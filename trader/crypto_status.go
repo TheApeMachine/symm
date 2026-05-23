@@ -23,15 +23,15 @@ func (crypto *Crypto) statusEvent() map[string]any {
 	}
 
 	return map[string]any{
-		"event":           "status",
-		"ts":              time.Now().UTC().Format(time.RFC3339Nano),
-		"equity_eur":      equity,
-		"cash_eur":        crypto.wallet.Balance,
-		"closed_pnl_eur":  crypto.closedPnL,
-		"trade_count":     crypto.tradeCount,
-		"win_rate":        winRate,
-		"open_count":      len(crypto.holds),
-		"positions":       positions,
+		"event":          "status",
+		"ts":             time.Now().UTC().Format(time.RFC3339Nano),
+		"equity_eur":     equity,
+		"cash_eur":       crypto.wallet.Balance,
+		"closed_pnl_eur": crypto.closedPnL,
+		"trade_count":    crypto.tradeCount,
+		"win_rate":       winRate,
+		"open_count":     len(crypto.holds),
+		"positions":      positions,
 	}
 }
 
@@ -97,7 +97,7 @@ func (crypto *Crypto) publishEnginePulse(
 	payload := map[string]any{
 		"event":        "engine_pulse",
 		"seq":          crypto.pulseSeq.Add(1),
-		"phase":        "scan",
+		"phase":        crypto.enginePhase(),
 		"measurements": len(batch),
 		"candidates":   len(candidates),
 		"open":         len(crypto.holds),
@@ -114,10 +114,18 @@ func (crypto *Crypto) publishEnginePulse(
 	crypto.publisher.Emit(payload)
 }
 
+func (crypto *Crypto) enginePhase() string {
+	if crypto.readyForTrading() {
+		return "scan"
+	}
+
+	return "warming"
+}
+
 func (crypto *Crypto) publishScoreboard(
 	batch []engine.Measurement,
 	candidates []tradeCandidate,
-	peakConfidence float64,
+	line entryLine,
 ) {
 	if crypto.publisher == nil {
 		return
@@ -130,12 +138,12 @@ func (crypto *Crypto) publishScoreboard(
 	}
 
 	crypto.publisher.Emit(map[string]any{
-		"event":    "scoreboard",
-		"ts":       time.Now().UTC().Format(time.RFC3339Nano),
-		"line":     peakConfidence,
-		"median":   peakConfidence,
-		"mad":      0,
-		"targets":  targets,
+		"event":   "scoreboard",
+		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
+		"line":    line.line,
+		"median":  line.median,
+		"mad":     line.mad,
+		"targets": targets,
 	})
 }
 
@@ -197,18 +205,25 @@ func scoreboardFromBatch(batch []engine.Measurement) []map[string]any {
 func (crypto *Crypto) publishDecisionTrace(
 	batch []engine.Measurement,
 	candidates []tradeCandidate,
-	peakConfidence float64,
+	line entryLine,
 ) {
 	if crypto.publisher == nil {
 		return
 	}
 
 	candidateBySymbol := make(map[string]tradeCandidate, len(candidates))
+	peakConfidence := 0.0
 
 	for _, candidate := range candidates {
 		candidateBySymbol[candidate.symbol] = candidate
+
+		if candidate.confidence > peakConfidence {
+			peakConfidence = candidate.confidence
+		}
 	}
 
+	readingsBySymbol := groupReadingsBySymbol(batch)
+	evaluations := make([]map[string]any, 0, len(candidates))
 	decisions := make([]map[string]any, 0, len(batch)+len(candidates))
 	seen := make(map[string]struct{}, len(batch))
 
@@ -239,16 +254,11 @@ func (crypto *Crypto) publishDecisionTrace(
 		why := "signal_only"
 
 		if inPlay {
-			allow = crypto.canEnter(candidate) && crypto.entryNotional(candidate.confidence, peakConfidence) > 0
-			why = "ok"
+			allow = crypto.candidateAllowsEntry(candidate, line, peakConfidence)
+			why = entryWhy(candidate, line, crypto)
 
 			if _, held := crypto.holds[candidate.symbol]; held {
 				why = "stop_cooldown"
-				allow = false
-			}
-
-			if !crypto.canEnter(candidate) {
-				why = "below_line"
 				allow = false
 			}
 		}
@@ -277,16 +287,11 @@ func (crypto *Crypto) publishDecisionTrace(
 			continue
 		}
 
-		allow := crypto.canEnter(candidate) && crypto.entryNotional(candidate.confidence, peakConfidence) > 0
-		why := "ok"
+		allow := crypto.candidateAllowsEntry(candidate, line, peakConfidence)
+		why := entryWhy(candidate, line, crypto)
 
 		if _, held := crypto.holds[candidate.symbol]; held {
 			why = "stop_cooldown"
-			allow = false
-		}
-
-		if !crypto.canEnter(candidate) {
-			why = "below_line"
 			allow = false
 		}
 
@@ -303,6 +308,19 @@ func (crypto *Crypto) publishDecisionTrace(
 		})
 	}
 
+	for _, candidate := range candidates {
+		evaluations = append(evaluations, map[string]any{
+			"symbol":   candidate.symbol,
+			"combined": candidate.confidence,
+			"support":  candidate.support,
+			"regime":   candidate.regime,
+			"reason":   candidate.reason,
+			"allow":    crypto.candidateAllowsEntry(candidate, line, peakConfidence),
+			"why":      entryWhy(candidate, line, crypto),
+			"signals":  readingsBySymbol[candidate.symbol],
+		})
+	}
+
 	allowed := 0
 
 	for _, row := range decisions {
@@ -313,14 +331,81 @@ func (crypto *Crypto) publishDecisionTrace(
 	}
 
 	crypto.publisher.Emit(map[string]any{
-		"event":     "decision_trace",
-		"ts":        time.Now().UTC().Format(time.RFC3339Nano),
-		"line":      peakConfidence,
-		"median":    peakConfidence,
-		"mad":       0,
-		"scored":    len(batch),
-		"in_play":   len(candidates),
-		"allowed":   allowed,
-		"decisions": decisions,
+		"event":       "decision_trace",
+		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		"line":        line.line,
+		"median":      line.median,
+		"mad":         line.mad,
+		"scored":      len(batch),
+		"in_play":     len(candidates),
+		"allowed":     allowed,
+		"decisions":   decisions,
+		"evaluations": evaluations,
 	})
+}
+
+func groupReadingsBySymbol(batch []engine.Measurement) map[string][]map[string]any {
+	grouped := make(map[string][]map[string]any)
+
+	for _, measurement := range batch {
+		if measurement.Err != nil || measurement.Confidence <= 0 || len(measurement.Pairs) == 0 {
+			continue
+		}
+
+		symbol := pairSymbol(measurement.Pairs[0])
+		if symbol == "" {
+			continue
+		}
+
+		regime := measurement.Regime
+		if regime == "" {
+			regime = regimeForType(measurement.Type)
+		}
+
+		reason := measurement.Reason
+		if reason == "" {
+			reason = "ok"
+		}
+
+		grouped[symbol] = append(grouped[symbol], map[string]any{
+			"source":     measurement.Source,
+			"regime":     regime,
+			"reason":     reason,
+			"confidence": measurement.Confidence,
+		})
+	}
+
+	return grouped
+}
+
+func (crypto *Crypto) candidateAllowsEntry(
+	candidate tradeCandidate,
+	line entryLine,
+	peakConfidence float64,
+) bool {
+	if !crypto.meetsEntryLine(candidate, line) {
+		return false
+	}
+
+	if !crypto.canEnter(candidate) {
+		return false
+	}
+
+	if peakConfidence <= 0 {
+		peakConfidence = candidate.confidence
+	}
+
+	return crypto.entryNotional(candidate.confidence, peakConfidence) > 0
+}
+
+func entryWhy(candidate tradeCandidate, line entryLine, crypto *Crypto) string {
+	if !crypto.meetsEntryLine(candidate, line) {
+		return "below_line"
+	}
+
+	if !crypto.canEnter(candidate) {
+		return "slot_limit"
+	}
+
+	return "ok"
 }

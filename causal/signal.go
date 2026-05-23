@@ -135,9 +135,9 @@ func (causal *Causal) scan(now time.Time) {
 	})
 
 	for _, symbol := range causal.symbols {
-		confidence, reason, fired := causal.evaluate(symbol, macro, now)
+		confidence, reason := causal.evaluate(symbol, macro, now)
 
-		if !fired {
+		if confidence <= 0 {
 			continue
 		}
 
@@ -159,9 +159,9 @@ func (causal *Causal) scan(now time.Time) {
 	}
 }
 
-func (causal *Causal) evaluate(symbol string, macroMomentum float64, now time.Time) (float64, string, bool) {
+func (causal *Causal) evaluate(symbol string, macroMomentum float64, now time.Time) (float64, string) {
 	if !causal.track.PassesLiquidity(symbol) {
-		return 0, "", false
+		return 0, ""
 	}
 
 	price, priceOK := causal.ticker.Last(symbol)
@@ -172,11 +172,11 @@ func (causal *Causal) evaluate(symbol string, macroMomentum float64, now time.Ti
 	imbalance, bookOK := causal.book.Imbalance(symbol)
 
 	if !priceOK || !volumeOK || !batchOK || !pressureOK || !spreadOK || !bookOK {
-		return 0, "", false
+		return 0, ""
 	}
 
 	if price <= 0 || batchVolume <= 0 || spreadBPS <= 0 || imbalance <= 0 || buyPressure <= 0 {
-		return 0, "", false
+		return 0, ""
 	}
 
 	causal.track.ApplyTicker(symbol, price, volumeBase)
@@ -187,7 +187,7 @@ func (causal *Causal) evaluate(symbol string, macroMomentum float64, now time.Ti
 	sample, ready := causal.track.Record(symbol, macroMomentum, liquidity, localFlow, price, now)
 
 	if !ready {
-		return 0, "", false
+		return 0, ""
 	}
 
 	return causal.track.Evaluate(symbol, sample)

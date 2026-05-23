@@ -57,10 +57,10 @@ func TestExcitationConfidenceRejectsCriticalBranching(t *testing.T) {
 	}
 }
 
-func TestConfidenceSpikeUsesOwnFence(t *testing.T) {
+func TestRecordScoreStoresConfidence(t *testing.T) {
 	trackStore := NewTrackStore()
 
-	for index := 0; index < minFitEvents; index++ {
+	for index := 0; index < minConfidenceHistory; index++ {
 		trackStore.bySymbol["PUMP/EUR"] = trackStore.ensure("PUMP/EUR")
 		trackStore.bySymbol["PUMP/EUR"].confidenceHistory = append(
 			trackStore.bySymbol["PUMP/EUR"].confidenceHistory,
@@ -68,12 +68,20 @@ func TestConfidenceSpikeUsesOwnFence(t *testing.T) {
 		)
 	}
 
-	if _, ok := trackStore.ConfidenceSpike("PUMP/EUR", 2.5); !ok {
-		t.Fatal("expected confidence above own fence to fire")
+	if score := trackStore.RecordScore("PUMP/EUR", 2.5); score != 2.5 {
+		t.Fatalf("expected score 2.5, got %v", score)
 	}
 
-	if _, ok := trackStore.ConfidenceSpike("PUMP/EUR", 1.1); ok {
-		t.Fatal("expected confidence below fence to be rejected")
+	if score := trackStore.RecordScore("PUMP/EUR", 1.1); score != 1.1 {
+		t.Fatalf("expected score 1.1, got %v", score)
+	}
+}
+
+func TestRecordScoreRejectsNonPositive(t *testing.T) {
+	trackStore := NewTrackStore()
+
+	if score := trackStore.RecordScore("PUMP/EUR", 0); score != 0 {
+		t.Fatalf("expected zero score, got %v", score)
 	}
 }
 

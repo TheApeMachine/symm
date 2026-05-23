@@ -158,9 +158,9 @@ func (fluid *Fluid) scan(now time.Time) {
 			fluid.track.ApplyTicker(symbol, price, volumeBase)
 		}
 
-		confidence, reason, fired := fluid.evaluate(symbol, now)
+		confidence, reason := fluid.evaluate(symbol, now)
 
-		if !fired {
+		if confidence <= 0 {
 			continue
 		}
 
@@ -186,9 +186,9 @@ func (fluid *Fluid) scan(now time.Time) {
 	}
 }
 
-func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, bool) {
+func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string) {
 	if !fluid.track.PassesLiquidity(symbol) {
-		return 0, "", false
+		return 0, ""
 	}
 
 	density, densityOK := fluid.book.Density(symbol)
@@ -198,11 +198,11 @@ func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, boo
 	buyPressure, pressureOK := fluid.trades.BuyPressure(symbol)
 
 	if !densityOK || !spreadOK || !priceOK || !batchOK || !pressureOK {
-		return 0, "", false
+		return 0, ""
 	}
 
 	if density <= 0 || spreadBPS <= 0 || price <= 0 || batchVolume <= 0 {
-		return 0, "", false
+		return 0, ""
 	}
 
 	flow := batchVolume

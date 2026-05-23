@@ -62,7 +62,7 @@ func (trackStore *TrackStore) Sample(
 	symbol string,
 	density, price, spreadBPS, flow, buyPressure float64,
 	now time.Time,
-) (float64, string, bool) {
+) (float64, string) {
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
@@ -87,7 +87,7 @@ func (trackStore *TrackStore) Sample(
 		track.lastSample = current
 		track.lastAt = now
 		track.hasPrior = true
-		return 0, "", false
+		return 0, ""
 	}
 
 	source := continuitySource(current, track.lastSample)
@@ -130,22 +130,12 @@ func (trackStore *TrackStore) Sample(
 		track.samples = track.samples[len(track.samples)-fieldHistoryCap:]
 	}
 
-	if sourceFence <= 0 && shockFence <= 0 {
-		track.lastPrice = price
-		track.lastSample = current
-		track.lastAt = now
-		track.recordConfidence(confidence)
-		return confidence, "", false
-	}
-
-	fired := (accumulating || shocking) && confidence > 0
-
 	track.lastPrice = price
 	track.lastSample = current
 	track.lastAt = now
 	track.recordConfidence(confidence)
 
-	return confidence, reason, fired
+	return confidence, reason
 }
 
 /*

@@ -2,32 +2,40 @@ import {
 	useSymmConnected,
 	useSymmDecisionTrace,
 	useSymmEnginePulse,
-	useSymmScoreboard,
+	useSymmEvaluation,
+	useSymmRankedEvaluations,
 } from "#/lib/symm/use-symm-ui";
 import { SidebarSection } from "./sidebar";
 import { whyLabel, type DecisionTraceEvent } from "#/lib/symm/events";
+import type { SymbolEvaluation } from "#/lib/symm/evaluation-store";
 import { EmptyHint } from "./hint";
 import { VerdictBadge } from "#/components/verdict";
 
 export const DecisionsPanel = () => {
 	const connected = useSymmConnected();
 	const decisionTrace = useSymmDecisionTrace();
-	const scoreboard = useSymmScoreboard();
 	const pulse = useSymmEnginePulse();
+	const evaluation = useSymmEvaluation();
+	const ranked = useSymmRankedEvaluations();
 
-	const decisions = decisionTrace?.decisions ?? [];
-	const targets = scoreboard?.targets ?? [];
-	const signals = pulse?.signals ?? [];
+	const hasEvaluations = ranked.length > 0;
 
 	return (
 		<SidebarSection title="Decisions" fill className="min-w-0">
 			{pulse ? <EnginePulseStrip pulse={pulse} connected={connected} /> : null}
-			{decisions.length > 0 ? (
-				<DecisionTable decisions={decisions} />
-			) : targets.length > 0 ? (
-				<ScoreboardTable targets={targets} />
-			) : signals.length > 0 ? (
-				<SignalTable signals={signals} />
+			{evaluation.line > 0 ? (
+				<EntryLineStrip
+					line={evaluation.line}
+					median={evaluation.median}
+					mad={evaluation.mad}
+				/>
+			) : null}
+			{hasEvaluations ? (
+				<EvaluationTable evaluations={ranked} />
+			) : decisionTrace?.decisions?.length ? (
+				<DecisionTable decisions={decisionTrace.decisions} />
+			) : pulse?.signals?.length ? (
+				<SignalTable signals={pulse.signals} />
 			) : (
 				<EmptyHint
 					connected={connected}
@@ -44,6 +52,20 @@ export const DecisionsPanel = () => {
 	);
 };
 
+const EntryLineStrip = ({
+	line,
+	median,
+	mad,
+}: {
+	line: number;
+	median: number;
+	mad: number;
+}) => (
+	<div className="border-b border-(--dash-border) px-3 py-1.5 text-[10px] tabular-nums text-(--dash-muted)">
+		line {line.toFixed(3)} · median {median.toFixed(3)} · mad {mad.toFixed(3)}
+	</div>
+);
+
 const EnginePulseStrip = ({
 	pulse,
 	connected,
@@ -58,8 +80,8 @@ const EnginePulseStrip = ({
 	return (
 		<div className="border-b border-(--dash-border) px-3 py-1.5 text-[10px] tabular-nums text-(--dash-muted)">
 			<span className="font-medium text-(--dash-text)">#{pulse.seq}</span>{" "}
-			{pulse.phase} · meas {pulse.measurements} · cand {pulse.candidates} ·
-			open {pulse.open}
+			{pulse.phase} · meas {pulse.measurements} · cand {pulse.candidates} · open{" "}
+			{pulse.open}
 			{pulse.fluid_sampled !== undefined ? (
 				<>
 					{" "}
@@ -113,32 +135,48 @@ export const DecisionTable = ({ decisions }: Props) => {
 	);
 };
 
-type ScoreboardTarget = {
-	symbol: string;
-	regime: string;
-	reason: string;
-	score: number;
-	source?: string;
-};
-
-const ScoreboardTable = ({ targets }: { targets: ScoreboardTarget[] }) => (
+const EvaluationTable = ({
+	evaluations,
+}: {
+	evaluations: SymbolEvaluation[];
+}) => (
 	<div className="overflow-auto">
 		<table className="w-full text-left text-xs">
 			<thead className="sticky top-0 bg-(--dash-panel) text-(--dash-muted)">
 				<tr>
 					<th className="px-3 py-1.5 font-medium">Symbol</th>
-					<th className="px-2 py-1.5 text-right font-medium">Score</th>
-					<th className="px-2 py-1.5 font-medium">Regime</th>
+					<th className="px-2 py-1.5 text-right font-medium">Combined</th>
+					<th className="hidden px-2 py-1.5 font-medium md:table-cell">
+						Signals
+					</th>
+					<th className="px-2 py-1.5 font-medium">Verdict</th>
+					<th className="hidden px-2 py-1.5 font-medium lg:table-cell">Why</th>
 				</tr>
 			</thead>
 			<tbody>
-				{targets.map((row) => (
+				{evaluations.map((row) => (
 					<tr key={row.symbol} className="border-t border-(--dash-border)">
 						<td className="px-3 py-1.5 font-medium">{row.symbol}</td>
 						<td className="px-2 py-1.5 text-right tabular-nums">
-							{row.score.toFixed(3)}
+							{row.combined.toFixed(3)}
+							{row.support > 1 ? (
+								<span className="ml-1 text-(--dash-muted)">×{row.support}</span>
+							) : null}
 						</td>
-						<td className="px-2 py-1.5 text-(--dash-muted)">{row.regime}</td>
+						<td className="hidden max-w-48 truncate px-2 py-1.5 text-(--dash-muted) md:table-cell">
+							{Object.values(row.signals)
+								.map(
+									(reading) =>
+										`${reading.source} ${reading.confidence.toFixed(2)}`,
+								)
+								.join(" · ")}
+						</td>
+						<td className="px-2 py-1.5">
+							<VerdictBadge allow={row.allow} inPlay={true} />
+						</td>
+						<td className="hidden max-w-36 truncate px-2 py-1.5 text-(--dash-muted) lg:table-cell">
+							{whyLabel(row.why)}
+						</td>
 					</tr>
 				))}
 			</tbody>

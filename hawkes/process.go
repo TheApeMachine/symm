@@ -6,16 +6,18 @@ import (
 )
 
 const (
-	minFitEvents     = 8
-	betaScanSteps    = 7
-	criticalBranch   = 1.0
-	localBetaSteps   = 5
-	localMuSteps     = 5
-	localBranchSteps = 5
-	localScaleMin    = 0.6
-	localScaleMax    = 1.4
-	localBranchDelta = 0.08
-	minBranching     = 0.05
+	minFitEvents         = 8
+	minConfidenceHistory = minFitEvents
+	hawkesTradeWindow    = 5 * time.Minute
+	betaScanSteps        = 7
+	criticalBranch       = 1.0
+	localBetaSteps       = 5
+	localMuSteps         = 5
+	localBranchSteps     = 5
+	localScaleMin        = 0.6
+	localScaleMax        = 1.4
+	localBranchDelta     = 0.08
+	minBranching         = 0.05
 )
 
 /*

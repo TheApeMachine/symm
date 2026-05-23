@@ -35,6 +35,30 @@ type stubSignal struct {
 	measurements []engine.Measurement
 }
 
+type stubEngineStats struct {
+	tickerReady func() int
+	symbolTotal func() int
+}
+
+func (stats stubEngineStats) TickerReadyCount() int  { return stats.tickerReady() }
+func (stats stubEngineStats) SymbolTotal() int       { return stats.symbolTotal() }
+func (stats stubEngineStats) FluidSampledCount() int { return 0 }
+func (stats stubEngineStats) FluidWarmingCount() int { return 0 }
+
+func primeDecideCrypto(crypto *Crypto) {
+	crypto.engineStats = stubEngineStats{
+		tickerReady: func() int { return 100 },
+		symbolTotal: func() int { return 100 },
+	}
+	crypto.pulseSeq.Store(int64(config.System.MinWarmPulses))
+}
+
+func decideForEntry(crypto *Crypto, batch []engine.Measurement) {
+	primeDecideCrypto(crypto)
+	crypto.decide(batch)
+	crypto.decide(batch)
+}
+
 func (stub *stubSignal) Run() {}
 
 func (stub *stubSignal) Measure(_ context.Context) iter.Seq[engine.Measurement] {
@@ -111,7 +135,7 @@ func TestCryptoAggregatesMultipleSignals(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
-	crypto.decide(append(first.measurements, second.measurements...))
+	decideForEntry(crypto, append(first.measurements, second.measurements...))
 
 	hold, ok := crypto.holds["PUMP/EUR"]
 
@@ -143,7 +167,7 @@ func TestCryptoEntersMomentumWithoutPump(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
-	crypto.decide(stub.measurements)
+	decideForEntry(crypto, stub.measurements)
 
 	hold, ok := crypto.holds["SCALP/EUR"]
 
@@ -258,7 +282,7 @@ func TestCryptoReentryUsesWinBoost(t *testing.T) {
 
 	crypto.records["PUMP/EUR"] = symbolRecord{wins: 1}
 
-	crypto.decide(stub.measurements)
+	decideForEntry(crypto, stub.measurements)
 
 	hold := crypto.holds["PUMP/EUR"]
 	expectedConfidence := 0.8 * repeatBoost(1)

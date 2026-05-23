@@ -35,12 +35,12 @@ type TrackStore struct {
 SymbolTrack stores rolling causal samples and effect histories.
 */
 type SymbolTrack struct {
-	samples           []causalSample
-	interventionHist  []float64
-	lastPrice         float64
-	lastAt            time.Time
-	hasPrior          bool
-	dailyQuoteVol     float64
+	samples          []causalSample
+	interventionHist []float64
+	lastPrice        float64
+	lastAt           time.Time
+	hasPrior         bool
+	dailyQuoteVol    float64
 }
 
 /*
@@ -150,44 +150,38 @@ Evaluate scores rung-2 intervention and rung-3 counterfactual uplift for one sym
 func (trackStore *TrackStore) Evaluate(
 	symbol string,
 	current causalSample,
-) (confidence float64, reason string, fired bool) {
+) (confidence float64, reason string) {
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
 	track, ok := trackStore.bySymbol[symbol]
 
 	if !ok || len(track.samples) < minCausalHistory {
-		return 0, "", false
+		return 0, ""
 	}
 
 	samples := track.samples
 	association := associationEffect(samples)
 	intervention := backdoorFlowEffect(samples)
-	fence := effectFence(track.interventionHist)
 
 	if intervention <= 0 {
 		track.recordIntervention(intervention)
-		return 0, "", false
+		return 0, ""
 	}
 
-	if len(track.interventionHist) >= minCausalHistory/2 && (fence <= 0 || intervention <= fence) {
-		track.recordIntervention(intervention)
-		return 0, "", false
-	}
+	track.recordIntervention(intervention)
 
 	coef, fitOK := fitStructural(samples)
 
 	if !fitOK {
-		track.recordIntervention(intervention)
-		return 0, "", false
+		return intervention, "intervention"
 	}
 
 	interventionFlow := flowInterventionLevel(samples)
 	uplift := counterfactualUplift(current, coef, interventionFlow)
 
 	if uplift <= 0 {
-		track.recordIntervention(intervention)
-		return 0, "", false
+		return intervention, "intervention"
 	}
 
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
@@ -200,17 +194,14 @@ func (trackStore *TrackStore) Evaluate(
 	confidence = intervention * uplift
 
 	if current.localFlow <= 0 || current.liquidity <= 0 {
-		track.recordIntervention(intervention)
-		return 0, "", false
+		return intervention, reason
 	}
-
-	track.recordIntervention(intervention)
 
 	if confidence <= 0 {
-		return 0, "", false
+		return intervention, reason
 	}
 
-	return trackStore.confidenceSpike(track, confidence), reason, true
+	return confidence, reason
 }
 
 /*
@@ -243,27 +234,6 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 	return track.dailyQuoteVol < percentileSorted(copySorted(quoteVolumes), 0.5)
 }
 
-func (trackStore *TrackStore) confidenceSpike(track *SymbolTrack, score float64) float64 {
-	if score <= 0 {
-		return 0
-	}
-
-	history := make([]float64, 0, len(track.interventionHist))
-	history = append(history, track.interventionHist...)
-
-	if len(history) < minCausalHistory/2 {
-		return score
-	}
-
-	fence := effectFence(history)
-
-	if fence <= 0 || score <= fence {
-		return 0
-	}
-
-	return score / fence
-}
-
 func (track *SymbolTrack) recordIntervention(effect float64) {
 	if effect == 0 {
 		return
@@ -290,31 +260,6 @@ func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
 	trackStore.bySymbol[symbol] = track
 
 	return track
-}
-
-func effectFence(effects []float64) float64 {
-	if len(effects) == 0 {
-		return 0
-	}
-
-	lower, upper := quartiles(effects)
-	spread := upper - lower
-
-	if spread > 0 {
-		return upper + spread + spread/2
-	}
-
-	return maxFloat(effects)
-}
-
-func quartiles(values []float64) (lower, upper float64) {
-	if len(values) == 0 {
-		return 0, 0
-	}
-
-	sorted := copySorted(values)
-
-	return percentileSorted(sorted, 0.25), percentileSorted(sorted, 0.75)
 }
 
 func percentileSorted(sorted []float64, quantile float64) float64 {

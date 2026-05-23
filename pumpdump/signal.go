@@ -132,9 +132,9 @@ func (pumpdump *PumpDump) scan(now time.Time) {
 	pumpdump.track.RollBuckets(now)
 
 	for _, symbol := range pumpdump.symbols {
-		confidence, fired := pumpdump.evaluate(symbol)
+		confidence, reason := pumpdump.evaluate(symbol)
 
-		if !fired {
+		if confidence <= 0 {
 			continue
 		}
 
@@ -144,11 +144,15 @@ func (pumpdump *PumpDump) scan(now time.Time) {
 			continue
 		}
 
+		if reason == "" {
+			reason = "precursor"
+		}
+
 		pumpdump.queue.Store(pumpdump.seq.Add(1), engine.Measurement{
 			Type:       engine.Pump,
 			Source:     "pumpdump",
 			Regime:     "pump",
-			Reason:     "actual_pump",
+			Reason:     reason,
 			Pairs:      []asset.Pair{pair},
 			Confidence: confidence,
 			Timeframe:  engine.Timeframe{Start: now.UnixNano(), End: now.UnixNano()},
@@ -181,41 +185,43 @@ func (pumpdump *PumpDump) ingest(now time.Time) {
 	}
 }
 
-func (pumpdump *PumpDump) evaluate(symbol string) (float64, bool) {
+func (pumpdump *PumpDump) evaluate(symbol string) (float64, string) {
 	if !pumpdump.track.PassesLiquidity(symbol) {
-		return 0, false
+		return 0, ""
 	}
 
 	volumeRatio, volumeSpike := pumpdump.track.VolumeSpike(symbol)
+	imbalance, bookOK := pumpdump.book.Imbalance(symbol)
+	buyPressure, tradeOK := pumpdump.trades.BuyPressure(symbol)
+
+	if !bookOK || !tradeOK {
+		return 0, ""
+	}
+
+	micro := precursorScore(imbalance, buyPressure)
+
+	if micro <= 0 || volumeRatio <= 0 {
+		return 0, ""
+	}
+
+	confidence := volumeRatio * micro
+	reason := "precursor"
 
 	if !volumeSpike {
-		return 0, false
+		return confidence, reason
 	}
 
 	if !pumpdump.track.PriceFlat(symbol) {
-		return 0, false
+		return confidence, reason
 	}
 
 	spreadBPS, spreadOK := pumpdump.book.SpreadBPS(symbol)
 
 	if !spreadOK || !pumpdump.track.SpreadTight(symbol, spreadBPS) {
-		return 0, false
+		return confidence, reason
 	}
 
-	imbalance, bookOK := pumpdump.book.Imbalance(symbol)
-	buyPressure, tradeOK := pumpdump.trades.BuyPressure(symbol)
-
-	if !bookOK || !tradeOK {
-		return 0, false
-	}
-
-	micro := precursorScore(imbalance, buyPressure)
-
-	if micro <= 0 {
-		return 0, false
-	}
-
-	return volumeRatio * micro, true
+	return confidence, "actual_pump"
 }
 
 /*

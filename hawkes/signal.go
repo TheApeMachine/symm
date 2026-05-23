@@ -132,9 +132,9 @@ func (hawkes *Hawkes) scan(now time.Time) {
 	hawkes.ingest()
 
 	for _, symbol := range hawkes.symbols {
-		confidence, fired := hawkes.evaluate(symbol, now)
+		confidence := hawkes.evaluate(symbol, now)
 
-		if !fired {
+		if confidence <= 0 {
 			continue
 		}
 
@@ -167,15 +167,15 @@ func (hawkes *Hawkes) ingest() {
 	}
 }
 
-func (hawkes *Hawkes) evaluate(symbol string, now time.Time) (float64, bool) {
+func (hawkes *Hawkes) evaluate(symbol string, now time.Time) float64 {
 	if !hawkes.track.PassesLiquidity(symbol) {
-		return 0, false
+		return 0
 	}
 
-	ticks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
+	ticks, ok := hawkes.trades.RecentTicks(symbol, now.Add(-hawkesTradeWindow))
 
 	if !ok {
-		return 0, false
+		return 0
 	}
 
 	buyTimes, sellTimes := splitSideEvents(ticks, now)
@@ -183,20 +183,20 @@ func (hawkes *Hawkes) evaluate(symbol string, now time.Time) (float64, bool) {
 	sellFit := hawkes.track.FitSide(symbol, "sell", sellTimes, now)
 
 	if buyFit.mu <= 0 {
-		return 0, false
+		return 0
 	}
 
 	asymmetry := buySellAsymmetry(buyFit, sellFit)
 	confidence := excitationConfidence(buyFit, asymmetry)
 
 	if confidence <= 0 {
-		return 0, false
+		return 0
 	}
 
 	imbalance, bookOK := hawkes.book.Imbalance(symbol)
 
 	if !bookOK || imbalance <= 0 {
-		return 0, false
+		return 0
 	}
 
 	bookSide := imbalance
@@ -207,7 +207,7 @@ func (hawkes *Hawkes) evaluate(symbol string, now time.Time) (float64, bool) {
 
 	score := confidence * bookSide
 
-	return hawkes.track.ConfidenceSpike(symbol, score)
+	return hawkes.track.RecordScore(symbol, score)
 }
 
 func splitSideEvents(ticks []market.TradeTick, horizon time.Time) ([]time.Time, []time.Time) {

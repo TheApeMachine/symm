@@ -19,6 +19,8 @@ type Config struct {
 	TakerFeePct         float64
 	SlippageBPS         float64
 	SubscribeBatch      int
+	MinWarmPulses       int
+	MinQuoteCoverage    float64
 	PriceHistory        int
 	MinCostEUR          float64
 	MaxSlotPct          float64
@@ -48,6 +50,8 @@ func NewConfig() *Config {
 		SlippageBPS:         DefaultSlippageBps,
 		RescoreEvery:        100 * time.Millisecond,
 		SubscribeBatch:      50,
+		MinWarmPulses:       50,
+		MinQuoteCoverage:    0.95,
 		PriceHistory:        128,
 		MinCostEUR:          0.45,
 		MaxSlotPct:          5,

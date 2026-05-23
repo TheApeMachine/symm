@@ -18,21 +18,22 @@ Crypto is the real crypto-currency trader, which uses actual
 money from the user's account.
 */
 type Crypto struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	wallet      *Wallet
-	prices      PriceReader
-	publisher   Publisher
-	engineStats EngineStats
-	signals     []engine.Signal
-	holds       map[string]position
-	records     map[string]symbolRecord
-	closedPnL   float64
-	tradeCount  int
-	winCount    int
-	pulseSeq    atomic.Int64
-	statusSink  func() map[string]any
+	ctx             context.Context
+	cancel          context.CancelFunc
+	pool            *qpool.Q
+	wallet          *Wallet
+	prices          PriceReader
+	publisher       Publisher
+	engineStats     EngineStats
+	signals         []engine.Signal
+	holds           map[string]position
+	records         map[string]symbolRecord
+	priorCandidates map[string]struct{}
+	closedPnL       float64
+	tradeCount      int
+	winCount        int
+	pulseSeq        atomic.Int64
+	statusSink      func() map[string]any
 }
 
 type position struct {
@@ -67,15 +68,16 @@ func NewCrypto(
 	}
 
 	crypto := &Crypto{
-		ctx:       ctx,
-		cancel:    cancel,
-		pool:      pool,
-		wallet:    wallet,
-		prices:    prices,
-		publisher: publisher,
-		signals:   signals,
-		holds:     make(map[string]position),
-		records:   make(map[string]symbolRecord),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		wallet:          wallet,
+		prices:          prices,
+		publisher:       publisher,
+		signals:         signals,
+		holds:           make(map[string]position),
+		records:         make(map[string]symbolRecord),
+		priorCandidates: make(map[string]struct{}),
 	}
 
 	crypto.statusSink = crypto.statusEvent
@@ -154,6 +156,7 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 	}
 
 	candidates := crypto.rankCandidates(batch)
+	line := batchEntryLine(candidates)
 	peakConfidence := 0.0
 
 	if len(candidates) > 0 {
@@ -161,17 +164,38 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 	}
 
 	crypto.publishEnginePulse(batch, candidates)
-	crypto.publishScoreboard(batch, candidates, peakConfidence)
-	crypto.publishDecisionTrace(batch, candidates, peakConfidence)
+	crypto.publishScoreboard(batch, candidates, line)
+	crypto.publishDecisionTrace(batch, candidates, line)
 
 	if len(candidates) == 0 {
+		crypto.priorCandidates = nil
+		return
+	}
+
+	nextCandidates := make(map[string]struct{}, len(candidates))
+
+	for _, candidate := range candidates {
+		nextCandidates[candidate.symbol] = struct{}{}
+	}
+
+	if !crypto.readyForTrading() {
+		crypto.priorCandidates = nextCandidates
 		return
 	}
 
 	for _, candidate := range candidates {
+		if _, seen := crypto.priorCandidates[candidate.symbol]; !seen {
+			continue
+		}
+
+		if !crypto.meetsEntryLine(candidate, line) {
+			continue
+		}
+
 		crypto.tryEnter(candidate, peakConfidence)
 	}
 
+	crypto.priorCandidates = nextCandidates
 	crypto.publishStatus()
 }
 

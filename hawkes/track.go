@@ -126,31 +126,20 @@ func (trackStore *TrackStore) FitSide(
 }
 
 /*
-ConfidenceSpike reports whether Hawkes confidence exceeds the symbol's own fence.
+RecordScore stores one Hawkes confidence sample and returns it for the trader batch.
 */
-func (trackStore *TrackStore) ConfidenceSpike(symbol string, confidence float64) (float64, bool) {
+func (trackStore *TrackStore) RecordScore(symbol string, confidence float64) float64 {
+	if confidence <= 0 {
+		return 0
+	}
+
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
-	track, ok := trackStore.bySymbol[symbol]
+	track := trackStore.ensure(symbol)
+	track.recordConfidence(confidence)
 
-	if !ok || confidence <= 0 {
-		return 0, false
-	}
-
-	fence := confidenceFence(track.confidenceHistory)
-
-	if fence <= 0 {
-		track.recordConfidence(confidence)
-		return confidence, false
-	}
-
-	if confidence <= fence {
-		track.recordConfidence(confidence)
-		return confidence, false
-	}
-
-	return confidence, true
+	return confidence
 }
 
 func (track *SymbolTrack) recordConfidence(confidence float64) {

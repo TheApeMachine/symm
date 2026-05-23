@@ -84,10 +84,10 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		priceVelocity: 0.2,
 	}
 
-	confidence, reason, fired := trackStore.Evaluate("ALT/EUR", sample)
+	confidence, reason := trackStore.Evaluate("ALT/EUR", sample)
 
-	if !fired {
-		t.Fatalf("expected causal intervention signal, confidence=%v", confidence)
+	if confidence <= 0 {
+		t.Fatalf("expected causal confidence, got %v", confidence)
 	}
 
 	if reason != "intervention" && reason != "counterfactual" {
