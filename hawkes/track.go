@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"sync"
+	"time"
 )
 
 const confidenceHistoryCap = 64
@@ -15,11 +16,15 @@ type TrackStore struct {
 }
 
 /*
-SymbolTrack stores rolling confidence samples and daily quote volume.
+SymbolTrack stores rolling confidence samples, daily quote volume, and warm-start fits.
 */
 type SymbolTrack struct {
 	confidenceHistory []float64
 	dailyQuoteVol     float64
+	buyFit            SideFit
+	sellFit           SideFit
+	hasBuyFit         bool
+	hasSellFit        bool
 }
 
 /*
@@ -74,6 +79,50 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 	}
 
 	return track.dailyQuoteVol < crossSectionMedian(quoteVolumes)
+}
+
+/*
+FitSide warm-starts Hawkes MLE from the symbol's prior side fit.
+*/
+func (trackStore *TrackStore) FitSide(
+	symbol string,
+	side string,
+	events []time.Time,
+	horizon time.Time,
+) SideFit {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track := trackStore.ensure(symbol)
+	prior := SideFit{}
+
+	switch side {
+	case "buy":
+		if track.hasBuyFit {
+			prior = track.buyFit
+		}
+	case "sell":
+		if track.hasSellFit {
+			prior = track.sellFit
+		}
+	}
+
+	fit := fitSideWithPrior(events, horizon, prior)
+
+	switch side {
+	case "buy":
+		if fit.mu > 0 {
+			track.buyFit = fit
+			track.hasBuyFit = true
+		}
+	case "sell":
+		if fit.mu > 0 {
+			track.sellFit = fit
+			track.hasSellFit = true
+		}
+	}
+
+	return fit
 }
 
 /*

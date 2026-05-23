@@ -77,6 +77,49 @@ func TestConfidenceSpikeUsesOwnFence(t *testing.T) {
 	}
 }
 
+func TestFitSideWarmStartMatchesFullSearch(t *testing.T) {
+	start := time.Unix(0, 0)
+	events := burstBuyEvents(start, minFitEvents+4, 50*time.Millisecond)
+	horizon := events[len(events)-1].Add(10 * time.Millisecond)
+	full := scanFullGrid(events, horizon, float64(len(events))/horizon.Sub(events[0]).Seconds(), 1/medianInterArrivalSec(events))
+	warm := fitSideWithPrior(events, horizon, full)
+
+	if warm.mu <= 0 || warm.beta <= 0 {
+		t.Fatalf("expected warm-started fit, mu=%v beta=%v", warm.mu, warm.beta)
+	}
+
+	if warm.intensity <= warm.mu {
+		t.Fatal("expected warm-started intensity above baseline")
+	}
+}
+
+func TestFitSideWarmStartUsesPrior(t *testing.T) {
+	start := time.Unix(0, 0)
+	events := burstBuyEvents(start, minFitEvents+4, 50*time.Millisecond)
+	horizon := events[len(events)-1].Add(10 * time.Millisecond)
+	prior := fitSide(events, horizon)
+	second := fitSideWithPrior(events, horizon, prior)
+
+	if second.mu <= 0 {
+		t.Fatal("expected second warm fit")
+	}
+}
+
+func BenchmarkFitSideWarmStart(b *testing.B) {
+	start := time.Unix(0, 0)
+	events := burstBuyEvents(start, 32, 25*time.Millisecond)
+	horizon := events[len(events)-1].Add(time.Millisecond)
+	prior := fitSide(events, horizon)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if fit := fitSideWithPrior(events, horizon, prior); fit.mu <= 0 {
+			b.Fatal("expected fit")
+		}
+	}
+}
+
 func BenchmarkFitSide(b *testing.B) {
 	start := time.Unix(0, 0)
 	events := burstBuyEvents(start, 32, 25*time.Millisecond)

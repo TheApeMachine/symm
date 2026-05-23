@@ -6,9 +6,16 @@ import (
 )
 
 const (
-	minFitEvents   = 8
-	betaScanSteps  = 7
-	criticalBranch = 1.0
+	minFitEvents     = 8
+	betaScanSteps    = 7
+	criticalBranch   = 1.0
+	localBetaSteps   = 5
+	localMuSteps     = 5
+	localBranchSteps = 5
+	localScaleMin    = 0.6
+	localScaleMax    = 1.4
+	localBranchDelta = 0.08
+	minBranching     = 0.05
 )
 
 /*
@@ -23,9 +30,16 @@ type SideFit struct {
 }
 
 /*
-fitSide estimates mu, alpha, beta via constrained likelihood on tick timestamps.
+fitSide estimates mu, alpha, beta via warm-started local likelihood search.
 */
 func fitSide(events []time.Time, horizon time.Time) SideFit {
+	return fitSideWithPrior(events, horizon, SideFit{})
+}
+
+/*
+fitSideWithPrior warm-starts from prior parameters and scans a local neighborhood.
+*/
+func fitSideWithPrior(events []time.Time, horizon time.Time, prior SideFit) SideFit {
 	if len(events) < minFitEvents {
 		return SideFit{}
 	}
@@ -44,6 +58,80 @@ func fitSide(events []time.Time, horizon time.Time) SideFit {
 	}
 
 	muStart := float64(len(events)) / span
+
+	if priorValid(prior) {
+		local := scanLocalGrid(events, horizon, prior, muStart, baseBeta)
+
+		if local.mu > 0 {
+			return local
+		}
+	}
+
+	return scanFullGrid(events, horizon, muStart, baseBeta)
+}
+
+func priorValid(prior SideFit) bool {
+	return prior.mu > 0 &&
+		prior.beta > 0 &&
+		prior.branching > 0 &&
+		prior.branching < criticalBranch
+}
+
+func scanLocalGrid(
+	events []time.Time,
+	horizon time.Time,
+	prior SideFit,
+	muStart, baseBeta float64,
+) SideFit {
+	best := SideFit{mu: -1}
+	bestLL := math.Inf(-1)
+
+	betaScales := localScales(localBetaSteps)
+	muScales := localScales(localMuSteps)
+	branchOffsets := localBranchOffsets(localBranchSteps)
+
+	for _, betaScale := range betaScales {
+		beta := prior.beta * betaScale
+
+		if beta <= 0 {
+			continue
+		}
+
+		for _, muScale := range muScales {
+			mu := prior.mu * muScale
+
+			if mu <= 0 {
+				continue
+			}
+
+			for _, branchOffset := range branchOffsets {
+				branching := prior.branching + branchOffset
+
+				if branching <= minBranching || branching >= criticalBranch {
+					continue
+				}
+
+				alpha := branching * beta
+				candidate := evaluateFit(events, horizon, mu, alpha, beta, branching)
+
+				if candidate.fit.mu <= 0 || candidate.logLikelihood <= bestLL {
+					continue
+				}
+
+				bestLL = candidate.logLikelihood
+				best = candidate.fit
+			}
+		}
+	}
+
+	if best.mu > 0 {
+		return best
+	}
+
+	return scanFullGrid(events, horizon, muStart, baseBeta)
+}
+
+func scanFullGrid(events []time.Time, horizon time.Time, muStart, baseBeta float64) SideFit {
 	best := SideFit{mu: -1}
 	bestLL := math.Inf(-1)
 
@@ -57,25 +145,77 @@ func fitSide(events []time.Time, horizon time.Time) SideFit {
 			for branchStep := 1; branchStep < 14; branchStep++ {
 				branching := float64(branchStep) / 15
 				alpha := branching * beta
-				logLikelihood := logLikelihood(events, horizon, mu, alpha, beta)
+				candidate := evaluateFit(events, horizon, mu, alpha, beta, branching)
 
-				if logLikelihood <= bestLL {
+				if candidate.fit.mu <= 0 || candidate.logLikelihood <= bestLL {
 					continue
 				}
 
-				bestLL = logLikelihood
-				best = SideFit{
-					mu:        mu,
-					alpha:     alpha,
-					beta:      beta,
-					branching: branching,
-					intensity: intensityAt(events, horizon, mu, alpha, beta),
-				}
+				bestLL = candidate.logLikelihood
+				best = candidate.fit
 			}
 		}
 	}
 
 	return best
+}
+
+type fitCandidate struct {
+	fit           SideFit
+	logLikelihood float64
+}
+
+func evaluateFit(
+	events []time.Time,
+	horizon time.Time,
+	mu, alpha, beta, branching float64,
+) fitCandidate {
+	logLikelihood := logLikelihood(events, horizon, mu, alpha, beta)
+
+	if logLikelihood <= math.Inf(-1) {
+		return fitCandidate{}
+	}
+
+	return fitCandidate{
+		logLikelihood: logLikelihood,
+		fit: SideFit{
+			mu:        mu,
+			alpha:     alpha,
+			beta:      beta,
+			branching: branching,
+			intensity: intensityAt(events, horizon, mu, alpha, beta),
+		},
+	}
+}
+
+func localScales(steps int) []float64 {
+	if steps <= 1 {
+		return []float64{1}
+	}
+
+	scales := make([]float64, steps)
+	stepSize := (localScaleMax - localScaleMin) / float64(steps-1)
+
+	for index := 0; index < steps; index++ {
+		scales[index] = localScaleMin + float64(index)*stepSize
+	}
+
+	return scales
+}
+
+func localBranchOffsets(steps int) []float64 {
+	if steps <= 1 {
+		return []float64{0}
+	}
+
+	center := (steps - 1) / 2
+	offsets := make([]float64, steps)
+
+	for index := 0; index < steps; index++ {
+		offsets[index] = float64(index-center) * localBranchDelta
+	}
+
+	return offsets
 }
 
 func logLikelihood(events []time.Time, horizon time.Time, mu, alpha, beta float64) float64 {

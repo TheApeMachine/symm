@@ -6,10 +6,10 @@ import "math"
 structuralCoef holds fitted SCM coefficients for price velocity.
 */
 type structuralCoef struct {
-	intercept     float64
-	macro         float64
-	liquidity     float64
-	flow          float64
+	intercept float64
+	macro     float64
+	liquidity float64
+	flow      float64
 }
 
 /*
@@ -159,7 +159,7 @@ func ols2(target, first, second []float64) ([]float64, bool) {
 		}
 	}
 
-	return gaussianSolve(normal, targetVec)
+	return ridgeSolve(normal, targetVec)
 }
 
 func ols3(
@@ -194,7 +194,7 @@ func ols3(
 		}
 	}
 
-	return gaussianSolve(normal, targetVec)
+	return ridgeSolve(normal, targetVec)
 }
 
 func gaussianSolve(matrix [][]float64, vector []float64) ([]float64, bool) {
@@ -220,7 +220,7 @@ func gaussianSolve(matrix [][]float64, vector []float64) ([]float64, bool) {
 			}
 		}
 
-		if maxMag <= 1e-12 {
+		if maxMag <= solverPivotFloor {
 			return nil, false
 		}
 

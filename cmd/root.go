@@ -21,6 +21,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trades"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/pumpdump"
+	"github.com/theapemachine/symm/replay"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -33,6 +34,8 @@ var rootCmd = &cobra.Command{
 		quote, _ := cmd.Flags().GetString("quote")
 		walletSize, _ := cmd.Flags().GetFloat64("wallet")
 		uiAddr, _ := cmd.Flags().GetString("ui-addr")
+		replayFile, _ := cmd.Flags().GetString("replay-file")
+		replayPace, _ := cmd.Flags().GetDuration("replay-pace")
 
 		pool := qpool.NewQ(cmd.Context(), 1, runtime.NumCPU(), nil)
 		wallet := trader.NewWallet(
@@ -40,7 +43,19 @@ var rootCmd = &cobra.Command{
 		)
 
 		publicClient := errnie.Does(func() (*client.PublicClient, error) {
-			publicClient := client.NewPublicClient(cmd.Context())
+			options := make([]client.PublicClientOption, 0, 1)
+
+			if replayFile != "" {
+				frames, err := replay.LoadFrames(replayFile)
+
+				if err != nil {
+					return nil, err
+				}
+
+				options = append(options, client.WithReplay(frames, replayPace))
+			}
+
+			publicClient := client.NewPublicClient(cmd.Context(), options...)
 
 			if err := publicClient.Connect(); err != nil {
 				return nil, err
@@ -220,6 +235,10 @@ var rootCmd = &cobra.Command{
 			go streamFieldSnapshots(cmd.Context(), telemetryHub, fluidSignal)
 		}
 
+		if publicClient.ReplayMode() {
+			publicClient.StartReplay()
+		}
+
 		if err := cryptoTrader.Run(); err != nil {
 			errnie.Error(err)
 		}
@@ -287,10 +306,13 @@ func init() {
 	rootCmd.Flags().Bool("log-file-active", true, "write logs to --log-file")
 	rootCmd.Flags().Bool("log-stdout", true, "mirror logs to stdout")
 	rootCmd.Flags().String("ui-addr", config.System.UIAddr, "WebSocket UI telemetry (e.g. :8765); enables ws://host/ws")
+	rootCmd.Flags().String("replay-file", "", "newline-delimited Kraken v2 websocket frames for dry-run replay")
+	rootCmd.Flags().Duration("replay-pace", 50*time.Millisecond, "delay between replay frames (0 = as fast as possible)")
 }
 
 const rootLong = `
 S.Y.M.M. - Shake Your Money Maker
 
-Kraken book and trade observers feed pump detection into the paper trader.
+Kraken book and trade observers feed microstructure signals into the paper trader.
+Use --replay-file with captured websocket JSONL to dry-run without a live feed.
 `

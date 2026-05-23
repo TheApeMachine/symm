@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/symm/kraken"
@@ -16,14 +17,16 @@ PublicClient maintains an unauthenticated Kraken WebSocket v2 session.
 It owns dial, ping, subscribe, and framed reads for public market channels.
 */
 type PublicClient struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	conn     *websocket.Conn
-	wsURL    string
-	reqID    int
-	handlers []func(context.Context, []byte) error
-	mu       sync.Mutex
-	readOnce sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	conn         *websocket.Conn
+	wsURL        string
+	reqID        int
+	handlers     []func(context.Context, []byte) error
+	replayFrames [][]byte
+	replayPace   time.Duration
+	mu           sync.Mutex
+	readOnce     sync.Once
 }
 
 type PublicClientOption func(*PublicClient)
@@ -58,8 +61,13 @@ func NewPublicClient(parent context.Context, opts ...PublicClientOption) *Public
 
 /*
 Connect dials the Kraken v2 websocket endpoint.
+Replay sources connect without dialing and require StartReplay after handlers register.
 */
 func (publicClient *PublicClient) Connect() error {
+	if len(publicClient.replayFrames) > 0 {
+		return nil
+	}
+
 	if publicClient.conn != nil {
 		return fmt.Errorf("public websocket already connected")
 	}
@@ -92,8 +100,13 @@ func (publicClient *PublicClient) Close() error {
 
 /*
 Send marshals and writes a JSON websocket text frame.
+Replay mode ignores outbound subscribe frames.
 */
 func (publicClient *PublicClient) Send(message any) error {
+	if len(publicClient.replayFrames) > 0 {
+		return nil
+	}
+
 	if publicClient.conn == nil {
 		return fmt.Errorf("public websocket is not connected")
 	}

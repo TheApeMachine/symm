@@ -184,8 +184,8 @@ func (hawkes *Hawkes) evaluate(symbol string, now time.Time) (float64, bool) {
 	}
 
 	buyTimes, sellTimes := splitSideEvents(ticks, now)
-	buyFit := fitSide(buyTimes, now)
-	sellFit := fitSide(sellTimes, now)
+	buyFit := hawkes.track.FitSide(symbol, "buy", buyTimes, now)
+	sellFit := hawkes.track.FitSide(symbol, "sell", sellTimes, now)
 
 	if buyFit.mu <= 0 {
 		return 0, false
