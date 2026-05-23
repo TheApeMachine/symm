@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -54,7 +56,14 @@ func New(
 		return nil, fmt.Errorf("public websocket client is nil")
 	}
 
-	if err := publicClient.SubscribeTo(market.SubscribeParams{}.Trades(symbols)); err != nil {
+	if err := client.SubscribeSymbolsBatched(
+		publicClient,
+		symbols,
+		config.System.SubscribeBatch,
+		func(chunk []string) any {
+			return market.SubscribeParams{}.Trades(chunk)
+		},
+	); err != nil {
 		return nil, fmt.Errorf("subscribe trade channel: %w", err)
 	}
 
@@ -146,7 +155,8 @@ func (trades *Trades) handleFrame(_ context.Context, payload []byte) error {
 	case errors.Is(err, market.ErrNotTrade):
 		return nil
 	case err != nil:
-		return trades.fail(fmt.Errorf("parse trades frame: %w", err))
+		_ = errnie.Error(fmt.Errorf("parse trades frame: %w", err))
+		return nil
 	case len(ticks) == 0:
 		return nil
 	default:
@@ -166,7 +176,7 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 			batch.buyVolume += tick.Volume
 		case sideSell:
 		default:
-			return trades.fail(fmt.Errorf("unknown trade side %q", tick.Side))
+			continue
 		}
 
 		batches[tick.Symbol] = batch
@@ -177,8 +187,7 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 
 	for symbol, batch := range batches {
 		if batch.volume <= 0 {
-			trades.err = fmt.Errorf("trade batch for %s has zero volume", symbol)
-			return trades.err
+			continue
 		}
 
 		state := trades.symbols[symbol]

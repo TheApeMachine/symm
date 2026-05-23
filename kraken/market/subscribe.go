@@ -60,6 +60,6 @@ func (subscribeParams SubscribeParams) Ticker(symbols []string) SubscribeParams 
 		Channel:      core.ChannelTicker,
 		Symbol:       symbols,
 		Snapshot:     true,
-		EventTrigger: "trades",
+		EventTrigger: "bbo",
 	}
 }

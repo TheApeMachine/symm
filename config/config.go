@@ -47,6 +47,7 @@ func NewConfig() *Config {
 		TakerFeePct:         DefaultTakerFeePct,
 		SlippageBPS:         DefaultSlippageBps,
 		RescoreEvery:        100 * time.Millisecond,
+		SubscribeBatch:      50,
 		PriceHistory:        128,
 		MinCostEUR:          0.45,
 		MaxSlotPct:          5,

@@ -30,7 +30,7 @@ It scans only the data array and avoids full struct unmarshaling.
 func ParseTrades(payload []byte) ([]TradeTick, error) {
 	channel, err := ChannelName(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrNotTrade, err)
 	}
 
 	if !isTradeChannel(channel) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -47,9 +48,14 @@ func New(
 		return nil, fmt.Errorf("public websocket client is nil")
 	}
 
-	params := market.SubscribeParams{}.Ticker(symbols)
-
-	if err := publicClient.SubscribeTo(params); err != nil {
+	if err := client.SubscribeSymbolsBatched(
+		publicClient,
+		symbols,
+		config.System.SubscribeBatch,
+		func(chunk []string) any {
+			return market.SubscribeParams{}.Ticker(chunk)
+		},
+	); err != nil {
 		return nil, fmt.Errorf("subscribe ticker channel: %w", err)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/core"
 )
@@ -223,7 +224,7 @@ func (publicClient *PublicClient) dispatchLoop() {
 
 		for _, handler := range handlers {
 			if err := handler(publicClient.ctx, payload); err != nil {
-				return
+				_ = errnie.Error(err)
 			}
 		}
 	}
