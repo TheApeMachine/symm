@@ -19,14 +19,17 @@ type quoteRow struct {
 	timestamp string
 }
 
+type quoteListener func(symbol string, last, bid, ask, changePct float64, timestamp string)
+
 /*
 Ticker watches Kraken v2 ticker updates for price and 24h volume.
 */
 type Ticker struct {
-	ctx    context.Context
-	mu     sync.RWMutex
-	quotes map[string]quoteRow
-	ready  map[string]bool
+	ctx            context.Context
+	mu             sync.RWMutex
+	quotes         map[string]quoteRow
+	ready          map[string]bool
+	quoteListeners []quoteListener
 }
 
 /*
@@ -60,6 +63,34 @@ func New(
 	publicClient.OnFrame(ticker.handleFrame)
 
 	return ticker, nil
+}
+
+/*
+OnQuote registers a listener invoked synchronously for each ticker row update.
+*/
+func (ticker *Ticker) OnQuote(listener quoteListener) {
+	ticker.mu.Lock()
+	defer ticker.mu.Unlock()
+
+	ticker.quoteListeners = append(ticker.quoteListeners, listener)
+}
+
+/*
+ReadyCount returns how many symbols have received at least one quote.
+*/
+func (ticker *Ticker) ReadyCount() int {
+	ticker.mu.RLock()
+	defer ticker.mu.RUnlock()
+
+	count := 0
+
+	for _, ok := range ticker.ready {
+		if ok {
+			count++
+		}
+	}
+
+	return count
 }
 
 /*
@@ -166,7 +197,7 @@ func (ticker *Ticker) handleFrame(_ context.Context, payload []byte) error {
 
 func (ticker *Ticker) store(rows []market.TickerRow) {
 	ticker.mu.Lock()
-	defer ticker.mu.Unlock()
+	listeners := append([]quoteListener(nil), ticker.quoteListeners...)
 
 	for _, row := range rows {
 		ticker.quotes[row.Symbol] = quoteRow{
@@ -178,5 +209,13 @@ func (ticker *Ticker) store(rows []market.TickerRow) {
 			timestamp: row.Timestamp,
 		}
 		ticker.ready[row.Symbol] = true
+	}
+
+	ticker.mu.Unlock()
+
+	for _, row := range rows {
+		for _, listener := range listeners {
+			listener(row.Symbol, row.Last, row.Bid, row.Ask, row.ChangePct, row.Timestamp)
+		}
 	}
 }

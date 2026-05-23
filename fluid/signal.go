@@ -20,17 +20,18 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	book     *kbook.Book
-	trades   *trades.Trades
-	ticker   *kticker.Ticker
-	track    *TrackStore
-	pairs    map[string]asset.Pair
-	symbols  []string
-	interval time.Duration
-	queue    sync.Map
-	seq      atomic.Int64
+	ctx       context.Context
+	cancel    context.CancelFunc
+	book      *kbook.Book
+	trades    *trades.Trades
+	ticker    *kticker.Ticker
+	track     *TrackStore
+	pairs     map[string]asset.Pair
+	symbols   []string
+	interval  time.Duration
+	fieldSink FieldSink
+	queue     sync.Map
+	seq       atomic.Int64
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -79,6 +80,27 @@ func NewFluid(
 		"track":  fluid.track,
 		"pairs":  pairs,
 	})
+}
+
+/*
+SetFieldSink wires immediate field telemetry after every scan.
+*/
+func (fluid *Fluid) SetFieldSink(sink FieldSink) {
+	fluid.fieldSink = sink
+}
+
+/*
+SampledCount returns symbols with at least one fluid sample.
+*/
+func (fluid *Fluid) SampledCount() int {
+	return fluid.track.SampledCount()
+}
+
+/*
+WarmingCount returns symbols ingesting ticker volume but not yet sampled.
+*/
+func (fluid *Fluid) WarmingCount() int {
+	return fluid.track.WarmingCount()
 }
 
 /*
@@ -134,7 +156,15 @@ func (fluid *Fluid) Close() error {
 
 func (fluid *Fluid) scan(now time.Time) {
 	for _, symbol := range fluid.symbols {
-		confidence, reason, fired := fluid.evaluate(symbol, now)
+		fluid.ingest(symbol, now)
+	}
+
+	if fluid.fieldSink != nil {
+		fluid.fieldSink(fluid.FieldSnapshot())
+	}
+
+	for _, symbol := range fluid.symbols {
+		confidence, reason, fired := fluid.fire(symbol, now)
 
 		if !fired {
 			continue
@@ -158,7 +188,41 @@ func (fluid *Fluid) scan(now time.Time) {
 	}
 }
 
-func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, bool) {
+func (fluid *Fluid) ingest(symbol string, now time.Time) {
+	price, priceOK := fluid.ticker.Last(symbol)
+	volumeBase, volumeOK := fluid.ticker.VolumeBase(symbol)
+
+	if priceOK && volumeOK && price > 0 {
+		fluid.track.ApplyTicker(symbol, price, volumeBase)
+	}
+
+	if !fluid.track.PassesLiquidity(symbol) {
+		return
+	}
+
+	density, densityOK := fluid.book.Density(symbol)
+	spreadBPS, spreadOK := fluid.book.SpreadBPS(symbol)
+	batchVolume, batchOK := fluid.trades.BatchVolume(symbol)
+	buyPressure, pressureOK := fluid.trades.BuyPressure(symbol)
+
+	if !densityOK || !spreadOK || !priceOK || !batchOK || !pressureOK {
+		return
+	}
+
+	if density <= 0 || spreadBPS <= 0 || price <= 0 || batchVolume <= 0 {
+		return
+	}
+
+	flow := batchVolume
+
+	if buyPressure > 0 {
+		flow = batchVolume * (buyPressure + 1) / 2
+	}
+
+	fluid.track.Sample(symbol, density, price, spreadBPS, flow, buyPressure, now)
+}
+
+func (fluid *Fluid) fire(symbol string, now time.Time) (float64, string, bool) {
 	if !fluid.track.PassesLiquidity(symbol) {
 		return 0, "", false
 	}
@@ -166,11 +230,10 @@ func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, boo
 	density, densityOK := fluid.book.Density(symbol)
 	spreadBPS, spreadOK := fluid.book.SpreadBPS(symbol)
 	price, priceOK := fluid.ticker.Last(symbol)
-	volumeBase, volumeOK := fluid.ticker.VolumeBase(symbol)
 	batchVolume, batchOK := fluid.trades.BatchVolume(symbol)
 	buyPressure, pressureOK := fluid.trades.BuyPressure(symbol)
 
-	if !densityOK || !spreadOK || !priceOK || !volumeOK || !batchOK || !pressureOK {
+	if !densityOK || !spreadOK || !priceOK || !batchOK || !pressureOK {
 		return 0, "", false
 	}
 
@@ -178,12 +241,11 @@ func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, boo
 		return 0, "", false
 	}
 
-	fluid.track.ApplyTicker(symbol, price, volumeBase)
-
 	flow := batchVolume
+
 	if buyPressure > 0 {
 		flow = batchVolume * (buyPressure + 1) / 2
 	}
 
-	return fluid.track.Sample(symbol, density, price, spreadBPS, flow, buyPressure, now)
+	return fluid.track.PeekFire(symbol, density, price, spreadBPS, flow, buyPressure, now)
 }
