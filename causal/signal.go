@@ -41,7 +41,9 @@ NewCausal wires live Kraken websocket observers into the engine signal.
 */
 func NewCausal(
 	ctx context.Context,
-	observers []engine.Observer,
+	book *kbook.Book,
+	tradesObserver *trades.Trades,
+	tickerObserver *kticker.Ticker,
 	pairs map[string]asset.Pair,
 	symbols []string,
 	interval time.Duration,
@@ -50,13 +52,6 @@ func NewCausal(
 
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
-	}
-
-	book, tradesObserver, tickerObserver, err := resolveMarketObservers(observers)
-
-	if err != nil {
-		cancel()
-		return nil, err
 	}
 
 	causal := &Causal{

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -57,36 +56,6 @@ func New(
 	publicClient.OnFrame(book.handleFrame)
 
 	return book, nil
-}
-
-/*
-Observe returns mean bid-side imbalance across ready symbols in [-1, 1].
-*/
-func (book *Book) Observe(_ context.Context) (engine.Observation, error) {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
-
-	if len(book.ready) == 0 {
-		return engine.Observation{}, fmt.Errorf("book observer not ready")
-	}
-
-	var sum float64
-	var count int
-
-	for symbol, ok := range book.ready {
-		if !ok {
-			continue
-		}
-
-		sum += book.bySymbol[symbol]
-		count++
-	}
-
-	if count == 0 {
-		return engine.Observation{}, fmt.Errorf("book observer not ready")
-	}
-
-	return engine.Observation{Confidence: sum / float64(count)}, nil
 }
 
 /*

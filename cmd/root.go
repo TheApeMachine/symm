@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/fluid"
 	"github.com/theapemachine/symm/hawkes"
 	"github.com/theapemachine/symm/kraken/asset"
@@ -128,16 +127,12 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
-		observers := []engine.Observer{
-			bookObserver,
-			tradesObserver,
-			tickerObserver,
-		}
-
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
 				cmd.Context(),
-				observers,
+				bookObserver,
+				tradesObserver,
+				tickerObserver,
 				pairIndex,
 				symbols,
 				config.System.RescoreEvery,
@@ -150,7 +145,9 @@ var rootCmd = &cobra.Command{
 		hawkesSignal := errnie.Does(func() (*hawkes.Hawkes, error) {
 			return hawkes.NewHawkes(
 				cmd.Context(),
-				observers,
+				bookObserver,
+				tradesObserver,
+				tickerObserver,
 				pairIndex,
 				symbols,
 				config.System.RescoreEvery,
@@ -163,7 +160,9 @@ var rootCmd = &cobra.Command{
 		fluidSignal := errnie.Does(func() (*fluid.Fluid, error) {
 			return fluid.NewFluid(
 				cmd.Context(),
-				observers,
+				bookObserver,
+				tradesObserver,
+				tickerObserver,
 				pairIndex,
 				symbols,
 				config.System.RescoreEvery,
@@ -176,7 +175,9 @@ var rootCmd = &cobra.Command{
 		causalSignal := errnie.Does(func() (*causal.Causal, error) {
 			return causal.NewCausal(
 				cmd.Context(),
-				observers,
+				bookObserver,
+				tradesObserver,
+				tickerObserver,
 				pairIndex,
 				symbols,
 				config.System.RescoreEvery,

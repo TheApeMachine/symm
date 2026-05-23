@@ -40,7 +40,9 @@ NewPumpDump wires live Kraken websocket observers into the engine signal.
 */
 func NewPumpDump(
 	ctx context.Context,
-	observers []engine.Observer,
+	book *kbook.Book,
+	tradesObserver *trades.Trades,
+	tickerObserver *kticker.Ticker,
 	pairs map[string]asset.Pair,
 	symbols []string,
 	interval time.Duration,
@@ -49,13 +51,6 @@ func NewPumpDump(
 
 	if interval <= 0 {
 		interval = 10 * time.Millisecond
-	}
-
-	book, tradesObserver, tickerObserver, err := resolveMarketObservers(observers)
-
-	if err != nil {
-		cancel()
-		return nil, err
 	}
 
 	pumpdump := &PumpDump{
@@ -78,31 +73,6 @@ func NewPumpDump(
 		"ticker": tickerObserver,
 		"track":  pumpdump.track,
 		"pairs":  pairs,
-	})
-}
-
-func resolveMarketObservers(
-	observers []engine.Observer,
-) (*kbook.Book, *trades.Trades, *kticker.Ticker, error) {
-	var book *kbook.Book
-	var tradesObserver *trades.Trades
-	var tickerObserver *kticker.Ticker
-
-	for _, observer := range observers {
-		switch concrete := observer.(type) {
-		case *kbook.Book:
-			book = concrete
-		case *trades.Trades:
-			tradesObserver = concrete
-		case *kticker.Ticker:
-			tickerObserver = concrete
-		}
-	}
-
-	return book, tradesObserver, tickerObserver, errnie.Require(map[string]any{
-		"book":   book,
-		"trades": tradesObserver,
-		"ticker": tickerObserver,
 	})
 }
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -91,36 +90,6 @@ func (ticker *Ticker) ReadyCount() int {
 	}
 
 	return count
-}
-
-/*
-Observe returns mean last price across ready symbols.
-*/
-func (ticker *Ticker) Observe(_ context.Context) (engine.Observation, error) {
-	ticker.mu.RLock()
-	defer ticker.mu.RUnlock()
-
-	if len(ticker.ready) == 0 {
-		return engine.Observation{}, fmt.Errorf("ticker observer not ready")
-	}
-
-	var sum float64
-	var count int
-
-	for symbol, ok := range ticker.ready {
-		if !ok {
-			continue
-		}
-
-		sum += ticker.quotes[symbol].last
-		count++
-	}
-
-	if count == 0 {
-		return engine.Observation{}, fmt.Errorf("ticker observer not ready")
-	}
-
-	return engine.Observation{Confidence: sum / float64(count)}, nil
 }
 
 /*

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -70,33 +69,6 @@ func New(
 	publicClient.OnFrame(trades.handleFrame)
 
 	return trades, nil
-}
-
-/*
-Observe returns mean buy pressure across ready symbols in [-1, 1].
-*/
-func (trades *Trades) Observe(_ context.Context) (engine.Observation, error) {
-	trades.mu.RLock()
-	defer trades.mu.RUnlock()
-
-	switch {
-	case trades.err != nil:
-		return engine.Observation{}, trades.err
-	case trades.ready == 0:
-		return engine.Observation{}, fmt.Errorf("trade observer not ready")
-	}
-
-	var sum float64
-
-	for _, state := range trades.symbols {
-		if state.ready {
-			sum += state.pressure
-		}
-	}
-
-	return engine.Observation{
-		Confidence: sum / float64(trades.ready),
-	}, nil
 }
 
 /*
