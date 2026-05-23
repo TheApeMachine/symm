@@ -204,6 +204,22 @@ var rootCmd = &cobra.Command{
 			}()
 		}
 
+		if telemetryHub != nil {
+			marketStream := ui.NewMarketStream(telemetryHub)
+
+			tickerObserver.OnQuote(func(
+				symbol string,
+				last, bid, ask, changePct float64,
+				timestamp string,
+			) {
+				marketStream.PriceTick(symbol, last, bid, ask, changePct, timestamp)
+			})
+
+			fluidSignal.SetFieldSink(func(snapshot fluid.FieldSnapshot) {
+				marketStream.FieldUpdate(snapshot)
+			})
+		}
+
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
 			crypto, err := trader.NewCrypto(
 				cmd.Context(),
@@ -225,15 +241,18 @@ var rootCmd = &cobra.Command{
 				telemetryHub.SetSnapshot(crypto.StatusSnapshot)
 			}
 
+			crypto.SetEngineStats(trader.NewEngineStats(
+				tickerObserver.ReadyCount,
+				func() int { return len(symbols) },
+				fluidSignal.SampledCount,
+				fluidSignal.WarmingCount,
+			))
+
 			return crypto, nil
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
-
-		if telemetryHub != nil {
-			go streamFieldSnapshots(cmd.Context(), telemetryHub, fluidSignal)
-		}
 
 		if publicClient.ReplayMode() {
 			publicClient.StartReplay()
@@ -243,48 +262,6 @@ var rootCmd = &cobra.Command{
 			errnie.Error(err)
 		}
 	},
-}
-
-func streamFieldSnapshots(ctx context.Context, hub *ui.Hub, fluidSignal *fluid.Fluid) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			snapshot := fluidSignal.FieldSnapshot()
-			rows := make([]map[string]any, 0, len(snapshot.Symbols))
-
-			for _, row := range snapshot.Symbols {
-				rows = append(rows, map[string]any{
-					"symbol":     row.Symbol,
-					"change_pct": row.ChangePct,
-					"vol":        row.Vol,
-					"div":        row.Div,
-					"vort":       row.Vort,
-					"turb":       row.Turb,
-					"visc":       row.Visc,
-					"re":         row.Re,
-				})
-			}
-
-			hub.Emit(map[string]any{
-				"event":        "field_snapshot",
-				"ts":           time.Now().UTC().Format(time.RFC3339Nano),
-				"symbol_count": snapshot.SymbolCount,
-				"field": map[string]any{
-					"div":  snapshot.Field.Div,
-					"vort": snapshot.Field.Vort,
-					"turb": snapshot.Field.Turb,
-					"visc": snapshot.Field.Visc,
-					"re":   snapshot.Field.Re,
-				},
-				"symbols": rows,
-			})
-		}
-	}
 }
 
 type errString string

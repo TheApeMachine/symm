@@ -178,6 +178,42 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 	return track.dailyQuoteVol < crossSectionMedian(quoteVolumes)
 }
 
+/*
+SampledCount returns symbols with at least one stored sample.
+*/
+func (trackStore *TrackStore) SampledCount() int {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	count := 0
+
+	for _, track := range trackStore.bySymbol {
+		if len(track.samples) > 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+/*
+WarmingCount returns symbols with ticker volume but no samples yet.
+*/
+func (trackStore *TrackStore) WarmingCount() int {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	count := 0
+
+	for _, track := range trackStore.bySymbol {
+		if track.dailyQuoteVol > 0 && len(track.samples) == 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
 func (track *SymbolField) trimHistories() {
 	if len(track.sourceHistory) > fieldHistoryCap {
 		track.sourceHistory = track.sourceHistory[len(track.sourceHistory)-fieldHistoryCap:]

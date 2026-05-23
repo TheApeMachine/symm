@@ -9,6 +9,7 @@ export type SymmEventName =
   | 'scoreboard'
   | 'decision_trace'
   | 'field_snapshot'
+  | 'engine_pulse'
   | 'price_tick'
   | 'chart_seed'
   | 'trade_enter'
@@ -52,6 +53,7 @@ export type DecisionRow = {
   why: string
   confidence: number
   effective_score: number
+  source?: string
 }
 
 export type DecisionTraceEvent = SymmEvent & {
@@ -89,6 +91,29 @@ export type FieldSnapshotEvent = SymmEvent & {
   symbol_count: number
   field: FieldFluidState
   symbols: FluidSymbolRow[]
+}
+
+export type EnginePulseSignal = {
+  symbol: string
+  source: string
+  regime: string
+  reason: string
+  score: number
+  type: string
+}
+
+export type EnginePulseEvent = SymmEvent & {
+  event: 'engine_pulse'
+  seq: number
+  phase: string
+  measurements: number
+  candidates: number
+  open: number
+  ticker_ready?: number
+  symbols_total?: number
+  fluid_sampled?: number
+  fluid_warming?: number
+  signals: EnginePulseSignal[]
 }
 
 const WHY_LABELS: Record<string, string> = {
@@ -213,17 +238,34 @@ export function tickTimeSec(ev: PriceTickEvent): number {
   return eventTimeSec(ev)
 }
 
-export function pickChartSymbol(
-  scoreboard: ScoreboardEvent | undefined,
-  decisions?: DecisionTraceEvent,
-  fallback?: string,
-): string | undefined {
+export function pickMarketWatchSymbol(
+  field?: FieldSnapshotEvent,
+  scoreboard?: ScoreboardEvent,
+  fallback = 'BTC/EUR',
+): string {
   if (scoreboard?.targets?.length) {
     return scoreboard.targets[0].symbol
   }
-  const allowed = decisions?.decisions?.find((d) => d.allow)
-  if (allowed) {
-    return allowed.symbol
+
+  const rows = field?.symbols ?? []
+  let best = ''
+  let bestRe = 0
+
+  for (const row of rows) {
+    if (row.re > bestRe) {
+      bestRe = row.re
+      best = row.symbol
+    }
   }
+
+  if (best) {
+    return best
+  }
+
+  const warming = rows.find((row) => row.symbol)
+  if (warming?.symbol) {
+    return warming.symbol
+  }
+
   return fallback
 }

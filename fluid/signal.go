@@ -156,15 +156,14 @@ func (fluid *Fluid) Close() error {
 
 func (fluid *Fluid) scan(now time.Time) {
 	for _, symbol := range fluid.symbols {
-		fluid.ingest(symbol, now)
-	}
+		price, priceOK := fluid.ticker.Last(symbol)
+		volumeBase, volumeOK := fluid.ticker.VolumeBase(symbol)
 
-	if fluid.fieldSink != nil {
-		fluid.fieldSink(fluid.FieldSnapshot())
-	}
+		if priceOK && volumeOK && price > 0 {
+			fluid.track.ApplyTicker(symbol, price, volumeBase)
+		}
 
-	for _, symbol := range fluid.symbols {
-		confidence, reason, fired := fluid.fire(symbol, now)
+		confidence, reason, fired := fluid.evaluate(symbol, now)
 
 		if !fired {
 			continue
@@ -186,43 +185,13 @@ func (fluid *Fluid) scan(now time.Time) {
 			Timeframe:  engine.Timeframe{Start: now.UnixNano(), End: now.UnixNano()},
 		})
 	}
+
+	if fluid.fieldSink != nil {
+		fluid.fieldSink(fluid.FieldSnapshot())
+	}
 }
 
-func (fluid *Fluid) ingest(symbol string, now time.Time) {
-	price, priceOK := fluid.ticker.Last(symbol)
-	volumeBase, volumeOK := fluid.ticker.VolumeBase(symbol)
-
-	if priceOK && volumeOK && price > 0 {
-		fluid.track.ApplyTicker(symbol, price, volumeBase)
-	}
-
-	if !fluid.track.PassesLiquidity(symbol) {
-		return
-	}
-
-	density, densityOK := fluid.book.Density(symbol)
-	spreadBPS, spreadOK := fluid.book.SpreadBPS(symbol)
-	batchVolume, batchOK := fluid.trades.BatchVolume(symbol)
-	buyPressure, pressureOK := fluid.trades.BuyPressure(symbol)
-
-	if !densityOK || !spreadOK || !priceOK || !batchOK || !pressureOK {
-		return
-	}
-
-	if density <= 0 || spreadBPS <= 0 || price <= 0 || batchVolume <= 0 {
-		return
-	}
-
-	flow := batchVolume
-
-	if buyPressure > 0 {
-		flow = batchVolume * (buyPressure + 1) / 2
-	}
-
-	fluid.track.Sample(symbol, density, price, spreadBPS, flow, buyPressure, now)
-}
-
-func (fluid *Fluid) fire(symbol string, now time.Time) (float64, string, bool) {
+func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string, bool) {
 	if !fluid.track.PassesLiquidity(symbol) {
 		return 0, "", false
 	}
@@ -247,5 +216,5 @@ func (fluid *Fluid) fire(symbol string, now time.Time) (float64, string, bool) {
 		flow = batchVolume * (buyPressure + 1) / 2
 	}
 
-	return fluid.track.PeekFire(symbol, density, price, spreadBPS, flow, buyPressure, now)
+	return fluid.track.Sample(symbol, density, price, spreadBPS, flow, buyPressure, now)
 }

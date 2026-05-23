@@ -2,6 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 import type {
   DecisionTraceEvent,
+  EnginePulseEvent,
   FieldSnapshotEvent,
   ScoreboardEvent,
   StatusEvent,
@@ -9,6 +10,7 @@ import type {
   TradeEnterEvent,
   TradeExitEvent,
 } from '#/lib/symm/events'
+import { pickMarketWatchSymbol } from '#/lib/symm/events'
 import {
   arrayEqual,
   getUIState,
@@ -66,6 +68,22 @@ export function useSymmDecisionTrace(): DecisionTraceEvent | undefined {
 
 export function useSymmFieldSnapshot(): FieldSnapshotEvent | undefined {
   return useSymmSelector((state) => state.fieldSnapshot)
+}
+
+export function useSymmEnginePulse(): EnginePulseEvent | undefined {
+  return useSymmSelector((state) => state.enginePulse)
+}
+
+export function useSymmPulseLog(): EnginePulseEvent[] {
+  return useSymmSelector((state) => state.pulseLog, arrayEqual)
+}
+
+export function useMarketWatchSymbol(fallback = 'BTC/EUR'): string {
+  return useSymmSelector(
+    (state) =>
+      pickMarketWatchSymbol(state.fieldSnapshot, state.scoreboard, fallback),
+    Object.is,
+  )
 }
 
 export function useSymmTrades(): Array<TradeEnterEvent | TradeExitEvent> {

@@ -87,7 +87,23 @@ func (trackStore *TrackStore) SnapshotRows(
 
 	for _, symbol := range symbols {
 		track, ok := trackStore.bySymbol[symbol]
+
+		changePct := 0.0
+
+		if ticker != nil {
+			if _, _, _, change, quoteOK := ticker.Quote(symbol); quoteOK {
+				changePct = change
+			}
+		}
+
 		if !ok || len(track.samples) == 0 {
+			if ok && track.dailyQuoteVol > 0 {
+				rows = append(rows, SymbolSnapshot{
+					Symbol:    symbol,
+					ChangePct: changePct,
+				})
+			}
+
 			continue
 		}
 
@@ -111,14 +127,6 @@ func (trackStore *TrackStore) SnapshotRows(
 
 		if sample.viscosity > 0 {
 			reynolds = velocity * sample.density / sample.viscosity
-		}
-
-		changePct := 0.0
-
-		if ticker != nil {
-			if _, _, _, change, ok := ticker.Quote(symbol); ok {
-				changePct = change
-			}
 		}
 
 		rows = append(rows, SymbolSnapshot{

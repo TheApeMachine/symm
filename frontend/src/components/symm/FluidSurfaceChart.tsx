@@ -65,9 +65,9 @@ const FluidSurfaceHeader = memo(function FluidSurfaceHeader() {
 			<span className="text-xs font-semibold tracking-wide">Market fluid</span>
 			<span className="text-[10px] text-(--dash-muted)">
 				{count > 0
-					? `${count} symbols`
+					? `${count} sampled`
 					: connected
-						? "Awaiting rescore…"
+						? "Warming — partial rows streaming"
 						: "Offline"}
 			</span>
 			{field ? (

@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -17,19 +18,21 @@ Crypto is the real crypto-currency trader, which uses actual
 money from the user's account.
 */
 type Crypto struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	pool       *qpool.Q
-	wallet     *Wallet
-	prices     PriceReader
-	publisher  Publisher
-	signals    []engine.Signal
-	holds      map[string]position
-	records    map[string]symbolRecord
-	closedPnL  float64
-	tradeCount int
-	winCount   int
-	statusSink func() map[string]any
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	wallet      *Wallet
+	prices      PriceReader
+	publisher   Publisher
+	engineStats EngineStats
+	signals     []engine.Signal
+	holds       map[string]position
+	records     map[string]symbolRecord
+	closedPnL   float64
+	tradeCount  int
+	winCount    int
+	pulseSeq    atomic.Int64
+	statusSink  func() map[string]any
 }
 
 type position struct {
@@ -86,6 +89,13 @@ func NewCrypto(
 }
 
 /*
+SetEngineStats wires live counters for engine_pulse events.
+*/
+func (crypto *Crypto) SetEngineStats(stats EngineStats) {
+	crypto.engineStats = stats
+}
+
+/*
 StatusSnapshot returns the latest wallet and position telemetry.
 */
 func (crypto *Crypto) StatusSnapshot() map[string]any {
@@ -109,26 +119,17 @@ func (crypto *Crypto) Run() error {
 	ticker := time.NewTicker(config.System.RescoreEvery)
 	defer ticker.Stop()
 
-	tickEvery := config.System.RescoreEvery / 2
-	if tickEvery < 25*time.Millisecond {
-		tickEvery = 25 * time.Millisecond
-	}
-
-	priceTicker := time.NewTicker(tickEvery)
-	defer priceTicker.Stop()
-
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case <-priceTicker.C:
-			crypto.publishPriceTicks()
 		case <-ticker.C:
 			if err := crypto.markExits(); err != nil {
 				return err
 			}
 
-			crypto.decide(crypto.drainMeasurements())
+			batch := crypto.drainMeasurements()
+			crypto.decide(batch)
 		}
 	}
 }
@@ -153,14 +154,19 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 	}
 
 	candidates := crypto.rankCandidates(batch)
+	peakConfidence := 0.0
 
-	if len(candidates) == 0 {
-		crypto.publishDecisionTrace(batch, nil, 0)
-		return
+	if len(candidates) > 0 {
+		peakConfidence = candidates[0].confidence
 	}
 
-	peakConfidence := candidates[0].confidence
+	crypto.publishEnginePulse(batch, candidates)
+	crypto.publishScoreboard(batch, candidates, peakConfidence)
 	crypto.publishDecisionTrace(batch, candidates, peakConfidence)
+
+	if len(candidates) == 0 {
+		return
+	}
 
 	for _, candidate := range candidates {
 		crypto.tryEnter(candidate, peakConfidence)

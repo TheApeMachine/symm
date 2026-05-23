@@ -64,6 +64,136 @@ func (crypto *Crypto) markToMarket() (float64, []map[string]any) {
 	return crypto.wallet.Balance + markValue, positions
 }
 
+func (crypto *Crypto) publishEnginePulse(
+	batch []engine.Measurement,
+	candidates []tradeCandidate,
+) {
+	if crypto.publisher == nil {
+		return
+	}
+
+	signalRows := make([]map[string]any, 0, len(batch))
+
+	for _, measurement := range batch {
+		if measurement.Err != nil || len(measurement.Pairs) == 0 {
+			continue
+		}
+
+		symbol := pairSymbol(measurement.Pairs[0])
+		if symbol == "" {
+			continue
+		}
+
+		signalRows = append(signalRows, map[string]any{
+			"symbol": symbol,
+			"source": measurement.Source,
+			"regime": measurement.Regime,
+			"reason": measurement.Reason,
+			"score":  measurement.Confidence,
+			"type":   regimeForType(measurement.Type),
+		})
+	}
+
+	payload := map[string]any{
+		"event":        "engine_pulse",
+		"seq":          crypto.pulseSeq.Add(1),
+		"phase":        "scan",
+		"measurements": len(batch),
+		"candidates":   len(candidates),
+		"open":         len(crypto.holds),
+		"signals":      signalRows,
+	}
+
+	if crypto.engineStats != nil {
+		payload["ticker_ready"] = crypto.engineStats.TickerReadyCount()
+		payload["symbols_total"] = crypto.engineStats.SymbolTotal()
+		payload["fluid_sampled"] = crypto.engineStats.FluidSampledCount()
+		payload["fluid_warming"] = crypto.engineStats.FluidWarmingCount()
+	}
+
+	crypto.publisher.Emit(payload)
+}
+
+func (crypto *Crypto) publishScoreboard(
+	batch []engine.Measurement,
+	candidates []tradeCandidate,
+	peakConfidence float64,
+) {
+	if crypto.publisher == nil {
+		return
+	}
+
+	targets := scoreboardFromCandidates(candidates)
+
+	if len(targets) == 0 {
+		targets = scoreboardFromBatch(batch)
+	}
+
+	crypto.publisher.Emit(map[string]any{
+		"event":    "scoreboard",
+		"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+		"line":     peakConfidence,
+		"median":   peakConfidence,
+		"mad":      0,
+		"targets":  targets,
+	})
+}
+
+func scoreboardFromCandidates(candidates []tradeCandidate) []map[string]any {
+	targets := make([]map[string]any, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		targets = append(targets, map[string]any{
+			"symbol":          candidate.symbol,
+			"regime":          candidate.regime,
+			"reason":          candidate.reason,
+			"score":           candidate.confidence,
+			"effective_score": candidate.confidence,
+			"trail_pct":       0,
+			"support":         candidate.support,
+		})
+	}
+
+	return targets
+}
+
+func scoreboardFromBatch(batch []engine.Measurement) []map[string]any {
+	targets := make([]map[string]any, 0, len(batch))
+
+	for _, measurement := range batch {
+		if measurement.Err != nil || measurement.Confidence <= 0 || len(measurement.Pairs) == 0 {
+			continue
+		}
+
+		symbol := pairSymbol(measurement.Pairs[0])
+		if symbol == "" {
+			continue
+		}
+
+		regime := measurement.Regime
+		if regime == "" {
+			regime = regimeForType(measurement.Type)
+		}
+
+		reason := measurement.Reason
+		if reason == "" {
+			reason = "ok"
+		}
+
+		targets = append(targets, map[string]any{
+			"symbol":          symbol,
+			"regime":          regime,
+			"reason":          reason,
+			"score":           measurement.Confidence,
+			"effective_score": measurement.Confidence,
+			"trail_pct":       0,
+			"source":          measurement.Source,
+		})
+	}
+
+	return targets
+}
+
 func (crypto *Crypto) publishDecisionTrace(
 	batch []engine.Measurement,
 	candidates []tradeCandidate,
@@ -73,10 +203,80 @@ func (crypto *Crypto) publishDecisionTrace(
 		return
 	}
 
-	decisions := make([]map[string]any, 0, len(candidates))
-	allowed := 0
+	candidateBySymbol := make(map[string]tradeCandidate, len(candidates))
 
 	for _, candidate := range candidates {
+		candidateBySymbol[candidate.symbol] = candidate
+	}
+
+	decisions := make([]map[string]any, 0, len(batch)+len(candidates))
+	seen := make(map[string]struct{}, len(batch))
+
+	for _, measurement := range batch {
+		if measurement.Err != nil || len(measurement.Pairs) == 0 {
+			continue
+		}
+
+		symbol := pairSymbol(measurement.Pairs[0])
+		if symbol == "" {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+
+		regime := measurement.Regime
+		if regime == "" {
+			regime = regimeForType(measurement.Type)
+		}
+
+		reason := measurement.Reason
+		if reason == "" {
+			reason = "ok"
+		}
+
+		candidate, inPlay := candidateBySymbol[symbol]
+		allow := false
+		why := "signal_only"
+
+		if inPlay {
+			allow = crypto.canEnter(candidate) && crypto.entryNotional(candidate.confidence, peakConfidence) > 0
+			why = "ok"
+
+			if _, held := crypto.holds[candidate.symbol]; held {
+				why = "stop_cooldown"
+				allow = false
+			}
+
+			if !crypto.canEnter(candidate) {
+				why = "below_line"
+				allow = false
+			}
+		}
+
+		score := measurement.Confidence
+		if inPlay {
+			score = candidate.confidence
+		}
+
+		decisions = append(decisions, map[string]any{
+			"symbol":          symbol,
+			"regime":          regime,
+			"reason":          reason,
+			"score":           score,
+			"in_play":         inPlay,
+			"allow":           allow,
+			"why":             why,
+			"confidence":      score,
+			"effective_score": score,
+			"source":          measurement.Source,
+		})
+	}
+
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate.symbol]; ok {
+			continue
+		}
+
 		allow := crypto.canEnter(candidate) && crypto.entryNotional(candidate.confidence, peakConfidence) > 0
 		why := "ok"
 
@@ -90,21 +290,26 @@ func (crypto *Crypto) publishDecisionTrace(
 			allow = false
 		}
 
-		if allow {
+		decisions = append(decisions, map[string]any{
+			"symbol":          candidate.symbol,
+			"regime":          candidate.regime,
+			"reason":          candidate.reason,
+			"score":           candidate.confidence,
+			"in_play":         true,
+			"allow":           allow,
+			"why":             why,
+			"confidence":      candidate.confidence,
+			"effective_score": candidate.confidence,
+		})
+	}
+
+	allowed := 0
+
+	for _, row := range decisions {
+		allow, ok := row["allow"].(bool)
+		if ok && allow {
 			allowed++
 		}
-
-		decisions = append(decisions, map[string]any{
-			"symbol":           candidate.symbol,
-			"regime":           candidate.regime,
-			"reason":           candidate.reason,
-			"score":            candidate.confidence,
-			"in_play":          true,
-			"allow":            allow,
-			"why":              why,
-			"confidence":       candidate.confidence,
-			"effective_score":  candidate.confidence,
-		})
 	}
 
 	crypto.publisher.Emit(map[string]any{
@@ -118,40 +323,4 @@ func (crypto *Crypto) publishDecisionTrace(
 		"allowed":   allowed,
 		"decisions": decisions,
 	})
-}
-
-func (crypto *Crypto) publishPriceTicks() {
-	if crypto.publisher == nil {
-		return
-	}
-
-	quoteReader, typed := crypto.prices.(QuoteReader)
-	if !typed {
-		return
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-
-	for symbol := range crypto.holds {
-		last, bid, ask, changePct, ok := quoteReader.Quote(symbol)
-		if !ok {
-			continue
-		}
-
-		at := now
-		if timestamp, tsOK := quoteReader.Timestamp(symbol); tsOK && timestamp != "" {
-			at = timestamp
-		}
-
-		crypto.publisher.Emit(map[string]any{
-			"event":            "price_tick",
-			"ts":               now,
-			"symbol":           symbol,
-			"last":             last,
-			"bid":              bid,
-			"ask":              ask,
-			"change_pct_24h":   changePct,
-			"at":               at,
-		})
-	}
 }

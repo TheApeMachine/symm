@@ -1,5 +1,6 @@
 import type {
   DecisionTraceEvent,
+  EnginePulseEvent,
   FieldSnapshotEvent,
   PriceTickEvent,
   ScoreboardEvent,
@@ -11,6 +12,7 @@ import type {
 import { defaultWsUrl } from '#/lib/symm/events'
 
 const MAX_TRADES = 40
+const MAX_PULSE_LOG = 32
 
 export type SymmUIState = {
   connected: boolean
@@ -18,6 +20,8 @@ export type SymmUIState = {
   scoreboard?: ScoreboardEvent
   decisionTrace?: DecisionTraceEvent
   fieldSnapshot?: FieldSnapshotEvent
+  enginePulse?: EnginePulseEvent
+  pulseLog: EnginePulseEvent[]
   trades: Array<TradeEnterEvent | TradeExitEvent>
 }
 
@@ -32,6 +36,7 @@ type UISubscription = {
 
 let ui: SymmUIState = {
   connected: false,
+  pulseLog: [],
   trades: [],
 }
 
@@ -41,6 +46,7 @@ const lastTickBySymbol = new Map<string, PriceTickEvent>()
 const lastSeedBySymbol = new Map<string, SymmEvent>()
 
 let fluidSurfaceHandler: ((snapshot: FieldSnapshotEvent) => void) | null = null
+let fieldStreamHandler: ((snapshot: FieldSnapshotEvent) => void) | null = null
 let ws: WebSocket | null = null
 let wsUrl = defaultWsUrl
 let started = false
@@ -179,6 +185,17 @@ function applyEvent(ev: SymmEvent) {
         fieldSnapshot: snapshot,
       }
       fluidSurfaceHandler?.(snapshot)
+      fieldStreamHandler?.(snapshot)
+      notifyUI()
+      return
+    }
+    case 'engine_pulse': {
+      const pulse = ev as EnginePulseEvent
+      ui = {
+        ...ui,
+        enginePulse: pulse,
+        pulseLog: [pulse, ...ui.pulseLog].slice(0, MAX_PULSE_LOG),
+      }
       notifyUI()
       return
     }
@@ -284,6 +301,17 @@ export function registerChart(symbol: string, handler: ChartListener) {
 
 export function unregisterChart(symbol: string) {
   chartListeners.delete(symbol)
+}
+
+export function registerFieldStream(handler: (snapshot: FieldSnapshotEvent) => void) {
+  fieldStreamHandler = handler
+  if (ui.fieldSnapshot) {
+    handler(ui.fieldSnapshot)
+  }
+}
+
+export function unregisterFieldStream() {
+  fieldStreamHandler = null
 }
 
 export function registerFluidSurface(handler: (snapshot: FieldSnapshotEvent) => void) {
