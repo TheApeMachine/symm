@@ -231,17 +231,17 @@ func (crypto *Crypto) tryEnter(candidate tradeCandidate, peakConfidence float64)
 
 	if crypto.publisher != nil {
 		crypto.publisher.Emit(map[string]any{
-			"event":          "trade_enter",
-			"ts":             time.Now().UTC().Format(time.RFC3339Nano),
-			"symbol":         candidate.symbol,
-			"regime":         candidate.regime,
-			"reason":         candidate.reason,
-			"score":          candidate.confidence,
-			"trail_pct":      trail,
-			"fill":           entryFill,
-			"stop":           stop,
-			"notional_eur":   notional,
-			"last":           entryFill,
+			"event":        "trade_enter",
+			"ts":           time.Now().UTC().Format(time.RFC3339Nano),
+			"symbol":       candidate.symbol,
+			"regime":       candidate.regime,
+			"reason":       candidate.reason,
+			"score":        candidate.confidence,
+			"trail_pct":    trail,
+			"fill":         entryFill,
+			"stop":         stop,
+			"notional_eur": notional,
+			"last":         entryFill,
 		})
 	}
 }
