@@ -2,10 +2,7 @@ package hawkes
 
 import (
 	"context"
-	"fmt"
 	"iter"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -21,17 +18,13 @@ import (
 Hawkes detects self-exciting buy-side trade clustering via exponential kernel intensity.
 */
 type Hawkes struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	book     *kbook.Book
-	trades   *trades.Trades
-	ticker   *kticker.Ticker
-	track    *TrackStore
-	pairs    map[string]asset.Pair
-	symbols  []string
-	interval time.Duration
-	queue    sync.Map
-	seq      atomic.Int64
+	scanner *engine.Scanner
+	book    *kbook.Book
+	trades  *trades.Trades
+	ticker  *kticker.Ticker
+	track   *TrackStore
+	pairs   map[string]asset.Pair
+	symbols []string
 }
 
 var _ engine.Signal = (*Hawkes)(nil)
@@ -48,32 +41,23 @@ func NewHawkes(
 	symbols []string,
 	interval time.Duration,
 ) (*Hawkes, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
-	}
-
 	hawkes := &Hawkes{
-		ctx:      ctx,
-		cancel:   cancel,
-		book:     book,
-		trades:   tradesObserver,
-		ticker:   tickerObserver,
-		track:    NewTrackStore(),
-		pairs:    pairs,
-		symbols:  symbols,
-		interval: interval,
+		scanner: engine.NewScanner(ctx, interval),
+		book:    book,
+		trades:  tradesObserver,
+		ticker:  tickerObserver,
+		track:   NewTrackStore(),
+		pairs:   pairs,
+		symbols: symbols,
 	}
 
 	return hawkes, errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"book":   book,
-		"trades": tradesObserver,
-		"ticker": tickerObserver,
-		"track":  hawkes.track,
-		"pairs":  pairs,
+		"scanner": hawkes.scanner,
+		"book":    book,
+		"trades":  tradesObserver,
+		"ticker":  tickerObserver,
+		"track":   hawkes.track,
+		"pairs":   pairs,
 	})
 }
 
@@ -81,51 +65,21 @@ func NewHawkes(
 Run recalibrates Hawkes intensity on a fixed interval.
 */
 func (hawkes *Hawkes) Run() {
-	go func() {
-		ticker := time.NewTicker(hawkes.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-hawkes.ctx.Done():
-				return
-			case tick := <-ticker.C:
-				hawkes.scan(tick)
-			}
-		}
-	}()
+	hawkes.scanner.Run(hawkes.scan)
 }
 
 /*
 Measure yields queued measurements for the trader.
 */
-func (hawkes *Hawkes) Measure(_ context.Context) iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		hawkes.queue.Range(func(key, value any) bool {
-			measurement, ok := value.(engine.Measurement)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement type: %T", value))
-				hawkes.queue.Delete(key)
-				return true
-			}
-
-			if !yield(measurement) {
-				return false
-			}
-
-			hawkes.queue.Delete(key)
-			return true
-		})
-	}
+func (hawkes *Hawkes) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
+	return hawkes.scanner.Measure(ctx)
 }
 
 /*
 Close stops rescoring.
 */
 func (hawkes *Hawkes) Close() error {
-	hawkes.cancel()
-	return nil
+	return hawkes.scanner.Close()
 }
 
 func (hawkes *Hawkes) scan(now time.Time) {
@@ -144,7 +98,7 @@ func (hawkes *Hawkes) scan(now time.Time) {
 			continue
 		}
 
-		hawkes.queue.Store(hawkes.seq.Add(1), engine.Measurement{
+		hawkes.scanner.Enqueue(engine.Measurement{
 			Type:       engine.Momentum,
 			Source:     "hawkes",
 			Regime:     "momentum",
@@ -172,13 +126,14 @@ func (hawkes *Hawkes) evaluate(symbol string, now time.Time) float64 {
 		return 0
 	}
 
-	ticks, ok := hawkes.trades.RecentTicks(symbol, now.Add(-hawkesTradeWindow))
+	windowStart := now.Add(-hawkesTradeWindow)
+	ticks, ok := hawkes.trades.RecentTicks(symbol, windowStart)
 
 	if !ok {
 		return 0
 	}
 
-	buyTimes, sellTimes := splitSideEvents(ticks, now)
+	buyTimes, sellTimes := splitSideEvents(ticks, windowStart, now)
 	buyFit := hawkes.track.FitSide(symbol, "buy", buyTimes, now)
 	sellFit := hawkes.track.FitSide(symbol, "sell", sellTimes, now)
 
@@ -210,12 +165,19 @@ func (hawkes *Hawkes) evaluate(symbol string, now time.Time) float64 {
 	return hawkes.track.RecordScore(symbol, score)
 }
 
-func splitSideEvents(ticks []market.TradeTick, horizon time.Time) ([]time.Time, []time.Time) {
+func splitSideEvents(
+	ticks []market.TradeTick,
+	windowStart, windowEnd time.Time,
+) ([]time.Time, []time.Time) {
 	buyTimes := make([]time.Time, 0, len(ticks))
 	sellTimes := make([]time.Time, 0, len(ticks))
 
 	for _, tick := range ticks {
-		if tick.Timestamp.After(horizon) {
+		if tick.Timestamp.Before(windowStart) {
+			continue
+		}
+
+		if tick.Timestamp.After(windowEnd) {
 			continue
 		}
 

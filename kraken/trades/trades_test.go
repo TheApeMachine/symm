@@ -121,10 +121,16 @@ func TestTradesRecentTicks(t *testing.T) {
 }
 
 func BenchmarkTradesBuyPressure(b *testing.B) {
-	observer := &Trades{}
+	observer := &Trades{
+		symbols: make(map[string]tradeState),
+	}
 	batch := []market.TradeTick{
 		{Symbol: "BTC/EUR", Side: "buy", Volume: 3, Timestamp: time.Now()},
 		{Symbol: "BTC/EUR", Side: "sell", Volume: 1, Timestamp: time.Now()},
+	}
+
+	if err := observer.applyTicks(batch); err != nil {
+		b.Fatal(err)
 	}
 
 	b.ReportAllocs()

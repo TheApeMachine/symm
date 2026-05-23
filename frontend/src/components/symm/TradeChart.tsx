@@ -56,7 +56,7 @@ export const TradeChart = memo(function TradeChart({
 	);
 
 	return (
-		<div className="flex min-h-[220px] flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
+		<div className="flex min-h-[200px] flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
 			<div className="flex items-center justify-between border-b border-(--dash-border) px-2 py-1">
 				<span className="text-xs font-semibold">{symbol}</span>
 				<span ref={regimeRef} className="text-[10px] text-(--dash-muted)" />

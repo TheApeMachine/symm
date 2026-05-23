@@ -1,13 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/fluid"
@@ -22,6 +21,7 @@ import (
 	"github.com/theapemachine/symm/replay"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/work"
 )
 
 var rootCmd = &cobra.Command{
@@ -35,13 +35,21 @@ var rootCmd = &cobra.Command{
 		replayFile, _ := cmd.Flags().GetString("replay-file")
 		replayPace, _ := cmd.Flags().GetDuration("replay-pace")
 
-		pool := qpool.NewQ(cmd.Context(), 1, runtime.NumCPU(), nil)
+		sessionCtx, sessionCancel := context.WithCancel(cmd.Context())
+		defer sessionCancel()
+
+		pool := work.NewPool(sessionCtx)
 		wallet := trader.NewWallet(
 			trader.PaperWallet, quote, walletSize, config.System.TakerFeePct,
 		)
 
 		publicClient := errnie.Does(func() (*client.PublicClient, error) {
-			options := make([]client.PublicClientOption, 0, 1)
+			options := make([]client.PublicClientOption, 0, 2)
+
+			options = append(options, client.OnDisconnect(func(err error) {
+				errnie.Error(err)
+				sessionCancel()
+			}))
 
 			if replayFile != "" {
 				frames, err := replay.LoadFrames(replayFile)
@@ -53,7 +61,7 @@ var rootCmd = &cobra.Command{
 				options = append(options, client.WithReplay(frames, replayPace))
 			}
 
-			publicClient := client.NewPublicClient(cmd.Context(), options...)
+			publicClient := client.NewPublicClient(sessionCtx, options...)
 
 			if err := publicClient.Connect(); err != nil {
 				return nil, err
@@ -68,21 +76,21 @@ var rootCmd = &cobra.Command{
 		defer publicClient.Close()
 
 		pairObserver := errnie.Does(func() (*market.Pairs, error) {
-			return market.NewPairs(cmd.Context(), quote, publicClient)
+			return market.NewPairs(sessionCtx, quote, publicClient)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		symbols := errnie.Does(func() ([]string, error) {
-			return pairObserver.Names(cmd.Context())
+			return pairObserver.Names(sessionCtx)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		pairIndex := errnie.Does(func() (map[string]asset.Pair, error) {
-			assetPairs, err := pairObserver.GetAll(cmd.Context())
+			assetPairs, err := pairObserver.GetAll(sessionCtx)
 
 			if err != nil {
 				return nil, err
@@ -107,21 +115,21 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		bookObserver := errnie.Does(func() (*kbook.Book, error) {
-			return kbook.New(cmd.Context(), publicClient, symbols)
+			return kbook.New(sessionCtx, publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
-			return trades.New(cmd.Context(), publicClient, symbols)
+			return trades.New(sessionCtx, publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		tickerObserver := errnie.Does(func() (*kticker.Ticker, error) {
-			return kticker.New(cmd.Context(), publicClient, symbols)
+			return kticker.New(sessionCtx, publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
@@ -129,7 +137,7 @@ var rootCmd = &cobra.Command{
 
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
-				cmd.Context(),
+				sessionCtx,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -144,7 +152,7 @@ var rootCmd = &cobra.Command{
 
 		hawkesSignal := errnie.Does(func() (*hawkes.Hawkes, error) {
 			return hawkes.NewHawkes(
-				cmd.Context(),
+				sessionCtx,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -159,7 +167,7 @@ var rootCmd = &cobra.Command{
 
 		fluidSignal := errnie.Does(func() (*fluid.Fluid, error) {
 			return fluid.NewFluid(
-				cmd.Context(),
+				sessionCtx,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -174,7 +182,7 @@ var rootCmd = &cobra.Command{
 
 		causalSignal := errnie.Does(func() (*causal.Causal, error) {
 			return causal.NewCausal(
-				cmd.Context(),
+				sessionCtx,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -191,14 +199,14 @@ var rootCmd = &cobra.Command{
 
 		if listenAddr, ok := ui.ListenAddr(uiAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), nil)
+				return ui.NewHub(sessionCtx, nil)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)
 			}).Value()
 
 			go func() {
-				if err := telemetryHub.Serve(listenAddr); err != nil && cmd.Context().Err() == nil {
+				if err := telemetryHub.Serve(listenAddr); err != nil && sessionCtx.Err() == nil {
 					errnie.Error(err)
 				}
 			}()
@@ -222,7 +230,7 @@ var rootCmd = &cobra.Command{
 
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
 			crypto, err := trader.NewCrypto(
-				cmd.Context(),
+				sessionCtx,
 				pool,
 				wallet,
 				tickerObserver,
@@ -238,7 +246,7 @@ var rootCmd = &cobra.Command{
 			}
 
 			if telemetryHub != nil {
-				telemetryHub.SetSnapshot(crypto.StatusSnapshot)
+				telemetryHub.SetBootstrap(crypto.ConnectSnapshot)
 			}
 
 			crypto.SetEngineStats(trader.NewEngineStats(
@@ -254,6 +262,16 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
+		defer cryptoTrader.Close()
+		defer pumpSignal.Close()
+		defer hawkesSignal.Close()
+		defer fluidSignal.Close()
+		defer causalSignal.Close()
+
+		if telemetryHub != nil {
+			defer telemetryHub.Close()
+		}
+
 		if publicClient.ReplayMode() {
 			publicClient.StartReplay()
 		}
@@ -267,12 +285,6 @@ var rootCmd = &cobra.Command{
 type errString string
 
 func (err errString) Error() string { return string(err) }
-
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
-}
 
 func init() {
 	rootCmd.Flags().Float64("wallet", config.DefaultWalletEUR, "paper wallet size in quote currency")

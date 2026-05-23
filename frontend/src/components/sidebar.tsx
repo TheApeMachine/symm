@@ -1,16 +1,16 @@
 import { FluidSurfaceChart } from "./symm/FluidSurfaceChart";
-import { DecisionsPanel } from "./desicions";
+import { DecisionsPanel } from "./decisions";
 import { TradesPanel } from "./trades";
 
 export const DashboardSidebar = () => {
 	return (
-		<aside className="grid min-h-0 min-w-0 flex-3 grid-rows-[minmax(0,38%)_minmax(240px,1fr)] overflow-hidden border-l border-(--dash-border) bg-(--dash-panel)">
-			<div className="flex min-h-0 overflow-hidden">
+		<aside className="grid min-h-0 min-w-0 flex-3 grid-rows-[minmax(0,42%)_minmax(280px,58%)] overflow-hidden border-l border-(--dash-border) bg-(--dash-panel)">
+			<div className="flex min-h-0 max-h-[42vh] overflow-hidden">
 				<DecisionsPanel />
 				<TradesPanel />
 			</div>
 
-			<div className="flex min-h-0 overflow-hidden border-t border-(--dash-border) p-2">
+			<div className="flex min-h-[280px] min-w-0 overflow-hidden border-t border-(--dash-border) p-2">
 				<FluidSurfaceChart className="min-h-0 h-full w-full" />
 			</div>
 		</aside>

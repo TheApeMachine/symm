@@ -274,22 +274,3 @@ func mean(values []float64) float64 {
 
 	return sum / float64(len(values))
 }
-
-func median(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
-
-	return percentileSorted(cp, 0.5)
-}
-
-func sortFloats(values []float64) {
-	for index := 1; index < len(values); index++ {
-		for inner := index; inner > 0 && values[inner] < values[inner-1]; inner-- {
-			values[inner], values[inner-1] = values[inner-1], values[inner]
-		}
-	}
-}

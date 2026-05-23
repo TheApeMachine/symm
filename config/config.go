@@ -29,6 +29,7 @@ type Config struct {
 	ScalpHoldBeforeExit time.Duration
 	FlowHoldBeforeExit  time.Duration
 	TrailSpreadMultiple float64
+	ExitEvery           time.Duration
 	WSPingInterval      time.Duration
 	UIAddr              string
 }
@@ -48,6 +49,7 @@ func NewConfig() *Config {
 		WalletEUR:           DefaultWalletEUR,
 		TakerFeePct:         DefaultTakerFeePct,
 		SlippageBPS:         DefaultSlippageBps,
+		ExitEvery:           10 * time.Millisecond,
 		RescoreEvery:        100 * time.Millisecond,
 		SubscribeBatch:      50,
 		MinWarmPulses:       50,

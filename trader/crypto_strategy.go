@@ -70,7 +70,7 @@ func (crypto *Crypto) rankCandidates(batch []engine.Measurement) []tradeCandidat
 			}
 		}
 
-		next.confidence = crypto.boostConfidence(symbol, next.confidence)
+		next.confidence = crypto.boostConfidence(symbol, next.confidence, next.regime)
 		bySymbol[symbol] = next
 	}
 

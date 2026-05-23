@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 )
 
 /*
-Crypto is the real crypto-currency trader, which uses actual
-money from the user's account.
+Crypto paper-trades Kraken microstructure signals with trailing stops.
+Live order placement is not wired; all fills go through PaperWallet.
 */
 type Crypto struct {
 	ctx             context.Context
@@ -118,18 +119,21 @@ func (crypto *Crypto) Run() error {
 
 	crypto.publishStatus()
 
-	ticker := time.NewTicker(config.System.RescoreEvery)
-	defer ticker.Stop()
+	exitTicker := time.NewTicker(config.System.ExitEvery)
+	defer exitTicker.Stop()
+
+	rescoreTicker := time.NewTicker(config.System.RescoreEvery)
+	defer rescoreTicker.Stop()
 
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case <-ticker.C:
+		case <-exitTicker.C:
 			if err := crypto.markExits(); err != nil {
 				return err
 			}
-
+		case <-rescoreTicker.C:
 			batch := crypto.drainMeasurements()
 			crypto.decide(batch)
 		}
@@ -137,6 +141,74 @@ func (crypto *Crypto) Run() error {
 }
 
 func (crypto *Crypto) drainMeasurements() []engine.Measurement {
+	if crypto.pool == nil || len(crypto.signals) <= 1 {
+		return crypto.drainMeasurementsSequential()
+	}
+
+	type drainResult struct {
+		items []engine.Measurement
+	}
+
+	results := make([][]engine.Measurement, len(crypto.signals))
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(len(crypto.signals))
+
+	for index, signal := range crypto.signals {
+		signalIndex := index
+		activeSignal := signal
+
+		resultCh := crypto.pool.Schedule(
+			fmt.Sprintf("measure-%d-%d", signalIndex, crypto.pulseSeq.Load()),
+			func(ctx context.Context) (any, error) {
+				items := make([]engine.Measurement, 0)
+
+				for measurement := range activeSignal.Measure(ctx) {
+					items = append(items, measurement)
+				}
+
+				return items, nil
+			},
+		)
+
+		go func() {
+			defer waitGroup.Done()
+
+			result := <-resultCh
+
+			if result == nil {
+				return
+			}
+
+			if result.Error != nil {
+				errnie.Error(result.Error)
+
+				return
+			}
+
+			items, ok := result.Value.([]engine.Measurement)
+
+			if !ok {
+				errnie.Error(fmt.Errorf("invalid measurement batch type: %T", result.Value))
+
+				return
+			}
+
+			results[signalIndex] = items
+		}()
+	}
+
+	waitGroup.Wait()
+
+	batch := make([]engine.Measurement, 0)
+
+	for _, items := range results {
+		batch = append(batch, items...)
+	}
+
+	return batch
+}
+
+func (crypto *Crypto) drainMeasurementsSequential() []engine.Measurement {
 	batch := make([]engine.Measurement, 0)
 
 	for _, signal := range crypto.signals {
@@ -157,11 +229,7 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 
 	candidates := crypto.rankCandidates(batch)
 	line := batchEntryLine(candidates)
-	peakConfidence := 0.0
-
-	if len(candidates) > 0 {
-		peakConfidence = candidates[0].confidence
-	}
+	peakConfidence := batchPeakConfidence(candidates)
 
 	crypto.publishEnginePulse(batch, candidates)
 	crypto.publishScoreboard(batch, candidates, line)
@@ -183,6 +251,11 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 		return
 	}
 
+	if !crypto.tradingSolvent() {
+		crypto.priorCandidates = nextCandidates
+		return
+	}
+
 	for _, candidate := range candidates {
 		if _, seen := crypto.priorCandidates[candidate.symbol]; !seen {
 			continue
@@ -200,11 +273,26 @@ func (crypto *Crypto) decide(batch []engine.Measurement) {
 }
 
 /*
-Close closes the crypto trader.
+Close closes the crypto trader and cancels open positions at market.
 */
 func (crypto *Crypto) Close() error {
+	crypto.closeAllPositions("shutdown")
 	crypto.cancel()
+
 	return nil
+}
+
+func (crypto *Crypto) closeAllPositions(reason string) {
+	for symbol, hold := range crypto.holds {
+		exitFill, ok := crypto.exitFill(symbol)
+
+		if !ok || exitFill <= 0 {
+			delete(crypto.holds, symbol)
+			continue
+		}
+
+		crypto.closePosition(symbol, hold, exitFill, reason)
+	}
 }
 
 func (crypto *Crypto) tryEnter(candidate tradeCandidate, peakConfidence float64) {
@@ -219,6 +307,10 @@ func (crypto *Crypto) tryEnter(candidate tradeCandidate, peakConfidence float64)
 	notional := crypto.entryNotional(candidate.confidence, peakConfidence)
 
 	if notional <= 0 {
+		return
+	}
+
+	if !crypto.canAffordEntry(notional) {
 		return
 	}
 
@@ -268,23 +360,4 @@ func (crypto *Crypto) tryEnter(candidate tradeCandidate, peakConfidence float64)
 			"last":         entryFill,
 		})
 	}
-}
-
-func (crypto *Crypto) entryNotional(confidence, peakConfidence float64) float64 {
-	if crypto.wallet.Balance <= 0 || config.System.MaxSlotPct <= 0 {
-		return 0
-	}
-
-	if confidence <= 0 || peakConfidence <= 0 {
-		return 0
-	}
-
-	weight := confidence / peakConfidence
-	notional := crypto.wallet.Balance * config.System.MaxSlotPct / 100 * weight
-
-	if config.System.MinCostEUR > 0 && notional < config.System.MinCostEUR {
-		return 0
-	}
-
-	return notional
 }

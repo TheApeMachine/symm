@@ -19,6 +19,7 @@ import {
 
 const MAX_TRADES = 40;
 const MAX_PULSE_LOG = 32;
+const MAX_TICK_HISTORY = 360;
 
 export type SymmUIState = {
 	connected: boolean;
@@ -51,6 +52,7 @@ let ui: SymmUIState = {
 const uiSubscriptions = new Set<UISubscription>();
 const chartListeners = new Map<string, ChartListener>();
 const lastTickBySymbol = new Map<string, PriceTickEvent>();
+const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
 const lastSeedBySymbol = new Map<string, SymmEvent>();
 
 let fluidSurfaceHandler: ((snapshot: FieldSnapshotEvent) => void) | null = null;
@@ -94,6 +96,18 @@ function subscribeOpenSymbols(positions: StatusEvent["positions"]) {
 	ws.send(JSON.stringify({ op: "subscribe", symbols }));
 }
 
+function appendTickHistory(tick: PriceTickEvent) {
+	const symbol = String(tick.symbol);
+	const history = tickHistoryBySymbol.get(symbol) ?? [];
+	history.push(tick);
+
+	if (history.length > MAX_TICK_HISTORY) {
+		history.splice(0, history.length - MAX_TICK_HISTORY);
+	}
+
+	tickHistoryBySymbol.set(symbol, history);
+}
+
 function replayChartState(symbol: string, handler: ChartListener) {
 	const seed = lastSeedBySymbol.get(symbol);
 	if (seed) {
@@ -104,8 +118,7 @@ function replayChartState(symbol: string, handler: ChartListener) {
 		handler(ui.status);
 	}
 
-	const tick = lastTickBySymbol.get(symbol);
-	if (tick) {
+	for (const tick of tickHistoryBySymbol.get(symbol) ?? []) {
 		handler(tick);
 	}
 }
@@ -130,17 +143,8 @@ function applyEvent(ev: SymmEvent) {
 	switch (ev.event) {
 		case "price_tick": {
 			const tick = ev as PriceTickEvent;
-			const prev = lastTickBySymbol.get(String(tick.symbol));
-			if (
-				prev &&
-				prev.last === tick.last &&
-				prev.bid === tick.bid &&
-				prev.ask === tick.ask
-			) {
-				return;
-			}
-
 			lastTickBySymbol.set(String(tick.symbol), tick);
+			appendTickHistory(tick);
 			dispatchChart(String(tick.symbol), tick);
 			return;
 		}
@@ -153,9 +157,16 @@ function applyEvent(ev: SymmEvent) {
 		case "stop_ratchet":
 			dispatchChart(String(ev.symbol), ev);
 			return;
-		case "trade_enter":
+		case "trade_enter": {
+			const trade = ev as TradeEnterEvent;
+			appendTrade(trade);
+			dispatchChart(trade.symbol, ev);
+			subscribeOpenSymbols(ui.status?.positions);
+			notifyUI();
+			return;
+		}
 		case "trade_exit": {
-			const trade = ev as TradeEnterEvent | TradeExitEvent;
+			const trade = ev as TradeExitEvent;
 			appendTrade(trade);
 			dispatchChart(trade.symbol, ev);
 			notifyUI();

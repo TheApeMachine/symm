@@ -9,25 +9,32 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/core"
 )
+
+const maxReconnectAttempts = 12
 
 /*
 PublicClient maintains an unauthenticated Kraken WebSocket v2 session.
 It owns dial, ping, subscribe, and framed reads for public market channels.
 */
 type PublicClient struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	conn         *websocket.Conn
-	wsURL        string
-	reqID        int
-	handlers     []func(context.Context, []byte) error
-	replayFrames [][]byte
-	replayPace   time.Duration
-	mu           sync.Mutex
-	readOnce     sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	conn          *websocket.Conn
+	wsURL         string
+	reqID         int
+	handlers      []func(context.Context, []byte) error
+	replayFrames  [][]byte
+	replayPace    time.Duration
+	subscriptions []any
+	onDisconnect  func(error)
+	mu            sync.Mutex
+	readOnce      sync.Once
+	pingOnce      sync.Once
+	reconnectMu   sync.Mutex
 }
 
 type PublicClientOption func(*PublicClient)
@@ -38,6 +45,15 @@ WithWebSocketURL overrides the default Kraken v2 websocket endpoint.
 func WithWebSocketURL(url string) PublicClientOption {
 	return func(publicClient *PublicClient) {
 		publicClient.wsURL = url
+	}
+}
+
+/*
+OnDisconnect registers a callback for unrecoverable read or reconnect failures.
+*/
+func OnDisconnect(handler func(error)) PublicClientOption {
+	return func(publicClient *PublicClient) {
+		publicClient.onDisconnect = handler
 	}
 }
 
@@ -73,12 +89,17 @@ func (publicClient *PublicClient) Connect() error {
 		return fmt.Errorf("public websocket already connected")
 	}
 
+	return publicClient.dial()
+}
+
+func (publicClient *PublicClient) dial() error {
 	conn, _, err := websocket.DefaultDialer.DialContext(publicClient.ctx, publicClient.wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("dial public websocket: %w", err)
 	}
 
 	publicClient.conn = conn
+	publicClient.startPing()
 
 	return nil
 }
@@ -88,6 +109,9 @@ Close cancels the session context and closes the underlying socket.
 */
 func (publicClient *PublicClient) Close() error {
 	publicClient.cancel()
+
+	publicClient.mu.Lock()
+	defer publicClient.mu.Unlock()
 
 	if publicClient.conn == nil {
 		return nil
@@ -108,7 +132,11 @@ func (publicClient *PublicClient) Send(message any) error {
 		return nil
 	}
 
-	if publicClient.conn == nil {
+	publicClient.mu.Lock()
+	conn := publicClient.conn
+	publicClient.mu.Unlock()
+
+	if conn == nil {
 		return fmt.Errorf("public websocket is not connected")
 	}
 
@@ -117,18 +145,22 @@ func (publicClient *PublicClient) Send(message any) error {
 		return fmt.Errorf("marshal websocket message: %w", err)
 	}
 
-	return publicClient.conn.WriteMessage(websocket.TextMessage, payload)
+	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 /*
 Read returns the next websocket text frame payload.
 */
 func (publicClient *PublicClient) Read() ([]byte, error) {
-	if publicClient.conn == nil {
+	publicClient.mu.Lock()
+	conn := publicClient.conn
+	publicClient.mu.Unlock()
+
+	if conn == nil {
 		return nil, fmt.Errorf("public websocket is not connected")
 	}
 
-	_, payload, err := publicClient.conn.ReadMessage()
+	_, payload, err := conn.ReadMessage()
 	if err != nil {
 		return nil, fmt.Errorf("read public websocket: %w", err)
 	}
@@ -173,6 +205,15 @@ func (publicClient *PublicClient) SubscribeTo(
 	params any,
 	opts ...kraken.SubscriptionOption,
 ) error {
+	publicClient.trackSubscription(params)
+
+	return publicClient.sendSubscribe(params, opts...)
+}
+
+func (publicClient *PublicClient) sendSubscribe(
+	params any,
+	opts ...kraken.SubscriptionOption,
+) error {
 	opts = append(opts, kraken.WithReqID(publicClient.NextReqID()))
 
 	return publicClient.Subscribe(kraken.NewSubscribe(params, opts...))
@@ -209,13 +250,23 @@ func (publicClient *PublicClient) dispatchLoop() {
 			return
 		}
 
+		if publicClient.ReplayMode() {
+			return
+		}
+
 		payload, err := publicClient.Read()
 		if err != nil {
 			if publicClient.ctx.Err() != nil {
 				return
 			}
 
-			return
+			if reconnectErr := publicClient.reconnect(); reconnectErr != nil {
+				publicClient.notifyDisconnect(reconnectErr)
+
+				return
+			}
+
+			continue
 		}
 
 		publicClient.mu.Lock()
@@ -227,6 +278,120 @@ func (publicClient *PublicClient) dispatchLoop() {
 				_ = errnie.Error(err)
 			}
 		}
+	}
+}
+
+func (publicClient *PublicClient) reconnect() error {
+	publicClient.reconnectMu.Lock()
+	defer publicClient.reconnectMu.Unlock()
+
+	publicClient.mu.Lock()
+
+	if publicClient.conn != nil {
+		_ = publicClient.conn.Close()
+		publicClient.conn = nil
+	}
+
+	publicClient.mu.Unlock()
+
+	backoff := time.Second
+
+	for attempt := 0; attempt < maxReconnectAttempts; attempt++ {
+		if err := publicClient.ctx.Err(); err != nil {
+			return err
+		}
+
+		if err := publicClient.dial(); err == nil {
+			if err := publicClient.resubscribeAll(); err != nil {
+				return err
+			}
+
+			errnie.Warn("public websocket reconnected", "attempt", attempt+1)
+
+			return nil
+		}
+
+		timer := time.NewTimer(backoff)
+
+		select {
+		case <-publicClient.ctx.Done():
+			timer.Stop()
+
+			return publicClient.ctx.Err()
+		case <-timer.C:
+		}
+
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+
+	return fmt.Errorf("public websocket reconnect failed after %d attempts", maxReconnectAttempts)
+}
+
+func (publicClient *PublicClient) trackSubscription(params any) {
+	if params == nil {
+		return
+	}
+
+	publicClient.mu.Lock()
+	publicClient.subscriptions = append(publicClient.subscriptions, params)
+	publicClient.mu.Unlock()
+}
+
+func (publicClient *PublicClient) resubscribeAll() error {
+	publicClient.mu.Lock()
+	paramsList := append([]any(nil), publicClient.subscriptions...)
+	publicClient.mu.Unlock()
+
+	for index, params := range paramsList {
+		if err := publicClient.sendSubscribe(params); err != nil {
+			return fmt.Errorf("resubscribe frame %d: %w", index, err)
+		}
+	}
+
+	return nil
+}
+
+func (publicClient *PublicClient) startPing() {
+	if publicClient.ReplayMode() {
+		return
+	}
+
+	publicClient.pingOnce.Do(func() {
+		go func() {
+			interval := config.System.WSPingInterval
+
+			if interval <= 0 {
+				interval = 30 * time.Second
+			}
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-publicClient.ctx.Done():
+					return
+				case <-ticker.C:
+					if err := publicClient.Ping(); err != nil {
+						errnie.Warn("public websocket ping failed", "err", err)
+					}
+				}
+			}
+		}()
+	})
+}
+
+func (publicClient *PublicClient) notifyDisconnect(err error) {
+	if err == nil {
+		return
+	}
+
+	_ = errnie.Error(err)
+
+	if publicClient.onDisconnect != nil {
+		publicClient.onDisconnect(err)
 	}
 }
 

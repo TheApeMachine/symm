@@ -212,14 +212,10 @@ func (crypto *Crypto) publishDecisionTrace(
 	}
 
 	candidateBySymbol := make(map[string]tradeCandidate, len(candidates))
-	peakConfidence := 0.0
+	peakConfidence := batchPeakConfidence(candidates)
 
 	for _, candidate := range candidates {
 		candidateBySymbol[candidate.symbol] = candidate
-
-		if candidate.confidence > peakConfidence {
-			peakConfidence = candidate.confidence
-		}
 	}
 
 	readingsBySymbol := groupReadingsBySymbol(batch)

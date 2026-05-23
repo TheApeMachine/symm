@@ -204,6 +204,21 @@ func TestCryptoScalesNotionalByConfidence(t *testing.T) {
 	}
 }
 
+func TestCryptoSkipsBoostForNonPumpRegime(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto, err := NewCrypto(context.Background(), nil, wallet, stubPrices{"SCALP/EUR": 1}, NoopPublisher(), &stubSignal{})
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	crypto.records["SCALP/EUR"] = symbolRecord{wins: 3}
+
+	if boosted := crypto.boostConfidence("SCALP/EUR", 0.6, "momentum"); boosted != 0.6 {
+		t.Fatalf("expected no boost for momentum, got %v", boosted)
+	}
+}
+
 func TestCryptoBoostsRepeatWinner(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	stub := &stubSignal{}
@@ -217,7 +232,7 @@ func TestCryptoBoostsRepeatWinner(t *testing.T) {
 
 	crypto.records["PUMP/EUR"] = symbolRecord{wins: 2}
 
-	boosted := crypto.boostConfidence("PUMP/EUR", 0.6)
+	boosted := crypto.boostConfidence("PUMP/EUR", 0.6, "pump")
 	expected := 0.6 * repeatBoost(2)
 
 	if boosted != expected {
@@ -327,7 +342,7 @@ func BenchmarkCryptoBoostConfidence(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if crypto.boostConfidence("PUMP/EUR", 0.8) <= 0 {
+		if crypto.boostConfidence("PUMP/EUR", 0.8, "pump") <= 0 {
 			b.Fatal("expected boost")
 		}
 	}

@@ -2,10 +2,7 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"iter"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -20,17 +17,13 @@ import (
 PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker streams.
 */
 type PumpDump struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	book     *kbook.Book
-	trades   *trades.Trades
-	ticker   *kticker.Ticker
-	track    *TrackStore
-	pairs    map[string]asset.Pair
-	symbols  []string
-	interval time.Duration
-	queue    sync.Map
-	seq      atomic.Int64
+	scanner *engine.Scanner
+	book    *kbook.Book
+	trades  *trades.Trades
+	ticker  *kticker.Ticker
+	track   *TrackStore
+	pairs   map[string]asset.Pair
+	symbols []string
 }
 
 var _ engine.Signal = (*PumpDump)(nil)
@@ -47,32 +40,23 @@ func NewPumpDump(
 	symbols []string,
 	interval time.Duration,
 ) (*PumpDump, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	if interval <= 0 {
-		interval = 10 * time.Millisecond
-	}
-
 	pumpdump := &PumpDump{
-		ctx:      ctx,
-		cancel:   cancel,
-		book:     book,
-		trades:   tradesObserver,
-		ticker:   tickerObserver,
-		track:    NewTrackStore(),
-		pairs:    pairs,
-		symbols:  symbols,
-		interval: interval,
+		scanner: engine.NewScanner(ctx, interval),
+		book:    book,
+		trades:  tradesObserver,
+		ticker:  tickerObserver,
+		track:   NewTrackStore(),
+		pairs:   pairs,
+		symbols: symbols,
 	}
 
 	return pumpdump, errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"book":   book,
-		"trades": tradesObserver,
-		"ticker": tickerObserver,
-		"track":  pumpdump.track,
-		"pairs":  pairs,
+		"scanner": pumpdump.scanner,
+		"book":    book,
+		"trades":  tradesObserver,
+		"ticker":  tickerObserver,
+		"track":   pumpdump.track,
+		"pairs":   pairs,
 	})
 }
 
@@ -80,51 +64,21 @@ func NewPumpDump(
 Run samples microstructure on a fixed interval.
 */
 func (pumpdump *PumpDump) Run() {
-	go func() {
-		ticker := time.NewTicker(pumpdump.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-pumpdump.ctx.Done():
-				return
-			case tick := <-ticker.C:
-				pumpdump.scan(tick)
-			}
-		}
-	}()
+	pumpdump.scanner.Run(pumpdump.scan)
 }
 
 /*
 Measure yields queued measurements for the trader.
 */
-func (pumpdump *PumpDump) Measure(_ context.Context) iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		pumpdump.queue.Range(func(key, value any) bool {
-			measurement, ok := value.(engine.Measurement)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement type: %T", value))
-				pumpdump.queue.Delete(key)
-				return true
-			}
-
-			if !yield(measurement) {
-				return false
-			}
-
-			pumpdump.queue.Delete(key)
-			return true
-		})
-	}
+func (pumpdump *PumpDump) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
+	return pumpdump.scanner.Measure(ctx)
 }
 
 /*
 Close stops rescoring.
 */
 func (pumpdump *PumpDump) Close() error {
-	pumpdump.cancel()
-	return nil
+	return pumpdump.scanner.Close()
 }
 
 func (pumpdump *PumpDump) scan(now time.Time) {
@@ -148,7 +102,7 @@ func (pumpdump *PumpDump) scan(now time.Time) {
 			reason = "precursor"
 		}
 
-		pumpdump.queue.Store(pumpdump.seq.Add(1), engine.Measurement{
+		pumpdump.scanner.Enqueue(engine.Measurement{
 			Type:       engine.Pump,
 			Source:     "pumpdump",
 			Regime:     "pump",

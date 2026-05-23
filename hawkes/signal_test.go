@@ -3,6 +3,8 @@ package hawkes
 import (
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/kraken/market"
 )
 
 func burstBuyEvents(start time.Time, count int, gap time.Duration) []time.Time {
@@ -13,6 +15,32 @@ func burstBuyEvents(start time.Time, count int, gap time.Duration) []time.Time {
 	}
 
 	return events
+}
+
+func TestSplitSideEventsKeepsWindowTicks(t *testing.T) {
+	now := time.Unix(1000, 0)
+	windowStart := now.Add(-hawkesTradeWindow)
+
+	ticks := []market.TradeTick{
+		{Side: "buy", Timestamp: windowStart.Add(-time.Minute)},
+		{Side: "buy", Timestamp: windowStart.Add(time.Minute)},
+		{Side: "sell", Timestamp: now.Add(-time.Second)},
+		{Side: "buy", Timestamp: now.Add(time.Minute)},
+	}
+
+	buyTimes, sellTimes := splitSideEvents(ticks, windowStart, now)
+
+	if len(buyTimes) != 1 {
+		t.Fatalf("expected one buy event in window, got %d", len(buyTimes))
+	}
+
+	if len(sellTimes) != 1 {
+		t.Fatalf("expected one sell event in window, got %d", len(sellTimes))
+	}
+
+	if buyTimes[0] != ticks[1].Timestamp {
+		t.Fatalf("expected in-window buy tick, got %v", buyTimes[0])
+	}
 }
 
 func TestFitSideRecoversExcitation(t *testing.T) {

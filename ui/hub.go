@@ -17,7 +17,25 @@ import (
 const clientSendBuffer = 256
 
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(*http.Request) bool { return true },
+	CheckOrigin: allowLocalhostOrigin,
+}
+
+func allowLocalhostOrigin(request *http.Request) bool {
+	origin := strings.TrimSpace(request.Header.Get("Origin"))
+
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 type wsClient struct {
@@ -32,21 +50,31 @@ type Hub struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	clients      sync.Map
-	snapshot     func() map[string]any
+	bootstrap    func() []map[string]any
+	replayMu     sync.Mutex
+	replayByType map[string]map[string]any
 	runID        string
+}
+
+var replayEventTypes = []string{
+	"field_snapshot",
+	"engine_pulse",
+	"scoreboard",
+	"decision_trace",
 }
 
 /*
 NewHub creates a new telemetry hub.
 */
-func NewHub(ctx context.Context, snapshot func() map[string]any) (*Hub, error) {
+func NewHub(ctx context.Context, bootstrap func() []map[string]any) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:      ctx,
-		cancel:   cancel,
-		snapshot: snapshot,
-		runID:    time.Now().UTC().Format("20060102T150405Z"),
+		ctx:          ctx,
+		cancel:       cancel,
+		bootstrap:    bootstrap,
+		replayByType: make(map[string]map[string]any),
+		runID:        time.Now().UTC().Format("20060102T150405Z"),
 	}
 
 	return hub, errnie.Require(map[string]any{
@@ -81,6 +109,8 @@ func (hub *Hub) Serve(addr string) error {
 Emit publishes a flat JSON telemetry event to all connected clients without blocking.
 */
 func (hub *Hub) Emit(event map[string]any) {
+	hub.storeReplay(event)
+
 	payload, err := json.Marshal(event)
 	if err != nil {
 		_ = errnie.Error(err)
@@ -114,7 +144,7 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	hub.clients.Store(client, struct{}{})
 	hub.sendHello(client)
-	hub.sendSnapshot(client)
+	hub.sendBootstrap(client)
 
 	go hub.writePump(client)
 	hub.readPump(client)
@@ -128,17 +158,57 @@ func (hub *Hub) sendHello(client *wsClient) {
 	})
 }
 
-func (hub *Hub) sendSnapshot(client *wsClient) {
-	if hub.snapshot == nil {
+func (hub *Hub) sendBootstrap(client *wsClient) {
+	if hub.bootstrap != nil {
+		for _, event := range hub.bootstrap() {
+			if event == nil {
+				continue
+			}
+
+			hub.enqueue(client, event)
+		}
+	}
+
+	for _, event := range hub.replayEvents() {
+		hub.enqueue(client, event)
+	}
+}
+
+func (hub *Hub) storeReplay(event map[string]any) {
+	eventName, ok := event["event"].(string)
+	if !ok {
 		return
 	}
 
-	status := hub.snapshot()
-	if status == nil {
+	for _, replayType := range replayEventTypes {
+		if eventName != replayType {
+			continue
+		}
+
+		hub.replayMu.Lock()
+		hub.replayByType[eventName] = event
+		hub.replayMu.Unlock()
+
 		return
 	}
+}
 
-	hub.enqueue(client, status)
+func (hub *Hub) replayEvents() []map[string]any {
+	hub.replayMu.Lock()
+	defer hub.replayMu.Unlock()
+
+	events := make([]map[string]any, 0, len(replayEventTypes))
+
+	for _, replayType := range replayEventTypes {
+		event, ok := hub.replayByType[replayType]
+		if !ok || event == nil {
+			continue
+		}
+
+		events = append(events, event)
+	}
+
+	return events
 }
 
 func (hub *Hub) enqueue(client *wsClient, event map[string]any) {
@@ -195,10 +265,10 @@ func (hub *Hub) readPump(client *wsClient) {
 }
 
 /*
-SetSnapshot wires a live status provider for new websocket clients.
+SetBootstrap wires the connect-time snapshot for new websocket clients.
 */
-func (hub *Hub) SetSnapshot(snapshot func() map[string]any) {
-	hub.snapshot = snapshot
+func (hub *Hub) SetBootstrap(bootstrap func() []map[string]any) {
+	hub.bootstrap = bootstrap
 }
 
 /*

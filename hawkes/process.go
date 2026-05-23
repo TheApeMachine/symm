@@ -3,6 +3,8 @@ package hawkes
 import (
 	"math"
 	"time"
+
+	"github.com/theapemachine/symm/stats"
 )
 
 const (
@@ -321,47 +323,7 @@ func medianInterArrivalSec(events []time.Time) float64 {
 		return 0
 	}
 
-	return medianFloat(gaps)
-}
-
-func medianFloat(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
-
-	return percentileSorted(cp, 0.5)
-}
-
-func percentileSorted(sorted []float64, quantile float64) float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	if quantile <= 0 {
-		return sorted[0]
-	}
-
-	if quantile >= 1 {
-		return sorted[len(sorted)-1]
-	}
-
-	position := quantile * float64(len(sorted)-1)
-	lowerIndex := int(math.Floor(position))
-	upperIndex := int(math.Ceil(position))
-	weight := position - float64(lowerIndex)
-
-	return sorted[lowerIndex]*(1-weight) + sorted[upperIndex]*weight
-}
-
-func sortFloats(values []float64) {
-	for index := 1; index < len(values); index++ {
-		for inner := index; inner > 0 && values[inner] < values[inner-1]; inner-- {
-			values[inner], values[inner-1] = values[inner-1], values[inner]
-		}
-	}
+	return stats.Median(gaps)
 }
 
 func confidenceFence(values []float64) float64 {
@@ -369,50 +331,16 @@ func confidenceFence(values []float64) float64 {
 		return 0
 	}
 
-	lower, upper := quartiles(values)
+	lower, upper := stats.Quartiles(values)
 	spread := upper - lower
 
 	if spread > 0 {
 		return upper + spread + spread/2
 	}
 
-	return maxFloat(values)
-}
-
-func quartiles(values []float64) (lower, upper float64) {
-	if len(values) == 0 {
-		return 0, 0
-	}
-
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
-
-	return percentileSorted(cp, 0.25), percentileSorted(cp, 0.75)
-}
-
-func maxFloat(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	peak := values[0]
-
-	for _, value := range values[1:] {
-		if value > peak {
-			peak = value
-		}
-	}
-
-	return peak
+	return stats.Max(values)
 }
 
 func crossSectionMedian(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
-
-	return percentileSorted(cp, 0.5)
+	return stats.CrossSectionMedian(values)
 }

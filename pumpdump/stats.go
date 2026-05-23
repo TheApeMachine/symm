@@ -1,40 +1,15 @@
 package pumpdump
 
-import "math"
+import (
+	"github.com/theapemachine/symm/stats"
+)
 
 func quartiles(values []float64) (lower, upper float64) {
-	if len(values) == 0 {
-		return 0, 0
-	}
-
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
-
-	lower = percentileSorted(cp, 0.25)
-	upper = percentileSorted(cp, 0.75)
-
-	return lower, upper
+	return stats.Quartiles(values)
 }
 
 func percentileSorted(sorted []float64, quantile float64) float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	if quantile <= 0 {
-		return sorted[0]
-	}
-
-	if quantile >= 1 {
-		return sorted[len(sorted)-1]
-	}
-
-	position := quantile * float64(len(sorted)-1)
-	lowerIndex := int(math.Floor(position))
-	upperIndex := int(math.Ceil(position))
-	weight := position - float64(lowerIndex)
-
-	return sorted[lowerIndex]*(1-weight) + sorted[upperIndex]*weight
+	return stats.PercentileSorted(sorted, quantile)
 }
 
 func volumeRatioFence(ratios []float64) float64 {
@@ -69,28 +44,17 @@ func volumeRatios(volumes []float64) []float64 {
 }
 
 func maxFloat(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	peak := values[0]
-
-	for _, value := range values[1:] {
-		if value > peak {
-			peak = value
-		}
-	}
-
-	return peak
+	return stats.Max(values)
 }
 
 func crossSectionMedian(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
+	return stats.CrossSectionMedian(values)
+}
 
-	cp := append([]float64(nil), values...)
-	sortFloats(cp)
+func median(values []float64) float64 {
+	return stats.Median(values)
+}
 
-	return median(cp)
+func sortFloats(values []float64) {
+	stats.SortFloats(values)
 }

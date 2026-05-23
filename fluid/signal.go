@@ -2,10 +2,7 @@ package fluid
 
 import (
 	"context"
-	"fmt"
 	"iter"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -20,18 +17,14 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
+	scanner   *engine.Scanner
 	book      *kbook.Book
 	trades    *trades.Trades
 	ticker    *kticker.Ticker
 	track     *TrackStore
 	pairs     map[string]asset.Pair
 	symbols   []string
-	interval  time.Duration
 	fieldSink FieldSink
-	queue     sync.Map
-	seq       atomic.Int64
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -48,32 +41,23 @@ func NewFluid(
 	symbols []string,
 	interval time.Duration,
 ) (*Fluid, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
-	}
-
 	fluid := &Fluid{
-		ctx:      ctx,
-		cancel:   cancel,
-		book:     book,
-		trades:   tradesObserver,
-		ticker:   tickerObserver,
-		track:    NewTrackStore(),
-		pairs:    pairs,
-		symbols:  symbols,
-		interval: interval,
+		scanner: engine.NewScanner(ctx, interval),
+		book:    book,
+		trades:  tradesObserver,
+		ticker:  tickerObserver,
+		track:   NewTrackStore(),
+		pairs:   pairs,
+		symbols: symbols,
 	}
 
 	return fluid, errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"book":   book,
-		"trades": tradesObserver,
-		"ticker": tickerObserver,
-		"track":  fluid.track,
-		"pairs":  pairs,
+		"scanner": fluid.scanner,
+		"book":    book,
+		"trades":  tradesObserver,
+		"ticker":  tickerObserver,
+		"track":   fluid.track,
+		"pairs":   pairs,
 	})
 }
 
@@ -102,51 +86,21 @@ func (fluid *Fluid) WarmingCount() int {
 Run advances the fluid field on a fixed interval.
 */
 func (fluid *Fluid) Run() {
-	go func() {
-		ticker := time.NewTicker(fluid.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case tick := <-ticker.C:
-				fluid.scan(tick)
-			}
-		}
-	}()
+	fluid.scanner.Run(fluid.scan)
 }
 
 /*
 Measure yields queued measurements for the trader.
 */
-func (fluid *Fluid) Measure(_ context.Context) iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		fluid.queue.Range(func(key, value any) bool {
-			measurement, ok := value.(engine.Measurement)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement type: %T", value))
-				fluid.queue.Delete(key)
-				return true
-			}
-
-			if !yield(measurement) {
-				return false
-			}
-
-			fluid.queue.Delete(key)
-			return true
-		})
-	}
+func (fluid *Fluid) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
+	return fluid.scanner.Measure(ctx)
 }
 
 /*
 Close stops field sampling.
 */
 func (fluid *Fluid) Close() error {
-	fluid.cancel()
-	return nil
+	return fluid.scanner.Close()
 }
 
 func (fluid *Fluid) scan(now time.Time) {
@@ -170,7 +124,7 @@ func (fluid *Fluid) scan(now time.Time) {
 			continue
 		}
 
-		fluid.queue.Store(fluid.seq.Add(1), engine.Measurement{
+		fluid.scanner.Enqueue(engine.Measurement{
 			Type:       engine.Flow,
 			Source:     "fluid",
 			Regime:     "flow",

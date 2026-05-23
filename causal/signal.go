@@ -2,10 +2,7 @@ package causal
 
 import (
 	"context"
-	"fmt"
 	"iter"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -21,17 +18,13 @@ Causal applies Pearl's ladder: association, backdoor intervention, and counterfa
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor control.
 */
 type Causal struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	book     *kbook.Book
-	trades   *trades.Trades
-	ticker   *kticker.Ticker
-	track    *TrackStore
-	pairs    map[string]asset.Pair
-	symbols  []string
-	interval time.Duration
-	queue    sync.Map
-	seq      atomic.Int64
+	scanner *engine.Scanner
+	book    *kbook.Book
+	trades  *trades.Trades
+	ticker  *kticker.Ticker
+	track   *TrackStore
+	pairs   map[string]asset.Pair
+	symbols []string
 }
 
 var _ engine.Signal = (*Causal)(nil)
@@ -48,32 +41,23 @@ func NewCausal(
 	symbols []string,
 	interval time.Duration,
 ) (*Causal, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
-	}
-
 	causal := &Causal{
-		ctx:      ctx,
-		cancel:   cancel,
-		book:     book,
-		trades:   tradesObserver,
-		ticker:   tickerObserver,
-		track:    NewTrackStore(),
-		pairs:    pairs,
-		symbols:  symbols,
-		interval: interval,
+		scanner: engine.NewScanner(ctx, interval),
+		book:    book,
+		trades:  tradesObserver,
+		ticker:  tickerObserver,
+		track:   NewTrackStore(),
+		pairs:   pairs,
+		symbols: symbols,
 	}
 
 	return causal, errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"book":   book,
-		"trades": tradesObserver,
-		"ticker": tickerObserver,
-		"track":  causal.track,
-		"pairs":  pairs,
+		"scanner": causal.scanner,
+		"book":    book,
+		"trades":  tradesObserver,
+		"ticker":  tickerObserver,
+		"track":   causal.track,
+		"pairs":   pairs,
 	})
 }
 
@@ -81,51 +65,21 @@ func NewCausal(
 Run advances the causal model on a fixed interval.
 */
 func (causal *Causal) Run() {
-	go func() {
-		ticker := time.NewTicker(causal.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-causal.ctx.Done():
-				return
-			case tick := <-ticker.C:
-				causal.scan(tick)
-			}
-		}
-	}()
+	causal.scanner.Run(causal.scan)
 }
 
 /*
 Measure yields queued measurements for the trader.
 */
-func (causal *Causal) Measure(_ context.Context) iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		causal.queue.Range(func(key, value any) bool {
-			measurement, ok := value.(engine.Measurement)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement type: %T", value))
-				causal.queue.Delete(key)
-				return true
-			}
-
-			if !yield(measurement) {
-				return false
-			}
-
-			causal.queue.Delete(key)
-			return true
-		})
-	}
+func (causal *Causal) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
+	return causal.scanner.Measure(ctx)
 }
 
 /*
 Close stops rescoring.
 */
 func (causal *Causal) Close() error {
-	causal.cancel()
-	return nil
+	return causal.scanner.Close()
 }
 
 func (causal *Causal) scan(now time.Time) {
@@ -147,7 +101,7 @@ func (causal *Causal) scan(now time.Time) {
 			continue
 		}
 
-		causal.queue.Store(causal.seq.Add(1), engine.Measurement{
+		causal.scanner.Enqueue(engine.Measurement{
 			Type:       engine.Causal,
 			Source:     "causal",
 			Regime:     "causal",

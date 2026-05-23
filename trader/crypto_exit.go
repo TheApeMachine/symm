@@ -35,13 +35,13 @@ func (crypto *Crypto) markExits() error {
 
 			if crypto.publisher != nil && hold.stopPrice > oldStop {
 				crypto.publisher.Emit(map[string]any{
-					"event":     "stop_ratchet",
-					"ts":        time.Now().UTC().Format(time.RFC3339Nano),
-					"symbol":    symbol,
-					"old_stop":  oldStop,
-					"new_stop":  hold.stopPrice,
-					"peak":      hold.peakPrice,
-					"last":      exitFill,
+					"event":    "stop_ratchet",
+					"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+					"symbol":   symbol,
+					"old_stop": oldStop,
+					"new_stop": hold.stopPrice,
+					"peak":     hold.peakPrice,
+					"last":     exitFill,
 				})
 			}
 		}
@@ -100,16 +100,16 @@ func (crypto *Crypto) closePosition(symbol string, hold position, exitFill float
 
 	if crypto.publisher != nil {
 		crypto.publisher.Emit(map[string]any{
-			"event":        "trade_exit",
-			"ts":           time.Now().UTC().Format(time.RFC3339Nano),
-			"symbol":       symbol,
-			"regime":       hold.regime,
-			"reason":       reason,
-			"pnl_eur":      pnl,
-			"hold_ms":      time.Since(hold.enteredAt).Milliseconds(),
-			"entry_price":  hold.entryPrice,
-			"stop_price":   hold.stopPrice,
-			"peak_price":   hold.peakPrice,
+			"event":       "trade_exit",
+			"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+			"symbol":      symbol,
+			"regime":      hold.regime,
+			"reason":      reason,
+			"pnl_eur":     pnl,
+			"hold_ms":     time.Since(hold.enteredAt).Milliseconds(),
+			"entry_price": hold.entryPrice,
+			"stop_price":  hold.stopPrice,
+			"peak_price":  hold.peakPrice,
 		})
 	}
 }
@@ -122,9 +122,9 @@ func repeatBoost(wins int) float64 {
 	return 1 + float64(wins)/float64(wins+1)
 }
 
-func (crypto *Crypto) boostConfidence(symbol string, confidence float64) float64 {
-	if confidence <= 0 {
-		return 0
+func (crypto *Crypto) boostConfidence(symbol string, confidence float64, regime string) float64 {
+	if confidence <= 0 || regime != "pump" {
+		return confidence
 	}
 
 	return confidence * repeatBoost(crypto.records[symbol].wins)
