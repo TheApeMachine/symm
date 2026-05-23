@@ -1,0 +1,247 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+
+	"github.com/fasthttp/websocket"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/core"
+)
+
+/*
+PublicClient maintains an unauthenticated Kraken WebSocket v2 session.
+It owns dial, ping, subscribe, and framed reads for public market channels.
+*/
+type PublicClient struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	conn     *websocket.Conn
+	wsURL    string
+	reqID    int
+	handlers []func(context.Context, []byte) error
+	mu       sync.Mutex
+	readOnce sync.Once
+}
+
+type PublicClientOption func(*PublicClient)
+
+/*
+WithWebSocketURL overrides the default Kraken v2 websocket endpoint.
+*/
+func WithWebSocketURL(url string) PublicClientOption {
+	return func(publicClient *PublicClient) {
+		publicClient.wsURL = url
+	}
+}
+
+/*
+NewPublicClient creates a public websocket client bound to parent context cancellation.
+*/
+func NewPublicClient(parent context.Context, opts ...PublicClientOption) *PublicClient {
+	ctx, cancel := context.WithCancel(parent)
+
+	publicClient := &PublicClient{
+		ctx:    ctx,
+		cancel: cancel,
+		wsURL:  core.KRAKEN_WS_URL,
+	}
+
+	for _, opt := range opts {
+		opt(publicClient)
+	}
+
+	return publicClient
+}
+
+/*
+Connect dials the Kraken v2 websocket endpoint.
+*/
+func (publicClient *PublicClient) Connect() error {
+	if publicClient.conn != nil {
+		return fmt.Errorf("public websocket already connected")
+	}
+
+	conn, _, err := websocket.DefaultDialer.DialContext(publicClient.ctx, publicClient.wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("dial public websocket: %w", err)
+	}
+
+	publicClient.conn = conn
+
+	return nil
+}
+
+/*
+Close cancels the session context and closes the underlying socket.
+*/
+func (publicClient *PublicClient) Close() error {
+	publicClient.cancel()
+
+	if publicClient.conn == nil {
+		return nil
+	}
+
+	err := publicClient.conn.Close()
+	publicClient.conn = nil
+
+	return err
+}
+
+/*
+Send marshals and writes a JSON websocket text frame.
+*/
+func (publicClient *PublicClient) Send(message any) error {
+	if publicClient.conn == nil {
+		return fmt.Errorf("public websocket is not connected")
+	}
+
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal websocket message: %w", err)
+	}
+
+	return publicClient.conn.WriteMessage(websocket.TextMessage, payload)
+}
+
+/*
+Read returns the next websocket text frame payload.
+*/
+func (publicClient *PublicClient) Read() ([]byte, error) {
+	if publicClient.conn == nil {
+		return nil, fmt.Errorf("public websocket is not connected")
+	}
+
+	_, payload, err := publicClient.conn.ReadMessage()
+	if err != nil {
+		return nil, fmt.Errorf("read public websocket: %w", err)
+	}
+
+	return payload, nil
+}
+
+/*
+Ping sends a Kraken v2 heartbeat request.
+*/
+func (publicClient *PublicClient) Ping() error {
+	return publicClient.Send(map[string]any{"method": "ping"})
+}
+
+/*
+NextReqID returns the next monotonic subscribe request id.
+*/
+func (publicClient *PublicClient) NextReqID() int {
+	publicClient.mu.Lock()
+	defer publicClient.mu.Unlock()
+
+	publicClient.reqID++
+
+	return publicClient.reqID
+}
+
+/*
+Subscribe sends a subscribe or unsubscribe frame unchanged.
+*/
+func (publicClient *PublicClient) Subscribe(sub *kraken.Subscription) error {
+	if sub == nil {
+		return fmt.Errorf("subscription is nil")
+	}
+
+	return publicClient.Send(sub)
+}
+
+/*
+SubscribeTo sends a subscribe frame with a fresh request id.
+*/
+func (publicClient *PublicClient) SubscribeTo(
+	params any,
+	opts ...kraken.SubscriptionOption,
+) error {
+	opts = append(opts, kraken.WithReqID(publicClient.NextReqID()))
+
+	return publicClient.Subscribe(kraken.NewSubscribe(params, opts...))
+}
+
+/*
+UnsubscribeFrom sends an unsubscribe frame with a fresh request id.
+*/
+func (publicClient *PublicClient) UnsubscribeFrom(
+	params any,
+	opts ...kraken.SubscriptionOption,
+) error {
+	opts = append(opts, kraken.WithReqID(publicClient.NextReqID()))
+
+	return publicClient.Subscribe(kraken.NewUnsubscribe(params, opts...))
+}
+
+/*
+OnFrame registers a frame handler and starts the shared read loop once.
+*/
+func (publicClient *PublicClient) OnFrame(handler func(context.Context, []byte) error) {
+	publicClient.mu.Lock()
+	publicClient.handlers = append(publicClient.handlers, handler)
+	publicClient.mu.Unlock()
+
+	publicClient.readOnce.Do(func() {
+		go publicClient.dispatchLoop()
+	})
+}
+
+func (publicClient *PublicClient) dispatchLoop() {
+	for {
+		if err := publicClient.ctx.Err(); err != nil {
+			return
+		}
+
+		payload, err := publicClient.Read()
+		if err != nil {
+			if publicClient.ctx.Err() != nil {
+				return
+			}
+
+			return
+		}
+
+		publicClient.mu.Lock()
+		handlers := publicClient.handlers
+		publicClient.mu.Unlock()
+
+		for _, handler := range handlers {
+			if err := handler(publicClient.ctx, payload); err != nil {
+				return
+			}
+		}
+	}
+}
+
+/*
+StartReader runs a blocking read loop until context cancellation or handler error.
+*/
+func (publicClient *PublicClient) StartReader(
+	handler func(context.Context, []byte) error,
+) error {
+	if publicClient.conn == nil {
+		return fmt.Errorf("public websocket is not connected")
+	}
+
+	for {
+		if err := publicClient.ctx.Err(); err != nil {
+			return nil
+		}
+
+		payload, err := publicClient.Read()
+		if err != nil {
+			if publicClient.ctx.Err() != nil {
+				return nil
+			}
+
+			return err
+		}
+
+		if err := handler(publicClient.ctx, payload); err != nil {
+			return err
+		}
+	}
+}
