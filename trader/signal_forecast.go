@@ -77,11 +77,11 @@ func spreadBPSFromQuote(last, bid, ask float64) float64 {
 
 func forecastRunway(measurement engine.Measurement) time.Duration {
 	switch measurement.Regime {
-	case "flow":
+	case "flow", "depth":
 		return config.System.FlowHoldBeforeExit
 	case "pump", "momentum", "dump":
 		return config.System.ScalpHoldBeforeExit
-	case "causal":
+	case "basis", "cross", "sentiment", "causal":
 		return config.System.MinHoldBeforeRotate
 	default:
 		return config.System.MinHoldBeforeRotate

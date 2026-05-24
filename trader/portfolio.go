@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -34,20 +35,23 @@ type ExecutionDecision struct {
 Position tracks one open paper trade.
 */
 type Position struct {
-	Symbol      string
-	Source      string
-	Regime      string
-	Reason      string
-	Score       float64
-	Side        int
-	EntryPrice  float64
-	FillPrice   float64
-	StopPrice   float64
-	PeakPrice   float64
-	NotionalEUR float64
-	EntryFeeEUR float64
-	TrailPct    float64
-	OpenedAt    time.Time
+	Symbol       string
+	Source       string
+	Regime       string
+	Reason       string
+	Score        float64
+	Side         int
+	EntryPrice   float64
+	FillPrice    float64
+	StopPrice    float64
+	PeakPrice    float64
+	NotionalEUR  float64
+	EntryFeeEUR  float64
+	TrailPct     float64
+	BaseQty      float64
+	OrderID      string
+	StopOrderID  string
+	OpenedAt     time.Time
 }
 
 /*
@@ -64,6 +68,7 @@ Portfolio owns open positions and paper wallet debits for the trader loop.
 type Portfolio struct {
 	mu          sync.Mutex
 	wallet      *Wallet
+	broker      ExecutionBroker
 	positions   map[string]*Position
 	closedPnL   float64
 	tradeCount  int
@@ -80,9 +85,26 @@ NewPortfolio creates an empty paper portfolio bound to one wallet.
 func NewPortfolio(wallet *Wallet) *Portfolio {
 	return &Portfolio{
 		wallet:    wallet,
+		broker:    NewPaperBroker(),
 		positions: make(map[string]*Position),
 		trailRisk: newTrailRiskFilter(),
 	}
+}
+
+/*
+BindBroker replaces the default paper broker with a live Kraken broker.
+*/
+func (portfolio *Portfolio) BindBroker(broker ExecutionBroker) {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	if broker == nil {
+		portfolio.broker = NewPaperBroker()
+
+		return
+	}
+
+	portfolio.broker = broker
 }
 
 /*
@@ -174,22 +196,32 @@ func (portfolio *Portfolio) TryEnter(
 	}
 
 	bidLevels, askLevels := bookDepthFor(quotes, decision.Symbol)
-	fillSide := "buy"
+	stop := initialStop(last, trailPct, side)
 
-	if side == positionShort {
-		fillSide = "sell"
-	}
-
-	fill := config.System.SlippageFill(
-		last, bid, ask, fillSide, config.System.SlippageBPS,
-		notional, bidLevels, askLevels,
-	)
-
-	if fill <= 0 {
+	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
+		config.System.MaxLossPerTradeEUR > 0 {
 		return nil, false
 	}
 
-	fee := config.System.TakerFee(notional, portfolio.wallet.FeePct)
+	brokerFill, err := portfolio.broker.Enter(context.Background(), BrokerEnterRequest{
+		Symbol:      decision.Symbol,
+		Side:        side,
+		NotionalEUR: notional,
+		Last:        last,
+		Bid:         bid,
+		Ask:         ask,
+		StopPrice:   stop,
+		FeePct:      portfolio.wallet.FeePct,
+		BidLevels:   bidLevels,
+		AskLevels:   askLevels,
+	})
+
+	if err != nil {
+		return nil, false
+	}
+
+	fill := brokerFill.FillPrice
+	fee := brokerFill.FeeEUR
 
 	if side == positionLong {
 		cost := notional + fee
@@ -211,16 +243,6 @@ func (portfolio *Portfolio) TryEnter(
 		portfolio.wallet.Balance += proceeds
 	}
 
-	trailPct := clampTrailPct(trailPctFromQuoteRisk(
-		last, bid, ask, decision.Symbol, portfolio.riskReader, portfolio.trailRisk,
-	))
-	stop := initialStop(fill, trailPct, side)
-
-	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
-		config.System.MaxLossPerTradeEUR > 0 {
-		return nil, false
-	}
-
 	position := &Position{
 		Symbol:      decision.Symbol,
 		Source:      decision.Source,
@@ -235,6 +257,9 @@ func (portfolio *Portfolio) TryEnter(
 		NotionalEUR: notional,
 		EntryFeeEUR: fee,
 		TrailPct:    trailPct,
+		BaseQty:     brokerFill.BaseQty,
+		OrderID:     brokerFill.OrderID,
+		StopOrderID: brokerFill.StopOrderID,
 		OpenedAt:    now,
 	}
 

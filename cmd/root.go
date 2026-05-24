@@ -9,8 +9,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/basis"
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/depthflow"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/exhaust"
 	"github.com/theapemachine/symm/fluid"
@@ -21,9 +23,11 @@ import (
 	krmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
+	"github.com/theapemachine/symm/leadlag"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/replay"
+	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -163,6 +167,7 @@ var rootCmd = &cobra.Command{
 			return book.New(cmd.Context(), publicClient, symbols, func(
 				symbol string,
 				spreadBPS, imbalance, density, depthSlope float64,
+				bids, asks []krmarket.BookLevel,
 				updatedAt time.Time,
 			) {
 				bookGroup.Send(&qpool.QValue[any]{
@@ -173,6 +178,8 @@ var rootCmd = &cobra.Command{
 						Imbalance:  imbalance,
 						Density:    density,
 						DepthSlope: depthSlope,
+						BidLevels:  bids,
+						AskLevels:  asks,
 						UpdatedAt:  updatedAt,
 					},
 				})
@@ -308,6 +315,61 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
+		depthflowSignal := errnie.Does(func() (*depthflow.DepthFlow, error) {
+			return depthflow.NewDepthFlow(
+				cmd.Context(),
+				pool,
+				marketRelay,
+				pairIndex,
+				symbolWatch,
+			)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
+
+		leadlagSignal := errnie.Does(func() (*leadlag.LeadLag, error) {
+			return leadlag.NewLeadLag(
+				cmd.Context(),
+				pool,
+				marketRelay,
+				pairIndex,
+				symbols,
+				symbolWatch,
+			)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
+
+		basisSignal := errnie.Does(func() (*basis.Basis, error) {
+			return basis.NewBasis(
+				cmd.Context(),
+				pool,
+				marketRelay,
+				pairIndex,
+				symbols,
+				symbolWatch,
+			)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
+
+		sentimentSignal := errnie.Does(func() (*sentiment.Sentiment, error) {
+			return sentiment.NewSentiment(
+				cmd.Context(),
+				pool,
+				marketRelay,
+				pairIndex,
+				symbols,
+				symbolWatch,
+			)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
+
 		var telemetryHub *ui.Hub
 
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
@@ -332,6 +394,10 @@ var rootCmd = &cobra.Command{
 					hawkesSignal,
 					fluidSignal,
 					causalSignal,
+					depthflowSignal,
+					leadlagSignal,
+					basisSignal,
+					sentimentSignal,
 				)
 			}).Or(func(err error) {
 				errnie.Error(err)

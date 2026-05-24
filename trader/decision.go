@@ -195,7 +195,8 @@ func (engine *DecisionEngine) buildRows(
 	scores := make([]float64, 0, len(candidates.bySymbol))
 
 	for symbol, sources := range candidates.bySymbol {
-		combined := 0.0
+		perspectives := scorePerspectives(sources, ensemble)
+		combined, activePerspectives := combinePerspectives(perspectives)
 		weightedReturn := 0.0
 		returnWeight := 0.0
 		support := 0
@@ -206,9 +207,19 @@ func (engine *DecisionEngine) buildRows(
 		runway := time.Duration(0)
 
 		for _, candidate := range sources {
-			effective := ensembleWeight(ensemble, candidate)
+			regime := RegimeWeight(ensemble.Regime, candidate.Source)
+
+			if regime <= 0 || !regimeAllowsSource(ensemble.Regime, candidate.Source) {
+				continue
+			}
+
+			effective := ensembleWeight(ensemble, candidate) * regimeGateScale(ensemble.Regime, candidate.Source)
+
+			if effective <= 0 {
+				continue
+			}
+
 			support++
-			combined += effective
 
 			if effective > 0 && candidate.ExpectedReturn > 0 {
 				weightedReturn += effective * candidate.ExpectedReturn
@@ -256,7 +267,7 @@ func (engine *DecisionEngine) buildRows(
 			Reason:         topReason,
 			Side:           directionSide(topDirection),
 			Allow:          false,
-			Why:            "below_line",
+			Why:            perspectiveWhy(activePerspectives, support),
 		})
 	}
 
@@ -324,6 +335,16 @@ func (engine *DecisionEngine) allowEvaluation(
 
 	if evaluation.CombinedScore <= 0 {
 		return false, "below_line"
+	}
+
+	minPerspectives := config.System.MinActivePerspectives
+
+	if minPerspectives <= 0 {
+		minPerspectives = 1
+	}
+
+	if evaluation.Support < minPerspectives {
+		return false, "thin_support"
 	}
 
 	requiredEdge := requiredEdgeReturn(quotes, evaluation.Symbol)
@@ -424,4 +445,16 @@ func directionSide(direction int) string {
 	}
 
 	return "long"
+}
+
+func perspectiveWhy(activePerspectives, support int) string {
+	if activePerspectives <= 0 {
+		return "no_perspective"
+	}
+
+	if support <= 0 {
+		return "below_line"
+	}
+
+	return "below_line"
 }

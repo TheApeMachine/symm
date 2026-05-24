@@ -14,6 +14,8 @@ symbolHistory holds rolling microstructure samples for exit scoring.
 */
 type symbolHistory struct {
 	bidDepths  []float64
+	askDepths  []float64
+	densities  []float64
 	spreads    []float64
 	pressures  []float64
 	imbalances []float64
@@ -37,7 +39,7 @@ func newHistoryStore() *historyStore {
 
 func (store *historyStore) observe(
 	symbol string,
-	bidDepth, spreadBPS, buyPressure, imbalance, last float64,
+	bidDepth, askDepth, density, spreadBPS, buyPressure, imbalance, last float64,
 ) {
 	if symbol == "" {
 		return
@@ -50,6 +52,14 @@ func (store *historyStore) observe(
 
 	if bidDepth > 0 {
 		history.bidDepths = append(history.bidDepths, bidDepth)
+	}
+
+	if askDepth > 0 {
+		history.askDepths = append(history.askDepths, askDepth)
+	}
+
+	if density > 0 {
+		history.densities = append(history.densities, density)
 	}
 
 	if spreadBPS > 0 {
@@ -100,6 +110,8 @@ func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 
 func (history *symbolHistory) trim() {
 	history.bidDepths = trimTail(history.bidDepths, exitHistoryCap)
+	history.askDepths = trimTail(history.askDepths, exitHistoryCap)
+	history.densities = trimTail(history.densities, exitHistoryCap)
 	history.spreads = trimTail(history.spreads, exitHistoryCap)
 	history.pressures = trimTail(history.pressures, exitHistoryCap)
 	history.imbalances = trimTail(history.imbalances, exitHistoryCap)

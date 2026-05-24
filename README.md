@@ -1,6 +1,6 @@
 # SYMM — Shake Your Money Maker
 
-Kraken WebSocket v2 microstructure engine with four parallel signals (`pumpdump`, `hawkes`, `fluid`, `causal`), paper trading, JSONL replay, and a SciChart telemetry UI.
+Kraken WebSocket v2 microstructure engine with eight entry signals across four market perspectives (`pumpdump`, `hawkes`, `fluid`, `causal`, `depthflow`, `leadlag`, `basis`, `sentiment`), an `exhaust` exit advisor, paper trading, JSONL replay, and a SciChart telemetry UI.
 
 ## Build and test
 
@@ -48,24 +48,16 @@ The report includes per-signal/source calibration, hit rate, error percentiles, 
 
 ## How the trading algorithm works
 
-SYMM is a closed-loop system: four parallel entry signals read Kraken microstructure, an **exhaust** exit advisor watches open positions, and the trader records **predictions** with a hold horizon. When time catches up it computes **error**, feeds it back into signal parameters, and updates per-source **ensemble trust** weights.
+SYMM is a closed-loop system: eight entry signals grouped into four **perspectives** (microstructure, flow, cross-asset, sentiment), an **exhaust** exit advisor for open positions, and a trader that **selects angles** rather than summing every source equally.
 
 ```
-  pumpdump ──measurement──┐
-  hawkes   ──measurement──┤
-  fluid    ──measurement──├──► TRADER ──► paper portfolio ◄── exhaust (exit urgency)
-  causal   ──measurement──┘       │
-                                  │ prediction matures
-                                  ▼
-                            error feedback
-                                  │
-          ┌───────────────────────┼───────────────────────┐
-          ▼                       ▼                       ▼
-      pumpdump                 hawkes                   …
-   (precursor scale)      (excitation scale)     (per-source calibrators)
-                                  │
-                                  ▼
-                         SourceTrustStore (ensemble weights)
+  pumpdump / hawkes / depthflow ── microstructure ──┐
+  fluid / depthflow ──────────── flow ──────────────┤
+  leadlag / basis ────────────── cross-asset ───────├──► TRADER ──► portfolio ◄── exhaust
+  sentiment / causal ─────────── sentiment ─────────┘         │
+                                                             │ settled error
+                                                             ▼
+                                                   SourceTrustStore + calibrators
 ```
 
 ### Rescore tick
@@ -73,7 +65,7 @@ SYMM is a closed-loop system: four parallel entry signals read Kraken microstruc
 `trader.Crypto.Run()` is the single scheduler. Each **rescore pulse** runs in order on the orchestrator thread:
 
 1. **Drain tickables** — flush pending book/trade/ticker updates into per-symbol track stores (`engine.WithTickDrain` ensures `Measure` never runs while stores are stale).
-2. **Measure signals** — call `Signal.Measure` on `pumpdump`, `hawkes`, `fluid`, and `causal` sequentially; each yields zero or more `engine.Measurement` values.
+2. **Measure signals** — call all eight entry signals sequentially; each yields zero or more `engine.Measurement` values.
 3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed.
 4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback` (also updates `SourceTrustStore`).
 5. **Execute** — mark open positions (trailing stops + **exhaust** early exit), merge live score candidates, classify cross-section **regime**, build the weighted ensemble decision, and enter when gates pass.
@@ -162,7 +154,7 @@ Unanchored or zero predicted-return feedback is dropped — no silent defaults.
 Forecast feedback and trade entry are separate paths:
 
 - **Candidates** — each measurement also becomes a `SignalCandidate` (symbol, source, confidence, trader expected return, runway, direction).
-- **Decision engine** — `ClassifyMarketRegime` (trending / chopping / dead) down-weights signals outside their specialty; `DecisionEngine.Build` combines candidates with regime × trust weights, MAD entry line, and post-cost edge gate.
+- **Decision engine** — `ClassifyMarketRegime` gates specialists; `scorePerspectives` + `combinePerspectives` blend the top 1–2 angles; `SourceTrustStore` weights sources from settled accuracy; MAD entry line + post-cost edge gate.
 - **Portfolio** — `Portfolio.TryEnter` opens long or short paper positions with depth-weighted VWAP fills (`config.SlippageFill`), regime-aware minimum hold, trailing stops, and **`exhaust` early exit** when book-thinning / pressure-fade urgency exceeds `ExitUrgencyThreshold`.
 
 Warm-up: the first `MinWarmPulses` rescans collect measurements and predictions but suppress entries until gauges and calibrators have context.
@@ -171,16 +163,18 @@ Warm-up: the first `MinWarmPulses` rescans collect measurements and predictions 
 
 All four share the same contract (`engine.Signal`) and sharded per-symbol track stores (`engine.ShardedStore` + `SymbolLock`), fed by Kraken v2 book, trade, and ticker observers via qpool broadcast groups.
 
-| Engine       | Detects                                                        | Emits                                            |
-|--------------|----------------------------------------------------------------|--------------------------------------------------|
-| **pumpdump** | Overlapping 5-minute volume windows vs cross-section median    | `Pump` when precursor volume spikes align        |
-| **hawkes**   | Bivariate self-exciting trade clustering (MLE + grid fallback) | `Momentum` (buy cluster) / `Dump` (sell cluster) |
-| **fluid**    | Burgers shock with book-depth viscosity                        | `Flow` on spread/imbalance shocks                |
-| **causal**   | Gradient-boosted stumps + kernel backdoor regression           | `Causal` when intervention uplift exceeds fence  |
+| Engine       | Perspective    | Detects                                                        |
+|--------------|----------------|----------------------------------------------------------------|
+| **pumpdump** | microstructure | Overlapping 5-minute volume windows vs cross-section median    |
+| **hawkes**   | microstructure | Bivariate self-exciting trade clustering                       |
+| **depthflow**| microstructure | Multi-level book imbalance at depth                            |
+| **fluid**    | flow           | Burgers shock with book-depth viscosity                        |
+| **leadlag**  | cross-asset    | Volume-leader move vs laggard catch-up                         |
+| **basis**    | cross-asset    | 24h relative strength vs cross-section (spot premium proxy)    |
+| **sentiment**| sentiment      | Cross-section pressure + momentum breadth z-scores             |
+| **causal**   | sentiment      | Gradient-boosted stumps + kernel backdoor regression           |
 
-**exhaust** (exit advisor, not an entry signal) tracks open symbols for bid-depth thinning, spread widening, buy-pressure fade, and imbalance reversal; `Portfolio.Mark` closes early when urgency ≥ threshold.
-
-Each entry engine owns its feature extraction, confidence normalization (`GaugeScan` mean across the symbol set), and `ApplyPredictionFeedback` hook that maps error into its internal parameters.
+**exhaust** (exit advisor) tracks bid/ask depth thinning, spread widening, density collapse, pressure fade, and imbalance reversal on open symbols; closes early when urgency ≥ `ExitUrgencyThreshold`.
 
 ### Data path (live)
 

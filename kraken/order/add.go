@@ -1,80 +1,96 @@
 package order
 
 /*
-OrderType is the type of order to add to Kraken.
-
-The execution model of the order.
-
-market              : The full order quantity executes immediately at the best available price in the order book.
-limit               : The full order quantity is placed immediately with a limit price restriction to only trade at this price or better.
-stop-loss           : A market order is triggered when the reference price reaches the stop price (from an unfavourable direction).
-stop-loss-limit     : A limit order is triggered when the reference price reaches the stop price (from an unfavourable direction).
-take-profit         : A market order is triggered when the reference price reaches the stop price (from an favourable direction).
-take-profit-limit   : A limit order is triggered when the reference price reaches the stop price (from an favourable direction).
-trailing-stop       : A market order is triggered when the market reverts a specified distance from the peak price.
-trailing-stop-limit : A limit order is triggered when the market reverts a specified distance from the peak price.
-iceberg             : Hides the full order size by only showing your chosen display size in the book at your limit price.
+Request is a Kraken WebSocket v2 trading request frame.
 */
-type OrderType string
-
-const (
-	Limit             OrderType = "limit"
-	Market            OrderType = "market"
-	Iceberg           OrderType = "iceberg"
-	StopLoss          OrderType = "stop-loss"
-	StopLossLimit     OrderType = "stop-loss-limit"
-	TakeProfit        OrderType = "take-profit"
-	TakeProfitLimit   OrderType = "take-profit-limit"
-	TrailingStop      OrderType = "trailing-stop"
-	TrailingStopLimit OrderType = "trailing-stop-limit"
-)
-
-type Side string
-
-const (
-	Buy  Side = "buy"
-	Sell Side = "sell"
-)
+type Request struct {
+	Method string    `json:"method"`
+	Params AddParams `json:"params"`
+	ReqID  int       `json:"req_id,omitempty"`
+}
 
 /*
-AddOrder is the struct for adding an order to Kraken.
+AddParams holds add_order fields for spot trading.
 */
-type AddOrder struct {
-	Method string      `json:"method"`
-	Params OrderParams `json:"params"`
+type AddParams struct {
+	OrderType    OrderType         `json:"order_type"`
+	Side         Side              `json:"side"`
+	Symbol       string            `json:"symbol"`
+	OrderQty     float64           `json:"order_qty,omitempty"`
+	CashOrderQty float64           `json:"cash_order_qty,omitempty"`
+	LimitPrice   float64           `json:"limit_price,omitempty"`
+	Token        string            `json:"token"`
+	Conditional  *ConditionalStop  `json:"conditional,omitempty"`
 }
 
-type OrderParams struct {
-	OrderType OrderType     `json:"order_type"`
-	Side      Side          `json:"side"`
-	OrderQty  int           `json:"order_qty"`
-	Symbol    string        `json:"symbol"`
-	Triggers  OrderTriggers `json:"triggers"`
-	Token     string        `json:"token"`
+/*
+ConditionalStop attaches a secondary stop-loss-limit on primary fill (OTO).
+*/
+type ConditionalStop struct {
+	OrderType    OrderType `json:"order_type"`
+	TriggerPrice float64   `json:"trigger_price"`
+	LimitPrice   float64   `json:"limit_price,omitempty"`
 }
 
-type OrderTriggers struct {
-	Reference string  `json:"reference"`
-	Price     float64 `json:"price"`
-	PriceType string  `json:"price_type"`
-}
-
-func NewAddOrder(
-	orderType OrderType,
-	side Side,
+/*
+MarketBuyCash builds a quote-notional market buy for EUR-denominated pairs.
+*/
+func MarketBuyCash(
 	symbol string,
-	orderQty int,
-	triggers OrderTriggers,
+	notionalEUR float64,
+	stopPrice float64,
+	limitBelowStop float64,
 	token string,
-) *AddOrder {
-	return &AddOrder{
-		Method: "AddOrder",
-		Params: OrderParams{
-			OrderType: orderType,
-			Side:      side,
-			OrderQty:  orderQty,
+) Request {
+	params := AddParams{
+		OrderType:    Market,
+		Side:         Buy,
+		Symbol:       symbol,
+		CashOrderQty: notionalEUR,
+		Token:        token,
+	}
+
+	if stopPrice > 0 {
+		params.Conditional = &ConditionalStop{
+			OrderType:    StopLossLimit,
+			TriggerPrice: stopPrice,
+			LimitPrice:   limitBelowStop,
+		}
+	}
+
+	return Request{
+		Method: MethodAddOrder,
+		Params: params,
+	}
+}
+
+/*
+MarketSellBase builds a base-quantity market sell to close a long.
+*/
+func MarketSellBase(symbol string, baseQty float64, token string) Request {
+	return Request{
+		Method: MethodAddOrder,
+		Params: AddParams{
+			OrderType: Market,
+			Side:      Sell,
 			Symbol:    symbol,
-			Triggers:  triggers,
+			OrderQty:  baseQty,
+			Token:     token,
+		},
+	}
+}
+
+/*
+MarketBuyBase builds a base-quantity market buy to close a short.
+*/
+func MarketBuyBase(symbol string, baseQty float64, token string) Request {
+	return Request{
+		Method: MethodAddOrder,
+		Params: AddParams{
+			OrderType: Market,
+			Side:      Buy,
+			Symbol:    symbol,
+			OrderQty:  baseQty,
 			Token:     token,
 		},
 	}

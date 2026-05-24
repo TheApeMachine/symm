@@ -53,6 +53,9 @@ type symbolMarketState struct {
 	densityOK    bool
 	depthSlope   float64
 	depthSlopeOK bool
+	bidLevels    []market.BookLevel
+	askLevels    []market.BookLevel
+	depthOK      bool
 	ticks        []market.TradeTick
 	ticksReady   bool
 }
@@ -247,6 +250,9 @@ func (relay *MarketRelay) applyBook(value *qpool.QValue[any]) {
 	state.densityOK = true
 	state.depthSlope = update.DepthSlope
 	state.depthSlopeOK = true
+	state.bidLevels = append([]market.BookLevel(nil), update.BidLevels...)
+	state.askLevels = append([]market.BookLevel(nil), update.AskLevels...)
+	state.depthOK = len(update.BidLevels) > 0 && len(update.AskLevels) > 0
 	state.bookAt = update.UpdatedAt
 }
 
@@ -286,6 +292,9 @@ func snapshotFromState(state *symbolMarketState) Snapshot {
 		ChangeOK:     state.changeOK,
 		DepthSlope:   state.depthSlope,
 		DepthSlopeOK: state.depthSlopeOK,
+		BidLevels:    append([]market.BookLevel(nil), state.bidLevels...),
+		AskLevels:    append([]market.BookLevel(nil), state.askLevels...),
+		DepthOK:      state.depthOK,
 	}
 }
 

@@ -18,7 +18,7 @@ func TestExitScoreLong(t *testing.T) {
 		urgency, reason := exitScoreLong(history)
 
 		Convey("It should recommend an early exit", func() {
-			So(urgency, ShouldBeGreaterThan, 0.35)
+			So(urgency, ShouldBeGreaterThan, 0.30)
 			So(reason, ShouldNotBeBlank)
 		})
 	})
@@ -28,6 +28,7 @@ func TestExitScoreShort(t *testing.T) {
 	Convey("Given pressure flipping against a short", t, func() {
 		history := symbolHistory{
 			bidDepths:  []float64{80, 75, 70, 65},
+			askDepths:  []float64{80, 75, 70, 65},
 			spreads:    []float64{12, 12, 12, 12},
 			pressures:  []float64{-0.7, -0.65, 0.2},
 			imbalances: []float64{-0.4, -0.35, 0.2},

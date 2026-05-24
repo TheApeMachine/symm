@@ -104,6 +104,8 @@ func (exhaust *Exhaust) Tick() bool {
 		exhaust.history.observe(
 			symbol,
 			bidDepth(snapshot.BidLevels),
+			askDepth(snapshot.AskLevels),
+			snapshot.Density,
 			snapshot.SpreadBPS,
 			snapshot.BuyPressure,
 			snapshot.Imbalance,
@@ -154,4 +156,8 @@ func bidDepth(levels []market.BookLevel) float64 {
 	}
 
 	return total
+}
+
+func askDepth(levels []market.BookLevel) float64 {
+	return bidDepth(levels)
 }

@@ -29,6 +29,7 @@ type depthState struct {
 type bookPublish func(
 	symbol string,
 	spreadBPS, imbalance, density, depthSlope float64,
+	bids, asks []market.BookLevel,
 	updatedAt time.Time,
 )
 
@@ -271,7 +272,22 @@ func (book *Book) applyLevelsDelta(delta market.BookLevelsDelta) {
 	book.mu.Unlock()
 
 	if publish != nil {
-		publish(delta.Symbol, spread, imbalance, density, depthSlope, now)
+		depthCap := config.System.BookDepthLevels
+
+		if depthCap <= 0 {
+			depthCap = defaultBookDepth
+		}
+
+		publish(
+			delta.Symbol,
+			spread,
+			imbalance,
+			density,
+			depthSlope,
+			copyLevels(state.bids.levels, depthCap),
+			copyLevels(state.asks.levels, depthCap),
+			now,
+		)
 	}
 
 	if listener != nil {

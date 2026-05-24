@@ -22,6 +22,10 @@ const (
 	Momentum
 	Flow
 	Causal
+	DepthFlow
+	LeadLag
+	Basis
+	Sentiment
 )
 
 /*

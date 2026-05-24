@@ -41,6 +41,8 @@ type Config struct {
 	MinEdgeReturn              float64
 	ForecastSpreadMultiple     float64
 	ExitUrgencyThreshold       float64
+	MaxActivePerspectives      int
+	MinActivePerspectives      int
 	SnapshotFreshnessTTL       time.Duration
 	MinCalibrationSamples      int
 	MinConfidenceHistory       int
@@ -110,6 +112,8 @@ func NewConfig() *Config {
 		MinEdgeReturn:              0.0005,
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,
+		MaxActivePerspectives:      2,
+		MinActivePerspectives:      1,
 		SnapshotFreshnessTTL:       200 * time.Millisecond,
 		MinCalibrationSamples:      12,
 		MinConfidenceHistory:       4,

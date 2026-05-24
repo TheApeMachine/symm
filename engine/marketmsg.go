@@ -37,5 +37,7 @@ type BookUpdate struct {
 	Imbalance  float64
 	Density    float64
 	DepthSlope float64
+	BidLevels  []market.BookLevel
+	AskLevels  []market.BookLevel
 	UpdatedAt  time.Time
 }
