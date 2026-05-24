@@ -26,6 +26,7 @@ type Fluid struct {
 	fieldPublisher FieldPublisher
 	displayParams  *DisplayParams
 	gridBuilder    *GridBuilder
+	pool           *qpool.Q
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -41,7 +42,7 @@ NewFluid wires live Kraken websocket observers into the engine signal.
 */
 func NewFluid(
 	_ context.Context,
-	_ *qpool.Q,
+	pool *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -56,6 +57,7 @@ func NewFluid(
 		symbols:       append([]string(nil), symbols...),
 		track:         NewTrackStore(),
 		displayParams: NewDisplayParams(),
+		pool:          pool,
 	}
 
 	fluid.gridBuilder = NewGridBuilder(fluid.displayParams)
@@ -217,6 +219,7 @@ func (fluid *Fluid) Measure(
 				Watch:   fluid.watch,
 				Pairs:   fluid.pairs,
 				Symbols: fluid.symbols,
+				Pool:    fluid.pool,
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {

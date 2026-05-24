@@ -26,6 +26,7 @@ type Hawkes struct {
 	symbols []string
 	trades  *trades.Trades
 	track   *TrackStore
+	pool    *qpool.Q
 }
 
 var _ engine.Signal = (*Hawkes)(nil)
@@ -41,7 +42,7 @@ NewHawkes wires live Kraken websocket observers into the engine signal.
 */
 func NewHawkes(
 	_ context.Context,
-	_ *qpool.Q,
+	pool *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -56,6 +57,7 @@ func NewHawkes(
 		symbols: append([]string(nil), symbols...),
 		trades:  tradesObserver,
 		track:   NewTrackStore(),
+		pool:    pool,
 	}
 
 	return hawkes, errnie.Require(map[string]any{
@@ -96,6 +98,7 @@ func (hawkes *Hawkes) Measure(
 				Watch:   hawkes.watch,
 				Pairs:   hawkes.pairs,
 				Symbols: hawkes.symbols,
+				Pool:    hawkes.pool,
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
@@ -151,15 +154,15 @@ func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
 }
 
 func (hawkes *Hawkes) refreshTracks(ctx context.Context) {
-	for _, symbol := range hawkes.symbols {
-		engine.DrainTicks(ctx)
-
+	_ = engine.RunSymbolJobs(ctx, hawkes.pool, hawkes.symbols, func(symbol string) error {
 		snapshot := hawkes.ingest.Read(symbol)
 
 		if snapshot.LastOK && snapshot.VolumeOK {
 			hawkes.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
 		}
-	}
+
+		return nil
+	})
 }
 
 func (hawkes *Hawkes) evaluate(

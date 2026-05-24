@@ -24,6 +24,7 @@ type Causal struct {
 	pairs   map[string]asset.Pair
 	symbols []string
 	track   *TrackStore
+	pool    *qpool.Q
 }
 
 var _ engine.Signal = (*Causal)(nil)
@@ -60,7 +61,7 @@ NewCausal wires live Kraken websocket observers into the engine signal.
 */
 func NewCausal(
 	_ context.Context,
-	_ *qpool.Q,
+	pool *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -74,6 +75,7 @@ func NewCausal(
 		pairs:   pairs,
 		symbols: append([]string(nil), symbols...),
 		track:   NewTrackStore(),
+		pool:    pool,
 	}
 
 	return causal, errnie.Require(map[string]any{
@@ -129,6 +131,7 @@ func (causal *Causal) Measure(
 				Watch:   causal.watch,
 				Pairs:   causal.pairs,
 				Symbols: causal.symbols,
+				Pool:    causal.pool,
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {

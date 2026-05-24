@@ -230,6 +230,7 @@ var rootCmd = &cobra.Command{
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
 				cmd.Context(),
+				pool,
 				tickGroup,
 				tradeGroup,
 				bookGroup,

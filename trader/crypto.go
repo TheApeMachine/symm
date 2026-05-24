@@ -226,7 +226,8 @@ type signalTickResult struct {
 
 /*
 processSignals measures every signal once per rescore tick on the orchestrator thread.
-Track stores are updated only during drainTickables; Measure must not run in pool workers.
+Per-symbol evaluate steps run on the injected qpool while the orchestrator drains
+tickables between worker completions.
 */
 func (crypto *Crypto) measureContext() context.Context {
 	return engine.WithTickDrain(crypto.ctx, crypto.drainTickables)

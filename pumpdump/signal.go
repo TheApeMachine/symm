@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	kbook "github.com/theapemachine/symm/kraken/book"
@@ -28,6 +27,7 @@ type PumpDump struct {
 	pairs  map[string]asset.Pair
 	track  *TrackStore
 	filter Filter
+	pool   *qpool.Q
 }
 
 var _ engine.Signal = (*PumpDump)(nil)
@@ -41,6 +41,7 @@ NewPumpDump wires live Kraken websocket observers into the engine signal.
 */
 func NewPumpDump(
 	ctx context.Context,
+	pool *qpool.Q,
 	tick, trade, book *qpool.BroadcastGroup,
 	bookObserver *kbook.Book,
 	tradesObserver *trades.Trades,
@@ -67,6 +68,7 @@ func NewPumpDump(
 		pairs:  pairs,
 		track:  track,
 		filter: &PrecursorFilter{},
+		pool:   pool,
 	}
 
 	_ = symbols
@@ -121,51 +123,31 @@ func (pumpdump *PumpDump) Measure(
 		pumpdump.track.ResetLiveScores()
 		pumpdump.track.RollBuckets(now)
 
-		symbols := pumpdump.watch.ScanSet(config.System.MaxScanSymbols)
+		for measurement := range engine.MeasureSymbols(
+			ctx,
+			engine.SymbolScanner{
+				Source: pumpdumpSource,
+				Ingest: pumpdump.ingest,
+				Watch:  pumpdump.watch,
+				Pairs:  pumpdump.pairs,
+				Pool:   pumpdump.pool,
+			},
+			now,
+			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
+				rawConfidence, _ := pumpdump.filter.Score(
+					symbol, pumpdump.track, snapshot, now,
+				)
+				pumpdump.track.ObserveGaugeScore(
+					GaugeConfidence(pumpdump.track, symbol, rawConfidence),
+				)
 
-		for _, symbol := range symbols {
-			engine.DrainTicks(ctx)
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			snapshot := pumpdump.ingest.Read(symbol)
-			rawConfidence, _ := pumpdump.filter.Score(symbol, pumpdump.track, snapshot, now)
-			pumpdump.track.ObserveGaugeScore(
-				GaugeConfidence(pumpdump.track, symbol, rawConfidence),
-			)
-
-			measurement, ok, err := pumpdump.evaluate(symbol, snapshot, now)
-
-			if err != nil {
-				return
-			}
-
-			if !ok {
-				continue
-			}
-
-			pair, pairOK := pumpdump.pairs[symbol]
-
-			if !pairOK {
-				continue
-			}
-
-			measurement.Source = pumpdumpSource
-			measurement.Pairs = []asset.Pair{pair}
-			measurement.Timeframe = engine.Timeframe{
-				Start: now.UnixNano(),
-				End:   now.UnixNano(),
-			}
-
+				return pumpdump.evaluate(symbol, snapshot, now)
+			},
+		) {
 			if !yield(measurement) {
 				return
 			}
 		}
-
-		pumpdump.watch.AdvanceRotation(config.System.MaxScanSymbols)
-		pumpdump.watch.Decay(now)
 	}
 }
 

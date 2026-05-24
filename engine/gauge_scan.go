@@ -1,9 +1,12 @@
 package engine
 
+import "sync"
+
 /*
 GaugeScan accumulates per-symbol normalized scores for one measure pass.
 */
 type GaugeScan struct {
+	mu   sync.Mutex
 	peak float64
 }
 
@@ -11,6 +14,9 @@ type GaugeScan struct {
 ResetGaugeScan clears scan accumulators before the next measure pass.
 */
 func (gaugeScan *GaugeScan) ResetGaugeScan() {
+	gaugeScan.mu.Lock()
+	defer gaugeScan.mu.Unlock()
+
 	gaugeScan.peak = 0
 }
 
@@ -23,6 +29,9 @@ func (gaugeScan *GaugeScan) ObserveGaugeScore(score float64) {
 		return
 	}
 
+	gaugeScan.mu.Lock()
+	defer gaugeScan.mu.Unlock()
+
 	if score > gaugeScan.peak {
 		gaugeScan.peak = score
 	}
@@ -32,6 +41,9 @@ func (gaugeScan *GaugeScan) ObserveGaugeScore(score float64) {
 PeakGaugeConfidence returns the strongest normalized score observed this scan.
 */
 func (gaugeScan *GaugeScan) PeakGaugeConfidence() float64 {
+	gaugeScan.mu.Lock()
+	defer gaugeScan.mu.Unlock()
+
 	return gaugeScan.peak
 }
 
