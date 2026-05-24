@@ -13,14 +13,14 @@ type Request struct {
 AddParams holds add_order fields for spot trading.
 */
 type AddParams struct {
-	OrderType    OrderType         `json:"order_type"`
-	Side         Side              `json:"side"`
-	Symbol       string            `json:"symbol"`
-	OrderQty     float64           `json:"order_qty,omitempty"`
-	CashOrderQty float64           `json:"cash_order_qty,omitempty"`
-	LimitPrice   float64           `json:"limit_price,omitempty"`
-	Token        string            `json:"token"`
-	Conditional  *ConditionalStop  `json:"conditional,omitempty"`
+	OrderType    OrderType        `json:"order_type"`
+	Side         Side             `json:"side"`
+	Symbol       string           `json:"symbol"`
+	OrderQty     float64          `json:"order_qty,omitempty"`
+	CashOrderQty float64          `json:"cash_order_qty,omitempty"`
+	LimitPrice   float64          `json:"limit_price,omitempty"`
+	Token        string           `json:"token"`
+	Conditional  *ConditionalStop `json:"conditional,omitempty"`
 }
 
 /*

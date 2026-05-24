@@ -25,6 +25,7 @@ type PrivateClient struct {
 	token      errnie.Result[*kraken.Token]
 	pending    sync.Map
 	fillWaits  sync.Map
+	fillBuffer sync.Map
 	readOnce   sync.Once
 }
 
@@ -236,6 +237,10 @@ func (privateClient *PrivateClient) WaitFill(
 		return order.Fill{}, fmt.Errorf("order id is required")
 	}
 
+	if buffered, ok := privateClient.takeBufferedFill(orderID); ok {
+		return buffered, nil
+	}
+
 	privateClient.startReadPump()
 
 	fillCh := privateClient.registerFillWait(orderID)
@@ -247,6 +252,22 @@ func (privateClient *PrivateClient) WaitFill(
 	case <-ctx.Done():
 		return order.Fill{}, fmt.Errorf("execution fill timeout: %w", ctx.Err())
 	}
+}
+
+func (privateClient *PrivateClient) takeBufferedFill(orderID string) (order.Fill, bool) {
+	value, ok := privateClient.fillBuffer.LoadAndDelete(orderID)
+
+	if !ok {
+		return order.Fill{}, false
+	}
+
+	fill, ok := value.(order.Fill)
+
+	return fill, ok
+}
+
+func (privateClient *PrivateClient) bufferFill(fill order.Fill) {
+	privateClient.fillBuffer.Store(fill.OrderID, fill)
 }
 
 func (privateClient *PrivateClient) waitAck(
@@ -356,6 +377,10 @@ func (privateClient *PrivateClient) routeFrame(payload []byte) {
 			case fillCh <- fill:
 			default:
 			}
+
+			continue
 		}
+
+		privateClient.bufferFill(fill)
 	}
 }
