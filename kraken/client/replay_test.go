@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,13 +15,14 @@ func TestReplayDispatchesRegisteredHandlers(t *testing.T) {
 		[]byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/EUR","side":"buy","qty":1,"price":1,"timestamp":"2026-05-23T02:00:00Z"}]}`),
 	}, 0))
 
-	received := 0
+	var received atomic.Int32
 	publicClient.OnFrame(func(_ context.Context, payload []byte) error {
 		if len(payload) == 0 {
 			t.Fatal("expected payload")
 		}
 
-		received++
+		received.Add(1)
+
 		return nil
 	})
 
@@ -32,12 +34,12 @@ func TestReplayDispatchesRegisteredHandlers(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 
-	for received == 0 && time.Now().Before(deadline) {
+	for received.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if received != 1 {
-		t.Fatalf("expected one replay frame, got %d", received)
+	if received.Load() != 1 {
+		t.Fatalf("expected one replay frame, got %d", received.Load())
 	}
 }
 
@@ -50,9 +52,10 @@ func TestLoadAndReplayFixture(t *testing.T) {
 
 	ctx := context.Background()
 	publicClient := NewPublicClient(ctx, WithReplay(frames, 0))
-	count := 0
+	var count atomic.Int32
 	publicClient.OnFrame(func(_ context.Context, _ []byte) error {
-		count++
+		count.Add(1)
+
 		return nil
 	})
 
@@ -64,11 +67,11 @@ func TestLoadAndReplayFixture(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 
-	for count < len(frames) && time.Now().Before(deadline) {
+	for int(count.Load()) < len(frames) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if count != len(frames) {
-		t.Fatalf("expected %d frames, got %d", len(frames), count)
+	if int(count.Load()) != len(frames) {
+		t.Fatalf("expected %d frames, got %d", len(frames), count.Load())
 	}
 }
