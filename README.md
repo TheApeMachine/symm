@@ -222,7 +222,7 @@ Set `SYMM_REPLAY_FILE` to a captured JSONL fixture: frames replay through the sa
 - Spot-long paper/live by default; synthetic shorts require explicit `AllowPaperShorts` / `AllowLiveShorts`
 - Safety gates: `MaxLossPerTradeEUR`, `MaxDailyLossEUR`, `MaxSpreadBPS`, `SnapshotFreshnessTTL` (signals + entries)
 - Regime-aware min hold: `ScalpHoldBeforeExit` (pump/momentum); hard stops always bypass min hold
-- `make test-race` runs `go test -race` with the qpool linkname flag
+- `make test-race` runs `go test -race` with the qpool linkname flag (on macOS, skips `engine/` because the race detector crashes on qpool parallel measure tests)
 
 ### Telemetry
 

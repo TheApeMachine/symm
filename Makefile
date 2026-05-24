@@ -1,8 +1,12 @@
 # qpool uses go:linkname runtime hooks; Go 1.26+ needs this when linking symm.
+# Always use make test-go / make build — bare `go test ./...` fails at link time.
 LDFLAGS := -ldflags='-checklinkname=0'
 
 SYMM_BIN := bin/symm
 LOG_DIR ?= runs
+
+# engine parallel qpool jobs crash the race detector on darwin; race all other packages.
+RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 .PHONY: build test test-go test-race test-frontend bench run replay eval
 
@@ -16,7 +20,11 @@ test-go:
 	go test $(LDFLAGS) ./...
 
 test-race:
+ifeq ($(shell uname -s),Darwin)
+	go test $(LDFLAGS) -race $(RACE_PACKAGES)
+else
 	go test $(LDFLAGS) -race ./...
+endif
 
 test-frontend:
 	cd frontend && pnpm test
