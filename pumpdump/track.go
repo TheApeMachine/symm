@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -47,6 +48,7 @@ TrackStore holds per-symbol rolling windows and listens on market broadcast grou
 */
 type TrackStore struct {
 	engine.GaugeScan
+	mu            sync.RWMutex
 	ctx           context.Context
 	cancel        context.CancelFunc
 	pool          *qpool.Pool
@@ -122,6 +124,9 @@ func (trackStore *TrackStore) Tick() bool {
 ResetLiveScores clears per-tick gauge scores before the next measure pass.
 */
 func (trackStore *TrackStore) ResetLiveScores() {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
 	trackStore.ResetGaugeScan()
 
 	for _, track := range trackStore.bySymbol {
@@ -133,6 +138,9 @@ func (trackStore *TrackStore) ResetLiveScores() {
 RollBuckets closes any elapsed five-minute windows.
 */
 func (trackStore *TrackStore) RollBuckets(now time.Time) {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
 	for _, track := range trackStore.bySymbol {
 		track.roll(now)
 		track.pruneRolling(now)
@@ -148,7 +156,10 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	track := trackStore.ensure(feedback.Symbol)
+	trackStore.mu.Lock()
+	track := trackStore.ensureLocked(feedback.Symbol)
+	trackStore.mu.Unlock()
+
 	track.calibrator.Apply(feedback)
 }
 
@@ -271,6 +282,13 @@ func (trackStore *TrackStore) applyBook(value *qpool.QValue[any]) {
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if ok {

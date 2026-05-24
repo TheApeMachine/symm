@@ -14,7 +14,8 @@ import (
 const sentimentSource = "sentiment"
 
 /*
-Sentiment aggregates cross-section trade-pressure and momentum breadth into one score.
+Sentiment aggregates cross-section buy-pressure and momentum z-scores.
+This is market-internal pressure, not external sentiment feeds.
 */
 type Sentiment struct {
 	market  *engine.MarketRelay

@@ -211,7 +211,11 @@ func evaluateSymbol(
 	var snapshot Snapshot
 
 	if scanner.Market != nil {
-		snapshot = scanner.Market.Read(symbol)
+		snapshot = scanner.Market.ReadFresh(
+			symbol,
+			now,
+			config.System.SnapshotFreshnessTTL,
+		)
 	}
 
 	measurement, ok, err := evaluate(symbol, snapshot)

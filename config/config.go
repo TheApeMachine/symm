@@ -38,6 +38,10 @@ type Config struct {
 	MinTrailPct                float64
 	MaxTrailPct                float64
 	MaxLossPerTradeEUR         float64
+	MaxDailyLossEUR            float64
+	MaxSpreadBPS               float64
+	AllowPaperShorts           bool
+	AllowLiveShorts            bool
 	MinEdgeReturn              float64
 	ForecastSpreadMultiple     float64
 	ExitUrgencyThreshold       float64
@@ -70,6 +74,7 @@ type Config struct {
 	MaxScanSymbols             int
 	SymbolActivityHalfLife     time.Duration
 	LogDir                     string
+	PaperOrderLatency          time.Duration
 	LogLevel                   string
 	LogFileActive              bool
 	KrakenAPIKey               string
@@ -115,7 +120,11 @@ func NewConfig() *Config {
 		DefaultTrailPct:            0.35,
 		MinTrailPct:                0.15,
 		MaxTrailPct:                3.0,
-		MaxLossPerTradeEUR:         0,
+		MaxLossPerTradeEUR:         2,
+		MaxDailyLossEUR:            20,
+		MaxSpreadBPS:               0,
+		AllowPaperShorts:           false,
+		AllowLiveShorts:            false,
 		MinEdgeReturn:              0.0005,
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,
@@ -147,6 +156,7 @@ func NewConfig() *Config {
 		MaxScanSymbols:             64,
 		SymbolActivityHalfLife:     30 * time.Second,
 		LogDir:                     "runs",
+		PaperOrderLatency:          0,
 		LogLevel:                   "info",
 		LogFileActive:              true,
 		OHLCEWarmEnabled:           true,
@@ -169,10 +179,6 @@ func NewConfig() *Config {
 
 	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
 	cfg.KrakenAPISecret = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_SECRET"))
-
-	if warm := strings.TrimSpace(os.Getenv("SYMM_OHLC_WARM")); warm == "0" || strings.EqualFold(warm, "false") {
-		cfg.OHLCEWarmEnabled = false
-	}
 
 	return cfg
 }

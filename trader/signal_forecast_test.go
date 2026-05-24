@@ -9,10 +9,26 @@ import (
 	"github.com/theapemachine/symm/engine"
 )
 
+func seedReturnModel(source, regime string, actual float64) *ReturnModel {
+	model := NewReturnModel()
+
+	for range config.System.MinCalibrationSamples {
+		model.Apply(engine.PredictionFeedback{
+			Source:          source,
+			Regime:          regime,
+			PredictedReturn: 0.01,
+			ActualReturn:    actual,
+		})
+	}
+
+	return model
+}
+
 func TestBuildSignalForecast(t *testing.T) {
 	config.System.ScalpHoldBeforeExit = 15 * time.Second
+	model := seedReturnModel("hawkes", "momentum", 0.02)
 
-	Convey("Given a signal reading and live quote", t, func() {
+	Convey("Given calibrated forward returns", t, func() {
 		measurement := engine.Measurement{
 			Source:     "hawkes",
 			Regime:     "momentum",
@@ -24,6 +40,7 @@ func TestBuildSignalForecast(t *testing.T) {
 			measurement,
 			stubPrices{"PUMP/EUR": 100},
 			"PUMP/EUR",
+			model,
 		)
 
 		Convey("It should derive trader-owned expected return and runway", func() {
@@ -38,10 +55,21 @@ func TestBuildSignalForecast(t *testing.T) {
 			engine.Measurement{Confidence: 0},
 			stubPrices{"PUMP/EUR": 100},
 			"PUMP/EUR",
+			model,
 		)
 
 		Convey("It should reject the forecast", func() {
 			So(ok, ShouldBeFalse)
 		})
 	})
+}
+
+func TestReturnModelPredictRequiresSamples(t *testing.T) {
+	model := NewReturnModel()
+
+	_, ok := model.Predict("hawkes", "momentum", 0.5)
+
+	if ok {
+		t.Fatal("expected forecast to require calibration samples")
+	}
 }

@@ -91,6 +91,42 @@ func TestMarketRelayRecentTicks(t *testing.T) {
 	})
 }
 
+func TestMarketRelayReadFresh(t *testing.T) {
+	Convey("Given a stale cached snapshot", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 1, 2, qpool.NewConfig())
+		defer pool.Close()
+
+		tickGroup := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
+		tradeGroup := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
+		bookGroup := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
+
+		relay, err := NewMarketRelay(ctx, tickGroup, tradeGroup, bookGroup)
+		So(err, ShouldBeNil)
+
+		staleAt := time.Unix(1_000, 0).UTC()
+		tickGroup.Send(&qpool.QValue[any]{
+			SenderID: "test",
+			Value: TickUpdate{
+				Symbol:     "PUMP/EUR",
+				Last:       1.25,
+				VolumeBase: 500000,
+				ChangePct:  2.5,
+				Timestamp:  staleAt.Format(time.RFC3339Nano),
+			},
+		})
+
+		So(relay.Tick(), ShouldBeTrue)
+
+		now := staleAt.Add(100 * time.Millisecond)
+		snapshot := relay.ReadFresh("PUMP/EUR", now, 10*time.Millisecond)
+
+		Convey("It should clear stale ticker fields", func() {
+			So(snapshot.LastOK, ShouldBeFalse)
+		})
+	})
+}
+
 func BenchmarkMarketRelayRead(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 1, 2, qpool.NewConfig())

@@ -13,6 +13,7 @@ const historyCap = 24
 SymbolTrack stores relative-strength history for one pair.
 */
 type SymbolTrack struct {
+	engine.SymbolLock
 	relStrength    []float64
 	calibrator     engine.PredictionCalibrator
 	confidenceHist []float64
@@ -46,9 +47,10 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	trackStore.mu.Lock()
-	track := trackStore.ensureLocked(feedback.Symbol)
-	trackStore.mu.Unlock()
+	track := trackStore.ensure(feedback.Symbol)
+
+	track.Lock()
+	defer track.Unlock()
 
 	track.calibrator.Apply(feedback)
 }
@@ -84,8 +86,8 @@ func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float
 
 	track := trackStore.ensure(symbol)
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track.Lock()
+	defer track.Unlock()
 
 	normalized := engine.NormalizeConfidence(rawScore, track.confidenceHist)
 	track.liveScore = normalized
@@ -101,6 +103,9 @@ func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float
 }
 
 func (track *SymbolTrack) recordRelativeStrength(value float64) {
+	track.Lock()
+	defer track.Unlock()
+
 	track.relStrength = append(track.relStrength, value)
 
 	if len(track.relStrength) > historyCap {

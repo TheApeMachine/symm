@@ -154,6 +154,7 @@ func (trackStore *TrackStore) symbolRowLocked(
 		return SymbolSnapshot{Symbol: symbol, ChangePct: changePct}
 	}
 
+	track.Lock()
 	sample := track.samples[len(track.samples)-1]
 	prior := track.lastSample
 
@@ -161,10 +162,14 @@ func (trackStore *TrackStore) symbolRowLocked(
 		prior = track.samples[len(track.samples)-2]
 	}
 
+	hasPrior := track.hasPrior
+	_ = track.dailyQuoteVol
+	track.Unlock()
+
 	source := 0.0
 	shock := 0.0
 
-	if track.hasPrior {
+	if hasPrior {
 		source = continuitySource(sample, prior)
 		shock = burgersShock(sample, prior)
 	}
@@ -201,6 +206,7 @@ func (trackStore *TrackStore) SymbolRisk(symbol string) (engine.SymbolRisk, bool
 		return engine.SymbolRisk{}, false
 	}
 
+	track.Lock()
 	sample := track.samples[len(track.samples)-1]
 	prior := track.lastSample
 
@@ -208,9 +214,12 @@ func (trackStore *TrackStore) SymbolRisk(symbol string) (engine.SymbolRisk, bool
 		prior = track.samples[len(track.samples)-2]
 	}
 
+	hasPrior := track.hasPrior
+	track.Unlock()
+
 	turbulence := 0.0
 
-	if track.hasPrior {
+	if hasPrior {
 		turbulence = burgersShock(sample, prior)
 	}
 

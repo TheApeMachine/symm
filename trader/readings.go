@@ -15,3 +15,11 @@ func walletBalance(wallet *Wallet) float64 {
 
 	return wallet.Balance
 }
+
+func walletReserved(wallet *Wallet) float64 {
+	if wallet == nil {
+		return 0
+	}
+
+	return wallet.ReservedEUR
+}

@@ -99,7 +99,7 @@ func TestPortfolioTryEnter(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	event, ok := portfolio.TryEnter(now, ExecutionDecision{
+	event, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Source: "hawkes",
 		Regime: "momentum",
@@ -157,7 +157,7 @@ func TestPortfolioMarkStopExit(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	event, ok := portfolio.TryEnter(now, ExecutionDecision{
+	event, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Score:  0.8,
 		Price:  100,
@@ -180,7 +180,7 @@ func TestPortfolioMarkStopExit(t *testing.T) {
 		"PUMP/EUR": {last: stopPrice * 0.99, bid: 90, ask: 90.2},
 	}
 
-	events := portfolio.Mark(now.Add(2*time.Millisecond), exitQuotes)
+	events := portfolio.Mark(context.Background(), now.Add(2*time.Millisecond), exitQuotes)
 
 	if len(events) == 0 {
 		t.Fatal("expected exit event")
@@ -214,7 +214,7 @@ func TestPortfolioClosedPnLIncludesEntryFee(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	_, ok := portfolio.TryEnter(now, ExecutionDecision{
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Score:  0.8,
 		Price:  100,
@@ -235,7 +235,7 @@ func TestPortfolioClosedPnLIncludesEntryFee(t *testing.T) {
 		"PUMP/EUR": {last: stopPrice * 0.99, bid: 90, ask: 90.2},
 	}
 
-	events := portfolio.Mark(now.Add(2*time.Millisecond), exitQuotes)
+	events := portfolio.Mark(context.Background(), now.Add(2*time.Millisecond), exitQuotes)
 
 	if len(events) == 0 {
 		t.Fatal("expected exit event")
@@ -261,7 +261,47 @@ func TestPortfolioClosedPnLIncludesEntryFee(t *testing.T) {
 	}
 }
 
-func TestPortfolioScalpHoldUsesRegimeHold(t *testing.T) {
+func TestPortfolioEntryDebitsActualFillCost(t *testing.T) {
+	config.System.MaxSlots = 1
+	config.System.MaxSlotPct = 10
+	config.System.MinCostEUR = 1
+	config.System.MinHoldBeforeRotate = time.Millisecond
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Score:  0.8,
+		Price:  100,
+	}, quotes)
+
+	if !ok {
+		t.Fatal("expected portfolio entry")
+	}
+
+	position := portfolio.positions["PUMP/EUR"]
+	expectedProceeds := spotProceedsEUR(position.BaseQty, position.FillPrice)
+	expectedDebit := expectedProceeds + position.EntryFeeEUR
+
+	if position.NotionalEUR != expectedProceeds {
+		t.Fatalf("expected notional=%v, got %v", expectedProceeds, position.NotionalEUR)
+	}
+
+	if position.StopOrderID == "" {
+		t.Fatal("expected protective stop order id on paper entry")
+	}
+
+	if wallet.Balance != 200-expectedDebit {
+		t.Fatalf("expected wallet balance %v, got %v", 200-expectedDebit, wallet.Balance)
+	}
+}
+
+func TestHardStopIgnoresMinHold(t *testing.T) {
 	config.System.ScalpHoldBeforeExit = 15 * time.Second
 	config.System.MinHoldBeforeRotate = time.Minute
 
@@ -272,7 +312,7 @@ func TestPortfolioScalpHoldUsesRegimeHold(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	_, ok := portfolio.TryEnter(now, ExecutionDecision{
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Regime: "momentum",
 		Score:  0.8,
@@ -283,26 +323,85 @@ func TestPortfolioScalpHoldUsesRegimeHold(t *testing.T) {
 		t.Fatal("expected portfolio entry")
 	}
 
-	stopPrice, _ := portfolio.positions["PUMP/EUR"].StopPrice, true
+	stopPrice := portfolio.positions["PUMP/EUR"].StopPrice
 	exitQuotes := stubQuote{
 		"PUMP/EUR": {last: stopPrice * 0.99, bid: 90, ask: 90.2},
 	}
 
-	events := portfolio.Mark(now.Add(5*time.Second), exitQuotes)
-
-	if len(events) != 0 {
-		t.Fatal("expected hold to block exit before scalp hold elapsed")
-	}
-
-	events = portfolio.Mark(now.Add(16*time.Second), exitQuotes)
+	events := portfolio.Mark(context.Background(), now.Add(5*time.Second), exitQuotes)
 
 	if len(events) == 0 {
-		t.Fatal("expected exit after scalp hold elapsed")
+		t.Fatal("expected hard stop to exit before scalp hold elapsed")
 	}
+
+	if events[len(events)-1].Name != "trade_exit" {
+		t.Fatalf("expected trade_exit, got %+v", events[len(events)-1])
+	}
+}
+
+func TestPortfolioScalpHoldBlocksEarlyExit(t *testing.T) {
+	config.System.ScalpHoldBeforeExit = 15 * time.Second
+	config.System.MinHoldBeforeRotate = time.Minute
+	config.System.ExitUrgencyThreshold = 0.65
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	portfolio.BindExitAdvisor(stubExitAdvisor{urgency: 0.9, reason: "pressure_fade"})
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Regime: "momentum",
+		Score:  0.8,
+		Price:  100,
+	}, quotes)
+
+	if !ok {
+		t.Fatal("expected portfolio entry")
+	}
+
+	exitQuotes := stubQuote{
+		"PUMP/EUR": {last: 101, bid: 100.9, ask: 101.1},
+	}
+
+	events := portfolio.Mark(context.Background(), now.Add(5*time.Second), exitQuotes)
+
+	for _, event := range events {
+		if event.Name == "trade_exit" {
+			t.Fatal("expected hold to block early exit before scalp hold elapsed")
+		}
+	}
+
+	events = portfolio.Mark(context.Background(), now.Add(16*time.Second), exitQuotes)
+
+	hasExit := false
+
+	for _, event := range events {
+		if event.Name == "trade_exit" {
+			hasExit = true
+		}
+	}
+
+	if !hasExit {
+		t.Fatal("expected early exit after scalp hold elapsed")
+	}
+}
+
+type stubExitAdvisor struct {
+	urgency float64
+	reason  string
+}
+
+func (advisor stubExitAdvisor) ExitUrgency(_ string, _ int) (float64, string) {
+	return advisor.urgency, advisor.reason
 }
 
 func TestPortfolioShortEntry(t *testing.T) {
 	config.System.MinHoldBeforeRotate = time.Millisecond
+	config.System.AllowPaperShorts = true
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	portfolio := NewPortfolio(wallet)
@@ -311,7 +410,7 @@ func TestPortfolioShortEntry(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	_, ok := portfolio.TryEnter(now, ExecutionDecision{
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Regime: "dump",
 		Score:  0.8,
@@ -330,6 +429,191 @@ func TestPortfolioShortEntry(t *testing.T) {
 	}
 }
 
+func TestSpotBrokerRejectsShort(t *testing.T) {
+	config.System.AllowPaperShorts = false
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Score:  0.8,
+		Price:  100,
+		Side:   positionShort,
+	}, quotes)
+
+	if ok {
+		t.Fatal("expected short entry to be rejected when paper shorts are disabled")
+	}
+}
+
+type blockingBroker struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (broker *blockingBroker) Live() bool { return true }
+
+func (broker *blockingBroker) SupportsShort() bool { return false }
+
+func (broker *blockingBroker) Enter(
+	ctx context.Context,
+	request BrokerEnterRequest,
+) (BrokerFill, error) {
+	close(broker.entered)
+
+	select {
+	case <-broker.release:
+	case <-ctx.Done():
+		return BrokerFill{}, ctx.Err()
+	}
+
+	return NewPaperBroker().Enter(ctx, request)
+}
+
+func (broker *blockingBroker) Exit(
+	ctx context.Context,
+	request BrokerExitRequest,
+) (BrokerFill, error) {
+	return NewPaperBroker().Exit(ctx, request)
+}
+
+func (broker *blockingBroker) AmendStop(
+	ctx context.Context,
+	request BrokerAmendStopRequest,
+) error {
+	return NewPaperBroker().AmendStop(ctx, request)
+}
+
+func TestLiveBrokerTimeoutDoesNotHoldPortfolioLock(t *testing.T) {
+	config.System.MaxSlots = 2
+	config.System.MaxSlotPct = 10
+	config.System.MinCostEUR = 1
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	broker := &blockingBroker{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	portfolio.BindBroker(broker)
+
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	done := make(chan struct{})
+
+	go func() {
+		_, _ = portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+			Symbol: "PUMP/EUR",
+			Score:  0.8,
+			Price:  100,
+		}, quotes)
+		close(done)
+	}()
+
+	<-broker.entered
+
+	statusDone := make(chan struct{})
+
+	go func() {
+		_ = portfolio.Status(quotes)
+		close(statusDone)
+	}()
+
+	select {
+	case <-statusDone:
+	case <-time.After(time.Second):
+		t.Fatal("portfolio lock was held during broker entry")
+	}
+
+	close(broker.release)
+	<-done
+}
+
+func TestPortfolioMaxSpreadGate(t *testing.T) {
+	config.System.MaxSpreadBPS = 5
+	t.Cleanup(func() { config.System.MaxSpreadBPS = 0 })
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99, ask: 101},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Score:  0.8,
+		Price:  100,
+	}, quotes)
+
+	if ok {
+		t.Fatal("expected wide spread to block entry")
+	}
+}
+
+func TestPortfolioMaxDailyLossGate(t *testing.T) {
+	config.System.MaxDailyLossEUR = 5
+	config.System.MaxLossPerTradeEUR = 0
+	config.System.MaxSpreadBPS = 0
+	config.System.MinHoldBeforeRotate = time.Millisecond
+	t.Cleanup(func() {
+		config.System.MaxDailyLossEUR = 20
+		config.System.MaxLossPerTradeEUR = 2
+	})
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+		"DUMP/EUR": {last: 50, bid: 49.9, ask: 50.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(context.Background(), now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Score:  0.8,
+		Price:  100,
+	}, quotes)
+
+	if !ok {
+		t.Fatal("expected first entry")
+	}
+
+	stopPrice := portfolio.positions["PUMP/EUR"].StopPrice
+	exitQuotes := stubQuote{
+		"PUMP/EUR": {last: stopPrice * 0.99, bid: 90, ask: 90.2},
+		"DUMP/EUR": {last: 50, bid: 49.9, ask: 50.1},
+	}
+
+	events := portfolio.Mark(context.Background(), now.Add(time.Millisecond), exitQuotes)
+
+	if len(events) == 0 {
+		t.Fatal("expected stop exit")
+	}
+
+	portfolio.mu.Lock()
+	portfolio.dailyClosedPnL = -6
+	portfolio.mu.Unlock()
+
+	_, ok = portfolio.TryEnter(context.Background(), now.Add(time.Second), ExecutionDecision{
+		Symbol: "DUMP/EUR",
+		Score:  0.8,
+		Price:  50,
+	}, exitQuotes)
+
+	if ok {
+		t.Fatal("expected daily loss gate to block new entries")
+	}
+}
+
 func BenchmarkPortfolioMark(b *testing.B) {
 	config.System.MinHoldBeforeRotate = time.Millisecond
 
@@ -341,7 +625,7 @@ func BenchmarkPortfolioMark(b *testing.B) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	_, _ = portfolio.TryEnter(now, ExecutionDecision{
+	_, _ = portfolio.TryEnter(context.Background(), now, ExecutionDecision{
 		Symbol: "PUMP/EUR",
 		Score:  0.8,
 		Price:  100,
@@ -350,6 +634,6 @@ func BenchmarkPortfolioMark(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		portfolio.Mark(now.Add(time.Second), quotes)
+		portfolio.Mark(context.Background(), now.Add(time.Second), quotes)
 	}
 }

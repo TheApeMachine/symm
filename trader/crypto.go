@@ -32,9 +32,13 @@ type Crypto struct {
 	pairStates     sync.Map
 	feedbackSink   func(engine.PredictionFeedback)
 	candidates     CandidateStore
+	liveCandidates CandidateStore
 	decisionEngine DecisionEngine
 	sourceTrust    *SourceTrustStore
+	returnModel    *ReturnModel
+	orderJournal   *OrderJournal
 	exitAdvisor    ExitAdvisor
+	symbolUniverse []string
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
 }
@@ -69,9 +73,20 @@ func NewCrypto(
 		signals:        signals,
 		pairStates:     sync.Map{},
 		candidates:     NewCandidateStore(),
+		liveCandidates: NewCandidateStore(),
 		decisionEngine: DecisionEngine{},
 		sourceTrust:    NewSourceTrustStore(),
+		returnModel:    NewReturnModel(),
+		orderJournal:   NewOrderJournal(config.System.LogDir),
 	}
+
+	portfolioStore := NewPortfolioStore(config.System.LogDir)
+
+	if err := portfolioStore.Restore(crypto.portfolio); err != nil {
+		return nil, err
+	}
+
+	crypto.portfolio.BindPortfolioStore(portfolioStore)
 
 	crypto.portfolio.BindRiskReader(NewSignalRiskBoard(signals...))
 	crypto.portfolio.BindUI(ui)
@@ -95,6 +110,20 @@ func NewCrypto(
 		"signals":    signals,
 		"pairStates": &crypto.pairStates,
 	})
+}
+
+/*
+SetSymbolUniverse pins regime classification to a stable scan set.
+*/
+func (crypto *Crypto) SetSymbolUniverse(symbols []string) {
+	crypto.symbolUniverse = append([]string(nil), symbols...)
+}
+
+/*
+OrderJournal returns the live order journal when configured.
+*/
+func (crypto *Crypto) OrderJournal() *OrderJournal {
+	return crypto.orderJournal
 }
 
 /*
@@ -144,6 +173,7 @@ BindBroker replaces the default paper broker with a live Kraken execution broker
 */
 func (crypto *Crypto) BindBroker(broker ExecutionBroker) {
 	crypto.portfolio.BindBroker(broker)
+	crypto.portfolio.BindOrderJournal(crypto.orderJournal)
 }
 
 /*
@@ -227,7 +257,9 @@ func (crypto *Crypto) runRescoreTick() {
 }
 
 func (crypto *Crypto) drainTickables() {
-	for {
+	const maxDrainIterations = 10_000
+
+	for iteration := 0; iteration < maxDrainIterations; iteration++ {
 		idle := true
 
 		for _, ticker := range crypto.tickers {
@@ -240,6 +272,8 @@ func (crypto *Crypto) drainTickables() {
 			return
 		}
 	}
+
+	errnie.Error(fmt.Errorf("tick drain exceeded %d iterations", maxDrainIterations))
 }
 
 type signalTickResult struct {
@@ -313,7 +347,9 @@ func (crypto *Crypto) updatePairStates(
 
 		state.Update(measurement)
 
-		forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol)
+		forecast, ok := BuildSignalForecast(
+			measurement, crypto.prices, symbol, crypto.returnModel,
+		)
 
 		if !ok {
 			continue
@@ -400,7 +436,9 @@ func (crypto *Crypto) signalRows(
 
 		expectedReturn := 0.0
 
-		if forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol); ok {
+		if forecast, ok := BuildSignalForecast(
+			measurement, crypto.prices, symbol, crypto.returnModel,
+		); ok {
 			expectedReturn = forecast.ExpectedReturn
 		}
 
@@ -411,7 +449,7 @@ func (crypto *Crypto) signalRows(
 			"reason":          measurement.Reason,
 			"score":           measurement.Confidence,
 			"expected_return": expectedReturn,
-			"type":            string(measurement.Type),
+			"type":            measurement.Type.String(),
 		})
 	}
 
@@ -440,7 +478,7 @@ func (crypto *Crypto) publishDashboard() {
 	ui.Publish(
 		crypto.uiBroadcast,
 		"decision_trace",
-		decisionTracePayload(crypto.lastDecision, crypto.candidates),
+		decisionTracePayload(crypto.lastDecision, crypto.candidates, crypto.liveCandidates),
 	)
 }
 
@@ -550,7 +588,9 @@ func (crypto *Crypto) noteCandidate(measurement engine.Measurement) {
 			continue
 		}
 
-		forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol)
+		forecast, ok := BuildSignalForecast(
+			measurement, crypto.prices, symbol, crypto.returnModel,
+		)
 
 		if !ok {
 			continue
@@ -565,6 +605,7 @@ func (crypto *Crypto) noteCandidate(measurement engine.Measurement) {
 			ExpectedReturn: forecast.ExpectedReturn,
 			Runway:         forecast.Runway,
 			Direction:      measurement.Type.Direction(),
+			Executable:     true,
 		})
 	}
 }
@@ -602,6 +643,8 @@ func (crypto *Crypto) settleDuePredictions(now time.Time) {
 }
 
 func (crypto *Crypto) mergeLiveCandidates() {
+	crypto.liveCandidates.Reset()
+
 	for _, signal := range crypto.signals {
 		reader, ok := signal.(engine.LiveScoreReader)
 
@@ -615,13 +658,14 @@ func (crypto *Crypto) mergeLiveCandidates() {
 			continue
 		}
 
-		crypto.candidates.Note(SignalCandidate{
+		crypto.liveCandidates.Note(SignalCandidate{
 			Symbol:     peak.Symbol,
 			Source:     signal.Source(),
 			Regime:     "live",
 			Reason:     "track",
 			Confidence: peak.Score,
 			Direction:  1,
+			Executable: false,
 		})
 	}
 }
@@ -656,6 +700,10 @@ func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
 		crypto.feedbackSink(feedback)
 	}
 
+	if crypto.returnModel != nil {
+		crypto.returnModel.Apply(feedback)
+	}
+
 	if crypto.sourceTrust != nil {
 		crypto.sourceTrust.Apply(feedback)
 	}
@@ -670,7 +718,7 @@ func (crypto *Crypto) runExecution(now time.Time) {
 		return
 	}
 
-	for _, event := range crypto.portfolio.Mark(now, crypto.prices) {
+	for _, event := range crypto.portfolio.Mark(crypto.ctx, now, crypto.prices) {
 		markEvent := event
 		crypto.portfolio.Emit(&markEvent)
 		crypto.handlePortfolioEvent(markEvent)
@@ -682,10 +730,19 @@ func (crypto *Crypto) runExecution(now time.Time) {
 
 	warming := crypto.rescoreCount < config.System.MinWarmPulses
 	crypto.rescoreCount++
-	regime := ClassifyMarketRegime(crypto.market, crypto.candidates.Symbols())
+	regime := ClassifyMarketRegime(crypto.market, crypto.regimeSymbols(), now)
+	cashEUR := config.System.WalletEUR
+
+	if crypto.wallet != nil {
+		cashEUR = crypto.wallet.Balance
+	}
+
 	crypto.lastDecision = crypto.decisionEngine.Build(
 		crypto.candidates,
 		crypto.prices,
+		crypto.market,
+		now,
+		cashEUR,
 		warming,
 		EnsembleContext{
 			Regime: regime,
@@ -696,6 +753,10 @@ func (crypto *Crypto) runExecution(now time.Time) {
 	crypto.publishDashboard()
 
 	if warming {
+		return
+	}
+
+	if !crypto.portfolio.TradingAllowed() {
 		return
 	}
 
@@ -724,8 +785,21 @@ func (crypto *Crypto) runExecution(now time.Time) {
 			decision.Side = positionShort
 		}
 
-		if event, ok := crypto.portfolio.TryEnter(now, decision, crypto.prices); ok {
+		if crypto.market != nil {
+			snapshot := crypto.market.ReadFresh(
+				evaluation.Symbol,
+				now,
+				config.System.SnapshotFreshnessTTL,
+			)
+
+			if !snapshot.LastOK || !snapshot.SpreadOK || !snapshot.BatchOK {
+				continue
+			}
+		}
+
+		if event, ok := crypto.portfolio.TryEnter(crypto.ctx, now, decision, crypto.prices); ok {
 			crypto.portfolio.Emit(event)
+			crypto.recordOrderJournalEntry(event)
 			crypto.watchExitSymbol(evaluation.Symbol)
 			crypto.publishStatus()
 		}
@@ -763,4 +837,37 @@ func (crypto *Crypto) forgetExitSymbol(symbol string) {
 	}
 
 	watcher.ForgetSymbol(symbol)
+}
+
+func (crypto *Crypto) regimeSymbols() []string {
+	if len(crypto.symbolUniverse) > 0 {
+		budget := config.System.MaxScanSymbols
+
+		if budget <= 0 || budget >= len(crypto.symbolUniverse) {
+			return crypto.symbolUniverse
+		}
+
+		return crypto.symbolUniverse[:budget]
+	}
+
+	return crypto.candidates.Symbols()
+}
+
+func (crypto *Crypto) recordOrderJournalEntry(event *PortfolioEvent) {
+	if crypto.orderJournal == nil || event == nil {
+		return
+	}
+
+	symbol, _ := event.Payload["symbol"].(string)
+	side, _ := event.Payload["side"].(string)
+	fill, _ := event.Payload["fill"].(float64)
+	notional, _ := event.Payload["notional_eur"].(float64)
+
+	crypto.orderJournal.RecordEntry(OrderJournalEntry{
+		Event:       event.Name,
+		Symbol:      symbol,
+		Side:        side,
+		NotionalEUR: notional,
+		FillPrice:   fill,
+	})
 }

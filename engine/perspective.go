@@ -11,6 +11,7 @@ const (
 	PerspectiveFlow           MarketPerspective = "flow"
 	PerspectiveCrossAsset     MarketPerspective = "cross_asset"
 	PerspectiveSentiment      MarketPerspective = "sentiment"
+	PerspectiveCausal         MarketPerspective = "causal"
 )
 
 /*
@@ -34,5 +35,5 @@ var sourcePerspectives = map[string]MarketPerspective{
 	"leadlag":   PerspectiveCrossAsset,
 	"basis":     PerspectiveCrossAsset,
 	"sentiment": PerspectiveSentiment,
-	"causal":    PerspectiveSentiment,
+	"causal":    PerspectiveCausal,
 }

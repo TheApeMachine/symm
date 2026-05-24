@@ -42,7 +42,7 @@ Live spot trading (WebSocket v2 `add_order` on `wss://ws-auth.kraken.com/v2`):
 SYMM_KRAKEN_API_KEY=... SYMM_KRAKEN_API_SECRET=... make run
 ```
 
-Without API keys the trader stays in paper mode. With keys, entries use market orders with OTO stop-loss-limit; exits use market orders; stop ratchets call `amend_order` when an exchange stop order id is known.
+Without API keys the trader stays in paper mode. Paper and live share proceeds-based taker fees, depth-weighted VWAP fills, OTO stop order ids, cash reservation during entry, stop-loss-limit stop exits (paper), and stop ratchets via `amend_order` / paper stop amend. With keys, entries wait for the exchange stop order id on the executions channel before committing; live stop fills are polled from the buffer instead of issuing duplicate market exits; trading halts if stop protection cannot be confirmed or amended.
 
 On live startup (skipped during replay), SYMM fetches recent Kraken OHLC candles for the first 64 EUR pairs and seeds volume/return baselines plus calibrator scales before the trader loop. Disable with `SYMM_OHLC_WARM=false`.
 
@@ -110,10 +110,10 @@ Signals do **not** populate expected return or runway. Confidence is derived ins
 
 ### Forecasts and predictions (trader-owned)
 
-When a measurement arrives, `trader.BuildSignalForecast` derives profit expectations from the reading plus the live quote:
+When a measurement arrives, `trader.BuildSignalForecast` derives profit expectations from settled forward returns (`ReturnModel` EWMA per source/regime) once `MinCalibrationSamples` exist:
 
-- **Expected return** = `confidence × (spreadBPS / 10_000) × ForecastSpreadMultiple` (default 4×). Spread is not double-counted in the edge gate — fills already pay bid/ask via `SlippageFill`.
-- **Edge gate** compares expected return to round-trip fees + slippage + `MinEdgeReturn` only.
+- **Expected return** = `confidence × EWMA(actual forward return)` from settled predictions. No forecast is emitted until enough samples exist.
+- **Edge gate** compares expected return to dynamic costs: round-trip fees + live spread + depth slippage for slot notional + stale-data penalty + `MinEdgeReturn`.
 - **Runway** (hold horizon before the prediction is due) comes from `config.System` by regime:
   - `ScalpHoldBeforeExit` — pump / momentum / dump
   - `FlowHoldBeforeExit` — flow
@@ -164,8 +164,8 @@ Unanchored or zero predicted-return feedback is dropped — no silent defaults.
 Forecast feedback and trade entry are separate paths:
 
 - **Candidates** — each measurement also becomes a `SignalCandidate` (symbol, source, confidence, trader expected return, runway, direction).
-- **Decision engine** — `ClassifyMarketRegime` gates specialists; `scorePerspectives` + `combinePerspectives` blend the top 1–2 angles; `SourceTrustStore` weights sources from settled accuracy; MAD entry line + post-cost edge gate.
-- **Portfolio** — `Portfolio.TryEnter` opens long or short paper positions with depth-weighted VWAP fills (`config.SlippageFill`), regime-aware minimum hold, trailing stops, and **`exhaust` early exit** when book-thinning / pressure-fade urgency exceeds `ExitUrgencyThreshold`.
+- **Decision engine** — stable-universe `ClassifyMarketRegime`; perspective-diverse gating (`ActivePerspectives`, not raw source count); live gauge rows kept separate from executable candidates; MAD entry line + dynamic post-cost edge gate.
+- **Portfolio** — spot-long by default (`AllowPaperShorts` / `AllowLiveShorts` off); hard stops bypass min hold; broker I/O outside portfolio lock; `OrderJournal` for live reconciliation; `PortfolioStore` (`runs/portfolio.json`) restores paper positions, cash, and base inventory across restarts; depth-weighted VWAP fills (`config.SlippageFill`); **`exhaust` early exit** when urgency exceeds `ExitUrgencyThreshold`.
 
 Warm-up: the first `MinWarmPulses` rescans collect measurements and predictions but suppress entries until gauges and calibrators have context.
 
@@ -181,8 +181,8 @@ All four share the same contract (`engine.Signal`) and sharded per-symbol track 
 | **fluid**    | flow           | Burgers shock with book-depth viscosity                        |
 | **leadlag**  | cross-asset    | Volume-leader move vs laggard catch-up                         |
 | **basis**    | cross-asset    | 24h relative strength vs cross-section (spot premium proxy)    |
-| **sentiment**| sentiment      | Cross-section pressure + momentum breadth z-scores             |
-| **causal**   | sentiment      | Gradient-boosted stumps + kernel backdoor regression           |
+| **sentiment**| sentiment      | Cross-section buy-pressure and momentum z-scores (market-internal, not external sentiment) |
+| **causal**   | causal         | Bounded intervention/uplift heuristics with kernel backdoor regression           |
 
 **exhaust** (exit advisor) tracks bid/ask depth thinning, spread widening, density collapse, pressure fade, and imbalance reversal on open symbols; closes early when urgency ≥ `ExitUrgencyThreshold`.
 
@@ -219,9 +219,10 @@ Set `SYMM_REPLAY_FILE` to a captured JSONL fixture: frames replay through the sa
 
 ### Execution defaults
 
-- Long and short paper positions with depth-weighted VWAP fills
-- Regime-aware min hold: `ScalpHoldBeforeExit` (pump/momentum), `FlowHoldBeforeExit` (flow), `MinHoldBeforeRotate` (default)
-- Per-symbol sharded track stores in all four signal packages
+- Spot-long paper/live by default; synthetic shorts require explicit `AllowPaperShorts` / `AllowLiveShorts`
+- Safety gates: `MaxLossPerTradeEUR`, `MaxDailyLossEUR`, `MaxSpreadBPS`, `SnapshotFreshnessTTL` (signals + entries)
+- Regime-aware min hold: `ScalpHoldBeforeExit` (pump/momentum); hard stops always bypass min hold
+- `make test-race` runs `go test -race` with the qpool linkname flag
 
 ### Telemetry
 

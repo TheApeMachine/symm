@@ -46,6 +46,14 @@ func (krakenBroker *KrakenBroker) Live() bool {
 }
 
 /*
+SupportsShort reports whether live Kraken spot shorting is enabled.
+Spot sells require existing inventory; margin shorting is not supported here.
+*/
+func (krakenBroker *KrakenBroker) SupportsShort() bool {
+	return config.System.AllowLiveShorts
+}
+
+/*
 Enter places a market order and waits for the execution fill.
 */
 func (krakenBroker *KrakenBroker) Enter(
@@ -66,11 +74,7 @@ func (krakenBroker *KrakenBroker) enterLong(
 	ctx context.Context,
 	request BrokerEnterRequest,
 ) (BrokerFill, error) {
-	limitBelow := request.StopPrice * 0.999
-
-	if limitBelow <= 0 {
-		limitBelow = request.StopPrice
-	}
+	limitBelow := StopLimitBelow(request.StopPrice)
 
 	frame := order.MarketBuyCash(
 		request.Symbol,
@@ -95,12 +99,26 @@ func (krakenBroker *KrakenBroker) enterLong(
 	proceeds := fill.Qty * fill.Price
 	fee := config.System.TakerFee(proceeds, krakenBroker.feePct)
 
-	return BrokerFill{
+	brokerFill := BrokerFill{
 		FillPrice: fill.Price,
 		BaseQty:   fill.Qty,
 		FeeEUR:    fee,
 		OrderID:   ack.Result.OrderID,
-	}, nil
+	}
+
+	if request.StopPrice <= 0 {
+		return brokerFill, nil
+	}
+
+	stopOrderID, err := krakenBroker.client.WaitStopOrder(ctx, ack.Result.OrderID, request.Symbol)
+
+	if err != nil {
+		return BrokerFill{}, err
+	}
+
+	brokerFill.StopOrderID = stopOrderID
+
+	return brokerFill, nil
 }
 
 func (krakenBroker *KrakenBroker) enterShort(
@@ -219,6 +237,30 @@ func (krakenBroker *KrakenBroker) AmendStop(
 	_, err := krakenBroker.client.AmendOrder(timeoutCtx, frame)
 
 	return err
+}
+
+/*
+PollFill returns one buffered execution for an order id without blocking.
+*/
+func (krakenBroker *KrakenBroker) PollFill(orderID string) (BrokerFill, bool) {
+	if krakenBroker.client == nil || orderID == "" {
+		return BrokerFill{}, false
+	}
+
+	fill, ok := krakenBroker.client.PollFill(orderID)
+
+	if !ok {
+		return BrokerFill{}, false
+	}
+
+	proceeds := fill.Qty * fill.Price
+
+	return BrokerFill{
+		FillPrice: fill.Price,
+		BaseQty:   fill.Qty,
+		FeeEUR:    spotTakerFeeEUR(proceeds, krakenBroker.feePct),
+		OrderID:   fill.OrderID,
+	}, true
 }
 
 func (krakenBroker *KrakenBroker) lotDecimals(symbol string) int {

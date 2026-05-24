@@ -4,7 +4,7 @@ LDFLAGS := -ldflags='-checklinkname=0'
 SYMM_BIN := bin/symm
 LOG_DIR ?= runs
 
-.PHONY: build test test-go test-frontend bench run replay eval
+.PHONY: build test test-go test-race test-frontend bench run replay eval
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -14,6 +14,9 @@ test: test-go test-frontend
 
 test-go:
 	go test $(LDFLAGS) ./...
+
+test-race:
+	go test $(LDFLAGS) -race ./...
 
 test-frontend:
 	cd frontend && pnpm test

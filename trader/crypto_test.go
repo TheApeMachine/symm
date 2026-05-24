@@ -10,6 +10,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
@@ -107,6 +108,27 @@ func testMeasurement(confidence float64) engine.Measurement {
 	}
 }
 
+func seedCryptoReturnModel(crypto *Crypto, source, regime string) {
+	if crypto == nil || crypto.returnModel == nil {
+		return
+	}
+
+	samples := config.System.MinCalibrationSamples
+
+	if samples <= 0 {
+		samples = 12
+	}
+
+	for range samples {
+		crypto.returnModel.Apply(engine.PredictionFeedback{
+			Source:          source,
+			Regime:          regime,
+			PredictedReturn: 0.01,
+			ActualReturn:    0.02,
+		})
+	}
+}
+
 func testCrypto(
 	t *testing.T,
 	prices QuoteReader,
@@ -124,6 +146,10 @@ func testCrypto(
 	if err != nil {
 		t.Fatalf("new crypto: %v", err)
 	}
+
+	seedCryptoReturnModel(crypto, "hawkes", "momentum")
+	seedCryptoReturnModel(crypto, "fluid", "flow")
+	seedCryptoReturnModel(crypto, "stub", "momentum")
 
 	return crypto
 }
@@ -184,6 +210,9 @@ func TestProcessSignalsSequential(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
+	seedCryptoReturnModel(crypto, "hawkes", "momentum")
+	seedCryptoReturnModel(crypto, "fluid", "flow")
+
 	convey.Convey("Given a qpool-backed trader", t, func() {
 		done := make(chan struct{}, 1)
 
@@ -241,6 +270,9 @@ func TestProcessSignalsDrainsEverySignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new crypto: %v", err)
 	}
+
+	seedCryptoReturnModel(crypto, "hawkes", "momentum")
+	seedCryptoReturnModel(crypto, "fluid", "flow")
 
 	convey.Convey("Given multiple signals on a qpool", t, func() {
 		crypto.processSignals(start)
@@ -341,7 +373,7 @@ func TestProcessSignal(t *testing.T) {
 
 		convey.Convey("It should apply feedback once the runway elapses", func() {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 1)
-			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldAlmostEqual, 0.004, 1e-9)
+			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldAlmostEqual, 0.01, 1e-9)
 		})
 	})
 }
@@ -382,7 +414,7 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 		t.Fatalf("expected confidence on feedback, got %v", feedback[0].Confidence)
 	}
 
-	if math.Abs(feedback[0].PredictedReturn-0.004) > 1e-9 {
+	if math.Abs(feedback[0].PredictedReturn-0.01) > 1e-9 {
 		t.Fatalf("expected trader forecast return, got %v", feedback[0].PredictedReturn)
 	}
 }
@@ -414,6 +446,8 @@ func BenchmarkProcessSignals(b *testing.B) {
 		b.Fatalf("new crypto: %v", err)
 	}
 
+	seedCryptoReturnModel(crypto, "hawkes", "momentum")
+
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -444,6 +478,8 @@ func BenchmarkProcessSignalsSequential(b *testing.B) {
 	if err != nil {
 		b.Fatalf("new crypto: %v", err)
 	}
+
+	seedCryptoReturnModel(crypto, "hawkes", "momentum")
 
 	b.ReportAllocs()
 

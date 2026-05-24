@@ -64,3 +64,21 @@ func TestParseExecutionFills(t *testing.T) {
 		})
 	})
 }
+
+func TestFindOTOStopOrderID(t *testing.T) {
+	convey.Convey("Given an OTO stop creation event", t, func() {
+		events := []ExecutionEvent{{
+			OrderID:   "STOP-1",
+			Symbol:    "BTC/EUR",
+			Side:      "sell",
+			OrderType: "stop-loss-limit",
+			ExecType:  "new",
+			OrdRefID:  "ENTRY-1",
+		}}
+
+		convey.Convey("It should return the stop order id", func() {
+			stopID := FindOTOStopOrderID(events, "ENTRY-1", "BTC/EUR")
+			convey.So(stopID, convey.ShouldEqual, "STOP-1")
+		})
+	})
+}

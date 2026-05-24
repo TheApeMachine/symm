@@ -13,6 +13,10 @@ func TestNewKrakenBrokerLive(t *testing.T) {
 		convey.Convey("It should report live execution", func() {
 			convey.So(broker.Live(), convey.ShouldBeTrue)
 		})
+
+		convey.Convey("It should not support spot shorts by default", func() {
+			convey.So(broker.SupportsShort(), convey.ShouldBeFalse)
+		})
 	})
 }
 

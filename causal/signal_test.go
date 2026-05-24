@@ -98,7 +98,7 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		t.Fatalf("expected causal reason, got %q", reason)
 	}
 
-	if reason != "intervention" && reason != "counterfactual" {
+	if reason != "intervention" && reason != "counterfactual_like" {
 		t.Fatalf("expected intervention reason, got %q", reason)
 	}
 }

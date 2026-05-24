@@ -113,7 +113,7 @@ func (exhaust *Exhaust) Tick() bool {
 		)
 	}
 
-	return true
+	return false
 }
 
 /*

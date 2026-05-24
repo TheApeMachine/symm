@@ -3,7 +3,6 @@ module github.com/theapemachine/symm
 go 1.26.1
 
 require (
-	github.com/davecgh/go-spew v1.1.1
 	github.com/qntfy/jsonparser v1.0.2
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2

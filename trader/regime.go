@@ -2,7 +2,9 @@ package trader
 
 import (
 	"math"
+	"time"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/stats"
 )
@@ -32,17 +34,26 @@ ClassifyMarketRegime infers trending, chopping, or dead from live snapshots.
 func ClassifyMarketRegime(
 	market engine.MarketReader,
 	symbols []string,
+	now time.Time,
 ) MarketRegime {
 	if market == nil || len(symbols) == 0 {
 		return RegimeChopping
 	}
 
+	ttl := config.System.SnapshotFreshnessTTL
 	pressures := make([]float64, 0, len(symbols))
 	volumes := make([]float64, 0, len(symbols))
 	active := 0
+	stale := 0
 
 	for _, symbol := range symbols {
-		snapshot := market.Read(symbol)
+		snapshot := market.ReadFresh(symbol, now, ttl)
+
+		if !snapshot.LastOK {
+			stale++
+
+			continue
+		}
 
 		if snapshot.PressureOK {
 			pressures = append(pressures, snapshot.BuyPressure)
@@ -52,13 +63,17 @@ func ClassifyMarketRegime(
 			volumes = append(volumes, snapshot.BatchVolume)
 		}
 
-		if snapshot.LastOK {
-			active++
-		}
+		active++
 	}
 
 	if active < 2 || len(pressures) < 2 {
 		return RegimeChopping
+	}
+
+	staleRatio := float64(stale) / float64(len(symbols))
+
+	if staleRatio > 0.5 {
+		return RegimeDead
 	}
 
 	medianVolume := stats.Median(volumes)

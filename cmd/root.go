@@ -411,6 +411,8 @@ var rootCmd = &cobra.Command{
 				os.Exit(1)
 			}).Value()
 
+			crypto.SetSymbolUniverse(symbols)
+
 			crypto.BindExitAdvisor(exhaustAdvisor)
 			crypto.RegisterTicker(exhaustAdvisor)
 

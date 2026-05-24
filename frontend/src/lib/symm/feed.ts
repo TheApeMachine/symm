@@ -45,7 +45,7 @@ const MAX_TICK_HISTORY = 360;
 
 type ChartListener = (event: SymmEvent) => void;
 
-const chartListeners = new Map<string, ChartListener>();
+const chartListeners = new Map<string, Set<ChartListener>>();
 const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
 const lastSeedBySymbol = new Map<string, ChartSeedEvent>();
 
@@ -55,7 +55,15 @@ let started = false;
 let marketWatchSticky = "";
 
 const dispatchChart = (symbol: string, event: SymmEvent) => {
-	chartListeners.get(symbol)?.(event);
+	const listeners = chartListeners.get(symbol);
+
+	if (!listeners) {
+		return;
+	}
+
+	for (const listener of listeners) {
+		listener(event);
+	}
 };
 
 const appendTickHistory = (tick: PriceTickEvent) => {
@@ -140,9 +148,13 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "status":
 			applyStatus(event as StatusEvent);
 			chartSubscribeSymbols();
-			for (const listener of chartListeners.values()) {
-				listener(event);
+
+			for (const listeners of chartListeners.values()) {
+				for (const listener of listeners) {
+					listener(event);
+				}
 			}
+
 			return;
 		case "scoreboard":
 			applyScoreboard(event as ScoreboardEvent);
@@ -247,12 +259,25 @@ export const onChart = (
 	symbol: string,
 	handler: ChartListener,
 ): (() => void) => {
-	chartListeners.set(symbol, handler);
+	const listeners = chartListeners.get(symbol) ?? new Set<ChartListener>();
+	listeners.add(handler);
+	chartListeners.set(symbol, listeners);
 	replayChartState(symbol, handler);
 	feedStream?.send({ op: "subscribe", symbols: [symbol] });
 
 	return () => {
-		chartListeners.delete(symbol);
+		const current = chartListeners.get(symbol);
+
+		if (!current) {
+			return;
+		}
+
+		current.delete(handler);
+
+		if (current.size === 0) {
+			chartListeners.delete(symbol);
+		}
+
 		feedStream?.send({ op: "unsubscribe", symbols: [symbol] });
 	};
 };

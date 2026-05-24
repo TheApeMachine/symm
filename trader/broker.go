@@ -47,13 +47,24 @@ type BrokerExitRequest struct {
 	FeePct      float64
 	BidLevels   []market.BookLevel
 	AskLevels   []market.BookLevel
+	StopExit    bool
+	StopPrice   float64
+	LimitPrice  float64
+	StopOrderID string
+}
+
+/*
+FillPoller reads one buffered execution without blocking.
+*/
+type FillPoller interface {
+	PollFill(orderID string) (BrokerFill, bool)
 }
 
 /*
 BrokerAmendStopRequest updates a resting exchange stop trigger.
 */
 type BrokerAmendStopRequest struct {
-	OrderID     string
+	OrderID      string
 	TriggerPrice float64
 }
 
@@ -62,6 +73,7 @@ ExecutionBroker submits entries and exits to Kraken or simulates them in paper m
 */
 type ExecutionBroker interface {
 	Live() bool
+	SupportsShort() bool
 	Enter(ctx context.Context, request BrokerEnterRequest) (BrokerFill, error)
 	Exit(ctx context.Context, request BrokerExitRequest) (BrokerFill, error)
 	AmendStop(ctx context.Context, request BrokerAmendStopRequest) error

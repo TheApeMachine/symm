@@ -15,6 +15,7 @@ export class WsStream {
 	private readonly onOpen?: () => void;
 	private socket: WebSocket | null = null;
 	private started = false;
+	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: WsStreamOptions) {
 		this.url = options.url;
@@ -33,6 +34,12 @@ export class WsStream {
 
 	stop(): void {
 		this.started = false;
+
+		if (this.reconnectTimer !== null) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+
 		this.closeSocket();
 		setFeedConnected(false);
 	}
@@ -59,9 +66,17 @@ export class WsStream {
 		socket.onclose = () => {
 			setFeedConnected(false);
 
-			if (this.started) {
-				setTimeout(() => this.connect(), 2000);
+			if (!this.started) {
+				return;
 			}
+
+			this.reconnectTimer = setTimeout(() => {
+				this.reconnectTimer = null;
+
+				if (this.started) {
+					this.connect();
+				}
+			}, 2000);
 		};
 
 		socket.onerror = () => {

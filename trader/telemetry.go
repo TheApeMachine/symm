@@ -58,16 +58,22 @@ func scoreboardTargets(
 func evaluationRows(
 	decision DecisionSnapshot,
 	candidates CandidateStore,
+	liveCandidates CandidateStore,
 ) []map[string]any {
 	rows := make([]map[string]any, 0, len(decision.Evaluations))
 
 	for _, evaluation := range decision.Evaluations {
 		signals := candidateSignals(candidates, evaluation.Symbol)
+		liveSignals := candidateSignals(liveCandidates, evaluation.Symbol)
 
 		row := evaluationToMap(evaluation)
 
 		if len(signals) > 0 {
 			row["signals"] = signals
+		}
+
+		if len(liveSignals) > 0 {
+			row["live_signals"] = liveSignals
 		}
 
 		rows = append(rows, row)
@@ -104,6 +110,7 @@ func candidateSignals(
 			"regime":     candidate.Regime,
 			"reason":     candidate.Reason,
 			"confidence": candidate.Confidence,
+			"executable": candidate.Executable,
 		})
 	}
 
@@ -113,6 +120,7 @@ func candidateSignals(
 func decisionTracePayload(
 	decision DecisionSnapshot,
 	candidates CandidateStore,
+	liveCandidates CandidateStore,
 ) map[string]any {
 	decisions := make([]map[string]any, 0, len(decision.Decisions))
 	allowed := 0
@@ -133,6 +141,6 @@ func decisionTracePayload(
 		"in_play":     len(decision.Decisions),
 		"allowed":     allowed,
 		"decisions":   decisions,
-		"evaluations": evaluationRows(decision, candidates),
+		"evaluations": evaluationRows(decision, candidates, liveCandidates),
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -21,22 +22,24 @@ type SignalCandidate struct {
 	Runway         time.Duration
 	Direction      int
 	ObservedAt     time.Time
+	Executable     bool
 }
 
 /*
 Evaluation is one symbol-level combined decision row.
 */
 type Evaluation struct {
-	Symbol         string
-	CombinedScore  float64
-	Support        int
-	ExpectedReturn float64
-	Runway         time.Duration
-	Regime         string
-	Reason         string
-	Side           string
-	Allow          bool
-	Why            string
+	Symbol             string
+	CombinedScore      float64
+	Support            int
+	ActivePerspectives int
+	ExpectedReturn     float64
+	Runway             time.Duration
+	Regime             string
+	Reason             string
+	Side               string
+	Allow              bool
+	Why                string
 }
 
 /*
@@ -103,7 +106,7 @@ func (store *CandidateStore) Symbols() []string {
 }
 
 /*
-Note records or upgrades one candidate for symbol/source.
+Note records or replaces one candidate atomically when utility improves.
 */
 func (store *CandidateStore) Note(candidate SignalCandidate) {
 	if candidate.Symbol == "" || candidate.Source == "" || candidate.Confidence <= 0 {
@@ -114,33 +117,13 @@ func (store *CandidateStore) Note(candidate SignalCandidate) {
 		store.bySymbol[candidate.Symbol] = make(map[string]SignalCandidate)
 	}
 
-	existing := store.bySymbol[candidate.Symbol][candidate.Source]
+	existing, ok := store.bySymbol[candidate.Symbol][candidate.Source]
 
-	if existing.Confidence >= candidate.Confidence &&
-		existing.ExpectedReturn >= candidate.ExpectedReturn {
+	if ok && candidateUtility(candidate) <= candidateUtility(existing) {
 		return
 	}
 
-	if candidate.Confidence > existing.Confidence {
-		existing.Confidence = candidate.Confidence
-		existing.Regime = candidate.Regime
-		existing.Reason = candidate.Reason
-		existing.Direction = candidate.Direction
-	}
-
-	if candidate.ExpectedReturn > existing.ExpectedReturn {
-		existing.ExpectedReturn = candidate.ExpectedReturn
-	}
-
-	if candidate.Runway > existing.Runway {
-		existing.Runway = candidate.Runway
-	}
-
-	existing.Symbol = candidate.Symbol
-	existing.Source = candidate.Source
-	existing.ObservedAt = candidate.ObservedAt
-
-	store.bySymbol[candidate.Symbol][candidate.Source] = existing
+	store.bySymbol[candidate.Symbol][candidate.Source] = candidate
 }
 
 /*
@@ -168,12 +151,15 @@ and gates on post-cost edge.
 func (engine *DecisionEngine) Build(
 	candidates CandidateStore,
 	quotes QuoteReader,
+	market engine.MarketReader,
+	now time.Time,
+	cashEUR float64,
 	warming bool,
 	ensemble EnsembleContext,
 ) DecisionSnapshot {
 	evaluations, decisions, scores := engine.buildRows(candidates, ensemble)
 	line, median, mad := entryLine(scores)
-	engine.applyGates(evaluations, decisions, quotes, warming, line)
+	engine.applyGates(evaluations, decisions, quotes, market, now, cashEUR, warming, line)
 
 	return DecisionSnapshot{
 		Line:         line,
@@ -195,7 +181,8 @@ func (engine *DecisionEngine) buildRows(
 	scores := make([]float64, 0, len(candidates.bySymbol))
 
 	for symbol, sources := range candidates.bySymbol {
-		perspectives := scorePerspectives(sources, ensemble)
+		executable := executableSources(sources)
+		perspectives := scorePerspectives(executable, ensemble)
 		combined, activePerspectives := combinePerspectives(perspectives)
 		weightedReturn := 0.0
 		returnWeight := 0.0
@@ -206,7 +193,7 @@ func (engine *DecisionEngine) buildRows(
 		topDirection := 1
 		runway := time.Duration(0)
 
-		for _, candidate := range sources {
+		for _, candidate := range executable {
 			regime := RegimeWeight(ensemble.Regime, candidate.Source)
 
 			if regime <= 0 || !regimeAllowsSource(ensemble.Regime, candidate.Source) {
@@ -258,16 +245,17 @@ func (engine *DecisionEngine) buildRows(
 		scores = append(scores, combined)
 
 		evaluations = append(evaluations, Evaluation{
-			Symbol:         symbol,
-			CombinedScore:  combined,
-			Support:        support,
-			ExpectedReturn: expectedReturn,
-			Runway:         runway,
-			Regime:         topRegime,
-			Reason:         topReason,
-			Side:           directionSide(topDirection),
-			Allow:          false,
-			Why:            perspectiveWhy(activePerspectives, support),
+			Symbol:             symbol,
+			CombinedScore:      combined,
+			Support:            support,
+			ActivePerspectives: activePerspectives,
+			ExpectedReturn:     expectedReturn,
+			Runway:             runway,
+			Regime:             topRegime,
+			Reason:             topReason,
+			Side:               directionSide(topDirection),
+			Allow:              false,
+			Why:                perspectiveWhy(activePerspectives, support),
 		})
 	}
 
@@ -286,6 +274,22 @@ func (engine *DecisionEngine) buildRows(
 	return evaluations, decisions, scores
 }
 
+func executableSources(
+	sources map[string]SignalCandidate,
+) map[string]SignalCandidate {
+	filtered := make(map[string]SignalCandidate, len(sources))
+
+	for source, candidate := range sources {
+		if !candidate.Executable {
+			continue
+		}
+
+		filtered[source] = candidate
+	}
+
+	return filtered
+}
+
 func ensembleWeight(ensemble EnsembleContext, candidate SignalCandidate) float64 {
 	regime := RegimeWeight(ensemble.Regime, candidate.Source)
 	trust := 1.0
@@ -301,19 +305,28 @@ func (engine *DecisionEngine) applyGates(
 	evaluations []Evaluation,
 	decisions []Decision,
 	quotes QuoteReader,
+	market engine.MarketReader,
+	now time.Time,
+	cashEUR float64,
 	warming bool,
 	line float64,
 ) {
+	notional := slotNotionalEstimate(cashEUR)
+
 	for index := range evaluations {
 		evaluation := &evaluations[index]
-		allow, why := engine.allowEvaluation(evaluation, quotes, warming, line)
+		allow, why := engine.allowEvaluation(
+			evaluation, quotes, market, now, notional, warming, line,
+		)
 		evaluation.Allow = allow
 		evaluation.Why = why
 	}
 
 	for index := range decisions {
 		decision := &decisions[index]
-		allow, why := engine.allowDecision(decision, quotes, warming, line)
+		allow, why := engine.allowDecision(
+			decision, quotes, market, now, notional, warming, line,
+		)
 		decision.Allow = allow
 		decision.Why = why
 	}
@@ -322,6 +335,9 @@ func (engine *DecisionEngine) applyGates(
 func (engine *DecisionEngine) allowEvaluation(
 	evaluation *Evaluation,
 	quotes QuoteReader,
+	market engine.MarketReader,
+	now time.Time,
+	notionalEUR float64,
 	warming bool,
 	line float64,
 ) (bool, string) {
@@ -343,11 +359,15 @@ func (engine *DecisionEngine) allowEvaluation(
 		minPerspectives = 1
 	}
 
-	if evaluation.Support < minPerspectives {
-		return false, "thin_support"
+	if evaluation.ActivePerspectives < minPerspectives {
+		return false, "thin_perspective"
 	}
 
-	requiredEdge := requiredEdgeReturn(quotes, evaluation.Symbol)
+	if evaluation.Support <= 0 {
+		return false, "no_signal_support"
+	}
+
+	requiredEdge := requiredEdgeReturn(quotes, market, evaluation.Symbol, notionalEUR, now)
 
 	if evaluation.ExpectedReturn <= requiredEdge {
 		return false, "negative_edge"
@@ -359,6 +379,9 @@ func (engine *DecisionEngine) allowEvaluation(
 func (engine *DecisionEngine) allowDecision(
 	decision *Decision,
 	quotes QuoteReader,
+	market engine.MarketReader,
+	now time.Time,
+	notionalEUR float64,
 	warming bool,
 	line float64,
 ) (bool, string) {
@@ -374,25 +397,13 @@ func (engine *DecisionEngine) allowDecision(
 		return false, "below_line"
 	}
 
-	requiredEdge := requiredEdgeReturn(quotes, decision.Symbol)
+	requiredEdge := requiredEdgeReturn(quotes, market, decision.Symbol, notionalEUR, now)
 
 	if decision.ExpectedReturn <= requiredEdge {
 		return false, "negative_edge"
 	}
 
 	return true, "ok"
-}
-
-func requiredEdgeReturn(quotes QuoteReader, symbol string) float64 {
-	roundTripFee := 2 * config.System.TakerFeePct / 100
-	slippageCost := 2 * config.System.SlippageBPS / 10000
-	minEdge := config.System.MinEdgeReturn
-
-	if minEdge <= 0 {
-		minEdge = 0
-	}
-
-	return roundTripFee + slippageCost + minEdge
 }
 
 func entryLine(scores []float64) (line, median, mad float64) {
@@ -410,16 +421,17 @@ func entryLine(scores []float64) (line, median, mad float64) {
 
 func evaluationToMap(evaluation Evaluation) map[string]any {
 	return map[string]any{
-		"symbol":          evaluation.Symbol,
-		"combined":        evaluation.CombinedScore,
-		"support":         evaluation.Support,
-		"expected_return": evaluation.ExpectedReturn,
-		"runway_ms":       evaluation.Runway.Milliseconds(),
-		"regime":          evaluation.Regime,
-		"reason":          evaluation.Reason,
-		"side":            evaluation.Side,
-		"allow":           evaluation.Allow,
-		"why":             evaluation.Why,
+		"symbol":              evaluation.Symbol,
+		"combined":            evaluation.CombinedScore,
+		"support":             evaluation.Support,
+		"active_perspectives": evaluation.ActivePerspectives,
+		"expected_return":     evaluation.ExpectedReturn,
+		"runway_ms":           evaluation.Runway.Milliseconds(),
+		"regime":              evaluation.Regime,
+		"reason":              evaluation.Reason,
+		"side":                evaluation.Side,
+		"allow":               evaluation.Allow,
+		"why":                 evaluation.Why,
 	}
 }
 
@@ -453,7 +465,7 @@ func perspectiveWhy(activePerspectives, support int) string {
 	}
 
 	if support <= 0 {
-		return "below_line"
+		return "no_signal_support"
 	}
 
 	return "below_line"

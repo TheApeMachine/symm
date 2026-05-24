@@ -18,6 +18,7 @@ MarketReader serves symbol snapshots from broadcast-backed cache.
 */
 type MarketReader interface {
 	Read(symbol string) Snapshot
+	ReadFresh(symbol string, now time.Time, ttl time.Duration) Snapshot
 }
 
 /*
@@ -145,6 +146,50 @@ func (relay *MarketRelay) Read(symbol string) Snapshot {
 	}
 
 	return snapshotFromState(state)
+}
+
+/*
+ReadFresh returns a snapshot with stale fields cleared relative to now and ttl.
+*/
+func (relay *MarketRelay) ReadFresh(
+	symbol string,
+	now time.Time,
+	ttl time.Duration,
+) Snapshot {
+	snapshot := relay.Read(symbol)
+
+	if ttl <= 0 {
+		return snapshot
+	}
+
+	if snapshot.LastOK && snapshotStale(snapshot.LastAt, now, ttl) {
+		snapshot.LastOK = false
+	}
+
+	if snapshot.BatchOK && snapshotStale(snapshot.TradesAt, now, ttl) {
+		snapshot.BatchOK = false
+		snapshot.PressureOK = false
+	}
+
+	if snapshot.SpreadOK && snapshotStale(snapshot.BookAt, now, ttl) {
+		snapshot.SpreadOK = false
+		snapshot.ImbalanceOK = false
+		snapshot.DensityOK = false
+		snapshot.DepthSlopeOK = false
+		snapshot.DepthOK = false
+		snapshot.BidLevels = nil
+		snapshot.AskLevels = nil
+	}
+
+	return snapshot
+}
+
+func snapshotStale(at, now time.Time, ttl time.Duration) bool {
+	if at.IsZero() {
+		return true
+	}
+
+	return now.Sub(at) > ttl
 }
 
 /*

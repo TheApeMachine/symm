@@ -25,6 +25,7 @@ type PrivateClient struct {
 	token      errnie.Result[*kraken.Token]
 	pending    sync.Map
 	fillWaits  sync.Map
+	stopWaits  sync.Map
 	fillBuffer sync.Map
 	readOnce   sync.Once
 }
@@ -227,6 +228,72 @@ func (privateClient *PrivateClient) AmendOrder(
 }
 
 /*
+WaitStopOrder blocks until Kraken creates the OTO stop order for one entry fill.
+*/
+func (privateClient *PrivateClient) WaitStopOrder(
+	ctx context.Context,
+	parentOrderID string,
+	symbol string,
+) (string, error) {
+	if parentOrderID == "" {
+		return "", fmt.Errorf("parent order id is required")
+	}
+
+	privateClient.startReadPump()
+
+	stopCh := privateClient.registerStopWait(parentOrderID)
+	defer privateClient.dropStopWait(parentOrderID)
+
+	select {
+	case stopOrderID := <-stopCh:
+		if stopOrderID == "" {
+			return "", fmt.Errorf("empty stop order id for parent %s", parentOrderID)
+		}
+
+		return stopOrderID, nil
+	case <-ctx.Done():
+		return "", fmt.Errorf("stop order timeout: %w", ctx.Err())
+	}
+}
+
+/*
+PollFill returns one buffered execution without blocking.
+*/
+func (privateClient *PrivateClient) PollFill(orderID string) (order.Fill, bool) {
+	return privateClient.takeBufferedFill(orderID)
+}
+
+func (privateClient *PrivateClient) registerStopWait(parentOrderID string) chan string {
+	stopCh := make(chan string, 1)
+	privateClient.stopWaits.Store(parentOrderID, stopCh)
+
+	return stopCh
+}
+
+func (privateClient *PrivateClient) dropStopWait(parentOrderID string) {
+	privateClient.stopWaits.Delete(parentOrderID)
+}
+
+func (privateClient *PrivateClient) deliverStopOrder(parentOrderID, stopOrderID string) {
+	value, found := privateClient.stopWaits.Load(parentOrderID)
+
+	if !found {
+		return
+	}
+
+	stopCh, ok := value.(chan string)
+
+	if !ok {
+		return
+	}
+
+	select {
+	case stopCh <- stopOrderID:
+	default:
+	}
+}
+
+/*
 WaitFill blocks until one trade fill arrives for orderID on the executions channel.
 */
 func (privateClient *PrivateClient) WaitFill(
@@ -361,26 +428,40 @@ func (privateClient *PrivateClient) routeFrame(payload []byte) {
 
 	fills, err := order.ParseExecutionFills(payload)
 
+	if err == nil {
+		for _, fill := range fills {
+			if value, found := privateClient.fillWaits.Load(fill.OrderID); found {
+				fillCh, ok := value.(chan order.Fill)
+
+				if !ok {
+					continue
+				}
+
+				select {
+				case fillCh <- fill:
+				default:
+				}
+
+				continue
+			}
+
+			privateClient.bufferFill(fill)
+		}
+	}
+
+	events, err := order.ParseExecutionEvents(payload)
+
 	if err != nil {
 		return
 	}
 
-	for _, fill := range fills {
-		if value, found := privateClient.fillWaits.Load(fill.OrderID); found {
-			fillCh, ok := value.(chan order.Fill)
+	for _, event := range events {
+		stopOrderID := order.FindOTOStopOrderID([]order.ExecutionEvent{event}, event.OrdRefID, event.Symbol)
 
-			if !ok {
-				continue
-			}
-
-			select {
-			case fillCh <- fill:
-			default:
-			}
-
+		if stopOrderID == "" || event.OrdRefID == "" {
 			continue
 		}
 
-		privateClient.bufferFill(fill)
+		privateClient.deliverStopOrder(event.OrdRefID, stopOrderID)
 	}
 }

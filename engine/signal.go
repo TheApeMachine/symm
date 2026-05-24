@@ -39,6 +39,34 @@ func (measurementType MeasurementType) Direction() int {
 	return 1
 }
 
+/*
+String returns the semantic measurement label for telemetry.
+*/
+func (measurementType MeasurementType) String() string {
+	switch measurementType {
+	case Pump:
+		return "pump"
+	case Dump:
+		return "dump"
+	case Momentum:
+		return "momentum"
+	case Flow:
+		return "flow"
+	case Causal:
+		return "causal"
+	case DepthFlow:
+		return "depthflow"
+	case LeadLag:
+		return "leadlag"
+	case Basis:
+		return "basis"
+	case Sentiment:
+		return "sentiment"
+	default:
+		return "unknown"
+	}
+}
+
 type Timeframe struct {
 	Start int64
 	End   int64

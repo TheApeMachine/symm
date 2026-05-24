@@ -17,28 +17,20 @@ type SignalForecast struct {
 }
 
 /*
-BuildSignalForecast derives expected return and hold horizon from a signal
-reading and the live quote. Expected return models gross move as confidence
-times spread times ForecastSpreadMultiple; costs are checked separately.
+BuildSignalForecast derives expected return from settled forward returns when
+enough calibration samples exist; otherwise no forecast is emitted.
 */
 func BuildSignalForecast(
 	measurement engine.Measurement,
 	quote QuoteReader,
 	symbol string,
+	returnModel *ReturnModel,
 ) (SignalForecast, bool) {
-	if measurement.Confidence <= 0 || symbol == "" {
+	if measurement.Confidence <= 0 || symbol == "" || returnModel == nil {
 		return SignalForecast{}, false
 	}
 
-	last, bid, ask, _, ok := quote.Quote(symbol)
-
-	if !ok || last <= 0 {
-		return SignalForecast{}, false
-	}
-
-	spreadBPS := spreadBPSFromQuote(last, bid, ask)
-
-	if spreadBPS <= 0 {
+	if _, _, _, _, ok := quote.Quote(symbol); !ok {
 		return SignalForecast{}, false
 	}
 
@@ -48,21 +40,18 @@ func BuildSignalForecast(
 		return SignalForecast{}, false
 	}
 
-	spreadReturn := spreadBPS / 10000
-	multiple := config.System.ForecastSpreadMultiple
+	gross, ok := returnModel.Predict(
+		measurement.Source,
+		measurement.Regime,
+		measurement.Confidence,
+	)
 
-	if multiple <= 0 {
-		multiple = 4
-	}
-
-	expectedReturn := measurement.Confidence * spreadReturn * multiple
-
-	if expectedReturn <= 0 {
+	if !ok || gross <= 0 {
 		return SignalForecast{}, false
 	}
 
 	return SignalForecast{
-		ExpectedReturn: expectedReturn,
+		ExpectedReturn: gross,
 		Runway:         runway,
 	}, true
 }

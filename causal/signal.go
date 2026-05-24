@@ -12,8 +12,8 @@ import (
 )
 
 /*
-Causal applies Pearl's ladder: association, backdoor intervention, and counterfactual uplift.
-DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor control.
+Causal scores flow/liquidity intervention heuristics with bounded effect composition.
+DAG sketch: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as control.
 */
 type Causal struct {
 	market  *engine.MarketRelay

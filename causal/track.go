@@ -41,6 +41,7 @@ type SymbolTrack struct {
 	engine.SymbolLock
 	samples           []causalSample
 	interventionHist  []float64
+	upliftHist        []float64
 	confidenceHistory []float64
 	lastPrice         float64
 	lastAt            time.Time
@@ -340,14 +341,32 @@ func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string)
 		return intervention, "intervention"
 	}
 
+	track.recordUplift(uplift)
+
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
 	reason := "intervention"
 
-	if confounded && uplift > intervention*0.5 {
-		reason = "counterfactual"
+	if confounded && uplift > 0 {
+		reason = "counterfactual_like"
 	}
 
-	return intervention * uplift, reason
+	interventionScore := engine.NormalizeConfidence(intervention, track.interventionHist)
+	upliftScore := engine.NormalizeConfidence(uplift, track.upliftHist)
+	score := interventionScore
+
+	if upliftScore > 0 {
+		score = 0.6*interventionScore + 0.4*upliftScore
+	}
+
+	if score <= 0 {
+		if intervention > 0 {
+			return intervention, reason
+		}
+
+		return 0, ""
+	}
+
+	return score, reason
 }
 
 func (track *SymbolTrack) recordConfidence(confidence float64) {
@@ -404,6 +423,18 @@ func (track *SymbolTrack) recordIntervention(effect float64) {
 	}
 }
 
+func (track *SymbolTrack) recordUplift(uplift float64) {
+	if uplift <= 0 {
+		return
+	}
+
+	track.upliftHist = append(track.upliftHist, uplift)
+
+	if len(track.upliftHist) > causalHistoryCap {
+		track.upliftHist = track.upliftHist[len(track.upliftHist)-causalHistoryCap:]
+	}
+}
+
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
 	return trackStore.ensureLocked(symbol)
 }
@@ -425,6 +456,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track = &SymbolTrack{
 		samples:           make([]causalSample, 0, causalHistoryCap),
 		interventionHist:  make([]float64, 0, causalHistoryCap),
+		upliftHist:        make([]float64, 0, causalHistoryCap),
 		confidenceHistory: make([]float64, 0, causalHistoryCap),
 		calibrator:        engine.NewPredictionCalibrator(),
 	}

@@ -35,23 +35,23 @@ type ExecutionDecision struct {
 Position tracks one open paper trade.
 */
 type Position struct {
-	Symbol       string
-	Source       string
-	Regime       string
-	Reason       string
-	Score        float64
-	Side         int
-	EntryPrice   float64
-	FillPrice    float64
-	StopPrice    float64
-	PeakPrice    float64
-	NotionalEUR  float64
-	EntryFeeEUR  float64
-	TrailPct     float64
-	BaseQty      float64
-	OrderID      string
-	StopOrderID  string
-	OpenedAt     time.Time
+	Symbol      string
+	Source      string
+	Regime      string
+	Reason      string
+	Score       float64
+	Side        int
+	EntryPrice  float64
+	FillPrice   float64
+	StopPrice   float64
+	PeakPrice   float64
+	NotionalEUR float64
+	EntryFeeEUR float64
+	TrailPct    float64
+	BaseQty     float64
+	OrderID     string
+	StopOrderID string
+	OpenedAt    time.Time
 }
 
 /*
@@ -66,17 +66,24 @@ type PortfolioEvent struct {
 Portfolio owns open positions and paper wallet debits for the trader loop.
 */
 type Portfolio struct {
-	mu          sync.Mutex
-	wallet      *Wallet
-	broker      ExecutionBroker
-	positions   map[string]*Position
-	closedPnL   float64
-	tradeCount  int
-	wins        int
-	ui          *qpool.BroadcastGroup
-	riskReader  RiskReader
-	exitAdvisor ExitAdvisor
-	trailRisk   *trailRiskFilter
+	mu             sync.Mutex
+	wallet         *Wallet
+	broker         ExecutionBroker
+	positions      map[string]*Position
+	pendingEntries map[string]struct{}
+	pendingExits   map[string]struct{}
+	closedPnL      float64
+	dailyClosedPnL float64
+	dailyPnLDay    time.Time
+	tradeCount     int
+	wins           int
+	ui             *qpool.BroadcastGroup
+	riskReader     RiskReader
+	exitAdvisor    ExitAdvisor
+	trailRisk      *trailRiskFilter
+	orderJournal   *OrderJournal
+	haltReason     string
+	store          *PortfolioStore
 }
 
 /*
@@ -84,10 +91,12 @@ NewPortfolio creates an empty paper portfolio bound to one wallet.
 */
 func NewPortfolio(wallet *Wallet) *Portfolio {
 	return &Portfolio{
-		wallet:    wallet,
-		broker:    NewPaperBroker(),
-		positions: make(map[string]*Position),
-		trailRisk: newTrailRiskFilter(),
+		wallet:         wallet,
+		broker:         NewPaperBroker(),
+		positions:      make(map[string]*Position),
+		pendingEntries: make(map[string]struct{}),
+		pendingExits:   make(map[string]struct{}),
+		trailRisk:      newTrailRiskFilter(),
 	}
 }
 
@@ -105,6 +114,27 @@ func (portfolio *Portfolio) BindBroker(broker ExecutionBroker) {
 	}
 
 	portfolio.broker = broker
+	portfolio.reconcileStopOrdersLocked()
+}
+
+func (portfolio *Portfolio) reconcileStopOrdersLocked() {
+	if portfolio.orderJournal == nil {
+		return
+	}
+
+	for symbol, position := range portfolio.positions {
+		if position.StopOrderID != "" {
+			continue
+		}
+
+		stopOrderID := portfolio.orderJournal.LatestStopOrderID(symbol)
+
+		if stopOrderID == "" {
+			continue
+		}
+
+		position.StopOrderID = stopOrderID
+	}
 }
 
 /*
@@ -123,11 +153,68 @@ StatusSnapshot is the portfolio slice of dashboard status telemetry.
 type StatusSnapshot struct {
 	EquityEUR    float64
 	CashEUR      float64
+	ReservedEUR  float64
 	ClosedPnLEUR float64
 	TradeCount   int
 	WinRate      float64
 	OpenCount    int
 	Positions    []map[string]any
+}
+
+/*
+TradingAllowed reports whether new entries are permitted.
+*/
+func (portfolio *Portfolio) TradingAllowed() bool {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	return portfolio.haltReason == ""
+}
+
+/*
+HaltReason returns the active trading halt reason, if any.
+*/
+func (portfolio *Portfolio) HaltReason() string {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	return portfolio.haltReason
+}
+
+func (portfolio *Portfolio) haltLocked(reason string) {
+	if reason == "" {
+		return
+	}
+
+	portfolio.haltReason = reason
+}
+
+/*
+BindPortfolioStore wires portfolio persistence for paper restarts.
+*/
+func (portfolio *Portfolio) BindPortfolioStore(store *PortfolioStore) {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	portfolio.store = store
+}
+
+func (portfolio *Portfolio) persistLocked() {
+	if portfolio.store == nil {
+		return
+	}
+
+	_ = portfolio.store.Save(portfolio)
+}
+
+/*
+BindOrderJournal wires live order persistence for reconciliation.
+*/
+func (portfolio *Portfolio) BindOrderJournal(journal *OrderJournal) {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	portfolio.orderJournal = journal
 }
 
 /*
@@ -154,10 +241,63 @@ func (portfolio *Portfolio) BindUI(uiGroup *qpool.BroadcastGroup) {
 TryEnter opens one paper position when slot and wallet constraints allow.
 */
 func (portfolio *Portfolio) TryEnter(
+	ctx context.Context,
 	now time.Time,
 	decision ExecutionDecision,
 	quotes QuoteReader,
 ) (*PortfolioEvent, bool) {
+	plan, ok := portfolio.prepareEntry(now, decision, quotes)
+
+	if !ok {
+		return nil, false
+	}
+
+	brokerFill, err := portfolio.broker.Enter(ctx, plan.brokerRequest)
+
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	delete(portfolio.pendingEntries, decision.Symbol)
+
+	if err != nil {
+		portfolio.releaseEntryReservationLocked(plan.reservedEUR)
+
+		return nil, false
+	}
+
+	if plan.brokerRequest.StopPrice > 0 &&
+		plan.brokerRequest.Side == positionLong &&
+		brokerFill.StopOrderID == "" {
+		portfolio.releaseEntryReservationLocked(plan.reservedEUR)
+
+		if portfolio.broker.Live() {
+			portfolio.haltLocked("unconfirmed_stop")
+		}
+
+		return nil, false
+	}
+
+	event := portfolio.commitEntryLocked(now, decision, plan, brokerFill)
+
+	if portfolio.broker.Live() && brokerFill.StopOrderID == "" {
+		portfolio.haltLocked("unprotected_position")
+	}
+
+	return event, true
+}
+
+type entryPlan struct {
+	brokerRequest BrokerEnterRequest
+	trailPct      float64
+	notional      float64
+	reservedEUR   float64
+}
+
+func (portfolio *Portfolio) prepareEntry(
+	now time.Time,
+	decision ExecutionDecision,
+	quotes QuoteReader,
+) (entryPlan, bool) {
 	side := decision.Side
 
 	if side == 0 {
@@ -165,34 +305,61 @@ func (portfolio *Portfolio) TryEnter(
 	}
 
 	if side != positionLong && side != positionShort {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	if decision.Symbol == "" || decision.Price <= 0 || decision.Score <= 0 {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	portfolio.mu.Lock()
 	defer portfolio.mu.Unlock()
 
+	if side == positionShort && !portfolio.brokerSupportsShortLocked() {
+		return entryPlan{}, false
+	}
+
+	if portfolio.haltReason != "" {
+		return entryPlan{}, false
+	}
+
+	portfolio.rollDailyPnLLocked(now)
+
+	if config.System.MaxDailyLossEUR > 0 &&
+		portfolio.dailyClosedPnL <= -config.System.MaxDailyLossEUR {
+		return entryPlan{}, false
+	}
+
+	if _, pending := portfolio.pendingEntries[decision.Symbol]; pending {
+		return entryPlan{}, false
+	}
+
 	if len(portfolio.positions) >= config.System.MaxSlots {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	if _, open := portfolio.positions[decision.Symbol]; open {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	notional := portfolio.slotNotional()
 
 	if notional < config.System.MinCostEUR {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	last, bid, ask, _, ok := quotes.Quote(decision.Symbol)
 
 	if !ok || last <= 0 {
 		last = decision.Price
+	}
+
+	if config.System.MaxSpreadBPS > 0 {
+		spread := quoteSpreadBPS(last, bid, ask)
+
+		if spread <= 0 || spread > config.System.MaxSpreadBPS {
+			return entryPlan{}, false
+		}
 	}
 
 	bidLevels, askLevels := bookDepthFor(quotes, decision.Symbol)
@@ -203,52 +370,91 @@ func (portfolio *Portfolio) TryEnter(
 
 	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
 		config.System.MaxLossPerTradeEUR > 0 {
-		return nil, false
+		return entryPlan{}, false
 	}
 
 	estimatedFee := config.System.TakerFee(notional, portfolio.wallet.FeePct)
+	reservedEUR := 0.0
 
 	if side == positionLong {
 		cost := notional + estimatedFee
 
-		if portfolio.wallet == nil || portfolio.wallet.Balance < cost {
-			return nil, false
+		if portfolio.wallet == nil || portfolio.wallet.AvailableEUR() < cost {
+			return entryPlan{}, false
 		}
+
+		if err := portfolio.wallet.ReserveEntry(cost); err != nil {
+			return entryPlan{}, false
+		}
+
+		reservedEUR = cost
 	}
 
 	if side == positionShort {
-		if portfolio.wallet == nil || portfolio.wallet.Balance < notional {
-			return nil, false
+		if portfolio.wallet == nil || portfolio.wallet.AvailableEUR() < notional {
+			return entryPlan{}, false
 		}
 	}
 
-	brokerFill, err := portfolio.broker.Enter(context.Background(), BrokerEnterRequest{
-		Symbol:      decision.Symbol,
-		Side:        side,
-		NotionalEUR: notional,
-		Last:        last,
-		Bid:         bid,
-		Ask:         ask,
-		StopPrice:   estimatedStop,
-		FeePct:      portfolio.wallet.FeePct,
-		BidLevels:   bidLevels,
-		AskLevels:   askLevels,
-	})
+	portfolio.pendingEntries[decision.Symbol] = struct{}{}
 
-	if err != nil {
-		return nil, false
+	return entryPlan{
+		brokerRequest: BrokerEnterRequest{
+			Symbol:      decision.Symbol,
+			Side:        side,
+			NotionalEUR: notional,
+			Last:        last,
+			Bid:         bid,
+			Ask:         ask,
+			StopPrice:   estimatedStop,
+			FeePct:      portfolio.wallet.FeePct,
+			BidLevels:   bidLevels,
+			AskLevels:   askLevels,
+		},
+		trailPct:    trailPct,
+		notional:    notional,
+		reservedEUR: reservedEUR,
+	}, true
+}
+
+func (portfolio *Portfolio) releaseEntryReservationLocked(reservedEUR float64) {
+	if portfolio.wallet == nil {
+		return
 	}
 
+	portfolio.wallet.ReleaseEntryReservation(reservedEUR)
+}
+
+func (portfolio *Portfolio) commitEntryLocked(
+	now time.Time,
+	decision ExecutionDecision,
+	plan entryPlan,
+	brokerFill BrokerFill,
+) *PortfolioEvent {
+	side := plan.brokerRequest.Side
 	fill := brokerFill.FillPrice
 	fee := brokerFill.FeeEUR
-	stop := initialStop(fill, trailPct, side)
+	stop := initialStop(fill, plan.trailPct, side)
+	entryProceeds := spotProceedsEUR(brokerFill.BaseQty, fill)
+
+	if entryProceeds <= 0 {
+		entryProceeds = plan.notional
+	}
 
 	if side == positionLong {
-		portfolio.wallet.Balance -= notional + fee
+		actualCost := entryProceeds + fee
+
+		if err := portfolio.wallet.SettleEntryReservation(plan.reservedEUR, actualCost); err != nil {
+			portfolio.haltLocked("entry_settlement_failed")
+		}
+
+		if err := portfolio.wallet.CreditBase(decision.Symbol, brokerFill.BaseQty); err != nil {
+			portfolio.haltLocked("inventory_credit_failed")
+		}
 	}
 
 	if side == positionShort {
-		portfolio.wallet.Balance += notional - fee
+		portfolio.wallet.Balance += entryProceeds - fee
 	}
 
 	position := &Position{
@@ -258,13 +464,13 @@ func (portfolio *Portfolio) TryEnter(
 		Reason:      decision.Reason,
 		Score:       decision.Score,
 		Side:        side,
-		EntryPrice:  last,
+		EntryPrice:  plan.brokerRequest.Last,
 		FillPrice:   fill,
 		StopPrice:   stop,
 		PeakPrice:   fill,
-		NotionalEUR: notional,
+		NotionalEUR: entryProceeds,
 		EntryFeeEUR: fee,
-		TrailPct:    trailPct,
+		TrailPct:    plan.trailPct,
 		BaseQty:     brokerFill.BaseQty,
 		OrderID:     brokerFill.OrderID,
 		StopOrderID: brokerFill.StopOrderID,
@@ -273,22 +479,89 @@ func (portfolio *Portfolio) TryEnter(
 
 	portfolio.positions[decision.Symbol] = position
 
-	return portfolio.enterEvent(now, position), true
+	if portfolio.orderJournal != nil {
+		sideLabel := "long"
+
+		if side == positionShort {
+			sideLabel = "short"
+		}
+
+		portfolio.orderJournal.RecordEntry(OrderJournalEntry{
+			Event:       "trade_enter",
+			Symbol:      decision.Symbol,
+			Side:        sideLabel,
+			OrderID:     brokerFill.OrderID,
+			StopOrderID: brokerFill.StopOrderID,
+			NotionalEUR: plan.notional,
+			FillPrice:   fill,
+		})
+	}
+
+	portfolio.persistLocked()
+
+	return portfolio.enterEvent(now, position)
+}
+
+func (portfolio *Portfolio) brokerSupportsShortLocked() bool {
+	if portfolio.broker == nil {
+		return false
+	}
+
+	return portfolio.broker.SupportsShort()
 }
 
 /*
 Mark updates peaks, ratchets stops, and closes positions that hit exit rules.
 */
-func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioEvent {
-	portfolio.mu.Lock()
-	defer portfolio.mu.Unlock()
+func (portfolio *Portfolio) Mark(
+	ctx context.Context,
+	now time.Time,
+	quotes QuoteReader,
+) []PortfolioEvent {
+	type ratchetAction struct {
+		position  *Position
+		oldStop   float64
+		last      float64
+		amendStop bool
+	}
 
+	portfolio.mu.Lock()
+
+	ratchetActions := make([]ratchetAction, 0, len(portfolio.positions))
+	exitPlans := make([]exitPlan, 0, len(portfolio.positions))
 	events := make([]PortfolioEvent, 0, len(portfolio.positions))
 
 	for symbol, position := range portfolio.positions {
+		if _, pending := portfolio.pendingExits[symbol]; pending {
+			continue
+		}
+
 		last, bid, ask, _, ok := quotes.Quote(symbol)
 
 		if !ok || last <= 0 {
+			continue
+		}
+
+		if stopExit, ok := portfolio.pollLiveStopFillLocked(symbol, position); ok {
+			feePct := 0.0
+
+			if portfolio.wallet != nil {
+				feePct = portfolio.wallet.FeePct
+			}
+
+			portfolio.pendingExits[symbol] = struct{}{}
+			exitPlans = append(exitPlans, exitPlan{
+				symbol:        symbol,
+				reason:        "stop",
+				position:      position,
+				last:          last,
+				bid:           bid,
+				ask:           ask,
+				feePct:        feePct,
+				usePolledFill: true,
+				polledFill:    stopExit,
+			})
+
 			continue
 		}
 
@@ -304,38 +577,108 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 
 		newStop := trailingStop(position)
 		oldStop := position.StopPrice
+		amendStop := false
 
 		if portfolio.ratchetStop(position, newStop) {
-			event := portfolio.ratchetEvent(now, position, oldStop, last)
-			events = append(events, event)
+			amendStop = portfolio.broker != nil && position.StopOrderID != ""
 
-			if portfolio.broker != nil && portfolio.broker.Live() && position.StopOrderID != "" {
-				_ = portfolio.broker.AmendStop(context.Background(), BrokerAmendStopRequest{
-					OrderID:      position.StopOrderID,
-					TriggerPrice: position.StopPrice,
-				})
+			ratchetActions = append(ratchetActions, ratchetAction{
+				position:  position,
+				oldStop:   oldStop,
+				last:      last,
+				amendStop: amendStop,
+			})
+		}
+
+		if portfolio.stopTriggered(position, last) {
+			if portfolio.broker != nil &&
+				portfolio.broker.Live() &&
+				position.StopOrderID != "" {
+				continue
 			}
+
+			if portfolio.broker != nil &&
+				portfolio.broker.Live() &&
+				position.StopOrderID == "" {
+				portfolio.haltLocked("unprotected_stop")
+			}
+
+			feePct := 0.0
+
+			if portfolio.wallet != nil {
+				feePct = portfolio.wallet.FeePct
+			}
+
+			portfolio.pendingExits[symbol] = struct{}{}
+			exitPlans = append(exitPlans, exitPlan{
+				symbol:   symbol,
+				reason:   "stop",
+				position: position,
+				last:     last,
+				bid:      bid,
+				ask:      ask,
+				feePct:   feePct,
+				stopExit: true,
+			})
+
+			continue
 		}
 
 		if !portfolio.canExit(now, position) {
 			continue
 		}
 
-		if portfolio.shouldExitEarly(position) {
-			exitEvent := portfolio.closeLocked(
-				now, symbol, position, last, bid, ask, quotes, portfolio.earlyExitReason(position),
-			)
-			events = append(events, exitEvent)
-
+		if !portfolio.shouldExitEarly(position) {
 			continue
 		}
 
-		if !portfolio.stopTriggered(position, last) {
+		feePct := 0.0
+
+		if portfolio.wallet != nil {
+			feePct = portfolio.wallet.FeePct
+		}
+
+		portfolio.pendingExits[symbol] = struct{}{}
+		exitPlans = append(exitPlans, exitPlan{
+			symbol:   symbol,
+			reason:   portfolio.earlyExitReason(position),
+			position: position,
+			last:     last,
+			bid:      bid,
+			ask:      ask,
+			feePct:   feePct,
+		})
+	}
+
+	portfolio.mu.Unlock()
+
+	for _, action := range ratchetActions {
+		events = append(events, portfolio.ratchetEvent(now, action.position, action.oldStop, action.last))
+
+		if !action.amendStop {
 			continue
 		}
 
-		exitEvent := portfolio.closeLocked(now, symbol, position, last, bid, ask, quotes, "stop")
-		events = append(events, exitEvent)
+		amendErr := portfolio.broker.AmendStop(ctx, BrokerAmendStopRequest{
+			OrderID:      action.position.StopOrderID,
+			TriggerPrice: action.position.StopPrice,
+		})
+
+		if amendErr != nil && portfolio.broker.Live() {
+			portfolio.mu.Lock()
+			portfolio.haltLocked("stop_amend_failed")
+			portfolio.mu.Unlock()
+		}
+	}
+
+	for _, plan := range exitPlans {
+		event := portfolio.executeExit(ctx, now, plan, quotes)
+
+		if event.Name == "" {
+			continue
+		}
+
+		events = append(events, event)
 	}
 
 	return events
@@ -350,6 +693,7 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 
 	snapshot := StatusSnapshot{
 		CashEUR:      walletBalance(portfolio.wallet),
+		ReservedEUR:  walletReserved(portfolio.wallet),
 		ClosedPnLEUR: portfolio.closedPnL,
 		TradeCount:   portfolio.tradeCount,
 		OpenCount:    len(portfolio.positions),
@@ -402,7 +746,7 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 }
 
 func (portfolio *Portfolio) slotNotional() float64 {
-	if portfolio.wallet == nil || portfolio.wallet.Balance <= 0 {
+	if portfolio.wallet == nil || portfolio.wallet.AvailableEUR() <= 0 {
 		return 0
 	}
 
@@ -412,13 +756,39 @@ func (portfolio *Portfolio) slotNotional() float64 {
 		slotPct = 5
 	}
 
-	notional := portfolio.wallet.Balance * slotPct / 100
+	available := portfolio.wallet.AvailableEUR()
+	notional := available * slotPct / 100
 
-	if notional > portfolio.wallet.Balance {
-		return portfolio.wallet.Balance
+	if notional > available {
+		return available
 	}
 
 	return notional
+}
+
+func (portfolio *Portfolio) pollLiveStopFillLocked(
+	symbol string,
+	position *Position,
+) (BrokerFill, bool) {
+	if portfolio.broker == nil || !portfolio.broker.Live() || position.StopOrderID == "" {
+		return BrokerFill{}, false
+	}
+
+	poller, ok := portfolio.broker.(FillPoller)
+
+	if !ok {
+		return BrokerFill{}, false
+	}
+
+	fill, ok := poller.PollFill(position.StopOrderID)
+
+	if !ok {
+		return BrokerFill{}, false
+	}
+
+	_ = symbol
+
+	return fill, true
 }
 
 func (portfolio *Portfolio) shouldExitEarly(position *Position) bool {
@@ -481,71 +851,200 @@ func minHoldForRegime(regime string) time.Duration {
 	return minHold
 }
 
-func (portfolio *Portfolio) closeLocked(
-	now time.Time,
-	symbol string,
-	position *Position,
-	last, bid, ask float64,
-	quotes QuoteReader,
-	reason string,
-) PortfolioEvent {
-	bidLevels, askLevels := bookDepthFor(quotes, symbol)
+type exitPlan struct {
+	symbol        string
+	reason        string
+	position      *Position
+	last          float64
+	bid           float64
+	ask           float64
+	feePct        float64
+	stopExit      bool
+	usePolledFill bool
+	polledFill    BrokerFill
+}
 
-	brokerFill, err := portfolio.broker.Exit(context.Background(), BrokerExitRequest{
-		Symbol:      symbol,
-		Side:        position.Side,
-		NotionalEUR: position.NotionalEUR,
-		BaseQty:     position.BaseQty,
-		Last:        last,
-		Bid:         bid,
-		Ask:         ask,
-		FeePct:      portfolio.wallet.FeePct,
+func (portfolio *Portfolio) executeExit(
+	ctx context.Context,
+	now time.Time,
+	action exitPlan,
+	quotes QuoteReader,
+) PortfolioEvent {
+	if action.usePolledFill {
+		portfolio.mu.Lock()
+
+		delete(portfolio.pendingExits, action.symbol)
+
+		position, open := portfolio.positions[action.symbol]
+
+		portfolio.mu.Unlock()
+
+		if !open {
+			return PortfolioEvent{}
+		}
+
+		return portfolio.commitExitLocked(now, position, action.reason, action.polledFill.FillPrice)
+	}
+
+	if !portfolio.hasInventoryForExit(action.position) {
+		portfolio.mu.Lock()
+		delete(portfolio.pendingExits, action.symbol)
+		portfolio.haltLocked("inventory_shortfall")
+		portfolio.mu.Unlock()
+
+		return PortfolioEvent{}
+	}
+
+	bidLevels, askLevels := bookDepthFor(quotes, action.symbol)
+
+	exitRequest := BrokerExitRequest{
+		Symbol:      action.symbol,
+		Side:        action.position.Side,
+		NotionalEUR: action.position.NotionalEUR,
+		BaseQty:     action.position.BaseQty,
+		Last:        action.last,
+		Bid:         action.bid,
+		Ask:         action.ask,
+		FeePct:      action.feePct,
 		BidLevels:   bidLevels,
 		AskLevels:   askLevels,
-	})
+	}
 
-	exitFill := last
+	if action.stopExit {
+		exitRequest.StopExit = true
+		exitRequest.StopPrice = action.position.StopPrice
+		exitRequest.LimitPrice = StopLimitBelow(action.position.StopPrice)
+		exitRequest.StopOrderID = action.position.StopOrderID
+	}
+
+	brokerFill, err := portfolio.broker.Exit(ctx, exitRequest)
+
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	delete(portfolio.pendingExits, action.symbol)
+
+	position, open := portfolio.positions[action.symbol]
+
+	if !open {
+		return PortfolioEvent{}
+	}
+
+	exitFill := action.last
 
 	if err == nil {
 		exitFill = brokerFill.FillPrice
 	}
 
 	if err != nil && portfolio.broker.Live() {
-		return portfolio.exitEvent(now, position, reason+"_failed", 0, exitFill)
+		return portfolio.exitEvent(now, position, action.reason+"_failed", 0, exitFill)
 	}
 
+	return portfolio.commitExitLocked(now, position, action.reason, exitFill)
+}
+
+func (portfolio *Portfolio) commitExitLocked(
+	now time.Time,
+	position *Position,
+	reason string,
+	exitFill float64,
+) PortfolioEvent {
 	pnl := portfolio.realizedPnL(position, exitFill)
 
 	if portfolio.wallet != nil {
+		if position.Side == positionLong {
+			if err := portfolio.wallet.DebitBase(position.Symbol, position.BaseQty); err != nil {
+				portfolio.haltLocked("inventory_debit_failed")
+
+				return portfolio.exitEvent(now, position, reason+"_inventory_failed", 0, exitFill)
+			}
+		}
+
 		portfolio.wallet.Balance += portfolio.exitCashFlow(position, exitFill)
 	}
 
 	portfolio.closedPnL += pnl
+	portfolio.dailyClosedPnL += pnl
 	portfolio.tradeCount++
 
 	if pnl > 0 {
 		portfolio.wins++
 	}
 
-	delete(portfolio.positions, symbol)
-	portfolio.trailRisk.forget(symbol)
+	delete(portfolio.positions, position.Symbol)
+	portfolio.trailRisk.forget(position.Symbol)
 
-	event := portfolio.exitEvent(now, position, reason, pnl, exitFill)
+	if portfolio.orderJournal != nil {
+		sideLabel := "long"
 
-	return event
+		if position.Side == positionShort {
+			sideLabel = "short"
+		}
+
+		portfolio.orderJournal.RecordEntry(OrderJournalEntry{
+			Event:     "trade_exit",
+			Symbol:    position.Symbol,
+			Side:      sideLabel,
+			FillPrice: exitFill,
+			Reason:    reason,
+		})
+	}
+
+	portfolio.persistLocked()
+
+	return portfolio.exitEvent(now, position, reason, pnl, exitFill)
+}
+
+func (portfolio *Portfolio) hasInventoryForExit(position *Position) bool {
+	if position == nil || position.Side != positionLong {
+		return true
+	}
+
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	if portfolio.wallet == nil {
+		return false
+	}
+
+	return portfolio.wallet.AvailableBase(position.Symbol) >= position.BaseQty
+}
+
+func (portfolio *Portfolio) rollDailyPnLLocked(now time.Time) {
+	day := now.UTC().Truncate(24 * time.Hour)
+
+	if portfolio.dailyPnLDay == day {
+		return
+	}
+
+	portfolio.dailyPnLDay = day
+	portfolio.dailyClosedPnL = 0
+}
+
+func quoteSpreadBPS(last, bid, ask float64) float64 {
+	if last <= 0 || bid <= 0 || ask <= 0 || ask < bid {
+		return 0
+	}
+
+	return (ask - bid) / last * 10000
 }
 
 func (portfolio *Portfolio) netMarkValue(position *Position, last float64) float64 {
 	gross := portfolio.markValue(position, last)
+	feePct := 0.0
+
+	if portfolio.wallet != nil {
+		feePct = portfolio.wallet.FeePct
+	}
 
 	if position.Side == positionShort {
-		exitCost := position.NotionalEUR * (last / position.FillPrice)
+		exitCost := positionExitProceeds(position, last)
 
 		if exitCost <= 0 {
 			return gross
 		}
 
-		return gross - config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+		return gross - spotTakerFeeEUR(exitCost, feePct)
 	}
 
 	exitProceeds := gross
@@ -554,20 +1053,20 @@ func (portfolio *Portfolio) netMarkValue(position *Position, last float64) float
 		return 0
 	}
 
-	return exitProceeds - config.System.TakerFee(exitProceeds, portfolio.wallet.FeePct)
+	return exitProceeds - spotTakerFeeEUR(exitProceeds, feePct)
 }
 
 func (portfolio *Portfolio) realizedPnL(position *Position, exitFill float64) float64 {
 	if position.Side == positionShort {
 		entryProceeds := position.NotionalEUR
-		exitCost := position.NotionalEUR * (exitFill / position.FillPrice)
-		exitFee := config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+		exitCost := positionExitProceeds(position, exitFill)
+		exitFee := spotTakerFeeEUR(exitCost, portfolio.wallet.FeePct)
 
 		return entryProceeds - position.EntryFeeEUR - exitCost - exitFee
 	}
 
-	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
-	exitFee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
+	proceeds := positionExitProceeds(position, exitFill)
+	exitFee := spotTakerFeeEUR(proceeds, portfolio.wallet.FeePct)
 	net := proceeds - exitFee
 
 	return net - position.NotionalEUR - position.EntryFeeEUR
@@ -575,26 +1074,20 @@ func (portfolio *Portfolio) realizedPnL(position *Position, exitFill float64) fl
 
 func (portfolio *Portfolio) exitCashFlow(position *Position, exitFill float64) float64 {
 	if position.Side == positionShort {
-		exitCost := position.NotionalEUR * (exitFill / position.FillPrice)
-		exitFee := config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+		exitCost := positionExitProceeds(position, exitFill)
+		exitFee := spotTakerFeeEUR(exitCost, portfolio.wallet.FeePct)
 
 		return -(exitCost + exitFee)
 	}
 
-	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
-	fee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
+	proceeds := positionExitProceeds(position, exitFill)
+	fee := spotTakerFeeEUR(proceeds, portfolio.wallet.FeePct)
 
 	return proceeds - fee
 }
 
 func (portfolio *Portfolio) markValue(position *Position, last float64) float64 {
-	if position.Side == positionShort {
-		unrealized := position.NotionalEUR * (position.FillPrice - last) / position.FillPrice
-
-		return unrealized
-	}
-
-	return position.NotionalEUR * (last / position.FillPrice)
+	return positionMarkValue(position, last)
 }
 
 func initialStop(fill, trailPct float64, side int) float64 {

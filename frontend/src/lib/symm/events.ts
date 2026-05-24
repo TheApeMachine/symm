@@ -217,6 +217,11 @@ export type SignalScoreEvent = SymmEvent & {
 
 const WHY_LABELS: Record<string, string> = {
 	below_line: "Below cut line",
+	thin_perspective: "Too few active perspectives",
+	thin_support: "Too little source support",
+	no_signal_support: "No signal support",
+	no_perspective: "No active perspective",
+	negative_edge: "Edge below costs",
 	slot_limit: "Slot limit reached",
 	field_warming: "Field warming up",
 	pump_unconfirmed: "Pump not confirmed",

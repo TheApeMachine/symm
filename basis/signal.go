@@ -158,20 +158,18 @@ func (basis *Basis) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
+	if relStrength <= 0 {
+		return engine.Measurement{}, false, nil
+	}
+
 	pair, ok := basis.pairs[symbol]
 
 	if !ok {
 		return engine.Measurement{}, false, nil
 	}
 
-	measurementType := engine.Basis
-
-	if relStrength < 0 {
-		measurementType = engine.Dump
-	}
-
 	return engine.Measurement{
-		Type:       measurementType,
+		Type:       engine.Basis,
 		Source:     basisSource,
 		Regime:     "basis",
 		Reason:     "relative_strength",

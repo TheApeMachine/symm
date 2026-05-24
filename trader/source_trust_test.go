@@ -2,6 +2,7 @@ package trader
 
 import (
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/engine"
@@ -118,6 +119,7 @@ func TestDecisionEngineBuildUsesTrustWeights(t *testing.T) {
 			ExpectedReturn: 0.008,
 			Runway:         15,
 			Direction:      1,
+			Executable:     true,
 		})
 		candidates.Note(SignalCandidate{
 			Symbol:         "PUMP/EUR",
@@ -126,12 +128,18 @@ func TestDecisionEngineBuildUsesTrustWeights(t *testing.T) {
 			ExpectedReturn: 0.008,
 			Runway:         15,
 			Direction:      1,
+			Executable:     true,
 		})
 
 		decisionEngine := DecisionEngine{}
 		snapshot := decisionEngine.Build(
 			candidates,
 			stubPrices{"PUMP/EUR": 100},
+			stubMarket{snapshots: map[string]engine.Snapshot{
+				"PUMP/EUR": {LastOK: true, SpreadOK: true, BatchOK: true},
+			}},
+			time.Now(),
+			200,
 			false,
 			EnsembleContext{Regime: RegimeChopping, Trust: store},
 		)
