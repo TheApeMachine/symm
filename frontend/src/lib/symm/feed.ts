@@ -22,31 +22,23 @@ import { defaultWsUrl, pickMarketWatchSymbol } from "#/lib/symm/events";
 import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
 import {
+	appendTrade,
+	applyDecisionTrace,
+	applyEnginePulse,
 	applyFieldAggregate,
 	applyFieldGrid,
 	applyFieldRow,
 	applyFieldSnapshot,
 	applyFluidDisplay,
-	buildFieldSnapshot,
-	fieldStore,
-} from "#/lib/symm/stores/field-store";
-import {
-	applyDecisionTrace,
-	applyEnginePulse,
-	applySignalScore,
-	engineStore,
-} from "#/lib/symm/stores/engine-store";
-import {
-	appendTrade,
-	applyScoreboard,
-	applyStatus,
-	statusStore,
-} from "#/lib/symm/stores/status-store";
-import {
 	applyFluidSampled,
 	applyQuoteProgress,
-} from "#/lib/symm/stores/scan-store";
-import { setFeedConnected } from "#/lib/symm/stores/connection-store";
+	applyScoreboard,
+	applySignalScore,
+	applyStatus,
+	buildFieldSnapshot,
+	dashboardStore,
+	setFeedConnected,
+} from "#/lib/symm/dashboard-store";
 import { WsStream } from "#/lib/symm/ws-stream";
 
 const MAX_TICK_HISTORY = 360;
@@ -85,8 +77,8 @@ const hasChartTick = (symbol: string) => {
 
 const chartSubscribeSymbols = () => {
 	const watch = pickMarketWatchSymbol(
-		statusStore.state.scoreboard,
-		buildFieldSnapshot(fieldStore.state),
+		dashboardStore.state.scoreboard,
+		buildFieldSnapshot(dashboardStore.state),
 		"BTC/EUR",
 		marketWatchSticky,
 		hasChartTick,
@@ -94,7 +86,7 @@ const chartSubscribeSymbols = () => {
 	marketWatchSticky = watch;
 
 	const symbols = new Set<string>([watch]);
-	for (const symbol of positionSymbolsFromStatus(statusStore.state.status)) {
+	for (const symbol of positionSymbolsFromStatus(dashboardStore.state.status)) {
 		symbols.add(symbol);
 	}
 
@@ -110,7 +102,7 @@ const replayChartState = (symbol: string, handler: ChartListener) => {
 		symbol,
 		lastSeedBySymbol.get(symbol),
 		tickHistoryBySymbol.get(symbol) ?? [],
-		statusStore.state.status,
+		dashboardStore.state.status,
 	)) {
 		handler(event);
 	}
@@ -183,7 +175,7 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "field_row": {
 			const rowEvent = event as FieldRowEvent;
 			applyFieldRow(rowEvent.row);
-			applyFluidSampled(Object.keys(fieldStore.state.rows).length);
+			applyFluidSampled(Object.keys(dashboardStore.state.rows).length);
 			return;
 		}
 		case "field_aggregate":

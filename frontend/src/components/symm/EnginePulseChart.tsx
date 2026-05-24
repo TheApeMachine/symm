@@ -5,14 +5,11 @@ import {
 	useRef,
 	type MutableRefObject,
 } from "react";
-import { SciChartReact } from "scichart-react";
+import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
+import { drawEnginePulse } from "#/components/symm/draw-engine-pulse";
 import type { EnginePulseEvent } from "#/lib/symm/events";
-import {
-	initEnginePulseChart,
-	type EnginePulseInitResult,
-} from "#/lib/symm/engine-pulse-controller";
-import { engineStore } from "#/lib/symm/stores/engine-store";
+import { dashboardStore } from "#/lib/symm/dashboard-store";
 import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
@@ -21,25 +18,25 @@ type EnginePulseChartProps = {
 };
 
 const replayPulseHistory = (
-	result: EnginePulseInitResult,
+	controls: TResolvedReturnType<typeof drawEnginePulse>["controls"],
 	lastSeqRef: MutableRefObject<number | null>,
 ) => {
 	const seen = new Set<number>();
 
-	for (const pulse of engineStore.state.pulseLog) {
+	for (const pulse of dashboardStore.state.pulseLog) {
 		if (seen.has(pulse.seq)) {
 			continue;
 		}
 
 		seen.add(pulse.seq);
-		result.appendPulse(pulse);
+		controls.appendPulse(pulse);
 		lastSeqRef.current = pulse.seq;
 	}
 
-	const current = engineStore.state.enginePulse;
+	const current = dashboardStore.state.enginePulse;
 
 	if (current && !seen.has(current.seq)) {
-		result.appendPulse(current);
+		controls.appendPulse(current);
 		lastSeqRef.current = current.seq;
 	}
 };
@@ -48,29 +45,41 @@ const replayPulseHistory = (
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
-	const chartRef = useRef<EnginePulseInitResult | null>(null);
+	const controlsRef =
+		useRef<TResolvedReturnType<typeof drawEnginePulse>["controls"] | null>(
+			null,
+		);
 	const lastSeqRef = useRef<number | null>(null);
 	const pulse = useSymmEnginePulse();
 
 	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) => initEnginePulseChart(rootElement),
+		(rootElement: string | HTMLDivElement) => {
+			if (typeof rootElement === "string") {
+				throw new Error("drawEnginePulse requires an HTMLDivElement root");
+			}
+
+			return drawEnginePulse(rootElement);
+		},
 		[],
 	);
 
-	const onInit = useCallback((result: EnginePulseInitResult) => {
-		chartRef.current = result;
-		lastSeqRef.current = null;
-		replayPulseHistory(result, lastSeqRef);
-	}, []);
+	const onInit = useCallback(
+		(result: TResolvedReturnType<typeof drawEnginePulse>) => {
+			controlsRef.current = result.controls;
+			lastSeqRef.current = null;
+			replayPulseHistory(result.controls, lastSeqRef);
 
-	const onDelete = useCallback((result?: EnginePulseInitResult) => {
-		chartRef.current = null;
-		lastSeqRef.current = null;
-		result?.dispose();
-	}, []);
+			return () => {
+				controlsRef.current = null;
+				lastSeqRef.current = null;
+				result.controls.dispose();
+			};
+		},
+		[],
+	);
 
 	useEffect(() => {
-		if (!pulse || !chartRef.current) {
+		if (!pulse || !controlsRef.current) {
 			return;
 		}
 
@@ -79,7 +88,7 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 		}
 
 		lastSeqRef.current = pulse.seq;
-		chartRef.current.appendPulse(pulse);
+		controlsRef.current.appendPulse(pulse);
 	}, [pulse]);
 
 	return (
@@ -90,7 +99,6 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 			<SciChartReact
 				initChart={initChart}
 				onInit={onInit}
-				onDelete={onDelete}
 				className="min-h-0 w-full flex-1"
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>

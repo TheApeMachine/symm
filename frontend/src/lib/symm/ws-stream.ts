@@ -1,5 +1,5 @@
 import type { SymmEvent } from "#/lib/symm/events";
-import { setFeedConnected } from "#/lib/symm/stores/connection-store";
+import { setFeedConnected } from "#/lib/symm/dashboard-store";
 
 export type StreamEventHandler = (event: SymmEvent) => void;
 

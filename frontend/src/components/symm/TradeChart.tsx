@@ -1,10 +1,7 @@
 import { memo, useCallback, useRef, type RefObject } from "react";
-import { SciChartGroup, SciChartReact } from "scichart-react";
+import { SciChartGroup, SciChartReact, type TResolvedReturnType } from "scichart-react";
 
-import {
-	initTradeChart,
-	type TradeChartInitResult,
-} from "#/lib/symm/chart-controller";
+import { drawTradeChart } from "#/components/symm/draw-trade-chart";
 import { onChart } from "#/lib/symm/feed";
 import type { StatusEvent, SymmEvent } from "#/lib/symm/events";
 import "#/lib/symm/scichart-setup";
@@ -32,24 +29,24 @@ export const TradeChart = memo(function TradeChart({
 	const regimeRef = useRef<HTMLSpanElement>(null);
 
 	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) =>
-			initTradeChart(rootElement, symbol),
-		[symbol],
-	);
+		(rootElement: string | HTMLDivElement) => {
+			if (typeof rootElement === "string") {
+				throw new Error("drawTradeChart requires an HTMLDivElement root");
+			}
 
-	const onInit = useCallback(
-		(result: TradeChartInitResult) => {
-			return onChart(symbol, (ev) => {
-				result.handleEvent(ev);
-				syncRegimeLabel(symbol, ev, regimeRef);
-			});
+			return drawTradeChart(rootElement, symbol);
 		},
 		[symbol],
 	);
 
-	const onDelete = useCallback((result?: TradeChartInitResult) => {
-		result?.dispose();
-	}, []);
+	const onInit = useCallback(
+		(result: TResolvedReturnType<typeof drawTradeChart>) =>
+			onChart(symbol, (ev) => {
+				result.controls.handleEvent(ev);
+				syncRegimeLabel(symbol, ev, regimeRef);
+			}),
+		[symbol],
+	);
 
 	return (
 		<div className="flex min-h-[200px] flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
@@ -60,7 +57,6 @@ export const TradeChart = memo(function TradeChart({
 			<SciChartReact
 				initChart={initChart}
 				onInit={onInit}
-				onDelete={onDelete}
 				className="min-h-[180px] flex-1"
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>

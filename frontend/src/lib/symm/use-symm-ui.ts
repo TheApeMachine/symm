@@ -14,17 +14,16 @@ import type {
 	TradeExitEvent,
 } from "#/lib/symm/events";
 import { pickMarketWatchSymbol } from "#/lib/symm/events";
+import {
+	buildFieldSnapshot,
+	dashboardStore,
+} from "#/lib/symm/dashboard-store";
 import type { SignalConfidenceSnapshot } from "#/lib/symm/signal-confidence";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
 import {
 	selectTradePanelRows,
 	type TradePanelRow,
 } from "#/lib/symm/trade-panel";
-import { connectionStore } from "#/lib/symm/stores/connection-store";
-import { engineStore } from "#/lib/symm/stores/engine-store";
-import { buildFieldSnapshot, fieldStore } from "#/lib/symm/stores/field-store";
-import { scanStore } from "#/lib/symm/stores/scan-store";
-import { statusStore } from "#/lib/symm/stores/status-store";
 import { startSymmFeed, stopSymmFeed } from "#/lib/symm/feed";
 
 export function useSymmFeed(url?: string): void {
@@ -38,25 +37,25 @@ export function useSymmFeed(url?: string): void {
 }
 
 export function useSymmConnected(): boolean {
-	return useSelector(connectionStore, (state) => state.connected);
+	return useSelector(dashboardStore, (state) => state.connected);
 }
 
 export function useSymmStatus(): StatusEvent | undefined {
-	return useSelector(statusStore, (state) => state.status);
+	return useSelector(dashboardStore, (state) => state.status);
 }
 
 export function useSymmPositionSymbols(): string[] {
-	return useSelector(statusStore, (state) =>
+	return useSelector(dashboardStore, (state) =>
 		positionSymbolsFromStatus(state.status),
 	);
 }
 
 export function useSymmScoreboard(): ScoreboardEvent | undefined {
-	return useSelector(statusStore, (state) => state.scoreboard);
+	return useSelector(dashboardStore, (state) => state.scoreboard);
 }
 
 export function useSymmDecisionTrace(): DecisionTraceEvent | undefined {
-	return useSelector(engineStore, (state) => state.decisionTrace);
+	return useSelector(dashboardStore, (state) => state.decisionTrace);
 }
 
 export function useSymmScanProgress(): {
@@ -64,34 +63,31 @@ export function useSymmScanProgress(): {
 	symbolsTotal?: number;
 	fluidSampled: number;
 } {
-	const scan = useSelector(scanStore, (state) => state);
-	const fluidRows = useSelector(
-		fieldStore,
-		(state) => state.symbolCount || Object.keys(state.rows).length,
-	);
-
-	return {
-		quotesReady: scan.quotesReady,
-		symbolsTotal: scan.symbolsTotal,
-		fluidSampled: Math.max(scan.fluidSampled, fluidRows),
-	};
+	return useSelector(dashboardStore, (state) => ({
+		quotesReady: state.quotesReady,
+		symbolsTotal: state.symbolsTotal,
+		fluidSampled: Math.max(
+			state.fluidSampled,
+			state.symbolCount || Object.keys(state.rows).length,
+		),
+	}));
 }
 
 export function useSymmFieldSnapshot(): FieldSnapshotEvent | undefined {
-	return useSelector(fieldStore, (state) => buildFieldSnapshot(state));
+	return useSelector(dashboardStore, (state) => buildFieldSnapshot(state));
 }
 
 export function useSymmFluidDisplay(): FluidDisplayEvent | undefined {
-	return useSelector(fieldStore, (state) => state.fluidDisplay);
+	return useSelector(dashboardStore, (state) => state.fluidDisplay);
 }
 
 export function useSymmEnginePulse(): EnginePulseEvent | undefined {
-	return useSelector(engineStore, (state) => state.enginePulse);
+	return useSelector(dashboardStore, (state) => state.enginePulse);
 }
 
 export function useSymmEvaluations(): EvaluationRow[] {
 	return useSelector(
-		engineStore,
+		dashboardStore,
 		(state) => state.decisionTrace?.evaluations ?? [],
 	);
 }
@@ -115,11 +111,11 @@ export function useSymmEntryLine(): {
 }
 
 export function useSymmSignalConfidences(): SignalConfidenceSnapshot {
-	return useSelector(engineStore, (state) => state.signalConfidences);
+	return useSelector(dashboardStore, (state) => state.signalConfidences);
 }
 
 export function useSymmPulseLog(): EnginePulseEvent[] {
-	return useSelector(engineStore, (state) => state.pulseLog);
+	return useSelector(dashboardStore, (state) => state.pulseLog);
 }
 
 export function useMarketWatchSymbol(fallback = "BTC/EUR"): string {
@@ -133,12 +129,12 @@ export function useMarketWatchSymbol(fallback = "BTC/EUR"): string {
 }
 
 export function useSymmTrades(): Array<TradeEnterEvent | TradeExitEvent> {
-	return useSelector(statusStore, (state) => state.trades);
+	return useSelector(dashboardStore, (state) => state.trades);
 }
 
 export function useSymmTradePanelRows(): TradePanelRow[] {
-	const status = useSelector(statusStore, (state) => state.status);
-	const trades = useSelector(statusStore, (state) => state.trades);
+	const status = useSelector(dashboardStore, (state) => state.status);
+	const trades = useSelector(dashboardStore, (state) => state.trades);
 
 	return useMemo(
 		() => selectTradePanelRows({ status, trades }),
