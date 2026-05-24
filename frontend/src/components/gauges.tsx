@@ -1,10 +1,7 @@
 import { memo, useCallback, useEffect, useRef } from "react";
-import { SciChartReact } from "scichart-react";
+import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
-import {
-	initSignalGauge,
-	type SignalGaugeInitResult,
-} from "#/lib/symm/gauge-controller";
+import { drawSignalGauge } from "#/components/symm/draw-signal-gauge";
 import {
 	confidenceToGaugePercent,
 	SIGNAL_LABELS,
@@ -27,28 +24,45 @@ const SignalGauge = memo(function SignalGauge({
 	source,
 	confidence,
 }: SignalGaugeProps) {
-	const gaugeRef = useRef<SignalGaugeInitResult | null>(null);
+	const controlsRef =
+		useRef<TResolvedReturnType<typeof drawSignalGauge>["controls"] | null>(
+			null,
+		);
 	const readingRef = useRef(confidence);
 	readingRef.current = confidence;
 
 	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) => initSignalGauge(rootElement),
+		(rootElement: string | HTMLDivElement) => {
+			if (typeof rootElement === "string") {
+				throw new Error("drawSignalGauge requires an HTMLDivElement root");
+			}
+
+			return drawSignalGauge(rootElement);
+		},
 		[],
 	);
 
-	const onInit = useCallback((result: SignalGaugeInitResult) => {
-		gaugeRef.current = result;
-		const value = readingRef.current;
-		result.update(confidenceToGaugePercent(value), value);
-	}, []);
+	const onInit = useCallback(
+		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
+			controlsRef.current = result.controls;
+			result.controls.update(
+				confidenceToGaugePercent(readingRef.current),
+				readingRef.current,
+			);
 
-	const onDelete = useCallback((result?: SignalGaugeInitResult) => {
-		result?.dispose();
-		gaugeRef.current = null;
-	}, []);
+			return () => {
+				controlsRef.current = null;
+				result.controls.dispose();
+			};
+		},
+		[],
+	);
 
 	useEffect(() => {
-		gaugeRef.current?.update(confidenceToGaugePercent(confidence), confidence);
+		controlsRef.current?.update(
+			confidenceToGaugePercent(confidence),
+			confidence,
+		);
 	}, [confidence]);
 
 	return (
@@ -59,7 +73,6 @@ const SignalGauge = memo(function SignalGauge({
 			<SciChartReact
 				initChart={initChart}
 				onInit={onInit}
-				onDelete={onDelete}
 				className="min-h-0 w-full flex-1"
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>

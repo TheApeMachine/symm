@@ -5,7 +5,7 @@ import {
 	positionSymbolsFromStatus,
 	sortOpenPositions,
 } from "#/lib/symm/positions";
-import { pruneClosedTradeEnters } from "#/lib/symm/stores/status-store";
+import { pruneClosedTradeEnters } from "#/lib/symm/dashboard-store";
 import { selectTradePanelRows } from "#/lib/symm/trade-panel";
 
 describe("pruneClosedTradeEnters", () => {
