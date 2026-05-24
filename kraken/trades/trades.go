@@ -31,10 +31,11 @@ type Trades struct {
 }
 
 type tradeState struct {
-	pressure float64
-	volume   float64
-	ready    bool
-	ticks    []market.TradeTick
+	pressure  float64
+	volume    float64
+	ready     bool
+	updatedAt time.Time
+	ticks     []market.TradeTick
 }
 
 type activityListener func(symbol string, volume float64)
@@ -120,6 +121,23 @@ func (trades *Trades) BatchVolume(symbol string) (float64, bool) {
 }
 
 /*
+UpdatedAt returns when the latest trade batch arrived for one symbol.
+*/
+func (trades *Trades) UpdatedAt(symbol string) (time.Time, bool) {
+	state, ok := trades.state(symbol)
+
+	if !ok {
+		return time.Time{}, false
+	}
+
+	if state.updatedAt.IsZero() {
+		return time.Time{}, false
+	}
+
+	return state.updatedAt, true
+}
+
+/*
 RecentTicks returns stored trade events for one symbol, optionally filtered by time.
 */
 func (trades *Trades) RecentTicks(symbol string, since time.Time) ([]market.TradeTick, bool) {
@@ -199,6 +217,7 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 	defer trades.mu.Unlock()
 
 	listener := trades.activityListener
+	now := time.Now()
 
 	for symbol, batch := range batches {
 		if batch.volume <= 0 {
@@ -214,6 +233,7 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 		state.ready = true
 		state.volume = batch.volume
 		state.pressure = (2*batch.buyVolume - batch.volume) / batch.volume
+		state.updatedAt = now
 
 		for _, tick := range ticks {
 			if tick.Symbol != symbol {

@@ -143,13 +143,19 @@ func (symbolWatch *SymbolWatch) ScanSet(budget int) []string {
 	}
 
 	ranked := make([]string, 0, len(symbolWatch.all))
+	cold := make([]string, 0, len(symbolWatch.all))
 
 	for _, symbol := range symbolWatch.all {
 		if _, ok := seen[symbol]; ok {
 			continue
 		}
 
-		ranked = append(ranked, symbol)
+		if symbolWatch.activity[symbol] > 0 {
+			ranked = append(ranked, symbol)
+			continue
+		}
+
+		cold = append(cold, symbol)
 	}
 
 	sort.Slice(ranked, func(left, right int) bool {
@@ -165,20 +171,20 @@ func (symbolWatch *SymbolWatch) ScanSet(budget int) []string {
 
 	for _, symbol := range ranked {
 		if len(selected) >= budget {
-			break
+			return selected
 		}
 
 		selected = append(selected, symbol)
 		seen[symbol] = struct{}{}
 	}
 
-	if len(selected) >= budget {
+	if len(cold) == 0 {
 		return selected
 	}
 
-	for step := 0; step < len(symbolWatch.all) && len(selected) < budget; step++ {
-		index := (symbolWatch.rotate + step) % len(symbolWatch.all)
-		symbol := symbolWatch.all[index]
+	for step := 0; step < len(cold) && len(selected) < budget; step++ {
+		index := (symbolWatch.rotate + step) % len(cold)
+		symbol := cold[index]
 
 		if _, ok := seen[symbol]; ok {
 			continue

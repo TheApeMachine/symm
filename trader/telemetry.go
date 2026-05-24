@@ -75,6 +75,12 @@ func (crypto *Crypto) BindTelemetry(
 		symbolsTotal: symbolsTotal,
 		readings:     make(map[string]symbolReadings),
 	}
+
+	if crypto.portfolio != nil {
+		if lifecycle, ok := stream.(PortfolioStream); ok {
+			crypto.portfolio.BindStream(lifecycle)
+		}
+	}
 }
 
 /*
@@ -186,12 +192,18 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 		}
 	}
 
+	openCount := 0
+
+	if crypto != nil && crypto.portfolio != nil && crypto.prices != nil {
+		openCount = crypto.portfolio.Status(crypto.prices).OpenCount
+	}
+
 	telemetry.stream.EnginePulse(map[string]any{
 		"seq":              telemetry.seq,
 		"phase":            phase,
 		"measurements":     len(telemetry.pulseSignals),
 		"candidates":       len(evaluations),
-		"open":             0,
+		"open":             openCount,
 		"ticker_ready":     telemetry.tickerReady(),
 		"symbols_total":    telemetry.symbolsTotal,
 		"fluid_sampled":    telemetry.fluidSampled(),
@@ -216,14 +228,31 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 	})
 
 	telemetry.stream.Scoreboard(line, median, mad, targets)
-	telemetry.stream.Status(map[string]any{
+
+	status := map[string]any{
 		"equity_eur":     walletBalance(wallet),
 		"cash_eur":       walletBalance(wallet),
 		"closed_pnl_eur": 0,
 		"trade_count":    0,
 		"win_rate":       0,
 		"open_count":     0,
-	})
+	}
+
+	if crypto != nil && crypto.portfolio != nil && crypto.prices != nil {
+		snapshot := crypto.portfolio.Status(crypto.prices)
+		status["equity_eur"] = snapshot.EquityEUR
+		status["cash_eur"] = snapshot.CashEUR
+		status["closed_pnl_eur"] = snapshot.ClosedPnLEUR
+		status["trade_count"] = snapshot.TradeCount
+		status["win_rate"] = snapshot.WinRate
+		status["open_count"] = snapshot.OpenCount
+
+		if len(snapshot.Positions) > 0 {
+			status["positions"] = snapshot.Positions
+		}
+	}
+
+	telemetry.stream.Status(status)
 }
 
 func (telemetry *Telemetry) ingestLiveReadings(crypto *Crypto) {

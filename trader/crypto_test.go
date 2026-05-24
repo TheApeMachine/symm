@@ -20,6 +20,16 @@ func (stub stubPrices) Last(symbol string) (float64, bool) {
 	return price, ok
 }
 
+func (stub stubPrices) Quote(symbol string) (float64, float64, float64, float64, bool) {
+	last, ok := stub.Last(symbol)
+
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+
+	return last, last * 0.999, last * 1.001, 0, true
+}
+
 type stubSignal struct {
 	measurements []engine.Measurement
 }
@@ -196,38 +206,6 @@ func TestProcessTickConcurrent(t *testing.T) {
 	})
 }
 
-func BenchmarkProcessTick(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
-
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	start := time.Unix(1_700_000_000, 0)
-
-	crypto, err := NewCrypto(
-		ctx,
-		pool,
-		wallet,
-		stubPrices{"PUMP/EUR": 100},
-		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
-		}},
-		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.001, time.Second),
-		}},
-	)
-
-	if err != nil {
-		b.Fatalf("new crypto: %v", err)
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		crypto.processTick(start)
-	}
-}
-
 func TestScanSignals(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
@@ -341,4 +319,61 @@ func TestProcessTick(t *testing.T) {
 			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldEqual, 0.002)
 		})
 	})
+}
+
+func BenchmarkProcessTick(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+
+	crypto, err := NewCrypto(
+		ctx,
+		pool,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.001, time.Second),
+		}},
+	)
+
+	if err != nil {
+		b.Fatalf("new crypto: %v", err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		crypto.processTick(start)
+	}
+}
+
+func BenchmarkProcessTickSequential(b *testing.B) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+
+	crypto, err := NewCrypto(
+		context.Background(),
+		nil,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}},
+	)
+
+	if err != nil {
+		b.Fatalf("new crypto: %v", err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		crypto.processTick(start)
+	}
 }

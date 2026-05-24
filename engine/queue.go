@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 )
 
@@ -23,14 +22,13 @@ type QueueStats struct {
 }
 
 /*
-MeasurementQueue stores signal measurements with bounded backpressure.
+MeasurementQueue stores signal measurements with bounded FIFO backpressure.
 */
 type MeasurementQueue struct {
-	queue    sync.Map
-	seq      atomic.Int64
-	pending  atomic.Int64
-	dropped  atomic.Int64
-	enqueued atomic.Int64
+	mu       sync.Mutex
+	queue    []Measurement
+	dropped  int64
+	enqueued int64
 }
 
 func maxPendingPerSignal() int64 {
@@ -49,14 +47,17 @@ func maxPendingGlobal() int64 {
 Enqueue stores one measurement when capacity allows.
 */
 func (measurementQueue *MeasurementQueue) Enqueue(measurement Measurement) error {
+	measurementQueue.mu.Lock()
+	defer measurementQueue.mu.Unlock()
+
 	limit := maxPendingPerSignal()
 
-	if measurementQueue.pending.Load() >= limit {
-		measurementQueue.dropped.Add(1)
+	if int64(len(measurementQueue.queue)) >= limit {
+		measurementQueue.dropped++
 
 		return fmt.Errorf(
 			"signal measurement queue full: pending=%d max=%d",
-			measurementQueue.pending.Load(),
+			len(measurementQueue.queue),
 			limit,
 		)
 	}
@@ -64,7 +65,7 @@ func (measurementQueue *MeasurementQueue) Enqueue(measurement Measurement) error
 	globalLimit := maxPendingGlobal()
 
 	if globalLimit > 0 && globalPending.Load() >= globalLimit {
-		measurementQueue.dropped.Add(1)
+		measurementQueue.dropped++
 
 		return fmt.Errorf(
 			"global measurement queue full: pending=%d max=%d",
@@ -73,9 +74,8 @@ func (measurementQueue *MeasurementQueue) Enqueue(measurement Measurement) error
 		)
 	}
 
-	measurementQueue.queue.Store(measurementQueue.seq.Add(1), measurement)
-	measurementQueue.pending.Add(1)
-	measurementQueue.enqueued.Add(1)
+	measurementQueue.queue = append(measurementQueue.queue, measurement)
+	measurementQueue.enqueued++
 	globalPending.Add(1)
 
 	return nil
@@ -85,39 +85,40 @@ func (measurementQueue *MeasurementQueue) Enqueue(measurement Measurement) error
 Stats returns live queue counters.
 */
 func (measurementQueue *MeasurementQueue) Stats() QueueStats {
+	measurementQueue.mu.Lock()
+	defer measurementQueue.mu.Unlock()
+
 	return QueueStats{
-		Pending:  measurementQueue.pending.Load(),
-		Dropped:  measurementQueue.dropped.Load(),
-		Enqueued: measurementQueue.enqueued.Load(),
+		Pending:  int64(len(measurementQueue.queue)),
+		Dropped:  measurementQueue.dropped,
+		Enqueued: measurementQueue.enqueued,
 	}
 }
 
 /*
-Drain yields queued measurements for the trader.
+Drain yields queued measurements in FIFO order for the trader.
 */
 func (measurementQueue *MeasurementQueue) Drain(_ context.Context) iter.Seq[Measurement] {
 	return func(yield func(Measurement) bool) {
-		measurementQueue.queue.Range(func(key, value any) bool {
-			measurement, ok := value.(Measurement)
+		for {
+			measurementQueue.mu.Lock()
 
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement type: %T", value))
-				measurementQueue.queue.Delete(key)
-				measurementQueue.pending.Add(-1)
-				globalPending.Add(-1)
+			if len(measurementQueue.queue) == 0 {
+				measurementQueue.mu.Unlock()
 
-				return true
+				return
 			}
 
-			if !yield(measurement) {
-				return false
-			}
+			measurement := measurementQueue.queue[0]
+			copy(measurementQueue.queue, measurementQueue.queue[1:])
+			measurementQueue.queue = measurementQueue.queue[:len(measurementQueue.queue)-1]
+			measurementQueue.mu.Unlock()
 
-			measurementQueue.queue.Delete(key)
-			measurementQueue.pending.Add(-1)
 			globalPending.Add(-1)
 
-			return true
-		})
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
 }

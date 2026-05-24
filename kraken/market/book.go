@@ -24,42 +24,71 @@ type BookTop struct {
 }
 
 /*
-ParseTopBook extracts the top bid and ask from a Kraken v2 book snapshot or delta.
-It reads only data[0].bids[0] and data[0].asks[0].
+BookTopDelta holds optional bid and ask updates from one book frame.
 */
-func ParseTopBook(payload []byte) (BookTop, error) {
+type BookTopDelta struct {
+	Symbol  string
+	BestBid BookLevel
+	BestAsk BookLevel
+	BidOK   bool
+	AskOK   bool
+}
+
+/*
+ParseBookTopDelta extracts optional top bid and ask updates from a book frame.
+*/
+func ParseBookTopDelta(payload []byte) (BookTopDelta, error) {
 	channel, err := ChannelName(payload)
 	if err != nil {
-		return BookTop{}, err
+		return BookTopDelta{}, err
 	}
 
 	if !isBookChannel(channel) {
-		return BookTop{}, fmt.Errorf("not a book event: channel=%q", channel)
+		return BookTopDelta{}, fmt.Errorf("not a book event: channel=%q", channel)
 	}
 
 	bestBid, bidOK, err := parseTopLevel(payload, "bids")
 	if err != nil {
-		return BookTop{}, err
+		return BookTopDelta{}, err
 	}
 
 	bestAsk, askOK, err := parseTopLevel(payload, "asks")
 	if err != nil {
-		return BookTop{}, err
+		return BookTopDelta{}, err
 	}
 
 	if !bidOK && !askOK {
-		return BookTop{}, fmt.Errorf("book frame has no top-of-book levels")
+		return BookTopDelta{}, fmt.Errorf("book frame has no top-of-book levels")
 	}
 
 	symbol, err := jsonparser.GetUnsafeString(payload, "data", "[0]", "symbol")
 	if err != nil {
-		return BookTop{}, fmt.Errorf("parse book symbol: %w", err)
+		return BookTopDelta{}, fmt.Errorf("parse book symbol: %w", err)
 	}
 
-	return BookTop{
+	return BookTopDelta{
 		Symbol:  string(symbol),
 		BestBid: bestBid,
 		BestAsk: bestAsk,
+		BidOK:   bidOK,
+		AskOK:   askOK,
+	}, nil
+}
+
+/*
+ParseTopBook extracts the top bid and ask from a Kraken v2 book snapshot or delta.
+It reads only data[0].bids[0] and data[0].asks[0].
+*/
+func ParseTopBook(payload []byte) (BookTop, error) {
+	delta, err := ParseBookTopDelta(payload)
+	if err != nil {
+		return BookTop{}, err
+	}
+
+	return BookTop{
+		Symbol:  delta.Symbol,
+		BestBid: delta.BestBid,
+		BestAsk: delta.BestAsk,
 	}, nil
 }
 

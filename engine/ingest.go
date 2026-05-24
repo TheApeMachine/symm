@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	kbook "github.com/theapemachine/symm/kraken/book"
 	kticker "github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
@@ -20,14 +22,17 @@ Snapshot holds the latest observer values for one symbol.
 */
 type Snapshot struct {
 	Last            float64
-	VolumeBase      float64
+	LastAt          time.Time
 	LastOK          bool
+	VolumeBase      float64
 	VolumeOK        bool
 	BatchVolume     float64
+	TradesAt        time.Time
 	BatchOK         bool
 	BuyPressure     float64
 	PressureOK      bool
 	SpreadBPS       float64
+	BookAt          time.Time
 	SpreadOK        bool
 	Imbalance       float64
 	ImbalanceOK     bool
@@ -66,6 +71,10 @@ func (ingest *Ingest) Read(symbol string) Snapshot {
 			snapshot.LastOK = true
 			snapshot.ChangePct = changePct
 			snapshot.ChangeOK = true
+
+			if timestamp, ok := ingest.ticker.Timestamp(symbol); ok {
+				snapshot.LastAt = parseExchangeTime(timestamp)
+			}
 		}
 
 		snapshot.VolumeBase, snapshot.VolumeOK = ingest.ticker.VolumeBase(symbol)
@@ -74,12 +83,20 @@ func (ingest *Ingest) Read(symbol string) Snapshot {
 	if ingest.trades != nil {
 		snapshot.BatchVolume, snapshot.BatchOK = ingest.trades.BatchVolume(symbol)
 		snapshot.BuyPressure, snapshot.PressureOK = ingest.trades.BuyPressure(symbol)
+
+		if updated, ok := ingest.trades.UpdatedAt(symbol); ok {
+			snapshot.TradesAt = updated
+		}
 	}
 
 	if ingest.book != nil {
 		snapshot.SpreadBPS, snapshot.SpreadOK = ingest.book.SpreadBPS(symbol)
 		snapshot.Imbalance, snapshot.ImbalanceOK = ingest.book.Imbalance(symbol)
 		snapshot.Density, snapshot.DensityOK = ingest.book.Density(symbol)
+
+		if updated, ok := ingest.book.UpdatedAt(symbol); ok {
+			snapshot.BookAt = updated
+		}
 	}
 
 	return snapshot
@@ -90,4 +107,17 @@ Ticker exposes the shared ticker observer for UI snapshots.
 */
 func (ingest *Ingest) Ticker() *kticker.Ticker {
 	return ingest.ticker
+}
+
+func parseExchangeTime(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+
+	return parsed
 }

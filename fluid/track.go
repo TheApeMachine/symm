@@ -141,16 +141,6 @@ func (trackStore *TrackStore) Sample(
 	quiet := quietVelocity(track.velocities, current.velocity)
 	accumulating := quiet && sourceFence > 0 && source > sourceFence
 	shocking := shockFence > 0 && shock > shockFence
-	rawConfidence := fieldConfidence(source, shock, buyPressure, quiet)
-	reason := ""
-
-	if accumulating {
-		reason = "accumulation"
-	}
-
-	if shocking {
-		reason = "shock"
-	}
 
 	if source > 0 {
 		track.sourceHistory = append(track.sourceHistory, source)
@@ -175,6 +165,26 @@ func (trackStore *TrackStore) Sample(
 	track.lastPrice = price
 	track.lastSample = current
 	track.lastAt = now
+
+	if !accumulating && !shocking {
+		return 0, 0, 0, ""
+	}
+
+	rawConfidence := 0.0
+	reason := ""
+
+	if accumulating {
+		rawConfidence += source * buyPressure
+		reason = "accumulation"
+	}
+
+	if shocking {
+		rawConfidence += shock * buyPressure
+
+		if reason == "" {
+			reason = "shock"
+		}
+	}
 
 	if rawConfidence <= 0 {
 		return 0, 0, 0, ""

@@ -148,7 +148,8 @@ func (signalBase *SignalBase) ScanSymbols(
 		}
 
 		if err := signalBase.scanner.Enqueue(measurement); err != nil {
-			return err
+			errnie.Warn("signal measurement queue drop", "source", signalBase.source, "err", err)
+			continue
 		}
 	}
 
@@ -186,7 +187,8 @@ func (signalBase *SignalBase) scanAll(
 		measurement.Timeframe = Timeframe{Start: now.UnixNano(), End: now.UnixNano()}
 
 		if err := signalBase.scanner.Enqueue(measurement); err != nil {
-			return err
+			errnie.Warn("signal measurement queue drop", "source", signalBase.source, "err", err)
+			continue
 		}
 	}
 

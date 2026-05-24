@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/client"
@@ -12,17 +13,27 @@ import (
 
 const defaultBookDepth = 10
 
+type topState struct {
+	bid    market.BookLevel
+	ask    market.BookLevel
+	bidOK  bool
+	askOK  bool
+	update time.Time
+}
+
 /*
 Book watches Kraken v2 order book updates and exposes per-symbol top-of-book imbalance.
 */
 type Book struct {
-	ctx                context.Context
-	mu                 sync.RWMutex
-	bySymbol           map[string]float64
-	spreadBPS          map[string]float64
-	density            map[string]float64
-	ready              map[string]bool
-	activityListener   func(symbol string)
+	ctx              context.Context
+	mu               sync.RWMutex
+	bySymbol         map[string]float64
+	spreadBPS        map[string]float64
+	density          map[string]float64
+	ready            map[string]bool
+	updatedAt        map[string]time.Time
+	tops             map[string]topState
+	activityListener func(symbol string)
 }
 
 /*
@@ -58,6 +69,8 @@ func New(
 		spreadBPS: make(map[string]float64, len(symbols)),
 		density:   make(map[string]float64, len(symbols)),
 		ready:     make(map[string]bool, len(symbols)),
+		updatedAt: make(map[string]time.Time, len(symbols)),
+		tops:      make(map[string]topState, len(symbols)),
 	}
 
 	publicClient.OnFrame(book.handleFrame)
@@ -117,31 +130,74 @@ func (book *Book) Density(symbol string) (float64, bool) {
 	return book.density[symbol], true
 }
 
+/*
+UpdatedAt returns when the merged top-of-book last changed for one symbol.
+*/
+func (book *Book) UpdatedAt(symbol string) (time.Time, bool) {
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	updated, ok := book.updatedAt[symbol]
+
+	if !ok || !book.ready[symbol] {
+		return time.Time{}, false
+	}
+
+	return updated, true
+}
+
 func (book *Book) handleFrame(_ context.Context, payload []byte) error {
-	top, err := market.ParseTopBook(payload)
+	delta, err := market.ParseBookTopDelta(payload)
 	if err != nil {
 		return nil
 	}
 
-	book.storeImbalance(top)
+	book.applyTopDelta(delta)
 
 	return nil
 }
 
-func (book *Book) storeImbalance(top market.BookTop) {
-	imbalance := topImbalance(top)
-	spread := spreadBPS(top)
+func (book *Book) applyTopDelta(delta market.BookTopDelta) {
+	now := time.Now()
 
 	book.mu.Lock()
+	state := book.tops[delta.Symbol]
+
+	if delta.BidOK {
+		state.bid = delta.BestBid
+		state.bidOK = true
+	}
+
+	if delta.AskOK {
+		state.ask = delta.BestAsk
+		state.askOK = true
+	}
+
+	if !state.bidOK || !state.askOK {
+		book.tops[delta.Symbol] = state
+		book.mu.Unlock()
+
+		return
+	}
+
+	state.update = now
+	top := market.BookTop{
+		Symbol:  delta.Symbol,
+		BestBid: state.bid,
+		BestAsk: state.ask,
+	}
+
 	listener := book.activityListener
-	book.bySymbol[top.Symbol] = imbalance
-	book.spreadBPS[top.Symbol] = spread
-	book.density[top.Symbol] = topDensity(top)
-	book.ready[top.Symbol] = true
+	book.tops[delta.Symbol] = state
+	book.bySymbol[delta.Symbol] = topImbalance(top)
+	book.spreadBPS[delta.Symbol] = spreadBPS(top)
+	book.density[delta.Symbol] = topDensity(top)
+	book.ready[delta.Symbol] = true
+	book.updatedAt[delta.Symbol] = now
 	book.mu.Unlock()
 
 	if listener != nil {
-		listener(top.Symbol)
+		listener(delta.Symbol)
 	}
 }
 

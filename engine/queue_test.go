@@ -38,6 +38,35 @@ func TestMeasurementQueueBounded(t *testing.T) {
 	}
 }
 
+func TestMeasurementQueueFIFOOrder(t *testing.T) {
+	config.System.MaxPendingPerSignal = 4
+	config.System.MaxPendingGlobal = 0
+
+	queue := &MeasurementQueue{}
+
+	for index := 0; index < 4; index++ {
+		if err := queue.Enqueue(Measurement{Confidence: float64(index)}); err != nil {
+			t.Fatalf("enqueue %d: %v", index, err)
+		}
+	}
+
+	got := make([]float64, 0, 4)
+
+	for measurement := range queue.Drain(context.Background()) {
+		got = append(got, measurement.Confidence)
+	}
+
+	if len(got) != 4 {
+		t.Fatalf("expected 4 measurements, got %d", len(got))
+	}
+
+	for index := 0; index < len(got); index++ {
+		if got[index] != float64(index) {
+			t.Fatalf("expected fifo order, got %v", got)
+		}
+	}
+}
+
 func TestMeasurementQueueGlobalCap(t *testing.T) {
 	config.System.MaxPendingPerSignal = 4096
 	config.System.MaxPendingGlobal = 2

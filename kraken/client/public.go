@@ -33,6 +33,7 @@ type PublicClient struct {
 	onDisconnect  func(error)
 	onReconnect   func()
 	mu            sync.Mutex
+	writeMu       sync.Mutex
 	readOnce      sync.Once
 	pingOnce      sync.Once
 	reconnectMu   sync.Mutex
@@ -142,6 +143,11 @@ func (publicClient *PublicClient) Send(message any) error {
 		return nil
 	}
 
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal websocket message: %w", err)
+	}
+
 	publicClient.mu.Lock()
 	conn := publicClient.conn
 	publicClient.mu.Unlock()
@@ -150,10 +156,8 @@ func (publicClient *PublicClient) Send(message any) error {
 		return fmt.Errorf("public websocket is not connected")
 	}
 
-	payload, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("marshal websocket message: %w", err)
-	}
+	publicClient.writeMu.Lock()
+	defer publicClient.writeMu.Unlock()
 
 	return conn.WriteMessage(websocket.TextMessage, payload)
 }
@@ -280,7 +284,7 @@ func (publicClient *PublicClient) dispatchLoop() {
 		}
 
 		publicClient.mu.Lock()
-		handlers := publicClient.handlers
+		handlers := append([]func(context.Context, []byte) error(nil), publicClient.handlers...)
 		publicClient.mu.Unlock()
 
 		for _, handler := range handlers {

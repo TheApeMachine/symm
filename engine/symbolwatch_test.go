@@ -45,6 +45,25 @@ func TestSymbolWatchRotatesColdSymbols(t *testing.T) {
 	}
 }
 
+func TestSymbolWatchPrefersHotOverColdRotation(t *testing.T) {
+	watch := NewSymbolWatch([]string{"AAA/EUR", "BBB/EUR", "CCC/EUR", "DDD/EUR"})
+	watch.NoteTrade("BBB/EUR", 10)
+
+	set := watch.ScanSet(2)
+
+	if len(set) != 2 {
+		t.Fatalf("expected scan budget of 2, got %d", len(set))
+	}
+
+	if set[0] != "BBB/EUR" {
+		t.Fatalf("expected hot symbol first, got %q", set[0])
+	}
+
+	if set[1] == "BBB/EUR" {
+		t.Fatalf("expected one cold rotation slot, got duplicate hot symbol")
+	}
+}
+
 func BenchmarkSymbolWatchScanSet(b *testing.B) {
 	symbols := make([]string, 0, 128)
 

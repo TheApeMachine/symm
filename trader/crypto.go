@@ -23,7 +23,8 @@ type Crypto struct {
 	cancel     context.CancelFunc
 	pool       *qpool.Q
 	wallet     *Wallet
-	prices     PriceReader
+	portfolio  *Portfolio
+	prices     QuoteReader
 	signals    []engine.Signal
 	pairStates sync.Map
 	telemetry  *Telemetry
@@ -37,18 +38,19 @@ func NewCrypto(
 	ctx context.Context,
 	pool *qpool.Q,
 	wallet *Wallet,
-	prices PriceReader,
+	prices QuoteReader,
 	signals ...engine.Signal,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:        ctx,
-		cancel:     cancel,
-		pool:       pool,
-		wallet:     wallet,
-		prices:     prices,
-		signals:    signals,
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		wallet:    wallet,
+		portfolio: NewPortfolio(wallet),
+		prices:    prices,
+		signals:   signals,
 		pairStates: sync.Map{},
 	}
 
@@ -103,6 +105,7 @@ func (crypto *Crypto) Run() error {
 			}
 
 			crypto.processTick(now)
+			crypto.runExecution(now)
 
 			if crypto.telemetry != nil {
 				crypto.telemetry.Publish(crypto.wallet, crypto)
@@ -301,5 +304,59 @@ func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
 		}
 
 		receiver.ApplyFeedback(feedback)
+	}
+}
+
+func (crypto *Crypto) runExecution(now time.Time) {
+	if crypto.portfolio == nil || crypto.prices == nil {
+		return
+	}
+
+	crypto.portfolio.Mark(now, crypto.prices)
+
+	if crypto.telemetry == nil {
+		return
+	}
+
+	warming := crypto.telemetry.warmPulses < config.System.MinWarmPulses
+
+	if warming {
+		return
+	}
+
+	evaluations, _, scores := crypto.telemetry.buildEvaluations()
+	line, _, _ := entryLine(scores)
+
+	for _, row := range evaluations {
+		allow, _ := row["allow"].(bool)
+
+		if !allow {
+			continue
+		}
+
+		symbol, _ := row["symbol"].(string)
+		regime, _ := row["regime"].(string)
+		reason, _ := row["reason"].(string)
+		combined, _ := row["combined"].(float64)
+
+		if symbol == "" || combined < line {
+			continue
+		}
+
+		last, ok := crypto.quotePrice(symbol)
+
+		if !ok {
+			continue
+		}
+
+		decision := ExecutionDecision{
+			Symbol: symbol,
+			Regime: regime,
+			Reason: reason,
+			Score:  combined,
+			Price:  last,
+		}
+
+		crypto.portfolio.TryEnter(now, decision, crypto.prices)
 	}
 }
