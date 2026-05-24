@@ -17,6 +17,10 @@ func TestKrakenEndpointsAreAbsoluteHTTPSOrWSS(t *testing.T) {
 	if !strings.HasPrefix(KRAKEN_WS_URL, "wss://") {
 		t.Fatalf("expected wss websocket url, got %q", KRAKEN_WS_URL)
 	}
+
+	if !strings.HasPrefix(KRAKEN_WS_AUTH_URL, "wss://") {
+		t.Fatalf("expected wss auth websocket url, got %q", KRAKEN_WS_AUTH_URL)
+	}
 }
 
 func TestChannelNamesAreNonEmpty(t *testing.T) {

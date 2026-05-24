@@ -36,6 +36,14 @@ SYMM_REPLAY_FILE=replay/fixtures/sample.jsonl ./bin/symm
 
 Optional: `SYMM_REPLAY_PACE=50ms` (default `50ms`).
 
+Live spot trading (WebSocket v2 `add_order` on `wss://ws-auth.kraken.com/v2`):
+
+```bash
+SYMM_KRAKEN_API_KEY=... SYMM_KRAKEN_API_SECRET=... make run
+```
+
+Without API keys the trader stays in paper mode. With keys, entries use market orders with OTO stop-loss-limit; exits use market orders; stop ratchets call `amend_order` when an exchange stop order id is known.
+
 Offline calibration report from a replay capture:
 
 ```bash

@@ -8,6 +8,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/order"
 )
 
 func TestNewPrivateClient(t *testing.T) {
@@ -78,6 +79,46 @@ func TestPrivateClientSubscribe(t *testing.T) {
 			convey.So(response.Channel, convey.ShouldEqual, string(kraken.ChannelTypeExecutions))
 			convey.So(response.Token, convey.ShouldEqual, "session-token")
 			convey.So(response.Success, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestPrivateClientPlaceOrder(t *testing.T) {
+	convey.Convey("Given a connected private client with a seeded token", t, func() {
+		testServer := newTestWSServer(t)
+		defer testServer.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		privateClient, err := NewPrivateClient(
+			ctx,
+			"public-key",
+			"private-key",
+			WithWebSocketURL(testServer.url),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(privateClient.conn.Connect(), convey.ShouldBeNil)
+		defer privateClient.Close()
+
+		privateClient.token = errnie.Does(func() (*kraken.Token, error) {
+			token := &kraken.Token{}
+			token.Result.Token = "session-token"
+			token.Result.Expires = 9999999999
+			return token, nil
+		})
+
+		convey.Convey("It should ack add_order and receive the execution fill", func() {
+			request := order.MarketBuyCash("BTC/EUR", 10, 94000, 93900, "session-token")
+
+			ack, err := privateClient.PlaceOrder(ctx, request)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(ack.Result.OrderID, convey.ShouldEqual, "ORDER-1")
+
+			fill, err := privateClient.WaitFill(ctx, ack.Result.OrderID)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(fill.Price, convey.ShouldEqual, 95000)
+			convey.So(fill.Qty, convey.ShouldEqual, 0.001)
 		})
 	})
 }

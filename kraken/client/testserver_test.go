@@ -32,13 +32,14 @@ func newTestWSServer(t *testing.T) *testWSServer {
 				return
 			}
 
-			response := handleTestFrame(payload)
-			if len(response) == 0 {
-				continue
-			}
+			for _, response := range handleTestFrames(payload) {
+				if len(response) == 0 {
+					continue
+				}
 
-			if err := conn.WriteMessage(websocket.TextMessage, response); err != nil {
-				return
+				if err := conn.WriteMessage(websocket.TextMessage, response); err != nil {
+					return
+				}
 			}
 		}
 	})
@@ -55,10 +56,11 @@ func (testServer *testWSServer) Close() {
 	testServer.server.Close()
 }
 
-func handleTestFrame(payload []byte) []byte {
+func handleTestFrames(payload []byte) [][]byte {
 	var frame struct {
 		Method string         `json:"method"`
 		Params map[string]any `json:"params"`
+		ReqID  int            `json:"req_id"`
 	}
 	if err := json.Unmarshal(payload, &frame); err != nil {
 		return nil
@@ -66,7 +68,31 @@ func handleTestFrame(payload []byte) []byte {
 
 	if frame.Method == "ping" {
 		body, _ := json.Marshal(map[string]any{"method": "pong"})
-		return body
+
+		return [][]byte{body}
+	}
+
+	if frame.Method == "add_order" {
+		ack, _ := json.Marshal(map[string]any{
+			"method":  "add_order",
+			"req_id":  frame.ReqID,
+			"success": true,
+			"result":  map[string]any{"order_id": "ORDER-1"},
+		})
+		fill, _ := json.Marshal(map[string]any{
+			"channel": "executions",
+			"type":    "update",
+			"data": []map[string]any{{
+				"order_id":   "ORDER-1",
+				"symbol":     "BTC/EUR",
+				"side":       "buy",
+				"exec_type":  "trade",
+				"last_qty":   0.001,
+				"last_price": 95000,
+			}},
+		})
+
+		return [][]byte{ack, fill}
 	}
 
 	if frame.Method != "subscribe" {
@@ -83,5 +109,5 @@ func handleTestFrame(payload []byte) []byte {
 		"token":   token,
 	})
 
-	return body
+	return [][]byte{body}
 }
