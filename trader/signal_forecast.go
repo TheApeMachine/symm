@@ -7,6 +7,15 @@ import (
 	"github.com/theapemachine/symm/engine"
 )
 
+const (
+	forecastRejectNoConfidence      = "no_confidence"
+	forecastRejectMissingSymbol     = "missing_symbol"
+	forecastRejectMissingReturnBook = "missing_return_model"
+	forecastRejectMissingQuote      = "missing_quote"
+	forecastRejectNoRunway          = "no_runway"
+	forecastRejectUncalibrated      = "uncalibrated_return"
+)
+
 /*
 SignalForecast is the trader-owned profit forecast for one signal reading.
 Entry time is implicit at record; exit time is now plus Runway.
@@ -26,18 +35,47 @@ func BuildSignalForecast(
 	symbol string,
 	returnModel *ReturnModel,
 ) (SignalForecast, bool) {
-	if measurement.Confidence <= 0 || symbol == "" || returnModel == nil {
-		return SignalForecast{}, false
+	forecast, reason := BuildSignalForecastReason(
+		measurement, quote, symbol, returnModel,
+	)
+
+	return forecast, reason == ""
+}
+
+/*
+BuildSignalForecastReason derives expected return and reports why a reading cannot
+become an executable candidate.
+*/
+func BuildSignalForecastReason(
+	measurement engine.Measurement,
+	quote QuoteReader,
+	symbol string,
+	returnModel *ReturnModel,
+) (SignalForecast, string) {
+	if measurement.Confidence <= 0 {
+		return SignalForecast{}, forecastRejectNoConfidence
+	}
+
+	if symbol == "" {
+		return SignalForecast{}, forecastRejectMissingSymbol
+	}
+
+	if returnModel == nil {
+		return SignalForecast{}, forecastRejectMissingReturnBook
+	}
+
+	if quote == nil {
+		return SignalForecast{}, forecastRejectMissingQuote
 	}
 
 	if _, _, _, _, ok := quote.Quote(symbol); !ok {
-		return SignalForecast{}, false
+		return SignalForecast{}, forecastRejectMissingQuote
 	}
 
 	runway := forecastRunway(measurement)
 
 	if runway <= 0 {
-		return SignalForecast{}, false
+		return SignalForecast{}, forecastRejectNoRunway
 	}
 
 	gross, ok := returnModel.Predict(
@@ -47,13 +85,13 @@ func BuildSignalForecast(
 	)
 
 	if !ok || gross <= 0 {
-		return SignalForecast{}, false
+		return SignalForecast{}, forecastRejectUncalibrated
 	}
 
 	return SignalForecast{
 		ExpectedReturn: gross,
 		Runway:         runway,
-	}, true
+	}, ""
 }
 
 func spreadBPSFromQuote(last, bid, ask float64) float64 {

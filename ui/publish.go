@@ -59,6 +59,10 @@ func omitEmptyCollections(payload map[string]any) map[string]any {
 			if len(typed) == 0 {
 				delete(payload, key)
 			}
+		case map[string]int:
+			if len(typed) == 0 {
+				delete(payload, key)
+			}
 		}
 	}
 

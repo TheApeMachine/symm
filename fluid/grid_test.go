@@ -2,6 +2,8 @@ package fluid
 
 import (
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func sampleGridRows(count int) []SymbolSnapshot {
@@ -90,6 +92,28 @@ func TestBuildFluidGridSanitizesNaNHeights(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBuildFluidGridDoesNotUseVolumeWhenReynoldsZero(t *testing.T) {
+	Convey("Given sampled rows with volume but zero Reynolds", t, func() {
+		params := NewDisplayParams()
+		builder := NewGridBuilder(params)
+		rows := sampleGridRows(64)
+
+		for index := range rows {
+			rows[index].Re = 0
+		}
+
+		grid := builder.Build(rows, params.activeGridSize())
+
+		Convey("It should keep the displayed terrain flat", func() {
+			for rowIndex := range grid.Heights {
+				for column := range grid.Heights[rowIndex] {
+					So(grid.Heights[rowIndex][column], ShouldEqual, 0)
+				}
+			}
+		})
+	})
 }
 
 func TestSummarizeFluidScalingClipsOutliers(t *testing.T) {

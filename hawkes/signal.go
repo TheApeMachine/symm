@@ -114,10 +114,10 @@ func (hawkes *Hawkes) PeakReading() engine.LiveReading {
 }
 
 /*
-MeanConfidence returns the peak normalized confidence across the latest scan set.
+MeanConfidence returns the mean normalized confidence across the latest scan set.
 */
 func (hawkes *Hawkes) MeanConfidence() float64 {
-	return hawkes.track.PeakLiveConfidence()
+	return hawkes.track.MeanGaugeConfidence()
 }
 
 /*

@@ -19,6 +19,17 @@ func TestPrecursorScoreRequiresBookAndExecutions(t *testing.T) {
 	}
 }
 
+func TestMeanConfidence(t *testing.T) {
+	pumpdumpSignal := &PumpDump{track: &TrackStore{}}
+
+	pumpdumpSignal.track.ObserveGaugeScore(0.2)
+	pumpdumpSignal.track.ObserveGaugeScore(0.6)
+
+	if got := pumpdumpSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
+		t.Fatalf("expected mean confidence 0.4, got %v", got)
+	}
+}
+
 func TestVolumeSpikeUsesOwnRatioFence(t *testing.T) {
 	trackStore, pool := testTrackStore(t)
 	filter := &PrecursorFilter{}

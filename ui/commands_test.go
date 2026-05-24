@@ -65,6 +65,29 @@ func TestHubRoutesCommandsWithoutBroadcast(t *testing.T) {
 	}
 }
 
+func TestDashboardCommandsHandleChartSubscribe(t *testing.T) {
+	chartWatch := NewChartWatch("BTC/EUR")
+	commands := NewDashboardCommands(nil, nil, chartWatch)
+
+	commands.HandleCommand([]byte(`{"op":"subscribe","symbols":["ETH/EUR","SOL/EUR"]}`))
+	commands.HandleCommand(map[string]any{
+		"op":      "unsubscribe",
+		"symbols": []any{"BTC/EUR"},
+	})
+
+	if chartWatch.Has("BTC/EUR") {
+		t.Fatal("expected BTC/EUR to be unwatched")
+	}
+
+	if !chartWatch.Has("ETH/EUR") {
+		t.Fatal("expected ETH/EUR to be watched")
+	}
+
+	if !chartWatch.Has("SOL/EUR") {
+		t.Fatal("expected SOL/EUR to be watched")
+	}
+}
+
 type commandSink struct {
 	received chan map[string]any
 }

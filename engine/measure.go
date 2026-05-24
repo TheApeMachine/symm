@@ -30,6 +30,11 @@ type symbolEvalResult struct {
 	err         error
 }
 
+type symbolChunkResult struct {
+	results []symbolEvalResult
+	err     error
+}
+
 /*
 MeasureSymbols evaluates the active symbol set and yields non-zero measurements.
 When Pool is set, independent symbol evaluations run on qpool workers while the
@@ -128,18 +133,32 @@ func measureSymbolsParallel(
 	evaluate func(symbol string, snapshot Snapshot) (Measurement, bool, error),
 	yield func(Measurement) bool,
 ) bool {
-	pending := make([]chan *qpool.QValue[any], len(symbols))
+	chunks := symbolChunks(symbols, runtime.GOMAXPROCS(0))
+	pending := make([]chan *qpool.QValue[any], len(chunks))
 
-	for index, symbol := range symbols {
+	for index, chunk := range chunks {
 		symbolIndex := index
-		symbolName := symbol
+		chunkSymbols := append([]string(nil), chunk...)
 
 		pending[symbolIndex] = scanner.Pool.ScheduleFast(ctx, func(jobCtx context.Context) (any, error) {
 			if jobCtx.Err() != nil {
-				return symbolEvalResult{err: jobCtx.Err()}, nil
+				return symbolChunkResult{err: jobCtx.Err()}, nil
 			}
 
-			return evaluateSymbol(scanner, now, symbolName, evaluate), nil
+			results := make([]symbolEvalResult, 0, len(chunkSymbols))
+
+			for _, symbolName := range chunkSymbols {
+				if jobCtx.Err() != nil {
+					return symbolChunkResult{err: jobCtx.Err()}, nil
+				}
+
+				results = append(
+					results,
+					evaluateSymbol(scanner, now, symbolName, evaluate),
+				)
+			}
+
+			return symbolChunkResult{results: results}, nil
 		})
 	}
 
@@ -173,7 +192,7 @@ func measureSymbolsParallel(
 					return false
 				}
 
-				result, ok := value.Value.(symbolEvalResult)
+				result, ok := value.Value.(symbolChunkResult)
 
 				if !ok {
 					return false
@@ -183,12 +202,18 @@ func measureSymbolsParallel(
 					return false
 				}
 
-				if !result.ok {
-					continue
-				}
+				for _, symbolResult := range result.results {
+					if symbolResult.err != nil {
+						return false
+					}
 
-				if !yield(result.measurement) {
-					return false
+					if !symbolResult.ok {
+						continue
+					}
+
+					if !yield(symbolResult.measurement) {
+						return false
+					}
 				}
 			default:
 			}
@@ -200,6 +225,35 @@ func measureSymbolsParallel(
 	}
 
 	return true
+}
+
+func symbolChunks(symbols []string, maxChunks int) [][]string {
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	if maxChunks <= 1 || len(symbols) == 1 {
+		return [][]string{symbols}
+	}
+
+	if maxChunks > len(symbols) {
+		maxChunks = len(symbols)
+	}
+
+	chunkSize := (len(symbols) + maxChunks - 1) / maxChunks
+	chunks := make([][]string, 0, maxChunks)
+
+	for start := 0; start < len(symbols); start += chunkSize {
+		end := start + chunkSize
+
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+
+		chunks = append(chunks, symbols[start:end])
+	}
+
+	return chunks
 }
 
 func evaluateSymbol(

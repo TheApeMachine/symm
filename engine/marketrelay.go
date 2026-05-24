@@ -133,6 +133,27 @@ func (relay *MarketRelay) Tick() bool {
 }
 
 /*
+Drain ingests up to limit pending market broadcast messages.
+*/
+func (relay *MarketRelay) Drain(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+
+	drained := 0
+
+	for drained < limit {
+		if !relay.Tick() {
+			return drained
+		}
+
+		drained++
+	}
+
+	return drained
+}
+
+/*
 Read returns the latest cached market values for one symbol.
 */
 func (relay *MarketRelay) Read(symbol string) Snapshot {

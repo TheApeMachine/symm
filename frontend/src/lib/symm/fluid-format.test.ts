@@ -49,4 +49,37 @@ describe("headerFieldMetrics", () => {
 		expect(metrics.div).toBeCloseTo(-0.3);
 		expect(metrics.turb).toBeCloseTo(0.015);
 	});
+
+	it("uses active symbol medians when sparse activity leaves aggregate at zero", () => {
+		const metrics = headerFieldMetrics(
+			{ re: 0, vort: 0, div: 0, turb: 0, visc: 0 },
+			[
+				{
+					symbol: "BTC/EUR",
+					change_pct: 0,
+					vol: 10,
+					re: 0,
+					vort: 0,
+					div: 0,
+					turb: 0,
+					visc: 1,
+				},
+				{
+					symbol: "ETH/EUR",
+					change_pct: 0.2,
+					vol: 8,
+					re: 0.08,
+					vort: 0.06,
+					div: -0.4,
+					turb: 0.02,
+					visc: 1,
+				},
+			],
+		);
+
+		expect(metrics.re).toBeCloseTo(0.08);
+		expect(metrics.vort).toBeCloseTo(0.06);
+		expect(metrics.div).toBeCloseTo(-0.4);
+		expect(metrics.turb).toBeCloseTo(0.02);
+	});
 });

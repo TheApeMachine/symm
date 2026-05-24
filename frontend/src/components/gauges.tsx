@@ -81,22 +81,10 @@ const SignalGauge = memo(function SignalGauge({
 });
 
 export const Gauges = () => {
-	const connected = useSymmConnected();
-	const entryLine = useSymmEntryLine();
 	const confidences = useSymmSignalConfidences();
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
-			<div className="flex shrink-0 items-center justify-between border-b border-(--dash-border) px-2 py-1">
-				<span className="text-xs font-semibold tracking-wide">Signals</span>
-				<span className="text-[10px] text-(--dash-muted)">
-					{connected
-						? entryLine.line > 0
-							? `line ${entryLine.line.toFixed(3)}`
-							: "Warming"
-						: "Offline"}
-				</span>
-			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-4 gap-1 p-1">
 				{SIGNAL_SOURCES.map((source) => (
 					<SignalGauge

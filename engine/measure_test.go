@@ -101,6 +101,25 @@ func TestMeasureSymbolsParallel(t *testing.T) {
 	})
 }
 
+func TestSymbolChunks(t *testing.T) {
+	Convey("Given more symbols than worker chunks", t, func() {
+		chunks := symbolChunks([]string{
+			"A/EUR",
+			"B/EUR",
+			"C/EUR",
+			"D/EUR",
+			"E/EUR",
+		}, 2)
+
+		Convey("It should split symbols into bounded contiguous chunks", func() {
+			So(chunks, ShouldResemble, [][]string{
+				{"A/EUR", "B/EUR", "C/EUR"},
+				{"D/EUR", "E/EUR"},
+			})
+		})
+	})
+}
+
 func TestRunSymbolJobs(t *testing.T) {
 	Convey("Given parallel symbol jobs", t, func() {
 		ctx := context.Background()

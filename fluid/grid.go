@@ -10,8 +10,6 @@ const (
 	GridSize          = 32
 	HeightEMAAlpha    = 0.35
 	gridQuantileClip  = 0.95
-	heightMoveWeight  = 0.65
-	heightVolWeight   = 0.35
 	smoothEmptyPasses = 3
 	minGridSymbols    = 8
 	warmingGridHeight = 0.05
@@ -253,16 +251,7 @@ func summarizeFluidScaling(rows []SymbolSnapshot, quantileClip float64) FluidSca
 }
 
 func displayHeight(row SymbolSnapshot, clippedAt float64) float64 {
-	reDisplay := displayRe(row.Re, clippedAt)
-
-	if reDisplay > 1e-4 {
-		return reDisplay
-	}
-
-	move := math.Log1p(math.Abs(row.ChangePct))
-	volume := math.Log1p(math.Max(row.Vol, 0))
-
-	return move*heightMoveWeight + volume*heightVolWeight
+	return displayRe(row.Re, clippedAt)
 }
 
 func displayRe(value, clippedAt float64) float64 {

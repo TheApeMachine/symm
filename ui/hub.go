@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -59,10 +60,19 @@ type Hub struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	clients        sync.Map
+	snapshotMu     sync.RWMutex
+	snapshot       map[string]map[string]any
 	ui             *qpool.BroadcastGroup
 	uiSubscription *qpool.Subscriber
 	commands       CommandHandler
 	runID          string
+}
+
+var dashboardSnapshotOrder = []string{
+	"engine_pulse",
+	"decision_trace",
+	"scoreboard",
+	"status",
 }
 
 /*
@@ -82,6 +92,7 @@ func NewHub(
 	hub := &Hub{
 		ctx:      ctx,
 		cancel:   cancel,
+		snapshot: make(map[string]map[string]any, len(dashboardSnapshotOrder)),
 		ui:       ui,
 		commands: commands,
 		runID:    time.Now().UTC().Format("20060102T150405Z"),
@@ -137,14 +148,14 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		conn: conn,
 	}
 
-	hub.clients.Store(client, struct{}{})
-
 	_ = client.conn.WriteJSON(map[string]any{
 		"event":  "hello",
 		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
 		"run_id": hub.runID,
 	})
 
+	hub.writeSnapshot(client)
+	hub.clients.Store(client, struct{}{})
 	hub.readPump(client)
 }
 
@@ -168,6 +179,15 @@ func (hub *Hub) writePump() {
 }
 
 func (hub *Hub) broadcastToClients(value *qpool.QValue[any]) {
+	switch typed := value.Value.(type) {
+	case map[string]any:
+		hub.cacheSnapshot(typed)
+	case []map[string]any:
+		for _, payload := range typed {
+			hub.cacheSnapshot(payload)
+		}
+	}
+
 	hub.clients.Range(func(key, _ any) bool {
 		client, ok := key.(*wsClient)
 
@@ -184,6 +204,58 @@ func (hub *Hub) broadcastToClients(value *qpool.QValue[any]) {
 
 		return true
 	})
+}
+
+func (hub *Hub) writeSnapshot(client *wsClient) {
+	for _, payload := range hub.dashboardSnapshot() {
+		_ = client.conn.WriteJSON(payload)
+	}
+}
+
+func (hub *Hub) cacheSnapshot(payload map[string]any) {
+	event, _ := payload["event"].(string)
+
+	if !isDashboardSnapshotEvent(event) {
+		return
+	}
+
+	hub.snapshotMu.Lock()
+	defer hub.snapshotMu.Unlock()
+
+	if hub.snapshot == nil {
+		hub.snapshot = make(map[string]map[string]any, len(dashboardSnapshotOrder))
+	}
+
+	hub.snapshot[event] = maps.Clone(payload)
+}
+
+func (hub *Hub) dashboardSnapshot() []map[string]any {
+	hub.snapshotMu.RLock()
+	defer hub.snapshotMu.RUnlock()
+
+	frames := make([]map[string]any, 0, len(dashboardSnapshotOrder))
+
+	for _, event := range dashboardSnapshotOrder {
+		payload, ok := hub.snapshot[event]
+
+		if !ok {
+			continue
+		}
+
+		frames = append(frames, maps.Clone(payload))
+	}
+
+	return frames
+}
+
+func isDashboardSnapshotEvent(event string) bool {
+	for _, candidate := range dashboardSnapshotOrder {
+		if event == candidate {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (hub *Hub) readPump(client *wsClient) {

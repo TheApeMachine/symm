@@ -16,6 +16,14 @@ type FluidCommands struct {
 }
 
 /*
+DashboardCommands routes websocket control payloads to dashboard subsystems.
+*/
+type DashboardCommands struct {
+	fluidCommands *FluidCommands
+	chartWatch    *ChartWatch
+}
+
+/*
 HandleCommand ingests one websocket control payload from the hub read pump.
 */
 func (handler *FluidCommands) HandleCommand(raw any) {
@@ -35,6 +43,45 @@ func NewFluidCommands(
 	}
 }
 
+/*
+NewDashboardCommands wires dashboard display controls and chart tick watching.
+*/
+func NewDashboardCommands(
+	fluidSignal *fluid.Fluid,
+	ui *qpool.BroadcastGroup,
+	chartWatch *ChartWatch,
+) *DashboardCommands {
+	return &DashboardCommands{
+		fluidCommands: NewFluidCommands(fluidSignal, ui),
+		chartWatch:    chartWatch,
+	}
+}
+
+/*
+HandleCommand ingests one websocket control payload from the hub read pump.
+*/
+func (handler *DashboardCommands) HandleCommand(raw any) {
+	payload, ok := decodeCommand(raw)
+
+	if !ok {
+		return
+	}
+
+	op, _ := payload["op"].(string)
+
+	switch op {
+	case "get_fluid_display", "set_fluid_display":
+		handler.fluidCommands.HandleCommand(payload)
+	case "subscribe":
+		handler.chartWatch.Subscribe(commandSymbols(payload))
+	case "unsubscribe":
+		handler.chartWatch.Unsubscribe(commandSymbols(payload))
+	case "watch":
+		symbol, _ := payload["symbol"].(string)
+		handler.chartWatch.Replace([]string{symbol})
+	}
+}
+
 func (handler *FluidCommands) handle(raw any) {
 	payload, ok := decodeCommand(raw)
 
@@ -49,6 +96,35 @@ func (handler *FluidCommands) handle(raw any) {
 		handler.publishDisplay()
 	case "set_fluid_display":
 		handler.applyDisplay(payload)
+	}
+}
+
+func commandSymbols(payload map[string]any) []string {
+	switch typed := payload["symbols"].(type) {
+	case []string:
+		return typed
+	case []any:
+		symbols := make([]string, 0, len(typed))
+
+		for _, symbolValue := range typed {
+			symbol, ok := symbolValue.(string)
+
+			if !ok || symbol == "" {
+				continue
+			}
+
+			symbols = append(symbols, symbol)
+		}
+
+		return symbols
+	default:
+		symbol, _ := payload["symbol"].(string)
+
+		if symbol == "" {
+			return nil
+		}
+
+		return []string{symbol}
 	}
 }
 

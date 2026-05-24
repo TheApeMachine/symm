@@ -98,6 +98,10 @@ describe("dashboard-store", () => {
 			fluid: 0,
 			pumpdump: 0.726,
 			causal: 0,
+			depthflow: 0,
+			leadlag: 0,
+			basis: 0,
+			sentiment: 0,
 		});
 	});
 

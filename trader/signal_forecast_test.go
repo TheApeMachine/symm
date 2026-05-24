@@ -73,3 +73,22 @@ func TestReturnModelPredictRequiresSamples(t *testing.T) {
 		t.Fatal("expected forecast to require calibration samples")
 	}
 }
+
+func TestBuildSignalForecastReason(t *testing.T) {
+	model := NewReturnModel()
+
+	_, reason := BuildSignalForecastReason(
+		engine.Measurement{
+			Source:     "hawkes",
+			Regime:     "momentum",
+			Confidence: 0.5,
+		},
+		stubPrices{"PUMP/EUR": 100},
+		"PUMP/EUR",
+		model,
+	)
+
+	if reason != forecastRejectUncalibrated {
+		t.Fatalf("expected uncalibrated return reject, got %q", reason)
+	}
+}

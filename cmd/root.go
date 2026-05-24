@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -145,7 +146,7 @@ var rootCmd = &cobra.Command{
 		tickGroup := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
 		tradeGroup := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 		bookGroup := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
-		chartWatch := map[string]struct{}{"BTC/EUR": {}}
+		chartWatch := ui.NewChartWatch("BTC/EUR")
 
 		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
 			return trades.New(cmd.Context(), publicClient, symbols, func(
@@ -215,7 +216,7 @@ var rootCmd = &cobra.Command{
 					},
 				})
 
-				if _, charted := chartWatch[symbol]; charted {
+				if chartWatch.Has(symbol) {
 					ui.Publish(uiGroup, "price_tick", map[string]any{
 						"symbol":         symbol,
 						"last":           last,
@@ -471,10 +472,14 @@ var rootCmd = &cobra.Command{
 
 		cryptoTrader.RegisterTicker(marketRelay)
 		fluidSignal.BindUI(uiGroup)
-		fluidCommands := ui.NewFluidCommands(fluidSignal, uiGroup)
+		dashboardCommands := ui.NewDashboardCommands(
+			fluidSignal,
+			uiGroup,
+			chartWatch,
+		)
 
 		if strings.TrimSpace(config.System.ReplayFile) == "" && config.System.OHLCEWarmEnabled {
-			_, warmErr := engine.StartupWarm(
+			warmCandles, warmErr := engine.StartupWarm(
 				cmd.Context(),
 				pairIndex,
 				symbols,
@@ -495,8 +500,12 @@ var rootCmd = &cobra.Command{
 			}
 
 			if warmErr == nil {
+				warmedReturns := cryptoTrader.WarmReturnModelFromOHLC(warmCandles)
 				cryptoTrader.CreditWarmPulses(config.System.OHLCEWarmPulseCredit)
-				errnie.Info("ohlc startup warm complete")
+				errnie.Info(fmt.Sprintf(
+					"ohlc startup warm complete return_samples=%d",
+					warmedReturns,
+				))
 			}
 		}
 
@@ -504,7 +513,7 @@ var rootCmd = &cobra.Command{
 
 		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), uiGroup, fluidCommands)
+				return ui.NewHub(cmd.Context(), uiGroup, dashboardCommands)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)

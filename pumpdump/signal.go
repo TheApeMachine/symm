@@ -87,10 +87,10 @@ func (pumpdump *PumpDump) Tick() bool {
 }
 
 /*
-MeanConfidence returns the peak normalized confidence across the latest scan set.
+MeanConfidence returns the mean normalized confidence across the latest scan set.
 */
 func (pumpdump *PumpDump) MeanConfidence() float64 {
-	return pumpdump.track.PeakLiveConfidence()
+	return pumpdump.track.MeanGaugeConfidence()
 }
 
 var _ engine.OHLCWarmer = (*PumpDump)(nil)

@@ -53,7 +53,14 @@ export function headerFieldMetrics(
 			return aggregate;
 		}
 
-		return median(values.filter((value) => Number.isFinite(value)));
+		const finite = values.filter((value) => Number.isFinite(value));
+		const active = finite.filter((value) => value !== 0);
+
+		if (active.length > 0) {
+			return median(active);
+		}
+
+		return median(finite);
 	};
 
 	return {

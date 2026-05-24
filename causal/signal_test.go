@@ -4,6 +4,9 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/engine"
 )
 
 func TestBackdoorBlocksMacroConfounder(t *testing.T) {
@@ -101,6 +104,53 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 	if reason != "intervention" && reason != "counterfactual_like" {
 		t.Fatalf("expected intervention reason, got %q", reason)
 	}
+}
+
+func TestMeanConfidence(t *testing.T) {
+	causalSignal := &Causal{track: NewTrackStore()}
+
+	causalSignal.track.ObserveGaugeScore(0.2)
+	causalSignal.track.ObserveGaugeScore(0.6)
+
+	if got := causalSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
+		t.Fatalf("expected mean confidence 0.4, got %v", got)
+	}
+}
+
+func TestEvaluateAppliesTickerBeforeLiquidityGate(t *testing.T) {
+	convey.Convey("Given an unseen symbol with a complete causal snapshot", t, func() {
+		causalSignal := &Causal{track: NewTrackStore()}
+		snapshot := engine.Snapshot{
+			Last:        10,
+			LastOK:      true,
+			VolumeBase:  100,
+			VolumeOK:    true,
+			BatchVolume: 2,
+			BatchOK:     true,
+			BuyPressure: 0.5,
+			PressureOK:  true,
+			SpreadBPS:   1,
+			SpreadOK:    true,
+			Imbalance:   0.4,
+			ImbalanceOK: true,
+		}
+
+		causalSignal.evaluate("ALT/EUR", snapshot, 0.01, time.Unix(1_700_000_000, 0))
+
+		causalSignal.track.shard.LockMap()
+		track := causalSignal.track.bySymbol["ALT/EUR"]
+		quoteVolume := 0.0
+
+		if track != nil {
+			quoteVolume = track.dailyQuoteVol
+		}
+
+		causalSignal.track.shard.UnlockMap()
+
+		convey.Convey("It should record quote volume before applying liquidity gates", func() {
+			convey.So(quoteVolume, convey.ShouldAlmostEqual, 1000.0)
+		})
+	})
 }
 
 func TestAssociationEffectReturnsPearson(t *testing.T) {

@@ -3,6 +3,10 @@ export const SIGNAL_SOURCES = [
 	"fluid",
 	"pumpdump",
 	"causal",
+	"depthflow",
+	"leadlag",
+	"basis",
+	"sentiment",
 ] as const;
 
 export type SignalSource = (typeof SIGNAL_SOURCES)[number];
@@ -14,6 +18,10 @@ export const SIGNAL_LABELS: Record<SignalSource, string> = {
 	fluid: "Fluid",
 	pumpdump: "Pump",
 	causal: "Causal",
+	depthflow: "Depth",
+	leadlag: "LeadLag",
+	basis: "Basis",
+	sentiment: "Sent",
 };
 
 export function isSignalSource(source: string): source is SignalSource {
@@ -49,4 +57,8 @@ export const emptySignalConfidences = (): SignalConfidenceSnapshot => ({
 	fluid: 0,
 	pumpdump: 0,
 	causal: 0,
+	depthflow: 0,
+	leadlag: 0,
+	basis: 0,
+	sentiment: 0,
 });

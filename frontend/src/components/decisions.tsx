@@ -109,13 +109,31 @@ const EnginePulseStrip = ({
 			<span className="font-medium text-(--dash-text)">#{pulse.seq}</span>{" "}
 			{pulse.phase} · meas {pulse.measurements} · cand {pulse.candidates} · open{" "}
 			{pulse.open}
-			<>
-				{" "}
-				· quotes {quotesReady}/{symbolsTotal ?? "?"} · fluid {fluidSampled}
-				{(pulse.fluid_warming ?? 0) > 0 ? `+${pulse.fluid_warming} warm` : ""}
-			</>
+				<>
+					{" "}
+					· quotes {quotesReady}/{symbolsTotal ?? "?"} · fluid {fluidSampled}
+					{(pulse.fluid_warming ?? 0) > 0 ? `+${pulse.fluid_warming} warm` : ""}
+				</>
+				{forecastRejectSummary(pulse.forecast_rejects)}
 		</div>
 	);
+};
+
+const forecastRejectSummary = (
+	rejections: Record<string, number> | undefined,
+) => {
+	const entries = Object.entries(rejections ?? {}).sort(
+		(left, right) => right[1] - left[1],
+	);
+
+	if (entries.length === 0) {
+		return "";
+	}
+
+	const [key, count] = entries[0];
+	const [source, reason] = key.split(":");
+
+	return ` · reject ${source} ${whyLabel(reason)} ×${count}`;
 };
 
 interface Props {

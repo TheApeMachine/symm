@@ -15,7 +15,7 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	market        *engine.MarketRelay
+	market        engine.MarketReader
 	watch         *engine.SymbolWatch
 	pairs         map[string]asset.Pair
 	symbols       []string
@@ -181,10 +181,10 @@ func (fluid *Fluid) PeakReading() engine.LiveReading {
 }
 
 /*
-MeanConfidence returns the peak normalized confidence across the latest scan set.
+MeanConfidence returns the mean normalized confidence across the latest scan set.
 */
 func (fluid *Fluid) MeanConfidence() float64 {
-	return fluid.track.PeakLiveConfidence()
+	return fluid.track.MeanGaugeConfidence()
 }
 
 /*
@@ -228,16 +228,16 @@ func (fluid *Fluid) Measure(
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
-					fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
-				}
-
-				confidence, reason := fluid.evaluate(symbol, snapshot, now)
+				confidence, reason := fluid.sampleField(symbol, fluid.market.Read(symbol))
 				fluid.publishSymbolField(symbol)
 
 				fluid.track.ObserveGaugeScore(confidence)
 
 				if confidence <= 0 {
+					return engine.Measurement{}, false, nil
+				}
+
+				if !fieldSnapshotReady(snapshot) || fieldSampleTime(snapshot).IsZero() {
 					return engine.Measurement{}, false, nil
 				}
 
@@ -256,6 +256,48 @@ func (fluid *Fluid) Measure(
 
 		fluid.publishFieldGrid()
 	}
+}
+
+func (fluid *Fluid) sampleField(symbol string, snapshot engine.Snapshot) (float64, string) {
+	if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
+		fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+	}
+
+	if !fieldSnapshotReady(snapshot) {
+		return 0, ""
+	}
+
+	sampleAt := fieldSampleTime(snapshot)
+
+	if sampleAt.IsZero() {
+		return 0, ""
+	}
+
+	return fluid.evaluate(symbol, snapshot, sampleAt)
+}
+
+func fieldSnapshotReady(snapshot engine.Snapshot) bool {
+	if !snapshot.LastOK || !snapshot.VolumeOK || !snapshot.DensityOK || !snapshot.SpreadOK ||
+		!snapshot.BatchOK || !snapshot.PressureOK {
+		return false
+	}
+
+	return snapshot.Last > 0 && snapshot.BatchVolume > 0 &&
+		snapshot.Density > 0 && snapshot.SpreadBPS > 0
+}
+
+func fieldSampleTime(snapshot engine.Snapshot) time.Time {
+	sampleAt := snapshot.LastAt
+
+	if snapshot.TradesAt.After(sampleAt) {
+		sampleAt = snapshot.TradesAt
+	}
+
+	if snapshot.BookAt.After(sampleAt) {
+		sampleAt = snapshot.BookAt
+	}
+
+	return sampleAt
 }
 
 func (fluid *Fluid) evaluate(

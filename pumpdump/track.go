@@ -121,6 +121,27 @@ func (trackStore *TrackStore) Tick() bool {
 }
 
 /*
+Drain ingests up to limit pending market messages into pump/dump track state.
+*/
+func (trackStore *TrackStore) Drain(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+
+	drained := 0
+
+	for drained < limit {
+		if !trackStore.Tick() {
+			return drained
+		}
+
+		drained++
+	}
+
+	return drained
+}
+
+/*
 ResetLiveScores clears per-tick gauge scores before the next measure pass.
 */
 func (trackStore *TrackStore) ResetLiveScores() {

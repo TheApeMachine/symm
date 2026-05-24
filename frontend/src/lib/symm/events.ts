@@ -207,6 +207,7 @@ export type EnginePulseEvent = SymmEvent & {
 	avg_error?: number;
 	forecast_symbols?: number;
 	forecast_errors?: number;
+	forecast_rejects?: Record<string, number>;
 };
 
 export type SignalScoreEvent = SymmEvent & {
@@ -233,6 +234,12 @@ const WHY_LABELS: Record<string, string> = {
 	intervention: "Backdoor-adjusted intervention",
 	counterfactual: "Counterfactual uplift confirmed",
 	ok: "Passed gate",
+	no_confidence: "No confidence",
+	missing_symbol: "Missing symbol",
+	missing_return_model: "Missing return model",
+	missing_quote: "Missing quote",
+	no_runway: "No runway",
+	uncalibrated_return: "Calibrating returns",
 };
 
 export function whyLabel(code: string): string {

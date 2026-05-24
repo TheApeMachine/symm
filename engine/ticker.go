@@ -2,8 +2,14 @@ package engine
 
 /*
 Ticker drains one non-blocking market or telemetry message per call.
-The orchestrator loops until every ticker returns false.
 */
 type Ticker interface {
 	Tick() bool
+}
+
+/*
+DrainTicker drains up to limit pending messages and returns how many it processed.
+*/
+type DrainTicker interface {
+	Drain(limit int) int
 }

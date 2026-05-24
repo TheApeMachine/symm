@@ -4,6 +4,7 @@ import {
 	CursorModifier,
 	DateTimeNumericAxis,
 	EAutoRange,
+	EDataPointWidthMode,
 	ENumericFormat,
 	FastCandlestickRenderableSeries,
 	MouseWheelZoomModifier,
@@ -156,7 +157,8 @@ class SymmChartController {
 		});
 		const candles = new FastCandlestickRenderableSeries(wasmContext, {
 			dataSeries: ohlc,
-			dataPointWidth: 0.7,
+			dataPointWidth: 8,
+			dataPointWidthMode: EDataPointWidthMode.Absolute,
 			brushUp: "#22C55E",
 			brushDown: "#EF4444",
 		});
@@ -579,4 +581,3 @@ class SymmChartController {
 		}
 	}
 }
-

@@ -110,6 +110,10 @@ func (trackStore *TrackStore) Sample(
 	track.Lock()
 	defer track.Unlock()
 
+	if track.hasPrior && !now.After(track.lastAt) {
+		return 0, ""
+	}
+
 	current := fieldSample{
 		density:   density,
 		viscosity: viscosityFromDepth(spreadBPS, depthSlope),

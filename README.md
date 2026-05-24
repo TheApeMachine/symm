@@ -74,14 +74,14 @@ SYMM is a closed-loop system: eight entry signals grouped into four **perspectiv
 
 `trader.Crypto.Run()` is the single scheduler. Each **rescore pulse** runs in order on the orchestrator thread:
 
-1. **Drain tickables** — flush pending book/trade/ticker updates into per-symbol track stores (`engine.WithTickDrain` ensures `Measure` never runs while stores are stale).
+1. **Drain tickables** — flush bounded batches of pending book/trade/ticker updates into per-symbol track stores (`MaxPendingPerSignal`, `MaxPendingGlobal`); `engine.WithTickDrain` ensures `Measure` never runs while configured drain capacity is unused.
 2. **Measure signals** — call all eight entry signals sequentially; each yields zero or more `engine.Measurement` values.
 3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed.
 4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback` (also updates `SourceTrustStore`).
 5. **Execute** — mark open positions (trailing stops + **exhaust** early exit), merge live score candidates, classify cross-section **regime**, build the weighted ensemble decision, and enter when gates pass.
 6. **Publish telemetry** — `engine_pulse`, decision trace, scoreboard, and status frames to the UI hub.
 
-There is no parallel signal measurement inside the trader loop: `processSignals` runs each signal in registration order so track-store drains stay deterministic.
+There is no parallel signal measurement inside the trader loop: `processSignals` runs each signal in registration order so track-store drains stay deterministic. Signal-owned symbol scans may still use `qpool` internally in chunks, so market-wide work is parallel without interleaving different signal engines on the orchestrator thread.
 
 ### Measurements (signal → trader)
 

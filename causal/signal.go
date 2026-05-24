@@ -47,10 +47,10 @@ func (causal *Causal) PeakReading() engine.LiveReading {
 }
 
 /*
-MeanConfidence returns the peak normalized confidence across the latest scan set.
+MeanConfidence returns the mean normalized confidence across the latest scan set.
 */
 func (causal *Causal) MeanConfidence() float64 {
-	return causal.track.PeakLiveConfidence()
+	return causal.track.MeanGaugeConfidence()
 }
 
 /*
@@ -154,10 +154,6 @@ func (causal *Causal) evaluate(
 	macroMomentum float64,
 	now time.Time,
 ) (float64, string) {
-	if !causal.track.PassesLiquidity(symbol) {
-		return 0, ""
-	}
-
 	if !snapshot.LastOK || !snapshot.VolumeOK || !snapshot.BatchOK ||
 		!snapshot.PressureOK || !snapshot.SpreadOK || !snapshot.ImbalanceOK {
 		return 0, ""
@@ -169,6 +165,10 @@ func (causal *Causal) evaluate(
 	}
 
 	causal.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+
+	if !causal.track.PassesLiquidity(symbol) {
+		return 0, ""
+	}
 
 	localFlow := snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
 	liquidity := bookLiquidity(snapshot.SpreadBPS, snapshot.BatchVolume)

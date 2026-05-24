@@ -36,6 +36,7 @@ type Crypto struct {
 	decisionEngine DecisionEngine
 	sourceTrust    *SourceTrustStore
 	returnModel    *ReturnModel
+	forecastReject map[string]int
 	orderJournal   *OrderJournal
 	exitAdvisor    ExitAdvisor
 	symbolUniverse []string
@@ -77,6 +78,7 @@ func NewCrypto(
 		decisionEngine: DecisionEngine{},
 		sourceTrust:    NewSourceTrustStore(),
 		returnModel:    NewReturnModel(),
+		forecastReject: make(map[string]int),
 		orderJournal:   NewOrderJournal(config.System.LogDir),
 	}
 
@@ -246,6 +248,7 @@ func (crypto *Crypto) runRescoreTick() {
 	now := time.Now().UTC()
 	crypto.drainTickables()
 	crypto.candidates.Reset()
+	crypto.resetForecastRejects()
 
 	tickResult := crypto.processSignals(now)
 
@@ -257,23 +260,68 @@ func (crypto *Crypto) runRescoreTick() {
 }
 
 func (crypto *Crypto) drainTickables() {
-	const maxDrainIterations = 10_000
-
-	for iteration := 0; iteration < maxDrainIterations; iteration++ {
-		idle := true
-
-		for _, ticker := range crypto.tickers {
-			if ticker.Tick() {
-				idle = false
-			}
-		}
-
-		if idle {
-			return
-		}
+	if len(crypto.tickers) == 0 {
+		return
 	}
 
-	errnie.Error(fmt.Errorf("tick drain exceeded %d iterations", maxDrainIterations))
+	perTickerLimit := config.System.MaxPendingPerSignal
+
+	if perTickerLimit <= 0 {
+		errnie.Error(fmt.Errorf("max pending per signal must be positive, got %d", perTickerLimit))
+
+		return
+	}
+
+	remaining := crypto.tickDrainGlobalLimit(perTickerLimit)
+
+	for _, ticker := range crypto.tickers {
+		if remaining <= 0 {
+			return
+		}
+
+		drainLimit := min(perTickerLimit, remaining)
+		remaining -= crypto.drainTicker(ticker, drainLimit)
+	}
+}
+
+func (crypto *Crypto) tickDrainGlobalLimit(perTickerLimit int) int {
+	globalLimit := config.System.MaxPendingGlobal
+
+	if globalLimit < 0 {
+		errnie.Error(fmt.Errorf("max pending global must be non-negative, got %d", globalLimit))
+
+		return 0
+	}
+
+	if globalLimit > 0 {
+		return globalLimit
+	}
+
+	return perTickerLimit * len(crypto.tickers)
+}
+
+func (crypto *Crypto) drainTicker(ticker engine.Ticker, limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+
+	drainTicker, ok := ticker.(engine.DrainTicker)
+
+	if ok {
+		return drainTicker.Drain(limit)
+	}
+
+	drained := 0
+
+	for drained < limit {
+		if !ticker.Tick() {
+			return drained
+		}
+
+		drained++
+	}
+
+	return drained
 }
 
 type signalTickResult struct {
@@ -347,11 +395,12 @@ func (crypto *Crypto) updatePairStates(
 
 		state.Update(measurement)
 
-		forecast, ok := BuildSignalForecast(
+		forecast, reason := BuildSignalForecastReason(
 			measurement, crypto.prices, symbol, crypto.returnModel,
 		)
 
-		if !ok {
+		if reason != "" {
+			crypto.recordForecastReject(measurement.Source, reason)
 			continue
 		}
 
@@ -408,6 +457,7 @@ func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
 		"symbols_total":    crypto.symbolTotal(),
 		"fluid_sampled":    crypto.fluidSampled(),
 		"fluid_warming":    crypto.fluidWarming(),
+		"forecast_rejects": crypto.forecastRejectSnapshot(),
 	})
 
 	if crypto.rescoreCount%50 == 0 {
@@ -561,6 +611,7 @@ Rescore runs one full tick: measure signals, settle predictions, and execute.
 func (crypto *Crypto) Rescore(now time.Time) error {
 	crypto.drainTickables()
 	crypto.candidates.Reset()
+	crypto.resetForecastRejects()
 
 	tickResult := crypto.processSignals(now)
 	crypto.settleDuePredictions(now)
@@ -608,6 +659,36 @@ func (crypto *Crypto) noteCandidate(measurement engine.Measurement) {
 			Executable:     true,
 		})
 	}
+}
+
+func (crypto *Crypto) resetForecastRejects() {
+	crypto.forecastReject = make(map[string]int)
+}
+
+func (crypto *Crypto) recordForecastReject(source, reason string) {
+	if source == "" || reason == "" {
+		return
+	}
+
+	if crypto.forecastReject == nil {
+		crypto.forecastReject = make(map[string]int)
+	}
+
+	crypto.forecastReject[source+":"+reason]++
+}
+
+func (crypto *Crypto) forecastRejectSnapshot() map[string]int {
+	if len(crypto.forecastReject) == 0 {
+		return nil
+	}
+
+	snapshot := make(map[string]int, len(crypto.forecastReject))
+
+	for key, value := range crypto.forecastReject {
+		snapshot[key] = value
+	}
+
+	return snapshot
 }
 
 func (crypto *Crypto) settleDuePredictions(now time.Time) {
