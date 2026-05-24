@@ -196,13 +196,15 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 
 	return {
 		sciChartSurface,
-		update(needlePercent: number, confidence: number) {
-			applyGaugeNeedle(gaugeArcs, needlePercent);
-			gaugeArcs.label.text = formatSignalConfidence(confidence);
-			sciChartSurface.invalidateElement();
-		},
-		dispose() {
-			sciChartSurface.delete();
-		},
+		controls: {
+			update(needlePercent: number, confidence: number) {
+				applyGaugeNeedle(gaugeArcs, needlePercent);
+				gaugeArcs.label.text = formatSignalConfidence(confidence);
+				sciChartSurface.invalidateElement();
+			},
+			dispose() {
+				sciChartSurface.delete();
+			},
+		} satisfies SignalGaugeControls,
 	};
-}
+};
