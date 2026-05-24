@@ -19,10 +19,9 @@ func TestApplyPredictionFeedback(t *testing.T) {
 		})
 
 		convey.Convey("It should lower intervention calibration", func() {
-			store.mu.Lock()
-			defer store.mu.Unlock()
-
-			track := store.bySymbol["ALT/EUR"]
+			track := store.track("ALT/EUR")
+			track.Lock()
+			defer track.Unlock()
 
 			convey.So(track.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
 		})

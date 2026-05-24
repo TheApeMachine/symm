@@ -6,6 +6,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/market"
 )
 
 type stubQuote map[string]struct {
@@ -32,6 +33,18 @@ func (stub stubQuote) Quote(symbol string) (float64, float64, float64, float64, 
 	}
 
 	return row.last, row.bid, row.ask, 0, true
+}
+
+func (stub stubQuote) BookDepth(symbol string) ([]market.BookLevel, []market.BookLevel, bool) {
+	row, ok := stub[symbol]
+
+	if !ok || row.bid <= 0 || row.ask <= 0 {
+		return nil, nil, false
+	}
+
+	return []market.BookLevel{{Price: row.bid, Volume: 1}},
+		[]market.BookLevel{{Price: row.ask, Volume: 1}},
+		true
 }
 
 type captureStream struct {
@@ -144,6 +157,75 @@ func TestPortfolioMarkStopExit(t *testing.T) {
 			convey.So(events[len(events)-1].Name, convey.ShouldEqual, "trade_exit")
 		})
 	})
+}
+
+func TestPortfolioScalpHoldUsesRegimeHold(t *testing.T) {
+	config.System.ScalpHoldBeforeExit = 15 * time.Second
+	config.System.MinHoldBeforeRotate = time.Minute
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Regime: "momentum",
+		Score:  0.8,
+		Price:  100,
+	}, quotes)
+
+	if !ok {
+		t.Fatal("expected portfolio entry")
+	}
+
+	stopPrice, _ := portfolio.positions["PUMP/EUR"].StopPrice, true
+	exitQuotes := stubQuote{
+		"PUMP/EUR": {last: stopPrice * 0.99, bid: 90, ask: 90.2},
+	}
+
+	events := portfolio.Mark(now.Add(5*time.Second), exitQuotes)
+
+	if len(events) != 0 {
+		t.Fatal("expected hold to block exit before scalp hold elapsed")
+	}
+
+	events = portfolio.Mark(now.Add(16*time.Second), exitQuotes)
+
+	if len(events) == 0 {
+		t.Fatal("expected exit after scalp hold elapsed")
+	}
+}
+
+func TestPortfolioShortEntry(t *testing.T) {
+	config.System.MinHoldBeforeRotate = time.Millisecond
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	portfolio := NewPortfolio(wallet)
+	quotes := stubQuote{
+		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	_, ok := portfolio.TryEnter(now, ExecutionDecision{
+		Symbol: "PUMP/EUR",
+		Regime: "dump",
+		Score:  0.8,
+		Price:  100,
+		Side:   positionShort,
+	}, quotes)
+
+	if !ok {
+		t.Fatal("expected short entry")
+	}
+
+	position := portfolio.positions["PUMP/EUR"]
+
+	if position.Side != positionShort {
+		t.Fatalf("expected short side, got %v", position.Side)
+	}
 }
 
 func BenchmarkPortfolioMark(b *testing.B) {

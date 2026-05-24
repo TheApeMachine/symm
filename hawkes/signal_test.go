@@ -199,7 +199,7 @@ func TestExcitationConfidenceRejectsCriticalBranching(t *testing.T) {
 		SpectralRadius: 1.05,
 	}
 
-	if excitationConfidence(fit, 0.5, 1) != 0 {
+	if excitationConfidence(fit, 0.5, 1, false) != 0 {
 		t.Fatal("expected zero confidence at critical spectral radius")
 	}
 }
@@ -211,7 +211,7 @@ func TestExcitationConfidenceUsesBaselineFence(t *testing.T) {
 		SpectralRadius: 0.4,
 	}
 
-	if excitationConfidence(fit, 0.5, 3) != 0 {
+	if excitationConfidence(fit, 0.5, 3, false) != 0 {
 		t.Fatal("expected zero confidence below symbol baseline fence")
 	}
 }
@@ -229,7 +229,7 @@ func TestRecordScoreStoresConfidence(t *testing.T) {
 	minHistory := confidenceHistoryCap(bivariateParamCount * 2)
 
 	for index := 0; index < minHistory; index++ {
-		trackStore.bySymbol["PUMP/EUR"] = trackStore.ensure("PUMP/EUR")
+		trackStore.bySymbol["PUMP/EUR"] = trackStore.track("PUMP/EUR")
 		trackStore.bySymbol["PUMP/EUR"].confidenceHistory = append(
 			trackStore.bySymbol["PUMP/EUR"].confidenceHistory,
 			1.2,
@@ -257,7 +257,7 @@ func TestRecordScoreNormalizesFirstSampleToOne(t *testing.T) {
 
 func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
 	trackStore := NewTrackStore()
-	track := trackStore.ensure("PUMP/EUR")
+	track := trackStore.track("PUMP/EUR")
 	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6}
 	fence := confidenceFence(track.confidenceHistory)
 	score := track.normalizedConfidence(fence / 2)

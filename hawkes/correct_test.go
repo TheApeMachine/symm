@@ -59,11 +59,11 @@ func TestApplyPredictionFeedback(t *testing.T) {
 	store := NewTrackStore()
 
 	convey.Convey("Given an overconfident settled forecast", t, func() {
-		store.mu.Lock()
-		track := store.ensure("PUMP/EUR")
+		track := store.track("PUMP/EUR")
+		track.Lock()
 		track.fit = sampleFit()
 		track.hasFit = true
-		store.mu.Unlock()
+		track.Unlock()
 
 		store.ApplyPredictionFeedback(engine.PredictionFeedback{
 			Symbol:          "PUMP/EUR",
@@ -72,10 +72,10 @@ func TestApplyPredictionFeedback(t *testing.T) {
 		})
 
 		convey.Convey("It should lower excitation calibration", func() {
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			track = store.track("PUMP/EUR")
+			track.Lock()
+			defer track.Unlock()
 
-			track = store.bySymbol["PUMP/EUR"]
 			prior := applyExcitationCalibration(track.fit, track.calibrator.Scale())
 
 			convey.So(track.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)

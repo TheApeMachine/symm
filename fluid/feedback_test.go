@@ -18,10 +18,9 @@ func TestApplyPredictionFeedback(t *testing.T) {
 		})
 
 		convey.Convey("It should lower source/shock calibration", func() {
-			store.mu.Lock()
-			defer store.mu.Unlock()
-
-			track := store.bySymbol["PUMP/EUR"]
+			track := store.track("PUMP/EUR")
+			track.Lock()
+			defer track.Unlock()
 
 			convey.So(track.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
 		})

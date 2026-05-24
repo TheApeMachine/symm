@@ -4,8 +4,10 @@ import "testing"
 
 func TestBeginScanClearsLiveScore(t *testing.T) {
 	store := NewTrackStore()
-	track := store.ensure("PUMP/EUR")
+	track := store.track("PUMP/EUR")
+	track.Lock()
 	track.liveScore = 1
+	track.Unlock()
 
 	store.BeginScan()
 
@@ -17,13 +19,17 @@ func TestBeginScanClearsLiveScore(t *testing.T) {
 func TestPeakLiveConfidenceReflectsCurrentTickOnly(t *testing.T) {
 	store := NewTrackStore()
 
-	first := store.ensure("AAA/EUR")
+	first := store.track("AAA/EUR")
+	first.Lock()
 	first.liveScore = 1
+	first.Unlock()
 
 	store.BeginScan()
 
-	second := store.ensure("BBB/EUR")
+	second := store.track("BBB/EUR")
+	second.Lock()
 	second.liveScore = 0.25
+	second.Unlock()
 
 	if peak := store.PeakLiveConfidence(); peak != 0.25 {
 		t.Fatalf("expected current tick peak 0.25, got %v", peak)

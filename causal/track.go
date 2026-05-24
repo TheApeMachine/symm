@@ -2,7 +2,6 @@ package causal
 
 import (
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/engine"
@@ -30,7 +29,7 @@ type causalSample struct {
 TrackStore holds per-symbol causal histories and cross-section macro state.
 */
 type TrackStore struct {
-	mu       sync.Mutex
+	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolTrack
 }
 
@@ -38,6 +37,7 @@ type TrackStore struct {
 SymbolTrack stores rolling causal samples and effect histories.
 */
 type SymbolTrack struct {
+	engine.SymbolLock
 	samples           []causalSample
 	interventionHist  []float64
 	confidenceHistory []float64
@@ -54,8 +54,8 @@ type SymbolTrack struct {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	for _, track := range trackStore.bySymbol {
 		track.liveScore = 0
@@ -79,8 +79,8 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track := trackStore.ensure(symbol)
 	track.dailyQuoteVol = volumeBase * last
@@ -93,8 +93,8 @@ func (trackStore *TrackStore) MacroMomentum(
 	symbols []string,
 	changePct func(symbol string) (float64, bool),
 ) float64 {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	changes := make([]float64, 0, len(symbols))
 
@@ -123,8 +123,8 @@ func (trackStore *TrackStore) Record(
 	macroMomentum, liquidity, localFlow, price float64,
 	now time.Time,
 ) (causalSample, bool) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track := trackStore.ensure(symbol)
 	elapsed := time.Duration(0)
@@ -178,8 +178,8 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track := trackStore.ensure(feedback.Symbol)
 	track.calibrator.Apply(feedback)
@@ -192,8 +192,8 @@ func (trackStore *TrackStore) Evaluate(
 	symbol string,
 	current causalSample,
 ) (float64, float64, time.Duration, string) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track, ok := trackStore.bySymbol[symbol]
 
@@ -226,8 +226,8 @@ func (trackStore *TrackStore) Evaluate(
 PeakLiveConfidence returns the highest unit-scale score across all symbols.
 */
 func (trackStore *TrackStore) PeakLiveConfidence() float64 {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	peak := 0.0
 
@@ -244,8 +244,8 @@ func (trackStore *TrackStore) PeakLiveConfidence() float64 {
 PeakSymbolScore returns the symbol with the highest live score.
 */
 func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	bestSymbol := ""
 	bestScore := 0.0
@@ -349,8 +349,8 @@ func (track *SymbolTrack) recordConfidence(confidence float64) {
 PassesLiquidity keeps symbols below the live cross-section median daily quote volume.
 */
 func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track, ok := trackStore.bySymbol[symbol]
 
@@ -388,6 +388,17 @@ func (track *SymbolTrack) recordIntervention(effect float64) {
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) track(symbol string) *SymbolTrack {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if ok {

@@ -98,7 +98,7 @@ func TestBucketRollClosesFiveMinuteWindow(t *testing.T) {
 	start := time.Unix(0, 0)
 
 	trackStore.ApplyTicker("PUMP/EUR", 1, 1000)
-	trackStore.AddVolume("PUMP/EUR", 42)
+	trackStore.AddVolume("PUMP/EUR", 42, start)
 	trackStore.RollBuckets(start)
 	trackStore.RollBuckets(start.Add(bucketWindow))
 

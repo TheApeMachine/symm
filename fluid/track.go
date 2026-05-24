@@ -2,7 +2,6 @@ package fluid
 
 import (
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/engine"
@@ -14,7 +13,7 @@ const fieldHistoryCap = 64
 TrackStore holds per-symbol fluid field histories.
 */
 type TrackStore struct {
-	mu       sync.Mutex
+	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolField
 }
 
@@ -22,6 +21,7 @@ type TrackStore struct {
 SymbolField tracks density, velocity, spread, and confidence samples.
 */
 type SymbolField struct {
+	engine.SymbolLock
 	samples           []fieldSample
 	velocities        []float64
 	sourceHistory     []float64
@@ -49,11 +49,19 @@ func NewTrackStore() *TrackStore {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.RLockMap()
+	tracks := make([]*SymbolField, 0, len(trackStore.bySymbol))
 
 	for _, track := range trackStore.bySymbol {
+		tracks = append(tracks, track)
+	}
+
+	trackStore.shard.RUnlockMap()
+
+	for _, track := range tracks {
+		track.Lock()
 		track.liveScore = 0
+		track.Unlock()
 	}
 }
 
@@ -65,10 +73,10 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(symbol)
 	track.dailyQuoteVol = volumeBase * last
 }
 
@@ -80,10 +88,10 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(feedback.Symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(feedback.Symbol)
 	track.calibrator.Apply(feedback)
 }
 
@@ -95,10 +103,9 @@ func (trackStore *TrackStore) Sample(
 	density, price, spreadBPS, depthSlope, flow, buyPressure float64,
 	now time.Time,
 ) (float64, float64, time.Duration, string) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
-
-	track := trackStore.ensure(symbol)
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
 
 	current := fieldSample{
 		density:   density,
@@ -207,8 +214,8 @@ func (trackStore *TrackStore) Sample(
 PassesLiquidity keeps symbols below the live cross-section median daily quote volume.
 */
 func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	track, ok := trackStore.bySymbol[symbol]
 
@@ -237,8 +244,8 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 SampledCount returns symbols with at least one stored sample.
 */
 func (trackStore *TrackStore) SampledCount() int {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	count := 0
 
@@ -255,8 +262,8 @@ func (trackStore *TrackStore) SampledCount() int {
 WarmingCount returns symbols with ticker volume but no samples yet.
 */
 func (trackStore *TrackStore) WarmingCount() int {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	count := 0
 
@@ -273,8 +280,8 @@ func (trackStore *TrackStore) WarmingCount() int {
 PeakLiveConfidence returns the highest unit-scale score across all symbols.
 */
 func (trackStore *TrackStore) PeakLiveConfidence() float64 {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	peak := 0.0
 
@@ -291,8 +298,8 @@ func (trackStore *TrackStore) PeakLiveConfidence() float64 {
 PeakSymbolScore returns the symbol with the highest live score.
 */
 func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
 
 	bestSymbol := ""
 	bestScore := 0.0
@@ -332,6 +339,17 @@ func (track *SymbolField) recordConfidence(confidence float64) {
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolField {
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) track(symbol string) *SymbolField {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolField {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if ok {

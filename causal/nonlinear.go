@@ -3,9 +3,9 @@ package causal
 import "math"
 
 const (
-	nonLinearStumps   = 8
-	kernelBandwidth   = 0.35
-	minKernelWeight   = 1e-9
+	nonLinearStumps = 8
+	kernelBandwidth = 0.35
+	minKernelWeight = 1e-9
 )
 
 type stumpSplit struct {
@@ -167,20 +167,23 @@ func splitGain(
 	featureIndex int,
 	threshold float64,
 ) float64 {
-	gain := 0.0
+	before := 0.0
+	after := 0.0
 
 	for index, sample := range samples {
 		residual := residuals[index]
+		before += residual * residual
 		prediction := rightMean
 
 		if featureValue(sample, featureIndex) <= threshold {
 			prediction = leftMean
 		}
 
-		gain += (residual - prediction) * (residual - prediction)
+		delta := residual - prediction
+		after += delta * delta
 	}
 
-	return -gain
+	return before - after
 }
 
 func stumpPrediction(sample causalSample, split stumpSplit) float64 {

@@ -100,8 +100,8 @@ func (trackStore *TrackStore) SnapshotRows(
 	symbols []string,
 	ticker *kticker.Ticker,
 ) []SymbolSnapshot {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.RLockMap()
+	defer trackStore.shard.RUnlockMap()
 
 	rows := make([]SymbolSnapshot, 0, len(symbols))
 

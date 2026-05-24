@@ -53,6 +53,34 @@ func TestHubStoresReplayEvents(t *testing.T) {
 	}
 }
 
+func TestHubReplayMatchesLiveOrder(t *testing.T) {
+	ctx := context.Background()
+	hub, err := NewHub(ctx, nil)
+
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+
+	hub.Emit(map[string]any{"event": "engine_pulse", "seq": 1})
+	hub.Emit(map[string]any{"event": "decision_trace", "line": 0.5})
+	hub.Emit(map[string]any{"event": "scoreboard", "line": 0.5})
+	hub.Emit(map[string]any{"event": "status", "open_count": 0})
+
+	replay := hub.replayEvents()
+
+	if len(replay) < 4 {
+		t.Fatalf("expected replay events, got %d", len(replay))
+	}
+
+	if replay[1]["event"] != "decision_trace" {
+		t.Fatalf("expected decision_trace before scoreboard, got %v", replay[1]["event"])
+	}
+
+	if replay[2]["event"] != "scoreboard" {
+		t.Fatalf("expected scoreboard after decision_trace, got %v", replay[2]["event"])
+	}
+}
+
 func TestHubBootstrapReturnsMultipleEvents(t *testing.T) {
 	ctx := context.Background()
 

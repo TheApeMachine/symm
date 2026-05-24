@@ -50,8 +50,27 @@ The report includes per-signal/source calibration, hit rate, error percentiles, 
 
 - `kraken/client.PublicClient` — live feed with ping, reconnect, resubscribe, and feed-pause on unrecoverable disconnect
 - Observers (`book`, `trades`, `ticker`) → `engine.Signal` scan queues → `trader.Crypto` unified scheduler
+- `book` retains multi-level depth (default 5 levels for fills) for VWAP slippage and fluid viscosity
+- `trader.MarketQuotes` — ticker + book depth for paper fills via `config.SlippageFill`
 - `work.NewPool` — shared qpool for parallel signal measurement drain
 - `replay/` — offline JSONL replay through the same client path
+
+### Signal engines
+
+- **hawkes** — bound-constrained coordinate-descent MLE with grid fallback; emits `Momentum` (buy cluster) and `Dump` (sell cluster)
+- **causal** — gradient-boosted stumps + kernel backdoor regression (non-linear SCM)
+- **fluid** — Burgers shock with depth-slope viscosity (spread adjusted by book depth)
+- **pumpdump** — overlapping rolling 5-minute volume windows (tick-aligned, not fixed bucket boundaries)
+
+### Execution
+
+- Long and short paper positions with depth-weighted VWAP fills
+- Regime-aware min hold: `ScalpHoldBeforeExit` (pump/momentum), `FlowHoldBeforeExit` (flow), `MinHoldBeforeRotate` (default)
+- Per-symbol sharded track stores (`engine.ShardedStore` + `SymbolLock`) in all four signal packages
+
+### Telemetry
+
+- Hub replay order matches live publish: `engine_pulse` → `decision_trace` → `scoreboard` → `status`
 
 ## Frontend
 
