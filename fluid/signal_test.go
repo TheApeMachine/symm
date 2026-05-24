@@ -40,12 +40,18 @@ func TestContinuitySourceDetectsHiddenAccumulation(t *testing.T) {
 
 func TestBurgersShockSpikesOnZeroViscosity(t *testing.T) {
 	prior := fieldSample{velocity: 0.001, viscosity: 10}
-	current := fieldSample{velocity: 0.02, viscosity: 0}
+	thinBook := fieldSample{velocity: 0.02, viscosity: 0}
+	thickBook := fieldSample{velocity: 0.02, viscosity: 10}
 
-	shock := burgersShock(current, prior)
+	thinShock := burgersShock(thinBook, prior)
+	thickShock := burgersShock(thickBook, prior)
 
-	if shock <= burgersShock(fieldSample{velocity: 0.02, viscosity: minViscosityEpsilon}, prior) {
-		t.Fatalf("expected zero-viscosity shock to spike above epsilon floor, got %v", shock)
+	if thinShock <= 0 {
+		t.Fatalf("expected positive shock on zero viscosity, got %v", thinShock)
+	}
+
+	if thinShock <= thickShock {
+		t.Fatalf("expected thin-book shock %v to exceed thick-book shock %v", thinShock, thickShock)
 	}
 }
 
@@ -67,7 +73,7 @@ func TestBurgersShockRequiresVelocityJump(t *testing.T) {
 }
 
 func TestTrackStoreFiresOnAccumulationWithQuietVelocity(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	trackStore.ApplyTicker("PUMP/EUR", 1, 500000)
 	trackStore.ApplyTicker("BTC/EUR", 50000, 100)
 
@@ -81,11 +87,13 @@ func TestTrackStoreFiresOnAccumulationWithQuietVelocity(t *testing.T) {
 	track := trackStore.bySymbol["PUMP/EUR"]
 
 	for index := 0; index < minFieldHistory; index++ {
-		track.sourceHistory = append(track.sourceHistory, 0.5)
-		track.shockHistory = append(track.shockHistory, 0.001)
+		track.sourceHistory.Push(0.5)
+		track.shockHistory.Push(0.001)
 	}
 
-	track.confidenceHistory = []float64{0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
+	for _, confidence := range []float64{0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4} {
+		track.confidenceHistory.Push(confidence)
+	}
 
 	at := start.Add(time.Duration(minFieldHistory+1) * time.Second)
 	confidence, reason := trackStore.Sample("PUMP/EUR", 25, 1, 5, 0, 20, 0.9, at)
@@ -110,7 +118,7 @@ func TestFieldConfidenceRequiresBuyPressure(t *testing.T) {
 }
 
 func TestMeanConfidence(t *testing.T) {
-	fluidSignal := &Fluid{track: NewTrackStore()}
+	fluidSignal := &Fluid{track: NewTrackStore(engine.DefaultCalibrationParams())}
 
 	fluidSignal.track.ObserveGaugeScore(0.2)
 	fluidSignal.track.ObserveGaugeScore(0.6)
@@ -129,7 +137,7 @@ func TestMeasureSamplesLatestFieldForDashboard(t *testing.T) {
 		}
 		fluidSignal := &Fluid{
 			market: marketStub,
-			track:  NewTrackStore(),
+			track:  NewTrackStore(engine.DefaultCalibrationParams()),
 			pairs: map[string]asset.Pair{
 				"ALT/EUR": {Wsname: "ALT/EUR"},
 				"BTC/EUR": {Wsname: "BTC/EUR"},
@@ -164,7 +172,7 @@ func TestMeasureSamplesLatestFieldForDashboard(t *testing.T) {
 
 func TestSampleIgnoresNonIncreasingTime(t *testing.T) {
 	convey.Convey("Given an existing field sample timestamp", t, func() {
-		trackStore := NewTrackStore()
+		trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 		trackStore.ApplyTicker("ALT/EUR", 10, 100)
 		trackStore.ApplyTicker("BTC/EUR", 100, 1000)
 		start := time.Unix(1_700_000_000, 0)

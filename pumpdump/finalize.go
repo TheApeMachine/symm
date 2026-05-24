@@ -1,9 +1,5 @@
 package pumpdump
 
-import (
-	"github.com/theapemachine/symm/engine"
-)
-
 /*
 GaugeConfidence normalizes one raw score for dashboard gauges without measurement gates.
 */

@@ -1,11 +1,11 @@
-package config
+package cmd
 
-import "github.com/theapemachine/symm/engine"
+import (
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/engine"
+)
 
-/*
-CalibrationParams maps runtime config into engine-local calibration parameters.
-*/
-func (cfg *Config) CalibrationParams() engine.CalibrationParams {
+func calibrationParamsFromConfig(cfg *config.Config) engine.CalibrationParams {
 	params := engine.DefaultCalibrationParams()
 
 	if cfg.MinCalibrationSamples > 0 {

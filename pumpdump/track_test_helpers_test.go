@@ -20,7 +20,7 @@ func testTrackStore(t *testing.T) (*TrackStore, *qpool.Q) {
 	trade := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 	book := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
 
-	trackStore, err := NewTrackStore(ctx, tick, trade, book)
+	trackStore, err := NewTrackStore(ctx, tick, trade, book, engine.DefaultCalibrationParams())
 
 	if err != nil {
 		t.Fatalf("new track store: %v", err)

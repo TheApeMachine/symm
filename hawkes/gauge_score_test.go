@@ -1,9 +1,13 @@
 package hawkes
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/theapemachine/symm/engine"
+)
 
 func TestGaugeScoreDoesNotPersistHistory(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	track := trackStore.track("PUMP/EUR")
 	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
 
@@ -25,7 +29,7 @@ func TestGaugeScoreDoesNotPersistHistory(t *testing.T) {
 }
 
 func TestRecordScorePersistsHistory(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	track := trackStore.track("PUMP/EUR")
 	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
 

@@ -56,7 +56,7 @@ func TestApplyExcitationCalibration(t *testing.T) {
 }
 
 func TestApplyPredictionFeedback(t *testing.T) {
-	store := NewTrackStore()
+	store := NewTrackStore(engine.DefaultCalibrationParams())
 
 	convey.Convey("Given an overconfident settled forecast", t, func() {
 		track := store.track("PUMP/EUR")

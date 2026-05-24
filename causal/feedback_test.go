@@ -9,7 +9,7 @@ import (
 )
 
 func TestApplyPredictionFeedback(t *testing.T) {
-	store := NewTrackStore()
+	store := NewTrackStore(engine.DefaultCalibrationParams())
 
 	convey.Convey("Given overconfident settled feedback", t, func() {
 		store.ApplyPredictionFeedback(engine.PredictionFeedback{

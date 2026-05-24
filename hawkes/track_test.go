@@ -1,9 +1,13 @@
 package hawkes
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/theapemachine/symm/engine"
+)
 
 func TestBeginScanClearsLiveScore(t *testing.T) {
-	store := NewTrackStore()
+	store := NewTrackStore(engine.DefaultCalibrationParams())
 	track := store.track("PUMP/EUR")
 	track.Lock()
 	track.liveScore = 1
@@ -17,7 +21,7 @@ func TestBeginScanClearsLiveScore(t *testing.T) {
 }
 
 func TestPeakLiveConfidenceReflectsCurrentTickOnly(t *testing.T) {
-	store := NewTrackStore()
+	store := NewTrackStore(engine.DefaultCalibrationParams())
 
 	first := store.track("AAA/EUR")
 	first.Lock()

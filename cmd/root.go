@@ -265,7 +265,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
-		calibrationParams := config.System.CalibrationParams()
+		calibrationParams := calibrationParamsFromConfig(config.System)
 
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(

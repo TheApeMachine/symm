@@ -65,7 +65,7 @@ func TestCounterfactualUpliftPositive(t *testing.T) {
 }
 
 func TestTrackStoreFiresOnIntervention(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	trackStore.ApplyTicker("ALT/EUR", 1, 500000)
 	trackStore.ApplyTicker("BTC/EUR", 50000, 1000000)
 
@@ -107,7 +107,7 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 }
 
 func TestMeanConfidence(t *testing.T) {
-	causalSignal := &Causal{track: NewTrackStore()}
+	causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
 
 	causalSignal.track.ObserveGaugeScore(0.2)
 	causalSignal.track.ObserveGaugeScore(0.6)
@@ -119,7 +119,7 @@ func TestMeanConfidence(t *testing.T) {
 
 func TestEvaluateAppliesTickerBeforeLiquidityGate(t *testing.T) {
 	convey.Convey("Given an unseen symbol with a complete causal snapshot", t, func() {
-		causalSignal := &Causal{track: NewTrackStore()}
+		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
 		snapshot := engine.Snapshot{
 			Last:        10,
 			LastOK:      true,

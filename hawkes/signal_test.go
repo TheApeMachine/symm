@@ -65,7 +65,7 @@ func TestSplitSideEventsKeepsWindowTicks(t *testing.T) {
 }
 
 func TestMeanConfidence(t *testing.T) {
-	hawkesSignal := &Hawkes{track: NewTrackStore()}
+	hawkesSignal := &Hawkes{track: NewTrackStore(engine.DefaultCalibrationParams())}
 
 	hawkesSignal.track.ObserveGaugeScore(0.2)
 	hawkesSignal.track.ObserveGaugeScore(0.6)
@@ -237,7 +237,7 @@ func TestSpectralRadiusSubcritical(t *testing.T) {
 }
 
 func TestRecordScoreStoresConfidence(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	minHistory := confidenceHistoryCap(bivariateParamCount * 2)
 
 	for index := 0; index < minHistory; index++ {
@@ -258,7 +258,7 @@ func TestRecordScoreStoresConfidence(t *testing.T) {
 }
 
 func TestRecordScoreRejectsColdSymbol(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 
 	score := trackStore.RecordScore("PUMP/EUR", 3.2)
 
@@ -268,11 +268,11 @@ func TestRecordScoreRejectsColdSymbol(t *testing.T) {
 }
 
 func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 	track := trackStore.track("PUMP/EUR")
 	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2}
 	fence := engine.ConfidenceFence(track.confidenceHistory)
-	score := engine.NormalizeConfidence(fence/2, track.confidenceHistory)
+	score := track.calibrator.NormalizeConfidence(fence/2, track.confidenceHistory)
 
 	if score <= 0 || score >= 1 {
 		t.Fatalf("expected mid-fence score in (0,1), got %v", score)
@@ -280,7 +280,7 @@ func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
 }
 
 func TestRecordScoreRejectsNonPositive(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
 
 	if score := trackStore.RecordScore("PUMP/EUR", 0); score != 0 {
 		t.Fatalf("expected zero score, got %v", score)
