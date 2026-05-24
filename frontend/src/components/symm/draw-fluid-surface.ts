@@ -17,9 +17,9 @@ import {
 import type { FieldSnapshotEvent } from "#/lib/symm/events";
 import {
 	FLUID_GRID_SIZE,
-	gridFromSnapshot,
 	type FluidGrid,
 	gridFromPayload,
+	gridFromSnapshot,
 } from "#/lib/symm/fluid-grid";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
@@ -34,19 +34,25 @@ const PALETTE = {
 };
 
 const FLUID_DISPLAY_HEIGHT = FLUID_GRID_SIZE * 0.4;
+const GRID_HALF = FLUID_GRID_SIZE / 2;
+const Y_MID = FLUID_DISPLAY_HEIGHT / 2;
 
-/** SciChart axis cube — larger than the data grid so the mesh sits on the origin plane like the official demo. */
-const WORLD_X = 100;
-const WORLD_Y = 50;
-const WORLD_Z = 100;
+/** Axis cube matches the 32×32 mesh so terrain fills the floor. */
+const WORLD_X = FLUID_GRID_SIZE;
+const WORLD_Y = FLUID_DISPLAY_HEIGHT * 1.5;
+const WORLD_Z = FLUID_GRID_SIZE;
 
 /** Horizontal orbit offset from the SciChart demo bearing (degrees). */
 const CAMERA_YAW_OFFSET_DEG = 90;
 
 const defaultCameraPosition = () =>
-	new Vector3(-WORLD_X, WORLD_Y * 1.5, WORLD_Z);
+	new Vector3(
+		GRID_HALF - FLUID_GRID_SIZE * 1.15,
+		WORLD_Y * 0.85,
+		GRID_HALF + FLUID_GRID_SIZE * 1.15,
+	);
 
-const defaultCameraTarget = () => new Vector3(0, WORLD_Y / 2, 0);
+const defaultCameraTarget = () => new Vector3(GRID_HALF, Y_MID, GRID_HALF);
 
 export type FluidSurfaceControls = {
 	update: (snapshot: FieldSnapshotEvent) => void;
@@ -124,7 +130,7 @@ export const drawFluidSurface = async (rootElement: HTMLDivElement) => {
 		stroke: PALETTE.stroke,
 		strokeThickness: 0.5,
 		drawSkirt: false,
-		drawMeshAs: EDrawMeshAs.SOLID_WITH_CONTOURS,
+		drawMeshAs: EDrawMeshAs.SOLID_MESH,
 		meshColorPalette: colorMap,
 	});
 
@@ -147,8 +153,12 @@ export const drawFluidSurface = async (rootElement: HTMLDivElement) => {
 
 	const applyGrid = (grid: FluidGrid) => {
 		const size = Math.min(grid.heights.length, FLUID_GRID_SIZE);
-		const scaleMax = Math.max(grid.outliers.displayMax, grid.max, 0.05);
-		const floor = scaleMax * 0.02;
+		const span = grid.max - grid.min;
+		const useSpan = Number.isFinite(span) && span > 1e-6;
+		const scaleMax = useSpan
+			? span
+			: Math.max(grid.outliers.displayMax, grid.max, 0.05);
+		const base = useSpan ? grid.min : 0;
 
 		for (let zIndex = 0; zIndex < FLUID_GRID_SIZE; zIndex++) {
 			for (let xIndex = 0; xIndex < FLUID_GRID_SIZE; xIndex++) {
@@ -168,13 +178,15 @@ export const drawFluidSurface = async (rootElement: HTMLDivElement) => {
 			for (let xIndex = 0; xIndex < width; xIndex++) {
 				const raw = row[xIndex];
 
-				if (!Number.isFinite(raw) || raw <= floor) {
+				if (!Number.isFinite(raw) || raw <= 0) {
 					continue;
 				}
 
+				const normalized = useSpan ? (raw - base) / scaleMax : raw / scaleMax;
+
 				heightmap[zIndex][xIndex] = Math.min(
 					FLUID_DISPLAY_HEIGHT,
-					(raw / scaleMax) * FLUID_DISPLAY_HEIGHT,
+					normalized * FLUID_DISPLAY_HEIGHT,
 				);
 			}
 		}
@@ -199,6 +211,7 @@ export const drawFluidSurface = async (rootElement: HTMLDivElement) => {
 			const grid = snapshot.grid?.heights?.length
 				? gridFromPayload(snapshot.grid)
 				: gridFromSnapshot(snapshot);
+
 			applyGrid(grid);
 		},
 		dispose: () => {

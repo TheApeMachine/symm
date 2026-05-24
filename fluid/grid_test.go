@@ -124,6 +124,81 @@ func TestBuildFluidGridUsesFieldActivityWhenReynoldsZero(t *testing.T) {
 	})
 }
 
+func TestBuildFluidGridMedianPositiveIgnoresInactiveBinMates(t *testing.T) {
+	Convey("Given one active symbol sharing a bin with inactive symbols", t, func() {
+		params := NewDisplayParams()
+		builder := NewGridBuilder(params)
+		rows := make([]SymbolSnapshot, 100)
+
+		for index := range rows {
+			rows[index] = SymbolSnapshot{
+				Symbol:    "FLAT/EUR",
+				ChangePct: float64(index) * 0.1,
+				Vol:       float64(index+1) * 10,
+			}
+		}
+
+		rows[99] = SymbolSnapshot{
+			Symbol:    "HOT/EUR",
+			ChangePct: 50,
+			Vol:       1e6,
+			Div:       -12,
+			Vort:      0.5,
+			Turb:      2,
+			Re:        100,
+		}
+
+		grid := builder.Build(rows, params.activeGridSize())
+
+		Convey("It should preserve the active symbol height in the shared bin", func() {
+			So(grid.Heights[31][31], ShouldBeGreaterThan, 0)
+			So(grid.Outliers.RawMaxSymbol, ShouldEqual, "HOT/EUR")
+		})
+	})
+}
+
+func TestBuildFluidGridSpreadsActiveActivity(t *testing.T) {
+	Convey("Given sparse field activity across change and volume ranks", t, func() {
+		params := NewDisplayParams()
+		builder := NewGridBuilder(params)
+		rows := make([]SymbolSnapshot, 100)
+
+		for index := range rows {
+			rows[index] = SymbolSnapshot{
+				Symbol:    "FLAT/EUR",
+				ChangePct: float64(index) * 0.1,
+				Vol:       float64(index+1) * 10,
+			}
+		}
+
+		rows[10] = SymbolSnapshot{
+			Symbol: "LOW/EUR", ChangePct: 1, Vol: 100, Div: -4,
+		}
+		rows[50] = SymbolSnapshot{
+			Symbol: "MID/EUR", ChangePct: 5, Vol: 500, Div: -8,
+		}
+		rows[99] = SymbolSnapshot{
+			Symbol: "HOT/EUR", ChangePct: 50, Vol: 1e6, Div: -12,
+		}
+
+		grid := builder.Build(rows, params.activeGridSize())
+
+		Convey("It should spread interpolated height beyond active bins", func() {
+			nonZero := 0
+
+			for rowIndex := range grid.Heights {
+				for column := range grid.Heights[rowIndex] {
+					if grid.Heights[rowIndex][column] > 0 {
+						nonZero++
+					}
+				}
+			}
+
+			So(nonZero, ShouldBeGreaterThan, 100)
+		})
+	})
+}
+
 func TestBuildFluidGridDoesNotUseVolumeWhenFieldActivityZero(t *testing.T) {
 	Convey("Given sampled rows with volume but no field activity", t, func() {
 		params := NewDisplayParams()

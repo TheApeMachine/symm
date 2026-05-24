@@ -47,9 +47,11 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	);
 
 	useEffect(() => {
-		if (snapshot && controlsRef.current) {
-			controlsRef.current.update(snapshot);
+		if (!snapshot || !controlsRef.current) {
+			return;
 		}
+
+		controlsRef.current.update(snapshot);
 	}, [snapshot]);
 
 	return (

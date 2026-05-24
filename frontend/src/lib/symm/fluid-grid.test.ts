@@ -68,6 +68,34 @@ describe("buildFluidGrid", () => {
 		expect(grid.outliers.rawMax).toBeGreaterThan(0);
 	});
 
+	it("preserves active height when inactive symbols share the same bin", () => {
+		const flatRows = Array.from({ length: 100 }, (_, index) => ({
+			symbol: `FLAT${index}/EUR`,
+			change_pct: index * 0.1,
+			vol: (index + 1) * 10,
+			div: 0,
+			vort: 0,
+			turb: 0,
+			visc: 1,
+			re: 0,
+		}));
+		flatRows[99] = {
+			symbol: "HOT/EUR",
+			change_pct: 50,
+			vol: 1e6,
+			div: -12,
+			vort: 0.5,
+			turb: 2,
+			visc: 1,
+			re: 100,
+		};
+
+		const grid = buildFluidGrid(flatRows);
+
+		expect(grid.heights[31][31]).toBeGreaterThan(0);
+		expect(grid.outliers.rawMaxSymbol).toBe("HOT/EUR");
+	});
+
 	it("does not use volume as a field fallback", () => {
 		const grid = buildFluidGrid(rows());
 		const peak = Math.max(...grid.heights.flat());

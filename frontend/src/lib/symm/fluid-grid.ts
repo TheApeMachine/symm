@@ -78,6 +78,16 @@ function median(values: number[]): number {
 	return sorted[mid];
 }
 
+function medianPositive(values: number[]): number {
+	const positive = values.filter((value) => value > 0);
+
+	if (positive.length === 0) {
+		return Number.NaN;
+	}
+
+	return median(positive);
+}
+
 function quantile(sorted: number[], q: number): number {
 	if (sorted.length === 0) return 0;
 	const pos = (sorted.length - 1) * q;
@@ -112,7 +122,7 @@ function smoothEmptyCells(grid: number[][], fallback: number): number {
 		return 0;
 	}
 
-	for (let pass = 0; pass < 3; pass++) {
+	for (let pass = 0; pass < Math.max(3, size); pass++) {
 		for (let z = 0; z < size; z++) {
 			for (let x = 0; x < size; x++) {
 				if (Number.isFinite(grid[z][x])) continue;
@@ -130,10 +140,23 @@ function smoothEmptyCells(grid: number[][], fallback: number): number {
 						count++;
 					}
 				}
-				grid[z][x] = count > 0 ? sum / count : fallback;
+				if (count > 0) {
+					grid[z][x] = sum / count;
+				}
 			}
 		}
 	}
+
+	for (let z = 0; z < size; z++) {
+		for (let x = 0; x < size; x++) {
+			if (Number.isFinite(grid[z][x])) {
+				continue;
+			}
+
+			grid[z][x] = fallback;
+		}
+	}
+
 	return filled;
 }
 
@@ -281,6 +304,10 @@ export function buildFluidGrid(
 	const fallback = median(displayValues);
 
 	for (const row of finiteRows) {
+		if (fieldActivity(row) <= 0) {
+			continue;
+		}
+
 		const x = binIndex(percentileRank(row.change_pct, changes), size);
 		const z = binIndex(percentileRank(row.vol, vols), size);
 		cells[z][x].push(displayHeight(row, outliers.clippedAt));
@@ -291,7 +318,7 @@ export function buildFluidGrid(
 	for (let z = 0; z < size; z++) {
 		for (let x = 0; x < size; x++) {
 			const values = cells[z][x];
-			const y = values.length > 0 ? median(values) : Number.NaN;
+			const y = values.length > 0 ? medianPositive(values) : Number.NaN;
 			heights[z][x] = y;
 			if (Number.isFinite(y)) {
 				min = Math.min(min, y);
@@ -300,7 +327,7 @@ export function buildFluidGrid(
 		}
 	}
 
-	const filledCells = smoothEmptyCells(heights, fallback);
+	const filledCells = smoothEmptyCells(heights, 0);
 	const smoothed = emaSmoothHeights(heights);
 
 	for (let z = 0; z < size; z++) {
@@ -312,6 +339,14 @@ export function buildFluidGrid(
 	if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
 		min = fallback - 0.5;
 		max = fallback + 0.5;
+	}
+
+	for (let z = 0; z < size; z++) {
+		for (let x = 0; x < size; x++) {
+			if (!Number.isFinite(heights[z][x])) {
+				heights[z][x] = 0;
+			}
+		}
 	}
 
 	return { heights, min, max, filledCells, outliers };

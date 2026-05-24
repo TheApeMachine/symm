@@ -10,9 +10,9 @@ const (
 	GridSize          = 32
 	HeightEMAAlpha    = 0.35
 	gridQuantileClip  = 0.95
-	smoothEmptyPasses = 3
+	minSmoothPasses   = 3
 	minGridSymbols    = 8
-	warmingGridHeight = 0.05
+	warmingGridHeight = 0
 )
 
 /*
@@ -90,10 +90,10 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 	finiteRows := filterFiniteRows(rows)
 	outliers := summarizeFluidScaling(finiteRows, quantileClip)
 
-	if len(finiteRows) < minGridSymbols {
+	if fluidSampledCount(finiteRows) < minGridSymbols {
 		builder.ResetSmoothing()
 
-		return warmingGrid(size, len(finiteRows), outliers)
+		return warmingGrid(size, fluidSampledCount(finiteRows), outliers)
 	}
 
 	if len(finiteRows) == 0 {
@@ -122,6 +122,10 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 	fallback := stats.Median(displayValues)
 
 	for _, row := range finiteRows {
+		if fieldActivity(row) <= 0 {
+			continue
+		}
+
 		column := binIndex(percentileRank(row.ChangePct, changes), size)
 		rowIndex := binIndex(percentileRank(row.Vol, vols), size)
 		cells[rowIndex][column] = append(
@@ -139,7 +143,7 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 			height := math.NaN()
 
 			if len(values) > 0 {
-				height = stats.Median(values)
+				height = medianPositiveValues(values)
 			}
 
 			heights[rowIndex][column] = height
@@ -153,7 +157,7 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 		}
 	}
 
-	filledCells := smoothEmptyCells(heights, fallback)
+	filledCells := smoothEmptyCells(heights, 0)
 	smoothed := builder.emaSmoothHeights(heights, size)
 
 	for rowIndex := 0; rowIndex < size; rowIndex++ {
@@ -167,7 +171,7 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 		maxHeight = fallback + 0.5
 	}
 
-	finalizeGridHeights(heights, fallback)
+	finalizeGridHeights(heights, 0)
 
 	return FluidGrid{
 		Size:        size,
@@ -372,6 +376,36 @@ func percentileRank(value float64, sorted []float64) float64 {
 	return float64(below) / float64(len(sorted))
 }
 
+func fluidSampledCount(rows []SymbolSnapshot) int {
+	count := 0
+
+	for _, row := range rows {
+		if row.Vol > 0 || row.Visc > 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+func medianPositiveValues(values []float64) float64 {
+	positive := make([]float64, 0, len(values))
+
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+
+		positive = append(positive, value)
+	}
+
+	if len(positive) == 0 {
+		return math.NaN()
+	}
+
+	return stats.Median(positive)
+}
+
 func binIndex(rank float64, size int) int {
 	index := int(math.Floor(rank * float64(size)))
 
@@ -446,7 +480,13 @@ func smoothEmptyCells(grid [][]float64, fallback float64) int {
 		return 0
 	}
 
-	for pass := 0; pass < smoothEmptyPasses; pass++ {
+	passes := minSmoothPasses
+
+	if size > passes {
+		passes = size
+	}
+
+	for pass := 0; pass < passes; pass++ {
 		for rowIndex := 0; rowIndex < size; rowIndex++ {
 			for column := 0; column < size; column++ {
 				if isFinite(grid[rowIndex][column]) {
@@ -483,11 +523,18 @@ func smoothEmptyCells(grid [][]float64, fallback float64) int {
 
 				if count > 0 {
 					grid[rowIndex][column] = sum / float64(count)
-					continue
 				}
-
-				grid[rowIndex][column] = fallback
 			}
+		}
+	}
+
+	for rowIndex := 0; rowIndex < size; rowIndex++ {
+		for column := 0; column < size; column++ {
+			if isFinite(grid[rowIndex][column]) {
+				continue
+			}
+
+			grid[rowIndex][column] = fallback
 		}
 	}
 
