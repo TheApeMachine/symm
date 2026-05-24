@@ -33,7 +33,6 @@ type Crypto struct {
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
 	uiStream       UIStream
-	dashboard      dashboardCache
 }
 
 /*
@@ -109,18 +108,17 @@ func (crypto *Crypto) BindPortfolioStream(stream PortfolioStream) {
 }
 
 /*
-Bootstrap returns the latest dashboard snapshot for new websocket clients.
+Bootstrap is retained for tests; live clients receive incremental events only.
 */
 func (crypto *Crypto) Bootstrap() []map[string]any {
-	return crypto.dashboard.snapshot()
+	return nil
 }
 
 /*
-PrimeDashboard publishes wallet and decision telemetry before the run loop starts.
-New websocket clients receive the cached snapshot on connect.
+PrimeDashboard publishes wallet status before the run loop starts.
 */
 func (crypto *Crypto) PrimeDashboard() {
-	crypto.publishDashboard()
+	crypto.publishStatus()
 }
 
 /*
@@ -262,15 +260,8 @@ func (crypto *Crypto) collectMeasurements(
 		)
 	}
 
-	if reader, ok := signal.(engine.MeanConfidenceReader); ok && crypto.uiBroadcast != nil {
-		crypto.uiBroadcast.Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"event":      "signal_score",
-				"ts":         time.Now().UTC().Format(time.RFC3339Nano),
-				"source":     signal.Source(),
-				"confidence": reader.MeanConfidence(),
-			},
-		})
+	if reader, ok := signal.(engine.MeanConfidenceReader); ok && crypto.uiStream != nil {
+		crypto.uiStream.SignalScore(signal.Source(), reader.MeanConfidence())
 	}
 
 	return result
@@ -351,6 +342,10 @@ func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
 		"forecast_symbols": forecast.PredictedSymbols,
 		"forecast_errors":  forecast.ErrorSymbols,
 		"signals":          crypto.signalRows(tickResult.measurements),
+		"ticker_ready":     crypto.tickerReady(),
+		"symbols_total":    crypto.symbolTotal(),
+		"fluid_sampled":    crypto.fluidSampled(),
+		"fluid_warming":    crypto.fluidWarming(),
 	})
 }
 
@@ -391,16 +386,7 @@ func (crypto *Crypto) publishDashboard() {
 		return
 	}
 
-	status := StatusSnapshot{}
-
-	if crypto.portfolio != nil {
-		status = crypto.portfolio.Status(crypto.prices)
-	}
-
-	statusPayload := statusPayload(status)
-	statusPayload["event"] = "status"
-
-	crypto.uiStream.Status(statusPayload)
+	crypto.publishStatus()
 
 	targets := scoreboardTargets(
 		crypto.lastDecision,
@@ -416,28 +402,61 @@ func (crypto *Crypto) publishDashboard() {
 
 	tracePayload := decisionTracePayload(crypto.lastDecision, crypto.candidates)
 	tracePayload["event"] = "decision_trace"
-
 	crypto.uiStream.DecisionTrace(tracePayload)
+}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	statusPayload["ts"] = now
-
-	scoreboardPayload := map[string]any{
-		"event":   "scoreboard",
-		"ts":      now,
-		"line":    crypto.lastDecision.Line,
-		"median":  crypto.lastDecision.Median,
-		"mad":     crypto.lastDecision.MAD,
-		"targets": targets,
+func (crypto *Crypto) publishStatus() {
+	if crypto.uiStream == nil || crypto.portfolio == nil {
+		return
 	}
 
-	tracePayload["ts"] = now
+	statusPayload := statusPayload(crypto.portfolio.Status(crypto.prices))
+	statusPayload["event"] = "status"
+	crypto.uiStream.Status(statusPayload)
+}
 
-	crypto.dashboard.store([]map[string]any{
-		statusPayload,
-		scoreboardPayload,
-		tracePayload,
-	})
+func (crypto *Crypto) tickerReady() int {
+	quotes, ok := crypto.prices.(*MarketQuotes)
+
+	if !ok || quotes == nil {
+		return 0
+	}
+
+	return quotes.TickerReady()
+}
+
+func (crypto *Crypto) symbolTotal() int {
+	quotes, ok := crypto.prices.(*MarketQuotes)
+
+	if !ok || quotes == nil {
+		return 0
+	}
+
+	return quotes.SymbolTotal()
+}
+
+func (crypto *Crypto) fluidSampled() int {
+	for _, signal := range crypto.signals {
+		reader, ok := signal.(interface{ SampledCount() int })
+
+		if ok {
+			return reader.SampledCount()
+		}
+	}
+
+	return 0
+}
+
+func (crypto *Crypto) fluidWarming() int {
+	for _, signal := range crypto.signals {
+		reader, ok := signal.(interface{ WarmingCount() int })
+
+		if ok {
+			return reader.WarmingCount()
+		}
+	}
+
+	return 0
 }
 
 func (crypto *Crypto) portfolioRiskReader() RiskReader {
@@ -615,6 +634,8 @@ func (crypto *Crypto) runExecution(now time.Time) {
 		crypto.portfolio.Emit(&markEvent)
 	}
 
+	crypto.publishStatus()
+
 	crypto.mergeLiveCandidates()
 
 	warming := crypto.rescoreCount < config.System.MinWarmPulses
@@ -656,6 +677,7 @@ func (crypto *Crypto) runExecution(now time.Time) {
 
 		if event, ok := crypto.portfolio.TryEnter(now, decision, crypto.prices); ok {
 			crypto.portfolio.Emit(event)
+			crypto.publishStatus()
 		}
 	}
 }

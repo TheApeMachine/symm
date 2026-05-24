@@ -8,7 +8,11 @@ export type SymmEventName =
 	| "status"
 	| "scoreboard"
 	| "decision_trace"
+	| "quote_progress"
 	| "field_snapshot"
+	| "field_row"
+	| "field_aggregate"
+	| "field_grid"
 	| "fluid_display"
 	| "engine_pulse"
 	| "signal_score"
@@ -109,6 +113,8 @@ export type FieldFluidState = {
 	re: number;
 };
 
+export type FieldAggregate = FieldFluidState;
+
 export type FluidScaleSummary = {
 	clipped_count: number;
 	clipped_at: number;
@@ -133,12 +139,35 @@ export type FluidDisplayEvent = SymmEvent & {
 	quantile_clip: number;
 };
 
+export type QuoteProgressEvent = SymmEvent & {
+	event: "quote_progress";
+	ready: number;
+	total: number;
+};
+
 export type FieldSnapshotEvent = SymmEvent & {
 	event: "field_snapshot";
 	symbol_count: number;
 	field: FieldFluidState;
 	symbols: FluidSymbolRow[];
 	grid?: FluidGridPayload;
+};
+
+export type FieldRowEvent = SymmEvent & {
+	event: "field_row";
+	symbol: string;
+	row: FluidSymbolRow;
+};
+
+export type FieldAggregateEvent = SymmEvent & {
+	event: "field_aggregate";
+	symbol_count: number;
+	field: FieldFluidState;
+};
+
+export type FieldGridEvent = SymmEvent & {
+	event: "field_grid";
+	grid: FluidGridPayload;
 };
 
 export type CandleBarEvent = SymmEvent & {

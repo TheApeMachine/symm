@@ -1,6 +1,10 @@
 package fluid
 
 /*
-FieldSink receives a field snapshot the moment it is computed.
+FieldPublisher receives incremental fluid telemetry as each symbol is sampled.
 */
-type FieldSink func(snapshot FieldSnapshot)
+type FieldPublisher interface {
+	PublishFieldRow(row SymbolSnapshot)
+	PublishFieldAggregate(sampledCount int, aggregate FieldAggregate)
+	PublishFieldGrid(grid FluidGrid)
+}

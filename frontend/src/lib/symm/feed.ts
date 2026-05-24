@@ -3,10 +3,14 @@ import type {
 	ChartSeedEvent,
 	DecisionTraceEvent,
 	EnginePulseEvent,
+	FieldAggregateEvent,
+	FieldGridEvent,
+	FieldRowEvent,
 	FieldSnapshotEvent,
 	FluidDisplayEvent,
 	FluidDisplayPatch,
 	PriceTickEvent,
+	QuoteProgressEvent,
 	ScoreboardEvent,
 	SignalScoreEvent,
 	StatusEvent,
@@ -18,7 +22,15 @@ import type {
 import { defaultWsUrl, pickMarketWatchSymbol } from "#/lib/symm/events";
 import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
-import { applyFluidDisplay, fieldStore } from "#/lib/symm/stores/field-store";
+import {
+	applyFieldAggregate,
+	applyFieldGrid,
+	applyFieldRow,
+	applyFieldSnapshot,
+	applyFluidDisplay,
+	buildFieldSnapshot,
+	fieldStore,
+} from "#/lib/symm/stores/field-store";
 import {
 	applyDecisionTrace,
 	applyEnginePulse,
@@ -31,7 +43,10 @@ import {
 	applyStatus,
 	statusStore,
 } from "#/lib/symm/stores/status-store";
-import { WsStream } from "#/lib/symm/ws-stream";
+import {
+	applyFluidSampled,
+	applyQuoteProgress,
+} from "#/lib/symm/stores/scan-store";
 
 const MAX_TICK_HISTORY = 360;
 
@@ -92,7 +107,7 @@ const hasChartTick = (symbol: string) => lastTickBySymbol.has(symbol);
 const chartSubscribeSymbols = () => {
 	const watch = pickMarketWatchSymbol(
 		statusStore.state.scoreboard,
-		fieldStore.state.fieldSnapshot,
+		buildFieldSnapshot(fieldStore.state),
 		"BTC/EUR",
 		marketWatchSticky,
 		hasChartTick,
@@ -111,7 +126,13 @@ const chartSubscribeSymbols = () => {
 	feedStream?.send({ op: "subscribe", symbols: [...symbols] });
 };
 
-const notifyFieldSnapshotListeners = (snapshot: FieldSnapshotEvent) => {
+const notifyFieldSnapshotListeners = () => {
+	const snapshot = buildFieldSnapshot(fieldStore.state);
+
+	if (!snapshot) {
+		return;
+	}
+
 	for (const listener of fieldSnapshotListeners) {
 		listener(snapshot);
 	}
@@ -123,9 +144,9 @@ const notifyEnginePulseListeners = (pulse: EnginePulseEvent) => {
 	}
 };
 
-const applyFieldSnapshot = (snapshot: FieldSnapshotEvent) => {
-	fieldStore.setState(() => ({ fieldSnapshot: snapshot }));
-	notifyFieldSnapshotListeners(snapshot);
+const applyFieldSnapshotEvent = (snapshot: FieldSnapshotEvent) => {
+	applyFieldSnapshot(snapshot);
+	notifyFieldSnapshotListeners();
 	chartSubscribeSymbols();
 };
 
@@ -216,8 +237,32 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "decision_trace":
 			applyDecisionTrace(event as DecisionTraceEvent);
 			return;
+		case "quote_progress": {
+			const progress = event as QuoteProgressEvent;
+			applyQuoteProgress(progress.ready, progress.total);
+			return;
+		}
 		case "field_snapshot":
-			applyFieldSnapshot(event as FieldSnapshotEvent);
+			applyFieldSnapshotEvent(event as FieldSnapshotEvent);
+			return;
+		case "field_row": {
+			const rowEvent = event as FieldRowEvent;
+			applyFieldRow(rowEvent.row);
+			applyFluidSampled(Object.keys(fieldStore.state.rows).length);
+			notifyFieldSnapshotListeners();
+			return;
+		}
+		case "field_aggregate":
+			applyFieldAggregate(
+				(event as FieldAggregateEvent).symbol_count,
+				(event as FieldAggregateEvent).field,
+			);
+			applyFluidSampled((event as FieldAggregateEvent).symbol_count);
+			notifyFieldSnapshotListeners();
+			return;
+		case "field_grid":
+			applyFieldGrid((event as FieldGridEvent).grid);
+			notifyFieldSnapshotListeners();
 			return;
 		case "fluid_display":
 			applyFluidDisplay(event as FluidDisplayEvent);
@@ -290,7 +335,7 @@ export const registerFieldSnapshotListener = (
 ) => {
 	fieldSnapshotListeners.add(handler);
 
-	const snapshot = fieldStore.state.fieldSnapshot;
+	const snapshot = buildFieldSnapshot(fieldStore.state);
 	if (snapshot) {
 		handler(snapshot);
 	}

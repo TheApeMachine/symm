@@ -22,7 +22,7 @@ import {
 } from "#/lib/symm/trade-panel";
 import { connectionStore } from "#/lib/symm/stores/connection-store";
 import { engineStore } from "#/lib/symm/stores/engine-store";
-import { fieldStore } from "#/lib/symm/stores/field-store";
+import { buildFieldSnapshot, fieldStore } from "#/lib/symm/stores/field-store";
 import { statusStore } from "#/lib/symm/stores/status-store";
 import { startSymmFeed, stopSymmFeed } from "#/lib/symm/feed";
 
@@ -58,8 +58,26 @@ export function useSymmDecisionTrace(): DecisionTraceEvent | undefined {
 	return useSelector(engineStore, (state) => state.decisionTrace);
 }
 
+export function useSymmScanProgress(): {
+	quotesReady: number;
+	symbolsTotal?: number;
+	fluidSampled: number;
+} {
+	const scan = useSelector(scanStore, (state) => state);
+	const fluidRows = useSelector(
+		fieldStore,
+		(state) => state.symbolCount || Object.keys(state.rows).length,
+	);
+
+	return {
+		quotesReady: scan.quotesReady,
+		symbolsTotal: scan.symbolsTotal,
+		fluidSampled: Math.max(scan.fluidSampled, fluidRows),
+	};
+}
+
 export function useSymmFieldSnapshot(): FieldSnapshotEvent | undefined {
-	return useSelector(fieldStore, (state) => state.fieldSnapshot);
+	return useSelector(fieldStore, (state) => buildFieldSnapshot(state));
 }
 
 export function useSymmFluidDisplay(): FluidDisplayEvent | undefined {

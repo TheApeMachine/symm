@@ -4,6 +4,7 @@ import {
 	useSymmEnginePulse,
 	useSymmEntryLine,
 	useSymmEvaluations,
+	useSymmScanProgress,
 } from "#/lib/symm/use-symm-ui";
 import { SidebarSection } from "./sidebar";
 import {
@@ -18,14 +19,31 @@ export const DecisionsPanel = () => {
 	const connected = useSymmConnected();
 	const decisionTrace = useSymmDecisionTrace();
 	const pulse = useSymmEnginePulse();
+	const scan = useSymmScanProgress();
 	const evaluations = useSymmEvaluations();
 	const entryLine = useSymmEntryLine();
 
 	const hasEvaluations = evaluations.length > 0;
+	const quotesReady = scan.quotesReady || pulse?.ticker_ready || 0;
+	const symbolsTotal = scan.symbolsTotal ?? pulse?.symbols_total;
+	const fluidSampled = scan.fluidSampled || pulse?.fluid_sampled || 0;
 
 	return (
 		<SidebarSection title="Decisions" fill className="min-w-0">
-			{pulse ? <EnginePulseStrip pulse={pulse} connected={connected} /> : null}
+			{pulse ? (
+				<EnginePulseStrip
+					pulse={pulse}
+					connected={connected}
+					quotesReady={quotesReady}
+					symbolsTotal={symbolsTotal}
+					fluidSampled={fluidSampled}
+				/>
+			) : connected ? (
+				<div className="border-b border-(--dash-border) px-3 py-1.5 text-[10px] tabular-nums text-(--dash-muted)">
+					Scanning — quotes {quotesReady}/{symbolsTotal ?? "?"} · fluid{" "}
+					{fluidSampled}
+				</div>
+			) : null}
 			{entryLine.line > 0 ? (
 				<EntryLineStrip
 					line={entryLine.line}
@@ -45,7 +63,7 @@ export const DecisionsPanel = () => {
 					message={
 						connected
 							? pulse
-								? `Scanning — quotes ${pulse.ticker_ready ?? 0}/${pulse.symbols_total ?? "?"} · fluid warming ${pulse.fluid_warming ?? 0}`
+								? `Scanning — quotes ${quotesReady}/${symbolsTotal ?? "?"} · fluid ${fluidSampled}`
 								: "Waiting for first engine pulse…"
 							: undefined
 					}
@@ -72,9 +90,15 @@ const EntryLineStrip = ({
 const EnginePulseStrip = ({
 	pulse,
 	connected,
+	quotesReady,
+	symbolsTotal,
+	fluidSampled,
 }: {
 	pulse: NonNullable<ReturnType<typeof useSymmEnginePulse>>;
 	connected: boolean;
+	quotesReady: number;
+	symbolsTotal?: number;
+	fluidSampled: number;
 }) => {
 	if (!connected) {
 		return null;
@@ -85,13 +109,11 @@ const EnginePulseStrip = ({
 			<span className="font-medium text-(--dash-text)">#{pulse.seq}</span>{" "}
 			{pulse.phase} · meas {pulse.measurements} · cand {pulse.candidates} · open{" "}
 			{pulse.open}
-			{pulse.fluid_sampled !== undefined ? (
-				<>
-					{" "}
-					· fluid {pulse.fluid_sampled}
-					{(pulse.fluid_warming ?? 0) > 0 ? `+${pulse.fluid_warming} warm` : ""}
-				</>
-			) : null}
+			<>
+				{" "}
+				· quotes {quotesReady}/{symbolsTotal ?? "?"} · fluid {fluidSampled}
+				{(pulse.fluid_warming ?? 0) > 0 ? `+${pulse.fluid_warming} warm` : ""}
+			</>
 		</div>
 	);
 };

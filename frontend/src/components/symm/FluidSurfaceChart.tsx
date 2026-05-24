@@ -16,6 +16,7 @@ import {
 	useSymmConnected,
 	useSymmFieldSnapshot,
 	useSymmFluidDisplay,
+	useSymmScanProgress,
 } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
@@ -77,9 +78,10 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 const FluidSurfaceHeader = memo(function FluidSurfaceHeader() {
 	const connected = useSymmConnected();
 	const snapshot = useSymmFieldSnapshot();
+	const scan = useSymmScanProgress();
 	const display = useSymmFluidDisplay();
 	const field = headerFieldMetrics(snapshot?.field, snapshot?.symbols);
-	const count = snapshot?.symbol_count ?? 0;
+	const count = Math.max(snapshot?.symbol_count ?? 0, scan.fluidSampled);
 	const [emaAlpha, setEmaAlpha] = useState(display?.height_ema_alpha ?? 0.35);
 
 	useEffect(() => {

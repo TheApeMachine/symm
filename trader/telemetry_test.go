@@ -31,7 +31,7 @@ func (stream *recordingUIStream) DecisionTrace(payload map[string]any) {
 	stream.decisionTrace = payload
 }
 
-func TestPublishDashboard(t *testing.T) {
+func TestPublishStatus(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	stream := &recordingUIStream{}
 
@@ -47,15 +47,6 @@ func TestPublishDashboard(t *testing.T) {
 			convey.So(stream.status["equity_eur"], convey.ShouldEqual, 200)
 			convey.So(stream.status["cash_eur"], convey.ShouldEqual, 200)
 			convey.So(stream.status["event"], convey.ShouldEqual, "status")
-		})
-
-		convey.Convey("It should cache bootstrap frames for new websocket clients", func() {
-			bootstrap := crypto.Bootstrap()
-
-			convey.So(len(bootstrap), convey.ShouldEqual, 3)
-			convey.So(bootstrap[0]["event"], convey.ShouldEqual, "status")
-			convey.So(bootstrap[1]["event"], convey.ShouldEqual, "scoreboard")
-			convey.So(bootstrap[2]["event"], convey.ShouldEqual, "decision_trace")
 		})
 	})
 }

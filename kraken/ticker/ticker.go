@@ -35,6 +35,7 @@ type Ticker struct {
 	mu             sync.RWMutex
 	quotes         map[string]quoteRow
 	ready          map[string]bool
+	symbolCount    int
 	quoteListeners []quoteListener
 	publish        tickPublish
 }
@@ -68,10 +69,11 @@ func New(
 	}
 
 	ticker := &Ticker{
-		ctx:     parent,
-		quotes:  make(map[string]quoteRow, len(symbols)),
-		ready:   make(map[string]bool, len(symbols)),
-		publish: publish,
+		ctx:         parent,
+		quotes:      make(map[string]quoteRow, len(symbols)),
+		ready:       make(map[string]bool, len(symbols)),
+		publish:     publish,
+		symbolCount: len(symbols),
 	}
 
 	publicClient.OnFrame(ticker.handleFrame)
@@ -105,6 +107,17 @@ func (ticker *Ticker) ReadyCount() int {
 	}
 
 	return count
+}
+
+/*
+SymbolCount returns the subscribed symbol universe size.
+*/
+func (ticker *Ticker) SymbolCount() int {
+	if ticker == nil {
+		return 0
+	}
+
+	return ticker.symbolCount
 }
 
 /*

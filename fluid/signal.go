@@ -18,14 +18,14 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	ingest        *engine.Ingest
-	watch         *engine.SymbolWatch
-	pairs         map[string]asset.Pair
-	symbols       []string
-	track         *TrackStore
-	fieldSink     FieldSink
-	displayParams *DisplayParams
-	gridBuilder   *GridBuilder
+	ingest         *engine.Ingest
+	watch          *engine.SymbolWatch
+	pairs          map[string]asset.Pair
+	symbols        []string
+	track          *TrackStore
+	fieldPublisher FieldPublisher
+	displayParams  *DisplayParams
+	gridBuilder    *GridBuilder
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -107,10 +107,33 @@ func (fluid *Fluid) DisplayParams() DisplayParamsSnapshot {
 }
 
 /*
-SetFieldSink wires immediate field telemetry after every scan.
+SetFieldPublisher wires incremental field telemetry as each symbol is sampled.
 */
-func (fluid *Fluid) SetFieldSink(sink FieldSink) {
-	fluid.fieldSink = sink
+func (fluid *Fluid) SetFieldPublisher(publisher FieldPublisher) {
+	fluid.fieldPublisher = publisher
+}
+
+func (fluid *Fluid) publishSymbolField(symbol string) {
+	if fluid.fieldPublisher == nil || symbol == "" {
+		return
+	}
+
+	row := fluid.track.SymbolRow(symbol, fluid.ingest.Ticker())
+	fluid.fieldPublisher.PublishFieldRow(row)
+
+	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.ingest.Ticker())
+	aggregate, sampledCount := aggregateFieldRows(rows)
+	fluid.fieldPublisher.PublishFieldAggregate(sampledCount, aggregate)
+}
+
+func (fluid *Fluid) publishFieldGrid() {
+	if fluid.fieldPublisher == nil {
+		return
+	}
+
+	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.ingest.Ticker())
+	grid := fluid.gridBuilder.Build(rows, fluid.displayParams.activeGridSize())
+	fluid.fieldPublisher.PublishFieldGrid(grid)
 }
 
 /*
@@ -202,6 +225,7 @@ func (fluid *Fluid) Measure(
 				}
 
 				confidence, reason := fluid.evaluate(symbol, snapshot, now)
+				fluid.publishSymbolField(symbol)
 
 				fluid.track.ObserveGaugeScore(confidence)
 
@@ -222,9 +246,7 @@ func (fluid *Fluid) Measure(
 			}
 		}
 
-		if fluid.fieldSink != nil {
-			fluid.fieldSink(fluid.FieldSnapshot())
-		}
+		fluid.publishFieldGrid()
 	}
 }
 

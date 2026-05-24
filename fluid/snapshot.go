@@ -109,62 +109,82 @@ func (trackStore *TrackStore) SnapshotRows(
 	rows := make([]SymbolSnapshot, 0, len(symbols))
 
 	for _, symbol := range symbols {
-		track, ok := trackStore.bySymbol[symbol]
-
-		changePct := 0.0
-
-		if ticker != nil {
-			if _, _, _, change, quoteOK := ticker.Quote(symbol); quoteOK {
-				changePct = change
-			}
-		}
-
-		if !ok || len(track.samples) == 0 {
-			if ok && track.dailyQuoteVol > 0 {
-				rows = append(rows, SymbolSnapshot{
-					Symbol:    symbol,
-					ChangePct: changePct,
-				})
-			}
-
-			continue
-		}
-
-		sample := track.samples[len(track.samples)-1]
-		prior := track.lastSample
-
-		if len(track.samples) >= 2 {
-			prior = track.samples[len(track.samples)-2]
-		}
-
-		source := 0.0
-		shock := 0.0
-
-		if track.hasPrior {
-			source = continuitySource(sample, prior)
-			shock = burgersShock(sample, prior)
-		}
-
-		velocity := math.Abs(sample.velocity)
-		reynolds := 0.0
-
-		if sample.viscosity > 0 {
-			reynolds = velocity * sample.density / sample.viscosity
-		}
-
-		rows = append(rows, SymbolSnapshot{
-			Symbol:    symbol,
-			ChangePct: changePct,
-			Vol:       sample.density,
-			Div:       source,
-			Vort:      velocity,
-			Turb:      shock,
-			Visc:      sample.viscosity,
-			Re:        reynolds,
-		})
+		rows = append(rows, trackStore.symbolRowLocked(symbol, ticker))
 	}
 
 	return rows
+}
+
+/*
+SymbolRow returns the latest fluid row for one symbol.
+*/
+func (trackStore *TrackStore) SymbolRow(
+	symbol string,
+	ticker *kticker.Ticker,
+) SymbolSnapshot {
+	trackStore.shard.RLockMap()
+	defer trackStore.shard.RUnlockMap()
+
+	return trackStore.symbolRowLocked(symbol, ticker)
+}
+
+func (trackStore *TrackStore) symbolRowLocked(
+	symbol string,
+	ticker *kticker.Ticker,
+) SymbolSnapshot {
+	track, ok := trackStore.bySymbol[symbol]
+
+	changePct := 0.0
+
+	if ticker != nil {
+		if _, _, _, change, quoteOK := ticker.Quote(symbol); quoteOK {
+			changePct = change
+		}
+	}
+
+	if !ok || len(track.samples) == 0 {
+		if ok && track.dailyQuoteVol > 0 {
+			return SymbolSnapshot{
+				Symbol:    symbol,
+				ChangePct: changePct,
+			}
+		}
+
+		return SymbolSnapshot{Symbol: symbol, ChangePct: changePct}
+	}
+
+	sample := track.samples[len(track.samples)-1]
+	prior := track.lastSample
+
+	if len(track.samples) >= 2 {
+		prior = track.samples[len(track.samples)-2]
+	}
+
+	source := 0.0
+	shock := 0.0
+
+	if track.hasPrior {
+		source = continuitySource(sample, prior)
+		shock = burgersShock(sample, prior)
+	}
+
+	velocity := math.Abs(sample.velocity)
+	reynolds := 0.0
+
+	if sample.viscosity > 0 {
+		reynolds = velocity * sample.density / sample.viscosity
+	}
+
+	return SymbolSnapshot{
+		Symbol:    symbol,
+		ChangePct: changePct,
+		Vol:       sample.density,
+		Div:       source,
+		Vort:      velocity,
+		Turb:      shock,
+		Visc:      sample.viscosity,
+		Re:        reynolds,
+	}
 }
 
 /*

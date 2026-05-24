@@ -54,7 +54,6 @@ type Hub struct {
 	clients        sync.Map
 	ui             *qpool.BroadcastGroup
 	uiSubscription *qpool.Subscriber
-	bootstrap      func() []map[string]any
 	runID          string
 }
 
@@ -64,7 +63,6 @@ NewHub subscribes to the shared ui broadcast group created on the pool.
 func NewHub(
 	ctx context.Context,
 	ui *qpool.BroadcastGroup,
-	bootstrap func() []map[string]any,
 ) (*Hub, error) {
 	if ui == nil {
 		return nil, fmt.Errorf("ui hub requires ui broadcast group")
@@ -73,11 +71,10 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:       ctx,
-		cancel:    cancel,
-		bootstrap: bootstrap,
-		ui:        ui,
-		runID:     time.Now().UTC().Format("20060102T150405Z"),
+		ctx:    ctx,
+		cancel: cancel,
+		ui:     ui,
+		runID:  time.Now().UTC().Format("20060102T150405Z"),
 	}
 
 	hub.uiSubscription = ui.Subscribe("ui", 4096)
@@ -137,12 +134,6 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
 		"run_id": hub.runID,
 	})
-
-	if hub.bootstrap != nil {
-		for _, message := range hub.bootstrap() {
-			_ = client.conn.WriteJSON(message)
-		}
-	}
 
 	hub.readPump(client)
 }

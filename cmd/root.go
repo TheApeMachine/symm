@@ -179,6 +179,8 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		tickerObserver := errnie.Does(func() (*ticker.Ticker, error) {
+			quoted := make(map[string]struct{}, len(symbols))
+
 			return ticker.New(cmd.Context(), publicClient, symbols, func(
 				symbol string,
 				last, bid, ask, volumeBase, changePct float64,
@@ -196,6 +198,13 @@ var rootCmd = &cobra.Command{
 				})
 
 				marketStream.PriceTick(symbol, last, bid, ask, changePct, timestamp)
+
+				if _, seen := quoted[symbol]; seen {
+					return
+				}
+
+				quoted[symbol] = struct{}{}
+				marketStream.QuoteProgress(len(quoted), len(symbols))
 			})
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -314,11 +323,13 @@ var rootCmd = &cobra.Command{
 
 		cryptoTrader.BindUIStream(marketStream)
 		cryptoTrader.BindPortfolioStream(marketStream)
+		fluidSignal.SetFieldPublisher(marketStream)
+		ui.NewFluidCommands(cmd.Context(), uiGroup, fluidSignal, marketStream)
 		cryptoTrader.PrimeDashboard()
 
 		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), uiGroup, cryptoTrader.Bootstrap)
+				return ui.NewHub(cmd.Context(), uiGroup)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)

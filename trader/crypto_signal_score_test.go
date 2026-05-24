@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/ui"
 )
 
 type meanConfidenceSignal struct {
@@ -41,19 +42,21 @@ func TestPublishSignalScoreAfterMeasure(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-		subscriber := ui.Subscribe("test", 8)
+		uiGroup := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		subscriber := uiGroup.Subscribe("test", 8)
+		stream := ui.NewMarketStream(uiGroup)
 
 		crypto, err := NewCrypto(
 			ctx,
 			pool,
-			ui,
+			uiGroup,
 			NewWallet(PaperWallet, "EUR", 200, 0.26),
 			stubPrices{"PUMP/EUR": 100},
 			&meanConfidenceSignal{source: "hawkes", mean: 0.42},
 		)
 
 		So(err, ShouldBeNil)
+		crypto.BindUIStream(stream)
 
 		crypto.collectMeasurements(
 			&meanConfidenceSignal{source: "hawkes", mean: 0.42},

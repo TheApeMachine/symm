@@ -1,9 +1,6 @@
 package trader
 
-import (
-	"sort"
-	"sync"
-)
+import "sort"
 
 /*
 statusPayload maps portfolio telemetry into the dashboard status wire shape.
@@ -138,27 +135,4 @@ func decisionTracePayload(
 		"decisions":   decisions,
 		"evaluations": evaluationRows(decision, candidates),
 	}
-}
-
-type dashboardCache struct {
-	mu       sync.RWMutex
-	messages []map[string]any
-}
-
-func (cache *dashboardCache) store(messages []map[string]any) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-
-	cache.messages = append([]map[string]any(nil), messages...)
-}
-
-func (cache *dashboardCache) snapshot() []map[string]any {
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
-
-	if len(cache.messages) == 0 {
-		return nil
-	}
-
-	return append([]map[string]any(nil), cache.messages...)
 }

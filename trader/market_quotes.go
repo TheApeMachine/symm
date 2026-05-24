@@ -54,6 +54,28 @@ func (quotes *MarketQuotes) Quote(
 }
 
 /*
+TickerReady returns how many symbols have received at least one quote.
+*/
+func (quotes *MarketQuotes) TickerReady() int {
+	if quotes.ticker == nil {
+		return 0
+	}
+
+	return quotes.ticker.ReadyCount()
+}
+
+/*
+SymbolTotal returns the subscribed symbol universe size.
+*/
+func (quotes *MarketQuotes) SymbolTotal() int {
+	if quotes.ticker == nil {
+		return 0
+	}
+
+	return quotes.ticker.SymbolCount()
+}
+
+/*
 BookDepth returns bid and ask levels for depth-weighted slippage.
 */
 func (quotes *MarketQuotes) BookDepth(

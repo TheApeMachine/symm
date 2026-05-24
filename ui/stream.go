@@ -40,6 +40,22 @@ func (stream *MarketStream) send(event map[string]any) {
 }
 
 /*
+QuoteProgress publishes how many symbols have received at least one live quote.
+*/
+func (stream *MarketStream) QuoteProgress(ready, total int) {
+	if stream == nil {
+		return
+	}
+
+	stream.send(map[string]any{
+		"event": "quote_progress",
+		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
+		"ready": ready,
+		"total": total,
+	})
+}
+
+/*
 PriceTick publishes one live quote update.
 */
 func (stream *MarketStream) PriceTick(
