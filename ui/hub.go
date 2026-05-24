@@ -13,6 +13,7 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/fluid"
 )
 
 const clientSendBuffer = 256
@@ -105,13 +106,15 @@ func (client *wsClient) wantsSymbol(symbol string) bool {
 Hub sends telemetry to WebSocket clients (SciCharts / monitor UI).
 */
 type Hub struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	clients      sync.Map
-	bootstrap    func() []map[string]any
-	replayMu     sync.Mutex
-	replayByType map[string]map[string]any
-	runID        string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	clients          sync.Map
+	bootstrap        func() []map[string]any
+	replayMu         sync.Mutex
+	replayByType     map[string]map[string]any
+	runID            string
+	fluidDisplay     FluidDisplayController
+	lastFluidDisplay map[string]any
 }
 
 var replayEventTypes = []string{
@@ -325,6 +328,14 @@ func (hub *Hub) sendBootstrap(client *wsClient) {
 	for _, event := range hub.replayEvents() {
 		hub.enqueue(client, event)
 	}
+
+	hub.replayMu.Lock()
+	fluidDisplay := hub.lastFluidDisplay
+	hub.replayMu.Unlock()
+
+	if fluidDisplay != nil {
+		hub.enqueue(client, fluidDisplay)
+	}
 }
 
 func (hub *Hub) storeReplay(event map[string]any) {
@@ -426,9 +437,13 @@ func (hub *Hub) readPump(client *wsClient) {
 }
 
 type clientMessage struct {
-	Op      string   `json:"op"`
-	Symbols []string `json:"symbols"`
-	Symbol  string   `json:"symbol"`
+	Op             string   `json:"op"`
+	Symbols        []string `json:"symbols"`
+	Symbol         string   `json:"symbol"`
+	HeightEMAAlpha *float64 `json:"height_ema_alpha,omitempty"`
+	GridSize       *int     `json:"grid_size,omitempty"`
+	QuantileClip   *float64 `json:"quantile_clip,omitempty"`
+	ResetSmoothing *bool    `json:"reset_smoothing,omitempty"`
 }
 
 func (hub *Hub) handleClientMessage(client *wsClient, payload []byte) {
@@ -453,7 +468,39 @@ func (hub *Hub) handleClientMessage(client *wsClient, payload []byte) {
 		if strings.TrimSpace(message.Symbol) != "" {
 			client.subscribe([]string{message.Symbol})
 		}
+	case "set_fluid_display":
+		hub.handleFluidDisplay(message)
+	case "get_fluid_display":
+		hub.handleFluidDisplayQuery(client)
 	}
+}
+
+func (hub *Hub) handleFluidDisplay(message clientMessage) {
+	if hub.fluidDisplay == nil {
+		return
+	}
+
+	snapshot, err := hub.fluidDisplay.ApplyDisplayPatch(fluid.DisplayPatch{
+		HeightEMAAlpha: message.HeightEMAAlpha,
+		GridSize:       message.GridSize,
+		QuantileClip:   message.QuantileClip,
+		ResetSmoothing: message.ResetSmoothing,
+	})
+
+	if err != nil {
+		_ = errnie.Error(err)
+		return
+	}
+
+	hub.publishFluidDisplay(snapshot)
+}
+
+func (hub *Hub) handleFluidDisplayQuery(client *wsClient) {
+	if hub.fluidDisplay == nil {
+		return
+	}
+
+	hub.enqueue(client, fluidDisplayEvent(hub.fluidDisplay.DisplayParams()))
 }
 
 /*
@@ -461,6 +508,30 @@ SetBootstrap wires the connect-time snapshot for new websocket clients.
 */
 func (hub *Hub) SetBootstrap(bootstrap func() []map[string]any) {
 	hub.bootstrap = bootstrap
+}
+
+/*
+SetFluidDisplayController wires server-side fluid terrain controls from websocket clients.
+*/
+func (hub *Hub) SetFluidDisplayController(controller FluidDisplayController) {
+	hub.fluidDisplay = controller
+
+	if controller == nil {
+		hub.lastFluidDisplay = nil
+		return
+	}
+
+	hub.publishFluidDisplay(controller.DisplayParams())
+}
+
+func (hub *Hub) publishFluidDisplay(snapshot fluid.DisplayParamsSnapshot) {
+	event := fluidDisplayEvent(snapshot)
+
+	hub.replayMu.Lock()
+	hub.lastFluidDisplay = event
+	hub.replayMu.Unlock()
+
+	hub.Emit(event)
 }
 
 /*

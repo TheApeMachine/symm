@@ -2,8 +2,10 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/config"
 )
 
 func TestCalibrationStepPenalizesLosingPredictions(t *testing.T) {
@@ -27,6 +29,18 @@ func TestCalibrationStepPenalizesLosingPredictions(t *testing.T) {
 
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(sample, convey.ShouldAlmostEqual, 0.5, 0.0001)
+		})
+	})
+}
+
+func TestAdaptiveCalibrationHalfLifeScalesWithRunway(t *testing.T) {
+	convey.Convey("Given short and long runways", t, func() {
+		short := adaptiveCalibrationHalfLife(2 * time.Second)
+		long := adaptiveCalibrationHalfLife(15 * time.Minute)
+
+		convey.Convey("It should keep short signals on tighter windows", func() {
+			convey.So(short, convey.ShouldBeLessThan, long)
+			convey.So(short, convey.ShouldBeGreaterThanOrEqualTo, config.System.CalibrationHalfLifeFloor)
 		})
 	})
 }

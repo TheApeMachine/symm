@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { SciChartReact } from "scichart-react";
 
 import type { FieldSnapshotEvent } from "#/lib/symm/events";
@@ -8,10 +8,15 @@ import {
 } from "#/lib/symm/fluid-surface-controller";
 import {
 	registerFieldSnapshotListener,
+	setFluidDisplay,
 	unregisterFieldSnapshotListener,
 } from "#/lib/symm/feed";
 import { formatFluidScalar } from "#/lib/symm/fluid-format";
-import { useSymmConnected, useSymmFieldSnapshot } from "#/lib/symm/use-symm-ui";
+import {
+	useSymmConnected,
+	useSymmFieldSnapshot,
+	useSymmFluidDisplay,
+} from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
 type FluidSurfaceChartProps = {
@@ -72,8 +77,16 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 const FluidSurfaceHeader = memo(function FluidSurfaceHeader() {
 	const connected = useSymmConnected();
 	const snapshot = useSymmFieldSnapshot();
+	const display = useSymmFluidDisplay();
 	const field = snapshot?.field;
 	const count = snapshot?.symbol_count ?? 0;
+	const [emaAlpha, setEmaAlpha] = useState(display?.height_ema_alpha ?? 0.35);
+
+	useEffect(() => {
+		if (display?.height_ema_alpha !== undefined) {
+			setEmaAlpha(display.height_ema_alpha);
+		}
+	}, [display?.height_ema_alpha]);
 
 	return (
 		<div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-(--dash-border) px-2 py-1.5">
@@ -85,6 +98,31 @@ const FluidSurfaceHeader = memo(function FluidSurfaceHeader() {
 						? "Warming — partial rows streaming"
 						: "Offline"}
 			</span>
+			<label className="flex items-center gap-2 text-[10px] text-(--dash-muted)">
+				<span>EMA</span>
+				<input
+					type="range"
+					min={0.05}
+					max={1}
+					step={0.05}
+					value={emaAlpha}
+					disabled={!connected}
+					onChange={(event) => {
+						const next = Number.parseFloat(event.target.value);
+
+						if (!Number.isFinite(next)) {
+							return;
+						}
+
+						setEmaAlpha(next);
+						setFluidDisplay({ height_ema_alpha: next });
+					}}
+					className="h-1 w-24 accent-sky-400"
+				/>
+				<span className="w-8 tabular-nums text-(--dash-text)">
+					{emaAlpha.toFixed(2)}
+				</span>
+			</label>
 			{field ? (
 				<div className="ml-auto flex flex-wrap gap-3 text-[10px] tabular-nums text-(--dash-muted)">
 					<FieldMetric label="Re" value={field.re} />

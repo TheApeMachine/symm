@@ -3,17 +3,20 @@ import type {
 	DecisionTraceEvent,
 	EnginePulseEvent,
 	FieldSnapshotEvent,
+	FluidDisplayEvent,
+	FluidDisplayPatch,
 	PriceTickEvent,
 	ScoreboardEvent,
 	StatusEvent,
 	SymmEvent,
 	TradeEnterEvent,
 	TradeExitEvent,
+	WatchCommand,
 } from "#/lib/symm/events";
 import { defaultWsUrl, pickMarketWatchSymbol } from "#/lib/symm/events";
 import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
-import { fieldStore } from "#/lib/symm/stores/field-store";
+import { applyFluidDisplay, fieldStore } from "#/lib/symm/stores/field-store";
 import {
 	applyDecisionTrace,
 	applyEnginePulse,
@@ -43,11 +46,16 @@ const ENGINE_EVENTS = new Set<SymmEvent["event"]>([
 	"decision_trace",
 ]);
 
-const FIELD_EVENTS = new Set<SymmEvent["event"]>(["hello", "field_snapshot"]);
+const FIELD_EVENTS = new Set<SymmEvent["event"]>([
+	"hello",
+	"field_snapshot",
+	"fluid_display",
+]);
 
 const CHART_EVENTS = new Set<SymmEvent["event"]>([
 	"hello",
 	"price_tick",
+	"candle_bar",
 	"chart_seed",
 	"stop_ratchet",
 	"trade_enter",
@@ -66,6 +74,7 @@ const fieldSnapshotListeners = new Set<
 const enginePulseListeners = new Set<(pulse: EnginePulseEvent) => void>();
 
 let chartStream: WsStream | null = null;
+let fieldWsStream: WsStream | null = null;
 let wsUrl = defaultWsUrl;
 let started = false;
 let marketWatchSticky = "";
@@ -224,16 +233,26 @@ const createStreams = () => {
 		},
 	});
 
-	const fieldWsStream = new WsStream({
+	const fieldStream = new WsStream({
 		url: wsUrl,
 		stream: "field",
 		accepts: FIELD_EVENTS,
 		onEvent: (event) => {
 			if (event.event === "field_snapshot") {
 				applyFieldSnapshot(event as FieldSnapshotEvent);
+				return;
+			}
+
+			if (event.event === "fluid_display") {
+				applyFluidDisplay(event as FluidDisplayEvent);
 			}
 		},
+		onOpen: () => {
+			fieldStream.send({ op: "get_fluid_display" });
+		},
 	});
+
+	fieldWsStream = fieldStream;
 
 	chartStream = new WsStream({
 		url: wsUrl,
@@ -243,7 +262,7 @@ const createStreams = () => {
 		onOpen: chartSubscribeSymbols,
 	});
 
-	return [statusStream, engineStream, fieldWsStream, chartStream];
+	return [statusStream, engineStream, fieldStream, chartStream];
 };
 
 export const startSymmFeed = (url: string = defaultWsUrl) => {
@@ -273,6 +292,16 @@ export const stopSymmFeed = () => {
 
 	streams.length = 0;
 	chartStream = null;
+	fieldWsStream = null;
+};
+
+export const setFluidDisplay = (patch: FluidDisplayPatch) => {
+	const command: WatchCommand = {
+		op: "set_fluid_display",
+		...patch,
+	};
+
+	fieldWsStream?.send(command);
 };
 
 export const registerChart = (symbol: string, handler: ChartListener) => {

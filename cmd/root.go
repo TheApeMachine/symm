@@ -255,6 +255,8 @@ var rootCmd = &cobra.Command{
 			fluidSignal.SetFieldSink(func(snapshot fluid.FieldSnapshot) {
 				marketStream.FieldUpdate(snapshot)
 			})
+
+			telemetryHub.SetFluidDisplayController(fluidSignal)
 		}
 
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {

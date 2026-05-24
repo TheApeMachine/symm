@@ -54,7 +54,7 @@ func (fluid *Fluid) FieldSnapshot() FieldSnapshot {
 		SymbolCount: sampledCount,
 		Field:       aggregate,
 		Symbols:     rows,
-		Grid:        fluid.gridBuilder.Build(rows, GridSize),
+		Grid:        fluid.gridBuilder.Build(rows, fluid.displayParams.activeGridSize()),
 	}
 }
 

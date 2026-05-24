@@ -6,6 +6,7 @@ import type {
 	EnginePulseEvent,
 	EvaluationRow,
 	FieldSnapshotEvent,
+	FluidDisplayEvent,
 	ScoreboardEvent,
 	StatusEvent,
 	StatusPosition,
@@ -57,6 +58,10 @@ export function useSymmDecisionTrace(): DecisionTraceEvent | undefined {
 
 export function useSymmFieldSnapshot(): FieldSnapshotEvent | undefined {
 	return useSelector(fieldStore, (state) => state.fieldSnapshot);
+}
+
+export function useSymmFluidDisplay(): FluidDisplayEvent | undefined {
+	return useSelector(fieldStore, (state) => state.fluidDisplay);
 }
 
 export function useSymmEnginePulse(): EnginePulseEvent | undefined {

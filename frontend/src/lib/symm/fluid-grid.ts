@@ -21,6 +21,36 @@ export type FluidScaleSummary = {
 	displayMax: number;
 };
 
+/** Map backend grid payload into chart-ready heights. */
+export function gridFromPayload(payload: {
+	size?: number;
+	heights: number[][];
+	min: number;
+	max: number;
+	filled_cells: number;
+	outliers: {
+		clipped_count: number;
+		clipped_at: number;
+		raw_max: number;
+		raw_max_symbol?: string;
+		display_max: number;
+	};
+}): FluidGrid {
+	return {
+		heights: payload.heights,
+		min: payload.min,
+		max: payload.max,
+		filledCells: payload.filled_cells,
+		outliers: {
+			clippedCount: payload.outliers.clipped_count,
+			clippedAt: payload.outliers.clipped_at,
+			rawMax: payload.outliers.raw_max,
+			rawMaxSymbol: payload.outliers.raw_max_symbol,
+			displayMax: payload.outliers.display_max,
+		},
+	};
+}
+
 function percentileRank(value: number, sorted: number[]): number {
 	if (sorted.length === 0) return 0.5;
 	let below = 0;

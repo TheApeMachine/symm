@@ -21,6 +21,7 @@ import {
 	FLUID_GRID_SIZE,
 	gridFromSnapshot,
 	type FluidGrid,
+	gridFromPayload,
 } from "#/lib/symm/fluid-grid";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
@@ -214,7 +215,10 @@ class FluidSurfaceController {
 	}
 
 	update(snapshot: FieldSnapshotEvent) {
-		this.applyGrid(gridFromSnapshot(snapshot));
+		const grid = snapshot.grid?.heights?.length
+			? gridFromPayload(snapshot.grid)
+			: gridFromSnapshot(snapshot);
+		this.applyGrid(grid);
 	}
 
 	dispose() {

@@ -9,8 +9,10 @@ export type SymmEventName =
 	| "scoreboard"
 	| "decision_trace"
 	| "field_snapshot"
+	| "fluid_display"
 	| "engine_pulse"
 	| "price_tick"
+	| "candle_bar"
 	| "chart_replay"
 	| "chart_seed"
 	| "trade_enter"
@@ -106,11 +108,46 @@ export type FieldFluidState = {
 	re: number;
 };
 
+export type FluidScaleSummary = {
+	clipped_count: number;
+	clipped_at: number;
+	raw_max: number;
+	raw_max_symbol?: string;
+	display_max: number;
+};
+
+export type FluidGridPayload = {
+	size: number;
+	heights: number[][];
+	min: number;
+	max: number;
+	filled_cells: number;
+	outliers: FluidScaleSummary;
+};
+
+export type FluidDisplayEvent = SymmEvent & {
+	event: "fluid_display";
+	height_ema_alpha: number;
+	grid_size: number;
+	quantile_clip: number;
+};
+
 export type FieldSnapshotEvent = SymmEvent & {
 	event: "field_snapshot";
 	symbol_count: number;
 	field: FieldFluidState;
 	symbols: FluidSymbolRow[];
+	grid?: FluidGridPayload;
+};
+
+export type CandleBarEvent = SymmEvent & {
+	event: "candle_bar";
+	symbol: string;
+	sec: number;
+	open: number;
+	high: number;
+	low: number;
+	close: number;
 };
 
 export type EnginePulseSignal = {
@@ -252,7 +289,22 @@ export type StatusEvent = SymmEvent & {
 export type WatchCommand =
 	| { op: "subscribe"; symbols: string[] }
 	| { op: "unsubscribe"; symbols: string[] }
-	| { op: "watch"; symbol: string };
+	| { op: "watch"; symbol: string }
+	| {
+			op: "set_fluid_display";
+			height_ema_alpha?: number;
+			grid_size?: number;
+			quantile_clip?: number;
+			reset_smoothing?: boolean;
+	  }
+	| { op: "get_fluid_display" };
+
+export type FluidDisplayPatch = {
+	height_ema_alpha?: number;
+	grid_size?: number;
+	quantile_clip?: number;
+	reset_smoothing?: boolean;
+};
 
 export const defaultWsUrl =
 	typeof window !== "undefined"

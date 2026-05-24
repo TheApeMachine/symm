@@ -19,23 +19,23 @@ const (
 FluidScaleSummary describes Reynolds outlier clipping for the UI grid.
 */
 type FluidScaleSummary struct {
-	ClippedCount  int     `json:"clipped_count"`
-	ClippedAt     float64 `json:"clipped_at"`
-	RawMax        float64 `json:"raw_max"`
-	RawMaxSymbol  string  `json:"raw_max_symbol,omitempty"`
-	DisplayMax    float64 `json:"display_max"`
+	ClippedCount int     `json:"clipped_count"`
+	ClippedAt    float64 `json:"clipped_at"`
+	RawMax       float64 `json:"raw_max"`
+	RawMaxSymbol string  `json:"raw_max_symbol,omitempty"`
+	DisplayMax   float64 `json:"display_max"`
 }
 
 /*
 FluidGrid is a UI-ready change-rank × volume-rank height map.
 */
 type FluidGrid struct {
-	Size        int                 `json:"size"`
-	Heights     [][]float64         `json:"heights"`
-	Min         float64             `json:"min"`
-	Max         float64             `json:"max"`
-	FilledCells int                 `json:"filled_cells"`
-	Outliers    FluidScaleSummary   `json:"outliers"`
+	Size        int               `json:"size"`
+	Heights     [][]float64       `json:"heights"`
+	Min         float64           `json:"min"`
+	Max         float64           `json:"max"`
+	FilledCells int               `json:"filled_cells"`
+	Outliers    FluidScaleSummary `json:"outliers"`
 }
 
 /*
@@ -43,13 +43,25 @@ GridBuilder maintains EMA-smoothed heights across field snapshots.
 */
 type GridBuilder struct {
 	smoothedHeights [][]float64
+	params          *DisplayParams
 }
 
 /*
-NewGridBuilder creates an empty fluid grid builder.
+NewGridBuilder creates an empty fluid grid builder bound to display params.
 */
-func NewGridBuilder() *GridBuilder {
-	return &GridBuilder{}
+func NewGridBuilder(params *DisplayParams) *GridBuilder {
+	if params == nil {
+		params = NewDisplayParams()
+	}
+
+	return &GridBuilder{params: params}
+}
+
+/*
+ResetSmoothing clears EMA state after display parameter changes.
+*/
+func (builder *GridBuilder) ResetSmoothing() {
+	builder.smoothedHeights = nil
 }
 
 /*
@@ -57,8 +69,10 @@ Build bins symbols by change% × volume rank and returns a display grid.
 */
 func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 	if size <= 0 {
-		size = GridSize
+		size = builder.params.activeGridSize()
 	}
+
+	quantileClip := builder.params.activeQuantileClip()
 
 	heights := newNaNGrid(size)
 	cells := newCellGrid(size)
@@ -69,12 +83,12 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 			Heights:  heights,
 			Min:      0,
 			Max:      1,
-			Outliers: summarizeFluidScaling(nil),
+			Outliers: summarizeFluidScaling(nil, quantileClip),
 		}
 	}
 
 	finiteRows := filterFiniteRows(rows)
-	outliers := summarizeFluidScaling(finiteRows)
+	outliers := summarizeFluidScaling(finiteRows, quantileClip)
 
 	if len(finiteRows) == 0 {
 		return FluidGrid{
@@ -179,7 +193,8 @@ func (builder *GridBuilder) emaSmoothHeights(raw [][]float64, size int) [][]floa
 			}
 
 			builder.smoothedHeights[rowIndex][column] =
-				HeightEMAAlpha*next + (1-HeightEMAAlpha)*previous
+				builder.params.activeHeightEMAAlpha()*next +
+					(1-builder.params.activeHeightEMAAlpha())*previous
 		}
 	}
 
@@ -190,17 +205,21 @@ func isFinite(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-func summarizeFluidScaling(rows []SymbolSnapshot) FluidScaleSummary {
+func summarizeFluidScaling(rows []SymbolSnapshot, quantileClip float64) FluidScaleSummary {
 	finiteRows := filterFiniteReRows(rows)
 
 	if len(finiteRows) == 0 {
 		return FluidScaleSummary{}
 	}
 
+	if quantileClip <= 0 {
+		quantileClip = gridQuantileClip
+	}
+
 	reValues := sortedValues(finiteRows, func(row SymbolSnapshot) float64 {
 		return row.Re
 	})
-	clippedAt := math.Max(stats.PercentileSorted(reValues, gridQuantileClip), 0)
+	clippedAt := math.Max(stats.PercentileSorted(reValues, quantileClip), 0)
 
 	summary := FluidScaleSummary{
 		ClippedAt: clippedAt,

@@ -10,8 +10,8 @@ import (
 MarketStream pushes telemetry the moment market or engine data is available.
 */
 type MarketStream struct {
-	hub      *Hub
-	candles  *CandleAggregator
+	hub     *Hub
+	candles *CandleAggregator
 }
 
 /*
@@ -67,6 +67,29 @@ func (stream *MarketStream) PriceTick(
 		"change_pct_24h": changePct,
 		"at":             at,
 	})
+
+	if stream.candles == nil {
+		return
+	}
+
+	parsedAt, err := time.Parse(time.RFC3339Nano, at)
+
+	if err != nil || parsedAt.IsZero() {
+		parsedAt = time.Now().UTC()
+	}
+
+	if bar, ok := stream.candles.Update(symbol, last, parsedAt); ok {
+		stream.Emit(map[string]any{
+			"event":  "candle_bar",
+			"ts":     now,
+			"symbol": symbol,
+			"sec":    bar.Sec,
+			"open":   bar.Open,
+			"high":   bar.High,
+			"low":    bar.Low,
+			"close":  bar.Close,
+		})
+	}
 }
 
 /*

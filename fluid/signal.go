@@ -17,9 +17,10 @@ Fluid models order-book liquidity as a compressible field with source-sink conti
 */
 type Fluid struct {
 	*engine.SignalBase
-	track       *TrackStore
-	fieldSink   FieldSink
-	gridBuilder *GridBuilder
+	track         *TrackStore
+	fieldSink     FieldSink
+	displayParams *DisplayParams
+	gridBuilder   *GridBuilder
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -58,15 +59,45 @@ func NewFluid(
 	}
 
 	fluid := &Fluid{
-		SignalBase:  base,
-		track:       NewTrackStore(),
-		gridBuilder: NewGridBuilder(),
+		SignalBase:    base,
+		track:         NewTrackStore(),
+		displayParams: NewDisplayParams(),
 	}
+
+	fluid.gridBuilder = NewGridBuilder(fluid.displayParams)
 
 	return fluid, errnie.Require(map[string]any{
 		"base":  base,
 		"track": fluid.track,
 	})
+}
+
+/*
+ApplyDisplayPatch updates server-side fluid terrain presentation parameters.
+*/
+func (fluid *Fluid) ApplyDisplayPatch(patch DisplayPatch) (DisplayParamsSnapshot, error) {
+	gridSizeChanged, err := fluid.displayParams.Apply(patch)
+
+	if err != nil {
+		return DisplayParamsSnapshot{}, err
+	}
+
+	if patch.ResetSmoothing != nil && *patch.ResetSmoothing {
+		fluid.gridBuilder.ResetSmoothing()
+	}
+
+	if gridSizeChanged {
+		fluid.gridBuilder.ResetSmoothing()
+	}
+
+	return fluid.displayParams.Snapshot(), nil
+}
+
+/*
+DisplayParams returns the active fluid terrain presentation snapshot.
+*/
+func (fluid *Fluid) DisplayParams() DisplayParamsSnapshot {
+	return fluid.displayParams.Snapshot()
 }
 
 /*
