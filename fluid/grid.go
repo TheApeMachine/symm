@@ -16,7 +16,7 @@ const (
 )
 
 /*
-FluidScaleSummary describes Reynolds outlier clipping for the UI grid.
+FluidScaleSummary describes field-activity outlier clipping for the UI grid.
 */
 type FluidScaleSummary struct {
 	ClippedCount int     `json:"clipped_count"`
@@ -214,7 +214,7 @@ func isFinite(value float64) bool {
 }
 
 func summarizeFluidScaling(rows []SymbolSnapshot, quantileClip float64) FluidScaleSummary {
-	finiteRows := filterFiniteReRows(rows)
+	finiteRows := filterFiniteActivityRows(rows)
 
 	if len(finiteRows) == 0 {
 		return FluidScaleSummary{}
@@ -224,10 +224,15 @@ func summarizeFluidScaling(rows []SymbolSnapshot, quantileClip float64) FluidSca
 		quantileClip = gridQuantileClip
 	}
 
-	reValues := sortedValues(finiteRows, func(row SymbolSnapshot) float64 {
-		return row.Re
+	activityValues := sortedPositiveValues(finiteRows, func(row SymbolSnapshot) float64 {
+		return fieldActivity(row)
 	})
-	clippedAt := math.Max(stats.PercentileSorted(reValues, quantileClip), 0)
+
+	if len(activityValues) == 0 {
+		return FluidScaleSummary{}
+	}
+
+	clippedAt := math.Max(stats.PercentileSorted(activityValues, quantileClip), 0)
 
 	summary := FluidScaleSummary{
 		ClippedAt: clippedAt,
@@ -235,26 +240,37 @@ func summarizeFluidScaling(rows []SymbolSnapshot, quantileClip float64) FluidSca
 	}
 
 	for _, row := range finiteRows {
-		if row.Re > summary.RawMax {
-			summary.RawMax = row.Re
+		activity := fieldActivity(row)
+
+		if activity > summary.RawMax {
+			summary.RawMax = activity
 			summary.RawMaxSymbol = row.Symbol
 		}
 
-		if row.Re > clippedAt {
+		if activity > clippedAt {
 			summary.ClippedCount++
 		}
 	}
 
-	summary.DisplayMax = displayRe(summary.RawMax, clippedAt)
+	summary.DisplayMax = displayActivity(summary.RawMax, clippedAt)
 
 	return summary
 }
 
 func displayHeight(row SymbolSnapshot, clippedAt float64) float64 {
-	return displayRe(row.Re, clippedAt)
+	return displayActivity(fieldActivity(row), clippedAt)
 }
 
-func displayRe(value, clippedAt float64) float64 {
+func fieldActivity(row SymbolSnapshot) float64 {
+	activity := math.Abs(row.Re)
+	activity = math.Max(activity, math.Abs(row.Div))
+	activity = math.Max(activity, math.Abs(row.Vort))
+	activity = math.Max(activity, math.Abs(row.Turb))
+
+	return activity
+}
+
+func displayActivity(value, clippedAt float64) float64 {
 	clamped := value
 
 	if clamped < 0 {
@@ -274,7 +290,10 @@ func filterFiniteRows(rows []SymbolSnapshot) []SymbolSnapshot {
 	for _, row := range rows {
 		if !isFinite(row.ChangePct) ||
 			!isFinite(row.Vol) ||
-			!isFinite(row.Re) {
+			!isFinite(row.Re) ||
+			!isFinite(row.Div) ||
+			!isFinite(row.Vort) ||
+			!isFinite(row.Turb) {
 			continue
 		}
 
@@ -284,11 +303,14 @@ func filterFiniteRows(rows []SymbolSnapshot) []SymbolSnapshot {
 	return filtered
 }
 
-func filterFiniteReRows(rows []SymbolSnapshot) []SymbolSnapshot {
+func filterFiniteActivityRows(rows []SymbolSnapshot) []SymbolSnapshot {
 	filtered := make([]SymbolSnapshot, 0, len(rows))
 
 	for _, row := range rows {
-		if !isFinite(row.Re) {
+		if !isFinite(row.Re) ||
+			!isFinite(row.Div) ||
+			!isFinite(row.Vort) ||
+			!isFinite(row.Turb) {
 			continue
 		}
 
@@ -306,6 +328,27 @@ func sortedValues(
 
 	for index, row := range rows {
 		values[index] = value(row)
+	}
+
+	stats.SortFloats(values)
+
+	return values
+}
+
+func sortedPositiveValues(
+	rows []SymbolSnapshot,
+	value func(SymbolSnapshot) float64,
+) []float64 {
+	values := make([]float64, 0, len(rows))
+
+	for _, row := range rows {
+		candidate := value(row)
+
+		if candidate <= 0 {
+			continue
+		}
+
+		values = append(values, candidate)
 	}
 
 	stats.SortFloats(values)

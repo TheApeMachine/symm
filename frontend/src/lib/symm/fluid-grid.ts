@@ -137,7 +137,7 @@ function smoothEmptyCells(grid: number[][], fallback: number): number {
 	return filled;
 }
 
-function displayRe(value: number, clippedAt: number): number {
+function displayActivity(value: number, clippedAt: number): number {
 	const clamped = Math.min(Math.max(value, 0), clippedAt);
 	return Math.log1p(clamped);
 }
@@ -178,35 +178,54 @@ export function resetFluidHeightSmoothing() {
 	smoothedHeights = null;
 }
 
-/** Height proxy when tick Reynolds is near zero — uses 24h move and vol. */
 function displayHeight(row: FluidSymbolRow, clippedAt: number): number {
-	const re = displayRe(row.re, clippedAt);
-	if (re > 1e-4) return re;
-	const move = Math.log1p(Math.abs(row.change_pct));
-	const vol = Math.log1p(Math.max(row.vol, 0));
-	return move * 0.65 + vol * 0.35;
+	return displayActivity(fieldActivity(row), clippedAt);
+}
+
+function fieldActivity(row: FluidSymbolRow): number {
+	return Math.max(
+		Math.abs(row.re),
+		Math.abs(row.div),
+		Math.abs(row.vort),
+		Math.abs(row.turb),
+	);
 }
 
 export function summarizeFluidScaling(
 	rows: FluidSymbolRow[],
 ): FluidScaleSummary {
-	const finiteRows = rows.filter((row) => Number.isFinite(row.re));
+	const finiteRows = rows.filter(
+		(row) =>
+			Number.isFinite(row.re) &&
+			Number.isFinite(row.div) &&
+			Number.isFinite(row.vort) &&
+			Number.isFinite(row.turb),
+	);
 	if (finiteRows.length === 0) {
 		return { clippedCount: 0, clippedAt: 0, rawMax: 0, displayMax: 0 };
 	}
 
-	const sortedRe = finiteRows.map((row) => row.re).sort((a, b) => a - b);
-	const clippedAt = Math.max(quantile(sortedRe, 0.95), 0);
+	const sortedActivity = finiteRows
+		.map((row) => fieldActivity(row))
+		.filter((value) => value > 0)
+		.sort((a, b) => a - b);
+	if (sortedActivity.length === 0) {
+		return { clippedCount: 0, clippedAt: 0, rawMax: 0, displayMax: 0 };
+	}
+
+	const clippedAt = Math.max(quantile(sortedActivity, 0.95), 0);
 	let rawMax = Number.NEGATIVE_INFINITY;
 	let rawMaxSymbol: string | undefined;
 	let clippedCount = 0;
 
 	for (const row of finiteRows) {
-		if (row.re > rawMax) {
-			rawMax = row.re;
+		const activity = fieldActivity(row);
+
+		if (activity > rawMax) {
+			rawMax = activity;
 			rawMaxSymbol = row.symbol;
 		}
-		if (row.re > clippedAt) clippedCount++;
+		if (activity > clippedAt) clippedCount++;
 	}
 
 	return {
@@ -214,11 +233,11 @@ export function summarizeFluidScaling(
 		clippedAt,
 		rawMax,
 		rawMaxSymbol,
-		displayMax: displayRe(rawMax, clippedAt),
+		displayMax: displayActivity(rawMax, clippedAt),
 	};
 }
 
-/** Bin symbols by change% × vol rank; height = median Reynolds per cell. */
+/** Bin symbols by change% × vol rank; height = median clipped fluid activity. */
 export function buildFluidGrid(
 	rows: FluidSymbolRow[],
 	size = FLUID_GRID_SIZE,
@@ -244,7 +263,10 @@ export function buildFluidGrid(
 		(row) =>
 			Number.isFinite(row.change_pct) &&
 			Number.isFinite(row.vol) &&
-			Number.isFinite(row.re),
+			Number.isFinite(row.re) &&
+			Number.isFinite(row.div) &&
+			Number.isFinite(row.vort) &&
+			Number.isFinite(row.turb),
 	);
 	const outliers = summarizeFluidScaling(finiteRows);
 	if (finiteRows.length === 0) {
@@ -253,10 +275,10 @@ export function buildFluidGrid(
 
 	const changes = finiteRows.map((r) => r.change_pct).sort((a, b) => a - b);
 	const vols = finiteRows.map((r) => r.vol).sort((a, b) => a - b);
-	const allDisplayRe = finiteRows.map((r) =>
+	const displayValues = finiteRows.map((r) =>
 		displayHeight(r, outliers.clippedAt),
 	);
-	const fallback = median(allDisplayRe);
+	const fallback = median(displayValues);
 
 	for (const row of finiteRows) {
 		const x = binIndex(percentileRank(row.change_pct, changes), size);

@@ -9,8 +9,6 @@ import {
 	type SignalSource,
 } from "#/lib/symm/signal-confidence";
 import {
-	useSymmConnected,
-	useSymmEntryLine,
 	useSymmSignalConfidences,
 } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";

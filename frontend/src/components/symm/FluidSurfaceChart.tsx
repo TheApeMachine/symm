@@ -19,7 +19,7 @@ type FluidSurfaceChartProps = {
 	className?: string;
 };
 
-/** Live 3D terrain of market turbulence (Reynolds) over change% × vol bins. */
+/** Live 3D terrain of clipped fluid activity over change% × vol bins. */
 export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	className = "",
 }: FluidSurfaceChartProps) {
@@ -65,7 +65,7 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 				/>
 			</div>
 			<p className="shrink-0 truncate border-t border-(--dash-border) px-2 py-0.5 text-[9px] text-(--dash-muted)">
-				Reynolds · change rank × vol rank · drag to orbit · field σ = median/MAD
+				Field activity · change rank × vol rank · drag to orbit · σ = median/MAD
 			</p>
 		</div>
 	);

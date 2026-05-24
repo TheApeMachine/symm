@@ -94,14 +94,47 @@ func TestBuildFluidGridSanitizesNaNHeights(t *testing.T) {
 	}
 }
 
-func TestBuildFluidGridDoesNotUseVolumeWhenReynoldsZero(t *testing.T) {
-	Convey("Given sampled rows with volume but zero Reynolds", t, func() {
+func TestBuildFluidGridUsesFieldActivityWhenReynoldsZero(t *testing.T) {
+	Convey("Given sampled rows with divergence but zero Reynolds", t, func() {
 		params := NewDisplayParams()
 		builder := NewGridBuilder(params)
 		rows := sampleGridRows(64)
 
 		for index := range rows {
 			rows[index].Re = 0
+			rows[index].Div = float64(index+1) * -0.1
+		}
+
+		grid := builder.Build(rows, params.activeGridSize())
+
+		Convey("It should display actual fluid field activity", func() {
+			peak := 0.0
+
+			for rowIndex := range grid.Heights {
+				for column := range grid.Heights[rowIndex] {
+					if grid.Heights[rowIndex][column] > peak {
+						peak = grid.Heights[rowIndex][column]
+					}
+				}
+			}
+
+			So(peak, ShouldBeGreaterThan, 0)
+			So(grid.Outliers.RawMax, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestBuildFluidGridDoesNotUseVolumeWhenFieldActivityZero(t *testing.T) {
+	Convey("Given sampled rows with volume but no field activity", t, func() {
+		params := NewDisplayParams()
+		builder := NewGridBuilder(params)
+		rows := sampleGridRows(64)
+
+		for index := range rows {
+			rows[index].Re = 0
+			rows[index].Div = 0
+			rows[index].Vort = 0
+			rows[index].Turb = 0
 		}
 
 		grid := builder.Build(rows, params.activeGridSize())
@@ -132,6 +165,29 @@ func TestSummarizeFluidScalingClipsOutliers(t *testing.T) {
 	if summary.RawMaxSymbol != "C/EUR" {
 		t.Fatalf("expected raw max symbol C/EUR, got %q", summary.RawMaxSymbol)
 	}
+}
+
+func TestSummarizeFluidScalingIgnoresZeroActivityForClip(t *testing.T) {
+	Convey("Given many flat rows and one active fluid row", t, func() {
+		rows := make([]SymbolSnapshot, 64)
+
+		for index := range rows {
+			rows[index] = SymbolSnapshot{Symbol: "FLAT/EUR"}
+		}
+
+		rows[len(rows)-1] = SymbolSnapshot{
+			Symbol: "ACTIVE/EUR",
+			Div:    -12,
+		}
+
+		summary := summarizeFluidScaling(rows, gridQuantileClip)
+
+		Convey("It should preserve a positive display scale", func() {
+			So(summary.ClippedAt, ShouldBeGreaterThan, 0)
+			So(summary.DisplayMax, ShouldBeGreaterThan, 0)
+			So(summary.RawMaxSymbol, ShouldEqual, "ACTIVE/EUR")
+		})
+	})
 }
 
 func BenchmarkBuildFluidGrid(b *testing.B) {
