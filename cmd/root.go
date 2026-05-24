@@ -21,6 +21,7 @@ import (
 	"github.com/theapemachine/symm/kraken/book"
 	"github.com/theapemachine/symm/kraken/client"
 	krmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/rest"
 	"github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
 	"github.com/theapemachine/symm/leadlag"
@@ -43,8 +44,14 @@ var rootCmd = &cobra.Command{
 
 		qpool.SuppressLogging()
 
+		walletType := trader.PaperWallet
+
+		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
+			walletType = trader.CryptoWallet
+		}
+
 		wallet := trader.NewWallet(
-			trader.PaperWallet,
+			walletType,
 			config.System.QuoteCurrency,
 			config.System.WalletEUR,
 			config.System.TakerFeePct,
@@ -407,6 +414,48 @@ var rootCmd = &cobra.Command{
 			crypto.BindExitAdvisor(exhaustAdvisor)
 			crypto.RegisterTicker(exhaustAdvisor)
 
+			if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
+				privateClient := errnie.Does(func() (*client.PrivateClient, error) {
+					return client.NewPrivateClient(
+						cmd.Context(),
+						config.System.KrakenAPIKey,
+						config.System.KrakenAPISecret,
+					)
+				}).Or(func(err error) {
+					errnie.Error(err)
+					os.Exit(1)
+				}).Value()
+
+				if err := privateClient.Connect(); err != nil {
+					errnie.Error(err)
+					os.Exit(1)
+				}
+
+				defer privateClient.Close()
+
+				balance := errnie.Does(func() (*rest.Balance, error) {
+					return rest.FetchBalance(
+						config.System.KrakenAPIKey,
+						config.System.KrakenAPISecret,
+					)
+				}).Or(func(err error) {
+					errnie.Error(err)
+					os.Exit(1)
+				}).Value()
+
+				if quoteBalance, ok := balance.QuoteBalance(config.System.QuoteCurrency); ok {
+					wallet.Balance = quoteBalance
+				}
+
+				crypto.BindBroker(trader.NewKrakenBroker(
+					privateClient,
+					pairIndex,
+					config.System.TakerFeePct,
+				))
+
+				errnie.Info("live Kraken trading enabled")
+			}
+
 			return crypto, nil
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -461,6 +510,7 @@ func (err errString) Error() string { return string(err) }
 const rootLong = `
 S.Y.M.M. - Shake Your Money Maker
 
-Kraken book and trade observers feed microstructure signals into the paper trader.
+Kraken book and trade observers feed microstructure signals into the trader.
 Set SYMM_REPLAY_FILE to a captured JSONL fixture for offline dry-run.
+Set SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET for live spot orders over WebSocket v2.
 `

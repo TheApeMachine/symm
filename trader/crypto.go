@@ -15,8 +15,8 @@ import (
 )
 
 /*
-Crypto paper-trades Kraken microstructure signals with trailing stops.
-Live order placement is not wired; all fills go through PaperWallet.
+Crypto trades Kraken microstructure signals with trailing stops.
+Paper mode simulates fills; live mode submits orders over WebSocket v2 when API keys are set.
 */
 type Crypto struct {
 	ctx            context.Context
@@ -137,6 +137,13 @@ BindExitAdvisor wires book-exhaustion scoring into paper exits.
 func (crypto *Crypto) BindExitAdvisor(advisor ExitAdvisor) {
 	crypto.exitAdvisor = advisor
 	crypto.portfolio.BindExitAdvisor(advisor)
+}
+
+/*
+BindBroker replaces the default paper broker with a live Kraken execution broker.
+*/
+func (crypto *Crypto) BindBroker(broker ExecutionBroker) {
+	crypto.portfolio.BindBroker(broker)
 }
 
 /*

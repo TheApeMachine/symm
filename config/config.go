@@ -72,6 +72,8 @@ type Config struct {
 	LogDir                     string
 	LogLevel                   string
 	LogFileActive              bool
+	KrakenAPIKey               string
+	KrakenAPISecret            string
 	ReplayFile                 string
 	ReplayPace                 time.Duration
 }
@@ -154,6 +156,9 @@ func NewConfig() *Config {
 			cfg.ReplayPace = parsed
 		}
 	}
+
+	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
+	cfg.KrakenAPISecret = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_SECRET"))
 
 	return cfg
 }

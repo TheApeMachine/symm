@@ -489,17 +489,30 @@ func (portfolio *Portfolio) closeLocked(
 	quotes QuoteReader,
 	reason string,
 ) PortfolioEvent {
-	fillSide := "sell"
+	bidLevels, askLevels := bookDepthFor(quotes, symbol)
 
-	if position.Side == positionShort {
-		fillSide = "buy"
+	brokerFill, err := portfolio.broker.Exit(context.Background(), BrokerExitRequest{
+		Symbol:      symbol,
+		Side:        position.Side,
+		NotionalEUR: position.NotionalEUR,
+		BaseQty:     position.BaseQty,
+		Last:        last,
+		Bid:         bid,
+		Ask:         ask,
+		FeePct:      portfolio.wallet.FeePct,
+		BidLevels:   bidLevels,
+		AskLevels:   askLevels,
+	})
+
+	exitFill := last
+
+	if err == nil {
+		exitFill = brokerFill.FillPrice
 	}
 
-	bidLevels, askLevels := bookDepthFor(quotes, symbol)
-	exitFill := config.System.SlippageFill(
-		last, bid, ask, fillSide, config.System.SlippageBPS,
-		position.NotionalEUR, bidLevels, askLevels,
-	)
+	if err != nil && portfolio.broker.Live() {
+		return portfolio.exitEvent(now, position, reason+"_failed", 0, exitFill)
+	}
 
 	pnl := portfolio.realizedPnL(position, exitFill)
 
