@@ -17,8 +17,9 @@ Fluid models order-book liquidity as a compressible field with source-sink conti
 */
 type Fluid struct {
 	*engine.SignalBase
-	track     *TrackStore
-	fieldSink FieldSink
+	track       *TrackStore
+	fieldSink   FieldSink
+	gridBuilder *GridBuilder
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -26,6 +27,8 @@ var _ engine.Signal = (*Fluid)(nil)
 var _ engine.FeedbackReceiver = (*Fluid)(nil)
 
 var _ engine.LiveScoreReader = (*Fluid)(nil)
+
+var _ engine.RiskExporter = (*Fluid)(nil)
 
 /*
 NewFluid wires live Kraken websocket observers into the engine signal.
@@ -55,8 +58,9 @@ func NewFluid(
 	}
 
 	fluid := &Fluid{
-		SignalBase: base,
-		track:      NewTrackStore(),
+		SignalBase:  base,
+		track:       NewTrackStore(),
+		gridBuilder: NewGridBuilder(),
 	}
 
 	return fluid, errnie.Require(map[string]any{
@@ -110,6 +114,13 @@ func (fluid *Fluid) PeakReading() engine.LiveReading {
 		Symbol: symbol,
 		Score:  score,
 	}
+}
+
+/*
+SymbolRisk exposes fluid turbulence metrics for dynamic execution.
+*/
+func (fluid *Fluid) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
+	return fluid.track.SymbolRisk(symbol)
 }
 
 /*

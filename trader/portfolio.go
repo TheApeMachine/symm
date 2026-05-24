@@ -89,6 +89,8 @@ type Portfolio struct {
 	tradeCount int
 	wins       int
 	stream     PortfolioStream
+	riskReader RiskReader
+	trailRisk  *trailRiskFilter
 }
 
 /*
@@ -98,7 +100,18 @@ func NewPortfolio(wallet *Wallet) *Portfolio {
 	return &Portfolio{
 		wallet:    wallet,
 		positions: make(map[string]*Position),
+		trailRisk: newTrailRiskFilter(),
 	}
+}
+
+/*
+BindRiskReader wires live topology metrics for dynamic trailing stops.
+*/
+func (portfolio *Portfolio) BindRiskReader(reader RiskReader) {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	portfolio.riskReader = reader
 }
 
 /*
@@ -194,7 +207,9 @@ func (portfolio *Portfolio) TryEnter(
 		portfolio.wallet.Balance += proceeds
 	}
 
-	trailPct := clampTrailPct(trailPctFromQuote(last, bid, ask))
+	trailPct := clampTrailPct(trailPctFromQuoteRisk(
+		last, bid, ask, decision.Symbol, portfolio.riskReader, portfolio.trailRisk,
+	))
 	stop := initialStop(fill, trailPct, side)
 
 	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
@@ -242,7 +257,9 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 
 		portfolio.updatePeak(position, last)
 
-		trailPct := trailPctFromQuote(last, bid, ask)
+		trailPct := trailPctFromQuoteRisk(
+			last, bid, ask, symbol, portfolio.riskReader, portfolio.trailRisk,
+		)
 
 		if trailPct > 0 {
 			position.TrailPct = trailPct
@@ -411,6 +428,7 @@ func (portfolio *Portfolio) closeLocked(
 	}
 
 	delete(portfolio.positions, symbol)
+	portfolio.trailRisk.forget(symbol)
 
 	event := portfolio.exitEvent(now, position, reason, pnl, exitFill)
 

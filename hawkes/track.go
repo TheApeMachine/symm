@@ -344,3 +344,20 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 
 	return track
 }
+
+/*
+SymbolRisk returns the latest Hawkes branching metric for one symbol.
+*/
+func (trackStore *TrackStore) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
+
+	if !track.hasFit || track.fit.SpectralRadius <= 0 {
+		return engine.SymbolRisk{}, false
+	}
+
+	return engine.SymbolRisk{
+		SpectralRadius: track.fit.SpectralRadius,
+	}, true
+}

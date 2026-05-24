@@ -10,7 +10,8 @@ import (
 MarketStream pushes telemetry the moment market or engine data is available.
 */
 type MarketStream struct {
-	hub *Hub
+	hub      *Hub
+	candles  *CandleAggregator
 }
 
 /*
@@ -21,7 +22,10 @@ func NewMarketStream(hub *Hub) *MarketStream {
 		return nil
 	}
 
-	return &MarketStream{hub: hub}
+	return &MarketStream{
+		hub:     hub,
+		candles: NewCandleAggregator(),
+	}
 }
 
 /*
@@ -100,6 +104,20 @@ func (stream *MarketStream) FieldUpdate(snapshot fluid.FieldSnapshot) {
 			"re":   snapshot.Field.Re,
 		},
 		"symbols": rows,
+		"grid": map[string]any{
+			"size":         snapshot.Grid.Size,
+			"heights":      snapshot.Grid.Heights,
+			"min":          snapshot.Grid.Min,
+			"max":          snapshot.Grid.Max,
+			"filled_cells": snapshot.Grid.FilledCells,
+			"outliers": map[string]any{
+				"clipped_count":  snapshot.Grid.Outliers.ClippedCount,
+				"clipped_at":     snapshot.Grid.Outliers.ClippedAt,
+				"raw_max":        snapshot.Grid.Outliers.RawMax,
+				"raw_max_symbol": snapshot.Grid.Outliers.RawMaxSymbol,
+				"display_max":    snapshot.Grid.Outliers.DisplayMax,
+			},
+		},
 	})
 }
 

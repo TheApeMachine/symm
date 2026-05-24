@@ -3,6 +3,7 @@ package fluid
 import (
 	"math"
 
+	"github.com/theapemachine/symm/engine"
 	kticker "github.com/theapemachine/symm/kraken/ticker"
 )
 
@@ -27,6 +28,7 @@ type FieldSnapshot struct {
 	SymbolCount int              `json:"symbol_count"`
 	Field       FieldAggregate   `json:"field"`
 	Symbols     []SymbolSnapshot `json:"symbols"`
+	Grid        FluidGrid        `json:"grid"`
 }
 
 /*
@@ -52,6 +54,7 @@ func (fluid *Fluid) FieldSnapshot() FieldSnapshot {
 		SymbolCount: sampledCount,
 		Field:       aggregate,
 		Symbols:     rows,
+		Grid:        fluid.gridBuilder.Build(rows, GridSize),
 	}
 }
 
@@ -162,4 +165,42 @@ func (trackStore *TrackStore) SnapshotRows(
 	}
 
 	return rows
+}
+
+/*
+SymbolRisk returns the latest fluid topology metrics for one symbol.
+*/
+func (trackStore *TrackStore) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
+	trackStore.shard.RLockMap()
+	defer trackStore.shard.RUnlockMap()
+
+	track, ok := trackStore.bySymbol[symbol]
+
+	if !ok || len(track.samples) == 0 {
+		return engine.SymbolRisk{}, false
+	}
+
+	sample := track.samples[len(track.samples)-1]
+	prior := track.lastSample
+
+	if len(track.samples) >= 2 {
+		prior = track.samples[len(track.samples)-2]
+	}
+
+	turbulence := 0.0
+
+	if track.hasPrior {
+		turbulence = burgersShock(sample, prior)
+	}
+
+	reynolds := 0.0
+
+	if sample.viscosity > 0 {
+		reynolds = math.Abs(sample.velocity) * sample.density / sample.viscosity
+	}
+
+	return engine.SymbolRisk{
+		Reynolds:   reynolds,
+		Turbulence: turbulence,
+	}, true
 }

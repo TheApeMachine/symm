@@ -39,7 +39,20 @@ type Config struct {
 	MaxTrailPct            float64
 	MaxLossPerTradeEUR     float64
 	MinEdgeReturn          float64
-	SnapshotFreshnessTTL   time.Duration
+	SnapshotFreshnessTTL      time.Duration
+	MinCalibrationSamples     int
+	CalibrationHalfLifeFloor  time.Duration
+	CalibrationHalfLifeCeiling time.Duration
+	CalibrationRunwayFactor   float64
+	TrailRiskEMAAlpha         float64
+	TrailSpectralWidenAt      float64
+	TrailSpectralWidenGain    float64
+	TrailTurbWidenAt          float64
+	TrailTurbWidenMultiple    float64
+	TrailReynoldsWidenAt      float64
+	TrailReynoldsWidenGain    float64
+	TrailRiskDebounce         time.Duration
+	CandleSeconds             int
 	ExitEvery              time.Duration
 	WSPingInterval         time.Duration
 	UIAddr                 string
@@ -89,7 +102,20 @@ func NewConfig() *Config {
 		MaxTrailPct:            3.0,
 		MaxLossPerTradeEUR:     0,
 		MinEdgeReturn:          0.0005,
-		SnapshotFreshnessTTL:   200 * time.Millisecond,
+		SnapshotFreshnessTTL:       200 * time.Millisecond,
+		MinCalibrationSamples:      12,
+		CalibrationHalfLifeFloor:   2 * time.Second,
+		CalibrationHalfLifeCeiling: 15 * time.Minute,
+		CalibrationRunwayFactor:    0.5,
+		TrailRiskEMAAlpha:          0.2,
+		TrailSpectralWidenAt:       0.85,
+		TrailSpectralWidenGain:     4,
+		TrailTurbWidenAt:           1,
+		TrailTurbWidenMultiple:     1.5,
+		TrailReynoldsWidenAt:       50,
+		TrailReynoldsWidenGain:     0.01,
+		TrailRiskDebounce:          500 * time.Millisecond,
+		CandleSeconds:              5,
 		WSPingInterval:         30 * time.Second,
 		UIAddr:                 ":8765",
 		MaxPendingPerSignal:    4096,

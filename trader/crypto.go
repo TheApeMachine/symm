@@ -61,6 +61,8 @@ func NewCrypto(
 		decisionEngine: DecisionEngine{},
 	}
 
+	crypto.portfolio.BindRiskReader(NewSignalRiskBoard(signals...))
+
 	return crypto, errnie.Require(map[string]any{
 		"ctx":        ctx,
 		"cancel":     cancel,

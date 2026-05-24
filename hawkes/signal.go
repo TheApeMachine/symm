@@ -29,6 +29,8 @@ var _ engine.FeedbackReceiver = (*Hawkes)(nil)
 
 var _ engine.LiveScoreReader = (*Hawkes)(nil)
 
+var _ engine.RiskExporter = (*Hawkes)(nil)
+
 /*
 NewHawkes wires live Kraken websocket observers into the engine signal.
 */
@@ -119,6 +121,13 @@ func (hawkes *Hawkes) PeakReading() engine.LiveReading {
 		Symbol: symbol,
 		Score:  score,
 	}
+}
+
+/*
+SymbolRisk exposes Hawkes branching metrics for dynamic execution.
+*/
+func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
+	return hawkes.track.SymbolRisk(symbol)
 }
 
 /*

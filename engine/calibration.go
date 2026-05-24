@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -36,6 +37,7 @@ func NewPredictionCalibrator() PredictionCalibrator {
 
 /*
 Apply records one settled forecast and updates the running EWMA scale.
+Half-life adapts to the signal runway when enough samples exist.
 */
 func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 	if feedback.Unanchored || feedback.PredictedReturn <= 0 {
@@ -54,6 +56,10 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 		sample = maxScale
 	}
 
+	if feedback.Runway > 0 && calibrator.feedbackCount >= minCalibrationSamples() {
+		calibrator.halfLife = adaptiveCalibrationHalfLife(feedback.Runway)
+	}
+
 	calibrator.feedbackCount++
 
 	if calibrator.feedbackCount == 1 {
@@ -63,6 +69,50 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 
 	alpha := calibrator.ewmaAlpha()
 	calibrator.scale += alpha * (sample - calibrator.scale)
+}
+
+func minCalibrationSamples() int {
+	minSamples := config.System.MinCalibrationSamples
+
+	if minSamples <= 0 {
+		return 12
+	}
+
+	return minSamples
+}
+
+func adaptiveCalibrationHalfLife(runway time.Duration) time.Duration {
+	if runway <= 0 {
+		return defaultCalibrationHalfLife
+	}
+
+	floor := config.System.CalibrationHalfLifeFloor
+
+	if floor <= 0 {
+		floor = 2 * time.Second
+	}
+
+	ceiling := config.System.CalibrationHalfLifeCeiling
+
+	if ceiling <= 0 {
+		ceiling = 15 * time.Minute
+	}
+
+	halfLife := time.Duration(float64(runway) * config.System.CalibrationRunwayFactor)
+
+	if config.System.CalibrationRunwayFactor <= 0 {
+		halfLife = runway / 2
+	}
+
+	if halfLife < floor {
+		return floor
+	}
+
+	if halfLife > ceiling {
+		return ceiling
+	}
+
+	return halfLife
 }
 
 /*
