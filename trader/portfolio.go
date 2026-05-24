@@ -196,11 +196,30 @@ func (portfolio *Portfolio) TryEnter(
 	}
 
 	bidLevels, askLevels := bookDepthFor(quotes, decision.Symbol)
-	stop := initialStop(last, trailPct, side)
+	trailPct := clampTrailPct(trailPctFromQuoteRisk(
+		last, bid, ask, decision.Symbol, portfolio.riskReader, portfolio.trailRisk,
+	))
+	estimatedStop := initialStop(last, trailPct, side)
 
 	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
 		config.System.MaxLossPerTradeEUR > 0 {
 		return nil, false
+	}
+
+	estimatedFee := config.System.TakerFee(notional, portfolio.wallet.FeePct)
+
+	if side == positionLong {
+		cost := notional + estimatedFee
+
+		if portfolio.wallet == nil || portfolio.wallet.Balance < cost {
+			return nil, false
+		}
+	}
+
+	if side == positionShort {
+		if portfolio.wallet == nil || portfolio.wallet.Balance < notional {
+			return nil, false
+		}
 	}
 
 	brokerFill, err := portfolio.broker.Enter(context.Background(), BrokerEnterRequest{
@@ -210,7 +229,7 @@ func (portfolio *Portfolio) TryEnter(
 		Last:        last,
 		Bid:         bid,
 		Ask:         ask,
-		StopPrice:   stop,
+		StopPrice:   estimatedStop,
 		FeePct:      portfolio.wallet.FeePct,
 		BidLevels:   bidLevels,
 		AskLevels:   askLevels,
@@ -222,25 +241,14 @@ func (portfolio *Portfolio) TryEnter(
 
 	fill := brokerFill.FillPrice
 	fee := brokerFill.FeeEUR
+	stop := initialStop(fill, trailPct, side)
 
 	if side == positionLong {
-		cost := notional + fee
-
-		if portfolio.wallet == nil || portfolio.wallet.Balance < cost {
-			return nil, false
-		}
-
-		portfolio.wallet.Balance -= cost
+		portfolio.wallet.Balance -= notional + fee
 	}
 
 	if side == positionShort {
-		proceeds := notional - fee
-
-		if portfolio.wallet == nil || portfolio.wallet.Balance < notional {
-			return nil, false
-		}
-
-		portfolio.wallet.Balance += proceeds
+		portfolio.wallet.Balance += notional - fee
 	}
 
 	position := &Position{
@@ -300,6 +308,13 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 		if portfolio.ratchetStop(position, newStop) {
 			event := portfolio.ratchetEvent(now, position, oldStop, last)
 			events = append(events, event)
+
+			if portfolio.broker != nil && portfolio.broker.Live() && position.StopOrderID != "" {
+				_ = portfolio.broker.AmendStop(context.Background(), BrokerAmendStopRequest{
+					OrderID:      position.StopOrderID,
+					TriggerPrice: position.StopPrice,
+				})
+			}
 		}
 
 		if !portfolio.canExit(now, position) {
