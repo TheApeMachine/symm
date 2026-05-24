@@ -14,10 +14,7 @@ import type {
 	TradeExitEvent,
 } from "#/lib/symm/events";
 import { pickMarketWatchSymbol } from "#/lib/symm/events";
-import {
-	buildFieldSnapshot,
-	dashboardStore,
-} from "#/lib/symm/dashboard-store";
+import { buildFieldSnapshot, dashboardStore } from "#/lib/symm/dashboard-store";
 import type { SignalConfidenceSnapshot } from "#/lib/symm/signal-confidence";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
 import {

@@ -45,23 +45,19 @@ const replayPulseHistory = (
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
-	const controlsRef =
-		useRef<TResolvedReturnType<typeof drawEnginePulse>["controls"] | null>(
-			null,
-		);
+	const controlsRef = useRef<
+		TResolvedReturnType<typeof drawEnginePulse>["controls"] | null
+	>(null);
 	const lastSeqRef = useRef<number | null>(null);
 	const pulse = useSymmEnginePulse();
 
-	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) => {
-			if (typeof rootElement === "string") {
-				throw new Error("drawEnginePulse requires an HTMLDivElement root");
-			}
+	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
+		if (typeof rootElement === "string") {
+			throw new Error("drawEnginePulse requires an HTMLDivElement root");
+		}
 
-			return drawEnginePulse(rootElement);
-		},
-		[],
-	);
+		return drawEnginePulse(rootElement);
+	}, []);
 
 	const onInit = useCallback(
 		(result: TResolvedReturnType<typeof drawEnginePulse>) => {
