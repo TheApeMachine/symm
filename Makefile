@@ -4,7 +4,7 @@ LDFLAGS := -ldflags='-checklinkname=0'
 SYMM_BIN := bin/symm
 LOG_DIR ?= runs
 
-.PHONY: build test test-go test-frontend bench run replay
+.PHONY: build test test-go test-frontend bench run replay eval
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -32,3 +32,7 @@ REPLAY_PACE ?= 50ms
 replay: build
 	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make replay REPLAY_FILE=replay/fixtures/sample.jsonl" && exit 1)
 	SYMM_REPLAY_FILE=$(REPLAY_FILE) SYMM_REPLAY_PACE=$(REPLAY_PACE) ./$(SYMM_BIN)
+
+eval:
+	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make eval REPLAY_FILE=replay/fixtures/sample.jsonl" && exit 1)
+	go run $(LDFLAGS) . eval --file $(REPLAY_FILE) --format $(or $(FORMAT),json)

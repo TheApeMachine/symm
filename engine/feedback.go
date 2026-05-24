@@ -11,6 +11,7 @@ type PredictionFeedback struct {
 	Type            MeasurementType
 	Regime          string
 	Reason          string
+	Confidence      float64
 	PredictedReturn float64
 	ActualReturn    float64
 	Error           float64

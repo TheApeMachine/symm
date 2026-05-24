@@ -36,6 +36,16 @@ SYMM_REPLAY_FILE=replay/fixtures/sample.jsonl ./bin/symm
 
 Optional: `SYMM_REPLAY_PACE=50ms` (default `50ms`).
 
+Offline calibration report from a replay capture:
+
+```bash
+make eval REPLAY_FILE=replay/fixtures/sample.jsonl
+make eval REPLAY_FILE=replay/fixtures/sample.jsonl FORMAT=csv
+./bin/symm eval --file replay/fixtures/sample.jsonl --format json
+```
+
+The report includes per-signal/source calibration, hit rate, error percentiles, and confidence-decile forward returns.
+
 ## Architecture
 
 - `kraken/client.PublicClient` — live feed with ping, reconnect, resubscribe, and feed-pause on unrecoverable disconnect

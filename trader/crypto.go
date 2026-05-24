@@ -19,16 +19,17 @@ Crypto paper-trades Kraken microstructure signals with trailing stops.
 Live order placement is not wired; all fills go through PaperWallet.
 */
 type Crypto struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	pool       *qpool.Q
-	wallet     *Wallet
-	portfolio  *Portfolio
-	prices     QuoteReader
-	signals    []engine.Signal
-	pairStates sync.Map
-	telemetry  *Telemetry
-	tickSeq    atomic.Uint64
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	wallet       *Wallet
+	portfolio    *Portfolio
+	prices       QuoteReader
+	signals      []engine.Signal
+	pairStates   sync.Map
+	telemetry    *Telemetry
+	tickSeq      atomic.Uint64
+	feedbackSink func(engine.PredictionFeedback)
 }
 
 /*
@@ -44,13 +45,13 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:       ctx,
-		cancel:    cancel,
-		pool:      pool,
-		wallet:    wallet,
-		portfolio: NewPortfolio(wallet),
-		prices:    prices,
-		signals:   signals,
+		ctx:        ctx,
+		cancel:     cancel,
+		pool:       pool,
+		wallet:     wallet,
+		portfolio:  NewPortfolio(wallet),
+		prices:     prices,
+		signals:    signals,
 		pairStates: sync.Map{},
 	}
 
@@ -78,6 +79,50 @@ func (crypto *Crypto) sourceScores() map[string]float64 {
 	}
 
 	return scores
+}
+
+/*
+BindFeedbackSink records settled prediction feedback for offline evaluation.
+*/
+func (crypto *Crypto) BindFeedbackSink(
+	sink func(engine.PredictionFeedback),
+) {
+	crypto.feedbackSink = sink
+}
+
+/*
+Rescore runs one scan, drain, forecast settlement, and execution tick at now.
+*/
+func (crypto *Crypto) Rescore(now time.Time) error {
+	if err := crypto.scanSignals(now); err != nil {
+		return err
+	}
+
+	crypto.processTick(now)
+	crypto.runExecution(now)
+
+	return nil
+}
+
+/*
+PendingPredictionCount returns unresolved forecasts across all pair states.
+*/
+func (crypto *Crypto) PendingPredictionCount() int {
+	total := 0
+
+	crypto.pairStates.Range(func(_, value any) bool {
+		state, ok := value.(*PairState)
+
+		if !ok || state == nil {
+			return true
+		}
+
+		total += state.PendingCount()
+
+		return true
+	})
+
+	return total
 }
 
 /*
@@ -296,6 +341,10 @@ func (crypto *Crypto) quotePrice(symbol string) (float64, bool) {
 }
 
 func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
+	if crypto.feedbackSink != nil {
+		crypto.feedbackSink(feedback)
+	}
+
 	for _, signal := range crypto.signals {
 		receiver, ok := signal.(engine.FeedbackReceiver)
 

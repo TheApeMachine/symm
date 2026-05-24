@@ -321,6 +321,50 @@ func TestProcessTick(t *testing.T) {
 	})
 }
 
+func TestRescoreCollectsFeedback(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+	feedback := make([]engine.PredictionFeedback, 0)
+
+	crypto, err := NewCrypto(
+		context.Background(),
+		nil,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, 5*time.Second),
+		}},
+	)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	crypto.BindFeedbackSink(func(item engine.PredictionFeedback) {
+		feedback = append(feedback, item)
+	})
+
+	if err := crypto.Rescore(start); err != nil {
+		t.Fatalf("rescore: %v", err)
+	}
+
+	if crypto.PendingPredictionCount() != 1 {
+		t.Fatalf("expected one pending forecast, got %d", crypto.PendingPredictionCount())
+	}
+
+	if err := crypto.Rescore(start.Add(5 * time.Second)); err != nil {
+		t.Fatalf("settle rescore: %v", err)
+	}
+
+	if len(feedback) != 1 {
+		t.Fatalf("expected one settled feedback, got %d", len(feedback))
+	}
+
+	if feedback[0].Confidence != 0.5 {
+		t.Fatalf("expected confidence on feedback, got %v", feedback[0].Confidence)
+	}
+}
+
 func BenchmarkProcessTick(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

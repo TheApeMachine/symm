@@ -16,6 +16,7 @@ type Prediction struct {
 	measurementType engine.MeasurementType
 	regime          string
 	reason          string
+	confidence      float64
 	direction       int
 	predictedAt     time.Time
 	dueAt           time.Time
@@ -43,6 +44,7 @@ func (state *PairState) buildPrediction(
 		measurementType: measurement.Type,
 		regime:          measurement.Regime,
 		reason:          measurement.Reason,
+		confidence:      measurement.Confidence,
 		direction:       measurement.Type.Direction(),
 		predictedAt:     now,
 		dueAt:           now.Add(measurement.Runway),
@@ -63,6 +65,7 @@ func (prediction *Prediction) settle(exitQuote float64, settledAt time.Time) eng
 		Type:            prediction.measurementType,
 		Regime:          prediction.regime,
 		Reason:          prediction.reason,
+		Confidence:      prediction.confidence,
 		PredictedReturn: prediction.expectedReturn,
 		ActualReturn:    actualReturn,
 		Error:           prediction.expectedReturn - actualReturn,
@@ -81,6 +84,7 @@ func (prediction *Prediction) settleUnanchored(settledAt time.Time) engine.Predi
 		Type:            prediction.measurementType,
 		Regime:          prediction.regime,
 		Reason:          prediction.reason,
+		Confidence:      prediction.confidence,
 		PredictedReturn: prediction.expectedReturn,
 		Runway:          prediction.runway,
 		SettledAt:       settledAt,
