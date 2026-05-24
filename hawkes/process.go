@@ -7,244 +7,165 @@ import (
 	"github.com/theapemachine/symm/stats"
 )
 
+type eventSide int
+
 const (
-	minFitEvents         = 8
-	minConfidenceHistory = minFitEvents
-	hawkesTradeWindow    = 5 * time.Minute
-	betaScanSteps        = 7
-	criticalBranch       = 1.0
-	localBetaSteps       = 5
-	localMuSteps         = 5
-	localBranchSteps     = 5
-	localScaleMin        = 0.6
-	localScaleMax        = 1.4
-	localBranchDelta     = 0.08
-	minBranching         = 0.05
+	sideBuy eventSide = iota
+	sideSell
 )
 
 /*
-SideFit holds rolling MLE parameters for one trade side.
+markedEvent is one trade arrival tagged by aggressor side.
 */
-type SideFit struct {
-	mu        float64
-	alpha     float64
-	beta      float64
-	branching float64
-	intensity float64
+type markedEvent struct {
+	at   time.Time
+	side eventSide
 }
 
 /*
-fitSide estimates mu, alpha, beta via warm-started local likelihood search.
+BivariateFit holds joint buy/sell Hawkes MLE parameters and horizon intensities.
+
+	λ_buy(t)  = μ_buy  + Σ α_bb exp(-β(t-t_i)) + Σ α_bs exp(-β(t-t_j))
+	λ_sell(t) = μ_sell + Σ α_sb exp(-β(t-t_i)) + Σ α_ss exp(-β(t-t_j))
 */
-func fitSide(events []time.Time, horizon time.Time) SideFit {
-	return fitSideWithPrior(events, horizon, SideFit{})
+type BivariateFit struct {
+	MuBuy          float64
+	MuSell         float64
+	AlphaBB        float64
+	AlphaBS        float64
+	AlphaSB        float64
+	AlphaSS        float64
+	Beta           float64
+	BuyIntensity   float64
+	SellIntensity  float64
+	SpectralRadius float64
 }
 
-/*
-fitSideWithPrior warm-starts from prior parameters and scans a local neighborhood.
-*/
-func fitSideWithPrior(events []time.Time, horizon time.Time, prior SideFit) SideFit {
-	if len(events) < minFitEvents {
-		return SideFit{}
+func (fit BivariateFit) valid() bool {
+	return fit.MuBuy > 0 &&
+		fit.MuSell > 0 &&
+		fit.Beta > 0 &&
+		fit.AlphaBB >= 0 &&
+		fit.AlphaBS >= 0 &&
+		fit.AlphaSB >= 0 &&
+		fit.AlphaSS >= 0 &&
+		fit.SpectralRadius > 0 &&
+		fit.SpectralRadius < criticalBranch
+}
+
+func mergeMarkedEvents(buyEvents, sellEvents []time.Time) []markedEvent {
+	marked := make([]markedEvent, 0, len(buyEvents)+len(sellEvents))
+
+	for _, eventTime := range buyEvents {
+		marked = append(marked, markedEvent{at: eventTime, side: sideBuy})
 	}
 
-	medianGap := medianInterArrivalSec(events)
-
-	if medianGap <= 0 {
-		return SideFit{}
+	for _, eventTime := range sellEvents {
+		marked = append(marked, markedEvent{at: eventTime, side: sideSell})
 	}
 
-	baseBeta := 1 / medianGap
-	span := horizon.Sub(events[0]).Seconds()
+	if len(marked) < 2 {
+		return marked
+	}
+
+	for left := 1; left < len(marked); left++ {
+		current := marked[left]
+		insertAt := left
+
+		for insertAt > 0 && marked[insertAt-1].at.After(current.at) {
+			marked[insertAt] = marked[insertAt-1]
+			insertAt--
+		}
+
+		marked[insertAt] = current
+	}
+
+	return marked
+}
+
+func windowSpan(marked []markedEvent, horizon time.Time) float64 {
+	if len(marked) == 0 {
+		return 0
+	}
+
+	span := horizon.Sub(marked[0].at).Seconds()
 
 	if span <= 0 {
-		return SideFit{}
+		return 0
 	}
 
-	muStart := float64(len(events)) / span
-
-	if priorValid(prior) {
-		local := scanLocalGrid(events, horizon, prior, muStart, baseBeta)
-
-		if local.mu > 0 {
-			return local
-		}
-	}
-
-	return scanFullGrid(events, horizon, muStart, baseBeta)
+	return span
 }
 
-func priorValid(prior SideFit) bool {
-	return prior.mu > 0 &&
-		prior.beta > 0 &&
-		prior.branching > 0 &&
-		prior.branching < criticalBranch
-}
+func buyIntensityAt(
+	buyEvents, sellEvents []time.Time,
+	at time.Time,
+	muBuy, alphaBB, alphaBS, beta float64,
+) float64 {
+	lambda := muBuy
 
-func scanLocalGrid(
-	events []time.Time,
-	horizon time.Time,
-	prior SideFit,
-	muStart, baseBeta float64,
-) SideFit {
-	best := SideFit{mu: -1}
-	bestLL := math.Inf(-1)
-
-	betaScales := localScales(localBetaSteps)
-	muScales := localScales(localMuSteps)
-	branchOffsets := localBranchOffsets(localBranchSteps)
-
-	for _, betaScale := range betaScales {
-		beta := prior.beta * betaScale
-
-		if beta <= 0 {
+	for _, eventTime := range buyEvents {
+		if !eventTime.Before(at) {
 			continue
 		}
 
-		for _, muScale := range muScales {
-			mu := prior.mu * muScale
+		age := at.Sub(eventTime).Seconds()
 
-			if mu <= 0 {
-				continue
-			}
-
-			for _, branchOffset := range branchOffsets {
-				branching := prior.branching + branchOffset
-
-				if branching <= minBranching || branching >= criticalBranch {
-					continue
-				}
-
-				alpha := branching * beta
-				candidate := evaluateFit(events, horizon, mu, alpha, beta, branching)
-
-				if candidate.fit.mu <= 0 || candidate.logLikelihood <= bestLL {
-					continue
-				}
-
-				bestLL = candidate.logLikelihood
-				best = candidate.fit
-			}
+		if age >= 0 {
+			lambda += alphaBB * math.Exp(-beta*age)
 		}
 	}
 
-	if best.mu > 0 {
-		return best
-	}
+	for _, eventTime := range sellEvents {
+		if !eventTime.Before(at) {
+			continue
+		}
 
-	return scanFullGrid(events, horizon, muStart, baseBeta)
-}
+		age := at.Sub(eventTime).Seconds()
 
-func scanFullGrid(events []time.Time, horizon time.Time, muStart, baseBeta float64) SideFit {
-	best := SideFit{mu: -1}
-	bestLL := math.Inf(-1)
-
-	for step := 0; step < betaScanSteps; step++ {
-		betaScale := 0.25 + float64(step)*0.25
-		beta := baseBeta * betaScale
-
-		for muFactor := 0.2; muFactor <= 2.0; muFactor += 0.2 {
-			mu := muStart * muFactor
-
-			for branchStep := 1; branchStep < 14; branchStep++ {
-				branching := float64(branchStep) / 15
-				alpha := branching * beta
-				candidate := evaluateFit(events, horizon, mu, alpha, beta, branching)
-
-				if candidate.fit.mu <= 0 || candidate.logLikelihood <= bestLL {
-					continue
-				}
-
-				bestLL = candidate.logLikelihood
-				best = candidate.fit
-			}
+		if age >= 0 {
+			lambda += alphaBS * math.Exp(-beta*age)
 		}
 	}
 
-	return best
+	return lambda
 }
 
-type fitCandidate struct {
-	fit           SideFit
-	logLikelihood float64
-}
+func sellIntensityAt(
+	buyEvents, sellEvents []time.Time,
+	at time.Time,
+	muSell, alphaSB, alphaSS, beta float64,
+) float64 {
+	lambda := muSell
 
-func evaluateFit(
-	events []time.Time,
-	horizon time.Time,
-	mu, alpha, beta, branching float64,
-) fitCandidate {
-	logLikelihood := logLikelihood(events, horizon, mu, alpha, beta)
-
-	if logLikelihood <= math.Inf(-1) {
-		return fitCandidate{}
-	}
-
-	return fitCandidate{
-		logLikelihood: logLikelihood,
-		fit: SideFit{
-			mu:        mu,
-			alpha:     alpha,
-			beta:      beta,
-			branching: branching,
-			intensity: intensityAt(events, horizon, mu, alpha, beta),
-		},
-	}
-}
-
-func localScales(steps int) []float64 {
-	if steps <= 1 {
-		return []float64{1}
-	}
-
-	scales := make([]float64, steps)
-	stepSize := (localScaleMax - localScaleMin) / float64(steps-1)
-
-	for index := 0; index < steps; index++ {
-		scales[index] = localScaleMin + float64(index)*stepSize
-	}
-
-	return scales
-}
-
-func localBranchOffsets(steps int) []float64 {
-	if steps <= 1 {
-		return []float64{0}
-	}
-
-	center := (steps - 1) / 2
-	offsets := make([]float64, steps)
-
-	for index := 0; index < steps; index++ {
-		offsets[index] = float64(index-center) * localBranchDelta
-	}
-
-	return offsets
-}
-
-func logLikelihood(events []time.Time, horizon time.Time, mu, alpha, beta float64) float64 {
-	if len(events) == 0 || mu <= 0 || beta <= 0 || alpha < 0 {
-		return math.Inf(-1)
-	}
-
-	span := horizon.Sub(events[0]).Seconds()
-
-	if span <= 0 {
-		return math.Inf(-1)
-	}
-
-	var logSum float64
-
-	for eventIndex, eventTime := range events {
-		lambda := intensityAt(events[:eventIndex], eventTime, mu, alpha, beta)
-
-		if lambda <= 0 {
-			return math.Inf(-1)
+	for _, eventTime := range buyEvents {
+		if !eventTime.Before(at) {
+			continue
 		}
 
-		logSum += math.Log(lambda)
+		age := at.Sub(eventTime).Seconds()
+
+		if age >= 0 {
+			lambda += alphaSB * math.Exp(-beta*age)
+		}
 	}
 
+	for _, eventTime := range sellEvents {
+		if !eventTime.Before(at) {
+			continue
+		}
+
+		age := at.Sub(eventTime).Seconds()
+
+		if age >= 0 {
+			lambda += alphaSS * math.Exp(-beta*age)
+		}
+	}
+
+	return lambda
+}
+
+func kernelSupport(events []time.Time, horizon time.Time, beta float64) float64 {
 	var support float64
 
 	for _, eventTime := range events {
@@ -255,49 +176,191 @@ func logLikelihood(events []time.Time, horizon time.Time, mu, alpha, beta float6
 		}
 	}
 
-	return logSum - mu*span - (alpha/beta)*support
+	return support
 }
 
-func intensityAt(events []time.Time, at time.Time, mu, alpha, beta float64) float64 {
-	lambda := mu
+func bivariateCompensator(
+	buyEvents, sellEvents []time.Time,
+	horizon time.Time,
+	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta, span float64,
+) float64 {
+	buySupport := kernelSupport(buyEvents, horizon, beta)
+	sellSupport := kernelSupport(sellEvents, horizon, beta)
 
-	for _, eventTime := range events {
-		if !eventTime.Before(at) {
-			continue
+	buyIntegral := muBuy*span +
+		(alphaBB/beta)*buySupport +
+		(alphaBS/beta)*sellSupport
+	sellIntegral := muSell*span +
+		(alphaSB/beta)*buySupport +
+		(alphaSS/beta)*sellSupport
+
+	return buyIntegral + sellIntegral
+}
+
+func bivariateLogLikelihood(
+	buyEvents, sellEvents []time.Time,
+	horizon time.Time,
+	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta float64,
+) float64 {
+	if muBuy <= 0 || muSell <= 0 || beta <= 0 {
+		return math.Inf(-1)
+	}
+
+	if alphaBB < 0 || alphaBS < 0 || alphaSB < 0 || alphaSS < 0 {
+		return math.Inf(-1)
+	}
+
+	marked := mergeMarkedEvents(buyEvents, sellEvents)
+
+	if len(marked) == 0 {
+		return math.Inf(-1)
+	}
+
+	span := windowSpan(marked, horizon)
+
+	if span <= 0 {
+		return math.Inf(-1)
+	}
+
+	buySoFar := make([]time.Time, 0, len(buyEvents))
+	sellSoFar := make([]time.Time, 0, len(sellEvents))
+	var logSum float64
+
+	for _, event := range marked {
+		var lambda float64
+
+		switch event.side {
+		case sideBuy:
+			lambda = buyIntensityAt(
+				buySoFar, sellSoFar, event.at,
+				muBuy, alphaBB, alphaBS, beta,
+			)
+			buySoFar = append(buySoFar, event.at)
+		case sideSell:
+			lambda = sellIntensityAt(
+				buySoFar, sellSoFar, event.at,
+				muSell, alphaSB, alphaSS, beta,
+			)
+			sellSoFar = append(sellSoFar, event.at)
 		}
 
-		age := at.Sub(eventTime).Seconds()
-
-		if age >= 0 {
-			lambda += alpha * math.Exp(-beta*age)
+		if lambda <= 0 {
+			return math.Inf(-1)
 		}
+
+		logSum += math.Log(lambda)
 	}
 
-	return lambda
+	compensator := bivariateCompensator(
+		buyEvents, sellEvents, horizon,
+		muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta, span,
+	)
+
+	return logSum - compensator
 }
 
-func buySellAsymmetry(buyFit, sellFit SideFit) float64 {
-	total := buyFit.intensity + sellFit.intensity
-
-	if total <= 0 || buyFit.intensity <= sellFit.intensity {
-		return 0
+func spectralRadius(alphaBB, alphaBS, alphaSB, alphaSS, beta float64) float64 {
+	if beta <= 0 {
+		return math.Inf(1)
 	}
 
-	return (buyFit.intensity - sellFit.intensity) / total
+	branchBB := alphaBB / beta
+	branchBS := alphaBS / beta
+	branchSB := alphaSB / beta
+	branchSS := alphaSS / beta
+	trace := branchBB + branchSS
+	determinant := branchBB*branchSS - branchBS*branchSB
+	discriminant := trace*trace - 4*determinant
+
+	if discriminant < 0 {
+		modulus := math.Sqrt(-discriminant)
+		realPart := trace / 2
+		imagPart := modulus / 2
+
+		return math.Sqrt(realPart*realPart + imagPart*imagPart)
+	}
+
+	rootHigh := (trace + math.Sqrt(discriminant)) / 2
+	rootLow := (trace - math.Sqrt(discriminant)) / 2
+
+	return math.Max(math.Abs(rootHigh), math.Abs(rootLow))
 }
 
-func excitationConfidence(buyFit SideFit, asymmetry float64) float64 {
-	if asymmetry <= 0 || buyFit.mu <= 0 || buyFit.intensity <= 0 {
+func evaluateBivariateFit(
+	buyEvents, sellEvents []time.Time,
+	horizon time.Time,
+	context FitContext,
+	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta float64,
+) BivariateFit {
+	spectral := spectralRadius(alphaBB, alphaBS, alphaSB, alphaSS, beta)
+
+	if spectral >= criticalBranch || spectral <= context.BranchFloor {
+		return BivariateFit{}
+	}
+
+	logLikelihood := bivariateLogLikelihood(
+		buyEvents, sellEvents, horizon,
+		muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta,
+	)
+
+	if logLikelihood <= math.Inf(-1) {
+		return BivariateFit{}
+	}
+
+	return BivariateFit{
+		MuBuy:   muBuy,
+		MuSell:  muSell,
+		AlphaBB: alphaBB,
+		AlphaBS: alphaBS,
+		AlphaSB: alphaSB,
+		AlphaSS: alphaSS,
+		Beta:    beta,
+		BuyIntensity: buyIntensityAt(
+			buyEvents, sellEvents, horizon,
+			muBuy, alphaBB, alphaBS, beta,
+		),
+		SellIntensity: sellIntensityAt(
+			buyEvents, sellEvents, horizon,
+			muSell, alphaSB, alphaSS, beta,
+		),
+		SpectralRadius: spectral,
+	}
+}
+
+func buySellAsymmetry(fit BivariateFit) float64 {
+	total := fit.BuyIntensity + fit.SellIntensity
+
+	if total <= 0 || fit.BuyIntensity <= fit.SellIntensity {
 		return 0
 	}
 
-	if buyFit.branching >= criticalBranch {
+	return (fit.BuyIntensity - fit.SellIntensity) / total
+}
+
+/*
+excitationRunway is the fitted kernel e-folding time: 1/β seconds until
+self-excitation has decayed to 1/e of an impulse.
+*/
+func excitationRunway(fit BivariateFit) time.Duration {
+	if fit.Beta <= 0 {
 		return 0
 	}
 
-	ratio := buyFit.intensity / buyFit.mu
+	return time.Duration((1 / fit.Beta) * float64(time.Second))
+}
 
-	if ratio <= 1 {
+func excitationConfidence(fit BivariateFit, asymmetry float64, baselineFence float64) float64 {
+	if asymmetry <= 0 || fit.MuBuy <= 0 || fit.BuyIntensity <= 0 {
+		return 0
+	}
+
+	if fit.SpectralRadius >= criticalBranch {
+		return 0
+	}
+
+	ratio := fit.BuyIntensity / fit.MuBuy
+
+	if ratio <= baselineFence {
 		return 0
 	}
 
@@ -324,6 +387,22 @@ func medianInterArrivalSec(events []time.Time) float64 {
 	}
 
 	return stats.Median(gaps)
+}
+
+func mergedMedianGap(buyEvents, sellEvents []time.Time) float64 {
+	marked := mergeMarkedEvents(buyEvents, sellEvents)
+
+	if len(marked) < 2 {
+		return 0
+	}
+
+	times := make([]time.Time, len(marked))
+
+	for index, event := range marked {
+		times[index] = event.at
+	}
+
+	return medianInterArrivalSec(times)
 }
 
 func confidenceFence(values []float64) float64 {

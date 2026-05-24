@@ -3,54 +3,29 @@ package engine
 import (
 	"context"
 	"iter"
-	"time"
 )
 
 /*
-Scanner runs a periodic scan loop and drains measurements from a shared queue.
+Scanner holds a bounded measurement queue for one signal.
+The trader scheduler calls Scan on each signal, then drains through Measure.
 */
 type Scanner struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	interval time.Duration
-	queue    *MeasurementQueue
+	ctx    context.Context
+	cancel context.CancelFunc
+	queue  *MeasurementQueue
 }
 
 /*
-NewScanner creates a bounded scan runner bound to parent context cancellation.
+NewScanner creates a passive queue bound to parent context cancellation.
 */
-func NewScanner(parent context.Context, interval time.Duration) *Scanner {
+func NewScanner(parent context.Context) *Scanner {
 	ctx, cancel := context.WithCancel(parent)
 
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
-	}
-
 	return &Scanner{
-		ctx:      ctx,
-		cancel:   cancel,
-		interval: interval,
-		queue:    &MeasurementQueue{},
+		ctx:    ctx,
+		cancel: cancel,
+		queue:  &MeasurementQueue{},
 	}
-}
-
-/*
-Run starts the scan loop on a background goroutine.
-*/
-func (scanner *Scanner) Run(scan func(time.Time)) {
-	go func() {
-		ticker := time.NewTicker(scanner.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-scanner.ctx.Done():
-				return
-			case tick := <-ticker.C:
-				scan(tick)
-			}
-		}
-	}()
 }
 
 /*
@@ -61,7 +36,14 @@ func (scanner *Scanner) Measure(ctx context.Context) iter.Seq[Measurement] {
 }
 
 /*
-Close stops the scan loop.
+Stats returns live queue counters.
+*/
+func (scanner *Scanner) Stats() QueueStats {
+	return scanner.queue.Stats()
+}
+
+/*
+Close stops the scanner context.
 */
 func (scanner *Scanner) Close() error {
 	scanner.cancel()
@@ -72,6 +54,6 @@ func (scanner *Scanner) Close() error {
 /*
 Enqueue stores one measurement in the scanner queue.
 */
-func (scanner *Scanner) Enqueue(measurement Measurement) {
-	scanner.queue.Enqueue(measurement)
+func (scanner *Scanner) Enqueue(measurement Measurement) error {
+	return scanner.queue.Enqueue(measurement)
 }

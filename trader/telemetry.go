@@ -1,16 +1,499 @@
 package trader
 
+import (
+	"sort"
+
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/stats"
+)
+
 /*
-Publisher emits flat JSON telemetry events for the UI hub.
+FluidTelemetry exposes fluid field sampling counters for engine_pulse.
 */
-type Publisher interface {
-	Emit(event map[string]any)
+type FluidTelemetry interface {
+	SampledCount() int
+	WarmingCount() int
 }
 
-type noopPublisher struct{}
+/*
+TickerTelemetry exposes quote readiness counters for engine_pulse.
+*/
+type TickerTelemetry interface {
+	ReadyCount() int
+}
 
-func (noopPublisher) Emit(map[string]any) {}
+/*
+TelemetryStream publishes dashboard websocket events.
+*/
+type TelemetryStream interface {
+	EnginePulse(payload map[string]any)
+	DecisionTrace(payload map[string]any)
+	Scoreboard(line, median, mad float64, targets []map[string]any)
+	Status(payload map[string]any)
+}
 
-func NoopPublisher() Publisher {
-	return noopPublisher{}
+/*
+Telemetry publishes dashboard events from one trader rescore tick.
+*/
+type Telemetry struct {
+	stream       TelemetryStream
+	ticker       TickerTelemetry
+	fluid        FluidTelemetry
+	symbolsTotal int
+	seq          int64
+	warmPulses   int
+
+	pulseSignals []map[string]any
+	readings     map[string]symbolReadings
+}
+
+type signalReading struct {
+	source         string
+	regime         string
+	reason         string
+	confidence     float64
+	expectedReturn float64
+}
+
+type symbolReadings map[string]signalReading
+
+/*
+BindTelemetry wires the dashboard publisher for live websocket telemetry.
+*/
+func (crypto *Crypto) BindTelemetry(
+	stream TelemetryStream,
+	ticker TickerTelemetry,
+	fluid FluidTelemetry,
+	symbolsTotal int,
+) {
+	crypto.telemetry = &Telemetry{
+		stream:       stream,
+		ticker:       ticker,
+		fluid:        fluid,
+		symbolsTotal: symbolsTotal,
+		readings:     make(map[string]symbolReadings),
+	}
+}
+
+/*
+BeginTick resets per-cycle telemetry buffers.
+*/
+func (telemetry *Telemetry) BeginTick() {
+	if telemetry == nil || telemetry.stream == nil {
+		return
+	}
+
+	telemetry.seq++
+	telemetry.pulseSignals = telemetry.pulseSignals[:0]
+	telemetry.readings = make(map[string]symbolReadings)
+}
+
+/*
+NoteMeasurement records one drained signal reading for pulse and decision rows.
+*/
+func (telemetry *Telemetry) NoteMeasurement(measurement engine.Measurement) {
+	if telemetry == nil || telemetry.stream == nil || measurement.Confidence <= 0 {
+		return
+	}
+
+	for _, pair := range measurement.Pairs {
+		symbol := asset.Symbol(pair)
+		if symbol == "" {
+			continue
+		}
+
+		telemetry.pulseSignals = append(telemetry.pulseSignals, map[string]any{
+			"symbol":          symbol,
+			"source":          measurement.Source,
+			"regime":          measurement.Regime,
+			"reason":          measurement.Reason,
+			"score":           measurement.Confidence,
+			"expected_return": measurement.ExpectedReturn,
+			"type":            measurementTypeName(measurement.Type),
+		})
+
+		if telemetry.readings[symbol] == nil {
+			telemetry.readings[symbol] = make(symbolReadings)
+		}
+
+		existing := telemetry.readings[symbol][measurement.Source]
+
+		if existing.confidence >= measurement.Confidence &&
+			existing.expectedReturn >= measurement.ExpectedReturn {
+			continue
+		}
+
+		if measurement.Confidence > existing.confidence {
+			existing.confidence = measurement.Confidence
+			existing.regime = measurement.Regime
+			existing.reason = measurement.Reason
+		}
+
+		if measurement.ExpectedReturn > existing.expectedReturn {
+			existing.expectedReturn = measurement.ExpectedReturn
+		}
+
+		existing.source = measurement.Source
+		telemetry.readings[symbol][measurement.Source] = existing
+	}
+}
+
+/*
+Publish emits status, engine_pulse, decision_trace, and scoreboard for the tick.
+*/
+func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
+	if telemetry == nil || telemetry.stream == nil {
+		return
+	}
+
+	if telemetry.seq > 0 {
+		telemetry.warmPulses++
+	}
+
+	phase := "scan"
+	if telemetry.warmPulses < config.System.MinWarmPulses {
+		phase = "warming"
+	}
+
+	if crypto != nil {
+		telemetry.ingestLiveReadings(crypto)
+	}
+
+	evaluations, decisions, scores := telemetry.buildEvaluations()
+	line, median, mad := entryLine(scores)
+	warming := phase == "warming"
+	telemetry.applyLine(evaluations, decisions, warming, line)
+	targets := scoreboardTargets(evaluations, line)
+
+	forecast := ForecastSnapshot{}
+
+	if crypto != nil {
+		forecast = crypto.resolveForecast(telemetry.readings, line, evaluations)
+	}
+
+	sourceScores := map[string]float64{}
+
+	if crypto != nil {
+		sourceScores = crypto.sourceScores()
+	}
+
+	allowed := 0
+	for _, row := range evaluations {
+		if allow, _ := row["allow"].(bool); allow {
+			allowed++
+		}
+	}
+
+	telemetry.stream.EnginePulse(map[string]any{
+		"seq":              telemetry.seq,
+		"phase":            phase,
+		"measurements":     len(telemetry.pulseSignals),
+		"candidates":       len(evaluations),
+		"open":             0,
+		"ticker_ready":     telemetry.tickerReady(),
+		"symbols_total":    telemetry.symbolsTotal,
+		"fluid_sampled":    telemetry.fluidSampled(),
+		"fluid_warming":    telemetry.fluidWarming(),
+		"signals":          telemetry.pulseSignals,
+		"source_scores":    sourceScores,
+		"avg_prediction":   forecast.AvgPrediction,
+		"avg_error":        forecast.AvgError,
+		"forecast_symbols": forecast.PredictedSymbols,
+		"forecast_errors":  forecast.ErrorSymbols,
+	})
+
+	telemetry.stream.DecisionTrace(map[string]any{
+		"line":        line,
+		"median":      median,
+		"mad":         mad,
+		"scored":      len(evaluations),
+		"in_play":     len(evaluations),
+		"allowed":     allowed,
+		"decisions":   decisions,
+		"evaluations": evaluations,
+	})
+
+	telemetry.stream.Scoreboard(line, median, mad, targets)
+	telemetry.stream.Status(map[string]any{
+		"equity_eur":     walletBalance(wallet),
+		"cash_eur":       walletBalance(wallet),
+		"closed_pnl_eur": 0,
+		"trade_count":    0,
+		"win_rate":       0,
+		"open_count":     0,
+	})
+}
+
+func (telemetry *Telemetry) ingestLiveReadings(crypto *Crypto) {
+	for _, signal := range crypto.signals {
+		reader, ok := signal.(engine.LiveScoreReader)
+
+		if !ok {
+			continue
+		}
+
+		peak := reader.PeakReading()
+
+		if peak.Score <= 0 {
+			continue
+		}
+
+		source := signal.Source()
+
+		if peak.Symbol != "" {
+			telemetry.mergeLiveReading(peak.Symbol, source, peak.Score)
+		}
+
+		if telemetry.hasPulseSignal(peak.Symbol, source) {
+			continue
+		}
+
+		telemetry.pulseSignals = append(telemetry.pulseSignals, map[string]any{
+			"symbol": peak.Symbol,
+			"source": source,
+			"regime": "live",
+			"reason": "track",
+			"score":  peak.Score,
+			"type":   "live",
+		})
+	}
+}
+
+func (telemetry *Telemetry) mergeLiveReading(
+	symbol, source string,
+	score float64,
+) {
+	if telemetry.readings[symbol] == nil {
+		telemetry.readings[symbol] = make(symbolReadings)
+	}
+
+	existing := telemetry.readings[symbol][source]
+
+	if score <= existing.confidence {
+		return
+	}
+
+	existing.confidence = score
+	existing.source = source
+	existing.regime = "live"
+	existing.reason = "track"
+	telemetry.readings[symbol][source] = existing
+}
+
+func (telemetry *Telemetry) hasPulseSignal(symbol, source string) bool {
+	for _, row := range telemetry.pulseSignals {
+		rowSymbol, _ := row["symbol"].(string)
+		rowSource, _ := row["source"].(string)
+
+		if rowSymbol == symbol && rowSource == source {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (telemetry *Telemetry) buildEvaluations() (
+	[]map[string]any,
+	[]map[string]any,
+	[]float64,
+) {
+	evaluations := make([]map[string]any, 0, len(telemetry.readings))
+	decisions := make([]map[string]any, 0, len(telemetry.pulseSignals))
+	scores := make([]float64, 0, len(telemetry.readings))
+
+	for symbol, sources := range telemetry.readings {
+		signals := make([]map[string]any, 0, len(sources))
+		combined := 0.0
+		support := 0
+		topRegime := ""
+		topReason := ""
+		topConfidence := 0.0
+
+		for _, reading := range sources {
+			signals = append(signals, map[string]any{
+				"source":     reading.source,
+				"regime":     reading.regime,
+				"reason":     reading.reason,
+				"confidence": reading.confidence,
+			})
+
+			support++
+			combined += reading.confidence
+
+			if reading.confidence >= topConfidence {
+				topConfidence = reading.confidence
+				topRegime = reading.regime
+				topReason = reading.reason
+			}
+
+			decisions = append(decisions, map[string]any{
+				"symbol":          symbol,
+				"source":          reading.source,
+				"regime":          reading.regime,
+				"reason":          reading.reason,
+				"score":           reading.confidence,
+				"confidence":      reading.confidence,
+				"effective_score": reading.confidence,
+				"in_play":         true,
+				"allow":           false,
+				"why":             "below_line",
+			})
+		}
+
+		scores = append(scores, combined)
+
+		evaluations = append(evaluations, map[string]any{
+			"symbol":   symbol,
+			"combined": combined,
+			"support":  support,
+			"regime":   topRegime,
+			"reason":   topReason,
+			"allow":    false,
+			"why":      "below_line",
+			"signals":  signals,
+		})
+	}
+
+	sort.Slice(evaluations, func(left, right int) bool {
+		leftCombined, _ := evaluations[left]["combined"].(float64)
+		rightCombined, _ := evaluations[right]["combined"].(float64)
+
+		if leftCombined != rightCombined {
+			return leftCombined > rightCombined
+		}
+
+		leftSymbol, _ := evaluations[left]["symbol"].(string)
+		rightSymbol, _ := evaluations[right]["symbol"].(string)
+
+		return leftSymbol < rightSymbol
+	})
+
+	return evaluations, decisions, scores
+}
+
+func (telemetry *Telemetry) applyLine(
+	evaluations []map[string]any,
+	decisions []map[string]any,
+	warming bool,
+	line float64,
+) {
+	for index := range evaluations {
+		combined, _ := evaluations[index]["combined"].(float64)
+		allow := !warming && combined >= line
+		evaluations[index]["allow"] = allow
+		evaluations[index]["why"] = whyCode(warming, combined, line)
+	}
+
+	for index := range decisions {
+		score, _ := decisions[index]["score"].(float64)
+		allow := !warming && score >= line
+		decisions[index]["allow"] = allow
+		decisions[index]["why"] = whyCode(warming, score, line)
+	}
+}
+
+func entryLine(scores []float64) (line, median, mad float64) {
+	if len(scores) == 0 {
+		return 0, 0, 0
+	}
+
+	sorted := stats.CopySorted(scores)
+	median = stats.PercentileSorted(sorted, 0.5)
+	mad = stats.MedianAbsoluteDeviation(sorted, median)
+	line = median + mad
+
+	return line, median, mad
+}
+
+func scoreboardTargets(
+	evaluations []map[string]any,
+	line float64,
+) []map[string]any {
+	targets := make([]map[string]any, 0, len(evaluations))
+
+	for _, row := range evaluations {
+		combined, _ := row["combined"].(float64)
+		if combined < line {
+			continue
+		}
+
+		targets = append(targets, map[string]any{
+			"symbol":          row["symbol"],
+			"regime":          row["regime"],
+			"reason":          row["reason"],
+			"score":           combined,
+			"effective_score": combined,
+			"trail_pct":       0,
+		})
+	}
+
+	return targets
+}
+
+func whyCode(warming bool, score, line float64) string {
+	if warming {
+		return "field_warming"
+	}
+
+	if line > 0 && score < line {
+		return "below_line"
+	}
+
+	if score <= 0 {
+		return "below_line"
+	}
+
+	return "ok"
+}
+
+func measurementTypeName(measurementType engine.MeasurementType) string {
+	switch measurementType {
+	case engine.Pump:
+		return "pump"
+	case engine.Dump:
+		return "dump"
+	case engine.Momentum:
+		return "momentum"
+	case engine.Flow:
+		return "flow"
+	case engine.Causal:
+		return "causal"
+	default:
+		return "unknown"
+	}
+}
+
+func walletBalance(wallet *Wallet) float64 {
+	if wallet == nil {
+		return 0
+	}
+
+	return wallet.Balance
+}
+
+func (telemetry *Telemetry) tickerReady() int {
+	if telemetry.ticker == nil {
+		return 0
+	}
+
+	return telemetry.ticker.ReadyCount()
+}
+
+func (telemetry *Telemetry) fluidSampled() int {
+	if telemetry.fluid == nil {
+		return 0
+	}
+
+	return telemetry.fluid.SampledCount()
+}
+
+func (telemetry *Telemetry) fluidWarming() int {
+	if telemetry.fluid == nil {
+		return 0
+	}
+
+	return telemetry.fluid.WarmingCount()
 }

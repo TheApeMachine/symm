@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -17,16 +16,31 @@ import (
 PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker streams.
 */
 type PumpDump struct {
-	scanner *engine.Scanner
-	book    *kbook.Book
-	trades  *trades.Trades
-	ticker  *kticker.Ticker
-	track   *TrackStore
-	pairs   map[string]asset.Pair
-	symbols []string
+	*engine.SignalBase
+	track *TrackStore
 }
 
 var _ engine.Signal = (*PumpDump)(nil)
+
+var _ engine.FeedbackReceiver = (*PumpDump)(nil)
+
+var _ engine.LiveScoreReader = (*PumpDump)(nil)
+
+/*
+LiveScore returns the current pump gauge reading from track state.
+*/
+func (pumpdump *PumpDump) LiveScore() float64 {
+	return pumpdump.track.PeakLiveConfidence()
+}
+
+func (pumpdump *PumpDump) PeakReading() engine.LiveReading {
+	symbol, score := pumpdump.track.PeakSymbolScore()
+
+	return engine.LiveReading{
+		Symbol: symbol,
+		Score:  score,
+	}
+}
 
 /*
 NewPumpDump wires live Kraken websocket observers into the engine signal.
@@ -38,127 +52,137 @@ func NewPumpDump(
 	tickerObserver *kticker.Ticker,
 	pairs map[string]asset.Pair,
 	symbols []string,
-	interval time.Duration,
+	watch *engine.SymbolWatch,
 ) (*PumpDump, error) {
+	base, err := engine.NewSignalBase(
+		ctx,
+		"pumpdump",
+		book,
+		tradesObserver,
+		tickerObserver,
+		pairs,
+		symbols,
+		watch,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
 	pumpdump := &PumpDump{
-		scanner: engine.NewScanner(ctx, interval),
-		book:    book,
-		trades:  tradesObserver,
-		ticker:  tickerObserver,
-		track:   NewTrackStore(),
-		pairs:   pairs,
-		symbols: symbols,
+		SignalBase: base,
+		track:      NewTrackStore(),
 	}
 
 	return pumpdump, errnie.Require(map[string]any{
-		"scanner": pumpdump.scanner,
-		"book":    book,
-		"trades":  tradesObserver,
-		"ticker":  tickerObserver,
-		"track":   pumpdump.track,
-		"pairs":   pairs,
+		"base":  base,
+		"track": pumpdump.track,
 	})
 }
 
 /*
-Run samples microstructure on a fixed interval.
+ApplyFeedback nudges precursor calibration from settled prediction error.
 */
-func (pumpdump *PumpDump) Run() {
-	pumpdump.scanner.Run(pumpdump.scan)
+func (pumpdump *PumpDump) ApplyFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != pumpdump.Source() {
+		return
+	}
+
+	pumpdump.track.ApplyPredictionFeedback(feedback)
 }
 
 /*
-Measure yields queued measurements for the trader.
+Scan samples microstructure for the current scheduler tick.
 */
-func (pumpdump *PumpDump) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
-	return pumpdump.scanner.Measure(ctx)
-}
-
-/*
-Close stops rescoring.
-*/
-func (pumpdump *PumpDump) Close() error {
-	return pumpdump.scanner.Close()
-}
-
-func (pumpdump *PumpDump) scan(now time.Time) {
-	pumpdump.ingest(now)
+func (pumpdump *PumpDump) Scan(now time.Time) error {
+	pumpdump.track.BeginScan()
+	pumpdump.refreshTracks(now)
 	pumpdump.track.RollBuckets(now)
 
-	for _, symbol := range pumpdump.symbols {
-		confidence, reason := pumpdump.evaluate(symbol)
-
-		if confidence <= 0 {
-			continue
-		}
-
-		pair, ok := pumpdump.pairs[symbol]
-
-		if !ok {
-			continue
-		}
-
-		if reason == "" {
-			reason = "precursor"
-		}
-
-		pumpdump.scanner.Enqueue(engine.Measurement{
-			Type:       engine.Pump,
-			Source:     "pumpdump",
-			Regime:     "pump",
-			Reason:     reason,
-			Pairs:      []asset.Pair{pair},
-			Confidence: confidence,
-			Timeframe:  engine.Timeframe{Start: now.UnixNano(), End: now.UnixNano()},
-		})
-	}
+	return pumpdump.ScanSymbols(now, func(
+		symbol string, snapshot engine.Snapshot,
+	) (engine.Measurement, bool, error) {
+		return pumpdump.evaluate(symbol, snapshot, now)
+	})
 }
 
-func (pumpdump *PumpDump) ingest(now time.Time) {
-	for _, symbol := range pumpdump.symbols {
-		last, lastOK := pumpdump.ticker.Last(symbol)
-		volumeBase, volumeOK := pumpdump.ticker.VolumeBase(symbol)
+func (pumpdump *PumpDump) refreshTracks(now time.Time) {
+	for _, symbol := range pumpdump.Symbols() {
+		snapshot := pumpdump.Ingest().Read(symbol)
 
-		if lastOK && volumeOK {
-			pumpdump.track.ApplyTicker(symbol, last, volumeBase)
+		if snapshot.LastOK && snapshot.VolumeOK {
+			pumpdump.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
 		}
 
-		batchVolume, batchOK := pumpdump.trades.BatchVolume(symbol)
-
-		if batchOK {
-			pumpdump.track.AddVolume(symbol, batchVolume)
+		if snapshot.BatchOK {
+			pumpdump.track.AddVolume(symbol, snapshot.BatchVolume)
 		}
 
-		spreadBPS, spreadOK := pumpdump.book.SpreadBPS(symbol)
-
-		if spreadOK {
-			pumpdump.track.RecordSpread(symbol, spreadBPS)
+		if snapshot.SpreadOK {
+			pumpdump.track.RecordSpread(symbol, snapshot.SpreadBPS)
 		}
-
-		_ = now
 	}
+
+	_ = now
 }
 
-func (pumpdump *PumpDump) evaluate(symbol string) (float64, string) {
+func (pumpdump *PumpDump) evaluate(
+	symbol string,
+	snapshot engine.Snapshot,
+	now time.Time,
+) (engine.Measurement, bool, error) {
+	rawConfidence, reason := pumpdump.score(symbol, snapshot)
+
+	if rawConfidence <= 0 {
+		return engine.Measurement{}, false, nil
+	}
+
+	if reason == "" {
+		reason = "precursor"
+	}
+
+	confidence, expectedReturn, runway, reason := pumpdump.track.FinalizeMeasurement(
+		symbol, rawConfidence, now, reason,
+	)
+
+	if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+		return engine.Measurement{}, false, nil
+	}
+
+	return engine.Measurement{
+		Type:           engine.Pump,
+		Regime:         "pump",
+		Reason:         reason,
+		Confidence:     confidence,
+		ExpectedReturn: expectedReturn,
+		Runway:         runway,
+	}, true, nil
+}
+
+func (pumpdump *PumpDump) score(symbol string, snapshot engine.Snapshot) (float64, string) {
 	if !pumpdump.track.PassesLiquidity(symbol) {
 		return 0, ""
 	}
 
 	volumeRatio, volumeSpike := pumpdump.track.VolumeSpike(symbol)
-	imbalance, bookOK := pumpdump.book.Imbalance(symbol)
-	buyPressure, tradeOK := pumpdump.trades.BuyPressure(symbol)
 
-	if !bookOK || !tradeOK {
+	if !snapshot.ImbalanceOK || !snapshot.PressureOK {
 		return 0, ""
 	}
 
-	micro := precursorScore(imbalance, buyPressure)
+	micro := precursorScore(snapshot.Imbalance, snapshot.BuyPressure)
 
 	if micro <= 0 || volumeRatio <= 0 {
 		return 0, ""
 	}
 
-	confidence := volumeRatio * micro
+	calibration := pumpdump.track.CalibrationScale(symbol)
+
+	if calibration <= 0 {
+		return 0, ""
+	}
+
+	confidence := volumeRatio * micro * calibration
 	reason := "precursor"
 
 	if !volumeSpike {
@@ -169,9 +193,7 @@ func (pumpdump *PumpDump) evaluate(symbol string) (float64, string) {
 		return confidence, reason
 	}
 
-	spreadBPS, spreadOK := pumpdump.book.SpreadBPS(symbol)
-
-	if !spreadOK || !pumpdump.track.SpreadTight(symbol, spreadBPS) {
+	if !snapshot.SpreadOK || !pumpdump.track.SpreadTight(symbol, snapshot.SpreadBPS) {
 		return confidence, reason
 	}
 

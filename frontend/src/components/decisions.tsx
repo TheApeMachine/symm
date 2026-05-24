@@ -2,12 +2,15 @@ import {
 	useSymmConnected,
 	useSymmDecisionTrace,
 	useSymmEnginePulse,
-	useSymmEvaluation,
-	useSymmRankedEvaluations,
+	useSymmEntryLine,
+	useSymmEvaluations,
 } from "#/lib/symm/use-symm-ui";
 import { SidebarSection } from "./sidebar";
-import { whyLabel, type DecisionTraceEvent } from "#/lib/symm/events";
-import type { SymbolEvaluation } from "#/lib/symm/evaluation-store";
+import {
+	whyLabel,
+	type DecisionTraceEvent,
+	type EvaluationRow,
+} from "#/lib/symm/events";
 import { EmptyHint } from "./hint";
 import { VerdictBadge } from "#/components/verdict";
 
@@ -15,23 +18,23 @@ export const DecisionsPanel = () => {
 	const connected = useSymmConnected();
 	const decisionTrace = useSymmDecisionTrace();
 	const pulse = useSymmEnginePulse();
-	const evaluation = useSymmEvaluation();
-	const ranked = useSymmRankedEvaluations();
+	const evaluations = useSymmEvaluations();
+	const entryLine = useSymmEntryLine();
 
-	const hasEvaluations = ranked.length > 0;
+	const hasEvaluations = evaluations.length > 0;
 
 	return (
 		<SidebarSection title="Decisions" fill className="min-w-0">
 			{pulse ? <EnginePulseStrip pulse={pulse} connected={connected} /> : null}
-			{evaluation.line > 0 ? (
+			{entryLine.line > 0 ? (
 				<EntryLineStrip
-					line={evaluation.line}
-					median={evaluation.median}
-					mad={evaluation.mad}
+					line={entryLine.line}
+					median={entryLine.median}
+					mad={entryLine.mad}
 				/>
 			) : null}
 			{hasEvaluations ? (
-				<EvaluationTable evaluations={ranked} />
+				<EvaluationTable evaluations={evaluations} />
 			) : decisionTrace?.decisions?.length ? (
 				<DecisionTable decisions={decisionTrace.decisions} />
 			) : pulse?.signals?.length ? (
@@ -135,11 +138,7 @@ export const DecisionTable = ({ decisions }: Props) => {
 	);
 };
 
-const EvaluationTable = ({
-	evaluations,
-}: {
-	evaluations: SymbolEvaluation[];
-}) => (
+const EvaluationTable = ({ evaluations }: { evaluations: EvaluationRow[] }) => (
 	<div className="overflow-auto">
 		<table className="w-full text-left text-xs">
 			<thead className="sticky top-0 bg-(--dash-panel) text-(--dash-muted)">
@@ -164,7 +163,7 @@ const EvaluationTable = ({
 							) : null}
 						</td>
 						<td className="hidden max-w-48 truncate px-2 py-1.5 text-(--dash-muted) md:table-cell">
-							{Object.values(row.signals)
+							{(row.signals ?? [])
 								.map(
 									(reading) =>
 										`${reading.source} ${reading.confidence.toFixed(2)}`,

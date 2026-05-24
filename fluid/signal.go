@@ -2,7 +2,6 @@ package fluid
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -17,17 +16,16 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	scanner   *engine.Scanner
-	book      *kbook.Book
-	trades    *trades.Trades
-	ticker    *kticker.Ticker
+	*engine.SignalBase
 	track     *TrackStore
-	pairs     map[string]asset.Pair
-	symbols   []string
 	fieldSink FieldSink
 }
 
 var _ engine.Signal = (*Fluid)(nil)
+
+var _ engine.FeedbackReceiver = (*Fluid)(nil)
+
+var _ engine.LiveScoreReader = (*Fluid)(nil)
 
 /*
 NewFluid wires live Kraken websocket observers into the engine signal.
@@ -39,25 +37,31 @@ func NewFluid(
 	tickerObserver *kticker.Ticker,
 	pairs map[string]asset.Pair,
 	symbols []string,
-	interval time.Duration,
+	watch *engine.SymbolWatch,
 ) (*Fluid, error) {
+	base, err := engine.NewSignalBase(
+		ctx,
+		"fluid",
+		book,
+		tradesObserver,
+		tickerObserver,
+		pairs,
+		symbols,
+		watch,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
 	fluid := &Fluid{
-		scanner: engine.NewScanner(ctx, interval),
-		book:    book,
-		trades:  tradesObserver,
-		ticker:  tickerObserver,
-		track:   NewTrackStore(),
-		pairs:   pairs,
-		symbols: symbols,
+		SignalBase: base,
+		track:      NewTrackStore(),
 	}
 
 	return fluid, errnie.Require(map[string]any{
-		"scanner": fluid.scanner,
-		"book":    book,
-		"trades":  tradesObserver,
-		"ticker":  tickerObserver,
-		"track":   fluid.track,
-		"pairs":   pairs,
+		"base":  base,
+		"track": fluid.track,
 	})
 }
 
@@ -83,87 +87,109 @@ func (fluid *Fluid) WarmingCount() int {
 }
 
 /*
-Run advances the fluid field on a fixed interval.
+LiveScore returns the current fluid gauge reading from track and field state.
 */
-func (fluid *Fluid) Run() {
-	fluid.scanner.Run(fluid.scan)
+func (fluid *Fluid) LiveScore() float64 {
+	peak := fluid.track.PeakLiveConfidence()
+
+	if peak > 0 {
+		return peak
+	}
+
+	return fieldGaugeScore(fluid.FieldSnapshot().Field)
+}
+
+func (fluid *Fluid) PeakReading() engine.LiveReading {
+	symbol, score := fluid.track.PeakSymbolScore()
+
+	if score <= 0 {
+		return engine.LiveReading{Score: fluid.LiveScore()}
+	}
+
+	return engine.LiveReading{
+		Symbol: symbol,
+		Score:  score,
+	}
 }
 
 /*
-Measure yields queued measurements for the trader.
+ApplyFeedback nudges fluid source/shock calibration from settled prediction error.
 */
-func (fluid *Fluid) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
-	return fluid.scanner.Measure(ctx)
+func (fluid *Fluid) ApplyFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != fluid.Source() {
+		return
+	}
+
+	fluid.track.ApplyPredictionFeedback(feedback)
 }
 
 /*
-Close stops field sampling.
+Scan advances the fluid field for the current scheduler tick.
 */
-func (fluid *Fluid) Close() error {
-	return fluid.scanner.Close()
-}
+func (fluid *Fluid) Scan(now time.Time) error {
+	fluid.track.BeginScan()
 
-func (fluid *Fluid) scan(now time.Time) {
-	for _, symbol := range fluid.symbols {
-		price, priceOK := fluid.ticker.Last(symbol)
-		volumeBase, volumeOK := fluid.ticker.VolumeBase(symbol)
-
-		if priceOK && volumeOK && price > 0 {
-			fluid.track.ApplyTicker(symbol, price, volumeBase)
+	err := fluid.ScanSymbols(now, func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
+		if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
+			fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
 		}
 
-		confidence, reason := fluid.evaluate(symbol, now)
+		confidence, expectedReturn, runway, reason := fluid.evaluate(symbol, snapshot, now)
 
-		if confidence <= 0 {
-			continue
+		if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+			return engine.Measurement{}, false, nil
 		}
 
-		pair, ok := fluid.pairs[symbol]
+		return engine.Measurement{
+			Type:           engine.Flow,
+			Regime:         "flow",
+			Reason:         reason,
+			Confidence:     confidence,
+			ExpectedReturn: expectedReturn,
+			Runway:         runway,
+		}, true, nil
+	})
 
-		if !ok {
-			continue
-		}
-
-		fluid.scanner.Enqueue(engine.Measurement{
-			Type:       engine.Flow,
-			Source:     "fluid",
-			Regime:     "flow",
-			Reason:     reason,
-			Pairs:      []asset.Pair{pair},
-			Confidence: confidence,
-			Timeframe:  engine.Timeframe{Start: now.UnixNano(), End: now.UnixNano()},
-		})
+	if err != nil {
+		return err
 	}
 
 	if fluid.fieldSink != nil {
 		fluid.fieldSink(fluid.FieldSnapshot())
 	}
+
+	return nil
 }
 
-func (fluid *Fluid) evaluate(symbol string, now time.Time) (float64, string) {
+func (fluid *Fluid) evaluate(
+	symbol string, snapshot engine.Snapshot, now time.Time,
+) (float64, float64, time.Duration, string) {
 	if !fluid.track.PassesLiquidity(symbol) {
-		return 0, ""
+		return 0, 0, 0, ""
 	}
 
-	density, densityOK := fluid.book.Density(symbol)
-	spreadBPS, spreadOK := fluid.book.SpreadBPS(symbol)
-	price, priceOK := fluid.ticker.Last(symbol)
-	batchVolume, batchOK := fluid.trades.BatchVolume(symbol)
-	buyPressure, pressureOK := fluid.trades.BuyPressure(symbol)
-
-	if !densityOK || !spreadOK || !priceOK || !batchOK || !pressureOK {
-		return 0, ""
+	if !snapshot.DensityOK || !snapshot.SpreadOK || !snapshot.LastOK ||
+		!snapshot.BatchOK || !snapshot.PressureOK {
+		return 0, 0, 0, ""
 	}
 
-	if density <= 0 || spreadBPS <= 0 || price <= 0 || batchVolume <= 0 {
-		return 0, ""
+	if snapshot.Density <= 0 || snapshot.SpreadBPS <= 0 || snapshot.Last <= 0 || snapshot.BatchVolume <= 0 {
+		return 0, 0, 0, ""
 	}
 
-	flow := batchVolume
+	flow := snapshot.BatchVolume
 
-	if buyPressure > 0 {
-		flow = batchVolume * (buyPressure + 1) / 2
+	if snapshot.BuyPressure > 0 {
+		flow = snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
 	}
 
-	return fluid.track.Sample(symbol, density, price, spreadBPS, flow, buyPressure, now)
+	return fluid.track.Sample(
+		symbol,
+		snapshot.Density,
+		snapshot.Last,
+		snapshot.SpreadBPS,
+		flow,
+		snapshot.BuyPressure,
+		now,
+	)
 }

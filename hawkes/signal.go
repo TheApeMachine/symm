@@ -2,7 +2,6 @@ package hawkes
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -15,19 +14,19 @@ import (
 )
 
 /*
-Hawkes detects self-exciting buy-side trade clustering via exponential kernel intensity.
+Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes model.
 */
 type Hawkes struct {
-	scanner *engine.Scanner
-	book    *kbook.Book
-	trades  *trades.Trades
-	ticker  *kticker.Ticker
-	track   *TrackStore
-	pairs   map[string]asset.Pair
-	symbols []string
+	*engine.SignalBase
+	trades *trades.Trades
+	track  *TrackStore
 }
 
 var _ engine.Signal = (*Hawkes)(nil)
+
+var _ engine.FeedbackReceiver = (*Hawkes)(nil)
+
+var _ engine.LiveScoreReader = (*Hawkes)(nil)
 
 /*
 NewHawkes wires live Kraken websocket observers into the engine signal.
@@ -39,130 +38,154 @@ func NewHawkes(
 	tickerObserver *kticker.Ticker,
 	pairs map[string]asset.Pair,
 	symbols []string,
-	interval time.Duration,
+	watch *engine.SymbolWatch,
 ) (*Hawkes, error) {
+	base, err := engine.NewSignalBase(
+		ctx,
+		"hawkes",
+		book,
+		tradesObserver,
+		tickerObserver,
+		pairs,
+		symbols,
+		watch,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
 	hawkes := &Hawkes{
-		scanner: engine.NewScanner(ctx, interval),
-		book:    book,
-		trades:  tradesObserver,
-		ticker:  tickerObserver,
-		track:   NewTrackStore(),
-		pairs:   pairs,
-		symbols: symbols,
+		SignalBase: base,
+		trades:     tradesObserver,
+		track:      NewTrackStore(),
 	}
 
 	return hawkes, errnie.Require(map[string]any{
-		"scanner": hawkes.scanner,
-		"book":    book,
-		"trades":  tradesObserver,
-		"ticker":  tickerObserver,
-		"track":   hawkes.track,
-		"pairs":   pairs,
+		"base":   base,
+		"trades": tradesObserver,
+		"track":  hawkes.track,
 	})
 }
 
 /*
-Run recalibrates Hawkes intensity on a fixed interval.
+Scan recalibrates Hawkes intensity for the current scheduler tick and enqueues
+unit-scale measurements for Measure to drain.
 */
-func (hawkes *Hawkes) Run() {
-	hawkes.scanner.Run(hawkes.scan)
+func (hawkes *Hawkes) Scan(now time.Time) error {
+	hawkes.track.BeginScan()
+	hawkes.refreshTracks()
+
+	return hawkes.ScanSymbols(now, func(
+		symbol string, snapshot engine.Snapshot,
+	) (engine.Measurement, bool, error) {
+		confidence, expectedReturn, runway := hawkes.evaluate(symbol, snapshot, now)
+
+		if confidence <= 0 || expectedReturn <= 0 {
+			return engine.Measurement{}, false, nil
+		}
+
+		return engine.Measurement{
+			Type:           engine.Momentum,
+			Regime:         "momentum",
+			Reason:         "cluster_buy",
+			Confidence:     confidence,
+			ExpectedReturn: expectedReturn,
+			Runway:         runway,
+		}, true, nil
+	})
 }
 
 /*
-Measure yields queued measurements for the trader.
+LiveScore returns the current Hawkes gauge reading from track state.
 */
-func (hawkes *Hawkes) Measure(ctx context.Context) iter.Seq[engine.Measurement] {
-	return hawkes.scanner.Measure(ctx)
+func (hawkes *Hawkes) LiveScore() float64 {
+	return hawkes.track.PeakLiveConfidence()
+}
+
+func (hawkes *Hawkes) PeakReading() engine.LiveReading {
+	symbol, score := hawkes.track.PeakSymbolScore()
+
+	return engine.LiveReading{
+		Symbol: symbol,
+		Score:  score,
+	}
 }
 
 /*
-Close stops rescoring.
+ApplyFeedback nudges Hawkes excitation parameters from settled prediction error.
 */
-func (hawkes *Hawkes) Close() error {
-	return hawkes.scanner.Close()
-}
-
-func (hawkes *Hawkes) scan(now time.Time) {
-	hawkes.ingest()
-
-	for _, symbol := range hawkes.symbols {
-		confidence := hawkes.evaluate(symbol, now)
-
-		if confidence <= 0 {
-			continue
-		}
-
-		pair, ok := hawkes.pairs[symbol]
-
-		if !ok {
-			continue
-		}
-
-		hawkes.scanner.Enqueue(engine.Measurement{
-			Type:       engine.Momentum,
-			Source:     "hawkes",
-			Regime:     "momentum",
-			Reason:     "cluster_buy",
-			Pairs:      []asset.Pair{pair},
-			Confidence: confidence,
-			Timeframe:  engine.Timeframe{Start: now.UnixNano(), End: now.UnixNano()},
-		})
+func (hawkes *Hawkes) ApplyFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != hawkes.Source() {
+		return
 	}
+
+	hawkes.track.ApplyPredictionFeedback(feedback)
 }
 
-func (hawkes *Hawkes) ingest() {
-	for _, symbol := range hawkes.symbols {
-		last, lastOK := hawkes.ticker.Last(symbol)
-		volumeBase, volumeOK := hawkes.ticker.VolumeBase(symbol)
+func (hawkes *Hawkes) refreshTracks() {
+	for _, symbol := range hawkes.Symbols() {
+		snapshot := hawkes.Ingest().Read(symbol)
 
-		if lastOK && volumeOK {
-			hawkes.track.ApplyTicker(symbol, last, volumeBase)
+		if snapshot.LastOK && snapshot.VolumeOK {
+			hawkes.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
 		}
 	}
 }
 
-func (hawkes *Hawkes) evaluate(symbol string, now time.Time) float64 {
+func (hawkes *Hawkes) evaluate(
+	symbol string, snapshot engine.Snapshot, now time.Time,
+) (float64, float64, time.Duration) {
 	if !hawkes.track.PassesLiquidity(symbol) {
-		return 0
+		return 0, 0, 0
 	}
 
-	windowStart := now.Add(-hawkesTradeWindow)
-	ticks, ok := hawkes.trades.RecentTicks(symbol, windowStart)
+	allTicks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
 
-	if !ok {
-		return 0
+	if !ok || len(allTicks) == 0 {
+		return 0, 0, 0
 	}
 
-	buyTimes, sellTimes := splitSideEvents(ticks, windowStart, now)
-	buyFit := hawkes.track.FitSide(symbol, "buy", buyTimes, now)
-	sellFit := hawkes.track.FitSide(symbol, "sell", sellTimes, now)
+	context, buyTimes, sellTimes, ok := fitContextFromTicks(allTicks, time.Time{}, now)
 
-	if buyFit.mu <= 0 {
-		return 0
+	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
+		return 0, 0, 0
 	}
 
-	asymmetry := buySellAsymmetry(buyFit, sellFit)
-	confidence := excitationConfidence(buyFit, asymmetry)
+	fit := hawkes.track.FitBivariate(symbol, buyTimes, sellTimes, now)
 
-	if confidence <= 0 {
-		return 0
+	if fit.MuBuy <= 0 {
+		return 0, 0, 0
 	}
 
-	imbalance, bookOK := hawkes.book.Imbalance(symbol)
+	asymmetry := buySellAsymmetry(fit)
+	baselineFence := hawkes.track.BaselineIntensityFence(symbol)
+	rawConfidence := excitationConfidence(fit, asymmetry, baselineFence)
+	runway := excitationRunway(fit)
 
-	if !bookOK || imbalance <= 0 {
-		return 0
+	if rawConfidence <= 0 || runway <= 0 {
+		return 0, 0, 0
 	}
 
-	bookSide := imbalance
+	if !snapshot.ImbalanceOK || snapshot.Imbalance <= 0 {
+		return 0, 0, 0
+	}
+
+	if !snapshot.SpreadOK || snapshot.SpreadBPS <= 0 {
+		return 0, 0, 0
+	}
+
+	bookSide := snapshot.Imbalance
 
 	if bookSide > 1 {
 		bookSide = 1
 	}
 
-	score := confidence * bookSide
+	score := rawConfidence * bookSide
+	confidence := hawkes.track.RecordScore(symbol, score)
+	expectedReturn := asymmetry * (snapshot.SpreadBPS / 10000)
 
-	return hawkes.track.RecordScore(symbol, score)
+	return confidence, expectedReturn, runway
 }
 
 func splitSideEvents(

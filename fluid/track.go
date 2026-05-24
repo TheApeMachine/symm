@@ -1,8 +1,11 @@
 package fluid
 
 import (
+	"math"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/engine"
 )
 
 const fieldHistoryCap = 64
@@ -29,6 +32,8 @@ type SymbolField struct {
 	lastSample        fieldSample
 	lastAt            time.Time
 	hasPrior          bool
+	calibrator        engine.PredictionCalibrator
+	liveScore         float64
 }
 
 /*
@@ -37,6 +42,18 @@ NewTrackStore creates an empty fluid track store.
 func NewTrackStore() *TrackStore {
 	return &TrackStore{
 		bySymbol: make(map[string]*SymbolField),
+	}
+}
+
+/*
+BeginScan clears per-tick live gauge scores before the next scan set runs.
+*/
+func (trackStore *TrackStore) BeginScan() {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	for _, track := range trackStore.bySymbol {
+		track.liveScore = 0
 	}
 }
 
@@ -56,13 +73,28 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 }
 
 /*
+ApplyPredictionFeedback updates field-parameter calibration from one settled forecast.
+*/
+func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
+	}
+
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track := trackStore.ensure(feedback.Symbol)
+	track.calibrator.Apply(feedback)
+}
+
+/*
 Sample ingests one fluid field observation for a symbol.
 */
 func (trackStore *TrackStore) Sample(
 	symbol string,
 	density, price, spreadBPS, flow, buyPressure float64,
 	now time.Time,
-) (float64, string) {
+) (float64, float64, time.Duration, string) {
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
@@ -87,11 +119,21 @@ func (trackStore *TrackStore) Sample(
 		track.lastSample = current
 		track.lastAt = now
 		track.hasPrior = true
-		return 0, ""
+
+		return 0, 0, 0, ""
 	}
 
+	elapsed := now.Sub(track.lastAt).Seconds()
 	source := continuitySource(current, track.lastSample)
 	shock := burgersShock(current, track.lastSample)
+	calibration := track.calibrator.Scale()
+
+	if calibration <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	source *= calibration
+	shock *= calibration
 
 	sourceFence := ratioFence(track.sourceHistory)
 	shockFence := ratioFence(track.shockHistory)
@@ -99,7 +141,7 @@ func (trackStore *TrackStore) Sample(
 	quiet := quietVelocity(track.velocities, current.velocity)
 	accumulating := quiet && sourceFence > 0 && source > sourceFence
 	shocking := shockFence > 0 && shock > shockFence
-	confidence := fieldConfidence(source, shock, buyPressure, quiet)
+	rawConfidence := fieldConfidence(source, shock, buyPressure, quiet)
 	reason := ""
 
 	if accumulating {
@@ -133,9 +175,22 @@ func (trackStore *TrackStore) Sample(
 	track.lastPrice = price
 	track.lastSample = current
 	track.lastAt = now
-	track.recordConfidence(confidence)
 
-	return confidence, reason
+	if rawConfidence <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	runway := fieldRunway(spreadBPS, current.velocity, elapsed)
+	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	track.recordConfidence(rawConfidence)
+	track.liveScore = normalized
+	expectedReturn := current.velocity * runway.Seconds()
+
+	if math.Abs(expectedReturn) <= 0 && spreadBPS > 0 && buyPressure > 0 {
+		expectedReturn = (spreadBPS / 10000) * buyPressure
+	}
+
+	return normalized, expectedReturn, runway, reason
 }
 
 /*
@@ -204,6 +259,46 @@ func (trackStore *TrackStore) WarmingCount() int {
 	return count
 }
 
+/*
+PeakLiveConfidence returns the highest unit-scale score across all symbols.
+*/
+func (trackStore *TrackStore) PeakLiveConfidence() float64 {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	peak := 0.0
+
+	for _, track := range trackStore.bySymbol {
+		if track.liveScore > peak {
+			peak = track.liveScore
+		}
+	}
+
+	return peak
+}
+
+/*
+PeakSymbolScore returns the symbol with the highest live score.
+*/
+func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	bestSymbol := ""
+	bestScore := 0.0
+
+	for symbol, track := range trackStore.bySymbol {
+		if track.liveScore <= bestScore {
+			continue
+		}
+
+		bestScore = track.liveScore
+		bestSymbol = symbol
+	}
+
+	return bestSymbol, bestScore
+}
+
 func (track *SymbolField) trimHistories() {
 	if len(track.sourceHistory) > fieldHistoryCap {
 		track.sourceHistory = track.sourceHistory[len(track.sourceHistory)-fieldHistoryCap:]
@@ -239,6 +334,7 @@ func (trackStore *TrackStore) ensure(symbol string) *SymbolField {
 		sourceHistory:     make([]float64, 0, fieldHistoryCap),
 		shockHistory:      make([]float64, 0, fieldHistoryCap),
 		confidenceHistory: make([]float64, 0, fieldHistoryCap),
+		calibrator:        engine.NewPredictionCalibrator(),
 	}
 	trackStore.bySymbol[symbol] = track
 

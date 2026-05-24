@@ -4,6 +4,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/engine"
 )
 
 const (
@@ -28,14 +30,29 @@ type TrackStore struct {
 SymbolTrack accumulates five-minute buckets used by the article trigger.
 */
 type SymbolTrack struct {
-	volumes         []float64
-	spreads         []float64
-	priceMoves      []float64
-	bucketVolume    float64
-	bucketOpenPrice float64
-	lastPrice       float64
-	dailyQuoteVol   float64
-	bucketStart     time.Time
+	volumes           []float64
+	spreads           []float64
+	priceMoves        []float64
+	confidenceHistory []float64
+	bucketVolume      float64
+	bucketOpenPrice   float64
+	lastPrice         float64
+	dailyQuoteVol     float64
+	bucketStart       time.Time
+	calibrator        engine.PredictionCalibrator
+	liveScore         float64
+}
+
+/*
+BeginScan clears per-tick live gauge scores before the next scan set runs.
+*/
+func (trackStore *TrackStore) BeginScan() {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	for _, track := range trackStore.bySymbol {
+		track.liveScore = 0
+	}
 }
 
 /*
@@ -142,6 +159,147 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 }
 
 /*
+ApplyPredictionFeedback updates precursor calibration from one settled forecast.
+*/
+func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
+	}
+
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track := trackStore.ensure(feedback.Symbol)
+	track.calibrator.Apply(feedback)
+}
+
+/*
+FinalizeMeasurement normalizes raw confidence and derives the active bucket runway.
+*/
+func (trackStore *TrackStore) FinalizeMeasurement(
+	symbol string, rawConfidence float64, now time.Time, reason string,
+) (float64, float64, time.Duration, string) {
+	if rawConfidence <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track, ok := trackStore.bySymbol[symbol]
+
+	if !ok {
+		return 0, 0, 0, ""
+	}
+
+	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	track.liveScore = normalized
+
+	runway := track.pumpRunway(now)
+
+	if runway <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	track.recordConfidence(rawConfidence)
+	expectedReturn := track.expectedReturnOverRunway(runway)
+
+	return normalized, expectedReturn, runway, reason
+}
+
+/*
+PeakLiveConfidence returns the highest unit-scale score across all symbols.
+*/
+func (trackStore *TrackStore) PeakLiveConfidence() float64 {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	peak := 0.0
+
+	for _, track := range trackStore.bySymbol {
+		if track.liveScore > peak {
+			peak = track.liveScore
+		}
+	}
+
+	return peak
+}
+
+/*
+PeakSymbolScore returns the symbol with the highest live score.
+*/
+func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	bestSymbol := ""
+	bestScore := 0.0
+
+	for symbol, track := range trackStore.bySymbol {
+		if track.liveScore <= bestScore {
+			continue
+		}
+
+		bestScore = track.liveScore
+		bestSymbol = symbol
+	}
+
+	return bestSymbol, bestScore
+}
+
+func (track *SymbolTrack) expectedReturnOverRunway(runway time.Duration) float64 {
+	if len(track.priceMoves) < minPriceHistory || runway <= 0 {
+		return 0
+	}
+
+	quietLine := median(track.priceMoves)
+
+	return quietLine * (runway.Seconds() / bucketWindow.Seconds())
+}
+
+func (track *SymbolTrack) pumpRunway(now time.Time) time.Duration {
+	if track.bucketStart.IsZero() {
+		return 0
+	}
+
+	remaining := bucketWindow - now.Sub(track.bucketStart)
+
+	if remaining <= 0 {
+		return 0
+	}
+
+	return remaining
+}
+
+func (track *SymbolTrack) recordConfidence(confidence float64) {
+	if confidence <= 0 {
+		return
+	}
+
+	track.confidenceHistory = append(track.confidenceHistory, confidence)
+
+	if len(track.confidenceHistory) > volumeHistoryCap {
+		track.confidenceHistory = track.confidenceHistory[len(track.confidenceHistory)-volumeHistoryCap:]
+	}
+}
+
+/*
+CalibrationScale returns the live precursor parameter multiplier for one symbol.
+*/
+func (trackStore *TrackStore) CalibrationScale(symbol string) float64 {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track, ok := trackStore.bySymbol[symbol]
+
+	if !ok {
+		return 1
+	}
+
+	return track.calibrator.Scale()
+}
+
+/*
 VolumeSpike reports whether current bucket volume exceeds the symbol's own ratio fence.
 */
 func (trackStore *TrackStore) VolumeSpike(symbol string) (float64, bool) {
@@ -219,9 +377,11 @@ func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
 	}
 
 	track = &SymbolTrack{
-		volumes:    make([]float64, 0, volumeHistoryCap),
-		spreads:    make([]float64, 0, spreadHistoryCap),
-		priceMoves: make([]float64, 0, priceHistoryCap),
+		volumes:           make([]float64, 0, volumeHistoryCap),
+		spreads:           make([]float64, 0, spreadHistoryCap),
+		priceMoves:        make([]float64, 0, priceHistoryCap),
+		confidenceHistory: make([]float64, 0, volumeHistoryCap),
+		calibrator:        engine.NewPredictionCalibrator(),
 	}
 	trackStore.bySymbol[symbol] = track
 

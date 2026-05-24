@@ -32,7 +32,7 @@ func (stream *MarketStream) Emit(event map[string]any) {
 		return
 	}
 
-	stream.hub.Emit(event)
+	stream.hub.Emit(omitEmptyCollections(event))
 }
 
 /*
@@ -54,14 +54,14 @@ func (stream *MarketStream) PriceTick(
 	}
 
 	stream.Emit(map[string]any{
-		"event":            "price_tick",
-		"ts":               now,
-		"symbol":           symbol,
-		"last":             last,
-		"bid":              bid,
-		"ask":              ask,
-		"change_pct_24h":   changePct,
-		"at":               at,
+		"event":          "price_tick",
+		"ts":             now,
+		"symbol":         symbol,
+		"last":           last,
+		"bid":            bid,
+		"ask":            ask,
+		"change_pct_24h": changePct,
+		"at":             at,
 	})
 }
 

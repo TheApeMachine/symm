@@ -30,7 +30,8 @@ type FieldSnapshot struct {
 }
 
 /*
-FieldAggregate holds aggregate fluid scalars for the surface chart.
+FieldAggregate holds cross-section-normalized fluid scalars for the dashboard.
+Each value is median/MAD activity for that metric across sampled symbols.
 */
 type FieldAggregate struct {
 	Div  float64 `json:"div"`
@@ -44,33 +45,52 @@ type FieldAggregate struct {
 FieldSnapshot builds a UI field snapshot from the latest per-symbol samples.
 */
 func (fluid *Fluid) FieldSnapshot() FieldSnapshot {
-	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.ticker)
-	aggregate := FieldAggregate{}
-
-	if len(rows) == 0 {
-		return FieldSnapshot{Symbols: rows}
-	}
-
-	for _, row := range rows {
-		aggregate.Div += row.Div
-		aggregate.Vort += row.Vort
-		aggregate.Turb += row.Turb
-		aggregate.Visc += row.Visc
-		aggregate.Re += row.Re
-	}
-
-	count := float64(len(rows))
-	aggregate.Div /= count
-	aggregate.Vort /= count
-	aggregate.Turb /= count
-	aggregate.Visc /= count
-	aggregate.Re /= count
+	rows := fluid.track.SnapshotRows(fluid.Symbols(), fluid.Ingest().Ticker())
+	aggregate, sampledCount := aggregateFieldRows(rows)
 
 	return FieldSnapshot{
-		SymbolCount: len(rows),
+		SymbolCount: sampledCount,
 		Field:       aggregate,
 		Symbols:     rows,
 	}
+}
+
+func aggregateFieldRows(rows []SymbolSnapshot) (FieldAggregate, int) {
+	divValues := make([]float64, 0, len(rows))
+	vortValues := make([]float64, 0, len(rows))
+	turbValues := make([]float64, 0, len(rows))
+	viscValues := make([]float64, 0, len(rows))
+	reValues := make([]float64, 0, len(rows))
+
+	for _, row := range rows {
+		if !rowHasFluidSample(row) {
+			continue
+		}
+
+		divValues = append(divValues, row.Div)
+		vortValues = append(vortValues, row.Vort)
+		turbValues = append(turbValues, row.Turb)
+		viscValues = append(viscValues, row.Visc)
+		reValues = append(reValues, row.Re)
+	}
+
+	sampledCount := len(divValues)
+
+	if sampledCount == 0 {
+		return FieldAggregate{}, 0
+	}
+
+	return FieldAggregate{
+		Div:  robustCrossSectionActivity(divValues),
+		Vort: robustCrossSectionActivity(vortValues),
+		Turb: robustCrossSectionActivity(turbValues),
+		Visc: robustCrossSectionActivity(viscValues),
+		Re:   robustCrossSectionActivity(reValues),
+	}, sampledCount
+}
+
+func rowHasFluidSample(row SymbolSnapshot) bool {
+	return row.Vol > 0 || row.Visc > 0
 }
 
 /*
@@ -132,12 +152,12 @@ func (trackStore *TrackStore) SnapshotRows(
 		rows = append(rows, SymbolSnapshot{
 			Symbol:    symbol,
 			ChangePct: changePct,
-			Vol:    sample.density,
-			Div:    source,
-			Vort:   velocity,
-			Turb:   shock,
-			Visc:   sample.viscosity,
-			Re:     reynolds,
+			Vol:       sample.density,
+			Div:       source,
+			Vort:      velocity,
+			Turb:      shock,
+			Visc:      sample.viscosity,
+			Re:        reynolds,
 		})
 	}
 

@@ -3,10 +3,12 @@ package trader
 import (
 	"context"
 	"iter"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
@@ -18,48 +20,11 @@ func (stub stubPrices) Last(symbol string) (float64, bool) {
 	return price, ok
 }
 
-func (stub stubPrices) Quote(symbol string) (last, bid, ask, changePct float64, ok bool) {
-	last, ok = stub[symbol]
-	if !ok {
-		return 0, 0, 0, 0, false
-	}
-
-	return last, last * 0.999, last * 1.001, 0, true
-}
-
-func (stub stubPrices) Timestamp(_ string) (string, bool) {
-	return time.Now().UTC().Format(time.RFC3339Nano), true
-}
-
 type stubSignal struct {
 	measurements []engine.Measurement
 }
 
-type stubEngineStats struct {
-	tickerReady func() int
-	symbolTotal func() int
-}
-
-func (stats stubEngineStats) TickerReadyCount() int  { return stats.tickerReady() }
-func (stats stubEngineStats) SymbolTotal() int       { return stats.symbolTotal() }
-func (stats stubEngineStats) FluidSampledCount() int { return 0 }
-func (stats stubEngineStats) FluidWarmingCount() int { return 0 }
-
-func primeDecideCrypto(crypto *Crypto) {
-	crypto.engineStats = stubEngineStats{
-		tickerReady: func() int { return 100 },
-		symbolTotal: func() int { return 100 },
-	}
-	crypto.pulseSeq.Store(int64(config.System.MinWarmPulses))
-}
-
-func decideForEntry(crypto *Crypto, batch []engine.Measurement) {
-	primeDecideCrypto(crypto)
-	crypto.decide(batch)
-	crypto.decide(batch)
-}
-
-func (stub *stubSignal) Run() {}
+func (stub *stubSignal) Scan(_ time.Time) error { return nil }
 
 func (stub *stubSignal) Measure(_ context.Context) iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
@@ -71,302 +36,309 @@ func (stub *stubSignal) Measure(_ context.Context) iter.Seq[engine.Measurement] 
 	}
 }
 
-func TestCryptoAppliesPumpMeasurement(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stub := &stubSignal{
-		measurements: []engine.Measurement{{
-			Type:       engine.Pump,
-			Regime:     "pump",
-			Reason:     "actual_pump",
-			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR", Base: "PUMP", Quote: "EUR"}},
-			Confidence: 0.8,
-		}},
-	}
-	prices := stubPrices{"PUMP/EUR": 1.0}
+func (stub *stubSignal) Source() string { return "stub" }
 
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
+func (stub *stubSignal) Stats() engine.QueueStats { return engine.QueueStats{} }
 
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
+type scoredSignal struct {
+	stubSignal
+	liveScore float64
+}
 
-	startBalance := wallet.Balance
+func (signal *scoredSignal) LiveScore() float64 {
+	return signal.liveScore
+}
 
-	crypto.tryEnter(tradeCandidate{
-		pair:       stub.measurements[0].Pairs[0],
-		symbol:     "PUMP/EUR",
-		confidence: stub.measurements[0].Confidence,
-		support:    1,
-		regime:     "pump",
-		reason:     "actual_pump",
-		measType:   engine.Pump,
-	}, stub.measurements[0].Confidence)
-
-	if wallet.Balance >= startBalance {
-		t.Fatalf("expected wallet debited, start=%v now=%v", startBalance, wallet.Balance)
-	}
-
-	hold := crypto.holds["PUMP/EUR"]
-	expectedNotional := 200 * config.System.MaxSlotPct / 100
-
-	if hold.notional != expectedNotional {
-		t.Fatalf("expected notional %.4f, got %.4f", expectedNotional, hold.notional)
-	}
-
-	if len(crypto.holds) != 1 {
-		t.Fatalf("expected one held position, got %d", len(crypto.holds))
+func (signal *scoredSignal) PeakReading() engine.LiveReading {
+	return engine.LiveReading{
+		Symbol: "PUMP/EUR",
+		Score:  signal.liveScore,
 	}
 }
 
-func TestCryptoAggregatesMultipleSignals(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	pair := asset.Pair{Wsname: "PUMP/EUR", Base: "PUMP", Quote: "EUR"}
-	first := &stubSignal{measurements: []engine.Measurement{{
-		Type: engine.Pump, Regime: "pump", Pairs: []asset.Pair{pair}, Confidence: 0.4,
-	}}}
-	second := &stubSignal{measurements: []engine.Measurement{{
-		Type: engine.Momentum, Regime: "momentum", Pairs: []asset.Pair{pair}, Confidence: 0.5,
-	}}}
-	prices := stubPrices{"PUMP/EUR": 1.0}
+type feedbackSignal struct {
+	stubSignal
+	feedback []engine.PredictionFeedback
+}
 
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), first, second)
+func (signal *feedbackSignal) ApplyFeedback(feedback engine.PredictionFeedback) {
+	signal.feedback = append(signal.feedback, feedback)
+}
 
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
+type scanSignal struct {
+	stubSignal
+	onScan func()
+}
+
+func (signal *scanSignal) Scan(now time.Time) error {
+	if signal.onScan != nil {
+		signal.onScan()
 	}
 
-	decideForEntry(crypto, append(first.measurements, second.measurements...))
+	return signal.stubSignal.Scan(now)
+}
 
-	hold, ok := crypto.holds["PUMP/EUR"]
-
-	if !ok {
-		t.Fatal("expected aggregated entry")
-	}
-
-	if hold.confidence != 0.9 {
-		t.Fatalf("expected combined confidence 0.9, got %v", hold.confidence)
-	}
-
-	if hold.regime != "pump" {
-		t.Fatalf("expected pump regime to win, got %q", hold.regime)
+func testMeasurement(expectedReturn float64, runway time.Duration) engine.Measurement {
+	return engine.Measurement{
+		Source:         "hawkes",
+		Type:           engine.Momentum,
+		Regime:         "momentum",
+		Reason:         "cluster_buy",
+		Pairs:          []asset.Pair{{Wsname: "PUMP/EUR"}},
+		Confidence:     0.5,
+		ExpectedReturn: expectedReturn,
+		Runway:         runway,
 	}
 }
 
-func TestCryptoEntersMomentumWithoutPump(t *testing.T) {
+func TestScanSignalsConcurrent(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	pair := asset.Pair{Wsname: "SCALP/EUR"}
-	stub := &stubSignal{measurements: []engine.Measurement{{
-		Type: engine.Momentum, Regime: "momentum", Reason: "cluster_buy",
-		Pairs: []asset.Pair{pair}, Confidence: 0.7,
-	}}}
-	prices := stubPrices{"SCALP/EUR": 2.0}
+	start := time.Unix(1_700_000_000, 0)
+	release := make(chan struct{})
 
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
+	var activeMu sync.Mutex
+	active := 0
+	peak := 0
 
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	decideForEntry(crypto, stub.measurements)
-
-	hold, ok := crypto.holds["SCALP/EUR"]
-
-	if !ok {
-		t.Fatal("expected momentum entry")
-	}
-
-	if hold.regime != "momentum" {
-		t.Fatalf("expected momentum regime, got %q", hold.regime)
-	}
-}
-
-func TestCryptoScalesNotionalByConfidence(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stub := &stubSignal{}
-	prices := stubPrices{"PUMP/EUR": 1.0}
-
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	strongNotional := crypto.entryNotional(0.8, 0.8)
-	weakNotional := crypto.entryNotional(0.4, 0.8)
-	cap := 200 * config.System.MaxSlotPct / 100
-
-	if strongNotional != cap {
-		t.Fatalf("expected strong notional %.4f, got %.4f", cap, strongNotional)
-	}
-
-	if weakNotional != cap/2 {
-		t.Fatalf("expected weak notional %.4f, got %.4f", cap/2, weakNotional)
-	}
-}
-
-func TestCryptoSkipsBoostForNonPumpRegime(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(context.Background(), nil, wallet, stubPrices{"SCALP/EUR": 1}, NoopPublisher(), &stubSignal{})
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	crypto.records["SCALP/EUR"] = symbolRecord{wins: 3}
-
-	if boosted := crypto.boostConfidence("SCALP/EUR", 0.6, "momentum"); boosted != 0.6 {
-		t.Fatalf("expected no boost for momentum, got %v", boosted)
-	}
-}
-
-func TestCryptoBoostsRepeatWinner(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stub := &stubSignal{}
-	prices := stubPrices{"PUMP/EUR": 1.0}
-
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	crypto.records["PUMP/EUR"] = symbolRecord{wins: 2}
-
-	boosted := crypto.boostConfidence("PUMP/EUR", 0.6, "pump")
-	expected := 0.6 * repeatBoost(2)
-
-	if boosted != expected {
-		t.Fatalf("expected boosted confidence %.4f, got %.4f", expected, boosted)
-	}
-}
-
-func TestCryptoMarkExitsRecordsWinAndFreesSlot(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stub := &stubSignal{}
-	prices := stubPrices{"PUMP/EUR": 1.2}
-
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	crypto.holds["PUMP/EUR"] = position{
-		pair:       asset.Pair{Wsname: "PUMP/EUR"},
-		notional:   10,
-		entryPrice: 1.0,
-		entryFee:   config.System.TakerFee(10, wallet.FeePct),
-		enteredAt:  time.Now().Add(-config.System.MinHoldBeforeRotate - time.Second),
-		confidence: 0.8,
-		regime:     "pump",
-		trailPct:   0.01,
-		stopPrice:  0.95,
-		peakPrice:  1.2,
-	}
-
-	if err := crypto.markExits(); err != nil {
-		t.Fatalf("mark exits: %v", err)
-	}
-
-	if len(crypto.holds) != 0 {
-		t.Fatalf("expected position closed, still holding %d", len(crypto.holds))
-	}
-
-	if crypto.records["PUMP/EUR"].wins != 1 {
-		t.Fatalf("expected one recorded win, got %d", crypto.records["PUMP/EUR"].wins)
-	}
-}
-
-func TestCryptoReentryUsesWinBoost(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stub := &stubSignal{
-		measurements: []engine.Measurement{{
-			Type:       engine.Pump,
-			Regime:     "pump",
-			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
-			Confidence: 0.8,
-		}},
-	}
-	prices := stubPrices{"PUMP/EUR": 1.0}
-
-	crypto, err := NewCrypto(context.Background(), nil, wallet, prices, NoopPublisher(), stub)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	crypto.records["PUMP/EUR"] = symbolRecord{wins: 1}
-
-	decideForEntry(crypto, stub.measurements)
-
-	hold := crypto.holds["PUMP/EUR"]
-	expectedConfidence := 0.8 * repeatBoost(1)
-
-	if hold.confidence != expectedConfidence {
-		t.Fatalf("expected boosted confidence %.4f, got %.4f", expectedConfidence, hold.confidence)
-	}
-}
-
-func TestTryEnterSkipsWithoutPrice(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(context.Background(), nil, wallet, stubPrices{}, NoopPublisher(), &stubSignal{})
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-
-	start := wallet.Balance
-
-	crypto.tryEnter(tradeCandidate{
-		symbol:     "MISSING/EUR",
-		confidence: 0.8,
-		regime:     "momentum",
-		measType:   engine.Momentum,
-	}, 0.8)
-
-	if wallet.Balance != start {
-		t.Fatal("expected skip without price to leave wallet unchanged")
-	}
-}
-
-func BenchmarkCryptoBoostConfidence(b *testing.B) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(context.Background(), nil, wallet, stubPrices{"PUMP/EUR": 1}, NoopPublisher(), &stubSignal{})
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	crypto.records["PUMP/EUR"] = symbolRecord{wins: 3}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		if crypto.boostConfidence("PUMP/EUR", 0.8, "pump") <= 0 {
-			b.Fatal("expected boost")
+	blockingScan := func() {
+		activeMu.Lock()
+		active++
+		if active > peak {
+			peak = active
 		}
-	}
-}
+		activeMu.Unlock()
 
-func BenchmarkCryptoRankCandidates(b *testing.B) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(context.Background(), nil, wallet, stubPrices{"PUMP/EUR": 1}, NoopPublisher(), &stubSignal{})
+		<-release
+
+		activeMu.Lock()
+		active--
+		activeMu.Unlock()
+	}
+
+	crypto, err := NewCrypto(
+		ctx,
+		pool,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&scanSignal{onScan: blockingScan},
+		&scanSignal{onScan: blockingScan},
+	)
 
 	if err != nil {
-		b.Fatal(err)
+		t.Fatalf("new crypto: %v", err)
 	}
 
-	batch := []engine.Measurement{
-		{Type: engine.Pump, Regime: "pump", Pairs: []asset.Pair{{Wsname: "A/EUR"}}, Confidence: 0.8},
-		{Type: engine.Momentum, Regime: "momentum", Pairs: []asset.Pair{{Wsname: "B/EUR"}}, Confidence: 0.6},
-		{Type: engine.Flow, Regime: "flow", Reason: "accumulation", Pairs: []asset.Pair{{Wsname: "C/EUR"}}, Confidence: 0.5},
+	convey.Convey("Given a qpool-backed trader", t, func() {
+		done := make(chan error, 1)
+
+		go func() {
+			done <- crypto.scanSignals(start)
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+		close(release)
+
+		convey.Convey("It should scan signals concurrently", func() {
+			convey.So(<-done, convey.ShouldBeNil)
+			convey.So(peak, convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func TestProcessTickConcurrent(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+
+	crypto, err := NewCrypto(
+		ctx,
+		pool,
+		wallet,
+		stubPrices{"PUMP/EUR": 100, "DUMP/EUR": 50},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}},
+		&stubSignal{measurements: []engine.Measurement{
+			{
+				Source:         "hawkes",
+				Type:           engine.Momentum,
+				Regime:         "momentum",
+				Reason:         "cluster_sell",
+				Pairs:          []asset.Pair{{Wsname: "DUMP/EUR"}},
+				Confidence:     0.4,
+				ExpectedReturn: 0.001,
+				Runway:         time.Second,
+			},
+		}},
+	)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	convey.Convey("Given multiple signals on a qpool", t, func() {
+		crypto.processTick(start)
+
+		convey.Convey("It should update pair state for every signal", func() {
+			pumpState := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+			dumpState := crypto.pairState(asset.Pair{Wsname: "DUMP/EUR"})
+
+			convey.So(pumpState.HasPendingPredictions(), convey.ShouldBeTrue)
+			convey.So(dumpState.HasPendingPredictions(), convey.ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkProcessTick(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+
+	crypto, err := NewCrypto(
+		ctx,
+		pool,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}},
+		&stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.001, time.Second),
+		}},
+	)
+
+	if err != nil {
+		b.Fatalf("new crypto: %v", err)
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if len(crypto.rankCandidates(batch)) == 0 {
-			b.Fatal("expected candidates")
-		}
+		crypto.processTick(start)
 	}
+}
+
+func TestScanSignals(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+	scanned := false
+
+	crypto, err := NewCrypto(
+		context.Background(),
+		nil,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&scanSignal{
+			stubSignal: stubSignal{measurements: []engine.Measurement{
+				testMeasurement(0.002, time.Second),
+			}},
+			onScan: func() { scanned = true },
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	convey.Convey("Given registered signals", t, func() {
+		err := crypto.scanSignals(start)
+
+		convey.Convey("It should scan every signal", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(scanned, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestProcessTick(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	start := time.Unix(1_700_000_000, 0)
+
+	convey.Convey("Given no price reader", t, func() {
+		crypto, err := NewCrypto(
+			context.Background(),
+			nil,
+			wallet,
+			stubPrices{},
+			&stubSignal{measurements: []engine.Measurement{
+				testMeasurement(0.002, time.Second),
+			}},
+		)
+
+		if err != nil {
+			t.Fatalf("new crypto: %v", err)
+		}
+
+		crypto.processTick(start)
+		state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+
+		convey.Convey("It should still record the forecast", func() {
+			convey.So(state.HasPendingPredictions(), convey.ShouldBeTrue)
+		})
+	})
+
+	convey.Convey("Given repeated measurements from one source", t, func() {
+		crypto, err := NewCrypto(
+			context.Background(),
+			nil,
+			wallet,
+			stubPrices{"PUMP/EUR": 100},
+			&stubSignal{measurements: []engine.Measurement{
+				testMeasurement(0.002, time.Second),
+			}},
+		)
+
+		if err != nil {
+			t.Fatalf("new crypto: %v", err)
+		}
+
+		crypto.processTick(start)
+		crypto.processTick(start.Add(100 * time.Millisecond))
+		state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+
+		convey.Convey("It should keep one open forecast per source", func() {
+			convey.So(state.PendingCount(), convey.ShouldEqual, 1)
+		})
+	})
+
+	convey.Convey("Given feedback receivers", t, func() {
+		signal := &feedbackSignal{stubSignal: stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, 5*time.Second),
+		}}}
+
+		crypto, err := NewCrypto(
+			context.Background(),
+			nil,
+			wallet,
+			stubPrices{"PUMP/EUR": 100},
+			signal,
+		)
+
+		if err != nil {
+			t.Fatalf("new crypto: %v", err)
+		}
+
+		crypto.processTick(start)
+
+		convey.Convey("It should not apply feedback before the runway elapses", func() {
+			convey.So(len(signal.feedback), convey.ShouldEqual, 0)
+		})
+
+		crypto.processTick(start.Add(5 * time.Second))
+
+		convey.Convey("It should apply feedback once the runway elapses", func() {
+			convey.So(len(signal.feedback), convey.ShouldEqual, 1)
+			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldEqual, 0.002)
+		})
+	})
 }

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"iter"
+	"time"
 
 	"github.com/theapemachine/symm/kraken/asset"
 )
@@ -30,23 +31,40 @@ type Timeframe struct {
 
 /*
 Measurement is the result of a measurement.
+Confidence is a unitless score for ranking and UI.
+ExpectedReturn is the model-estimated fractional price return over Runway.
 */
 type Measurement struct {
-	Type       MeasurementType
-	Source     string
-	Regime     string
-	Reason     string
-	Pairs      []asset.Pair
-	Confidence float64
-	Timeframe  Timeframe
-	Err        error
+	Type           MeasurementType
+	Source         string
+	Regime         string
+	Reason         string
+	Pairs          []asset.Pair
+	Confidence     float64
+	ExpectedReturn float64
+	Runway         time.Duration
+	Timeframe      Timeframe
+	Err            error
 }
 
 /*
-Signal is the interface that all signals must implement.
-Run gathers measurements; Measure yields them for the trader.
+Direction returns +1 for buy-side forecasts and -1 for sell-side.
+*/
+func (measurementType MeasurementType) Direction() int {
+	if measurementType == Dump {
+		return -1
+	}
+
+	return 1
+}
+
+/*
+Signal evaluates microstructure on demand and yields queued measurements.
+Scan is invoked by the trader scheduler; Measure drains the passive queue.
 */
 type Signal interface {
-	Run()
+	Scan(now time.Time) error
 	Measure(ctx context.Context) iter.Seq[Measurement]
+	Source() string
+	Stats() QueueStats
 }

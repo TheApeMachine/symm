@@ -12,7 +12,7 @@ import {
 	ZoomPanModifier,
 } from "scichart";
 
-import type { FieldSnapshotEvent } from "#/lib/symm/events";
+import type { EnginePulseEvent } from "#/lib/symm/events";
 import { eventTimeSec } from "#/lib/symm/events";
 import { PulseValueClip, pulseYRange } from "#/lib/symm/chart-range";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
@@ -22,34 +22,31 @@ const PULSE_WINDOW = 48;
 
 export type EnginePulseInitResult = {
 	sciChartSurface: SciChartSurface;
-	appendField: (snapshot: FieldSnapshotEvent) => void;
+	appendPulse: (pulse: EnginePulseEvent) => void;
 	dispose: () => void;
 };
 
-/** Real-time lines for aggregate fluid scalars (Re, turb, div) with outlier clipping. */
+/** Real-time lines for cross-symbol average prediction and running error. */
 class EnginePulseController {
 	private surface: SciChartSurface;
 	private yAxis: NumericAxis;
-	private reSeries: XyDataSeries;
-	private turbSeries: XyDataSeries;
-	private divSeries: XyDataSeries;
-	private reClip = new PulseValueClip();
-	private turbClip = new PulseValueClip();
-	private divClip = new PulseValueClip();
+	private predictionSeries: XyDataSeries;
+	private errorSeries: XyDataSeries;
+	private predictionClip = new PulseValueClip();
+	private errorClip = new PulseValueClip();
 	private pointIndex = 0;
+	private frameScheduled = false;
 
 	private constructor(
 		surface: SciChartSurface,
 		yAxis: NumericAxis,
-		reSeries: XyDataSeries,
-		turbSeries: XyDataSeries,
-		divSeries: XyDataSeries,
+		predictionSeries: XyDataSeries,
+		errorSeries: XyDataSeries,
 	) {
 		this.surface = surface;
 		this.yAxis = yAxis;
-		this.reSeries = reSeries;
-		this.turbSeries = turbSeries;
-		this.divSeries = divSeries;
+		this.predictionSeries = predictionSeries;
+		this.errorSeries = errorSeries;
 	}
 
 	static async create(
@@ -68,19 +65,15 @@ class EnginePulseController {
 			autoRange: EAutoRange.Never,
 			growBy: new NumberRange(0.08, 0.12),
 			labelFormat: ENumericFormat.Decimal,
-			labelPrecision: 3,
+			labelPrecision: 4,
 		});
 
-		const reSeries = new XyDataSeries(wasmContext, {
-			dataSeriesName: "Re",
+		const predictionSeries = new XyDataSeries(wasmContext, {
+			dataSeriesName: "Prediction",
 			fifoCapacity: FIFO_CAPACITY,
 		});
-		const turbSeries = new XyDataSeries(wasmContext, {
-			dataSeriesName: "Turb",
-			fifoCapacity: FIFO_CAPACITY,
-		});
-		const divSeries = new XyDataSeries(wasmContext, {
-			dataSeriesName: "Div",
+		const errorSeries = new XyDataSeries(wasmContext, {
+			dataSeriesName: "Error",
 			fifoCapacity: FIFO_CAPACITY,
 		});
 
@@ -88,18 +81,13 @@ class EnginePulseController {
 		sciChartSurface.yAxes.add(yAxis);
 		sciChartSurface.renderableSeries.add(
 			new FastLineRenderableSeries(wasmContext, {
-				dataSeries: reSeries,
+				dataSeries: predictionSeries,
 				stroke: "#22C55E",
 				strokeThickness: 2,
 			}),
 			new FastLineRenderableSeries(wasmContext, {
-				dataSeries: turbSeries,
+				dataSeries: errorSeries,
 				stroke: "#F59E0B",
-				strokeThickness: 2,
-			}),
-			new FastLineRenderableSeries(wasmContext, {
-				dataSeries: divSeries,
-				stroke: "#3B82F6",
 				strokeThickness: 2,
 			}),
 		);
@@ -112,9 +100,8 @@ class EnginePulseController {
 		return new EnginePulseController(
 			sciChartSurface,
 			yAxis,
-			reSeries,
-			turbSeries,
-			divSeries,
+			predictionSeries,
+			errorSeries,
 		);
 	}
 
@@ -122,28 +109,38 @@ class EnginePulseController {
 		return this.surface;
 	}
 
-	appendField(snapshot: FieldSnapshotEvent) {
-		const field = snapshot.field;
-		if (!field) {
-			return;
-		}
-
-		const sec = eventTimeSec(snapshot);
+	appendPulse(pulse: EnginePulseEvent) {
+		const sec = eventTimeSec(pulse);
 		this.pointIndex += 1;
 		const x = sec + this.pointIndex * 1e-6;
 
-		this.reSeries.append(x, this.reClip.clip(field.re));
-		this.turbSeries.append(x, this.turbClip.clip(field.turb));
-		this.divSeries.append(x, this.divClip.clip(field.div));
-		this.frameVisibleRange();
-		this.surface.invalidateElement();
+		this.predictionSeries.append(
+			x,
+			this.predictionClip.clip(pulse.avg_prediction ?? 0),
+		);
+		this.errorSeries.append(x, this.errorClip.clip(pulse.avg_error ?? 0));
+		this.scheduleFrameVisibleRange();
 	}
 
-	private frameVisibleRange() {
+	private scheduleFrameVisibleRange() {
+		if (this.frameScheduled) {
+			return;
+		}
+
+		this.frameScheduled = true;
+
+		requestAnimationFrame(() => {
+			this.frameScheduled = false;
+			this.applyFrameVisibleRange();
+			this.surface.invalidateElement();
+		});
+	}
+
+	private applyFrameVisibleRange() {
 		const range = pulseYRange(
-			tailValues(this.reSeries, PULSE_WINDOW),
-			tailValues(this.turbSeries, PULSE_WINDOW),
-			tailValues(this.divSeries, PULSE_WINDOW),
+			tailValues(this.predictionSeries, PULSE_WINDOW),
+			tailValues(this.errorSeries, PULSE_WINDOW),
+			[],
 		);
 
 		if (!range) {
@@ -186,7 +183,7 @@ export async function initEnginePulseChart(
 
 	return {
 		sciChartSurface: controller.sciChartSurface,
-		appendField: (snapshot) => controller.appendField(snapshot),
+		appendPulse: (pulse) => controller.appendPulse(pulse),
 		dispose: () => controller.dispose(),
 	};
 }

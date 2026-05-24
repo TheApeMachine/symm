@@ -1,4 +1,5 @@
 import type {
+	ChartSeedEvent,
 	DecisionTraceEvent,
 	EnginePulseEvent,
 	FieldSnapshotEvent,
@@ -9,94 +10,73 @@ import type {
 	TradeEnterEvent,
 	TradeExitEvent,
 } from "#/lib/symm/events";
-import { defaultWsUrl } from "#/lib/symm/events";
+import { defaultWsUrl, pickMarketWatchSymbol } from "#/lib/symm/events";
+import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
+import { positionSymbolsFromStatus } from "#/lib/symm/positions";
+import { fieldStore } from "#/lib/symm/stores/field-store";
 import {
-	emptyEvaluationState,
-	mergeDecisionTrace,
-	mergeEnginePulse,
-	type EvaluationState,
-} from "#/lib/symm/evaluation-store";
+	applyDecisionTrace,
+	applyEnginePulse,
+	engineStore,
+} from "#/lib/symm/stores/engine-store";
+import {
+	appendTrade,
+	applyScoreboard,
+	applyStatus,
+	statusStore,
+} from "#/lib/symm/stores/status-store";
+import { WsStream } from "#/lib/symm/ws-stream";
 
-const MAX_TRADES = 40;
-const MAX_PULSE_LOG = 32;
 const MAX_TICK_HISTORY = 360;
 
-export type SymmUIState = {
-	connected: boolean;
-	status?: StatusEvent;
-	scoreboard?: ScoreboardEvent;
-	decisionTrace?: DecisionTraceEvent;
-	fieldSnapshot?: FieldSnapshotEvent;
-	enginePulse?: EnginePulseEvent;
-	evaluation: EvaluationState;
-	pulseLog: EnginePulseEvent[];
-	trades: Array<TradeEnterEvent | TradeExitEvent>;
-};
+const STATUS_EVENTS = new Set<SymmEvent["event"]>([
+	"hello",
+	"status",
+	"trade_enter",
+	"trade_exit",
+	"scoreboard",
+]);
+
+const ENGINE_EVENTS = new Set<SymmEvent["event"]>([
+	"hello",
+	"engine_pulse",
+	"decision_trace",
+]);
+
+const FIELD_EVENTS = new Set<SymmEvent["event"]>(["hello", "field_snapshot"]);
+
+const CHART_EVENTS = new Set<SymmEvent["event"]>([
+	"hello",
+	"price_tick",
+	"chart_seed",
+	"stop_ratchet",
+	"trade_enter",
+	"trade_exit",
+]);
 
 type ChartListener = (event: SymmEvent) => void;
 
-type UISubscription = {
-	listener: () => void;
-	selector: (state: SymmUIState) => unknown;
-	equals: (a: unknown, b: unknown) => boolean;
-	snapshot: unknown;
-};
-
-let ui: SymmUIState = {
-	connected: false,
-	evaluation: emptyEvaluationState(),
-	pulseLog: [],
-	trades: [],
-};
-
-const uiSubscriptions = new Set<UISubscription>();
 const chartListeners = new Map<string, ChartListener>();
 const lastTickBySymbol = new Map<string, PriceTickEvent>();
 const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
 const lastSeedBySymbol = new Map<string, SymmEvent>();
+const fieldSnapshotListeners = new Set<
+	(snapshot: FieldSnapshotEvent) => void
+>();
+const enginePulseListeners = new Set<(pulse: EnginePulseEvent) => void>();
 
-let fluidSurfaceHandler: ((snapshot: FieldSnapshotEvent) => void) | null = null;
-let fieldStreamHandler: ((snapshot: FieldSnapshotEvent) => void) | null = null;
-let ws: WebSocket | null = null;
+let chartStream: WsStream | null = null;
 let wsUrl = defaultWsUrl;
 let started = false;
+let marketWatchSticky = "";
 
-const EMPTY_SYMBOLS: string[] = [];
+const streams: WsStream[] = [];
 
-function notifyUI() {
-	for (const sub of uiSubscriptions) {
-		const next = sub.selector(ui);
-		if (!sub.equals(sub.snapshot, next)) {
-			sub.snapshot = next;
-			sub.listener();
-		}
-	}
-}
-
-function dispatchChart(symbol: string, event: SymmEvent) {
+const dispatchChart = (symbol: string, event: SymmEvent) => {
 	chartListeners.get(symbol)?.(event);
-}
+};
 
-function dispatchAllCharts(event: SymmEvent) {
-	for (const listener of chartListeners.values()) {
-		listener(event);
-	}
-}
-
-function subscribeOpenSymbols(positions: StatusEvent["positions"]) {
-	if (!ws || ws.readyState !== WebSocket.OPEN || !positions?.length) {
-		return;
-	}
-
-	const symbols = positions.map((position) => position.symbol).filter(Boolean);
-	if (symbols.length === 0) {
-		return;
-	}
-
-	ws.send(JSON.stringify({ op: "subscribe", symbols }));
-}
-
-function appendTickHistory(tick: PriceTickEvent) {
+const appendTickHistory = (tick: PriceTickEvent) => {
 	const symbol = String(tick.symbol);
 	const history = tickHistoryBySymbol.get(symbol) ?? [];
 	history.push(tick);
@@ -106,256 +86,236 @@ function appendTickHistory(tick: PriceTickEvent) {
 	}
 
 	tickHistoryBySymbol.set(symbol, history);
-}
+};
 
-function replayChartState(symbol: string, handler: ChartListener) {
-	const seed = lastSeedBySymbol.get(symbol);
-	if (seed) {
-		handler(seed);
+const hasChartTick = (symbol: string) => lastTickBySymbol.has(symbol);
+
+const chartSubscribeSymbols = () => {
+	const watch = pickMarketWatchSymbol(
+		statusStore.state.scoreboard,
+		fieldStore.state.fieldSnapshot,
+		"BTC/EUR",
+		marketWatchSticky,
+		hasChartTick,
+	);
+	marketWatchSticky = watch;
+
+	const symbols = new Set<string>([watch]);
+	for (const symbol of positionSymbolsFromStatus(statusStore.state.status)) {
+		symbols.add(symbol);
 	}
 
-	if (ui.status) {
-		handler(ui.status);
-	}
-
-	for (const tick of tickHistoryBySymbol.get(symbol) ?? []) {
-		handler(tick);
-	}
-}
-
-function tradeKey(trade: TradeEnterEvent | TradeExitEvent) {
-	return `${trade.event}:${trade.ts}:${trade.symbol}`;
-}
-
-function appendTrade(trade: TradeEnterEvent | TradeExitEvent) {
-	const key = tradeKey(trade);
-	if (ui.trades.some((row) => tradeKey(row) === key)) {
+	if (symbols.size === 0) {
 		return;
 	}
 
-	ui = {
-		...ui,
-		trades: [trade, ...ui.trades].slice(0, MAX_TRADES),
-	};
-}
+	chartStream?.send({ op: "subscribe", symbols: [...symbols] });
+};
 
-function applyEvent(ev: SymmEvent) {
-	switch (ev.event) {
+const notifyFieldSnapshotListeners = (snapshot: FieldSnapshotEvent) => {
+	for (const listener of fieldSnapshotListeners) {
+		listener(snapshot);
+	}
+};
+
+const notifyEnginePulseListeners = (pulse: EnginePulseEvent) => {
+	for (const listener of enginePulseListeners) {
+		listener(pulse);
+	}
+};
+
+const applyFieldSnapshot = (snapshot: FieldSnapshotEvent) => {
+	fieldStore.setState(() => ({ fieldSnapshot: snapshot }));
+	notifyFieldSnapshotListeners(snapshot);
+	chartSubscribeSymbols();
+};
+
+const applyStatusEvent = (status: StatusEvent) => {
+	applyStatus(status);
+	chartSubscribeSymbols();
+
+	for (const listener of chartListeners.values()) {
+		listener(status);
+	}
+};
+
+const applyScoreboardEvent = (scoreboard: ScoreboardEvent) => {
+	applyScoreboard(scoreboard);
+	chartSubscribeSymbols();
+};
+
+const replayChartState = (symbol: string, handler: ChartListener) => {
+	for (const event of buildChartReplayEvents(
+		symbol,
+		lastSeedBySymbol.get(symbol),
+		tickHistoryBySymbol.get(symbol) ?? [],
+		statusStore.state.status,
+	)) {
+		handler(event);
+	}
+};
+
+const applyChartEvent = (event: SymmEvent) => {
+	switch (event.event) {
 		case "price_tick": {
-			const tick = ev as PriceTickEvent;
+			const tick = event as PriceTickEvent;
 			lastTickBySymbol.set(String(tick.symbol), tick);
 			appendTickHistory(tick);
 			dispatchChart(String(tick.symbol), tick);
 			return;
 		}
 		case "chart_seed": {
-			const seed = ev;
+			const seed = event as ChartSeedEvent;
 			lastSeedBySymbol.set(String(seed.symbol), seed);
 			dispatchChart(String(seed.symbol), seed);
 			return;
 		}
 		case "stop_ratchet":
-			dispatchChart(String(ev.symbol), ev);
+			dispatchChart(String(event.symbol), event);
 			return;
-		case "trade_enter": {
-			const trade = ev as TradeEnterEvent;
-			appendTrade(trade);
-			dispatchChart(trade.symbol, ev);
-			subscribeOpenSymbols(ui.status?.positions);
-			notifyUI();
+		case "trade_enter":
+		case "trade_exit":
+			dispatchChart(String(event.symbol), event);
 			return;
-		}
-		case "trade_exit": {
-			const trade = ev as TradeExitEvent;
-			appendTrade(trade);
-			dispatchChart(trade.symbol, ev);
-			notifyUI();
-			return;
-		}
-		case "status": {
-			const status = ev as StatusEvent;
-			ui = {
-				...ui,
-				status,
-			};
-			subscribeOpenSymbols(status.positions);
-			dispatchAllCharts(ev);
-			notifyUI();
-			return;
-		}
-		case "scoreboard":
-			ui = {
-				...ui,
-				scoreboard: ev as ScoreboardEvent,
-				evaluation: {
-					...ui.evaluation,
-					line: (ev as ScoreboardEvent).line,
-					median: (ev as ScoreboardEvent).median,
-					mad: (ev as ScoreboardEvent).mad,
-				},
-			};
-			notifyUI();
-			return;
-		case "decision_trace": {
-			const trace = ev as DecisionTraceEvent;
-			ui = {
-				...ui,
-				decisionTrace: trace,
-				evaluation: mergeDecisionTrace(ui.evaluation, trace),
-			};
-			notifyUI();
-			return;
-		}
-		case "field_snapshot": {
-			const snapshot = ev as FieldSnapshotEvent;
-			ui = {
-				...ui,
-				fieldSnapshot: snapshot,
-			};
-			fluidSurfaceHandler?.(snapshot);
-			fieldStreamHandler?.(snapshot);
-			notifyUI();
-			return;
-		}
-		case "engine_pulse": {
-			const pulse = ev as EnginePulseEvent;
-			ui = {
-				...ui,
-				enginePulse: pulse,
-				evaluation: mergeEnginePulse(ui.evaluation, pulse),
-				pulseLog: [pulse, ...ui.pulseLog].slice(0, MAX_PULSE_LOG),
-			};
-			notifyUI();
-			return;
-		}
 		default:
 			return;
 	}
-}
+};
 
-function connect() {
-	if (ws) {
-		ws.close();
-		ws = null;
-	}
+const createStreams = () => {
+	const statusStream = new WsStream({
+		url: wsUrl,
+		stream: "status",
+		accepts: STATUS_EVENTS,
+		onEvent: (event) => {
+			switch (event.event) {
+				case "status":
+					applyStatusEvent(event as StatusEvent);
+					return;
+				case "scoreboard":
+					applyScoreboardEvent(event as ScoreboardEvent);
+					return;
+				case "trade_enter":
+				case "trade_exit":
+					appendTrade(event as TradeEnterEvent | TradeExitEvent);
+					chartSubscribeSymbols();
+					return;
+				default:
+					return;
+			}
+		},
+	});
 
-	const socket = new WebSocket(wsUrl);
-	ws = socket;
+	const engineStream = new WsStream({
+		url: wsUrl,
+		stream: "engine",
+		accepts: ENGINE_EVENTS,
+		onEvent: (event) => {
+			if (event.event === "engine_pulse") {
+				const pulse = event as EnginePulseEvent;
+				applyEnginePulse(pulse);
+				notifyEnginePulseListeners(pulse);
+				return;
+			}
 
-	socket.onopen = () => {
-		ui = {
-			...ui,
-			connected: true,
-		};
-		notifyUI();
-		subscribeOpenSymbols(ui.status?.positions);
-	};
+			if (event.event === "decision_trace") {
+				applyDecisionTrace(event as DecisionTraceEvent);
+			}
+		},
+	});
 
-	socket.onclose = () => {
-		ui = {
-			...ui,
-			connected: false,
-		};
-		notifyUI();
-		if (started) {
-			setTimeout(connect, 2000);
-		}
-	};
+	const fieldWsStream = new WsStream({
+		url: wsUrl,
+		stream: "field",
+		accepts: FIELD_EVENTS,
+		onEvent: (event) => {
+			if (event.event === "field_snapshot") {
+				applyFieldSnapshot(event as FieldSnapshotEvent);
+			}
+		},
+	});
 
-	socket.onerror = () => {
-		socket.close();
-	};
+	chartStream = new WsStream({
+		url: wsUrl,
+		stream: "chart",
+		accepts: CHART_EVENTS,
+		onEvent: applyChartEvent,
+		onOpen: chartSubscribeSymbols,
+	});
 
-	socket.onmessage = (message) => {
-		try {
-			applyEvent(JSON.parse(String(message.data)) as SymmEvent);
-		} catch {
-			// ignore malformed frames
-		}
-	};
-}
+	return [statusStream, engineStream, fieldWsStream, chartStream];
+};
 
-export function startSymmFeed(url: string = defaultWsUrl) {
+export const startSymmFeed = (url: string = defaultWsUrl) => {
 	wsUrl = url;
 	if (started) {
 		return;
 	}
-	started = true;
-	connect();
-}
 
-export function arrayEqual<T>(left: T[], right: T[]) {
-	if (left.length !== right.length) {
-		return false;
+	started = true;
+
+	for (const stream of createStreams()) {
+		streams.push(stream);
+		stream.start();
+	}
+};
+
+export const stopSymmFeed = () => {
+	if (!started) {
+		return;
 	}
 
-	return left.every((value, index) => value === right[index]);
-}
+	started = false;
 
-export function selectPositionSymbols(state: SymmUIState) {
-	return (
-		state.status?.positions?.map((position) => position.symbol) ?? EMPTY_SYMBOLS
-	);
-}
+	for (const stream of streams) {
+		stream.stop();
+	}
 
-export function subscribeUISelector<T>(
-	selector: (state: SymmUIState) => T,
-	equals: (a: T, b: T) => boolean,
-	onStoreChange: () => void,
-) {
-	const sub: UISubscription = {
-		listener: onStoreChange,
-		selector: selector as UISubscription["selector"],
-		equals: equals as UISubscription["equals"],
-		snapshot: selector(ui),
-	};
+	streams.length = 0;
+	chartStream = null;
+};
 
-	uiSubscriptions.add(sub);
-
-	return () => {
-		uiSubscriptions.delete(sub);
-	};
-}
-
-export function getUIState() {
-	return ui;
-}
-
-export function registerChart(symbol: string, handler: ChartListener) {
+export const registerChart = (symbol: string, handler: ChartListener) => {
 	chartListeners.set(symbol, handler);
 	replayChartState(symbol, handler);
+	chartStream?.send({ op: "subscribe", symbols: [symbol] });
+};
 
-	if (ws?.readyState === WebSocket.OPEN) {
-		ws.send(JSON.stringify({ op: "subscribe", symbols: [symbol] }));
-	}
-}
-
-export function unregisterChart(symbol: string) {
+export const unregisterChart = (symbol: string) => {
 	chartListeners.delete(symbol);
-}
+	chartStream?.send({ op: "unsubscribe", symbols: [symbol] });
+};
 
-export function registerFieldStream(
+export const registerFieldSnapshotListener = (
 	handler: (snapshot: FieldSnapshotEvent) => void,
-) {
-	fieldStreamHandler = handler;
-	if (ui.fieldSnapshot) {
-		handler(ui.fieldSnapshot);
+) => {
+	fieldSnapshotListeners.add(handler);
+
+	const snapshot = fieldStore.state.fieldSnapshot;
+	if (snapshot) {
+		handler(snapshot);
 	}
-}
+};
 
-export function unregisterFieldStream() {
-	fieldStreamHandler = null;
-}
-
-export function registerFluidSurface(
+export const unregisterFieldSnapshotListener = (
 	handler: (snapshot: FieldSnapshotEvent) => void,
-) {
-	fluidSurfaceHandler = handler;
-	if (ui.fieldSnapshot) {
-		handler(ui.fieldSnapshot);
-	}
-}
+) => {
+	fieldSnapshotListeners.delete(handler);
+};
 
-export function unregisterFluidSurface() {
-	fluidSurfaceHandler = null;
-}
+export const registerEnginePulseListener = (
+	handler: (pulse: EnginePulseEvent) => void,
+) => {
+	enginePulseListeners.add(handler);
+
+	const pulse = engineStore.state.enginePulse;
+	if (pulse) {
+		handler(pulse);
+	}
+};
+
+export const unregisterEnginePulseListener = (
+	handler: (pulse: EnginePulseEvent) => void,
+) => {
+	enginePulseListeners.delete(handler);
+};

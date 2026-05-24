@@ -11,6 +11,7 @@ export type SymmEventName =
 	| "field_snapshot"
 	| "engine_pulse"
 	| "price_tick"
+	| "chart_replay"
 	| "chart_seed"
 	| "trade_enter"
 	| "trade_exit"
@@ -118,6 +119,7 @@ export type EnginePulseSignal = {
 	regime: string;
 	reason: string;
 	score: number;
+	expected_return?: number;
 	type: string;
 };
 
@@ -133,6 +135,11 @@ export type EnginePulseEvent = SymmEvent & {
 	fluid_sampled?: number;
 	fluid_warming?: number;
 	signals: EnginePulseSignal[];
+	source_scores?: Record<string, number>;
+	avg_prediction?: number;
+	avg_error?: number;
+	forecast_symbols?: number;
+	forecast_errors?: number;
 };
 
 const WHY_LABELS: Record<string, string> = {
@@ -162,6 +169,12 @@ export type PriceTickEvent = SymmEvent & {
 	ask: number;
 	change_pct_24h: number;
 	at: string;
+};
+
+export type ChartReplayEvent = SymmEvent & {
+	event: "chart_replay";
+	symbol: string;
+	ticks: PriceTickEvent[];
 };
 
 export type ChartSeedBar = {
@@ -261,32 +274,34 @@ export function tickTimeSec(ev: PriceTickEvent): number {
 }
 
 export function pickMarketWatchSymbol(
-	field?: FieldSnapshotEvent,
 	scoreboard?: ScoreboardEvent,
+	field?: FieldSnapshotEvent,
 	fallback = "BTC/EUR",
+	sticky?: string,
+	hasTick: (symbol: string) => boolean = () => true,
 ): string {
-	if (scoreboard?.targets?.length) {
-		return scoreboard.targets[0].symbol;
+	if (hasTick(fallback)) {
+		return fallback;
 	}
 
-	const rows = field?.symbols ?? [];
-	let best = "";
-	let bestRe = 0;
-
-	for (const row of rows) {
-		if (row.re > bestRe) {
-			bestRe = row.re;
-			best = row.symbol;
+	if (scoreboard?.targets?.length) {
+		for (const target of scoreboard.targets) {
+			if (hasTick(target.symbol)) {
+				return target.symbol;
+			}
 		}
 	}
 
-	if (best) {
-		return best;
+	const rows = field?.symbols ?? [];
+
+	if (sticky && hasTick(sticky) && rows.some((row) => row.symbol === sticky)) {
+		return sticky;
 	}
 
-	const warming = rows.find((row) => row.symbol);
-	if (warming?.symbol) {
-		return warming.symbol;
+	for (const row of rows) {
+		if (row.symbol && hasTick(row.symbol)) {
+			return row.symbol;
+		}
 	}
 
 	return fallback;

@@ -42,7 +42,7 @@ func TestTrackStoreFiresOnAccumulationWithQuietVelocity(t *testing.T) {
 
 	for index := 0; index < minFieldHistory+1; index++ {
 		at := start.Add(time.Duration(index) * time.Second)
-		_, _ = trackStore.Sample("PUMP/EUR", 10, 1, 20, 1, 0.2, at)
+		_, _, _, _ = trackStore.Sample("PUMP/EUR", 10, 1, 20, 1, 0.2, at)
 	}
 
 	track := trackStore.bySymbol["PUMP/EUR"]
@@ -53,10 +53,18 @@ func TestTrackStoreFiresOnAccumulationWithQuietVelocity(t *testing.T) {
 	}
 
 	at := start.Add(time.Duration(minFieldHistory+1) * time.Second)
-	confidence, reason := trackStore.Sample("PUMP/EUR", 25, 1, 5, 20, 0.9, at)
+	confidence, expectedReturn, runway, reason := trackStore.Sample("PUMP/EUR", 25, 1, 5, 20, 0.9, at)
 
 	if confidence <= 0 {
 		t.Fatalf("expected fluid confidence, got %v", confidence)
+	}
+
+	if expectedReturn == 0 {
+		t.Fatalf("expected fluid expected return, got %v", expectedReturn)
+	}
+
+	if runway <= 0 {
+		t.Fatalf("expected fluid runway, got %v", runway)
 	}
 
 	if reason != "accumulation" && reason != "shock" {

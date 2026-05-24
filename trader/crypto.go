@@ -19,36 +19,15 @@ Crypto paper-trades Kraken microstructure signals with trailing stops.
 Live order placement is not wired; all fills go through PaperWallet.
 */
 type Crypto struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	pool            *qpool.Q
-	wallet          *Wallet
-	prices          PriceReader
-	publisher       Publisher
-	engineStats     EngineStats
-	signals         []engine.Signal
-	holds           map[string]position
-	records         map[string]symbolRecord
-	priorCandidates map[string]struct{}
-	closedPnL       float64
-	tradeCount      int
-	winCount        int
-	pulseSeq        atomic.Int64
-	statusSink      func() map[string]any
-}
-
-type position struct {
-	pair       asset.Pair
-	notional   float64
-	entryPrice float64
-	entryFee   float64
-	enteredAt  time.Time
-	confidence float64
-	regime     string
-	reason     string
-	trailPct   float64
-	stopPrice  float64
-	peakPrice  float64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	pool       *qpool.Q
+	wallet     *Wallet
+	prices     PriceReader
+	signals    []engine.Signal
+	pairStates sync.Map
+	telemetry  *Telemetry
+	tickSeq    atomic.Uint64
 }
 
 /*
@@ -59,68 +38,53 @@ func NewCrypto(
 	pool *qpool.Q,
 	wallet *Wallet,
 	prices PriceReader,
-	publisher Publisher,
 	signals ...engine.Signal,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	if publisher == nil {
-		publisher = NoopPublisher()
-	}
-
 	crypto := &Crypto{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		wallet:          wallet,
-		prices:          prices,
-		publisher:       publisher,
-		signals:         signals,
-		holds:           make(map[string]position),
-		records:         make(map[string]symbolRecord),
-		priorCandidates: make(map[string]struct{}),
+		ctx:        ctx,
+		cancel:     cancel,
+		pool:       pool,
+		wallet:     wallet,
+		prices:     prices,
+		signals:    signals,
+		pairStates: sync.Map{},
 	}
-
-	crypto.statusSink = crypto.statusEvent
 
 	return crypto, errnie.Require(map[string]any{
-		"ctx":     ctx,
-		"cancel":  cancel,
-		"wallet":  wallet,
-		"signals": signals,
+		"ctx":        ctx,
+		"cancel":     cancel,
+		"wallet":     wallet,
+		"prices":     prices,
+		"signals":    signals,
+		"pairStates": &crypto.pairStates,
 	})
 }
 
-/*
-SetEngineStats wires live counters for engine_pulse events.
-*/
-func (crypto *Crypto) SetEngineStats(stats EngineStats) {
-	crypto.engineStats = stats
-}
+func (crypto *Crypto) sourceScores() map[string]float64 {
+	scores := make(map[string]float64, len(crypto.signals))
 
-/*
-StatusSnapshot returns the latest wallet and position telemetry.
-*/
-func (crypto *Crypto) StatusSnapshot() map[string]any {
-	if crypto.statusSink == nil {
-		return crypto.statusEvent()
+	for _, signal := range crypto.signals {
+		reader, ok := signal.(engine.LiveScoreReader)
+
+		if !ok {
+			continue
+		}
+
+		scores[signal.Source()] = reader.LiveScore()
 	}
 
-	return crypto.statusSink()
+	return scores
 }
 
 /*
-Run runs the crypto trader.
+Run runs the crypto trader on a single scheduler: scan → drain → decide.
 */
 func (crypto *Crypto) Run() error {
-	for _, signal := range crypto.signals {
-		signal.Run()
+	if crypto.telemetry != nil {
+		crypto.telemetry.Publish(crypto.wallet, crypto)
 	}
-
-	crypto.publishStatus()
-
-	exitTicker := time.NewTicker(config.System.ExitEvery)
-	defer exitTicker.Stop()
 
 	rescoreTicker := time.NewTicker(config.System.RescoreEvery)
 	defer rescoreTicker.Stop()
@@ -129,235 +93,213 @@ func (crypto *Crypto) Run() error {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case <-exitTicker.C:
-			if err := crypto.markExits(); err != nil {
+		case now := <-rescoreTicker.C:
+			if crypto.telemetry != nil {
+				crypto.telemetry.BeginTick()
+			}
+
+			if err := crypto.scanSignals(now); err != nil {
 				return err
 			}
-		case <-rescoreTicker.C:
-			batch := crypto.drainMeasurements()
-			crypto.decide(batch)
+
+			crypto.processTick(now)
+
+			if crypto.telemetry != nil {
+				crypto.telemetry.Publish(crypto.wallet, crypto)
+			}
 		}
 	}
 }
 
-func (crypto *Crypto) drainMeasurements() []engine.Measurement {
-	if crypto.pool == nil || len(crypto.signals) <= 1 {
-		return crypto.drainMeasurementsSequential()
-	}
-
-	type drainResult struct {
-		items []engine.Measurement
-	}
-
-	results := make([][]engine.Measurement, len(crypto.signals))
-	waitGroup := sync.WaitGroup{}
-	waitGroup.Add(len(crypto.signals))
-
-	for index, signal := range crypto.signals {
-		signalIndex := index
-		activeSignal := signal
-
-		resultCh := crypto.pool.Schedule(
-			fmt.Sprintf("measure-%d-%d", signalIndex, crypto.pulseSeq.Load()),
-			func(ctx context.Context) (any, error) {
-				items := make([]engine.Measurement, 0)
-
-				for measurement := range activeSignal.Measure(ctx) {
-					items = append(items, measurement)
-				}
-
-				return items, nil
-			},
-		)
-
-		go func() {
-			defer waitGroup.Done()
-
-			result := <-resultCh
-
-			if result == nil {
-				return
-			}
-
-			if result.Error != nil {
-				errnie.Error(result.Error)
-
-				return
-			}
-
-			items, ok := result.Value.([]engine.Measurement)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid measurement batch type: %T", result.Value))
-
-				return
-			}
-
-			results[signalIndex] = items
-		}()
-	}
-
-	waitGroup.Wait()
-
-	batch := make([]engine.Measurement, 0)
-
-	for _, items := range results {
-		batch = append(batch, items...)
-	}
-
-	return batch
-}
-
-func (crypto *Crypto) drainMeasurementsSequential() []engine.Measurement {
-	batch := make([]engine.Measurement, 0)
-
-	for _, signal := range crypto.signals {
-		for measurement := range signal.Measure(crypto.ctx) {
-			batch = append(batch, measurement)
-		}
-	}
-
-	return batch
-}
-
-func (crypto *Crypto) decide(batch []engine.Measurement) {
-	for _, measurement := range batch {
-		if measurement.Err != nil {
-			errnie.Error(measurement.Err)
-		}
-	}
-
-	candidates := crypto.rankCandidates(batch)
-	line := batchEntryLine(candidates)
-	peakConfidence := batchPeakConfidence(candidates)
-
-	crypto.publishEnginePulse(batch, candidates)
-	crypto.publishScoreboard(batch, candidates, line)
-	crypto.publishDecisionTrace(batch, candidates, line)
-
-	if len(candidates) == 0 {
-		crypto.priorCandidates = nil
-		return
-	}
-
-	nextCandidates := make(map[string]struct{}, len(candidates))
-
-	for _, candidate := range candidates {
-		nextCandidates[candidate.symbol] = struct{}{}
-	}
-
-	if !crypto.readyForTrading() {
-		crypto.priorCandidates = nextCandidates
-		return
-	}
-
-	if !crypto.tradingSolvent() {
-		crypto.priorCandidates = nextCandidates
-		return
-	}
-
-	for _, candidate := range candidates {
-		if _, seen := crypto.priorCandidates[candidate.symbol]; !seen {
-			continue
-		}
-
-		if !crypto.meetsEntryLine(candidate, line) {
-			continue
-		}
-
-		crypto.tryEnter(candidate, peakConfidence)
-	}
-
-	crypto.priorCandidates = nextCandidates
-	crypto.publishStatus()
+type signalTickResult struct {
+	measurements []engine.Measurement
+	feedback     []engine.PredictionFeedback
 }
 
 /*
-Close closes the crypto trader and cancels open positions at market.
+updatePairStates ingests one signal measurement per pair.
 */
-func (crypto *Crypto) Close() error {
-	crypto.closeAllPositions("shutdown")
-	crypto.cancel()
+func (crypto *Crypto) updatePairStates(
+	measurement engine.Measurement, now time.Time,
+) []engine.PredictionFeedback {
+	pending := make([]engine.PredictionFeedback, 0)
+
+	for _, pair := range measurement.Pairs {
+		state := crypto.pairState(pair)
+
+		if state == nil {
+			continue
+		}
+
+		state.Update(measurement)
+
+		if measurement.ExpectedReturn <= 0 {
+			continue
+		}
+
+		state.RecordPrediction(now, measurement)
+
+		symbol := asset.Symbol(pair)
+		quotePrice, ok := crypto.quotePrice(symbol)
+
+		if !ok {
+			continue
+		}
+
+		state.AnchorPending(quotePrice)
+		pending = append(pending, state.SettleDue(now, quotePrice)...)
+	}
+
+	return pending
+}
+
+func (crypto *Crypto) scanSignals(now time.Time) error {
+	if crypto.pool == nil {
+		return crypto.scanSignalsSequential(now)
+	}
+
+	resultChannels := make([]chan *qpool.QValue[any], len(crypto.signals))
+
+	for index, signal := range crypto.signals {
+		jobIndex := index
+		jobSignal := signal
+		jobID := fmt.Sprintf("crypto:scan:%d:%d", jobIndex, crypto.nextJobID())
+		resultChannels[jobIndex] = crypto.pool.Schedule(jobID, func(context.Context) (any, error) {
+			return nil, jobSignal.Scan(now)
+		})
+	}
+
+	for _, resultChannel := range resultChannels {
+		result := <-resultChannel
+
+		if result == nil {
+			continue
+		}
+
+		if result.Error != nil {
+			return result.Error
+		}
+	}
 
 	return nil
 }
 
-func (crypto *Crypto) closeAllPositions(reason string) {
-	for symbol, hold := range crypto.holds {
-		exitFill, ok := crypto.exitFill(symbol)
+func (crypto *Crypto) scanSignalsSequential(now time.Time) error {
+	for _, signal := range crypto.signals {
+		if err := signal.Scan(now); err != nil {
+			return err
+		}
+	}
 
-		if !ok || exitFill <= 0 {
-			delete(crypto.holds, symbol)
+	return nil
+}
+
+func (crypto *Crypto) processTick(now time.Time) {
+	if crypto.pool == nil {
+		crypto.processTickSequential(now)
+
+		return
+	}
+
+	resultChannels := make([]chan *qpool.QValue[any], len(crypto.signals))
+
+	for index, signal := range crypto.signals {
+		jobIndex := index
+		jobSignal := signal
+		jobID := fmt.Sprintf("crypto:tick:%d:%d", jobIndex, crypto.nextJobID())
+		resultChannels[jobIndex] = crypto.pool.Schedule(jobID, func(context.Context) (any, error) {
+			return crypto.drainSignal(jobSignal, now), nil
+		})
+	}
+
+	for _, resultChannel := range resultChannels {
+		result := <-resultChannel
+
+		if result == nil || result.Error != nil {
 			continue
 		}
 
-		crypto.closePosition(symbol, hold, exitFill, reason)
+		tickResult, ok := result.Value.(signalTickResult)
+
+		if !ok {
+			continue
+		}
+
+		crypto.applyTickResult(tickResult)
 	}
 }
 
-func (crypto *Crypto) tryEnter(candidate tradeCandidate, peakConfidence float64) {
-	if _, held := crypto.holds[candidate.symbol]; held {
-		return
+func (crypto *Crypto) processTickSequential(now time.Time) {
+	for _, signal := range crypto.signals {
+		crypto.applyTickResult(crypto.drainSignal(signal, now))
+	}
+}
+
+func (crypto *Crypto) drainSignal(
+	signal engine.Signal, now time.Time,
+) signalTickResult {
+	result := signalTickResult{}
+
+	for measurement := range signal.Measure(crypto.ctx) {
+		result.measurements = append(result.measurements, measurement)
+		result.feedback = append(
+			result.feedback,
+			crypto.updatePairStates(measurement, now)...,
+		)
 	}
 
-	if !crypto.canEnter(candidate) {
-		return
+	return result
+}
+
+func (crypto *Crypto) applyTickResult(result signalTickResult) {
+	for _, measurement := range result.measurements {
+		if crypto.telemetry != nil {
+			crypto.telemetry.NoteMeasurement(measurement)
+		}
 	}
 
-	notional := crypto.entryNotional(candidate.confidence, peakConfidence)
+	for _, feedback := range result.feedback {
+		crypto.applyFeedback(feedback)
+	}
+}
 
-	if notional <= 0 {
-		return
+func (crypto *Crypto) nextJobID() uint64 {
+	return crypto.tickSeq.Add(1)
+}
+
+func (crypto *Crypto) pairState(pair asset.Pair) *PairState {
+	symbol := asset.Symbol(pair)
+
+	if symbol == "" {
+		return nil
 	}
 
-	if !crypto.canAffordEntry(notional) {
-		return
+	if loaded, ok := crypto.pairStates.Load(symbol); ok {
+		return loaded.(*PairState)
 	}
 
-	entryFill, trail, ok := crypto.entryFill(candidate.symbol)
+	state := NewPairState(pair)
+	loaded, _ := crypto.pairStates.LoadOrStore(symbol, state)
 
-	if !ok || entryFill <= 0 {
-		return
+	return loaded.(*PairState)
+}
+
+func (crypto *Crypto) quotePrice(symbol string) (float64, bool) {
+	if crypto.prices == nil || symbol == "" {
+		return 0, false
 	}
 
-	entryFee := config.System.TakerFee(notional, crypto.wallet.FeePct)
-	crypto.wallet.Balance -= notional + entryFee
+	return crypto.prices.Last(symbol)
+}
 
-	stop := stopFromEntry(entryFill, trail)
+func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
+	for _, signal := range crypto.signals {
+		receiver, ok := signal.(engine.FeedbackReceiver)
 
-	crypto.holds[candidate.symbol] = position{
-		pair:       candidate.pair,
-		notional:   notional,
-		entryPrice: entryFill,
-		entryFee:   entryFee,
-		enteredAt:  time.Now(),
-		confidence: candidate.confidence,
-		regime:     candidate.regime,
-		reason:     candidate.reason,
-		trailPct:   trail,
-		stopPrice:  stop,
-		peakPrice:  entryFill,
-	}
+		if !ok {
+			continue
+		}
 
-	errnie.Info(fmt.Sprintf(
-		"paper_enter symbol=%s regime=%s notional=%.4f confidence=%.4f support=%d fee=%.4f wins=%d",
-		candidate.symbol, candidate.regime, notional, candidate.confidence, candidate.support, entryFee,
-		crypto.records[candidate.symbol].wins,
-	))
-
-	if crypto.publisher != nil {
-		crypto.publisher.Emit(map[string]any{
-			"event":        "trade_enter",
-			"ts":           time.Now().UTC().Format(time.RFC3339Nano),
-			"symbol":       candidate.symbol,
-			"regime":       candidate.regime,
-			"reason":       candidate.reason,
-			"score":        candidate.confidence,
-			"trail_pct":    trail,
-			"fill":         entryFill,
-			"stop":         stop,
-			"notional_eur": notional,
-			"last":         entryFill,
-		})
+		receiver.ApplyFeedback(feedback)
 	}
 }

@@ -80,11 +80,16 @@ type TradeChartGridProps = {
 export const TradeChartGrid = memo(function TradeChartGrid({
 	symbols,
 }: TradeChartGridProps) {
+	const gridClass =
+		symbols.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2";
+
 	return (
-		<SciChartGroup>
-			{symbols.map((symbol) => (
-				<TradeChart key={symbol} symbol={symbol} />
-			))}
-		</SciChartGroup>
+		<div className={`grid min-h-0 gap-2 ${gridClass}`}>
+			<SciChartGroup>
+				{symbols.map((symbol) => (
+					<TradeChart key={symbol} symbol={symbol} />
+				))}
+			</SciChartGroup>
+		</div>
 	);
 });

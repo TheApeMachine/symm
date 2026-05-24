@@ -39,8 +39,60 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 type wsClient struct {
-	conn *websocket.Conn
-	send chan []byte
+	conn    *websocket.Conn
+	send    chan []byte
+	mu      sync.Mutex
+	symbols map[string]struct{}
+}
+
+func (client *wsClient) subscribe(symbols []string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.symbols == nil {
+		client.symbols = make(map[string]struct{})
+	}
+
+	for _, symbol := range symbols {
+		symbol = strings.TrimSpace(symbol)
+		if symbol == "" {
+			continue
+		}
+
+		client.symbols[symbol] = struct{}{}
+	}
+}
+
+func (client *wsClient) unsubscribe(symbols []string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	for _, symbol := range symbols {
+		symbol = strings.TrimSpace(symbol)
+		if symbol == "" {
+			continue
+		}
+
+		delete(client.symbols, symbol)
+	}
+}
+
+func (client *wsClient) wantsSymbol(symbol string) bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.symbols) == 0 {
+		return false
+	}
+
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return false
+	}
+
+	_, ok := client.symbols[symbol]
+
+	return ok
 }
 
 /*
@@ -61,6 +113,7 @@ var replayEventTypes = []string{
 	"engine_pulse",
 	"scoreboard",
 	"decision_trace",
+	"status",
 }
 
 /*
@@ -117,16 +170,42 @@ func (hub *Hub) Emit(event map[string]any) {
 		return
 	}
 
+	eventName, _ := event["event"].(string)
+	tickSymbol, _ := event["symbol"].(string)
+
 	hub.clients.Range(func(key, value any) bool {
 		client := key.(*wsClient)
 
-		select {
-		case client.send <- payload:
-		default:
+		if eventName == "price_tick" && !client.wantsSymbol(tickSymbol) {
+			return true
 		}
+
+		critical := eventIsCritical(eventName) || eventName == "price_tick"
+		hub.deliver(client, payload, critical)
 
 		return true
 	})
+}
+
+func eventIsCritical(eventName string) bool {
+	switch eventName {
+	case "hello", "status", "trade_enter", "trade_exit", "stop_ratchet":
+		return true
+	default:
+		return false
+	}
+}
+
+func (hub *Hub) deliver(client *wsClient, payload []byte, critical bool) {
+	if critical {
+		client.send <- payload
+		return
+	}
+
+	select {
+	case client.send <- payload:
+	default:
+	}
 }
 
 func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
@@ -218,10 +297,8 @@ func (hub *Hub) enqueue(client *wsClient, event map[string]any) {
 		return
 	}
 
-	select {
-	case client.send <- payload:
-	default:
-	}
+	eventName, _ := event["event"].(string)
+	hub.deliver(client, payload, eventIsCritical(eventName))
 }
 
 func (hub *Hub) writePump(client *wsClient) {
@@ -257,9 +334,42 @@ func (hub *Hub) readPump(client *wsClient) {
 			return
 		}
 
-		_, _, err := client.conn.ReadMessage()
+		_, payload, err := client.conn.ReadMessage()
 		if err != nil {
 			return
+		}
+
+		hub.handleClientMessage(client, payload)
+	}
+}
+
+type clientMessage struct {
+	Op      string   `json:"op"`
+	Symbols []string `json:"symbols"`
+	Symbol  string   `json:"symbol"`
+}
+
+func (hub *Hub) handleClientMessage(client *wsClient, payload []byte) {
+	var message clientMessage
+
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return
+	}
+
+	switch message.Op {
+	case "subscribe":
+		client.subscribe(message.Symbols)
+		if strings.TrimSpace(message.Symbol) != "" {
+			client.subscribe([]string{message.Symbol})
+		}
+	case "unsubscribe":
+		client.unsubscribe(message.Symbols)
+		if strings.TrimSpace(message.Symbol) != "" {
+			client.unsubscribe([]string{message.Symbol})
+		}
+	case "watch":
+		if strings.TrimSpace(message.Symbol) != "" {
+			client.subscribe([]string{message.Symbol})
 		}
 	}
 }
@@ -283,7 +393,7 @@ func (hub *Hub) Close() error {
 }
 
 /*
-ListenAddr parses --ui-addr into a host listen address (e.g. :8765).
+ListenAddr parses config.System.UIAddr into a host listen address (e.g. :8765).
 */
 func ListenAddr(raw string) (string, bool) {
 	raw = strings.TrimSpace(raw)
@@ -292,7 +402,7 @@ func ListenAddr(raw string) (string, bool) {
 	}
 
 	if strings.HasPrefix(raw, ":") {
-		return raw, true
+		return net.JoinHostPort("127.0.0.1", strings.TrimPrefix(raw, ":")), true
 	}
 
 	parsed, err := url.Parse(raw)

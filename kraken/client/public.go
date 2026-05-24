@@ -31,6 +31,7 @@ type PublicClient struct {
 	replayPace    time.Duration
 	subscriptions []any
 	onDisconnect  func(error)
+	onReconnect   func()
 	mu            sync.Mutex
 	readOnce      sync.Once
 	pingOnce      sync.Once
@@ -54,6 +55,15 @@ OnDisconnect registers a callback for unrecoverable read or reconnect failures.
 func OnDisconnect(handler func(error)) PublicClientOption {
 	return func(publicClient *PublicClient) {
 		publicClient.onDisconnect = handler
+	}
+}
+
+/*
+OnReconnect registers a callback after a successful websocket reconnect and resubscribe.
+*/
+func OnReconnect(handler func()) PublicClientOption {
+	return func(publicClient *PublicClient) {
+		publicClient.onReconnect = handler
 	}
 }
 
@@ -307,6 +317,10 @@ func (publicClient *PublicClient) reconnect() error {
 			}
 
 			errnie.Warn("public websocket reconnected", "attempt", attempt+1)
+
+			if publicClient.onReconnect != nil {
+				publicClient.onReconnect()
+			}
 
 			return nil
 		}

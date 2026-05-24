@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+func TestListenAddrBindsLocalhostByDefault(t *testing.T) {
+	addr, ok := ListenAddr(":8765")
+
+	if !ok || addr != "127.0.0.1:8765" {
+		t.Fatalf("expected localhost bind, got ok=%v addr=%q", ok, addr)
+	}
+}
+
 func TestHubStoresReplayEvents(t *testing.T) {
 	ctx := context.Background()
 	hub, err := NewHub(ctx, nil)
@@ -28,8 +36,8 @@ func TestHubStoresReplayEvents(t *testing.T) {
 
 	replay := hub.replayEvents()
 
-	if len(replay) != 2 {
-		t.Fatalf("expected two replay events, got %d", len(replay))
+	if len(replay) != 3 {
+		t.Fatalf("expected three replay events, got %d", len(replay))
 	}
 
 	if replay[0]["event"] != "field_snapshot" {
@@ -38,6 +46,10 @@ func TestHubStoresReplayEvents(t *testing.T) {
 
 	if replay[1]["event"] != "engine_pulse" {
 		t.Fatalf("expected engine_pulse second, got %v", replay[1]["event"])
+	}
+
+	if replay[2]["event"] != "status" {
+		t.Fatalf("expected status third, got %v", replay[2]["event"])
 	}
 }
 

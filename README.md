@@ -12,7 +12,7 @@ make test
 make bench
 ```
 
-Plain `go test ./...` fails at link time without that flag.
+`make test` runs Go tests and the frontend Vitest suite. Plain `go test ./...` fails at link time without that flag.
 
 ## Run
 
@@ -20,27 +20,26 @@ Plain `go test ./...` fails at link time without that flag.
 make run
 ```
 
-Replay dry-run:
+No CLI flags — runtime defaults live in `config.NewConfig()`. Logs go to stdout and `runs/symm-<timestamp>.log`.
+
+Replay dry-run (JSONL Kraken v2 frames via environment):
 
 ```bash
 make replay REPLAY_FILE=replay/fixtures/sample.jsonl
 ```
 
-## Flags
+Or directly:
 
-| Flag | Purpose |
-|------|---------|
-| `--wallet` | Paper wallet size in quote currency |
-| `--quote` | Quote filter (default EUR) |
-| `--ui-addr` | Telemetry WebSocket server (`:8765`) |
-| `--replay-file` | JSONL Kraken v2 frames |
-| `--log-level` | errnie log level |
-| `--log-dir` / `--log-file` | Run log output |
+```bash
+SYMM_REPLAY_FILE=replay/fixtures/sample.jsonl ./bin/symm
+```
+
+Optional: `SYMM_REPLAY_PACE=50ms` (default `50ms`).
 
 ## Architecture
 
-- `kraken/client.PublicClient` — live feed with ping, reconnect, and resubscribe
-- Observers (`book`, `trades`, `ticker`) → `engine.Signal` → `trader.Crypto`
+- `kraken/client.PublicClient` — live feed with ping, reconnect, resubscribe, and feed-pause on unrecoverable disconnect
+- Observers (`book`, `trades`, `ticker`) → `engine.Signal` scan queues → `trader.Crypto` unified scheduler
 - `work.NewPool` — shared qpool for parallel signal measurement drain
 - `replay/` — offline JSONL replay through the same client path
 
@@ -50,4 +49,4 @@ make replay REPLAY_FILE=replay/fixtures/sample.jsonl
 cd frontend && pnpm dev
 ```
 
-Dashboard connects to `ws://127.0.0.1:8765/ws` when `--ui-addr :8765` is set.
+Dashboard connects to `ws://127.0.0.1:8765/ws` (default `config.System.UIAddr`).

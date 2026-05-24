@@ -1,4 +1,5 @@
 import {
+	CameraController,
 	EDrawMeshAs,
 	EAxisPlaneDrawLabelsMode,
 	GradientColorPalette,
@@ -12,6 +13,7 @@ import {
 	UniformGridDataSeries3D,
 	Vector3,
 	zeroArray2D,
+	type TSciChart3D,
 } from "scichart";
 
 import type { FieldSnapshotEvent } from "#/lib/symm/events";
@@ -58,23 +60,43 @@ function setWorldHeight(surface: SciChart3DSurface): void {
 	);
 }
 
-function frameCameraInitial(surface: SciChart3DSurface): void {
+function frameCameraInitial(
+	surface: SciChart3DSurface,
+	wasmContext: TSciChart3D,
+): void {
 	setWorldHeight(surface);
 
 	const half = FLUID_GRID_SIZE / 2;
 	const orbit = FLUID_GRID_SIZE * 1.2;
 	const yMid = FLUID_DISPLAY_HEIGHT / 2;
-	const camera = surface.camera;
-	camera.target = gridCenter(yMid);
-	camera.position = new Vector3(
-		half - orbit * 0.82,
-		yMid + orbit * 0.62,
-		half + orbit * 0.82,
-	);
+
+	surface.camera = new CameraController(wasmContext, {
+		position: new Vector3(
+			half - orbit * 0.82,
+			yMid + orbit * 0.62,
+			half + orbit * 0.82,
+		),
+		target: gridCenter(yMid),
+	});
 }
 
 function retargetCamera(surface: SciChart3DSurface): void {
 	surface.camera.target = gridCenter(FLUID_DISPLAY_HEIGHT / 2);
+}
+
+function syncSurfaceViewport(
+	surface: SciChart3DSurface,
+	hostElement: HTMLDivElement,
+): void {
+	const width = Math.floor(hostElement.clientWidth);
+	const height = Math.floor(hostElement.clientHeight);
+
+	if (width <= 0 || height <= 0) {
+		return;
+	}
+
+	surface.onResize(width, height);
+	surface.invalidateElement();
 }
 
 export type FluidSurfaceInitResult = {
@@ -91,7 +113,6 @@ class FluidSurfaceController {
 	private heightmap = zeroArray2D([FLUID_GRID_SIZE, FLUID_GRID_SIZE]);
 	private followView = true;
 	private readonly interactionAbort = new AbortController();
-	private resizeObserver: ResizeObserver | null = null;
 	private latestFrame = { yMin: 0, yMax: 1, ySpan: 1 };
 
 	private constructor(
@@ -105,14 +126,14 @@ class FluidSurfaceController {
 	}
 
 	static async create(
-		rootElement: HTMLDivElement,
+		hostElement: HTMLDivElement,
 	): Promise<FluidSurfaceController> {
 		await ensureSciChartWasm();
+
 		const { sciChart3DSurface, wasmContext } = await SciChart3DSurface.create(
-			rootElement,
+			hostElement,
 			{
-				worldDimensions: new Vector3(FLUID_GRID_SIZE, 12, FLUID_GRID_SIZE),
-				disableAspect: true,
+				disableAspect: false,
 				background: PALETTE.dark,
 				xyAxisPlane: HIDDEN_PLANE_LABELS,
 				zyAxisPlane: HIDDEN_PLANE_LABELS,
@@ -120,7 +141,8 @@ class FluidSurfaceController {
 			},
 		);
 
-		frameCameraInitial(sciChart3DSurface);
+		frameCameraInitial(sciChart3DSurface, wasmContext);
+		syncSurfaceViewport(sciChart3DSurface, hostElement);
 
 		const gridRange = new NumberRange(0, FLUID_GRID_SIZE - 1);
 		sciChart3DSurface.xAxis = new NumericAxis3D(wasmContext, {
@@ -180,8 +202,10 @@ class FluidSurfaceController {
 			dataSeries,
 			meshSeries,
 		);
-		controller.bindUserNavigation(rootElement);
-		controller.bindResize(rootElement);
+		controller.bindUserNavigation(hostElement);
+		requestAnimationFrame(() => {
+			syncSurfaceViewport(sciChart3DSurface, hostElement);
+		});
 		return controller;
 	}
 
@@ -195,18 +219,6 @@ class FluidSurfaceController {
 
 	dispose() {
 		this.interactionAbort.abort();
-		this.resizeObserver?.disconnect();
-		this.resizeObserver = null;
-	}
-
-	private bindResize(rootElement: HTMLDivElement) {
-		this.resizeObserver = new ResizeObserver(() => {
-			if (rootElement.clientWidth <= 0 || rootElement.clientHeight <= 0) {
-				return;
-			}
-			this.surface.invalidateElement();
-		});
-		this.resizeObserver.observe(rootElement);
 	}
 
 	private bindUserNavigation(rootElement: HTMLDivElement) {

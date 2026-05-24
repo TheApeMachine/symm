@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -37,12 +38,28 @@ type TrackStore struct {
 SymbolTrack stores rolling causal samples and effect histories.
 */
 type SymbolTrack struct {
-	samples          []causalSample
-	interventionHist []float64
-	lastPrice        float64
-	lastAt           time.Time
-	hasPrior         bool
-	dailyQuoteVol    float64
+	samples           []causalSample
+	interventionHist  []float64
+	confidenceHistory []float64
+	lastPrice         float64
+	lastAt            time.Time
+	lastElapsed       time.Duration
+	hasPrior          bool
+	dailyQuoteVol     float64
+	calibrator        engine.PredictionCalibrator
+	liveScore         float64
+}
+
+/*
+BeginScan clears per-tick live gauge scores before the next scan set runs.
+*/
+func (trackStore *TrackStore) BeginScan() {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	for _, track := range trackStore.bySymbol {
+		track.liveScore = 0
+	}
 }
 
 /*
@@ -110,13 +127,19 @@ func (trackStore *TrackStore) Record(
 	defer trackStore.mu.Unlock()
 
 	track := trackStore.ensure(symbol)
+	elapsed := time.Duration(0)
+
+	if track.hasPrior && !track.lastAt.IsZero() {
+		elapsed = now.Sub(track.lastAt)
+	}
+
 	velocity := 0.0
 
 	if track.hasPrior && !track.lastAt.IsZero() && track.lastPrice > 0 && price > 0 {
-		elapsed := now.Sub(track.lastAt).Seconds()
+		elapsedSec := elapsed.Seconds()
 
-		if elapsed > 0 {
-			velocity = (price - track.lastPrice) / track.lastPrice / elapsed
+		if elapsedSec > 0 {
+			velocity = (price - track.lastPrice) / track.lastPrice / elapsedSec
 		}
 	}
 
@@ -142,8 +165,24 @@ func (trackStore *TrackStore) Record(
 
 	track.lastPrice = price
 	track.lastAt = now
+	track.lastElapsed = elapsed
 
 	return sample, len(track.samples) >= minCausalHistory
+}
+
+/*
+ApplyPredictionFeedback updates intervention calibration from one settled forecast.
+*/
+func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.PredictionFeedback) {
+	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
+	}
+
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	track := trackStore.ensure(feedback.Symbol)
+	track.calibrator.Apply(feedback)
 }
 
 /*
@@ -152,19 +191,105 @@ Evaluate scores rung-2 intervention and rung-3 counterfactual uplift for one sym
 func (trackStore *TrackStore) Evaluate(
 	symbol string,
 	current causalSample,
-) (confidence float64, reason string) {
+) (float64, float64, time.Duration, string) {
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
 	track, ok := trackStore.bySymbol[symbol]
 
 	if !ok || len(track.samples) < minCausalHistory {
-		return 0, ""
+		return 0, 0, 0, ""
 	}
 
+	rawConfidence, reason := track.evaluateLocked(current)
+
+	if rawConfidence <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	track.liveScore = normalized
+
+	runway := opportunityRunway(track.samples, track.lastElapsed)
+
+	if runway <= 0 {
+		return 0, 0, 0, ""
+	}
+
+	track.recordConfidence(rawConfidence)
+	expectedReturn := track.forecastReturn(current, reason, runway)
+
+	return normalized, expectedReturn, runway, reason
+}
+
+/*
+PeakLiveConfidence returns the highest unit-scale score across all symbols.
+*/
+func (trackStore *TrackStore) PeakLiveConfidence() float64 {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	peak := 0.0
+
+	for _, track := range trackStore.bySymbol {
+		if track.liveScore > peak {
+			peak = track.liveScore
+		}
+	}
+
+	return peak
+}
+
+/*
+PeakSymbolScore returns the symbol with the highest live score.
+*/
+func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
+	trackStore.mu.Lock()
+	defer trackStore.mu.Unlock()
+
+	bestSymbol := ""
+	bestScore := 0.0
+
+	for symbol, track := range trackStore.bySymbol {
+		if track.liveScore <= bestScore {
+			continue
+		}
+
+		bestScore = track.liveScore
+		bestSymbol = symbol
+	}
+
+	return bestSymbol, bestScore
+}
+
+func (track *SymbolTrack) forecastReturn(
+	current causalSample, reason string, runway time.Duration,
+) float64 {
+	if runway <= 0 {
+		return 0
+	}
+
+	runwaySeconds := runway.Seconds()
+
+	if reason == "counterfactual" {
+		coef, fitOK := fitStructural(track.samples)
+
+		if fitOK {
+			uplift := counterfactualUplift(current, coef, flowInterventionLevel(track.samples))
+
+			if uplift > 0 {
+				return uplift * runwaySeconds
+			}
+		}
+	}
+
+	return current.priceVelocity * runwaySeconds
+}
+
+func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string) {
 	samples := track.samples
 	association := associationEffect(samples)
-	intervention := backdoorFlowEffect(samples)
+	intervention := backdoorFlowEffect(samples) * track.calibrator.Scale()
 
 	if intervention <= 0 {
 		track.recordIntervention(intervention)
@@ -187,13 +312,13 @@ func (trackStore *TrackStore) Evaluate(
 	}
 
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
-	reason = "intervention"
+	reason := "intervention"
 
 	if confounded && uplift > intervention*0.5 {
 		reason = "counterfactual"
 	}
 
-	confidence = intervention * uplift
+	confidence := intervention * uplift
 
 	if current.localFlow <= 0 || current.liquidity <= 0 {
 		return intervention, reason
@@ -204,6 +329,18 @@ func (trackStore *TrackStore) Evaluate(
 	}
 
 	return confidence, reason
+}
+
+func (track *SymbolTrack) recordConfidence(confidence float64) {
+	if confidence <= 0 {
+		return
+	}
+
+	track.confidenceHistory = append(track.confidenceHistory, confidence)
+
+	if len(track.confidenceHistory) > causalHistoryCap {
+		track.confidenceHistory = track.confidenceHistory[len(track.confidenceHistory)-causalHistoryCap:]
+	}
 }
 
 /*
@@ -256,8 +393,10 @@ func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
 	}
 
 	track = &SymbolTrack{
-		samples:          make([]causalSample, 0, causalHistoryCap),
-		interventionHist: make([]float64, 0, causalHistoryCap),
+		samples:           make([]causalSample, 0, causalHistoryCap),
+		interventionHist:  make([]float64, 0, causalHistoryCap),
+		confidenceHistory: make([]float64, 0, causalHistoryCap),
+		calibrator:        engine.NewPredictionCalibrator(),
 	}
 	trackStore.bySymbol[symbol] = track
 

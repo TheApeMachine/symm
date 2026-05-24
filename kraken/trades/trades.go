@@ -23,10 +23,11 @@ const (
 Trades watches Kraken v2 trade executions and exposes per-symbol buy pressure.
 */
 type Trades struct {
-	mu      sync.RWMutex
-	err     error
-	symbols map[string]tradeState
-	ready   int
+	mu                 sync.RWMutex
+	err                error
+	symbols            map[string]tradeState
+	ready              int
+	activityListener   activityListener
 }
 
 type tradeState struct {
@@ -35,6 +36,8 @@ type tradeState struct {
 	ready    bool
 	ticks    []market.TradeTick
 }
+
+type activityListener func(symbol string, volume float64)
 
 type tradeBatch struct {
 	buyVolume float64
@@ -78,6 +81,16 @@ func New(
 	publicClient.OnFrame(trades.handleFrame)
 
 	return trades, nil
+}
+
+/*
+SetActivityListener registers a callback for executed trade batches.
+*/
+func (trades *Trades) SetActivityListener(listener activityListener) {
+	trades.mu.Lock()
+	defer trades.mu.Unlock()
+
+	trades.activityListener = listener
 }
 
 /*
@@ -185,6 +198,8 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 	trades.mu.Lock()
 	defer trades.mu.Unlock()
 
+	listener := trades.activityListener
+
 	for symbol, batch := range batches {
 		if batch.volume <= 0 {
 			continue
@@ -213,6 +228,10 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 		}
 
 		trades.symbols[symbol] = state
+
+		if listener != nil {
+			listener(symbol, batch.volume)
+		}
 	}
 
 	return nil

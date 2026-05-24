@@ -23,6 +23,7 @@ import {
 } from "scichart-financial-tools";
 
 import type {
+	ChartReplayEvent,
 	ChartSeedEvent,
 	PriceTickEvent,
 	StatusEvent,
@@ -32,6 +33,11 @@ import type {
 	TradeEnterEvent,
 } from "#/lib/symm/events";
 import { eventTimeSec } from "#/lib/symm/events";
+import {
+	aggregateTicksToCandles,
+	type CandleBar,
+	widenFlatOHLC,
+} from "#/lib/symm/chart-candles";
 import { candleYRange } from "#/lib/symm/chart-range";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
@@ -65,40 +71,6 @@ function tickSecond(ev: PriceTickEvent): number {
 	return eventSecond(ev.at || ev.ts);
 }
 
-function candleBounds(ev: PriceTickEvent): { high: number; low: number } {
-	const values = [ev.last, ev.bid, ev.ask].filter((value) => value > 0);
-	if (values.length === 0) {
-		return { high: ev.last, low: ev.last };
-	}
-	return {
-		high: Math.max(...values),
-		low: Math.min(...values),
-	};
-}
-
-function widenFlatOHLC(
-	open: number,
-	high: number,
-	low: number,
-	close: number,
-): { open: number; high: number; low: number; close: number } {
-	const mid = close || open || high || low;
-	if (mid <= 0) {
-		return { open, high, low, close };
-	}
-	const minSpread = Math.max(Math.abs(mid) * 1e-5, 1e-8);
-	if (high - low >= minSpread) {
-		return { open, high, low, close };
-	}
-	const half = minSpread / 2;
-	return {
-		open,
-		high: Math.max(high, mid + half),
-		low: Math.min(low, mid - half),
-		close,
-	};
-}
-
 export type TradeChartInitResult = {
 	sciChartSurface: SciChartSurface;
 	handleEvent: (ev: SymmEvent) => void;
@@ -122,6 +94,8 @@ class SymmChartController {
 	private riskZone: StopLossTakeProfitAnnotation | null = null;
 	private followLive = true;
 	private readonly interactionAbort = new AbortController();
+	private frameScheduled = false;
+	private pendingFramePrices: number[] = [];
 
 	private constructor(
 		symbol: string,
@@ -210,17 +184,19 @@ class SymmChartController {
 			? Math.floor(Date.parse(pos.opened_at) / 1000)
 			: Math.floor(Date.now() / 1000) - 300;
 
-		if (last > 0 && (this.ohlc.count() === 0 || last !== this.latestPrice)) {
-			this.appendPrice(last, Date.now() / 1000, last, last);
-		}
 		this.setRiskZone(openedSec, pos.entry_price, pos.stop_price);
-		this.frameVisibleRange(last);
+		this.scheduleFrameVisibleRange(last);
 	}
 
 	handleEvent(ev: SymmEvent) {
 		switch (ev.event) {
 			case "price_tick":
 				if (ev.symbol === this.symbol) this.onTick(ev as PriceTickEvent);
+				return;
+			case "chart_replay":
+				if (ev.symbol === this.symbol) {
+					this.onReplay(ev as ChartReplayEvent);
+				}
 				return;
 			case "stop_ratchet":
 				if (ev.symbol === this.symbol) this.onRatchet(ev as StopRatchetEvent);
@@ -252,8 +228,11 @@ class SymmChartController {
 			return;
 		}
 
-		const { high, low } = candleBounds(ev);
-		this.appendPrice(ev.last, tickSecond(ev), high, low);
+		this.appendPrice(ev.last, tickSecond(ev));
+	}
+
+	private onReplay(ev: ChartReplayEvent) {
+		this.loadBars(aggregateTicksToCandles(ev.ticks, CANDLE_SECONDS));
 	}
 
 	private onSeed(ev: ChartSeedEvent) {
@@ -276,25 +255,23 @@ class SymmChartController {
 			close: last.c,
 		};
 		this.refreshRiskZone();
-		this.frameVisibleRange(last.c, last.h, last.l);
-		this.surface.invalidateElement();
+		this.scheduleFrameVisibleRange(last.c, last.h, last.l);
 	}
 
 	private onEnter(ev: TradeEnterEvent) {
 		const last = ev.last && ev.last > 0 ? ev.last : ev.fill;
 		const entrySec = eventTimeSec(ev);
 		if (last > 0 && this.ohlc.count() === 0) {
-			this.appendPrice(last, entrySec, last, last);
+			this.appendPrice(last, entrySec);
 		}
 		this.setRiskZone(entrySec, ev.fill, ev.stop);
-		this.frameVisibleRange(last);
+		this.scheduleFrameVisibleRange(last);
 	}
 
 	private onRatchet(ev: StopRatchetEvent) {
 		this.tradeStop = ev.new_stop;
 		this.refreshRiskZone();
-		this.frameVisibleRange(ev.last);
-		this.surface.invalidateElement();
+		this.scheduleFrameVisibleRange(ev.last);
 	}
 
 	private onExit() {
@@ -307,79 +284,104 @@ class SymmChartController {
 		else this.clearRiskZone();
 	}
 
-	private appendPrice(last: number, sec: number, high: number, low: number) {
+	private appendPrice(last: number, sec: number) {
 		const nextSec = Number.isFinite(sec) ? sec : Date.now() / 1000;
 		const bucketSec = Math.floor(nextSec / CANDLE_SECONDS) * CANDLE_SECONDS;
 		this.latestPrice = last;
 		this.latestSec = nextSec;
-		const ohlc = widenFlatOHLC(last, high, low, last);
 
 		if (this.bucket && this.bucket.sec === bucketSec && this.ohlc.count() > 0) {
-			this.bucket.high = Math.max(this.bucket.high, ohlc.high);
-			this.bucket.low = Math.min(this.bucket.low, ohlc.low);
+			this.bucket.high = Math.max(this.bucket.high, last);
+			this.bucket.low = Math.min(this.bucket.low, last);
 			this.bucket.close = last;
-			const merged = widenFlatOHLC(
-				this.bucket.open,
-				this.bucket.high,
-				this.bucket.low,
-				this.bucket.close,
-			);
-			this.ohlc.update(
-				this.ohlc.count() - 1,
-				merged.open,
-				merged.high,
-				merged.low,
-				merged.close,
-			);
+			this.writeBucket(this.ohlc.count() - 1);
 		} else if (this.ohlc.count() > 0) {
 			const nativeX = this.ohlc.getNativeXValues();
 			const lastIdx = this.ohlc.count() - 1;
 			const lastX = nativeX.get(lastIdx);
+
 			if (bucketSec === lastX) {
 				this.bucket = {
 					sec: bucketSec,
 					open: this.bucket?.open ?? last,
-					high: ohlc.high,
-					low: ohlc.low,
+					high: Math.max(this.bucket?.high ?? last, last),
+					low: Math.min(this.bucket?.low ?? last, last),
 					close: last,
 				};
-				const merged = widenFlatOHLC(
-					this.bucket.open,
-					this.bucket.high,
-					this.bucket.low,
-					this.bucket.close,
-				);
-				this.ohlc.update(
-					lastIdx,
-					merged.open,
-					merged.high,
-					merged.low,
-					merged.close,
-				);
+				this.writeBucket(lastIdx);
 			} else if (bucketSec > lastX) {
 				this.bucket = {
 					sec: bucketSec,
 					open: last,
-					high: ohlc.high,
-					low: ohlc.low,
+					high: last,
+					low: last,
 					close: last,
 				};
-				this.ohlc.append(bucketSec, last, ohlc.high, ohlc.low, last);
+				this.appendBucket(bucketSec);
 			}
 		} else {
 			this.bucket = {
 				sec: bucketSec,
 				open: last,
-				high: ohlc.high,
-				low: ohlc.low,
+				high: last,
+				low: last,
 				close: last,
 			};
-			this.ohlc.append(bucketSec, last, ohlc.high, ohlc.low, last);
+			this.appendBucket(bucketSec);
 		}
 
 		this.refreshRiskZone();
-		this.frameVisibleRange(last, high, low);
-		this.surface.invalidateElement();
+		this.scheduleFrameVisibleRange(last);
+	}
+
+	private loadBars(bars: CandleBar[]) {
+		this.ohlc.clear();
+		this.bucket = null;
+
+		for (const bar of bars) {
+			const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
+			this.ohlc.append(bar.sec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+		}
+
+		const lastBar = bars[bars.length - 1];
+
+		if (!lastBar) {
+			return;
+		}
+
+		this.latestPrice = lastBar.close;
+		this.latestSec = lastBar.sec + CANDLE_SECONDS - 1;
+		this.bucket = { ...lastBar };
+		this.refreshRiskZone();
+		this.scheduleFrameVisibleRange(lastBar.close, lastBar.high, lastBar.low);
+	}
+
+	private writeBucket(index: number) {
+		if (!this.bucket) {
+			return;
+		}
+
+		const ohlc = widenFlatOHLC(
+			this.bucket.open,
+			this.bucket.high,
+			this.bucket.low,
+			this.bucket.close,
+		);
+		this.ohlc.update(index, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+	}
+
+	private appendBucket(bucketSec: number) {
+		if (!this.bucket) {
+			return;
+		}
+
+		const ohlc = widenFlatOHLC(
+			this.bucket.open,
+			this.bucket.high,
+			this.bucket.low,
+			this.bucket.close,
+		);
+		this.ohlc.append(bucketSec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
 	}
 
 	private setRiskZone(entrySec: number, entry: number, stop: number) {
@@ -399,8 +401,7 @@ class SymmChartController {
 				axisLabelVisibility: EAnnotationVisibilityMode.Hidden,
 				axisSpanFillOpacity: 0,
 				isEditable: false,
-				snapMode: ESnapMode.XSlice,
-				snapToSeriesId: this.candles.id,
+				snapMode: ESnapMode.None,
 				labels: [
 					{
 						text: "entry",
@@ -464,14 +465,29 @@ class SymmChartController {
 			"dblclick",
 			() => {
 				this.followLive = true;
-				this.frameVisibleRange(this.latestPrice);
-				this.surface.invalidateElement();
+				this.scheduleFrameVisibleRange(this.latestPrice);
 			},
 			{ passive: true, signal },
 		);
 	}
 
-	private frameVisibleRange(...prices: number[]) {
+	private scheduleFrameVisibleRange(...prices: number[]) {
+		this.pendingFramePrices = prices;
+
+		if (this.frameScheduled) {
+			return;
+		}
+
+		this.frameScheduled = true;
+
+		requestAnimationFrame(() => {
+			this.frameScheduled = false;
+			this.applyFrameVisibleRange(...this.pendingFramePrices);
+			this.surface.invalidateElement();
+		});
+	}
+
+	private applyFrameVisibleRange(...prices: number[]) {
 		const latest = this.latestSec || Date.now() / 1000;
 
 		if (!this.followLive) {

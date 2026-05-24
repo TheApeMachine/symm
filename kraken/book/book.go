@@ -16,12 +16,13 @@ const defaultBookDepth = 10
 Book watches Kraken v2 order book updates and exposes per-symbol top-of-book imbalance.
 */
 type Book struct {
-	ctx       context.Context
-	mu        sync.RWMutex
-	bySymbol  map[string]float64
-	spreadBPS map[string]float64
-	density   map[string]float64
-	ready     map[string]bool
+	ctx                context.Context
+	mu                 sync.RWMutex
+	bySymbol           map[string]float64
+	spreadBPS          map[string]float64
+	density            map[string]float64
+	ready              map[string]bool
+	activityListener   func(symbol string)
 }
 
 /*
@@ -62,6 +63,16 @@ func New(
 	publicClient.OnFrame(book.handleFrame)
 
 	return book, nil
+}
+
+/*
+SetActivityListener registers a callback for order-book updates.
+*/
+func (book *Book) SetActivityListener(listener func(symbol string)) {
+	book.mu.Lock()
+	defer book.mu.Unlock()
+
+	book.activityListener = listener
 }
 
 /*
@@ -122,12 +133,16 @@ func (book *Book) storeImbalance(top market.BookTop) {
 	spread := spreadBPS(top)
 
 	book.mu.Lock()
-	defer book.mu.Unlock()
-
+	listener := book.activityListener
 	book.bySymbol[top.Symbol] = imbalance
 	book.spreadBPS[top.Symbol] = spread
 	book.density[top.Symbol] = topDensity(top)
 	book.ready[top.Symbol] = true
+	book.mu.Unlock()
+
+	if listener != nil {
+		listener(top.Symbol)
+	}
 }
 
 func topDensity(top market.BookTop) float64 {

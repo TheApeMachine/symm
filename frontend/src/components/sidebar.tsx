@@ -10,8 +10,8 @@ export const DashboardSidebar = () => {
 				<TradesPanel />
 			</div>
 
-			<div className="flex min-h-[280px] min-w-0 overflow-hidden border-t border-(--dash-border) p-2">
-				<FluidSurfaceChart className="min-h-0 h-full w-full" />
+			<div className="flex h-full min-h-[280px] min-w-0 flex-col overflow-hidden border-t border-(--dash-border) p-2">
+				<FluidSurfaceChart className="h-full min-h-0 w-full" />
 			</div>
 		</aside>
 	);

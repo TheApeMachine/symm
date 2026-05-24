@@ -3,6 +3,7 @@ package causal
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestBackdoorBlocksMacroConfounder(t *testing.T) {
@@ -67,6 +68,7 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 
 	track := trackStore.ensure("ALT/EUR")
 	track.hasPrior = true
+	track.lastElapsed = time.Second
 
 	for index := 0; index < minCausalHistory; index++ {
 		track.samples = append(track.samples, causalSample{
@@ -84,10 +86,18 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		priceVelocity: 0.2,
 	}
 
-	confidence, reason := trackStore.Evaluate("ALT/EUR", sample)
+	confidence, expectedReturn, runway, reason := trackStore.Evaluate("ALT/EUR", sample)
 
 	if confidence <= 0 {
 		t.Fatalf("expected causal confidence, got %v", confidence)
+	}
+
+	if expectedReturn == 0 {
+		t.Fatalf("expected causal expected return, got %v", expectedReturn)
+	}
+
+	if runway <= 0 {
+		t.Fatalf("expected causal runway, got %v", runway)
 	}
 
 	if reason != "intervention" && reason != "counterfactual" {

@@ -1,67 +1,70 @@
 package cmd
 
 import (
-	"context"
 	"os"
-	"time"
+	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/fluid"
 	"github.com/theapemachine/symm/hawkes"
 	"github.com/theapemachine/symm/kraken/asset"
-	kbook "github.com/theapemachine/symm/kraken/book"
+	"github.com/theapemachine/symm/kraken/book"
 	"github.com/theapemachine/symm/kraken/client"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
+	"github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/replay"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/work"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "symm",
-	Short: "Shake Your Money Maker — Kraken paper trading",
+	Short: "Shake Your Money Maker",
 	Long:  rootLong,
 	Run: func(cmd *cobra.Command, args []string) {
-		quote, _ := cmd.Flags().GetString("quote")
-		walletSize, _ := cmd.Flags().GetFloat64("wallet")
-		uiAddr, _ := cmd.Flags().GetString("ui-addr")
-		replayFile, _ := cmd.Flags().GetString("replay-file")
-		replayPace, _ := cmd.Flags().GetDuration("replay-pace")
+		pool := qpool.NewQ(
+			cmd.Context(), 1, runtime.NumCPU()*2, qpool.NewConfig(),
+		)
 
-		sessionCtx, sessionCancel := context.WithCancel(cmd.Context())
-		defer sessionCancel()
+		qpool.SuppressLogging()
 
-		pool := work.NewPool(sessionCtx)
 		wallet := trader.NewWallet(
-			trader.PaperWallet, quote, walletSize, config.System.TakerFeePct,
+			trader.PaperWallet,
+			config.System.QuoteCurrency,
+			config.System.WalletEUR,
+			config.System.TakerFeePct,
 		)
 
 		publicClient := errnie.Does(func() (*client.PublicClient, error) {
-			options := make([]client.PublicClientOption, 0, 2)
+			options := make([]client.PublicClientOption, 0, 3)
 
 			options = append(options, client.OnDisconnect(func(err error) {
 				errnie.Error(err)
-				sessionCancel()
 			}))
 
-			if replayFile != "" {
-				frames, err := replay.LoadFrames(replayFile)
+			options = append(options, client.OnReconnect(func() {
+				errnie.Info("public websocket reconnected")
+			}))
 
-				if err != nil {
-					return nil, err
+			replayFile := strings.TrimSpace(config.System.ReplayFile)
+			if replayFile != "" {
+				frames, loadErr := replay.LoadFrames(replayFile)
+				if loadErr != nil {
+					return nil, loadErr
 				}
 
-				options = append(options, client.WithReplay(frames, replayPace))
+				options = append(options, client.WithReplay(frames, config.System.ReplayPace))
 			}
 
-			publicClient := client.NewPublicClient(sessionCtx, options...)
+			publicClient := client.NewPublicClient(cmd.Context(), options...)
 
 			if err := publicClient.Connect(); err != nil {
 				return nil, err
@@ -76,25 +79,30 @@ var rootCmd = &cobra.Command{
 		defer publicClient.Close()
 
 		pairObserver := errnie.Does(func() (*market.Pairs, error) {
-			return market.NewPairs(sessionCtx, quote, publicClient)
+			return market.NewPairs(
+				cmd.Context(),
+				config.System.QuoteCurrency,
+				publicClient,
+			)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		symbols := errnie.Does(func() ([]string, error) {
-			return pairObserver.Names(sessionCtx)
+			return pairObserver.Names(cmd.Context())
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		pairIndex := errnie.Does(func() (map[string]asset.Pair, error) {
-			assetPairs, err := pairObserver.GetAll(sessionCtx)
-
-			if err != nil {
-				return nil, err
-			}
+			assetPairs := errnie.Does(func() ([]asset.Pair, error) {
+				return pairObserver.GetAll(cmd.Context())
+			}).Or(func(err error) {
+				errnie.Error(err)
+				os.Exit(1)
+			}).Value()
 
 			index := make(map[string]asset.Pair, len(assetPairs))
 
@@ -114,36 +122,54 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
-		bookObserver := errnie.Does(func() (*kbook.Book, error) {
-			return kbook.New(sessionCtx, publicClient, symbols)
+		bookObserver := errnie.Does(func() (*book.Book, error) {
+			return book.New(cmd.Context(), publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
-			return trades.New(sessionCtx, publicClient, symbols)
+			return trades.New(cmd.Context(), publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
-		tickerObserver := errnie.Does(func() (*kticker.Ticker, error) {
-			return kticker.New(sessionCtx, publicClient, symbols)
+		tickerObserver := errnie.Does(func() (*ticker.Ticker, error) {
+			return ticker.New(cmd.Context(), publicClient, symbols)
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
+
+		symbolWatch := engine.NewSymbolWatch(symbols)
+
+		tradesObserver.SetActivityListener(func(symbol string, volume float64) {
+			symbolWatch.NoteTrade(symbol, volume)
+		})
+
+		bookObserver.SetActivityListener(func(symbol string) {
+			symbolWatch.NoteBook(symbol)
+		})
+
+		tickerObserver.OnQuote(func(
+			symbol string,
+			_, _, _, changePct float64,
+			_ string,
+		) {
+			symbolWatch.NoteTicker(symbol, changePct)
+		})
 
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
-				sessionCtx,
+				cmd.Context(),
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
 				pairIndex,
 				symbols,
-				config.System.RescoreEvery,
+				symbolWatch,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -152,13 +178,13 @@ var rootCmd = &cobra.Command{
 
 		hawkesSignal := errnie.Does(func() (*hawkes.Hawkes, error) {
 			return hawkes.NewHawkes(
-				sessionCtx,
+				cmd.Context(),
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
 				pairIndex,
 				symbols,
-				config.System.RescoreEvery,
+				symbolWatch,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -167,13 +193,13 @@ var rootCmd = &cobra.Command{
 
 		fluidSignal := errnie.Does(func() (*fluid.Fluid, error) {
 			return fluid.NewFluid(
-				sessionCtx,
+				cmd.Context(),
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
 				pairIndex,
 				symbols,
-				config.System.RescoreEvery,
+				symbolWatch,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -182,13 +208,13 @@ var rootCmd = &cobra.Command{
 
 		causalSignal := errnie.Does(func() (*causal.Causal, error) {
 			return causal.NewCausal(
-				sessionCtx,
+				cmd.Context(),
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
 				pairIndex,
 				symbols,
-				config.System.RescoreEvery,
+				symbolWatch,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -196,24 +222,27 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		var telemetryHub *ui.Hub
+		var marketStream *ui.MarketStream
 
-		if listenAddr, ok := ui.ListenAddr(uiAddr); ok {
+		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(sessionCtx, nil)
+				return ui.NewHub(cmd.Context(), nil)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)
 			}).Value()
 
 			go func() {
-				if err := telemetryHub.Serve(listenAddr); err != nil && sessionCtx.Err() == nil {
+				if err := telemetryHub.Serve(
+					config.System.UIAddr,
+				); err != nil && cmd.Context().Err() == nil {
 					errnie.Error(err)
 				}
 			}()
 		}
 
 		if telemetryHub != nil {
-			marketStream := ui.NewMarketStream(telemetryHub)
+			marketStream = ui.NewMarketStream(telemetryHub)
 
 			tickerObserver.OnQuote(func(
 				symbol string,
@@ -229,48 +258,36 @@ var rootCmd = &cobra.Command{
 		}
 
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
-			crypto, err := trader.NewCrypto(
-				sessionCtx,
-				pool,
-				wallet,
-				tickerObserver,
-				telemetryHub,
-				pumpSignal,
-				hawkesSignal,
-				fluidSignal,
-				causalSignal,
-			)
+			crypto := errnie.Does(func() (*trader.Crypto, error) {
+				return trader.NewCrypto(
+					cmd.Context(),
+					pool,
+					wallet,
+					tickerObserver,
+					pumpSignal,
+					hawkesSignal,
+					fluidSignal,
+					causalSignal,
+				)
+			}).Or(func(err error) {
+				errnie.Error(err)
+				os.Exit(1)
+			}).Value()
 
-			if err != nil {
-				return nil, err
+			if marketStream != nil {
+				crypto.BindTelemetry(
+					marketStream,
+					tickerObserver,
+					fluidSignal,
+					len(symbols),
+				)
 			}
-
-			if telemetryHub != nil {
-				telemetryHub.SetBootstrap(crypto.ConnectSnapshot)
-			}
-
-			crypto.SetEngineStats(trader.NewEngineStats(
-				tickerObserver.ReadyCount,
-				func() int { return len(symbols) },
-				fluidSignal.SampledCount,
-				fluidSignal.WarmingCount,
-			))
 
 			return crypto, nil
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
-
-		defer cryptoTrader.Close()
-		defer pumpSignal.Close()
-		defer hawkesSignal.Close()
-		defer fluidSignal.Close()
-		defer causalSignal.Close()
-
-		if telemetryHub != nil {
-			defer telemetryHub.Close()
-		}
 
 		if publicClient.ReplayMode() {
 			publicClient.StartReplay()
@@ -286,22 +303,9 @@ type errString string
 
 func (err errString) Error() string { return string(err) }
 
-func init() {
-	rootCmd.Flags().Float64("wallet", config.DefaultWalletEUR, "paper wallet size in quote currency")
-	rootCmd.Flags().String("quote", config.DefaultQuoteCurrency, "quote currency filter (e.g. EUR)")
-	rootCmd.Flags().String("log-level", "info", "trace|debug|info|warn|error")
-	rootCmd.Flags().String("log-dir", "runs", "directory for run log files")
-	rootCmd.Flags().String("log-file", "", "log file path (default runs/symm-<run_id>.log)")
-	rootCmd.Flags().Bool("log-file-active", true, "write logs to --log-file")
-	rootCmd.Flags().Bool("log-stdout", true, "mirror logs to stdout")
-	rootCmd.Flags().String("ui-addr", config.System.UIAddr, "WebSocket UI telemetry (e.g. :8765); enables ws://host/ws")
-	rootCmd.Flags().String("replay-file", "", "newline-delimited Kraken v2 websocket frames for dry-run replay")
-	rootCmd.Flags().Duration("replay-pace", 50*time.Millisecond, "delay between replay frames (0 = as fast as possible)")
-}
-
 const rootLong = `
 S.Y.M.M. - Shake Your Money Maker
 
 Kraken book and trade observers feed microstructure signals into the paper trader.
-Use --replay-file with captured websocket JSONL to dry-run without a live feed.
+Set SYMM_REPLAY_FILE to a captured JSONL fixture for offline dry-run.
 `

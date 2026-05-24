@@ -1,11 +1,15 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useRef } from "react";
 import { SciChartReact } from "scichart-react";
 
+import type { EnginePulseEvent } from "#/lib/symm/events";
 import {
 	initEnginePulseChart,
 	type EnginePulseInitResult,
 } from "#/lib/symm/engine-pulse-controller";
-import { registerFieldStream, unregisterFieldStream } from "#/lib/symm/feed";
+import {
+	registerEnginePulseListener,
+	unregisterEnginePulseListener,
+} from "#/lib/symm/feed";
 import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
@@ -13,22 +17,34 @@ type EnginePulseChartProps = {
 	className?: string;
 };
 
-/** Live aggregate fluid scalars — updates on every field_snapshot, no batching. */
+/** Live average prediction vs running error — one point per engine_pulse tick. */
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
+	const pulseListenerRef = useRef<((pulse: EnginePulseEvent) => void) | null>(
+		null,
+	);
+
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => initEnginePulseChart(rootElement),
 		[],
 	);
 
 	const onInit = useCallback((result: EnginePulseInitResult) => {
-		registerFieldStream((snapshot) => result.appendField(snapshot));
+		const listener = (pulse: EnginePulseEvent) => {
+			result.appendPulse(pulse);
+		};
+		pulseListenerRef.current = listener;
+		registerEnginePulseListener(listener);
 	}, []);
 
 	const onDelete = useCallback((result?: EnginePulseInitResult) => {
+		if (pulseListenerRef.current) {
+			unregisterEnginePulseListener(pulseListenerRef.current);
+			pulseListenerRef.current = null;
+		}
+
 		result?.dispose();
-		unregisterFieldStream();
 	}, []);
 
 	return (
@@ -44,7 +60,7 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>
 			<p className="shrink-0 border-t border-(--dash-border) px-2 py-0.5 text-[9px] text-(--dash-muted)">
-				Re · Turb · Div — one point per fluid rescore
+				Prediction · Error — symbol averages per rescore tick
 			</p>
 		</div>
 	);
@@ -62,16 +78,28 @@ const EnginePulseHeader = memo(function EnginePulseHeader() {
 			</span>
 			{pulse ? (
 				<div className="ml-auto flex flex-wrap gap-3 text-[10px] tabular-nums text-(--dash-muted)">
+					<span>
+						pred{" "}
+						<span className="font-medium text-(--dash-text)">
+							{formatReturn(pulse.avg_prediction)}
+						</span>
+					</span>
+					<span>
+						err{" "}
+						<span className="font-medium text-(--dash-text)">
+							{formatReturn(pulse.avg_error)}
+						</span>
+					</span>
+					<span>
+						syms{" "}
+						<span className="font-medium text-(--dash-text)">
+							{pulse.forecast_symbols ?? pulse.candidates ?? 0}
+						</span>
+					</span>
 					<PulseMetric
 						label="quotes"
 						value={pulse.ticker_ready}
 						total={pulse.symbols_total}
-					/>
-					<PulseMetric
-						label="fluid"
-						value={pulse.fluid_sampled}
-						total={pulse.fluid_warming}
-						warm
 					/>
 					<span>
 						sig{" "}
@@ -79,17 +107,19 @@ const EnginePulseHeader = memo(function EnginePulseHeader() {
 							{pulse.measurements}
 						</span>
 					</span>
-					<span>
-						cand{" "}
-						<span className="font-medium text-(--dash-text)">
-							{pulse.candidates}
-						</span>
-					</span>
 				</div>
 			) : null}
 		</div>
 	);
 });
+
+function formatReturn(value: number | undefined) {
+	if (value === undefined || !Number.isFinite(value)) {
+		return "—";
+	}
+
+	return value.toFixed(4);
+}
 
 function PulseMetric({
 	label,
