@@ -155,7 +155,7 @@ After settlement, `trader.Crypto.applyFeedback`:
 
 Inside each signal, `engine.PredictionCalibrator` maintains an EWMA **scale** from calibration samples. Losses preserve magnitude via `max(0, 1 + actual/predicted)` rather than flat zero. That scale feeds back into the **next** internal fit — Hawkes excitation, pump precursor weights, fluid shock thresholds, causal uplift — not into the confidence number shown on the dashboard.
 
-The trader also maintains `SourceTrustStore`: per-source hit-rate × magnitude EWMA from settled feedback. `DecisionEngine.Build` multiplies each candidate by regime weight and source trust instead of summing raw confidence equally.
+The trader also maintains `SourceTrustStore`: per-source hit-rate, win magnitude, and loss-severity EWMAs from settled feedback. Unknown sources start at 0.5 trust until samples exist; weight is `hitRate × winMagnitude / (1 + lossSeverity)`. `DecisionEngine.Build` multiplies each candidate by regime weight and source trust instead of summing raw confidence equally.
 
 Unanchored or zero predicted-return feedback is dropped — no silent defaults.
 
