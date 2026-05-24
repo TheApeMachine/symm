@@ -61,7 +61,8 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 				<SciChartReact
 					initChart={initChart}
 					onInit={onInit}
-					style={{ position: "absolute", height: "100%", width: "100%" }}
+					className="h-full w-full"
+					innerContainerProps={{ className: "h-full w-full" }}
 				/>
 			</div>
 			<p className="shrink-0 truncate border-t border-(--dash-border) px-2 py-0.5 text-[9px] text-(--dash-muted)">
