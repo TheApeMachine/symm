@@ -2,9 +2,11 @@ package causal
 
 import (
 	"context"
+	"iter"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	kbook "github.com/theapemachine/symm/kraken/book"
@@ -17,15 +19,18 @@ Causal applies Pearl's ladder: association, backdoor intervention, and counterfa
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor control.
 */
 type Causal struct {
-	*engine.SignalBase
-	track *TrackStore
+	ingest  *engine.Ingest
+	watch   *engine.SymbolWatch
+	pairs   map[string]asset.Pair
+	symbols []string
+	track   *TrackStore
 }
 
 var _ engine.Signal = (*Causal)(nil)
 
-var _ engine.FeedbackReceiver = (*Causal)(nil)
-
 var _ engine.LiveScoreReader = (*Causal)(nil)
+
+var _ engine.MeanConfidenceReader = (*Causal)(nil)
 
 /*
 LiveScore returns the current causal gauge reading from track state.
@@ -44,10 +49,18 @@ func (causal *Causal) PeakReading() engine.LiveReading {
 }
 
 /*
+MeanConfidence returns the mean normalized confidence across the latest scan set.
+*/
+func (causal *Causal) MeanConfidence() float64 {
+	return causal.track.MeanGaugeConfidence()
+}
+
+/*
 NewCausal wires live Kraken websocket observers into the engine signal.
 */
 func NewCausal(
-	ctx context.Context,
+	_ context.Context,
+	_ *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -55,36 +68,28 @@ func NewCausal(
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Causal, error) {
-	base, err := engine.NewSignalBase(
-		ctx,
-		"causal",
-		book,
-		tradesObserver,
-		tickerObserver,
-		pairs,
-		symbols,
-		watch,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
 	causal := &Causal{
-		SignalBase: base,
-		track:      NewTrackStore(),
+		ingest:  engine.NewIngest(book, tradesObserver, tickerObserver),
+		watch:   watch,
+		pairs:   pairs,
+		symbols: append([]string(nil), symbols...),
+		track:   NewTrackStore(),
 	}
 
 	return causal, errnie.Require(map[string]any{
-		"base":  base,
-		"track": causal.track,
+		"ingest": causal.ingest,
+		"track":  causal.track,
 	})
 }
 
+func (causal *Causal) Source() string {
+	return "causal"
+}
+
 /*
-ApplyFeedback nudges intervention calibration from settled prediction error.
+Feedback nudges intervention calibration from settled prediction error.
 */
-func (causal *Causal) ApplyFeedback(feedback engine.PredictionFeedback) {
+func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != causal.Source() {
 		return
 	}
@@ -93,33 +98,65 @@ func (causal *Causal) ApplyFeedback(feedback engine.PredictionFeedback) {
 }
 
 /*
-Scan advances the causal model for the current scheduler tick.
+Tick is a no-op until Causal subscribes to market broadcasts.
 */
-func (causal *Causal) Scan(now time.Time) error {
-	causal.track.BeginScan()
+func (causal *Causal) Tick() bool {
+	return false
+}
 
-	macro := causal.track.MacroMomentum(causal.Symbols(), func(symbol string) (float64, bool) {
-		snapshot := causal.Ingest().Read(symbol)
+/*
+Measure advances the causal model and yields non-zero uplift readings.
+*/
+func (causal *Causal) Measure(
+	ctx context.Context,
+	now time.Time,
+) iter.Seq[engine.Measurement] {
+	return func(yield func(engine.Measurement) bool) {
+		causal.track.BeginScan()
+		engine.DrainTicks(ctx)
 
-		return snapshot.ChangePct, snapshot.ChangeOK
-	})
+		macro := causal.track.MacroMomentum(causal.symbols, func(symbol string) (float64, bool) {
+			snapshot := causal.ingest.Read(symbol)
 
-	return causal.ScanSymbols(now, func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-		confidence, expectedReturn, runway, reason := causal.evaluate(symbol, snapshot, macro, now)
+			return snapshot.ChangePct, snapshot.ChangeOK
+		})
 
-		if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
-			return engine.Measurement{}, false, nil
+		for measurement := range engine.MeasureSymbols(
+			ctx,
+			engine.SymbolScanner{
+				Source:  causal.Source(),
+				Ingest:  causal.ingest,
+				Watch:   causal.watch,
+				Pairs:   causal.pairs,
+				Symbols: causal.symbols,
+			},
+			now,
+			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
+				confidence, expectedReturn, runway, reason := causal.evaluate(
+					symbol, snapshot, macro, now,
+				)
+
+				causal.track.ObserveGaugeScore(causal.track.SymbolLiveScore(symbol))
+
+				if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+					return engine.Measurement{}, false, nil
+				}
+
+				return engine.Measurement{
+					Type:           engine.Causal,
+					Regime:         "causal",
+					Reason:         reason,
+					Confidence:     confidence,
+					ExpectedReturn: expectedReturn,
+					Runway:         runway,
+				}, true, nil
+			},
+		) {
+			if !yield(measurement) {
+				return
+			}
 		}
-
-		return engine.Measurement{
-			Type:           engine.Causal,
-			Regime:         "causal",
-			Reason:         reason,
-			Confidence:     confidence,
-			ExpectedReturn: expectedReturn,
-			Runway:         runway,
-		}, true, nil
-	})
+	}
 }
 
 func (causal *Causal) evaluate(

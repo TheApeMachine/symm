@@ -16,3 +16,10 @@ type LiveScoreReader interface {
 	LiveScore() float64
 	PeakReading() LiveReading
 }
+
+/*
+MeanConfidenceReader exposes the mean normalized confidence across the latest scan set.
+*/
+type MeanConfidenceReader interface {
+	MeanConfidence() float64
+}

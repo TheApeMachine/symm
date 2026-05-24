@@ -2,10 +2,12 @@ package hawkes
 
 import (
 	"context"
+	"iter"
 	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	kbook "github.com/theapemachine/symm/kraken/book"
@@ -18,16 +20,19 @@ import (
 Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes model.
 */
 type Hawkes struct {
-	*engine.SignalBase
-	trades *trades.Trades
-	track  *TrackStore
+	ingest  *engine.Ingest
+	watch   *engine.SymbolWatch
+	pairs   map[string]asset.Pair
+	symbols []string
+	trades  *trades.Trades
+	track   *TrackStore
 }
 
 var _ engine.Signal = (*Hawkes)(nil)
 
-var _ engine.FeedbackReceiver = (*Hawkes)(nil)
-
 var _ engine.LiveScoreReader = (*Hawkes)(nil)
+
+var _ engine.MeanConfidenceReader = (*Hawkes)(nil)
 
 var _ engine.RiskExporter = (*Hawkes)(nil)
 
@@ -35,7 +40,8 @@ var _ engine.RiskExporter = (*Hawkes)(nil)
 NewHawkes wires live Kraken websocket observers into the engine signal.
 */
 func NewHawkes(
-	ctx context.Context,
+	_ context.Context,
+	_ *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -43,68 +49,68 @@ func NewHawkes(
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Hawkes, error) {
-	base, err := engine.NewSignalBase(
-		ctx,
-		"hawkes",
-		book,
-		tradesObserver,
-		tickerObserver,
-		pairs,
-		symbols,
-		watch,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
 	hawkes := &Hawkes{
-		SignalBase: base,
-		trades:     tradesObserver,
-		track:      NewTrackStore(),
+		ingest:  engine.NewIngest(book, tradesObserver, tickerObserver),
+		watch:   watch,
+		pairs:   pairs,
+		symbols: append([]string(nil), symbols...),
+		trades:  tradesObserver,
+		track:   NewTrackStore(),
 	}
 
 	return hawkes, errnie.Require(map[string]any{
-		"base":   base,
+		"ingest": hawkes.ingest,
 		"trades": tradesObserver,
 		"track":  hawkes.track,
 	})
 }
 
+func (hawkes *Hawkes) Source() string {
+	return "hawkes"
+}
+
 /*
-Scan recalibrates Hawkes intensity for the current scheduler tick and enqueues
-unit-scale measurements for Measure to drain.
+Tick is a no-op until Hawkes subscribes to market broadcasts.
 */
-func (hawkes *Hawkes) Scan(now time.Time) error {
-	hawkes.track.BeginScan()
-	hawkes.refreshTracks()
+func (hawkes *Hawkes) Tick() bool {
+	return false
+}
 
-	return hawkes.ScanSymbols(now, func(
-		symbol string, snapshot engine.Snapshot,
-	) (engine.Measurement, bool, error) {
-		confidence, expectedReturn, runway, measurementType := hawkes.evaluate(symbol, snapshot, now)
+/*
+Measure recalibrates Hawkes intensity and yields non-zero cluster readings.
+*/
+func (hawkes *Hawkes) Measure(
+	ctx context.Context,
+	now time.Time,
+) iter.Seq[engine.Measurement] {
+	return func(yield func(engine.Measurement) bool) {
+		hawkes.track.BeginScan()
+		engine.DrainTicks(ctx)
+		hawkes.refreshTracks(ctx)
 
-		if confidence <= 0 || expectedReturn <= 0 {
-			return engine.Measurement{}, false, nil
+		for measurement := range engine.MeasureSymbols(
+			ctx,
+			engine.SymbolScanner{
+				Source:  hawkes.Source(),
+				Ingest:  hawkes.ingest,
+				Watch:   hawkes.watch,
+				Pairs:   hawkes.pairs,
+				Symbols: hawkes.symbols,
+			},
+			now,
+			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
+				measurement, ok, err := hawkes.evaluate(symbol, snapshot, now)
+
+				hawkes.track.ObserveGaugeScore(hawkes.track.SymbolLiveScore(symbol))
+
+				return measurement, ok, err
+			},
+		) {
+			if !yield(measurement) {
+				return
+			}
 		}
-
-		regime := "momentum"
-		reason := "cluster_buy"
-
-		if measurementType == engine.Dump {
-			regime = "dump"
-			reason = "cluster_sell"
-		}
-
-		return engine.Measurement{
-			Type:           measurementType,
-			Regime:         regime,
-			Reason:         reason,
-			Confidence:     confidence,
-			ExpectedReturn: expectedReturn,
-			Runway:         runway,
-		}, true, nil
-	})
+	}
 }
 
 /*
@@ -124,6 +130,13 @@ func (hawkes *Hawkes) PeakReading() engine.LiveReading {
 }
 
 /*
+MeanConfidence returns the mean normalized confidence across the latest scan set.
+*/
+func (hawkes *Hawkes) MeanConfidence() float64 {
+	return hawkes.track.MeanGaugeConfidence()
+}
+
+/*
 SymbolRisk exposes Hawkes branching metrics for dynamic execution.
 */
 func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
@@ -131,9 +144,9 @@ func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
 }
 
 /*
-ApplyFeedback nudges Hawkes excitation parameters from settled prediction error.
+Feedback nudges Hawkes excitation parameters from settled prediction error.
 */
-func (hawkes *Hawkes) ApplyFeedback(feedback engine.PredictionFeedback) {
+func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != hawkes.Source() {
 		return
 	}
@@ -141,9 +154,11 @@ func (hawkes *Hawkes) ApplyFeedback(feedback engine.PredictionFeedback) {
 	hawkes.track.ApplyPredictionFeedback(feedback)
 }
 
-func (hawkes *Hawkes) refreshTracks() {
-	for _, symbol := range hawkes.Symbols() {
-		snapshot := hawkes.Ingest().Read(symbol)
+func (hawkes *Hawkes) refreshTracks(ctx context.Context) {
+	for _, symbol := range hawkes.symbols {
+		engine.DrainTicks(ctx)
+
+		snapshot := hawkes.ingest.Read(symbol)
 
 		if snapshot.LastOK && snapshot.VolumeOK {
 			hawkes.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
@@ -152,6 +167,35 @@ func (hawkes *Hawkes) refreshTracks() {
 }
 
 func (hawkes *Hawkes) evaluate(
+	symbol string,
+	snapshot engine.Snapshot,
+	now time.Time,
+) (engine.Measurement, bool, error) {
+	confidence, expectedReturn, runway, measurementType := hawkes.score(symbol, snapshot, now)
+
+	if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+		return engine.Measurement{}, false, nil
+	}
+
+	regime := "momentum"
+	reason := "cluster_buy"
+
+	if measurementType == engine.Dump {
+		regime = "dump"
+		reason = "cluster_sell"
+	}
+
+	return engine.Measurement{
+		Type:           measurementType,
+		Regime:         regime,
+		Reason:         reason,
+		Confidence:     confidence,
+		ExpectedReturn: expectedReturn,
+		Runway:         runway,
+	}, true, nil
+}
+
+func (hawkes *Hawkes) score(
 	symbol string, snapshot engine.Snapshot, now time.Time,
 ) (float64, float64, time.Duration, engine.MeasurementType) {
 	if !hawkes.track.PassesLiquidity(symbol) {

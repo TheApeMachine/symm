@@ -4,6 +4,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
@@ -55,11 +56,14 @@ var rootCmd = &cobra.Command{
 			}))
 
 			replayFile := strings.TrimSpace(config.System.ReplayFile)
+
 			if replayFile != "" {
-				frames, loadErr := replay.LoadFrames(replayFile)
-				if loadErr != nil {
-					return nil, loadErr
-				}
+				frames := errnie.Does(func() ([][]byte, error) {
+					return replay.LoadFrames(replayFile)
+				}).Or(func(err error) {
+					errnie.Error(err)
+					os.Exit(1)
+				}).Value()
 
 				options = append(options, client.WithReplay(frames, config.System.ReplayPace))
 			}
@@ -122,28 +126,81 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
-		bookObserver := errnie.Does(func() (*book.Book, error) {
-			return book.New(cmd.Context(), publicClient, symbols)
+		symbolWatch := engine.NewSymbolWatch(symbols)
+
+		uiGroup := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		tickGroup := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
+		tradeGroup := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
+		bookGroup := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
+		marketStream := ui.NewMarketStream(uiGroup)
+
+		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
+			return trades.New(cmd.Context(), publicClient, symbols, func(
+				symbol string,
+				batchVolume, buyPressure float64,
+				updatedAt time.Time,
+			) {
+				tradeGroup.Send(&qpool.QValue[any]{
+					SenderID: "kraken:trades",
+					Value: engine.TradeUpdate{
+						Symbol:      symbol,
+						BatchVolume: batchVolume,
+						BuyPressure: buyPressure,
+						UpdatedAt:   updatedAt,
+					},
+				})
+			})
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
-		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
-			return trades.New(cmd.Context(), publicClient, symbols)
+		bookObserver := errnie.Does(func() (*book.Book, error) {
+			return book.New(cmd.Context(), publicClient, symbols, func(
+				symbol string,
+				spreadBPS, imbalance, density, depthSlope float64,
+				updatedAt time.Time,
+			) {
+				bookGroup.Send(&qpool.QValue[any]{
+					SenderID: "kraken:book",
+					Value: engine.BookUpdate{
+						Symbol:     symbol,
+						SpreadBPS:  spreadBPS,
+						Imbalance:  imbalance,
+						Density:    density,
+						DepthSlope: depthSlope,
+						UpdatedAt:  updatedAt,
+					},
+				})
+			})
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
 
 		tickerObserver := errnie.Does(func() (*ticker.Ticker, error) {
-			return ticker.New(cmd.Context(), publicClient, symbols)
+			return ticker.New(cmd.Context(), publicClient, symbols, func(
+				symbol string,
+				last, bid, ask, volumeBase, changePct float64,
+				timestamp string,
+			) {
+				tickGroup.Send(&qpool.QValue[any]{
+					SenderID: "kraken:ticker",
+					Value: engine.TickUpdate{
+						Symbol:     symbol,
+						Last:       last,
+						VolumeBase: volumeBase,
+						ChangePct:  changePct,
+						Timestamp:  timestamp,
+					},
+				})
+
+				marketStream.PriceTick(symbol, last, bid, ask, changePct, timestamp)
+			})
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
-
-		symbolWatch := engine.NewSymbolWatch(symbols)
 
 		tradesObserver.SetActivityListener(func(symbol string, volume float64) {
 			symbolWatch.NoteTrade(symbol, volume)
@@ -164,6 +221,9 @@ var rootCmd = &cobra.Command{
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
 				cmd.Context(),
+				tickGroup,
+				tradeGroup,
+				bookGroup,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -179,6 +239,7 @@ var rootCmd = &cobra.Command{
 		hawkesSignal := errnie.Does(func() (*hawkes.Hawkes, error) {
 			return hawkes.NewHawkes(
 				cmd.Context(),
+				pool,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -194,6 +255,7 @@ var rootCmd = &cobra.Command{
 		fluidSignal := errnie.Does(func() (*fluid.Fluid, error) {
 			return fluid.NewFluid(
 				cmd.Context(),
+				pool,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -209,6 +271,7 @@ var rootCmd = &cobra.Command{
 		causalSignal := errnie.Does(func() (*causal.Causal, error) {
 			return causal.NewCausal(
 				cmd.Context(),
+				pool,
 				bookObserver,
 				tradesObserver,
 				tickerObserver,
@@ -222,11 +285,10 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		var telemetryHub *ui.Hub
-		var marketStream *ui.MarketStream
 
 		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), nil)
+				return ui.NewHub(cmd.Context(), uiGroup, nil)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)
@@ -241,24 +303,6 @@ var rootCmd = &cobra.Command{
 			}()
 		}
 
-		if telemetryHub != nil {
-			marketStream = ui.NewMarketStream(telemetryHub)
-
-			tickerObserver.OnQuote(func(
-				symbol string,
-				last, bid, ask, changePct float64,
-				timestamp string,
-			) {
-				marketStream.PriceTick(symbol, last, bid, ask, changePct, timestamp)
-			})
-
-			fluidSignal.SetFieldSink(func(snapshot fluid.FieldSnapshot) {
-				marketStream.FieldUpdate(snapshot)
-			})
-
-			telemetryHub.SetFluidDisplayController(fluidSignal)
-		}
-
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
 			marketQuotes := trader.NewMarketQuotes(tickerObserver, bookObserver)
 
@@ -266,6 +310,7 @@ var rootCmd = &cobra.Command{
 				return trader.NewCrypto(
 					cmd.Context(),
 					pool,
+					uiGroup,
 					wallet,
 					marketQuotes,
 					pumpSignal,
@@ -278,20 +323,13 @@ var rootCmd = &cobra.Command{
 				os.Exit(1)
 			}).Value()
 
-			if marketStream != nil {
-				crypto.BindTelemetry(
-					marketStream,
-					tickerObserver,
-					fluidSignal,
-					len(symbols),
-				)
-			}
-
 			return crypto, nil
 		}).Or(func(err error) {
 			errnie.Error(err)
 			os.Exit(1)
 		}).Value()
+
+		cryptoTrader.BindUIStream(marketStream)
 
 		if publicClient.ReplayMode() {
 			publicClient.StartReplay()
@@ -301,6 +339,15 @@ var rootCmd = &cobra.Command{
 			errnie.Error(err)
 		}
 	},
+}
+
+/*
+Execute runs the root command with graceful shutdown on SIGINT/SIGTERM.
+*/
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
 
 type errString string

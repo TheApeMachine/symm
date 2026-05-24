@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	applyDecisionTrace,
 	applyEnginePulse,
+	applySignalScore,
 	engineStore,
 } from "#/lib/symm/stores/engine-store";
 import type { DecisionTraceEvent, EnginePulseEvent } from "#/lib/symm/events";
@@ -43,25 +44,7 @@ describe("engine-store", () => {
 			in_play: 1,
 			allowed: 1,
 			decisions: [],
-			evaluations: [
-				{
-					symbol: "PUMP/EUR",
-					combined: 0.6,
-					support: 1,
-					regime: "momentum",
-					reason: "cluster_buy",
-					allow: true,
-					why: "ok",
-					signals: [
-						{
-							source: "hawkes",
-							regime: "momentum",
-							reason: "cluster_buy",
-							confidence: 0.6,
-						},
-					],
-				},
-			],
+			evaluations: [],
 		} satisfies DecisionTraceEvent;
 
 		engineStore.setState(() => ({
@@ -79,36 +62,32 @@ describe("engine-store", () => {
 		expect(engineStore.state.enginePulse).toEqual(pulse);
 		expect(engineStore.state.decisionTrace).toEqual(trace);
 		expect(engineStore.state.pulseLog).toHaveLength(1);
-		expect(engineStore.state.signalConfidences).toEqual({
-			hawkes: 0.6,
-			fluid: 0,
-			pumpdump: 0,
-			causal: 0,
-		});
+		expect(engineStore.state.signalConfidences.hawkes).toBe(0);
 	});
 
-	it("should keep prior signal confidences when a pulse has no measurements", () => {
+	it("updates one gauge reading from signal_score events", () => {
 		engineStore.setState(() => ({
 			pulseLog: [],
 			signalConfidences: {
 				hawkes: 0,
 				fluid: 0,
-				pumpdump: 0.726,
+				pumpdump: 0,
 				causal: 0,
 			},
 		}));
 
-		applyEnginePulse({
-			event: "engine_pulse",
+		applySignalScore({
+			event: "signal_score",
 			ts: "2026-05-23T12:00:02Z",
-			seq: 2,
-			phase: "scan",
-			measurements: 0,
-			candidates: 0,
-			open: 0,
-			signals: [],
+			source: "pumpdump",
+			confidence: 0.726,
 		});
 
-		expect(engineStore.state.signalConfidences.pumpdump).toBe(0.726);
+		expect(engineStore.state.signalConfidences).toEqual({
+			hawkes: 0,
+			fluid: 0,
+			pumpdump: 0.726,
+			causal: 0,
+		});
 	});
 });

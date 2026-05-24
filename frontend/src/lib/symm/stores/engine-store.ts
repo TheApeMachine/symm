@@ -1,19 +1,17 @@
 import { createStore } from "@tanstack/react-store";
 
-import type { DecisionTraceEvent, EnginePulseEvent } from "#/lib/symm/events";
+import type {
+	DecisionTraceEvent,
+	EnginePulseEvent,
+	SignalScoreEvent,
+} from "#/lib/symm/events";
 import {
-	mergeSignalConfidences,
+	emptySignalConfidences,
+	isSignalSource,
 	type SignalConfidenceSnapshot,
 } from "#/lib/symm/signal-confidence";
 
 const MAX_PULSE_LOG = 32;
-
-const emptySignalConfidences = (): SignalConfidenceSnapshot => ({
-	hawkes: 0,
-	fluid: 0,
-	pumpdump: 0,
-	causal: 0,
-});
 
 export type EngineStoreState = {
 	enginePulse?: EnginePulseEvent;
@@ -32,7 +30,25 @@ export const applyEnginePulse = (pulse: EnginePulseEvent): void => {
 		...state,
 		enginePulse: pulse,
 		pulseLog: [pulse, ...state.pulseLog].slice(0, MAX_PULSE_LOG),
-		signalConfidences: mergeSignalConfidences(state.signalConfidences, pulse),
+	}));
+};
+
+export const applySignalScore = (event: SignalScoreEvent): void => {
+	if (!isSignalSource(event.source)) {
+		return;
+	}
+
+	const confidence =
+		typeof event.confidence === "number" && Number.isFinite(event.confidence)
+			? event.confidence
+			: 0;
+
+	engineStore.setState((state) => ({
+		...state,
+		signalConfidences: {
+			...state.signalConfidences,
+			[event.source]: confidence,
+		},
 	}));
 };
 

@@ -1,15 +1,17 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useRef,
+	type MutableRefObject,
+} from "react";
 import { SciChartReact } from "scichart-react";
 
+import type { EnginePulseEvent } from "#/lib/symm/events";
 import {
 	initEnginePulseChart,
 	type EnginePulseInitResult,
 } from "#/lib/symm/engine-pulse-controller";
-import {
-	replayEnginePulseHistory,
-	subscribeTradeChart,
-	unsubscribeTradeChart,
-} from "#/lib/symm/feed";
 import { engineStore } from "#/lib/symm/stores/engine-store";
 import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
@@ -18,12 +20,36 @@ type EnginePulseChartProps = {
 	className?: string;
 };
 
+const replayPulseHistory = (
+	result: EnginePulseInitResult,
+	lastSeqRef: MutableRefObject<number | null>,
+) => {
+	const seen = new Set<number>();
+
+	for (const pulse of engineStore.state.pulseLog) {
+		if (seen.has(pulse.seq)) {
+			continue;
+		}
+
+		seen.add(pulse.seq);
+		result.appendPulse(pulse);
+		lastSeqRef.current = pulse.seq;
+	}
+
+	const current = engineStore.state.enginePulse;
+
+	if (current && !seen.has(current.seq)) {
+		result.appendPulse(current);
+		lastSeqRef.current = current.seq;
+	}
+};
+
 /** Live average prediction vs running error — one point per engine_pulse tick. */
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
 	const chartRef = useRef<EnginePulseInitResult | null>(null);
-	const lastSeqRef = useRef(0);
+	const lastSeqRef = useRef<number | null>(null);
 	const pulse = useSymmEnginePulse();
 
 	const initChart = useCallback(
@@ -33,23 +59,27 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 
 	const onInit = useCallback((result: EnginePulseInitResult) => {
 		chartRef.current = result;
-		replayEnginePulseHistory((entry) => result.appendPulse(entry));
-		lastSeqRef.current = engineStore.state.pulseLog[0]?.seq ?? 0;
+		lastSeqRef.current = null;
+		replayPulseHistory(result, lastSeqRef);
 	}, []);
 
 	const onDelete = useCallback((result?: EnginePulseInitResult) => {
-		result?.dispose();
 		chartRef.current = null;
-		lastSeqRef.current = 0;
+		lastSeqRef.current = null;
+		result?.dispose();
 	}, []);
 
 	useEffect(() => {
-		if (!pulse || !chartRef.current || pulse.seq <= lastSeqRef.current) {
+		if (!pulse || !chartRef.current) {
 			return;
 		}
 
-		chartRef.current.appendPulse(pulse);
+		if (pulse.seq === lastSeqRef.current) {
+			return;
+		}
+
 		lastSeqRef.current = pulse.seq;
+		chartRef.current.appendPulse(pulse);
 	}, [pulse]);
 
 	return (
@@ -130,10 +160,12 @@ function PulseMetric({
 	label,
 	value,
 	total,
+	warm,
 }: {
 	label: string;
 	value?: number;
 	total?: number;
+	warm?: boolean;
 }) {
 	if (value === undefined && total === undefined) {
 		return null;
@@ -143,7 +175,12 @@ function PulseMetric({
 		<span>
 			{label}{" "}
 			<span className="font-medium text-(--dash-text)">{value ?? 0}</span>
-			{total !== undefined ? <span>/{total}</span> : null}
+			{total !== undefined ? (
+				<span>
+					{warm ? "+" : "/"}
+					{total}
+				</span>
+			) : null}
 		</span>
 	);
 }

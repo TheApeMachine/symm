@@ -10,6 +10,7 @@ import (
 TrackStore holds per-symbol Hawkes confidence history and liquidity state.
 */
 type TrackStore struct {
+	engine.GaugeScan
 	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolTrack
 }
@@ -42,6 +43,8 @@ func NewTrackStore() *TrackStore {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
+	trackStore.ResetGaugeScan()
+
 	trackStore.shard.RLockMap()
 	tracks := make([]*SymbolTrack, 0, len(trackStore.bySymbol))
 
@@ -213,6 +216,17 @@ func (trackStore *TrackStore) RecordScore(symbol string, rawScore float64) float
 	track.liveScore = normalized
 
 	return normalized
+}
+
+/*
+SymbolLiveScore returns the latest normalized gauge reading for one symbol.
+*/
+func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
+
+	return track.liveScore
 }
 
 /*

@@ -34,9 +34,7 @@ type stubSignal struct {
 	measurements []engine.Measurement
 }
 
-func (stub *stubSignal) Scan(_ time.Time) error { return nil }
-
-func (stub *stubSignal) Measure(_ context.Context) iter.Seq[engine.Measurement] {
+func (stub *stubSignal) Measure(_ context.Context, _ time.Time) iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		for _, measurement := range stub.measurements {
 			if !yield(measurement) {
@@ -48,7 +46,7 @@ func (stub *stubSignal) Measure(_ context.Context) iter.Seq[engine.Measurement] 
 
 func (stub *stubSignal) Source() string { return "stub" }
 
-func (stub *stubSignal) Stats() engine.QueueStats { return engine.QueueStats{} }
+func (stub *stubSignal) Feedback(_ engine.PredictionFeedback) {}
 
 type scoredSignal struct {
 	stubSignal
@@ -71,21 +69,21 @@ type feedbackSignal struct {
 	feedback []engine.PredictionFeedback
 }
 
-func (signal *feedbackSignal) ApplyFeedback(feedback engine.PredictionFeedback) {
+func (signal *feedbackSignal) Feedback(feedback engine.PredictionFeedback) {
 	signal.feedback = append(signal.feedback, feedback)
 }
 
-type scanSignal struct {
+type measureSignal struct {
 	stubSignal
-	onScan func()
+	onMeasure func()
 }
 
-func (signal *scanSignal) Scan(now time.Time) error {
-	if signal.onScan != nil {
-		signal.onScan()
+func (signal *measureSignal) Measure(ctx context.Context, now time.Time) iter.Seq[engine.Measurement] {
+	if signal.onMeasure != nil {
+		signal.onMeasure()
 	}
 
-	return signal.stubSignal.Scan(now)
+	return signal.stubSignal.Measure(ctx, now)
 }
 
 func testMeasurement(expectedReturn float64, runway time.Duration) engine.Measurement {
@@ -101,7 +99,7 @@ func testMeasurement(expectedReturn float64, runway time.Duration) engine.Measur
 	}
 }
 
-func TestScanSignalsConcurrent(t *testing.T) {
+func TestProcessSignalsSequential(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -114,7 +112,7 @@ func TestScanSignalsConcurrent(t *testing.T) {
 	active := 0
 	peak := 0
 
-	blockingScan := func() {
+	blockingMeasure := func() {
 		activeMu.Lock()
 		active++
 		if active > peak {
@@ -132,10 +130,11 @@ func TestScanSignalsConcurrent(t *testing.T) {
 	crypto, err := NewCrypto(
 		ctx,
 		pool,
+		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
-		&scanSignal{onScan: blockingScan},
-		&scanSignal{onScan: blockingScan},
+		&measureSignal{onMeasure: blockingMeasure},
+		&measureSignal{onMeasure: blockingMeasure},
 	)
 
 	if err != nil {
@@ -143,23 +142,24 @@ func TestScanSignalsConcurrent(t *testing.T) {
 	}
 
 	convey.Convey("Given a qpool-backed trader", t, func() {
-		done := make(chan error, 1)
+		done := make(chan struct{}, 1)
 
 		go func() {
-			done <- crypto.scanSignals(start)
+			crypto.processSignals(start)
+			done <- struct{}{}
 		}()
 
 		time.Sleep(20 * time.Millisecond)
 		close(release)
 
-		convey.Convey("It should scan signals concurrently", func() {
-			convey.So(<-done, convey.ShouldBeNil)
-			convey.So(peak, convey.ShouldEqual, 2)
+		convey.Convey("It should process signals sequentially on the orchestrator thread", func() {
+			<-done
+			convey.So(peak, convey.ShouldEqual, 1)
 		})
 	})
 }
 
-func TestProcessTickConcurrent(t *testing.T) {
+func TestProcessSignalsDrainsEverySignal(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -170,6 +170,7 @@ func TestProcessTickConcurrent(t *testing.T) {
 	crypto, err := NewCrypto(
 		ctx,
 		pool,
+		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100, "DUMP/EUR": 50},
 		&stubSignal{measurements: []engine.Measurement{
@@ -194,7 +195,7 @@ func TestProcessTickConcurrent(t *testing.T) {
 	}
 
 	convey.Convey("Given multiple signals on a qpool", t, func() {
-		crypto.processTick(start)
+		crypto.processSignals(start)
 
 		convey.Convey("It should update pair state for every signal", func() {
 			pumpState := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
@@ -206,21 +207,22 @@ func TestProcessTickConcurrent(t *testing.T) {
 	})
 }
 
-func TestScanSignals(t *testing.T) {
+func TestProcessSignals(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
-	scanned := false
+	measured := false
 
 	crypto, err := NewCrypto(
 		context.Background(),
 		nil,
+		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
-		&scanSignal{
+		&measureSignal{
 			stubSignal: stubSignal{measurements: []engine.Measurement{
 				testMeasurement(0.002, time.Second),
 			}},
-			onScan: func() { scanned = true },
+			onMeasure: func() { measured = true },
 		},
 	)
 
@@ -229,35 +231,39 @@ func TestScanSignals(t *testing.T) {
 	}
 
 	convey.Convey("Given registered signals", t, func() {
-		err := crypto.scanSignals(start)
+		crypto.processSignals(start)
 
-		convey.Convey("It should scan every signal", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(scanned, convey.ShouldBeTrue)
+		convey.Convey("It should measure every signal", func() {
+			convey.So(measured, convey.ShouldBeTrue)
 		})
 	})
 }
 
-func TestProcessTick(t *testing.T) {
+func TestProcessSignal(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 
 	convey.Convey("Given no price reader", t, func() {
+		signal := &stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}}
+
 		crypto, err := NewCrypto(
 			context.Background(),
 			nil,
+			nil,
 			wallet,
 			stubPrices{},
-			&stubSignal{measurements: []engine.Measurement{
-				testMeasurement(0.002, time.Second),
-			}},
+			signal,
 		)
 
 		if err != nil {
 			t.Fatalf("new crypto: %v", err)
 		}
 
-		crypto.processTick(start)
+		if err := crypto.processSignal(signal, start); err != nil {
+			t.Fatalf("process signal: %v", err)
+		}
 		state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
 
 		convey.Convey("It should still record the forecast", func() {
@@ -266,22 +272,30 @@ func TestProcessTick(t *testing.T) {
 	})
 
 	convey.Convey("Given repeated measurements from one source", t, func() {
+		signal := &stubSignal{measurements: []engine.Measurement{
+			testMeasurement(0.002, time.Second),
+		}}
+
 		crypto, err := NewCrypto(
 			context.Background(),
 			nil,
+			nil,
 			wallet,
 			stubPrices{"PUMP/EUR": 100},
-			&stubSignal{measurements: []engine.Measurement{
-				testMeasurement(0.002, time.Second),
-			}},
+			signal,
 		)
 
 		if err != nil {
 			t.Fatalf("new crypto: %v", err)
 		}
 
-		crypto.processTick(start)
-		crypto.processTick(start.Add(100 * time.Millisecond))
+		if err := crypto.processSignal(signal, start); err != nil {
+			t.Fatalf("process signal: %v", err)
+		}
+
+		if err := crypto.processSignal(signal, start.Add(100*time.Millisecond)); err != nil {
+			t.Fatalf("process signal: %v", err)
+		}
 		state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
 
 		convey.Convey("It should keep one open forecast per source", func() {
@@ -297,6 +311,7 @@ func TestProcessTick(t *testing.T) {
 		crypto, err := NewCrypto(
 			context.Background(),
 			nil,
+			nil,
 			wallet,
 			stubPrices{"PUMP/EUR": 100},
 			signal,
@@ -306,13 +321,17 @@ func TestProcessTick(t *testing.T) {
 			t.Fatalf("new crypto: %v", err)
 		}
 
-		crypto.processTick(start)
+		if err := crypto.processSignal(signal, start); err != nil {
+			t.Fatalf("process signal: %v", err)
+		}
 
 		convey.Convey("It should not apply feedback before the runway elapses", func() {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 0)
 		})
 
-		crypto.processTick(start.Add(5 * time.Second))
+		if err := crypto.processSignal(signal, start.Add(5*time.Second)); err != nil {
+			t.Fatalf("process signal: %v", err)
+		}
 
 		convey.Convey("It should apply feedback once the runway elapses", func() {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 1)
@@ -328,6 +347,7 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 
 	crypto, err := NewCrypto(
 		context.Background(),
+		nil,
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
@@ -365,7 +385,7 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 	}
 }
 
-func BenchmarkProcessTick(b *testing.B) {
+func BenchmarkProcessSignals(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -376,6 +396,7 @@ func BenchmarkProcessTick(b *testing.B) {
 	crypto, err := NewCrypto(
 		ctx,
 		pool,
+		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
 		&stubSignal{measurements: []engine.Measurement{
@@ -393,16 +414,17 @@ func BenchmarkProcessTick(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crypto.processTick(start)
+		crypto.processSignals(start)
 	}
 }
 
-func BenchmarkProcessTickSequential(b *testing.B) {
+func BenchmarkProcessSignalsSequential(b *testing.B) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 
 	crypto, err := NewCrypto(
 		context.Background(),
+		nil,
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
@@ -418,6 +440,6 @@ func BenchmarkProcessTickSequential(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crypto.processTick(start)
+		crypto.processSignals(start)
 	}
 }

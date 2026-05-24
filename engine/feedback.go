@@ -19,10 +19,3 @@ type PredictionFeedback struct {
 	SettledAt       time.Time
 	Unanchored      bool
 }
-
-/*
-FeedbackReceiver ingests settled prediction errors from the trader.
-*/
-type FeedbackReceiver interface {
-	ApplyFeedback(feedback PredictionFeedback)
-}

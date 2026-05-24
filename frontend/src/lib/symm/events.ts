@@ -11,6 +11,7 @@ export type SymmEventName =
 	| "field_snapshot"
 	| "fluid_display"
 	| "engine_pulse"
+	| "signal_score"
 	| "price_tick"
 	| "candle_bar"
 	| "chart_replay"
@@ -177,6 +178,12 @@ export type EnginePulseEvent = SymmEvent & {
 	avg_error?: number;
 	forecast_symbols?: number;
 	forecast_errors?: number;
+};
+
+export type SignalScoreEvent = SymmEvent & {
+	event: "signal_score";
+	source: string;
+	confidence: number;
 };
 
 const WHY_LABELS: Record<string, string> = {

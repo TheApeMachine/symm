@@ -142,14 +142,19 @@ func forecastFromEvaluations(
 	scored := 0
 
 	for _, row := range evaluations {
-		combined, _ := row["combined"].(float64)
+		expectedReturn, _ := row["expected_return"].(float64)
 
-		if combined <= 0 {
+		if expectedReturn <= 0 {
+			combined, _ := row["combined"].(float64)
+			expectedReturn = combined
+		}
+
+		if expectedReturn <= 0 {
 			continue
 		}
 
-		predictionSum += combined
-		errorSum += combined - line
+		predictionSum += expectedReturn
+		errorSum += expectedReturn - line
 		scored++
 	}
 

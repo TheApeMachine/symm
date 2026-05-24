@@ -6,7 +6,11 @@ import {
 	initFluidSurface,
 	type FluidSurfaceInitResult,
 } from "#/lib/symm/fluid-surface-controller";
-import { replayFieldSnapshot, setFluidDisplay } from "#/lib/symm/feed";
+import {
+	registerFieldSnapshotListener,
+	setFluidDisplay,
+	unregisterFieldSnapshotListener,
+} from "#/lib/symm/feed";
 import { formatFluidScalar, headerFieldMetrics } from "#/lib/symm/fluid-format";
 import {
 	useSymmConnected,
@@ -23,8 +27,9 @@ type FluidSurfaceChartProps = {
 export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	className = "",
 }: FluidSurfaceChartProps) {
-	const chartRef = useRef<FluidSurfaceInitResult | null>(null);
-	const snapshot = useSymmFieldSnapshot();
+	const fieldListenerRef = useRef<
+		((snapshot: FieldSnapshotEvent) => void) | null
+	>(null);
 
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => initFluidSurface(rootElement),
@@ -32,22 +37,22 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	);
 
 	const onInit = useCallback((result: FluidSurfaceInitResult) => {
-		chartRef.current = result;
-		replayFieldSnapshot((entry) => result.update(entry));
+		const listener = (snapshot: FieldSnapshotEvent) => {
+			result.update(snapshot);
+		};
+
+		fieldListenerRef.current = listener;
+		registerFieldSnapshotListener(listener);
 	}, []);
 
 	const onDelete = useCallback((result?: FluidSurfaceInitResult) => {
-		result?.dispose();
-		chartRef.current = null;
-	}, []);
-
-	useEffect(() => {
-		if (!snapshot || !chartRef.current) {
-			return;
+		if (fieldListenerRef.current) {
+			unregisterFieldSnapshotListener(fieldListenerRef.current);
+			fieldListenerRef.current = null;
 		}
 
-		chartRef.current.update(snapshot);
-	}, [snapshot]);
+		result?.dispose();
+	}, []);
 
 	return (
 		<div

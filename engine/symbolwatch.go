@@ -9,6 +9,8 @@ import (
 	"github.com/theapemachine/symm/config"
 )
 
+// TODO: REMOVE
+
 const symbolActivityHalfLife = 30 * time.Second
 
 /*

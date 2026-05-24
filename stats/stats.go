@@ -14,6 +14,40 @@ func SortFloats(values []float64) {
 }
 
 /*
+Mean returns the arithmetic mean of values.
+*/
+func Mean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	var sum float64
+
+	for _, value := range values {
+		sum += value
+	}
+
+	return sum / float64(len(values))
+}
+
+/*
+AbsRelativeMove returns |last/open - 1|.
+*/
+func AbsRelativeMove(last, open float64) float64 {
+	if open <= 0 || last <= 0 {
+		return 0
+	}
+
+	move := last/open - 1
+
+	if move < 0 {
+		return -move
+	}
+
+	return move
+}
+
+/*
 Median returns the median of a copy of values.
 */
 func Median(values []float64) float64 {

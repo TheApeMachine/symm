@@ -1,6 +1,25 @@
 package stats
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+func TestMean(t *testing.T) {
+	if got := Mean([]float64{2, 4, 6}); got != 4 {
+		t.Fatalf("expected mean 4, got %v", got)
+	}
+}
+
+func TestAbsRelativeMove(t *testing.T) {
+	if got := AbsRelativeMove(1.05, 1); math.Abs(got-0.05) > 1e-12 {
+		t.Fatalf("expected 0.05, got %v", got)
+	}
+
+	if got := AbsRelativeMove(0.95, 1); math.Abs(got-0.05) > 1e-12 {
+		t.Fatalf("expected 0.05, got %v", got)
+	}
+}
 
 func TestMedian(t *testing.T) {
 	if got := Median([]float64{3, 1, 2}); got != 2 {

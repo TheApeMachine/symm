@@ -2,9 +2,7 @@ package trader
 
 import (
 	"context"
-	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -22,18 +20,19 @@ type Crypto struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	pool           *qpool.Q
+	uiBroadcast    *qpool.BroadcastGroup
 	wallet         *Wallet
 	portfolio      *Portfolio
 	prices         QuoteReader
 	signals        []engine.Signal
+	tickers        []engine.Ticker
 	pairStates     sync.Map
-	telemetry      *Telemetry
-	tickSeq        atomic.Uint64
 	feedbackSink   func(engine.PredictionFeedback)
 	candidates     CandidateStore
 	decisionEngine DecisionEngine
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
+	uiStream       UIStream
 }
 
 /*
@@ -42,16 +41,22 @@ NewCrypto creates a new crypto trader.
 func NewCrypto(
 	ctx context.Context,
 	pool *qpool.Q,
+	ui *qpool.BroadcastGroup,
 	wallet *Wallet,
 	prices QuoteReader,
 	signals ...engine.Signal,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
+	if ui == nil && pool != nil {
+		ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	}
+
 	crypto := &Crypto{
 		ctx:            ctx,
 		cancel:         cancel,
 		pool:           pool,
+		uiBroadcast:    ui,
 		wallet:         wallet,
 		portfolio:      NewPortfolio(wallet),
 		prices:         prices,
@@ -63,9 +68,20 @@ func NewCrypto(
 
 	crypto.portfolio.BindRiskReader(NewSignalRiskBoard(signals...))
 
+	for _, signal := range signals {
+		ticker, ok := signal.(engine.Ticker)
+
+		if !ok {
+			continue
+		}
+
+		crypto.tickers = append(crypto.tickers, ticker)
+	}
+
 	return crypto, errnie.Require(map[string]any{
 		"ctx":        ctx,
 		"cancel":     cancel,
+		"pool":       pool,
 		"wallet":     wallet,
 		"prices":     prices,
 		"signals":    signals,
@@ -73,20 +89,22 @@ func NewCrypto(
 	})
 }
 
-func (crypto *Crypto) sourceScores() map[string]float64 {
-	scores := make(map[string]float64, len(crypto.signals))
+/*
+BindUIStream attaches the dashboard websocket publisher.
+*/
+func (crypto *Crypto) BindUIStream(stream UIStream) {
+	crypto.uiStream = stream
+}
 
-	for _, signal := range crypto.signals {
-		reader, ok := signal.(engine.LiveScoreReader)
-
-		if !ok {
-			continue
-		}
-
-		scores[signal.Source()] = reader.LiveScore()
+/*
+RegisterTicker adds one orchestrator-driven message consumer.
+*/
+func (crypto *Crypto) RegisterTicker(ticker engine.Ticker) {
+	if ticker == nil {
+		return
 	}
 
-	return scores
+	crypto.tickers = append(crypto.tickers, ticker)
 }
 
 /*
@@ -99,35 +117,10 @@ func (crypto *Crypto) BindFeedbackSink(
 }
 
 /*
-Rescore runs one scan, drain, forecast settlement, and execution tick at now.
-*/
-func (crypto *Crypto) Rescore(now time.Time) error {
-	crypto.beginRescoreTick()
-
-	if err := crypto.scanSignals(now); err != nil {
-		return err
-	}
-
-	crypto.processTick(now)
-	crypto.settleDuePredictions(now)
-	crypto.runExecution(now)
-
-	return nil
-}
-
-/*
 DecisionSnapshot returns the latest decision snapshot for telemetry.
 */
 func (crypto *Crypto) DecisionSnapshot() DecisionSnapshot {
 	return crypto.lastDecision
-}
-
-func (crypto *Crypto) beginRescoreTick() {
-	crypto.candidates.Reset()
-
-	if crypto.telemetry != nil {
-		crypto.telemetry.BeginTick()
-	}
 }
 
 /*
@@ -152,34 +145,49 @@ func (crypto *Crypto) PendingPredictionCount() int {
 }
 
 /*
-Run runs the crypto trader on a single scheduler: scan → drain → decide.
+Run runs the crypto trader on a single scheduler: tick → measure → decide.
 */
 func (crypto *Crypto) Run() error {
-	if crypto.telemetry != nil {
-		crypto.telemetry.Publish(crypto.wallet, crypto)
-	}
-
-	rescoreTicker := time.NewTicker(config.System.RescoreEvery)
-	defer rescoreTicker.Stop()
+	crypto.uiBroadcast.Send(&qpool.QValue[any]{
+		Value: map[string]any{
+			"type":   "rescore_begin",
+			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+			"wallet": crypto.wallet,
+		},
+	})
 
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case now := <-rescoreTicker.C:
-			crypto.beginRescoreTick()
+		default:
+			now := time.Now().UTC()
+			crypto.drainTickables()
+			crypto.candidates.Reset()
 
-			if err := crypto.scanSignals(now); err != nil {
-				return err
-			}
+			tickResult := crypto.processSignals(now)
 
-			crypto.processTick(now)
+			crypto.drainTickables()
 			crypto.settleDuePredictions(now)
+			crypto.drainTickables()
 			crypto.runExecution(now)
+			crypto.publishEnginePulse(tickResult)
+		}
+	}
+}
 
-			if crypto.telemetry != nil {
-				crypto.telemetry.Publish(crypto.wallet, crypto)
+func (crypto *Crypto) drainTickables() {
+	for {
+		idle := true
+
+		for _, ticker := range crypto.tickers {
+			if ticker.Tick() {
+				idle = false
 			}
+		}
+
+		if idle {
+			return
 		}
 	}
 }
@@ -187,6 +195,64 @@ func (crypto *Crypto) Run() error {
 type signalTickResult struct {
 	measurements []engine.Measurement
 	feedback     []engine.PredictionFeedback
+}
+
+/*
+processSignals measures every signal once per rescore tick on the orchestrator thread.
+Track stores are updated only during drainTickables; Measure must not run in pool workers.
+*/
+func (crypto *Crypto) measureContext() context.Context {
+	return engine.WithTickDrain(crypto.ctx, crypto.drainTickables)
+}
+
+func (crypto *Crypto) publishSignalScore(source string, confidence float64) {
+	if crypto.uiStream == nil || source == "" {
+		return
+	}
+
+	crypto.uiStream.SignalScore(source, confidence)
+}
+
+func (crypto *Crypto) processSignals(now time.Time) signalTickResult {
+	measureCtx := crypto.measureContext()
+	result := signalTickResult{}
+
+	for _, signal := range crypto.signals {
+		engine.DrainTicks(measureCtx)
+		tickResult := crypto.collectMeasurements(signal, now)
+		crypto.applyTickResult(tickResult)
+		result.measurements = append(result.measurements, tickResult.measurements...)
+		result.feedback = append(result.feedback, tickResult.feedback...)
+	}
+
+	return result
+}
+
+func (crypto *Crypto) collectMeasurements(
+	signal engine.Signal, now time.Time,
+) signalTickResult {
+	result := signalTickResult{}
+
+	for measurement := range signal.Measure(crypto.measureContext(), now) {
+		result.measurements = append(result.measurements, measurement)
+		result.feedback = append(
+			result.feedback,
+			crypto.updatePairStates(measurement, now)...,
+		)
+	}
+
+	if reader, ok := signal.(engine.MeanConfidenceReader); ok && crypto.uiBroadcast != nil {
+		crypto.uiBroadcast.Send(&qpool.QValue[any]{
+			Value: map[string]any{
+				"event":      "signal_score",
+				"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+				"source":     signal.Source(),
+				"confidence": reader.MeanConfidence(),
+			},
+		})
+	}
+
+	return result
 }
 
 /*
@@ -226,111 +292,100 @@ func (crypto *Crypto) updatePairStates(
 	return pending
 }
 
-func (crypto *Crypto) scanSignals(now time.Time) error {
-	if crypto.pool == nil {
-		return crypto.scanSignalsSequential(now)
-	}
-
-	resultChannels := make([]chan *qpool.QValue[any], len(crypto.signals))
-
-	for index, signal := range crypto.signals {
-		jobIndex := index
-		jobSignal := signal
-		jobID := fmt.Sprintf("crypto:scan:%d:%d", jobIndex, crypto.nextJobID())
-		resultChannels[jobIndex] = crypto.pool.Schedule(jobID, func(context.Context) (any, error) {
-			return nil, jobSignal.Scan(now)
-		})
-	}
-
-	for _, resultChannel := range resultChannels {
-		result := <-resultChannel
-
-		if result == nil {
-			continue
-		}
-
-		if result.Error != nil {
-			return result.Error
-		}
-	}
+func (crypto *Crypto) processSignal(signal engine.Signal, now time.Time) error {
+	crypto.applyTickResult(crypto.collectMeasurements(signal, now))
 
 	return nil
 }
 
-func (crypto *Crypto) scanSignalsSequential(now time.Time) error {
-	for _, signal := range crypto.signals {
-		if err := signal.Scan(now); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (crypto *Crypto) processTick(now time.Time) {
-	if crypto.pool == nil {
-		crypto.processTickSequential(now)
-
+func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
+	if crypto.uiStream == nil {
 		return
 	}
 
-	resultChannels := make([]chan *qpool.QValue[any], len(crypto.signals))
+	openCount := 0
 
-	for index, signal := range crypto.signals {
-		jobIndex := index
-		jobSignal := signal
-		jobID := fmt.Sprintf("crypto:tick:%d:%d", jobIndex, crypto.nextJobID())
-		resultChannels[jobIndex] = crypto.pool.Schedule(jobID, func(context.Context) (any, error) {
-			return crypto.drainSignal(jobSignal, now), nil
+	if crypto.portfolio != nil && crypto.prices != nil {
+		openCount = crypto.portfolio.Status(crypto.prices).OpenCount
+	}
+
+	forecast := crypto.resolveForecast(
+		nil,
+		crypto.lastDecision.Line,
+		crypto.evaluationRows(),
+	)
+
+	crypto.uiStream.EnginePulse(map[string]any{
+		"seq":              crypto.rescoreCount,
+		"phase":            "scan",
+		"measurements":     len(tickResult.measurements),
+		"candidates":       crypto.candidates.Len(),
+		"open":             openCount,
+		"avg_prediction":   forecast.AvgPrediction,
+		"avg_error":        forecast.AvgError,
+		"forecast_symbols": forecast.PredictedSymbols,
+		"forecast_errors":  forecast.ErrorSymbols,
+		"signals":          crypto.signalRows(tickResult.measurements),
+	})
+}
+
+func (crypto *Crypto) signalRows(
+	measurements []engine.Measurement,
+) []map[string]any {
+	rows := make([]map[string]any, 0, len(measurements))
+
+	for _, measurement := range measurements {
+		symbol := ""
+
+		if len(measurement.Pairs) > 0 {
+			symbol = asset.Symbol(measurement.Pairs[0])
+		}
+
+		rows = append(rows, map[string]any{
+			"symbol":          symbol,
+			"source":          measurement.Source,
+			"regime":          measurement.Regime,
+			"reason":          measurement.Reason,
+			"score":           measurement.Confidence,
+			"expected_return": measurement.ExpectedReturn,
+			"type":            string(measurement.Type),
 		})
 	}
 
-	for _, resultChannel := range resultChannels {
-		result := <-resultChannel
-
-		if result == nil || result.Error != nil {
-			continue
-		}
-
-		tickResult, ok := result.Value.(signalTickResult)
-
-		if !ok {
-			continue
-		}
-
-		crypto.applyTickResult(tickResult)
-	}
+	return rows
 }
 
-func (crypto *Crypto) processTickSequential(now time.Time) {
-	for _, signal := range crypto.signals {
-		crypto.applyTickResult(crypto.drainSignal(signal, now))
+func (crypto *Crypto) evaluationRows() []map[string]any {
+	rows := make([]map[string]any, 0, len(crypto.lastDecision.Evaluations))
+
+	for _, evaluation := range crypto.lastDecision.Evaluations {
+		rows = append(rows, map[string]any{
+			"expected_return": evaluation.ExpectedReturn,
+			"combined":        evaluation.CombinedScore,
+		})
 	}
+
+	return rows
 }
 
-func (crypto *Crypto) drainSignal(
-	signal engine.Signal, now time.Time,
-) signalTickResult {
-	result := signalTickResult{}
+/*
+Rescore runs one full tick: measure signals, settle predictions, and execute.
+*/
+func (crypto *Crypto) Rescore(now time.Time) error {
+	crypto.drainTickables()
+	crypto.candidates.Reset()
 
-	for measurement := range signal.Measure(crypto.ctx) {
-		result.measurements = append(result.measurements, measurement)
-		result.feedback = append(
-			result.feedback,
-			crypto.updatePairStates(measurement, now)...,
-		)
-	}
+	tickResult := crypto.processSignals(now)
+	crypto.settleDuePredictions(now)
+	crypto.runExecution(now)
+	crypto.publishEnginePulse(tickResult)
 
-	return result
+	return nil
 }
 
 func (crypto *Crypto) applyTickResult(result signalTickResult) {
 	for _, measurement := range result.measurements {
 		crypto.noteCandidate(measurement)
-
-		if crypto.telemetry != nil {
-			crypto.telemetry.NoteMeasurement(measurement)
-		}
 	}
 
 	for _, feedback := range result.feedback {
@@ -416,10 +471,6 @@ func (crypto *Crypto) mergeLiveCandidates() {
 	}
 }
 
-func (crypto *Crypto) nextJobID() uint64 {
-	return crypto.tickSeq.Add(1)
-}
-
 func (crypto *Crypto) pairState(pair asset.Pair) *PairState {
 	symbol := asset.Symbol(pair)
 
@@ -451,13 +502,7 @@ func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
 	}
 
 	for _, signal := range crypto.signals {
-		receiver, ok := signal.(engine.FeedbackReceiver)
-
-		if !ok {
-			continue
-		}
-
-		receiver.ApplyFeedback(feedback)
+		signal.Feedback(feedback)
 	}
 }
 

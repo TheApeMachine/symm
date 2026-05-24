@@ -12,7 +12,7 @@ func (stream *MarketStream) Status(payload map[string]any) {
 
 	payload["event"] = "status"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }
 
 /*
@@ -25,7 +25,7 @@ func (stream *MarketStream) DecisionTrace(payload map[string]any) {
 
 	payload["event"] = "decision_trace"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }
 
 /*
@@ -38,7 +38,7 @@ func (stream *MarketStream) TradeEnter(payload map[string]any) {
 
 	payload["event"] = "trade_enter"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }
 
 /*
@@ -51,7 +51,7 @@ func (stream *MarketStream) TradeExit(payload map[string]any) {
 
 	payload["event"] = "trade_exit"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }
 
 /*
@@ -64,5 +64,5 @@ func (stream *MarketStream) StopRatchet(payload map[string]any) {
 
 	payload["event"] = "stop_ratchet"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }

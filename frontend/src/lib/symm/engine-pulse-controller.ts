@@ -70,10 +70,14 @@ class EnginePulseController {
 
 		const predictionSeries = new XyDataSeries(wasmContext, {
 			dataSeriesName: "Prediction",
+			dataIsSortedInX: true,
+			containsNaN: false,
 			fifoCapacity: FIFO_CAPACITY,
 		});
 		const errorSeries = new XyDataSeries(wasmContext, {
 			dataSeriesName: "Error",
+			dataIsSortedInX: true,
+			containsNaN: false,
 			fifoCapacity: FIFO_CAPACITY,
 		});
 

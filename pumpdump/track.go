@@ -1,10 +1,14 @@
 package pumpdump
 
 import (
-	"math"
+	"context"
+	"fmt"
 	"time"
 
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/stats"
 )
 
 type volumeTick struct {
@@ -13,9 +17,6 @@ type volumeTick struct {
 }
 
 const (
-	minVolumeHistory = 4
-	minPriceHistory  = 3
-	minSpreadHistory = 8
 	volumeHistoryCap = 20
 	bucketWindow     = 5 * time.Minute
 	spreadHistoryCap = 20
@@ -23,18 +24,9 @@ const (
 )
 
 /*
-TrackStore holds per-symbol rolling windows for pump precursors.
-*/
-type TrackStore struct {
-	shard    engine.ShardedStore
-	bySymbol map[string]*SymbolTrack
-}
-
-/*
-SymbolTrack accumulates rolling volume windows used by the article trigger.
+SymbolTrack holds rolling market state for one pair.
 */
 type SymbolTrack struct {
-	engine.SymbolLock
 	volumes           []float64
 	spreads           []float64
 	priceMoves        []float64
@@ -51,11 +43,86 @@ type SymbolTrack struct {
 }
 
 /*
-BeginScan clears per-tick live gauge scores before the next scan set runs.
+TrackStore holds per-symbol rolling windows and listens on market broadcast groups.
 */
-func (trackStore *TrackStore) BeginScan() {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
+type TrackStore struct {
+	engine.GaugeScan
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Pool
+	subscriptions map[string]*qpool.Subscriber
+	bySymbol      map[string]*SymbolTrack
+}
+
+/*
+NewTrackStore subscribes to tick, trade, and book on the shared broadcast groups.
+*/
+func NewTrackStore(
+	ctx context.Context,
+	tick, trade, book *qpool.BroadcastGroup,
+) (*TrackStore, error) {
+	if tick == nil || trade == nil || book == nil {
+		return nil, fmt.Errorf("track store requires tick, trade, and book groups")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	trackStore := &TrackStore{
+		ctx:           ctx,
+		cancel:        cancel,
+		subscriptions: make(map[string]*qpool.Subscriber),
+		bySymbol:      make(map[string]*SymbolTrack),
+	}
+
+	trackStore.subscriptions["tick"] = tick.Subscribe("pumpdump:track", 65536)
+	trackStore.subscriptions["trade"] = trade.Subscribe("pumpdump:track", 65536)
+	trackStore.subscriptions["book"] = book.Subscribe("pumpdump:track", 65536)
+
+	return trackStore, errnie.Require(map[string]any{
+		"ctx":           ctx,
+		"cancel":        cancel,
+		"subscriptions": trackStore.subscriptions,
+	})
+}
+
+func (trackStore *TrackStore) Tick() bool {
+	select {
+	case <-trackStore.ctx.Done():
+		return false
+	case value := <-trackStore.subscriptions["tick"].Incoming:
+		if value == nil {
+			return false
+		}
+
+		trackStore.applyTick(value)
+
+		return true
+	case value := <-trackStore.subscriptions["trade"].Incoming:
+		if value == nil {
+			return false
+		}
+
+		trackStore.applyTrade(value)
+
+		return true
+	case value := <-trackStore.subscriptions["book"].Incoming:
+		if value == nil {
+			return false
+		}
+
+		trackStore.applyBook(value)
+
+		return true
+	default:
+		return false
+	}
+}
+
+/*
+ResetLiveScores clears per-tick gauge scores before the next measure pass.
+*/
+func (trackStore *TrackStore) ResetLiveScores() {
+	trackStore.ResetGaugeScan()
 
 	for _, track := range trackStore.bySymbol {
 		track.liveScore = 0
@@ -63,110 +130,14 @@ func (trackStore *TrackStore) BeginScan() {
 }
 
 /*
-NewTrackStore creates an empty track store.
-*/
-func NewTrackStore() *TrackStore {
-	return &TrackStore{
-		bySymbol: make(map[string]*SymbolTrack),
-	}
-}
-
-/*
-ApplyTicker ingests last price and 24h quote volume for liquidity filtering.
-*/
-func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float64) {
-	if symbol == "" || last <= 0 {
-		return
-	}
-
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	track := trackStore.ensure(symbol)
-	track.lastPrice = last
-	track.dailyQuoteVol = volumeBase * last
-}
-
-/*
-AddVolume adds executed trade volume into the rolling window.
-*/
-func (trackStore *TrackStore) AddVolume(symbol string, volume float64, now time.Time) {
-	if symbol == "" || volume <= 0 {
-		return
-	}
-
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	track := trackStore.ensure(symbol)
-	track.rollingTicks = append(track.rollingTicks, volumeTick{at: now, volume: volume})
-	track.pruneRolling(now)
-	track.bucketVolume = track.rollingVolume()
-}
-
-/*
-RecordSpread stores bid-ask spread samples for tightening detection.
-*/
-func (trackStore *TrackStore) RecordSpread(symbol string, spreadBPS float64) {
-	if symbol == "" || spreadBPS <= 0 {
-		return
-	}
-
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	track := trackStore.ensure(symbol)
-	track.spreads = append(track.spreads, spreadBPS)
-
-	if len(track.spreads) > spreadHistoryCap {
-		track.spreads = track.spreads[len(track.spreads)-spreadHistoryCap:]
-	}
-}
-
-/*
 RollBuckets closes any elapsed five-minute windows.
 */
 func (trackStore *TrackStore) RollBuckets(now time.Time) {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
 	for _, track := range trackStore.bySymbol {
 		track.roll(now)
 		track.pruneRolling(now)
 		track.bucketVolume = track.rollingVolume()
 	}
-}
-
-/*
-PassesLiquidity keeps symbols below the live cross-section median daily quote volume.
-*/
-func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	track, ok := trackStore.bySymbol[symbol]
-
-	if !ok || track.dailyQuoteVol <= 0 {
-		return false
-	}
-
-	quoteVolumes := make([]float64, 0, len(trackStore.bySymbol))
-
-	for _, candidate := range trackStore.bySymbol {
-		if candidate.dailyQuoteVol <= 0 {
-			continue
-		}
-
-		quoteVolumes = append(quoteVolumes, candidate.dailyQuoteVol)
-	}
-
-	if len(quoteVolumes) < 2 {
-		return false
-	}
-
-	liquidityLine := crossSectionMedian(quoteVolumes)
-
-	return track.dailyQuoteVol < liquidityLine
 }
 
 /*
@@ -177,113 +148,34 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
 	track := trackStore.ensure(feedback.Symbol)
 	track.calibrator.Apply(feedback)
 }
 
 /*
-FinalizeMeasurement normalizes raw confidence and derives the active bucket runway.
+CalibrationScale returns the live precursor multiplier for one symbol.
 */
-func (trackStore *TrackStore) FinalizeMeasurement(
-	symbol string, rawConfidence float64, now time.Time, reason string,
-) (float64, float64, time.Duration, string) {
-	if rawConfidence <= 0 {
-		return 0, 0, 0, ""
+func (trackStore *TrackStore) CalibrationScale(symbol string) float64 {
+	track, ok := trackStore.bySymbol[symbol]
+
+	if !ok {
+		return 1
 	}
 
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
+	return track.calibrator.Scale()
+}
+
+/*
+RecordConfidence appends one raw confidence sample to symbol history.
+*/
+func (trackStore *TrackStore) RecordConfidence(symbol string, confidence float64) {
+	if confidence <= 0 {
+		return
+	}
 
 	track, ok := trackStore.bySymbol[symbol]
 
 	if !ok {
-		return 0, 0, 0, ""
-	}
-
-	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
-	track.liveScore = normalized
-
-	runway := track.pumpRunway(now)
-
-	if runway <= 0 {
-		return 0, 0, 0, ""
-	}
-
-	track.recordConfidence(rawConfidence)
-	expectedReturn := track.expectedReturnOverRunway(runway)
-
-	return normalized, expectedReturn, runway, reason
-}
-
-/*
-PeakLiveConfidence returns the highest unit-scale score across all symbols.
-*/
-func (trackStore *TrackStore) PeakLiveConfidence() float64 {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	peak := 0.0
-
-	for _, track := range trackStore.bySymbol {
-		if track.liveScore > peak {
-			peak = track.liveScore
-		}
-	}
-
-	return peak
-}
-
-/*
-PeakSymbolScore returns the symbol with the highest live score.
-*/
-func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	bestSymbol := ""
-	bestScore := 0.0
-
-	for symbol, track := range trackStore.bySymbol {
-		if track.liveScore <= bestScore {
-			continue
-		}
-
-		bestScore = track.liveScore
-		bestSymbol = symbol
-	}
-
-	return bestSymbol, bestScore
-}
-
-func (track *SymbolTrack) expectedReturnOverRunway(runway time.Duration) float64 {
-	if len(track.priceMoves) < minPriceHistory || runway <= 0 {
-		return 0
-	}
-
-	quietLine := median(track.priceMoves)
-
-	return quietLine * (runway.Seconds() / bucketWindow.Seconds())
-}
-
-func (track *SymbolTrack) pumpRunway(now time.Time) time.Duration {
-	if track.bucketStart.IsZero() {
-		return 0
-	}
-
-	remaining := bucketWindow - now.Sub(track.bucketStart)
-
-	if remaining <= 0 {
-		return 0
-	}
-
-	return remaining
-}
-
-func (track *SymbolTrack) recordConfidence(confidence float64) {
-	if confidence <= 0 {
 		return
 	}
 
@@ -295,103 +187,75 @@ func (track *SymbolTrack) recordConfidence(confidence float64) {
 }
 
 /*
-CalibrationScale returns the live precursor parameter multiplier for one symbol.
+SetLiveScore stores the latest normalized gauge reading for one symbol.
 */
-func (trackStore *TrackStore) CalibrationScale(symbol string) float64 {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
+func (trackStore *TrackStore) SetLiveScore(symbol string, score float64) {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if !ok {
-		return 1
+		return
 	}
 
-	return track.calibrator.Scale()
+	track.liveScore = score
 }
 
 /*
-VolumeSpike reports whether current bucket volume exceeds the symbol's own ratio fence.
+SymbolLiveScore returns the latest normalized gauge reading for one symbol.
 */
-func (trackStore *TrackStore) VolumeSpike(symbol string) (float64, bool) {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
+func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
 	track, ok := trackStore.bySymbol[symbol]
 
-	if !ok || len(track.volumes) < minVolumeHistory {
-		return 0, false
+	if !ok {
+		return 0
 	}
 
-	baseline := mean(track.volumes)
-
-	if baseline <= 0 || track.bucketVolume <= 0 {
-		return 0, false
-	}
-
-	ratio := track.bucketVolume / baseline
-	fence := volumeRatioFence(volumeRatios(track.volumes))
-
-	if fence <= 0 {
-		return 0, false
-	}
-
-	return ratio, ratio > fence
+	return track.liveScore
 }
 
-/*
-PriceFlat reports whether the active bucket move is below the symbol's own move history.
-*/
-func (trackStore *TrackStore) PriceFlat(symbol string) bool {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
+func (trackStore *TrackStore) applyTick(value *qpool.QValue[any]) {
+	update, ok := value.Value.(engine.TickUpdate)
 
-	track, ok := trackStore.bySymbol[symbol]
-
-	if !ok || track.bucketOpenPrice <= 0 || track.lastPrice <= 0 {
-		return false
+	if !ok || update.Symbol == "" || update.Last <= 0 {
+		return
 	}
 
-	if len(track.priceMoves) < minPriceHistory {
-		return false
-	}
-
-	move := math.Abs(track.lastPrice/track.bucketOpenPrice - 1)
-	quietLine := median(track.priceMoves)
-
-	return move < quietLine
+	track := trackStore.ensure(update.Symbol)
+	track.lastPrice = update.Last
+	track.dailyQuoteVol = update.VolumeBase * update.Last
 }
 
-/*
-SpreadTight reports sudden quote compression vs the spread history.
-*/
-func (trackStore *TrackStore) SpreadTight(symbol string, spreadBPS float64) bool {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
+func (trackStore *TrackStore) applyTrade(value *qpool.QValue[any]) {
+	update, ok := value.Value.(engine.TradeUpdate)
 
-	track, ok := trackStore.bySymbol[symbol]
-
-	if !ok || len(track.spreads) < minSpreadHistory {
-		return false
+	if !ok || update.Symbol == "" || update.BatchVolume <= 0 {
+		return
 	}
 
-	medianSpread := median(track.spreads)
+	track := trackStore.ensure(update.Symbol)
+	track.rollingTicks = append(track.rollingTicks, volumeTick{
+		at:     update.UpdatedAt,
+		volume: update.BatchVolume,
+	})
+	track.pruneRolling(update.UpdatedAt)
+	track.bucketVolume = track.rollingVolume()
+}
 
-	return spreadBPS < medianSpread
+func (trackStore *TrackStore) applyBook(value *qpool.QValue[any]) {
+	update, ok := value.Value.(engine.BookUpdate)
+
+	if !ok || update.Symbol == "" || update.SpreadBPS <= 0 {
+		return
+	}
+
+	track := trackStore.ensure(update.Symbol)
+	track.spreads = append(track.spreads, update.SpreadBPS)
+
+	if len(track.spreads) > spreadHistoryCap {
+		track.spreads = track.spreads[len(track.spreads)-spreadHistoryCap:]
+	}
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
-	return trackStore.ensureLocked(symbol)
-}
-
-func (trackStore *TrackStore) track(symbol string) *SymbolTrack {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	return trackStore.ensureLocked(symbol)
-}
-
-func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if ok {
@@ -415,6 +279,7 @@ func (track *SymbolTrack) roll(now time.Time) {
 		track.bucketStart = now
 		track.bucketOpenPrice = track.lastPrice
 		track.lastRollAt = now
+
 		return
 	}
 
@@ -423,7 +288,7 @@ func (track *SymbolTrack) roll(now time.Time) {
 	}
 
 	if track.bucketOpenPrice > 0 && track.lastPrice > 0 {
-		move := math.Abs(track.lastPrice/track.bucketOpenPrice - 1)
+		move := stats.AbsRelativeMove(track.lastPrice, track.bucketOpenPrice)
 		track.priceMoves = append(track.priceMoves, move)
 
 		if len(track.priceMoves) > priceHistoryCap {
@@ -469,18 +334,4 @@ func (track *SymbolTrack) rollingVolume() float64 {
 	}
 
 	return total
-}
-
-func mean(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	var sum float64
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
 }

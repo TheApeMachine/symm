@@ -24,6 +24,17 @@ const (
 	Causal
 )
 
+/*
+Direction returns the signed trade side implied by one measurement type.
+*/
+func (measurementType MeasurementType) Direction() int {
+	if measurementType == Dump {
+		return -1
+	}
+
+	return 1
+}
+
 type Timeframe struct {
 	Start int64
 	End   int64
@@ -48,23 +59,10 @@ type Measurement struct {
 }
 
 /*
-Direction returns +1 for buy-side forecasts and -1 for sell-side.
-*/
-func (measurementType MeasurementType) Direction() int {
-	if measurementType == Dump {
-		return -1
-	}
-
-	return 1
-}
-
-/*
-Signal evaluates microstructure on demand and yields queued measurements.
-Scan is invoked by the trader scheduler; Measure drains the passive queue.
+Signal emits regime measurements and ingests settled prediction feedback.
 */
 type Signal interface {
-	Scan(now time.Time) error
-	Measure(ctx context.Context) iter.Seq[Measurement]
 	Source() string
-	Stats() QueueStats
+	Measure(ctx context.Context, now time.Time) iter.Seq[Measurement]
+	Feedback(feedback PredictionFeedback)
 }

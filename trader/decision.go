@@ -43,14 +43,14 @@ type Evaluation struct {
 Decision is one per-source decision row.
 */
 type Decision struct {
-	Symbol          string
-	Source          string
-	Regime          string
-	Reason          string
-	Score           float64
-	ExpectedReturn  float64
-	Allow           bool
-	Why             string
+	Symbol         string
+	Source         string
+	Regime         string
+	Reason         string
+	Score          float64
+	ExpectedReturn float64
+	Allow          bool
+	Why            string
 }
 
 /*
@@ -127,6 +127,19 @@ func (store *CandidateStore) Note(candidate SignalCandidate) {
 	existing.ObservedAt = candidate.ObservedAt
 
 	store.bySymbol[candidate.Symbol][candidate.Source] = existing
+}
+
+/*
+Len returns the number of symbol/source candidates recorded this tick.
+*/
+func (store *CandidateStore) Len() int {
+	total := 0
+
+	for _, sources := range store.bySymbol {
+		total += len(sources)
+	}
+
+	return total
 }
 
 /*
@@ -214,7 +227,7 @@ func (engine *DecisionEngine) buildRows(
 			Runway:         runway,
 			Regime:         topRegime,
 			Reason:         topReason,
-			Side:           sideLabel(topDirection),
+			Side:           directionSide(topDirection),
 			Allow:          false,
 			Why:            "below_line",
 		})
@@ -371,4 +384,12 @@ func decisionToMap(decision Decision) map[string]any {
 		"allow":           decision.Allow,
 		"why":             decision.Why,
 	}
+}
+
+func directionSide(direction int) string {
+	if direction < 0 {
+		return "short"
+	}
+
+	return "long"
 }

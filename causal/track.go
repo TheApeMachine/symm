@@ -29,6 +29,7 @@ type causalSample struct {
 TrackStore holds per-symbol causal histories and cross-section macro state.
 */
 type TrackStore struct {
+	engine.GaugeScan
 	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolTrack
 }
@@ -54,6 +55,8 @@ type SymbolTrack struct {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
+	trackStore.ResetGaugeScan()
+
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
@@ -262,6 +265,22 @@ func (trackStore *TrackStore) Evaluate(
 	expectedReturn := track.forecastReturn(current, reason, runway)
 
 	return normalized, expectedReturn, runway, reason
+}
+
+/*
+SymbolLiveScore returns the latest normalized gauge reading for one symbol.
+*/
+func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	track, ok := trackStore.bySymbol[symbol]
+
+	if !ok {
+		return 0
+	}
+
+	return track.liveScore
 }
 
 /*

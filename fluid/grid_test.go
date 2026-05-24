@@ -59,6 +59,20 @@ func TestBuildFluidGridEMASmoothsAcrossTicks(t *testing.T) {
 	}
 }
 
+func TestBuildFluidGridWarmingWhenSparse(t *testing.T) {
+	params := NewDisplayParams()
+	builder := NewGridBuilder(params)
+	grid := builder.Build(sampleGridRows(3), params.activeGridSize())
+
+	if grid.Max > warmingGridHeight+1e-9 {
+		t.Fatalf("expected warming grid max %v, got %v", warmingGridHeight, grid.Max)
+	}
+
+	if grid.Heights[0][0] != warmingGridHeight {
+		t.Fatalf("expected flat warming height, got %v", grid.Heights[0][0])
+	}
+}
+
 func TestBuildFluidGridSanitizesNaNHeights(t *testing.T) {
 	params := NewDisplayParams()
 	builder := NewGridBuilder(params)

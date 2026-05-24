@@ -3,40 +3,40 @@ package ui
 import (
 	"time"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/fluid"
 )
 
 /*
-MarketStream pushes telemetry the moment market or engine data is available.
+MarketStream pushes telemetry through the shared ui broadcast group.
 */
 type MarketStream struct {
-	hub     *Hub
+	ui      *qpool.BroadcastGroup
 	candles *CandleAggregator
 }
 
 /*
-NewMarketStream binds a hub for non-blocking event fan-out.
+NewMarketStream binds the shared ui group for non-blocking event fan-out.
 */
-func NewMarketStream(hub *Hub) *MarketStream {
-	if hub == nil {
+func NewMarketStream(ui *qpool.BroadcastGroup) *MarketStream {
+	if ui == nil {
 		return nil
 	}
 
 	return &MarketStream{
-		hub:     hub,
+		ui:      ui,
 		candles: NewCandleAggregator(),
 	}
 }
 
-/*
-Emit forwards a flat event to websocket clients without blocking producers.
-*/
-func (stream *MarketStream) Emit(event map[string]any) {
-	if stream == nil || stream.hub == nil {
+func (stream *MarketStream) send(event map[string]any) {
+	if stream == nil || stream.ui == nil || event == nil {
 		return
 	}
 
-	stream.hub.Emit(omitEmptyCollections(event))
+	stream.ui.Send(&qpool.QValue[any]{
+		Value: omitEmptyCollections(event),
+	})
 }
 
 /*
@@ -57,7 +57,7 @@ func (stream *MarketStream) PriceTick(
 		at = now
 	}
 
-	stream.Emit(map[string]any{
+	stream.send(map[string]any{
 		"event":          "price_tick",
 		"ts":             now,
 		"symbol":         symbol,
@@ -79,7 +79,7 @@ func (stream *MarketStream) PriceTick(
 	}
 
 	if bar, ok := stream.candles.Update(symbol, last, parsedAt); ok {
-		stream.Emit(map[string]any{
+		stream.send(map[string]any{
 			"event":  "candle_bar",
 			"ts":     now,
 			"symbol": symbol,
@@ -115,7 +115,7 @@ func (stream *MarketStream) FieldUpdate(snapshot fluid.FieldSnapshot) {
 		})
 	}
 
-	stream.Emit(map[string]any{
+	stream.send(map[string]any{
 		"event":        "field_snapshot",
 		"ts":           time.Now().UTC().Format(time.RFC3339Nano),
 		"symbol_count": snapshot.SymbolCount,
@@ -145,6 +145,22 @@ func (stream *MarketStream) FieldUpdate(snapshot fluid.FieldSnapshot) {
 }
 
 /*
+SignalScore publishes one mean confidence reading for dashboard gauges.
+*/
+func (stream *MarketStream) SignalScore(source string, confidence float64) {
+	if stream == nil || source == "" {
+		return
+	}
+
+	stream.send(map[string]any{
+		"event":      "signal_score",
+		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+		"source":     source,
+		"confidence": confidence,
+	})
+}
+
+/*
 EnginePulse publishes one engine heartbeat with live counters and signal rows.
 */
 func (stream *MarketStream) EnginePulse(payload map[string]any) {
@@ -154,7 +170,7 @@ func (stream *MarketStream) EnginePulse(payload map[string]any) {
 
 	payload["event"] = "engine_pulse"
 	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	stream.Emit(payload)
+	stream.send(payload)
 }
 
 /*
@@ -168,7 +184,7 @@ func (stream *MarketStream) Scoreboard(
 		return
 	}
 
-	stream.Emit(map[string]any{
+	stream.send(map[string]any{
 		"event":   "scoreboard",
 		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
 		"line":    line,

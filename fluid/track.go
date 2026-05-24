@@ -13,6 +13,7 @@ const fieldHistoryCap = 64
 TrackStore holds per-symbol fluid field histories.
 */
 type TrackStore struct {
+	engine.GaugeScan
 	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolField
 }
@@ -49,6 +50,8 @@ func NewTrackStore() *TrackStore {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
+	trackStore.ResetGaugeScan()
+
 	trackStore.shard.RLockMap()
 	tracks := make([]*SymbolField, 0, len(trackStore.bySymbol))
 
@@ -208,6 +211,17 @@ func (trackStore *TrackStore) Sample(
 	}
 
 	return normalized, expectedReturn, runway, reason
+}
+
+/*
+SymbolLiveScore returns the latest normalized gauge reading for one symbol.
+*/
+func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
+
+	return track.liveScore
 }
 
 /*

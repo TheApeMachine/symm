@@ -2,9 +2,11 @@ package fluid
 
 import (
 	"context"
+	"iter"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	kbook "github.com/theapemachine/symm/kraken/book"
@@ -16,7 +18,10 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	*engine.SignalBase
+	ingest        *engine.Ingest
+	watch         *engine.SymbolWatch
+	pairs         map[string]asset.Pair
+	symbols       []string
 	track         *TrackStore
 	fieldSink     FieldSink
 	displayParams *DisplayParams
@@ -25,9 +30,9 @@ type Fluid struct {
 
 var _ engine.Signal = (*Fluid)(nil)
 
-var _ engine.FeedbackReceiver = (*Fluid)(nil)
-
 var _ engine.LiveScoreReader = (*Fluid)(nil)
+
+var _ engine.MeanConfidenceReader = (*Fluid)(nil)
 
 var _ engine.RiskExporter = (*Fluid)(nil)
 
@@ -35,7 +40,8 @@ var _ engine.RiskExporter = (*Fluid)(nil)
 NewFluid wires live Kraken websocket observers into the engine signal.
 */
 func NewFluid(
-	ctx context.Context,
+	_ context.Context,
+	_ *qpool.Q,
 	book *kbook.Book,
 	tradesObserver *trades.Trades,
 	tickerObserver *kticker.Ticker,
@@ -43,23 +49,11 @@ func NewFluid(
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Fluid, error) {
-	base, err := engine.NewSignalBase(
-		ctx,
-		"fluid",
-		book,
-		tradesObserver,
-		tickerObserver,
-		pairs,
-		symbols,
-		watch,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
 	fluid := &Fluid{
-		SignalBase:    base,
+		ingest:        engine.NewIngest(book, tradesObserver, tickerObserver),
+		watch:         watch,
+		pairs:         pairs,
+		symbols:       append([]string(nil), symbols...),
 		track:         NewTrackStore(),
 		displayParams: NewDisplayParams(),
 	}
@@ -67,9 +61,21 @@ func NewFluid(
 	fluid.gridBuilder = NewGridBuilder(fluid.displayParams)
 
 	return fluid, errnie.Require(map[string]any{
-		"base":  base,
-		"track": fluid.track,
+		"ingest": fluid.ingest,
+		"track":  fluid.track,
 	})
+}
+
+func (fluid *Fluid) Source() string {
+	return "fluid"
+}
+
+func (fluid *Fluid) Symbols() []string {
+	return append([]string(nil), fluid.symbols...)
+}
+
+func (fluid *Fluid) Ingest() *engine.Ingest {
+	return fluid.ingest
 }
 
 /*
@@ -160,6 +166,13 @@ func (fluid *Fluid) PeakReading() engine.LiveReading {
 }
 
 /*
+MeanConfidence returns the mean normalized confidence across the latest scan set.
+*/
+func (fluid *Fluid) MeanConfidence() float64 {
+	return fluid.track.MeanGaugeConfidence()
+}
+
+/*
 SymbolRisk exposes fluid turbulence metrics for dynamic execution.
 */
 func (fluid *Fluid) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
@@ -167,9 +180,9 @@ func (fluid *Fluid) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
 }
 
 /*
-ApplyFeedback nudges fluid source/shock calibration from settled prediction error.
+Feedback nudges fluid source/shock calibration from settled prediction error.
 */
-func (fluid *Fluid) ApplyFeedback(feedback engine.PredictionFeedback) {
+func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != fluid.Source() {
 		return
 	}
@@ -178,41 +191,65 @@ func (fluid *Fluid) ApplyFeedback(feedback engine.PredictionFeedback) {
 }
 
 /*
-Scan advances the fluid field for the current scheduler tick.
+Tick is a no-op until Fluid subscribes to market broadcasts.
 */
-func (fluid *Fluid) Scan(now time.Time) error {
-	fluid.track.BeginScan()
+func (fluid *Fluid) Tick() bool {
+	return false
+}
 
-	err := fluid.ScanSymbols(now, func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-		if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
-			fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+/*
+Measure advances the fluid field and yields non-zero flow readings.
+*/
+func (fluid *Fluid) Measure(
+	ctx context.Context,
+	now time.Time,
+) iter.Seq[engine.Measurement] {
+	return func(yield func(engine.Measurement) bool) {
+		fluid.track.BeginScan()
+		engine.DrainTicks(ctx)
+
+		for measurement := range engine.MeasureSymbols(
+			ctx,
+			engine.SymbolScanner{
+				Source:  fluid.Source(),
+				Ingest:  fluid.ingest,
+				Watch:   fluid.watch,
+				Pairs:   fluid.pairs,
+				Symbols: fluid.symbols,
+			},
+			now,
+			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
+				if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
+					fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+				}
+
+				confidence, expectedReturn, runway, reason := fluid.evaluate(symbol, snapshot, now)
+
+				fluid.track.ObserveGaugeScore(fluid.track.SymbolLiveScore(symbol))
+
+				if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+					return engine.Measurement{}, false, nil
+				}
+
+				return engine.Measurement{
+					Type:           engine.Flow,
+					Regime:         "flow",
+					Reason:         reason,
+					Confidence:     confidence,
+					ExpectedReturn: expectedReturn,
+					Runway:         runway,
+				}, true, nil
+			},
+		) {
+			if !yield(measurement) {
+				return
+			}
 		}
 
-		confidence, expectedReturn, runway, reason := fluid.evaluate(symbol, snapshot, now)
-
-		if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
-			return engine.Measurement{}, false, nil
+		if fluid.fieldSink != nil {
+			fluid.fieldSink(fluid.FieldSnapshot())
 		}
-
-		return engine.Measurement{
-			Type:           engine.Flow,
-			Regime:         "flow",
-			Reason:         reason,
-			Confidence:     confidence,
-			ExpectedReturn: expectedReturn,
-			Runway:         runway,
-		}, true, nil
-	})
-
-	if err != nil {
-		return err
 	}
-
-	if fluid.fieldSink != nil {
-		fluid.fieldSink(fluid.FieldSnapshot())
-	}
-
-	return nil
 }
 
 func (fluid *Fluid) evaluate(

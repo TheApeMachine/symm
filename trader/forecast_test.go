@@ -12,11 +12,11 @@ import (
 func TestForecastFromEvaluations(t *testing.T) {
 	convey.Convey("Given scored evaluation rows", t, func() {
 		snapshot := forecastFromEvaluations(0.9, []map[string]any{
-			{"combined": 0.8},
-			{"combined": 1.2},
+			{"expected_return": 0.8},
+			{"expected_return": 1.2},
 		})
 
-		convey.Convey("It should average combined prediction and line error", func() {
+		convey.Convey("It should average expected return and line error", func() {
 			convey.So(snapshot.PredictedSymbols, convey.ShouldEqual, 2)
 			convey.So(snapshot.AvgPrediction, convey.ShouldAlmostEqual, 1.0, 1e-9)
 			convey.So(snapshot.AvgError, convey.ShouldAlmostEqual, 0.1, 1e-9)
@@ -30,6 +30,7 @@ func TestAggregateForecasts(t *testing.T) {
 
 	crypto, err := NewCrypto(
 		context.Background(),
+		nil,
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 101, "DUMP/EUR": 49},
@@ -68,6 +69,7 @@ func TestResolveForecastPrefersPairStates(t *testing.T) {
 
 	crypto, err := NewCrypto(
 		context.Background(),
+		nil,
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 101},

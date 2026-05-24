@@ -21,6 +21,12 @@ type quoteRow struct {
 
 type quoteListener func(symbol string, last, bid, ask, changePct float64, timestamp string)
 
+type tickPublish func(
+	symbol string,
+	last, bid, ask, volumeBase, changePct float64,
+	timestamp string,
+)
+
 /*
 Ticker watches Kraken v2 ticker updates for price and 24h volume.
 */
@@ -30,6 +36,7 @@ type Ticker struct {
 	quotes         map[string]quoteRow
 	ready          map[string]bool
 	quoteListeners []quoteListener
+	publish        tickPublish
 }
 
 /*
@@ -39,6 +46,7 @@ func New(
 	parent context.Context,
 	publicClient *client.PublicClient,
 	symbols []string,
+	publish tickPublish,
 ) (*Ticker, error) {
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("ticker observer requires at least one symbol")
@@ -60,9 +68,10 @@ func New(
 	}
 
 	ticker := &Ticker{
-		ctx:    parent,
-		quotes: make(map[string]quoteRow, len(symbols)),
-		ready:  make(map[string]bool, len(symbols)),
+		ctx:     parent,
+		quotes:  make(map[string]quoteRow, len(symbols)),
+		ready:   make(map[string]bool, len(symbols)),
+		publish: publish,
 	}
 
 	publicClient.OnFrame(ticker.handleFrame)
@@ -192,5 +201,11 @@ func (ticker *Ticker) store(rows []market.TickerRow) {
 		for _, listener := range listeners {
 			listener(row.Symbol, row.Last, row.Bid, row.Ask, row.ChangePct, row.Timestamp)
 		}
+
+		if ticker.publish == nil {
+			continue
+		}
+
+		ticker.publish(row.Symbol, row.Last, row.Bid, row.Ask, row.Volume, row.ChangePct, row.Timestamp)
 	}
 }

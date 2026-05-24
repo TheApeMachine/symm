@@ -20,90 +20,100 @@ func TestPrecursorScoreRequiresBookAndExecutions(t *testing.T) {
 }
 
 func TestVolumeSpikeUsesOwnRatioFence(t *testing.T) {
-	trackStore := NewTrackStore()
-	trackStore.ApplyTicker("PUMP/EUR", 1, 1000)
+	trackStore, pool := testTrackStore(t)
+	filter := &PrecursorFilter{}
+	publishTick(pool, "PUMP/EUR", 1, 1000)
+	drainTrack(trackStore)
 
 	for index := 0; index < minVolumeHistory; index++ {
-		trackStore.bySymbol["PUMP/EUR"].volumes = append(
-			trackStore.bySymbol["PUMP/EUR"].volumes,
+		trackStore.ensure("PUMP/EUR").volumes = append(
+			trackStore.ensure("PUMP/EUR").volumes,
 			10,
 		)
 	}
 
-	trackStore.bySymbol["PUMP/EUR"].bucketVolume = 30
+	trackStore.ensure("PUMP/EUR").bucketVolume = 30
 
-	ratio, ok := trackStore.VolumeSpike("PUMP/EUR")
+	ratio, ok := filter.volumeSpike("PUMP/EUR", trackStore)
 
 	if !ok {
 		t.Fatalf("expected volume spike above own fence, got ratio=%v", ratio)
 	}
 
-	trackStore.bySymbol["PUMP/EUR"].bucketVolume = 10
+	trackStore.ensure("PUMP/EUR").bucketVolume = 10
 
-	if _, ok := trackStore.VolumeSpike("PUMP/EUR"); ok {
+	if _, ok := filter.volumeSpike("PUMP/EUR", trackStore); ok {
 		t.Fatal("expected no spike at baseline volume")
 	}
 }
 
 func TestPriceFlatUsesOwnMoveHistory(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore, _ := testTrackStore(t)
+	filter := &PrecursorFilter{}
 	track := trackStore.ensure("PUMP/EUR")
 	track.priceMoves = []float64{0.02, 0.015, 0.018}
 	track.bucketOpenPrice = 1.0
 	track.lastPrice = 1.05
 
-	if trackStore.PriceFlat("PUMP/EUR") {
+	if filter.priceFlat("PUMP/EUR", trackStore) {
 		t.Fatal("expected large move to fail against own quiet history")
 	}
 
 	track.lastPrice = 1.005
 
-	if !trackStore.PriceFlat("PUMP/EUR") {
+	if !filter.priceFlat("PUMP/EUR", trackStore) {
 		t.Fatal("expected small move to pass against own quiet history")
 	}
 }
 
 func TestSpreadTightRequiresCompression(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore, pool := testTrackStore(t)
+	filter := &PrecursorFilter{}
 
 	for _, spread := range []float64{20, 22, 21, 23, 20, 22, 21, 20} {
-		trackStore.RecordSpread("PUMP/EUR", spread)
+		publishBook(pool, "PUMP/EUR", spread)
 	}
 
-	if !trackStore.SpreadTight("PUMP/EUR", 10) {
+	drainTrack(trackStore)
+
+	if !filter.spreadTight("PUMP/EUR", trackStore, 10) {
 		t.Fatal("expected spread below history median to pass")
 	}
 
-	if trackStore.SpreadTight("PUMP/EUR", 25) {
+	if filter.spreadTight("PUMP/EUR", trackStore, 25) {
 		t.Fatal("expected wide spread to fail")
 	}
 }
 
 func TestLiquidityFilterUsesCrossSectionMedian(t *testing.T) {
-	trackStore := NewTrackStore()
-	trackStore.ApplyTicker("BTC/EUR", 50000, 100)
-	trackStore.ApplyTicker("PUMP/EUR", 1, 500000)
+	trackStore, pool := testTrackStore(t)
+	filter := &PrecursorFilter{}
+	publishTick(pool, "BTC/EUR", 50000, 100)
+	publishTick(pool, "PUMP/EUR", 1, 500000)
+	drainTrack(trackStore)
 
-	if trackStore.PassesLiquidity("BTC/EUR") {
+	if filter.passesLiquidity("BTC/EUR", trackStore) {
 		t.Fatal("expected high daily quote volume to sit above the live median")
 	}
 
-	if !trackStore.PassesLiquidity("PUMP/EUR") {
+	if !filter.passesLiquidity("PUMP/EUR", trackStore) {
 		t.Fatal("expected low daily quote volume to sit below the live median")
 	}
 }
 
 func TestBucketRollClosesFiveMinuteWindow(t *testing.T) {
-	trackStore := NewTrackStore()
+	trackStore, pool := testTrackStore(t)
 	start := time.Unix(0, 0)
 
-	trackStore.ApplyTicker("PUMP/EUR", 1, 1000)
-	trackStore.AddVolume("PUMP/EUR", 42, start)
+	publishTick(pool, "PUMP/EUR", 1, 1000)
+	publishTrade(pool, "PUMP/EUR", 42, start)
+	drainTrack(trackStore)
+
 	trackStore.RollBuckets(start)
 	trackStore.RollBuckets(start.Add(bucketWindow))
 
-	if len(trackStore.bySymbol["PUMP/EUR"].volumes) != 1 {
-		t.Fatalf("expected closed bucket in history, got %d", len(trackStore.bySymbol["PUMP/EUR"].volumes))
+	if len(trackStore.ensure("PUMP/EUR").volumes) != 1 {
+		t.Fatalf("expected closed bucket in history, got %d", len(trackStore.ensure("PUMP/EUR").volumes))
 	}
 }
 
@@ -115,17 +125,16 @@ func TestVolumeRatioFenceUsesSpreadWhenHistoryVaries(t *testing.T) {
 	}
 }
 
-func BenchmarkTrackStoreVolumeSpike(b *testing.B) {
-	trackStore := NewTrackStore()
-	trackStore.bySymbol["PUMP/EUR"] = &SymbolTrack{
-		volumes:      []float64{10, 10, 10, 10},
-		bucketVolume: 30,
-	}
+func BenchmarkPrecursorFilterVolumeSpike(b *testing.B) {
+	trackStore, _ := testTrackStore(&testing.T{})
+	filter := &PrecursorFilter{}
+	trackStore.ensure("PUMP/EUR").volumes = []float64{10, 10, 10, 10}
+	trackStore.ensure("PUMP/EUR").bucketVolume = 30
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, ok := trackStore.VolumeSpike("PUMP/EUR"); !ok {
+		if _, ok := filter.volumeSpike("PUMP/EUR", trackStore); !ok {
 			b.Fatal("expected spike")
 		}
 	}

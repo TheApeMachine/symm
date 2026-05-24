@@ -250,23 +250,36 @@ class FluidSurfaceController {
 	}
 
 	private applyGrid(grid: FluidGrid) {
-		const size = grid.heights.length;
+		const size = Math.min(grid.heights.length, FLUID_GRID_SIZE);
+		const scaleMax = Math.max(grid.outliers.displayMax, grid.max, 0.05);
+		const floor = scaleMax * 0.02;
 
-		if (size === 0) {
-			return;
+		for (let z = 0; z < FLUID_GRID_SIZE; z++) {
+			for (let x = 0; x < FLUID_GRID_SIZE; x++) {
+				this.heightmap[z][x] = 0;
+			}
 		}
 
-		const rawSpan = grid.max - grid.min;
-		const pad = Math.max(rawSpan * 0.08, 0.05);
-		const sourceMin = grid.min - pad;
-		const sourceSpan = Math.max(grid.max + pad - sourceMin, 0.01);
-
 		for (let z = 0; z < size; z++) {
-			for (let x = 0; x < size; x++) {
-				const raw = grid.heights[z]?.[x];
-				const finite = Number.isFinite(raw) ? raw : sourceMin;
-				this.heightmap[z][x] =
-					((finite - sourceMin) / sourceSpan) * FLUID_DISPLAY_HEIGHT;
+			const row = grid.heights[z];
+
+			if (!row) {
+				continue;
+			}
+
+			const width = Math.min(row.length, FLUID_GRID_SIZE);
+
+			for (let x = 0; x < width; x++) {
+				const raw = row[x];
+
+				if (!Number.isFinite(raw) || raw <= floor) {
+					continue;
+				}
+
+				this.heightmap[z][x] = Math.min(
+					FLUID_DISPLAY_HEIGHT,
+					(raw / scaleMax) * FLUID_DISPLAY_HEIGHT,
+				);
 			}
 		}
 
@@ -280,16 +293,9 @@ class FluidSurfaceController {
 		};
 
 		if (this.followView) {
-			const yAxis = this.surface.yAxis;
-
-			if (
-				yAxis &&
-				yAxis.visibleRange.max === 1 &&
-				yAxis.visibleRange.min === 0
-			) {
-				this.applyViewFrame();
-			}
+			this.applyViewFrame();
 		}
+
 		this.surface.invalidateElement();
 	}
 

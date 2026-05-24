@@ -13,6 +13,8 @@ const (
 	heightMoveWeight  = 0.65
 	heightVolWeight   = 0.35
 	smoothEmptyPasses = 3
+	minGridSymbols    = 8
+	warmingGridHeight = 0.05
 )
 
 /*
@@ -89,6 +91,12 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 
 	finiteRows := filterFiniteRows(rows)
 	outliers := summarizeFluidScaling(finiteRows, quantileClip)
+
+	if len(finiteRows) < minGridSymbols {
+		builder.ResetSmoothing()
+
+		return warmingGrid(size, len(finiteRows), outliers)
+	}
 
 	if len(finiteRows) == 0 {
 		return FluidGrid{
@@ -468,4 +476,31 @@ func finalizeGridHeights(heights [][]float64, fallback float64) {
 			heights[rowIndex][column] = fallback
 		}
 	}
+}
+
+func warmingGrid(size, sampled int, outliers FluidScaleSummary) FluidGrid {
+	heights := newFlatGrid(size, warmingGridHeight)
+
+	return FluidGrid{
+		Size:        size,
+		Heights:     heights,
+		Min:         0,
+		Max:         warmingGridHeight,
+		FilledCells: sampled,
+		Outliers:    outliers,
+	}
+}
+
+func newFlatGrid(size int, height float64) [][]float64 {
+	grid := make([][]float64, size)
+
+	for rowIndex := range grid {
+		grid[rowIndex] = make([]float64, size)
+
+		for column := 0; column < size; column++ {
+			grid[rowIndex][column] = height
+		}
+	}
+
+	return grid
 }

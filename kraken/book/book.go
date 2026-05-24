@@ -26,6 +26,12 @@ type depthState struct {
 	update time.Time
 }
 
+type bookPublish func(
+	symbol string,
+	spreadBPS, imbalance, density, depthSlope float64,
+	updatedAt time.Time,
+)
+
 /*
 Book watches Kraken v2 order book updates and exposes per-symbol depth and imbalance.
 */
@@ -40,6 +46,7 @@ type Book struct {
 	updatedAt        map[string]time.Time
 	depths           map[string]depthState
 	activityListener func(symbol string)
+	publish          bookPublish
 }
 
 /*
@@ -49,6 +56,7 @@ func New(
 	parent context.Context,
 	publicClient *client.PublicClient,
 	symbols []string,
+	publish bookPublish,
 ) (*Book, error) {
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("book observer requires at least one symbol")
@@ -78,6 +86,7 @@ func New(
 		ready:      make(map[string]bool, len(symbols)),
 		updatedAt:  make(map[string]time.Time, len(symbols)),
 		depths:     make(map[string]depthState, len(symbols)),
+		publish:    publish,
 	}
 
 	publicClient.OnFrame(book.handleFrame)
@@ -247,14 +256,23 @@ func (book *Book) applyLevelsDelta(delta market.BookLevelsDelta) {
 	}
 
 	listener := book.activityListener
+	spread := spreadBPS(top)
+	imbalance := topImbalance(top)
+	density := topDensity(top)
+	depthSlope := combinedDepthSlope(state)
 	book.depths[delta.Symbol] = state
-	book.bySymbol[delta.Symbol] = topImbalance(top)
-	book.spreadBPS[delta.Symbol] = spreadBPS(top)
-	book.density[delta.Symbol] = topDensity(top)
-	book.depthSlope[delta.Symbol] = combinedDepthSlope(state)
+	book.bySymbol[delta.Symbol] = imbalance
+	book.spreadBPS[delta.Symbol] = spread
+	book.density[delta.Symbol] = density
+	book.depthSlope[delta.Symbol] = depthSlope
 	book.ready[delta.Symbol] = true
 	book.updatedAt[delta.Symbol] = now
+	publish := book.publish
 	book.mu.Unlock()
+
+	if publish != nil {
+		publish(delta.Symbol, spread, imbalance, density, depthSlope, now)
+	}
 
 	if listener != nil {
 		listener(delta.Symbol)
