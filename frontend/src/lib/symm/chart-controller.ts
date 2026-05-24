@@ -18,33 +18,17 @@ import {
 import {
 	EAnnotationVisibilityMode,
 	ESnapMode,
-	SeriesValueModifier,
 	StopLossTakeProfitAnnotation,
 } from "scichart-financial-tools";
 
-import type {
-	CandleBarEvent,
-	ChartReplayEvent,
-	ChartSeedEvent,
-	PriceTickEvent,
-	StatusEvent,
-	StatusPosition,
-	StopRatchetEvent,
-	SymmEvent,
-	TradeEnterEvent,
-} from "#/lib/symm/events";
-import { eventTimeSec } from "#/lib/symm/events";
-import {
-	aggregateTicksToCandles,
-	type CandleBar,
-	widenFlatOHLC,
-} from "#/lib/symm/chart-candles";
-import { candleYRange } from "#/lib/symm/chart-range";
+import type { CandleBarEvent, StatusPosition } from "#/lib/symm/events";
+import { widenFlatOHLC } from "#/lib/symm/chart-candles";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
 const CANDLE_SECONDS = 5;
 const VISIBLE_SECONDS = 5 * 60;
 const FIFO_CAPACITY = 720;
+const Y_EXPAND_PAD = 0.12;
 
 const TAKE_PROFIT_COLOR = "#16A34A";
 const STOP_LOSS_COLOR = "#EF4444";
@@ -58,29 +42,29 @@ type Bucket = {
 };
 
 function labelPrecision(price: number): number {
-	if (price >= 100) return 2;
-	if (price >= 1) return 4;
+	if (price >= 100) {
+		return 2;
+	}
+
+	if (price >= 1) {
+		return 4;
+	}
+
 	return 6;
-}
-
-function eventSecond(raw: string | undefined): number {
-	const ms = Date.parse(raw ?? "");
-	return Number.isFinite(ms) ? ms / 1000 : Date.now() / 1000;
-}
-
-function tickSecond(ev: PriceTickEvent): number {
-	return eventSecond(ev.at || ev.ts);
 }
 
 export type TradeChartInitResult = {
 	sciChartSurface: SciChartSurface;
-	handleEvent: (ev: SymmEvent) => void;
+	appendCandle: (bar: CandleBarEvent) => void;
+	seedCandles: (bars: CandleBarEvent[]) => void;
+	setPosition: (position: StatusPosition) => void;
+	clearPosition: () => void;
+	ratchetStop: (stop: number) => void;
 	dispose: () => void;
 };
 
-/** SciChart financial chart — OHLC candles + StopLossTakeProfitAnnotation from scichart-financial-tools. */
+/** SciChart financial chart — server candle bars with stable follow-live axes. */
 class SymmChartController {
-	private readonly symbol: string;
 	private surface: SciChartSurface;
 	private ohlc: OhlcDataSeries;
 	private candles: FastCandlestickRenderableSeries;
@@ -95,18 +79,14 @@ class SymmChartController {
 	private riskZone: StopLossTakeProfitAnnotation | null = null;
 	private followLive = true;
 	private readonly interactionAbort = new AbortController();
-	private frameScheduled = false;
-	private pendingFramePrices: number[] = [];
 
 	private constructor(
-		symbol: string,
 		surface: SciChartSurface,
 		ohlc: OhlcDataSeries,
 		candles: FastCandlestickRenderableSeries,
 		xAxis: DateTimeNumericAxis,
 		yAxis: NumericAxis,
 	) {
-		this.symbol = symbol;
 		this.surface = surface;
 		this.ohlc = ohlc;
 		this.candles = candles;
@@ -116,7 +96,6 @@ class SymmChartController {
 
 	static async create(
 		rootElement: HTMLDivElement,
-		symbol: string,
 	): Promise<SymmChartController> {
 		await ensureSciChartWasm();
 		const { sciChartSurface, wasmContext } =
@@ -134,7 +113,7 @@ class SymmChartController {
 			labelPrecision: 6,
 		});
 		const ohlc = new OhlcDataSeries(wasmContext, {
-			dataSeriesName: symbol,
+			dataSeriesName: "OHLC",
 			dataIsSortedInX: true,
 			containsNaN: false,
 			fifoCapacity: FIFO_CAPACITY,
@@ -152,14 +131,12 @@ class SymmChartController {
 		sciChartSurface.chartModifiers.add(
 			new RolloverModifier({ showRollover: true }),
 			new CursorModifier({ showTooltip: true, showAxisLabels: true }),
-			new SeriesValueModifier(),
 			new ZoomPanModifier(),
 			new MouseWheelZoomModifier(),
 			new ZoomExtentsModifier(),
 		);
 
 		const controller = new SymmChartController(
-			symbol,
 			sciChartSurface,
 			ohlc,
 			candles,
@@ -167,6 +144,7 @@ class SymmChartController {
 			yAxis,
 		);
 		controller.bindUserNavigation(rootElement);
+
 		return controller;
 	}
 
@@ -174,54 +152,69 @@ class SymmChartController {
 		return this.surface;
 	}
 
-	syncPosition(pos: StatusPosition) {
-		const last =
-			(pos.last_price ?? 0) > 0
-				? (pos.last_price as number)
-				: pos.peak_price > 0
-					? pos.peak_price
-					: pos.entry_price;
-		const openedSec = pos.opened_at
-			? Math.floor(Date.parse(pos.opened_at) / 1000)
-			: Math.floor(Date.now() / 1000) - 300;
+	seedCandles(bars: CandleBarEvent[]) {
+		this.ohlc.clear();
+		this.bucket = null;
 
-		this.setRiskZone(openedSec, pos.entry_price, pos.stop_price);
-		this.scheduleFrameVisibleRange(last);
+		for (const bar of bars) {
+			this.ingestCandle(bar, false);
+		}
+
+		const last = bars.at(-1);
+
+		if (!last) {
+			return;
+		}
+
+		this.fitVisibleRange(last.close, last.high, last.low, last.sec);
+		this.surface.invalidateElement();
 	}
 
-	handleEvent(ev: SymmEvent) {
-		switch (ev.event) {
-			case "candle_bar":
-				if (ev.symbol === this.symbol) {
-					this.onCandleBar(ev as CandleBarEvent);
-				}
-				return;
-			case "price_tick":
-				if (ev.symbol === this.symbol) this.onTick(ev as PriceTickEvent);
-				return;
-			case "chart_replay":
-				if (ev.symbol === this.symbol) {
-					this.onReplay(ev as ChartReplayEvent);
-				}
-				return;
-			case "stop_ratchet":
-				if (ev.symbol === this.symbol) this.onRatchet(ev as StopRatchetEvent);
-				return;
-			case "trade_enter":
-				if (ev.symbol === this.symbol) this.onEnter(ev as TradeEnterEvent);
-				return;
-			case "trade_exit":
-				if (ev.symbol === this.symbol) this.onExit();
-				return;
-			case "status":
-				this.onStatus(ev as StatusEvent);
-				return;
-			case "chart_seed":
-				if (ev.symbol === this.symbol) this.onSeed(ev as ChartSeedEvent);
-				return;
-			case "scoreboard":
-				return;
+	appendCandle(bar: CandleBarEvent) {
+		if (bar.close <= 0 || bar.sec <= 0) {
+			return;
 		}
+
+		const isUpdate = this.ingestCandle(bar, true);
+
+		if (!isUpdate && this.followLive) {
+			this.scrollXToLive(bar.sec);
+			this.expandYIfNeeded(bar.high, bar.low, bar.close);
+		}
+
+		this.refreshRiskZone();
+		this.surface.invalidateElement();
+	}
+
+	setPosition(position: StatusPosition) {
+		const last =
+			(position.last_price ?? 0) > 0
+				? (position.last_price as number)
+				: position.peak_price > 0
+					? position.peak_price
+					: position.entry_price;
+		const openedSec = position.opened_at
+			? Math.floor(Date.parse(position.opened_at) / 1000)
+			: Math.floor(Date.now() / 1000) - 300;
+
+		this.latestPrice = last;
+		this.setRiskZone(openedSec, position.entry_price, position.stop_price);
+		this.surface.invalidateElement();
+	}
+
+	clearPosition() {
+		this.clearRiskZone();
+		this.surface.invalidateElement();
+	}
+
+	ratchetStop(stop: number) {
+		if (stop <= 0) {
+			return;
+		}
+
+		this.tradeStop = stop;
+		this.refreshRiskZone();
+		this.surface.invalidateElement();
 	}
 
 	dispose() {
@@ -229,16 +222,12 @@ class SymmChartController {
 		this.clearRiskZone();
 	}
 
-	private onCandleBar(ev: CandleBarEvent) {
-		if (ev.close <= 0 || ev.sec <= 0) {
-			return;
-		}
-
-		const ohlc = widenFlatOHLC(ev.open, ev.high, ev.low, ev.close);
-		this.latestPrice = ev.close;
-		this.latestSec = ev.sec;
+	private ingestCandle(bar: CandleBarEvent, animate: boolean): boolean {
+		const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
+		this.latestPrice = bar.close;
+		this.latestSec = bar.sec;
 		this.bucket = {
-			sec: ev.sec,
+			sec: bar.sec,
 			open: ohlc.open,
 			high: ohlc.high,
 			low: ohlc.low,
@@ -250,157 +239,24 @@ class SymmChartController {
 			const lastIndex = this.ohlc.count() - 1;
 			const lastSec = nativeX.get(lastIndex);
 
-			if (lastSec > ev.sec) {
-				return;
+			if (lastSec > bar.sec) {
+				return true;
 			}
 
-			if (lastSec === ev.sec) {
+			if (lastSec === bar.sec) {
 				this.writeBucket(lastIndex);
-				this.refreshRiskZone();
-				this.scheduleFrameVisibleRange(ev.close, ev.high, ev.low);
-				return;
+
+				return true;
 			}
 		}
 
-		this.appendBucket(ev.sec);
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(ev.close, ev.high, ev.low);
-	}
+		this.appendBucket(bar.sec);
 
-	private onTick(ev: PriceTickEvent) {
-		if (ev.last <= 0) {
-			return;
+		if (!animate) {
+			return false;
 		}
 
-		this.latestPrice = ev.last;
-		this.latestSec = tickSecond(ev);
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(ev.last);
-	}
-
-	private onReplay(ev: ChartReplayEvent) {
-		this.loadBars(aggregateTicksToCandles(ev.ticks, CANDLE_SECONDS));
-	}
-
-	private onSeed(ev: ChartSeedEvent) {
-		const bars = ev.bars?.filter((bar) => bar.t > 0 && bar.c > 0) ?? [];
-		if (bars.length === 0) return;
-		this.ohlc.clear();
-		this.bucket = null;
-		for (const bar of bars) {
-			const ohlc = widenFlatOHLC(bar.o, bar.h, bar.l, bar.c);
-			this.ohlc.append(bar.t, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
-		}
-		const last = bars[bars.length - 1];
-		this.latestPrice = last.c;
-		this.latestSec = last.t;
-		this.bucket = {
-			sec: Math.floor(last.t / CANDLE_SECONDS) * CANDLE_SECONDS,
-			open: last.o,
-			high: last.h,
-			low: last.l,
-			close: last.c,
-		};
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(last.c, last.h, last.l);
-	}
-
-	private onEnter(ev: TradeEnterEvent) {
-		const last = ev.last && ev.last > 0 ? ev.last : ev.fill;
-		const entrySec = eventTimeSec(ev);
-		if (last > 0 && this.ohlc.count() === 0) {
-			this.appendPrice(last, entrySec);
-		}
-		this.setRiskZone(entrySec, ev.fill, ev.stop);
-		this.scheduleFrameVisibleRange(last);
-	}
-
-	private onRatchet(ev: StopRatchetEvent) {
-		this.tradeStop = ev.new_stop;
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(ev.last);
-	}
-
-	private onExit() {
-		this.clearRiskZone();
-	}
-
-	private onStatus(ev: StatusEvent) {
-		const pos = ev.positions?.find((p) => p.symbol === this.symbol);
-		if (pos) this.syncPosition(pos);
-		else this.clearRiskZone();
-	}
-
-	private appendPrice(last: number, sec: number) {
-		const nextSec = Number.isFinite(sec) ? sec : Date.now() / 1000;
-		const bucketSec = Math.floor(nextSec / CANDLE_SECONDS) * CANDLE_SECONDS;
-		this.latestPrice = last;
-		this.latestSec = nextSec;
-
-		if (this.bucket && this.bucket.sec === bucketSec && this.ohlc.count() > 0) {
-			this.bucket.high = Math.max(this.bucket.high, last);
-			this.bucket.low = Math.min(this.bucket.low, last);
-			this.bucket.close = last;
-			this.writeBucket(this.ohlc.count() - 1);
-		} else if (this.ohlc.count() > 0) {
-			const nativeX = this.ohlc.getNativeXValues();
-			const lastIdx = this.ohlc.count() - 1;
-			const lastX = nativeX.get(lastIdx);
-
-			if (bucketSec === lastX) {
-				this.bucket = {
-					sec: bucketSec,
-					open: this.bucket?.open ?? last,
-					high: Math.max(this.bucket?.high ?? last, last),
-					low: Math.min(this.bucket?.low ?? last, last),
-					close: last,
-				};
-				this.writeBucket(lastIdx);
-			} else if (bucketSec > lastX) {
-				this.bucket = {
-					sec: bucketSec,
-					open: last,
-					high: last,
-					low: last,
-					close: last,
-				};
-				this.appendBucket(bucketSec);
-			}
-		} else {
-			this.bucket = {
-				sec: bucketSec,
-				open: last,
-				high: last,
-				low: last,
-				close: last,
-			};
-			this.appendBucket(bucketSec);
-		}
-
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(last);
-	}
-
-	private loadBars(bars: CandleBar[]) {
-		this.ohlc.clear();
-		this.bucket = null;
-
-		for (const bar of bars) {
-			const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
-			this.ohlc.append(bar.sec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
-		}
-
-		const lastBar = bars[bars.length - 1];
-
-		if (!lastBar) {
-			return;
-		}
-
-		this.latestPrice = lastBar.close;
-		this.latestSec = lastBar.sec + CANDLE_SECONDS - 1;
-		this.bucket = { ...lastBar };
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(lastBar.close, lastBar.high, lastBar.low);
+		return false;
 	}
 
 	private writeBucket(index: number) {
@@ -432,7 +288,9 @@ class SymmChartController {
 	}
 
 	private setRiskZone(entrySec: number, entry: number, stop: number) {
-		if (entry <= 0 || stop <= 0) return;
+		if (entry <= 0 || stop <= 0) {
+			return;
+		}
 
 		this.tradeEntrySec = entrySec;
 		this.tradeEntry = entry;
@@ -450,14 +308,8 @@ class SymmChartController {
 				isEditable: false,
 				snapMode: ESnapMode.None,
 				labels: [
-					{
-						text: "entry",
-						pointIndex: 0,
-					},
-					{
-						text: "stop",
-						pointIndex: 1,
-					},
+					{ text: "entry", pointIndex: 0 },
+					{ text: "stop", pointIndex: 1 },
 				],
 			});
 			this.surface.annotations.add(this.riskZone);
@@ -475,6 +327,7 @@ class SymmChartController {
 		) {
 			return;
 		}
+
 		const endSec = Math.max(
 			this.latestSec || Date.now() / 1000,
 			this.tradeEntrySec + CANDLE_SECONDS,
@@ -490,6 +343,7 @@ class SymmChartController {
 			this.surface.annotations.remove(this.riskZone, true);
 			this.riskZone = null;
 		}
+
 		this.tradeEntrySec = 0;
 		this.tradeEntry = 0;
 		this.tradeStop = 0;
@@ -500,6 +354,7 @@ class SymmChartController {
 		const leaveFollowMode = () => {
 			this.followLive = false;
 		};
+
 		rootElement.addEventListener("wheel", leaveFollowMode, {
 			passive: true,
 			signal,
@@ -512,84 +367,113 @@ class SymmChartController {
 			"dblclick",
 			() => {
 				this.followLive = true;
-				this.scheduleFrameVisibleRange(this.latestPrice);
+				this.fitVisibleRange(
+					this.latestPrice,
+					this.bucket?.high ?? this.latestPrice,
+					this.bucket?.low ?? this.latestPrice,
+					this.latestSec,
+				);
+				this.surface.invalidateElement();
 			},
 			{ passive: true, signal },
 		);
 	}
 
-	private scheduleFrameVisibleRange(...prices: number[]) {
-		this.pendingFramePrices = prices;
+	private scrollXToLive(sec: number) {
+		const anchor = sec + CANDLE_SECONDS;
+		this.xAxis.visibleRange = new NumberRange(
+			anchor - VISIBLE_SECONDS,
+			anchor + CANDLE_SECONDS * 2,
+		);
+	}
 
-		if (this.frameScheduled) {
+	private expandYIfNeeded(high: number, low: number, close: number) {
+		const current = this.yAxis.visibleRange;
+
+		if (!current) {
+			this.fitVisibleRange(close, high, low, this.latestSec);
 			return;
 		}
 
-		this.frameScheduled = true;
+		const prices = [high, low, close, this.tradeEntry, this.tradeStop].filter(
+			(value) => Number.isFinite(value) && value > 0,
+		);
 
-		requestAnimationFrame(() => {
-			this.frameScheduled = false;
-			this.applyFrameVisibleRange(...this.pendingFramePrices);
-			this.surface.invalidateElement();
-		});
+		if (prices.length === 0) {
+			return;
+		}
+
+		const min = Math.min(...prices);
+		const max = Math.max(...prices);
+		const span = Math.max(max - min, Math.abs(close) * 1e-4, 1e-8);
+		const pad = span * Y_EXPAND_PAD;
+
+		if (min >= current.min + pad && max <= current.max - pad) {
+			return;
+		}
+
+		const nextMin = Math.min(current.min, min - pad);
+		const nextMax = Math.max(current.max, max + pad);
+		this.setYAxisPrecision((nextMin + nextMax) / 2);
+		this.yAxis.visibleRange = new NumberRange(nextMin, nextMax);
 	}
 
-	private applyFrameVisibleRange(...prices: number[]) {
-		const latest = this.latestSec || Date.now() / 1000;
-
+	private fitVisibleRange(
+		close: number,
+		high: number,
+		low: number,
+		sec: number,
+	) {
 		if (!this.followLive) {
 			return;
 		}
 
-		this.xAxis.visibleRange = new NumberRange(
-			latest - VISIBLE_SECONDS,
-			latest + CANDLE_SECONDS * 2,
+		this.scrollXToLive(sec);
+
+		const prices = [high, low, close, this.tradeEntry, this.tradeStop].filter(
+			(value) => Number.isFinite(value) && value > 0,
 		);
 
-		const xRange = this.xAxis.visibleRange;
-		const seriesYRange = this.candles.getYRange(xRange, false);
-		const livePrices = [
-			...prices,
-			this.latestPrice,
-			this.bucket?.high,
-			this.bucket?.low,
-		].filter((value): value is number => Number.isFinite(value) && value > 0);
-
-		const nextRange = candleYRange(
-			seriesYRange.min,
-			seriesYRange.max,
-			livePrices,
-		);
-
-		if (!nextRange) {
+		if (prices.length === 0) {
 			return;
 		}
 
-		const mid = (nextRange.min + nextRange.max) / 2;
+		const min = Math.min(...prices);
+		const max = Math.max(...prices);
+		const mid = (min + max) / 2;
+		const span = Math.max(max - min, Math.abs(mid) * 1e-4, 1e-8);
+		const pad = span * Y_EXPAND_PAD;
+
 		this.setYAxisPrecision(mid);
-		this.yAxis.visibleRange = new NumberRange(nextRange.min, nextRange.max);
+		this.yAxis.visibleRange = new NumberRange(min - pad, max + pad);
 	}
 
 	private setYAxisPrecision(price: number) {
 		const next = labelPrecision(price);
-		const lp = this.yAxis.labelProvider;
-		if (lp.precision !== next) {
-			lp.precision = next;
+		const labelProvider = this.yAxis.labelProvider;
+
+		if (labelProvider.precision !== next) {
+			labelProvider.precision = next;
 		}
 	}
 }
 
 export async function initTradeChart(
 	rootElement: string | HTMLDivElement,
-	symbol: string,
 ): Promise<TradeChartInitResult> {
 	if (typeof rootElement === "string") {
 		throw new Error("initTradeChart requires an HTMLDivElement root");
 	}
-	const controller = await SymmChartController.create(rootElement, symbol);
+
+	const controller = await SymmChartController.create(rootElement);
+
 	return {
 		sciChartSurface: controller.sciChartSurface,
-		handleEvent: (ev) => controller.handleEvent(ev),
+		appendCandle: (bar) => controller.appendCandle(bar),
+		seedCandles: (bars) => controller.seedCandles(bars),
+		setPosition: (position) => controller.setPosition(position),
+		clearPosition: () => controller.clearPosition(),
+		ratchetStop: (stop) => controller.ratchetStop(stop),
 		dispose: () => controller.dispose(),
 	};
 }

@@ -1,15 +1,16 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { SciChartReact } from "scichart-react";
 
-import type { EnginePulseEvent } from "#/lib/symm/events";
 import {
 	initEnginePulseChart,
 	type EnginePulseInitResult,
 } from "#/lib/symm/engine-pulse-controller";
 import {
-	registerEnginePulseListener,
-	unregisterEnginePulseListener,
+	replayEnginePulseHistory,
+	subscribeTradeChart,
+	unsubscribeTradeChart,
 } from "#/lib/symm/feed";
+import { engineStore } from "#/lib/symm/stores/engine-store";
 import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
@@ -21,9 +22,9 @@ type EnginePulseChartProps = {
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
-	const pulseListenerRef = useRef<((pulse: EnginePulseEvent) => void) | null>(
-		null,
-	);
+	const chartRef = useRef<EnginePulseInitResult | null>(null);
+	const lastSeqRef = useRef(0);
+	const pulse = useSymmEnginePulse();
 
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => initEnginePulseChart(rootElement),
@@ -31,21 +32,25 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 	);
 
 	const onInit = useCallback((result: EnginePulseInitResult) => {
-		const listener = (pulse: EnginePulseEvent) => {
-			result.appendPulse(pulse);
-		};
-		pulseListenerRef.current = listener;
-		registerEnginePulseListener(listener);
+		chartRef.current = result;
+		replayEnginePulseHistory((entry) => result.appendPulse(entry));
+		lastSeqRef.current = engineStore.state.pulseLog[0]?.seq ?? 0;
 	}, []);
 
 	const onDelete = useCallback((result?: EnginePulseInitResult) => {
-		if (pulseListenerRef.current) {
-			unregisterEnginePulseListener(pulseListenerRef.current);
-			pulseListenerRef.current = null;
+		result?.dispose();
+		chartRef.current = null;
+		lastSeqRef.current = 0;
+	}, []);
+
+	useEffect(() => {
+		if (!pulse || !chartRef.current || pulse.seq <= lastSeqRef.current) {
+			return;
 		}
 
-		result?.dispose();
-	}, []);
+		chartRef.current.appendPulse(pulse);
+		lastSeqRef.current = pulse.seq;
+	}, [pulse]);
 
 	return (
 		<div
@@ -125,12 +130,10 @@ function PulseMetric({
 	label,
 	value,
 	total,
-	warm,
 }: {
 	label: string;
 	value?: number;
 	total?: number;
-	warm?: boolean;
 }) {
 	if (value === undefined && total === undefined) {
 		return null;
@@ -140,12 +143,7 @@ function PulseMetric({
 		<span>
 			{label}{" "}
 			<span className="font-medium text-(--dash-text)">{value ?? 0}</span>
-			{total !== undefined ? (
-				<span>
-					{warm ? "+" : "/"}
-					{total}
-				</span>
-			) : null}
+			{total !== undefined ? <span>/{total}</span> : null}
 		</span>
 	);
 }

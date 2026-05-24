@@ -88,6 +88,37 @@ describe("signal-confidence", () => {
 		});
 	});
 
+	it("should merge pulse signal peaks with live source_scores", () => {
+		const merged = mergeSignalConfidences(emptySnapshot(), {
+			event: "engine_pulse",
+			ts: "2026-05-23T12:00:00Z",
+			seq: 6,
+			phase: "scan",
+			measurements: 1,
+			candidates: 1,
+			open: 0,
+			source_scores: {
+				fluid: 0.34,
+				hawkes: 0,
+				pumpdump: 0,
+				causal: 0,
+			},
+			signals: [
+				{
+					symbol: "DOG/EUR",
+					source: "hawkes",
+					regime: "momentum",
+					reason: "cluster_buy",
+					score: 0.52,
+					type: "momentum",
+				},
+			],
+		});
+
+		expect(merged.hawkes).toBe(0.52);
+		expect(merged.fluid).toBe(0.34);
+	});
+
 	it("should hold prior source_scores when live scores reset to zero", () => {
 		const held = mergeSignalConfidences(
 			{

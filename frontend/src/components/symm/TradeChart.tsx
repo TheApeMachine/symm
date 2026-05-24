@@ -1,56 +1,50 @@
-import { memo, useCallback, useRef, type RefObject } from "react";
+import { memo, useCallback, useRef } from "react";
 import { SciChartGroup, SciChartReact } from "scichart-react";
 
 import {
 	initTradeChart,
 	type TradeChartInitResult,
 } from "#/lib/symm/chart-controller";
-import { registerChart, unregisterChart } from "#/lib/symm/feed";
-import type { StatusEvent, SymmEvent } from "#/lib/symm/events";
+import {
+	registerTradeChartBridge,
+	subscribeTradeChart,
+	unregisterTradeChartBridge,
+	unsubscribeTradeChart,
+} from "#/lib/symm/feed";
+import { useSymmStatus } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
 type TradeChartProps = {
 	symbol: string;
 };
 
-function syncRegimeLabel(
-	symbol: string,
-	ev: SymmEvent,
-	regimeRef: RefObject<HTMLSpanElement | null>,
-) {
-	if (ev.event !== "status") return;
-	const pos = (ev as StatusEvent).positions?.find((p) => p.symbol === symbol);
-	if (pos && regimeRef.current) {
-		regimeRef.current.textContent = pos.regime;
-	}
-}
-
-/** One SciChart surface per open position — ticks arrive via feed, not React props. */
+/** One SciChart surface per symbol — data flows store → bridge → append. */
 export const TradeChart = memo(function TradeChart({
 	symbol,
 }: TradeChartProps) {
-	const regimeRef = useRef<HTMLSpanElement>(null);
+	const status = useSymmStatus();
+	const regime =
+		status?.positions?.find((position) => position.symbol === symbol)?.regime ??
+		"";
 
 	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) =>
-			initTradeChart(rootElement, symbol),
-		[symbol],
+		(rootElement: string | HTMLDivElement) => initTradeChart(rootElement),
+		[],
 	);
 
 	const onInit = useCallback(
 		(result: TradeChartInitResult) => {
-			registerChart(symbol, (ev) => {
-				result.handleEvent(ev);
-				syncRegimeLabel(symbol, ev, regimeRef);
-			});
+			registerTradeChartBridge(symbol, result);
+			subscribeTradeChart(symbol);
 		},
 		[symbol],
 	);
 
 	const onDelete = useCallback(
 		(result?: TradeChartInitResult) => {
-			result?.dispose();
-			unregisterChart(symbol);
+			result.dispose();
+			unregisterTradeChartBridge(symbol);
+			unsubscribeTradeChart(symbol);
 		},
 		[symbol],
 	);
@@ -59,7 +53,7 @@ export const TradeChart = memo(function TradeChart({
 		<div className="flex min-h-[200px] flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
 			<div className="flex items-center justify-between border-b border-(--dash-border) px-2 py-1">
 				<span className="text-xs font-semibold">{symbol}</span>
-				<span ref={regimeRef} className="text-[10px] text-(--dash-muted)" />
+				<span className="text-[10px] text-(--dash-muted)">{regime}</span>
 			</div>
 			<SciChartReact
 				initChart={initChart}

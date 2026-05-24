@@ -280,7 +280,15 @@ class FluidSurfaceController {
 		};
 
 		if (this.followView) {
-			this.applyViewFrame();
+			const yAxis = this.surface.yAxis;
+
+			if (
+				yAxis &&
+				yAxis.visibleRange.max === 1 &&
+				yAxis.visibleRange.min === 0
+			) {
+				this.applyViewFrame();
+			}
 		}
 		this.surface.invalidateElement();
 	}

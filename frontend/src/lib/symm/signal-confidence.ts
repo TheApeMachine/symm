@@ -61,8 +61,6 @@ export function mergeSignalConfidences(
 				next[source] = score;
 			}
 		}
-
-		return next;
 	}
 
 	const pulsePeaks = peakSignalConfidencesFromPulse(pulse);
@@ -72,7 +70,7 @@ export function mergeSignalConfidences(
 			continue;
 		}
 
-		next[source] = pulsePeaks[source];
+		next[source] = Math.max(next[source], pulsePeaks[source]);
 	}
 
 	return next;

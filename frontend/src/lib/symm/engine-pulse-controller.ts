@@ -147,6 +147,16 @@ class EnginePulseController {
 			return;
 		}
 
+		const current = this.yAxis.visibleRange;
+
+		if (
+			current &&
+			Math.abs(current.min - range.min) < 1e-6 &&
+			Math.abs(current.max - range.max) < 1e-6
+		) {
+			return;
+		}
+
 		this.yAxis.visibleRange = new NumberRange(range.min, range.max);
 	}
 
