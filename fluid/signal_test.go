@@ -38,6 +38,17 @@ func TestContinuitySourceDetectsHiddenAccumulation(t *testing.T) {
 	}
 }
 
+func TestBurgersShockSpikesOnZeroViscosity(t *testing.T) {
+	prior := fieldSample{velocity: 0.001, viscosity: 10}
+	current := fieldSample{velocity: 0.02, viscosity: 0}
+
+	shock := burgersShock(current, prior)
+
+	if shock <= burgersShock(fieldSample{velocity: 0.02, viscosity: minViscosityEpsilon}, prior) {
+		t.Fatalf("expected zero-viscosity shock to spike above epsilon floor, got %v", shock)
+	}
+}
+
 func TestBurgersShockRequiresVelocityJump(t *testing.T) {
 	prior := fieldSample{velocity: 0.001, viscosity: 10}
 	current := fieldSample{velocity: 0.02, viscosity: 10}

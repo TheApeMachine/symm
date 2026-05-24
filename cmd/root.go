@@ -265,6 +265,8 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
+		calibrationParams := config.System.CalibrationParams()
+
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
 				cmd.Context(),
@@ -275,6 +277,7 @@ var rootCmd = &cobra.Command{
 				marketRelay,
 				pairIndex,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -289,6 +292,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -303,6 +307,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -317,6 +322,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -330,6 +336,7 @@ var rootCmd = &cobra.Command{
 				marketRelay,
 				pairIndex,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -344,6 +351,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -358,6 +366,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -372,6 +381,7 @@ var rootCmd = &cobra.Command{
 				pairIndex,
 				symbols,
 				symbolWatch,
+				calibrationParams,
 			)
 		}).Or(func(err error) {
 			errnie.Error(err)

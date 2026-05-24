@@ -12,9 +12,8 @@ type structuralCoef struct {
 	flow      float64
 }
 
-/*
-associationEffect is rung-1 correlation between flow and price velocity.
-*/
+const minBackdoorDenominator = 1e-9
+
 func associationEffect(samples []causalSample) float64 {
 	flows := make([]float64, len(samples))
 	vels := make([]float64, len(samples))
@@ -39,11 +38,7 @@ func backdoorFlowEffect(samples []causalSample) float64 {
 	residualVel := residualize(vels, macro, liquidity)
 	residualFlow := residualize(flows, macro, liquidity)
 
-	denom := dot(residualFlow, residualFlow)
-
-	if denom <= 0 {
-		return 0
-	}
+	denom := math.Max(dot(residualFlow, residualFlow), minBackdoorDenominator)
 
 	return dot(residualVel, residualFlow) / denom
 }

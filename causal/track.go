@@ -30,8 +30,9 @@ TrackStore holds per-symbol causal histories and cross-section macro state.
 */
 type TrackStore struct {
 	engine.GaugeScan
-	shard    engine.ShardedStore
-	bySymbol map[string]*SymbolTrack
+	shard             engine.ShardedStore
+	bySymbol          map[string]*SymbolTrack
+	calibrationParams engine.CalibrationParams
 }
 
 /*
@@ -69,9 +70,10 @@ func (trackStore *TrackStore) BeginScan() {
 /*
 NewTrackStore creates an empty causal track store.
 */
-func NewTrackStore() *TrackStore {
+func NewTrackStore(calibrationParams engine.CalibrationParams) *TrackStore {
 	return &TrackStore{
-		bySymbol: make(map[string]*SymbolTrack),
+		bySymbol:          make(map[string]*SymbolTrack),
+		calibrationParams: calibrationParams,
 	}
 }
 
@@ -253,7 +255,7 @@ func (trackStore *TrackStore) Evaluate(
 		return 0, ""
 	}
 
-	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	normalized := track.calibrator.NormalizeConfidence(rawConfidence, track.confidenceHistory)
 	track.liveScore = normalized
 	track.recordConfidence(rawConfidence)
 
@@ -350,8 +352,8 @@ func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string)
 		reason = "counterfactual_like"
 	}
 
-	interventionScore := engine.NormalizeConfidence(intervention, track.interventionHist)
-	upliftScore := engine.NormalizeConfidence(uplift, track.upliftHist)
+	interventionScore := track.calibrator.NormalizeConfidence(intervention, track.interventionHist)
+	upliftScore := track.calibrator.NormalizeConfidence(uplift, track.upliftHist)
 	score := interventionScore
 
 	if upliftScore > 0 {
@@ -458,7 +460,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 		interventionHist:  make([]float64, 0, causalHistoryCap),
 		upliftHist:        make([]float64, 0, causalHistoryCap),
 		confidenceHistory: make([]float64, 0, causalHistoryCap),
-		calibrator:        engine.NewPredictionCalibrator(),
+		calibrator:        engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 

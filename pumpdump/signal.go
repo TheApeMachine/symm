@@ -43,10 +43,11 @@ func NewPumpDump(
 	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
 	watch *engine.SymbolWatch,
+	calibrationParams engine.CalibrationParams,
 ) (*PumpDump, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	track, err := NewTrackStore(ctx, tick, trade, book)
+	track, err := NewTrackStore(ctx, tick, trade, book, calibrationParams)
 
 	if err != nil {
 		cancel()

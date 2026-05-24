@@ -48,12 +48,13 @@ TrackStore holds per-symbol rolling windows and listens on market broadcast grou
 */
 type TrackStore struct {
 	engine.GaugeScan
-	mu            sync.RWMutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Pool
-	subscriptions map[string]*qpool.Subscriber
-	bySymbol      map[string]*SymbolTrack
+	mu                sync.RWMutex
+	ctx               context.Context
+	cancel            context.CancelFunc
+	pool              *qpool.Pool
+	subscriptions     map[string]*qpool.Subscriber
+	bySymbol          map[string]*SymbolTrack
+	calibrationParams engine.CalibrationParams
 }
 
 /*
@@ -62,6 +63,7 @@ NewTrackStore subscribes to tick, trade, and book on the shared broadcast groups
 func NewTrackStore(
 	ctx context.Context,
 	tick, trade, book *qpool.BroadcastGroup,
+	calibrationParams engine.CalibrationParams,
 ) (*TrackStore, error) {
 	if tick == nil || trade == nil || book == nil {
 		return nil, fmt.Errorf("track store requires tick, trade, and book groups")
@@ -70,10 +72,11 @@ func NewTrackStore(
 	ctx, cancel := context.WithCancel(ctx)
 
 	trackStore := &TrackStore{
-		ctx:           ctx,
-		cancel:        cancel,
-		subscriptions: make(map[string]*qpool.Subscriber),
-		bySymbol:      make(map[string]*SymbolTrack),
+		ctx:               ctx,
+		cancel:            cancel,
+		subscriptions:     make(map[string]*qpool.Subscriber),
+		bySymbol:          make(map[string]*SymbolTrack),
+		calibrationParams: calibrationParams,
 	}
 
 	trackStore.subscriptions["tick"] = tick.Subscribe("pumpdump:track", 65536)
@@ -321,7 +324,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 		spreads:           make([]float64, 0, spreadHistoryCap),
 		priceMoves:        make([]float64, 0, priceHistoryCap),
 		confidenceHistory: make([]float64, 0, volumeHistoryCap),
-		calibrator:        engine.NewPredictionCalibrator(),
+		calibrator:        engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 

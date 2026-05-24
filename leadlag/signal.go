@@ -39,13 +39,14 @@ func NewLeadLag(
 	pairs map[string]asset.Pair,
 	symbols []string,
 	watch *engine.SymbolWatch,
+	calibrationParams engine.CalibrationParams,
 ) (*LeadLag, error) {
 	leadlag := &LeadLag{
 		market:  marketRelay,
 		watch:   watch,
 		pairs:   pairs,
 		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(),
+		track:   NewTrackStore(calibrationParams),
 		pool:    pool,
 	}
 

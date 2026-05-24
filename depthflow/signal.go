@@ -37,12 +37,13 @@ func NewDepthFlow(
 	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
 	watch *engine.SymbolWatch,
+	calibrationParams engine.CalibrationParams,
 ) (*DepthFlow, error) {
 	depthflow := &DepthFlow{
 		market: marketRelay,
 		watch:  watch,
 		pairs:  pairs,
-		track:  NewTrackStore(),
+		track:  NewTrackStore(calibrationParams),
 		pool:   pool,
 	}
 

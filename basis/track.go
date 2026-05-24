@@ -25,16 +25,18 @@ TrackStore holds cross-section basis state.
 */
 type TrackStore struct {
 	engine.GaugeScan
-	mu       sync.RWMutex
-	bySymbol map[string]*SymbolTrack
+	mu                sync.RWMutex
+	bySymbol          map[string]*SymbolTrack
+	calibrationParams engine.CalibrationParams
 }
 
 /*
 NewTrackStore creates an empty basis track store.
 */
-func NewTrackStore() *TrackStore {
+func NewTrackStore(calibrationParams engine.CalibrationParams) *TrackStore {
 	return &TrackStore{
-		bySymbol: make(map[string]*SymbolTrack),
+		bySymbol:          make(map[string]*SymbolTrack),
+		calibrationParams: calibrationParams,
 	}
 }
 
@@ -72,7 +74,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track = &SymbolTrack{
 		relStrength:    make([]float64, 0, historyCap),
 		confidenceHist: make([]float64, 0, historyCap),
-		calibrator:     engine.NewPredictionCalibrator(),
+		calibrator:     engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 
@@ -89,7 +91,7 @@ func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float
 	track.Lock()
 	defer track.Unlock()
 
-	normalized := engine.NormalizeConfidence(rawScore, track.confidenceHist)
+	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHist)
 	track.liveScore = normalized
 	track.confidenceHist = append(track.confidenceHist, rawScore)
 

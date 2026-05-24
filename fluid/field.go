@@ -32,17 +32,17 @@ func continuitySource(current, prior fieldSample) float64 {
 	return densityChange - expectedChange
 }
 
+const minViscosityEpsilon = 1e-9
+
 /*
 burgersShock estimates shock strength from velocity nonlinearity over viscosity.
+Near-zero viscosity uses an epsilon floor so thin-book events spike instead of flatlining.
 */
 func burgersShock(current, prior fieldSample) float64 {
-	if current.viscosity <= 0 {
-		return 0
-	}
-
+	viscosity := math.Max(current.viscosity, minViscosityEpsilon)
 	velocityJump := math.Abs(current.velocity - prior.velocity)
 
-	return math.Abs(current.velocity) * velocityJump / current.viscosity
+	return math.Abs(current.velocity) * velocityJump / viscosity
 }
 
 func fieldConfidence(source, shock, buyPressure float64, quiet bool) float64 {

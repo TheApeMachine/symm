@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/theapemachine/symm/ring"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -13,12 +14,12 @@ const exitHistoryCap = 24
 symbolHistory holds rolling microstructure samples for exit scoring.
 */
 type symbolHistory struct {
-	bidDepths  []float64
-	askDepths  []float64
-	densities  []float64
-	spreads    []float64
-	pressures  []float64
-	imbalances []float64
+	bidDepths  ring.FloatRing
+	askDepths  ring.FloatRing
+	densities  ring.FloatRing
+	spreads    ring.FloatRing
+	pressures  ring.FloatRing
+	imbalances ring.FloatRing
 	lastPrice  float64
 	hasLast    bool
 }
@@ -51,35 +52,33 @@ func (store *historyStore) observe(
 	history := store.ensureLocked(symbol)
 
 	if bidDepth > 0 {
-		history.bidDepths = append(history.bidDepths, bidDepth)
+		history.bidDepths.Push(bidDepth)
 	}
 
 	if askDepth > 0 {
-		history.askDepths = append(history.askDepths, askDepth)
+		history.askDepths.Push(askDepth)
 	}
 
 	if density > 0 {
-		history.densities = append(history.densities, density)
+		history.densities.Push(density)
 	}
 
 	if spreadBPS > 0 {
-		history.spreads = append(history.spreads, spreadBPS)
+		history.spreads.Push(spreadBPS)
 	}
 
 	if buyPressure != 0 {
-		history.pressures = append(history.pressures, buyPressure)
+		history.pressures.Push(buyPressure)
 	}
 
 	if imbalance != 0 {
-		history.imbalances = append(history.imbalances, imbalance)
+		history.imbalances.Push(imbalance)
 	}
 
 	if last > 0 {
 		history.lastPrice = last
 		history.hasLast = true
 	}
-
-	history.trim()
 }
 
 func (store *historyStore) snapshot(symbol string) (symbolHistory, bool) {
@@ -92,7 +91,7 @@ func (store *historyStore) snapshot(symbol string) (symbolHistory, bool) {
 		return symbolHistory{}, false
 	}
 
-	return *history, true
+	return history.snapshot(), true
 }
 
 func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
@@ -102,36 +101,40 @@ func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 		return history
 	}
 
-	history = &symbolHistory{}
+	history = &symbolHistory{
+		bidDepths:  ring.NewFloatRing(exitHistoryCap),
+		askDepths:  ring.NewFloatRing(exitHistoryCap),
+		densities:  ring.NewFloatRing(exitHistoryCap),
+		spreads:    ring.NewFloatRing(exitHistoryCap),
+		pressures:  ring.NewFloatRing(exitHistoryCap),
+		imbalances: ring.NewFloatRing(exitHistoryCap),
+	}
 	store.bySymbol[symbol] = history
 
 	return history
 }
 
-func (history *symbolHistory) trim() {
-	history.bidDepths = trimTail(history.bidDepths, exitHistoryCap)
-	history.askDepths = trimTail(history.askDepths, exitHistoryCap)
-	history.densities = trimTail(history.densities, exitHistoryCap)
-	history.spreads = trimTail(history.spreads, exitHistoryCap)
-	history.pressures = trimTail(history.pressures, exitHistoryCap)
-	history.imbalances = trimTail(history.imbalances, exitHistoryCap)
-}
-
-func trimTail(values []float64, cap int) []float64 {
-	if len(values) <= cap {
-		return values
+func (history *symbolHistory) snapshot() symbolHistory {
+	return symbolHistory{
+		bidDepths:  history.bidDepths,
+		askDepths:  history.askDepths,
+		densities:  history.densities,
+		spreads:    history.spreads,
+		pressures:  history.pressures,
+		imbalances: history.imbalances,
+		lastPrice:  history.lastPrice,
+		hasLast:    history.hasLast,
 	}
-
-	return values[len(values)-cap:]
 }
 
-func depthTrend(depths []float64) float64 {
-	if len(depths) < 4 {
+func depthTrend(depths ring.FloatRing) float64 {
+	if depths.Len() < 4 {
 		return 0
 	}
 
-	recent := stats.Mean(depths[len(depths)-3:])
-	prior := stats.Mean(depths[:len(depths)-3])
+	ordered := depths.Ordered()
+	recent := stats.Mean(ordered[len(ordered)-3:])
+	prior := stats.Mean(ordered[:len(ordered)-3])
 
 	if prior <= 0 {
 		return 0
@@ -140,14 +143,15 @@ func depthTrend(depths []float64) float64 {
 	return (prior - recent) / prior
 }
 
-func spreadWiden(spreads []float64) float64 {
-	if len(spreads) < 4 {
+func spreadWiden(spreads ring.FloatRing) float64 {
+	if spreads.Len() < 4 {
 		return 0
 	}
 
-	sorted := stats.CopySorted(spreads)
+	ordered := spreads.Ordered()
+	sorted := stats.CopySorted(ordered)
 	median := stats.PercentileSorted(sorted, 0.5)
-	current := spreads[len(spreads)-1]
+	current := ordered[len(ordered)-1]
 
 	if median <= 0 || current <= median {
 		return 0
@@ -156,13 +160,14 @@ func spreadWiden(spreads []float64) float64 {
 	return (current - median) / median
 }
 
-func pressureFade(pressures []float64, side int) float64 {
-	if len(pressures) < 3 {
+func pressureFade(pressures ring.FloatRing, side int) float64 {
+	if pressures.Len() < 3 {
 		return 0
 	}
 
-	recent := pressures[len(pressures)-1]
-	priorPeak := stats.Max(pressures[:len(pressures)-1])
+	ordered := pressures.Ordered()
+	recent := ordered[len(ordered)-1]
+	priorPeak := stats.Max(ordered[:len(ordered)-1])
 
 	if side > 0 {
 		if priorPeak <= 0 {
@@ -187,13 +192,14 @@ func pressureFade(pressures []float64, side int) float64 {
 	return (recent - priorPeak) / math.Max(math.Abs(priorPeak), 1e-9)
 }
 
-func imbalanceFlip(imbalances []float64, side int) float64 {
-	if len(imbalances) < 2 {
+func imbalanceFlip(imbalances ring.FloatRing, side int) float64 {
+	if imbalances.Len() < 2 {
 		return 0
 	}
 
-	recent := imbalances[len(imbalances)-1]
-	prior := stats.Mean(imbalances[:len(imbalances)-1])
+	ordered := imbalances.Ordered()
+	recent := ordered[len(ordered)-1]
+	prior := stats.Mean(ordered[:len(ordered)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
 		return math.Min(1, math.Abs(recent)/math.Max(prior, 1e-9))

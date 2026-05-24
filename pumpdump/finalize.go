@@ -17,7 +17,7 @@ func GaugeConfidence(
 	}
 
 	track := trackStore.ensure(symbol)
-	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	normalized := track.calibrator.NormalizeConfidence(rawConfidence, track.confidenceHistory)
 	track.liveScore = normalized
 
 	return normalized

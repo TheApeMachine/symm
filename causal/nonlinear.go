@@ -96,9 +96,7 @@ func kernelBackdoorFlowEffect(samples []causalSample) float64 {
 		denominator += weight * sample.localFlow * sample.localFlow
 	}
 
-	if denominator <= 0 {
-		return 0
-	}
+	denominator := math.Max(denominator, minBackdoorDenominator)
 
 	return numerator / denominator
 }

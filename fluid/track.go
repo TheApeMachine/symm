@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/ring"
 )
 
 const fieldHistoryCap = 64
@@ -14,8 +15,9 @@ TrackStore holds per-symbol fluid field histories.
 */
 type TrackStore struct {
 	engine.GaugeScan
-	shard    engine.ShardedStore
-	bySymbol map[string]*SymbolField
+	shard             engine.ShardedStore
+	bySymbol          map[string]*SymbolField
+	calibrationParams engine.CalibrationParams
 }
 
 /*
@@ -24,10 +26,11 @@ SymbolField tracks density, velocity, spread, and confidence samples.
 type SymbolField struct {
 	engine.SymbolLock
 	samples           []fieldSample
-	velocities        []float64
-	sourceHistory     []float64
-	shockHistory      []float64
-	confidenceHistory []float64
+	velocities        ring.FloatRing
+	sourceHistory     ring.FloatRing
+	shockHistory      ring.FloatRing
+	confidenceHistory ring.FloatRing
+	scratch           []float64
 	dailyQuoteVol     float64
 	lastPrice         float64
 	lastSample        fieldSample
@@ -38,11 +41,12 @@ type SymbolField struct {
 }
 
 /*
-NewTrackStore creates an empty fluid track store.
+NewTrackStore creates an empty fluid track store with injected calibration parameters.
 */
-func NewTrackStore() *TrackStore {
+func NewTrackStore(calibrationParams engine.CalibrationParams) *TrackStore {
 	return &TrackStore{
-		bySymbol: make(map[string]*SymbolField),
+		bySymbol:          make(map[string]*SymbolField),
+		calibrationParams: calibrationParams,
 	}
 }
 
@@ -148,28 +152,23 @@ func (trackStore *TrackStore) Sample(
 	source *= calibration
 	shock *= calibration
 
-	sourceFence := ratioFence(track.sourceHistory)
-	shockFence := ratioFence(track.shockHistory)
+	sourceFence := ratioFence(track.ringScratch(track.sourceHistory))
+	shockFence := ratioFence(track.ringScratch(track.shockHistory))
 
-	quiet := quietVelocity(track.velocities, current.velocity)
+	quiet := quietVelocity(track.ringScratch(track.velocities), current.velocity)
 	accumulating := quiet && sourceFence > 0 && source > sourceFence
 	shocking := shockFence > 0 && shock > shockFence
 
 	if source > 0 {
-		track.sourceHistory = append(track.sourceHistory, source)
+		track.sourceHistory.Push(source)
 	}
 
 	if shock > 0 {
-		track.shockHistory = append(track.shockHistory, shock)
+		track.shockHistory.Push(shock)
 	}
 
-	track.trimHistories()
-	track.velocities = append(track.velocities, current.velocity)
+	track.velocities.Push(current.velocity)
 	track.samples = append(track.samples, current)
-
-	if len(track.velocities) > fieldHistoryCap {
-		track.velocities = track.velocities[len(track.velocities)-fieldHistoryCap:]
-	}
 
 	if len(track.samples) > fieldHistoryCap {
 		track.samples = track.samples[len(track.samples)-fieldHistoryCap:]
@@ -195,7 +194,7 @@ func (trackStore *TrackStore) Sample(
 		reason = "shock"
 	}
 
-	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
+	normalized := track.calibrator.NormalizeConfidence(rawConfidence, track.ringScratch(track.confidenceHistory))
 	track.recordConfidence(rawConfidence)
 	track.liveScore = normalized
 
@@ -349,26 +348,32 @@ func (trackStore *TrackStore) PeakFieldSymbol() string {
 	return bestSymbol
 }
 
-func (track *SymbolField) trimHistories() {
-	if len(track.sourceHistory) > fieldHistoryCap {
-		track.sourceHistory = track.sourceHistory[len(track.sourceHistory)-fieldHistoryCap:]
-	}
-
-	if len(track.shockHistory) > fieldHistoryCap {
-		track.shockHistory = track.shockHistory[len(track.shockHistory)-fieldHistoryCap:]
-	}
-}
-
 func (track *SymbolField) recordConfidence(confidence float64) {
 	if confidence <= 0 {
 		return
 	}
 
-	track.confidenceHistory = append(track.confidenceHistory, confidence)
+	track.confidenceHistory.Push(confidence)
+}
 
-	if len(track.confidenceHistory) > fieldHistoryCap {
-		track.confidenceHistory = track.confidenceHistory[len(track.confidenceHistory)-fieldHistoryCap:]
+func (track *SymbolField) ringScratch(history ring.FloatRing) []float64 {
+	count := history.Len()
+
+	if count == 0 {
+		return nil
 	}
+
+	if cap(track.scratch) < count {
+		track.scratch = make([]float64, count)
+	}
+
+	scratch := track.scratch[:count]
+
+	for index := 0; index < count; index++ {
+		scratch[index] = history.At(index)
+	}
+
+	return scratch
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolField {
@@ -391,11 +396,12 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolField {
 
 	track = &SymbolField{
 		samples:           make([]fieldSample, 0, fieldHistoryCap),
-		velocities:        make([]float64, 0, fieldHistoryCap),
-		sourceHistory:     make([]float64, 0, fieldHistoryCap),
-		shockHistory:      make([]float64, 0, fieldHistoryCap),
-		confidenceHistory: make([]float64, 0, fieldHistoryCap),
-		calibrator:        engine.NewPredictionCalibrator(),
+		velocities:        ring.NewFloatRing(fieldHistoryCap),
+		sourceHistory:     ring.NewFloatRing(fieldHistoryCap),
+		shockHistory:      ring.NewFloatRing(fieldHistoryCap),
+		confidenceHistory: ring.NewFloatRing(fieldHistoryCap),
+		scratch:           make([]float64, 0, fieldHistoryCap),
+		calibrator:        engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 

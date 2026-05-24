@@ -25,17 +25,19 @@ TrackStore holds cross-symbol lead-lag state.
 */
 type TrackStore struct {
 	engine.GaugeScan
-	mu       sync.RWMutex
-	bySymbol map[string]*SymbolTrack
-	leader   string
+	mu                sync.RWMutex
+	bySymbol          map[string]*SymbolTrack
+	leader            string
+	calibrationParams engine.CalibrationParams
 }
 
 /*
 NewTrackStore creates an empty lead-lag track store.
 */
-func NewTrackStore() *TrackStore {
+func NewTrackStore(calibrationParams engine.CalibrationParams) *TrackStore {
 	return &TrackStore{
-		bySymbol: make(map[string]*SymbolTrack),
+		bySymbol:          make(map[string]*SymbolTrack),
+		calibrationParams: calibrationParams,
 	}
 }
 
@@ -72,7 +74,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track = &SymbolTrack{
 		returns:        make([]float64, 0, historyCap),
 		confidenceHist: make([]float64, 0, historyCap),
-		calibrator:     engine.NewPredictionCalibrator(),
+		calibrator:     engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 
@@ -151,7 +153,7 @@ func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
-	normalized := engine.NormalizeConfidence(rawScore, track.confidenceHist)
+	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHist)
 	track.liveScore = normalized
 	track.confidenceHist = append(track.confidenceHist, rawScore)
 

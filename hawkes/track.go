@@ -11,8 +11,9 @@ TrackStore holds per-symbol Hawkes confidence history and liquidity state.
 */
 type TrackStore struct {
 	engine.GaugeScan
-	shard    engine.ShardedStore
-	bySymbol map[string]*SymbolTrack
+	shard             engine.ShardedStore
+	bySymbol          map[string]*SymbolTrack
+	calibrationParams engine.CalibrationParams
 }
 
 /*
@@ -33,9 +34,10 @@ type SymbolTrack struct {
 /*
 NewTrackStore creates an empty Hawkes track store.
 */
-func NewTrackStore() *TrackStore {
+func NewTrackStore(calibrationParams engine.CalibrationParams) *TrackStore {
 	return &TrackStore{
-		bySymbol: make(map[string]*SymbolTrack),
+		bySymbol:          make(map[string]*SymbolTrack),
+		calibrationParams: calibrationParams,
 	}
 }
 
@@ -224,7 +226,7 @@ func (trackStore *TrackStore) applyGaugeScore(
 	track.Lock()
 	defer track.Unlock()
 
-	normalized := engine.NormalizeConfidence(rawScore, track.confidenceHistory)
+	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHistory)
 	track.liveScore = normalized
 
 	if persist {
@@ -350,7 +352,7 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 		confidenceHistory: make([]float64, 0, confidenceHistoryCap(bivariateParamCount*2)),
 		intensityRatios:   make([]float64, 0, confidenceHistoryCap(bivariateParamCount*2)),
 		minFitEvents:      bivariateParamCount * 2,
-		calibrator:        engine.NewPredictionCalibrator(),
+		calibrator:        engine.NewPredictionCalibrator(trackStore.calibrationParams),
 	}
 	trackStore.bySymbol[symbol] = track
 

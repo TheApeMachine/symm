@@ -40,13 +40,14 @@ func NewSentiment(
 	pairs map[string]asset.Pair,
 	symbols []string,
 	watch *engine.SymbolWatch,
+	calibrationParams engine.CalibrationParams,
 ) (*Sentiment, error) {
 	sentiment := &Sentiment{
 		market:  marketRelay,
 		watch:   watch,
 		pairs:   pairs,
 		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(),
+		track:   NewTrackStore(calibrationParams),
 		pool:    pool,
 	}
 

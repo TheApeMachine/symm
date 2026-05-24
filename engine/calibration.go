@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -23,16 +22,18 @@ type PredictionCalibrator struct {
 	scale         float64
 	halfLife      time.Duration
 	tickInterval  time.Duration
+	params        CalibrationParams
 }
 
 /*
-NewPredictionCalibrator returns a neutral calibrator with EWMA defaults.
+NewPredictionCalibrator returns a neutral calibrator with injected calibration parameters.
 */
-func NewPredictionCalibrator() PredictionCalibrator {
+func NewPredictionCalibrator(params CalibrationParams) PredictionCalibrator {
 	return PredictionCalibrator{
 		scale:        1,
 		halfLife:     defaultCalibrationHalfLife,
 		tickInterval: defaultCalibrationTick,
+		params:       params,
 	}
 }
 
@@ -57,8 +58,8 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 		sample = maxScale
 	}
 
-	if feedback.Runway > 0 && calibrator.feedbackCount >= minCalibrationSamples() {
-		calibrator.halfLife = adaptiveCalibrationHalfLife(feedback.Runway)
+	if feedback.Runway > 0 && calibrator.feedbackCount >= calibrator.params.minCalibrationSamples() {
+		calibrator.halfLife = calibrator.params.adaptiveHalfLife(feedback.Runway)
 	}
 
 	calibrator.feedbackCount++
@@ -70,50 +71,6 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 
 	alpha := calibrator.ewmaAlpha()
 	calibrator.scale += alpha * (sample - calibrator.scale)
-}
-
-func minCalibrationSamples() int {
-	minSamples := config.System.MinCalibrationSamples
-
-	if minSamples <= 0 {
-		return 12
-	}
-
-	return minSamples
-}
-
-func adaptiveCalibrationHalfLife(runway time.Duration) time.Duration {
-	if runway <= 0 {
-		return defaultCalibrationHalfLife
-	}
-
-	floor := config.System.CalibrationHalfLifeFloor
-
-	if floor <= 0 {
-		floor = 2 * time.Second
-	}
-
-	ceiling := config.System.CalibrationHalfLifeCeiling
-
-	if ceiling <= 0 {
-		ceiling = 15 * time.Minute
-	}
-
-	halfLife := time.Duration(float64(runway) * config.System.CalibrationRunwayFactor)
-
-	if config.System.CalibrationRunwayFactor <= 0 {
-		halfLife = runway / 2
-	}
-
-	if halfLife < floor {
-		return floor
-	}
-
-	if halfLife > ceiling {
-		return ceiling
-	}
-
-	return halfLife
 }
 
 /*
@@ -187,12 +144,12 @@ func ConfidenceFence(values []float64) float64 {
 NormalizeConfidence maps raw signal strength into [0, 1] against the symbol-local fence.
 Returns 0 until enough history exists to calibrate; never invents certainty on a cold symbol.
 */
-func NormalizeConfidence(rawScore float64, history []float64) float64 {
+func (calibrator *PredictionCalibrator) NormalizeConfidence(rawScore float64, history []float64) float64 {
 	if rawScore <= 0 {
 		return 0
 	}
 
-	if len(history) < minConfidenceHistory() {
+	if len(history) < calibrator.params.minConfidenceHistory() {
 		return 0
 	}
 
@@ -207,14 +164,4 @@ func NormalizeConfidence(rawScore float64, history []float64) float64 {
 	}
 
 	return rawScore / fence
-}
-
-func minConfidenceHistory() int {
-	minSamples := config.System.MinConfidenceHistory
-
-	if minSamples <= 0 {
-		return 4
-	}
-
-	return minSamples
 }
