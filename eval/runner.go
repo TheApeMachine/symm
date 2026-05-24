@@ -92,13 +92,29 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	collector := NewCollector()
 	cryptoTrader.BindFeedbackSink(collector.Sink())
 
+	start := opts.StartTime
+
+	if start.IsZero() {
+		start = time.Unix(1_700_000_000, 0)
+	}
+
+	step := config.System.RescoreEvery
+	tick := 0
+
 	for _, payload := range marketFrames {
 		if err := publicClient.InjectFrame(ctx, payload); err != nil {
 			return Report{}, fmt.Errorf("inject market frame: %w", err)
 		}
+
+		now := start.Add(time.Duration(tick) * step)
+		tick++
+
+		if err := cryptoTrader.Rescore(now); err != nil {
+			return Report{}, fmt.Errorf("rescore after market frame: %w", err)
+		}
 	}
 
-	if err := rescoreUntilSettled(cryptoTrader, opts); err != nil {
+	if err := drainSettlementsAfterReplay(cryptoTrader, start, tick, step, opts); err != nil {
 		return Report{}, err
 	}
 
@@ -257,6 +273,42 @@ func wireTrader(
 	}
 
 	return cryptoTrader, tickerObserver, nil
+}
+
+func drainSettlementsAfterReplay(
+	cryptoTrader *trader.Crypto,
+	start time.Time,
+	tickCount int,
+	step time.Duration,
+	opts Options,
+) error {
+	maxTicks := opts.MaxTicks
+
+	if maxTicks <= 0 {
+		maxTicks = defaultMaxRescoreTicks
+	}
+
+	seenPending := cryptoTrader.PendingPredictionCount() > 0
+
+	for extra := 0; extra < maxTicks; extra++ {
+		now := start.Add(time.Duration(tickCount+extra) * step)
+
+		if err := cryptoTrader.Rescore(now); err != nil {
+			return err
+		}
+
+		pending := cryptoTrader.PendingPredictionCount()
+
+		if pending > 0 {
+			seenPending = true
+		}
+
+		if seenPending && pending == 0 {
+			return nil
+		}
+	}
+
+	return nil
 }
 
 func rescoreUntilSettled(cryptoTrader *trader.Crypto, opts Options) error {

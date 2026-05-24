@@ -147,13 +147,18 @@ func (causal *Causal) evaluate(
 	localFlow := snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
 	liquidity := bookLiquidity(snapshot.SpreadBPS, snapshot.BatchVolume)
 
-	sample, ready := causal.track.Record(symbol, macroMomentum, liquidity, localFlow, snapshot.Last, now)
+	sample, ready := causal.track.BuildSample(
+		symbol, macroMomentum, liquidity, localFlow, snapshot.Last, now,
+	)
 
 	if !ready {
 		return 0, 0, 0, ""
 	}
 
-	return causal.track.Evaluate(symbol, sample)
+	confidence, expectedReturn, runway, reason := causal.track.Evaluate(symbol, sample)
+	causal.track.CommitSample(symbol, sample, snapshot.Last, now)
+
+	return confidence, expectedReturn, runway, reason
 }
 
 func bookLiquidity(spreadBPS, batchVolume float64) float64 {

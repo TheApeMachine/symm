@@ -124,6 +124,12 @@ func (signalBase *SignalBase) ScanSymbols(
 	for _, symbol := range symbols {
 		snapshot := signalBase.ingest.Read(symbol)
 
+		if ttl := config.System.SnapshotFreshnessTTL; ttl > 0 &&
+			snapshotHasTimestamps(snapshot) &&
+			!snapshot.Fresh(now, ttl) {
+			continue
+		}
+
 		measurement, ok, err := evaluate(symbol, snapshot)
 
 		if err != nil {

@@ -19,17 +19,21 @@ Crypto paper-trades Kraken microstructure signals with trailing stops.
 Live order placement is not wired; all fills go through PaperWallet.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	wallet       *Wallet
-	portfolio    *Portfolio
-	prices       QuoteReader
-	signals      []engine.Signal
-	pairStates   sync.Map
-	telemetry    *Telemetry
-	tickSeq      atomic.Uint64
-	feedbackSink func(engine.PredictionFeedback)
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *qpool.Q
+	wallet         *Wallet
+	portfolio      *Portfolio
+	prices         QuoteReader
+	signals        []engine.Signal
+	pairStates     sync.Map
+	telemetry      *Telemetry
+	tickSeq        atomic.Uint64
+	feedbackSink   func(engine.PredictionFeedback)
+	candidates     CandidateStore
+	decisionEngine DecisionEngine
+	lastDecision   DecisionSnapshot
+	rescoreCount   int
 }
 
 /*
@@ -45,14 +49,16 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:        ctx,
-		cancel:     cancel,
-		pool:       pool,
-		wallet:     wallet,
-		portfolio:  NewPortfolio(wallet),
-		prices:     prices,
-		signals:    signals,
-		pairStates: sync.Map{},
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		wallet:         wallet,
+		portfolio:      NewPortfolio(wallet),
+		prices:         prices,
+		signals:        signals,
+		pairStates:     sync.Map{},
+		candidates:     NewCandidateStore(),
+		decisionEngine: DecisionEngine{},
 	}
 
 	return crypto, errnie.Require(map[string]any{
@@ -94,14 +100,32 @@ func (crypto *Crypto) BindFeedbackSink(
 Rescore runs one scan, drain, forecast settlement, and execution tick at now.
 */
 func (crypto *Crypto) Rescore(now time.Time) error {
+	crypto.beginRescoreTick()
+
 	if err := crypto.scanSignals(now); err != nil {
 		return err
 	}
 
 	crypto.processTick(now)
+	crypto.settleDuePredictions(now)
 	crypto.runExecution(now)
 
 	return nil
+}
+
+/*
+DecisionSnapshot returns the latest decision snapshot for telemetry.
+*/
+func (crypto *Crypto) DecisionSnapshot() DecisionSnapshot {
+	return crypto.lastDecision
+}
+
+func (crypto *Crypto) beginRescoreTick() {
+	crypto.candidates.Reset()
+
+	if crypto.telemetry != nil {
+		crypto.telemetry.BeginTick()
+	}
 }
 
 /*
@@ -141,15 +165,14 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
 		case now := <-rescoreTicker.C:
-			if crypto.telemetry != nil {
-				crypto.telemetry.BeginTick()
-			}
+			crypto.beginRescoreTick()
 
 			if err := crypto.scanSignals(now); err != nil {
 				return err
 			}
 
 			crypto.processTick(now)
+			crypto.settleDuePredictions(now)
 			crypto.runExecution(now)
 
 			if crypto.telemetry != nil {
@@ -301,6 +324,8 @@ func (crypto *Crypto) drainSignal(
 
 func (crypto *Crypto) applyTickResult(result signalTickResult) {
 	for _, measurement := range result.measurements {
+		crypto.noteCandidate(measurement)
+
 		if crypto.telemetry != nil {
 			crypto.telemetry.NoteMeasurement(measurement)
 		}
@@ -308,6 +333,84 @@ func (crypto *Crypto) applyTickResult(result signalTickResult) {
 
 	for _, feedback := range result.feedback {
 		crypto.applyFeedback(feedback)
+	}
+}
+
+func (crypto *Crypto) noteCandidate(measurement engine.Measurement) {
+	for _, pair := range measurement.Pairs {
+		symbol := asset.Symbol(pair)
+
+		if symbol == "" {
+			continue
+		}
+
+		crypto.candidates.Note(SignalCandidate{
+			Symbol:         symbol,
+			Source:         measurement.Source,
+			Regime:         measurement.Regime,
+			Reason:         measurement.Reason,
+			Confidence:     measurement.Confidence,
+			ExpectedReturn: measurement.ExpectedReturn,
+			Runway:         measurement.Runway,
+			Direction:      measurement.Type.Direction(),
+		})
+	}
+}
+
+func (crypto *Crypto) settleDuePredictions(now time.Time) {
+	if crypto.prices == nil {
+		return
+	}
+
+	crypto.pairStates.Range(func(_, value any) bool {
+		state, ok := value.(*PairState)
+
+		if !ok || state == nil {
+			return true
+		}
+
+		symbol := state.Symbol()
+
+		if symbol == "" {
+			return true
+		}
+
+		quote, ok := crypto.quotePrice(symbol)
+
+		if !ok || quote <= 0 {
+			return true
+		}
+
+		for _, feedback := range state.SettleDue(now, quote) {
+			crypto.applyFeedback(feedback)
+		}
+
+		return true
+	})
+}
+
+func (crypto *Crypto) mergeLiveCandidates() {
+	for _, signal := range crypto.signals {
+		reader, ok := signal.(engine.LiveScoreReader)
+
+		if !ok {
+			continue
+		}
+
+		peak := reader.PeakReading()
+
+		if peak.Score <= 0 || peak.Symbol == "" {
+			continue
+		}
+
+		crypto.candidates.Note(SignalCandidate{
+			Symbol:     peak.Symbol,
+			Source:     signal.Source(),
+			Regime:     "live",
+			Reason:     "track",
+			Confidence: peak.Score,
+			Direction:  1,
+		})
 	}
 }
 
@@ -361,56 +464,50 @@ func (crypto *Crypto) runExecution(now time.Time) {
 		return
 	}
 
-	crypto.portfolio.Mark(now, crypto.prices)
-
-	if crypto.telemetry == nil {
-		return
+	for _, event := range crypto.portfolio.Mark(now, crypto.prices) {
+		markEvent := event
+		crypto.portfolio.Emit(&markEvent)
 	}
 
-	warming := crypto.telemetry.warmPulses < config.System.MinWarmPulses
+	crypto.mergeLiveCandidates()
+
+	warming := crypto.rescoreCount < config.System.MinWarmPulses
+	crypto.rescoreCount++
+	crypto.lastDecision = crypto.decisionEngine.Build(
+		crypto.candidates, crypto.prices, warming,
+	)
 
 	if warming {
 		return
 	}
 
-	evaluations, _, scores := crypto.telemetry.buildEvaluations()
-	line, _, _ := entryLine(scores)
-
-	for _, row := range evaluations {
-		allow, _ := row["allow"].(bool)
-
-		if !allow {
+	for _, evaluation := range crypto.lastDecision.Evaluations {
+		if !evaluation.Allow {
 			continue
 		}
 
-		symbol, _ := row["symbol"].(string)
-		regime, _ := row["regime"].(string)
-		reason, _ := row["reason"].(string)
-		side, _ := row["side"].(string)
-		combined, _ := row["combined"].(float64)
-
-		if symbol == "" || combined < line {
-			continue
-		}
-
-		last, ok := crypto.quotePrice(symbol)
+		last, ok := crypto.quotePrice(evaluation.Symbol)
 
 		if !ok {
 			continue
 		}
 
 		decision := ExecutionDecision{
-			Symbol: symbol,
-			Regime: regime,
-			Reason: reason,
-			Score:  combined,
-			Price:  last,
+			Symbol:         evaluation.Symbol,
+			Regime:         evaluation.Regime,
+			Reason:         evaluation.Reason,
+			Score:          evaluation.CombinedScore,
+			ExpectedReturn: evaluation.ExpectedReturn,
+			Runway:         evaluation.Runway,
+			Price:          last,
 		}
 
-		if side == "short" {
+		if evaluation.Side == "short" {
 			decision.Side = positionShort
 		}
 
-		crypto.portfolio.TryEnter(now, decision, crypto.prices)
+		if event, ok := crypto.portfolio.TryEnter(now, decision, crypto.prices); ok {
+			crypto.portfolio.Emit(event)
+		}
 	}
 }

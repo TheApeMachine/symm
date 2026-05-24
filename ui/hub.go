@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fasthttp/websocket"
@@ -16,6 +17,7 @@ import (
 
 const clientSendBuffer = 256
 const priceTickFlushEvery = 50 * time.Millisecond
+const criticalSendTimeout = 50 * time.Millisecond
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: allowLocalhostOrigin,
@@ -42,6 +44,7 @@ func allowLocalhostOrigin(request *http.Request) bool {
 type wsClient struct {
 	conn         *websocket.Conn
 	send         chan []byte
+	closed       atomic.Bool
 	mu           sync.Mutex
 	symbols      map[string]struct{}
 	tickMu       sync.Mutex
@@ -258,14 +261,24 @@ func eventIsCritical(eventName string) bool {
 }
 
 func (hub *Hub) deliver(client *wsClient, payload []byte, critical bool) {
-	if critical {
-		client.send <- payload
+	if client == nil || client.closed.Load() {
+		return
+	}
+
+	if !critical {
+		select {
+		case client.send <- payload:
+		default:
+		}
+
 		return
 	}
 
 	select {
 	case client.send <- payload:
-	default:
+	case <-time.After(criticalSendTimeout):
+		client.closed.Store(true)
+		hub.clients.Delete(client)
 	}
 }
 
@@ -364,6 +377,7 @@ func (hub *Hub) enqueue(client *wsClient, event map[string]any) {
 
 func (hub *Hub) writePump(client *wsClient) {
 	defer func() {
+		client.closed.Store(true)
 		hub.clients.Delete(client)
 		_ = client.conn.Close()
 	}()
@@ -386,7 +400,14 @@ func (hub *Hub) writePump(client *wsClient) {
 
 func (hub *Hub) readPump(client *wsClient) {
 	defer func() {
+		client.closed.Store(true)
 		hub.clients.Delete(client)
+
+		select {
+		case <-client.send:
+		default:
+		}
+
 		close(client.send)
 	}()
 

@@ -1,12 +1,9 @@
 package trader
 
 import (
-	"sort"
-
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/stats"
 )
 
 /*
@@ -98,7 +95,7 @@ func (telemetry *Telemetry) BeginTick() {
 }
 
 /*
-NoteMeasurement records one drained signal reading for pulse and decision rows.
+NoteMeasurement records one drained signal reading for pulse and forecast rows.
 */
 func (telemetry *Telemetry) NoteMeasurement(measurement engine.Measurement) {
 	if telemetry == nil || telemetry.stream == nil || measurement.Confidence <= 0 {
@@ -150,6 +147,7 @@ func (telemetry *Telemetry) NoteMeasurement(measurement engine.Measurement) {
 
 /*
 Publish emits status, engine_pulse, decision_trace, and scoreboard for the tick.
+Decision rows come from the trader decision snapshot, not a separate gate path.
 */
 func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 	if telemetry == nil || telemetry.stream == nil {
@@ -161,6 +159,7 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 	}
 
 	phase := "scan"
+
 	if telemetry.warmPulses < config.System.MinWarmPulses {
 		phase = "warming"
 	}
@@ -169,11 +168,18 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 		telemetry.ingestLiveReadings(crypto)
 	}
 
-	evaluations, decisions, scores := telemetry.buildEvaluations()
-	line, median, mad := entryLine(scores)
-	warming := phase == "warming"
-	telemetry.applyLine(evaluations, decisions, warming, line)
-	targets := scoreboardTargets(evaluations, line)
+	snapshot := DecisionSnapshot{}
+
+	if crypto != nil {
+		snapshot = crypto.DecisionSnapshot()
+	}
+
+	evaluations := evaluationsToMaps(snapshot.Evaluations)
+	decisions := decisionsToMaps(snapshot.Decisions)
+	line := snapshot.Line
+	median := snapshot.Median
+	mad := snapshot.MAD
+	targets := scoreboardTargetsFromEvaluations(snapshot.Evaluations, line)
 
 	forecast := ForecastSnapshot{}
 
@@ -188,8 +194,9 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 	}
 
 	allowed := 0
-	for _, row := range evaluations {
-		if allow, _ := row["allow"].(bool); allow {
+
+	for _, row := range snapshot.Evaluations {
+		if row.Allow {
 			allowed++
 		}
 	}
@@ -241,16 +248,16 @@ func (telemetry *Telemetry) Publish(wallet *Wallet, crypto *Crypto) {
 	}
 
 	if crypto != nil && crypto.portfolio != nil && crypto.prices != nil {
-		snapshot := crypto.portfolio.Status(crypto.prices)
-		status["equity_eur"] = snapshot.EquityEUR
-		status["cash_eur"] = snapshot.CashEUR
-		status["closed_pnl_eur"] = snapshot.ClosedPnLEUR
-		status["trade_count"] = snapshot.TradeCount
-		status["win_rate"] = snapshot.WinRate
-		status["open_count"] = snapshot.OpenCount
+		portfolioStatus := crypto.portfolio.Status(crypto.prices)
+		status["equity_eur"] = portfolioStatus.EquityEUR
+		status["cash_eur"] = portfolioStatus.CashEUR
+		status["closed_pnl_eur"] = portfolioStatus.ClosedPnLEUR
+		status["trade_count"] = portfolioStatus.TradeCount
+		status["win_rate"] = portfolioStatus.WinRate
+		status["open_count"] = portfolioStatus.OpenCount
 
-		if len(snapshot.Positions) > 0 {
-			status["positions"] = snapshot.Positions
+		if len(portfolioStatus.Positions) > 0 {
+			status["positions"] = portfolioStatus.Positions
 		}
 	}
 
@@ -326,140 +333,43 @@ func (telemetry *Telemetry) hasPulseSignal(symbol, source string) bool {
 	return false
 }
 
-func (telemetry *Telemetry) buildEvaluations() (
-	[]map[string]any,
-	[]map[string]any,
-	[]float64,
-) {
-	evaluations := make([]map[string]any, 0, len(telemetry.readings))
-	decisions := make([]map[string]any, 0, len(telemetry.pulseSignals))
-	scores := make([]float64, 0, len(telemetry.readings))
+func evaluationsToMaps(evaluations []Evaluation) []map[string]any {
+	rows := make([]map[string]any, len(evaluations))
 
-	for symbol, sources := range telemetry.readings {
-		signals := make([]map[string]any, 0, len(sources))
-		combined := 0.0
-		support := 0
-		topRegime := ""
-		topReason := ""
-		topConfidence := 0.0
-		topDirection := 1
-
-		for _, reading := range sources {
-			signals = append(signals, map[string]any{
-				"source":     reading.source,
-				"regime":     reading.regime,
-				"reason":     reading.reason,
-				"confidence": reading.confidence,
-			})
-
-			support++
-			combined += reading.confidence
-
-			if reading.confidence >= topConfidence {
-				topConfidence = reading.confidence
-				topRegime = reading.regime
-				topReason = reading.reason
-				topDirection = reading.direction
-			}
-
-			decisions = append(decisions, map[string]any{
-				"symbol":          symbol,
-				"source":          reading.source,
-				"regime":          reading.regime,
-				"reason":          reading.reason,
-				"score":           reading.confidence,
-				"confidence":      reading.confidence,
-				"effective_score": reading.confidence,
-				"in_play":         true,
-				"allow":           false,
-				"why":             "below_line",
-			})
-		}
-
-		scores = append(scores, combined)
-
-		evaluations = append(evaluations, map[string]any{
-			"symbol":   symbol,
-			"combined": combined,
-			"support":  support,
-			"regime":   topRegime,
-			"reason":   topReason,
-			"side":     sideLabel(topDirection),
-			"allow":    false,
-			"why":      "below_line",
-			"signals":  signals,
-		})
+	for index, evaluation := range evaluations {
+		rows[index] = evaluationToMap(evaluation)
 	}
 
-	sort.Slice(evaluations, func(left, right int) bool {
-		leftCombined, _ := evaluations[left]["combined"].(float64)
-		rightCombined, _ := evaluations[right]["combined"].(float64)
-
-		if leftCombined != rightCombined {
-			return leftCombined > rightCombined
-		}
-
-		leftSymbol, _ := evaluations[left]["symbol"].(string)
-		rightSymbol, _ := evaluations[right]["symbol"].(string)
-
-		return leftSymbol < rightSymbol
-	})
-
-	return evaluations, decisions, scores
+	return rows
 }
 
-func (telemetry *Telemetry) applyLine(
-	evaluations []map[string]any,
-	decisions []map[string]any,
-	warming bool,
-	line float64,
-) {
-	for index := range evaluations {
-		combined, _ := evaluations[index]["combined"].(float64)
-		allow := !warming && combined >= line
-		evaluations[index]["allow"] = allow
-		evaluations[index]["why"] = whyCode(warming, combined, line)
+func decisionsToMaps(decisions []Decision) []map[string]any {
+	rows := make([]map[string]any, len(decisions))
+
+	for index, decision := range decisions {
+		rows[index] = decisionToMap(decision)
 	}
 
-	for index := range decisions {
-		score, _ := decisions[index]["score"].(float64)
-		allow := !warming && score >= line
-		decisions[index]["allow"] = allow
-		decisions[index]["why"] = whyCode(warming, score, line)
-	}
+	return rows
 }
 
-func entryLine(scores []float64) (line, median, mad float64) {
-	if len(scores) == 0 {
-		return 0, 0, 0
-	}
-
-	sorted := stats.CopySorted(scores)
-	median = stats.PercentileSorted(sorted, 0.5)
-	mad = stats.MedianAbsoluteDeviation(sorted, median)
-	line = median + mad
-
-	return line, median, mad
-}
-
-func scoreboardTargets(
-	evaluations []map[string]any,
+func scoreboardTargetsFromEvaluations(
+	evaluations []Evaluation,
 	line float64,
 ) []map[string]any {
 	targets := make([]map[string]any, 0, len(evaluations))
 
 	for _, row := range evaluations {
-		combined, _ := row["combined"].(float64)
-		if combined < line {
+		if row.CombinedScore < line {
 			continue
 		}
 
 		targets = append(targets, map[string]any{
-			"symbol":          row["symbol"],
-			"regime":          row["regime"],
-			"reason":          row["reason"],
-			"score":           combined,
-			"effective_score": combined,
+			"symbol":          row.Symbol,
+			"regime":          row.Regime,
+			"reason":          row.Reason,
+			"score":           row.CombinedScore,
+			"effective_score": row.CombinedScore,
 			"trail_pct":       0,
 		})
 	}

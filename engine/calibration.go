@@ -42,10 +42,16 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 		return
 	}
 
-	sample := CalibrationStep(feedback.PredictedReturn, feedback.ActualReturn)
+	sample, ok := CalibrationStep(feedback.PredictedReturn, feedback.ActualReturn)
 
-	if sample <= 0 {
+	if !ok {
 		return
+	}
+
+	const maxScale = 2.0
+
+	if sample > maxScale {
+		sample = maxScale
 	}
 
 	calibrator.feedbackCount++
@@ -76,17 +82,18 @@ func (calibrator *PredictionCalibrator) Scale() float64 {
 
 /*
 CalibrationStep is actualReturn/predictedReturn for one signed settled forecast.
+Losing samples return zero with ok=true.
 */
-func CalibrationStep(predictedReturn, actualReturn float64) float64 {
+func CalibrationStep(predictedReturn, actualReturn float64) (float64, bool) {
 	if predictedReturn <= 0 {
-		return 0
+		return 0, false
 	}
 
 	if actualReturn <= 0 {
-		return 0
+		return 0, true
 	}
 
-	return actualReturn / predictedReturn
+	return actualReturn / predictedReturn, true
 }
 
 func (calibrator *PredictionCalibrator) ewmaAlpha() float64 {

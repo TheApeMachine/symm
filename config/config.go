@@ -34,6 +34,12 @@ type Config struct {
 	ScalpHoldBeforeExit    time.Duration
 	FlowHoldBeforeExit     time.Duration
 	TrailSpreadMultiple    float64
+	DefaultTrailPct        float64
+	MinTrailPct            float64
+	MaxTrailPct            float64
+	MaxLossPerTradeEUR     float64
+	MinEdgeReturn          float64
+	SnapshotFreshnessTTL   time.Duration
 	ExitEvery              time.Duration
 	WSPingInterval         time.Duration
 	UIAddr                 string
@@ -78,6 +84,12 @@ func NewConfig() *Config {
 		ScalpHoldBeforeExit:    15 * time.Second,
 		FlowHoldBeforeExit:     30 * time.Second,
 		TrailSpreadMultiple:    2,
+		DefaultTrailPct:        0.35,
+		MinTrailPct:            0.15,
+		MaxTrailPct:            3.0,
+		MaxLossPerTradeEUR:     0,
+		MinEdgeReturn:          0.0005,
+		SnapshotFreshnessTTL:   200 * time.Millisecond,
 		WSPingInterval:         30 * time.Second,
 		UIAddr:                 ":8765",
 		MaxPendingPerSignal:    4096,

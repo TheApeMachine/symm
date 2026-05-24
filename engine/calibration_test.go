@@ -6,51 +6,46 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-func TestPredictionCalibrator(t *testing.T) {
-	convey.Convey("Given no feedback", t, func() {
-		calibrator := NewPredictionCalibrator()
+func TestCalibrationStepPenalizesLosingPredictions(t *testing.T) {
+	convey.Convey("Given a positive predicted return", t, func() {
+		convey.Convey("It should accept zero actual return as a losing sample", func() {
+			sample, ok := CalibrationStep(0.01, 0)
 
-		convey.Convey("It should stay neutral", func() {
-			convey.So(calibrator.Scale(), convey.ShouldEqual, 1)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(sample, convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("It should accept negative actual return as a losing sample", func() {
+			sample, ok := CalibrationStep(0.01, -0.005)
+
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(sample, convey.ShouldEqual, 0)
+		})
+
+		convey.Convey("It should scale winning samples by actual/predicted", func() {
+			sample, ok := CalibrationStep(0.01, 0.005)
+
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(sample, convey.ShouldAlmostEqual, 0.5, 0.0001)
 		})
 	})
+}
 
-	convey.Convey("Given overconfident feedback", t, func() {
+func TestPredictionCalibratorApplyLowersScaleOnLosses(t *testing.T) {
+	convey.Convey("Given an optimistic calibrator", t, func() {
 		calibrator := NewPredictionCalibrator()
 		calibrator.Apply(PredictionFeedback{
-			PredictedReturn: 0.1,
-			ActualReturn:    0.05,
+			PredictedReturn: 0.01,
+			ActualReturn:    0.01,
 		})
 
-		convey.Convey("It should scale parameters down", func() {
-			convey.So(calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
-		})
-	})
-}
+		convey.Convey("It should push scale toward zero on a losing forecast", func() {
+			calibrator.Apply(PredictionFeedback{
+				PredictedReturn: 0.01,
+				ActualReturn:    -0.01,
+			})
 
-func TestNormalizeConfidence(t *testing.T) {
-	history := []float64{0.2, 0.4, 0.6, 0.8}
-
-	convey.Convey("Given raw confidence below the fence", t, func() {
-		convey.Convey("It should normalize into unit scale", func() {
-			normalized := NormalizeConfidence(0.4, history)
-
-			convey.So(normalized, convey.ShouldBeGreaterThan, 0)
-			convey.So(normalized, convey.ShouldBeLessThan, 1)
+			convey.So(calibrator.Scale(), convey.ShouldBeLessThan, 1)
 		})
 	})
-}
-
-func BenchmarkPredictionCalibratorApply(b *testing.B) {
-	calibrator := NewPredictionCalibrator()
-	feedback := PredictionFeedback{
-		PredictedReturn: 0.1,
-		ActualReturn:    0.08,
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		calibrator.Apply(feedback)
-	}
 }

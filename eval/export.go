@@ -27,7 +27,6 @@ WriteCSV writes source and decile rows as a flat CSV table.
 */
 func WriteCSV(writer io.Writer, report Report) error {
 	csvWriter := csv.NewWriter(writer)
-	defer csvWriter.Flush()
 
 	if err := csvWriter.Write([]string{
 		"section",
@@ -59,6 +58,12 @@ func WriteCSV(writer io.Writer, report Report) error {
 		if err := csvWriter.Write(decileCSVRow(row)); err != nil {
 			return fmt.Errorf("write decile row: %w", err)
 		}
+	}
+
+	csvWriter.Flush()
+
+	if err := csvWriter.Error(); err != nil {
+		return fmt.Errorf("flush csv: %w", err)
 	}
 
 	return nil

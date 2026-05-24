@@ -33,6 +33,13 @@ func NewPairState(pair asset.Pair) *PairState {
 }
 
 /*
+Symbol returns the websocket symbol for this pair state.
+*/
+func (state *PairState) Symbol() string {
+	return asset.Symbol(state.pair)
+}
+
+/*
 Update ingests the latest signal measurement for this pair.
 */
 func (state *PairState) Update(measurement engine.Measurement) {

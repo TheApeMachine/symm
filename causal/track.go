@@ -116,9 +116,9 @@ func (trackStore *TrackStore) MacroMomentum(
 }
 
 /*
-Record ingests one causal observation for a symbol.
+BuildSample constructs one causal observation without appending it to history.
 */
-func (trackStore *TrackStore) Record(
+func (trackStore *TrackStore) BuildSample(
 	symbol string,
 	macroMomentum, liquidity, localFlow, price float64,
 	now time.Time,
@@ -154,7 +154,30 @@ func (trackStore *TrackStore) Record(
 		track.lastPrice = price
 		track.lastAt = now
 		track.hasPrior = true
+
 		return sample, false
+	}
+
+	return sample, len(track.samples) >= minCausalHistory
+}
+
+/*
+CommitSample appends one evaluated sample to symbol history.
+*/
+func (trackStore *TrackStore) CommitSample(
+	symbol string,
+	sample causalSample,
+	price float64,
+	now time.Time,
+) {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	track := trackStore.ensure(symbol)
+	elapsed := time.Duration(0)
+
+	if !track.lastAt.IsZero() {
+		elapsed = now.Sub(track.lastAt)
 	}
 
 	track.samples = append(track.samples, sample)
@@ -166,8 +189,27 @@ func (trackStore *TrackStore) Record(
 	track.lastPrice = price
 	track.lastAt = now
 	track.lastElapsed = elapsed
+}
 
-	return sample, len(track.samples) >= minCausalHistory
+/*
+Record ingests one causal observation for a symbol.
+*/
+func (trackStore *TrackStore) Record(
+	symbol string,
+	macroMomentum, liquidity, localFlow, price float64,
+	now time.Time,
+) (causalSample, bool) {
+	sample, ready := trackStore.BuildSample(
+		symbol, macroMomentum, liquidity, localFlow, price, now,
+	)
+
+	if !ready {
+		return sample, false
+	}
+
+	trackStore.CommitSample(symbol, sample, price, now)
+
+	return sample, true
 }
 
 /*

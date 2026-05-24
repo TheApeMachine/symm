@@ -43,6 +43,7 @@ type Position struct {
 	StopPrice   float64
 	PeakPrice   float64
 	NotionalEUR float64
+	EntryFeeEUR float64
 	TrailPct    float64
 	OpenedAt    time.Time
 }
@@ -193,8 +194,13 @@ func (portfolio *Portfolio) TryEnter(
 		portfolio.wallet.Balance += proceeds
 	}
 
-	trailPct := trailPctFromQuote(last, bid, ask)
+	trailPct := clampTrailPct(trailPctFromQuote(last, bid, ask))
 	stop := initialStop(fill, trailPct, side)
+
+	if lossAtStop(notional, trailPct) > config.System.MaxLossPerTradeEUR &&
+		config.System.MaxLossPerTradeEUR > 0 {
+		return nil, false
+	}
 
 	position := &Position{
 		Symbol:      decision.Symbol,
@@ -208,16 +214,14 @@ func (portfolio *Portfolio) TryEnter(
 		StopPrice:   stop,
 		PeakPrice:   fill,
 		NotionalEUR: notional,
+		EntryFeeEUR: fee,
 		TrailPct:    trailPct,
 		OpenedAt:    now,
 	}
 
 	portfolio.positions[decision.Symbol] = position
 
-	event := portfolio.enterEvent(now, position)
-	portfolio.emitLocked(event)
-
-	return event, true
+	return portfolio.enterEvent(now, position), true
 }
 
 /*
@@ -250,7 +254,6 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 		if portfolio.ratchetStop(position, newStop) {
 			event := portfolio.ratchetEvent(now, position, oldStop, last)
 			events = append(events, event)
-			portfolio.emitLocked(&event)
 		}
 
 		if !portfolio.canExit(now, position) {
@@ -296,7 +299,7 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 			last = position.EntryPrice
 		}
 
-		equity += portfolio.markValue(position, last)
+		equity += portfolio.netMarkValue(position, last)
 
 		sideLabel := "long"
 
@@ -410,26 +413,46 @@ func (portfolio *Portfolio) closeLocked(
 	delete(portfolio.positions, symbol)
 
 	event := portfolio.exitEvent(now, position, reason, pnl, exitFill)
-	portfolio.emitLocked(&event)
 
 	return event
+}
+
+func (portfolio *Portfolio) netMarkValue(position *Position, last float64) float64 {
+	gross := portfolio.markValue(position, last)
+
+	if position.Side == positionShort {
+		exitCost := position.NotionalEUR * (last / position.FillPrice)
+
+		if exitCost <= 0 {
+			return gross
+		}
+
+		return gross - config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+	}
+
+	exitProceeds := gross
+
+	if exitProceeds <= 0 {
+		return 0
+	}
+
+	return exitProceeds - config.System.TakerFee(exitProceeds, portfolio.wallet.FeePct)
 }
 
 func (portfolio *Portfolio) realizedPnL(position *Position, exitFill float64) float64 {
 	if position.Side == positionShort {
 		entryProceeds := position.NotionalEUR
 		exitCost := position.NotionalEUR * (exitFill / position.FillPrice)
-		entryFee := config.System.TakerFee(entryProceeds, portfolio.wallet.FeePct)
 		exitFee := config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
 
-		return entryProceeds - entryFee - exitCost - exitFee
+		return entryProceeds - position.EntryFeeEUR - exitCost - exitFee
 	}
 
 	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
-	fee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
-	net := proceeds - fee
+	exitFee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
+	net := proceeds - exitFee
 
-	return net - position.NotionalEUR
+	return net - position.NotionalEUR - position.EntryFeeEUR
 }
 
 func (portfolio *Portfolio) exitCashFlow(position *Position, exitFill float64) float64 {
@@ -609,7 +632,10 @@ func (portfolio *Portfolio) exitEvent(
 	}
 }
 
-func (portfolio *Portfolio) emitLocked(event *PortfolioEvent) {
+/*
+Emit publishes one lifecycle event outside portfolio locks.
+*/
+func (portfolio *Portfolio) Emit(event *PortfolioEvent) {
 	if event == nil || portfolio.stream == nil {
 		return
 	}
@@ -622,6 +648,42 @@ func (portfolio *Portfolio) emitLocked(event *PortfolioEvent) {
 	case "stop_ratchet":
 		portfolio.stream.StopRatchet(event.Payload)
 	}
+}
+
+func clampTrailPct(trailPct float64) float64 {
+	if trailPct <= 0 {
+		trailPct = config.System.DefaultTrailPct
+	}
+
+	minTrail := config.System.MinTrailPct
+
+	if minTrail <= 0 {
+		minTrail = 0.15
+	}
+
+	maxTrail := config.System.MaxTrailPct
+
+	if maxTrail <= 0 {
+		maxTrail = 3
+	}
+
+	if trailPct < minTrail {
+		return minTrail
+	}
+
+	if trailPct > maxTrail {
+		return maxTrail
+	}
+
+	return trailPct
+}
+
+func lossAtStop(notional, trailPct float64) float64 {
+	if notional <= 0 || trailPct <= 0 {
+		return 0
+	}
+
+	return notional * trailPct / 100
 }
 
 func trailPctFromQuote(last, bid, ask float64) float64 {

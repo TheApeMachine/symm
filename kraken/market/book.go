@@ -76,13 +76,16 @@ func ParseBookTopDelta(payload []byte) (BookTopDelta, error) {
 }
 
 /*
-ParseTopBook extracts the top bid and ask from a Kraken v2 book snapshot or delta.
-It reads only data[0].bids[0] and data[0].asks[0].
+ParseTopBook extracts the top bid and ask from a complete Kraken v2 book frame.
 */
 func ParseTopBook(payload []byte) (BookTop, error) {
 	delta, err := ParseBookTopDelta(payload)
 	if err != nil {
 		return BookTop{}, err
+	}
+
+	if !delta.BidOK || !delta.AskOK {
+		return BookTop{}, fmt.Errorf("incomplete top-of-book frame")
 	}
 
 	return BookTop{

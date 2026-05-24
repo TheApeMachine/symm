@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -33,6 +34,23 @@ func (stream *fakeTelemetryStream) Status(payload map[string]any) {
 	stream.statusEvents = append(stream.statusEvents, payload)
 }
 
+func runDecisionTick(
+	t *testing.T,
+	crypto *Crypto,
+	measurements []engine.Measurement,
+) {
+	t.Helper()
+
+	crypto.beginRescoreTick()
+
+	for _, measurement := range measurements {
+		crypto.noteCandidate(measurement)
+	}
+
+	crypto.mergeLiveCandidates()
+	crypto.runExecution(time.Now())
+}
+
 func TestTelemetryPublishBuildsEvaluationsAndLine(t *testing.T) {
 	originalMinWarm := config.System.MinWarmPulses
 	config.System.MinWarmPulses = 0
@@ -58,7 +76,27 @@ func TestTelemetryPublishBuildsEvaluationsAndLine(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
+	crypto.BindTelemetry(stream, nil, nil, 128)
+
 	telemetry.BeginTick()
+	runDecisionTick(t, crypto, []engine.Measurement{
+		{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "momentum",
+			Reason:     "cluster_buy",
+			Confidence: 0.8,
+			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
+		},
+		{
+			Source:     "fluid",
+			Type:       engine.Flow,
+			Regime:     "flow",
+			Reason:     "accumulation",
+			Confidence: 0.4,
+			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
+		},
+	})
 	telemetry.NoteMeasurement(engine.Measurement{
 		Source:     "hawkes",
 		Type:       engine.Momentum,
@@ -130,13 +168,15 @@ func TestWhyCodeUsesWarmupAndLine(t *testing.T) {
 	}
 }
 
-func TestTelemetryIngestLiveReadings(t *testing.T) {
-	stream := &fakeTelemetryStream{}
-	telemetry := &Telemetry{
-		stream:       stream,
-		symbolsTotal: 128,
-		readings:     make(map[string]symbolReadings),
-	}
+func TestDecisionEngineAllowsCombinedCandidates(t *testing.T) {
+	originalMinWarm := config.System.MinWarmPulses
+	config.System.MinWarmPulses = 0
+	config.System.MinEdgeReturn = 0
+	t.Cleanup(func() {
+		config.System.MinWarmPulses = originalMinWarm
+		config.System.MinEdgeReturn = 0.0005
+	})
+
 	crypto, err := NewCrypto(
 		context.Background(),
 		nil,
@@ -149,28 +189,28 @@ func TestTelemetryIngestLiveReadings(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
-	telemetry.BeginTick()
-	telemetry.ingestLiveReadings(crypto)
-	evaluations, _, _ := telemetry.buildEvaluations()
+	runDecisionTick(t, crypto, nil)
+	crypto.mergeLiveCandidates()
+	crypto.runExecution(time.Now())
 
-	if len(evaluations) != 1 {
-		t.Fatalf("expected one live evaluation, got %d", len(evaluations))
+	snapshot := crypto.DecisionSnapshot()
+
+	if len(snapshot.Evaluations) != 1 {
+		t.Fatalf("expected one live evaluation, got %d", len(snapshot.Evaluations))
 	}
 
-	if combined, _ := evaluations[0]["combined"].(float64); combined != 0.42 {
-		t.Fatalf("expected combined 0.42, got %v", combined)
-	}
-
-	if len(telemetry.pulseSignals) != 1 {
-		t.Fatalf("expected one live pulse signal, got %d", len(telemetry.pulseSignals))
+	if snapshot.Evaluations[0].CombinedScore != 0.42 {
+		t.Fatalf("expected combined 0.42, got %v", snapshot.Evaluations[0].CombinedScore)
 	}
 }
 
 func TestTelemetryPublishIncludesSourceScores(t *testing.T) {
 	originalMinWarm := config.System.MinWarmPulses
 	config.System.MinWarmPulses = 0
+	config.System.MinEdgeReturn = 0
 	t.Cleanup(func() {
 		config.System.MinWarmPulses = originalMinWarm
+		config.System.MinEdgeReturn = 0.0005
 	})
 
 	stream := &fakeTelemetryStream{}
@@ -191,7 +231,10 @@ func TestTelemetryPublishIncludesSourceScores(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 
+	crypto.BindTelemetry(stream, nil, nil, 128)
+
 	telemetry.BeginTick()
+	runDecisionTick(t, crypto, nil)
 	telemetry.Publish(NewWallet(PaperWallet, "EUR", 200, 0.26), crypto)
 
 	sourceScores, ok := stream.pulseEvents[0]["source_scores"].(map[string]float64)
@@ -218,5 +261,54 @@ func TestTelemetryPublishIncludesSourceScores(t *testing.T) {
 
 	if _, ok := stream.statusEvents[0]["positions"]; ok {
 		t.Fatal("expected empty positions to be omitted from status")
+	}
+}
+
+func TestRunExecutionWithoutTelemetry(t *testing.T) {
+	originalMinWarm := config.System.MinWarmPulses
+	originalMinEdge := config.System.MinEdgeReturn
+	config.System.MinWarmPulses = 0
+	config.System.MinEdgeReturn = 0
+	t.Cleanup(func() {
+		config.System.MinWarmPulses = originalMinWarm
+		config.System.MinEdgeReturn = originalMinEdge
+	})
+
+	crypto, err := NewCrypto(
+		context.Background(),
+		nil,
+		NewWallet(PaperWallet, "EUR", 200, 0.26),
+		stubPrices{"PUMP/EUR": 1.0},
+		&stubSignal{},
+	)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	runDecisionTick(t, crypto, []engine.Measurement{
+		{
+			Source:         "hawkes",
+			Type:           engine.Momentum,
+			Regime:         "momentum",
+			Reason:         "cluster_buy",
+			Confidence:     0.9,
+			ExpectedReturn: 0.01,
+			Pairs:          []asset.Pair{{Wsname: "PUMP/EUR"}},
+		},
+	})
+
+	snapshot := crypto.DecisionSnapshot()
+
+	if len(snapshot.Evaluations) == 0 {
+		t.Fatal("expected evaluation rows without telemetry")
+	}
+
+	if !snapshot.Evaluations[0].Allow {
+		t.Fatalf("expected allow=true, got why=%q", snapshot.Evaluations[0].Why)
+	}
+
+	if crypto.portfolio.Status(stubPrices{"PUMP/EUR": 1.0}).OpenCount != 1 {
+		t.Fatal("expected portfolio to open one position without telemetry")
 	}
 }
