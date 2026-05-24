@@ -43,14 +43,21 @@ func fitBivariateWithPrior(
 	}
 
 	if prior.valid() {
-		local := scanBivariateLocalGrid(
-			buyEvents, sellEvents, horizon, prior, context,
-			muBuyStart, muSellStart,
+		optimized := optimizeBivariate(
+			buyEvents, sellEvents, horizon, context, prior,
 		)
 
-		if local.MuBuy > 0 {
-			return local
+		if optimized.MuBuy > 0 {
+			return optimized
 		}
+	}
+
+	optimized := optimizeBivariate(
+		buyEvents, sellEvents, horizon, context, BivariateFit{},
+	)
+
+	if optimized.MuBuy > 0 {
+		return optimized
 	}
 
 	return scanBivariateFullGrid(

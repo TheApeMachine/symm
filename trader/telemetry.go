@@ -55,6 +55,7 @@ type signalReading struct {
 	reason         string
 	confidence     float64
 	expectedReturn float64
+	direction      int
 }
 
 type symbolReadings map[string]signalReading
@@ -141,6 +142,7 @@ func (telemetry *Telemetry) NoteMeasurement(measurement engine.Measurement) {
 			existing.expectedReturn = measurement.ExpectedReturn
 		}
 
+		existing.direction = measurement.Type.Direction()
 		existing.source = measurement.Source
 		telemetry.readings[symbol][measurement.Source] = existing
 	}
@@ -340,6 +342,7 @@ func (telemetry *Telemetry) buildEvaluations() (
 		topRegime := ""
 		topReason := ""
 		topConfidence := 0.0
+		topDirection := 1
 
 		for _, reading := range sources {
 			signals = append(signals, map[string]any{
@@ -356,6 +359,7 @@ func (telemetry *Telemetry) buildEvaluations() (
 				topConfidence = reading.confidence
 				topRegime = reading.regime
 				topReason = reading.reason
+				topDirection = reading.direction
 			}
 
 			decisions = append(decisions, map[string]any{
@@ -380,6 +384,7 @@ func (telemetry *Telemetry) buildEvaluations() (
 			"support":  support,
 			"regime":   topRegime,
 			"reason":   topReason,
+			"side":     sideLabel(topDirection),
 			"allow":    false,
 			"why":      "below_line",
 			"signals":  signals,
@@ -501,6 +506,14 @@ func walletBalance(wallet *Wallet) float64 {
 	}
 
 	return wallet.Balance
+}
+
+func sideLabel(direction int) string {
+	if direction < 0 {
+		return "short"
+	}
+
+	return "long"
 }
 
 func (telemetry *Telemetry) tickerReady() int {

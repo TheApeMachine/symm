@@ -1,7 +1,6 @@
 package hawkes
 
 import (
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/engine"
@@ -11,7 +10,7 @@ import (
 TrackStore holds per-symbol Hawkes confidence history and liquidity state.
 */
 type TrackStore struct {
-	mu       sync.Mutex
+	shard    engine.ShardedStore
 	bySymbol map[string]*SymbolTrack
 }
 
@@ -19,6 +18,7 @@ type TrackStore struct {
 SymbolTrack stores rolling confidence samples, daily quote volume, and warm-start fits.
 */
 type SymbolTrack struct {
+	engine.SymbolLock
 	confidenceHistory []float64
 	intensityRatios   []float64
 	dailyQuoteVol     float64
@@ -42,11 +42,19 @@ func NewTrackStore() *TrackStore {
 BeginScan clears per-tick live gauge scores before the next scan set runs.
 */
 func (trackStore *TrackStore) BeginScan() {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.RLockMap()
+	tracks := make([]*SymbolTrack, 0, len(trackStore.bySymbol))
 
 	for _, track := range trackStore.bySymbol {
+		tracks = append(tracks, track)
+	}
+
+	trackStore.shard.RUnlockMap()
+
+	for _, track := range tracks {
+		track.Lock()
 		track.liveScore = 0
+		track.Unlock()
 	}
 }
 
@@ -58,10 +66,10 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(symbol)
 	track.dailyQuoteVol = volumeBase * last
 }
 
@@ -69,30 +77,44 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 PassesLiquidity keeps symbols below the live cross-section median daily quote volume.
 */
 func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	target := trackStore.track(symbol)
 
-	track, ok := trackStore.bySymbol[symbol]
+	target.Lock()
+	targetVolume := target.dailyQuoteVol
+	target.Unlock()
 
-	if !ok || track.dailyQuoteVol <= 0 {
+	if targetVolume <= 0 {
 		return false
 	}
 
-	quoteVolumes := make([]float64, 0, len(trackStore.bySymbol))
+	trackStore.shard.RLockMap()
+	tracks := make([]*SymbolTrack, 0, len(trackStore.bySymbol))
 
-	for _, candidate := range trackStore.bySymbol {
-		if candidate.dailyQuoteVol <= 0 {
+	for _, track := range trackStore.bySymbol {
+		tracks = append(tracks, track)
+	}
+
+	trackStore.shard.RUnlockMap()
+
+	quoteVolumes := make([]float64, 0, len(tracks))
+
+	for _, track := range tracks {
+		track.Lock()
+		volume := track.dailyQuoteVol
+		track.Unlock()
+
+		if volume <= 0 {
 			continue
 		}
 
-		quoteVolumes = append(quoteVolumes, candidate.dailyQuoteVol)
+		quoteVolumes = append(quoteVolumes, volume)
 	}
 
 	if len(quoteVolumes) < 2 {
 		return false
 	}
 
-	return track.dailyQuoteVol < crossSectionMedian(quoteVolumes)
+	return targetVolume < crossSectionMedian(quoteVolumes)
 }
 
 /*
@@ -104,10 +126,10 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 		return
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(feedback.Symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(feedback.Symbol)
 	track.calibrator.Apply(feedback)
 }
 
@@ -119,10 +141,10 @@ func (trackStore *TrackStore) FitBivariate(
 	buyEvents, sellEvents []time.Time,
 	horizon time.Time,
 ) BivariateFit {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(symbol)
 	prior := BivariateFit{}
 
 	if track.hasFit {
@@ -150,12 +172,18 @@ func (trackStore *TrackStore) FitBivariate(
 BaselineIntensityFence returns the symbol's own excitation ratio fence.
 */
 func (trackStore *TrackStore) BaselineIntensityFence(symbol string) float64 {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
-
+	trackStore.shard.RLockMap()
 	track, ok := trackStore.bySymbol[symbol]
+	trackStore.shard.RUnlockMap()
 
-	if !ok || len(track.intensityRatios) == 0 {
+	if !ok {
+		return 1
+	}
+
+	track.Lock()
+	defer track.Unlock()
+
+	if len(track.intensityRatios) == 0 {
 		return 1
 	}
 
@@ -176,10 +204,10 @@ func (trackStore *TrackStore) RecordScore(symbol string, rawScore float64) float
 		return 0
 	}
 
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	track := trackStore.track(symbol)
+	track.Lock()
+	defer track.Unlock()
 
-	track := trackStore.ensure(symbol)
 	normalized := track.normalizedConfidence(rawScore)
 	track.recordConfidence(rawScore)
 	track.liveScore = normalized
@@ -191,14 +219,24 @@ func (trackStore *TrackStore) RecordScore(symbol string, rawScore float64) float
 PeakLiveConfidence returns the highest unit-scale score across all symbols.
 */
 func (trackStore *TrackStore) PeakLiveConfidence() float64 {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.RLockMap()
+	tracks := make([]*SymbolTrack, 0, len(trackStore.bySymbol))
+
+	for _, track := range trackStore.bySymbol {
+		tracks = append(tracks, track)
+	}
+
+	trackStore.shard.RUnlockMap()
 
 	peak := 0.0
 
-	for _, track := range trackStore.bySymbol {
-		if track.liveScore > peak {
-			peak = track.liveScore
+	for _, track := range tracks {
+		track.Lock()
+		score := track.liveScore
+		track.Unlock()
+
+		if score > peak {
+			peak = score
 		}
 	}
 
@@ -209,18 +247,29 @@ func (trackStore *TrackStore) PeakLiveConfidence() float64 {
 PeakSymbolScore returns the symbol with the highest live score.
 */
 func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
-	trackStore.mu.Lock()
-	defer trackStore.mu.Unlock()
+	trackStore.shard.RLockMap()
+	symbols := make([]string, 0, len(trackStore.bySymbol))
+
+	for symbol := range trackStore.bySymbol {
+		symbols = append(symbols, symbol)
+	}
+
+	trackStore.shard.RUnlockMap()
 
 	bestSymbol := ""
 	bestScore := 0.0
 
-	for symbol, track := range trackStore.bySymbol {
-		if track.liveScore <= bestScore {
+	for _, symbol := range symbols {
+		track := trackStore.track(symbol)
+		track.Lock()
+		score := track.liveScore
+		track.Unlock()
+
+		if score <= bestScore {
 			continue
 		}
 
-		bestScore = track.liveScore
+		bestScore = score
 		bestSymbol = symbol
 	}
 
@@ -271,7 +320,14 @@ func (track *SymbolTrack) recordIntensityRatio(ratio float64) {
 	}
 }
 
-func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
+func (trackStore *TrackStore) track(symbol string) *SymbolTrack {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	return trackStore.ensureLocked(symbol)
+}
+
+func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	track, ok := trackStore.bySymbol[symbol]
 
 	if ok {

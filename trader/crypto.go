@@ -386,6 +386,7 @@ func (crypto *Crypto) runExecution(now time.Time) {
 		symbol, _ := row["symbol"].(string)
 		regime, _ := row["regime"].(string)
 		reason, _ := row["reason"].(string)
+		side, _ := row["side"].(string)
 		combined, _ := row["combined"].(float64)
 
 		if symbol == "" || combined < line {
@@ -404,6 +405,10 @@ func (crypto *Crypto) runExecution(now time.Time) {
 			Reason: reason,
 			Score:  combined,
 			Price:  last,
+		}
+
+		if side == "short" {
+			decision.Side = positionShort
 		}
 
 		crypto.portfolio.TryEnter(now, decision, crypto.prices)

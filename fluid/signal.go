@@ -183,11 +183,18 @@ func (fluid *Fluid) evaluate(
 		flow = snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
 	}
 
+	depthSlope := 0.0
+
+	if snapshot.DepthSlopeOK {
+		depthSlope = snapshot.DepthSlope
+	}
+
 	return fluid.track.Sample(
 		symbol,
 		snapshot.Density,
 		snapshot.Last,
 		snapshot.SpreadBPS,
+		depthSlope,
 		flow,
 		snapshot.BuyPressure,
 		now,

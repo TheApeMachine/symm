@@ -22,6 +22,7 @@ type Config struct {
 	RescoreEvery           time.Duration
 	TakerFeePct            float64
 	SlippageBPS            float64
+	BookDepthLevels        int
 	SubscribeBatch         int
 	MinWarmPulses          int
 	MinQuoteCoverage       float64
@@ -63,6 +64,7 @@ func NewConfig() *Config {
 		WalletEUR:              DefaultWalletEUR,
 		TakerFeePct:            DefaultTakerFeePct,
 		SlippageBPS:            DefaultSlippageBps,
+		BookDepthLevels:        5,
 		ExitEvery:              10 * time.Millisecond,
 		RescoreEvery:           100 * time.Millisecond,
 		SubscribeBatch:         50,
@@ -111,34 +113,4 @@ func (cfg Config) TakerFee(notionalEUR, feePct float64) float64 {
 	}
 
 	return notionalEUR * feePct / 100
-}
-
-/*
-SlippagePrice applies half-spread plus extra bps on exit (worse fill).
-*/
-func (cfg Config) SlippagePrice(
-	last, bid, ask float64,
-	side string,
-	extraBPS float64,
-) float64 {
-	if last <= 0 {
-		return last
-	}
-
-	halfSpread := 0.0
-
-	if bid > 0 && ask > 0 && ask >= bid {
-		halfSpread = (ask - bid) / 2
-	}
-
-	extra := last * extraBPS / 10000
-
-	switch side {
-	case "buy":
-		return last + halfSpread + extra
-	case "sell":
-		return last - halfSpread - extra
-	default:
-		return last
-	}
 }

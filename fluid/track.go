@@ -92,7 +92,7 @@ Sample ingests one fluid field observation for a symbol.
 */
 func (trackStore *TrackStore) Sample(
 	symbol string,
-	density, price, spreadBPS, flow, buyPressure float64,
+	density, price, spreadBPS, depthSlope, flow, buyPressure float64,
 	now time.Time,
 ) (float64, float64, time.Duration, string) {
 	trackStore.mu.Lock()
@@ -102,7 +102,7 @@ func (trackStore *TrackStore) Sample(
 
 	current := fieldSample{
 		density:   density,
-		viscosity: spreadBPS,
+		viscosity: viscosityFromDepth(spreadBPS, depthSlope),
 		flow:      flow,
 	}
 
@@ -349,4 +349,16 @@ func (trackStore *TrackStore) ensure(symbol string) *SymbolField {
 	trackStore.bySymbol[symbol] = track
 
 	return track
+}
+
+func viscosityFromDepth(spreadBPS, depthSlope float64) float64 {
+	if spreadBPS <= 0 {
+		return 0
+	}
+
+	if depthSlope <= 0 {
+		return spreadBPS
+	}
+
+	return spreadBPS / (1 + depthSlope)
 }

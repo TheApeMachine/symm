@@ -114,8 +114,8 @@ type Hub struct {
 var replayEventTypes = []string{
 	"field_snapshot",
 	"engine_pulse",
-	"scoreboard",
 	"decision_trace",
+	"scoreboard",
 	"status",
 }
 

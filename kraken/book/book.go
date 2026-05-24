@@ -3,6 +3,7 @@ package book
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -13,16 +14,20 @@ import (
 
 const defaultBookDepth = 10
 
-type topState struct {
-	bid    market.BookLevel
-	ask    market.BookLevel
+type depthSide struct {
+	levels []market.BookLevel
+}
+
+type depthState struct {
+	bids   depthSide
+	asks   depthSide
 	bidOK  bool
 	askOK  bool
 	update time.Time
 }
 
 /*
-Book watches Kraken v2 order book updates and exposes per-symbol top-of-book imbalance.
+Book watches Kraken v2 order book updates and exposes per-symbol depth and imbalance.
 */
 type Book struct {
 	ctx              context.Context
@@ -30,9 +35,10 @@ type Book struct {
 	bySymbol         map[string]float64
 	spreadBPS        map[string]float64
 	density          map[string]float64
+	depthSlope       map[string]float64
 	ready            map[string]bool
 	updatedAt        map[string]time.Time
-	tops             map[string]topState
+	depths           map[string]depthState
 	activityListener func(symbol string)
 }
 
@@ -64,13 +70,14 @@ func New(
 	}
 
 	book := &Book{
-		ctx:       parent,
-		bySymbol:  make(map[string]float64, len(symbols)),
-		spreadBPS: make(map[string]float64, len(symbols)),
-		density:   make(map[string]float64, len(symbols)),
-		ready:     make(map[string]bool, len(symbols)),
-		updatedAt: make(map[string]time.Time, len(symbols)),
-		tops:      make(map[string]topState, len(symbols)),
+		ctx:        parent,
+		bySymbol:   make(map[string]float64, len(symbols)),
+		spreadBPS:  make(map[string]float64, len(symbols)),
+		density:    make(map[string]float64, len(symbols)),
+		depthSlope: make(map[string]float64, len(symbols)),
+		ready:      make(map[string]bool, len(symbols)),
+		updatedAt:  make(map[string]time.Time, len(symbols)),
+		depths:     make(map[string]depthState, len(symbols)),
 	}
 
 	publicClient.OnFrame(book.handleFrame)
@@ -131,7 +138,47 @@ func (book *Book) Density(symbol string) (float64, bool) {
 }
 
 /*
-UpdatedAt returns when the merged top-of-book last changed for one symbol.
+DepthSlope returns cumulative volume per price step across stored book levels.
+*/
+func (book *Book) DepthSlope(symbol string) (float64, bool) {
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	if !book.ready[symbol] {
+		return 0, false
+	}
+
+	return book.depthSlope[symbol], true
+}
+
+/*
+Depth returns up to depthLevels bid and ask levels for one symbol.
+*/
+func (book *Book) Depth(
+	symbol string,
+	depthLevels int,
+) (bids, asks []market.BookLevel, ok bool) {
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	state, exists := book.depths[symbol]
+
+	if !exists || !book.ready[symbol] || !state.bidOK || !state.askOK {
+		return nil, nil, false
+	}
+
+	if depthLevels <= 0 {
+		depthLevels = config.System.BookDepthLevels
+	}
+
+	bids = copyLevels(state.bids.levels, depthLevels)
+	asks = copyLevels(state.asks.levels, depthLevels)
+
+	return bids, asks, len(bids) > 0 && len(asks) > 0
+}
+
+/*
+UpdatedAt returns when the merged book last changed for one symbol.
 */
 func (book *Book) UpdatedAt(symbol string) (time.Time, bool) {
 	book.mu.RLock()
@@ -147,51 +194,64 @@ func (book *Book) UpdatedAt(symbol string) (time.Time, bool) {
 }
 
 func (book *Book) handleFrame(_ context.Context, payload []byte) error {
-	delta, err := market.ParseBookTopDelta(payload)
+	delta, err := market.ParseBookLevelsDelta(payload)
 	if err != nil {
 		return nil
 	}
 
-	book.applyTopDelta(delta)
+	book.applyLevelsDelta(delta)
 
 	return nil
 }
 
-func (book *Book) applyTopDelta(delta market.BookTopDelta) {
+func (book *Book) applyLevelsDelta(delta market.BookLevelsDelta) {
 	now := time.Now()
 
 	book.mu.Lock()
-	state := book.tops[delta.Symbol]
+	state := book.depths[delta.Symbol]
 
 	if delta.BidOK {
-		state.bid = delta.BestBid
-		state.bidOK = true
+		state.bids.levels = mergeSideLevels(state.bids.levels, delta.Bids, true)
+		state.bidOK = len(state.bids.levels) > 0
 	}
 
 	if delta.AskOK {
-		state.ask = delta.BestAsk
-		state.askOK = true
+		state.asks.levels = mergeSideLevels(state.asks.levels, delta.Asks, false)
+		state.askOK = len(state.asks.levels) > 0
 	}
 
 	if !state.bidOK || !state.askOK {
-		book.tops[delta.Symbol] = state
+		book.depths[delta.Symbol] = state
 		book.mu.Unlock()
 
 		return
 	}
 
 	state.update = now
+
+	bestBid := state.bids.levels[0]
+	bestAsk := state.asks.levels[0]
+
+	if delta.BidOK && len(delta.Bids) > 0 {
+		bestBid = delta.Bids[0]
+	}
+
+	if delta.AskOK && len(delta.Asks) > 0 {
+		bestAsk = delta.Asks[0]
+	}
+
 	top := market.BookTop{
 		Symbol:  delta.Symbol,
-		BestBid: state.bid,
-		BestAsk: state.ask,
+		BestBid: bestBid,
+		BestAsk: bestAsk,
 	}
 
 	listener := book.activityListener
-	book.tops[delta.Symbol] = state
+	book.depths[delta.Symbol] = state
 	book.bySymbol[delta.Symbol] = topImbalance(top)
 	book.spreadBPS[delta.Symbol] = spreadBPS(top)
 	book.density[delta.Symbol] = topDensity(top)
+	book.depthSlope[delta.Symbol] = combinedDepthSlope(state)
 	book.ready[delta.Symbol] = true
 	book.updatedAt[delta.Symbol] = now
 	book.mu.Unlock()
@@ -199,6 +259,70 @@ func (book *Book) applyTopDelta(delta market.BookTopDelta) {
 	if listener != nil {
 		listener(delta.Symbol)
 	}
+}
+
+func mergeSideLevels(
+	existing, delta []market.BookLevel,
+	bidSide bool,
+) []market.BookLevel {
+	byPrice := make(map[float64]float64, len(existing)+len(delta))
+
+	for _, level := range existing {
+		if level.Volume > 0 {
+			byPrice[level.Price] = level.Volume
+		}
+	}
+
+	for _, level := range delta {
+		if level.Volume <= 0 {
+			delete(byPrice, level.Price)
+			continue
+		}
+
+		byPrice[level.Price] = level.Volume
+	}
+
+	merged := make([]market.BookLevel, 0, len(byPrice))
+
+	for price, volume := range byPrice {
+		merged = append(merged, market.BookLevel{Price: price, Volume: volume})
+	}
+
+	sort.Slice(merged, func(left, right int) bool {
+		if bidSide {
+			return merged[left].Price > merged[right].Price
+		}
+
+		return merged[left].Price < merged[right].Price
+	})
+
+	if len(merged) > defaultBookDepth {
+		merged = merged[:defaultBookDepth]
+	}
+
+	return merged
+}
+
+func copyLevels(levels []market.BookLevel, depthLevels int) []market.BookLevel {
+	if depthLevels <= 0 || len(levels) == 0 {
+		return nil
+	}
+
+	if depthLevels > len(levels) {
+		depthLevels = len(levels)
+	}
+
+	copied := make([]market.BookLevel, depthLevels)
+	copy(copied, levels[:depthLevels])
+
+	return copied
+}
+
+func combinedDepthSlope(state depthState) float64 {
+	bidSlope := market.DepthSlope(state.bids.levels)
+	askSlope := market.DepthSlope(state.asks.levels)
+
+	return (bidSlope + askSlope) / 2
 }
 
 func topDensity(top market.BookTop) float64 {

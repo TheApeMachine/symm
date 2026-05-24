@@ -4,6 +4,7 @@ import (
 	"time"
 
 	kbook "github.com/theapemachine/symm/kraken/book"
+	"github.com/theapemachine/symm/kraken/market"
 	kticker "github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
 )
@@ -40,6 +41,11 @@ type Snapshot struct {
 	DensityOK       bool
 	ChangePct       float64
 	ChangeOK        bool
+	BidLevels       []market.BookLevel
+	AskLevels       []market.BookLevel
+	DepthOK         bool
+	DepthSlope      float64
+	DepthSlopeOK    bool
 }
 
 /*
@@ -93,6 +99,8 @@ func (ingest *Ingest) Read(symbol string) Snapshot {
 		snapshot.SpreadBPS, snapshot.SpreadOK = ingest.book.SpreadBPS(symbol)
 		snapshot.Imbalance, snapshot.ImbalanceOK = ingest.book.Imbalance(symbol)
 		snapshot.Density, snapshot.DensityOK = ingest.book.Density(symbol)
+		snapshot.DepthSlope, snapshot.DepthSlopeOK = ingest.book.DepthSlope(symbol)
+		snapshot.BidLevels, snapshot.AskLevels, snapshot.DepthOK = ingest.book.Depth(symbol, 0)
 
 		if updated, ok := ingest.book.UpdatedAt(symbol); ok {
 			snapshot.BookAt = updated

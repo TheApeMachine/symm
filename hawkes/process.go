@@ -327,6 +327,16 @@ func evaluateBivariateFit(
 	}
 }
 
+func sellBuyAsymmetry(fit BivariateFit) float64 {
+	total := fit.BuyIntensity + fit.SellIntensity
+
+	if total <= 0 || fit.SellIntensity <= fit.BuyIntensity {
+		return 0
+	}
+
+	return (fit.SellIntensity - fit.BuyIntensity) / total
+}
+
 func buySellAsymmetry(fit BivariateFit) float64 {
 	total := fit.BuyIntensity + fit.SellIntensity
 
@@ -349,12 +359,31 @@ func excitationRunway(fit BivariateFit) time.Duration {
 	return time.Duration((1 / fit.Beta) * float64(time.Second))
 }
 
-func excitationConfidence(fit BivariateFit, asymmetry float64, baselineFence float64) float64 {
-	if asymmetry <= 0 || fit.MuBuy <= 0 || fit.BuyIntensity <= 0 {
+func excitationConfidence(
+	fit BivariateFit,
+	asymmetry float64,
+	baselineFence float64,
+	sellSide bool,
+) float64 {
+	if asymmetry <= 0 || fit.SpectralRadius >= criticalBranch {
 		return 0
 	}
 
-	if fit.SpectralRadius >= criticalBranch {
+	if sellSide {
+		if fit.MuSell <= 0 || fit.SellIntensity <= 0 {
+			return 0
+		}
+
+		ratio := fit.SellIntensity / fit.MuSell
+
+		if ratio <= baselineFence {
+			return 0
+		}
+
+		return asymmetry * ratio
+	}
+
+	if fit.MuBuy <= 0 || fit.BuyIntensity <= 0 {
 		return 0
 	}
 
@@ -365,6 +394,10 @@ func excitationConfidence(fit BivariateFit, asymmetry float64, baselineFence flo
 	}
 
 	return asymmetry * ratio
+}
+
+func excitationConfidenceLegacy(fit BivariateFit, asymmetry float64, baselineFence float64) float64 {
+	return excitationConfidence(fit, asymmetry, baselineFence, false)
 }
 
 func medianInterArrivalSec(events []time.Time) float64 {

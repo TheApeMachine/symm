@@ -45,21 +45,22 @@ var sampleBookAskDelta = []byte(`{
 func TestBookMergesBidOnlyDeltaAfterSnapshot(t *testing.T) {
 	convey.Convey("Given a book observer with a merged snapshot top", t, func() {
 		book := &Book{
-			bySymbol:  make(map[string]float64),
-			spreadBPS: make(map[string]float64),
-			density:   make(map[string]float64),
-			ready:     make(map[string]bool),
-			updatedAt: make(map[string]time.Time),
-			tops:      make(map[string]topState),
+			bySymbol:   make(map[string]float64),
+			spreadBPS:  make(map[string]float64),
+			density:    make(map[string]float64),
+			depthSlope: make(map[string]float64),
+			ready:      make(map[string]bool),
+			updatedAt:  make(map[string]time.Time),
+			depths:     make(map[string]depthState),
 		}
 
-		snapshot, err := market.ParseBookTopDelta(sampleBookSnapshot)
+		snapshot, err := market.ParseBookLevelsDelta(sampleBookSnapshot)
 		convey.So(err, convey.ShouldBeNil)
-		book.applyTopDelta(snapshot)
+		book.applyLevelsDelta(snapshot)
 
-		bidDelta, err := market.ParseBookTopDelta(sampleBookBidDelta)
+		bidDelta, err := market.ParseBookLevelsDelta(sampleBookBidDelta)
 		convey.So(err, convey.ShouldBeNil)
-		book.applyTopDelta(bidDelta)
+		book.applyLevelsDelta(bidDelta)
 
 		spread, ok := book.SpreadBPS("BTC/EUR")
 
@@ -73,21 +74,22 @@ func TestBookMergesBidOnlyDeltaAfterSnapshot(t *testing.T) {
 func TestBookMergesAskOnlyDeltaAfterSnapshot(t *testing.T) {
 	convey.Convey("Given a book observer with a merged snapshot top", t, func() {
 		book := &Book{
-			bySymbol:  make(map[string]float64),
-			spreadBPS: make(map[string]float64),
-			density:   make(map[string]float64),
-			ready:     make(map[string]bool),
-			updatedAt: make(map[string]time.Time),
-			tops:      make(map[string]topState),
+			bySymbol:   make(map[string]float64),
+			spreadBPS:  make(map[string]float64),
+			density:    make(map[string]float64),
+			depthSlope: make(map[string]float64),
+			ready:      make(map[string]bool),
+			updatedAt:  make(map[string]time.Time),
+			depths:     make(map[string]depthState),
 		}
 
-		snapshot, err := market.ParseBookTopDelta(sampleBookSnapshot)
+		snapshot, err := market.ParseBookLevelsDelta(sampleBookSnapshot)
 		convey.So(err, convey.ShouldBeNil)
-		book.applyTopDelta(snapshot)
+		book.applyLevelsDelta(snapshot)
 
-		askDelta, err := market.ParseBookTopDelta(sampleBookAskDelta)
+		askDelta, err := market.ParseBookLevelsDelta(sampleBookAskDelta)
 		convey.So(err, convey.ShouldBeNil)
-		book.applyTopDelta(askDelta)
+		book.applyLevelsDelta(askDelta)
 
 		spread, ok := book.SpreadBPS("BTC/EUR")
 
@@ -101,17 +103,18 @@ func TestBookMergesAskOnlyDeltaAfterSnapshot(t *testing.T) {
 func TestBookDoesNotMarkReadyFromSingleSideDelta(t *testing.T) {
 	convey.Convey("Given a book observer with no prior top", t, func() {
 		book := &Book{
-			bySymbol:  make(map[string]float64),
-			spreadBPS: make(map[string]float64),
-			density:   make(map[string]float64),
-			ready:     make(map[string]bool),
-			updatedAt: make(map[string]time.Time),
-			tops:      make(map[string]topState),
+			bySymbol:   make(map[string]float64),
+			spreadBPS:  make(map[string]float64),
+			density:    make(map[string]float64),
+			depthSlope: make(map[string]float64),
+			ready:      make(map[string]bool),
+			updatedAt:  make(map[string]time.Time),
+			depths:     make(map[string]depthState),
 		}
 
-		bidDelta, err := market.ParseBookTopDelta(sampleBookBidDelta)
+		bidDelta, err := market.ParseBookLevelsDelta(sampleBookBidDelta)
 		convey.So(err, convey.ShouldBeNil)
-		book.applyTopDelta(bidDelta)
+		book.applyLevelsDelta(bidDelta)
 
 		_, ok := book.SpreadBPS("BTC/EUR")
 

@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -79,16 +80,24 @@ func (hawkes *Hawkes) Scan(now time.Time) error {
 	return hawkes.ScanSymbols(now, func(
 		symbol string, snapshot engine.Snapshot,
 	) (engine.Measurement, bool, error) {
-		confidence, expectedReturn, runway := hawkes.evaluate(symbol, snapshot, now)
+		confidence, expectedReturn, runway, measurementType := hawkes.evaluate(symbol, snapshot, now)
 
 		if confidence <= 0 || expectedReturn <= 0 {
 			return engine.Measurement{}, false, nil
 		}
 
+		regime := "momentum"
+		reason := "cluster_buy"
+
+		if measurementType == engine.Dump {
+			regime = "dump"
+			reason = "cluster_sell"
+		}
+
 		return engine.Measurement{
-			Type:           engine.Momentum,
-			Regime:         "momentum",
-			Reason:         "cluster_buy",
+			Type:           measurementType,
+			Regime:         regime,
+			Reason:         reason,
 			Confidence:     confidence,
 			ExpectedReturn: expectedReturn,
 			Runway:         runway,
@@ -135,47 +144,62 @@ func (hawkes *Hawkes) refreshTracks() {
 
 func (hawkes *Hawkes) evaluate(
 	symbol string, snapshot engine.Snapshot, now time.Time,
-) (float64, float64, time.Duration) {
+) (float64, float64, time.Duration, engine.MeasurementType) {
 	if !hawkes.track.PassesLiquidity(symbol) {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	allTicks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
 
 	if !ok || len(allTicks) == 0 {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	context, buyTimes, sellTimes, ok := fitContextFromTicks(allTicks, time.Time{}, now)
 
 	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	fit := hawkes.track.FitBivariate(symbol, buyTimes, sellTimes, now)
 
 	if fit.MuBuy <= 0 {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
-	asymmetry := buySellAsymmetry(fit)
+	buyAsymmetry := buySellAsymmetry(fit)
+	sellAsymmetry := sellBuyAsymmetry(fit)
 	baselineFence := hawkes.track.BaselineIntensityFence(symbol)
-	rawConfidence := excitationConfidence(fit, asymmetry, baselineFence)
 	runway := excitationRunway(fit)
+	measurementType := engine.Momentum
+	asymmetry := buyAsymmetry
+
+	if sellAsymmetry > buyAsymmetry {
+		measurementType = engine.Dump
+		asymmetry = sellAsymmetry
+	}
+
+	rawConfidence := excitationConfidence(
+		fit, asymmetry, baselineFence, measurementType == engine.Dump,
+	)
 
 	if rawConfidence <= 0 || runway <= 0 {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	if !snapshot.ImbalanceOK || snapshot.Imbalance <= 0 {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	if !snapshot.SpreadOK || snapshot.SpreadBPS <= 0 {
-		return 0, 0, 0
+		return 0, 0, 0, engine.Momentum
 	}
 
 	bookSide := snapshot.Imbalance
+
+	if measurementType == engine.Dump {
+		bookSide = math.Abs(snapshot.Imbalance)
+	}
 
 	if bookSide > 1 {
 		bookSide = 1
@@ -185,7 +209,7 @@ func (hawkes *Hawkes) evaluate(
 	confidence := hawkes.track.RecordScore(symbol, score)
 	expectedReturn := asymmetry * (snapshot.SpreadBPS / 10000)
 
-	return confidence, expectedReturn, runway
+	return confidence, expectedReturn, runway, measurementType
 }
 
 func splitSideEvents(

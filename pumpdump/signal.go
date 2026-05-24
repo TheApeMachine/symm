@@ -115,7 +115,7 @@ func (pumpdump *PumpDump) refreshTracks(now time.Time) {
 		}
 
 		if snapshot.BatchOK {
-			pumpdump.track.AddVolume(symbol, snapshot.BatchVolume)
+			pumpdump.track.AddVolume(symbol, snapshot.BatchVolume, now)
 		}
 
 		if snapshot.SpreadOK {

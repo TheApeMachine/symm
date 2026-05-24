@@ -258,12 +258,14 @@ var rootCmd = &cobra.Command{
 		}
 
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
+			marketQuotes := trader.NewMarketQuotes(tickerObserver, bookObserver)
+
 			crypto := errnie.Does(func() (*trader.Crypto, error) {
 				return trader.NewCrypto(
 					cmd.Context(),
 					pool,
 					wallet,
-					tickerObserver,
+					marketQuotes,
 					pumpSignal,
 					hawkesSignal,
 					fluidSignal,

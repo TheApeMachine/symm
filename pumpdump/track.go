@@ -26,19 +26,26 @@ type TrackStore struct {
 	bySymbol map[string]*SymbolTrack
 }
 
+type volumeTick struct {
+	at     time.Time
+	volume float64
+}
+
 /*
-SymbolTrack accumulates five-minute buckets used by the article trigger.
+SymbolTrack accumulates rolling volume windows used by the article trigger.
 */
 type SymbolTrack struct {
 	volumes           []float64
 	spreads           []float64
 	priceMoves        []float64
 	confidenceHistory []float64
+	rollingTicks      []volumeTick
 	bucketVolume      float64
 	bucketOpenPrice   float64
 	lastPrice         float64
 	dailyQuoteVol     float64
 	bucketStart       time.Time
+	lastRollAt        time.Time
 	calibrator        engine.PredictionCalibrator
 	liveScore         float64
 }
@@ -81,9 +88,9 @@ func (trackStore *TrackStore) ApplyTicker(symbol string, last, volumeBase float6
 }
 
 /*
-AddVolume adds executed trade volume into the active five-minute bucket.
+AddVolume adds executed trade volume into the rolling window.
 */
-func (trackStore *TrackStore) AddVolume(symbol string, volume float64) {
+func (trackStore *TrackStore) AddVolume(symbol string, volume float64, now time.Time) {
 	if symbol == "" || volume <= 0 {
 		return
 	}
@@ -92,7 +99,9 @@ func (trackStore *TrackStore) AddVolume(symbol string, volume float64) {
 	defer trackStore.mu.Unlock()
 
 	track := trackStore.ensure(symbol)
-	track.bucketVolume += volume
+	track.rollingTicks = append(track.rollingTicks, volumeTick{at: now, volume: volume})
+	track.pruneRolling(now)
+	track.bucketVolume = track.rollingVolume()
 }
 
 /*
@@ -123,6 +132,8 @@ func (trackStore *TrackStore) RollBuckets(now time.Time) {
 
 	for _, track := range trackStore.bySymbol {
 		track.roll(now)
+		track.pruneRolling(now)
+		track.bucketVolume = track.rollingVolume()
 	}
 }
 
@@ -392,6 +403,7 @@ func (track *SymbolTrack) roll(now time.Time) {
 	if track.bucketStart.IsZero() {
 		track.bucketStart = now
 		track.bucketOpenPrice = track.lastPrice
+		track.lastRollAt = now
 		return
 	}
 
@@ -408,17 +420,44 @@ func (track *SymbolTrack) roll(now time.Time) {
 		}
 	}
 
-	if track.bucketVolume > 0 {
-		track.volumes = append(track.volumes, track.bucketVolume)
+	closedVolume := track.rollingVolume()
+
+	if closedVolume > 0 {
+		track.volumes = append(track.volumes, closedVolume)
 
 		if len(track.volumes) > volumeHistoryCap {
 			track.volumes = track.volumes[len(track.volumes)-volumeHistoryCap:]
 		}
 	}
 
-	track.bucketVolume = 0
 	track.bucketStart = now
 	track.bucketOpenPrice = track.lastPrice
+	track.lastRollAt = now
+}
+
+func (track *SymbolTrack) pruneRolling(now time.Time) {
+	cutoff := now.Add(-bucketWindow)
+	kept := track.rollingTicks[:0]
+
+	for _, tick := range track.rollingTicks {
+		if tick.at.Before(cutoff) {
+			continue
+		}
+
+		kept = append(kept, tick)
+	}
+
+	track.rollingTicks = kept
+}
+
+func (track *SymbolTrack) rollingVolume() float64 {
+	total := 0.0
+
+	for _, tick := range track.rollingTicks {
+		total += tick.volume
+	}
+
+	return total
 }
 
 func mean(values []float64) float64 {

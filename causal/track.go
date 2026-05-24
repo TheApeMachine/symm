@@ -272,10 +272,12 @@ func (track *SymbolTrack) forecastReturn(
 	runwaySeconds := runway.Seconds()
 
 	if reason == "counterfactual" {
-		coef, fitOK := fitStructural(track.samples)
+		model, fitOK := fitNonLinearStructural(track.samples)
 
 		if fitOK {
-			uplift := counterfactualUplift(current, coef, flowInterventionLevel(track.samples))
+			uplift := nonLinearCounterfactualUplift(
+				current, model, flowInterventionLevel(track.samples),
+			)
 
 			if uplift > 0 {
 				return uplift * runwaySeconds
@@ -289,7 +291,7 @@ func (track *SymbolTrack) forecastReturn(
 func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string) {
 	samples := track.samples
 	association := associationEffect(samples)
-	intervention := backdoorFlowEffect(samples) * track.calibrator.Scale()
+	intervention := kernelBackdoorFlowEffect(samples) * track.calibrator.Scale()
 
 	if intervention <= 0 {
 		track.recordIntervention(intervention)
@@ -298,14 +300,14 @@ func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string)
 
 	track.recordIntervention(intervention)
 
-	coef, fitOK := fitStructural(samples)
+	model, fitOK := fitNonLinearStructural(samples)
 
 	if !fitOK {
 		return intervention, "intervention"
 	}
 
 	interventionFlow := flowInterventionLevel(samples)
-	uplift := counterfactualUplift(current, coef, interventionFlow)
+	uplift := nonLinearCounterfactualUplift(current, model, interventionFlow)
 
 	if uplift <= 0 {
 		return intervention, "intervention"

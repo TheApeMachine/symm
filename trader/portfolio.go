@@ -5,6 +5,12 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/market"
+)
+
+const (
+	positionLong  = 1
+	positionShort = -1
 )
 
 /*
@@ -19,6 +25,7 @@ type ExecutionDecision struct {
 	ExpectedReturn float64
 	Runway         time.Duration
 	Price          float64
+	Side           int
 }
 
 /*
@@ -30,6 +37,7 @@ type Position struct {
 	Regime      string
 	Reason      string
 	Score       float64
+	Side        int
 	EntryPrice  float64
 	FillPrice   float64
 	StopPrice   float64
@@ -103,13 +111,23 @@ func (portfolio *Portfolio) BindStream(stream PortfolioStream) {
 }
 
 /*
-TryEnter opens one long paper position when slot and wallet constraints allow.
+TryEnter opens one paper position when slot and wallet constraints allow.
 */
 func (portfolio *Portfolio) TryEnter(
 	now time.Time,
 	decision ExecutionDecision,
 	quotes QuoteReader,
 ) (*PortfolioEvent, bool) {
+	side := decision.Side
+
+	if side == 0 {
+		side = positionLong
+	}
+
+	if side != positionLong && side != positionShort {
+		return nil, false
+	}
+
 	if decision.Symbol == "" || decision.Price <= 0 || decision.Score <= 0 {
 		return nil, false
 	}
@@ -137,23 +155,46 @@ func (portfolio *Portfolio) TryEnter(
 		last = decision.Price
 	}
 
-	fill := config.System.SlippagePrice(last, bid, ask, "buy", config.System.SlippageBPS)
+	bidLevels, askLevels := bookDepthFor(quotes, decision.Symbol)
+	fillSide := "buy"
+
+	if side == positionShort {
+		fillSide = "sell"
+	}
+
+	fill := config.System.SlippageFill(
+		last, bid, ask, fillSide, config.System.SlippageBPS,
+		notional, bidLevels, askLevels,
+	)
 
 	if fill <= 0 {
 		return nil, false
 	}
 
 	fee := config.System.TakerFee(notional, portfolio.wallet.FeePct)
-	cost := notional + fee
 
-	if portfolio.wallet == nil || portfolio.wallet.Balance < cost {
-		return nil, false
+	if side == positionLong {
+		cost := notional + fee
+
+		if portfolio.wallet == nil || portfolio.wallet.Balance < cost {
+			return nil, false
+		}
+
+		portfolio.wallet.Balance -= cost
+	}
+
+	if side == positionShort {
+		proceeds := notional - fee
+
+		if portfolio.wallet == nil || portfolio.wallet.Balance < notional {
+			return nil, false
+		}
+
+		portfolio.wallet.Balance += proceeds
 	}
 
 	trailPct := trailPctFromQuote(last, bid, ask)
-	stop := fill * (1 - trailPct/100)
-
-	portfolio.wallet.Balance -= cost
+	stop := initialStop(fill, trailPct, side)
 
 	position := &Position{
 		Symbol:      decision.Symbol,
@@ -161,6 +202,7 @@ func (portfolio *Portfolio) TryEnter(
 		Regime:      decision.Regime,
 		Reason:      decision.Reason,
 		Score:       decision.Score,
+		Side:        side,
 		EntryPrice:  last,
 		FillPrice:   fill,
 		StopPrice:   stop,
@@ -194,9 +236,7 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 			continue
 		}
 
-		if last > position.PeakPrice {
-			position.PeakPrice = last
-		}
+		portfolio.updatePeak(position, last)
 
 		trailPct := trailPctFromQuote(last, bid, ask)
 
@@ -204,12 +244,10 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 			position.TrailPct = trailPct
 		}
 
-		newStop := position.PeakPrice * (1 - position.TrailPct/100)
+		newStop := trailingStop(position)
+		oldStop := position.StopPrice
 
-		if newStop > position.StopPrice {
-			oldStop := position.StopPrice
-			position.StopPrice = newStop
-
+		if portfolio.ratchetStop(position, newStop) {
 			event := portfolio.ratchetEvent(now, position, oldStop, last)
 			events = append(events, event)
 			portfolio.emitLocked(&event)
@@ -219,11 +257,11 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 			continue
 		}
 
-		if last > position.StopPrice {
+		if !portfolio.stopTriggered(position, last) {
 			continue
 		}
 
-		exitEvent := portfolio.closeLocked(now, symbol, position, last, bid, ask, "stop")
+		exitEvent := portfolio.closeLocked(now, symbol, position, last, bid, ask, quotes, "stop")
 		events = append(events, exitEvent)
 	}
 
@@ -258,12 +296,18 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 			last = position.EntryPrice
 		}
 
-		markValue := position.NotionalEUR * (last / position.FillPrice)
-		equity += markValue
+		equity += portfolio.markValue(position, last)
+
+		sideLabel := "long"
+
+		if position.Side == positionShort {
+			sideLabel = "short"
+		}
 
 		snapshot.Positions = append(snapshot.Positions, map[string]any{
 			"symbol":        position.Symbol,
 			"regime":        position.Regime,
+			"side":          sideLabel,
 			"entry_price":   position.EntryPrice,
 			"stop_price":    position.StopPrice,
 			"peak_price":    position.PeakPrice,
@@ -304,13 +348,30 @@ func (portfolio *Portfolio) canExit(now time.Time, position *Position) bool {
 		return false
 	}
 
+	minHold := minHoldForRegime(position.Regime)
+
+	return !now.Before(position.OpenedAt.Add(minHold))
+}
+
+func minHoldForRegime(regime string) time.Duration {
+	switch regime {
+	case "pump", "momentum":
+		if config.System.ScalpHoldBeforeExit > 0 {
+			return config.System.ScalpHoldBeforeExit
+		}
+	case "flow":
+		if config.System.FlowHoldBeforeExit > 0 {
+			return config.System.FlowHoldBeforeExit
+		}
+	}
+
 	minHold := config.System.MinHoldBeforeRotate
 
 	if minHold <= 0 {
 		minHold = time.Minute
 	}
 
-	return !now.Before(position.OpenedAt.Add(minHold))
+	return minHold
 }
 
 func (portfolio *Portfolio) closeLocked(
@@ -318,16 +379,25 @@ func (portfolio *Portfolio) closeLocked(
 	symbol string,
 	position *Position,
 	last, bid, ask float64,
+	quotes QuoteReader,
 	reason string,
 ) PortfolioEvent {
-	exitFill := config.System.SlippagePrice(last, bid, ask, "sell", config.System.SlippageBPS)
-	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
-	fee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
-	net := proceeds - fee
-	pnl := net - position.NotionalEUR
+	fillSide := "sell"
+
+	if position.Side == positionShort {
+		fillSide = "buy"
+	}
+
+	bidLevels, askLevels := bookDepthFor(quotes, symbol)
+	exitFill := config.System.SlippageFill(
+		last, bid, ask, fillSide, config.System.SlippageBPS,
+		position.NotionalEUR, bidLevels, askLevels,
+	)
+
+	pnl := portfolio.realizedPnL(position, exitFill)
 
 	if portfolio.wallet != nil {
-		portfolio.wallet.Balance += net
+		portfolio.wallet.Balance += portfolio.exitCashFlow(position, exitFill)
 	}
 
 	portfolio.closedPnL += pnl
@@ -345,10 +415,130 @@ func (portfolio *Portfolio) closeLocked(
 	return event
 }
 
+func (portfolio *Portfolio) realizedPnL(position *Position, exitFill float64) float64 {
+	if position.Side == positionShort {
+		entryProceeds := position.NotionalEUR
+		exitCost := position.NotionalEUR * (exitFill / position.FillPrice)
+		entryFee := config.System.TakerFee(entryProceeds, portfolio.wallet.FeePct)
+		exitFee := config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+
+		return entryProceeds - entryFee - exitCost - exitFee
+	}
+
+	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
+	fee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
+	net := proceeds - fee
+
+	return net - position.NotionalEUR
+}
+
+func (portfolio *Portfolio) exitCashFlow(position *Position, exitFill float64) float64 {
+	if position.Side == positionShort {
+		exitCost := position.NotionalEUR * (exitFill / position.FillPrice)
+		exitFee := config.System.TakerFee(exitCost, portfolio.wallet.FeePct)
+
+		return -(exitCost + exitFee)
+	}
+
+	proceeds := position.NotionalEUR * (exitFill / position.FillPrice)
+	fee := config.System.TakerFee(proceeds, portfolio.wallet.FeePct)
+
+	return proceeds - fee
+}
+
+func (portfolio *Portfolio) markValue(position *Position, last float64) float64 {
+	if position.Side == positionShort {
+		unrealized := position.NotionalEUR * (position.FillPrice - last) / position.FillPrice
+
+		return unrealized
+	}
+
+	return position.NotionalEUR * (last / position.FillPrice)
+}
+
+func initialStop(fill, trailPct float64, side int) float64 {
+	if side == positionShort {
+		return fill * (1 + trailPct/100)
+	}
+
+	return fill * (1 - trailPct/100)
+}
+
+func trailingStop(position *Position) float64 {
+	if position.Side == positionShort {
+		return position.PeakPrice * (1 + position.TrailPct/100)
+	}
+
+	return position.PeakPrice * (1 - position.TrailPct/100)
+}
+
+func (portfolio *Portfolio) updatePeak(position *Position, last float64) {
+	if position.Side == positionShort {
+		if last < position.PeakPrice {
+			position.PeakPrice = last
+		}
+
+		return
+	}
+
+	if last > position.PeakPrice {
+		position.PeakPrice = last
+	}
+}
+
+func (portfolio *Portfolio) ratchetStop(position *Position, newStop float64) bool {
+	if position.Side == positionShort {
+		if newStop >= position.StopPrice {
+			return false
+		}
+
+		position.StopPrice = newStop
+
+		return true
+	}
+
+	if newStop <= position.StopPrice {
+		return false
+	}
+
+	position.StopPrice = newStop
+
+	return true
+}
+
+func (portfolio *Portfolio) stopTriggered(position *Position, last float64) bool {
+	if position.Side == positionShort {
+		return last >= position.StopPrice
+	}
+
+	return last <= position.StopPrice
+}
+
+func bookDepthFor(
+	quotes QuoteReader,
+	symbol string,
+) (bids, asks []market.BookLevel) {
+	fillReader, ok := quotes.(FillReader)
+
+	if !ok || fillReader == nil {
+		return nil, nil
+	}
+
+	bids, asks, _ = fillReader.BookDepth(symbol)
+
+	return bids, asks
+}
+
 func (portfolio *Portfolio) enterEvent(
 	now time.Time,
 	position *Position,
 ) *PortfolioEvent {
+	sideLabel := "long"
+
+	if position.Side == positionShort {
+		sideLabel = "short"
+	}
+
 	return &PortfolioEvent{
 		Name: "trade_enter",
 		Payload: map[string]any{
@@ -356,6 +546,7 @@ func (portfolio *Portfolio) enterEvent(
 			"ts":            now.UTC().Format(time.RFC3339Nano),
 			"symbol":        position.Symbol,
 			"regime":        position.Regime,
+			"side":          sideLabel,
 			"reason":        position.Reason,
 			"score":         position.Score,
 			"trail_pct":     position.TrailPct,
@@ -393,6 +584,11 @@ func (portfolio *Portfolio) exitEvent(
 	pnl, exitFill float64,
 ) PortfolioEvent {
 	hold := now.Sub(position.OpenedAt)
+	sideLabel := "long"
+
+	if position.Side == positionShort {
+		sideLabel = "short"
+	}
 
 	return PortfolioEvent{
 		Name: "trade_exit",
@@ -401,6 +597,7 @@ func (portfolio *Portfolio) exitEvent(
 			"ts":           now.UTC().Format(time.RFC3339Nano),
 			"symbol":       position.Symbol,
 			"regime":       position.Regime,
+			"side":         sideLabel,
 			"reason":       reason,
 			"pnl_eur":      pnl,
 			"hold_ms":      hold.Milliseconds(),
