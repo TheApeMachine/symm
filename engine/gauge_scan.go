@@ -18,9 +18,10 @@ func (gaugeScan *GaugeScan) ResetGaugeScan() {
 
 /*
 ObserveGaugeScore records one symbol-level normalized confidence for the scan set.
+Zero scores are skipped so unscored symbols do not dilute the gauge mean.
 */
 func (gaugeScan *GaugeScan) ObserveGaugeScore(score float64) {
-	if score < 0 {
+	if score <= 0 {
 		return
 	}
 

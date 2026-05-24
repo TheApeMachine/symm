@@ -30,3 +30,17 @@ func TestGaugeScanResetGaugeScan(t *testing.T) {
 		})
 	})
 }
+
+func TestGaugeScanIgnoresZeroScores(t *testing.T) {
+	Convey("Given unscored symbols mixed with one reading", t, func() {
+		gaugeScan := GaugeScan{}
+
+		gaugeScan.ObserveGaugeScore(0)
+		gaugeScan.ObserveGaugeScore(0)
+		gaugeScan.ObserveGaugeScore(0.6)
+
+		Convey("It should mean only positive scores", func() {
+			So(gaugeScan.MeanGaugeConfidence(), ShouldAlmostEqual, 0.6, 0.0001)
+		})
+	})
+}
