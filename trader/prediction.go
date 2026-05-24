@@ -26,15 +26,17 @@ type Prediction struct {
 }
 
 /*
-buildPrediction constructs one forecast from the current pair and measurement.
+buildPrediction constructs one forecast from the current pair and trader forecast.
 */
 func (state *PairState) buildPrediction(
-	now time.Time, measurement engine.Measurement,
+	now time.Time,
+	measurement engine.Measurement,
+	forecast SignalForecast,
 ) (Prediction, bool) {
 	symbol := asset.Symbol(state.pair)
 
 	if symbol == "" || measurement.Source == "" ||
-		measurement.ExpectedReturn <= 0 || measurement.Runway <= 0 {
+		forecast.ExpectedReturn <= 0 || forecast.Runway <= 0 {
 		return Prediction{}, false
 	}
 
@@ -47,9 +49,9 @@ func (state *PairState) buildPrediction(
 		confidence:      measurement.Confidence,
 		direction:       measurement.Type.Direction(),
 		predictedAt:     now,
-		dueAt:           now.Add(measurement.Runway),
-		expectedReturn:  measurement.ExpectedReturn,
-		runway:          measurement.Runway,
+		dueAt:           now.Add(forecast.Runway),
+		expectedReturn:  forecast.ExpectedReturn,
+		runway:          forecast.Runway,
 	}, true
 }
 

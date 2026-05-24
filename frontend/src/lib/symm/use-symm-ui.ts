@@ -24,18 +24,20 @@ import { connectionStore } from "#/lib/symm/stores/connection-store";
 import { engineStore } from "#/lib/symm/stores/engine-store";
 import { fieldStore } from "#/lib/symm/stores/field-store";
 import { statusStore } from "#/lib/symm/stores/status-store";
-import { startSymmFeed } from "#/lib/symm/feed";
+import { startSymmFeed, stopSymmFeed } from "#/lib/symm/feed";
 
 export function useSymmFeed(url?: string): void {
 	useEffect(() => {
 		startSymmFeed(url);
+
+		return () => {
+			stopSymmFeed();
+		};
 	}, [url]);
 }
 
 export function useSymmConnected(): boolean {
-	return useSelector(connectionStore, (state) =>
-		Object.values(state).every(Boolean),
-	);
+	return useSelector(connectionStore, (state) => state.connected);
 }
 
 export function useSymmStatus(): StatusEvent | undefined {

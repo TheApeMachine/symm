@@ -41,21 +41,19 @@ type Timeframe struct {
 }
 
 /*
-Measurement is the result of a measurement.
-Confidence is a unitless score for ranking and UI.
-ExpectedReturn is the model-estimated fractional price return over Runway.
+Measurement is one signal reading for downstream trading.
+Confidence is a unitless score for ranking and UI; expected return and hold
+horizon are derived in the trader, not in the signal.
 */
 type Measurement struct {
-	Type           MeasurementType
-	Source         string
-	Regime         string
-	Reason         string
-	Pairs          []asset.Pair
-	Confidence     float64
-	ExpectedReturn float64
-	Runway         time.Duration
-	Timeframe      Timeframe
-	Err            error
+	Type       MeasurementType
+	Source     string
+	Regime     string
+	Reason     string
+	Pairs      []asset.Pair
+	Confidence float64
+	Timeframe  Timeframe
+	Err        error
 }
 
 /*

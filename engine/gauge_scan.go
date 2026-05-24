@@ -4,38 +4,40 @@ package engine
 GaugeScan accumulates per-symbol normalized scores for one measure pass.
 */
 type GaugeScan struct {
-	sum   float64
-	count int
+	peak float64
 }
 
 /*
 ResetGaugeScan clears scan accumulators before the next measure pass.
 */
 func (gaugeScan *GaugeScan) ResetGaugeScan() {
-	gaugeScan.sum = 0
-	gaugeScan.count = 0
+	gaugeScan.peak = 0
 }
 
 /*
 ObserveGaugeScore records one symbol-level normalized confidence for the scan set.
-Zero scores are skipped so unscored symbols do not dilute the gauge mean.
+Zero and negative readings are ignored so unscored symbols do not dilute the gauge.
 */
 func (gaugeScan *GaugeScan) ObserveGaugeScore(score float64) {
 	if score <= 0 {
 		return
 	}
 
-	gaugeScan.sum += score
-	gaugeScan.count++
+	if score > gaugeScan.peak {
+		gaugeScan.peak = score
+	}
 }
 
 /*
-MeanGaugeConfidence returns the arithmetic mean across observed scan symbols.
+PeakGaugeConfidence returns the strongest normalized score observed this scan.
+*/
+func (gaugeScan *GaugeScan) PeakGaugeConfidence() float64 {
+	return gaugeScan.peak
+}
+
+/*
+MeanGaugeConfidence returns the peak normalized score for the latest scan set.
 */
 func (gaugeScan *GaugeScan) MeanGaugeConfidence() float64 {
-	if gaugeScan.count == 0 {
-		return 0
-	}
-
-	return gaugeScan.sum / float64(gaugeScan.count)
+	return gaugeScan.PeakGaugeConfidence()
 }

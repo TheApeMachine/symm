@@ -79,6 +79,8 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		})
 	}
 
+	track.confidenceHistory = []float64{0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
+
 	sample := causalSample{
 		macroMomentum: 0.015,
 		liquidity:     2.0,
@@ -86,18 +88,14 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		priceVelocity: 0.2,
 	}
 
-	confidence, expectedReturn, runway, reason := trackStore.Evaluate("ALT/EUR", sample)
+	confidence, reason := trackStore.Evaluate("ALT/EUR", sample)
 
 	if confidence <= 0 {
 		t.Fatalf("expected causal confidence, got %v", confidence)
 	}
 
-	if expectedReturn == 0 {
-		t.Fatalf("expected causal expected return, got %v", expectedReturn)
-	}
-
-	if runway <= 0 {
-		t.Fatalf("expected causal runway, got %v", runway)
+	if reason == "" {
+		t.Fatalf("expected causal reason, got %q", reason)
 	}
 
 	if reason != "intervention" && reason != "counterfactual" {

@@ -173,17 +173,22 @@ func ConfidenceFence(values []float64) float64 {
 }
 
 /*
-NormalizeConfidence maps raw confidence into [0, 1] against the local fence.
+NormalizeConfidence maps raw signal strength into [0, 1] against the symbol-local fence.
+Returns 0 until enough history exists to calibrate; never invents certainty on a cold symbol.
 */
 func NormalizeConfidence(rawScore float64, history []float64) float64 {
 	if rawScore <= 0 {
 		return 0
 	}
 
+	if len(history) < minConfidenceHistory() {
+		return 0
+	}
+
 	fence := ConfidenceFence(history)
 
 	if fence <= 0 {
-		return 1
+		return 0
 	}
 
 	if rawScore >= fence {
@@ -191,4 +196,14 @@ func NormalizeConfidence(rawScore float64, history []float64) float64 {
 	}
 
 	return rawScore / fence
+}
+
+func minConfidenceHistory() int {
+	minSamples := config.System.MinConfidenceHistory
+
+	if minSamples <= 0 {
+		return 4
+	}
+
+	return minSamples
 }

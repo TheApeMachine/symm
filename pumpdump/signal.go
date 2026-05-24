@@ -93,10 +93,10 @@ func (pumpdump *PumpDump) Tick() bool {
 }
 
 /*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
+MeanConfidence returns the peak normalized confidence across the latest scan set.
 */
 func (pumpdump *PumpDump) MeanConfidence() float64 {
-	return pumpdump.track.MeanGaugeConfidence()
+	return pumpdump.track.PeakLiveConfidence()
 }
 
 /*
@@ -131,9 +131,12 @@ func (pumpdump *PumpDump) Measure(
 			}
 
 			snapshot := pumpdump.ingest.Read(symbol)
-			measurement, ok, err := pumpdump.evaluate(symbol, snapshot, now)
+			rawConfidence, _ := pumpdump.filter.Score(symbol, pumpdump.track, snapshot, now)
+			pumpdump.track.ObserveGaugeScore(
+				GaugeConfidence(pumpdump.track, symbol, rawConfidence),
+			)
 
-			pumpdump.track.ObserveGaugeScore(pumpdump.track.SymbolLiveScore(symbol))
+			measurement, ok, err := pumpdump.evaluate(symbol, snapshot, now)
 
 			if err != nil {
 				return
@@ -181,20 +184,18 @@ func (pumpdump *PumpDump) evaluate(
 		reason = "precursor"
 	}
 
-	confidence, expectedReturn, runway, reason := FinalizeMeasurement(
-		pumpdump.track, symbol, rawConfidence, now, reason,
+	confidence, reason := FinalizeReading(
+		pumpdump.track, symbol, rawConfidence, reason,
 	)
 
-	if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+	if confidence <= 0 {
 		return engine.Measurement{}, false, nil
 	}
 
 	return engine.Measurement{
-		Type:           engine.Pump,
-		Regime:         "pump",
-		Reason:         reason,
-		Confidence:     confidence,
-		ExpectedReturn: expectedReturn,
-		Runway:         runway,
+		Type:       engine.Pump,
+		Regime:     "pump",
+		Reason:     reason,
+		Confidence: confidence,
 	}, true, nil
 }

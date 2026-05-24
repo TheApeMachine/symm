@@ -68,15 +68,15 @@ func (filter *PrecursorFilter) Score(
 	reason := "precursor"
 
 	if !volumeSpike {
-		return confidence, reason
+		return 0, reason
 	}
 
 	if !filter.priceFlat(symbol, trackStore) {
-		return confidence, reason
+		return 0, reason
 	}
 
 	if !snapshot.SpreadOK || !filter.spreadTight(symbol, trackStore, snapshot.SpreadBPS) {
-		return confidence, reason
+		return 0, reason
 	}
 
 	return confidence, "actual_pump"

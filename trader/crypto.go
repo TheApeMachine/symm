@@ -205,14 +205,6 @@ func (crypto *Crypto) measureContext() context.Context {
 	return engine.WithTickDrain(crypto.ctx, crypto.drainTickables)
 }
 
-func (crypto *Crypto) publishSignalScore(source string, confidence float64) {
-	if crypto.uiStream == nil || source == "" {
-		return
-	}
-
-	crypto.uiStream.SignalScore(source, confidence)
-}
-
 func (crypto *Crypto) processSignals(now time.Time) signalTickResult {
 	measureCtx := crypto.measureContext()
 	result := signalTickResult{}
@@ -270,15 +262,19 @@ func (crypto *Crypto) updatePairStates(
 			continue
 		}
 
+		symbol := asset.Symbol(pair)
+
 		state.Update(measurement)
 
-		if measurement.ExpectedReturn <= 0 {
+		forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol)
+
+		if !ok {
 			continue
 		}
 
-		state.RecordPrediction(now, measurement)
+		state.ApplyForecast(forecast)
+		state.RecordPrediction(now, measurement, forecast)
 
-		symbol := asset.Symbol(pair)
 		quotePrice, ok := crypto.quotePrice(symbol)
 
 		if !ok {
@@ -341,13 +337,19 @@ func (crypto *Crypto) signalRows(
 			symbol = asset.Symbol(measurement.Pairs[0])
 		}
 
+		expectedReturn := 0.0
+
+		if forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol); ok {
+			expectedReturn = forecast.ExpectedReturn
+		}
+
 		rows = append(rows, map[string]any{
 			"symbol":          symbol,
 			"source":          measurement.Source,
 			"regime":          measurement.Regime,
 			"reason":          measurement.Reason,
 			"score":           measurement.Confidence,
-			"expected_return": measurement.ExpectedReturn,
+			"expected_return": expectedReturn,
 			"type":            string(measurement.Type),
 		})
 	}
@@ -401,14 +403,20 @@ func (crypto *Crypto) noteCandidate(measurement engine.Measurement) {
 			continue
 		}
 
+		forecast, ok := BuildSignalForecast(measurement, crypto.prices, symbol)
+
+		if !ok {
+			continue
+		}
+
 		crypto.candidates.Note(SignalCandidate{
 			Symbol:         symbol,
 			Source:         measurement.Source,
 			Regime:         measurement.Regime,
 			Reason:         measurement.Reason,
 			Confidence:     measurement.Confidence,
-			ExpectedReturn: measurement.ExpectedReturn,
-			Runway:         measurement.Runway,
+			ExpectedReturn: forecast.ExpectedReturn,
+			Runway:         forecast.Runway,
 			Direction:      measurement.Type.Direction(),
 		})
 	}

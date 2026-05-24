@@ -203,6 +203,19 @@ func (trackStore *TrackStore) BaselineIntensityFence(symbol string) float64 {
 RecordScore stores one raw Hawkes score and returns a unit-scale confidence in [0, 1].
 */
 func (trackStore *TrackStore) RecordScore(symbol string, rawScore float64) float64 {
+	return trackStore.applyGaugeScore(symbol, rawScore, true)
+}
+
+/*
+GaugeScore normalizes one raw score for live display without appending history.
+*/
+func (trackStore *TrackStore) GaugeScore(symbol string, rawScore float64) float64 {
+	return trackStore.applyGaugeScore(symbol, rawScore, false)
+}
+
+func (trackStore *TrackStore) applyGaugeScore(
+	symbol string, rawScore float64, persist bool,
+) float64 {
 	if rawScore <= 0 {
 		return 0
 	}
@@ -211,9 +224,12 @@ func (trackStore *TrackStore) RecordScore(symbol string, rawScore float64) float
 	track.Lock()
 	defer track.Unlock()
 
-	normalized := track.normalizedConfidence(rawScore)
-	track.recordConfidence(rawScore)
+	normalized := engine.NormalizeConfidence(rawScore, track.confidenceHistory)
 	track.liveScore = normalized
+
+	if persist {
+		track.recordConfidence(rawScore)
+	}
 
 	return normalized
 }
@@ -288,24 +304,6 @@ func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
 	}
 
 	return bestSymbol, bestScore
-}
-
-func (track *SymbolTrack) normalizedConfidence(rawScore float64) float64 {
-	if rawScore <= 0 {
-		return 0
-	}
-
-	fence := confidenceFence(track.confidenceHistory)
-
-	if fence <= 0 {
-		return 1
-	}
-
-	if rawScore >= fence {
-		return 1
-	}
-
-	return rawScore / fence
 }
 
 func (track *SymbolTrack) recordConfidence(confidence float64) {

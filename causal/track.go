@@ -236,35 +236,27 @@ Evaluate scores rung-2 intervention and rung-3 counterfactual uplift for one sym
 func (trackStore *TrackStore) Evaluate(
 	symbol string,
 	current causalSample,
-) (float64, float64, time.Duration, string) {
+) (float64, string) {
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
 	track, ok := trackStore.bySymbol[symbol]
 
 	if !ok || len(track.samples) < minCausalHistory {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	rawConfidence, reason := track.evaluateLocked(current)
 
 	if rawConfidence <= 0 {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
 	track.liveScore = normalized
-
-	runway := opportunityRunway(track.samples, track.lastElapsed)
-
-	if runway <= 0 {
-		return 0, 0, 0, ""
-	}
-
 	track.recordConfidence(rawConfidence)
-	expectedReturn := track.forecastReturn(current, reason, runway)
 
-	return normalized, expectedReturn, runway, reason
+	return normalized, reason
 }
 
 /*
@@ -323,32 +315,6 @@ func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
 	return bestSymbol, bestScore
 }
 
-func (track *SymbolTrack) forecastReturn(
-	current causalSample, reason string, runway time.Duration,
-) float64 {
-	if runway <= 0 {
-		return 0
-	}
-
-	runwaySeconds := runway.Seconds()
-
-	if reason == "counterfactual" {
-		model, fitOK := fitNonLinearStructural(track.samples)
-
-		if fitOK {
-			uplift := nonLinearCounterfactualUplift(
-				current, model, flowInterventionLevel(track.samples),
-			)
-
-			if uplift > 0 {
-				return uplift * runwaySeconds
-			}
-		}
-	}
-
-	return current.priceVelocity * runwaySeconds
-}
-
 func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string) {
 	samples := track.samples
 	association := associationEffect(samples)
@@ -381,17 +347,7 @@ func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string)
 		reason = "counterfactual"
 	}
 
-	confidence := intervention * uplift
-
-	if current.localFlow <= 0 || current.liquidity <= 0 {
-		return intervention, reason
-	}
-
-	if confidence <= 0 {
-		return intervention, reason
-	}
-
-	return confidence, reason
+	return intervention * uplift, reason
 }
 
 func (track *SymbolTrack) recordConfidence(confidence float64) {

@@ -99,11 +99,7 @@ func (hawkes *Hawkes) Measure(
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				measurement, ok, err := hawkes.evaluate(symbol, snapshot, now)
-
-				hawkes.track.ObserveGaugeScore(hawkes.track.SymbolLiveScore(symbol))
-
-				return measurement, ok, err
+				return hawkes.evaluate(symbol, snapshot, now)
 			},
 		) {
 			if !yield(measurement) {
@@ -130,10 +126,10 @@ func (hawkes *Hawkes) PeakReading() engine.LiveReading {
 }
 
 /*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
+MeanConfidence returns the peak normalized confidence across the latest scan set.
 */
 func (hawkes *Hawkes) MeanConfidence() float64 {
-	return hawkes.track.MeanGaugeConfidence()
+	return hawkes.track.PeakLiveConfidence()
 }
 
 /*
@@ -171,9 +167,11 @@ func (hawkes *Hawkes) evaluate(
 	snapshot engine.Snapshot,
 	now time.Time,
 ) (engine.Measurement, bool, error) {
-	confidence, expectedReturn, runway, measurementType := hawkes.score(symbol, snapshot, now)
+	confidence, measurementType := hawkes.score(symbol, snapshot, now)
 
-	if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+	hawkes.track.ObserveGaugeScore(confidence)
+
+	if confidence <= 0 {
 		return engine.Measurement{}, false, nil
 	}
 
@@ -186,66 +184,30 @@ func (hawkes *Hawkes) evaluate(
 	}
 
 	return engine.Measurement{
-		Type:           measurementType,
-		Regime:         regime,
-		Reason:         reason,
-		Confidence:     confidence,
-		ExpectedReturn: expectedReturn,
-		Runway:         runway,
+		Type:       measurementType,
+		Regime:     regime,
+		Reason:     reason,
+		Confidence: confidence,
 	}, true, nil
 }
 
-func (hawkes *Hawkes) score(
-	symbol string, snapshot engine.Snapshot, now time.Time,
-) (float64, float64, time.Duration, engine.MeasurementType) {
-	if !hawkes.track.PassesLiquidity(symbol) {
-		return 0, 0, 0, engine.Momentum
-	}
-
-	allTicks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
-
-	if !ok || len(allTicks) == 0 {
-		return 0, 0, 0, engine.Momentum
-	}
-
-	context, buyTimes, sellTimes, ok := fitContextFromTicks(allTicks, time.Time{}, now)
-
-	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
-		return 0, 0, 0, engine.Momentum
-	}
-
-	fit := hawkes.track.FitBivariate(symbol, buyTimes, sellTimes, now)
-
-	if fit.MuBuy <= 0 {
-		return 0, 0, 0, engine.Momentum
-	}
-
-	buyAsymmetry := buySellAsymmetry(fit)
-	sellAsymmetry := sellBuyAsymmetry(fit)
-	baselineFence := hawkes.track.BaselineIntensityFence(symbol)
-	runway := excitationRunway(fit)
-	measurementType := engine.Momentum
-	asymmetry := buyAsymmetry
-
-	if sellAsymmetry > buyAsymmetry {
-		measurementType = engine.Dump
-		asymmetry = sellAsymmetry
-	}
-
-	rawConfidence := excitationConfidence(
-		fit, asymmetry, baselineFence, measurementType == engine.Dump,
-	)
-
-	if rawConfidence <= 0 || runway <= 0 {
-		return 0, 0, 0, engine.Momentum
+func (hawkes *Hawkes) gaugeConfidence(
+	symbol string,
+	snapshot engine.Snapshot,
+	rawConfidence float64,
+	measurementType engine.MeasurementType,
+	persist bool,
+) float64 {
+	if rawConfidence <= 0 {
+		return 0
 	}
 
 	if !snapshot.ImbalanceOK || snapshot.Imbalance <= 0 {
-		return 0, 0, 0, engine.Momentum
+		return 0
 	}
 
 	if !snapshot.SpreadOK || snapshot.SpreadBPS <= 0 {
-		return 0, 0, 0, engine.Momentum
+		return 0
 	}
 
 	bookSide := snapshot.Imbalance
@@ -258,11 +220,62 @@ func (hawkes *Hawkes) score(
 		bookSide = 1
 	}
 
-	score := rawConfidence * bookSide
-	confidence := hawkes.track.RecordScore(symbol, score)
-	expectedReturn := asymmetry * (snapshot.SpreadBPS / 10000)
+	return hawkes.track.applyGaugeScore(symbol, rawConfidence*bookSide, persist)
+}
 
-	return confidence, expectedReturn, runway, measurementType
+func (hawkes *Hawkes) score(
+	symbol string, snapshot engine.Snapshot, now time.Time,
+) (float64, engine.MeasurementType) {
+	if !hawkes.track.PassesLiquidity(symbol) {
+		return 0, engine.Momentum
+	}
+
+	allTicks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
+
+	if !ok || len(allTicks) == 0 {
+		return 0, engine.Momentum
+	}
+
+	context, buyTimes, sellTimes, ok := fitContextFromTicks(allTicks, time.Time{}, now)
+
+	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
+		return 0, engine.Momentum
+	}
+
+	fit := hawkes.track.FitBivariate(symbol, buyTimes, sellTimes, now)
+
+	if fit.MuBuy <= 0 {
+		return 0, engine.Momentum
+	}
+
+	buyAsymmetry := buySellAsymmetry(fit)
+	sellAsymmetry := sellBuyAsymmetry(fit)
+	baselineFence := hawkes.track.BaselineIntensityFence(symbol)
+	measurementType := engine.Momentum
+	asymmetry := buyAsymmetry
+
+	if sellAsymmetry > buyAsymmetry {
+		measurementType = engine.Dump
+		asymmetry = sellAsymmetry
+	}
+
+	rawConfidence := excitationConfidence(
+		fit, asymmetry, baselineFence, measurementType == engine.Dump,
+	)
+
+	if rawConfidence <= 0 {
+		return 0, measurementType
+	}
+
+	gaugeConfidence := hawkes.gaugeConfidence(
+		symbol, snapshot, rawConfidence, measurementType, true,
+	)
+
+	if gaugeConfidence <= 0 {
+		return 0, measurementType
+	}
+
+	return gaugeConfidence, measurementType
 }
 
 func splitSideEvents(

@@ -9,28 +9,32 @@ import (
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
-func forecastMeasurement(source string, expectedReturn float64, runway time.Duration) engine.Measurement {
-	return engine.Measurement{
-		Source:         source,
-		Type:           engine.Momentum,
-		Regime:         "momentum",
-		Reason:         "cluster_buy",
-		Confidence:     0.5,
+func testForecast(expectedReturn float64, runway time.Duration) SignalForecast {
+	return SignalForecast{
 		ExpectedReturn: expectedReturn,
 		Runway:         runway,
+	}
+}
+
+func signalMeasurement(source string) engine.Measurement {
+	return engine.Measurement{
+		Source:     source,
+		Type:       engine.Momentum,
+		Regime:     "momentum",
+		Reason:     "cluster_buy",
+		Confidence: 0.5,
 	}
 }
 
 func TestUpdate(t *testing.T) {
 	pair := asset.Pair{Wsname: "PUMP/EUR"}
 
-	convey.Convey("Given a signal measurement", t, func() {
+	convey.Convey("Given a signal reading and trader forecast", t, func() {
 		state := NewPairState(pair)
-		measurement := forecastMeasurement("hawkes", 0.002, 10*time.Second)
+		state.Update(signalMeasurement("hawkes"))
+		state.ApplyForecast(testForecast(0.002, 10*time.Second))
 
 		convey.Convey("It should store confidence separately from expected return", func() {
-			state.Update(measurement)
-
 			score, runway := state.Predict()
 
 			convey.So(runway, convey.ShouldEqual, 10*time.Second)
@@ -55,11 +59,7 @@ func TestPredict(t *testing.T) {
 
 	convey.Convey("Given expected return without a runway estimate", t, func() {
 		state := NewPairState(pair)
-		state.Update(engine.Measurement{
-			Confidence:     0.6,
-			ExpectedReturn: 0.002,
-			Runway:         0,
-		})
+		state.ApplyForecast(testForecast(0.002, 0))
 
 		convey.Convey("It should not invent a horizon", func() {
 			score, runway := state.Predict()
@@ -69,13 +69,9 @@ func TestPredict(t *testing.T) {
 		})
 	})
 
-	convey.Convey("Given a signal-derived runway", t, func() {
+	convey.Convey("Given a trader-derived runway", t, func() {
 		state := NewPairState(pair)
-		state.Update(engine.Measurement{
-			Confidence:     0.6,
-			ExpectedReturn: 0.012,
-			Runway:         12 * time.Second,
-		})
+		state.ApplyForecast(testForecast(0.012, 12*time.Second))
 
 		convey.Convey("It should rank using expected return per second", func() {
 			score, runway := state.Predict()
@@ -88,10 +84,10 @@ func TestPredict(t *testing.T) {
 
 	convey.Convey("Given two readings with the same expected return", t, func() {
 		fleeting := NewPairState(pair)
-		fleeting.Update(engine.Measurement{ExpectedReturn: 0.008, Runway: 8 * time.Second})
+		fleeting.ApplyForecast(testForecast(0.008, 8*time.Second))
 
 		lingering := NewPairState(pair)
-		lingering.Update(engine.Measurement{ExpectedReturn: 0.008, Runway: 40 * time.Second})
+		lingering.ApplyForecast(testForecast(0.008, 40*time.Second))
 
 		convey.Convey("It should rank the shorter runway higher", func() {
 			fleetingScore, _ := fleeting.Predict()
@@ -103,10 +99,10 @@ func TestPredict(t *testing.T) {
 
 	convey.Convey("Given two readings with the same runway", t, func() {
 		weak := NewPairState(pair)
-		weak.Update(engine.Measurement{ExpectedReturn: 0.003, Runway: 10 * time.Second})
+		weak.ApplyForecast(testForecast(0.003, 10*time.Second))
 
 		strong := NewPairState(pair)
-		strong.Update(engine.Measurement{ExpectedReturn: 0.009, Runway: 10 * time.Second})
+		strong.ApplyForecast(testForecast(0.009, 10*time.Second))
 
 		convey.Convey("It should rank the stronger expected return higher", func() {
 			weakScore, _ := weak.Predict()
@@ -120,13 +116,14 @@ func TestPredict(t *testing.T) {
 func TestRecordPrediction(t *testing.T) {
 	pair := asset.Pair{Wsname: "PUMP/EUR"}
 	now := time.Unix(1_700_000_000, 0)
-	measurement := forecastMeasurement("hawkes", 0.002, 10*time.Second)
+	measurement := signalMeasurement("hawkes")
+	forecast := testForecast(0.002, 10*time.Second)
 
 	convey.Convey("Given a valid forecast", t, func() {
 		state := NewPairState(pair)
 
-		convey.Convey("It should store the expected return from the measurement", func() {
-			recorded := state.RecordPrediction(now, measurement)
+		convey.Convey("It should store the trader forecast", func() {
+			recorded := state.RecordPrediction(now, measurement, forecast)
 
 			convey.So(recorded, convey.ShouldBeTrue)
 			convey.So(state.PendingCount(), convey.ShouldEqual, 1)
@@ -135,21 +132,22 @@ func TestRecordPrediction(t *testing.T) {
 
 	convey.Convey("Given no expected return", t, func() {
 		state := NewPairState(pair)
-		invalid := measurement
-		invalid.ExpectedReturn = 0
 
 		convey.Convey("It should not store a prediction", func() {
-			convey.So(state.RecordPrediction(now, invalid), convey.ShouldBeFalse)
+			convey.So(
+				state.RecordPrediction(now, measurement, testForecast(0, 10*time.Second)),
+				convey.ShouldBeFalse,
+			)
 		})
 	})
 
 	convey.Convey("Given an open forecast for the same source", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, measurement)
-		replacement := forecastMeasurement("hawkes", 0.003, 10*time.Second)
+		state.RecordPrediction(now, measurement, forecast)
+		replacement := testForecast(0.003, 10*time.Second)
 
 		convey.Convey("It should replace the open forecast", func() {
-			state.RecordPrediction(now.Add(time.Second), replacement)
+			state.RecordPrediction(now.Add(time.Second), measurement, replacement)
 
 			convey.So(state.PendingCount(), convey.ShouldEqual, 1)
 		})
@@ -162,8 +160,8 @@ func TestAnchorPending(t *testing.T) {
 
 	convey.Convey("Given unanchored forecasts", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, forecastMeasurement("hawkes", 0.002, time.Second))
-		state.RecordPrediction(now, forecastMeasurement("fluid", 0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("fluid"), testForecast(0.002, time.Second))
 
 		convey.Convey("It should anchor every pending forecast", func() {
 			state.AnchorPending(100)
@@ -177,11 +175,12 @@ func TestAnchorPending(t *testing.T) {
 func TestSettleDue(t *testing.T) {
 	pair := asset.Pair{Wsname: "PUMP/EUR"}
 	start := time.Unix(1_700_000_000, 0)
-	measurement := forecastMeasurement("hawkes", 0.001, 5*time.Second)
+	measurement := signalMeasurement("hawkes")
+	forecast := testForecast(0.001, 5*time.Second)
 
 	convey.Convey("Given a matured anchored prediction", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement)
+		state.RecordPrediction(start, measurement, forecast)
 		state.AnchorPending(100)
 
 		convey.Convey("It should emit signed prediction feedback", func() {
@@ -197,7 +196,7 @@ func TestSettleDue(t *testing.T) {
 
 	convey.Convey("Given an immature prediction", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement)
+		state.RecordPrediction(start, measurement, forecast)
 		state.AnchorPending(100)
 
 		convey.Convey("It should keep the prediction pending", func() {
@@ -210,7 +209,7 @@ func TestSettleDue(t *testing.T) {
 
 	convey.Convey("Given a matured prediction without a baseline quote", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement)
+		state.RecordPrediction(start, measurement, forecast)
 
 		convey.Convey("It should emit unanchored feedback and drop the forecast", func() {
 			feedback := state.SettleDue(start.Add(5*time.Second), 110)
@@ -239,8 +238,8 @@ func TestForecastMetrics(t *testing.T) {
 
 	convey.Convey("Given an unanchored forecast", t, func() {
 		state := NewPairState(pair)
-		state.Update(forecastMeasurement("hawkes", 0.002, time.Second))
-		state.RecordPrediction(now, forecastMeasurement("hawkes", 0.002, time.Second))
+		state.ApplyForecast(testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
 
 		prediction, runningError, hasPrediction, hasError := state.ForecastMetrics(100)
 
@@ -254,8 +253,8 @@ func TestForecastMetrics(t *testing.T) {
 
 	convey.Convey("Given an anchored forecast", t, func() {
 		state := NewPairState(pair)
-		state.Update(forecastMeasurement("hawkes", 0.002, time.Second))
-		state.RecordPrediction(now, forecastMeasurement("hawkes", 0.002, time.Second))
+		state.ApplyForecast(testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
 		state.AnchorPending(100)
 
 		_, runningError, hasPrediction, hasError := state.ForecastMetrics(101)
@@ -282,7 +281,7 @@ func TestHasPendingPredictions(t *testing.T) {
 
 	convey.Convey("Given one stored forecast", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, forecastMeasurement("hawkes", 0.001, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.001, time.Second))
 
 		convey.Convey("It should report pending predictions", func() {
 			convey.So(state.HasPendingPredictions(), convey.ShouldBeTrue)
@@ -293,10 +292,7 @@ func TestHasPendingPredictions(t *testing.T) {
 
 func BenchmarkPredict(b *testing.B) {
 	state := NewPairState(asset.Pair{Wsname: "PUMP/EUR"})
-	state.Update(engine.Measurement{
-		ExpectedReturn: 0.004,
-		Runway:         500 * time.Millisecond,
-	})
+	state.ApplyForecast(testForecast(0.004, 500*time.Millisecond))
 
 	b.ReportAllocs()
 
@@ -309,13 +305,14 @@ func BenchmarkSettleDue(b *testing.B) {
 	pair := asset.Pair{Wsname: "PUMP/EUR"}
 	start := time.Unix(1_700_000_000, 0)
 	dueAt := start.Add(time.Millisecond)
-	measurement := forecastMeasurement("hawkes", 0.001, time.Millisecond)
+	measurement := signalMeasurement("hawkes")
+	forecast := testForecast(0.001, time.Millisecond)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement)
+		state.RecordPrediction(start, measurement, forecast)
 		state.AnchorPending(100)
 		state.SettleDue(dueAt, 101)
 	}

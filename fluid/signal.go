@@ -128,48 +128,26 @@ func (fluid *Fluid) WarmingCount() int {
 }
 
 /*
-LiveScore returns the current fluid gauge reading from track and field state.
+LiveScore returns the current fluid gauge reading from track state.
 */
 func (fluid *Fluid) LiveScore() float64 {
-	peak := fluid.track.PeakLiveConfidence()
-
-	if peak > 0 {
-		return peak
-	}
-
-	return fieldGaugeScore(fluid.FieldSnapshot().Field)
+	return fluid.track.PeakLiveConfidence()
 }
 
 func (fluid *Fluid) PeakReading() engine.LiveReading {
 	symbol, score := fluid.track.PeakSymbolScore()
 
-	if score > 0 {
-		return engine.LiveReading{
-			Symbol: symbol,
-			Score:  score,
-		}
-	}
-
-	field := fluid.FieldSnapshot().Field
-	gaugeScore := fieldGaugeScore(field)
-
-	if gaugeScore <= 0 {
-		return engine.LiveReading{}
-	}
-
-	symbol = fluid.track.PeakFieldSymbol()
-
 	return engine.LiveReading{
 		Symbol: symbol,
-		Score:  gaugeScore,
+		Score:  score,
 	}
 }
 
 /*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
+MeanConfidence returns the peak normalized confidence across the latest scan set.
 */
 func (fluid *Fluid) MeanConfidence() float64 {
-	return fluid.track.MeanGaugeConfidence()
+	return fluid.track.PeakLiveConfidence()
 }
 
 /*
@@ -223,21 +201,19 @@ func (fluid *Fluid) Measure(
 					fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
 				}
 
-				confidence, expectedReturn, runway, reason := fluid.evaluate(symbol, snapshot, now)
+				confidence, reason := fluid.evaluate(symbol, snapshot, now)
 
-				fluid.track.ObserveGaugeScore(fluid.track.SymbolLiveScore(symbol))
+				fluid.track.ObserveGaugeScore(confidence)
 
-				if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+				if confidence <= 0 {
 					return engine.Measurement{}, false, nil
 				}
 
 				return engine.Measurement{
-					Type:           engine.Flow,
-					Regime:         "flow",
-					Reason:         reason,
-					Confidence:     confidence,
-					ExpectedReturn: expectedReturn,
-					Runway:         runway,
+					Type:       engine.Flow,
+					Regime:     "flow",
+					Reason:     reason,
+					Confidence: confidence,
 				}, true, nil
 			},
 		) {
@@ -254,18 +230,18 @@ func (fluid *Fluid) Measure(
 
 func (fluid *Fluid) evaluate(
 	symbol string, snapshot engine.Snapshot, now time.Time,
-) (float64, float64, time.Duration, string) {
+) (float64, string) {
 	if !fluid.track.PassesLiquidity(symbol) {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	if !snapshot.DensityOK || !snapshot.SpreadOK || !snapshot.LastOK ||
 		!snapshot.BatchOK || !snapshot.PressureOK {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	if snapshot.Density <= 0 || snapshot.SpreadBPS <= 0 || snapshot.Last <= 0 || snapshot.BatchVolume <= 0 {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	flow := snapshot.BatchVolume

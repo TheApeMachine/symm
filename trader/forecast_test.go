@@ -1,11 +1,11 @@
 package trader
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
@@ -25,31 +25,32 @@ func TestForecastFromEvaluations(t *testing.T) {
 }
 
 func TestAggregateForecasts(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 
-	crypto, err := NewCrypto(
-		context.Background(),
-		nil,
-		nil,
-		wallet,
-		stubPrices{"PUMP/EUR": 101, "DUMP/EUR": 49},
-		&stubSignal{},
-	)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
+	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 101, "DUMP/EUR": 49}, &stubSignal{})
 
 	pumpState := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
 	dumpState := crypto.pairState(asset.Pair{Wsname: "DUMP/EUR"})
 
-	pumpState.Update(testMeasurement(0.002, time.Second))
-	pumpState.RecordPrediction(start, testMeasurement(0.002, time.Second))
+	pumpMeasurement := testMeasurement(0.5)
+	dumpMeasurement := engine.Measurement{
+		Source:     "hawkes",
+		Type:       engine.Momentum,
+		Regime:     "momentum",
+		Reason:     "cluster_sell",
+		Confidence: 0.5,
+	}
+	pumpForecast := testForecast(0.002, time.Second)
+	dumpForecast := testForecast(0.004, time.Second)
+
+	pumpState.Update(pumpMeasurement)
+	pumpState.ApplyForecast(pumpForecast)
+	pumpState.RecordPrediction(start, pumpMeasurement, pumpForecast)
 	pumpState.AnchorPending(100)
 
-	dumpState.Update(testMeasurement(0.004, time.Second))
-	dumpState.RecordPrediction(start, testMeasurement(0.004, time.Second))
+	dumpState.Update(dumpMeasurement)
+	dumpState.ApplyForecast(dumpForecast)
+	dumpState.RecordPrediction(start, dumpMeasurement, dumpForecast)
 	dumpState.AnchorPending(50)
 
 	convey.Convey("Given anchored forecasts on multiple symbols", t, func() {
@@ -65,24 +66,15 @@ func TestAggregateForecasts(t *testing.T) {
 }
 
 func TestResolveForecastPrefersPairStates(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-
-	crypto, err := NewCrypto(
-		context.Background(),
-		nil,
-		nil,
-		wallet,
-		stubPrices{"PUMP/EUR": 101},
-		&stubSignal{},
-	)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
+	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 101}, &stubSignal{})
 
 	state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
-	state.Update(testMeasurement(0.002, time.Second))
-	state.RecordPrediction(time.Unix(1_700_000_000, 0), testMeasurement(0.002, time.Second))
+	measurement := testMeasurement(0.5)
+	forecast := testForecast(0.002, time.Second)
+
+	state.Update(measurement)
+	state.ApplyForecast(forecast)
+	state.RecordPrediction(time.Unix(1_700_000_000, 0), measurement, forecast)
 	state.AnchorPending(100)
 
 	readings := map[string]symbolReadings{

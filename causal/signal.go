@@ -49,10 +49,10 @@ func (causal *Causal) PeakReading() engine.LiveReading {
 }
 
 /*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
+MeanConfidence returns the peak normalized confidence across the latest scan set.
 */
 func (causal *Causal) MeanConfidence() float64 {
-	return causal.track.MeanGaugeConfidence()
+	return causal.track.PeakLiveConfidence()
 }
 
 /*
@@ -132,23 +132,21 @@ func (causal *Causal) Measure(
 			},
 			now,
 			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				confidence, expectedReturn, runway, reason := causal.evaluate(
+				confidence, reason := causal.evaluate(
 					symbol, snapshot, macro, now,
 				)
 
-				causal.track.ObserveGaugeScore(causal.track.SymbolLiveScore(symbol))
+				causal.track.ObserveGaugeScore(confidence)
 
-				if confidence <= 0 || expectedReturn <= 0 || runway <= 0 {
+				if confidence <= 0 {
 					return engine.Measurement{}, false, nil
 				}
 
 				return engine.Measurement{
-					Type:           engine.Causal,
-					Regime:         "causal",
-					Reason:         reason,
-					Confidence:     confidence,
-					ExpectedReturn: expectedReturn,
-					Runway:         runway,
+					Type:       engine.Causal,
+					Regime:     "causal",
+					Reason:     reason,
+					Confidence: confidence,
 				}, true, nil
 			},
 		) {
@@ -164,19 +162,19 @@ func (causal *Causal) evaluate(
 	snapshot engine.Snapshot,
 	macroMomentum float64,
 	now time.Time,
-) (float64, float64, time.Duration, string) {
+) (float64, string) {
 	if !causal.track.PassesLiquidity(symbol) {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	if !snapshot.LastOK || !snapshot.VolumeOK || !snapshot.BatchOK ||
 		!snapshot.PressureOK || !snapshot.SpreadOK || !snapshot.ImbalanceOK {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	if snapshot.Last <= 0 || snapshot.BatchVolume <= 0 || snapshot.SpreadBPS <= 0 ||
 		snapshot.Imbalance <= 0 || snapshot.BuyPressure <= 0 {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	causal.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
@@ -189,13 +187,13 @@ func (causal *Causal) evaluate(
 	)
 
 	if !ready {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
-	confidence, expectedReturn, runway, reason := causal.track.Evaluate(symbol, sample)
+	confidence, reason := causal.track.Evaluate(symbol, sample)
 	causal.track.CommitSample(symbol, sample, snapshot.Last, now)
 
-	return confidence, expectedReturn, runway, reason
+	return confidence, reason
 }
 
 func bookLiquidity(spreadBPS, batchVolume float64) float64 {

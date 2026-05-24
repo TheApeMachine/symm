@@ -2,7 +2,12 @@ module github.com/theapemachine/symm
 
 go 1.26.1
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/davecgh/go-spew v1.1.1
+	github.com/qntfy/jsonparser v1.0.2
+	github.com/smartystreets/goconvey v1.8.1
+	github.com/spf13/cobra v1.10.2
+)
 
 require (
 	github.com/andybalholm/brotli v1.2.1 // indirect
@@ -21,10 +26,8 @@ require (
 	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/phuslu/log v1.0.124 // indirect
-	github.com/qntfy/jsonparser v1.0.2 // indirect
 	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
-	github.com/smartystreets/goconvey v1.8.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.71.0 // indirect

@@ -212,6 +212,21 @@ func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
 	return track.liveScore
 }
 
+/*
+PeakLiveConfidence returns the highest unit-scale score across all symbols.
+*/
+func (trackStore *TrackStore) PeakLiveConfidence() float64 {
+	peak := 0.0
+
+	for _, track := range trackStore.bySymbol {
+		if track.liveScore > peak {
+			peak = track.liveScore
+		}
+	}
+
+	return peak
+}
+
 func (trackStore *TrackStore) applyTick(value *qpool.QValue[any]) {
 	update, ok := value.Value.(engine.TickUpdate)
 

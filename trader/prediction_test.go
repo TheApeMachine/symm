@@ -13,19 +13,19 @@ func TestBuildPrediction(t *testing.T) {
 	pair := asset.Pair{Wsname: "PUMP/EUR"}
 	now := time.Unix(1_700_000_000, 0)
 
-	convey.Convey("Given a valid measurement", t, func() {
+	convey.Convey("Given a valid trader forecast", t, func() {
 		state := NewPairState(pair)
 		measurement := engine.Measurement{
-			Source:         "hawkes",
-			Type:           engine.Momentum,
-			Regime:         "momentum",
-			Reason:         "cluster_buy",
-			ExpectedReturn: 0.002,
-			Runway:         10 * time.Second,
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "momentum",
+			Reason:     "cluster_buy",
+			Confidence: 0.5,
 		}
+		forecast := testForecast(0.002, 10*time.Second)
 
 		convey.Convey("It should build a due forecast", func() {
-			prediction, ok := state.buildPrediction(now, measurement)
+			prediction, ok := state.buildPrediction(now, measurement, forecast)
 
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(prediction.expectedReturn, convey.ShouldEqual, 0.002)

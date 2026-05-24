@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
@@ -245,22 +246,22 @@ func TestRecordScoreStoresConfidence(t *testing.T) {
 	}
 }
 
-func TestRecordScoreNormalizesFirstSampleToOne(t *testing.T) {
+func TestRecordScoreRejectsColdSymbol(t *testing.T) {
 	trackStore := NewTrackStore()
 
 	score := trackStore.RecordScore("PUMP/EUR", 3.2)
 
-	if score != 1 {
-		t.Fatalf("expected first sample normalized to 1, got %v", score)
+	if score != 0 {
+		t.Fatalf("expected zero confidence before calibration history, got %v", score)
 	}
 }
 
 func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
 	trackStore := NewTrackStore()
 	track := trackStore.track("PUMP/EUR")
-	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6}
-	fence := confidenceFence(track.confidenceHistory)
-	score := track.normalizedConfidence(fence / 2)
+	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2}
+	fence := engine.ConfidenceFence(track.confidenceHistory)
+	score := engine.NormalizeConfidence(fence/2, track.confidenceHistory)
 
 	if score <= 0 || score >= 1 {
 		t.Fatalf("expected mid-fence score in (0,1), got %v", score)

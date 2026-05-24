@@ -105,7 +105,7 @@ func (trackStore *TrackStore) Sample(
 	symbol string,
 	density, price, spreadBPS, depthSlope, flow, buyPressure float64,
 	now time.Time,
-) (float64, float64, time.Duration, string) {
+) (float64, string) {
 	track := trackStore.track(symbol)
 	track.Lock()
 	defer track.Unlock()
@@ -130,16 +130,15 @@ func (trackStore *TrackStore) Sample(
 		track.lastAt = now
 		track.hasPrior = true
 
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
-	elapsed := now.Sub(track.lastAt).Seconds()
 	source := continuitySource(current, track.lastSample)
 	shock := burgersShock(current, track.lastSample)
 	calibration := track.calibrator.Scale()
 
 	if calibration <= 0 {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
 	source *= calibration
@@ -177,40 +176,26 @@ func (trackStore *TrackStore) Sample(
 	track.lastAt = now
 
 	if !accumulating && !shocking {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
-	rawConfidence := 0.0
-	reason := ""
-
-	if accumulating {
-		rawConfidence += source * buyPressure
-		reason = "accumulation"
-	}
-
-	if shocking {
-		rawConfidence += shock * buyPressure
-
-		if reason == "" {
-			reason = "shock"
-		}
-	}
+	rawConfidence := fieldConfidence(source, shock, buyPressure, quiet)
 
 	if rawConfidence <= 0 {
-		return 0, 0, 0, ""
+		return 0, ""
 	}
 
-	runway := fieldRunway(spreadBPS, current.velocity, elapsed)
+	reason := "accumulation"
+
+	if shocking && !accumulating {
+		reason = "shock"
+	}
+
 	normalized := engine.NormalizeConfidence(rawConfidence, track.confidenceHistory)
 	track.recordConfidence(rawConfidence)
 	track.liveScore = normalized
-	expectedReturn := current.velocity * runway.Seconds()
 
-	if math.Abs(expectedReturn) <= 0 && spreadBPS > 0 && buyPressure > 0 {
-		expectedReturn = (spreadBPS / 10000) * buyPressure
-	}
-
-	return normalized, expectedReturn, runway, reason
+	return normalized, reason
 }
 
 /*

@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"iter"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -46,6 +47,15 @@ func (stub *stubSignal) Measure(_ context.Context, _ time.Time) iter.Seq[engine.
 
 func (stub *stubSignal) Source() string { return "stub" }
 
+type sourceStubSignal struct {
+	stubSignal
+	source string
+}
+
+func (signal *sourceStubSignal) Source() string {
+	return signal.source
+}
+
 func (stub *stubSignal) Feedback(_ engine.PredictionFeedback) {}
 
 type scoredSignal struct {
@@ -86,16 +96,48 @@ func (signal *measureSignal) Measure(ctx context.Context, now time.Time) iter.Se
 	return signal.stubSignal.Measure(ctx, now)
 }
 
-func testMeasurement(expectedReturn float64, runway time.Duration) engine.Measurement {
+func testMeasurement(confidence float64) engine.Measurement {
 	return engine.Measurement{
-		Source:         "hawkes",
-		Type:           engine.Momentum,
-		Regime:         "momentum",
-		Reason:         "cluster_buy",
-		Pairs:          []asset.Pair{{Wsname: "PUMP/EUR"}},
-		Confidence:     0.5,
-		ExpectedReturn: expectedReturn,
-		Runway:         runway,
+		Source:     "hawkes",
+		Type:       engine.Momentum,
+		Regime:     "momentum",
+		Reason:     "cluster_buy",
+		Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
+		Confidence: confidence,
+	}
+}
+
+func testCrypto(
+	t *testing.T,
+	prices QuoteReader,
+	signals ...engine.Signal,
+) *Crypto {
+	t.Helper()
+
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto, err := NewCrypto(ctx, pool, nil, wallet, prices, signals...)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+
+	return crypto
+}
+
+func TestUpdatePairStatesRecordsTraderForecast(t *testing.T) {
+	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 100}, &stubSignal{})
+	now := time.Unix(1_700_000_000, 0)
+
+	crypto.updatePairStates(testMeasurement(0.5), now)
+
+	state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+
+	if state == nil || !state.HasPendingPredictions() {
+		t.Fatal("expected trader forecast to be recorded")
 	}
 }
 
@@ -173,21 +215,25 @@ func TestProcessSignalsDrainsEverySignal(t *testing.T) {
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100, "DUMP/EUR": 50},
-		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
-		}},
-		&stubSignal{measurements: []engine.Measurement{
-			{
-				Source:         "hawkes",
-				Type:           engine.Momentum,
-				Regime:         "momentum",
-				Reason:         "cluster_sell",
-				Pairs:          []asset.Pair{{Wsname: "DUMP/EUR"}},
-				Confidence:     0.4,
-				ExpectedReturn: 0.001,
-				Runway:         time.Second,
-			},
-		}},
+		&sourceStubSignal{
+			source: "hawkes",
+			stubSignal: stubSignal{measurements: []engine.Measurement{
+				testMeasurement(0.5),
+			}},
+		},
+		&sourceStubSignal{
+			source: "fluid",
+			stubSignal: stubSignal{measurements: []engine.Measurement{
+				{
+					Source:     "fluid",
+					Type:       engine.Flow,
+					Regime:     "flow",
+					Reason:     "shock",
+					Pairs:      []asset.Pair{{Wsname: "DUMP/EUR"}},
+					Confidence: 0.4,
+				},
+			}},
+		},
 	)
 
 	if err != nil {
@@ -208,27 +254,19 @@ func TestProcessSignalsDrainsEverySignal(t *testing.T) {
 }
 
 func TestProcessSignals(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 	measured := false
 
-	crypto, err := NewCrypto(
-		context.Background(),
-		nil,
-		nil,
-		wallet,
+	crypto := testCrypto(
+		t,
 		stubPrices{"PUMP/EUR": 100},
 		&measureSignal{
 			stubSignal: stubSignal{measurements: []engine.Measurement{
-				testMeasurement(0.002, time.Second),
+				testMeasurement(0.5),
 			}},
 			onMeasure: func() { measured = true },
 		},
 	)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
 
 	convey.Convey("Given registered signals", t, func() {
 		crypto.processSignals(start)
@@ -240,54 +278,31 @@ func TestProcessSignals(t *testing.T) {
 }
 
 func TestProcessSignal(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 
-	convey.Convey("Given no price reader", t, func() {
+	convey.Convey("Given no live quote", t, func() {
 		signal := &stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
+			testMeasurement(0.5),
 		}}
 
-		crypto, err := NewCrypto(
-			context.Background(),
-			nil,
-			nil,
-			wallet,
-			stubPrices{},
-			signal,
-		)
-
-		if err != nil {
-			t.Fatalf("new crypto: %v", err)
-		}
+		crypto := testCrypto(t, stubPrices{}, signal)
 
 		if err := crypto.processSignal(signal, start); err != nil {
 			t.Fatalf("process signal: %v", err)
 		}
 		state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
 
-		convey.Convey("It should still record the forecast", func() {
-			convey.So(state.HasPendingPredictions(), convey.ShouldBeTrue)
+		convey.Convey("It should not record a forecast without a quote", func() {
+			convey.So(state.HasPendingPredictions(), convey.ShouldBeFalse)
 		})
 	})
 
 	convey.Convey("Given repeated measurements from one source", t, func() {
 		signal := &stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
+			testMeasurement(0.5),
 		}}
 
-		crypto, err := NewCrypto(
-			context.Background(),
-			nil,
-			nil,
-			wallet,
-			stubPrices{"PUMP/EUR": 100},
-			signal,
-		)
-
-		if err != nil {
-			t.Fatalf("new crypto: %v", err)
-		}
+		crypto := testCrypto(t, stubPrices{"PUMP/EUR": 100}, signal)
 
 		if err := crypto.processSignal(signal, start); err != nil {
 			t.Fatalf("process signal: %v", err)
@@ -305,21 +320,10 @@ func TestProcessSignal(t *testing.T) {
 
 	convey.Convey("Given feedback receivers", t, func() {
 		signal := &feedbackSignal{stubSignal: stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, 5*time.Second),
+			testMeasurement(0.5),
 		}}}
 
-		crypto, err := NewCrypto(
-			context.Background(),
-			nil,
-			nil,
-			wallet,
-			stubPrices{"PUMP/EUR": 100},
-			signal,
-		)
-
-		if err != nil {
-			t.Fatalf("new crypto: %v", err)
-		}
+		crypto := testCrypto(t, stubPrices{"PUMP/EUR": 100}, signal)
 
 		if err := crypto.processSignal(signal, start); err != nil {
 			t.Fatalf("process signal: %v", err)
@@ -329,36 +333,28 @@ func TestProcessSignal(t *testing.T) {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 0)
 		})
 
-		if err := crypto.processSignal(signal, start.Add(5*time.Second)); err != nil {
+		if err := crypto.processSignal(signal, start.Add(16*time.Second)); err != nil {
 			t.Fatalf("process signal: %v", err)
 		}
 
 		convey.Convey("It should apply feedback once the runway elapses", func() {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 1)
-			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldEqual, 0.002)
+			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldAlmostEqual, 0.001, 1e-9)
 		})
 	})
 }
 
 func TestRescoreCollectsFeedback(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 	feedback := make([]engine.PredictionFeedback, 0)
 
-	crypto, err := NewCrypto(
-		context.Background(),
-		nil,
-		nil,
-		wallet,
+	crypto := testCrypto(
+		t,
 		stubPrices{"PUMP/EUR": 100},
 		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, 5*time.Second),
+			testMeasurement(0.5),
 		}},
 	)
-
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
 
 	crypto.BindFeedbackSink(func(item engine.PredictionFeedback) {
 		feedback = append(feedback, item)
@@ -372,7 +368,7 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 		t.Fatalf("expected one pending forecast, got %d", crypto.PendingPredictionCount())
 	}
 
-	if err := crypto.Rescore(start.Add(5 * time.Second)); err != nil {
+	if err := crypto.Rescore(start.Add(16 * time.Second)); err != nil {
 		t.Fatalf("settle rescore: %v", err)
 	}
 
@@ -382,6 +378,10 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 
 	if feedback[0].Confidence != 0.5 {
 		t.Fatalf("expected confidence on feedback, got %v", feedback[0].Confidence)
+	}
+
+	if math.Abs(feedback[0].PredictedReturn-0.001) > 1e-9 {
+		t.Fatalf("expected trader forecast return, got %v", feedback[0].PredictedReturn)
 	}
 }
 
@@ -400,10 +400,10 @@ func BenchmarkProcessSignals(b *testing.B) {
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
 		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
+			testMeasurement(0.5),
 		}},
 		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.001, time.Second),
+			testMeasurement(0.5),
 		}},
 	)
 
@@ -419,17 +419,21 @@ func BenchmarkProcessSignals(b *testing.B) {
 }
 
 func BenchmarkProcessSignalsSequential(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	start := time.Unix(1_700_000_000, 0)
 
 	crypto, err := NewCrypto(
-		context.Background(),
-		nil,
+		ctx,
+		pool,
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
 		&stubSignal{measurements: []engine.Measurement{
-			testMeasurement(0.002, time.Second),
+			testMeasurement(0.5),
 		}},
 	)
 

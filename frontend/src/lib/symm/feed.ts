@@ -35,37 +35,6 @@ import { WsStream } from "#/lib/symm/ws-stream";
 
 const MAX_TICK_HISTORY = 360;
 
-const STATUS_EVENTS = new Set<SymmEvent["event"]>([
-	"hello",
-	"status",
-	"trade_enter",
-	"trade_exit",
-	"scoreboard",
-]);
-
-const ENGINE_EVENTS = new Set<SymmEvent["event"]>([
-	"hello",
-	"engine_pulse",
-	"signal_score",
-	"decision_trace",
-]);
-
-const FIELD_EVENTS = new Set<SymmEvent["event"]>([
-	"hello",
-	"field_snapshot",
-	"fluid_display",
-]);
-
-const CHART_EVENTS = new Set<SymmEvent["event"]>([
-	"hello",
-	"price_tick",
-	"candle_bar",
-	"chart_seed",
-	"stop_ratchet",
-	"trade_enter",
-	"trade_exit",
-]);
-
 type ChartListener = (event: SymmEvent) => void;
 
 const chartListeners = new Map<string, ChartListener>();
@@ -79,13 +48,10 @@ const fieldSnapshotListeners = new Set<
 >();
 const enginePulseListeners = new Set<(pulse: EnginePulseEvent) => void>();
 
-let chartStream: WsStream | null = null;
-let fieldWsStream: WsStream | null = null;
+let feedStream: WsStream | null = null;
 let wsUrl = defaultWsUrl;
 let started = false;
 let marketWatchSticky = "";
-
-const streams: WsStream[] = [];
 
 const dispatchChart = (symbol: string, event: SymmEvent) => {
 	chartListeners.get(symbol)?.(event);
@@ -142,7 +108,7 @@ const chartSubscribeSymbols = () => {
 		return;
 	}
 
-	chartStream?.send({ op: "subscribe", symbols: [...symbols] });
+	feedStream?.send({ op: "subscribe", symbols: [...symbols] });
 };
 
 const notifyFieldSnapshotListeners = (snapshot: FieldSnapshotEvent) => {
@@ -222,83 +188,61 @@ const applyChartEvent = (event: SymmEvent) => {
 	}
 };
 
-const createStreams = () => {
-	const statusStream = new WsStream({
+const handleFeedEvent = (event: SymmEvent) => {
+	switch (event.event) {
+		case "hello":
+			return;
+		case "status":
+			applyStatusEvent(event as StatusEvent);
+			return;
+		case "scoreboard":
+			applyScoreboardEvent(event as ScoreboardEvent);
+			return;
+		case "trade_enter":
+		case "trade_exit":
+			appendTrade(event as TradeEnterEvent | TradeExitEvent);
+			chartSubscribeSymbols();
+			applyChartEvent(event);
+			return;
+		case "signal_score":
+			applySignalScore(event as SignalScoreEvent);
+			return;
+		case "engine_pulse": {
+			const pulse = event as EnginePulseEvent;
+			applyEnginePulse(pulse);
+			notifyEnginePulseListeners(pulse);
+			return;
+		}
+		case "decision_trace":
+			applyDecisionTrace(event as DecisionTraceEvent);
+			return;
+		case "field_snapshot":
+			applyFieldSnapshot(event as FieldSnapshotEvent);
+			return;
+		case "fluid_display":
+			applyFluidDisplay(event as FluidDisplayEvent);
+			return;
+		case "price_tick":
+		case "candle_bar":
+		case "chart_seed":
+		case "stop_ratchet":
+			applyChartEvent(event);
+			return;
+		default:
+			return;
+	}
+};
+
+const openFeedStream = () => {
+	feedStream = new WsStream({
 		url: wsUrl,
-		stream: "status",
-		accepts: STATUS_EVENTS,
-		onEvent: (event) => {
-			switch (event.event) {
-				case "status":
-					applyStatusEvent(event as StatusEvent);
-					return;
-				case "scoreboard":
-					applyScoreboardEvent(event as ScoreboardEvent);
-					return;
-				case "trade_enter":
-				case "trade_exit":
-					appendTrade(event as TradeEnterEvent | TradeExitEvent);
-					chartSubscribeSymbols();
-					return;
-				default:
-					return;
-			}
-		},
-	});
-
-	const engineStream = new WsStream({
-		url: wsUrl,
-		stream: "engine",
-		accepts: ENGINE_EVENTS,
-		onEvent: (event) => {
-			if (event.event === "signal_score") {
-				applySignalScore(event as SignalScoreEvent);
-				return;
-			}
-
-			if (event.event === "engine_pulse") {
-				const pulse = event as EnginePulseEvent;
-				applyEnginePulse(pulse);
-				notifyEnginePulseListeners(pulse);
-				return;
-			}
-
-			if (event.event === "decision_trace") {
-				applyDecisionTrace(event as DecisionTraceEvent);
-			}
-		},
-	});
-
-	const fieldStream = new WsStream({
-		url: wsUrl,
-		stream: "field",
-		accepts: FIELD_EVENTS,
-		onEvent: (event) => {
-			if (event.event === "field_snapshot") {
-				applyFieldSnapshot(event as FieldSnapshotEvent);
-				return;
-			}
-
-			if (event.event === "fluid_display") {
-				applyFluidDisplay(event as FluidDisplayEvent);
-			}
-		},
+		onEvent: handleFeedEvent,
 		onOpen: () => {
-			fieldStream.send({ op: "get_fluid_display" });
+			feedStream?.send({ op: "get_fluid_display" });
+			chartSubscribeSymbols();
 		},
 	});
-
-	fieldWsStream = fieldStream;
-
-	chartStream = new WsStream({
-		url: wsUrl,
-		stream: "chart",
-		accepts: CHART_EVENTS,
-		onEvent: applyChartEvent,
-		onOpen: chartSubscribeSymbols,
-	});
-
-	return [statusStream, engineStream, fieldStream, chartStream];
+	feedStream.start();
 };
 
 export const startSymmFeed = (url: string = defaultWsUrl) => {
@@ -308,11 +252,7 @@ export const startSymmFeed = (url: string = defaultWsUrl) => {
 	}
 
 	started = true;
-
-	for (const stream of createStreams()) {
-		streams.push(stream);
-		stream.start();
-	}
+	openFeedStream();
 };
 
 export const stopSymmFeed = () => {
@@ -321,14 +261,8 @@ export const stopSymmFeed = () => {
 	}
 
 	started = false;
-
-	for (const stream of streams) {
-		stream.stop();
-	}
-
-	streams.length = 0;
-	chartStream = null;
-	fieldWsStream = null;
+	feedStream?.stop();
+	feedStream = null;
 };
 
 export const setFluidDisplay = (patch: FluidDisplayPatch) => {
@@ -337,18 +271,18 @@ export const setFluidDisplay = (patch: FluidDisplayPatch) => {
 		...patch,
 	};
 
-	fieldWsStream?.send(command);
+	feedStream?.send(command);
 };
 
 export const registerChart = (symbol: string, handler: ChartListener) => {
 	chartListeners.set(symbol, handler);
 	replayChartState(symbol, handler);
-	chartStream?.send({ op: "subscribe", symbols: [symbol] });
+	feedStream?.send({ op: "subscribe", symbols: [symbol] });
 };
 
 export const unregisterChart = (symbol: string) => {
 	chartListeners.delete(symbol);
-	chartStream?.send({ op: "unsubscribe", symbols: [symbol] });
+	feedStream?.send({ op: "unsubscribe", symbols: [symbol] });
 };
 
 export const registerFieldSnapshotListener = (

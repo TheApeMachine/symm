@@ -40,18 +40,16 @@ func (state *PairState) Symbol() string {
 }
 
 /*
-Update ingests the latest signal measurement for this pair.
+Update ingests the latest signal reading for this pair.
 */
 func (state *PairState) Update(measurement engine.Measurement) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	state.confidence = measurement.Confidence
-	state.expectedReturn = measurement.ExpectedReturn
 	state.regime = measurement.Regime
 	state.reason = measurement.Reason
 	state.measurementType = measurement.Type
-	state.runway = measurement.Runway
 }
 
 /*
@@ -75,19 +73,34 @@ func (state *PairState) Predict() (float64, time.Duration) {
 }
 
 /*
-RecordPrediction stores or replaces the open forecast for one source on this symbol.
+ApplyForecast stores the trader-derived profit forecast for this pair.
 */
-func (state *PairState) RecordPrediction(now time.Time, measurement engine.Measurement) bool {
+func (state *PairState) ApplyForecast(forecast SignalForecast) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if measurement.Source == "" || measurement.ExpectedReturn <= 0 || measurement.Runway <= 0 {
+	state.expectedReturn = forecast.ExpectedReturn
+	state.runway = forecast.Runway
+}
+
+/*
+RecordPrediction stores or replaces the open forecast for one source on this symbol.
+*/
+func (state *PairState) RecordPrediction(
+	now time.Time,
+	measurement engine.Measurement,
+	forecast SignalForecast,
+) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if measurement.Source == "" || forecast.ExpectedReturn <= 0 || forecast.Runway <= 0 {
 		return false
 	}
 
 	state.predictions = state.dropOpenForecast(measurement.Source, now)
 
-	prediction, ok := state.buildPrediction(now, measurement)
+	prediction, ok := state.buildPrediction(now, measurement, forecast)
 
 	if !ok {
 		return false

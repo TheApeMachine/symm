@@ -41,6 +41,7 @@ type Config struct {
 	MinEdgeReturn              float64
 	SnapshotFreshnessTTL       time.Duration
 	MinCalibrationSamples      int
+	MinConfidenceHistory       int
 	CalibrationHalfLifeFloor   time.Duration
 	CalibrationHalfLifeCeiling time.Duration
 	CalibrationRunwayFactor    float64
@@ -107,6 +108,7 @@ func NewConfig() *Config {
 		MinEdgeReturn:              0.0005,
 		SnapshotFreshnessTTL:       200 * time.Millisecond,
 		MinCalibrationSamples:      12,
+		MinConfidenceHistory:       4,
 		CalibrationHalfLifeFloor:   2 * time.Second,
 		CalibrationHalfLifeCeiling: 15 * time.Minute,
 		CalibrationRunwayFactor:    0.5,

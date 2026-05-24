@@ -1,23 +1,16 @@
-import type { SymmEvent, SymmEventName } from "#/lib/symm/events";
-import {
-	setStreamConnected,
-	type StreamName,
-} from "#/lib/symm/stores/connection-store";
+import type { SymmEvent } from "#/lib/symm/events";
+import { setFeedConnected } from "#/lib/symm/stores/connection-store";
 
 export type StreamEventHandler = (event: SymmEvent) => void;
 
 export type WsStreamOptions = {
 	url: string;
-	stream: StreamName;
-	accepts: ReadonlySet<SymmEventName>;
 	onEvent: StreamEventHandler;
 	onOpen?: () => void;
 };
 
 export class WsStream {
 	private readonly url: string;
-	private readonly stream: StreamName;
-	private readonly accepts: ReadonlySet<SymmEventName>;
 	private readonly onEvent: StreamEventHandler;
 	private readonly onOpen?: () => void;
 	private socket: WebSocket | null = null;
@@ -25,8 +18,6 @@ export class WsStream {
 
 	constructor(options: WsStreamOptions) {
 		this.url = options.url;
-		this.stream = options.stream;
-		this.accepts = options.accepts;
 		this.onEvent = options.onEvent;
 		this.onOpen = options.onOpen;
 	}
@@ -43,7 +34,7 @@ export class WsStream {
 	stop(): void {
 		this.started = false;
 		this.closeSocket();
-		setStreamConnected(this.stream, false);
+		setFeedConnected(false);
 	}
 
 	send(payload: unknown): void {
@@ -61,12 +52,12 @@ export class WsStream {
 		this.socket = socket;
 
 		socket.onopen = () => {
-			setStreamConnected(this.stream, true);
+			setFeedConnected(true);
 			this.onOpen?.();
 		};
 
 		socket.onclose = () => {
-			setStreamConnected(this.stream, false);
+			setFeedConnected(false);
 
 			if (this.started) {
 				setTimeout(() => this.connect(), 2000);
@@ -80,10 +71,6 @@ export class WsStream {
 		socket.onmessage = (message) => {
 			try {
 				const event = JSON.parse(String(message.data)) as SymmEvent;
-				if (!this.accepts.has(event.event)) {
-					return;
-				}
-
 				this.onEvent(event);
 			} catch {
 				// ignore malformed frames
