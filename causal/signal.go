@@ -9,9 +9,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	kbook "github.com/theapemachine/symm/kraken/book"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
-	"github.com/theapemachine/symm/kraken/trades"
 )
 
 /*
@@ -19,7 +16,7 @@ Causal applies Pearl's ladder: association, backdoor intervention, and counterfa
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor control.
 */
 type Causal struct {
-	ingest  *engine.Ingest
+	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair
 	symbols []string
@@ -57,20 +54,18 @@ func (causal *Causal) MeanConfidence() float64 {
 }
 
 /*
-NewCausal wires live Kraken websocket observers into the engine signal.
+NewCausal wires the shared market broadcast relay into the engine signal.
 */
 func NewCausal(
 	_ context.Context,
 	pool *qpool.Q,
-	book *kbook.Book,
-	tradesObserver *trades.Trades,
-	tickerObserver *kticker.Ticker,
+	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Causal, error) {
 	causal := &Causal{
-		ingest:  engine.NewIngest(book, tradesObserver, tickerObserver),
+		market:  marketRelay,
 		watch:   watch,
 		pairs:   pairs,
 		symbols: append([]string(nil), symbols...),
@@ -79,7 +74,7 @@ func NewCausal(
 	}
 
 	return causal, errnie.Require(map[string]any{
-		"ingest": causal.ingest,
+		"market": marketRelay,
 		"track":  causal.track,
 	})
 }
@@ -100,13 +95,6 @@ func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
 }
 
 /*
-Tick is a no-op until Causal subscribes to market broadcasts.
-*/
-func (causal *Causal) Tick() bool {
-	return false
-}
-
-/*
 Measure advances the causal model and yields non-zero uplift readings.
 */
 func (causal *Causal) Measure(
@@ -118,7 +106,7 @@ func (causal *Causal) Measure(
 		engine.DrainTicks(ctx)
 
 		macro := causal.track.MacroMomentum(causal.symbols, func(symbol string) (float64, bool) {
-			snapshot := causal.ingest.Read(symbol)
+			snapshot := causal.market.Read(symbol)
 
 			return snapshot.ChangePct, snapshot.ChangeOK
 		})
@@ -127,7 +115,7 @@ func (causal *Causal) Measure(
 			ctx,
 			engine.SymbolScanner{
 				Source:  causal.Source(),
-				Ingest:  causal.ingest,
+				Market:  causal.market,
 				Watch:   causal.watch,
 				Pairs:   causal.pairs,
 				Symbols: causal.symbols,

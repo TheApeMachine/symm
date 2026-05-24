@@ -44,6 +44,13 @@ type wsClient struct {
 }
 
 /*
+CommandHandler receives websocket control payloads from connected clients.
+*/
+type CommandHandler interface {
+	HandleCommand(raw any)
+}
+
+/*
 Hub drains the shared ui broadcast group and writes frames to websocket clients.
 Producers Send on the group; writePump delivers asynchronously so Kraken websocket
 frames are not blocked when the orchestrator is in Measure.
@@ -54,6 +61,7 @@ type Hub struct {
 	clients        sync.Map
 	ui             *qpool.BroadcastGroup
 	uiSubscription *qpool.Subscriber
+	commands       CommandHandler
 	runID          string
 }
 
@@ -63,6 +71,7 @@ NewHub subscribes to the shared ui broadcast group created on the pool.
 func NewHub(
 	ctx context.Context,
 	ui *qpool.BroadcastGroup,
+	commands CommandHandler,
 ) (*Hub, error) {
 	if ui == nil {
 		return nil, fmt.Errorf("ui hub requires ui broadcast group")
@@ -71,13 +80,14 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:    ctx,
-		cancel: cancel,
-		ui:     ui,
-		runID:  time.Now().UTC().Format("20060102T150405Z"),
+		ctx:      ctx,
+		cancel:   cancel,
+		ui:       ui,
+		commands: commands,
+		runID:    time.Now().UTC().Format("20060102T150405Z"),
 	}
 
-	hub.uiSubscription = ui.Subscribe("ui", 4096)
+	hub.uiSubscription = ui.Subscribe("ui", 65536)
 
 	go hub.writePump()
 
@@ -143,7 +153,11 @@ func (hub *Hub) writePump() {
 		select {
 		case <-hub.ctx.Done():
 			return
-		case value := <-hub.uiSubscription.Incoming:
+		case value, open := <-hub.uiSubscription.Incoming:
+			if !open {
+				return
+			}
+
 			if value == nil {
 				continue
 			}
@@ -190,9 +204,9 @@ func (hub *Hub) readPump(client *wsClient) {
 			return
 		}
 
-		hub.ui.Send(&qpool.QValue[any]{
-			Value: payload,
-		})
+		if hub.commands != nil {
+			hub.commands.HandleCommand(payload)
+		}
 	}
 }
 

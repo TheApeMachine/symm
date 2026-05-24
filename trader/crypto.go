@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -32,7 +34,6 @@ type Crypto struct {
 	decisionEngine DecisionEngine
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
-	uiStream       UIStream
 }
 
 /*
@@ -67,6 +68,7 @@ func NewCrypto(
 	}
 
 	crypto.portfolio.BindRiskReader(NewSignalRiskBoard(signals...))
+	crypto.portfolio.BindUI(ui)
 
 	for _, signal := range signals {
 		ticker, ok := signal.(engine.Ticker)
@@ -87,24 +89,6 @@ func NewCrypto(
 		"signals":    signals,
 		"pairStates": &crypto.pairStates,
 	})
-}
-
-/*
-BindUIStream attaches the dashboard websocket publisher.
-*/
-func (crypto *Crypto) BindUIStream(stream UIStream) {
-	crypto.uiStream = stream
-}
-
-/*
-BindPortfolioStream wires trade lifecycle events to the dashboard stream.
-*/
-func (crypto *Crypto) BindPortfolioStream(stream PortfolioStream) {
-	if crypto.portfolio == nil {
-		return
-	}
-
-	crypto.portfolio.BindStream(stream)
 }
 
 /*
@@ -183,24 +167,31 @@ func (crypto *Crypto) Run() error {
 
 	crypto.publishDashboard()
 
+	rescoreTicker := time.NewTicker(config.System.RescoreEvery)
+	defer rescoreTicker.Stop()
+
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		default:
-			now := time.Now().UTC()
-			crypto.drainTickables()
-			crypto.candidates.Reset()
-
-			tickResult := crypto.processSignals(now)
-
-			crypto.drainTickables()
-			crypto.settleDuePredictions(now)
-			crypto.drainTickables()
-			crypto.runExecution(now)
-			crypto.publishEnginePulse(tickResult)
+		case <-rescoreTicker.C:
+			crypto.runRescoreTick()
 		}
 	}
+}
+
+func (crypto *Crypto) runRescoreTick() {
+	now := time.Now().UTC()
+	crypto.drainTickables()
+	crypto.candidates.Reset()
+
+	tickResult := crypto.processSignals(now)
+
+	crypto.drainTickables()
+	crypto.settleDuePredictions(now)
+	crypto.drainTickables()
+	crypto.runExecution(now)
+	crypto.publishEnginePulse(tickResult)
 }
 
 func (crypto *Crypto) drainTickables() {
@@ -261,8 +252,11 @@ func (crypto *Crypto) collectMeasurements(
 		)
 	}
 
-	if reader, ok := signal.(engine.MeanConfidenceReader); ok && crypto.uiStream != nil {
-		crypto.uiStream.SignalScore(signal.Source(), reader.MeanConfidence())
+	if reader, ok := signal.(engine.MeanConfidenceReader); ok && crypto.uiBroadcast != nil {
+		ui.Publish(crypto.uiBroadcast, "signal_score", map[string]any{
+			"source":     signal.Source(),
+			"confidence": reader.MeanConfidence(),
+		})
 	}
 
 	return result
@@ -316,7 +310,7 @@ func (crypto *Crypto) processSignal(signal engine.Signal, now time.Time) error {
 }
 
 func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
-	if crypto.uiStream == nil {
+	if crypto.uiBroadcast == nil {
 		return
 	}
 
@@ -332,7 +326,7 @@ func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
 		crypto.evaluationRows(),
 	)
 
-	crypto.uiStream.EnginePulse(map[string]any{
+	ui.Publish(crypto.uiBroadcast, "engine_pulse", map[string]any{
 		"seq":              crypto.rescoreCount,
 		"phase":            "scan",
 		"measurements":     len(tickResult.measurements),
@@ -348,6 +342,17 @@ func (crypto *Crypto) publishEnginePulse(tickResult signalTickResult) {
 		"fluid_sampled":    crypto.fluidSampled(),
 		"fluid_warming":    crypto.fluidWarming(),
 	})
+
+	if crypto.rescoreCount%50 == 0 {
+		errnie.Info(fmt.Sprintf(
+			"engine_pulse seq=%d measurements=%d candidates=%d fluid_sampled=%d fluid_warming=%d",
+			crypto.rescoreCount,
+			len(tickResult.measurements),
+			crypto.candidates.Len(),
+			crypto.fluidSampled(),
+			crypto.fluidWarming(),
+		))
+	}
 }
 
 func (crypto *Crypto) signalRows(
@@ -383,7 +388,7 @@ func (crypto *Crypto) signalRows(
 }
 
 func (crypto *Crypto) publishDashboard() {
-	if crypto.uiStream == nil {
+	if crypto.uiBroadcast == nil {
 		return
 	}
 
@@ -394,26 +399,26 @@ func (crypto *Crypto) publishDashboard() {
 		crypto.prices,
 		crypto.portfolioRiskReader(),
 	)
-	crypto.uiStream.Scoreboard(
-		crypto.lastDecision.Line,
-		crypto.lastDecision.Median,
-		crypto.lastDecision.MAD,
-		targets,
-	)
+	ui.Publish(crypto.uiBroadcast, "scoreboard", map[string]any{
+		"line":    crypto.lastDecision.Line,
+		"median":  crypto.lastDecision.Median,
+		"mad":     crypto.lastDecision.MAD,
+		"targets": targets,
+	})
 
-	tracePayload := decisionTracePayload(crypto.lastDecision, crypto.candidates)
-	tracePayload["event"] = "decision_trace"
-	crypto.uiStream.DecisionTrace(tracePayload)
+	ui.Publish(
+		crypto.uiBroadcast,
+		"decision_trace",
+		decisionTracePayload(crypto.lastDecision, crypto.candidates),
+	)
 }
 
 func (crypto *Crypto) publishStatus() {
-	if crypto.uiStream == nil || crypto.portfolio == nil {
+	if crypto.uiBroadcast == nil || crypto.portfolio == nil {
 		return
 	}
 
-	statusPayload := statusPayload(crypto.portfolio.Status(crypto.prices))
-	statusPayload["event"] = "status"
-	crypto.uiStream.Status(statusPayload)
+	ui.Publish(crypto.uiBroadcast, "status", statusPayload(crypto.portfolio.Status(crypto.prices)))
 }
 
 func (crypto *Crypto) tickerReady() int {

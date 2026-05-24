@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/book"
 	"github.com/theapemachine/symm/kraken/client"
+	krmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ticker"
 	"github.com/theapemachine/symm/kraken/trades"
 	"github.com/theapemachine/symm/market"
@@ -132,13 +133,14 @@ var rootCmd = &cobra.Command{
 		tickGroup := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
 		tradeGroup := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 		bookGroup := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
-		marketStream := ui.NewMarketStream(uiGroup)
+		chartWatch := map[string]struct{}{"BTC/EUR": {}}
 
 		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
 			return trades.New(cmd.Context(), publicClient, symbols, func(
 				symbol string,
 				batchVolume, buyPressure float64,
 				updatedAt time.Time,
+				batchTicks []krmarket.TradeTick,
 			) {
 				tradeGroup.Send(&qpool.QValue[any]{
 					SenderID: "kraken:trades",
@@ -147,6 +149,7 @@ var rootCmd = &cobra.Command{
 						BatchVolume: batchVolume,
 						BuyPressure: buyPressure,
 						UpdatedAt:   updatedAt,
+						Ticks:       batchTicks,
 					},
 				})
 			})
@@ -197,14 +200,26 @@ var rootCmd = &cobra.Command{
 					},
 				})
 
-				marketStream.PriceTick(symbol, last, bid, ask, changePct, timestamp)
+				if _, charted := chartWatch[symbol]; charted {
+					ui.Publish(uiGroup, "price_tick", map[string]any{
+						"symbol":         symbol,
+						"last":           last,
+						"bid":            bid,
+						"ask":            ask,
+						"change_pct_24h": changePct,
+						"at":             timestamp,
+					})
+				}
 
 				if _, seen := quoted[symbol]; seen {
 					return
 				}
 
 				quoted[symbol] = struct{}{}
-				marketStream.QuoteProgress(len(quoted), len(symbols))
+				ui.Publish(uiGroup, "quote_progress", map[string]any{
+					"ready": len(quoted),
+					"total": len(symbols),
+				})
 			})
 		}).Or(func(err error) {
 			errnie.Error(err)
@@ -227,6 +242,13 @@ var rootCmd = &cobra.Command{
 			symbolWatch.NoteTicker(symbol, changePct)
 		})
 
+		marketRelay := errnie.Does(func() (*engine.MarketRelay, error) {
+			return engine.NewMarketRelay(cmd.Context(), tickGroup, tradeGroup, bookGroup)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
+
 		pumpSignal := errnie.Does(func() (*pumpdump.PumpDump, error) {
 			return pumpdump.NewPumpDump(
 				cmd.Context(),
@@ -234,11 +256,8 @@ var rootCmd = &cobra.Command{
 				tickGroup,
 				tradeGroup,
 				bookGroup,
-				bookObserver,
-				tradesObserver,
-				tickerObserver,
+				marketRelay,
 				pairIndex,
-				symbols,
 				symbolWatch,
 			)
 		}).Or(func(err error) {
@@ -250,9 +269,7 @@ var rootCmd = &cobra.Command{
 			return hawkes.NewHawkes(
 				cmd.Context(),
 				pool,
-				bookObserver,
-				tradesObserver,
-				tickerObserver,
+				marketRelay,
 				pairIndex,
 				symbols,
 				symbolWatch,
@@ -266,9 +283,7 @@ var rootCmd = &cobra.Command{
 			return fluid.NewFluid(
 				cmd.Context(),
 				pool,
-				bookObserver,
-				tradesObserver,
-				tickerObserver,
+				marketRelay,
 				pairIndex,
 				symbols,
 				symbolWatch,
@@ -282,9 +297,7 @@ var rootCmd = &cobra.Command{
 			return causal.NewCausal(
 				cmd.Context(),
 				pool,
-				bookObserver,
-				tradesObserver,
-				tickerObserver,
+				marketRelay,
 				pairIndex,
 				symbols,
 				symbolWatch,
@@ -322,15 +335,14 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}).Value()
 
-		cryptoTrader.BindUIStream(marketStream)
-		cryptoTrader.BindPortfolioStream(marketStream)
-		fluidSignal.SetFieldPublisher(marketStream)
-		ui.NewFluidCommands(cmd.Context(), uiGroup, fluidSignal, marketStream)
+		cryptoTrader.RegisterTicker(marketRelay)
+		fluidSignal.BindUI(uiGroup)
+		fluidCommands := ui.NewFluidCommands(fluidSignal, uiGroup)
 		cryptoTrader.PrimeDashboard()
 
 		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
 			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), uiGroup)
+				return ui.NewHub(cmd.Context(), uiGroup, fluidCommands)
 			}).Or(func(err error) {
 				errnie.Error(err)
 				os.Exit(1)

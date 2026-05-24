@@ -17,7 +17,7 @@ SymbolScanner selects symbols and reads ingest snapshots for one signal source.
 */
 type SymbolScanner struct {
 	Source  string
-	Ingest  *Ingest
+	Market  MarketReader
 	Watch   *SymbolWatch
 	Pairs   map[string]asset.Pair
 	Symbols []string
@@ -210,8 +210,8 @@ func evaluateSymbol(
 ) symbolEvalResult {
 	var snapshot Snapshot
 
-	if scanner.Ingest != nil {
-		snapshot = scanner.Ingest.Read(symbol)
+	if scanner.Market != nil {
+		snapshot = scanner.Market.Read(symbol)
 	}
 
 	measurement, ok, err := evaluate(symbol, snapshot)

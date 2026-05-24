@@ -9,9 +9,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	kbook "github.com/theapemachine/symm/kraken/book"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
-	"github.com/theapemachine/symm/kraken/trades"
 )
 
 const pumpdumpSource = "pumpdump"
@@ -22,7 +19,7 @@ PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker str
 type PumpDump struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	ingest *engine.Ingest
+	market *engine.MarketRelay
 	watch  *engine.SymbolWatch
 	pairs  map[string]asset.Pair
 	track  *TrackStore
@@ -37,17 +34,14 @@ var _ engine.Ticker = (*PumpDump)(nil)
 var _ engine.MeanConfidenceReader = (*PumpDump)(nil)
 
 /*
-NewPumpDump wires live Kraken websocket observers into the engine signal.
+NewPumpDump wires market broadcast groups into the engine signal.
 */
 func NewPumpDump(
 	ctx context.Context,
 	pool *qpool.Q,
 	tick, trade, book *qpool.BroadcastGroup,
-	bookObserver *kbook.Book,
-	tradesObserver *trades.Trades,
-	tickerObserver *kticker.Ticker,
+	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
-	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*PumpDump, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -63,7 +57,7 @@ func NewPumpDump(
 	pumpdump := &PumpDump{
 		ctx:    ctx,
 		cancel: cancel,
-		ingest: engine.NewIngest(bookObserver, tradesObserver, tickerObserver),
+		market: marketRelay,
 		watch:  watch,
 		pairs:  pairs,
 		track:  track,
@@ -71,11 +65,9 @@ func NewPumpDump(
 		pool:   pool,
 	}
 
-	_ = symbols
-
 	return pumpdump, errnie.Require(map[string]any{
 		"ctx":    ctx,
-		"ingest": pumpdump.ingest,
+		"market": marketRelay,
 		"track":  track,
 	})
 }
@@ -127,7 +119,7 @@ func (pumpdump *PumpDump) Measure(
 			ctx,
 			engine.SymbolScanner{
 				Source: pumpdumpSource,
-				Ingest: pumpdump.ingest,
+				Market: pumpdump.market,
 				Watch:  pumpdump.watch,
 				Pairs:  pumpdump.pairs,
 				Pool:   pumpdump.pool,

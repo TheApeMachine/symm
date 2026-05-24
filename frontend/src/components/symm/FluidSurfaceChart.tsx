@@ -1,16 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { SciChartReact } from "scichart-react";
+import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
-import type { FieldSnapshotEvent } from "#/lib/symm/events";
 import {
-	initFluidSurface,
-	type FluidSurfaceInitResult,
-} from "#/lib/symm/fluid-surface-controller";
-import {
-	registerFieldSnapshotListener,
-	setFluidDisplay,
-	unregisterFieldSnapshotListener,
-} from "#/lib/symm/feed";
+	drawFluidSurface,
+	type FluidSurfaceControls,
+} from "#/components/symm/draw-fluid-surface";
+import { setFluidDisplay } from "#/lib/symm/feed";
 import { formatFluidScalar, headerFieldMetrics } from "#/lib/symm/fluid-format";
 import {
 	useSymmConnected,
@@ -28,32 +23,34 @@ type FluidSurfaceChartProps = {
 export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	className = "",
 }: FluidSurfaceChartProps) {
-	const fieldListenerRef = useRef<
-		((snapshot: FieldSnapshotEvent) => void) | null
-	>(null);
+	const controlsRef = useRef<FluidSurfaceControls | null>(null);
+	const snapshot = useSymmFieldSnapshot();
 
-	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) => initFluidSurface(rootElement),
+	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
+		if (typeof rootElement === "string") {
+			throw new Error("drawFluidSurface requires an HTMLDivElement root");
+		}
+
+		return drawFluidSurface(rootElement);
+	}, []);
+
+	const onInit = useCallback(
+		(initResult: TResolvedReturnType<typeof drawFluidSurface>) => {
+			controlsRef.current = initResult.controls;
+
+			return () => {
+				initResult.controls.dispose();
+				controlsRef.current = null;
+			};
+		},
 		[],
 	);
 
-	const onInit = useCallback((result: FluidSurfaceInitResult) => {
-		const listener = (snapshot: FieldSnapshotEvent) => {
-			result.update(snapshot);
-		};
-
-		fieldListenerRef.current = listener;
-		registerFieldSnapshotListener(listener);
-	}, []);
-
-	const onDelete = useCallback((result?: FluidSurfaceInitResult) => {
-		if (fieldListenerRef.current) {
-			unregisterFieldSnapshotListener(fieldListenerRef.current);
-			fieldListenerRef.current = null;
+	useEffect(() => {
+		if (snapshot && controlsRef.current) {
+			controlsRef.current.update(snapshot);
 		}
-
-		result?.dispose();
-	}, []);
+	}, [snapshot]);
 
 	return (
 		<div
@@ -64,7 +61,6 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 				<SciChartReact
 					initChart={initChart}
 					onInit={onInit}
-					onDelete={onDelete}
 					style={{ position: "absolute", height: "100%", width: "100%" }}
 				/>
 			</div>

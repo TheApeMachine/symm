@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"github.com/theapemachine/symm/kraken/market"
+)
 
 /*
 TickUpdate is one ticker row from Kraken.
@@ -21,6 +25,7 @@ type TradeUpdate struct {
 	BatchVolume float64
 	BuyPressure float64
 	UpdatedAt   time.Time
+	Ticks       []market.TradeTick
 }
 
 /*

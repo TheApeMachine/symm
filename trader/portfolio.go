@@ -4,8 +4,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/ui"
 )
 
 const (
@@ -57,28 +59,6 @@ type PortfolioEvent struct {
 }
 
 /*
-PortfolioStream publishes trade lifecycle events to the dashboard.
-*/
-type PortfolioStream interface {
-	TradeEnter(payload map[string]any)
-	TradeExit(payload map[string]any)
-	StopRatchet(payload map[string]any)
-}
-
-/*
-StatusSnapshot is the portfolio slice of dashboard status telemetry.
-*/
-type StatusSnapshot struct {
-	EquityEUR    float64
-	CashEUR      float64
-	ClosedPnLEUR float64
-	TradeCount   int
-	WinRate      float64
-	OpenCount    int
-	Positions    []map[string]any
-}
-
-/*
 Portfolio owns open positions and paper wallet debits for the trader loop.
 */
 type Portfolio struct {
@@ -88,7 +68,7 @@ type Portfolio struct {
 	closedPnL  float64
 	tradeCount int
 	wins       int
-	stream     PortfolioStream
+	ui         *qpool.BroadcastGroup
 	riskReader RiskReader
 	trailRisk  *trailRiskFilter
 }
@@ -115,13 +95,26 @@ func (portfolio *Portfolio) BindRiskReader(reader RiskReader) {
 }
 
 /*
-BindStream wires lifecycle event publishing for trade telemetry.
+StatusSnapshot is the portfolio slice of dashboard status telemetry.
 */
-func (portfolio *Portfolio) BindStream(stream PortfolioStream) {
+type StatusSnapshot struct {
+	EquityEUR    float64
+	CashEUR      float64
+	ClosedPnLEUR float64
+	TradeCount   int
+	WinRate      float64
+	OpenCount    int
+	Positions    []map[string]any
+}
+
+/*
+BindUI wires lifecycle event publishing to the shared dashboard group.
+*/
+func (portfolio *Portfolio) BindUI(uiGroup *qpool.BroadcastGroup) {
 	portfolio.mu.Lock()
 	defer portfolio.mu.Unlock()
 
-	portfolio.stream = stream
+	portfolio.ui = uiGroup
 }
 
 /*
@@ -659,18 +652,11 @@ func (portfolio *Portfolio) exitEvent(
 Emit publishes one lifecycle event outside portfolio locks.
 */
 func (portfolio *Portfolio) Emit(event *PortfolioEvent) {
-	if event == nil || portfolio.stream == nil {
+	if event == nil || portfolio.ui == nil {
 		return
 	}
 
-	switch event.Name {
-	case "trade_enter":
-		portfolio.stream.TradeEnter(event.Payload)
-	case "trade_exit":
-		portfolio.stream.TradeExit(event.Payload)
-	case "stop_ratchet":
-		portfolio.stream.StopRatchet(event.Payload)
-	}
+	ui.SendEvent(portfolio.ui, event.Payload)
 }
 
 func clampTrailPct(trailPct float64) float64 {

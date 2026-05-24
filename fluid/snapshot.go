@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/engine"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
 )
 
 /*
@@ -47,7 +46,7 @@ type FieldAggregate struct {
 FieldSnapshot builds a UI field snapshot from the latest per-symbol samples.
 */
 func (fluid *Fluid) FieldSnapshot() FieldSnapshot {
-	rows := fluid.track.SnapshotRows(fluid.Symbols(), fluid.Ingest().Ticker())
+	rows := fluid.track.SnapshotRows(fluid.Symbols(), fluid.market)
 	aggregate, sampledCount := aggregateFieldRows(rows)
 
 	return FieldSnapshot{
@@ -101,7 +100,7 @@ SnapshotRows returns per-symbol fluid rows for telemetry.
 */
 func (trackStore *TrackStore) SnapshotRows(
 	symbols []string,
-	ticker *kticker.Ticker,
+	quotes engine.MarketReader,
 ) []SymbolSnapshot {
 	trackStore.shard.RLockMap()
 	defer trackStore.shard.RUnlockMap()
@@ -109,7 +108,7 @@ func (trackStore *TrackStore) SnapshotRows(
 	rows := make([]SymbolSnapshot, 0, len(symbols))
 
 	for _, symbol := range symbols {
-		rows = append(rows, trackStore.symbolRowLocked(symbol, ticker))
+		rows = append(rows, trackStore.symbolRowLocked(symbol, quotes))
 	}
 
 	return rows
@@ -120,25 +119,27 @@ SymbolRow returns the latest fluid row for one symbol.
 */
 func (trackStore *TrackStore) SymbolRow(
 	symbol string,
-	ticker *kticker.Ticker,
+	quotes engine.MarketReader,
 ) SymbolSnapshot {
 	trackStore.shard.RLockMap()
 	defer trackStore.shard.RUnlockMap()
 
-	return trackStore.symbolRowLocked(symbol, ticker)
+	return trackStore.symbolRowLocked(symbol, quotes)
 }
 
 func (trackStore *TrackStore) symbolRowLocked(
 	symbol string,
-	ticker *kticker.Ticker,
+	quotes engine.MarketReader,
 ) SymbolSnapshot {
 	track, ok := trackStore.bySymbol[symbol]
 
 	changePct := 0.0
 
-	if ticker != nil {
-		if _, _, _, change, quoteOK := ticker.Quote(symbol); quoteOK {
-			changePct = change
+	if quotes != nil {
+		snapshot := quotes.Read(symbol)
+
+		if snapshot.ChangeOK {
+			changePct = snapshot.ChangePct
 		}
 	}
 

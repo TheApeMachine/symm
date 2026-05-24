@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/ui"
 )
 
 type meanConfidenceSignal struct {
@@ -44,7 +43,6 @@ func TestPublishSignalScoreAfterMeasure(t *testing.T) {
 
 		uiGroup := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 		subscriber := uiGroup.Subscribe("test", 8)
-		stream := ui.NewMarketStream(uiGroup)
 
 		crypto, err := NewCrypto(
 			ctx,
@@ -56,7 +54,6 @@ func TestPublishSignalScoreAfterMeasure(t *testing.T) {
 		)
 
 		So(err, ShouldBeNil)
-		crypto.BindUIStream(stream)
 
 		crypto.collectMeasurements(
 			&meanConfidenceSignal{source: "hawkes", mean: 0.42},

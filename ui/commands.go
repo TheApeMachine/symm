@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/theapemachine/qpool"
@@ -12,44 +11,28 @@ import (
 FluidCommands handles dashboard control messages forwarded from websocket clients.
 */
 type FluidCommands struct {
-	ui     *qpool.BroadcastGroup
-	fluid  *fluid.Fluid
-	stream *MarketStream
+	fluid *fluid.Fluid
+	ui    *qpool.BroadcastGroup
 }
 
 /*
-NewFluidCommands subscribes to the ui group and responds to fluid control ops.
+HandleCommand ingests one websocket control payload from the hub read pump.
+*/
+func (handler *FluidCommands) HandleCommand(raw any) {
+	handler.handle(raw)
+}
+
+/*
+NewFluidCommands wires fluid display control handlers.
 */
 func NewFluidCommands(
-	ctx context.Context,
-	ui *qpool.BroadcastGroup,
 	fluidSignal *fluid.Fluid,
-	stream *MarketStream,
+	ui *qpool.BroadcastGroup,
 ) *FluidCommands {
-	handler := &FluidCommands{
-		ui:     ui,
-		fluid:  fluidSignal,
-		stream: stream,
+	return &FluidCommands{
+		fluid: fluidSignal,
+		ui:    ui,
 	}
-
-	subscription := ui.Subscribe("fluid_commands", 256)
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case value := <-subscription.Incoming:
-				if value == nil {
-					continue
-				}
-
-				handler.handle(value.Value)
-			}
-		}
-	}()
-
-	return handler
 }
 
 func (handler *FluidCommands) handle(raw any) {
@@ -70,15 +53,19 @@ func (handler *FluidCommands) handle(raw any) {
 }
 
 func (handler *FluidCommands) publishDisplay() {
-	if handler.fluid == nil || handler.stream == nil {
+	if handler.fluid == nil || handler.ui == nil {
 		return
 	}
 
-	handler.stream.FluidDisplay(handler.fluid.DisplayParams())
+	Publish(handler.ui, "fluid_display", map[string]any{
+		"height_ema_alpha": handler.fluid.DisplayParams().HeightEMAAlpha,
+		"grid_size":        handler.fluid.DisplayParams().GridSize,
+		"quantile_clip":    handler.fluid.DisplayParams().QuantileClip,
+	})
 }
 
 func (handler *FluidCommands) applyDisplay(payload map[string]any) {
-	if handler.fluid == nil || handler.stream == nil {
+	if handler.fluid == nil || handler.ui == nil {
 		return
 	}
 
@@ -106,7 +93,11 @@ func (handler *FluidCommands) applyDisplay(payload map[string]any) {
 		return
 	}
 
-	handler.stream.FluidDisplay(snapshot)
+	Publish(handler.ui, "fluid_display", map[string]any{
+		"height_ema_alpha": snapshot.HeightEMAAlpha,
+		"grid_size":        snapshot.GridSize,
+		"quantile_clip":    snapshot.QuantileClip,
+	})
 }
 
 func decodeCommand(raw any) (map[string]any, bool) {

@@ -17,13 +17,13 @@ export const sciChartWasmBase = (): string => {
 	return "/scichart";
 };
 
-const useSciChartCdn = (): boolean =>
+const sciChartCdnEnabled = (): boolean =>
 	import.meta.env.VITE_SCICHART_WASM_CDN === "true";
 
 /** Load SciChart 2D/3D/polar wasm from `/scichart` or CDN when VITE_SCICHART_WASM_CDN=true. */
 export const ensureSciChartWasm = (): Promise<void> => {
 	if (!wasmReady) {
-		if (useSciChartCdn()) {
+		if (sciChartCdnEnabled()) {
 			SciChartSurface.loadWasmFromCDN();
 			SciChart3DSurface.loadWasmFromCDN();
 			SciChartPolarSurface.loadWasmFromCDN();

@@ -10,21 +10,17 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	kbook "github.com/theapemachine/symm/kraken/book"
 	"github.com/theapemachine/symm/kraken/market"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
-	"github.com/theapemachine/symm/kraken/trades"
 )
 
 /*
 Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes model.
 */
 type Hawkes struct {
-	ingest  *engine.Ingest
+	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair
 	symbols []string
-	trades  *trades.Trades
 	track   *TrackStore
 	pool    *qpool.Q
 }
@@ -38,44 +34,33 @@ var _ engine.MeanConfidenceReader = (*Hawkes)(nil)
 var _ engine.RiskExporter = (*Hawkes)(nil)
 
 /*
-NewHawkes wires live Kraken websocket observers into the engine signal.
+NewHawkes wires the shared market broadcast relay into the engine signal.
 */
 func NewHawkes(
 	_ context.Context,
 	pool *qpool.Q,
-	book *kbook.Book,
-	tradesObserver *trades.Trades,
-	tickerObserver *kticker.Ticker,
+	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Hawkes, error) {
 	hawkes := &Hawkes{
-		ingest:  engine.NewIngest(book, tradesObserver, tickerObserver),
+		market:  marketRelay,
 		watch:   watch,
 		pairs:   pairs,
 		symbols: append([]string(nil), symbols...),
-		trades:  tradesObserver,
 		track:   NewTrackStore(),
 		pool:    pool,
 	}
 
 	return hawkes, errnie.Require(map[string]any{
-		"ingest": hawkes.ingest,
-		"trades": tradesObserver,
+		"market": marketRelay,
 		"track":  hawkes.track,
 	})
 }
 
 func (hawkes *Hawkes) Source() string {
 	return "hawkes"
-}
-
-/*
-Tick is a no-op until Hawkes subscribes to market broadcasts.
-*/
-func (hawkes *Hawkes) Tick() bool {
-	return false
 }
 
 /*
@@ -94,7 +79,7 @@ func (hawkes *Hawkes) Measure(
 			ctx,
 			engine.SymbolScanner{
 				Source:  hawkes.Source(),
-				Ingest:  hawkes.ingest,
+				Market:  hawkes.market,
 				Watch:   hawkes.watch,
 				Pairs:   hawkes.pairs,
 				Symbols: hawkes.symbols,
@@ -155,7 +140,7 @@ func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
 
 func (hawkes *Hawkes) refreshTracks(ctx context.Context) {
 	_ = engine.RunSymbolJobs(ctx, hawkes.pool, hawkes.symbols, func(symbol string) error {
-		snapshot := hawkes.ingest.Read(symbol)
+		snapshot := hawkes.market.Read(symbol)
 
 		if snapshot.LastOK && snapshot.VolumeOK {
 			hawkes.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
@@ -233,7 +218,7 @@ func (hawkes *Hawkes) score(
 		return 0, engine.Momentum
 	}
 
-	allTicks, ok := hawkes.trades.RecentTicks(symbol, time.Time{})
+	allTicks, ok := hawkes.market.RecentTicks(symbol, time.Time{})
 
 	if !ok || len(allTicks) == 0 {
 		return 0, engine.Momentum

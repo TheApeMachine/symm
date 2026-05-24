@@ -1,52 +1,53 @@
 package trader
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/qpool"
 )
 
-type recordingUIStream struct {
-	status        map[string]any
-	scoreboard    []map[string]any
-	decisionTrace map[string]any
-}
-
-func (stream *recordingUIStream) SignalScore(string, float64) {}
-
-func (stream *recordingUIStream) EnginePulse(map[string]any) {}
-
-func (stream *recordingUIStream) Status(payload map[string]any) {
-	stream.status = payload
-}
-
-func (stream *recordingUIStream) Scoreboard(
-	line, median, mad float64,
-	targets []map[string]any,
-) {
-	stream.scoreboard = targets
-}
-
-func (stream *recordingUIStream) DecisionTrace(payload map[string]any) {
-	stream.decisionTrace = payload
-}
-
 func TestPublishStatus(t *testing.T) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	stream := &recordingUIStream{}
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
 
-	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 100}, &stubSignal{})
-	crypto.wallet = wallet
-	crypto.portfolio = NewPortfolio(wallet)
-	crypto.BindUIStream(stream)
+	uiGroup := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	subscriber := uiGroup.Subscribe("test", 8)
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+
+	crypto, err := NewCrypto(
+		ctx,
+		pool,
+		uiGroup,
+		wallet,
+		stubPrices{"PUMP/EUR": 100},
+		&stubSignal{},
+	)
+
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
 
 	crypto.PrimeDashboard()
 
+	var payload map[string]any
+
+	select {
+	case value := <-subscriber.Incoming:
+		payload, _ = value.Value.(map[string]any)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for status")
+	}
+
 	convey.Convey("Given a primed crypto trader", t, func() {
 		convey.Convey("It should publish wallet status for the dashboard header", func() {
-			convey.So(stream.status["equity_eur"], convey.ShouldEqual, 200)
-			convey.So(stream.status["cash_eur"], convey.ShouldEqual, 200)
-			convey.So(stream.status["event"], convey.ShouldEqual, "status")
+			convey.So(payload["equity_eur"], convey.ShouldEqual, 200)
+			convey.So(payload["cash_eur"], convey.ShouldEqual, 200)
+			convey.So(payload["event"], convey.ShouldEqual, "status")
 		})
 	})
 }

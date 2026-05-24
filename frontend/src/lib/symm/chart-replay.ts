@@ -1,9 +1,14 @@
-import type { CandleBarEvent, StatusEvent, SymmEvent } from "#/lib/symm/events";
+import type {
+	ChartSeedEvent,
+	PriceTickEvent,
+	StatusEvent,
+	SymmEvent,
+} from "#/lib/symm/events";
 
 export const buildChartReplayEvents = (
 	symbol: string,
-	seed: SymmEvent | undefined,
-	candles: CandleBarEvent[],
+	seed: ChartSeedEvent | undefined,
+	ticks: PriceTickEvent[],
 	status: StatusEvent | undefined,
 ): SymmEvent[] => {
 	const events: SymmEvent[] = [];
@@ -12,12 +17,12 @@ export const buildChartReplayEvents = (
 		events.push(seed);
 	}
 
-	for (const bar of candles) {
-		if (String(bar.symbol) !== symbol) {
+	for (const tick of ticks) {
+		if (String(tick.symbol) !== symbol) {
 			continue;
 		}
 
-		events.push(bar);
+		events.push(tick);
 	}
 
 	if (status) {

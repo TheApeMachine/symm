@@ -23,7 +23,6 @@ import {
 } from "scichart-financial-tools";
 
 import type {
-	CandleBarEvent,
 	ChartReplayEvent,
 	ChartSeedEvent,
 	PriceTickEvent,
@@ -197,13 +196,10 @@ class SymmChartController {
 		}
 
 		switch (ev.event) {
-			case "candle_bar":
-				if (ev.symbol === this.symbol) {
-					this.onCandleBar(ev as CandleBarEvent);
-				}
-				return;
 			case "price_tick":
-				if (ev.symbol === this.symbol) this.onTick(ev as PriceTickEvent);
+				if (ev.symbol === this.symbol) {
+					this.onTick(ev as PriceTickEvent);
+				}
 				return;
 			case "chart_replay":
 				if (ev.symbol === this.symbol) {
@@ -243,51 +239,12 @@ class SymmChartController {
 		this.clearRiskZone();
 	}
 
-	private onCandleBar(ev: CandleBarEvent) {
-		if (ev.close <= 0 || ev.sec <= 0) {
-			return;
-		}
-
-		const ohlc = widenFlatOHLC(ev.open, ev.high, ev.low, ev.close);
-		this.latestPrice = ev.close;
-		this.latestSec = ev.sec;
-		this.bucket = {
-			sec: ev.sec,
-			open: ohlc.open,
-			high: ohlc.high,
-			low: ohlc.low,
-			close: ohlc.close,
-		};
-
-		if (this.ohlc.count() > 0) {
-			const nativeX = this.ohlc.getNativeXValues();
-			const lastIndex = this.ohlc.count() - 1;
-			const lastSec = nativeX.get(lastIndex);
-
-			if (lastSec > ev.sec) {
-				return;
-			}
-
-			if (lastSec === ev.sec) {
-				this.writeBucket(lastIndex);
-				this.refreshRiskZone();
-				this.scheduleFrameVisibleRange(ev.close, ev.high, ev.low);
-				return;
-			}
-		}
-
-		this.appendBucket(ev.sec);
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(ev.close, ev.high, ev.low);
-	}
-
 	private onTick(ev: PriceTickEvent) {
 		if (ev.last <= 0) {
 			return;
 		}
 
-		this.latestPrice = ev.last;
-		this.latestSec = tickSecond(ev);
+		this.appendPrice(ev.last, tickSecond(ev));
 		this.refreshRiskZone();
 	}
 

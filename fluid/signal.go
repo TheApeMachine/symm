@@ -9,24 +9,21 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	kbook "github.com/theapemachine/symm/kraken/book"
-	kticker "github.com/theapemachine/symm/kraken/ticker"
-	"github.com/theapemachine/symm/kraken/trades"
 )
 
 /*
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
-	ingest         *engine.Ingest
-	watch          *engine.SymbolWatch
-	pairs          map[string]asset.Pair
-	symbols        []string
-	track          *TrackStore
-	fieldPublisher FieldPublisher
-	displayParams  *DisplayParams
-	gridBuilder    *GridBuilder
-	pool           *qpool.Q
+	market        *engine.MarketRelay
+	watch         *engine.SymbolWatch
+	pairs         map[string]asset.Pair
+	symbols       []string
+	track         *TrackStore
+	ui            *qpool.BroadcastGroup
+	displayParams *DisplayParams
+	gridBuilder   *GridBuilder
+	pool          *qpool.Q
 }
 
 var _ engine.Signal = (*Fluid)(nil)
@@ -38,20 +35,18 @@ var _ engine.MeanConfidenceReader = (*Fluid)(nil)
 var _ engine.RiskExporter = (*Fluid)(nil)
 
 /*
-NewFluid wires live Kraken websocket observers into the engine signal.
+NewFluid wires the shared market broadcast relay into the engine signal.
 */
 func NewFluid(
 	_ context.Context,
 	pool *qpool.Q,
-	book *kbook.Book,
-	tradesObserver *trades.Trades,
-	tickerObserver *kticker.Ticker,
+	marketRelay *engine.MarketRelay,
 	pairs map[string]asset.Pair,
 	symbols []string,
 	watch *engine.SymbolWatch,
 ) (*Fluid, error) {
 	fluid := &Fluid{
-		ingest:        engine.NewIngest(book, tradesObserver, tickerObserver),
+		market:        marketRelay,
 		watch:         watch,
 		pairs:         pairs,
 		symbols:       append([]string(nil), symbols...),
@@ -63,7 +58,7 @@ func NewFluid(
 	fluid.gridBuilder = NewGridBuilder(fluid.displayParams)
 
 	return fluid, errnie.Require(map[string]any{
-		"ingest": fluid.ingest,
+		"market": marketRelay,
 		"track":  fluid.track,
 	})
 }
@@ -74,10 +69,6 @@ func (fluid *Fluid) Source() string {
 
 func (fluid *Fluid) Symbols() []string {
 	return append([]string(nil), fluid.symbols...)
-}
-
-func (fluid *Fluid) Ingest() *engine.Ingest {
-	return fluid.ingest
 }
 
 /*
@@ -109,33 +100,54 @@ func (fluid *Fluid) DisplayParams() DisplayParamsSnapshot {
 }
 
 /*
-SetFieldPublisher wires incremental field telemetry as each symbol is sampled.
+BindUI wires incremental field telemetry to the shared dashboard group.
 */
-func (fluid *Fluid) SetFieldPublisher(publisher FieldPublisher) {
-	fluid.fieldPublisher = publisher
+func (fluid *Fluid) BindUI(uiGroup *qpool.BroadcastGroup) {
+	fluid.ui = uiGroup
 }
 
 func (fluid *Fluid) publishSymbolField(symbol string) {
-	if fluid.fieldPublisher == nil || symbol == "" {
+	if fluid.ui == nil || symbol == "" {
 		return
 	}
 
-	row := fluid.track.SymbolRow(symbol, fluid.ingest.Ticker())
-	fluid.fieldPublisher.PublishFieldRow(row)
+	row := fluid.track.SymbolRow(symbol, fluid.market)
+	publishEvent(fluid.ui, "field_row", map[string]any{
+		"symbol": row.Symbol,
+		"row":    WireRow(row),
+	})
 
-	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.ingest.Ticker())
+	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.market)
 	aggregate, sampledCount := aggregateFieldRows(rows)
-	fluid.fieldPublisher.PublishFieldAggregate(sampledCount, aggregate)
+	publishEvent(fluid.ui, "field_aggregate", map[string]any{
+		"symbol_count": sampledCount,
+		"field":        WireAggregate(aggregate),
+	})
 }
 
 func (fluid *Fluid) publishFieldGrid() {
-	if fluid.fieldPublisher == nil {
+	if fluid.ui == nil {
 		return
 	}
 
-	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.ingest.Ticker())
+	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.market)
 	grid := fluid.gridBuilder.Build(rows, fluid.displayParams.activeGridSize())
-	fluid.fieldPublisher.PublishFieldGrid(grid)
+	publishEvent(fluid.ui, "field_grid", map[string]any{
+		"grid": WireGrid(grid),
+	})
+}
+
+func publishEvent(ui *qpool.BroadcastGroup, event string, payload map[string]any) {
+	if ui == nil || payload == nil {
+		return
+	}
+
+	payload["event"] = event
+	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
+
+	ui.Send(&qpool.QValue[any]{
+		Value: payload,
+	})
 }
 
 /*
@@ -194,13 +206,6 @@ func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
 }
 
 /*
-Tick is a no-op until Fluid subscribes to market broadcasts.
-*/
-func (fluid *Fluid) Tick() bool {
-	return false
-}
-
-/*
 Measure advances the fluid field and yields non-zero flow readings.
 */
 func (fluid *Fluid) Measure(
@@ -215,7 +220,7 @@ func (fluid *Fluid) Measure(
 			ctx,
 			engine.SymbolScanner{
 				Source:  fluid.Source(),
-				Ingest:  fluid.ingest,
+				Market:  fluid.market,
 				Watch:   fluid.watch,
 				Pairs:   fluid.pairs,
 				Symbols: fluid.symbols,

@@ -1,5 +1,4 @@
 import type {
-	CandleBarEvent,
 	ChartSeedEvent,
 	DecisionTraceEvent,
 	EnginePulseEvent,
@@ -47,21 +46,16 @@ import {
 	applyFluidSampled,
 	applyQuoteProgress,
 } from "#/lib/symm/stores/scan-store";
+import { setFeedConnected } from "#/lib/symm/stores/connection-store";
+import { WsStream } from "#/lib/symm/ws-stream";
 
 const MAX_TICK_HISTORY = 360;
 
 type ChartListener = (event: SymmEvent) => void;
 
 const chartListeners = new Map<string, ChartListener>();
-const lastTickBySymbol = new Map<string, PriceTickEvent>();
 const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
-const lastCandleBySymbol = new Map<string, CandleBarEvent>();
-const candleHistoryBySymbol = new Map<string, CandleBarEvent[]>();
-const lastSeedBySymbol = new Map<string, SymmEvent>();
-const fieldSnapshotListeners = new Set<
-	(snapshot: FieldSnapshotEvent) => void
->();
-const enginePulseListeners = new Set<(pulse: EnginePulseEvent) => void>();
+const lastSeedBySymbol = new Map<string, ChartSeedEvent>();
 
 let feedStream: WsStream | null = null;
 let wsUrl = defaultWsUrl;
@@ -84,25 +78,10 @@ const appendTickHistory = (tick: PriceTickEvent) => {
 	tickHistoryBySymbol.set(symbol, history);
 };
 
-const appendCandleHistory = (bar: CandleBarEvent) => {
-	const symbol = String(bar.symbol);
-	const history = candleHistoryBySymbol.get(symbol) ?? [];
-	const lastBar = history[history.length - 1];
-
-	if (lastBar?.sec === bar.sec) {
-		history[history.length - 1] = bar;
-	} else {
-		history.push(bar);
-	}
-
-	if (history.length > MAX_TICK_HISTORY) {
-		history.splice(0, history.length - MAX_TICK_HISTORY);
-	}
-
-	candleHistoryBySymbol.set(symbol, history);
+const hasChartTick = (symbol: string) => {
+	const history = tickHistoryBySymbol.get(symbol);
+	return history !== undefined && history.length > 0;
 };
-
-const hasChartTick = (symbol: string) => lastTickBySymbol.has(symbol);
 
 const chartSubscribeSymbols = () => {
 	const watch = pickMarketWatchSymbol(
@@ -126,69 +105,23 @@ const chartSubscribeSymbols = () => {
 	feedStream?.send({ op: "subscribe", symbols: [...symbols] });
 };
 
-const notifyFieldSnapshotListeners = () => {
-	const snapshot = buildFieldSnapshot(fieldStore.state);
-
-	if (!snapshot) {
-		return;
-	}
-
-	for (const listener of fieldSnapshotListeners) {
-		listener(snapshot);
-	}
-};
-
-const notifyEnginePulseListeners = (pulse: EnginePulseEvent) => {
-	for (const listener of enginePulseListeners) {
-		listener(pulse);
-	}
-};
-
-const applyFieldSnapshotEvent = (snapshot: FieldSnapshotEvent) => {
-	applyFieldSnapshot(snapshot);
-	notifyFieldSnapshotListeners();
-	chartSubscribeSymbols();
-};
-
-const applyStatusEvent = (status: StatusEvent) => {
-	applyStatus(status);
-	chartSubscribeSymbols();
-
-	for (const listener of chartListeners.values()) {
-		listener(status);
-	}
-};
-
-const applyScoreboardEvent = (scoreboard: ScoreboardEvent) => {
-	applyScoreboard(scoreboard);
-	chartSubscribeSymbols();
-};
-
 const replayChartState = (symbol: string, handler: ChartListener) => {
 	for (const event of buildChartReplayEvents(
 		symbol,
 		lastSeedBySymbol.get(symbol),
-		candleHistoryBySymbol.get(symbol) ?? [],
+		tickHistoryBySymbol.get(symbol) ?? [],
 		statusStore.state.status,
 	)) {
 		handler(event);
 	}
 };
 
-const applyChartEvent = (event: SymmEvent) => {
+const routeChartEvent = (event: SymmEvent) => {
 	switch (event.event) {
 		case "price_tick": {
 			const tick = event as PriceTickEvent;
-			lastTickBySymbol.set(String(tick.symbol), tick);
 			appendTickHistory(tick);
 			dispatchChart(String(tick.symbol), tick);
-			return;
-		}
-		case "candle_bar": {
-			const bar = event as CandleBarEvent;
-			lastCandleBySymbol.set(String(bar.symbol), bar);
-			appendCandleHistory(bar);
-			dispatchChart(String(bar.symbol), bar);
 			return;
 		}
 		case "chart_seed": {
@@ -198,11 +131,10 @@ const applyChartEvent = (event: SymmEvent) => {
 			return;
 		}
 		case "stop_ratchet":
-			dispatchChart(String(event.symbol), event);
-			return;
 		case "trade_enter":
 		case "trade_exit":
-			dispatchChart(String(event.symbol), event);
+		case "status":
+			dispatchChart(String(event.symbol ?? ""), event);
 			return;
 		default:
 			return;
@@ -214,26 +146,28 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "hello":
 			return;
 		case "status":
-			applyStatusEvent(event as StatusEvent);
+			applyStatus(event as StatusEvent);
+			chartSubscribeSymbols();
+			for (const listener of chartListeners.values()) {
+				listener(event);
+			}
 			return;
 		case "scoreboard":
-			applyScoreboardEvent(event as ScoreboardEvent);
+			applyScoreboard(event as ScoreboardEvent);
+			chartSubscribeSymbols();
 			return;
 		case "trade_enter":
 		case "trade_exit":
 			appendTrade(event as TradeEnterEvent | TradeExitEvent);
 			chartSubscribeSymbols();
-			applyChartEvent(event);
+			routeChartEvent(event);
 			return;
 		case "signal_score":
 			applySignalScore(event as SignalScoreEvent);
 			return;
-		case "engine_pulse": {
-			const pulse = event as EnginePulseEvent;
-			applyEnginePulse(pulse);
-			notifyEnginePulseListeners(pulse);
+		case "engine_pulse":
+			applyEnginePulse(event as EnginePulseEvent);
 			return;
-		}
 		case "decision_trace":
 			applyDecisionTrace(event as DecisionTraceEvent);
 			return;
@@ -243,13 +177,13 @@ const handleFeedEvent = (event: SymmEvent) => {
 			return;
 		}
 		case "field_snapshot":
-			applyFieldSnapshotEvent(event as FieldSnapshotEvent);
+			applyFieldSnapshot(event as FieldSnapshotEvent);
+			chartSubscribeSymbols();
 			return;
 		case "field_row": {
 			const rowEvent = event as FieldRowEvent;
 			applyFieldRow(rowEvent.row);
 			applyFluidSampled(Object.keys(fieldStore.state.rows).length);
-			notifyFieldSnapshotListeners();
 			return;
 		}
 		case "field_aggregate":
@@ -258,20 +192,17 @@ const handleFeedEvent = (event: SymmEvent) => {
 				(event as FieldAggregateEvent).field,
 			);
 			applyFluidSampled((event as FieldAggregateEvent).symbol_count);
-			notifyFieldSnapshotListeners();
 			return;
 		case "field_grid":
 			applyFieldGrid((event as FieldGridEvent).grid);
-			notifyFieldSnapshotListeners();
 			return;
 		case "fluid_display":
 			applyFluidDisplay(event as FluidDisplayEvent);
 			return;
 		case "price_tick":
-		case "candle_bar":
 		case "chart_seed":
 		case "stop_ratchet":
-			applyChartEvent(event);
+			routeChartEvent(event);
 			return;
 		default:
 			return;
@@ -308,6 +239,7 @@ export const stopSymmFeed = () => {
 	started = false;
 	feedStream?.stop();
 	feedStream = null;
+	setFeedConnected(false);
 };
 
 export const setFluidDisplay = (patch: FluidDisplayPatch) => {
@@ -319,47 +251,16 @@ export const setFluidDisplay = (patch: FluidDisplayPatch) => {
 	feedStream?.send(command);
 };
 
-export const registerChart = (symbol: string, handler: ChartListener) => {
+export const onChart = (
+	symbol: string,
+	handler: ChartListener,
+): (() => void) => {
 	chartListeners.set(symbol, handler);
 	replayChartState(symbol, handler);
 	feedStream?.send({ op: "subscribe", symbols: [symbol] });
-};
 
-export const unregisterChart = (symbol: string) => {
-	chartListeners.delete(symbol);
-	feedStream?.send({ op: "unsubscribe", symbols: [symbol] });
-};
-
-export const registerFieldSnapshotListener = (
-	handler: (snapshot: FieldSnapshotEvent) => void,
-) => {
-	fieldSnapshotListeners.add(handler);
-
-	const snapshot = buildFieldSnapshot(fieldStore.state);
-	if (snapshot) {
-		handler(snapshot);
-	}
-};
-
-export const unregisterFieldSnapshotListener = (
-	handler: (snapshot: FieldSnapshotEvent) => void,
-) => {
-	fieldSnapshotListeners.delete(handler);
-};
-
-export const registerEnginePulseListener = (
-	handler: (pulse: EnginePulseEvent) => void,
-) => {
-	enginePulseListeners.add(handler);
-
-	const pulse = engineStore.state.enginePulse;
-	if (pulse) {
-		handler(pulse);
-	}
-};
-
-export const unregisterEnginePulseListener = (
-	handler: (pulse: EnginePulseEvent) => void,
-) => {
-	enginePulseListeners.delete(handler);
+	return () => {
+		chartListeners.delete(symbol);
+		feedStream?.send({ op: "unsubscribe", symbols: [symbol] });
+	};
 };

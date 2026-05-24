@@ -23,6 +23,7 @@ import {
 import { connectionStore } from "#/lib/symm/stores/connection-store";
 import { engineStore } from "#/lib/symm/stores/engine-store";
 import { buildFieldSnapshot, fieldStore } from "#/lib/symm/stores/field-store";
+import { scanStore } from "#/lib/symm/stores/scan-store";
 import { statusStore } from "#/lib/symm/stores/status-store";
 import { startSymmFeed, stopSymmFeed } from "#/lib/symm/feed";
 

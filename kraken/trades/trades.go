@@ -45,6 +45,7 @@ type tradePublish func(
 	symbol string,
 	batchVolume, buyPressure float64,
 	updatedAt time.Time,
+	batchTicks []market.TradeTick,
 )
 
 type tradeBatch struct {
@@ -263,7 +264,17 @@ func (trades *Trades) applyTicks(ticks []market.TradeTick) error {
 		}
 
 		if trades.publish != nil {
-			trades.publish(symbol, batch.volume, state.pressure, now)
+			batchTicks := make([]market.TradeTick, 0, len(ticks))
+
+			for _, tick := range ticks {
+				if tick.Symbol != symbol {
+					continue
+				}
+
+				batchTicks = append(batchTicks, tick)
+			}
+
+			trades.publish(symbol, batch.volume, state.pressure, now, batchTicks)
 		}
 	}
 

@@ -1,10 +1,12 @@
 package trader
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -47,20 +49,39 @@ func (stub stubQuote) BookDepth(symbol string) ([]market.BookLevel, []market.Boo
 		true
 }
 
-type captureStream struct {
-	events []map[string]any
+type captureUI struct {
+	group      *qpool.BroadcastGroup
+	subscriber *qpool.Subscriber
 }
 
-func (stream *captureStream) TradeEnter(payload map[string]any) {
-	stream.events = append(stream.events, payload)
+func newCaptureUI(t *testing.T) *captureUI {
+	t.Helper()
+
+	ctx := context.Background()
+	group, err := qpool.NewBroadcastGroup(ctx, "portfolio-test", time.Minute)
+
+	if err != nil {
+		t.Fatalf("broadcast group: %v", err)
+	}
+
+	return &captureUI{
+		group:      group,
+		subscriber: group.Subscribe("capture", 8),
+	}
 }
 
-func (stream *captureStream) TradeExit(payload map[string]any) {
-	stream.events = append(stream.events, payload)
-}
+func (capture *captureUI) waitEvent(t *testing.T) map[string]any {
+	t.Helper()
 
-func (stream *captureStream) StopRatchet(payload map[string]any) {
-	stream.events = append(stream.events, payload)
+	select {
+	case value := <-capture.subscriber.Incoming:
+		payload, _ := value.Value.(map[string]any)
+		return payload
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for portfolio event")
+	}
+
+	return nil
 }
 
 func TestPortfolioTryEnter(t *testing.T) {
@@ -70,8 +91,8 @@ func TestPortfolioTryEnter(t *testing.T) {
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	portfolio := NewPortfolio(wallet)
-	stream := &captureStream{}
-	portfolio.BindStream(stream)
+	capture := newCaptureUI(t)
+	portfolio.BindUI(capture.group)
 
 	quotes := stubQuote{
 		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
@@ -92,6 +113,7 @@ func TestPortfolioTryEnter(t *testing.T) {
 	}
 
 	portfolio.Emit(event)
+	tradeEnter := capture.waitEvent(t)
 
 	status := portfolio.Status(quotes)
 
@@ -114,8 +136,8 @@ func TestPortfolioTryEnter(t *testing.T) {
 		t.Fatalf("expected wallet debit after entry, balance=%f", wallet.Balance)
 	}
 
-	if len(stream.events) != 1 || stream.events[0]["event"] != "trade_enter" {
-		t.Fatalf("expected trade_enter event, got %+v", stream.events)
+	if tradeEnter["event"] != "trade_enter" {
+		t.Fatalf("expected trade_enter event, got %+v", tradeEnter)
 	}
 }
 
@@ -127,8 +149,8 @@ func TestPortfolioMarkStopExit(t *testing.T) {
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	portfolio := NewPortfolio(wallet)
-	stream := &captureStream{}
-	portfolio.BindStream(stream)
+	capture := newCaptureUI(t)
+	portfolio.BindUI(capture.group)
 
 	entryQuotes := stubQuote{
 		"PUMP/EUR": {last: 100, bid: 99.9, ask: 100.1},
@@ -146,11 +168,12 @@ func TestPortfolioMarkStopExit(t *testing.T) {
 	}
 
 	portfolio.Emit(event)
+	tradeEnter := capture.waitEvent(t)
 
-	stopPrice, _ := stream.events[0]["stop"].(float64)
+	stopPrice, _ := tradeEnter["stop"].(float64)
 
 	if stopPrice <= 0 {
-		t.Fatalf("expected stop on trade_enter, got %+v", stream.events[0])
+		t.Fatalf("expected stop on trade_enter, got %+v", tradeEnter)
 	}
 
 	exitQuotes := stubQuote{

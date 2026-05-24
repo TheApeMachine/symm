@@ -5,7 +5,7 @@ import {
 	initTradeChart,
 	type TradeChartInitResult,
 } from "#/lib/symm/chart-controller";
-import { registerChart, unregisterChart } from "#/lib/symm/feed";
+import { onChart } from "#/lib/symm/feed";
 import type { StatusEvent, SymmEvent } from "#/lib/symm/events";
 import "#/lib/symm/scichart-setup";
 
@@ -39,7 +39,7 @@ export const TradeChart = memo(function TradeChart({
 
 	const onInit = useCallback(
 		(result: TradeChartInitResult) => {
-			registerChart(symbol, (ev) => {
+			return onChart(symbol, (ev) => {
 				result.handleEvent(ev);
 				syncRegimeLabel(symbol, ev, regimeRef);
 			});
@@ -47,13 +47,9 @@ export const TradeChart = memo(function TradeChart({
 		[symbol],
 	);
 
-	const onDelete = useCallback(
-		(result?: TradeChartInitResult) => {
-			unregisterChart(symbol);
-			result?.dispose();
-		},
-		[symbol],
-	);
+	const onDelete = useCallback((result?: TradeChartInitResult) => {
+		result?.dispose();
+	}, []);
 
 	return (
 		<div className="flex min-h-[200px] flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
