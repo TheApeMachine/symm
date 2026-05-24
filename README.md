@@ -42,7 +42,7 @@ Live spot trading (WebSocket v2 `add_order` on `wss://ws-auth.kraken.com/v2`):
 SYMM_KRAKEN_API_KEY=... SYMM_KRAKEN_API_SECRET=... make run
 ```
 
-Without API keys the trader stays in paper mode. Paper and live share proceeds-based taker fees, depth-weighted VWAP fills, OTO stop order ids, cash reservation during entry, stop-loss-limit stop exits (paper), and stop ratchets via `amend_order` / paper stop amend. With keys, entries wait for the exchange stop order id on the executions channel before committing; live stop fills are polled from the buffer instead of issuing duplicate market exits; trading halts if stop protection cannot be confirmed or amended.
+Without API keys the trader stays in paper mode. Paper and live share proceeds-based taker fees, depth-walk fills with configurable partial-fill coverage (`PaperMinFillCoverage`), optional simulated rejections (`PaperOrderRejectRate`), OTO stop order ids, cash reservation during entry, base-asset inventory, stop-loss-limit stop exits (paper), and stop ratchets via `amend_order` / paper stop amend. With keys, startup runs live reconciliation against Kraken balances and the order journal (`runs/orders.jsonl`), recovers open positions when inventory and journal align, and halts on orphan inventory or missing stop protection; entries wait for the exchange stop order id before committing; live stop fills are polled from the buffer instead of duplicate market exits.
 
 On live startup (skipped during replay), SYMM fetches recent Kraken OHLC candles for the first 64 EUR pairs and seeds volume/return baselines plus calibrator scales before the trader loop. Disable with `SYMM_OHLC_WARM=false`.
 

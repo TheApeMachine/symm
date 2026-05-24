@@ -65,19 +65,19 @@ func (paperBroker *PaperBroker) Enter(
 		fillSide = "sell"
 	}
 
-	fill := config.System.SlippageFill(
-		request.Last, request.Bid, request.Ask, fillSide, config.System.SlippageBPS,
-		request.NotionalEUR, request.BidLevels, request.AskLevels,
+	fill, baseQty, _, err := paperSimulatedFill(
+		fillSide,
+		request.NotionalEUR,
+		0,
+		request.Last,
+		request.Bid,
+		request.Ask,
+		request.BidLevels,
+		request.AskLevels,
 	)
 
-	if fill <= 0 {
-		return BrokerFill{}, errInvalidFill
-	}
-
-	baseQty := roundBaseQty(request.NotionalEUR/fill, paperLotDecimals)
-
-	if baseQty <= 0 {
-		return BrokerFill{}, errInvalidFill
+	if err != nil {
+		return BrokerFill{}, err
 	}
 
 	proceeds, fee, _ := spotLongEntryCost(baseQty, fill, request.FeePct)
@@ -129,12 +129,6 @@ func (paperBroker *PaperBroker) Exit(
 		return BrokerFill{}, err
 	}
 
-	fillSide := "sell"
-
-	if request.Side == positionShort {
-		fillSide = "buy"
-	}
-
 	var exitFill float64
 
 	if request.StopExit && request.Side == positionLong {
@@ -150,20 +144,28 @@ func (paperBroker *PaperBroker) Exit(
 	}
 
 	if exitFill <= 0 {
-		notional := request.NotionalEUR
+		fillSide := "sell"
 
-		if request.BaseQty > 0 && request.Last > 0 {
-			notional = request.BaseQty * request.Last
+		if request.Side == positionShort {
+			fillSide = "buy"
 		}
 
-		exitFill = config.System.SlippageFill(
-			request.Last, request.Bid, request.Ask, fillSide, config.System.SlippageBPS,
-			notional, request.BidLevels, request.AskLevels,
-		)
-	}
+		var err error
 
-	if exitFill <= 0 {
-		return BrokerFill{}, errInvalidFill
+		exitFill, _, _, err = paperSimulatedFill(
+			fillSide,
+			request.NotionalEUR,
+			request.BaseQty,
+			request.Last,
+			request.Bid,
+			request.Ask,
+			request.BidLevels,
+			request.AskLevels,
+		)
+
+		if err != nil {
+			return BrokerFill{}, err
+		}
 	}
 
 	proceeds := spotProceedsEUR(request.BaseQty, exitFill)
@@ -188,6 +190,25 @@ func (paperBroker *PaperBroker) Exit(
 func (paperBroker *PaperBroker) clearRestingStop(stopOrderID string) {
 	paperBroker.mu.Lock()
 	delete(paperBroker.restingStops, stopOrderID)
+	paperBroker.mu.Unlock()
+}
+
+/*
+restoreRestingStop reattaches one stop after portfolio restore.
+*/
+func (paperBroker *PaperBroker) restoreRestingStop(
+	symbol, stopOrderID string,
+	triggerPrice float64,
+) {
+	if stopOrderID == "" || triggerPrice <= 0 {
+		return
+	}
+
+	paperBroker.mu.Lock()
+	paperBroker.restingStops[stopOrderID] = paperRestingStop{
+		symbol:       symbol,
+		triggerPrice: triggerPrice,
+	}
 	paperBroker.mu.Unlock()
 }
 

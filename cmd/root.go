@@ -455,6 +455,11 @@ var rootCmd = &cobra.Command{
 					config.System.TakerFeePct,
 				))
 
+				if err := crypto.ReconcileLive(balance, pairIndex); err != nil {
+					errnie.Error(err)
+					os.Exit(1)
+				}
+
 				errnie.Info("live Kraken trading enabled")
 			}
 

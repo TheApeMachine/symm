@@ -10,7 +10,7 @@ build:
 	@mkdir -p $(LOG_DIR)
 	go build $(LDFLAGS) -o $(SYMM_BIN) .
 
-test: test-go test-frontend
+test: test-go test-race test-frontend
 
 test-go:
 	go test $(LDFLAGS) ./...

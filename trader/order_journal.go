@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -123,4 +124,44 @@ func (journal *OrderJournal) LatestStopOrderID(symbol string) string {
 	}
 
 	return ""
+}
+
+/*
+LoadFromDisk replays persisted journal rows into memory.
+*/
+func (journal *OrderJournal) LoadFromDisk() {
+	if journal == nil || journal.path == "" {
+		return
+	}
+
+	file, err := os.Open(journal.path)
+
+	if err != nil {
+		return
+	}
+
+	defer file.Close()
+
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+
+	journal.entries = journal.entries[:0]
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+
+		if len(line) == 0 {
+			continue
+		}
+
+		var entry OrderJournalEntry
+
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+
+		journal.entries = append(journal.entries, entry)
+	}
 }

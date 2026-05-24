@@ -75,6 +75,9 @@ type Config struct {
 	SymbolActivityHalfLife     time.Duration
 	LogDir                     string
 	PaperOrderLatency          time.Duration
+	PaperMinFillCoverage       float64
+	PaperOrderRejectRate       float64
+	LiveInventoryEpsilon       float64
 	LogLevel                   string
 	LogFileActive              bool
 	KrakenAPIKey               string
@@ -157,6 +160,9 @@ func NewConfig() *Config {
 		SymbolActivityHalfLife:     30 * time.Second,
 		LogDir:                     "runs",
 		PaperOrderLatency:          0,
+		PaperMinFillCoverage:       1,
+		PaperOrderRejectRate:       0,
+		LiveInventoryEpsilon:       1e-8,
 		LogLevel:                   "info",
 		LogFileActive:              true,
 		OHLCEWarmEnabled:           true,

@@ -192,6 +192,8 @@ func (portfolio *Portfolio) applySnapshotLocked(snapshot PortfolioSnapshot) erro
 		portfolio.positions[record.Symbol] = positionFromRecord(record)
 	}
 
+	portfolio.rehydratePaperStopsLocked()
+
 	return nil
 }
 

@@ -799,7 +799,6 @@ func (crypto *Crypto) runExecution(now time.Time) {
 
 		if event, ok := crypto.portfolio.TryEnter(crypto.ctx, now, decision, crypto.prices); ok {
 			crypto.portfolio.Emit(event)
-			crypto.recordOrderJournalEntry(event)
 			crypto.watchExitSymbol(evaluation.Symbol)
 			crypto.publishStatus()
 		}
@@ -851,23 +850,4 @@ func (crypto *Crypto) regimeSymbols() []string {
 	}
 
 	return crypto.candidates.Symbols()
-}
-
-func (crypto *Crypto) recordOrderJournalEntry(event *PortfolioEvent) {
-	if crypto.orderJournal == nil || event == nil {
-		return
-	}
-
-	symbol, _ := event.Payload["symbol"].(string)
-	side, _ := event.Payload["side"].(string)
-	fill, _ := event.Payload["fill"].(float64)
-	notional, _ := event.Payload["notional_eur"].(float64)
-
-	crypto.orderJournal.RecordEntry(OrderJournalEntry{
-		Event:       event.Name,
-		Symbol:      symbol,
-		Side:        side,
-		NotionalEUR: notional,
-		FillPrice:   fill,
-	})
 }
