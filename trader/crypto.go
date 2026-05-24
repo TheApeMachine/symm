@@ -33,6 +33,7 @@ type Crypto struct {
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
 	uiStream       UIStream
+	dashboard      dashboardCache
 }
 
 /*
@@ -97,6 +98,32 @@ func (crypto *Crypto) BindUIStream(stream UIStream) {
 }
 
 /*
+BindPortfolioStream wires trade lifecycle events to the dashboard stream.
+*/
+func (crypto *Crypto) BindPortfolioStream(stream PortfolioStream) {
+	if crypto.portfolio == nil {
+		return
+	}
+
+	crypto.portfolio.BindStream(stream)
+}
+
+/*
+Bootstrap returns the latest dashboard snapshot for new websocket clients.
+*/
+func (crypto *Crypto) Bootstrap() []map[string]any {
+	return crypto.dashboard.snapshot()
+}
+
+/*
+PrimeDashboard publishes wallet and decision telemetry before the run loop starts.
+New websocket clients receive the cached snapshot on connect.
+*/
+func (crypto *Crypto) PrimeDashboard() {
+	crypto.publishDashboard()
+}
+
+/*
 RegisterTicker adds one orchestrator-driven message consumer.
 */
 func (crypto *Crypto) RegisterTicker(ticker engine.Ticker) {
@@ -155,6 +182,8 @@ func (crypto *Crypto) Run() error {
 			"wallet": crypto.wallet,
 		},
 	})
+
+	crypto.publishDashboard()
 
 	for {
 		select {
@@ -357,6 +386,68 @@ func (crypto *Crypto) signalRows(
 	return rows
 }
 
+func (crypto *Crypto) publishDashboard() {
+	if crypto.uiStream == nil {
+		return
+	}
+
+	status := StatusSnapshot{}
+
+	if crypto.portfolio != nil {
+		status = crypto.portfolio.Status(crypto.prices)
+	}
+
+	statusPayload := statusPayload(status)
+	statusPayload["event"] = "status"
+
+	crypto.uiStream.Status(statusPayload)
+
+	targets := scoreboardTargets(
+		crypto.lastDecision,
+		crypto.prices,
+		crypto.portfolioRiskReader(),
+	)
+	crypto.uiStream.Scoreboard(
+		crypto.lastDecision.Line,
+		crypto.lastDecision.Median,
+		crypto.lastDecision.MAD,
+		targets,
+	)
+
+	tracePayload := decisionTracePayload(crypto.lastDecision, crypto.candidates)
+	tracePayload["event"] = "decision_trace"
+
+	crypto.uiStream.DecisionTrace(tracePayload)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	statusPayload["ts"] = now
+
+	scoreboardPayload := map[string]any{
+		"event":   "scoreboard",
+		"ts":      now,
+		"line":    crypto.lastDecision.Line,
+		"median":  crypto.lastDecision.Median,
+		"mad":     crypto.lastDecision.MAD,
+		"targets": targets,
+	}
+
+	tracePayload["ts"] = now
+
+	crypto.dashboard.store([]map[string]any{
+		statusPayload,
+		scoreboardPayload,
+		tracePayload,
+	})
+}
+
+func (crypto *Crypto) portfolioRiskReader() RiskReader {
+	if crypto.portfolio == nil {
+		return nil
+	}
+
+	return crypto.portfolio.riskReader
+}
+
 func (crypto *Crypto) evaluationRows() []map[string]any {
 	rows := make([]map[string]any, 0, len(crypto.lastDecision.Evaluations))
 
@@ -531,6 +622,8 @@ func (crypto *Crypto) runExecution(now time.Time) {
 	crypto.lastDecision = crypto.decisionEngine.Build(
 		crypto.candidates, crypto.prices, warming,
 	)
+
+	crypto.publishDashboard()
 
 	if warming {
 		return

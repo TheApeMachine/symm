@@ -310,10 +310,14 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 	equity := snapshot.CashEUR
 
 	for _, position := range portfolio.positions {
-		last, _, _, _, ok := quotes.Quote(position.Symbol)
+		last := position.EntryPrice
 
-		if !ok || last <= 0 {
-			last = position.EntryPrice
+		if quotes != nil {
+			quoteLast, _, _, _, ok := quotes.Quote(position.Symbol)
+
+			if ok && quoteLast > 0 {
+				last = quoteLast
+			}
 		}
 
 		equity += portfolio.netMarkValue(position, last)

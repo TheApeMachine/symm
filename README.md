@@ -215,6 +215,8 @@ Set `SYMM_REPLAY_FILE` to a captured JSONL fixture: frames replay through the sa
 ### Telemetry
 
 - Hub replay order matches live publish: `engine_pulse` → `decision_trace` → `scoreboard` → `status`
+- On websocket connect the hub sends `hello`, then the cached dashboard snapshot (`status`, `scoreboard`, `decision_trace`) so the header shows wallet equity immediately
+- `PrimeDashboard()` runs before the hub starts accepting clients; every rescore tick refreshes the same frames live
 - Frontend opens one WebSocket to `config.System.UIAddr` and routes all event types through a single feed handler
 
 ## Frontend

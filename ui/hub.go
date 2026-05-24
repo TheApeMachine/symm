@@ -132,6 +132,12 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	hub.clients.Store(client, struct{}{})
 
+	_ = client.conn.WriteJSON(map[string]any{
+		"event":  "hello",
+		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+		"run_id": hub.runID,
+	})
+
 	if hub.bootstrap != nil {
 		for _, message := range hub.bootstrap() {
 			_ = client.conn.WriteJSON(message)

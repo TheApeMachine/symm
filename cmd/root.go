@@ -286,23 +286,6 @@ var rootCmd = &cobra.Command{
 
 		var telemetryHub *ui.Hub
 
-		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
-			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), uiGroup, nil)
-			}).Or(func(err error) {
-				errnie.Error(err)
-				os.Exit(1)
-			}).Value()
-
-			go func() {
-				if err := telemetryHub.Serve(
-					config.System.UIAddr,
-				); err != nil && cmd.Context().Err() == nil {
-					errnie.Error(err)
-				}
-			}()
-		}
-
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
 			marketQuotes := trader.NewMarketQuotes(tickerObserver, bookObserver)
 
@@ -330,6 +313,25 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		cryptoTrader.BindUIStream(marketStream)
+		cryptoTrader.BindPortfolioStream(marketStream)
+		cryptoTrader.PrimeDashboard()
+
+		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
+			telemetryHub = errnie.Does(func() (*ui.Hub, error) {
+				return ui.NewHub(cmd.Context(), uiGroup, cryptoTrader.Bootstrap)
+			}).Or(func(err error) {
+				errnie.Error(err)
+				os.Exit(1)
+			}).Value()
+
+			go func() {
+				if err := telemetryHub.Serve(
+					config.System.UIAddr,
+				); err != nil && cmd.Context().Err() == nil {
+					errnie.Error(err)
+				}
+			}()
+		}
 
 		if publicClient.ReplayMode() {
 			publicClient.StartReplay()
