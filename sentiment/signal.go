@@ -63,6 +63,15 @@ func (sentiment *Sentiment) MeanConfidence() float64 {
 	return sentiment.track.MeanGaugeConfidence()
 }
 
+var _ engine.OHLCWarmer = (*Sentiment)(nil)
+
+/*
+WarmFromOHLC seeds sentiment feature history from historical candles.
+*/
+func (sentiment *Sentiment) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
+	sentiment.track.WarmFromOHLC(candles)
+}
+
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != sentimentSource {
 		return

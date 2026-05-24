@@ -147,6 +147,17 @@ func (crypto *Crypto) BindBroker(broker ExecutionBroker) {
 }
 
 /*
+CreditWarmPulses advances the warm-up counter after OHLC bootstrap.
+*/
+func (crypto *Crypto) CreditWarmPulses(credit int) {
+	if credit <= 0 {
+		return
+	}
+
+	crypto.rescoreCount += credit
+}
+
+/*
 DecisionSnapshot returns the latest decision snapshot for telemetry.
 */
 func (crypto *Crypto) DecisionSnapshot() DecisionSnapshot {

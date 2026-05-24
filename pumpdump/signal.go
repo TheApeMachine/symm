@@ -93,6 +93,15 @@ func (pumpdump *PumpDump) MeanConfidence() float64 {
 	return pumpdump.track.PeakLiveConfidence()
 }
 
+var _ engine.OHLCWarmer = (*PumpDump)(nil)
+
+/*
+WarmFromOHLC seeds precursor volume and price-move baselines from historical candles.
+*/
+func (pumpdump *PumpDump) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
+	pumpdump.track.WarmFromOHLC(candles)
+}
+
 /*
 Feedback nudges precursor calibration from settled prediction error.
 */

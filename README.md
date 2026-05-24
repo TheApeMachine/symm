@@ -44,6 +44,8 @@ SYMM_KRAKEN_API_KEY=... SYMM_KRAKEN_API_SECRET=... make run
 
 Without API keys the trader stays in paper mode. With keys, entries use market orders with OTO stop-loss-limit; exits use market orders; stop ratchets call `amend_order` when an exchange stop order id is known.
 
+On live startup (skipped during replay), SYMM fetches recent Kraken OHLC candles for the first 64 EUR pairs and seeds volume/return baselines plus calibrator scales before the trader loop. Disable with `SYMM_OHLC_WARM=false`.
+
 Offline calibration report from a replay capture:
 
 ```bash

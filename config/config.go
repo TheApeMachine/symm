@@ -74,6 +74,11 @@ type Config struct {
 	LogFileActive              bool
 	KrakenAPIKey               string
 	KrakenAPISecret            string
+	OHLCEWarmEnabled           bool
+	OHLCIntervalMinutes        int
+	OHLCMaxSymbols             int
+	OHLCFetchDelay             time.Duration
+	OHLCEWarmPulseCredit       int
 	ReplayFile                 string
 	ReplayPace                 time.Duration
 }
@@ -144,6 +149,11 @@ func NewConfig() *Config {
 		LogDir:                     "runs",
 		LogLevel:                   "info",
 		LogFileActive:              true,
+		OHLCEWarmEnabled:           true,
+		OHLCIntervalMinutes:        5,
+		OHLCMaxSymbols:             64,
+		OHLCFetchDelay:             200 * time.Millisecond,
+		OHLCEWarmPulseCredit:       30,
 		ReplayPace:                 50 * time.Millisecond,
 	}
 
@@ -159,6 +169,10 @@ func NewConfig() *Config {
 
 	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
 	cfg.KrakenAPISecret = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_SECRET"))
+
+	if warm := strings.TrimSpace(os.Getenv("SYMM_OHLC_WARM")); warm == "0" || strings.EqualFold(warm, "false") {
+		cfg.OHLCEWarmEnabled = false
+	}
 
 	return cfg
 }

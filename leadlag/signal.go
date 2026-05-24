@@ -63,6 +63,15 @@ func (leadlag *LeadLag) MeanConfidence() float64 {
 	return leadlag.track.MeanGaugeConfidence()
 }
 
+var _ engine.OHLCWarmer = (*LeadLag)(nil)
+
+/*
+WarmFromOHLC seeds return history and the volume leader from historical candles.
+*/
+func (leadlag *LeadLag) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
+	leadlag.track.WarmFromOHLC(candles)
+}
+
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != leadlagSource {
 		return

@@ -63,6 +63,15 @@ func (basis *Basis) MeanConfidence() float64 {
 	return basis.track.MeanGaugeConfidence()
 }
 
+var _ engine.OHLCWarmer = (*Basis)(nil)
+
+/*
+WarmFromOHLC seeds relative-strength history from historical candles.
+*/
+func (basis *Basis) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
+	basis.track.WarmFromOHLC(candles)
+}
+
 func (basis *Basis) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != basisSource {
 		return

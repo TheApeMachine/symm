@@ -465,6 +465,34 @@ var rootCmd = &cobra.Command{
 		cryptoTrader.RegisterTicker(marketRelay)
 		fluidSignal.BindUI(uiGroup)
 		fluidCommands := ui.NewFluidCommands(fluidSignal, uiGroup)
+
+		if strings.TrimSpace(config.System.ReplayFile) == "" && config.System.OHLCEWarmEnabled {
+			_, warmErr := engine.StartupWarm(
+				cmd.Context(),
+				pairIndex,
+				symbols,
+				[]engine.Signal{
+					pumpSignal,
+					hawkesSignal,
+					fluidSignal,
+					causalSignal,
+					depthflowSignal,
+					leadlagSignal,
+					basisSignal,
+					sentimentSignal,
+				},
+			)
+
+			if warmErr != nil {
+				errnie.Error(warmErr)
+			}
+
+			if warmErr == nil {
+				cryptoTrader.CreditWarmPulses(config.System.OHLCEWarmPulseCredit)
+				errnie.Info("ohlc startup warm complete")
+			}
+		}
+
 		cryptoTrader.PrimeDashboard()
 
 		if _, ok := ui.ListenAddr(config.System.UIAddr); ok {
