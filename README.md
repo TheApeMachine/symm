@@ -56,7 +56,9 @@ The report includes per-signal/source calibration, hit rate, error percentiles, 
 ## Frontend
 
 ```bash
-cd frontend && pnpm dev
+cd frontend && pnpm install && pnpm dev
 ```
+
+SciChart wasm is copied to `frontend/public/scichart/` on install (`pnpm sync:scichart-wasm`). Override with `VITE_SCICHART_WASM_BASE` or set `VITE_SCICHART_WASM_CDN=true` to load from jsDelivr.
 
 Dashboard connects to `ws://127.0.0.1:8765/ws` (default `config.System.UIAddr`).

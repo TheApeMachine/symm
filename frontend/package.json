@@ -7,9 +7,11 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
-    "build": "vite build",
+    "build": "pnpm sync:scichart-wasm && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:scichart-wasm": "mkdir -p public/scichart && cp node_modules/scichart/_wasm/scichart2d.wasm node_modules/scichart/_wasm/scichart2d-nosimd.wasm node_modules/scichart/_wasm/scichart3d.wasm node_modules/scichart/_wasm/scichart3d-nosimd.wasm node_modules/scichart/_wasm/scichart2d.js node_modules/scichart/_wasm/scichart3d.js public/scichart/",
+    "postinstall": "pnpm sync:scichart-wasm"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",

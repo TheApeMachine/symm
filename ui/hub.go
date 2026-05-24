@@ -15,6 +15,7 @@ import (
 )
 
 const clientSendBuffer = 256
+const priceTickFlushEvery = 50 * time.Millisecond
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: allowLocalhostOrigin,
@@ -39,10 +40,12 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 type wsClient struct {
-	conn    *websocket.Conn
-	send    chan []byte
-	mu      sync.Mutex
-	symbols map[string]struct{}
+	conn         *websocket.Conn
+	send         chan []byte
+	mu           sync.Mutex
+	symbols      map[string]struct{}
+	tickMu       sync.Mutex
+	pendingTicks map[string][]byte
 }
 
 func (client *wsClient) subscribe(symbols []string) {
@@ -130,6 +133,8 @@ func NewHub(ctx context.Context, bootstrap func() []map[string]any) (*Hub, error
 		runID:        time.Now().UTC().Format("20060102T150405Z"),
 	}
 
+	go hub.runPriceTickFlush()
+
 	return hub, errnie.Require(map[string]any{
 		"ctx":    hub.ctx,
 		"cancel": hub.cancel,
@@ -173,15 +178,71 @@ func (hub *Hub) Emit(event map[string]any) {
 	eventName, _ := event["event"].(string)
 	tickSymbol, _ := event["symbol"].(string)
 
+	if eventName == "price_tick" {
+		hub.coalescePriceTick(tickSymbol, payload)
+		return
+	}
+
 	hub.clients.Range(func(key, value any) bool {
 		client := key.(*wsClient)
 
-		if eventName == "price_tick" && !client.wantsSymbol(tickSymbol) {
+		hub.deliver(client, payload, eventIsCritical(eventName))
+
+		return true
+	})
+}
+
+func (hub *Hub) runPriceTickFlush() {
+	ticker := time.NewTicker(priceTickFlushEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case <-ticker.C:
+			hub.flushPendingTicks()
+		}
+	}
+}
+
+func (hub *Hub) coalescePriceTick(symbol string, payload []byte) {
+	if symbol == "" {
+		return
+	}
+
+	hub.clients.Range(func(key, value any) bool {
+		client := key.(*wsClient)
+
+		if !client.wantsSymbol(symbol) {
 			return true
 		}
 
-		critical := eventIsCritical(eventName) || eventName == "price_tick"
-		hub.deliver(client, payload, critical)
+		client.tickMu.Lock()
+
+		if client.pendingTicks == nil {
+			client.pendingTicks = make(map[string][]byte)
+		}
+
+		client.pendingTicks[symbol] = payload
+		client.tickMu.Unlock()
+
+		return true
+	})
+}
+
+func (hub *Hub) flushPendingTicks() {
+	hub.clients.Range(func(key, value any) bool {
+		client := key.(*wsClient)
+
+		client.tickMu.Lock()
+		pending := client.pendingTicks
+		client.pendingTicks = nil
+		client.tickMu.Unlock()
+
+		for _, payload := range pending {
+			hub.deliver(client, payload, false)
+		}
 
 		return true
 	})
