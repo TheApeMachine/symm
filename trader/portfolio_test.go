@@ -99,6 +99,17 @@ func TestPortfolioTryEnter(t *testing.T) {
 		t.Fatalf("expected one open position, got %d", status.OpenCount)
 	}
 
+	openPnL, ok := status.Positions[0]["open_pnl_eur"].(float64)
+
+	if !ok {
+		t.Fatalf(
+			"expected open_pnl_eur on status position, got %T",
+			status.Positions[0]["open_pnl_eur"],
+		)
+	}
+
+	_ = openPnL
+
 	if wallet.Balance >= 200 {
 		t.Fatalf("expected wallet debit after entry, balance=%f", wallet.Balance)
 	}

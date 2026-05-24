@@ -325,16 +325,17 @@ func (portfolio *Portfolio) Status(quotes QuoteReader) StatusSnapshot {
 		}
 
 		snapshot.Positions = append(snapshot.Positions, map[string]any{
-			"symbol":        position.Symbol,
-			"regime":        position.Regime,
-			"side":          sideLabel,
-			"entry_price":   position.EntryPrice,
-			"stop_price":    position.StopPrice,
-			"peak_price":    position.PeakPrice,
-			"last_price":    last,
-			"trail_pct":     position.TrailPct,
-			"notional_eur":  position.NotionalEUR,
-			"opened_at":     position.OpenedAt.UTC().Format(time.RFC3339Nano),
+			"symbol":       position.Symbol,
+			"regime":       position.Regime,
+			"side":         sideLabel,
+			"entry_price":  position.EntryPrice,
+			"stop_price":   position.StopPrice,
+			"peak_price":   position.PeakPrice,
+			"last_price":   last,
+			"trail_pct":    position.TrailPct,
+			"notional_eur": position.NotionalEUR,
+			"open_pnl_eur": portfolio.realizedPnL(position, last),
+			"opened_at":    position.OpenedAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
 
@@ -583,18 +584,18 @@ func (portfolio *Portfolio) enterEvent(
 	return &PortfolioEvent{
 		Name: "trade_enter",
 		Payload: map[string]any{
-			"event":         "trade_enter",
-			"ts":            now.UTC().Format(time.RFC3339Nano),
-			"symbol":        position.Symbol,
-			"regime":        position.Regime,
-			"side":          sideLabel,
-			"reason":        position.Reason,
-			"score":         position.Score,
-			"trail_pct":     position.TrailPct,
-			"fill":          position.FillPrice,
-			"stop":          position.StopPrice,
-			"notional_eur":  position.NotionalEUR,
-			"last":          position.EntryPrice,
+			"event":        "trade_enter",
+			"ts":           now.UTC().Format(time.RFC3339Nano),
+			"symbol":       position.Symbol,
+			"regime":       position.Regime,
+			"side":         sideLabel,
+			"reason":       position.Reason,
+			"score":        position.Score,
+			"trail_pct":    position.TrailPct,
+			"fill":         position.FillPrice,
+			"stop":         position.StopPrice,
+			"notional_eur": position.NotionalEUR,
+			"last":         position.EntryPrice,
 		},
 	}
 }
@@ -607,13 +608,13 @@ func (portfolio *Portfolio) ratchetEvent(
 	return PortfolioEvent{
 		Name: "stop_ratchet",
 		Payload: map[string]any{
-			"event":     "stop_ratchet",
-			"ts":        now.UTC().Format(time.RFC3339Nano),
-			"symbol":    position.Symbol,
-			"old_stop":  oldStop,
-			"new_stop":  position.StopPrice,
-			"peak":      position.PeakPrice,
-			"last":      last,
+			"event":    "stop_ratchet",
+			"ts":       now.UTC().Format(time.RFC3339Nano),
+			"symbol":   position.Symbol,
+			"old_stop": oldStop,
+			"new_stop": position.StopPrice,
+			"peak":     position.PeakPrice,
+			"last":     last,
 		},
 	}
 }
@@ -634,18 +635,18 @@ func (portfolio *Portfolio) exitEvent(
 	return PortfolioEvent{
 		Name: "trade_exit",
 		Payload: map[string]any{
-			"event":        "trade_exit",
-			"ts":           now.UTC().Format(time.RFC3339Nano),
-			"symbol":       position.Symbol,
-			"regime":       position.Regime,
-			"side":         sideLabel,
-			"reason":       reason,
-			"pnl_eur":      pnl,
-			"hold_ms":      hold.Milliseconds(),
-			"entry_price":  position.FillPrice,
-			"stop_price":   position.StopPrice,
-			"peak_price":   position.PeakPrice,
-			"exit_price":   exitFill,
+			"event":       "trade_exit",
+			"ts":          now.UTC().Format(time.RFC3339Nano),
+			"symbol":      position.Symbol,
+			"regime":      position.Regime,
+			"side":        sideLabel,
+			"reason":      reason,
+			"pnl_eur":     pnl,
+			"hold_ms":     hold.Milliseconds(),
+			"entry_price": position.FillPrice,
+			"stop_price":  position.StopPrice,
+			"peak_price":  position.PeakPrice,
+			"exit_price":  exitFill,
 		},
 	}
 }

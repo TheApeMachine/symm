@@ -272,6 +272,7 @@ export type StatusPosition = {
 	last_price?: number;
 	trail_pct: number;
 	notional_eur: number;
+	open_pnl_eur?: number;
 	opened_at?: string;
 };
 

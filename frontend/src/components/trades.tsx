@@ -4,7 +4,7 @@ import {
 } from "#/lib/symm/use-symm-ui";
 import { SidebarSection } from "./sidebar";
 import { EmptyHint } from "./hint";
-import { formatPnl, pnlTone } from "#/lib/utils";
+import { formatEur, formatPnl, pnlTone } from "#/lib/utils";
 
 export const TradesPanel = () => {
 	const connected = useSymmConnected();
@@ -34,14 +34,26 @@ export const TradesPanel = () => {
 											: "ENTER"}{" "}
 									{row.symbol}
 								</span>
+								{row.kind === "open" && row.open_pnl_eur !== undefined ? (
+									<span className={`tabular-nums ${pnlTone(row.open_pnl_eur)}`}>
+										{formatPnl(row.open_pnl_eur)}
+									</span>
+								) : null}
 								{row.kind === "exit" && row.pnl_eur !== undefined ? (
 									<span className={`tabular-nums ${pnlTone(row.pnl_eur)}`}>
 										{formatPnl(row.pnl_eur)}
 									</span>
 								) : null}
 							</div>
-							<div className="mt-0.5 text-(--dash-muted)">
-								{row.regime} · {row.reason}
+							<div className="mt-0.5 flex items-center justify-between gap-2 text-(--dash-muted)">
+								<span>
+									{row.regime} · {row.reason}
+								</span>
+								{row.kind === "open" && row.notional_eur !== undefined ? (
+									<span className="tabular-nums">
+										{formatEur(row.notional_eur)}
+									</span>
+								) : null}
 							</div>
 						</li>
 					))}

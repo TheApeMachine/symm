@@ -11,6 +11,10 @@ export const formatPnl = (value: number): string => {
 	return `${sign}€${value.toFixed(4)}`;
 };
 
+export const formatEur = (value: number): string => {
+	return `€${value.toFixed(2)}`;
+};
+
 export const pnlTone = (value: number | undefined): string => {
 	if (value === undefined) return "";
 	if (value > 0) return "text-(--dash-up)";

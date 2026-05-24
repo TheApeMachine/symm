@@ -11,6 +11,8 @@ export type TradePanelRow = {
 	symbol: string;
 	regime: string;
 	reason: string;
+	notional_eur?: number;
+	open_pnl_eur?: number;
 	pnl_eur?: number;
 };
 
@@ -25,6 +27,8 @@ export const selectTradePanelRows = (input: {
 		symbol: position.symbol,
 		regime: position.regime,
 		reason: "open",
+		notional_eur: position.notional_eur,
+		open_pnl_eur: position.open_pnl_eur,
 	}));
 
 	const exits = input.trades.filter(

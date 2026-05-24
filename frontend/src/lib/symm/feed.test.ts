@@ -163,6 +163,7 @@ describe("selectTradePanelRows", () => {
 						last_price: 0.04,
 						trail_pct: 0.01,
 						notional_eur: 10,
+						open_pnl_eur: 0.12,
 						opened_at: "2026-05-23T15:30:00.000000000Z",
 					},
 				],
@@ -173,5 +174,7 @@ describe("selectTradePanelRows", () => {
 			"open:ZETA/EUR",
 			"exit:Q/EUR",
 		]);
+		expect(rows[0]?.notional_eur).toBe(10);
+		expect(rows[0]?.open_pnl_eur).toBe(0.12);
 	});
 });
