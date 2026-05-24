@@ -25,7 +25,7 @@ func TestBuildPrediction(t *testing.T) {
 		forecast := testForecast(0.002, 10*time.Second)
 
 		convey.Convey("It should build a due forecast", func() {
-			prediction, ok := state.buildPrediction(now, measurement, forecast)
+			prediction, ok := state.buildPrediction(now, measurement, forecast, 100)
 
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(prediction.expectedReturn, convey.ShouldEqual, 0.002)

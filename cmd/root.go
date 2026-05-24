@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/exhaust"
 	"github.com/theapemachine/symm/fluid"
 	"github.com/theapemachine/symm/hawkes"
 	"github.com/theapemachine/symm/kraken/asset"
@@ -312,6 +313,13 @@ var rootCmd = &cobra.Command{
 		cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
 			marketQuotes := trader.NewMarketQuotes(tickerObserver, bookObserver)
 
+			exhaustAdvisor := errnie.Does(func() (*exhaust.Exhaust, error) {
+				return exhaust.NewExhaust(cmd.Context(), marketRelay, symbolWatch)
+			}).Or(func(err error) {
+				errnie.Error(err)
+				os.Exit(1)
+			}).Value()
+
 			crypto := errnie.Does(func() (*trader.Crypto, error) {
 				return trader.NewCrypto(
 					cmd.Context(),
@@ -319,6 +327,7 @@ var rootCmd = &cobra.Command{
 					uiGroup,
 					wallet,
 					marketQuotes,
+					marketRelay,
 					pumpSignal,
 					hawkesSignal,
 					fluidSignal,
@@ -328,6 +337,9 @@ var rootCmd = &cobra.Command{
 				errnie.Error(err)
 				os.Exit(1)
 			}).Value()
+
+			crypto.BindExitAdvisor(exhaustAdvisor)
+			crypto.RegisterTicker(exhaustAdvisor)
 
 			return crypto, nil
 		}).Or(func(err error) {

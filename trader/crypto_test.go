@@ -119,7 +119,7 @@ func testCrypto(
 	t.Cleanup(func() { pool.Close() })
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(ctx, pool, nil, wallet, prices, signals...)
+	crypto, err := NewCrypto(ctx, pool, nil, wallet, prices, nil, signals...)
 
 	if err != nil {
 		t.Fatalf("new crypto: %v", err)
@@ -175,6 +175,7 @@ func TestProcessSignalsSequential(t *testing.T) {
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
+		nil,
 		&measureSignal{onMeasure: blockingMeasure},
 		&measureSignal{onMeasure: blockingMeasure},
 	)
@@ -215,6 +216,7 @@ func TestProcessSignalsDrainsEverySignal(t *testing.T) {
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100, "DUMP/EUR": 50},
+		nil,
 		&sourceStubSignal{
 			source: "hawkes",
 			stubSignal: stubSignal{measurements: []engine.Measurement{
@@ -339,7 +341,7 @@ func TestProcessSignal(t *testing.T) {
 
 		convey.Convey("It should apply feedback once the runway elapses", func() {
 			convey.So(len(signal.feedback), convey.ShouldEqual, 1)
-			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldAlmostEqual, 0.001, 1e-9)
+			convey.So(signal.feedback[0].PredictedReturn, convey.ShouldAlmostEqual, 0.004, 1e-9)
 		})
 	})
 }
@@ -380,7 +382,7 @@ func TestRescoreCollectsFeedback(t *testing.T) {
 		t.Fatalf("expected confidence on feedback, got %v", feedback[0].Confidence)
 	}
 
-	if math.Abs(feedback[0].PredictedReturn-0.001) > 1e-9 {
+	if math.Abs(feedback[0].PredictedReturn-0.004) > 1e-9 {
 		t.Fatalf("expected trader forecast return, got %v", feedback[0].PredictedReturn)
 	}
 }
@@ -399,6 +401,7 @@ func BenchmarkProcessSignals(b *testing.B) {
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
+		nil,
 		&stubSignal{measurements: []engine.Measurement{
 			testMeasurement(0.5),
 		}},
@@ -432,6 +435,7 @@ func BenchmarkProcessSignalsSequential(b *testing.B) {
 		nil,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
+		nil,
 		&stubSignal{measurements: []engine.Measurement{
 			testMeasurement(0.5),
 		}},

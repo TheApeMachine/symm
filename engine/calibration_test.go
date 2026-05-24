@@ -14,14 +14,14 @@ func TestCalibrationStepPenalizesLosingPredictions(t *testing.T) {
 			sample, ok := CalibrationStep(0.01, 0)
 
 			convey.So(ok, convey.ShouldBeTrue)
-			convey.So(sample, convey.ShouldEqual, 0)
+			convey.So(sample, convey.ShouldEqual, 1)
 		})
 
 		convey.Convey("It should accept negative actual return as a losing sample", func() {
 			sample, ok := CalibrationStep(0.01, -0.005)
 
 			convey.So(ok, convey.ShouldBeTrue)
-			convey.So(sample, convey.ShouldEqual, 0)
+			convey.So(sample, convey.ShouldAlmostEqual, 0.5, 0.0001)
 		})
 
 		convey.Convey("It should scale winning samples by actual/predicted", func() {

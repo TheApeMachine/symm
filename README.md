@@ -48,12 +48,12 @@ The report includes per-signal/source calibration, hit rate, error percentiles, 
 
 ## How the trading algorithm works
 
-SYMM is a closed-loop system: four parallel signal engines read Kraken microstructure, emit **measurements** upward into the trader, the trader records **predictions** with a hold horizon, and when time catches up it computes **error** and sends that back down to tune each signal’s internal parameters. Signals never decide position size, expected return, or hold time — those belong to the trader.
+SYMM is a closed-loop system: four parallel entry signals read Kraken microstructure, an **exhaust** exit advisor watches open positions, and the trader records **predictions** with a hold horizon. When time catches up it computes **error**, feeds it back into signal parameters, and updates per-source **ensemble trust** weights.
 
 ```
   pumpdump ──measurement──┐
   hawkes   ──measurement──┤
-  fluid    ──measurement──├──► TRADER ──► paper portfolio
+  fluid    ──measurement──├──► TRADER ──► paper portfolio ◄── exhaust (exit urgency)
   causal   ──measurement──┘       │
                                   │ prediction matures
                                   ▼
@@ -63,6 +63,9 @@ SYMM is a closed-loop system: four parallel signal engines read Kraken microstru
           ▼                       ▼                       ▼
       pumpdump                 hawkes                   …
    (precursor scale)      (excitation scale)     (per-source calibrators)
+                                  │
+                                  ▼
+                         SourceTrustStore (ensemble weights)
 ```
 
 ### Rescore tick
@@ -71,9 +74,9 @@ SYMM is a closed-loop system: four parallel signal engines read Kraken microstru
 
 1. **Drain tickables** — flush pending book/trade/ticker updates into per-symbol track stores (`engine.WithTickDrain` ensures `Measure` never runs while stores are stale).
 2. **Measure signals** — call `Signal.Measure` on `pumpdump`, `hawkes`, `fluid`, and `causal` sequentially; each yields zero or more `engine.Measurement` values.
-3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction, anchor it to the live quote, and settle any predictions whose runway has elapsed.
-4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback`.
-5. **Execute** — mark open positions, merge live score candidates, build the cross-symbol decision, and enter/exit paper trades when gates pass.
+3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed.
+4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback` (also updates `SourceTrustStore`).
+5. **Execute** — mark open positions (trailing stops + **exhaust** early exit), merge live score candidates, classify cross-section **regime**, build the weighted ensemble decision, and enter when gates pass.
 6. **Publish telemetry** — `engine_pulse`, decision trace, scoreboard, and status frames to the UI hub.
 
 There is no parallel signal measurement inside the trader loop: `processSignals` runs each signal in registration order so track-store drains stay deterministic.
@@ -107,7 +110,8 @@ Signals do **not** populate expected return or runway. Confidence is derived ins
 
 When a measurement arrives, `trader.BuildSignalForecast` derives profit expectations from the reading plus the live quote:
 
-- **Expected return** = `confidence × (spreadBPS / 10_000)` using the current bid/ask.
+- **Expected return** = `confidence × (spreadBPS / 10_000) × ForecastSpreadMultiple` (default 4×). Spread is not double-counted in the edge gate — fills already pay bid/ask via `SlippageFill`.
+- **Edge gate** compares expected return to round-trip fees + slippage + `MinEdgeReturn` only.
 - **Runway** (hold horizon before the prediction is due) comes from `config.System` by regime:
   - `ScalpHoldBeforeExit` — pump / momentum / dump
   - `FlowHoldBeforeExit` — flow
@@ -121,12 +125,11 @@ Each symbol keeps a `PairState` with:
 
 Lifecycle for one prediction:
 
-1. **Record** at measurement time with `dueAt = now + runway`.
-2. **Anchor** baseline quote from the live ticker (required for signed actual return).
-3. **Settle** when `now ≥ dueAt`: compute `actualReturn` from baseline → exit quote, signed by measurement direction; emit `PredictionFeedback` with `Error = predicted − actual`.
-4. **Replace** — a new measurement from the same source on the same symbol replaces the still-open forecast for that source only; matured predictions settle regardless.
+1. **Record** at measurement time with `dueAt = now + runway` and **baseline quote** from the live ticker at record time.
+2. **Settle** when `now ≥ dueAt`: compute `actualReturn` from baseline → exit quote, signed by measurement direction; emit `PredictionFeedback` with `Error = predicted − actual`.
+3. **Replace** — a new measurement from the same source on the same symbol replaces the still-open forecast for that source only; matured predictions settle regardless.
 
-The prediction nodes in the architecture diagram are not a fixed pair — they stand for however many open forecasts the trader is tracking at once (per symbol, per source, and potentially more shapes later). Each stores “I expect X return over Y seconds from this reading,” then checks reality when Y elapses.
+`AnchorPending` remains as a fallback when baseline was not set at record time.
 
 ### Error feedback (trader → signal)
 
@@ -148,7 +151,9 @@ After settlement, `trader.Crypto.applyFeedback`:
 1. optionally forwards to a bound sink (eval/replay tooling),
 2. calls `Signal.Feedback` on every registered signal; each signal ignores feedback whose `Source` does not match.
 
-Inside each signal, `engine.PredictionCalibrator` maintains an EWMA **scale** from `actualReturn / predictedReturn` samples. That scale feeds back into the **next** internal fit — Hawkes excitation, pump precursor weights, fluid shock thresholds, causal uplift — not into the confidence number shown on the dashboard. Confidence stays a live market-relative score; calibration tunes the physics parameters that produce it.
+Inside each signal, `engine.PredictionCalibrator` maintains an EWMA **scale** from calibration samples. Losses preserve magnitude via `max(0, 1 + actual/predicted)` rather than flat zero. That scale feeds back into the **next** internal fit — Hawkes excitation, pump precursor weights, fluid shock thresholds, causal uplift — not into the confidence number shown on the dashboard.
+
+The trader also maintains `SourceTrustStore`: per-source hit-rate × magnitude EWMA from settled feedback. `DecisionEngine.Build` multiplies each candidate by regime weight and source trust instead of summing raw confidence equally.
 
 Unanchored or zero predicted-return feedback is dropped — no silent defaults.
 
@@ -157,8 +162,8 @@ Unanchored or zero predicted-return feedback is dropped — no silent defaults.
 Forecast feedback and trade entry are separate paths:
 
 - **Candidates** — each measurement also becomes a `SignalCandidate` (symbol, source, confidence, trader expected return, runway, direction).
-- **Decision engine** — `DecisionEngine.Build` combines candidates per symbol (support count, MAD-scored line, warming gate), producing `Evaluation` rows with `Allow` / `Why`.
-- **Portfolio** — `Portfolio.TryEnter` opens long or short paper positions with depth-weighted VWAP fills (`config.SlippageFill`), regime-aware minimum hold, trailing stops, and fee accounting.
+- **Decision engine** — `ClassifyMarketRegime` (trending / chopping / dead) down-weights signals outside their specialty; `DecisionEngine.Build` combines candidates with regime × trust weights, MAD entry line, and post-cost edge gate.
+- **Portfolio** — `Portfolio.TryEnter` opens long or short paper positions with depth-weighted VWAP fills (`config.SlippageFill`), regime-aware minimum hold, trailing stops, and **`exhaust` early exit** when book-thinning / pressure-fade urgency exceeds `ExitUrgencyThreshold`.
 
 Warm-up: the first `MinWarmPulses` rescans collect measurements and predictions but suppress entries until gauges and calibrators have context.
 
@@ -173,7 +178,9 @@ All four share the same contract (`engine.Signal`) and sharded per-symbol track 
 | **fluid**    | Burgers shock with book-depth viscosity                        | `Flow` on spread/imbalance shocks                |
 | **causal**   | Gradient-boosted stumps + kernel backdoor regression           | `Causal` when intervention uplift exceeds fence  |
 
-Each package owns its feature extraction, confidence normalization (`GaugeScan` peak across the symbol set), and `ApplyPredictionFeedback` hook that maps error into its internal parameters.
+**exhaust** (exit advisor, not an entry signal) tracks open symbols for bid-depth thinning, spread widening, buy-pressure fade, and imbalance reversal; `Portfolio.Mark` closes early when urgency ≥ threshold.
+
+Each entry engine owns its feature extraction, confidence normalization (`GaugeScan` mean across the symbol set), and `ApplyPredictionFeedback` hook that maps error into its internal parameters.
 
 ### Data path (live)
 

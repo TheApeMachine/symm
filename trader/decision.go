@@ -57,12 +57,13 @@ type Decision struct {
 DecisionSnapshot is the execution truth for one rescore tick.
 */
 type DecisionSnapshot struct {
-	Line        float64
-	Median      float64
-	MAD         float64
-	Warming     bool
-	Evaluations []Evaluation
-	Decisions   []Decision
+	Line         float64
+	Median       float64
+	MAD          float64
+	Warming      bool
+	MarketRegime string
+	Evaluations  []Evaluation
+	Decisions    []Decision
 }
 
 /*
@@ -86,6 +87,19 @@ Reset clears all candidates for the next rescore tick.
 */
 func (store *CandidateStore) Reset() {
 	store.bySymbol = make(map[string]map[string]SignalCandidate)
+}
+
+/*
+Symbols returns every symbol with at least one candidate this tick.
+*/
+func (store *CandidateStore) Symbols() []string {
+	symbols := make([]string, 0, len(store.bySymbol))
+
+	for symbol := range store.bySymbol {
+		symbols = append(symbols, symbol)
+	}
+
+	return symbols
 }
 
 /*
@@ -148,29 +162,33 @@ DecisionEngine builds allow/deny snapshots from candidates and quotes.
 type DecisionEngine struct{}
 
 /*
-Build scores candidates, applies the entry line, and gates on post-cost edge.
+Build scores candidates with regime and trust weights, applies the entry line,
+and gates on post-cost edge.
 */
 func (engine *DecisionEngine) Build(
 	candidates CandidateStore,
 	quotes QuoteReader,
 	warming bool,
+	ensemble EnsembleContext,
 ) DecisionSnapshot {
-	evaluations, decisions, scores := engine.buildRows(candidates)
+	evaluations, decisions, scores := engine.buildRows(candidates, ensemble)
 	line, median, mad := entryLine(scores)
 	engine.applyGates(evaluations, decisions, quotes, warming, line)
 
 	return DecisionSnapshot{
-		Line:        line,
-		Median:      median,
-		MAD:         mad,
-		Warming:     warming,
-		Evaluations: evaluations,
-		Decisions:   decisions,
+		Line:         line,
+		Median:       median,
+		MAD:          mad,
+		Warming:      warming,
+		MarketRegime: regimeLabel(ensemble.Regime),
+		Evaluations:  evaluations,
+		Decisions:    decisions,
 	}
 }
 
 func (engine *DecisionEngine) buildRows(
 	candidates CandidateStore,
+	ensemble EnsembleContext,
 ) ([]Evaluation, []Decision, []float64) {
 	evaluations := make([]Evaluation, 0, len(candidates.bySymbol))
 	decisions := make([]Decision, 0)
@@ -178,20 +196,23 @@ func (engine *DecisionEngine) buildRows(
 
 	for symbol, sources := range candidates.bySymbol {
 		combined := 0.0
+		weightedReturn := 0.0
+		returnWeight := 0.0
 		support := 0
 		topRegime := ""
 		topReason := ""
 		topConfidence := 0.0
 		topDirection := 1
-		expectedReturn := 0.0
 		runway := time.Duration(0)
 
 		for _, candidate := range sources {
+			effective := ensembleWeight(ensemble, candidate)
 			support++
-			combined += candidate.Confidence
+			combined += effective
 
-			if candidate.ExpectedReturn > expectedReturn {
-				expectedReturn = candidate.ExpectedReturn
+			if effective > 0 && candidate.ExpectedReturn > 0 {
+				weightedReturn += effective * candidate.ExpectedReturn
+				returnWeight += effective
 			}
 
 			if candidate.Runway > runway {
@@ -210,11 +231,17 @@ func (engine *DecisionEngine) buildRows(
 				Source:         candidate.Source,
 				Regime:         candidate.Regime,
 				Reason:         candidate.Reason,
-				Score:          candidate.Confidence,
+				Score:          effective,
 				ExpectedReturn: candidate.ExpectedReturn,
 				Allow:          false,
 				Why:            "below_line",
 			})
+		}
+
+		expectedReturn := 0.0
+
+		if returnWeight > 0 {
+			expectedReturn = weightedReturn / returnWeight
 		}
 
 		scores = append(scores, combined)
@@ -238,10 +265,25 @@ func (engine *DecisionEngine) buildRows(
 			return evaluations[left].CombinedScore > evaluations[right].CombinedScore
 		}
 
+		if evaluations[left].ExpectedReturn != evaluations[right].ExpectedReturn {
+			return evaluations[left].ExpectedReturn > evaluations[right].ExpectedReturn
+		}
+
 		return evaluations[left].Symbol < evaluations[right].Symbol
 	})
 
 	return evaluations, decisions, scores
+}
+
+func ensembleWeight(ensemble EnsembleContext, candidate SignalCandidate) float64 {
+	regime := RegimeWeight(ensemble.Regime, candidate.Source)
+	trust := 1.0
+
+	if ensemble.Trust != nil {
+		trust = ensemble.Trust.Weight(candidate.Source)
+	}
+
+	return candidate.Confidence * regime * trust
 }
 
 func (engine *DecisionEngine) applyGates(
@@ -322,24 +364,14 @@ func (engine *DecisionEngine) allowDecision(
 
 func requiredEdgeReturn(quotes QuoteReader, symbol string) float64 {
 	roundTripFee := 2 * config.System.TakerFeePct / 100
-	spreadCost := 0.0
 	slippageCost := 2 * config.System.SlippageBPS / 10000
-
-	if quotes != nil && symbol != "" {
-		last, bid, ask, _, ok := quotes.Quote(symbol)
-
-		if ok && last > 0 && bid > 0 && ask > 0 && ask >= bid {
-			spreadCost = (ask - bid) / last
-		}
-	}
-
 	minEdge := config.System.MinEdgeReturn
 
 	if minEdge <= 0 {
 		minEdge = 0
 	}
 
-	return roundTripFee + spreadCost + slippageCost + minEdge
+	return roundTripFee + slippageCost + minEdge
 }
 
 func entryLine(scores []float64) (line, median, mad float64) {

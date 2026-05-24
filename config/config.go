@@ -39,6 +39,8 @@ type Config struct {
 	MaxTrailPct                float64
 	MaxLossPerTradeEUR         float64
 	MinEdgeReturn              float64
+	ForecastSpreadMultiple     float64
+	ExitUrgencyThreshold       float64
 	SnapshotFreshnessTTL       time.Duration
 	MinCalibrationSamples      int
 	MinConfidenceHistory       int
@@ -106,6 +108,8 @@ func NewConfig() *Config {
 		MaxTrailPct:                3.0,
 		MaxLossPerTradeEUR:         0,
 		MinEdgeReturn:              0.0005,
+		ForecastSpreadMultiple:     4,
+		ExitUrgencyThreshold:       0.65,
 		SnapshotFreshnessTTL:       200 * time.Millisecond,
 		MinCalibrationSamples:      12,
 		MinConfidenceHistory:       4,

@@ -62,15 +62,16 @@ type PortfolioEvent struct {
 Portfolio owns open positions and paper wallet debits for the trader loop.
 */
 type Portfolio struct {
-	mu         sync.Mutex
-	wallet     *Wallet
-	positions  map[string]*Position
-	closedPnL  float64
-	tradeCount int
-	wins       int
-	ui         *qpool.BroadcastGroup
-	riskReader RiskReader
-	trailRisk  *trailRiskFilter
+	mu          sync.Mutex
+	wallet      *Wallet
+	positions   map[string]*Position
+	closedPnL   float64
+	tradeCount  int
+	wins        int
+	ui          *qpool.BroadcastGroup
+	riskReader  RiskReader
+	exitAdvisor ExitAdvisor
+	trailRisk   *trailRiskFilter
 }
 
 /*
@@ -105,6 +106,16 @@ type StatusSnapshot struct {
 	WinRate      float64
 	OpenCount    int
 	Positions    []map[string]any
+}
+
+/*
+BindExitAdvisor wires urgency scoring for early position closes.
+*/
+func (portfolio *Portfolio) BindExitAdvisor(advisor ExitAdvisor) {
+	portfolio.mu.Lock()
+	defer portfolio.mu.Unlock()
+
+	portfolio.exitAdvisor = advisor
 }
 
 /*
@@ -270,6 +281,15 @@ func (portfolio *Portfolio) Mark(now time.Time, quotes QuoteReader) []PortfolioE
 			continue
 		}
 
+		if portfolio.shouldExitEarly(position) {
+			exitEvent := portfolio.closeLocked(
+				now, symbol, position, last, bid, ask, quotes, portfolio.earlyExitReason(position),
+			)
+			events = append(events, exitEvent)
+
+			continue
+		}
+
 		if !portfolio.stopTriggered(position, last) {
 			continue
 		}
@@ -359,6 +379,35 @@ func (portfolio *Portfolio) slotNotional() float64 {
 	}
 
 	return notional
+}
+
+func (portfolio *Portfolio) shouldExitEarly(position *Position) bool {
+	if portfolio.exitAdvisor == nil || position == nil {
+		return false
+	}
+
+	urgency, _ := portfolio.exitAdvisor.ExitUrgency(position.Symbol, position.Side)
+	threshold := config.System.ExitUrgencyThreshold
+
+	if threshold <= 0 {
+		threshold = 0.65
+	}
+
+	return urgency >= threshold
+}
+
+func (portfolio *Portfolio) earlyExitReason(position *Position) string {
+	if portfolio.exitAdvisor == nil || position == nil {
+		return "exhaustion"
+	}
+
+	_, reason := portfolio.exitAdvisor.ExitUrgency(position.Symbol, position.Side)
+
+	if reason == "" {
+		return "exhaustion"
+	}
+
+	return reason
 }
 
 func (portfolio *Portfolio) canExit(now time.Time, position *Position) bool {

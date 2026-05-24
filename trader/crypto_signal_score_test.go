@@ -50,6 +50,7 @@ func TestPublishSignalScoreAfterMeasure(t *testing.T) {
 			uiGroup,
 			NewWallet(PaperWallet, "EUR", 200, 0.26),
 			stubPrices{"PUMP/EUR": 100},
+			nil,
 			&meanConfidenceSignal{source: "hawkes", mean: 0.42},
 		)
 

@@ -18,7 +18,8 @@ type SignalForecast struct {
 
 /*
 BuildSignalForecast derives expected return and hold horizon from a signal
-reading and the live quote. Signals never populate these fields themselves.
+reading and the live quote. Expected return models gross move as confidence
+times spread times ForecastSpreadMultiple; costs are checked separately.
 */
 func BuildSignalForecast(
 	measurement engine.Measurement,
@@ -47,7 +48,14 @@ func BuildSignalForecast(
 		return SignalForecast{}, false
 	}
 
-	expectedReturn := measurement.Confidence * (spreadBPS / 10000)
+	spreadReturn := spreadBPS / 10000
+	multiple := config.System.ForecastSpreadMultiple
+
+	if multiple <= 0 {
+		multiple = 4
+	}
+
+	expectedReturn := measurement.Confidence * spreadReturn * multiple
 
 	if expectedReturn <= 0 {
 		return SignalForecast{}, false

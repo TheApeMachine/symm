@@ -45,13 +45,11 @@ func TestAggregateForecasts(t *testing.T) {
 
 	pumpState.Update(pumpMeasurement)
 	pumpState.ApplyForecast(pumpForecast)
-	pumpState.RecordPrediction(start, pumpMeasurement, pumpForecast)
-	pumpState.AnchorPending(100)
+	pumpState.RecordPrediction(start, pumpMeasurement, pumpForecast, 100)
 
 	dumpState.Update(dumpMeasurement)
 	dumpState.ApplyForecast(dumpForecast)
-	dumpState.RecordPrediction(start, dumpMeasurement, dumpForecast)
-	dumpState.AnchorPending(50)
+	dumpState.RecordPrediction(start, dumpMeasurement, dumpForecast, 50)
 
 	convey.Convey("Given anchored forecasts on multiple symbols", t, func() {
 		snapshot := crypto.aggregateForecasts()
@@ -74,8 +72,7 @@ func TestResolveForecastPrefersPairStates(t *testing.T) {
 
 	state.Update(measurement)
 	state.ApplyForecast(forecast)
-	state.RecordPrediction(time.Unix(1_700_000_000, 0), measurement, forecast)
-	state.AnchorPending(100)
+	state.RecordPrediction(time.Unix(1_700_000_000, 0), measurement, forecast, 100)
 
 	readings := map[string]symbolReadings{
 		"PUMP/EUR": {

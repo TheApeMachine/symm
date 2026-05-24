@@ -25,6 +25,7 @@ func TestPublishStatus(t *testing.T) {
 		uiGroup,
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
+		nil,
 		&stubSignal{},
 	)
 

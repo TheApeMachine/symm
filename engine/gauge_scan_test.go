@@ -31,6 +31,19 @@ func TestGaugeScanResetGaugeScan(t *testing.T) {
 	})
 }
 
+func TestGaugeScanMeanGaugeConfidence(t *testing.T) {
+	Convey("Given multiple observed scores", t, func() {
+		gaugeScan := GaugeScan{}
+
+		gaugeScan.ObserveGaugeScore(0.2)
+		gaugeScan.ObserveGaugeScore(0.6)
+
+		Convey("It should return the mean score", func() {
+			So(gaugeScan.MeanGaugeConfidence(), ShouldAlmostEqual, 0.4, 0.0001)
+		})
+	})
+}
+
 func TestGaugeScanIgnoresZeroScores(t *testing.T) {
 	Convey("Given unscored symbols mixed with one reading", t, func() {
 		gaugeScan := GaugeScan{}

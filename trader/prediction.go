@@ -32,6 +32,7 @@ func (state *PairState) buildPrediction(
 	now time.Time,
 	measurement engine.Measurement,
 	forecast SignalForecast,
+	baselineQuote float64,
 ) (Prediction, bool) {
 	symbol := asset.Symbol(state.pair)
 
@@ -50,6 +51,7 @@ func (state *PairState) buildPrediction(
 		direction:       measurement.Type.Direction(),
 		predictedAt:     now,
 		dueAt:           now.Add(forecast.Runway),
+		baselineQuote:   baselineQuote,
 		expectedReturn:  forecast.ExpectedReturn,
 		runway:          forecast.Runway,
 	}, true

@@ -26,12 +26,15 @@ type Crypto struct {
 	wallet         *Wallet
 	portfolio      *Portfolio
 	prices         QuoteReader
+	market         engine.MarketReader
 	signals        []engine.Signal
 	tickers        []engine.Ticker
 	pairStates     sync.Map
 	feedbackSink   func(engine.PredictionFeedback)
 	candidates     CandidateStore
 	decisionEngine DecisionEngine
+	sourceTrust    *SourceTrustStore
+	exitAdvisor    ExitAdvisor
 	lastDecision   DecisionSnapshot
 	rescoreCount   int
 }
@@ -45,6 +48,7 @@ func NewCrypto(
 	ui *qpool.BroadcastGroup,
 	wallet *Wallet,
 	prices QuoteReader,
+	market engine.MarketReader,
 	signals ...engine.Signal,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -61,10 +65,12 @@ func NewCrypto(
 		wallet:         wallet,
 		portfolio:      NewPortfolio(wallet),
 		prices:         prices,
+		market:         market,
 		signals:        signals,
 		pairStates:     sync.Map{},
 		candidates:     NewCandidateStore(),
 		decisionEngine: DecisionEngine{},
+		sourceTrust:    NewSourceTrustStore(),
 	}
 
 	crypto.portfolio.BindRiskReader(NewSignalRiskBoard(signals...))
@@ -123,6 +129,14 @@ func (crypto *Crypto) BindFeedbackSink(
 	sink func(engine.PredictionFeedback),
 ) {
 	crypto.feedbackSink = sink
+}
+
+/*
+BindExitAdvisor wires book-exhaustion scoring into paper exits.
+*/
+func (crypto *Crypto) BindExitAdvisor(advisor ExitAdvisor) {
+	crypto.exitAdvisor = advisor
+	crypto.portfolio.BindExitAdvisor(advisor)
 }
 
 /*
@@ -288,16 +302,15 @@ func (crypto *Crypto) updatePairStates(
 		}
 
 		state.ApplyForecast(forecast)
-		state.RecordPrediction(now, measurement, forecast)
 
-		quotePrice, ok := crypto.quotePrice(symbol)
+		baselineQuote, ok := crypto.quotePrice(symbol)
 
 		if !ok {
 			continue
 		}
 
-		state.AnchorPending(quotePrice)
-		pending = append(pending, state.SettleDue(now, quotePrice)...)
+		state.RecordPrediction(now, measurement, forecast, baselineQuote)
+		pending = append(pending, state.SettleDue(now, baselineQuote)...)
 	}
 
 	return pending
@@ -625,6 +638,10 @@ func (crypto *Crypto) applyFeedback(feedback engine.PredictionFeedback) {
 		crypto.feedbackSink(feedback)
 	}
 
+	if crypto.sourceTrust != nil {
+		crypto.sourceTrust.Apply(feedback)
+	}
+
 	for _, signal := range crypto.signals {
 		signal.Feedback(feedback)
 	}
@@ -638,6 +655,7 @@ func (crypto *Crypto) runExecution(now time.Time) {
 	for _, event := range crypto.portfolio.Mark(now, crypto.prices) {
 		markEvent := event
 		crypto.portfolio.Emit(&markEvent)
+		crypto.handlePortfolioEvent(markEvent)
 	}
 
 	crypto.publishStatus()
@@ -646,8 +664,15 @@ func (crypto *Crypto) runExecution(now time.Time) {
 
 	warming := crypto.rescoreCount < config.System.MinWarmPulses
 	crypto.rescoreCount++
+	regime := ClassifyMarketRegime(crypto.market, crypto.candidates.Symbols())
 	crypto.lastDecision = crypto.decisionEngine.Build(
-		crypto.candidates, crypto.prices, warming,
+		crypto.candidates,
+		crypto.prices,
+		warming,
+		EnsembleContext{
+			Regime: regime,
+			Trust:  crypto.sourceTrust,
+		},
 	)
 
 	crypto.publishDashboard()
@@ -683,7 +708,41 @@ func (crypto *Crypto) runExecution(now time.Time) {
 
 		if event, ok := crypto.portfolio.TryEnter(now, decision, crypto.prices); ok {
 			crypto.portfolio.Emit(event)
+			crypto.watchExitSymbol(evaluation.Symbol)
 			crypto.publishStatus()
 		}
 	}
+}
+
+func (crypto *Crypto) handlePortfolioEvent(event PortfolioEvent) {
+	if event.Name != "trade_exit" {
+		return
+	}
+
+	symbol, _ := event.Payload["symbol"].(string)
+	crypto.forgetExitSymbol(symbol)
+}
+
+func (crypto *Crypto) watchExitSymbol(symbol string) {
+	watcher, ok := crypto.exitAdvisor.(interface {
+		WatchSymbol(string)
+	})
+
+	if !ok || symbol == "" {
+		return
+	}
+
+	watcher.WatchSymbol(symbol)
+}
+
+func (crypto *Crypto) forgetExitSymbol(symbol string) {
+	watcher, ok := crypto.exitAdvisor.(interface {
+		ForgetSymbol(string)
+	})
+
+	if !ok || symbol == "" {
+		return
+	}
+
+	watcher.ForgetSymbol(symbol)
 }

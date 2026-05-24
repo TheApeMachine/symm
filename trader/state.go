@@ -53,7 +53,7 @@ func (state *PairState) Update(measurement engine.Measurement) {
 }
 
 /*
-Predict returns a risk-adjusted return score for cross-pair ranking once calibrated.
+Predict returns expected return and runway for cross-pair ranking.
 */
 func (state *PairState) Predict() (float64, time.Duration) {
 	state.mu.Lock()
@@ -63,13 +63,7 @@ func (state *PairState) Predict() (float64, time.Duration) {
 		return 0, 0
 	}
 
-	runwaySeconds := state.runway.Seconds()
-
-	if runwaySeconds <= 0 {
-		return 0, 0
-	}
-
-	return state.expectedReturn / runwaySeconds, state.runway
+	return state.expectedReturn, state.runway
 }
 
 /*
@@ -85,11 +79,13 @@ func (state *PairState) ApplyForecast(forecast SignalForecast) {
 
 /*
 RecordPrediction stores or replaces the open forecast for one source on this symbol.
+baselineQuote anchors settlement at signal fire time when positive.
 */
 func (state *PairState) RecordPrediction(
 	now time.Time,
 	measurement engine.Measurement,
 	forecast SignalForecast,
+	baselineQuote float64,
 ) bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -100,7 +96,7 @@ func (state *PairState) RecordPrediction(
 
 	state.predictions = state.dropOpenForecast(measurement.Source, now)
 
-	prediction, ok := state.buildPrediction(now, measurement, forecast)
+	prediction, ok := state.buildPrediction(now, measurement, forecast, baselineQuote)
 
 	if !ok {
 		return false

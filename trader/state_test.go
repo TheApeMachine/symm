@@ -38,7 +38,7 @@ func TestUpdate(t *testing.T) {
 			score, runway := state.Predict()
 
 			convey.So(runway, convey.ShouldEqual, 10*time.Second)
-			convey.So(score, convey.ShouldAlmostEqual, 0.0002, 0.0000001)
+			convey.So(score, convey.ShouldAlmostEqual, 0.002, 0.0000001)
 		})
 	})
 }
@@ -73,31 +73,15 @@ func TestPredict(t *testing.T) {
 		state := NewPairState(pair)
 		state.ApplyForecast(testForecast(0.012, 12*time.Second))
 
-		convey.Convey("It should rank using expected return per second", func() {
+		convey.Convey("It should return expected return for ranking", func() {
 			score, runway := state.Predict()
-			expected := 0.012 / 12.0
 
 			convey.So(runway, convey.ShouldEqual, 12*time.Second)
-			convey.So(score, convey.ShouldAlmostEqual, expected, 0.0001)
+			convey.So(score, convey.ShouldAlmostEqual, 0.012, 0.0001)
 		})
 	})
 
-	convey.Convey("Given two readings with the same expected return", t, func() {
-		fleeting := NewPairState(pair)
-		fleeting.ApplyForecast(testForecast(0.008, 8*time.Second))
-
-		lingering := NewPairState(pair)
-		lingering.ApplyForecast(testForecast(0.008, 40*time.Second))
-
-		convey.Convey("It should rank the shorter runway higher", func() {
-			fleetingScore, _ := fleeting.Predict()
-			lingeringScore, _ := lingering.Predict()
-
-			convey.So(fleetingScore, convey.ShouldBeGreaterThan, lingeringScore)
-		})
-	})
-
-	convey.Convey("Given two readings with the same runway", t, func() {
+	convey.Convey("Given two readings with different expected returns", t, func() {
 		weak := NewPairState(pair)
 		weak.ApplyForecast(testForecast(0.003, 10*time.Second))
 
@@ -123,7 +107,7 @@ func TestRecordPrediction(t *testing.T) {
 		state := NewPairState(pair)
 
 		convey.Convey("It should store the trader forecast", func() {
-			recorded := state.RecordPrediction(now, measurement, forecast)
+			recorded := state.RecordPrediction(now, measurement, forecast, 100)
 
 			convey.So(recorded, convey.ShouldBeTrue)
 			convey.So(state.PendingCount(), convey.ShouldEqual, 1)
@@ -135,7 +119,7 @@ func TestRecordPrediction(t *testing.T) {
 
 		convey.Convey("It should not store a prediction", func() {
 			convey.So(
-				state.RecordPrediction(now, measurement, testForecast(0, 10*time.Second)),
+				state.RecordPrediction(now, measurement, testForecast(0, 10*time.Second), 100),
 				convey.ShouldBeFalse,
 			)
 		})
@@ -143,11 +127,11 @@ func TestRecordPrediction(t *testing.T) {
 
 	convey.Convey("Given an open forecast for the same source", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, measurement, forecast)
+		state.RecordPrediction(now, measurement, forecast, 100)
 		replacement := testForecast(0.003, 10*time.Second)
 
 		convey.Convey("It should replace the open forecast", func() {
-			state.RecordPrediction(now.Add(time.Second), measurement, replacement)
+			state.RecordPrediction(now.Add(time.Second), measurement, replacement, 100)
 
 			convey.So(state.PendingCount(), convey.ShouldEqual, 1)
 		})
@@ -160,8 +144,8 @@ func TestAnchorPending(t *testing.T) {
 
 	convey.Convey("Given unanchored forecasts", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
-		state.RecordPrediction(now, signalMeasurement("fluid"), testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second), 0)
+		state.RecordPrediction(now, signalMeasurement("fluid"), testForecast(0.002, time.Second), 0)
 
 		convey.Convey("It should anchor every pending forecast", func() {
 			state.AnchorPending(100)
@@ -180,8 +164,7 @@ func TestSettleDue(t *testing.T) {
 
 	convey.Convey("Given a matured anchored prediction", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement, forecast)
-		state.AnchorPending(100)
+		state.RecordPrediction(start, measurement, forecast, 100)
 
 		convey.Convey("It should emit signed prediction feedback", func() {
 			feedback := state.SettleDue(start.Add(5*time.Second), 110)
@@ -196,8 +179,7 @@ func TestSettleDue(t *testing.T) {
 
 	convey.Convey("Given an immature prediction", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement, forecast)
-		state.AnchorPending(100)
+		state.RecordPrediction(start, measurement, forecast, 100)
 
 		convey.Convey("It should keep the prediction pending", func() {
 			feedback := state.SettleDue(start.Add(2*time.Second), 110)
@@ -209,7 +191,7 @@ func TestSettleDue(t *testing.T) {
 
 	convey.Convey("Given a matured prediction without a baseline quote", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement, forecast)
+		state.RecordPrediction(start, measurement, forecast, 0)
 
 		convey.Convey("It should emit unanchored feedback and drop the forecast", func() {
 			feedback := state.SettleDue(start.Add(5*time.Second), 110)
@@ -239,7 +221,7 @@ func TestForecastMetrics(t *testing.T) {
 	convey.Convey("Given an unanchored forecast", t, func() {
 		state := NewPairState(pair)
 		state.ApplyForecast(testForecast(0.002, time.Second))
-		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second), 0)
 
 		prediction, runningError, hasPrediction, hasError := state.ForecastMetrics(100)
 
@@ -254,7 +236,7 @@ func TestForecastMetrics(t *testing.T) {
 	convey.Convey("Given an anchored forecast", t, func() {
 		state := NewPairState(pair)
 		state.ApplyForecast(testForecast(0.002, time.Second))
-		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.002, time.Second), 100)
 		state.AnchorPending(100)
 
 		_, runningError, hasPrediction, hasError := state.ForecastMetrics(101)
@@ -281,7 +263,7 @@ func TestHasPendingPredictions(t *testing.T) {
 
 	convey.Convey("Given one stored forecast", t, func() {
 		state := NewPairState(pair)
-		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.001, time.Second))
+		state.RecordPrediction(now, signalMeasurement("hawkes"), testForecast(0.001, time.Second), 100)
 
 		convey.Convey("It should report pending predictions", func() {
 			convey.So(state.HasPendingPredictions(), convey.ShouldBeTrue)
@@ -312,8 +294,7 @@ func BenchmarkSettleDue(b *testing.B) {
 
 	for b.Loop() {
 		state := NewPairState(pair)
-		state.RecordPrediction(start, measurement, forecast)
-		state.AnchorPending(100)
+		state.RecordPrediction(start, measurement, forecast, 100)
 		state.SettleDue(dueAt, 101)
 	}
 }

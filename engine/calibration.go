@@ -11,6 +11,7 @@ import (
 const (
 	defaultCalibrationHalfLife = 5 * time.Minute
 	defaultCalibrationTick     = 100 * time.Millisecond
+	maxCalibrationSample       = 2.0
 )
 
 /*
@@ -131,19 +132,29 @@ func (calibrator *PredictionCalibrator) Scale() float64 {
 }
 
 /*
-CalibrationStep is actualReturn/predictedReturn for one signed settled forecast.
-Losing samples return zero with ok=true.
+CalibrationStep maps realized move to a calibration sample in [0, maxCalibrationSample].
+Wins scale by actual/predicted; losses preserve magnitude via 1+actual/predicted clamped at zero.
 */
 func CalibrationStep(predictedReturn, actualReturn float64) (float64, bool) {
 	if predictedReturn <= 0 {
 		return 0, false
 	}
 
+	ratio := actualReturn / predictedReturn
+
 	if actualReturn <= 0 {
-		return 0, true
+		ratio = 1 + ratio
 	}
 
-	return actualReturn / predictedReturn, true
+	if ratio < 0 {
+		ratio = 0
+	}
+
+	if ratio > maxCalibrationSample {
+		ratio = maxCalibrationSample
+	}
+
+	return ratio, true
 }
 
 func (calibrator *PredictionCalibrator) ewmaAlpha() float64 {

@@ -6,8 +6,10 @@ import "sync"
 GaugeScan accumulates per-symbol normalized scores for one measure pass.
 */
 type GaugeScan struct {
-	mu   sync.Mutex
-	peak float64
+	mu    sync.Mutex
+	peak  float64
+	sum   float64
+	count int
 }
 
 /*
@@ -18,6 +20,8 @@ func (gaugeScan *GaugeScan) ResetGaugeScan() {
 	defer gaugeScan.mu.Unlock()
 
 	gaugeScan.peak = 0
+	gaugeScan.sum = 0
+	gaugeScan.count = 0
 }
 
 /*
@@ -31,6 +35,9 @@ func (gaugeScan *GaugeScan) ObserveGaugeScore(score float64) {
 
 	gaugeScan.mu.Lock()
 	defer gaugeScan.mu.Unlock()
+
+	gaugeScan.sum += score
+	gaugeScan.count++
 
 	if score > gaugeScan.peak {
 		gaugeScan.peak = score
@@ -48,8 +55,15 @@ func (gaugeScan *GaugeScan) PeakGaugeConfidence() float64 {
 }
 
 /*
-MeanGaugeConfidence returns the peak normalized score for the latest scan set.
+MeanGaugeConfidence returns the mean normalized score across the latest scan set.
 */
 func (gaugeScan *GaugeScan) MeanGaugeConfidence() float64 {
-	return gaugeScan.PeakGaugeConfidence()
+	gaugeScan.mu.Lock()
+	defer gaugeScan.mu.Unlock()
+
+	if gaugeScan.count == 0 {
+		return 0
+	}
+
+	return gaugeScan.sum / float64(gaugeScan.count)
 }
