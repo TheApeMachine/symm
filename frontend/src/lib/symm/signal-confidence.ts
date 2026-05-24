@@ -57,7 +57,7 @@ export function mergeSignalConfidences(
 		for (const source of SIGNAL_SOURCES) {
 			const score = pulse.source_scores[source];
 
-			if (score !== undefined && Number.isFinite(score)) {
+			if (score !== undefined && Number.isFinite(score) && score > 0) {
 				next[source] = score;
 			}
 		}

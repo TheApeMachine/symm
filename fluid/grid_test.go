@@ -59,6 +59,25 @@ func TestBuildFluidGridEMASmoothsAcrossTicks(t *testing.T) {
 	}
 }
 
+func TestBuildFluidGridSanitizesNaNHeights(t *testing.T) {
+	params := NewDisplayParams()
+	builder := NewGridBuilder(params)
+	grid := builder.Build(sampleGridRows(100), params.activeGridSize())
+
+	for rowIndex := range grid.Heights {
+		for column := range grid.Heights[rowIndex] {
+			if !isFinite(grid.Heights[rowIndex][column]) {
+				t.Fatalf(
+					"expected finite height at [%d][%d], got %v",
+					rowIndex,
+					column,
+					grid.Heights[rowIndex][column],
+				)
+			}
+		}
+	}
+}
+
 func TestSummarizeFluidScalingClipsOutliers(t *testing.T) {
 	rows := []SymbolSnapshot{
 		{Symbol: "A/EUR", Re: 1},

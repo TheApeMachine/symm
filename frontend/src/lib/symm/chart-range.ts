@@ -94,7 +94,7 @@ export function pulseYRange(
 	);
 
 	if (values.length === 0) {
-		return null;
+		return { min: -0.01, max: 0.01 };
 	}
 
 	const min = Math.min(...values);

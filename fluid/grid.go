@@ -161,6 +161,8 @@ func (builder *GridBuilder) Build(rows []SymbolSnapshot, size int) FluidGrid {
 		maxHeight = fallback + 0.5
 	}
 
+	finalizeGridHeights(heights, fallback)
+
 	return FluidGrid{
 		Size:        size,
 		Heights:     heights,
@@ -450,4 +452,20 @@ func smoothEmptyCells(grid [][]float64, fallback float64) int {
 	}
 
 	return filled
+}
+
+func finalizeGridHeights(heights [][]float64, fallback float64) {
+	if !isFinite(fallback) {
+		fallback = 0
+	}
+
+	for rowIndex := range heights {
+		for column := range heights[rowIndex] {
+			if isFinite(heights[rowIndex][column]) {
+				continue
+			}
+
+			heights[rowIndex][column] = fallback
+		}
+	}
 }

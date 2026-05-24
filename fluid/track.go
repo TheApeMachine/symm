@@ -316,6 +316,36 @@ func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
 	return bestSymbol, bestScore
 }
 
+/*
+PeakFieldSymbol returns the symbol with the strongest recent field activity.
+Used when the live gauge score comes from cross-section field state.
+*/
+func (trackStore *TrackStore) PeakFieldSymbol() string {
+	trackStore.shard.LockMap()
+	defer trackStore.shard.UnlockMap()
+
+	bestSymbol := ""
+	bestActivity := 0.0
+
+	for symbol, track := range trackStore.bySymbol {
+		if len(track.samples) == 0 {
+			continue
+		}
+
+		sample := track.samples[len(track.samples)-1]
+		activity := math.Abs(sample.velocity)*sample.density + sample.density
+
+		if activity <= bestActivity {
+			continue
+		}
+
+		bestActivity = activity
+		bestSymbol = symbol
+	}
+
+	return bestSymbol
+}
+
 func (track *SymbolField) trimHistories() {
 	if len(track.sourceHistory) > fieldHistoryCap {
 		track.sourceHistory = track.sourceHistory[len(track.sourceHistory)-fieldHistoryCap:]

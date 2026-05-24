@@ -280,9 +280,11 @@ func (telemetry *Telemetry) ingestLiveReadings(crypto *Crypto) {
 
 		source := signal.Source()
 
-		if peak.Symbol != "" {
-			telemetry.mergeLiveReading(peak.Symbol, source, peak.Score)
+		if peak.Symbol == "" {
+			continue
 		}
+
+		telemetry.mergeLiveReading(peak.Symbol, source, peak.Score)
 
 		if telemetry.hasPulseSignal(peak.Symbol, source) {
 			continue

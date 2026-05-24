@@ -250,16 +250,23 @@ class FluidSurfaceController {
 	}
 
 	private applyGrid(grid: FluidGrid) {
+		const size = grid.heights.length;
+
+		if (size === 0) {
+			return;
+		}
+
 		const rawSpan = grid.max - grid.min;
 		const pad = Math.max(rawSpan * 0.08, 0.05);
 		const sourceMin = grid.min - pad;
 		const sourceSpan = Math.max(grid.max + pad - sourceMin, 0.01);
 
-		for (let z = 0; z < FLUID_GRID_SIZE; z++) {
-			for (let x = 0; x < FLUID_GRID_SIZE; x++) {
-				const raw = grid.heights[z][x];
+		for (let z = 0; z < size; z++) {
+			for (let x = 0; x < size; x++) {
+				const raw = grid.heights[z]?.[x];
+				const finite = Number.isFinite(raw) ? raw : sourceMin;
 				this.heightmap[z][x] =
-					((raw - sourceMin) / sourceSpan) * FLUID_DISPLAY_HEIGHT;
+					((finite - sourceMin) / sourceSpan) * FLUID_DISPLAY_HEIGHT;
 			}
 		}
 

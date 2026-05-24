@@ -250,6 +250,10 @@ class SymmChartController {
 			const lastIndex = this.ohlc.count() - 1;
 			const lastSec = nativeX.get(lastIndex);
 
+			if (lastSec > ev.sec) {
+				return;
+			}
+
 			if (lastSec === ev.sec) {
 				this.writeBucket(lastIndex);
 				this.refreshRiskZone();
@@ -268,7 +272,10 @@ class SymmChartController {
 			return;
 		}
 
-		this.appendPrice(ev.last, tickSecond(ev));
+		this.latestPrice = ev.last;
+		this.latestSec = tickSecond(ev);
+		this.refreshRiskZone();
+		this.scheduleFrameVisibleRange(ev.last);
 	}
 
 	private onReplay(ev: ChartReplayEvent) {

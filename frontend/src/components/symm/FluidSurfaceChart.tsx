@@ -11,7 +11,7 @@ import {
 	setFluidDisplay,
 	unregisterFieldSnapshotListener,
 } from "#/lib/symm/feed";
-import { formatFluidScalar } from "#/lib/symm/fluid-format";
+import { formatFluidScalar, headerFieldMetrics } from "#/lib/symm/fluid-format";
 import {
 	useSymmConnected,
 	useSymmFieldSnapshot,
@@ -78,7 +78,7 @@ const FluidSurfaceHeader = memo(function FluidSurfaceHeader() {
 	const connected = useSymmConnected();
 	const snapshot = useSymmFieldSnapshot();
 	const display = useSymmFluidDisplay();
-	const field = snapshot?.field;
+	const field = headerFieldMetrics(snapshot?.field, snapshot?.symbols);
 	const count = snapshot?.symbol_count ?? 0;
 	const [emaAlpha, setEmaAlpha] = useState(display?.height_ema_alpha ?? 0.35);
 

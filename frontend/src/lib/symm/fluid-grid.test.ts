@@ -1,66 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import {
-	buildFluidGrid,
-	FLUID_HEIGHT_EMA_ALPHA,
-	FLUID_GRID_SIZE,
-	resetFluidHeightSmoothing,
-} from "#/lib/symm/fluid-grid";
-import type { FluidSymbolRow } from "#/lib/symm/events";
+import { gridFromPayload } from "#/lib/symm/fluid-grid";
 
-function sampleRows(re: number): FluidSymbolRow[] {
-	return Array.from({ length: 8 }, (_, index) => ({
-		symbol: `SYM${index}/EUR`,
-		change_pct: index * 0.5,
-		vol: index + 1,
-		div: 0.1,
-		vort: 0.2,
-		turb: 0.3,
-		visc: 1,
-		re: re + index * 0.01,
-	}));
-}
+describe("gridFromPayload", () => {
+	it("replaces null and non-finite heights with the grid minimum", () => {
+		const grid = gridFromPayload({
+			size: 2,
+			heights: [
+				[1, null as unknown as number],
+				[Number.NaN, 2],
+			],
+			min: 0.5,
+			max: 2,
+			filled_cells: 3,
+			outliers: {
+				clipped_count: 0,
+				clipped_at: 1,
+				raw_max: 2,
+				display_max: 1,
+			},
+		});
 
-describe("buildFluidGrid", () => {
-	it("should EMA-smooth heights between frames", () => {
-		resetFluidHeightSmoothing();
-
-		const first = buildFluidGrid(sampleRows(10));
-		const second = buildFluidGrid(sampleRows(100));
-
-		let delta = 0;
-		for (let z = 0; z < FLUID_GRID_SIZE; z++) {
-			for (let x = 0; x < FLUID_GRID_SIZE; x++) {
-				const firstHeight = first.heights[z][x];
-				const secondHeight = second.heights[z][x];
-
-				if (!Number.isFinite(firstHeight) || !Number.isFinite(secondHeight)) {
-					continue;
-				}
-
-				delta += Math.abs(secondHeight - firstHeight);
-			}
-		}
-
-		resetFluidHeightSmoothing();
-		const unsmoothed = buildFluidGrid(sampleRows(100));
-
-		let rawDelta = 0;
-		for (let z = 0; z < FLUID_GRID_SIZE; z++) {
-			for (let x = 0; x < FLUID_GRID_SIZE; x++) {
-				const firstHeight = first.heights[z][x];
-				const rawHeight = unsmoothed.heights[z][x];
-
-				if (!Number.isFinite(firstHeight) || !Number.isFinite(rawHeight)) {
-					continue;
-				}
-
-				rawDelta += Math.abs(rawHeight - firstHeight);
-			}
-		}
-
-		expect(delta).toBeLessThan(rawDelta);
-		expect(FLUID_HEIGHT_EMA_ALPHA).toBeGreaterThan(0);
-		expect(second.max).toBeGreaterThanOrEqual(second.min);
+		expect(grid.heights[0][1]).toBe(0.5);
+		expect(grid.heights[1][0]).toBe(0.5);
+		expect(grid.heights[0][0]).toBe(1);
 	});
 });

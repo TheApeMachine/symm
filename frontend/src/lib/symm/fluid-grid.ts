@@ -36,8 +36,10 @@ export function gridFromPayload(payload: {
 		display_max: number;
 	};
 }): FluidGrid {
+	const fallback = Number.isFinite(payload.min) ? payload.min : 0;
+
 	return {
-		heights: payload.heights,
+		heights: sanitizeHeights(payload.heights, fallback),
 		min: payload.min,
 		max: payload.max,
 		filledCells: payload.filled_cells,
@@ -49,6 +51,12 @@ export function gridFromPayload(payload: {
 			displayMax: payload.outliers.display_max,
 		},
 	};
+}
+
+function sanitizeHeights(heights: number[][], fallback: number): number[][] {
+	return heights.map((row) =>
+		row.map((value) => (Number.isFinite(value) ? value : fallback)),
+	);
 }
 
 function percentileRank(value: number, sorted: number[]): number {

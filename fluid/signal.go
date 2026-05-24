@@ -137,13 +137,25 @@ func (fluid *Fluid) LiveScore() float64 {
 func (fluid *Fluid) PeakReading() engine.LiveReading {
 	symbol, score := fluid.track.PeakSymbolScore()
 
-	if score <= 0 {
-		return engine.LiveReading{Score: fluid.LiveScore()}
+	if score > 0 {
+		return engine.LiveReading{
+			Symbol: symbol,
+			Score:  score,
+		}
 	}
+
+	field := fluid.FieldSnapshot().Field
+	gaugeScore := fieldGaugeScore(field)
+
+	if gaugeScore <= 0 {
+		return engine.LiveReading{}
+	}
+
+	symbol = fluid.track.PeakFieldSymbol()
 
 	return engine.LiveReading{
 		Symbol: symbol,
-		Score:  score,
+		Score:  gaugeScore,
 	}
 }
 

@@ -88,6 +88,40 @@ describe("signal-confidence", () => {
 		});
 	});
 
+	it("should hold prior source_scores when live scores reset to zero", () => {
+		const held = mergeSignalConfidences(
+			{
+				hawkes: 0.42,
+				fluid: 0.31,
+				pumpdump: 0.726,
+				causal: 0.08,
+			},
+			{
+				event: "engine_pulse",
+				ts: "2026-05-23T12:00:00Z",
+				seq: 5,
+				phase: "scan",
+				measurements: 0,
+				candidates: 0,
+				open: 0,
+				signals: [],
+				source_scores: {
+					hawkes: 0,
+					fluid: 0.34,
+					pumpdump: 0,
+					causal: 0,
+				},
+			},
+		);
+
+		expect(held).toEqual({
+			hawkes: 0.42,
+			fluid: 0.34,
+			pumpdump: 0.726,
+			causal: 0.08,
+		});
+	});
+
 	it("should hold confidence when later pulses omit that source", () => {
 		const first = {
 			event: "engine_pulse",

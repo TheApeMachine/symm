@@ -1,4 +1,5 @@
 import type {
+	CandleBarEvent,
 	ChartSeedEvent,
 	DecisionTraceEvent,
 	EnginePulseEvent,
@@ -67,6 +68,8 @@ type ChartListener = (event: SymmEvent) => void;
 const chartListeners = new Map<string, ChartListener>();
 const lastTickBySymbol = new Map<string, PriceTickEvent>();
 const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
+const lastCandleBySymbol = new Map<string, CandleBarEvent>();
+const candleHistoryBySymbol = new Map<string, CandleBarEvent[]>();
 const lastSeedBySymbol = new Map<string, SymmEvent>();
 const fieldSnapshotListeners = new Set<
 	(snapshot: FieldSnapshotEvent) => void
@@ -95,6 +98,24 @@ const appendTickHistory = (tick: PriceTickEvent) => {
 	}
 
 	tickHistoryBySymbol.set(symbol, history);
+};
+
+const appendCandleHistory = (bar: CandleBarEvent) => {
+	const symbol = String(bar.symbol);
+	const history = candleHistoryBySymbol.get(symbol) ?? [];
+	const lastBar = history[history.length - 1];
+
+	if (lastBar?.sec === bar.sec) {
+		history[history.length - 1] = bar;
+	} else {
+		history.push(bar);
+	}
+
+	if (history.length > MAX_TICK_HISTORY) {
+		history.splice(0, history.length - MAX_TICK_HISTORY);
+	}
+
+	candleHistoryBySymbol.set(symbol, history);
 };
 
 const hasChartTick = (symbol: string) => lastTickBySymbol.has(symbol);
@@ -157,7 +178,7 @@ const replayChartState = (symbol: string, handler: ChartListener) => {
 	for (const event of buildChartReplayEvents(
 		symbol,
 		lastSeedBySymbol.get(symbol),
-		tickHistoryBySymbol.get(symbol) ?? [],
+		candleHistoryBySymbol.get(symbol) ?? [],
 		statusStore.state.status,
 	)) {
 		handler(event);
@@ -171,6 +192,13 @@ const applyChartEvent = (event: SymmEvent) => {
 			lastTickBySymbol.set(String(tick.symbol), tick);
 			appendTickHistory(tick);
 			dispatchChart(String(tick.symbol), tick);
+			return;
+		}
+		case "candle_bar": {
+			const bar = event as CandleBarEvent;
+			lastCandleBySymbol.set(String(bar.symbol), bar);
+			appendCandleHistory(bar);
+			dispatchChart(String(bar.symbol), bar);
 			return;
 		}
 		case "chart_seed": {
