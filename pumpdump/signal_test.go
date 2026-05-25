@@ -54,10 +54,9 @@ func TestPumpDumpMeasure(t *testing.T) {
 	signal, symbolState := testPumpDump(t)
 	seedPumpSymbol(symbolState)
 
-	now := time.Unix(1_700_000_000, 0)
 	found := false
 
-	for measurement := range signal.Measure(context.Background(), now) {
+	for measurement := range signal.Measure() {
 		found = true
 
 		if measurement.Source != pumpdumpSource || measurement.Confidence <= 0 {
@@ -87,9 +86,7 @@ func TestPumpDumpFeedbackLowersConfidence(t *testing.T) {
 		t.Fatalf("expected scale to drop after loss, before=%v after=%v", before, symbolState.forecast.Scale())
 	}
 
-	now := time.Unix(1_700_000_000, 0)
-
-	for measurement := range signal.Measure(context.Background(), now) {
+	for measurement := range signal.Measure() {
 		if measurement.Confidence <= 0 {
 			t.Fatalf("expected positive confidence after feedback scale, got %+v", measurement)
 		}
@@ -106,12 +103,10 @@ func BenchmarkPumpDumpMeasure(b *testing.B) {
 
 	seedPumpSymbol(signal.symbols["PUMP/EUR"])
 
-	now := time.Unix(1_700_000_000, 0)
-
 	b.ReportAllocs()
 
 	for b.Loop() {
-		for range signal.Measure(ctx, now) {
+		for range signal.Measure() {
 		}
 	}
 }

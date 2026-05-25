@@ -2,10 +2,10 @@ package engine
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/theapemachine/symm/numeric/learned"
-	"github.com/theapemachine/symm/stats"
 )
 
 const (
@@ -87,14 +87,37 @@ func ConfidenceFence(values []float64) float64 {
 		return 0
 	}
 
-	lower, upper := stats.Quartiles(values)
+	lower, upper := quartiles(values)
 	spread := upper - lower
 
 	if spread > 0 {
 		return upper + spread + spread/2
 	}
 
-	return stats.Max(values)
+	return valuesMax(values)
+}
+
+func quartiles(values []float64) (lower, upper float64) {
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+
+	n := len(sorted)
+	lower = sorted[n/4]
+	upper = sorted[(3*n)/4]
+
+	return lower, upper
+}
+
+func valuesMax(values []float64) float64 {
+	maxValue := values[0]
+
+	for _, value := range values[1:] {
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+
+	return maxValue
 }
 
 /*

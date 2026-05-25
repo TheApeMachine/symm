@@ -73,26 +73,22 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 	}
 }
 
-func (symbolState *PumpSymbol) observations(peakSpike float64) []float64 {
-	return []float64{
+func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
+	confidence, err := state.score.Push(
 		peakSpike,
-		math.Min(symbolState.imbalance, 1),
-		(symbolState.buyPressure + 1) / 2,
-		symbolState.spreadBPS,
-		symbolState.lastPrice,
-		symbolState.volumeWindow.Anchor(),
-		symbolState.forecast.Scale(),
-	}
-}
-
-func (symbolState *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
-	confidence, err := symbolState.score.Push(symbolState.observations(peakSpike)...)
+		math.Min(state.imbalance, 1),
+		(state.buyPressure+1)/2,
+		state.spreadBPS,
+		state.lastPrice,
+		state.volumeWindow.Anchor(),
+		state.forecast.Scale(),
+	)
 
 	if err != nil || confidence <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	classCode := symbolState.score.ClassCode()
+	classCode := state.score.ClassCode()
 
 	return engine.Measurement{
 		Type: logic.Or(
@@ -103,87 +99,7 @@ func (symbolState *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, b
 		Source:     pumpdumpSource,
 		Regime:     "microstructure",
 		Reason:     moveClassifier.Label(classCode),
-		Pairs:      []asset.Pair{symbolState.pair},
+		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
 	}, true
-}
-
-func (symbolState *PumpSymbol) spike() (float64, bool) {
-	spike, err := symbolState.volumeSpike.Next(
-		0,
-		symbolState.volumeWindow.Sum(),
-		symbolState.volumeBaseline.Value(),
-	)
-
-	if err != nil || spike <= 1 {
-		return 0, false
-	}
-
-	return spike, true
-}
-
-func (symbolState *PumpSymbol) passesLiquidity(
-	positiveQuotes map[string]float64,
-	symbol string,
-) bool {
-	if symbolState.dailyQuoteVol <= 0 {
-		return true
-	}
-
-	if len(positiveQuotes) < 1 {
-		return false
-	}
-
-	liquid, err := liquidityGate.Next(
-		symbolState.dailyQuoteVol,
-		adaptive.PeerValues(positiveQuotes, symbol)...,
-	)
-
-	if err != nil || liquid <= 0 {
-		return false
-	}
-
-	return true
-}
-
-/*
-ApplyFeedback updates the per-symbol forecast learner from one settled prediction.
-*/
-func (symbolState *PumpSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
-	if feedback.PredictedReturn <= 0 {
-		return
-	}
-
-	_, _ = symbolState.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
-}
-
-func (symbolState *PumpSymbol) FeedTick(update TickUpdate) {
-	symbolState.lastPrice = update.Last
-	symbolState.dailyQuoteVol = update.VolumeBase * update.Last
-}
-
-func (symbolState *PumpSymbol) FeedTrade(update TradeUpdate) {
-	closed, err := symbolState.volumeWindow.Next(
-		0,
-		float64(update.UpdatedAt.UnixNano()),
-		update.BatchVolume,
-		symbolState.lastPrice,
-	)
-
-	if err != nil {
-		return
-	}
-
-	if closed != symbolState.volumeWindow.Sum() {
-		_, _ = symbolState.volumeBaseline.Next(0, closed)
-	}
-
-	if update.BuyPressure > 0 {
-		symbolState.buyPressure = update.BuyPressure
-	}
-}
-
-func (symbolState *PumpSymbol) FeedBook(update BookUpdate) {
-	symbolState.spreadBPS = update.SpreadBPS
-	symbolState.imbalance = update.Imbalance
 }

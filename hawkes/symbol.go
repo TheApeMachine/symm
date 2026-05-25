@@ -112,7 +112,7 @@ func (sym *HawkesSymbol) SymbolRisk() (engine.SymbolRisk, bool) {
 }
 
 func (sym *HawkesSymbol) Measure(
-	ticks []market.TradeTick,
+	ticks []trade.Data,
 	snapshot engine.Snapshot,
 	now time.Time,
 	pair asset.Pair,

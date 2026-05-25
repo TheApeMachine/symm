@@ -1,0 +1,85 @@
+# do-it-right
+
+These are the FACTS:
+
+1. You constantly severely over-engineer everything
+2. You write mostly slop code, and that is unacceptable
+3. You have ruined this project and now you are going to fix it, correctly
+
+You will strictly adhere to the following RULES:
+
+1. You do not write any new abstractions without explicit permission
+2. By default you do not have permission
+3. You may ONLY use the numeric packages
+4. You will put an effort to find the most compact, yet correct implementation, using numeric composition
+
+THE CORRECT SYSTEM ARCHITECTURE:
+
+1. Everything MUST be a System
+
+    type System interface {
+        Start() error
+        State() State
+        Tick() error
+        Close() error
+    }
+
+2. All systems must be registered in root.go
+
+    booter.AddSystems(
+        client.NewPublicClient(cmd.Context(), pool, "wss://ws.kraken.com/v2"),
+        pumpdump.NewPumpDump(cmd.Context(), pool),
+        trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
+            trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
+        )),
+    )
+
+3. All systems use the same Tick() shape:
+
+    func (publicClient *PublicClient) Tick() error {
+        select {
+        case <-publicClient.ctx.Done():
+            publicClient.cancel()
+            return publicClient.ctx.Err()
+        case msg := <-publicClient.subscribers["subscriptions"].Incoming:
+            if msg, ok := msg.Value.([]string); !ok {
+                return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
+            }
+
+            for _, symbol := range msg.Value.([]string) {
+                subscription := errnie.Does(func() (*ohlc.Subscribe, error) {
+                    return ohlc.NewSubscribe([]string{symbol}), nil
+                }).Or(func(err error) {
+                    errnie.Error(err)
+                }).Value()
+
+                publicClient.conn.WriteJSON(subscription)
+            }
+
+            return nil
+        default:
+            return nil
+        }
+    }
+
+4. You will avoid excessive helper methods
+5. You must never have something that is reusable as a specific method on a type, keep things compact
+6. Always use the qpool, broadcast groups, and subscribers to communicate/send data, and do not add any abstraction
+7. If something was deleted and is no longer there, it should not come back, think of a way to do it with what you have available, or remove it if it isn't actually useful.
+
+8. If you need to send data to the UI/Frontend:
+
+    privateClient.broadcasts["ui"].Send(&qpool.QValue[any]{
+        Value: payload,
+    })
+
+And you don't have to make all kinds of special types for that, just send the data as soon as you have any, right at the source, no "snapshots" no "drains" just simple.
+
+THE OVERALL SYSTEM WORKS LIKE THIS:
+
+1. Signals convert raw market data into Measurement
+2. Measurements are picked up by the trader
+3. The trader combines Measurements into Perspectives
+4. The trader uses Perspectives to make Predictions (always, not just when entering a trade)
+5. Predictions are evaluated once current time has caught up
+6. The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that makde the prediction use

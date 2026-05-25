@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -64,14 +64,14 @@ func TestFitContextFromTicksAdaptsWindow(t *testing.T) {
 	start := time.Unix(0, 0)
 	buyEvents := burstEvents(start, 16, 40*time.Millisecond)
 	sellEvents := sparseSellEvents(start.Add(-time.Second), 6)
-	ticks := make([]market.TradeTick, 0, len(buyEvents)+len(sellEvents))
+	ticks := make([]trade.Data, 0, len(buyEvents)+len(sellEvents))
 
 	for _, eventTime := range buyEvents {
-		ticks = append(ticks, market.TradeTick{Side: "buy", Timestamp: eventTime})
+		ticks = append(ticks, trade.Data{Side: "buy", Timestamp: eventTime})
 	}
 
 	for _, eventTime := range sellEvents {
-		ticks = append(ticks, market.TradeTick{Side: "sell", Timestamp: eventTime})
+		ticks = append(ticks, trade.Data{Side: "sell", Timestamp: eventTime})
 	}
 
 	horizon := buyEvents[len(buyEvents)-1].Add(50 * time.Millisecond)

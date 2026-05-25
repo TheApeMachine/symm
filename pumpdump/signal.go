@@ -37,7 +37,10 @@ type PumpDump struct {
 	symbols     map[string]*PumpSymbol
 }
 
-var _ engine.Signal = (*PumpDump)(nil)
+var (
+	_ engine.System = (*PumpDump)(nil)
+	_ engine.Signal = (*PumpDump)(nil)
+)
 
 /*
 NewPumpDump wires broadcast subscribers for the pumpdump system.
@@ -84,15 +87,41 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	case value := <-pumpdump.subscribers["tick"].Incoming:
 		update := value.Value.(TickUpdate)
-		pumpdump.symbols[update.Symbol].FeedTick(update)
+		state := pumpdump.symbols[update.Symbol]
+		state.lastPrice = update.Last
+		state.dailyQuoteVol = update.VolumeBase * update.Last
 	case value := <-pumpdump.subscribers["trade"].Incoming:
 		update := value.Value.(TradeUpdate)
-		pumpdump.symbols[update.Symbol].FeedTrade(update)
+		state := pumpdump.symbols[update.Symbol]
+		closed, err := state.volumeWindow.Next(
+			0,
+			float64(update.UpdatedAt.UnixNano()),
+			update.BatchVolume,
+			state.lastPrice,
+		)
+
+		if err != nil {
+			return nil
+		}
+
+		if closed != state.volumeWindow.Sum() {
+			_, _ = state.volumeBaseline.Next(0, closed)
+		}
+
+		if update.BuyPressure > 0 {
+			state.buyPressure = update.BuyPressure
+		}
 	case value := <-pumpdump.subscribers["book"].Incoming:
 		update := value.Value.(BookUpdate)
-		pumpdump.symbols[update.Symbol].FeedBook(update)
+		state := pumpdump.symbols[update.Symbol]
+		state.spreadBPS = update.SpreadBPS
+		state.imbalance = update.Imbalance
 	default:
-		return pumpdump.scoreAll()
+		for measurement := range pumpdump.Measure() {
+			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+				Value: measurement,
+			})
+		}
 	}
 
 	return nil
@@ -110,80 +139,75 @@ func (pumpdump *PumpDump) Source() string {
 
 func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		pumpdump.eachMeasurement(yield)
+		positiveQuotes := make(map[string]float64, len(pumpdump.symbols))
+
+		for symbol, state := range pumpdump.symbols {
+			if state.dailyQuoteVol > 0 {
+				positiveQuotes[symbol] = state.dailyQuoteVol
+			}
+		}
+
+		spikes := make(map[string]float64, len(pumpdump.symbols))
+
+		for symbol, state := range pumpdump.symbols {
+			if state.dailyQuoteVol > 0 {
+				if len(positiveQuotes) < 1 {
+					continue
+				}
+
+				liquid, err := liquidityGate.Next(
+					state.dailyQuoteVol,
+					adaptive.PeerValues(positiveQuotes, symbol)...,
+				)
+
+				if err != nil || liquid <= 0 {
+					continue
+				}
+			}
+
+			spike, err := state.volumeSpike.Next(
+				0,
+				state.volumeWindow.Sum(),
+				state.volumeBaseline.Value(),
+			)
+
+			if err != nil || spike <= 1 {
+				continue
+			}
+
+			spikes[symbol] = spike
+		}
+
+		for symbol, spike := range spikes {
+			peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
+
+			if err != nil {
+				continue
+			}
+
+			measurement, ok := pumpdump.symbols[symbol].Measure(peakSpike)
+
+			if !ok {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
 }
 
 func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != pumpdumpSource {
+	if feedback.Source != pumpdumpSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 
-	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	state := pumpdump.symbols[feedback.Symbol]
+
+	if state == nil {
 		return
 	}
 
-	symbolState := pumpdump.symbols[feedback.Symbol]
-
-	if symbolState == nil {
-		return
-	}
-
-	symbolState.ApplyFeedback(feedback)
-}
-
-func (pumpdump *PumpDump) scoreAll() error {
-	pumpdump.eachMeasurement(func(measurement engine.Measurement) bool {
-		pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-			Value: measurement,
-		})
-
-		return true
-	})
-
-	return nil
-}
-
-func (pumpdump *PumpDump) eachMeasurement(visit func(engine.Measurement) bool) {
-	positiveQuotes := make(map[string]float64, len(pumpdump.symbols))
-
-	for symbol, symbolState := range pumpdump.symbols {
-		if symbolState.dailyQuoteVol > 0 {
-			positiveQuotes[symbol] = symbolState.dailyQuoteVol
-		}
-	}
-
-	spikes := make(map[string]float64, len(pumpdump.symbols))
-
-	for symbol, symbolState := range pumpdump.symbols {
-		if !symbolState.passesLiquidity(positiveQuotes, symbol) {
-			continue
-		}
-
-		spike, ok := symbolState.spike()
-
-		if !ok {
-			continue
-		}
-
-		spikes[symbol] = spike
-	}
-
-	for symbol, spike := range spikes {
-		peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
-
-		if err != nil {
-			continue
-		}
-
-		measurement, ok := pumpdump.symbols[symbol].Measure(peakSpike)
-
-		if !ok {
-			continue
-		}
-
-		if !visit(measurement) {
-			return
-		}
-	}
+	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
 }

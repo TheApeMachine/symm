@@ -3,19 +3,9 @@ package market
 import (
 	"encoding/json"
 	"testing"
-)
 
-type tradeMessage struct {
-	Channel string `json:"channel"`
-	Type    string `json:"type"`
-	Data    []struct {
-		Symbol    string  `json:"symbol"`
-		Side      string  `json:"side"`
-		Qty       float64 `json:"qty"`
-		Price     float64 `json:"price"`
-		Timestamp string  `json:"timestamp"`
-	} `json:"data"`
-}
+	"github.com/theapemachine/symm/kraken/trade"
+)
 
 type bookMessage struct {
 	Channel string `json:"channel"`
@@ -33,18 +23,10 @@ type bookMessage struct {
 	} `json:"data"`
 }
 
-func BenchmarkParseTradesJSONParser(b *testing.B) {
-	for b.Loop() {
-		if _, err := ParseTrades(sampleTradeFrame); err != nil {
-			b.Fatalf("parse trades: %v", err)
-		}
-	}
-}
-
 func BenchmarkParseTradesEncodingJSON(b *testing.B) {
 	for b.Loop() {
-		var message tradeMessage
-		if err := json.Unmarshal(sampleTradeFrame, &message); err != nil {
+		var frame trade.Snapshot
+		if err := json.Unmarshal(sampleTradeFrame, &frame); err != nil {
 			b.Fatalf("unmarshal trades: %v", err)
 		}
 	}

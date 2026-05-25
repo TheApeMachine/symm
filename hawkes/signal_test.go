@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 )
 
 const testFixtureWindow = 5 * time.Minute
@@ -42,7 +42,7 @@ func TestSplitSideEventsKeepsWindowTicks(t *testing.T) {
 	now := time.Unix(1000, 0)
 	windowStart := now.Add(-testFixtureWindow)
 
-	ticks := []market.TradeTick{
+	ticks := []trade.Data{
 		{Side: "buy", Timestamp: windowStart.Add(-time.Minute)},
 		{Side: "buy", Timestamp: windowStart.Add(time.Minute)},
 		{Side: "sell", Timestamp: now.Add(-time.Second)},

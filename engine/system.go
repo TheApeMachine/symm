@@ -10,24 +10,3 @@ type System interface {
 	Tick() error
 	Close() error
 }
-
-/*
-Passive is embedded by systems that only work when another system drives their Measure path.
-*/
-type Passive struct{}
-
-func (passive *Passive) Start() error {
-	return nil
-}
-
-func (passive *Passive) State() State {
-	return READY
-}
-
-func (passive *Passive) Close() error {
-	return nil
-}
-
-func (passive *Passive) Tick() error {
-	return nil
-}

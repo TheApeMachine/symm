@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/stats"
 )
@@ -139,7 +139,7 @@ func newFitContext(
 }
 
 func fitContextFromTicks(
-	ticks []market.TradeTick,
+	ticks []trade.Data,
 	windowStart, horizon time.Time,
 ) (FitContext, []time.Time, []time.Time, bool) {
 	buyTimes, sellTimes := splitSideEvents(ticks, windowStart, horizon)
@@ -350,7 +350,7 @@ func confidenceHistoryCap(minFitEvents int) int {
 }
 
 func splitSideEvents(
-	ticks []market.TradeTick,
+	ticks []trade.Data,
 	windowStart, windowEnd time.Time,
 ) ([]time.Time, []time.Time) {
 	buyTimes := make([]time.Time, 0, len(ticks))

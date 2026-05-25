@@ -1,6 +1,6 @@
 package adaptive
 
-import "github.com/theapemachine/symm/stats"
+import "sort"
 
 /*
 BelowMedian passes out through when it is strictly below the cross-section median
@@ -29,11 +29,24 @@ func (gate *BelowMedian) Next(out float64, values ...float64) (float64, error) {
 		return out, nil
 	}
 
-	if out >= stats.CrossSectionMedian(sample) {
+	if out >= crossSectionMedian(sample) {
 		return 0, nil
 	}
 
 	return out, nil
+}
+
+func crossSectionMedian(sample []float64) float64 {
+	sorted := append([]float64(nil), sample...)
+	sort.Float64s(sorted)
+
+	mid := len(sorted) / 2
+
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+
+	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
 /*
