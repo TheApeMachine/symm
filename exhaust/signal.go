@@ -1,0 +1,139 @@
+package exhaust
+
+import (
+	"context"
+	"time"
+
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
+)
+
+const exhaustSource = "exhaust"
+
+const exitUrgencyThreshold = 0.45
+
+/*
+Exhaust tracks book/trade microstructure decay and advises exit urgency on ui.
+*/
+type Exhaust struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	history     *historyStore
+}
+
+var _ engine.System = (*Exhaust)(nil)
+
+func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
+	ctx, cancel := context.WithCancel(ctx)
+
+	exhaust := &Exhaust{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		history:     newHistoryStore(),
+	}
+
+	for _, channel := range []string{"book", "trade", "tick"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		exhaust.subscribers[channel] = group.Subscribe("exhaust:"+channel, 128)
+	}
+
+	exhaust.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+
+	return exhaust
+}
+
+func (exhaust *Exhaust) Start() error  { return nil }
+func (exhaust *Exhaust) State() engine.State { return engine.READY }
+
+func (exhaust *Exhaust) Tick() error {
+	select {
+	case <-exhaust.ctx.Done():
+		return exhaust.ctx.Err()
+	case value := <-exhaust.subscribers["book"].Incoming:
+		delta := value.Value.(market.BookLevelsDelta)
+
+		bidDepth := 0.0
+		askDepth := 0.0
+
+		for _, level := range delta.Bids {
+			bidDepth += level.Volume
+		}
+
+		for _, level := range delta.Asks {
+			askDepth += level.Volume
+		}
+
+		spreadBPS := 0.0
+		imbalance := 0.0
+
+		if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+			bid := delta.Bids[0].Price
+			ask := delta.Asks[0].Price
+			mid := (bid + ask) / 2
+
+			if mid > 0 {
+				spreadBPS = (ask - bid) / mid * 10000
+			}
+
+			total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+			if total > 0 {
+				imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+			}
+		}
+
+		exhaust.history.observe(delta.Symbol, bidDepth, askDepth, bidDepth+askDepth, spreadBPS, 0, imbalance, 0)
+	case value := <-exhaust.subscribers["trade"].Incoming:
+		tick := value.Value.(trade.Data)
+		sign := -1.0
+
+		if tick.Side == "buy" {
+			sign = 1.0
+		}
+
+		exhaust.history.observe(tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price)
+	case value := <-exhaust.subscribers["tick"].Incoming:
+		row := value.Value.(market.TickerRow)
+		exhaust.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
+	default:
+		for _, symbol := range exhaust.history.symbols() {
+			snapshot, ok := exhaust.history.snapshot(symbol)
+
+			if !ok {
+				continue
+			}
+
+			urgency, reason := exitScoreLong(snapshot)
+
+			if urgency < exitUrgencyThreshold {
+				continue
+			}
+
+			exhaust.broadcasts["ui"].Send(&qpool.QValue[any]{
+				Value: map[string]any{
+					"event":    "decision_trace",
+					"phase":    "exit",
+					"source":   exhaustSource,
+					"symbol":   symbol,
+					"urgency":  urgency,
+					"reason":   reason,
+				},
+			})
+		}
+	}
+
+	return nil
+}
+
+func (exhaust *Exhaust) Close() error {
+	exhaust.cancel()
+	return nil
+}

@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/stats"
 )
 
 const (
@@ -66,8 +65,8 @@ func newFitContext(
 		return FitContext{}, false
 	}
 
-	medianGap := stats.Median(gaps)
-	lowerGap, upperGap := stats.Quartiles(gaps)
+	medianGap := numeric.Median(gaps)
+	lowerGap, upperGap := numeric.Quartiles(gaps)
 
 	if medianGap <= 0 {
 		return FitContext{}, false

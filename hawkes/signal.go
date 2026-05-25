@@ -8,96 +8,167 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 )
+
+const hawkesSource = "hawkes"
+
+type symbolState struct {
+	pair      asset.Pair
+	state     *HawkesSymbol
+	ticks     []trade.Data
+	imbalance float64
+}
 
 /*
 Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes model.
 */
 type Hawkes struct {
-	engine.Passive
-	engine.GaugeScan
-	market            *engine.MarketRelay
-	watch             *engine.SymbolWatch
-	pairs             map[string]asset.Pair
-	symbols           []string
-	states            map[string]*HawkesSymbol
-	calibrationParams engine.CalibrationParams
-	pool              *qpool.Q
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     map[string]*symbolState
+	calibration engine.CalibrationParams
 }
 
-var _ engine.Signal = (*Hawkes)(nil)
+var (
+	_ engine.System = (*Hawkes)(nil)
+	_ engine.Signal = (*Hawkes)(nil)
+)
 
-var _ engine.LiveScoreReader = (*Hawkes)(nil)
+func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
+	ctx, cancel := context.WithCancel(ctx)
 
-var _ engine.MeanConfidenceReader = (*Hawkes)(nil)
-
-var _ engine.RiskExporter = (*Hawkes)(nil)
-
-/*
-NewHawkes wires the shared market broadcast relay into the engine signal.
-*/
-func NewHawkes(
-	_ context.Context,
-	pool *qpool.Q,
-	marketRelay *engine.MarketRelay,
-	pairs map[string]asset.Pair,
-	symbols []string,
-	watch *engine.SymbolWatch,
-	calibrationParams engine.CalibrationParams,
-) *Hawkes {
-	return &Hawkes{
-		market:            marketRelay,
-		watch:             watch,
-		pairs:             pairs,
-		symbols:           append([]string(nil), symbols...),
-		states:            make(map[string]*HawkesSymbol),
-		calibrationParams: calibrationParams,
-		pool:              pool,
+	hawkes := &Hawkes{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		symbols:     make(map[string]*symbolState),
+		calibration: engine.DefaultCalibrationParams(),
 	}
+
+	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		hawkes.subscribers[channel] = group.Subscribe("hawkes:"+channel, 128)
+	}
+
+	hawkes.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return hawkes
+}
+
+func (hawkes *Hawkes) Start() error {
+	return nil
+}
+
+func (hawkes *Hawkes) State() engine.State {
+	return engine.READY
+}
+
+func (hawkes *Hawkes) Tick() error {
+	select {
+	case <-hawkes.ctx.Done():
+		return hawkes.ctx.Err()
+	case value := <-hawkes.subscribers["symbols"].Incoming:
+		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+			if pair != nil {
+				hawkes.symbols[symbol] = &symbolState{
+					pair:  *pair,
+					state: NewHawkesSymbol(hawkes.calibration),
+					ticks: make([]trade.Data, 0, 128),
+				}
+			}
+		}
+	case value := <-hawkes.subscribers["tick"].Incoming:
+		row := value.Value.(market.TickerRow)
+		symbolState := hawkes.symbols[row.Symbol]
+
+		if symbolState == nil {
+			return nil
+		}
+
+		symbolState.state.FeedTicker(row.Last, row.Volume)
+	case value := <-hawkes.subscribers["trade"].Incoming:
+		tick := value.Value.(trade.Data)
+		symbolState := hawkes.symbols[tick.Symbol]
+
+		if symbolState == nil {
+			return nil
+		}
+
+		symbolState.ticks = append(symbolState.ticks, tick)
+
+		if len(symbolState.ticks) > 512 {
+			symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
+		}
+	case value := <-hawkes.subscribers["book"].Incoming:
+		delta := value.Value.(market.BookLevelsDelta)
+		symbolState := hawkes.symbols[delta.Symbol]
+
+		if symbolState == nil || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+			return nil
+		}
+
+		total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+		if total > 0 {
+			symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+		}
+	case value := <-hawkes.subscribers["feedback"].Incoming:
+		feedback := value.Value.(engine.PredictionFeedback)
+
+		if feedback.Source != hawkesSource || feedback.Symbol == "" {
+			return nil
+		}
+
+		symbolState := hawkes.symbols[feedback.Symbol]
+
+		if symbolState == nil {
+			return nil
+		}
+
+		symbolState.state.ApplyFeedback(feedback)
+	default:
+		for measurement := range hawkes.Measure() {
+			hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{
+				Value: measurement,
+			})
+		}
+	}
+
+	return nil
+}
+
+func (hawkes *Hawkes) Close() error {
+	hawkes.cancel()
+	return nil
 }
 
 func (hawkes *Hawkes) Source() string {
-	return "hawkes"
+	return hawkesSource
 }
 
-func (hawkes *Hawkes) state(symbol string) *HawkesSymbol {
-	sym := hawkes.states[symbol]
-
-	if sym == nil {
-		sym = NewHawkesSymbol(hawkes.calibrationParams)
-		hawkes.states[symbol] = sym
-	}
-
-	return sym
-}
-
-/*
-Measure recalibrates Hawkes intensity and yields non-zero cluster readings.
-*/
-func (hawkes *Hawkes) Measure(
-	ctx context.Context,
-	now time.Time,
-) iter.Seq[engine.Measurement] {
+func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		hawkes.beginScan()
-		engine.DrainTicks(ctx)
-		hawkes.refreshStates(ctx)
+		now := time.Now()
 
-		for measurement := range engine.MeasureSymbols(
-			ctx,
-			engine.SymbolScanner{
-				Source:  hawkes.Source(),
-				Market:  hawkes.market,
-				Watch:   hawkes.watch,
-				Pairs:   hawkes.pairs,
-				Symbols: hawkes.symbols,
-				Pool:    hawkes.pool,
-			},
-			now,
-			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				return hawkes.evaluate(symbol, snapshot, now)
-			},
-		) {
+		for _, symbolState := range hawkes.symbols {
+			measurement, ok := symbolState.state.Measure(
+				symbolState.ticks,
+				symbolState.imbalance,
+				now,
+				symbolState.pair,
+			)
+
+			if !ok {
+				continue
+			}
+
 			if !yield(measurement) {
 				return
 			}
@@ -105,94 +176,16 @@ func (hawkes *Hawkes) Measure(
 	}
 }
 
-func (hawkes *Hawkes) LiveScore() float64 {
-	return engine.PeakLiveFromMap(hawkes.states, func(sym *HawkesSymbol) float64 {
-		return sym.liveScore
-	}).Score
-}
-
-func (hawkes *Hawkes) PeakReading() engine.LiveReading {
-	return engine.PeakLiveFromMap(hawkes.states, func(sym *HawkesSymbol) float64 {
-		return sym.liveScore
-	})
-}
-
-func (hawkes *Hawkes) MeanConfidence() float64 {
-	return hawkes.MeanGaugeConfidence()
-}
-
-func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
-	return hawkes.state(symbol).SymbolRisk()
-}
-
 func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
-	engine.ForwardSourceFeedback(hawkes.Source(), feedback, func(feedback engine.PredictionFeedback) {
-		hawkes.state(feedback.Symbol).ApplyFeedback(feedback)
-	})
-}
-
-func (hawkes *Hawkes) beginScan() {
-	hawkes.ResetGaugeScan()
-
-	for _, sym := range hawkes.states {
-		sym.liveScore = 0
-	}
-}
-
-func (hawkes *Hawkes) refreshStates(ctx context.Context) {
-	_ = engine.RunSymbolJobs(ctx, hawkes.pool, hawkes.symbols, func(symbol string) error {
-		snapshot := hawkes.market.Read(symbol)
-
-		if snapshot.LastOK && snapshot.VolumeOK {
-			hawkes.state(symbol).FeedTicker(snapshot.Last, snapshot.VolumeBase)
-		}
-
-		return nil
-	})
-}
-
-func (hawkes *Hawkes) passesLiquidity(symbol string) bool {
-	sym := hawkes.state(symbol)
-
-	quotes := make(map[string]float64, len(hawkes.states))
-
-	for name, state := range hawkes.states {
-		if state.dailyQuoteVol > 0 {
-			quotes[name] = state.dailyQuoteVol
-		}
+	if feedback.Source != hawkesSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
 	}
 
-	return engine.PassesBelowMedianLiquidity(
-		sym.dailyQuoteVol,
-		quotes,
-		symbol,
-		1,
-	)
-}
+	symbolState := hawkes.symbols[feedback.Symbol]
 
-func (hawkes *Hawkes) evaluate(
-	symbol string,
-	snapshot engine.Snapshot,
-	now time.Time,
-) (engine.Measurement, bool, error) {
-	if !hawkes.passesLiquidity(symbol) {
-		return engine.Measurement{}, false, nil
+	if symbolState == nil {
+		return
 	}
 
-	ticks, ok := hawkes.market.RecentTicks(symbol, time.Time{})
-
-	if !ok || len(ticks) == 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	measurement, ok := hawkes.state(symbol).Measure(
-		ticks,
-		snapshot,
-		now,
-		hawkes.pairs[symbol],
-	)
-
-	hawkes.ObserveGaugeScore(measurement.Confidence)
-
-	return measurement, ok, nil
+	symbolState.state.ApplyFeedback(feedback)
 }

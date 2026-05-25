@@ -46,7 +46,7 @@ func NewDepthFlow(ctx context.Context, pool *qpool.Q) *DepthFlow {
 		symbols:     make(map[string]*DepthSymbol),
 	}
 
-	for _, channel := range []string{"symbols", "book", "trade"} {
+	for _, channel := range []string{"symbols", "book", "trade", "feedback"} {
 		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		depthflow.subscribers[channel] = group.Subscribe("depthflow:"+channel, 128)
 	}
@@ -95,6 +95,8 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 
 		state.buyPressure, _ = state.pressure.Next(0, sign)
+	case value := <-depthflow.subscribers["feedback"].Incoming:
+		depthflow.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
 		for measurement := range depthflow.Measure() {
 			depthflow.broadcasts["measurements"].Send(&qpool.QValue[any]{

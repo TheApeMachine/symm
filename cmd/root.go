@@ -7,10 +7,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/depthflow"
+	"github.com/theapemachine/symm/exhaust"
+	"github.com/theapemachine/symm/fluid"
+	"github.com/theapemachine/symm/hawkes"
 	"github.com/theapemachine/symm/kraken/client"
+	"github.com/theapemachine/symm/kraken/core"
+	"github.com/theapemachine/symm/leadlag"
 	"github.com/theapemachine/symm/pumpdump"
+	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
 )
 
 var rootCmd = &cobra.Command{
@@ -30,13 +39,42 @@ var rootCmd = &cobra.Command{
 			errnie.Error(err)
 		}).Value()
 
+		hub := errnie.Does(func() (*ui.Hub, error) {
+			return ui.NewHub(cmd.Context(), pool, nil)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
+
 		booter.AddSystems(
-			client.NewPublicClient(cmd.Context(), pool, "wss://ws.kraken.com/v2"),
+			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
 			pumpdump.NewPumpDump(cmd.Context(), pool),
+			depthflow.NewDepthFlow(cmd.Context(), pool),
+			hawkes.NewHawkes(cmd.Context(), pool),
+			leadlag.NewLeadLag(cmd.Context(), pool),
+			sentiment.NewSentiment(cmd.Context(), pool),
+			fluid.NewFluid(cmd.Context(), pool),
+			causal.NewCausal(cmd.Context(), pool),
+			exhaust.NewExhaust(cmd.Context(), pool),
 			trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
 				trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
 			)),
+			hub,
 		)
+
+		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
+			booter.AddSystems(client.NewPrivateClient(
+				cmd.Context(),
+				pool,
+				core.KRAKEN_WS_AUTH_URL,
+				config.System.KrakenAPIKey,
+				config.System.KrakenAPISecret,
+			))
+		}
+
+		if err := booter.Boot(); err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
 	},
 }
 

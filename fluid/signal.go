@@ -5,335 +5,151 @@ import (
 	"iter"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 )
 
+const fluidSource = "fluid"
+
 /*
-Fluid models order-book liquidity as a compressible field with source-sink continuity.
+Fluid scores multi-level book flow pressure and spread tightness.
 */
 type Fluid struct {
-	engine.Passive
-	market        engine.MarketReader
-	watch         *engine.SymbolWatch
-	pairs         map[string]asset.Pair
-	symbols       []string
-	track         *TrackStore
-	ui            *qpool.BroadcastGroup
-	displayParams *DisplayParams
-	gridBuilder   *GridBuilder
-	pool          *qpool.Q
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     map[string]*FluidSymbol
 }
 
-var _ engine.Signal = (*Fluid)(nil)
+var (
+	_ engine.System = (*Fluid)(nil)
+	_ engine.Signal = (*Fluid)(nil)
+)
 
-var _ engine.LiveScoreReader = (*Fluid)(nil)
+func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
+	ctx, cancel := context.WithCancel(ctx)
 
-var _ engine.MeanConfidenceReader = (*Fluid)(nil)
-
-var _ engine.RiskExporter = (*Fluid)(nil)
-
-/*
-NewFluid wires the shared market broadcast relay into the engine signal.
-*/
-func NewFluid(
-	_ context.Context,
-	pool *qpool.Q,
-	marketRelay *engine.MarketRelay,
-	pairs map[string]asset.Pair,
-	symbols []string,
-	watch *engine.SymbolWatch,
-	calibrationParams engine.CalibrationParams,
-) (*Fluid, error) {
 	fluid := &Fluid{
-		market:        marketRelay,
-		watch:         watch,
-		pairs:         pairs,
-		symbols:       append([]string(nil), symbols...),
-		track:         NewTrackStore(calibrationParams),
-		displayParams: NewDisplayParams(),
-		pool:          pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		symbols:     make(map[string]*FluidSymbol),
 	}
 
-	fluid.gridBuilder = NewGridBuilder(fluid.displayParams)
-
-	return fluid, errnie.Require(map[string]any{
-		"market": marketRelay,
-		"track":  fluid.track,
-	})
-}
-
-func (fluid *Fluid) Source() string {
-	return "fluid"
-}
-
-func (fluid *Fluid) Symbols() []string {
-	return append([]string(nil), fluid.symbols...)
-}
-
-/*
-ApplyDisplayPatch updates server-side fluid terrain presentation parameters.
-*/
-func (fluid *Fluid) ApplyDisplayPatch(patch DisplayPatch) (DisplayParamsSnapshot, error) {
-	gridSizeChanged, err := fluid.displayParams.Apply(patch)
-
-	if err != nil {
-		return DisplayParamsSnapshot{}, err
+	for _, channel := range []string{"symbols", "book", "trade", "feedback"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		fluid.subscribers[channel] = group.Subscribe("fluid:"+channel, 128)
 	}
 
-	if patch.ResetSmoothing != nil && *patch.ResetSmoothing {
-		fluid.gridBuilder.ResetSmoothing()
+	fluid.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return fluid
+}
+
+func (fluid *Fluid) Start() error  { return nil }
+func (fluid *Fluid) State() engine.State { return engine.READY }
+
+func (fluid *Fluid) Tick() error {
+	select {
+	case <-fluid.ctx.Done():
+		return fluid.ctx.Err()
+	case value := <-fluid.subscribers["symbols"].Incoming:
+		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+			if pair != nil {
+				fluid.symbols[symbol] = NewFluidSymbol(*pair)
+			}
+		}
+	case value := <-fluid.subscribers["book"].Incoming:
+		delta := value.Value.(market.BookLevelsDelta)
+		state := fluid.symbols[delta.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		if delta.BidOK {
+			state.bids = delta.Bids
+		}
+
+		if delta.AskOK {
+			state.asks = delta.Asks
+		}
+
+		if len(state.bids) > 0 && len(state.asks) > 0 {
+			bid := state.bids[0].Price
+			ask := state.asks[0].Price
+			mid := (bid + ask) / 2
+
+			if mid > 0 {
+				state.spreadBPS = (ask - bid) / mid * 10000
+			}
+		}
+	case value := <-fluid.subscribers["trade"].Incoming:
+		tick := value.Value.(trade.Data)
+		state := fluid.symbols[tick.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		sign := -1.0
+
+		if tick.Side == "buy" {
+			sign = 1.0
+		}
+
+		state.buyPressure, _ = state.pressure.Next(0, sign)
+	case value := <-fluid.subscribers["feedback"].Incoming:
+		fluid.Feedback(value.Value.(engine.PredictionFeedback))
+	default:
+		for measurement := range fluid.Measure() {
+			fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
 	}
 
-	if gridSizeChanged {
-		fluid.gridBuilder.ResetSmoothing()
-	}
-
-	return fluid.displayParams.Snapshot(), nil
+	return nil
 }
 
-/*
-DisplayParams returns the active fluid terrain presentation snapshot.
-*/
-func (fluid *Fluid) DisplayParams() DisplayParamsSnapshot {
-	return fluid.displayParams.Snapshot()
+func (fluid *Fluid) Close() error {
+	fluid.cancel()
+	return nil
 }
 
-/*
-BindUI wires incremental field telemetry to the shared dashboard group.
-*/
-func (fluid *Fluid) BindUI(uiGroup *qpool.BroadcastGroup) {
-	fluid.ui = uiGroup
-}
+func (fluid *Fluid) Source() string { return fluidSource }
 
-func (fluid *Fluid) publishSymbolField(symbol string) {
-	if fluid.ui == nil || symbol == "" {
-		return
-	}
-
-	row := fluid.track.SymbolRow(symbol, fluid.market)
-	publishEvent(fluid.ui, "field_row", map[string]any{
-		"symbol": row.Symbol,
-		"row":    WireRow(row),
-	})
-
-	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.market)
-	aggregate, sampledCount := aggregateFieldRows(rows)
-	publishEvent(fluid.ui, "field_aggregate", map[string]any{
-		"symbol_count": sampledCount,
-		"field":        WireAggregate(aggregate),
-	})
-}
-
-func (fluid *Fluid) publishFieldGrid() {
-	if fluid.ui == nil {
-		return
-	}
-
-	rows := fluid.track.SnapshotRows(fluid.symbols, fluid.market)
-	grid := fluid.gridBuilder.Build(rows, fluid.displayParams.activeGridSize())
-	publishEvent(fluid.ui, "field_grid", map[string]any{
-		"grid": WireGrid(grid),
-	})
-}
-
-func publishEvent(ui *qpool.BroadcastGroup, event string, payload map[string]any) {
-	if ui == nil || payload == nil {
-		return
-	}
-
-	payload["event"] = event
-	payload["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-
-	ui.Send(&qpool.QValue[any]{
-		Value: payload,
-	})
-}
-
-/*
-SampledCount returns symbols with at least one fluid sample.
-*/
-func (fluid *Fluid) SampledCount() int {
-	return fluid.track.SampledCount()
-}
-
-/*
-WarmingCount returns symbols ingesting ticker volume but not yet sampled.
-*/
-func (fluid *Fluid) WarmingCount() int {
-	return fluid.track.WarmingCount()
-}
-
-/*
-LiveScore returns the current fluid gauge reading from track state.
-*/
-func (fluid *Fluid) LiveScore() float64 {
-	return fluid.track.PeakLiveConfidence()
-}
-
-func (fluid *Fluid) PeakReading() engine.LiveReading {
-	symbol, score := fluid.track.PeakSymbolScore()
-
-	return engine.LiveReading{
-		Symbol: symbol,
-		Score:  score,
-	}
-}
-
-/*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
-*/
-func (fluid *Fluid) MeanConfidence() float64 {
-	return fluid.track.MeanGaugeConfidence()
-}
-
-/*
-SymbolRisk exposes fluid turbulence metrics for dynamic execution.
-*/
-func (fluid *Fluid) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
-	return fluid.track.SymbolRisk(symbol)
-}
-
-/*
-Feedback nudges fluid source/shock calibration from settled prediction error.
-*/
-func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
-	engine.ForwardSourceFeedback(fluid.Source(), feedback, fluid.track.ApplyPredictionFeedback)
-}
-
-/*
-Measure advances the fluid field and yields non-zero flow readings.
-*/
-func (fluid *Fluid) Measure(
-	ctx context.Context,
-	now time.Time,
-) iter.Seq[engine.Measurement] {
+func (fluid *Fluid) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		fluid.track.BeginScan()
-		engine.DrainTicks(ctx)
+		for _, state := range fluid.symbols {
+			measurement, ok := state.Measure()
 
-		for measurement := range engine.MeasureSymbols(
-			ctx,
-			engine.SymbolScanner{
-				Source:  fluid.Source(),
-				Market:  fluid.market,
-				Watch:   fluid.watch,
-				Pairs:   fluid.pairs,
-				Symbols: fluid.symbols,
-				Pool:    fluid.pool,
-			},
-			now,
-			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				confidence, reason := fluid.sampleField(symbol, fluid.market.Read(symbol))
-				fluid.publishSymbolField(symbol)
+			if !ok {
+				continue
+			}
 
-				fluid.track.ObserveGaugeScore(confidence)
-
-				if confidence <= 0 {
-					return engine.Measurement{}, false, nil
-				}
-
-				if !fieldSnapshotReady(snapshot) || fieldSampleTime(snapshot).IsZero() {
-					return engine.Measurement{}, false, nil
-				}
-
-				return engine.Measurement{
-					Type:       engine.Flow,
-					Regime:     "flow",
-					Reason:     reason,
-					Confidence: confidence,
-				}, true, nil
-			},
-		) {
 			if !yield(measurement) {
 				return
 			}
 		}
-
-		fluid.publishFieldGrid()
 	}
 }
 
-func (fluid *Fluid) sampleField(symbol string, snapshot engine.Snapshot) (float64, string) {
-	if snapshot.LastOK && snapshot.VolumeOK && snapshot.Last > 0 {
-		fluid.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != fluidSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
 	}
 
-	if !fieldSnapshotReady(snapshot) {
-		return 0, ""
+	state := fluid.symbols[feedback.Symbol]
+
+	if state == nil {
+		return
 	}
 
-	sampleAt := fieldSampleTime(snapshot)
-
-	if sampleAt.IsZero() {
-		return 0, ""
-	}
-
-	return fluid.evaluate(symbol, snapshot, sampleAt)
-}
-
-func fieldSnapshotReady(snapshot engine.Snapshot) bool {
-	if !snapshot.LastOK || !snapshot.VolumeOK || !snapshot.DensityOK || !snapshot.SpreadOK ||
-		!snapshot.BatchOK || !snapshot.PressureOK {
-		return false
-	}
-
-	return snapshot.Last > 0 && snapshot.BatchVolume > 0 &&
-		snapshot.Density > 0 && snapshot.SpreadBPS > 0
-}
-
-func fieldSampleTime(snapshot engine.Snapshot) time.Time {
-	sampleAt := snapshot.LastAt
-
-	if snapshot.TradesAt.After(sampleAt) {
-		sampleAt = snapshot.TradesAt
-	}
-
-	if snapshot.BookAt.After(sampleAt) {
-		sampleAt = snapshot.BookAt
-	}
-
-	return sampleAt
-}
-
-func (fluid *Fluid) evaluate(
-	symbol string, snapshot engine.Snapshot, now time.Time,
-) (float64, string) {
-	if !fluid.track.PassesLiquidity(symbol) {
-		return 0, ""
-	}
-
-	if !snapshot.DensityOK || !snapshot.SpreadOK || !snapshot.LastOK ||
-		!snapshot.BatchOK || !snapshot.PressureOK {
-		return 0, ""
-	}
-
-	if snapshot.Density <= 0 || snapshot.SpreadBPS <= 0 || snapshot.Last <= 0 || snapshot.BatchVolume <= 0 {
-		return 0, ""
-	}
-
-	flow := snapshot.BatchVolume
-
-	if snapshot.BuyPressure > 0 {
-		flow = snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
-	}
-
-	depthSlope := 0.0
-
-	if snapshot.DepthSlopeOK {
-		depthSlope = snapshot.DepthSlope
-	}
-
-	return fluid.track.Sample(
-		symbol,
-		snapshot.Density,
-		snapshot.Last,
-		snapshot.SpreadBPS,
-		depthSlope,
-		flow,
-		snapshot.BuyPressure,
-		now,
-	)
+	state.ApplyFeedback(feedback)
 }

@@ -5,140 +5,134 @@ import (
 	"iter"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/numeric"
 )
 
+const causalSource = "causal"
+
+const minLiquidityPairs = 2
+
 /*
-Causal scores flow/liquidity intervention heuristics with bounded effect composition.
-DAG sketch: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as control.
+Causal scores Pearl's ladder: association, intervention, counterfactual uplift.
+DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor control.
 */
 type Causal struct {
-	engine.Passive
-	market  *engine.MarketRelay
-	watch   *engine.SymbolWatch
-	pairs   map[string]asset.Pair
-	symbols []string
-	track   *TrackStore
-	pool    *qpool.Q
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     map[string]*CausalSymbol
+	calibration engine.CalibrationParams
 }
 
-var _ engine.Signal = (*Causal)(nil)
+var (
+	_ engine.System = (*Causal)(nil)
+	_ engine.Signal = (*Causal)(nil)
+)
 
-var _ engine.LiveScoreReader = (*Causal)(nil)
+func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
+	ctx, cancel := context.WithCancel(ctx)
 
-var _ engine.MeanConfidenceReader = (*Causal)(nil)
-
-/*
-LiveScore returns the current causal gauge reading from track state.
-*/
-func (causal *Causal) LiveScore() float64 {
-	return causal.track.PeakLiveConfidence()
-}
-
-func (causal *Causal) PeakReading() engine.LiveReading {
-	symbol, score := causal.track.PeakSymbolScore()
-
-	return engine.LiveReading{
-		Symbol: symbol,
-		Score:  score,
-	}
-}
-
-/*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
-*/
-func (causal *Causal) MeanConfidence() float64 {
-	return causal.track.MeanGaugeConfidence()
-}
-
-/*
-NewCausal wires the shared market broadcast relay into the engine signal.
-*/
-func NewCausal(
-	_ context.Context,
-	pool *qpool.Q,
-	marketRelay *engine.MarketRelay,
-	pairs map[string]asset.Pair,
-	symbols []string,
-	watch *engine.SymbolWatch,
-	calibrationParams engine.CalibrationParams,
-) (*Causal, error) {
 	causal := &Causal{
-		market:  marketRelay,
-		watch:   watch,
-		pairs:   pairs,
-		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(calibrationParams),
-		pool:    pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		symbols:     make(map[string]*CausalSymbol),
+		calibration: engine.DefaultCalibrationParams(),
 	}
 
-	return causal, errnie.Require(map[string]any{
-		"market": marketRelay,
-		"track":  causal.track,
-	})
+	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		causal.subscribers[channel] = group.Subscribe("causal:"+channel, 128)
+	}
+
+	causal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return causal
 }
 
-func (causal *Causal) Source() string {
-	return "causal"
+func (causal *Causal) Start() error  { return nil }
+func (causal *Causal) State() engine.State { return engine.READY }
+
+func (causal *Causal) Tick() error {
+	select {
+	case <-causal.ctx.Done():
+		return causal.ctx.Err()
+	case value := <-causal.subscribers["symbols"].Incoming:
+		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+			if pair != nil {
+				causal.symbols[symbol] = NewCausalSymbol(*pair, causal.calibration)
+			}
+		}
+	case value := <-causal.subscribers["tick"].Incoming:
+		row := value.Value.(market.TickerRow)
+		state := causal.symbols[row.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		state.FeedTicker(row)
+	case value := <-causal.subscribers["trade"].Incoming:
+		tick := value.Value.(trade.Data)
+		state := causal.symbols[tick.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		state.FeedTrade(tick)
+	case value := <-causal.subscribers["book"].Incoming:
+		delta := value.Value.(market.BookLevelsDelta)
+		state := causal.symbols[delta.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		state.FeedBook(delta)
+	case value := <-causal.subscribers["feedback"].Incoming:
+		causal.Feedback(value.Value.(engine.PredictionFeedback))
+	default:
+		for measurement := range causal.Measure() {
+			causal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
+	}
+
+	return nil
 }
 
-/*
-Feedback nudges intervention calibration from settled prediction error.
-*/
-func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
-	engine.ForwardSourceFeedback(causal.Source(), feedback, causal.track.ApplyPredictionFeedback)
+func (causal *Causal) Close() error {
+	causal.cancel()
+	return nil
 }
 
-/*
-Measure advances the causal model and yields non-zero uplift readings.
-*/
-func (causal *Causal) Measure(
-	ctx context.Context,
-	now time.Time,
-) iter.Seq[engine.Measurement] {
+func (causal *Causal) Source() string { return causalSource }
+
+func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		causal.track.BeginScan()
-		engine.DrainTicks(ctx)
+		macro := causal.macroMomentum()
+		now := time.Now()
 
-		macro := causal.track.MacroMomentum(causal.symbols, func(symbol string) (float64, bool) {
-			snapshot := causal.market.Read(symbol)
+		for symbol, state := range causal.symbols {
+			if !causal.passesLiquidity(symbol) {
+				continue
+			}
 
-			return snapshot.ChangePct, snapshot.ChangeOK
-		})
+			measurement, ok := state.Measure(macro, now)
 
-		for measurement := range engine.MeasureSymbols(
-			ctx,
-			engine.SymbolScanner{
-				Source:  causal.Source(),
-				Market:  causal.market,
-				Watch:   causal.watch,
-				Pairs:   causal.pairs,
-				Symbols: causal.symbols,
-				Pool:    causal.pool,
-			},
-			now,
-			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				confidence, reason := causal.evaluate(
-					symbol, snapshot, macro, now,
-				)
+			if !ok {
+				continue
+			}
 
-				causal.track.ObserveGaugeScore(confidence)
-
-				if confidence <= 0 {
-					return engine.Measurement{}, false, nil
-				}
-
-				return engine.Measurement{
-					Type:       engine.Causal,
-					Regime:     "causal",
-					Reason:     reason,
-					Confidence: confidence,
-				}, true, nil
-			},
-		) {
 			if !yield(measurement) {
 				return
 			}
@@ -146,51 +140,55 @@ func (causal *Causal) Measure(
 	}
 }
 
-func (causal *Causal) evaluate(
-	symbol string,
-	snapshot engine.Snapshot,
-	macroMomentum float64,
-	now time.Time,
-) (float64, string) {
-	if !snapshot.LastOK || !snapshot.VolumeOK || !snapshot.BatchOK ||
-		!snapshot.PressureOK || !snapshot.SpreadOK || !snapshot.ImbalanceOK {
-		return 0, ""
+func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != causalSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
 	}
 
-	if snapshot.Last <= 0 || snapshot.BatchVolume <= 0 || snapshot.SpreadBPS <= 0 ||
-		snapshot.Imbalance <= 0 || snapshot.BuyPressure <= 0 {
-		return 0, ""
+	state := causal.symbols[feedback.Symbol]
+
+	if state == nil {
+		return
 	}
 
-	causal.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
-
-	if !causal.track.PassesLiquidity(symbol) {
-		return 0, ""
-	}
-
-	localFlow := snapshot.BatchVolume * (snapshot.BuyPressure + 1) / 2
-	liquidity := bookLiquidity(snapshot.SpreadBPS, snapshot.BatchVolume)
-
-	sample, ready := causal.track.BuildSample(
-		symbol, macroMomentum, liquidity, localFlow, snapshot.Last, now,
-	)
-
-	if !ready {
-		causal.track.CommitSample(symbol, sample, snapshot.Last, now)
-
-		return 0, ""
-	}
-
-	confidence, reason := causal.track.Evaluate(symbol, sample)
-	causal.track.CommitSample(symbol, sample, snapshot.Last, now)
-
-	return confidence, reason
+	state.ApplyFeedback(feedback)
 }
 
-func bookLiquidity(spreadBPS, batchVolume float64) float64 {
-	if spreadBPS <= 0 || batchVolume <= 0 {
+func (causal *Causal) macroMomentum() float64 {
+	changes := make([]float64, 0, len(causal.symbols))
+
+	for _, state := range causal.symbols {
+		if state.changePct != 0 {
+			changes = append(changes, state.changePct)
+		}
+	}
+
+	if len(changes) == 0 {
 		return 0
 	}
 
-	return batchVolume / spreadBPS
+	return numeric.PercentileSorted(numeric.CopySorted(changes), 0.5)
+}
+
+func (causal *Causal) passesLiquidity(symbol string) bool {
+	state := causal.symbols[symbol]
+
+	if state == nil {
+		return false
+	}
+
+	quotes := make(map[string]float64, len(causal.symbols))
+
+	for name, candidate := range causal.symbols {
+		if candidate.dailyQuoteVol > 0 {
+			quotes[name] = candidate.dailyQuoteVol
+		}
+	}
+
+	return engine.PassesBelowMedianLiquidity(
+		state.dailyQuoteVol,
+		quotes,
+		symbol,
+		minLiquidityPairs,
+	)
 }

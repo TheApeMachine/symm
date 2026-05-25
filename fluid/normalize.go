@@ -3,7 +3,7 @@ package fluid
 import (
 	"math"
 
-	"github.com/theapemachine/symm/stats"
+	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -16,9 +16,9 @@ func robustCrossSectionActivity(values []float64) float64 {
 		return 0
 	}
 
-	sorted := stats.CopySorted(values)
-	median := stats.PercentileSorted(sorted, 0.5)
-	mad := stats.MedianAbsoluteDeviation(sorted, median)
+	sorted := numeric.CopySorted(values)
+	median := numeric.PercentileSorted(sorted, 0.5)
+	mad := numeric.MedianAbsoluteDeviation(sorted, median)
 	spread := math.Max(mad, math.Max(math.Abs(median)*1e-3, 1e-12))
 
 	if mad <= 0 {

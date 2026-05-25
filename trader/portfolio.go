@@ -1,8 +1,6 @@
 package trader
 
-type Portfolio struct {
-	trades map[string]*Trade
-}
+type Portfolio struct{}
 
 func NewPortfolio(wallet *Wallet) *Portfolio {
 	return &Portfolio{}

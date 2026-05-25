@@ -4,36 +4,22 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/stats"
+	"github.com/theapemachine/symm/numeric"
 )
-
-func medianAbsVelocity(samples []causalSample) float64 {
-	if len(samples) == 0 {
-		return 0
-	}
-
-	velocities := make([]float64, len(samples))
-
-	for index, sample := range samples {
-		velocities[index] = sample.priceVelocity
-	}
-
-	return stats.MedianAbsolute(velocities)
-}
 
 /*
 opportunityRunway estimates how long excess velocity persists versus history.
 */
-func opportunityRunway(
-	samples []causalSample, lastElapsed time.Duration,
-) time.Duration {
+func opportunityRunway(samples []causalSample, lastElapsed time.Duration) time.Duration {
 	if lastElapsed <= 0 || len(samples) == 0 {
 		return 0
 	}
 
 	current := samples[len(samples)-1]
 	speed := math.Abs(current.priceVelocity)
-	typical := medianAbsVelocity(samples)
+	typical := numeric.MedianAbsolute(extract(samples, func(sample causalSample) float64 {
+		return sample.priceVelocity
+	}))
 
 	if speed <= 0 {
 		return lastElapsed

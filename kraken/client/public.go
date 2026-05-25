@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -9,8 +10,13 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/core"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ohlc"
+	"github.com/theapemachine/symm/kraken/trade"
 )
 
 /*
@@ -18,17 +24,16 @@ PublicClient maintains an unauthenticated Kraken WebSocket v2 session.
 It owns dial, ping, subscribe, and framed reads for public market channels.
 */
 type PublicClient struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
-	conn          *websocket.Conn
-	url           string
-	once          sync.Once
-	reqID         int
-	subscriptions []ohlc.Subscribe
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	conn        *websocket.Conn
+	url         string
+	once        sync.Once
+	subscribed  map[string]struct{}
 }
 
 /*
@@ -84,18 +89,38 @@ func (publicClient *PublicClient) Tick() error {
 		publicClient.cancel()
 		return publicClient.ctx.Err()
 	case msg := <-publicClient.subscribers["subscriptions"].Incoming:
-		if msg, ok := msg.Value.([]string); !ok {
+		symbols, ok := msg.Value.([]string)
+
+		if !ok {
 			return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
 		}
 
-		for _, symbol := range msg.Value.([]string) {
-			subscription := errnie.Does(func() (*ohlc.Subscribe, error) {
-				return ohlc.NewSubscribe([]string{symbol}), nil
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
+		if publicClient.conn == nil {
+			return errnie.Error(fmt.Errorf("public client not connected"))
+		}
 
-			publicClient.conn.WriteJSON(subscription)
+		if err := publicClient.conn.WriteJSON(ohlc.NewSubscribe(symbols)); err != nil {
+			return errnie.Error(err)
+		}
+
+		if err := publicClient.conn.WriteJSON(trade.NewSubscribe(symbols)); err != nil {
+			return errnie.Error(err)
+		}
+
+		if err := publicClient.conn.WriteJSON(map[string]any{
+			"method": "subscribe",
+			"params": market.SubscribeParams{}.Ticker(symbols),
+		}); err != nil {
+			return errnie.Error(err)
+		}
+
+		if err := publicClient.conn.WriteJSON(map[string]any{
+			"method": "subscribe",
+			"params": market.SubscribeParams{}.Book(
+				symbols, config.System.BookDepthLevels,
+			),
+		}); err != nil {
+			return errnie.Error(err)
 		}
 
 		return nil
@@ -109,14 +134,6 @@ Connect dials the Kraken v2 websocket endpoint.
 Replay sources connect without dialing and require StartReplay after handlers register.
 */
 func (publicClient *PublicClient) Connect() error {
-	publicClient.conn, _, publicClient.err = websocket.DefaultDialer.DialContext(
-		publicClient.ctx, publicClient.url, nil,
-	)
-
-	if publicClient.err != nil {
-		return errnie.Error(publicClient.err)
-	}
-
 	publicClient.ReadLoop()
 	return nil
 }
@@ -126,34 +143,202 @@ Close cancels the session context and closes the underlying socket.
 */
 func (publicClient *PublicClient) Close() error {
 	publicClient.cancel()
+
+	if publicClient.conn == nil {
+		return nil
+	}
+
 	return publicClient.conn.Close()
 }
 
 func (publicClient *PublicClient) ReadLoop() {
 	publicClient.once.Do(func() {
 		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
+			backoff := 30 * time.Second
 
-			for {
-				select {
-				case <-publicClient.ctx.Done():
-					return
-				case <-ticker.C:
-					if err := publicClient.conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
-						errnie.Error(err)
+			for publicClient.ctx.Err() == nil {
+				conn, _, err := websocket.DefaultDialer.DialContext(
+					publicClient.ctx, publicClient.url, nil,
+				)
+
+				if err != nil {
+					errnie.Error(err)
+
+					select {
+					case <-publicClient.ctx.Done():
+						return
+					case <-time.After(backoff):
 					}
-				default:
-					_, payload, err := publicClient.conn.ReadMessage()
+
+					continue
+				}
+
+				publicClient.conn = conn
+				publicClient.subscribed = make(map[string]struct{})
+
+				if err := conn.WriteJSON(map[string]any{
+					"method": "subscribe",
+					"params": market.SubscribeParams{}.Instrument(),
+				}); err != nil {
+					errnie.Error(err)
+					conn.Close()
+					publicClient.conn = nil
+
+					select {
+					case <-publicClient.ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+
+					continue
+				}
+
+				pingStop := make(chan struct{})
+
+				go func() {
+					ticker := time.NewTicker(30 * time.Second)
+					defer ticker.Stop()
+
+					for {
+						select {
+						case <-publicClient.ctx.Done():
+							return
+						case <-pingStop:
+							return
+						case <-ticker.C:
+							if err := conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
+								return
+							}
+						}
+					}
+				}()
+
+				for publicClient.ctx.Err() == nil {
+					_, payload, err := conn.ReadMessage()
 
 					if err != nil {
 						errnie.Error(err)
-						continue
+						break
 					}
 
 					publicClient.broadcasts["ui"].Send(&qpool.QValue[any]{
 						Value: payload,
 					})
+
+					channel, err := market.ChannelName(payload)
+
+					if err != nil {
+						continue
+					}
+
+					switch channel {
+					case core.ChannelInstrument:
+						var frame market.InstrumentMessage
+
+						if frame.Parse(payload) != nil {
+							continue
+						}
+
+						pairs := make(map[string]*asset.Pair, len(frame.Data.Pairs))
+						symbols := make([]string, 0, len(frame.Data.Pairs))
+
+						for _, instrument := range frame.Data.Pairs {
+							if instrument.Status != market.PairStatusOnline {
+								continue
+							}
+
+							pair := instrument.AssetPair()
+							pairs[instrument.Symbol] = &pair
+							symbols = append(symbols, instrument.Symbol)
+						}
+
+						if len(pairs) > 0 {
+							publicClient.pool.CreateBroadcastGroup("symbols", 10*time.Millisecond).Send(&qpool.QValue[any]{
+								Value: pairs,
+							})
+						}
+
+						pending := make([]string, 0, len(symbols))
+
+						for _, symbol := range symbols {
+							if _, seen := publicClient.subscribed[symbol]; seen {
+								continue
+							}
+
+							publicClient.subscribed[symbol] = struct{}{}
+							pending = append(pending, symbol)
+						}
+
+						batch := config.System.SubscribeBatch
+
+						for start := 0; start < len(pending); start += batch {
+							end := start + batch
+
+							if end > len(pending) {
+								end = len(pending)
+							}
+
+							publicClient.broadcasts["subscriptions"].Send(&qpool.QValue[any]{
+								Value: pending[start:end],
+							})
+						}
+					case core.ChannelTicker:
+						rows, err := market.ParseTickerRows(payload)
+
+						if err != nil {
+							continue
+						}
+
+						tick := publicClient.pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
+
+						for _, row := range rows {
+							tick.Send(&qpool.QValue[any]{Value: row})
+						}
+					case core.ChannelTrades, "trade":
+						var frame trade.Snapshot
+
+						if json.Unmarshal(payload, &frame) != nil {
+							continue
+						}
+
+						tradeGroup := publicClient.pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
+
+						for _, data := range frame.Data {
+							tradeGroup.Send(&qpool.QValue[any]{Value: data})
+						}
+					case core.ChannelOHLC:
+						var frame ohlc.Snapshot
+
+						if json.Unmarshal(payload, &frame) != nil {
+							continue
+						}
+
+						ohlcGroup := publicClient.pool.CreateBroadcastGroup("ohlc", 10*time.Millisecond)
+
+						for _, data := range frame.Data {
+							ohlcGroup.Send(&qpool.QValue[any]{Value: data})
+						}
+					case core.ChannelBook:
+						delta, err := market.ParseBookLevelsDelta(payload)
+
+						if err != nil {
+							continue
+						}
+
+						publicClient.pool.CreateBroadcastGroup("book", 10*time.Millisecond).Send(&qpool.QValue[any]{
+							Value: delta,
+						})
+					}
+				}
+
+				close(pingStop)
+				conn.Close()
+				publicClient.conn = nil
+
+				select {
+				case <-publicClient.ctx.Done():
+					return
+				case <-time.After(backoff):
 				}
 			}
 		}()

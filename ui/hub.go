@@ -15,6 +15,8 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/engine"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -75,17 +77,53 @@ var dashboardSnapshotOrder = []string{
 	"status",
 }
 
+var _ engine.System = (*Hub)(nil)
+
 /*
-NewHub subscribes to the shared ui broadcast group created on the pool.
+Start serves the websocket hub when UIAddr is configured.
+*/
+func (hub *Hub) Start() error {
+	addr, ok := ListenAddr(config.System.UIAddr)
+
+	if !ok {
+		return nil
+	}
+
+	go func() {
+		if err := hub.Serve(addr); err != nil {
+			errnie.Error(err)
+		}
+	}()
+
+	return nil
+}
+
+func (hub *Hub) State() engine.State {
+	return engine.READY
+}
+
+func (hub *Hub) Tick() error {
+	select {
+	case <-hub.ctx.Done():
+		return hub.ctx.Err()
+	default:
+		return nil
+	}
+}
+
+/*
+NewHub subscribes to the ui broadcast group on pool.
 */
 func NewHub(
 	ctx context.Context,
-	ui *qpool.BroadcastGroup,
+	pool *qpool.Q,
 	commands CommandHandler,
 ) (*Hub, error) {
-	if ui == nil {
-		return nil, fmt.Errorf("ui hub requires ui broadcast group")
+	if pool == nil {
+		return nil, fmt.Errorf("ui hub requires pool")
 	}
+
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -179,11 +217,12 @@ func (hub *Hub) writePump() {
 }
 
 func (hub *Hub) broadcastToClients(value *qpool.QValue[any]) {
-	switch typed := value.Value.(type) {
-	case map[string]any:
-		hub.cacheSnapshot(typed)
-	case []map[string]any:
-		for _, payload := range typed {
+	if payload, ok := value.Value.(map[string]any); ok {
+		hub.cacheSnapshot(payload)
+	}
+
+	if payloads, ok := value.Value.([]map[string]any); ok {
+		for _, payload := range payloads {
 			hub.cacheSnapshot(payload)
 		}
 	}
@@ -195,10 +234,10 @@ func (hub *Hub) broadcastToClients(value *qpool.QValue[any]) {
 			return true
 		}
 
-		switch value.Value.(type) {
-		case map[string]any:
-			_ = client.conn.WriteJSON(value.Value)
-		case []map[string]any:
+		switch typed := value.Value.(type) {
+		case []byte:
+			_ = client.conn.WriteMessage(websocket.TextMessage, typed)
+		default:
 			_ = client.conn.WriteJSON(value.Value)
 		}
 

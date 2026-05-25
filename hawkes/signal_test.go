@@ -64,17 +64,6 @@ func TestSplitSideEventsKeepsWindowTicks(t *testing.T) {
 	}
 }
 
-func TestMeanConfidence(t *testing.T) {
-	hawkesSignal := &Hawkes{calibrationParams: engine.DefaultCalibrationParams()}
-
-	hawkesSignal.ObserveGaugeScore(0.2)
-	hawkesSignal.ObserveGaugeScore(0.6)
-
-	if got := hawkesSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
-		t.Fatalf("expected mean confidence 0.4, got %v", got)
-	}
-}
-
 func TestMergeMarkedEventsSortsChronologically(t *testing.T) {
 	start := time.Unix(0, 0)
 	buyEvents := []time.Time{start.Add(3 * time.Second), start}

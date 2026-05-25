@@ -34,7 +34,7 @@ func fitNonLinearStructural(samples []causalSample) (nonLinearModel, bool) {
 	targets := extract(samples, func(sample causalSample) float64 { return sample.priceVelocity })
 	residuals := append([]float64(nil), targets...)
 	model := nonLinearModel{
-		intercept: mean(targets),
+		intercept: numericMean(targets),
 		stumps:    make([]stumpSplit, 0, nonLinearStumps),
 	}
 
@@ -55,14 +55,24 @@ func fitNonLinearStructural(samples []causalSample) (nonLinearModel, bool) {
 	return model, len(model.stumps) > 0
 }
 
+func numericMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sum := 0.0
+
+	for _, value := range values {
+		sum += value
+	}
+
+	return sum / float64(len(values))
+}
+
 /*
 predictNonLinearVelocity returns the ensemble prediction at one observation.
 */
-func predictNonLinearVelocity(
-	sample causalSample,
-	model nonLinearModel,
-	flow float64,
-) float64 {
+func predictNonLinearVelocity(sample causalSample, model nonLinearModel, flow float64) float64 {
 	prediction := model.intercept
 
 	for _, split := range model.stumps {
@@ -101,6 +111,17 @@ func kernelBackdoorFlowEffect(samples []causalSample) float64 {
 	return numerator / denominator
 }
 
+func nonLinearCounterfactualUplift(
+	current causalSample,
+	model nonLinearModel,
+	interventionFlow float64,
+) float64 {
+	observed := predictNonLinearVelocity(current, model, current.localFlow)
+	counterfactual := predictNonLinearVelocity(current, model, interventionFlow)
+
+	return counterfactual - observed
+}
+
 func bestStump(samples []causalSample, residuals []float64) (stumpSplit, float64) {
 	best := stumpSplit{}
 	bestGain := 0.0
@@ -108,7 +129,6 @@ func bestStump(samples []causalSample, residuals []float64) (stumpSplit, float64
 	for featureIndex := 0; featureIndex < 3; featureIndex++ {
 		for _, sample := range samples {
 			threshold := featureValue(sample, featureIndex)
-
 			leftSum, leftCount, rightSum, rightCount := partitionResiduals(
 				samples, residuals, featureIndex, threshold,
 			)
@@ -188,11 +208,7 @@ func stumpPrediction(sample causalSample, split stumpSplit) float64 {
 	return stumpPredictionWithFlow(sample, split, sample.localFlow)
 }
 
-func stumpPredictionWithFlow(
-	sample causalSample,
-	split stumpSplit,
-	flow float64,
-) float64 {
+func stumpPredictionWithFlow(sample causalSample, split stumpSplit, flow float64) float64 {
 	value := featureValueWithFlow(sample, split.featureIndex, flow)
 
 	if value <= split.threshold {
@@ -223,15 +239,4 @@ func featureDistance(left, right causalSample) float64 {
 	flowDelta := left.localFlow - right.localFlow
 
 	return math.Sqrt(macroDelta*macroDelta + liquidityDelta*liquidityDelta + flowDelta*flowDelta)
-}
-
-func nonLinearCounterfactualUplift(
-	current causalSample,
-	model nonLinearModel,
-	interventionFlow float64,
-) float64 {
-	observed := predictNonLinearVelocity(current, model, current.localFlow)
-	counterfactual := predictNonLinearVelocity(current, model, interventionFlow)
-
-	return counterfactual - observed
 }

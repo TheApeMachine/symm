@@ -10,25 +10,29 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/ohlc"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/core"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/order"
 )
 
 /*
 PrivateClient maintains an authenticated Kraken WebSocket v2 session.
-It owns dial, ping, subscribe, and framed reads for public market channels.
+It forwards private channel frames to ui and routes executions into the pool.
 */
 type PrivateClient struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
-	conn          *websocket.Conn
-	url           string
-	once          sync.Once
-	reqID         int
-	subscriptions []ohlc.Subscribe
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	conn        *websocket.Conn
+	url         string
+	apiKey      string
+	apiSecret   string
+	token       string
+	once        sync.Once
 }
 
 /*
@@ -38,6 +42,8 @@ func NewPrivateClient(
 	ctx context.Context,
 	pool *qpool.Q,
 	url string,
+	apiKey string,
+	apiSecret string,
 ) *PrivateClient {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -48,13 +54,14 @@ func NewPrivateClient(
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		url:         url,
+		apiKey:      apiKey,
+		apiSecret:   apiSecret,
 	}
 
-	client.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
-	client.subscribers["subscriptions"] = client.broadcasts["subscriptions"].Subscribe("subscriptions", 128)
-
 	client.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	client.subscribers["ui"] = client.broadcasts["ui"].Subscribe("ui", 128)
+	client.subscribers["ui"] = client.broadcasts["ui"].Subscribe("private:ui", 128)
+	client.broadcasts["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond)
+	client.subscribers["orders"] = pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Subscribe("private:orders", 128)
 
 	if errnie.Error(errnie.Require(map[string]any{
 		"ctx":         ctx,
@@ -63,6 +70,8 @@ func NewPrivateClient(
 		"broadcasts":  client.broadcasts,
 		"subscribers": client.subscribers,
 		"url":         url,
+		"apiKey":      apiKey,
+		"apiSecret":   apiSecret,
 	})) != nil {
 		return nil
 	}
@@ -83,19 +92,17 @@ func (privateClient *PrivateClient) Tick() error {
 	case <-privateClient.ctx.Done():
 		privateClient.cancel()
 		return privateClient.ctx.Err()
-	case msg := <-privateClient.subscribers["subscriptions"].Incoming:
-		if msg, ok := msg.Value.([]string); !ok {
-			return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
+	case value := <-privateClient.subscribers["orders"].Incoming:
+		request, ok := value.Value.(order.Request)
+
+		if !ok {
+			return errnie.Error(fmt.Errorf("invalid order request: %v", value.Value))
 		}
 
-		for _, symbol := range msg.Value.([]string) {
-			subscription := errnie.Does(func() (*ohlc.Subscribe, error) {
-				return ohlc.NewSubscribe([]string{symbol}), nil
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
+		request.Params.Token = privateClient.token
 
-			privateClient.conn.WriteJSON(subscription)
+		if err := privateClient.conn.WriteJSON(request); err != nil {
+			return errnie.Error(err)
 		}
 
 		return nil
@@ -105,16 +112,38 @@ func (privateClient *PrivateClient) Tick() error {
 }
 
 /*
-Connect dials the Kraken v2 websocket endpoint.
-Replay sources connect without dialing and require StartReplay after handlers register.
+Connect dials the Kraken v2 authenticated websocket endpoint and subscribes to executions.
 */
 func (privateClient *PrivateClient) Connect() error {
+	if privateClient.apiKey == "" || privateClient.apiSecret == "" {
+		return errnie.Error(fmt.Errorf("private client requires API credentials"))
+	}
+
+	token, err := kraken.NewToken(privateClient.apiKey, privateClient.apiSecret)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	privateClient.token = token.Value()
+
 	privateClient.conn, _, privateClient.err = websocket.DefaultDialer.DialContext(
 		privateClient.ctx, privateClient.url, nil,
 	)
 
 	if privateClient.err != nil {
 		return errnie.Error(privateClient.err)
+	}
+
+	if err := privateClient.conn.WriteJSON(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":     core.ChannelExecutions,
+			"token":       privateClient.token,
+			"snap_orders": true,
+		},
+	}); err != nil {
+		return errnie.Error(err)
 	}
 
 	privateClient.ReadLoop()
@@ -126,34 +155,75 @@ Close cancels the session context and closes the underlying socket.
 */
 func (privateClient *PrivateClient) Close() error {
 	privateClient.cancel()
+
+	if privateClient.conn == nil {
+		return nil
+	}
+
 	return privateClient.conn.Close()
 }
 
 func (privateClient *PrivateClient) ReadLoop() {
 	privateClient.once.Do(func() {
 		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
+			pingStop := make(chan struct{})
+			defer close(pingStop)
 
-			for {
-				select {
-				case <-privateClient.ctx.Done():
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-privateClient.ctx.Done():
+						return
+					case <-pingStop:
+						return
+					case <-ticker.C:
+						if privateClient.conn == nil {
+							return
+						}
+
+						if err := privateClient.conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
+							return
+						}
+					}
+				}
+			}()
+
+			for privateClient.ctx.Err() == nil {
+				_, payload, err := privateClient.conn.ReadMessage()
+
+				if err != nil {
+					errnie.Error(err)
 					return
-				case <-ticker.C:
-					if err := privateClient.conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
-						errnie.Error(err)
-					}
-				default:
-					_, payload, err := privateClient.conn.ReadMessage()
+				}
 
-					if err != nil {
-						errnie.Error(err)
-						continue
-					}
+				privateClient.broadcasts["ui"].Send(&qpool.QValue[any]{
+					Value: payload,
+				})
 
-					privateClient.broadcasts["ui"].Send(&qpool.QValue[any]{
-						Value: payload,
-					})
+				channel, err := market.ChannelName(payload)
+
+				if err != nil {
+					continue
+				}
+
+				if channel != core.ChannelExecutions {
+					continue
+				}
+
+				fills, err := order.ParseExecutionFills(payload)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				executions := privateClient.broadcasts["executions"]
+
+				for _, fill := range fills {
+					executions.Send(&qpool.QValue[any]{Value: fill})
 				}
 			}
 		}()

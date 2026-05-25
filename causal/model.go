@@ -3,7 +3,7 @@ package causal
 import (
 	"math"
 
-	"github.com/theapemachine/symm/stats"
+	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -18,14 +18,12 @@ type structuralCoef struct {
 
 const minBackdoorDenominator = 1e-9
 
+/*
+associationEffect is rung-1 P(velocity | flow): observational correlation.
+*/
 func associationEffect(samples []causalSample) float64 {
-	flows := make([]float64, len(samples))
-	vels := make([]float64, len(samples))
-
-	for index, sample := range samples {
-		flows[index] = sample.localFlow
-		vels[index] = sample.priceVelocity
-	}
+	flows := extract(samples, func(sample causalSample) float64 { return sample.localFlow })
+	vels := extract(samples, func(sample causalSample) float64 { return sample.priceVelocity })
 
 	return pearson(flows, vels)
 }
@@ -91,7 +89,7 @@ func flowInterventionLevel(samples []causalSample) float64 {
 		return 0
 	}
 
-	return stats.PercentileSorted(stats.CopySorted(flows), 0.75)
+	return numeric.PercentileSorted(numeric.CopySorted(flows), 0.75)
 }
 
 func predictVelocity(sample causalSample, coef structuralCoef, flow float64) float64 {
@@ -161,9 +159,7 @@ func ols2(target, first, second []float64) ([]float64, bool) {
 	return ridgeSolve(normal, targetVec)
 }
 
-func ols3(
-	target, first, second, third []float64,
-) ([]float64, bool) {
+func ols3(target, first, second, third []float64) ([]float64, bool) {
 	if len(target) < minCausalHistory {
 		return nil, false
 	}
@@ -260,8 +256,8 @@ func pearson(left, right []float64) float64 {
 		return 0
 	}
 
-	meanLeft := mean(left)
-	meanRight := mean(right)
+	meanLeft := numeric.Mean(left)
+	meanRight := numeric.Mean(right)
 	numerator := 0.0
 	varLeft := 0.0
 	varRight := 0.0
@@ -281,20 +277,6 @@ func pearson(left, right []float64) float64 {
 	}
 
 	return numerator / denom
-}
-
-func mean(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
 }
 
 func dot(left, right []float64) float64 {

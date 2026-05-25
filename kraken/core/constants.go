@@ -14,6 +14,7 @@ const (
 	ChannelTicker     = "ticker"
 	ChannelBook       = "book"
 	ChannelTrades     = "trades"
+	ChannelOHLC       = "ohlc"
 	ChannelExecutions = "executions"
 	ChannelBalances   = "balances"
 )

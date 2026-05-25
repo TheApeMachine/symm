@@ -4,8 +4,8 @@ import (
 	"math"
 	"sync"
 
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/ring"
-	"github.com/theapemachine/symm/stats"
 )
 
 const exitHistoryCap = 24
@@ -94,6 +94,19 @@ func (store *historyStore) snapshot(symbol string) (symbolHistory, bool) {
 	return history.snapshot(), true
 }
 
+func (store *historyStore) symbols() []string {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	symbols := make([]string, 0, len(store.bySymbol))
+
+	for symbol := range store.bySymbol {
+		symbols = append(symbols, symbol)
+	}
+
+	return symbols
+}
+
 func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 	history, ok := store.bySymbol[symbol]
 
@@ -133,8 +146,8 @@ func depthTrend(depths ring.FloatRing) float64 {
 	}
 
 	ordered := depths.Ordered()
-	recent := stats.Mean(ordered[len(ordered)-3:])
-	prior := stats.Mean(ordered[:len(ordered)-3])
+	recent := numeric.Mean(ordered[len(ordered)-3:])
+	prior := numeric.Mean(ordered[:len(ordered)-3])
 
 	if prior <= 0 {
 		return 0
@@ -149,8 +162,8 @@ func spreadWiden(spreads ring.FloatRing) float64 {
 	}
 
 	ordered := spreads.Ordered()
-	sorted := stats.CopySorted(ordered)
-	median := stats.PercentileSorted(sorted, 0.5)
+	sorted := numeric.CopySorted(ordered)
+	median := numeric.PercentileSorted(sorted, 0.5)
 	current := ordered[len(ordered)-1]
 
 	if median <= 0 || current <= median {
@@ -167,7 +180,7 @@ func pressureFade(pressures ring.FloatRing, side int) float64 {
 
 	ordered := pressures.Ordered()
 	recent := ordered[len(ordered)-1]
-	priorPeak := stats.Max(ordered[:len(ordered)-1])
+	priorPeak := numeric.Max(ordered[:len(ordered)-1])
 
 	if side > 0 {
 		if priorPeak <= 0 {
@@ -199,7 +212,7 @@ func imbalanceFlip(imbalances ring.FloatRing, side int) float64 {
 
 	ordered := imbalances.Ordered()
 	recent := ordered[len(ordered)-1]
-	prior := stats.Mean(ordered[:len(ordered)-1])
+	prior := numeric.Mean(ordered[:len(ordered)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
 		return math.Min(1, math.Abs(recent)/math.Max(prior, 1e-9))

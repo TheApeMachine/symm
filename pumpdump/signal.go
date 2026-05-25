@@ -8,6 +8,8 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -57,7 +59,7 @@ func NewPumpDump(ctx context.Context, pool *qpool.Q) *PumpDump {
 		symbols:     make(map[string]*PumpSymbol),
 	}
 
-	for _, channel := range []string{"symbols", "tick", "trade", "book"} {
+	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
 		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		pumpdump.subscribers[channel] = group.Subscribe("pumpdump:"+channel, 128)
 	}
@@ -86,17 +88,27 @@ func (pumpdump *PumpDump) Tick() error {
 			}
 		}
 	case value := <-pumpdump.subscribers["tick"].Incoming:
-		update := value.Value.(TickUpdate)
-		state := pumpdump.symbols[update.Symbol]
-		state.lastPrice = update.Last
-		state.dailyQuoteVol = update.VolumeBase * update.Last
+		row := value.Value.(market.TickerRow)
+		state := pumpdump.symbols[row.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		state.lastPrice = row.Last
+		state.dailyQuoteVol = row.Volume * row.Last
 	case value := <-pumpdump.subscribers["trade"].Incoming:
-		update := value.Value.(TradeUpdate)
-		state := pumpdump.symbols[update.Symbol]
+		tick := value.Value.(trade.Data)
+		state := pumpdump.symbols[tick.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
 		closed, err := state.volumeWindow.Next(
 			0,
-			float64(update.UpdatedAt.UnixNano()),
-			update.BatchVolume,
+			float64(tick.Timestamp.UnixNano()),
+			tick.Qty,
 			state.lastPrice,
 		)
 
@@ -108,14 +120,41 @@ func (pumpdump *PumpDump) Tick() error {
 			_, _ = state.volumeBaseline.Next(0, closed)
 		}
 
-		if update.BuyPressure > 0 {
-			state.buyPressure = update.BuyPressure
+		if tick.Side == "buy" {
+			state.buyPressure = 1
+			return nil
 		}
+
+		if tick.Side == "sell" {
+			state.buyPressure = -1
+		}
+	case value := <-pumpdump.subscribers["feedback"].Incoming:
+		pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
 	case value := <-pumpdump.subscribers["book"].Incoming:
-		update := value.Value.(BookUpdate)
-		state := pumpdump.symbols[update.Symbol]
-		state.spreadBPS = update.SpreadBPS
-		state.imbalance = update.Imbalance
+		delta := value.Value.(market.BookLevelsDelta)
+		state := pumpdump.symbols[delta.Symbol]
+
+		if state == nil {
+			return nil
+		}
+
+		if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+			return nil
+		}
+
+		bid := delta.Bids[0].Price
+		ask := delta.Asks[0].Price
+		mid := (bid + ask) / 2
+
+		if mid > 0 {
+			state.spreadBPS = (ask - bid) / mid * 10000
+		}
+
+		total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+		if total > 0 {
+			state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+		}
 	default:
 		for measurement := range pumpdump.Measure() {
 			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{

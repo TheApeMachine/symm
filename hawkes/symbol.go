@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/logic"
@@ -113,7 +113,7 @@ func (sym *HawkesSymbol) SymbolRisk() (engine.SymbolRisk, bool) {
 
 func (sym *HawkesSymbol) Measure(
 	ticks []trade.Data,
-	snapshot engine.Snapshot,
+	imbalance float64,
 	now time.Time,
 	pair asset.Pair,
 ) (engine.Measurement, bool) {
@@ -145,10 +145,10 @@ func (sym *HawkesSymbol) Measure(
 		sellSide,
 	)
 
-	bookSide := snapshot.Imbalance
+	bookSide := imbalance
 
 	if sellSide {
-		bookSide = math.Abs(snapshot.Imbalance)
+		bookSide = math.Abs(imbalance)
 	}
 
 	scaled := errnie.Does(func() (float64, error) {

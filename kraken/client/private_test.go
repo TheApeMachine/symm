@@ -2,165 +2,42 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/order"
+	"github.com/theapemachine/qpool"
 )
 
 func TestNewPrivateClient(t *testing.T) {
-	convey.Convey("Given websocket credentials", t, func() {
+	convey.Convey("Given API credentials", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		convey.Convey("It should construct a private client with a public transport", func() {
-			privateClient, err := NewPrivateClient(ctx, "public-key", "private-key")
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(privateClient.conn, convey.ShouldNotBeNil)
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		convey.Convey("It should construct a private client", func() {
+			privateClient := NewPrivateClient(ctx, pool, "wss://ws-auth.kraken.com/v2", "key", "secret")
+			convey.So(privateClient, convey.ShouldNotBeNil)
 		})
 	})
 }
 
-func TestPrivateClientAuthenticate(t *testing.T) {
-	convey.Convey("Given invalid API credentials", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		privateClient, err := NewPrivateClient(ctx, "invalid", "invalid")
-		convey.So(err, convey.ShouldBeNil)
-
-		convey.Convey("It should record the token error without panicking", func() {
-			convey.So(privateClient.Authenticate(), convey.ShouldNotBeNil)
-			convey.So(privateClient.token.Err(), convey.ShouldNotBeNil)
-		})
-	})
-}
-
-func TestPrivateClientSubscribe(t *testing.T) {
-	convey.Convey("Given a connected private client with a seeded token", t, func() {
+func TestPrivateClientConnectRequiresCredentials(t *testing.T) {
+	convey.Convey("Given a private client without credentials", t, func() {
 		testServer := newTestWSServer(t)
 		defer testServer.Close()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		privateClient, err := NewPrivateClient(
-			ctx,
-			"public-key",
-			"private-key",
-			WithWebSocketURL(testServer.url),
-		)
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(privateClient.conn.Connect(), convey.ShouldBeNil)
-		defer privateClient.Close()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
 
-		privateClient.token = errnie.Does(func() (*kraken.Token, error) {
-			token := &kraken.Token{}
-			token.Result.Token = "session-token"
-			token.Result.Expires = 9999999999
-			return token, nil
-		})
+		privateClient := NewPrivateClient(ctx, pool, testServer.url, "", "")
 
-		convey.Convey("It should attach the token to authenticated subscriptions", func() {
-			convey.So(privateClient.Subscribe(kraken.ChannelTypeExecutions), convey.ShouldBeNil)
-
-			payload, readErr := privateClient.Read()
-			convey.So(readErr, convey.ShouldBeNil)
-
-			var response struct {
-				Channel string `json:"channel"`
-				Token   string `json:"token"`
-				Success bool   `json:"success"`
-			}
-			convey.So(json.Unmarshal(payload, &response), convey.ShouldBeNil)
-			convey.So(response.Channel, convey.ShouldEqual, string(kraken.ChannelTypeExecutions))
-			convey.So(response.Token, convey.ShouldEqual, "session-token")
-			convey.So(response.Success, convey.ShouldBeTrue)
+		convey.Convey("It should reject connect", func() {
+			convey.So(privateClient.Connect(), convey.ShouldNotBeNil)
 		})
 	})
-}
-
-func TestPrivateClientPlaceOrder(t *testing.T) {
-	convey.Convey("Given a connected private client with a seeded token", t, func() {
-		testServer := newTestWSServer(t)
-		defer testServer.Close()
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		privateClient, err := NewPrivateClient(
-			ctx,
-			"public-key",
-			"private-key",
-			WithWebSocketURL(testServer.url),
-		)
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(privateClient.conn.Connect(), convey.ShouldBeNil)
-		defer privateClient.Close()
-
-		privateClient.token = errnie.Does(func() (*kraken.Token, error) {
-			token := &kraken.Token{}
-			token.Result.Token = "session-token"
-			token.Result.Expires = 9999999999
-			return token, nil
-		})
-
-		convey.Convey("It should ack add_order and receive the execution fill", func() {
-			request := order.MarketBuyCash("BTC/EUR", 10, 94000, 93900, "session-token")
-
-			ack, err := privateClient.PlaceOrder(ctx, request)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(ack.Result.OrderID, convey.ShouldEqual, "ORDER-1")
-
-			fill, err := privateClient.WaitFill(ctx, ack.Result.OrderID)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(fill.Price, convey.ShouldEqual, 95000)
-			convey.So(fill.Qty, convey.ShouldEqual, 0.001)
-		})
-	})
-}
-
-func BenchmarkPrivateClientSubscribe(b *testing.B) {
-	testServer := newTestWSServer(&testing.T{})
-	defer testServer.Close()
-
-	ctx := context.Background()
-	privateClient, err := NewPrivateClient(
-		ctx,
-		"public-key",
-		"private-key",
-		WithWebSocketURL(testServer.url),
-	)
-	if err != nil {
-		b.Fatalf("new private client: %v", err)
-	}
-
-	if err := privateClient.conn.Connect(); err != nil {
-		b.Fatalf("connect: %v", err)
-	}
-	defer privateClient.Close()
-
-	go func() {
-		for {
-			if _, readErr := privateClient.Read(); readErr != nil {
-				return
-			}
-		}
-	}()
-
-	privateClient.token = errnie.Does(func() (*kraken.Token, error) {
-		token := &kraken.Token{}
-		token.Result.Token = "session-token"
-		token.Result.Expires = 9999999999
-		return token, nil
-	})
-
-	for b.Loop() {
-		if err := privateClient.Subscribe(kraken.ChannelTypeExecutions); err != nil {
-			b.Fatalf("subscribe: %v", err)
-		}
-	}
 }

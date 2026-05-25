@@ -5,175 +5,169 @@ import (
 	"iter"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
-const leadlagSource = "leadlag"
+const (
+	leadlagSource  = "leadlag"
+	anchorSymbol   = "BTC/EUR"
+	minAnchorMove  = 0.05
+	minLagFraction = 0.35
+)
+
+type symbolState struct {
+	pair      asset.Pair
+	changePct float64
+}
 
 /*
-LeadLag detects when one symbol leads the cross-section and a laggard has not caught up.
+LeadLag detects altcoins lagging a moving anchor pair.
 */
 type LeadLag struct {
-	engine.Passive
-	market  *engine.MarketRelay
-	watch   *engine.SymbolWatch
-	pairs   map[string]asset.Pair
-	symbols []string
-	track   *TrackStore
-	pool    *qpool.Q
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     map[string]*symbolState
+	peak        *adaptive.Peak
 }
 
-var _ engine.Signal = (*LeadLag)(nil)
+var (
+	_ engine.System = (*LeadLag)(nil)
+	_ engine.Signal = (*LeadLag)(nil)
+)
 
-var _ engine.MeanConfidenceReader = (*LeadLag)(nil)
+func NewLeadLag(ctx context.Context, pool *qpool.Q) *LeadLag {
+	ctx, cancel := context.WithCancel(ctx)
 
-/*
-NewLeadLag wires the market relay into the lead-lag signal.
-*/
-func NewLeadLag(
-	_ context.Context,
-	pool *qpool.Q,
-	marketRelay *engine.MarketRelay,
-	pairs map[string]asset.Pair,
-	symbols []string,
-	watch *engine.SymbolWatch,
-	calibrationParams engine.CalibrationParams,
-) (*LeadLag, error) {
 	leadlag := &LeadLag{
-		market:  marketRelay,
-		watch:   watch,
-		pairs:   pairs,
-		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(calibrationParams),
-		pool:    pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		symbols:     make(map[string]*symbolState),
+		peak:        adaptive.NewPeak(),
 	}
 
-	return leadlag, errnie.Require(map[string]any{
-		"market": marketRelay,
-		"track":  leadlag.track,
-	})
+	for _, channel := range []string{"symbols", "tick", "feedback"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		leadlag.subscribers[channel] = group.Subscribe("leadlag:"+channel, 128)
+	}
+
+	leadlag.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return leadlag
 }
 
-func (leadlag *LeadLag) Source() string {
-	return leadlagSource
+func (leadlag *LeadLag) Start() error  { return nil }
+func (leadlag *LeadLag) State() engine.State { return engine.READY }
+
+func (leadlag *LeadLag) Tick() error {
+	select {
+	case <-leadlag.ctx.Done():
+		return leadlag.ctx.Err()
+	case value := <-leadlag.subscribers["symbols"].Incoming:
+		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+			if pair != nil {
+				leadlag.symbols[symbol] = &symbolState{pair: *pair}
+			}
+		}
+	case value := <-leadlag.subscribers["tick"].Incoming:
+		row := value.Value.(market.TickerRow)
+		state := leadlag.symbols[row.Symbol]
+
+		if state == nil || row.ChangePct == 0 {
+			return nil
+		}
+
+		state.changePct = row.ChangePct
+	case value := <-leadlag.subscribers["feedback"].Incoming:
+		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
+	default:
+		for measurement := range leadlag.Measure() {
+			leadlag.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
+	}
+
+	return nil
 }
 
-func (leadlag *LeadLag) MeanConfidence() float64 {
-	return leadlag.track.MeanGaugeConfidence()
+func (leadlag *LeadLag) Close() error {
+	leadlag.cancel()
+	return nil
 }
 
-var _ engine.OHLCWarmer = (*LeadLag)(nil)
+func (leadlag *LeadLag) Source() string { return leadlagSource }
 
-/*
-WarmFromOHLC seeds return history and the volume leader from historical candles.
-*/
-func (leadlag *LeadLag) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
-	leadlag.track.WarmFromOHLC(candles)
-}
-
-func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	engine.ForwardSourceFeedback(leadlagSource, feedback, leadlag.track.ApplyPredictionFeedback)
-}
-
-func (leadlag *LeadLag) Measure(
-	ctx context.Context,
-	now time.Time,
-) iter.Seq[engine.Measurement] {
+func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		leadlag.track.BeginScan()
-		leadlag.refreshLeader()
+		anchor := leadlag.symbols[anchorSymbol]
 
-		for measurement := range engine.MeasureSymbols(
-			ctx,
-			engine.SymbolScanner{
-				Source:  leadlag.Source(),
-				Market:  leadlag.market,
-				Watch:   leadlag.watch,
-				Pairs:   leadlag.pairs,
-				Symbols: leadlag.symbols,
-				Pool:    leadlag.pool,
-			},
-			now,
-			leadlag.evaluate,
-		) {
-			if !yield(measurement) {
+		if anchor == nil || anchor.changePct < minAnchorMove {
+			return
+		}
+
+		lags := make(map[string]float64, len(leadlag.symbols))
+
+		for symbol, state := range leadlag.symbols {
+			if symbol == anchorSymbol || state.changePct <= 0 {
+				continue
+			}
+
+			lag := anchor.changePct - state.changePct
+
+			if lag <= anchor.changePct*minLagFraction {
+				continue
+			}
+
+			lags[symbol] = lag / anchor.changePct
+		}
+
+		for symbol, lagRatio := range lags {
+			peakLag, err := leadlag.peak.Next(lagRatio, peerValues(lags, symbol)...)
+
+			if err != nil || peakLag <= 0 {
+				continue
+			}
+
+			state := leadlag.symbols[symbol]
+
+			if !yield(engine.Measurement{
+				Type:       engine.LeadLag,
+				Source:     leadlagSource,
+				Regime:     "cross_asset",
+				Reason:     "anchor_lag",
+				Pairs:      []asset.Pair{state.pair},
+				Confidence: peakLag,
+			}) {
 				return
 			}
 		}
 	}
 }
 
-func (leadlag *LeadLag) refreshLeader() {
-	volumes := make(map[string]float64, len(leadlag.symbols))
+func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != leadlagSource {
+		return
+	}
+}
 
-	for _, symbol := range leadlag.symbols {
-		snapshot := leadlag.market.Read(symbol)
+func peerValues(values map[string]float64, skip string) []float64 {
+	peers := make([]float64, 0, len(values)-1)
 
-		if !snapshot.BatchOK {
+	for symbol, value := range values {
+		if symbol == skip {
 			continue
 		}
 
-		volumes[symbol] = snapshot.BatchVolume
+		peers = append(peers, value)
 	}
 
-	leader := pickLeader(volumes)
-
-	if leader == "" {
-		return
-	}
-
-	leadlag.track.setLeader(leader)
-}
-
-func (leadlag *LeadLag) evaluate(
-	symbol string,
-	snapshot engine.Snapshot,
-) (engine.Measurement, bool, error) {
-	if !snapshot.LastOK || snapshot.Last <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	followerReturn := leadlag.track.recordReturn(symbol, snapshot.Last)
-	leaderReturn := leadlag.track.leaderReturn()
-
-	if leaderReturn == 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	if symbol == leadlag.track.Leader() {
-		return engine.Measurement{}, false, nil
-	}
-
-	raw := leadLagScore(leaderReturn, followerReturn)
-
-	if raw <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	confidence := leadlag.track.recordCalibrated(symbol, raw)
-
-	if confidence <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	measurementType := engine.LeadLag
-
-	if leaderReturn < 0 {
-		measurementType = engine.Dump
-	}
-
-	return engine.PairMeasurement(
-		leadlag.pairs,
-		symbol,
-		engine.Reading{
-			Type:   measurementType,
-			Source: leadlagSource,
-			Regime: "cross",
-			Reason: "lead_lag",
-		},
-		confidence,
-	)
+	return peers
 }

@@ -56,28 +56,24 @@ func TestApplyExcitationCalibration(t *testing.T) {
 }
 
 func TestApplyPredictionFeedback(t *testing.T) {
-	hawkesSignal := &Hawkes{
-		calibrationParams: engine.DefaultCalibrationParams(),
-		states:            make(map[string]*HawkesSymbol),
-	}
+	symbol := NewHawkesSymbol(engine.DefaultCalibrationParams())
 
 	convey.Convey("Given an overconfident settled forecast", t, func() {
-		sym := hawkesSignal.state("PUMP/EUR")
-		sym.fit = sampleFit()
-		sym.hasFit = true
+		symbol.fit = sampleFit()
+		symbol.hasFit = true
 
-		hawkesSignal.Feedback(engine.PredictionFeedback{
-			Source:          "hawkes",
+		symbol.ApplyFeedback(engine.PredictionFeedback{
+			Source:          hawkesSource,
 			Symbol:          "PUMP/EUR",
 			PredictedReturn: 0.1,
 			ActualReturn:    0.05,
 		})
 
 		convey.Convey("It should lower excitation calibration", func() {
-			prior := applyExcitationCalibration(sym.fit, sym.calibrator.Scale())
+			prior := applyExcitationCalibration(symbol.fit, symbol.calibrator.Scale())
 
-			convey.So(sym.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
-			convey.So(prior.AlphaBB, convey.ShouldAlmostEqual, sym.fit.AlphaBB*0.5, 0.0001)
+			convey.So(symbol.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
+			convey.So(prior.AlphaBB, convey.ShouldAlmostEqual, symbol.fit.AlphaBB*0.5, 0.0001)
 		})
 	})
 }

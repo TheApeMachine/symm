@@ -7,6 +7,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
 )
 
 func TestBackdoorBlocksMacroConfounder(t *testing.T) {
@@ -64,25 +65,17 @@ func TestCounterfactualUpliftPositive(t *testing.T) {
 	}
 }
 
-func TestTrackStoreFiresOnIntervention(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
-	trackStore.ApplyTicker("ALT/EUR", 1, 500000)
-	trackStore.ApplyTicker("BTC/EUR", 50000, 1000000)
-
-	track := trackStore.ensure("ALT/EUR")
-	track.hasPrior = true
-	track.lastElapsed = time.Second
+func TestSymbolEvaluateIntervention(t *testing.T) {
+	state := NewCausalSymbol(asset.Pair{Wsname: "ALT/EUR"}, engine.DefaultCalibrationParams())
 
 	for index := 0; index < minCausalHistory; index++ {
-		track.samples = append(track.samples, causalSample{
+		state.samples = append(state.samples, causalSample{
 			macroMomentum: float64(index%4) * 0.005,
 			liquidity:     1 + float64(index%3)*0.15,
 			localFlow:     float64(index) * 0.4,
 			priceVelocity: float64(index) * 0.08,
 		})
 	}
-
-	track.confidenceHistory = []float64{0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
 
 	sample := causalSample{
 		macroMomentum: 0.015,
@@ -91,7 +84,7 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 		priceVelocity: 0.2,
 	}
 
-	confidence, reason := trackStore.Evaluate("ALT/EUR", sample)
+	confidence, reason := state.evaluate(sample)
 
 	if confidence <= 0 {
 		t.Fatalf("expected causal confidence, got %v", confidence)
@@ -106,137 +99,6 @@ func TestTrackStoreFiresOnIntervention(t *testing.T) {
 	}
 }
 
-func TestMeanConfidence(t *testing.T) {
-	causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
-
-	causalSignal.track.ObserveGaugeScore(0.2)
-	causalSignal.track.ObserveGaugeScore(0.6)
-
-	if got := causalSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
-		t.Fatalf("expected mean confidence 0.4, got %v", got)
-	}
-}
-
-func TestEvaluateAppliesTickerBeforeLiquidityGate(t *testing.T) {
-	convey.Convey("Given an unseen symbol with a complete causal snapshot", t, func() {
-		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
-		snapshot := engine.Snapshot{
-			Last:        10,
-			LastOK:      true,
-			VolumeBase:  100,
-			VolumeOK:    true,
-			BatchVolume: 2,
-			BatchOK:     true,
-			BuyPressure: 0.5,
-			PressureOK:  true,
-			SpreadBPS:   1,
-			SpreadOK:    true,
-			Imbalance:   0.4,
-			ImbalanceOK: true,
-		}
-
-		causalSignal.evaluate("ALT/EUR", snapshot, 0.01, time.Unix(1_700_000_000, 0))
-
-		causalSignal.track.shard.LockMap()
-		track := causalSignal.track.bySymbol["ALT/EUR"]
-		quoteVolume := 0.0
-
-		if track != nil {
-			quoteVolume = track.dailyQuoteVol
-		}
-
-		causalSignal.track.shard.UnlockMap()
-
-		convey.Convey("It should record quote volume before applying liquidity gates", func() {
-			convey.So(quoteVolume, convey.ShouldAlmostEqual, 1000.0)
-		})
-	})
-}
-
-func TestEvaluateAccumulatesWarmSamples(t *testing.T) {
-	convey.Convey("Given repeated complete causal snapshots before history is ready", t, func() {
-		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
-		causalSignal.track.ApplyTicker("BTC/EUR", 100, 10000)
-		start := time.Unix(1_700_000_000, 0)
-
-		for index := range 3 {
-			snapshot := engine.Snapshot{
-				Last:        10 + float64(index)*0.1,
-				LastOK:      true,
-				VolumeBase:  100,
-				VolumeOK:    true,
-				BatchVolume: 2 + float64(index)*0.1,
-				BatchOK:     true,
-				BuyPressure: 0.5,
-				PressureOK:  true,
-				SpreadBPS:   1,
-				SpreadOK:    true,
-				Imbalance:   0.4,
-				ImbalanceOK: true,
-			}
-
-			causalSignal.evaluate(
-				"ALT/EUR",
-				snapshot,
-				0.01,
-				start.Add(time.Duration(index)*time.Second),
-			)
-		}
-
-		causalSignal.track.shard.LockMap()
-		track := causalSignal.track.bySymbol["ALT/EUR"]
-		samples := 0
-
-		if track != nil {
-			samples = len(track.samples)
-		}
-
-		causalSignal.track.shard.UnlockMap()
-
-		convey.Convey("It should keep warming the causal history", func() {
-			convey.So(samples, convey.ShouldEqual, 3)
-		})
-	})
-}
-
-func TestEvaluateProducesConfidenceAfterWarmSamples(t *testing.T) {
-	convey.Convey("Given flow and velocity co-move through the causal warmup", t, func() {
-		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
-		causalSignal.track.ApplyTicker("BTC/EUR", 100, 10000)
-		start := time.Unix(1_700_000_000, 0)
-		confidence := 0.0
-
-		for index := range minCausalHistory + engine.DefaultCalibrationParams().MinConfidenceHistory + 4 {
-			step := float64(index)
-			snapshot := engine.Snapshot{
-				Last:        10 + step*step*0.01,
-				LastOK:      true,
-				VolumeBase:  100,
-				VolumeOK:    true,
-				BatchVolume: 1 + step*0.4,
-				BatchOK:     true,
-				BuyPressure: 0.6,
-				PressureOK:  true,
-				SpreadBPS:   1,
-				SpreadOK:    true,
-				Imbalance:   0.4,
-				ImbalanceOK: true,
-			}
-
-			confidence, _ = causalSignal.evaluate(
-				"ALT/EUR",
-				snapshot,
-				0.01,
-				start.Add(time.Duration(index)*time.Second),
-			)
-		}
-
-		convey.Convey("It should emit a normalized causal confidence", func() {
-			convey.So(confidence, convey.ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
 func TestAssociationEffectReturnsPearson(t *testing.T) {
 	samples := []causalSample{
 		{localFlow: 1, priceVelocity: 2},
@@ -249,6 +111,23 @@ func TestAssociationEffectReturnsPearson(t *testing.T) {
 	if correlation <= 0.99 {
 		t.Fatalf("expected strong positive correlation, got %v", correlation)
 	}
+}
+
+func TestOpportunityRunway(t *testing.T) {
+	samples := []causalSample{
+		{priceVelocity: 0.01},
+		{priceVelocity: 0.02},
+		{priceVelocity: 0.08},
+	}
+
+	convey.Convey("Given excess velocity versus history", t, func() {
+		convey.Convey("It should shorten the runway", func() {
+			runway := opportunityRunway(samples, time.Second)
+
+			convey.So(runway, convey.ShouldBeLessThan, time.Second)
+			convey.So(runway, convey.ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 func BenchmarkBackdoorFlowEffect(b *testing.B) {

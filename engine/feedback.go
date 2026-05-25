@@ -21,3 +21,19 @@ type PredictionFeedback struct {
 	SettledAt       time.Time
 	Unanchored      bool
 }
+
+/*
+ValidPredictionFeedback reports whether settled feedback should be emitted to signals.
+Unanchored or zero predicted-return feedback is dropped — no silent defaults.
+*/
+func ValidPredictionFeedback(feedback PredictionFeedback) bool {
+	if feedback.Source == "" || feedback.Symbol == "" {
+		return false
+	}
+
+	if feedback.Unanchored || feedback.PredictedReturn <= 0 {
+		return false
+	}
+
+	return true
+}

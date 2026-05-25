@@ -73,6 +73,62 @@ THE CORRECT SYSTEM ARCHITECTURE:
         Value: payload,
     })
 
+9. NOTHING IS OUT OF SCOPE AND YOU DO NOT MAKE THAT DECISION, EVER. DO THE WORK.
+
+10. Model the Kraken data correctly:
+
+    package ohlc
+
+    import "time"
+
+    type Data struct {
+        Symbol        string    `json:"symbol"`
+        Open          float64   `json:"open"`
+        High          float64   `json:"high"`
+        Low           float64   `json:"low"`
+        Close         float64   `json:"close"`
+        VWAP          float64   `json:"vwap"`
+        Volume        float64   `json:"volume"`
+        IntervalBegin time.Time `json:"count"`
+        Interval      time.Time `json:"interval"`
+    }
+
+    type Snapshot struct {
+        Channel string `json:"channel"`
+        Type    string `json:"type"`
+        Data    []Data `json:"data"`
+    }
+
+    package ohlc
+
+    import "time"
+
+    type Params struct {
+        Channel  string   `json:"channel"`
+        Symbol   []string `json:"symbol"`
+        Interval int      `json:"interval"`
+        Snapshot bool     `json:"snapshot"`
+    }
+
+    type Subscribe struct {
+        Method string `json:"method"`
+        Params any    `json:"params"`
+        ReqID  int    `json:"req_id,omitempty"`
+    }
+
+    func NewSubscribe(symbols []string) *Subscribe {
+        return &Subscribe{
+            Method: "subscribe",
+            Params: Params{
+                Channel:  "ohlc",
+                Symbol:   symbols,
+                Interval: 1,
+                Snapshot: true,
+            },
+            ReqID: int(time.Now().UnixNano()),
+        }
+    }
+
 And you don't have to make all kinds of special types for that, just send the data as soon as you have any, right at the source, no "snapshots" no "drains" just simple.
 
 THE OVERALL SYSTEM WORKS LIKE THIS:
@@ -83,3 +139,5 @@ THE OVERALL SYSTEM WORKS LIKE THIS:
 4. The trader uses Perspectives to make Predictions (always, not just when entering a trade)
 5. Predictions are evaluated once current time has caught up
 6. The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that makde the prediction use
+
+AND FINALLY STOP STOPPING ALL THE TIME, JUST KEEP GOING UNTIL IT IS RIGHT, FINALLY.

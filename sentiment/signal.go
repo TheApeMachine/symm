@@ -5,190 +5,174 @@ import (
 	"iter"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
-const sentimentSource = "sentiment"
+const (
+	sentimentSource = "sentiment"
+	minBreadth      = 0.55
+)
+
+type symbolState struct {
+	pair      asset.Pair
+	changePct float64
+}
 
 /*
-Sentiment aggregates cross-section buy-pressure and momentum z-scores.
-This is market-internal pressure, not external sentiment feeds.
+Sentiment measures cross-section bullish breadth from ticker change percentages.
 */
 type Sentiment struct {
-	engine.Passive
-	market  *engine.MarketRelay
-	watch   *engine.SymbolWatch
-	pairs   map[string]asset.Pair
-	symbols []string
-	track   *TrackStore
-	pool    *qpool.Q
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     map[string]*symbolState
+	peak        *adaptive.Peak
 }
 
-var _ engine.Signal = (*Sentiment)(nil)
+var (
+	_ engine.System = (*Sentiment)(nil)
+	_ engine.Signal = (*Sentiment)(nil)
+)
 
-var _ engine.MeanConfidenceReader = (*Sentiment)(nil)
+func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
+	ctx, cancel := context.WithCancel(ctx)
 
-/*
-NewSentiment wires the market relay into the sentiment signal.
-*/
-func NewSentiment(
-	_ context.Context,
-	pool *qpool.Q,
-	marketRelay *engine.MarketRelay,
-	pairs map[string]asset.Pair,
-	symbols []string,
-	watch *engine.SymbolWatch,
-	calibrationParams engine.CalibrationParams,
-) (*Sentiment, error) {
 	sentiment := &Sentiment{
-		market:  marketRelay,
-		watch:   watch,
-		pairs:   pairs,
-		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(calibrationParams),
-		pool:    pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		symbols:     make(map[string]*symbolState),
+		peak:        adaptive.NewPeak(),
 	}
 
-	return sentiment, errnie.Require(map[string]any{
-		"market": marketRelay,
-		"track":  sentiment.track,
-	})
+	for _, channel := range []string{"symbols", "tick", "feedback"} {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		sentiment.subscribers[channel] = group.Subscribe("sentiment:"+channel, 128)
+	}
+
+	sentiment.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return sentiment
 }
 
-func (sentiment *Sentiment) Source() string {
-	return sentimentSource
+func (sentiment *Sentiment) Start() error  { return nil }
+func (sentiment *Sentiment) State() engine.State { return engine.READY }
+
+func (sentiment *Sentiment) Tick() error {
+	select {
+	case <-sentiment.ctx.Done():
+		return sentiment.ctx.Err()
+	case value := <-sentiment.subscribers["symbols"].Incoming:
+		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+			if pair != nil {
+				sentiment.symbols[symbol] = &symbolState{pair: *pair}
+			}
+		}
+	case value := <-sentiment.subscribers["tick"].Incoming:
+		row := value.Value.(market.TickerRow)
+		state := sentiment.symbols[row.Symbol]
+
+		if state == nil || row.ChangePct == 0 {
+			return nil
+		}
+
+		state.changePct = row.ChangePct
+	case value := <-sentiment.subscribers["feedback"].Incoming:
+		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
+	default:
+		for measurement := range sentiment.Measure() {
+			sentiment.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
+	}
+
+	return nil
 }
 
-func (sentiment *Sentiment) MeanConfidence() float64 {
-	return sentiment.track.MeanGaugeConfidence()
+func (sentiment *Sentiment) Close() error {
+	sentiment.cancel()
+	return nil
 }
 
-var _ engine.OHLCWarmer = (*Sentiment)(nil)
+func (sentiment *Sentiment) Source() string { return sentimentSource }
 
-/*
-WarmFromOHLC seeds sentiment feature history from historical candles.
-*/
-func (sentiment *Sentiment) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
-	sentiment.track.WarmFromOHLC(candles)
-}
-
-func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	engine.ForwardSourceFeedback(sentimentSource, feedback, sentiment.track.ApplyPredictionFeedback)
-}
-
-func (sentiment *Sentiment) Measure(
-	ctx context.Context,
-	now time.Time,
-) iter.Seq[engine.Measurement] {
+func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		sentiment.track.BeginScan()
-		features := sentiment.collectFeatures()
+		positive := 0
+		total := 0
+		leaders := make(map[string]float64, len(sentiment.symbols))
 
-		for measurement := range engine.MeasureSymbols(
-			ctx,
-			engine.SymbolScanner{
-				Source:  sentiment.Source(),
-				Market:  sentiment.market,
-				Watch:   sentiment.watch,
-				Pairs:   sentiment.pairs,
-				Symbols: sentiment.symbols,
-				Pool:    sentiment.pool,
-			},
-			now,
-			func(symbol string, snapshot engine.Snapshot) (engine.Measurement, bool, error) {
-				return sentiment.evaluate(symbol, snapshot, features)
-			},
-		) {
-			if !yield(measurement) {
+		for symbol, state := range sentiment.symbols {
+			if state.changePct == 0 {
+				continue
+			}
+
+			total++
+
+			if state.changePct <= 0 {
+				continue
+			}
+
+			positive++
+			leaders[symbol] = state.changePct
+		}
+
+		if total < 4 {
+			return
+		}
+
+		breadth := float64(positive) / float64(total)
+
+		if breadth < minBreadth {
+			return
+		}
+
+		for symbol, change := range leaders {
+			confidence, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
+
+			if err != nil || confidence <= 0 {
+				continue
+			}
+
+			state := sentiment.symbols[symbol]
+
+			if !yield(engine.Measurement{
+				Type:       engine.Sentiment,
+				Source:     sentimentSource,
+				Regime:     "sentiment",
+				Reason:     "breadth_leader",
+				Pairs:      []asset.Pair{state.pair},
+				Confidence: confidence,
+			}) {
 				return
 			}
 		}
 	}
 }
 
-type sectionFeatures struct {
-	pressures []float64
-	changes   []float64
+func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != sentimentSource {
+		return
+	}
 }
 
-func (sentiment *Sentiment) collectFeatures() sectionFeatures {
-	features := sectionFeatures{
-		pressures: make([]float64, 0, len(sentiment.symbols)),
-		changes:   make([]float64, 0, len(sentiment.symbols)),
-	}
+func leaderPeers(leaders map[string]float64, skip string) []float64 {
+	peers := make([]float64, 0, len(leaders)-1)
 
-	for _, symbol := range sentiment.symbols {
-		snapshot := sentiment.market.Read(symbol)
-
-		if snapshot.PressureOK {
-			features.pressures = append(features.pressures, snapshot.BuyPressure)
+	for symbol, value := range leaders {
+		if symbol == skip {
+			continue
 		}
 
-		if snapshot.ChangeOK {
-			features.changes = append(features.changes, snapshot.ChangePct)
-		}
+		peers = append(peers, value)
 	}
 
-	return features
-}
-
-func (sentiment *Sentiment) evaluate(
-	symbol string,
-	snapshot engine.Snapshot,
-	features sectionFeatures,
-) (engine.Measurement, bool, error) {
-	if !snapshot.PressureOK && !snapshot.ChangeOK {
-		return engine.Measurement{}, false, nil
-	}
-
-	pressure := 0.0
-
-	if snapshot.PressureOK {
-		pressure = snapshot.BuyPressure
-	}
-
-	change := 0.0
-
-	if snapshot.ChangeOK {
-		change = snapshot.ChangePct
-	}
-
-	raw := sentimentRaw(
-		crossSectionZScore(pressure, features.pressures),
-		crossSectionZScore(change, features.changes),
-	)
-
-	if raw <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	track := sentiment.track.ensure(symbol)
-	track.recordSentiment(raw)
-
-	confidence := sentiment.track.recordCalibrated(symbol, raw)
-
-	if confidence <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	measurementType := engine.Sentiment
-
-	if pressure+change < 0 {
-		measurementType = engine.Dump
-	}
-
-	return engine.PairMeasurement(
-		sentiment.pairs,
-		symbol,
-		engine.Reading{
-			Type:   measurementType,
-			Source: sentimentSource,
-			Regime: "sentiment",
-			Reason: "flow_breadth",
-		},
-		confidence,
-	)
+	return peers
 }
