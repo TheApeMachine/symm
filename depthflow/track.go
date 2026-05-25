@@ -13,10 +13,8 @@ const historyCap = 24
 SymbolTrack holds depth-imbalance history for one pair.
 */
 type SymbolTrack struct {
+	engine.ScoreRecorder
 	depthImbalance []float64
-	calibrator     engine.PredictionCalibrator
-	confidenceHist []float64
-	liveScore      float64
 }
 
 /*
@@ -58,7 +56,7 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 	track := trackStore.ensureLocked(feedback.Symbol)
 	trackStore.mu.Unlock()
 
-	track.calibrator.Apply(feedback)
+	track.Calibrator.Apply(feedback)
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
@@ -77,34 +75,20 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 
 	track = &SymbolTrack{
 		depthImbalance: make([]float64, 0, historyCap),
-		confidenceHist: make([]float64, 0, historyCap),
-		calibrator:     engine.NewPredictionCalibrator(trackStore.calibrationParams),
+		ScoreRecorder:  engine.NewScoreRecorder(trackStore.calibrationParams, historyCap),
 	}
 	trackStore.bySymbol[symbol] = track
 
 	return track
 }
 
-func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float64 {
-	if rawScore <= 0 {
-		return 0
-	}
-
+func (trackStore *TrackStore) recordCalibrated(symbol string, rawScore float64) float64 {
 	track := trackStore.ensure(symbol)
+
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
-	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHist)
-	track.liveScore = normalized
-	track.confidenceHist = append(track.confidenceHist, rawScore)
-
-	if len(track.confidenceHist) > historyCap {
-		track.confidenceHist = track.confidenceHist[len(track.confidenceHist)-historyCap:]
-	}
-
-	trackStore.ObserveGaugeScore(normalized)
-
-	return normalized
+	return track.RecordCalibrated(rawScore, &trackStore.GaugeScan)
 }
 
 func (track *SymbolTrack) recordDepthImbalance(value float64) {

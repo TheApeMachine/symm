@@ -1,152 +1,94 @@
 package pumpdump
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
 )
 
-func TestPrecursorScoreRequiresBookAndExecutions(t *testing.T) {
-	if precursorScore(0.8, 0.6) <= 0 {
-		t.Fatal("expected positive score when book and buys align")
+func TestPumpDumpPublishesMeasurement(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewPumpDump(ctx, pool)
+	subscriber := signal.broadcasts["measurements"].Subscribe("test", 8)
+
+	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
+
+	sym := signal.symbols["PUMP/EUR"]
+	sym.lastPrice = 1
+	sym.dailyQuoteVol = 50
+	sym.imbalance = 0.8
+	sym.buyPressure = 0.6
+	sym.spreadBPS = 10
+
+	for range 12 {
+		_, _ = sym.volumeBaseline.Next(0, 10)
 	}
 
-	if precursorScore(0.8, -0.2) != 0 {
-		t.Fatal("expected zero score without executed buy confirmation")
+	for range 8 {
+		_, _ = sym.score.Push(1, 0.8, 0.6, 20, 1, 1)
 	}
 
-	if precursorScore(-0.2, 0.8) != 0 {
-		t.Fatal("expected zero score without bid-side book pressure")
-	}
-}
+	now := time.Unix(1_700_000_000, 0)
+	_, _ = sym.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
 
-func TestMeanConfidence(t *testing.T) {
-	pumpdumpSignal := &PumpDump{track: &TrackStore{}}
-
-	pumpdumpSignal.track.ObserveGaugeScore(0.2)
-	pumpdumpSignal.track.ObserveGaugeScore(0.6)
-
-	if got := pumpdumpSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
-		t.Fatalf("expected mean confidence 0.4, got %v", got)
-	}
-}
-
-func TestVolumeSpikeUsesOwnRatioFence(t *testing.T) {
-	trackStore, pool := testTrackStore(t)
-	filter := &PrecursorFilter{}
-	publishTick(pool, "PUMP/EUR", 1, 1000)
-	drainTrack(trackStore)
-
-	for index := 0; index < minVolumeHistory; index++ {
-		trackStore.ensure("PUMP/EUR").volumes = append(
-			trackStore.ensure("PUMP/EUR").volumes,
-			10,
-		)
+	if err := signal.scoreAll(); err != nil {
+		t.Fatalf("score: %v", err)
 	}
 
-	trackStore.ensure("PUMP/EUR").bucketVolume = 30
+	select {
+	case value := <-subscriber.Incoming:
+		measurement, ok := value.Value.(engine.Measurement)
 
-	ratio, ok := filter.volumeSpike("PUMP/EUR", trackStore)
+		if !ok {
+			t.Fatalf("expected measurement, got %T", value.Value)
+		}
 
-	if !ok {
-		t.Fatalf("expected volume spike above own fence, got ratio=%v", ratio)
-	}
-
-	trackStore.ensure("PUMP/EUR").bucketVolume = 10
-
-	if _, ok := filter.volumeSpike("PUMP/EUR", trackStore); ok {
-		t.Fatal("expected no spike at baseline volume")
+		if measurement.Source != "pumpdump" || measurement.Confidence <= 0 {
+			t.Fatalf("unexpected measurement: %+v", measurement)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pumpdump measurement")
 	}
 }
 
-func TestPriceFlatUsesOwnMoveHistory(t *testing.T) {
-	trackStore, _ := testTrackStore(t)
-	filter := &PrecursorFilter{}
-	track := trackStore.ensure("PUMP/EUR")
-	track.priceMoves = []float64{0.02, 0.015, 0.018}
-	track.bucketOpenPrice = 1.0
-	track.lastPrice = 1.05
+func BenchmarkPumpDumpScoreAll(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
 
-	if filter.priceFlat("PUMP/EUR", trackStore) {
-		t.Fatal("expected large move to fail against own quiet history")
+	signal := NewPumpDump(ctx, pool)
+	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
+
+	sym := signal.symbols["PUMP/EUR"]
+	sym.lastPrice = 1
+	sym.dailyQuoteVol = 50
+	sym.imbalance = 0.8
+	sym.buyPressure = 0.6
+	sym.spreadBPS = 10
+
+	for range 6 {
+		_, _ = sym.volumeBaseline.Next(0, 10)
 	}
 
-	track.lastPrice = 1.005
-
-	if !filter.priceFlat("PUMP/EUR", trackStore) {
-		t.Fatal("expected small move to pass against own quiet history")
-	}
-}
-
-func TestSpreadTightRequiresCompression(t *testing.T) {
-	trackStore, pool := testTrackStore(t)
-	filter := &PrecursorFilter{}
-
-	for _, spread := range []float64{20, 22, 21, 23, 20, 22, 21, 20} {
-		publishBook(pool, "PUMP/EUR", spread)
+	for range 6 {
+		_, _ = sym.score.Push(1, 0.8, 0.6, 20, 1, 1)
 	}
 
-	drainTrack(trackStore)
-
-	if !filter.spreadTight("PUMP/EUR", trackStore, 10) {
-		t.Fatal("expected spread below history median to pass")
-	}
-
-	if filter.spreadTight("PUMP/EUR", trackStore, 25) {
-		t.Fatal("expected wide spread to fail")
-	}
-}
-
-func TestLiquidityFilterUsesCrossSectionMedian(t *testing.T) {
-	trackStore, pool := testTrackStore(t)
-	filter := &PrecursorFilter{}
-	publishTick(pool, "BTC/EUR", 50000, 100)
-	publishTick(pool, "PUMP/EUR", 1, 500000)
-	drainTrack(trackStore)
-
-	if filter.passesLiquidity("BTC/EUR", trackStore) {
-		t.Fatal("expected high daily quote volume to sit above the live median")
-	}
-
-	if !filter.passesLiquidity("PUMP/EUR", trackStore) {
-		t.Fatal("expected low daily quote volume to sit below the live median")
-	}
-}
-
-func TestBucketRollClosesFiveMinuteWindow(t *testing.T) {
-	trackStore, pool := testTrackStore(t)
-	start := time.Unix(0, 0)
-
-	publishTick(pool, "PUMP/EUR", 1, 1000)
-	publishTrade(pool, "PUMP/EUR", 42, start)
-	drainTrack(trackStore)
-
-	trackStore.RollBuckets(start)
-	trackStore.RollBuckets(start.Add(bucketWindow))
-
-	if len(trackStore.ensure("PUMP/EUR").volumes) != 1 {
-		t.Fatalf("expected closed bucket in history, got %d", len(trackStore.ensure("PUMP/EUR").volumes))
-	}
-}
-
-func TestVolumeRatioFenceUsesSpreadWhenHistoryVaries(t *testing.T) {
-	fence := volumeRatioFence([]float64{1, 1.2, 1.4, 1.6})
-
-	if fence <= 1.6 {
-		t.Fatalf("expected fence above upper quartile when history varies, got %v", fence)
-	}
-}
-
-func BenchmarkPrecursorFilterVolumeSpike(b *testing.B) {
-	trackStore, _ := testTrackStore(&testing.T{})
-	filter := &PrecursorFilter{}
-	trackStore.ensure("PUMP/EUR").volumes = []float64{10, 10, 10, 10}
-	trackStore.ensure("PUMP/EUR").bucketVolume = 30
+	now := time.Unix(1_700_000_000, 0)
+	_, _ = sym.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, ok := filter.volumeSpike("PUMP/EUR", trackStore); !ok {
-			b.Fatal("expected spike")
+		if err := signal.scoreAll(); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

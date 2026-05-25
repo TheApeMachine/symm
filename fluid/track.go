@@ -1,7 +1,6 @@
 package fluid
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/symm/engine"
@@ -152,8 +151,8 @@ func (trackStore *TrackStore) Sample(
 	source *= calibration
 	shock *= calibration
 
-	sourceFence := ratioFence(track.ringScratch(track.sourceHistory))
-	shockFence := ratioFence(track.ringScratch(track.shockHistory))
+	sourceFence := engine.ConfidenceFence(track.ringScratch(track.sourceHistory))
+	shockFence := engine.ConfidenceFence(track.ringScratch(track.shockHistory))
 
 	quiet := quietVelocity(track.ringScratch(track.velocities), current.velocity)
 	accumulating := quiet && sourceFence > 0 && source > sourceFence
@@ -202,17 +201,6 @@ func (trackStore *TrackStore) Sample(
 }
 
 /*
-SymbolLiveScore returns the latest normalized gauge reading for one symbol.
-*/
-func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
-	track := trackStore.track(symbol)
-	track.Lock()
-	defer track.Unlock()
-
-	return track.liveScore
-}
-
-/*
 PassesLiquidity keeps symbols below the live cross-section median daily quote volume.
 */
 func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
@@ -221,25 +209,24 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 
 	track, ok := trackStore.bySymbol[symbol]
 
-	if !ok || track.dailyQuoteVol <= 0 {
+	if !ok {
 		return false
 	}
 
-	quoteVolumes := make([]float64, 0, len(trackStore.bySymbol))
+	quotes := make(map[string]float64, len(trackStore.bySymbol))
 
-	for _, candidate := range trackStore.bySymbol {
-		if candidate.dailyQuoteVol <= 0 {
-			continue
+	for name, candidate := range trackStore.bySymbol {
+		if candidate.dailyQuoteVol > 0 {
+			quotes[name] = candidate.dailyQuoteVol
 		}
-
-		quoteVolumes = append(quoteVolumes, candidate.dailyQuoteVol)
 	}
 
-	if len(quoteVolumes) < 2 {
-		return false
-	}
-
-	return track.dailyQuoteVol < crossSectionMedian(quoteVolumes)
+	return engine.PassesBelowMedianLiquidity(
+		track.dailyQuoteVol,
+		quotes,
+		symbol,
+		engine.DefaultMinLiquidityPairs,
+	)
 }
 
 /*
@@ -285,15 +272,9 @@ func (trackStore *TrackStore) PeakLiveConfidence() float64 {
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
-	peak := 0.0
-
-	for _, track := range trackStore.bySymbol {
-		if track.liveScore > peak {
-			peak = track.liveScore
-		}
-	}
-
-	return peak
+	return engine.PeakLiveFromMap(trackStore.bySymbol, func(track *SymbolField) float64 {
+		return track.liveScore
+	}).Score
 }
 
 /*
@@ -303,49 +284,11 @@ func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
-	bestSymbol := ""
-	bestScore := 0.0
+	reading := engine.PeakLiveFromMap(trackStore.bySymbol, func(track *SymbolField) float64 {
+		return track.liveScore
+	})
 
-	for symbol, track := range trackStore.bySymbol {
-		if track.liveScore <= bestScore {
-			continue
-		}
-
-		bestScore = track.liveScore
-		bestSymbol = symbol
-	}
-
-	return bestSymbol, bestScore
-}
-
-/*
-PeakFieldSymbol returns the symbol with the strongest recent field activity.
-Used when the live gauge score comes from cross-section field state.
-*/
-func (trackStore *TrackStore) PeakFieldSymbol() string {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	bestSymbol := ""
-	bestActivity := 0.0
-
-	for symbol, track := range trackStore.bySymbol {
-		if len(track.samples) == 0 {
-			continue
-		}
-
-		sample := track.samples[len(track.samples)-1]
-		activity := math.Abs(sample.velocity)*sample.density + sample.density
-
-		if activity <= bestActivity {
-			continue
-		}
-
-		bestActivity = activity
-		bestSymbol = symbol
-	}
-
-	return bestSymbol
+	return reading.Symbol, reading.Score
 }
 
 func (track *SymbolField) recordConfidence(confidence float64) {

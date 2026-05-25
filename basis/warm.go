@@ -6,7 +6,7 @@ import "github.com/theapemachine/symm/engine"
 WarmFromOHLC seeds relative-strength history from cross-section bar changes.
 */
 func (trackStore *TrackStore) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
-	length := minCompletedLength(candles)
+	length := engine.MinCompletedLength(candles)
 
 	if length <= 0 {
 		return
@@ -21,25 +21,6 @@ func (trackStore *TrackStore) WarmFromOHLC(candles map[string][]engine.OHLCCandl
 			track.recordRelativeStrength(change - median)
 		}
 	}
-}
-
-func minCompletedLength(candles map[string][]engine.OHLCCandle) int {
-	length := 0
-
-	for _, bars := range candles {
-		completed := engine.CompletedCandles(bars)
-		size := len(completed)
-
-		if size == 0 {
-			continue
-		}
-
-		if length == 0 || size < length {
-			length = size
-		}
-	}
-
-	return length
 }
 
 func barChangesAt(candles map[string][]engine.OHLCCandle, index int) map[string]float64 {

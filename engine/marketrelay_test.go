@@ -35,7 +35,7 @@ func TestMarketRelayRead(t *testing.T) {
 		})
 
 		Convey("When Tick drains the update", func() {
-			So(relay.Tick(), ShouldBeTrue)
+			So(relay.Drain(1), ShouldEqual, 1)
 
 			snapshot := relay.Read("PUMP/EUR")
 
@@ -79,7 +79,7 @@ func TestMarketRelayRecentTicks(t *testing.T) {
 		})
 
 		Convey("When Tick drains the trade batch", func() {
-			So(relay.Tick(), ShouldBeTrue)
+			So(relay.Drain(1), ShouldEqual, 1)
 
 			ticks, ok := relay.RecentTicks("PUMP/EUR", time.Time{})
 
@@ -116,7 +116,7 @@ func TestMarketRelayReadFresh(t *testing.T) {
 			},
 		})
 
-		So(relay.Tick(), ShouldBeTrue)
+		So(relay.Tick(), ShouldBeNil)
 
 		now := staleAt.Add(100 * time.Millisecond)
 		snapshot := relay.ReadFresh("PUMP/EUR", now, 10*time.Millisecond)
@@ -152,7 +152,7 @@ func BenchmarkMarketRelayRead(b *testing.B) {
 		},
 	})
 
-	for relay.Tick() {
+	for relay.Drain(1) > 0 {
 	}
 
 	b.ReportAllocs()

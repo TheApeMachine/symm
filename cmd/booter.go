@@ -9,19 +9,12 @@ import (
 	"github.com/theapemachine/symm/engine"
 )
 
-type System interface {
-	Start() error
-	State() engine.State
-	Tick() error
-	Close() error
-}
-
 type Booter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	err         error
 	pool        *qpool.Q
-	systems     []System
+	systems     []engine.System
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	once        sync.Once
@@ -34,13 +27,13 @@ func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    pool,
-		systems: make([]System, 0),
+		systems: make([]engine.System, 0),
 	}
 
 	return booter, nil
 }
 
-func (booter *Booter) AddSystems(systems ...System) {
+func (booter *Booter) AddSystems(systems ...engine.System) {
 	booter.systems = append(booter.systems, systems...)
 
 	for _, system := range systems {

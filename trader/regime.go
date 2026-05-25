@@ -25,7 +25,33 @@ EnsembleContext carries regime and trust weights into decision scoring.
 */
 type EnsembleContext struct {
 	Regime MarketRegime
-	Trust  *SourceTrustStore
+	Trust  TrustReader
+}
+
+/*
+TrustReader supplies per-source ensemble multipliers.
+*/
+type TrustReader interface {
+	Weight(source string) float64
+}
+
+/*
+TrustWeightsSnapshot is a frozen trust view from one candidate frame.
+*/
+type TrustWeightsSnapshot map[string]float64
+
+func (weights TrustWeightsSnapshot) Weight(source string) float64 {
+	if weights == nil {
+		return sourceTrustColdStart
+	}
+
+	weight, ok := weights[source]
+
+	if !ok || weight <= 0 {
+		return sourceTrustColdStart
+	}
+
+	return weight
 }
 
 /*

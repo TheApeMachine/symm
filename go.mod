@@ -50,6 +50,7 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/theapemachine/errnie v1.2.0
 	github.com/theapemachine/qpool v0.0.3
+	gonum.org/v1/gonum v0.17.0
 )
 
 replace (

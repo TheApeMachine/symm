@@ -27,10 +27,10 @@ func TestForecastFromEvaluations(t *testing.T) {
 func TestAggregateForecasts(t *testing.T) {
 	start := time.Unix(1_700_000_000, 0)
 
-	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 101, "DUMP/EUR": 49}, &stubSignal{})
+	scorer := testScorer(t, stubPrices{"PUMP/EUR": 101, "DUMP/EUR": 49}, &stubSignal{})
 
-	pumpState := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
-	dumpState := crypto.pairState(asset.Pair{Wsname: "DUMP/EUR"})
+	pumpState := scorer.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+	dumpState := scorer.pairState(asset.Pair{Wsname: "DUMP/EUR"})
 
 	pumpMeasurement := testMeasurement(0.5)
 	dumpMeasurement := engine.Measurement{
@@ -52,7 +52,7 @@ func TestAggregateForecasts(t *testing.T) {
 	dumpState.RecordPrediction(start, dumpMeasurement, dumpForecast, 50)
 
 	convey.Convey("Given anchored forecasts on multiple symbols", t, func() {
-		snapshot := crypto.aggregateForecasts()
+		snapshot := scorer.aggregateForecasts()
 
 		convey.Convey("It should average prediction and error across symbols", func() {
 			convey.So(snapshot.PredictedSymbols, convey.ShouldEqual, 2)
@@ -64,9 +64,9 @@ func TestAggregateForecasts(t *testing.T) {
 }
 
 func TestResolveForecastPrefersPairStates(t *testing.T) {
-	crypto := testCrypto(t, stubPrices{"PUMP/EUR": 101}, &stubSignal{})
+	scorer := testScorer(t, stubPrices{"PUMP/EUR": 101}, &stubSignal{})
 
-	state := crypto.pairState(asset.Pair{Wsname: "PUMP/EUR"})
+	state := scorer.pairState(asset.Pair{Wsname: "PUMP/EUR"})
 	measurement := testMeasurement(0.5)
 	forecast := testForecast(0.002, time.Second)
 
@@ -84,7 +84,7 @@ func TestResolveForecastPrefersPairStates(t *testing.T) {
 		},
 	}
 
-	snapshot := crypto.resolveForecast(readings, 0.9, []map[string]any{
+	snapshot := scorer.resolveForecast(readings, 0.9, []map[string]any{
 		{"combined": 0.5},
 	})
 

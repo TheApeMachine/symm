@@ -23,10 +23,11 @@ func TestPublishStatus(t *testing.T) {
 		ctx,
 		pool,
 		uiGroup,
+		pool.CreateBroadcastGroup("candidates", 10*time.Millisecond),
 		wallet,
 		stubPrices{"PUMP/EUR": 100},
 		nil,
-		&stubSignal{},
+		nil,
 	)
 
 	if err != nil {

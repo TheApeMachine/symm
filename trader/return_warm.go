@@ -3,34 +3,6 @@ package trader
 import "github.com/theapemachine/symm/engine"
 
 /*
-WarmReturnModelFromOHLC seeds trader-owned forward-return buckets from OHLC warm
-data so live measurements can become candidates before live prediction settlement.
-*/
-func (crypto *Crypto) WarmReturnModelFromOHLC(
-	candles map[string][]engine.OHLCCandle,
-) int {
-	if crypto == nil || crypto.returnModel == nil || len(candles) == 0 {
-		return 0
-	}
-
-	total := 0
-
-	for _, signal := range crypto.signals {
-		if signal == nil {
-			continue
-		}
-
-		total += crypto.returnModel.WarmFromOHLC(
-			signal.Source(),
-			warmRegimes(signal.Source()),
-			candles,
-		)
-	}
-
-	return total
-}
-
-/*
 WarmFromOHLC records dynamic realized forward returns for a source/regime pair.
 */
 func (model *ReturnModel) WarmFromOHLC(

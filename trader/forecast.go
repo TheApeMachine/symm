@@ -14,16 +14,16 @@ type ForecastSnapshot struct {
 resolveForecast averages per-symbol prediction and error from pair states,
 current tick readings, or scored evaluations when forecasts are not yet live.
 */
-func (crypto *Crypto) resolveForecast(
+func (scorer *Scorer) resolveForecast(
 	readings map[string]symbolReadings,
 	line float64,
 	evaluations []map[string]any,
 ) ForecastSnapshot {
-	if snapshot := crypto.aggregateForecasts(); snapshot.PredictedSymbols > 0 {
+	if snapshot := scorer.aggregateForecasts(); snapshot.PredictedSymbols > 0 {
 		return snapshot
 	}
 
-	if snapshot := crypto.forecastFromReadings(readings); snapshot.PredictedSymbols > 0 {
+	if snapshot := scorer.forecastFromReadings(readings); snapshot.PredictedSymbols > 0 {
 		return snapshot
 	}
 
@@ -33,12 +33,12 @@ func (crypto *Crypto) resolveForecast(
 /*
 aggregateForecasts averages expected return and running error from pair states.
 */
-func (crypto *Crypto) aggregateForecasts() ForecastSnapshot {
+func (scorer *Scorer) aggregateForecasts() ForecastSnapshot {
 	snapshot := ForecastSnapshot{}
 	predictionSum := 0.0
 	errorSum := 0.0
 
-	crypto.pairStates.Range(func(key, value any) bool {
+	scorer.pairStates.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 
 		if !ok || symbol == "" {
@@ -51,7 +51,7 @@ func (crypto *Crypto) aggregateForecasts() ForecastSnapshot {
 			return true
 		}
 
-		quotePrice, _ := crypto.quotePrice(symbol)
+		quotePrice, _ := scorer.quotePrice(symbol)
 		prediction, runningError, hasPrediction, hasError := state.ForecastMetrics(quotePrice)
 
 		if hasPrediction {
@@ -78,7 +78,7 @@ func (crypto *Crypto) aggregateForecasts() ForecastSnapshot {
 	return snapshot
 }
 
-func (crypto *Crypto) forecastFromReadings(
+func (scorer *Scorer) forecastFromReadings(
 	readings map[string]symbolReadings,
 ) ForecastSnapshot {
 	snapshot := ForecastSnapshot{}
@@ -101,13 +101,13 @@ func (crypto *Crypto) forecastFromReadings(
 		predictionSum += bestReturn
 		snapshot.PredictedSymbols++
 
-		state := crypto.pairStateBySymbol(symbol)
+		state := scorer.pairStateBySymbol(symbol)
 
 		if state == nil {
 			continue
 		}
 
-		quotePrice, _ := crypto.quotePrice(symbol)
+		quotePrice, _ := scorer.quotePrice(symbol)
 		_, runningError, _, hasError := state.ForecastMetrics(quotePrice)
 
 		if !hasError {
@@ -170,12 +170,12 @@ func forecastFromEvaluations(
 	}
 }
 
-func (crypto *Crypto) pairStateBySymbol(symbol string) *PairState {
+func (scorer *Scorer) pairStateBySymbol(symbol string) *PairState {
 	if symbol == "" {
 		return nil
 	}
 
-	if loaded, ok := crypto.pairStates.Load(symbol); ok {
+	if loaded, ok := scorer.pairStates.Load(symbol); ok {
 		return loaded.(*PairState)
 	}
 

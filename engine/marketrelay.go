@@ -63,7 +63,7 @@ type symbolMarketState struct {
 
 var _ MarketReader = (*MarketRelay)(nil)
 
-var _ Ticker = (*MarketRelay)(nil)
+var _ DrainTicker = (*MarketRelay)(nil)
 
 /*
 NewMarketRelay subscribes to tick, trade, and book on the shared broadcast groups.
@@ -97,9 +97,46 @@ func NewMarketRelay(
 }
 
 /*
-Tick drains one market broadcast message into relay cache.
+Start satisfies System; subscriptions are created in NewMarketRelay.
 */
-func (relay *MarketRelay) Tick() bool {
+func (relay *MarketRelay) Start() error {
+	return nil
+}
+
+/*
+State reports whether the relay is ready to drain market broadcasts.
+*/
+func (relay *MarketRelay) State() State {
+	return READY
+}
+
+/*
+Close stops the relay context.
+*/
+func (relay *MarketRelay) Close() error {
+	relay.cancel()
+
+	return nil
+}
+
+/*
+Tick drains one pending tick, trade, or book message without blocking.
+*/
+func (relay *MarketRelay) Tick() error {
+	select {
+	case <-relay.ctx.Done():
+		return relay.ctx.Err()
+	default:
+		relay.drainOnce()
+
+		return nil
+	}
+}
+
+/*
+drainOnce ingests one market broadcast message when available.
+*/
+func (relay *MarketRelay) drainOnce() bool {
 	select {
 	case <-relay.ctx.Done():
 		return false
@@ -143,7 +180,7 @@ func (relay *MarketRelay) Drain(limit int) int {
 	drained := 0
 
 	for drained < limit {
-		if !relay.Tick() {
+		if !relay.drainOnce() {
 			return drained
 		}
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
@@ -18,8 +19,7 @@ type ReturnModel struct {
 }
 
 type returnBucket struct {
-	ewma  float64
-	count int
+	ewma adaptive.AlphaEMA
 }
 
 /*
@@ -64,15 +64,7 @@ func (model *ReturnModel) Apply(feedback engine.PredictionFeedback) {
 		model.byKey[key] = bucket
 	}
 
-	bucket.count++
-
-	if bucket.count == 1 {
-		bucket.ewma = actual
-
-		return
-	}
-
-	bucket.ewma += model.alpha * (actual - bucket.ewma)
+	_ = bucket.ewma.Update(actual, model.alpha)
 }
 
 /*
@@ -98,11 +90,11 @@ func (model *ReturnModel) Predict(
 	bucket := model.byKey[key]
 	model.mu.Unlock()
 
-	if bucket == nil || bucket.count < minSamples || bucket.ewma <= 0 {
+	if bucket == nil || bucket.ewma.Updates() < minSamples || bucket.ewma.Value() <= 0 {
 		return 0, false
 	}
 
-	gross := confidence * bucket.ewma
+	gross := confidence * bucket.ewma.Value()
 
 	if gross <= 0 {
 		return 0, false

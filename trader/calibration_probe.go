@@ -9,7 +9,7 @@ import (
 /*
 recordCalibrationProbe stores a non-executable forward-return sample for cold models.
 */
-func (crypto *Crypto) recordCalibrationProbe(
+func (scorer *Scorer) recordCalibrationProbe(
 	state *PairState,
 	measurement engine.Measurement,
 	now time.Time,
@@ -20,7 +20,7 @@ func (crypto *Crypto) recordCalibrationProbe(
 		return
 	}
 
-	baselineQuote, ok := crypto.quotePrice(symbol)
+	baselineQuote, ok := scorer.quotePrice(symbol)
 
 	if !ok {
 		return

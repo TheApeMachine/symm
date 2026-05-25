@@ -1,6 +1,10 @@
 package causal
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/stats"
+)
 
 /*
 structuralCoef holds fitted SCM coefficients for price velocity.
@@ -87,7 +91,7 @@ func flowInterventionLevel(samples []causalSample) float64 {
 		return 0
 	}
 
-	return percentileSorted(copySorted(flows), 0.75)
+	return stats.PercentileSorted(stats.CopySorted(flows), 0.75)
 }
 
 func predictVelocity(sample causalSample, coef structuralCoef, flow float64) float64 {

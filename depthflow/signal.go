@@ -17,6 +17,7 @@ const depthflowSource = "depthflow"
 DepthFlow detects multi-level order-book imbalance and depth-weighted flow pressure.
 */
 type DepthFlow struct {
+	engine.Passive
 	market *engine.MarketRelay
 	watch  *engine.SymbolWatch
 	pairs  map[string]asset.Pair
@@ -112,13 +113,7 @@ func (depthflow *DepthFlow) evaluate(
 	track := depthflow.track.ensure(symbol)
 	track.recordDepthImbalance(imbalance)
 
-	scale := track.calibrator.Scale()
-
-	if scale <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	raw := absFloat(imbalance) * scale
+	raw := absFloat(imbalance)
 
 	if snapshot.BuyPressure > 0 && imbalance > 0 {
 		raw *= (snapshot.BuyPressure + 1) / 2
@@ -128,7 +123,7 @@ func (depthflow *DepthFlow) evaluate(
 		raw *= (1 - snapshot.BuyPressure) / 2
 	}
 
-	confidence := depthflow.track.recordScore(symbol, raw)
+	confidence := depthflow.track.recordCalibrated(symbol, raw)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false, nil

@@ -17,6 +17,7 @@ const basisSource = "basis"
 Basis measures relative strength versus the cross-section as a spot premium proxy.
 */
 type Basis struct {
+	engine.Passive
 	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair
@@ -147,13 +148,7 @@ func (basis *Basis) evaluate(
 	track := basis.track.ensure(symbol)
 	track.recordRelativeStrength(relStrength)
 
-	scale := track.calibrator.Scale()
-
-	if scale <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	confidence := basis.track.recordScore(symbol, raw*scale)
+	confidence := basis.track.recordCalibrated(symbol, raw)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false, nil

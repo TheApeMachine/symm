@@ -12,12 +12,10 @@ const historyCap = 32
 SymbolTrack stores return history for lead-lag scoring.
 */
 type SymbolTrack struct {
-	returns        []float64
-	calibrator     engine.PredictionCalibrator
-	confidenceHist []float64
-	lastPrice      float64
-	hasLast        bool
-	liveScore      float64
+	engine.ScoreRecorder
+	returns   []float64
+	lastPrice float64
+	hasLast   bool
 }
 
 /*
@@ -54,7 +52,7 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 	track := trackStore.ensureLocked(feedback.Symbol)
 	trackStore.mu.Unlock()
 
-	track.calibrator.Apply(feedback)
+	track.Calibrator.Apply(feedback)
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
@@ -72,9 +70,8 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	}
 
 	track = &SymbolTrack{
-		returns:        make([]float64, 0, historyCap),
-		confidenceHist: make([]float64, 0, historyCap),
-		calibrator:     engine.NewPredictionCalibrator(trackStore.calibrationParams),
+		returns:       make([]float64, 0, historyCap),
+		ScoreRecorder: engine.NewScoreRecorder(trackStore.calibrationParams, historyCap),
 	}
 	trackStore.bySymbol[symbol] = track
 
@@ -143,27 +140,13 @@ func (trackStore *TrackStore) leaderReturn() float64 {
 	return track.returns[len(track.returns)-1]
 }
 
-func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float64 {
-	if rawScore <= 0 {
-		return 0
-	}
-
+func (trackStore *TrackStore) recordCalibrated(symbol string, rawScore float64) float64 {
 	track := trackStore.ensure(symbol)
 
 	trackStore.mu.Lock()
 	defer trackStore.mu.Unlock()
 
-	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHist)
-	track.liveScore = normalized
-	track.confidenceHist = append(track.confidenceHist, rawScore)
-
-	if len(track.confidenceHist) > historyCap {
-		track.confidenceHist = track.confidenceHist[len(track.confidenceHist)-historyCap:]
-	}
-
-	trackStore.ObserveGaugeScore(normalized)
-
-	return normalized
+	return track.RecordCalibrated(rawScore, &trackStore.GaugeScan)
 }
 
 func leadLagScore(leaderReturn, followerReturn float64) float64 {

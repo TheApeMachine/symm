@@ -15,6 +15,7 @@ import (
 Fluid models order-book liquidity as a compressible field with source-sink continuity.
 */
 type Fluid struct {
+	engine.Passive
 	market        engine.MarketReader
 	watch         *engine.SymbolWatch
 	pairs         map[string]asset.Pair

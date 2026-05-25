@@ -118,7 +118,7 @@ func (trackStore *TrackStore) MacroMomentum(
 		return 0
 	}
 
-	return percentileSorted(copySorted(changes), 0.5)
+	return stats.PercentileSorted(stats.CopySorted(changes), 0.5)
 }
 
 /*
@@ -265,37 +265,15 @@ func (trackStore *TrackStore) Evaluate(
 }
 
 /*
-SymbolLiveScore returns the latest normalized gauge reading for one symbol.
-*/
-func (trackStore *TrackStore) SymbolLiveScore(symbol string) float64 {
-	trackStore.shard.LockMap()
-	defer trackStore.shard.UnlockMap()
-
-	track, ok := trackStore.bySymbol[symbol]
-
-	if !ok {
-		return 0
-	}
-
-	return track.liveScore
-}
-
-/*
 PeakLiveConfidence returns the highest unit-scale score across all symbols.
 */
 func (trackStore *TrackStore) PeakLiveConfidence() float64 {
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
-	peak := 0.0
-
-	for _, track := range trackStore.bySymbol {
-		if track.liveScore > peak {
-			peak = track.liveScore
-		}
-	}
-
-	return peak
+	return engine.PeakLiveFromMap(trackStore.bySymbol, func(track *SymbolTrack) float64 {
+		return track.liveScore
+	}).Score
 }
 
 /*
@@ -305,19 +283,11 @@ func (trackStore *TrackStore) PeakSymbolScore() (string, float64) {
 	trackStore.shard.LockMap()
 	defer trackStore.shard.UnlockMap()
 
-	bestSymbol := ""
-	bestScore := 0.0
+	reading := engine.PeakLiveFromMap(trackStore.bySymbol, func(track *SymbolTrack) float64 {
+		return track.liveScore
+	})
 
-	for symbol, track := range trackStore.bySymbol {
-		if track.liveScore <= bestScore {
-			continue
-		}
-
-		bestScore = track.liveScore
-		bestSymbol = symbol
-	}
-
-	return bestSymbol, bestScore
+	return reading.Symbol, reading.Score
 }
 
 func (track *SymbolTrack) evaluateLocked(current causalSample) (float64, string) {
@@ -394,25 +364,24 @@ func (trackStore *TrackStore) PassesLiquidity(symbol string) bool {
 
 	track, ok := trackStore.bySymbol[symbol]
 
-	if !ok || track.dailyQuoteVol <= 0 {
+	if !ok {
 		return false
 	}
 
-	quoteVolumes := make([]float64, 0, len(trackStore.bySymbol))
+	quotes := make(map[string]float64, len(trackStore.bySymbol))
 
-	for _, candidate := range trackStore.bySymbol {
-		if candidate.dailyQuoteVol <= 0 {
-			continue
+	for name, candidate := range trackStore.bySymbol {
+		if candidate.dailyQuoteVol > 0 {
+			quotes[name] = candidate.dailyQuoteVol
 		}
-
-		quoteVolumes = append(quoteVolumes, candidate.dailyQuoteVol)
 	}
 
-	if len(quoteVolumes) < minLiquidityPairs {
-		return false
-	}
-
-	return track.dailyQuoteVol < percentileSorted(copySorted(quoteVolumes), 0.5)
+	return engine.PassesBelowMedianLiquidity(
+		track.dailyQuoteVol,
+		quotes,
+		symbol,
+		minLiquidityPairs,
+	)
 }
 
 func (track *SymbolTrack) recordIntervention(effect float64) {
@@ -467,16 +436,4 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	trackStore.bySymbol[symbol] = track
 
 	return track
-}
-
-func percentileSorted(sorted []float64, quantile float64) float64 {
-	return stats.PercentileSorted(sorted, quantile)
-}
-
-func copySorted(values []float64) []float64 {
-	return stats.CopySorted(values)
-}
-
-func maxFloat(values []float64) float64 {
-	return stats.Max(values)
 }

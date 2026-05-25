@@ -17,6 +17,7 @@ const leadlagSource = "leadlag"
 LeadLag detects when one symbol leads the cross-section and a laggard has not caught up.
 */
 type LeadLag struct {
+	engine.Passive
 	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair
@@ -156,14 +157,7 @@ func (leadlag *LeadLag) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
-	track := leadlag.track.ensure(symbol)
-	scale := track.calibrator.Scale()
-
-	if scale <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	confidence := leadlag.track.recordScore(symbol, raw*scale)
+	confidence := leadlag.track.recordCalibrated(symbol, raw)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false, nil

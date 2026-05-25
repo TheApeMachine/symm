@@ -7,45 +7,37 @@ import (
 )
 
 func TestGaugeScoreDoesNotPersistHistory(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
-	track := trackStore.track("PUMP/EUR")
-	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
+	sym.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
 
-	historyLen := len(track.confidenceHistory)
+	historyLen := len(sym.confidenceHistory)
 
-	score := trackStore.GaugeScore("PUMP/EUR", 2.5)
+	score := sym.gaugeScore(2.5, false)
 
 	if score <= 0 || score > 1 {
 		t.Fatalf("expected unit-scale gauge score, got %v", score)
 	}
 
-	track.Lock()
-	defer track.Unlock()
-
-	if len(track.confidenceHistory) != historyLen {
+	if len(sym.confidenceHistory) != historyLen {
 		t.Fatalf("expected gauge score without history append, got len %d want %d",
-			len(track.confidenceHistory), historyLen)
+			len(sym.confidenceHistory), historyLen)
 	}
 }
 
 func TestRecordScorePersistsHistory(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
-	track := trackStore.track("PUMP/EUR")
-	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
+	sym.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4}
 
-	historyLen := len(track.confidenceHistory)
+	historyLen := len(sym.confidenceHistory)
 
-	score := trackStore.RecordScore("PUMP/EUR", 2.5)
+	score := sym.gaugeScore(2.5, true)
 
 	if score <= 0 || score > 1 {
 		t.Fatalf("expected unit-scale score, got %v", score)
 	}
 
-	track.Lock()
-	defer track.Unlock()
-
-	if len(track.confidenceHistory) != historyLen+1 {
+	if len(sym.confidenceHistory) != historyLen+1 {
 		t.Fatalf("expected history append, got len %d want %d",
-			len(track.confidenceHistory), historyLen+1)
+			len(sym.confidenceHistory), historyLen+1)
 	}
 }

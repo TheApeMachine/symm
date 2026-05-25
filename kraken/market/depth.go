@@ -10,34 +10,7 @@ func DepthFillVWAP(
 	levels []BookLevel,
 	quoteNotional float64,
 ) float64 {
-	if quoteNotional <= 0 || len(levels) == 0 {
-		return 0
-	}
-
-	remaining := quoteNotional
-	costSum := 0.0
-	volumeSum := 0.0
-
-	for _, level := range levels {
-		if level.Price <= 0 || level.Volume <= 0 {
-			continue
-		}
-
-		levelNotional := level.Price * level.Volume
-
-		if levelNotional >= remaining {
-			takeVolume := remaining / level.Price
-			costSum += remaining
-			volumeSum += takeVolume
-			remaining = 0
-
-			break
-		}
-
-		costSum += levelNotional
-		volumeSum += level.Volume
-		remaining -= levelNotional
-	}
+	costSum, volumeSum, remaining := walkQuoteNotional(levels, quoteNotional)
 
 	if remaining > 0 || volumeSum <= 0 {
 		return 0

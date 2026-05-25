@@ -3,6 +3,8 @@ package causal
 import (
 	"math"
 	"time"
+
+	"github.com/theapemachine/symm/stats"
 )
 
 func medianAbsVelocity(samples []causalSample) float64 {
@@ -10,13 +12,13 @@ func medianAbsVelocity(samples []causalSample) float64 {
 		return 0
 	}
 
-	magnitudes := make([]float64, len(samples))
+	velocities := make([]float64, len(samples))
 
 	for index, sample := range samples {
-		magnitudes[index] = math.Abs(sample.priceVelocity)
+		velocities[index] = sample.priceVelocity
 	}
 
-	return percentileSorted(copySorted(magnitudes), 0.5)
+	return stats.MedianAbsolute(velocities)
 }
 
 /*

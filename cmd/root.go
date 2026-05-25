@@ -7,7 +7,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/client"
+	"github.com/theapemachine/symm/pumpdump"
+	"github.com/theapemachine/symm/trader"
 )
 
 var rootCmd = &cobra.Command{
@@ -28,7 +31,11 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		booter.AddSystems(
-			client.NewPublicClient(cmd.Context(), pool, "wss://ws.kraken.com/v2/public"),
+			client.NewPublicClient(cmd.Context(), pool, "wss://ws.kraken.com/v2"),
+			pumpdump.NewPumpDump(cmd.Context(), pool),
+			trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
+				trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
+			)),
 		)
 	},
 }

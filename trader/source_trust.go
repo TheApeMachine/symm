@@ -99,7 +99,15 @@ func (store *SourceTrustStore) Weight(source string) float64 {
 	entry, ok := store.bySource[source]
 	store.mu.RUnlock()
 
-	if !ok || entry == nil || entry.samples == 0 {
+	if !ok || entry == nil {
+		return sourceTrustColdStart
+	}
+
+	return weightFromEntry(entry)
+}
+
+func weightFromEntry(entry *sourceTrustEntry) float64 {
+	if entry == nil || entry.samples == 0 {
 		return sourceTrustColdStart
 	}
 
@@ -173,4 +181,28 @@ func sourceTrustAlpha(samples int) float64 {
 	}
 
 	return 0.15
+}
+
+/*
+SnapshotWeights copies the live ensemble multiplier for every known source.
+*/
+func (store *SourceTrustStore) SnapshotWeights() map[string]float64 {
+	if store == nil {
+		return nil
+	}
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if len(store.bySource) == 0 {
+		return nil
+	}
+
+	weights := make(map[string]float64, len(store.bySource))
+
+	for source, entry := range store.bySource {
+		weights[source] = weightFromEntry(entry)
+	}
+
+	return weights
 }

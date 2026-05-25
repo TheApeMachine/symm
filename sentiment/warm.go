@@ -6,7 +6,7 @@ import "github.com/theapemachine/symm/engine"
 WarmFromOHLC seeds sentiment feature history from volume and bar-change z-scores.
 */
 func (trackStore *TrackStore) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
-	length := minCompletedLength(candles)
+	length := engine.MinCompletedLength(candles)
 
 	if length <= 0 {
 		return
@@ -36,25 +36,6 @@ func (trackStore *TrackStore) WarmFromOHLC(candles map[string][]engine.OHLCCandl
 			track.recordSentiment(raw)
 		}
 	}
-}
-
-func minCompletedLength(candles map[string][]engine.OHLCCandle) int {
-	length := 0
-
-	for _, bars := range candles {
-		completed := engine.CompletedCandles(bars)
-		size := len(completed)
-
-		if size == 0 {
-			continue
-		}
-
-		if length == 0 || size < length {
-			length = size
-		}
-	}
-
-	return length
 }
 
 func sectionFeaturesAt(

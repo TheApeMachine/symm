@@ -20,26 +20,26 @@ func TestRecordCalibrationProbe(t *testing.T) {
 	defer pool.Close()
 
 	prices := stubPrices{"PUMP/EUR": 100}
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, err := NewCrypto(
+	candidatesGroup := pool.CreateBroadcastGroup("candidates", 10*time.Millisecond)
+	scorer, err := NewScorer(
 		ctx,
 		pool,
 		nil,
-		wallet,
+		candidatesGroup,
 		prices,
 		nil,
 		&stubSignal{},
 	)
 
 	if err != nil {
-		t.Fatalf("new crypto: %v", err)
+		t.Fatalf("new scorer: %v", err)
 	}
 
 	start := time.Unix(1_700_000_000, 0)
-	crypto.updatePairStates(testMeasurement(0.5), start)
+	scorer.updatePairStates(testMeasurement(0.5), start)
 	prices["PUMP/EUR"] = 102
-	crypto.settleDuePredictions(start.Add(config.System.ScalpHoldBeforeExit + time.Second))
-	gross, ok := crypto.returnModel.Predict("hawkes", "momentum", 0.5)
+	scorer.settleDuePredictions(start.Add(config.System.ScalpHoldBeforeExit + time.Second))
+	gross, ok := scorer.ReturnModel().Predict("hawkes", "momentum", 0.5)
 
 	convey.Convey("Given an uncalibrated signal with a live quote", t, func() {
 		convey.Convey("It should learn from an actual forward return before trading", func() {

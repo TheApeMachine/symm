@@ -56,30 +56,28 @@ func TestApplyExcitationCalibration(t *testing.T) {
 }
 
 func TestApplyPredictionFeedback(t *testing.T) {
-	store := NewTrackStore(engine.DefaultCalibrationParams())
+	hawkesSignal := &Hawkes{
+		calibrationParams: engine.DefaultCalibrationParams(),
+		states:            make(map[string]*HawkesSymbol),
+	}
 
 	convey.Convey("Given an overconfident settled forecast", t, func() {
-		track := store.track("PUMP/EUR")
-		track.Lock()
-		track.fit = sampleFit()
-		track.hasFit = true
-		track.Unlock()
+		sym := hawkesSignal.state("PUMP/EUR")
+		sym.fit = sampleFit()
+		sym.hasFit = true
 
-		store.ApplyPredictionFeedback(engine.PredictionFeedback{
+		hawkesSignal.Feedback(engine.PredictionFeedback{
+			Source:          "hawkes",
 			Symbol:          "PUMP/EUR",
 			PredictedReturn: 0.1,
 			ActualReturn:    0.05,
 		})
 
 		convey.Convey("It should lower excitation calibration", func() {
-			track = store.track("PUMP/EUR")
-			track.Lock()
-			defer track.Unlock()
+			prior := applyExcitationCalibration(sym.fit, sym.calibrator.Scale())
 
-			prior := applyExcitationCalibration(track.fit, track.calibrator.Scale())
-
-			convey.So(track.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
-			convey.So(prior.AlphaBB, convey.ShouldAlmostEqual, track.fit.AlphaBB*0.5, 0.0001)
+			convey.So(sym.calibrator.Scale(), convey.ShouldAlmostEqual, 0.5, 0.0001)
+			convey.So(prior.AlphaBB, convey.ShouldAlmostEqual, sym.fit.AlphaBB*0.5, 0.0001)
 		})
 	})
 }

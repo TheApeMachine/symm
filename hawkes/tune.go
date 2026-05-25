@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -112,7 +113,7 @@ func newFitContext(
 		BranchScanSteps: branchSteps,
 		BranchFloor:     branchFloor,
 		BranchCeiling:   branchCeiling,
-		BetaCandidates: logSpace(
+		BetaCandidates: numeric.LogSpace(
 			betaMin, betaMax, scanSteps,
 		),
 		MuBuyFactors: muUncertaintyFactors(
@@ -121,17 +122,17 @@ func newFitContext(
 		MuSellFactors: muUncertaintyFactors(
 			len(sellEvents), scanSteps,
 		),
-		BranchSelfCandidates: linSpace(
+		BranchSelfCandidates: numeric.LinSpace(
 			branchFloor,
 			branchCeiling*selfBranchShare(
 				total, len(buyEvents), len(sellEvents),
 			),
 			branchSteps,
 		),
-		BranchCrossCandidates: linSpace(
+		BranchCrossCandidates: numeric.LinSpace(
 			0, branchCeiling, branchSteps,
 		),
-		LocalScales: linSpace(
+		LocalScales: numeric.LinSpace(
 			localMin, localMax, scanSteps,
 		),
 	}, true
@@ -321,7 +322,7 @@ func muUncertaintyFactors(count, steps int) []float64 {
 
 	spread := 2 / math.Sqrt(float64(count))
 
-	return linSpace(1-spread, 1+spread, steps)
+	return numeric.LinSpace(1-spread, 1+spread, steps)
 }
 
 func localScaleRange(gapCV float64) (minScale, maxScale float64) {
@@ -348,42 +349,29 @@ func confidenceHistoryCap(minFitEvents int) int {
 	return minFitEvents * 4
 }
 
-func logSpace(minValue, maxValue float64, steps int) []float64 {
-	if steps <= 1 {
-		return []float64{math.Sqrt(minValue * maxValue)}
+func splitSideEvents(
+	ticks []market.TradeTick,
+	windowStart, windowEnd time.Time,
+) ([]time.Time, []time.Time) {
+	buyTimes := make([]time.Time, 0, len(ticks))
+	sellTimes := make([]time.Time, 0, len(ticks))
+
+	for _, tick := range ticks {
+		if tick.Timestamp.Before(windowStart) {
+			continue
+		}
+
+		if tick.Timestamp.After(windowEnd) {
+			continue
+		}
+
+		switch tick.Side {
+		case "buy":
+			buyTimes = append(buyTimes, tick.Timestamp)
+		case "sell":
+			sellTimes = append(sellTimes, tick.Timestamp)
+		}
 	}
 
-	if minValue <= 0 || maxValue <= 0 {
-		return []float64{maxValue}
-	}
-
-	if minValue > maxValue {
-		minValue, maxValue = maxValue, minValue
-	}
-
-	logMin := math.Log(minValue)
-	logMax := math.Log(maxValue)
-	values := make([]float64, steps)
-	stepSize := (logMax - logMin) / float64(steps-1)
-
-	for index := range steps {
-		values[index] = math.Exp(logMin + float64(index)*stepSize)
-	}
-
-	return values
-}
-
-func linSpace(minValue, maxValue float64, steps int) []float64 {
-	if steps <= 1 {
-		return []float64{(minValue + maxValue) / 2}
-	}
-
-	values := make([]float64, steps)
-	stepSize := (maxValue - minValue) / float64(steps-1)
-
-	for index := range steps {
-		values[index] = minValue + float64(index)*stepSize
-	}
-
-	return values
+	return buyTimes, sellTimes
 }

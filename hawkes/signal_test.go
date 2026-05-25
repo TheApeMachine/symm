@@ -65,10 +65,10 @@ func TestSplitSideEventsKeepsWindowTicks(t *testing.T) {
 }
 
 func TestMeanConfidence(t *testing.T) {
-	hawkesSignal := &Hawkes{track: NewTrackStore(engine.DefaultCalibrationParams())}
+	hawkesSignal := &Hawkes{calibrationParams: engine.DefaultCalibrationParams()}
 
-	hawkesSignal.track.ObserveGaugeScore(0.2)
-	hawkesSignal.track.ObserveGaugeScore(0.6)
+	hawkesSignal.ObserveGaugeScore(0.2)
+	hawkesSignal.ObserveGaugeScore(0.6)
 
 	if got := hawkesSignal.MeanConfidence(); got < 0.399 || got > 0.401 {
 		t.Fatalf("expected mean confidence 0.4, got %v", got)
@@ -190,16 +190,16 @@ func TestFitBivariateCapturesCrossExcitation(t *testing.T) {
 	}
 }
 
-func TestBuySellAsymmetryRequiresBuyDominance(t *testing.T) {
+func TestIntensityAsymmetryRequiresBuyDominance(t *testing.T) {
 	fit := BivariateFit{BuyIntensity: 3, SellIntensity: 1, MuBuy: 1, SpectralRadius: 0.4}
 
-	if buySellAsymmetry(fit) <= 0 {
+	if intensityAsymmetry(fit, false) <= 0 {
 		t.Fatal("expected positive asymmetry when buy intensity dominates")
 	}
 
 	fit.SellIntensity = 4
 
-	if buySellAsymmetry(fit) != 0 {
+	if intensityAsymmetry(fit, false) != 0 {
 		t.Fatal("expected zero asymmetry when sell intensity dominates")
 	}
 }
@@ -237,30 +237,26 @@ func TestSpectralRadiusSubcritical(t *testing.T) {
 }
 
 func TestRecordScoreStoresConfidence(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
 	minHistory := confidenceHistoryCap(bivariateParamCount * 2)
 
 	for index := 0; index < minHistory; index++ {
-		trackStore.bySymbol["PUMP/EUR"] = trackStore.track("PUMP/EUR")
-		trackStore.bySymbol["PUMP/EUR"].confidenceHistory = append(
-			trackStore.bySymbol["PUMP/EUR"].confidenceHistory,
-			1.2,
-		)
+		sym.confidenceHistory = append(sym.confidenceHistory, 1.2)
 	}
 
-	if score := trackStore.RecordScore("PUMP/EUR", 2.5); score <= 0 || score > 1 {
+	if score := sym.gaugeScore(2.5, true); score <= 0 || score > 1 {
 		t.Fatalf("expected unit-scale score in (0,1], got %v", score)
 	}
 
-	if score := trackStore.RecordScore("PUMP/EUR", 1.1); score <= 0 || score > 1 {
+	if score := sym.gaugeScore(1.1, true); score <= 0 || score > 1 {
 		t.Fatalf("expected unit-scale score in (0,1], got %v", score)
 	}
 }
 
 func TestRecordScoreRejectsColdSymbol(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
 
-	score := trackStore.RecordScore("PUMP/EUR", 3.2)
+	score := sym.gaugeScore(3.2, true)
 
 	if score != 0 {
 		t.Fatalf("expected zero confidence before calibration history, got %v", score)
@@ -268,11 +264,10 @@ func TestRecordScoreRejectsColdSymbol(t *testing.T) {
 }
 
 func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
-	track := trackStore.track("PUMP/EUR")
-	track.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2}
-	fence := engine.ConfidenceFence(track.confidenceHistory)
-	score := track.calibrator.NormalizeConfidence(fence/2, track.confidenceHistory)
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
+	sym.confidenceHistory = []float64{1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2}
+	fence := engine.ConfidenceFence(sym.confidenceHistory)
+	score := sym.calibrator.NormalizeConfidence(fence/2, sym.confidenceHistory)
 
 	if score <= 0 || score >= 1 {
 		t.Fatalf("expected mid-fence score in (0,1), got %v", score)
@@ -280,9 +275,9 @@ func TestRecordScoreScalesAgainstSymbolFence(t *testing.T) {
 }
 
 func TestRecordScoreRejectsNonPositive(t *testing.T) {
-	trackStore := NewTrackStore(engine.DefaultCalibrationParams())
+	sym := NewHawkesSymbol(engine.DefaultCalibrationParams())
 
-	if score := trackStore.RecordScore("PUMP/EUR", 0); score != 0 {
+	if score := sym.gaugeScore(0, true); score != 0 {
 		t.Fatalf("expected zero score, got %v", score)
 	}
 }
@@ -297,10 +292,11 @@ func TestFitBivariateWarmStartMatchesFullSearch(t *testing.T) {
 		t.Fatal("expected fit context")
 	}
 
-	full := scanBivariateFullGrid(
+	full := scanBivariateGrid(
 		buyEvents, sellEvents, horizon, context,
 		float64(len(buyEvents))/context.SpanSec,
 		float64(len(sellEvents))/context.SpanSec,
+		false,
 	)
 	warm := fitBivariateWithPrior(buyEvents, sellEvents, horizon, full)
 

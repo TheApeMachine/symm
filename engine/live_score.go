@@ -23,3 +23,36 @@ MeanConfidenceReader exposes the peak normalized confidence across the latest sc
 type MeanConfidenceReader interface {
 	MeanConfidence() float64
 }
+
+/*
+PeakLiveReading returns the strongest symbol-level live score from a score map.
+*/
+func PeakLiveReading(liveScores map[string]float64) LiveReading {
+	return PeakLiveFromMap(liveScores, func(score float64) float64 {
+		return score
+	})
+}
+
+/*
+PeakLiveFromMap scans keyed items and returns the symbol with the highest score.
+*/
+func PeakLiveFromMap[T any](items map[string]T, score func(T) float64) LiveReading {
+	bestSymbol := ""
+	bestScore := 0.0
+
+	for symbol, item := range items {
+		value := score(item)
+
+		if value <= bestScore {
+			continue
+		}
+
+		bestScore = value
+		bestSymbol = symbol
+	}
+
+	return LiveReading{
+		Symbol: bestSymbol,
+		Score:  bestScore,
+	}
+}

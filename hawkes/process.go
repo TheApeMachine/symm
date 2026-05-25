@@ -3,8 +3,6 @@ package hawkes
 import (
 	"math"
 	"time"
-
-	"github.com/theapemachine/symm/stats"
 )
 
 type eventSide int
@@ -97,12 +95,12 @@ func windowSpan(marked []markedEvent, horizon time.Time) float64 {
 	return span
 }
 
-func buyIntensityAt(
+func intensityAt(
 	buyEvents, sellEvents []time.Time,
 	at time.Time,
-	muBuy, alphaBB, alphaBS, beta float64,
+	mu, alphaFromBuy, alphaFromSell, beta float64,
 ) float64 {
-	lambda := muBuy
+	lambda := mu
 
 	for _, eventTime := range buyEvents {
 		if !eventTime.Before(at) {
@@ -112,7 +110,7 @@ func buyIntensityAt(
 		age := at.Sub(eventTime).Seconds()
 
 		if age >= 0 {
-			lambda += alphaBB * math.Exp(-beta*age)
+			lambda += alphaFromBuy * math.Exp(-beta*age)
 		}
 	}
 
@@ -124,41 +122,7 @@ func buyIntensityAt(
 		age := at.Sub(eventTime).Seconds()
 
 		if age >= 0 {
-			lambda += alphaBS * math.Exp(-beta*age)
-		}
-	}
-
-	return lambda
-}
-
-func sellIntensityAt(
-	buyEvents, sellEvents []time.Time,
-	at time.Time,
-	muSell, alphaSB, alphaSS, beta float64,
-) float64 {
-	lambda := muSell
-
-	for _, eventTime := range buyEvents {
-		if !eventTime.Before(at) {
-			continue
-		}
-
-		age := at.Sub(eventTime).Seconds()
-
-		if age >= 0 {
-			lambda += alphaSB * math.Exp(-beta*age)
-		}
-	}
-
-	for _, eventTime := range sellEvents {
-		if !eventTime.Before(at) {
-			continue
-		}
-
-		age := at.Sub(eventTime).Seconds()
-
-		if age >= 0 {
-			lambda += alphaSS * math.Exp(-beta*age)
+			lambda += alphaFromSell * math.Exp(-beta*age)
 		}
 	}
 
@@ -231,13 +195,13 @@ func bivariateLogLikelihood(
 
 		switch event.side {
 		case sideBuy:
-			lambda = buyIntensityAt(
+			lambda = intensityAt(
 				buySoFar, sellSoFar, event.at,
 				muBuy, alphaBB, alphaBS, beta,
 			)
 			buySoFar = append(buySoFar, event.at)
 		case sideSell:
-			lambda = sellIntensityAt(
+			lambda = intensityAt(
 				buySoFar, sellSoFar, event.at,
 				muSell, alphaSB, alphaSS, beta,
 			)
@@ -315,11 +279,11 @@ func evaluateBivariateFit(
 		AlphaSB: alphaSB,
 		AlphaSS: alphaSS,
 		Beta:    beta,
-		BuyIntensity: buyIntensityAt(
+		BuyIntensity: intensityAt(
 			buyEvents, sellEvents, horizon,
 			muBuy, alphaBB, alphaBS, beta,
 		),
-		SellIntensity: sellIntensityAt(
+		SellIntensity: intensityAt(
 			buyEvents, sellEvents, horizon,
 			muSell, alphaSB, alphaSS, beta,
 		),
@@ -327,20 +291,22 @@ func evaluateBivariateFit(
 	}
 }
 
-func sellBuyAsymmetry(fit BivariateFit) float64 {
+func intensityAsymmetry(fit BivariateFit, sellSide bool) float64 {
 	total := fit.BuyIntensity + fit.SellIntensity
 
-	if total <= 0 || fit.SellIntensity <= fit.BuyIntensity {
+	if total <= 0 {
 		return 0
 	}
 
-	return (fit.SellIntensity - fit.BuyIntensity) / total
-}
+	if sellSide {
+		if fit.SellIntensity <= fit.BuyIntensity {
+			return 0
+		}
 
-func buySellAsymmetry(fit BivariateFit) float64 {
-	total := fit.BuyIntensity + fit.SellIntensity
+		return (fit.SellIntensity - fit.BuyIntensity) / total
+	}
 
-	if total <= 0 || fit.BuyIntensity <= fit.SellIntensity {
+	if fit.BuyIntensity <= fit.SellIntensity {
 		return 0
 	}
 
@@ -394,65 +360,4 @@ func excitationConfidence(
 	}
 
 	return asymmetry * ratio
-}
-
-func excitationConfidenceLegacy(fit BivariateFit, asymmetry float64, baselineFence float64) float64 {
-	return excitationConfidence(fit, asymmetry, baselineFence, false)
-}
-
-func medianInterArrivalSec(events []time.Time) float64 {
-	if len(events) < 2 {
-		return 0
-	}
-
-	gaps := make([]float64, 0, len(events)-1)
-
-	for index := 1; index < len(events); index++ {
-		gap := events[index].Sub(events[index-1]).Seconds()
-
-		if gap > 0 {
-			gaps = append(gaps, gap)
-		}
-	}
-
-	if len(gaps) == 0 {
-		return 0
-	}
-
-	return stats.Median(gaps)
-}
-
-func mergedMedianGap(buyEvents, sellEvents []time.Time) float64 {
-	marked := mergeMarkedEvents(buyEvents, sellEvents)
-
-	if len(marked) < 2 {
-		return 0
-	}
-
-	times := make([]time.Time, len(marked))
-
-	for index, event := range marked {
-		times[index] = event.at
-	}
-
-	return medianInterArrivalSec(times)
-}
-
-func confidenceFence(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	lower, upper := stats.Quartiles(values)
-	spread := upper - lower
-
-	if spread > 0 {
-		return upper + spread + spread/2
-	}
-
-	return stats.Max(values)
-}
-
-func crossSectionMedian(values []float64) float64 {
-	return stats.CrossSectionMedian(values)
 }

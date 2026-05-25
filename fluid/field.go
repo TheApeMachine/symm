@@ -74,44 +74,11 @@ func quietVelocity(velocities []float64, currentVelocity float64) bool {
 		return false
 	}
 
-	medianSpeed := medianAbs(velocities)
+	medianSpeed := stats.MedianAbsolute(velocities)
 
 	if medianSpeed <= 0 {
 		return math.Abs(currentVelocity) <= 0
 	}
 
 	return math.Abs(currentVelocity) <= medianSpeed
-}
-
-func ratioFence(ratios []float64) float64 {
-	if len(ratios) == 0 {
-		return 0
-	}
-
-	lower, upper := stats.Quartiles(ratios)
-	spread := upper - lower
-
-	if spread > 0 {
-		return upper + spread + spread/2
-	}
-
-	return stats.Max(ratios)
-}
-
-func medianAbs(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	magnitudes := make([]float64, len(values))
-
-	for index, value := range values {
-		magnitudes[index] = math.Abs(value)
-	}
-
-	return stats.PercentileSorted(stats.CopySorted(magnitudes), 0.5)
-}
-
-func crossSectionMedian(values []float64) float64 {
-	return stats.Median(values)
 }

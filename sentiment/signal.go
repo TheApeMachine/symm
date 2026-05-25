@@ -18,6 +18,7 @@ Sentiment aggregates cross-section buy-pressure and momentum z-scores.
 This is market-internal pressure, not external sentiment feeds.
 */
 type Sentiment struct {
+	engine.Passive
 	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair
@@ -171,13 +172,7 @@ func (sentiment *Sentiment) evaluate(
 	track := sentiment.track.ensure(symbol)
 	track.recordSentiment(raw)
 
-	scale := track.calibrator.Scale()
-
-	if scale <= 0 {
-		return engine.Measurement{}, false, nil
-	}
-
-	confidence := sentiment.track.recordScore(symbol, raw*scale)
+	confidence := sentiment.track.recordCalibrated(symbol, raw)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false, nil

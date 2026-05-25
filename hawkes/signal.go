@@ -3,26 +3,26 @@ package hawkes
 import (
 	"context"
 	"iter"
-	"math"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
 Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes model.
 */
 type Hawkes struct {
-	market  *engine.MarketRelay
-	watch   *engine.SymbolWatch
-	pairs   map[string]asset.Pair
-	symbols []string
-	track   *TrackStore
-	pool    *qpool.Q
+	engine.Passive
+	engine.GaugeScan
+	market            *engine.MarketRelay
+	watch             *engine.SymbolWatch
+	pairs             map[string]asset.Pair
+	symbols           []string
+	states            map[string]*HawkesSymbol
+	calibrationParams engine.CalibrationParams
+	pool              *qpool.Q
 }
 
 var _ engine.Signal = (*Hawkes)(nil)
@@ -44,24 +44,31 @@ func NewHawkes(
 	symbols []string,
 	watch *engine.SymbolWatch,
 	calibrationParams engine.CalibrationParams,
-) (*Hawkes, error) {
-	hawkes := &Hawkes{
-		market:  marketRelay,
-		watch:   watch,
-		pairs:   pairs,
-		symbols: append([]string(nil), symbols...),
-		track:   NewTrackStore(calibrationParams),
-		pool:    pool,
+) *Hawkes {
+	return &Hawkes{
+		market:            marketRelay,
+		watch:             watch,
+		pairs:             pairs,
+		symbols:           append([]string(nil), symbols...),
+		states:            make(map[string]*HawkesSymbol),
+		calibrationParams: calibrationParams,
+		pool:              pool,
 	}
-
-	return hawkes, errnie.Require(map[string]any{
-		"market": marketRelay,
-		"track":  hawkes.track,
-	})
 }
 
 func (hawkes *Hawkes) Source() string {
 	return "hawkes"
+}
+
+func (hawkes *Hawkes) state(symbol string) *HawkesSymbol {
+	sym := hawkes.states[symbol]
+
+	if sym == nil {
+		sym = NewHawkesSymbol(hawkes.calibrationParams)
+		hawkes.states[symbol] = sym
+	}
+
+	return sym
 }
 
 /*
@@ -72,9 +79,9 @@ func (hawkes *Hawkes) Measure(
 	now time.Time,
 ) iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		hawkes.track.BeginScan()
+		hawkes.beginScan()
 		engine.DrainTicks(ctx)
-		hawkes.refreshTracks(ctx)
+		hawkes.refreshStates(ctx)
 
 		for measurement := range engine.MeasureSymbols(
 			ctx,
@@ -98,57 +105,71 @@ func (hawkes *Hawkes) Measure(
 	}
 }
 
-/*
-LiveScore returns the current Hawkes gauge reading from track state.
-*/
 func (hawkes *Hawkes) LiveScore() float64 {
-	return hawkes.track.PeakLiveConfidence()
+	return engine.PeakLiveFromMap(hawkes.states, func(sym *HawkesSymbol) float64 {
+		return sym.liveScore
+	}).Score
 }
 
 func (hawkes *Hawkes) PeakReading() engine.LiveReading {
-	symbol, score := hawkes.track.PeakSymbolScore()
-
-	return engine.LiveReading{
-		Symbol: symbol,
-		Score:  score,
-	}
+	return engine.PeakLiveFromMap(hawkes.states, func(sym *HawkesSymbol) float64 {
+		return sym.liveScore
+	})
 }
 
-/*
-MeanConfidence returns the mean normalized confidence across the latest scan set.
-*/
 func (hawkes *Hawkes) MeanConfidence() float64 {
-	return hawkes.track.MeanGaugeConfidence()
+	return hawkes.MeanGaugeConfidence()
 }
 
-/*
-SymbolRisk exposes Hawkes branching metrics for dynamic execution.
-*/
 func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
-	return hawkes.track.SymbolRisk(symbol)
+	return hawkes.state(symbol).SymbolRisk()
 }
 
-/*
-Feedback nudges Hawkes excitation parameters from settled prediction error.
-*/
 func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
 	if feedback.Source != hawkes.Source() {
 		return
 	}
 
-	hawkes.track.ApplyPredictionFeedback(feedback)
+	hawkes.state(feedback.Symbol).ApplyFeedback(feedback)
 }
 
-func (hawkes *Hawkes) refreshTracks(ctx context.Context) {
+func (hawkes *Hawkes) beginScan() {
+	hawkes.ResetGaugeScan()
+
+	for _, sym := range hawkes.states {
+		sym.liveScore = 0
+	}
+}
+
+func (hawkes *Hawkes) refreshStates(ctx context.Context) {
 	_ = engine.RunSymbolJobs(ctx, hawkes.pool, hawkes.symbols, func(symbol string) error {
 		snapshot := hawkes.market.Read(symbol)
 
 		if snapshot.LastOK && snapshot.VolumeOK {
-			hawkes.track.ApplyTicker(symbol, snapshot.Last, snapshot.VolumeBase)
+			hawkes.state(symbol).FeedTicker(snapshot.Last, snapshot.VolumeBase)
 		}
 
 		return nil
 	})
+}
+
+func (hawkes *Hawkes) passesLiquidity(symbol string) bool {
+	sym := hawkes.state(symbol)
+
+	quotes := make(map[string]float64, len(hawkes.states))
+
+	for name, state := range hawkes.states {
+		if state.dailyQuoteVol > 0 {
+			quotes[name] = state.dailyQuoteVol
+		}
+	}
+
+	return engine.PassesBelowMedianLiquidity(
+		sym.dailyQuoteVol,
+		quotes,
+		symbol,
+		1,
+	)
 }
 
 func (hawkes *Hawkes) evaluate(
@@ -156,140 +177,24 @@ func (hawkes *Hawkes) evaluate(
 	snapshot engine.Snapshot,
 	now time.Time,
 ) (engine.Measurement, bool, error) {
-	confidence, measurementType := hawkes.score(symbol, snapshot, now)
-
-	hawkes.track.ObserveGaugeScore(confidence)
-
-	if confidence <= 0 {
+	if !hawkes.passesLiquidity(symbol) {
 		return engine.Measurement{}, false, nil
 	}
 
-	regime := "momentum"
-	reason := "cluster_buy"
+	ticks, ok := hawkes.market.RecentTicks(symbol, time.Time{})
 
-	if measurementType == engine.Dump {
-		regime = "dump"
-		reason = "cluster_sell"
+	if !ok || len(ticks) == 0 {
+		return engine.Measurement{}, false, nil
 	}
 
-	return engine.Measurement{
-		Type:       measurementType,
-		Regime:     regime,
-		Reason:     reason,
-		Confidence: confidence,
-	}, true, nil
-}
-
-func (hawkes *Hawkes) gaugeConfidence(
-	symbol string,
-	snapshot engine.Snapshot,
-	rawConfidence float64,
-	measurementType engine.MeasurementType,
-	persist bool,
-) float64 {
-	if rawConfidence <= 0 {
-		return 0
-	}
-
-	if !snapshot.ImbalanceOK || snapshot.Imbalance <= 0 {
-		return 0
-	}
-
-	if !snapshot.SpreadOK || snapshot.SpreadBPS <= 0 {
-		return 0
-	}
-
-	bookSide := snapshot.Imbalance
-
-	if measurementType == engine.Dump {
-		bookSide = math.Abs(snapshot.Imbalance)
-	}
-
-	if bookSide > 1 {
-		bookSide = 1
-	}
-
-	return hawkes.track.applyGaugeScore(symbol, rawConfidence*bookSide, persist)
-}
-
-func (hawkes *Hawkes) score(
-	symbol string, snapshot engine.Snapshot, now time.Time,
-) (float64, engine.MeasurementType) {
-	if !hawkes.track.PassesLiquidity(symbol) {
-		return 0, engine.Momentum
-	}
-
-	allTicks, ok := hawkes.market.RecentTicks(symbol, time.Time{})
-
-	if !ok || len(allTicks) == 0 {
-		return 0, engine.Momentum
-	}
-
-	context, buyTimes, sellTimes, ok := fitContextFromTicks(allTicks, time.Time{}, now)
-
-	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
-		return 0, engine.Momentum
-	}
-
-	fit := hawkes.track.FitBivariate(symbol, buyTimes, sellTimes, now)
-
-	if fit.MuBuy <= 0 {
-		return 0, engine.Momentum
-	}
-
-	buyAsymmetry := buySellAsymmetry(fit)
-	sellAsymmetry := sellBuyAsymmetry(fit)
-	baselineFence := hawkes.track.BaselineIntensityFence(symbol)
-	measurementType := engine.Momentum
-	asymmetry := buyAsymmetry
-
-	if sellAsymmetry > buyAsymmetry {
-		measurementType = engine.Dump
-		asymmetry = sellAsymmetry
-	}
-
-	rawConfidence := excitationConfidence(
-		fit, asymmetry, baselineFence, measurementType == engine.Dump,
+	measurement, ok := hawkes.state(symbol).Measure(
+		ticks,
+		snapshot,
+		now,
+		hawkes.pairs[symbol],
 	)
 
-	if rawConfidence <= 0 {
-		return 0, measurementType
-	}
+	hawkes.ObserveGaugeScore(measurement.Confidence)
 
-	gaugeConfidence := hawkes.gaugeConfidence(
-		symbol, snapshot, rawConfidence, measurementType, true,
-	)
-
-	if gaugeConfidence <= 0 {
-		return 0, measurementType
-	}
-
-	return gaugeConfidence, measurementType
-}
-
-func splitSideEvents(
-	ticks []market.TradeTick,
-	windowStart, windowEnd time.Time,
-) ([]time.Time, []time.Time) {
-	buyTimes := make([]time.Time, 0, len(ticks))
-	sellTimes := make([]time.Time, 0, len(ticks))
-
-	for _, tick := range ticks {
-		if tick.Timestamp.Before(windowStart) {
-			continue
-		}
-
-		if tick.Timestamp.After(windowEnd) {
-			continue
-		}
-
-		switch tick.Side {
-		case "buy":
-			buyTimes = append(buyTimes, tick.Timestamp)
-		case "sell":
-			sellTimes = append(sellTimes, tick.Timestamp)
-		}
-	}
-
-	return buyTimes, sellTimes
+	return measurement, ok, nil
 }

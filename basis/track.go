@@ -1,6 +1,7 @@
 package basis
 
 import (
+	"math"
 	"sync"
 
 	"github.com/theapemachine/symm/engine"
@@ -14,10 +15,8 @@ SymbolTrack stores relative-strength history for one pair.
 */
 type SymbolTrack struct {
 	engine.SymbolLock
-	relStrength    []float64
-	calibrator     engine.PredictionCalibrator
-	confidenceHist []float64
-	liveScore      float64
+	engine.ScoreRecorder
+	relStrength []float64
 }
 
 /*
@@ -54,7 +53,7 @@ func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.Prediction
 	track.Lock()
 	defer track.Unlock()
 
-	track.calibrator.Apply(feedback)
+	track.Calibrator.Apply(feedback)
 }
 
 func (trackStore *TrackStore) ensure(symbol string) *SymbolTrack {
@@ -72,36 +71,21 @@ func (trackStore *TrackStore) ensureLocked(symbol string) *SymbolTrack {
 	}
 
 	track = &SymbolTrack{
-		relStrength:    make([]float64, 0, historyCap),
-		confidenceHist: make([]float64, 0, historyCap),
-		calibrator:     engine.NewPredictionCalibrator(trackStore.calibrationParams),
+		relStrength:   make([]float64, 0, historyCap),
+		ScoreRecorder: engine.NewScoreRecorder(trackStore.calibrationParams, historyCap),
 	}
 	trackStore.bySymbol[symbol] = track
 
 	return track
 }
 
-func (trackStore *TrackStore) recordScore(symbol string, rawScore float64) float64 {
-	if rawScore <= 0 {
-		return 0
-	}
-
+func (trackStore *TrackStore) recordCalibrated(symbol string, rawScore float64) float64 {
 	track := trackStore.ensure(symbol)
 
 	track.Lock()
 	defer track.Unlock()
 
-	normalized := track.calibrator.NormalizeConfidence(rawScore, track.confidenceHist)
-	track.liveScore = normalized
-	track.confidenceHist = append(track.confidenceHist, rawScore)
-
-	if len(track.confidenceHist) > historyCap {
-		track.confidenceHist = track.confidenceHist[len(track.confidenceHist)-historyCap:]
-	}
-
-	trackStore.ObserveGaugeScore(normalized)
-
-	return normalized
+	return track.RecordCalibrated(rawScore, &trackStore.GaugeScan)
 }
 
 func (track *SymbolTrack) recordRelativeStrength(value float64) {
@@ -127,20 +111,12 @@ func crossSectionMedianChange(changes map[string]float64) float64 {
 
 func basisScore(changePct, crossMedian float64) float64 {
 	if !validChange(changePct) || !validChange(crossMedian) {
-		return absFloat(changePct - crossMedian)
+		return math.Abs(changePct - crossMedian)
 	}
 
-	return absFloat(changePct - crossMedian)
+	return math.Abs(changePct - crossMedian)
 }
 
 func validChange(value float64) bool {
 	return value != 0
-}
-
-func absFloat(value float64) float64 {
-	if value < 0 {
-		return -value
-	}
-
-	return value
 }

@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -18,11 +19,10 @@ PredictionCalibrator tracks running actual/predicted return ratios from settled 
 Scale feeds back into signal parameters, not post-hoc confidence output.
 */
 type PredictionCalibrator struct {
-	feedbackCount int
-	scale         float64
-	halfLife      time.Duration
-	tickInterval  time.Duration
-	params        CalibrationParams
+	scale        adaptive.AlphaEMA
+	halfLife     time.Duration
+	tickInterval time.Duration
+	params       CalibrationParams
 }
 
 /*
@@ -30,7 +30,6 @@ NewPredictionCalibrator returns a neutral calibrator with injected calibration p
 */
 func NewPredictionCalibrator(params CalibrationParams) PredictionCalibrator {
 	return PredictionCalibrator{
-		scale:        1,
 		halfLife:     defaultCalibrationHalfLife,
 		tickInterval: defaultCalibrationTick,
 		params:       params,
@@ -58,34 +57,28 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 		sample = maxScale
 	}
 
-	if feedback.Runway > 0 && calibrator.feedbackCount >= calibrator.params.minCalibrationSamples() {
+	if feedback.Runway > 0 && calibrator.scale.Updates() >= calibrator.params.minCalibrationSamples() {
 		calibrator.halfLife = calibrator.params.adaptiveHalfLife(feedback.Runway)
 	}
 
-	calibrator.feedbackCount++
-
-	if calibrator.feedbackCount == 1 {
-		calibrator.scale = sample
-		return
-	}
-
-	alpha := calibrator.ewmaAlpha()
-	calibrator.scale += alpha * (sample - calibrator.scale)
+	_ = calibrator.scale.Update(sample, calibrator.ewmaAlpha())
 }
 
 /*
 Scale returns the current parameter calibration multiplier.
 */
 func (calibrator *PredictionCalibrator) Scale() float64 {
-	if calibrator.feedbackCount == 0 {
+	if calibrator.scale.Updates() == 0 {
 		return 1
 	}
 
-	if calibrator.scale <= 0 {
+	value := calibrator.scale.Value()
+
+	if value <= 0 {
 		return 0
 	}
 
-	return calibrator.scale
+	return value
 }
 
 /*

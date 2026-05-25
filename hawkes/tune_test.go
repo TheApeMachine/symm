@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 )
 
 func TestMinFitEventsScalesWithArrivalCount(t *testing.T) {
@@ -44,7 +45,7 @@ func TestTradeWindowDurationScalesWithGapAndCount(t *testing.T) {
 }
 
 func TestLogSpaceCoversBetaRange(t *testing.T) {
-	values := logSpace(1, 10, 5)
+	values := numeric.LogSpace(1, 10, 5)
 
 	if len(values) != 5 {
 		t.Fatalf("expected five beta candidates, got %d", len(values))

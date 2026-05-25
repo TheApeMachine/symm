@@ -144,6 +144,32 @@ func (store *CandidateStore) Len() int {
 }
 
 /*
+Snapshot copies every candidate recorded this tick.
+*/
+func (store CandidateStore) Snapshot() []SignalCandidate {
+	snapshot := make([]SignalCandidate, 0, store.Len())
+
+	for _, sources := range store.bySymbol {
+		for _, candidate := range sources {
+			snapshot = append(snapshot, candidate)
+		}
+	}
+
+	return snapshot
+}
+
+/*
+Load replaces the store from one candidate frame slice.
+*/
+func (store *CandidateStore) Load(candidates []SignalCandidate) {
+	store.Reset()
+
+	for _, candidate := range candidates {
+		store.Note(candidate)
+	}
+}
+
+/*
 DecisionEngine builds allow/deny snapshots from candidates and quotes.
 */
 type DecisionEngine struct{}

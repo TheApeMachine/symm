@@ -16,6 +16,7 @@ Causal scores flow/liquidity intervention heuristics with bounded effect composi
 DAG sketch: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as control.
 */
 type Causal struct {
+	engine.Passive
 	market  *engine.MarketRelay
 	watch   *engine.SymbolWatch
 	pairs   map[string]asset.Pair

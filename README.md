@@ -171,11 +171,11 @@ Warm-up: the first `MinWarmPulses` rescans collect measurements and predictions 
 
 ### Signal engines
 
-All four share the same contract (`engine.Signal`) and sharded per-symbol track stores (`engine.ShardedStore` + `SymbolLock`), fed by Kraken v2 book, trade, and ticker observers via qpool broadcast groups.
+Each signal is an `engine.System`: **`symbols`** defines the watch list (from UI / SymbolWatch); **`tick`**, **`trade`**, and **`book`** carry market data. One message per `Tick`, score on idle, publish `engine.Measurement` on `measurements`. Per-symbol state is composed `numeric.Derived` chains — no TrackStore.
 
 | Engine       | Perspective    | Detects                                                        |
 |--------------|----------------|----------------------------------------------------------------|
-| **pumpdump** | microstructure | Overlapping 5-minute volume windows vs cross-section median    |
+| **pumpdump** | microstructure | Volume spike vs EMA baseline, cross-section peak, book pressure |
 | **hawkes**   | microstructure | Bivariate self-exciting trade clustering                       |
 | **depthflow**| microstructure | Multi-level book imbalance at depth                            |
 | **fluid**    | flow           | Burgers shock with book-depth viscosity                        |

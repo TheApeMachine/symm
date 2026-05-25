@@ -46,14 +46,14 @@ func fitBivariateWithPrior(
 		buyEvents, sellEvents, horizon, context, prior,
 	)
 
-	grid := scanBivariateFullGrid(
+	grid := scanBivariateGrid(
 		buyEvents, sellEvents, horizon, context,
-		muBuyStart, muSellStart,
+		muBuyStart, muSellStart, false,
 	)
 
-	crossGrid := scanBivariateCrossGrid(
+	crossGrid := scanBivariateGrid(
 		buyEvents, sellEvents, horizon, context,
-		muBuyStart, muSellStart,
+		muBuyStart, muSellStart, true,
 	)
 
 	return bestBivariateFit(
@@ -61,11 +61,12 @@ func fitBivariateWithPrior(
 	)
 }
 
-func scanBivariateCrossGrid(
+func scanBivariateGrid(
 	buyEvents, sellEvents []time.Time,
 	horizon time.Time,
 	context FitContext,
 	muBuyStart, muSellStart float64,
+	crossOnly bool,
 ) BivariateFit {
 	best := BivariateFit{}
 	bestLL := math.Inf(-1)
@@ -81,7 +82,13 @@ func scanBivariateCrossGrid(
 					for _, branchSS := range context.BranchSelfCandidates {
 						for _, branchBS := range context.BranchCrossCandidates {
 							for _, branchSB := range context.BranchCrossCandidates {
-								if branchBS <= 0 && branchSB <= 0 {
+								if crossOnly {
+									if branchBS <= 0 && branchSB <= 0 {
+										continue
+									}
+								}
+
+								if branchBB <= 0 && branchSS <= 0 && branchBS <= 0 && branchSB <= 0 {
 									continue
 								}
 
@@ -214,136 +221,6 @@ func betterBivariateCandidate(
 	crossCandidate := candidate.AlphaBS + candidate.AlphaSB
 
 	return crossCandidate > crossCurrent
-}
-
-func scanBivariateLocalGrid(
-	buyEvents, sellEvents []time.Time,
-	horizon time.Time,
-	prior BivariateFit,
-	context FitContext,
-	muBuyStart, muSellStart float64,
-) BivariateFit {
-	best := BivariateFit{}
-	bestLL := math.Inf(-1)
-
-	for _, betaScale := range context.LocalScales {
-		beta := prior.Beta * betaScale
-
-		if beta <= 0 {
-			continue
-		}
-
-		for _, muBuyScale := range context.LocalScales {
-			muBuy := prior.MuBuy * muBuyScale
-
-			if muBuy <= 0 {
-				continue
-			}
-
-			for _, muSellScale := range context.LocalScales {
-				muSell := prior.MuSell * muSellScale
-
-				if muSell <= 0 {
-					continue
-				}
-
-				for _, alphaScale := range context.LocalScales {
-					alphaBB := prior.AlphaBB * alphaScale
-					alphaBS := prior.AlphaBS * alphaScale
-					alphaSB := prior.AlphaSB * alphaScale
-					alphaSS := prior.AlphaSS * alphaScale
-					candidate := evaluateBivariateCandidate(
-						buyEvents, sellEvents, horizon, context,
-						muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta,
-					)
-
-					if candidate.fit.MuBuy <= 0 || candidate.logLikelihood <= bestLL {
-						continue
-					}
-
-					bestLL = candidate.logLikelihood
-					best = candidate.fit
-				}
-			}
-		}
-	}
-
-	if best.MuBuy > 0 {
-		return best
-	}
-
-	return scanBivariateFullGrid(
-		buyEvents, sellEvents, horizon, context,
-		muBuyStart, muSellStart,
-	)
-}
-
-func scanBivariateFullGrid(
-	buyEvents, sellEvents []time.Time,
-	horizon time.Time,
-	context FitContext,
-	muBuyStart, muSellStart float64,
-) BivariateFit {
-	best := BivariateFit{}
-	bestLL := math.Inf(-1)
-
-	for _, beta := range context.BetaCandidates {
-		for _, muBuyFactor := range context.MuBuyFactors {
-			muBuy := muBuyStart * muBuyFactor
-
-			for _, muSellFactor := range context.MuSellFactors {
-				muSell := muSellStart * muSellFactor
-
-				for _, branchBB := range context.BranchSelfCandidates {
-					for _, branchSS := range context.BranchSelfCandidates {
-						for _, branchBS := range context.BranchCrossCandidates {
-							for _, branchSB := range context.BranchCrossCandidates {
-								crossCap := crossBranchShare(
-									math.Max(branchBB, branchSS),
-									context.BranchCeiling,
-								)
-
-								if branchBS > crossCap || branchSB > crossCap {
-									continue
-								}
-
-								if branchBB <= 0 && branchSS <= 0 && branchBS <= 0 && branchSB <= 0 {
-									continue
-								}
-
-								spectral := spectralRadius(
-									branchBB*beta, branchBS*beta,
-									branchSB*beta, branchSS*beta,
-									beta,
-								)
-
-								if spectral <= context.BranchFloor || spectral >= criticalBranch {
-									continue
-								}
-
-								candidate := evaluateBivariateCandidate(
-									buyEvents, sellEvents, horizon, context,
-									muBuy, muSell,
-									branchBB*beta, branchBS*beta,
-									branchSB*beta, branchSS*beta,
-									beta,
-								)
-
-								if candidate.fit.MuBuy <= 0 || candidate.logLikelihood <= bestLL {
-									continue
-								}
-
-								bestLL = candidate.logLikelihood
-								best = candidate.fit
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return best
 }
 
 func evaluateBivariateCandidate(

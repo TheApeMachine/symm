@@ -28,3 +28,24 @@ OHLCWarmer seeds signal track stores from historical candles.
 type OHLCWarmer interface {
 	WarmFromOHLC(candles map[string][]OHLCCandle)
 }
+
+/*
+MinCompletedLength returns the shortest completed-candle count across symbols.
+*/
+func MinCompletedLength(candles map[string][]OHLCCandle) int {
+	length := 0
+
+	for _, bars := range candles {
+		size := len(CompletedCandles(bars))
+
+		if size == 0 {
+			continue
+		}
+
+		if length == 0 || size < length {
+			length = size
+		}
+	}
+
+	return length
+}
