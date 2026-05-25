@@ -90,13 +90,56 @@ func (state *PairState) RecordPrediction(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if measurement.Source == "" || forecast.ExpectedReturn <= 0 || forecast.Runway <= 0 {
+	if measurement.Source == "" || forecast.Runway <= 0 {
+		return false
+	}
+
+	if !forecast.CalibrationOnly && forecast.ExpectedReturn <= 0 {
 		return false
 	}
 
 	state.predictions = state.dropOpenForecast(measurement.Source, now)
 
 	prediction, ok := state.buildPrediction(now, measurement, forecast, baselineQuote)
+
+	if !ok {
+		return false
+	}
+
+	state.predictions = append(state.predictions, prediction)
+
+	return true
+}
+
+/*
+RecordCalibrationProbe stores one non-executable return sample for cold models.
+Existing open probes are kept until due so calibration can actually mature.
+*/
+func (state *PairState) RecordCalibrationProbe(
+	now time.Time,
+	measurement engine.Measurement,
+	runway time.Duration,
+	baselineQuote float64,
+) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if measurement.Source == "" || runway <= 0 || baselineQuote <= 0 {
+		return false
+	}
+
+	for _, prediction := range state.predictions {
+		if prediction.source == measurement.Source && now.Before(prediction.dueAt) {
+			return false
+		}
+	}
+
+	prediction, ok := state.buildPrediction(
+		now,
+		measurement,
+		SignalForecast{Runway: runway, CalibrationOnly: true},
+		baselineQuote,
+	)
 
 	if !ok {
 		return false

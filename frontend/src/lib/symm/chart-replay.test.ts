@@ -25,6 +25,7 @@ describe("buildChartReplayEvents", () => {
 				high: 2,
 				low: 1,
 				close: 1.5,
+				volume: 3,
 			},
 			{
 				event: "candle_bar",
@@ -35,6 +36,7 @@ describe("buildChartReplayEvents", () => {
 				high: 3,
 				low: 2,
 				close: 2.5,
+				volume: 4,
 			},
 		];
 

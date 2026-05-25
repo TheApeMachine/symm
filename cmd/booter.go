@@ -1,0 +1,74 @@
+package cmd
+
+import (
+	"context"
+	"sync"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
+)
+
+type System interface {
+	Start() error
+	State() engine.State
+	Tick() error
+	Close() error
+}
+
+type Booter struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q
+	systems     []System
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	once        sync.Once
+}
+
+func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	booter := &Booter{
+		ctx:     ctx,
+		cancel:  cancel,
+		pool:    pool,
+		systems: make([]System, 0),
+	}
+
+	return booter, nil
+}
+
+func (booter *Booter) AddSystems(systems ...System) {
+	booter.systems = append(booter.systems, systems...)
+
+	for _, system := range systems {
+		system.Start()
+	}
+}
+
+func (booter *Booter) Boot() error {
+	booter.once.Do(func() {
+		for {
+			select {
+			case <-booter.ctx.Done():
+				booter.cancel()
+				booter.err = errnie.Error(booter.ctx.Err())
+				return
+			default:
+				for _, system := range booter.systems {
+					if system.State() != engine.READY {
+						continue
+					}
+
+					if err := system.Tick(); err != nil {
+						booter.err = errnie.Error(err)
+					}
+				}
+			}
+		}
+	})
+
+	return booter.err
+}

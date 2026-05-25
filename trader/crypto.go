@@ -401,6 +401,7 @@ func (crypto *Crypto) updatePairStates(
 
 		if reason != "" {
 			crypto.recordForecastReject(measurement.Source, reason)
+			crypto.recordCalibrationProbe(state, measurement, now, symbol, reason)
 			continue
 		}
 

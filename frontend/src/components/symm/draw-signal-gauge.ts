@@ -32,7 +32,10 @@ type GaugeArcSet = {
 	label: NativeTextAnnotation;
 };
 
-function applyGaugeNeedle(gaugeArcs: GaugeArcSet, needlePercent: number): void {
+const applyGaugeNeedle = (
+	gaugeArcs: GaugeArcSet,
+	needlePercent: number,
+): void => {
 	const pointerValue = Math.max(0, Math.min(100, needlePercent));
 	let hasPointerPassedValue = false;
 
@@ -54,12 +57,12 @@ function applyGaugeNeedle(gaugeArcs: GaugeArcSet, needlePercent: number): void {
 			hasPointerPassedValue = true;
 		}
 	}
-}
+};
 
-function buildGaugeArcs(
+const buildGaugeArcs = (
 	sciChartSurface: SciChartPolarSurface,
 	pointerValue: number,
-): GaugeArcSet {
+): GaugeArcSet => {
 	const valueArcs: PolarArcAnnotation[] = [];
 	let hasPointerPassedValue = false;
 
@@ -91,7 +94,9 @@ function buildGaugeArcs(
 			fill: GRADIENT_COLORS[index],
 			strokeThickness: 0,
 		});
+
 		valueArcs.push(valueArc);
+
 		sciChartSurface.annotations.add(valueArc);
 
 		if (bandTop >= pointerValue) {
@@ -117,12 +122,13 @@ function buildGaugeArcs(
 		},
 		strokeLineJoin: EStrokeLineJoin.Miter,
 	});
+
 	const label = new NativeTextAnnotation({
 		text: formatSignalConfidence(0),
 		x1: 0,
 		y1: 0,
 		textColor: "#FFFFFF",
-		fontSize: 22,
+		fontSize: 16,
 		padding: new Thickness(0, 0, 16, 0),
 		xCoordinateMode: ECoordinateMode.DataValue,
 		yCoordinateMode: ECoordinateMode.DataValue,
@@ -133,7 +139,7 @@ function buildGaugeArcs(
 	sciChartSurface.annotations.add(pointer, label);
 
 	return { valueArcs, pointer, label };
-}
+};
 
 export type SignalGaugeControls = {
 	update: (needlePercent: number, confidence: number) => void;
@@ -151,35 +157,37 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 		},
 	);
 
-	const radialAxis = new PolarNumericAxis(wasmContext, {
-		polarAxisMode: EPolarAxisMode.Radial,
-		axisAlignment: EAxisAlignment.Right,
-		startAngle: (Math.PI * 3) / 2 + Math.PI / 4,
-		drawLabels: false,
-		drawMinorGridLines: false,
-		drawMajorGridLines: false,
-		drawMajorTickLines: false,
-		drawMinorTickLines: false,
-	});
-	sciChartSurface.xAxes.add(radialAxis);
+	sciChartSurface.xAxes.add(
+		new PolarNumericAxis(wasmContext, {
+			polarAxisMode: EPolarAxisMode.Radial,
+			axisAlignment: EAxisAlignment.Right,
+			startAngle: (Math.PI * 3) / 2 + Math.PI / 4,
+			drawLabels: false,
+			drawMinorGridLines: false,
+			drawMajorGridLines: false,
+			drawMajorTickLines: false,
+			drawMinorTickLines: false,
+		}),
+	);
 
-	const angularAxis = new PolarNumericAxis(wasmContext, {
-		polarAxisMode: EPolarAxisMode.Angular,
-		axisAlignment: EAxisAlignment.Top,
-		polarLabelMode: EPolarLabelMode.Perpendicular,
-		visibleRange: new NumberRange(0, 100),
-		zoomExtentsToInitialRange: true,
-		flippedCoordinates: true,
-		useNativeText: true,
-		totalAngleDegrees: 220,
-		startAngleDegrees: -20,
-		drawMinorGridLines: false,
-		drawMajorGridLines: false,
-		drawMinorTickLines: false,
-		drawMajorTickLines: false,
-		labelPrecision: 0,
-	});
-	sciChartSurface.yAxes.add(angularAxis);
+	sciChartSurface.yAxes.add(
+		new PolarNumericAxis(wasmContext, {
+			polarAxisMode: EPolarAxisMode.Angular,
+			axisAlignment: EAxisAlignment.Top,
+			polarLabelMode: EPolarLabelMode.Perpendicular,
+			visibleRange: new NumberRange(0, 100),
+			zoomExtentsToInitialRange: true,
+			flippedCoordinates: true,
+			useNativeText: true,
+			totalAngleDegrees: 220,
+			startAngleDegrees: -20,
+			drawMinorGridLines: false,
+			drawMajorGridLines: false,
+			drawMinorTickLines: false,
+			drawMajorTickLines: false,
+			labelPrecision: 0,
+		}),
+	);
 
 	sciChartSurface.annotations.add(
 		new PolarArcAnnotation({

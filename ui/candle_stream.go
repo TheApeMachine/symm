@@ -19,10 +19,11 @@ type CandleBar struct {
 	High   float64
 	Low    float64
 	Close  float64
+	Volume float64
 }
 
 /*
-CandleStream builds per-symbol OHLC bars from ticker prices before UI broadcast.
+CandleStream builds per-symbol OHLCV bars from market prices before UI broadcast.
 */
 type CandleStream struct {
 	mu              sync.Mutex
@@ -56,6 +57,18 @@ func (candleStream *CandleStream) Observe(
 	price float64,
 	at time.Time,
 ) (CandleBar, error) {
+	return candleStream.ObserveTrade(symbol, price, 0, at)
+}
+
+/*
+ObserveTrade records one timestamped trade and returns the complete current bar.
+*/
+func (candleStream *CandleStream) ObserveTrade(
+	symbol string,
+	price float64,
+	volume float64,
+	at time.Time,
+) (CandleBar, error) {
 	if candleStream == nil {
 		return CandleBar{}, fmt.Errorf("candle stream is nil")
 	}
@@ -66,6 +79,10 @@ func (candleStream *CandleStream) Observe(
 
 	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return CandleBar{}, fmt.Errorf("candle stream invalid price %f for %s", price, symbol)
+	}
+
+	if volume < 0 || math.IsNaN(volume) || math.IsInf(volume, 0) {
+		return CandleBar{}, fmt.Errorf("candle stream invalid volume %f for %s", volume, symbol)
 	}
 
 	if at.IsZero() {
@@ -92,6 +109,7 @@ func (candleStream *CandleStream) Observe(
 		current.High = math.Max(current.High, price)
 		current.Low = math.Min(current.Low, price)
 		current.Close = price
+		current.Volume += volume
 		candleStream.bySymbol[symbol] = current
 
 		return current, nil
@@ -104,6 +122,7 @@ func (candleStream *CandleStream) Observe(
 		High:   price,
 		Low:    price,
 		Close:  price,
+		Volume: volume,
 	}
 	candleStream.bySymbol[symbol] = current
 
@@ -162,5 +181,6 @@ func (candleBar CandleBar) Payload() map[string]any {
 		"high":   candleBar.High,
 		"low":    candleBar.Low,
 		"close":  candleBar.Close,
+		"volume": candleBar.Volume,
 	}
 }

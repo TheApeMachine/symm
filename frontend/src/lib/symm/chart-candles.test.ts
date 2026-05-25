@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PriceTickEvent } from "#/lib/symm/events";
-import {
-	aggregateTicksToCandles,
-	bucketSecond,
-	widenFlatOHLC,
-} from "#/lib/symm/chart-candles";
+import { aggregateTicksToCandles, bucketSecond } from "#/lib/symm/chart-candles";
 
 function tick(
 	symbol: string,
@@ -60,6 +56,7 @@ describe("aggregateTicksToCandles", () => {
 		expect(bars[0].close).toBe(0.0434);
 		expect(bars[0].high).toBe(0.0434);
 		expect(bars[0].low).toBe(0.043);
+		expect(bars[0].volume).toBe(0);
 		expect(bars[1].open).toBe(0.0431);
 	});
 
@@ -77,14 +74,5 @@ describe("aggregateTicksToCandles", () => {
 describe("bucketSecond", () => {
 	it("aligns timestamps to candle buckets", () => {
 		expect(bucketSecond(171, 5)).toBe(170);
-	});
-});
-
-describe("widenFlatOHLC", () => {
-	it("adds a visible body for flat prices", () => {
-		const bar = widenFlatOHLC(0.043, 0.043, 0.043, 0.043);
-
-		expect(bar.high).toBeGreaterThan(0.043);
-		expect(bar.low).toBeLessThan(0.043);
 	});
 });

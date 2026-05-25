@@ -13,13 +13,23 @@ func TestCandleStreamObserve(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		start := time.Unix(1_700_000_001, 0)
-		first, err := candleStream.Observe("BTC/EUR", 100, start)
+		first, err := candleStream.ObserveTrade("BTC/EUR", 100, 0.2, start)
 		So(err, ShouldBeNil)
 
-		second, err := candleStream.Observe("BTC/EUR", 101, start.Add(time.Second))
+		second, err := candleStream.ObserveTrade(
+			"BTC/EUR",
+			101,
+			0.3,
+			start.Add(time.Second),
+		)
 		So(err, ShouldBeNil)
 
-		third, err := candleStream.Observe("BTC/EUR", 99, start.Add(5*time.Second))
+		third, err := candleStream.ObserveTrade(
+			"BTC/EUR",
+			99,
+			0.4,
+			start.Add(5*time.Second),
+		)
 		So(err, ShouldBeNil)
 
 		Convey("It should merge prices inside one candle bucket", func() {
@@ -28,6 +38,7 @@ func TestCandleStreamObserve(t *testing.T) {
 			So(second.High, ShouldEqual, 101)
 			So(second.Low, ShouldEqual, 100)
 			So(second.Close, ShouldEqual, 101)
+			So(second.Volume, ShouldEqual, 0.5)
 		})
 
 		Convey("It should start a new bar when the bucket advances", func() {
@@ -36,6 +47,7 @@ func TestCandleStreamObserve(t *testing.T) {
 			So(third.High, ShouldEqual, 99)
 			So(third.Low, ShouldEqual, 99)
 			So(third.Close, ShouldEqual, 99)
+			So(third.Volume, ShouldEqual, 0.4)
 		})
 	})
 }
@@ -48,6 +60,19 @@ func TestCandleStreamObserveRejectsInvalidInput(t *testing.T) {
 		_, err = candleStream.Observe("BTC/EUR", 0, time.Now())
 
 		Convey("It should reject invalid prices", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestCandleStreamObserveTradeRejectsInvalidVolume(t *testing.T) {
+	Convey("Given a source-side candle stream", t, func() {
+		candleStream, err := NewCandleStream(5 * time.Second)
+		So(err, ShouldBeNil)
+
+		_, err = candleStream.ObserveTrade("BTC/EUR", 100, -1, time.Now())
+
+		Convey("It should reject invalid trade volume", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})

@@ -39,10 +39,10 @@ func NewReturnModel() *ReturnModel {
 }
 
 /*
-Apply records one settled forecast outcome.
+Apply records one settled forecast or calibration probe outcome.
 */
 func (model *ReturnModel) Apply(feedback engine.PredictionFeedback) {
-	if feedback.Unanchored || feedback.PredictedReturn <= 0 {
+	if feedback.Unanchored || feedback.Source == "" {
 		return
 	}
 

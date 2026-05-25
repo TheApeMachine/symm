@@ -76,7 +76,7 @@ SYMM is a closed-loop system: eight entry signals grouped into four **perspectiv
 
 1. **Drain tickables** — flush bounded batches of pending book/trade/ticker updates into per-symbol track stores (`MaxPendingPerSignal`, `MaxPendingGlobal`); `engine.WithTickDrain` ensures `Measure` never runs while configured drain capacity is unused.
 2. **Measure signals** — call all eight entry signals sequentially; each yields zero or more `engine.Measurement` values.
-3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed.
+3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed. If the return model is still cold, record a non-executable calibration probe instead; the probe only seeds empirical forward returns from actual market movement and never becomes an entry candidate.
 4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback` (also updates `SourceTrustStore`).
 5. **Execute** — mark open positions (trailing stops + **exhaust** early exit), merge live score candidates, classify cross-section **regime**, build the weighted ensemble decision, and enter when gates pass.
 6. **Publish telemetry** — `engine_pulse`, decision trace, scoreboard, status, and source-side `candle_bar` frames to the UI hub.
@@ -112,7 +112,7 @@ Signals do **not** populate expected return or runway. Confidence is derived ins
 
 When a measurement arrives, `trader.BuildSignalForecast` derives profit expectations from settled forward returns (`ReturnModel` EWMA per source/regime) once `MinCalibrationSamples` exist:
 
-- **Expected return** = `confidence × EWMA(actual forward return)` from settled predictions. No forecast is emitted until enough samples exist.
+- **Expected return** = `confidence × EWMA(actual forward return)` from settled predictions and calibration probes. No executable forecast is emitted until enough samples exist.
 - **Edge gate** compares expected return to dynamic costs: round-trip fees + live spread + depth slippage for slot notional + stale-data penalty + `MinEdgeReturn`.
 - **Runway** (hold horizon before the prediction is due) comes from `config.System` by regime:
   - `ScalpHoldBeforeExit` — pump / momentum / dump
@@ -127,7 +127,7 @@ Each symbol keeps a `PairState` with:
 
 Lifecycle for one prediction:
 
-1. **Record** at measurement time with `dueAt = now + runway` and **baseline quote** from the live ticker at record time.
+1. **Record** at measurement time with `dueAt = now + runway` and **baseline quote** from the live ticker at record time. Cold return models record calibration-only probes with zero predicted return so signal calibrators and trust weights do not consume guessed forecasts.
 2. **Settle** when `now ≥ dueAt`: compute `actualReturn` from baseline → exit quote, signed by measurement direction; emit `PredictionFeedback` with `Error = predicted − actual`.
 3. **Replace** — a new measurement from the same source on the same symbol replaces the still-open forecast for that source only; matured predictions settle regardless.
 
@@ -201,7 +201,7 @@ Kraken WS v2
 ```
 
 `kraken/client.PublicClient` handles ping, reconnect, resubscribe, and feed pause on unrecoverable disconnect. `book` retains multi-level depth (default 5 levels) for VWAP slippage and fluid viscosity. `trader.MarketQuotes` merges ticker last/bid/ask with book depth for fills.
-Watched chart symbols are bucketed into OHLC `candle_bar` events before `ui.Publish`; the React chart only renders bars and annotations.
+Watched chart symbols are bucketed from executed trade ticks in the Kraken websocket handler and emitted as OHLCV `candle_bar` events on the shared `ui` group; the React chart renders those bars directly.
 
 ### Offline replay and eval
 
@@ -229,7 +229,7 @@ Set `SYMM_REPLAY_FILE` to a captured JSONL fixture: frames replay through the sa
 
 - Hub replay order matches live publish: `engine_pulse` → `decision_trace` → `scoreboard` → `status`
 - On websocket connect the hub sends `hello`, then the cached dashboard snapshot (`status`, `scoreboard`, `decision_trace`) so the header shows wallet equity immediately
-- Chart panels consume `candle_bar` frames from the shared `ui` qpool broadcast group instead of constructing live candles in React.
+- Chart panels consume OHLCV `candle_bar` frames from the shared `ui` qpool broadcast group. Backend candle production runs synchronously in the Kraken trade websocket handler so React never constructs live candles from ticker snapshots.
 - `PrimeDashboard()` runs before the hub starts accepting clients; every rescore tick refreshes the same frames live
 - Frontend opens one WebSocket to `config.System.UIAddr` and routes all event types through a single feed handler
 

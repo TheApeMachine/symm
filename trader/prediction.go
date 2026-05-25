@@ -36,8 +36,11 @@ func (state *PairState) buildPrediction(
 ) (Prediction, bool) {
 	symbol := asset.Symbol(state.pair)
 
-	if symbol == "" || measurement.Source == "" ||
-		forecast.ExpectedReturn <= 0 || forecast.Runway <= 0 {
+	if symbol == "" || measurement.Source == "" || forecast.Runway <= 0 {
+		return Prediction{}, false
+	}
+
+	if !forecast.CalibrationOnly && forecast.ExpectedReturn <= 0 {
 		return Prediction{}, false
 	}
 

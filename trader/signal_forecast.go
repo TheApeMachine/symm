@@ -21,8 +21,9 @@ SignalForecast is the trader-owned profit forecast for one signal reading.
 Entry time is implicit at record; exit time is now plus Runway.
 */
 type SignalForecast struct {
-	ExpectedReturn float64
-	Runway         time.Duration
+	ExpectedReturn  float64
+	Runway          time.Duration
+	CalibrationOnly bool
 }
 
 /*

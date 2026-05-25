@@ -34,6 +34,31 @@ func TestBuildPrediction(t *testing.T) {
 	})
 }
 
+func TestBuildPredictionCalibrationOnly(t *testing.T) {
+	pair := asset.Pair{Wsname: "PUMP/EUR"}
+	now := time.Unix(1_700_000_000, 0)
+
+	convey.Convey("Given a calibration-only forecast", t, func() {
+		state := NewPairState(pair)
+		measurement := engine.Measurement{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "momentum",
+			Reason:     "cluster_buy",
+			Confidence: 0.5,
+		}
+		forecast := SignalForecast{Runway: 10 * time.Second, CalibrationOnly: true}
+
+		convey.Convey("It should build a non-executable prediction probe", func() {
+			prediction, ok := state.buildPrediction(now, measurement, forecast, 100)
+
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(prediction.expectedReturn, convey.ShouldEqual, 0)
+			convey.So(prediction.dueAt, convey.ShouldEqual, now.Add(10*time.Second))
+		})
+	})
+}
+
 func TestSignedActualReturn(t *testing.T) {
 	prediction := Prediction{
 		baselineQuote: 100,

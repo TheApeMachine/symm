@@ -7,6 +7,7 @@ export type CandleBar = {
 	high: number;
 	low: number;
 	close: number;
+	volume: number;
 };
 
 export function bucketSecond(sec: number, candleSeconds: number): number {
@@ -40,36 +41,9 @@ export function aggregateTicksToCandles(
 			high: tick.last,
 			low: tick.last,
 			close: tick.last,
+			volume: 0,
 		});
 	}
 
 	return bars;
-}
-
-export function widenFlatOHLC(
-	open: number,
-	high: number,
-	low: number,
-	close: number,
-): { open: number; high: number; low: number; close: number } {
-	const mid = close || open || high || low;
-
-	if (mid <= 0) {
-		return { open, high, low, close };
-	}
-
-	const minSpread = Math.max(Math.abs(mid) * 1e-5, 1e-8);
-
-	if (high - low >= minSpread) {
-		return { open, high, low, close };
-	}
-
-	const half = minSpread / 2;
-
-	return {
-		open,
-		high: Math.max(high, mid + half),
-		low: Math.min(low, mid - half),
-		close,
-	};
 }

@@ -184,6 +184,7 @@ export type CandleBarEvent = SymmEvent & {
 	high: number;
 	low: number;
 	close: number;
+	volume: number;
 };
 
 export type EnginePulseSignal = {
@@ -274,6 +275,7 @@ export type ChartSeedBar = {
 	h: number;
 	l: number;
 	c: number;
+	v?: number;
 };
 
 export type ChartSeedEvent = SymmEvent & {

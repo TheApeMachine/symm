@@ -29,6 +29,27 @@ func TestReturnModelApply(t *testing.T) {
 	})
 }
 
+func TestReturnModelApplyCalibrationProbe(t *testing.T) {
+	model := NewReturnModel()
+
+	for range 12 {
+		model.Apply(engine.PredictionFeedback{
+			Source:       "hawkes",
+			Regime:       "momentum",
+			ActualReturn: 0.02,
+		})
+	}
+
+	gross, ok := model.Predict("hawkes", "momentum", 0.5)
+
+	Convey("Given calibration-only forward returns", t, func() {
+		Convey("It should learn without a prior predicted return", func() {
+			So(ok, ShouldBeTrue)
+			So(gross, ShouldAlmostEqual, 0.01, 0.0001)
+		})
+	})
+}
+
 func BenchmarkReturnModelPredict(b *testing.B) {
 	model := seedReturnModel("hawkes", "momentum", 0.02)
 
