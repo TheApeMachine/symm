@@ -24,9 +24,8 @@ import {
 } from "scichart-financial-tools";
 
 import type {
-	ChartReplayEvent,
+	CandleBarEvent,
 	ChartSeedEvent,
-	PriceTickEvent,
 	StatusEvent,
 	StatusPosition,
 	StopRatchetEvent,
@@ -35,7 +34,6 @@ import type {
 } from "#/lib/symm/events";
 import { eventTimeSec } from "#/lib/symm/events";
 import {
-	aggregateTicksToCandles,
 	type CandleBar,
 	widenFlatOHLC,
 } from "#/lib/symm/chart-candles";
@@ -49,28 +47,11 @@ const FIFO_CAPACITY = 720;
 const TAKE_PROFIT_COLOR = "#16A34A";
 const STOP_LOSS_COLOR = "#EF4444";
 
-type Bucket = {
-	sec: number;
-	open: number;
-	high: number;
-	low: number;
-	close: number;
-};
-
-function labelPrecision(price: number): number {
+const labelPrecision = (price: number): number => {
 	if (price >= 100) return 2;
 	if (price >= 1) return 4;
 	return 6;
-}
-
-function eventSecond(raw: string | undefined): number {
-	const ms = Date.parse(raw ?? "");
-	return Number.isFinite(ms) ? ms / 1000 : Date.now() / 1000;
-}
-
-function tickSecond(ev: PriceTickEvent): number {
-	return eventSecond(ev.at || ev.ts);
-}
+};
 
 export type TradeChartControls = {
 	handleEvent: (ev: SymmEvent) => void;
@@ -100,7 +81,7 @@ class SymmChartController {
 	private candles: FastCandlestickRenderableSeries;
 	private xAxis: DateTimeNumericAxis;
 	private yAxis: NumericAxis;
-	private bucket: Bucket | null = null;
+	private bucket: CandleBar | null = null;
 	private latestPrice = 0;
 	private latestSec = 0;
 	private tradeEntrySec = 0;
@@ -212,14 +193,9 @@ class SymmChartController {
 		}
 
 		switch (ev.event) {
-			case "price_tick":
+			case "candle_bar":
 				if (ev.symbol === this.symbol) {
-					this.onTick(ev as PriceTickEvent);
-				}
-				return;
-			case "chart_replay":
-				if (ev.symbol === this.symbol) {
-					this.onReplay(ev as ChartReplayEvent);
+					this.onCandle(ev as CandleBarEvent);
 				}
 				return;
 			case "stop_ratchet":
@@ -255,48 +231,23 @@ class SymmChartController {
 		this.clearRiskZone();
 	}
 
-	private onTick(ev: PriceTickEvent) {
-		if (ev.last <= 0) {
-			return;
-		}
-
-		this.appendPrice(ev.last, tickSecond(ev));
-		this.refreshRiskZone();
-	}
-
-	private onReplay(ev: ChartReplayEvent) {
-		this.loadBars(aggregateTicksToCandles(ev.ticks, CANDLE_SECONDS));
-	}
-
 	private onSeed(ev: ChartSeedEvent) {
-		const bars = ev.bars?.filter((bar) => bar.t > 0 && bar.c > 0) ?? [];
-		if (bars.length === 0) return;
-		this.ohlc.clear();
-		this.bucket = null;
-		for (const bar of bars) {
-			const ohlc = widenFlatOHLC(bar.o, bar.h, bar.l, bar.c);
-			this.ohlc.append(bar.t, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
-		}
-		const last = bars[bars.length - 1];
-		this.latestPrice = last.c;
-		this.latestSec = last.t;
-		this.bucket = {
-			sec: Math.floor(last.t / CANDLE_SECONDS) * CANDLE_SECONDS,
-			open: last.o,
-			high: last.h,
-			low: last.l,
-			close: last.c,
-		};
-		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(last.c, last.h, last.l);
+		const bars =
+			ev.bars
+				?.filter((bar) => bar.t > 0 && bar.c > 0)
+				.map((bar) => ({
+					sec: bar.t,
+					open: bar.o,
+					high: bar.h,
+					low: bar.l,
+					close: bar.c,
+				})) ?? [];
+		this.loadBars(bars);
 	}
 
 	private onEnter(ev: TradeEnterEvent) {
 		const last = ev.last && ev.last > 0 ? ev.last : ev.fill;
 		const entrySec = eventTimeSec(ev);
-		if (last > 0 && this.ohlc.count() === 0) {
-			this.appendPrice(last, entrySec);
-		}
 		this.setRiskZone(entrySec, ev.fill, ev.stop);
 		this.scheduleFrameVisibleRange(last);
 	}
@@ -317,54 +268,17 @@ class SymmChartController {
 		else this.clearRiskZone();
 	}
 
-	private appendPrice(last: number, sec: number) {
-		const nextSec = Number.isFinite(sec) ? sec : Date.now() / 1000;
-		const bucketSec = Math.floor(nextSec / CANDLE_SECONDS) * CANDLE_SECONDS;
-		this.latestPrice = last;
-		this.latestSec = nextSec;
-
-		if (this.bucket && this.bucket.sec === bucketSec && this.ohlc.count() > 0) {
-			this.bucket.high = Math.max(this.bucket.high, last);
-			this.bucket.low = Math.min(this.bucket.low, last);
-			this.bucket.close = last;
-			this.writeBucket(this.ohlc.count() - 1);
-		} else if (this.ohlc.count() > 0) {
-			const nativeX = this.ohlc.getNativeXValues();
-			const lastIdx = this.ohlc.count() - 1;
-			const lastX = nativeX.get(lastIdx);
-
-			if (bucketSec === lastX) {
-				this.bucket = {
-					sec: bucketSec,
-					open: this.bucket?.open ?? last,
-					high: Math.max(this.bucket?.high ?? last, last),
-					low: Math.min(this.bucket?.low ?? last, last),
-					close: last,
-				};
-				this.writeBucket(lastIdx);
-			} else if (bucketSec > lastX) {
-				this.bucket = {
-					sec: bucketSec,
-					open: last,
-					high: last,
-					low: last,
-					close: last,
-				};
-				this.appendBucket(bucketSec);
-			}
-		} else {
-			this.bucket = {
-				sec: bucketSec,
-				open: last,
-				high: last,
-				low: last,
-				close: last,
-			};
-			this.appendBucket(bucketSec);
-		}
-
+	private onCandle(ev: CandleBarEvent) {
+		const bar = {
+			sec: ev.sec,
+			open: ev.open,
+			high: ev.high,
+			low: ev.low,
+			close: ev.close,
+		};
+		this.upsertBar(bar);
 		this.refreshRiskZone();
-		this.scheduleFrameVisibleRange(last);
+		this.scheduleFrameVisibleRange(bar.close, bar.high, bar.low);
 	}
 
 	private loadBars(bars: CandleBar[]) {
@@ -372,8 +286,7 @@ class SymmChartController {
 		this.bucket = null;
 
 		for (const bar of bars) {
-			const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
-			this.ohlc.append(bar.sec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+			this.appendBar(bar);
 		}
 
 		const lastBar = bars[bars.length - 1];
@@ -383,38 +296,58 @@ class SymmChartController {
 		}
 
 		this.latestPrice = lastBar.close;
-		this.latestSec = lastBar.sec + CANDLE_SECONDS - 1;
+		this.latestSec = lastBar.sec + CANDLE_SECONDS;
 		this.bucket = { ...lastBar };
 		this.refreshRiskZone();
 		this.scheduleFrameVisibleRange(lastBar.close, lastBar.high, lastBar.low);
 	}
 
-	private writeBucket(index: number) {
-		if (!this.bucket) {
+	private upsertBar(bar: CandleBar) {
+		if (bar.sec <= 0 || bar.close <= 0) {
 			return;
 		}
 
-		const ohlc = widenFlatOHLC(
-			this.bucket.open,
-			this.bucket.high,
-			this.bucket.low,
-			this.bucket.close,
-		);
-		this.ohlc.update(index, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+		const index = this.findBarIndex(bar.sec);
+
+		if (index >= 0) {
+			this.writeBar(index, bar);
+		}
+
+		if (index < 0) {
+			this.appendBar(bar);
+		}
+
+		this.latestPrice = bar.close;
+		this.latestSec = bar.sec + CANDLE_SECONDS;
+		this.bucket = { ...bar };
 	}
 
-	private appendBucket(bucketSec: number) {
-		if (!this.bucket) {
-			return;
+	private findBarIndex(sec: number) {
+		const nativeX = this.ohlc.getNativeXValues();
+
+		for (let index = this.ohlc.count() - 1; index >= 0; index--) {
+			const currentSec = nativeX.get(index);
+
+			if (currentSec === sec) {
+				return index;
+			}
+
+			if (currentSec < sec) {
+				return -1;
+			}
 		}
 
-		const ohlc = widenFlatOHLC(
-			this.bucket.open,
-			this.bucket.high,
-			this.bucket.low,
-			this.bucket.close,
-		);
-		this.ohlc.append(bucketSec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+		return -1;
+	}
+
+	private appendBar(bar: CandleBar) {
+		const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
+		this.ohlc.append(bar.sec, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
+	}
+
+	private writeBar(index: number, bar: CandleBar) {
+		const ohlc = widenFlatOHLC(bar.open, bar.high, bar.low, bar.close);
+		this.ohlc.update(index, ohlc.open, ohlc.high, ohlc.low, ohlc.close);
 	}
 
 	private setRiskZone(entrySec: number, entry: number, stop: number) {

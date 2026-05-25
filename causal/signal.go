@@ -179,6 +179,8 @@ func (causal *Causal) evaluate(
 	)
 
 	if !ready {
+		causal.track.CommitSample(symbol, sample, snapshot.Last, now)
+
 		return 0, ""
 	}
 

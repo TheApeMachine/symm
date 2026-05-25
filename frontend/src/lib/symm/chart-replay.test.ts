@@ -1,46 +1,48 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+	CandleBarEvent,
 	ChartSeedEvent,
-	PriceTickEvent,
 	StatusEvent,
 } from "#/lib/symm/events";
 import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
 
 describe("buildChartReplayEvents", () => {
-	it("filters replay ticks to the requested symbol", () => {
+	it("filters replay candles to the requested symbol", () => {
 		const seed: ChartSeedEvent = {
 			event: "chart_seed",
 			ts: "2026-05-23T12:00:00.000000000Z",
 			symbol: "BTC/EUR",
 			bars: [],
 		};
-		const ticks: PriceTickEvent[] = [
+		const bars: CandleBarEvent[] = [
 			{
-				event: "price_tick",
+				event: "candle_bar",
 				ts: "2026-05-23T12:00:01.000000000Z",
 				symbol: "BTC/EUR",
-				last: 1.05,
-				bid: 1.04,
-				ask: 1.06,
-				at: "2026-05-23T12:00:01.000000000Z",
+				sec: 1,
+				open: 1,
+				high: 2,
+				low: 1,
+				close: 1.5,
 			},
 			{
-				event: "price_tick",
+				event: "candle_bar",
 				ts: "2026-05-23T12:00:02.000000000Z",
 				symbol: "ETH/EUR",
-				last: 2.05,
-				bid: 2.04,
-				ask: 2.06,
-				at: "2026-05-23T12:00:02.000000000Z",
+				sec: 2,
+				open: 2,
+				high: 3,
+				low: 2,
+				close: 2.5,
 			},
 		];
 
-		const events = buildChartReplayEvents("BTC/EUR", seed, ticks, undefined);
+		const events = buildChartReplayEvents("BTC/EUR", seed, bars, undefined);
 
 		expect(events.map((event) => event.event)).toEqual([
 			"chart_seed",
-			"price_tick",
+			"candle_bar",
 		]);
 	});
 });

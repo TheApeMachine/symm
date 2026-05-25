@@ -153,6 +153,90 @@ func TestEvaluateAppliesTickerBeforeLiquidityGate(t *testing.T) {
 	})
 }
 
+func TestEvaluateAccumulatesWarmSamples(t *testing.T) {
+	convey.Convey("Given repeated complete causal snapshots before history is ready", t, func() {
+		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
+		causalSignal.track.ApplyTicker("BTC/EUR", 100, 10000)
+		start := time.Unix(1_700_000_000, 0)
+
+		for index := range 3 {
+			snapshot := engine.Snapshot{
+				Last:        10 + float64(index)*0.1,
+				LastOK:      true,
+				VolumeBase:  100,
+				VolumeOK:    true,
+				BatchVolume: 2 + float64(index)*0.1,
+				BatchOK:     true,
+				BuyPressure: 0.5,
+				PressureOK:  true,
+				SpreadBPS:   1,
+				SpreadOK:    true,
+				Imbalance:   0.4,
+				ImbalanceOK: true,
+			}
+
+			causalSignal.evaluate(
+				"ALT/EUR",
+				snapshot,
+				0.01,
+				start.Add(time.Duration(index)*time.Second),
+			)
+		}
+
+		causalSignal.track.shard.LockMap()
+		track := causalSignal.track.bySymbol["ALT/EUR"]
+		samples := 0
+
+		if track != nil {
+			samples = len(track.samples)
+		}
+
+		causalSignal.track.shard.UnlockMap()
+
+		convey.Convey("It should keep warming the causal history", func() {
+			convey.So(samples, convey.ShouldEqual, 3)
+		})
+	})
+}
+
+func TestEvaluateProducesConfidenceAfterWarmSamples(t *testing.T) {
+	convey.Convey("Given flow and velocity co-move through the causal warmup", t, func() {
+		causalSignal := &Causal{track: NewTrackStore(engine.DefaultCalibrationParams())}
+		causalSignal.track.ApplyTicker("BTC/EUR", 100, 10000)
+		start := time.Unix(1_700_000_000, 0)
+		confidence := 0.0
+
+		for index := range minCausalHistory + engine.DefaultCalibrationParams().MinConfidenceHistory + 4 {
+			step := float64(index)
+			snapshot := engine.Snapshot{
+				Last:        10 + step*step*0.01,
+				LastOK:      true,
+				VolumeBase:  100,
+				VolumeOK:    true,
+				BatchVolume: 1 + step*0.4,
+				BatchOK:     true,
+				BuyPressure: 0.6,
+				PressureOK:  true,
+				SpreadBPS:   1,
+				SpreadOK:    true,
+				Imbalance:   0.4,
+				ImbalanceOK: true,
+			}
+
+			confidence, _ = causalSignal.evaluate(
+				"ALT/EUR",
+				snapshot,
+				0.01,
+				start.Add(time.Duration(index)*time.Second),
+			)
+		}
+
+		convey.Convey("It should emit a normalized causal confidence", func() {
+			convey.So(confidence, convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestAssociationEffectReturnsPearson(t *testing.T) {
 	samples := []causalSample{
 		{localFlow: 1, priceVelocity: 2},

@@ -147,6 +147,12 @@ var rootCmd = &cobra.Command{
 		tradeGroup := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 		bookGroup := pool.CreateBroadcastGroup("book", 10*time.Millisecond)
 		chartWatch := ui.NewChartWatch("BTC/EUR")
+		chartCandles := errnie.Does(func() (*ui.CandleStream, error) {
+			return ui.NewCandleStream(5 * time.Second)
+		}).Or(func(err error) {
+			errnie.Error(err)
+			os.Exit(1)
+		}).Value()
 
 		tradesObserver := errnie.Does(func() (*trades.Trades, error) {
 			return trades.New(cmd.Context(), publicClient, symbols, func(
@@ -217,14 +223,14 @@ var rootCmd = &cobra.Command{
 				})
 
 				if chartWatch.Has(symbol) {
-					ui.Publish(uiGroup, "price_tick", map[string]any{
-						"symbol":         symbol,
-						"last":           last,
-						"bid":            bid,
-						"ask":            ask,
-						"change_pct_24h": changePct,
-						"at":             timestamp,
-					})
+					if err := chartCandles.PublishTicker(
+						uiGroup,
+						symbol,
+						last,
+						timestamp,
+					); err != nil {
+						errnie.Error(err)
+					}
 				}
 
 				if _, seen := quoted[symbol]; seen {

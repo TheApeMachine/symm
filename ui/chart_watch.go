@@ -4,7 +4,7 @@ import "sync"
 
 /*
 ChartWatch tracks symbols whose ticker stream should be mirrored to dashboard
-price_tick frames.
+candle_bar frames.
 */
 type ChartWatch struct {
 	mu      sync.RWMutex

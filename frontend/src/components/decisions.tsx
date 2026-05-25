@@ -136,6 +136,14 @@ const forecastRejectSummary = (
 	return ` · reject ${source} ${whyLabel(reason)} ×${count}`;
 };
 
+const formatPct = (value: number | undefined) => {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return "—";
+	}
+
+	return `${(value * 100).toFixed(2)}%`;
+};
+
 interface Props {
 	decisions: DecisionTraceEvent["decisions"];
 }
@@ -185,6 +193,9 @@ const EvaluationTable = ({ evaluations }: { evaluations: EvaluationRow[] }) => (
 				<tr>
 					<th className="px-3 py-1.5 font-medium">Symbol</th>
 					<th className="px-2 py-1.5 text-right font-medium">Combined</th>
+					<th className="hidden px-2 py-1.5 text-right font-medium xl:table-cell">
+						Edge
+					</th>
 					<th className="hidden px-2 py-1.5 font-medium md:table-cell">
 						Signals
 					</th>
@@ -201,6 +212,10 @@ const EvaluationTable = ({ evaluations }: { evaluations: EvaluationRow[] }) => (
 							{row.support > 1 ? (
 								<span className="ml-1 text-(--dash-muted)">×{row.support}</span>
 							) : null}
+						</td>
+						<td className="hidden px-2 py-1.5 text-right tabular-nums text-(--dash-muted) xl:table-cell">
+							{formatPct(row.expected_return)}
+							<span className="ml-1">/ {formatPct(row.required_edge)}</span>
 						</td>
 						<td className="hidden max-w-48 truncate px-2 py-1.5 text-(--dash-muted) md:table-cell">
 							{(row.signals ?? [])

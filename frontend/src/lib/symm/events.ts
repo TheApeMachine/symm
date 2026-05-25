@@ -56,6 +56,9 @@ export type DecisionRow = {
 	regime: string;
 	reason: string;
 	score: number;
+	expected_return?: number;
+	required_edge?: number;
+	edge_surplus?: number;
 	in_play: boolean;
 	allow: boolean;
 	why: string;
@@ -75,6 +78,9 @@ export type EvaluationRow = {
 	symbol: string;
 	combined: number;
 	support: number;
+	expected_return?: number;
+	required_edge?: number;
+	edge_surplus?: number;
 	regime: string;
 	reason: string;
 	allow: boolean;

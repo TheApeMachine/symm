@@ -13,7 +13,7 @@ func TestHubDashboardSnapshot(t *testing.T) {
 
 		hub.cacheSnapshot(map[string]any{"event": "scoreboard", "rows": 3})
 		hub.cacheSnapshot(status)
-		hub.cacheSnapshot(map[string]any{"event": "price_tick", "last": 1.0})
+		hub.cacheSnapshot(map[string]any{"event": "candle_bar", "close": 1.0})
 		hub.cacheSnapshot(map[string]any{"event": "decision_trace", "tick": 9})
 		hub.cacheSnapshot(map[string]any{"event": "engine_pulse", "tick": 9})
 		status["equity"] = 0.0

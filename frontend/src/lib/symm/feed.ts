@@ -1,4 +1,5 @@
 import type {
+	CandleBarEvent,
 	ChartSeedEvent,
 	DecisionTraceEvent,
 	EnginePulseEvent,
@@ -8,7 +9,6 @@ import type {
 	FieldSnapshotEvent,
 	FluidDisplayEvent,
 	FluidDisplayPatch,
-	PriceTickEvent,
 	QuoteProgressEvent,
 	ScoreboardEvent,
 	SignalScoreEvent,
@@ -41,12 +41,12 @@ import {
 } from "#/lib/symm/dashboard-store";
 import { WsStream } from "#/lib/symm/ws-stream";
 
-const MAX_TICK_HISTORY = 360;
+const MAX_CANDLE_HISTORY = 720;
 
 type ChartListener = (event: SymmEvent) => void;
 
 const chartListeners = new Map<string, Set<ChartListener>>();
-const tickHistoryBySymbol = new Map<string, PriceTickEvent[]>();
+const candleHistoryBySymbol = new Map<string, CandleBarEvent[]>();
 const lastSeedBySymbol = new Map<string, ChartSeedEvent>();
 
 let feedStream: WsStream | null = null;
@@ -66,20 +66,28 @@ const dispatchChart = (symbol: string, event: SymmEvent) => {
 	}
 };
 
-const appendTickHistory = (tick: PriceTickEvent) => {
-	const symbol = String(tick.symbol);
-	const history = tickHistoryBySymbol.get(symbol) ?? [];
-	history.push(tick);
+const appendCandleHistory = (bar: CandleBarEvent) => {
+	const symbol = String(bar.symbol);
+	const history = candleHistoryBySymbol.get(symbol) ?? [];
+	const last = history[history.length - 1];
 
-	if (history.length > MAX_TICK_HISTORY) {
-		history.splice(0, history.length - MAX_TICK_HISTORY);
+	if (last && last.sec === bar.sec) {
+		history[history.length - 1] = bar;
+		candleHistoryBySymbol.set(symbol, history);
+		return;
 	}
 
-	tickHistoryBySymbol.set(symbol, history);
+	history.push(bar);
+
+	if (history.length > MAX_CANDLE_HISTORY) {
+		history.splice(0, history.length - MAX_CANDLE_HISTORY);
+	}
+
+	candleHistoryBySymbol.set(symbol, history);
 };
 
-const hasChartTick = (symbol: string) => {
-	const history = tickHistoryBySymbol.get(symbol);
+const hasChartData = (symbol: string) => {
+	const history = candleHistoryBySymbol.get(symbol);
 	return history !== undefined && history.length > 0;
 };
 
@@ -89,7 +97,7 @@ const chartSubscribeSymbols = () => {
 		buildFieldSnapshot(dashboardStore.state),
 		"BTC/EUR",
 		marketWatchSticky,
-		hasChartTick,
+		hasChartData,
 	);
 	marketWatchSticky = watch;
 
@@ -109,7 +117,7 @@ const replayChartState = (symbol: string, handler: ChartListener) => {
 	for (const event of buildChartReplayEvents(
 		symbol,
 		lastSeedBySymbol.get(symbol),
-		tickHistoryBySymbol.get(symbol) ?? [],
+		candleHistoryBySymbol.get(symbol) ?? [],
 		dashboardStore.state.status,
 	)) {
 		handler(event);
@@ -118,10 +126,10 @@ const replayChartState = (symbol: string, handler: ChartListener) => {
 
 const routeChartEvent = (event: SymmEvent) => {
 	switch (event.event) {
-		case "price_tick": {
-			const tick = event as PriceTickEvent;
-			appendTickHistory(tick);
-			dispatchChart(String(tick.symbol), tick);
+		case "candle_bar": {
+			const bar = event as CandleBarEvent;
+			appendCandleHistory(bar);
+			dispatchChart(String(bar.symbol), bar);
 			return;
 		}
 		case "chart_seed": {
@@ -203,7 +211,7 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "fluid_display":
 			applyFluidDisplay(event as FluidDisplayEvent);
 			return;
-		case "price_tick":
+		case "candle_bar":
 		case "chart_seed":
 		case "stop_ratchet":
 			routeChartEvent(event);

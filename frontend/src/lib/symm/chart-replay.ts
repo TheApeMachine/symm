@@ -1,6 +1,6 @@
 import type {
+	CandleBarEvent,
 	ChartSeedEvent,
-	PriceTickEvent,
 	StatusEvent,
 	SymmEvent,
 } from "#/lib/symm/events";
@@ -8,7 +8,7 @@ import type {
 export const buildChartReplayEvents = (
 	symbol: string,
 	seed: ChartSeedEvent | undefined,
-	ticks: PriceTickEvent[],
+	bars: CandleBarEvent[],
 	status: StatusEvent | undefined,
 ): SymmEvent[] => {
 	const events: SymmEvent[] = [];
@@ -17,12 +17,12 @@ export const buildChartReplayEvents = (
 		events.push(seed);
 	}
 
-	for (const tick of ticks) {
-		if (String(tick.symbol) !== symbol) {
+	for (const bar of bars) {
+		if (String(bar.symbol) !== symbol) {
 			continue;
 		}
 
-		events.push(tick);
+		events.push(bar);
 	}
 
 	if (status) {

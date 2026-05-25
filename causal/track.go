@@ -210,6 +210,8 @@ func (trackStore *TrackStore) Record(
 	)
 
 	if !ready {
+		trackStore.CommitSample(symbol, sample, price, now)
+
 		return sample, false
 	}
 

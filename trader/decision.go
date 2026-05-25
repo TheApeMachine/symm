@@ -34,6 +34,8 @@ type Evaluation struct {
 	Support            int
 	ActivePerspectives int
 	ExpectedReturn     float64
+	RequiredEdge       float64
+	EdgeSurplus        float64
 	Runway             time.Duration
 	Regime             string
 	Reason             string
@@ -52,6 +54,8 @@ type Decision struct {
 	Reason         string
 	Score          float64
 	ExpectedReturn float64
+	RequiredEdge   float64
+	EdgeSurplus    float64
 	Allow          bool
 	Why            string
 }
@@ -368,6 +372,8 @@ func (engine *DecisionEngine) allowEvaluation(
 	}
 
 	requiredEdge := requiredEdgeReturn(quotes, market, evaluation.Symbol, notionalEUR, now)
+	evaluation.RequiredEdge = requiredEdge
+	evaluation.EdgeSurplus = evaluation.ExpectedReturn - requiredEdge
 
 	if evaluation.ExpectedReturn <= requiredEdge {
 		return false, "negative_edge"
@@ -398,6 +404,8 @@ func (engine *DecisionEngine) allowDecision(
 	}
 
 	requiredEdge := requiredEdgeReturn(quotes, market, decision.Symbol, notionalEUR, now)
+	decision.RequiredEdge = requiredEdge
+	decision.EdgeSurplus = decision.ExpectedReturn - requiredEdge
 
 	if decision.ExpectedReturn <= requiredEdge {
 		return false, "negative_edge"
@@ -426,6 +434,8 @@ func evaluationToMap(evaluation Evaluation) map[string]any {
 		"support":             evaluation.Support,
 		"active_perspectives": evaluation.ActivePerspectives,
 		"expected_return":     evaluation.ExpectedReturn,
+		"required_edge":       evaluation.RequiredEdge,
+		"edge_surplus":        evaluation.EdgeSurplus,
 		"runway_ms":           evaluation.Runway.Milliseconds(),
 		"regime":              evaluation.Regime,
 		"reason":              evaluation.Reason,
@@ -445,6 +455,8 @@ func decisionToMap(decision Decision) map[string]any {
 		"confidence":      decision.Score,
 		"effective_score": decision.Score,
 		"expected_return": decision.ExpectedReturn,
+		"required_edge":   decision.RequiredEdge,
+		"edge_surplus":    decision.EdgeSurplus,
 		"in_play":         true,
 		"allow":           decision.Allow,
 		"why":             decision.Why,

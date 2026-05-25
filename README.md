@@ -79,7 +79,7 @@ SYMM is a closed-loop system: eight entry signals grouped into four **perspectiv
 3. **Ingest readings** — for every measurement, update per-symbol `PairState`, derive a trader forecast, record an open prediction **anchored at the live quote**, and settle any predictions whose runway has elapsed.
 4. **Settle due predictions** — scan all pair states again and emit matured `PredictionFeedback` (also updates `SourceTrustStore`).
 5. **Execute** — mark open positions (trailing stops + **exhaust** early exit), merge live score candidates, classify cross-section **regime**, build the weighted ensemble decision, and enter when gates pass.
-6. **Publish telemetry** — `engine_pulse`, decision trace, scoreboard, and status frames to the UI hub.
+6. **Publish telemetry** — `engine_pulse`, decision trace, scoreboard, status, and source-side `candle_bar` frames to the UI hub.
 
 There is no parallel signal measurement inside the trader loop: `processSignals` runs each signal in registration order so track-store drains stay deterministic. Signal-owned symbol scans may still use `qpool` internally in chunks, so market-wide work is parallel without interleaving different signal engines on the orchestrator thread.
 
@@ -201,6 +201,7 @@ Kraken WS v2
 ```
 
 `kraken/client.PublicClient` handles ping, reconnect, resubscribe, and feed pause on unrecoverable disconnect. `book` retains multi-level depth (default 5 levels) for VWAP slippage and fluid viscosity. `trader.MarketQuotes` merges ticker last/bid/ask with book depth for fills.
+Watched chart symbols are bucketed into OHLC `candle_bar` events before `ui.Publish`; the React chart only renders bars and annotations.
 
 ### Offline replay and eval
 
@@ -228,6 +229,7 @@ Set `SYMM_REPLAY_FILE` to a captured JSONL fixture: frames replay through the sa
 
 - Hub replay order matches live publish: `engine_pulse` → `decision_trace` → `scoreboard` → `status`
 - On websocket connect the hub sends `hello`, then the cached dashboard snapshot (`status`, `scoreboard`, `decision_trace`) so the header shows wallet equity immediately
+- Chart panels consume `candle_bar` frames from the shared `ui` qpool broadcast group instead of constructing live candles in React.
 - `PrimeDashboard()` runs before the hub starts accepting clients; every rescore tick refreshes the same frames live
 - Frontend opens one WebSocket to `config.System.UIAddr` and routes all event types through a single feed handler
 
