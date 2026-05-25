@@ -112,8 +112,6 @@ func TestCryptoEnterPaper(t *testing.T) {
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto := NewCrypto(ctx, pool, wallet)
-	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	subscriber := ui.Subscribe("test:ui", 32)
 
 	crypto.pulses = config.System.MinWarmPulses
 	crypto.returnCount["pumpdump"] = config.System.MinCalibrationSamples
@@ -148,7 +146,7 @@ func TestCryptoEnterPaper(t *testing.T) {
 
 	for {
 		select {
-		case value := <-subscriber.Incoming:
+		case value := <-crypto.subscribers["executions"].Incoming:
 			payload, ok := value.Value.(map[string]any)
 
 			if !ok {

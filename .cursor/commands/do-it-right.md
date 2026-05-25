@@ -141,3 +141,5 @@ THE OVERALL SYSTEM WORKS LIKE THIS:
 6. The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that makde the prediction use
 
 AND FINALLY STOP STOPPING ALL THE TIME, JUST KEEP GOING UNTIL IT IS RIGHT, FINALLY.
+
+(Oh and check the Makefile for the linker error)

@@ -43,12 +43,11 @@ func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
 	}
 
 	exhaust.broadcasts["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond)
-	exhaust.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return exhaust
 }
 
-func (exhaust *Exhaust) Start() error  { return nil }
+func (exhaust *Exhaust) Start() error        { return nil }
 func (exhaust *Exhaust) State() engine.State { return engine.READY }
 
 func (exhaust *Exhaust) Tick() error {
@@ -119,17 +118,6 @@ func (exhaust *Exhaust) Tick() error {
 
 			exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
 				Value: map[string]any{
-					"symbol":  symbol,
-					"urgency": urgency,
-					"reason":  reason,
-				},
-			})
-			exhaust.broadcasts["ui"].Send(&qpool.QValue[any]{
-				Value: map[string]any{
-					"event":   "decision_trace",
-					"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-					"phase":   "exit",
-					"source":  exhaustSource,
 					"symbol":  symbol,
 					"urgency": urgency,
 					"reason":  reason,

@@ -120,6 +120,12 @@ func (pumpdump *PumpDump) Tick() error {
 
 		pumpdump.requested[row.Symbol] = struct{}{}
 		pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+
+		for measurement := range pumpdump.Measure() {
+			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+				Value: measurement,
+			})
+		}
 	case value := <-pumpdump.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := pumpdump.symbols[tick.Symbol]
@@ -156,6 +162,12 @@ func (pumpdump *PumpDump) Tick() error {
 		if tick.Side == "sell" {
 			state.buyPressure = -1
 		}
+
+		for measurement := range pumpdump.Measure() {
+			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+				Value: measurement,
+			})
+		}
 	case value := <-pumpdump.subscribers["feedback"].Incoming:
 		pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
 	case value := <-pumpdump.subscribers["book"].Incoming:
@@ -182,6 +194,12 @@ func (pumpdump *PumpDump) Tick() error {
 
 		if total > 0 {
 			state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+		}
+
+		for measurement := range pumpdump.Measure() {
+			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+				Value: measurement,
+			})
 		}
 	default:
 		for measurement := range pumpdump.Measure() {

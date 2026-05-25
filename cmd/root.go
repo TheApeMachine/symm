@@ -20,7 +20,6 @@ import (
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
-	"github.com/theapemachine/symm/ui"
 )
 
 var rootCmd = &cobra.Command{
@@ -40,12 +39,6 @@ var rootCmd = &cobra.Command{
 			errnie.Error(err)
 		}).Value()
 
-		hub := errnie.Does(func() (*ui.Hub, error) {
-			return ui.NewHub(cmd.Context(), pool, ui.NewSubscriptionCommands(pool))
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
 		booter.AddSystems(
 			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
 			pumpdump.NewPumpDump(cmd.Context(), pool),
@@ -60,7 +53,6 @@ var rootCmd = &cobra.Command{
 			trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
 				trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
 			)),
-			hub,
 		)
 
 		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {

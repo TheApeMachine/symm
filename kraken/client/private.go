@@ -58,8 +58,6 @@ func NewPrivateClient(
 		apiSecret:   apiSecret,
 	}
 
-	client.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	client.subscribers["ui"] = client.broadcasts["ui"].Subscribe("private:ui", 128)
 	client.broadcasts["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond)
 	client.subscribers["orders"] = pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Subscribe("private:orders", 128)
 

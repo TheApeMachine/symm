@@ -49,7 +49,6 @@ func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
 
 	fluid.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	fluid.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
-	fluid.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return fluid
 }
@@ -120,26 +119,7 @@ func (fluid *Fluid) Tick() error {
 			return nil
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-
 		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"event":  "field_row",
-				"ts":     now,
-				"symbol": delta.Symbol,
-				"row": map[string]any{
-					"symbol":     delta.Symbol,
-					"change_pct": state.changePct,
-					"vol":        state.pressure.Value(),
-					"div":        state.buyPressure,
-					"vort":       measurement.Confidence,
-					"turb":       state.spreadBPS,
-					"visc":       state.spreadBPS,
-					"re":         state.score.Value(),
-				},
-			},
-		})
 	case value := <-fluid.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := fluid.symbols[tick.Symbol]
@@ -162,26 +142,7 @@ func (fluid *Fluid) Tick() error {
 			return nil
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-
 		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"event":  "field_row",
-				"ts":     now,
-				"symbol": tick.Symbol,
-				"row": map[string]any{
-					"symbol":     tick.Symbol,
-					"change_pct": state.changePct,
-					"vol":        state.pressure.Value(),
-					"div":        state.buyPressure,
-					"vort":       measurement.Confidence,
-					"turb":       state.spreadBPS,
-					"visc":       state.spreadBPS,
-					"re":         state.score.Value(),
-				},
-			},
-		})
 	case value := <-fluid.subscribers["feedback"].Incoming:
 		fluid.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
