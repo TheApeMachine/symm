@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -32,12 +33,8 @@ type Hawkes struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     map[string]*symbolState
 	calibration engine.CalibrationParams
+	requested   map[string]struct{}
 }
-
-var (
-	_ engine.System = (*Hawkes)(nil)
-	_ engine.Signal = (*Hawkes)(nil)
-)
 
 func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
 	ctx, cancel := context.WithCancel(ctx)
@@ -50,6 +47,7 @@ func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     make(map[string]*symbolState),
 		calibration: engine.DefaultCalibrationParams(),
+		requested:   make(map[string]struct{}),
 	}
 
 	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
@@ -58,6 +56,7 @@ func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
 	}
 
 	hawkes.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	hawkes.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 
 	return hawkes
 }
@@ -93,6 +92,17 @@ func (hawkes *Hawkes) Tick() error {
 		}
 
 		symbolState.state.FeedTicker(row.Last, row.Volume)
+
+		if _, seen := hawkes.requested[row.Symbol]; seen || row.Volume <= 0 {
+			return nil
+		}
+
+		if pair := symbolState.pair; pair.Quote != config.System.QuoteCurrency {
+			return nil
+		}
+
+		hawkes.requested[row.Symbol] = struct{}{}
+		hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
 	case value := <-hawkes.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		symbolState := hawkes.symbols[tick.Symbol]
@@ -105,6 +115,11 @@ func (hawkes *Hawkes) Tick() error {
 
 		if len(symbolState.ticks) > 512 {
 			symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
+		}
+
+		if _, seen := hawkes.requested[tick.Symbol]; !seen && len(symbolState.ticks) >= 16 {
+			hawkes.requested[tick.Symbol] = struct{}{}
+			hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
 		}
 	case value := <-hawkes.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)

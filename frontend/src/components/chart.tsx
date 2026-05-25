@@ -21,7 +21,7 @@ export const ChartSection = ({ connected, positionSymbols }: Props) => {
 		<section className="flex min-w-0 flex-7 flex-col overflow-hidden p-2">
 			<div className="grid min-h-[400px] flex-1 grid-rows-[280px_minmax(240px,1fr)] gap-2 overflow-hidden">
 				<div className="flex min-h-0 gap-2">
-					<EnginePulseChart className="min-h-0" />
+					<EnginePulseChart className="min-h-0 flex-1" />
 					<Gauges />
 				</div>
 				{tradeSymbols.length > 0 ? (

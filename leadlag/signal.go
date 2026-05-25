@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -35,12 +36,9 @@ type LeadLag struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     map[string]*symbolState
 	peak        *adaptive.Peak
+	pending     []string
+	requested   map[string]struct{}
 }
-
-var (
-	_ engine.System = (*LeadLag)(nil)
-	_ engine.Signal = (*LeadLag)(nil)
-)
 
 func NewLeadLag(ctx context.Context, pool *qpool.Q) *LeadLag {
 	ctx, cancel := context.WithCancel(ctx)
@@ -53,6 +51,7 @@ func NewLeadLag(ctx context.Context, pool *qpool.Q) *LeadLag {
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     make(map[string]*symbolState),
 		peak:        adaptive.NewPeak(),
+		requested:   make(map[string]struct{}),
 	}
 
 	for _, channel := range []string{"symbols", "tick", "feedback"} {
@@ -61,11 +60,12 @@ func NewLeadLag(ctx context.Context, pool *qpool.Q) *LeadLag {
 	}
 
 	leadlag.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	leadlag.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 
 	return leadlag
 }
 
-func (leadlag *LeadLag) Start() error  { return nil }
+func (leadlag *LeadLag) Start() error        { return nil }
 func (leadlag *LeadLag) State() engine.State { return engine.READY }
 
 func (leadlag *LeadLag) Tick() error {
@@ -74,9 +74,27 @@ func (leadlag *LeadLag) Tick() error {
 		return leadlag.ctx.Err()
 	case value := <-leadlag.subscribers["symbols"].Incoming:
 		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair != nil {
-				leadlag.symbols[symbol] = &symbolState{pair: *pair}
+			if pair == nil {
+				continue
 			}
+
+			leadlag.symbols[symbol] = &symbolState{pair: *pair}
+
+			if pair.Quote != config.System.QuoteCurrency {
+				continue
+			}
+
+			if _, seen := leadlag.requested[symbol]; seen {
+				continue
+			}
+
+			if symbol == anchorSymbol {
+				leadlag.requested[symbol] = struct{}{}
+				leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{symbol}})
+				continue
+			}
+
+			leadlag.pending = append(leadlag.pending, symbol)
 		}
 	case value := <-leadlag.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
@@ -87,6 +105,42 @@ func (leadlag *LeadLag) Tick() error {
 		}
 
 		state.changePct = row.ChangePct
+
+		anchor := leadlag.symbols[anchorSymbol]
+
+		if anchor == nil || anchor.changePct < minAnchorMove || len(leadlag.pending) == 0 {
+			return nil
+		}
+
+		scanCap := config.System.MaxScanSymbols / 8
+
+		if scanCap < 1 {
+			scanCap = 1
+		}
+
+		if len(leadlag.requested) >= scanCap {
+			return nil
+		}
+
+		remaining := scanCap - len(leadlag.requested)
+		batch := config.System.SubscribeBatch
+
+		if batch > remaining {
+			batch = remaining
+		}
+
+		if batch > len(leadlag.pending) {
+			batch = len(leadlag.pending)
+		}
+
+		symbols := leadlag.pending[:batch]
+		leadlag.pending = leadlag.pending[batch:]
+
+		for _, symbol := range symbols {
+			leadlag.requested[symbol] = struct{}{}
+		}
+
+		leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	case value := <-leadlag.subscribers["feedback"].Incoming:
 		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
 	default:

@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/kraken/client"
 	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/leadlag"
+	"github.com/theapemachine/symm/liquidity"
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
@@ -40,7 +41,7 @@ var rootCmd = &cobra.Command{
 		}).Value()
 
 		hub := errnie.Does(func() (*ui.Hub, error) {
-			return ui.NewHub(cmd.Context(), pool, nil)
+			return ui.NewHub(cmd.Context(), pool, ui.NewSubscriptionCommands(pool))
 		}).Or(func(err error) {
 			errnie.Error(err)
 		}).Value()
@@ -51,6 +52,7 @@ var rootCmd = &cobra.Command{
 			depthflow.NewDepthFlow(cmd.Context(), pool),
 			hawkes.NewHawkes(cmd.Context(), pool),
 			leadlag.NewLeadLag(cmd.Context(), pool),
+			liquidity.NewLiquidity(cmd.Context(), pool),
 			sentiment.NewSentiment(cmd.Context(), pool),
 			fluid.NewFluid(cmd.Context(), pool),
 			causal.NewCausal(cmd.Context(), pool),

@@ -22,6 +22,7 @@ const (
 	LeadLag
 	Basis
 	Sentiment
+	Liquidity
 )
 
 /*

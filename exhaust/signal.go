@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
@@ -12,10 +13,8 @@ import (
 
 const exhaustSource = "exhaust"
 
-const exitUrgencyThreshold = 0.45
-
 /*
-Exhaust tracks book/trade microstructure decay and advises exit urgency on ui.
+Exhaust tracks book/trade microstructure decay and advises exit urgency.
 */
 type Exhaust struct {
 	ctx         context.Context
@@ -25,8 +24,6 @@ type Exhaust struct {
 	subscribers map[string]*qpool.Subscriber
 	history     *historyStore
 }
-
-var _ engine.System = (*Exhaust)(nil)
 
 func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
 	ctx, cancel := context.WithCancel(ctx)
@@ -45,6 +42,7 @@ func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
 		exhaust.subscribers[channel] = group.Subscribe("exhaust:"+channel, 128)
 	}
 
+	exhaust.broadcasts["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond)
 	exhaust.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return exhaust
@@ -104,6 +102,8 @@ func (exhaust *Exhaust) Tick() error {
 		row := value.Value.(market.TickerRow)
 		exhaust.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
 	default:
+		threshold := config.System.ExitUrgencyThreshold
+
 		for _, symbol := range exhaust.history.symbols() {
 			snapshot, ok := exhaust.history.snapshot(symbol)
 
@@ -113,18 +113,26 @@ func (exhaust *Exhaust) Tick() error {
 
 			urgency, reason := exitScoreLong(snapshot)
 
-			if urgency < exitUrgencyThreshold {
+			if urgency < threshold {
 				continue
 			}
 
+			exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
+				Value: map[string]any{
+					"symbol":  symbol,
+					"urgency": urgency,
+					"reason":  reason,
+				},
+			})
 			exhaust.broadcasts["ui"].Send(&qpool.QValue[any]{
 				Value: map[string]any{
-					"event":    "decision_trace",
-					"phase":    "exit",
-					"source":   exhaustSource,
-					"symbol":   symbol,
-					"urgency":  urgency,
-					"reason":   reason,
+					"event":   "decision_trace",
+					"ts":      time.Now().UTC().Format(time.RFC3339Nano),
+					"phase":   "exit",
+					"source":  exhaustSource,
+					"symbol":  symbol,
+					"urgency": urgency,
+					"reason":  reason,
 				},
 			})
 		}

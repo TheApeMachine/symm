@@ -32,6 +32,76 @@ import { SciTraderDarkTheme } from "scichart-financial-tools";
 export const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 export const VISIBLE_CANDLE_COUNT = 300;
 
+export const candleChartXExtents = (
+	firstX: number,
+	lastX: number,
+	barCountInWindow: number,
+	priorBarX?: number,
+): { min: number; max: number } => {
+	const barStep =
+		barCountInWindow > 1 && lastX > firstX
+			? (lastX - firstX) / (barCountInWindow - 1)
+			: priorBarX !== undefined
+				? lastX - priorBarX
+				: 60;
+	const pad = Math.max(barStep * 2, 60);
+
+	return { min: firstX - pad, max: lastX + pad };
+};
+
+export const shiftTrailingVisibleRange = (
+	visibleMin: number,
+	visibleMax: number,
+	lastX: number,
+	barStep: number,
+): { min: number; max: number } => {
+	const followTolerance = Math.max(barStep * 2, 60);
+	const span = visibleMax - visibleMin;
+	const pad = followTolerance / 2;
+
+	return { min: lastX + pad - span, max: lastX + pad };
+};
+
+export const resolveFollowVisibleRange = (
+	ohlc: OhlcDataSeries,
+	mode: "initial" | "live",
+	currentRange?: NumberRange,
+): NumberRange | null => {
+	const barCount = ohlc.count();
+
+	if (barCount <= 0) {
+		return null;
+	}
+
+	const nativeX = ohlc.getNativeXValues();
+	const lastIndex = barCount - 1;
+	const lastX = nativeX.get(lastIndex);
+	const barStep = lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : 60;
+
+	if (mode === "live" && currentRange !== undefined) {
+		const shifted = shiftTrailingVisibleRange(
+			currentRange.min,
+			currentRange.max,
+			lastX,
+			barStep,
+		);
+
+		return new NumberRange(shifted.min, shifted.max);
+	}
+
+	const firstIndex = Math.max(0, lastIndex - VISIBLE_CANDLE_COUNT + 1);
+	const firstX = nativeX.get(firstIndex);
+	const priorBarX = lastIndex > 0 ? nativeX.get(lastIndex - 1) : undefined;
+	const { min, max } = candleChartXExtents(
+		firstX,
+		lastX,
+		lastIndex - firstIndex + 1,
+		priorBarX,
+	);
+
+	return new NumberRange(min, max);
+};
+
 const VOLUME_PALETTE_PROVIDER_TYPE = "TradingAnnotationVolumePaletteProvider";
 
 const FOREGROUND_COLOR = "#F5F5F5";
@@ -168,35 +238,15 @@ export const addDefaultFinancialModifiers = (
 export const followLatestCandleRange = (
 	xAxis: DiscontinuousDateAxis,
 	ohlc: OhlcDataSeries,
-	force = false,
+	mode: "initial" | "live" = "live",
 ) => {
-	const barCount = ohlc.count();
+	const nextRange = resolveFollowVisibleRange(ohlc, mode, xAxis.visibleRange);
 
-	if (barCount <= 0) {
+	if (nextRange === null) {
 		return;
 	}
 
-	const nativeX = ohlc.getNativeXValues();
-	const lastIndex = barCount - 1;
-	const lastX = nativeX.get(lastIndex);
-
-	if (!force) {
-		const visibleRange = xAxis.visibleRange;
-
-		if (visibleRange !== undefined) {
-			const barStep =
-				lastIndex > 0 ? nativeX.get(lastIndex) - nativeX.get(lastIndex - 1) : 5;
-			const followTolerance = Math.max(barStep * 2, 1);
-
-			if (visibleRange.max < lastX - followTolerance) {
-				return;
-			}
-		}
-	}
-
-	const firstIndex = Math.max(0, lastIndex - VISIBLE_CANDLE_COUNT + 1);
-
-	xAxis.visibleRange = new NumberRange(nativeX.get(firstIndex), lastX);
+	xAxis.visibleRange = nextRange;
 };
 
 export const refreshFinancialPriceAxis = (

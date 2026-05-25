@@ -3,11 +3,13 @@ package depthflow
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 )
 
 func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
@@ -38,6 +40,30 @@ func seedDepthSymbol(state *DepthSymbol) {
 
 	for range 8 {
 		_, _ = state.score.Push(0.7, 0.8)
+	}
+}
+
+func TestDepthFlowTickIgnoresUnknownTrade(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewDepthFlow(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	trades := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
+	trades.Send(&qpool.QValue[any]{
+		Value: trade.Data{
+			Symbol:    "BTC/EUR",
+			Side:      "buy",
+			Qty:       0.1,
+			Price:     50000,
+			Timestamp: time.Now(),
+		},
+	})
+
+	if err := signal.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
 	}
 }
 

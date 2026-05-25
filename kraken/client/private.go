@@ -199,10 +199,6 @@ func (privateClient *PrivateClient) ReadLoop() {
 					return
 				}
 
-				privateClient.broadcasts["ui"].Send(&qpool.QValue[any]{
-					Value: payload,
-				})
-
 				channel, err := market.ChannelName(payload)
 
 				if err != nil {

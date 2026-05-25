@@ -1,50 +1,71 @@
 import {
 	SciChart3DSurface,
+	SciChartDefaults,
 	SciChartPolarSurface,
 	SciChartSurface,
 } from "scichart";
 
+import scichart2dNoSimdWasm from "scichart/_wasm/scichart2d-nosimd.wasm?url";
+import scichart2dWasm from "scichart/_wasm/scichart2d.wasm?url";
+import scichart3dNoSimdWasm from "scichart/_wasm/scichart3d-nosimd.wasm?url";
+import scichart3dWasm from "scichart/_wasm/scichart3d.wasm?url";
+
 let wasmReady: Promise<void> | null = null;
-
-/** Base URL for self-hosted SciChart wasm (default `/scichart`). Override with VITE_SCICHART_WASM_BASE. */
-export const sciChartWasmBase = (): string => {
-	const custom = import.meta.env.VITE_SCICHART_WASM_BASE?.trim();
-
-	if (custom) {
-		return custom.replace(/\/$/, "");
-	}
-
-	return "/scichart";
-};
 
 const sciChartCdnEnabled = (): boolean =>
 	import.meta.env.VITE_SCICHART_WASM_CDN === "true";
 
-/** Load SciChart 2D/3D/polar wasm from `/scichart` or CDN when VITE_SCICHART_WASM_CDN=true. */
-export const ensureSciChartWasm = (): Promise<void> => {
-	if (!wasmReady) {
-		if (sciChartCdnEnabled()) {
-			SciChartSurface.loadWasmFromCDN();
-			SciChart3DSurface.loadWasmFromCDN();
-			SciChartPolarSurface.loadWasmFromCDN();
-		} else {
-			const base = sciChartWasmBase();
+const sciChartWasmBase = (): string | null => {
+	const custom = import.meta.env.VITE_SCICHART_WASM_BASE?.trim();
 
-			SciChartSurface.configure({
-				wasmUrl: `${base}/scichart2d.wasm`,
-				wasmNoSimdUrl: `${base}/scichart2d-nosimd.wasm`,
-			});
-			SciChart3DSurface.configure({
-				wasmUrl: `${base}/scichart3d.wasm`,
-				wasmNoSimdUrl: `${base}/scichart3d-nosimd.wasm`,
-			});
-			SciChartSurface.loadWasmLocal();
-			SciChart3DSurface.loadWasmLocal();
-			SciChartPolarSurface.loadWasmLocal();
-		}
-
-		wasmReady = Promise.resolve();
+	if (!custom) {
+		return null;
 	}
 
+	return custom.replace(/\/$/, "");
+};
+
+const configureLocalWasm = () => {
+	const base = sciChartWasmBase();
+
+	if (base) {
+		SciChartSurface.configure({
+			wasmUrl: `${base}/scichart2d.wasm`,
+			wasmNoSimdUrl: `${base}/scichart2d-nosimd.wasm`,
+		});
+		SciChart3DSurface.configure({
+			wasmUrl: `${base}/scichart3d.wasm`,
+			wasmNoSimdUrl: `${base}/scichart3d-nosimd.wasm`,
+		});
+		return;
+	}
+
+	SciChartSurface.configure({
+		wasmUrl: scichart2dWasm,
+		wasmNoSimdUrl: scichart2dNoSimdWasm,
+	});
+	SciChart3DSurface.configure({
+		wasmUrl: scichart3dWasm,
+		wasmNoSimdUrl: scichart3dNoSimdWasm,
+	});
+};
+
+export const ensureSciChartWasm = (): Promise<void> => {
+	if (wasmReady) {
+		return wasmReady;
+	}
+
+	SciChartSurface.UseCommunityLicense();
+	SciChartDefaults.performanceWarnings = false;
+
+	if (sciChartCdnEnabled()) {
+		SciChartSurface.loadWasmFromCDN();
+		SciChart3DSurface.loadWasmFromCDN();
+		SciChartPolarSurface.loadWasmFromCDN();
+	} else {
+		configureLocalWasm();
+	}
+
+	wasmReady = Promise.resolve();
 	return wasmReady;
 };

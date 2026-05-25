@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 )
 
@@ -58,6 +60,10 @@ func (booter *Booter) Boot() error {
 					if err := system.Tick(); err != nil {
 						booter.err = errnie.Error(err)
 					}
+				}
+
+				if delay := config.System.RescoreEvery; delay > 0 {
+					time.Sleep(delay)
 				}
 			}
 		}

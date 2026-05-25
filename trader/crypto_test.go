@@ -105,6 +105,69 @@ func TestCryptoSettlesFeedback(t *testing.T) {
 	}
 }
 
+func TestCryptoEnterPaper(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto := NewCrypto(ctx, pool, wallet)
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	subscriber := ui.Subscribe("test:ui", 32)
+
+	crypto.pulses = config.System.MinWarmPulses
+	crypto.returnCount["pumpdump"] = config.System.MinCalibrationSamples
+	returnEMA := adaptive.NewEMA(0)
+	_, _ = returnEMA.Next(0, 0.01)
+	crypto.returns["pumpdump"] = returnEMA
+	crypto.pairs["BTC/EUR"] = &pairState{
+		lastPrice: 50000,
+		bid:       49999,
+		ask:       50001,
+		open:      make(map[string]openPrediction),
+	}
+
+	crypto.measurements = append(crypto.measurements, engine.Measurement{
+		Source:     "pumpdump",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "actual_pump",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.8,
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if wallet.Inventory["BTC"] <= 0 {
+		t.Fatalf("expected paper entry inventory, got %v", wallet.Inventory["BTC"])
+	}
+
+	foundEnter := false
+
+	for {
+		select {
+		case value := <-subscriber.Incoming:
+			payload, ok := value.Value.(map[string]any)
+
+			if !ok {
+				continue
+			}
+
+			if payload["event"] == "trade_enter" {
+				foundEnter = true
+			}
+		default:
+			if foundEnter {
+				return
+			}
+
+			t.Fatal("expected trade_enter ui event after paper entry")
+		}
+	}
+}
+
 func TestCryptoApplyFill(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

@@ -1,11 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
-import {
-	drawFluidSurface,
-	type FluidSurfaceControls,
-} from "#/components/symm/draw-fluid-surface";
-import { setFluidDisplay } from "#/lib/symm/feed";
+import { drawFluidSurface } from "#/components/symm/draw-fluid-surface";
+import { registerFluidSurface, setFluidDisplay } from "#/lib/symm/feed";
 import { formatFluidScalar, headerFieldMetrics } from "#/lib/symm/fluid-format";
 import {
 	useSymmConnected,
@@ -23,9 +20,6 @@ type FluidSurfaceChartProps = {
 export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	className = "",
 }: FluidSurfaceChartProps) {
-	const controlsRef = useRef<FluidSurfaceControls | null>(null);
-	const snapshot = useSymmFieldSnapshot();
-
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
 		if (typeof rootElement === "string") {
 			throw new Error("drawFluidSurface requires an HTMLDivElement root");
@@ -35,24 +29,12 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart({
 	}, []);
 
 	const onInit = useCallback(
-		(initResult: TResolvedReturnType<typeof drawFluidSurface>) => {
-			controlsRef.current = initResult.controls;
-
-			return () => {
-				initResult.controls.dispose();
-				controlsRef.current = null;
-			};
-		},
+		(initResult: TResolvedReturnType<typeof drawFluidSurface>) =>
+			registerFluidSurface((snapshot) => {
+				initResult.controls.update(snapshot);
+			}),
 		[],
 	);
-
-	useEffect(() => {
-		if (!snapshot || !controlsRef.current) {
-			return;
-		}
-
-		controlsRef.current.update(snapshot);
-	}, [snapshot]);
 
 	return (
 		<div

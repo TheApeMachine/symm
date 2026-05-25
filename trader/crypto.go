@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ type openPrediction struct {
 
 type pairState struct {
 	lastPrice float64
+	bid       float64
+	ask       float64
 	open      map[string]openPrediction
 }
 
@@ -41,11 +44,15 @@ type Crypto struct {
 	broadcasts   map[string]*qpool.BroadcastGroup
 	subscribers  map[string]*qpool.Subscriber
 	wallet       *Wallet
-	portfolio    *Portfolio
 	measurements []engine.Measurement
 	pairs        map[string]*pairState
 	returns      map[string]*adaptive.EMA
 	returnCount  map[string]int
+	pulses       int
+	seq          int
+	quoteReady   int
+	errorSum     float64
+	errorCount   int
 }
 
 func NewCrypto(
@@ -62,7 +69,6 @@ func NewCrypto(
 		broadcasts:   make(map[string]*qpool.BroadcastGroup),
 		subscribers:  make(map[string]*qpool.Subscriber),
 		wallet:       wallet,
-		portfolio:    NewPortfolio(wallet),
 		measurements: make([]engine.Measurement, 0),
 		pairs:        make(map[string]*pairState),
 		returns:      make(map[string]*adaptive.EMA),
@@ -73,19 +79,15 @@ func NewCrypto(
 	crypto.subscribers["measurements"] = crypto.broadcasts["measurements"].Subscribe("crypto:measurements", 128)
 	crypto.broadcasts["feedback"] = pool.CreateBroadcastGroup("feedback", 10*time.Millisecond)
 	crypto.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	tick := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
-	crypto.subscribers["tick"] = tick.Subscribe("crypto:tick", 128)
-
-	executions := pool.CreateBroadcastGroup("executions", 10*time.Millisecond)
-	crypto.subscribers["executions"] = executions.Subscribe("crypto:executions", 128)
+	crypto.subscribers["tick"] = pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Subscribe("crypto:tick", 128)
+	crypto.subscribers["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Subscribe("crypto:executions", 128)
+	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Subscribe("crypto:exits", 128)
 
 	if errnie.Error(errnie.Require(map[string]any{
-		"ctx":       ctx,
-		"cancel":    cancel,
-		"pool":      pool,
-		"wallet":    wallet,
-		"portfolio": crypto.portfolio,
+		"ctx":    ctx,
+		"cancel": cancel,
+		"pool":   pool,
+		"wallet": wallet,
 	})) != nil {
 		return nil
 	}
@@ -125,7 +127,21 @@ func (crypto *Crypto) Tick() error {
 			crypto.pairs[row.Symbol] = state
 		}
 
-		state.lastPrice = row.Last
+		if row.Last > 0 {
+			if state.lastPrice <= 0 {
+				crypto.quoteReady++
+			}
+
+			state.lastPrice = row.Last
+		}
+
+		if row.Bid > 0 {
+			state.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			state.ask = row.Ask
+		}
 
 		return nil
 	case value := <-crypto.subscribers["executions"].Incoming:
@@ -138,11 +154,32 @@ func (crypto *Crypto) Tick() error {
 		crypto.applyFill(fill)
 
 		return nil
+	case value := <-crypto.subscribers["exits"].Incoming:
+		exit, ok := value.Value.(map[string]any)
+
+		if !ok {
+			return errnie.Error(fmt.Errorf("invalid exit: %v", value.Value))
+		}
+
+		symbol, _ := exit["symbol"].(string)
+
+		if symbol == "" {
+			return errnie.Error(fmt.Errorf("exit missing symbol: %v", exit))
+		}
+
+		crypto.exit(symbol, exit["reason"])
+
+		return nil
 	default:
 		now := time.Now()
 		crypto.settleDue(now)
 
 		perspectives := make(map[string]map[engine.PerspectiveType]engine.Perspective)
+		pulseSignals := make([]map[string]any, 0, len(crypto.measurements))
+		scoreTargets := make([]map[string]any, 0, len(crypto.measurements))
+		bestReturn := 0.0
+		var bestSymbol string
+		var bestMeasurement engine.Measurement
 
 		for _, measurement := range crypto.measurements {
 			if len(measurement.Pairs) == 0 {
@@ -167,10 +204,90 @@ func (crypto *Crypto) Tick() error {
 		for _, byType := range perspectives {
 			for _, perspective := range byType {
 				for _, measurement := range perspective.Measurements {
-					crypto.recordPrediction(perspective, measurement, now)
+					predicted := crypto.recordPrediction(perspective, measurement, now)
+					symbol := measurement.Pairs[0].Wsname
+
+					pulseSignals = append(pulseSignals, map[string]any{
+						"symbol":          symbol,
+						"source":          measurement.Source,
+						"regime":          measurement.Regime,
+						"reason":          measurement.Reason,
+						"score":           measurement.Confidence,
+						"expected_return": predicted,
+						"type":            measurement.Type,
+					})
+					scoreTargets = append(scoreTargets, map[string]any{
+						"symbol":          symbol,
+						"regime":          measurement.Regime,
+						"reason":          measurement.Reason,
+						"score":           measurement.Confidence,
+						"effective_score": predicted,
+						"trail_pct":       config.System.DefaultTrailPct,
+					})
+
+					if predicted > bestReturn {
+						bestReturn = predicted
+						bestSymbol = symbol
+						bestMeasurement = measurement
+					}
 				}
 			}
 		}
+
+		openCount := crypto.openCount()
+
+		if crypto.pulses >= config.System.MinWarmPulses &&
+			openCount < config.System.MaxSlots &&
+			bestReturn >= config.System.MinEdgeReturn {
+			crypto.enter(bestSymbol, bestMeasurement, bestReturn)
+		}
+
+		crypto.pulses++
+		crypto.seq++
+
+		avgError := 0.0
+		avgPrediction := 0.0
+
+		if crypto.errorCount > 0 {
+			avgError = crypto.errorSum / float64(crypto.errorCount)
+		}
+
+		if len(pulseSignals) > 0 {
+			predictionSum := 0.0
+
+			for _, signal := range pulseSignals {
+				if expected, ok := signal["expected_return"].(float64); ok {
+					predictionSum += expected
+				}
+			}
+
+			avgPrediction = predictionSum / float64(len(pulseSignals))
+		}
+
+		crypto.sendUI(map[string]any{
+			"event":            "engine_pulse",
+			"ts":               now.UTC().Format(time.RFC3339Nano),
+			"seq":              crypto.seq,
+			"phase":            "scan",
+			"measurements":     len(crypto.measurements),
+			"candidates":       len(scoreTargets),
+			"open":             openCount,
+			"ticker_ready":     crypto.quoteReady,
+			"symbols_total":    len(crypto.pairs),
+			"avg_prediction":   avgPrediction,
+			"avg_error":        avgError,
+			"forecast_symbols": len(pulseSignals),
+			"signals":          pulseSignals,
+		})
+		crypto.sendUI(map[string]any{
+			"event":   "scoreboard",
+			"ts":      now.UTC().Format(time.RFC3339Nano),
+			"line":    bestReturn,
+			"median":  0.0,
+			"mad":     0.0,
+			"targets": scoreTargets,
+		})
+		crypto.publishStatus(now)
 
 		crypto.measurements = crypto.measurements[:0]
 
@@ -224,9 +341,12 @@ func (crypto *Crypto) settleDue(now time.Time) {
 					Unanchored:      prediction.anchorPrice <= 0,
 				}
 
+				crypto.errorSum += math.Abs(feedback.Error)
+				crypto.errorCount++
 				crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: feedback})
 				crypto.sendUI(map[string]any{
 					"event":            "decision_trace",
+					"ts":               now.UTC().Format(time.RFC3339Nano),
 					"phase":            "settle",
 					"symbol":           symbol,
 					"source":           source,
@@ -245,9 +365,9 @@ func (crypto *Crypto) recordPrediction(
 	perspective engine.Perspective,
 	measurement engine.Measurement,
 	now time.Time,
-) {
+) float64 {
 	if len(measurement.Pairs) == 0 {
-		return
+		return 0
 	}
 
 	symbol := measurement.Pairs[0].Wsname
@@ -262,9 +382,12 @@ func (crypto *Crypto) recordPrediction(
 	predictedReturn := 0.0
 	sourceEMA := crypto.returnEMA(measurement.Source)
 
-	if crypto.returnCount[measurement.Source] >= config.System.MinCalibrationSamples &&
-		sourceEMA.Value() > 0 {
-		predictedReturn = measurement.Confidence * sourceEMA.Value()
+	if crypto.returnCount[measurement.Source] >= config.System.MinCalibrationSamples {
+		magnitude := math.Abs(sourceEMA.Value())
+
+		if magnitude > 0 {
+			predictedReturn = measurement.Confidence * magnitude
+		}
 	}
 
 	state.open[measurement.Source] = openPrediction{
@@ -279,7 +402,14 @@ func (crypto *Crypto) recordPrediction(
 	}
 
 	crypto.sendUI(map[string]any{
+		"event":      "signal_score",
+		"ts":         now.UTC().Format(time.RFC3339Nano),
+		"source":     measurement.Source,
+		"confidence": measurement.Confidence,
+	})
+	crypto.sendUI(map[string]any{
 		"event":            "decision_trace",
+		"ts":               now.UTC().Format(time.RFC3339Nano),
 		"phase":            "predict",
 		"symbol":           symbol,
 		"source":           measurement.Source,
@@ -289,12 +419,10 @@ func (crypto *Crypto) recordPrediction(
 		"runway_ms":        runway.Milliseconds(),
 	})
 
-	if predictedReturn >= config.System.MinEdgeReturn {
-		crypto.maybeEnter(symbol, measurement, predictedReturn)
-	}
+	return predictedReturn
 }
 
-func (crypto *Crypto) maybeEnter(
+func (crypto *Crypto) enter(
 	symbol string,
 	measurement engine.Measurement,
 	predictedReturn float64,
@@ -323,13 +451,18 @@ func (crypto *Crypto) maybeEnter(
 		crypto.pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Send(&qpool.QValue[any]{
 			Value: order.MarketBuyCash(symbol, slot, 0, 0, ""),
 		})
-
 		crypto.sendUI(map[string]any{
-			"event":            "decision_trace",
-			"phase":            "enter",
+			"event":            "trade_enter",
+			"ts":               time.Now().UTC().Format(time.RFC3339Nano),
 			"symbol":           symbol,
-			"source":           measurement.Source,
+			"regime":           measurement.Regime,
+			"reason":           measurement.Reason,
+			"score":            measurement.Confidence,
+			"trail_pct":        config.System.DefaultTrailPct,
+			"fill":             state.lastPrice,
+			"stop":             0,
 			"notional_eur":     slot,
+			"last":             state.lastPrice,
 			"predicted_return": predictedReturn,
 			"live":             true,
 		})
@@ -341,29 +474,74 @@ func (crypto *Crypto) maybeEnter(
 		return
 	}
 
-	if err := crypto.wallet.SettleEntryReservation(slot, slot); err != nil {
+	fillPrice := config.System.SlippageFill(
+		state.lastPrice, state.bid, state.ask, "buy", config.System.SlippageBPS, slot, nil, nil,
+	)
+	cost := slot
+	fee := cost * crypto.wallet.FeePct / 100
+
+	if err := crypto.wallet.SettleEntryReservation(slot, cost+fee); err != nil {
 		crypto.wallet.ReleaseEntryReservation(slot)
 		return
 	}
 
 	base := strings.Split(symbol, "/")[0]
-	fee := slot * crypto.wallet.FeePct / 100
-	qty := (slot - fee) / state.lastPrice
+	qty := (cost - fee) / fillPrice
 
 	if qty <= 0 {
 		return
 	}
 
 	crypto.wallet.Inventory[base] += qty
+	crypto.sendUI(map[string]any{
+		"event":        "trade_enter",
+		"ts":           time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol":       symbol,
+		"regime":       measurement.Regime,
+		"reason":       measurement.Reason,
+		"score":        measurement.Confidence,
+		"trail_pct":    config.System.DefaultTrailPct,
+		"fill":         fillPrice,
+		"stop":         0,
+		"notional_eur": slot,
+		"last":         state.lastPrice,
+	})
+}
+
+func (crypto *Crypto) exit(symbol string, reason any) {
+	if crypto.wallet == nil {
+		return
+	}
+
+	base := strings.Split(symbol, "/")[0]
+	qty := crypto.wallet.Inventory[base]
+
+	if qty <= 0 {
+		return
+	}
+
+	state := crypto.pairs[symbol]
+
+	if state == nil || state.lastPrice <= 0 {
+		return
+	}
+
+	fillPrice := config.System.SlippageFill(
+		state.lastPrice, state.bid, state.ask, "sell", config.System.SlippageBPS, qty*state.lastPrice, nil, nil,
+	)
+	proceeds := qty * fillPrice
+	fee := proceeds * crypto.wallet.FeePct / 100
+
+	crypto.wallet.Inventory[base] -= qty
+	crypto.wallet.Balance += proceeds - fee
 
 	crypto.sendUI(map[string]any{
-		"event":            "decision_trace",
-		"phase":            "enter",
-		"symbol":           symbol,
-		"source":           measurement.Source,
-		"notional_eur":     slot,
-		"qty":              qty,
-		"predicted_return": predictedReturn,
+		"event":  "trade_exit",
+		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol": symbol,
+		"reason": reason,
+		"fill":   fillPrice,
+		"qty":    qty,
 	})
 }
 
@@ -398,6 +576,7 @@ func (crypto *Crypto) applyFill(fill order.Fill) {
 
 	crypto.sendUI(map[string]any{
 		"event":   "decision_trace",
+		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
 		"phase":   "fill",
 		"symbol":  fill.Symbol,
 		"side":    fill.Side,
@@ -405,6 +584,71 @@ func (crypto *Crypto) applyFill(fill order.Fill) {
 		"price":   fill.Price,
 		"orderID": fill.OrderID,
 	})
+}
+
+func (crypto *Crypto) publishStatus(now time.Time) {
+	if crypto.wallet == nil {
+		return
+	}
+
+	positions := make([]map[string]any, 0)
+	equity := crypto.wallet.Balance + crypto.wallet.ReservedEUR
+
+	for symbol, state := range crypto.pairs {
+		if state.lastPrice <= 0 {
+			continue
+		}
+
+		base := strings.Split(symbol, "/")[0]
+		qty := crypto.wallet.Inventory[base]
+
+		if qty <= 0 {
+			continue
+		}
+
+		equity += qty * state.lastPrice
+		positions = append(positions, map[string]any{
+			"symbol": symbol,
+			"qty":    qty,
+			"last":   state.lastPrice,
+		})
+	}
+
+	crypto.sendUI(map[string]any{
+		"event":          "status",
+		"ts":             now.UTC().Format(time.RFC3339Nano),
+		"equity_eur":     equity,
+		"cash_eur":       crypto.wallet.Balance,
+		"closed_pnl_eur": 0,
+		"trade_count":    0,
+		"win_rate":       0,
+		"open_count":     len(positions),
+		"positions":      positions,
+	})
+	crypto.sendUI(map[string]any{
+		"event": "quote_progress",
+		"ts":    now.UTC().Format(time.RFC3339Nano),
+		"ready": crypto.quoteReady,
+		"total": len(crypto.pairs),
+	})
+}
+
+func (crypto *Crypto) openCount() int {
+	if crypto.wallet == nil {
+		return 0
+	}
+
+	open := 0
+
+	for _, qty := range crypto.wallet.Inventory {
+		if qty <= 0 {
+			continue
+		}
+
+		open++
+	}
+
+	return open
 }
 
 func (crypto *Crypto) sendUI(payload map[string]any) {
@@ -445,9 +689,11 @@ func measurementRunway(measurement engine.Measurement) time.Duration {
 
 func perspectiveType(measurement engine.Measurement) engine.PerspectiveType {
 	switch measurement.Type {
+	case engine.Flow, engine.DepthFlow:
+		return engine.PerspectiveFlow
 	case engine.Basis, engine.LeadLag:
 		return engine.PerspectiveCrossAsset
-	case engine.Sentiment:
+	case engine.Sentiment, engine.Causal:
 		return engine.PerspectiveSentiment
 	default:
 		return engine.PerspectiveMicrostructure

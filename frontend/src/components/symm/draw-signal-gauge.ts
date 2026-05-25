@@ -15,7 +15,7 @@ import {
 	Thickness,
 } from "scichart";
 
-import { appTheme } from "#/components/theme";
+import { appTheme } from "#/components/symm/theme";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 import { formatSignalConfidence } from "#/lib/symm/signal-confidence";
 

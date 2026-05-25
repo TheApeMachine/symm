@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -33,12 +34,9 @@ type Sentiment struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     map[string]*symbolState
 	peak        *adaptive.Peak
+	pending     []string
+	requested   map[string]struct{}
 }
-
-var (
-	_ engine.System = (*Sentiment)(nil)
-	_ engine.Signal = (*Sentiment)(nil)
-)
 
 func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 	ctx, cancel := context.WithCancel(ctx)
@@ -51,6 +49,7 @@ func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     make(map[string]*symbolState),
 		peak:        adaptive.NewPeak(),
+		requested:   make(map[string]struct{}),
 	}
 
 	for _, channel := range []string{"symbols", "tick", "feedback"} {
@@ -59,11 +58,12 @@ func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 	}
 
 	sentiment.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	sentiment.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 
 	return sentiment
 }
 
-func (sentiment *Sentiment) Start() error  { return nil }
+func (sentiment *Sentiment) Start() error        { return nil }
 func (sentiment *Sentiment) State() engine.State { return engine.READY }
 
 func (sentiment *Sentiment) Tick() error {
@@ -72,9 +72,21 @@ func (sentiment *Sentiment) Tick() error {
 		return sentiment.ctx.Err()
 	case value := <-sentiment.subscribers["symbols"].Incoming:
 		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair != nil {
-				sentiment.symbols[symbol] = &symbolState{pair: *pair}
+			if pair == nil {
+				continue
 			}
+
+			sentiment.symbols[symbol] = &symbolState{pair: *pair}
+
+			if pair.Quote != config.System.QuoteCurrency {
+				continue
+			}
+
+			if _, seen := sentiment.requested[symbol]; seen {
+				continue
+			}
+
+			sentiment.pending = append(sentiment.pending, symbol)
 		}
 	case value := <-sentiment.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
@@ -88,6 +100,42 @@ func (sentiment *Sentiment) Tick() error {
 	case value := <-sentiment.subscribers["feedback"].Incoming:
 		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
+		tickerCount := 0
+
+		for _, state := range sentiment.symbols {
+			if state.changePct != 0 {
+				tickerCount++
+			}
+		}
+
+		scanCap := config.System.MaxScanSymbols / 8
+
+		if scanCap < 1 {
+			scanCap = 1
+		}
+
+		if len(sentiment.pending) > 0 && tickerCount < 4 && len(sentiment.requested) < scanCap {
+			remaining := scanCap - len(sentiment.requested)
+			batch := config.System.SubscribeBatch
+
+			if batch > remaining {
+				batch = remaining
+			}
+
+			if batch > len(sentiment.pending) {
+				batch = len(sentiment.pending)
+			}
+
+			symbols := sentiment.pending[:batch]
+			sentiment.pending = sentiment.pending[batch:]
+
+			for _, symbol := range symbols {
+				sentiment.requested[symbol] = struct{}{}
+			}
+
+			sentiment.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
+		}
+
 		for measurement := range sentiment.Measure() {
 			sentiment.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}

@@ -18,6 +18,7 @@ import type {
 	TradeExitEvent,
 	WatchCommand,
 } from "#/lib/symm/events";
+import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { defaultWsUrl, pickMarketWatchSymbol } from "#/lib/symm/events";
 import { buildChartReplayEvents } from "#/lib/symm/chart-replay";
 import { positionSymbolsFromStatus } from "#/lib/symm/positions";
@@ -39,9 +40,62 @@ import {
 	dashboardStore,
 	setFeedConnected,
 } from "#/lib/symm/dashboard-store";
+import {
+	confidenceToGaugePercent,
+	isSignalSource,
+	type SignalSource,
+} from "#/lib/symm/signal-confidence";
 import { WsStream } from "#/lib/symm/ws-stream";
 
 const MAX_CANDLE_HISTORY = 720;
+
+type FluidSurfaceListener = (snapshot: FieldSnapshotEvent) => void;
+type EnginePulseListener = (pulse: EnginePulseEvent) => void;
+type SignalGaugeListener = (needlePercent: number, confidence: number) => void;
+
+const fluidSurfaceListeners = new Set<FluidSurfaceListener>();
+const enginePulseListeners = new Set<EnginePulseListener>();
+const signalGaugeListeners = new Map<SignalSource, Set<SignalGaugeListener>>();
+
+const dispatchFluidSurface = () => {
+	const snapshot = buildFieldSnapshot(dashboardStore.state);
+
+	if (!snapshot) {
+		return;
+	}
+
+	for (const listener of fluidSurfaceListeners) {
+		listener(snapshot);
+	}
+};
+
+const dispatchEnginePulse = (pulse: EnginePulseEvent) => {
+	for (const listener of enginePulseListeners) {
+		listener(pulse);
+	}
+};
+
+const dispatchSignalGauge = (event: SignalScoreEvent) => {
+	if (!isSignalSource(event.source)) {
+		return;
+	}
+
+	const listeners = signalGaugeListeners.get(event.source);
+
+	if (!listeners) {
+		return;
+	}
+
+	const confidence =
+		typeof event.confidence === "number" && Number.isFinite(event.confidence)
+			? event.confidence
+			: 0;
+	const needlePercent = confidenceToGaugePercent(confidence);
+
+	for (const listener of listeners) {
+		listener(needlePercent, confidence);
+	}
+};
 
 type ChartListener = (event: SymmEvent) => void;
 
@@ -129,6 +183,7 @@ const routeChartEvent = (event: SymmEvent) => {
 		case "candle_bar": {
 			const bar = event as CandleBarEvent;
 			appendCandleHistory(bar);
+			OhlcDataProvider.ingest(bar);
 			dispatchChart(String(bar.symbol), bar);
 			return;
 		}
@@ -174,12 +229,18 @@ const handleFeedEvent = (event: SymmEvent) => {
 			chartSubscribeSymbols();
 			routeChartEvent(event);
 			return;
-		case "signal_score":
-			applySignalScore(event as SignalScoreEvent);
+		case "signal_score": {
+			const score = event as SignalScoreEvent;
+			applySignalScore(score);
+			dispatchSignalGauge(score);
 			return;
-		case "engine_pulse":
-			applyEnginePulse(event as EnginePulseEvent);
+		}
+		case "engine_pulse": {
+			const pulse = event as EnginePulseEvent;
+			applyEnginePulse(pulse);
+			dispatchEnginePulse(pulse);
 			return;
+		}
 		case "decision_trace":
 			applyDecisionTrace(event as DecisionTraceEvent);
 			return;
@@ -191,11 +252,13 @@ const handleFeedEvent = (event: SymmEvent) => {
 		case "field_snapshot":
 			applyFieldSnapshot(event as FieldSnapshotEvent);
 			chartSubscribeSymbols();
+			dispatchFluidSurface();
 			return;
 		case "field_row": {
 			const rowEvent = event as FieldRowEvent;
 			applyFieldRow(rowEvent.row);
 			applyFluidSampled(Object.keys(dashboardStore.state.rows).length);
+			dispatchFluidSurface();
 			return;
 		}
 		case "field_aggregate":
@@ -204,9 +267,11 @@ const handleFeedEvent = (event: SymmEvent) => {
 				(event as FieldAggregateEvent).field,
 			);
 			applyFluidSampled((event as FieldAggregateEvent).symbol_count);
+			dispatchFluidSurface();
 			return;
 		case "field_grid":
 			applyFieldGrid((event as FieldGridEvent).grid);
+			dispatchFluidSurface();
 			return;
 		case "fluid_display":
 			applyFluidDisplay(event as FluidDisplayEvent);
@@ -287,5 +352,64 @@ export const onChart = (
 		}
 
 		feedStream?.send({ op: "unsubscribe", symbols: [symbol] });
+	};
+};
+
+export const registerFluidSurface = (
+	handler: FluidSurfaceListener,
+): (() => void) => {
+	fluidSurfaceListeners.add(handler);
+	const snapshot = buildFieldSnapshot(dashboardStore.state);
+
+	if (snapshot) {
+		handler(snapshot);
+	}
+
+	return () => {
+		fluidSurfaceListeners.delete(handler);
+	};
+};
+
+export const registerEnginePulseChart = (
+	appendPulse: EnginePulseListener,
+): (() => void) => {
+	enginePulseListeners.add(appendPulse);
+	const pulse = dashboardStore.state.enginePulse;
+
+	if (pulse) {
+		appendPulse(pulse);
+	}
+
+	return () => {
+		enginePulseListeners.delete(appendPulse);
+	};
+};
+
+export const registerSignalGauge = (
+	source: SignalSource,
+	handler: SignalGaugeListener,
+): (() => void) => {
+	const listeners = signalGaugeListeners.get(source) ?? new Set();
+	listeners.add(handler);
+	signalGaugeListeners.set(source, listeners);
+
+	const confidence = dashboardStore.state.signalConfidences[source];
+
+	if (confidence > 0) {
+		handler(confidenceToGaugePercent(confidence), confidence);
+	}
+
+	return () => {
+		const current = signalGaugeListeners.get(source);
+
+		if (!current) {
+			return;
+		}
+
+		current.delete(handler);
+
+		if (current.size === 0) {
+			signalGaugeListeners.delete(source);
+		}
 	};
 };

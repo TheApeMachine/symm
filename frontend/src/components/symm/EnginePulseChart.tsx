@@ -1,15 +1,8 @@
-import {
-	memo,
-	useCallback,
-	useEffect,
-	useRef,
-	type MutableRefObject,
-} from "react";
-import { SciChartReact, type TResolvedReturnType } from "scichart-react";
+import { memo, useCallback } from "react";
+import { SciChartReact } from "scichart-react";
 
-import { drawEnginePulse } from "#/components/symm/draw-engine-pulse";
-import type { EnginePulseEvent } from "#/lib/symm/events";
-import { dashboardStore } from "#/lib/symm/dashboard-store";
+import { initEnginePulseChart } from "#/components/symm/init-engine-pulse";
+import { registerEnginePulseChart } from "#/lib/symm/feed";
 import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
 import "#/lib/symm/scichart-setup";
 
@@ -17,75 +10,23 @@ type EnginePulseChartProps = {
 	className?: string;
 };
 
-const replayPulseHistory = (
-	controls: TResolvedReturnType<typeof drawEnginePulse>["controls"],
-	lastSeqRef: MutableRefObject<number | null>,
-) => {
-	const seen = new Set<number>();
-
-	for (const pulse of dashboardStore.state.pulseLog) {
-		if (seen.has(pulse.seq)) {
-			continue;
-		}
-
-		seen.add(pulse.seq);
-		controls.appendPulse(pulse);
-		lastSeqRef.current = pulse.seq;
-	}
-
-	const current = dashboardStore.state.enginePulse;
-
-	if (current && !seen.has(current.seq)) {
-		controls.appendPulse(current);
-		lastSeqRef.current = current.seq;
-	}
-};
-
 /** Live average prediction vs running error — one point per engine_pulse tick. */
 export const EnginePulseChart = memo(function EnginePulseChart({
 	className = "",
 }: EnginePulseChartProps) {
-	const controlsRef = useRef<
-		TResolvedReturnType<typeof drawEnginePulse>["controls"] | null
-	>(null);
-	const lastSeqRef = useRef<number | null>(null);
-	const pulse = useSymmEnginePulse();
-
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
 		if (typeof rootElement === "string") {
-			throw new Error("drawEnginePulse requires an HTMLDivElement root");
+			throw new Error("initEnginePulseChart requires an HTMLDivElement root");
 		}
 
-		return drawEnginePulse(rootElement);
+		return initEnginePulseChart(rootElement);
 	}, []);
 
 	const onInit = useCallback(
-		(result: TResolvedReturnType<typeof drawEnginePulse>) => {
-			controlsRef.current = result.controls;
-			lastSeqRef.current = null;
-			replayPulseHistory(result.controls, lastSeqRef);
-
-			return () => {
-				controlsRef.current = null;
-				lastSeqRef.current = null;
-				result.controls.dispose();
-			};
-		},
+		(result: Awaited<ReturnType<typeof initEnginePulseChart>>) =>
+			registerEnginePulseChart(result.appendPulse),
 		[],
 	);
-
-	useEffect(() => {
-		if (!pulse || !controlsRef.current) {
-			return;
-		}
-
-		if (pulse.seq === lastSeqRef.current) {
-			return;
-		}
-
-		lastSeqRef.current = pulse.seq;
-		controlsRef.current.appendPulse(pulse);
-	}, [pulse]);
 
 	return (
 		<div

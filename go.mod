@@ -6,6 +6,7 @@ require (
 	github.com/qntfy/jsonparser v1.0.2
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
+	github.com/valyala/fasthttp v1.71.0
 )
 
 require (
@@ -30,7 +31,6 @@ require (
 	github.com/smarty/assertions v1.16.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.71.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect
@@ -48,7 +48,7 @@ require (
 	github.com/gofiber/fiber/v3 v3.2.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/theapemachine/errnie v1.2.0
+	github.com/theapemachine/errnie v1.2.3
 	github.com/theapemachine/qpool v0.0.3
 	gonum.org/v1/gonum v0.17.0
 )

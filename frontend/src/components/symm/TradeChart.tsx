@@ -1,39 +1,33 @@
 import { memo, useCallback } from "react";
-import {
-	SciChartGroup,
-	SciChartReact,
-	type TResolvedReturnType,
-} from "scichart-react";
+import { SciChartGroup, SciChartReact } from "scichart-react";
 
-import { drawTradeChart } from "#/components/symm/draw-trade-chart";
-import { onChart } from "#/lib/symm/feed";
-import type { SymmEvent } from "#/lib/symm/events";
-import "#/lib/symm/scichart-setup";
+import {
+	initTradeChart,
+	type TTradeChartInitResult,
+} from "#/components/symm/init-trade-chart";
+import { registerTradeChart } from "#/components/symm/ws";
 
 type TradeChartProps = {
 	symbol: string;
 };
 
-/** One SciChart surface per open position — ticks arrive via feed, not React props. */
 export const TradeChart = memo(function TradeChart({
 	symbol,
 }: TradeChartProps) {
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => {
 			if (typeof rootElement === "string") {
-				throw new Error("drawTradeChart requires an HTMLDivElement root");
+				throw new Error("initTradeChart requires an HTMLDivElement root");
 			}
 
-			return drawTradeChart(rootElement, symbol);
+			return initTradeChart(rootElement, symbol);
 		},
 		[symbol],
 	);
 
 	const onInit = useCallback(
-		(result: TResolvedReturnType<typeof drawTradeChart>) =>
-			onChart(symbol, (ev: SymmEvent) => {
-				result.controls.handleEvent(ev);
-			}),
+		(result: TTradeChartInitResult) =>
+			registerTradeChart(symbol, result.appendBar),
 		[symbol],
 	);
 
@@ -51,7 +45,6 @@ type TradeChartGridProps = {
 	symbols: string[];
 };
 
-/** Grid of linked trade charts — SciChartGroup shares modifier context across surfaces. */
 export const TradeChartGrid = memo(function TradeChartGrid({
 	symbols,
 }: TradeChartGridProps) {

@@ -16,6 +16,7 @@ type FluidSymbol struct {
 	bids        []market.BookLevel
 	asks        []market.BookLevel
 	buyPressure float64
+	changePct   float64
 	pressure    *adaptive.EMA
 	spreadBPS   float64
 	score       *numeric.Derived

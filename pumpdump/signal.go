@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -23,8 +24,7 @@ var (
 		[]float64{0, 1, 2},
 		[]string{"dump", "precursor", "actual_pump"},
 	)
-	liquidityGate = adaptive.NewBelowMedian()
-	peakGate      = adaptive.NewPeak()
+	peakGate = adaptive.NewPeak()
 )
 
 /*
@@ -37,12 +37,8 @@ type PumpDump struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     map[string]*PumpSymbol
+	requested   map[string]struct{}
 }
-
-var (
-	_ engine.System = (*PumpDump)(nil)
-	_ engine.Signal = (*PumpDump)(nil)
-)
 
 /*
 NewPumpDump wires broadcast subscribers for the pumpdump system.
@@ -57,6 +53,7 @@ func NewPumpDump(ctx context.Context, pool *qpool.Q) *PumpDump {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     make(map[string]*PumpSymbol),
+		requested:   make(map[string]struct{}),
 	}
 
 	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
@@ -65,6 +62,7 @@ func NewPumpDump(ctx context.Context, pool *qpool.Q) *PumpDump {
 	}
 
 	pumpdump.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	pumpdump.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 
 	return pumpdump
 }
@@ -91,12 +89,37 @@ func (pumpdump *PumpDump) Tick() error {
 		row := value.Value.(market.TickerRow)
 		state := pumpdump.symbols[row.Symbol]
 
-		if state == nil {
+		if state == nil || row.Last <= 0 {
 			return nil
 		}
 
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
+
+		if _, seen := pumpdump.requested[row.Symbol]; seen {
+			return nil
+		}
+
+		volumes := make([]float64, 0, len(pumpdump.symbols))
+
+		for _, symbolState := range pumpdump.symbols {
+			if symbolState.dailyQuoteVol > 0 {
+				volumes = append(volumes, symbolState.dailyQuoteVol)
+			}
+		}
+
+		if len(volumes) < 2 {
+			return nil
+		}
+
+		median := numeric.PercentileSorted(numeric.CopySorted(volumes), 0.5)
+
+		if state.dailyQuoteVol < median {
+			return nil
+		}
+
+		pumpdump.requested[row.Symbol] = struct{}{}
+		pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
 	case value := <-pumpdump.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := pumpdump.symbols[tick.Symbol]
@@ -118,6 +141,11 @@ func (pumpdump *PumpDump) Tick() error {
 
 		if closed != state.volumeWindow.Sum() {
 			_, _ = state.volumeBaseline.Next(0, closed)
+		}
+
+		if _, seen := pumpdump.requested[tick.Symbol]; !seen && closed > state.volumeBaseline.Value() {
+			pumpdump.requested[tick.Symbol] = struct{}{}
+			pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
 		}
 
 		if tick.Side == "buy" {
@@ -178,32 +206,9 @@ func (pumpdump *PumpDump) Source() string {
 
 func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		positiveQuotes := make(map[string]float64, len(pumpdump.symbols))
-
-		for symbol, state := range pumpdump.symbols {
-			if state.dailyQuoteVol > 0 {
-				positiveQuotes[symbol] = state.dailyQuoteVol
-			}
-		}
-
 		spikes := make(map[string]float64, len(pumpdump.symbols))
 
 		for symbol, state := range pumpdump.symbols {
-			if state.dailyQuoteVol > 0 {
-				if len(positiveQuotes) < 1 {
-					continue
-				}
-
-				liquid, err := liquidityGate.Next(
-					state.dailyQuoteVol,
-					adaptive.PeerValues(positiveQuotes, symbol)...,
-				)
-
-				if err != nil || liquid <= 0 {
-					continue
-				}
-			}
-
 			spike, err := state.volumeSpike.Next(
 				0,
 				state.volumeWindow.Sum(),

@@ -15,7 +15,7 @@ const TradingDashboard = () => {
 	const positionSymbols = useSymmPositionSymbols();
 
 	return (
-		<div className="flex w-full h-full flex-col overflow-hidden bg-(--dash-bg) text-(--dash-text)">
+		<div className="flex h-full w-full flex-col overflow-hidden bg-(--dash-bg) text-(--dash-text)">
 			<DashboardHeader />
 			<div className="flex min-h-0 flex-1">
 				<ChartSection connected={connected} positionSymbols={positionSymbols} />

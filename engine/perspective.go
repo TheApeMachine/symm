@@ -4,6 +4,7 @@ type PerspectiveType uint8
 
 const (
 	PerspectiveMicrostructure PerspectiveType = iota
+	PerspectiveFlow
 	PerspectiveCrossAsset
 	PerspectiveSentiment
 )
