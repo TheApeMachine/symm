@@ -4,6 +4,8 @@ import "time"
 
 /*
 PredictionFeedback is the realized error once a stored prediction matures.
+The trader emits this after Prediction.DueAt; each Signal.Feedback ingests it
+and updates a learned.Forecast scale (directly or via PredictionCalibrator).
 */
 type PredictionFeedback struct {
 	Source          string

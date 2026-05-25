@@ -10,55 +10,93 @@ import (
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
-func TestPumpDumpPublishesMeasurement(t *testing.T) {
+func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
+	t.Helper()
+
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	signal := NewPumpDump(ctx, pool)
-	subscriber := signal.broadcasts["measurements"].Subscribe("test", 8)
+	t.Cleanup(func() { _ = signal.Close() })
 
 	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
 
-	sym := signal.symbols["PUMP/EUR"]
-	sym.lastPrice = 1
-	sym.dailyQuoteVol = 50
-	sym.imbalance = 0.8
-	sym.buyPressure = 0.6
-	sym.spreadBPS = 10
+	symbolState := signal.symbols["PUMP/EUR"]
+
+	if symbolState == nil {
+		t.Fatal("expected pump symbol state")
+	}
+
+	return signal, symbolState
+}
+
+func seedPumpSymbol(symbolState *PumpSymbol) {
+	symbolState.lastPrice = 1
+	symbolState.dailyQuoteVol = 50
+	symbolState.imbalance = 0.8
+	symbolState.buyPressure = 0.6
+	symbolState.spreadBPS = 10
 
 	for range 12 {
-		_, _ = sym.volumeBaseline.Next(0, 10)
+		_, _ = symbolState.volumeBaseline.Next(0, 10)
 	}
 
 	for range 8 {
-		_, _ = sym.score.Push(1, 0.8, 0.6, 20, 1, 1)
+		_, _ = symbolState.score.Push(1, 0.8, 0.6, 20, 1, 1, 1)
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	_, _ = sym.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
+	_, _ = symbolState.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
+}
 
-	if err := signal.scoreAll(); err != nil {
-		t.Fatalf("score: %v", err)
-	}
+func TestPumpDumpMeasure(t *testing.T) {
+	signal, symbolState := testPumpDump(t)
+	seedPumpSymbol(symbolState)
 
-	select {
-	case value := <-subscriber.Incoming:
-		measurement, ok := value.Value.(engine.Measurement)
+	now := time.Unix(1_700_000_000, 0)
+	found := false
 
-		if !ok {
-			t.Fatalf("expected measurement, got %T", value.Value)
-		}
+	for measurement := range signal.Measure(context.Background(), now) {
+		found = true
 
-		if measurement.Source != "pumpdump" || measurement.Confidence <= 0 {
+		if measurement.Source != pumpdumpSource || measurement.Confidence <= 0 {
 			t.Fatalf("unexpected measurement: %+v", measurement)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for pumpdump measurement")
+	}
+
+	if !found {
+		t.Fatal("expected at least one measurement")
 	}
 }
 
-func BenchmarkPumpDumpScoreAll(b *testing.B) {
+func TestPumpDumpFeedbackLowersConfidence(t *testing.T) {
+	signal, symbolState := testPumpDump(t)
+	seedPumpSymbol(symbolState)
+
+	before := symbolState.forecast.Scale()
+
+	signal.Feedback(engine.PredictionFeedback{
+		Source:          pumpdumpSource,
+		Symbol:          "PUMP/EUR",
+		PredictedReturn: 0.01,
+		ActualReturn:    -0.01,
+	})
+
+	if symbolState.forecast.Scale() >= before {
+		t.Fatalf("expected scale to drop after loss, before=%v after=%v", before, symbolState.forecast.Scale())
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+
+	for measurement := range signal.Measure(context.Background(), now) {
+		if measurement.Confidence <= 0 {
+			t.Fatalf("expected positive confidence after feedback scale, got %+v", measurement)
+		}
+	}
+}
+
+func BenchmarkPumpDumpMeasure(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -66,29 +104,14 @@ func BenchmarkPumpDumpScoreAll(b *testing.B) {
 	signal := NewPumpDump(ctx, pool)
 	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
 
-	sym := signal.symbols["PUMP/EUR"]
-	sym.lastPrice = 1
-	sym.dailyQuoteVol = 50
-	sym.imbalance = 0.8
-	sym.buyPressure = 0.6
-	sym.spreadBPS = 10
-
-	for range 6 {
-		_, _ = sym.volumeBaseline.Next(0, 10)
-	}
-
-	for range 6 {
-		_, _ = sym.score.Push(1, 0.8, 0.6, 20, 1, 1)
-	}
+	seedPumpSymbol(signal.symbols["PUMP/EUR"])
 
 	now := time.Unix(1_700_000_000, 0)
-	_, _ = sym.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := signal.scoreAll(); err != nil {
-			b.Fatal(err)
+		for range signal.Measure(ctx, now) {
 		}
 	}
 }

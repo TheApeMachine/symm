@@ -2,26 +2,31 @@ package pumpdump
 
 import (
 	"context"
+	"iter"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
+const pumpdumpSource = "pumpdump"
+
 const tradeWindow = 5 * time.Minute
 
-var moveClassifier, _ = adaptive.NewClassifier(
-	[]float64{-0.001, 0.001},
-	[]float64{0, 1, 2},
-	[]string{"dump", "precursor", "actual_pump"},
+var (
+	moveClassifier, _ = adaptive.NewClassifier(
+		[]float64{-0.001, 0.001},
+		[]float64{0, 1, 2},
+		[]string{"dump", "precursor", "actual_pump"},
+	)
+	liquidityGate = adaptive.NewBelowMedian()
+	peakGate      = adaptive.NewPeak()
 )
 
 /*
 PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker streams.
-Watch list comes from symbols; market data from tick, trade, and book.
 */
 type PumpDump struct {
 	ctx         context.Context
@@ -30,8 +35,9 @@ type PumpDump struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     map[string]*PumpSymbol
-	peak        *adaptive.Peak
 }
+
+var _ engine.Signal = (*PumpDump)(nil)
 
 /*
 NewPumpDump wires broadcast subscribers for the pumpdump system.
@@ -46,7 +52,6 @@ func NewPumpDump(ctx context.Context, pool *qpool.Q) *PumpDump {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     make(map[string]*PumpSymbol),
-		peak:        adaptive.NewPeak(),
 	}
 
 	for _, channel := range []string{"symbols", "tick", "trade", "book"} {
@@ -78,13 +83,13 @@ func (pumpdump *PumpDump) Tick() error {
 			}
 		}
 	case value := <-pumpdump.subscribers["tick"].Incoming:
-		update := value.Value.(engine.TickUpdate)
+		update := value.Value.(TickUpdate)
 		pumpdump.symbols[update.Symbol].FeedTick(update)
 	case value := <-pumpdump.subscribers["trade"].Incoming:
-		update := value.Value.(engine.TradeUpdate)
+		update := value.Value.(TradeUpdate)
 		pumpdump.symbols[update.Symbol].FeedTrade(update)
 	case value := <-pumpdump.subscribers["book"].Incoming:
-		update := value.Value.(engine.BookUpdate)
+		update := value.Value.(BookUpdate)
 		pumpdump.symbols[update.Symbol].FeedBook(update)
 	default:
 		return pumpdump.scoreAll()
@@ -99,45 +104,86 @@ func (pumpdump *PumpDump) Close() error {
 	return nil
 }
 
-func (pumpdump *PumpDump) scoreAll() error {
-	quotes := make(map[string]float64, len(pumpdump.symbols))
+func (pumpdump *PumpDump) Source() string {
+	return pumpdumpSource
+}
 
-	for symbol, sym := range pumpdump.symbols {
-		quotes[symbol] = sym.dailyQuoteVol
+func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
+	return func(yield func(engine.Measurement) bool) {
+		pumpdump.eachMeasurement(yield)
+	}
+}
+
+func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
+	if feedback.Source != pumpdumpSource {
+		return
+	}
+
+	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+		return
+	}
+
+	symbolState := pumpdump.symbols[feedback.Symbol]
+
+	if symbolState == nil {
+		return
+	}
+
+	symbolState.ApplyFeedback(feedback)
+}
+
+func (pumpdump *PumpDump) scoreAll() error {
+	pumpdump.eachMeasurement(func(measurement engine.Measurement) bool {
+		pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
+
+		return true
+	})
+
+	return nil
+}
+
+func (pumpdump *PumpDump) eachMeasurement(visit func(engine.Measurement) bool) {
+	positiveQuotes := make(map[string]float64, len(pumpdump.symbols))
+
+	for symbol, symbolState := range pumpdump.symbols {
+		if symbolState.dailyQuoteVol > 0 {
+			positiveQuotes[symbol] = symbolState.dailyQuoteVol
+		}
 	}
 
 	spikes := make(map[string]float64, len(pumpdump.symbols))
 
-	for symbol, sym := range pumpdump.symbols {
-		if sym.dailyQuoteVol > 0 &&
-			!engine.PassesBelowMedianLiquidity(sym.dailyQuoteVol, quotes, symbol, 1) {
+	for symbol, symbolState := range pumpdump.symbols {
+		if !symbolState.passesLiquidity(positiveQuotes, symbol) {
 			continue
 		}
 
-		spike := errnie.Does(func() (float64, error) {
-			return sym.volumeSpike.Next(0, sym.volumeWindow.Sum(), sym.volumeBaseline.Value())
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		spike, ok := symbolState.spike()
 
-		if spike > 1 {
-			spikes[symbol] = spike
+		if !ok {
+			continue
 		}
+
+		spikes[symbol] = spike
 	}
 
 	for symbol, spike := range spikes {
-		peakSpike := errnie.Does(func() (float64, error) {
-			return pumpdump.peak.Next(spike, adaptive.PeerValues(spikes, symbol)...)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
 
-		if measurement, ok := pumpdump.symbols[symbol].Measure(peakSpike); ok {
-			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
+		if err != nil {
+			continue
+		}
+
+		measurement, ok := pumpdump.symbols[symbol].Measure(peakSpike)
+
+		if !ok {
+			continue
+		}
+
+		if !visit(measurement) {
+			return
 		}
 	}
-
-	return nil
 }

@@ -200,11 +200,7 @@ func (fluid *Fluid) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
 Feedback nudges fluid source/shock calibration from settled prediction error.
 */
 func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != fluid.Source() {
-		return
-	}
-
-	fluid.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(fluid.Source(), feedback, fluid.track.ApplyPredictionFeedback)
 }
 
 /*

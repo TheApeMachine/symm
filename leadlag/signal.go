@@ -75,11 +75,7 @@ func (leadlag *LeadLag) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
 }
 
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != leadlagSource {
-		return
-	}
-
-	leadlag.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(leadlagSource, feedback, leadlag.track.ApplyPredictionFeedback)
 }
 
 func (leadlag *LeadLag) Measure(
@@ -163,24 +159,21 @@ func (leadlag *LeadLag) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
-	pair, ok := leadlag.pairs[symbol]
-
-	if !ok {
-		return engine.Measurement{}, false, nil
-	}
-
 	measurementType := engine.LeadLag
 
 	if leaderReturn < 0 {
 		measurementType = engine.Dump
 	}
 
-	return engine.Measurement{
-		Type:       measurementType,
-		Source:     leadlagSource,
-		Regime:     "cross",
-		Reason:     "lead_lag",
-		Pairs:      []asset.Pair{pair},
-		Confidence: confidence,
-	}, true, nil
+	return engine.PairMeasurement(
+		leadlag.pairs,
+		symbol,
+		engine.Reading{
+			Type:   measurementType,
+			Source: leadlagSource,
+			Regime: "cross",
+			Reason: "lead_lag",
+		},
+		confidence,
+	)
 }

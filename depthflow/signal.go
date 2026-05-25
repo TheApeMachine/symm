@@ -3,6 +3,7 @@ package depthflow
 import (
 	"context"
 	"iter"
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -63,11 +64,7 @@ func (depthflow *DepthFlow) MeanConfidence() float64 {
 }
 
 func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != depthflowSource {
-		return
-	}
-
-	depthflow.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(depthflowSource, feedback, depthflow.track.ApplyPredictionFeedback)
 }
 
 func (depthflow *DepthFlow) Measure(
@@ -113,7 +110,7 @@ func (depthflow *DepthFlow) evaluate(
 	track := depthflow.track.ensure(symbol)
 	track.recordDepthImbalance(imbalance)
 
-	raw := absFloat(imbalance)
+	raw := math.Abs(imbalance)
 
 	if snapshot.BuyPressure > 0 && imbalance > 0 {
 		raw *= (snapshot.BuyPressure + 1) / 2
@@ -129,32 +126,21 @@ func (depthflow *DepthFlow) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
-	pair, ok := depthflow.pairs[symbol]
-
-	if !ok {
-		return engine.Measurement{}, false, nil
-	}
-
 	measurementType := engine.DepthFlow
 
 	if imbalance < 0 {
 		measurementType = engine.Dump
 	}
 
-	return engine.Measurement{
-		Type:       measurementType,
-		Source:     depthflowSource,
-		Regime:     "depth",
-		Reason:     "depth_imbalance",
-		Pairs:      []asset.Pair{pair},
-		Confidence: confidence,
-	}, true, nil
-}
-
-func absFloat(value float64) float64 {
-	if value < 0 {
-		return -value
-	}
-
-	return value
+	return engine.PairMeasurement(
+		depthflow.pairs,
+		symbol,
+		engine.Reading{
+			Type:   measurementType,
+			Source: depthflowSource,
+			Regime: "depth",
+			Reason: "depth_imbalance",
+		},
+		confidence,
+	)
 }

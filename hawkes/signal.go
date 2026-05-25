@@ -126,11 +126,9 @@ func (hawkes *Hawkes) SymbolRisk(symbol string) (engine.SymbolRisk, bool) {
 }
 
 func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != hawkes.Source() {
-		return
-	}
-
-	hawkes.state(feedback.Symbol).ApplyFeedback(feedback)
+	engine.ForwardSourceFeedback(hawkes.Source(), feedback, func(feedback engine.PredictionFeedback) {
+		hawkes.state(feedback.Symbol).ApplyFeedback(feedback)
+	})
 }
 
 func (hawkes *Hawkes) beginScan() {

@@ -4,14 +4,13 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/numeric/learned"
 	"github.com/theapemachine/symm/stats"
 )
 
 const (
 	defaultCalibrationHalfLife = 5 * time.Minute
 	defaultCalibrationTick     = 100 * time.Millisecond
-	maxCalibrationSample       = 2.0
 )
 
 /*
@@ -19,7 +18,7 @@ PredictionCalibrator tracks running actual/predicted return ratios from settled 
 Scale feeds back into signal parameters, not post-hoc confidence output.
 */
 type PredictionCalibrator struct {
-	scale        adaptive.AlphaEMA
+	forecast     *learned.Forecast
 	halfLife     time.Duration
 	tickInterval time.Duration
 	params       CalibrationParams
@@ -30,6 +29,7 @@ NewPredictionCalibrator returns a neutral calibrator with injected calibration p
 */
 func NewPredictionCalibrator(params CalibrationParams) PredictionCalibrator {
 	return PredictionCalibrator{
+		forecast:     learned.NewForecast(0.35),
 		halfLife:     defaultCalibrationHalfLife,
 		tickInterval: defaultCalibrationTick,
 		params:       params,
@@ -45,66 +45,30 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 		return
 	}
 
-	sample, ok := CalibrationStep(feedback.PredictedReturn, feedback.ActualReturn)
-
-	if !ok {
-		return
-	}
-
-	const maxScale = 2.0
-
-	if sample > maxScale {
-		sample = maxScale
-	}
-
-	if feedback.Runway > 0 && calibrator.scale.Updates() >= calibrator.params.minCalibrationSamples() {
+	if feedback.Runway > 0 && calibrator.forecast.Updates() >= calibrator.params.minCalibrationSamples() {
 		calibrator.halfLife = calibrator.params.adaptiveHalfLife(feedback.Runway)
 	}
 
-	_ = calibrator.scale.Update(sample, calibrator.ewmaAlpha())
+	_ = calibrator.forecast.Absorb(
+		feedback.PredictedReturn,
+		feedback.ActualReturn,
+		calibrator.ewmaAlpha(),
+	)
 }
 
 /*
 Scale returns the current parameter calibration multiplier.
 */
 func (calibrator *PredictionCalibrator) Scale() float64 {
-	if calibrator.scale.Updates() == 0 {
-		return 1
-	}
-
-	value := calibrator.scale.Value()
-
-	if value <= 0 {
-		return 0
-	}
-
-	return value
+	return calibrator.forecast.Scale()
 }
 
 /*
-CalibrationStep maps realized move to a calibration sample in [0, maxCalibrationSample].
+CalibrationStep maps realized move to a calibration sample in [0, maxSampleRatio].
 Wins scale by actual/predicted; losses preserve magnitude via 1+actual/predicted clamped at zero.
 */
 func CalibrationStep(predictedReturn, actualReturn float64) (float64, bool) {
-	if predictedReturn <= 0 {
-		return 0, false
-	}
-
-	ratio := actualReturn / predictedReturn
-
-	if actualReturn <= 0 {
-		ratio = 1 + ratio
-	}
-
-	if ratio < 0 {
-		ratio = 0
-	}
-
-	if ratio > maxCalibrationSample {
-		ratio = maxCalibrationSample
-	}
-
-	return ratio, true
+	return learned.SampleRatio(predictedReturn, actualReturn)
 }
 
 func (calibrator *PredictionCalibrator) ewmaAlpha() float64 {

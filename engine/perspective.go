@@ -1,39 +1,24 @@
 package engine
 
-/*
-MarketPerspective groups signals by the market angle they measure.
-The trader combines perspectives selectively, not all sources equally.
-*/
-type MarketPerspective string
+type PerspectiveType uint8
 
 const (
-	PerspectiveMicrostructure MarketPerspective = "microstructure"
-	PerspectiveFlow           MarketPerspective = "flow"
-	PerspectiveCrossAsset     MarketPerspective = "cross_asset"
-	PerspectiveSentiment      MarketPerspective = "sentiment"
-	PerspectiveCausal         MarketPerspective = "causal"
+	PerspectiveMicrostructure PerspectiveType = iota
+	PerspectiveCrossAsset
+	PerspectiveSentiment
 )
 
-/*
-SourcePerspective maps each signal source to its primary market angle.
-*/
-func SourcePerspective(source string) MarketPerspective {
-	perspective, ok := sourcePerspectives[source]
+type MarketRegime uint8
 
-	if !ok {
-		return PerspectiveMicrostructure
-	}
+const (
+	RegimeDead MarketRegime = iota
+	RegimeTrending
+	RegimeBullish
+	RegimeBearish
+)
 
-	return perspective
-}
-
-var sourcePerspectives = map[string]MarketPerspective{
-	"pumpdump":  PerspectiveMicrostructure,
-	"hawkes":    PerspectiveMicrostructure,
-	"depthflow": PerspectiveMicrostructure,
-	"fluid":     PerspectiveFlow,
-	"leadlag":   PerspectiveCrossAsset,
-	"basis":     PerspectiveCrossAsset,
-	"sentiment": PerspectiveSentiment,
-	"causal":    PerspectiveCausal,
+type Perspective struct {
+	Type         PerspectiveType
+	Measurements []Measurement
+	Regime       MarketRegime
 }

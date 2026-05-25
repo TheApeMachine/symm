@@ -76,11 +76,7 @@ func (sentiment *Sentiment) WarmFromOHLC(candles map[string][]engine.OHLCCandle)
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != sentimentSource {
-		return
-	}
-
-	sentiment.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(sentimentSource, feedback, sentiment.track.ApplyPredictionFeedback)
 }
 
 func (sentiment *Sentiment) Measure(
@@ -178,24 +174,21 @@ func (sentiment *Sentiment) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
-	pair, ok := sentiment.pairs[symbol]
-
-	if !ok {
-		return engine.Measurement{}, false, nil
-	}
-
 	measurementType := engine.Sentiment
 
 	if pressure+change < 0 {
 		measurementType = engine.Dump
 	}
 
-	return engine.Measurement{
-		Type:       measurementType,
-		Source:     sentimentSource,
-		Regime:     "sentiment",
-		Reason:     "flow_breadth",
-		Pairs:      []asset.Pair{pair},
-		Confidence: confidence,
-	}, true, nil
+	return engine.PairMeasurement(
+		sentiment.pairs,
+		symbol,
+		engine.Reading{
+			Type:   measurementType,
+			Source: sentimentSource,
+			Regime: "sentiment",
+			Reason: "flow_breadth",
+		},
+		confidence,
+	)
 }

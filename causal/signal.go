@@ -89,11 +89,7 @@ func (causal *Causal) Source() string {
 Feedback nudges intervention calibration from settled prediction error.
 */
 func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != causal.Source() {
-		return
-	}
-
-	causal.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(causal.Source(), feedback, causal.track.ApplyPredictionFeedback)
 }
 
 /*

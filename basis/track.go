@@ -44,7 +44,7 @@ func (trackStore *TrackStore) BeginScan() {
 }
 
 func (trackStore *TrackStore) ApplyPredictionFeedback(feedback engine.PredictionFeedback) {
-	if feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.ValidPredictionFeedback(feedback) {
 		return
 	}
 

@@ -75,11 +75,7 @@ func (basis *Basis) WarmFromOHLC(candles map[string][]engine.OHLCCandle) {
 }
 
 func (basis *Basis) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != basisSource {
-		return
-	}
-
-	basis.track.ApplyPredictionFeedback(feedback)
+	engine.ForwardSourceFeedback(basisSource, feedback, basis.track.ApplyPredictionFeedback)
 }
 
 func (basis *Basis) Measure(
@@ -158,18 +154,15 @@ func (basis *Basis) evaluate(
 		return engine.Measurement{}, false, nil
 	}
 
-	pair, ok := basis.pairs[symbol]
-
-	if !ok {
-		return engine.Measurement{}, false, nil
-	}
-
-	return engine.Measurement{
-		Type:       engine.Basis,
-		Source:     basisSource,
-		Regime:     "basis",
-		Reason:     "relative_strength",
-		Pairs:      []asset.Pair{pair},
-		Confidence: confidence,
-	}, true, nil
+	return engine.PairMeasurement(
+		basis.pairs,
+		symbol,
+		engine.Reading{
+			Type:   engine.Basis,
+			Source: basisSource,
+			Regime: "basis",
+			Reason: "relative_strength",
+		},
+		confidence,
+	)
 }

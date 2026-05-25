@@ -3,6 +3,7 @@ package fluid
 import (
 	"math"
 
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/stats"
 )
 
@@ -204,9 +205,8 @@ func (builder *GridBuilder) emaSmoothHeights(raw [][]float64, size int) [][]floa
 				continue
 			}
 
-			builder.smoothedHeights[rowIndex][column] =
-				builder.params.activeHeightEMAAlpha()*next +
-					(1-builder.params.activeHeightEMAAlpha())*previous
+			alpha := builder.params.activeHeightEMAAlpha()
+			builder.smoothedHeights[rowIndex][column] = adaptive.BlendEMA(previous, next, alpha)
 		}
 	}
 

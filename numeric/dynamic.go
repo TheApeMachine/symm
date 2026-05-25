@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/numeric/learned"
 )
 
 /*
@@ -187,6 +188,8 @@ func cloneDynamic(d Dynamic) Dynamic {
 		return &ScaleIndex{index: x.index}
 	case *LabelTap:
 		return x.clone()
+	case *learned.Forecast:
+		return learned.NewForecast(0.35)
 	default:
 		return d
 	}
