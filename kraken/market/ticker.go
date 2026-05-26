@@ -78,7 +78,7 @@ func parseTickerEntry(value []byte) (TickerRow, bool) {
 
 	bid, _ := jsonparser.GetFloat(value, "bid")
 	ask, _ := jsonparser.GetFloat(value, "ask")
-	changePct, _ := jsonparser.GetFloat(value, "change_pct")
+	changePctPoints, _ := jsonparser.GetFloat(value, "change_pct")
 	volume, _ := jsonparser.GetFloat(value, "volume")
 	timestamp, _ := jsonparser.GetUnsafeString(value, "timestamp")
 
@@ -87,7 +87,7 @@ func parseTickerEntry(value []byte) (TickerRow, bool) {
 		Last:      last,
 		Bid:       bid,
 		Ask:       ask,
-		ChangePct: changePct,
+		ChangePct: changePctPoints / 100,
 		Volume:    volume,
 		Timestamp: string(timestamp),
 	}, true

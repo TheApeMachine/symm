@@ -198,14 +198,14 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 	model, fitOK := fitNonLinearStructural(samples)
 
 	if !fitOK {
-		return state.calibrator.NormalizeConfidence(intervention, state.confidenceHistory), "intervention"
+		return state.calibrator.NormalizeConfidence(intervention, state.interventionHist), "intervention"
 	}
 
 	interventionFlow := flowInterventionLevel(samples)
 	uplift := nonLinearCounterfactualUplift(current, model, interventionFlow)
 
 	if uplift <= 0 {
-		normalized := state.calibrator.NormalizeConfidence(intervention, state.confidenceHistory)
+		normalized := state.calibrator.NormalizeConfidence(intervention, state.interventionHist)
 		state.recordConfidence(intervention)
 
 		return normalized, "intervention"
@@ -229,14 +229,10 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 	}
 
 	if score <= 0 {
-		if intervention > 0 {
-			return intervention, reason
-		}
-
 		return 0, ""
 	}
 
-	state.recordConfidence(score)
+	state.recordConfidence(intervention)
 
 	return score, reason
 }

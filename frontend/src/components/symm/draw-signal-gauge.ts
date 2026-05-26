@@ -17,7 +17,10 @@ import {
 
 import { appTheme } from "#/components/symm/theme";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
-import { formatSignalConfidence } from "#/lib/symm/signal-confidence";
+import {
+	confidenceToGaugePercent,
+	formatSignalConfidence,
+} from "#/lib/symm/signal-confidence";
 
 const GAUGE_BANDS = [50, 75, 100] as const;
 const GRADIENT_COLORS = [
@@ -142,7 +145,7 @@ const buildGaugeArcs = (
 };
 
 export type SignalGaugeControls = {
-	update: (needlePercent: number, confidence: number) => void;
+	update: (confidence: number) => void;
 	dispose: () => void;
 };
 
@@ -205,13 +208,17 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 	return {
 		sciChartSurface,
 		controls: {
-			update(needlePercent: number, confidence: number) {
-				applyGaugeNeedle(gaugeArcs, needlePercent);
+			update(confidence: number) {
+				if (sciChartSurface.isDeleted) {
+					return;
+				}
+
+				applyGaugeNeedle(gaugeArcs, confidenceToGaugePercent(confidence));
 				gaugeArcs.label.text = formatSignalConfidence(confidence);
 				sciChartSurface.invalidateElement();
 			},
 			dispose() {
-				sciChartSurface.delete();
+				// SciChartReact deletes the surface on unmount.
 			},
 		} satisfies SignalGaugeControls,
 	};

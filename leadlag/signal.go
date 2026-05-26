@@ -21,8 +21,9 @@ const (
 )
 
 type symbolState struct {
-	pair      asset.Pair
-	changePct float64
+	pair       asset.Pair
+	changePct  float64
+	confidence *engine.SymbolConfidence
 }
 
 /*
@@ -78,7 +79,10 @@ func (leadlag *LeadLag) Tick() error {
 				continue
 			}
 
-			leadlag.symbols[symbol] = &symbolState{pair: *pair}
+			leadlag.symbols[symbol] = &symbolState{
+				pair:       *pair,
+				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+			}
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
@@ -101,7 +105,7 @@ func (leadlag *LeadLag) Tick() error {
 		state := leadlag.symbols[row.Symbol]
 
 		if state == nil || row.ChangePct == 0 {
-			return nil
+			break
 		}
 
 		state.changePct = row.ChangePct
@@ -109,7 +113,7 @@ func (leadlag *LeadLag) Tick() error {
 		anchor := leadlag.symbols[anchorSymbol]
 
 		if anchor == nil || anchor.changePct < minAnchorMove || len(leadlag.pending) == 0 {
-			return nil
+			break
 		}
 
 		scanCap := config.System.MaxScanSymbols / 8
@@ -119,7 +123,7 @@ func (leadlag *LeadLag) Tick() error {
 		}
 
 		if len(leadlag.requested) >= scanCap {
-			return nil
+			break
 		}
 
 		remaining := scanCap - len(leadlag.requested)
@@ -144,12 +148,17 @@ func (leadlag *LeadLag) Tick() error {
 	case value := <-leadlag.subscribers["feedback"].Incoming:
 		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		for measurement := range leadlag.Measure() {
-			leadlag.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-		}
 	}
 
+	leadlag.publishPulse()
+
 	return nil
+}
+
+func (leadlag *LeadLag) publishPulse() {
+	for measurement := range leadlag.Measure() {
+		leadlag.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
 }
 
 func (leadlag *LeadLag) Close() error {
@@ -184,13 +193,18 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		for symbol, lagRatio := range lags {
-			peakLag, err := leadlag.peak.Next(lagRatio, peerValues(lags, symbol)...)
+			rawScore, err := leadlag.peak.Next(lagRatio, peerValues(lags, symbol)...)
 
-			if err != nil || peakLag <= 0 {
+			if err != nil || rawScore <= 0 {
 				continue
 			}
 
 			state := leadlag.symbols[symbol]
+			confidence, ok := state.confidence.Measure(rawScore)
+
+			if !ok {
+				continue
+			}
 
 			if !yield(engine.Measurement{
 				Type:       engine.LeadLag,
@@ -198,7 +212,7 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 				Regime:     "cross_asset",
 				Reason:     "anchor_lag",
 				Pairs:      []asset.Pair{state.pair},
-				Confidence: peakLag,
+				Confidence: confidence,
 			}) {
 				return
 			}
@@ -207,9 +221,17 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != leadlagSource {
+	if feedback.Source != leadlagSource || feedback.Symbol == "" {
 		return
 	}
+
+	state := leadlag.symbols[feedback.Symbol]
+
+	if state == nil {
+		return
+	}
+
+	state.confidence.ApplyFeedback(feedback)
 }
 
 func peerValues(values map[string]float64, skip string) []float64 {

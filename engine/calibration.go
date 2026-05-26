@@ -121,8 +121,10 @@ func valuesMax(values []float64) float64 {
 }
 
 /*
-NormalizeConfidence maps raw signal strength into [0, 1] against the symbol-local fence.
-Returns 0 until enough history exists to calibrate; never invents certainty on a cold symbol.
+NormalizeConfidence maps raw signal strength into (0, 1) against the symbol-local fence.
+The fence is the half-saturation point: raw equal to the fence yields 0.5 strength.
+Strength saturates via raw/(raw+fence) so no reading — however extreme — implies certainty.
+Returns 0 until enough history exists to calibrate; never invents strength on a cold symbol.
 */
 func (calibrator *PredictionCalibrator) NormalizeConfidence(rawScore float64, history []float64) float64 {
 	if rawScore <= 0 {
@@ -139,9 +141,5 @@ func (calibrator *PredictionCalibrator) NormalizeConfidence(rawScore float64, hi
 		return 0
 	}
 
-	if rawScore >= fence {
-		return 1
-	}
-
-	return rawScore / fence
+	return rawScore / (rawScore + fence)
 }

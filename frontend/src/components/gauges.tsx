@@ -1,14 +1,17 @@
+import "@tanstack/react-start/client-only";
+
 import { memo, useCallback } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
+import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
 import { drawSignalGauge } from "#/components/symm/draw-signal-gauge";
 import {
 	SIGNAL_LABELS,
 	SIGNAL_SOURCES,
 	type SignalSource,
 } from "#/lib/symm/signal-confidence";
-import { registerSignalGauge } from "#/lib/symm/feed";
 import "#/lib/symm/scichart-setup";
+import { Flex } from "./ui/flex";
 
 type SignalGaugeProps = {
 	source: SignalSource;
@@ -24,36 +27,57 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 	}, []);
 
 	const onInit = useCallback(
-		(result: TResolvedReturnType<typeof drawSignalGauge>) =>
-			registerSignalGauge(source, (needlePercent, confidence) => {
-				result.controls.update(needlePercent, confidence);
-			}),
+		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
+			const latest = ConfidenceDataProvider.snapshot().get(source);
+
+			if (latest !== undefined) {
+				result.controls.update(latest);
+			}
+
+			const unregister = ConfidenceDataProvider.registerSource(
+				source,
+				(confidence) => {
+					result.controls.update(confidence);
+				},
+			);
+
+			return () => {
+				unregister();
+				result.controls.dispose();
+			};
+		},
 		[source],
 	);
 
 	return (
-		<div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-			<span className="shrink-0 truncate px-1 text-[9px] font-medium tracking-wide text-(--dash-muted)">
-				{SIGNAL_LABELS[source]}
-			</span>
-			<SciChartReact
-				initChart={initChart}
-				onInit={onInit}
-				className="min-h-0 w-full flex-1"
-				innerContainerProps={{ className: "h-full w-full" }}
-			/>
-		</div>
+		<SciChartReact
+			initChart={initChart}
+			onInit={onInit}
+			className="flex w-full h-full"
+			innerContainerProps={{ className: "h-full w-full" }}
+		/>
 	);
 });
 
 export const Gauges = () => {
 	return (
-		<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel)">
-			<div className="grid min-h-0 flex-1 grid-cols-4 gap-1 p-1">
-				{SIGNAL_SOURCES.map((source) => (
-					<SignalGauge key={source} source={source} />
+		<Flex.Column gap={1} padding={1} fullWidth fullHeight>
+			<Flex.Row align="center" justify="center" fullWidth fullHeight>
+				{SIGNAL_SOURCES.slice(0, 4).map((source: SignalSource) => (
+					<Flex.Column key={source} fullWidth fullHeight>
+						<small>{SIGNAL_LABELS[source]}</small>
+						<SignalGauge key={source} source={source} />
+					</Flex.Column>
 				))}
-			</div>
-		</div>
+			</Flex.Row>
+			<Flex.Row align="center" justify="center" fullWidth fullHeight>
+				{SIGNAL_SOURCES.slice(4).map((source: SignalSource) => (
+					<Flex.Column key={source} fullWidth fullHeight>
+						<small>{SIGNAL_LABELS[source]}</small>
+						<SignalGauge key={source} source={source} />
+					</Flex.Column>
+				))}
+			</Flex.Row>
+		</Flex.Column>
 	);
 };

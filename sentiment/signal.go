@@ -19,8 +19,9 @@ const (
 )
 
 type symbolState struct {
-	pair      asset.Pair
-	changePct float64
+	pair       asset.Pair
+	changePct  float64
+	confidence *engine.SymbolConfidence
 }
 
 /*
@@ -76,7 +77,10 @@ func (sentiment *Sentiment) Tick() error {
 				continue
 			}
 
-			sentiment.symbols[symbol] = &symbolState{pair: *pair}
+			sentiment.symbols[symbol] = &symbolState{
+				pair:       *pair,
+				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+			}
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
@@ -93,55 +97,60 @@ func (sentiment *Sentiment) Tick() error {
 		state := sentiment.symbols[row.Symbol]
 
 		if state == nil || row.ChangePct == 0 {
-			return nil
+			break
 		}
 
 		state.changePct = row.ChangePct
 	case value := <-sentiment.subscribers["feedback"].Incoming:
 		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		tickerCount := 0
+	}
 
-		for _, state := range sentiment.symbols {
-			if state.changePct != 0 {
-				tickerCount++
-			}
-		}
+	sentiment.publishPulse()
 
-		scanCap := config.System.MaxScanSymbols / 8
+	return nil
+}
 
-		if scanCap < 1 {
-			scanCap = 1
-		}
+func (sentiment *Sentiment) publishPulse() {
+	tickerCount := 0
 
-		if len(sentiment.pending) > 0 && tickerCount < 4 && len(sentiment.requested) < scanCap {
-			remaining := scanCap - len(sentiment.requested)
-			batch := config.System.SubscribeBatch
-
-			if batch > remaining {
-				batch = remaining
-			}
-
-			if batch > len(sentiment.pending) {
-				batch = len(sentiment.pending)
-			}
-
-			symbols := sentiment.pending[:batch]
-			sentiment.pending = sentiment.pending[batch:]
-
-			for _, symbol := range symbols {
-				sentiment.requested[symbol] = struct{}{}
-			}
-
-			sentiment.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
-		}
-
-		for measurement := range sentiment.Measure() {
-			sentiment.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	for _, state := range sentiment.symbols {
+		if state.changePct != 0 {
+			tickerCount++
 		}
 	}
 
-	return nil
+	scanCap := config.System.MaxScanSymbols / 8
+
+	if scanCap < 1 {
+		scanCap = 1
+	}
+
+	if len(sentiment.pending) > 0 && tickerCount < 4 && len(sentiment.requested) < scanCap {
+		remaining := scanCap - len(sentiment.requested)
+		batch := config.System.SubscribeBatch
+
+		if batch > remaining {
+			batch = remaining
+		}
+
+		if batch > len(sentiment.pending) {
+			batch = len(sentiment.pending)
+		}
+
+		symbols := sentiment.pending[:batch]
+		sentiment.pending = sentiment.pending[batch:]
+
+		for _, symbol := range symbols {
+			sentiment.requested[symbol] = struct{}{}
+		}
+
+		sentiment.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
+	}
+
+	for measurement := range sentiment.Measure() {
+		sentiment.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
 }
 
 func (sentiment *Sentiment) Close() error {
@@ -183,13 +192,18 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		for symbol, change := range leaders {
-			confidence, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
+			rawScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
 
-			if err != nil || confidence <= 0 {
+			if err != nil || rawScore <= 0 {
 				continue
 			}
 
 			state := sentiment.symbols[symbol]
+			confidence, ok := state.confidence.Measure(rawScore)
+
+			if !ok {
+				continue
+			}
 
 			if !yield(engine.Measurement{
 				Type:       engine.Sentiment,
@@ -206,9 +220,17 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != sentimentSource {
+	if feedback.Source != sentimentSource || feedback.Symbol == "" {
 		return
 	}
+
+	state := sentiment.symbols[feedback.Symbol]
+
+	if state == nil {
+		return
+	}
+
+	state.confidence.ApplyFeedback(feedback)
 }
 
 func leaderPeers(leaders map[string]float64, skip string) []float64 {

@@ -51,8 +51,9 @@ func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
 		causal.subscribers[channel] = group.Subscribe("causal:"+channel, 128)
 	}
 
-	causal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	causal.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
+	for _, channel := range []string{"measurements", "subscriptions", "causal_graph"} {
+		causal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+	}
 
 	return causal
 }
@@ -87,13 +88,13 @@ func (causal *Causal) Tick() error {
 		state := causal.symbols[row.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		state.FeedTicker(row)
 
 		if _, seen := causal.requested[row.Symbol]; seen || state.changePct == 0 {
-			return nil
+			break
 		}
 
 		causal.requested[row.Symbol] = struct{}{}
@@ -103,13 +104,13 @@ func (causal *Causal) Tick() error {
 		state := causal.symbols[tick.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		state.FeedTrade(tick)
 
 		if _, seen := causal.requested[tick.Symbol]; seen {
-			return nil
+			break
 		}
 
 		causal.requested[tick.Symbol] = struct{}{}
@@ -119,17 +120,17 @@ func (causal *Causal) Tick() error {
 		state := causal.symbols[delta.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		state.FeedBook(delta)
 
 		if _, seen := causal.requested[delta.Symbol]; seen {
-			return nil
+			break
 		}
 
 		if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-			return nil
+			break
 		}
 
 		causal.requested[delta.Symbol] = struct{}{}
@@ -137,40 +138,47 @@ func (causal *Causal) Tick() error {
 	case value := <-causal.subscribers["feedback"].Incoming:
 		causal.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		scanCap := config.System.MaxScanSymbols / 8
-
-		if scanCap < 1 {
-			scanCap = 1
-		}
-
-		if len(causal.pending) > 0 && len(causal.requested) < scanCap {
-			remaining := scanCap - len(causal.requested)
-			batch := config.System.SubscribeBatch
-
-			if batch > remaining {
-				batch = remaining
-			}
-
-			if batch > len(causal.pending) {
-				batch = len(causal.pending)
-			}
-
-			symbols := causal.pending[:batch]
-			causal.pending = causal.pending[batch:]
-
-			for _, symbol := range symbols {
-				causal.requested[symbol] = struct{}{}
-			}
-
-			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
-		}
-
-		for measurement := range causal.Measure() {
-			causal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-		}
 	}
 
+	causal.publishPulse()
+
 	return nil
+}
+
+func (causal *Causal) publishPulse() {
+	scanCap := max(config.System.MaxScanSymbols/8, 1)
+
+	if len(causal.pending) > 0 && len(causal.requested) < scanCap {
+		remaining := scanCap - len(causal.requested)
+		batch := min(config.System.SubscribeBatch, remaining)
+
+		if batch > len(causal.pending) {
+			batch = len(causal.pending)
+		}
+
+		symbols := causal.pending[:batch]
+		causal.pending = causal.pending[batch:]
+
+		for _, symbol := range symbols {
+			causal.requested[symbol] = struct{}{}
+		}
+
+		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
+	}
+
+	for measurement := range causal.Measure() {
+		causal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
+
+	macro := causal.macroMomentum()
+	now := time.Now()
+
+	for symbol, state := range causal.symbols {
+		payload := state.GraphSnapshot(macro, now)
+		payload["symbol"] = symbol
+		payload["peers"] = causal.peerLinks(symbol)
+		causal.broadcasts["causal_graph"].Send(&qpool.QValue[any]{Value: payload})
+	}
 }
 
 func (causal *Causal) Close() error {

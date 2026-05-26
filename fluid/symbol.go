@@ -21,6 +21,7 @@ type FluidSymbol struct {
 	spreadBPS   float64
 	score       *numeric.Derived
 	forecast    *learned.Forecast
+	confidence  *engine.SymbolConfidence
 }
 
 func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
@@ -31,7 +32,8 @@ func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
 		)),
-		forecast: learned.NewForecast(0.35),
+		forecast:   learned.NewForecast(0.35),
+		confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 	}
 }
 
@@ -64,15 +66,15 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 		pressure *= 1 / (1 + state.spreadBPS/100)
 	}
 
-	raw, err := state.score.Push(math.Abs(imbalance), pressure)
+	raw, err := state.score.Push(math.Abs(imbalance), pressure*state.forecast.Scale())
 
 	if err != nil || raw <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	confidence := raw * state.forecast.Scale()
+	confidence, ok := state.confidence.Measure(raw)
 
-	if confidence <= 0 {
+	if !ok {
 		return engine.Measurement{}, false
 	}
 
@@ -88,4 +90,5 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 
 func (state *FluidSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state.confidence.ApplyFeedback(feedback)
 }

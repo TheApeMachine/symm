@@ -27,8 +27,8 @@ const (
 
 /*
 Measurement is one signal reading for downstream trading.
-Confidence is a unitless score for ranking and UI; expected return and hold
-horizon are derived in the trader, not in the signal.
+Confidence is unitless signal strength in (0, 1): relative to symbol-local history,
+never certainty. Expected return and hold horizon are derived in the trader.
 */
 type Measurement struct {
 	Type       MeasurementType

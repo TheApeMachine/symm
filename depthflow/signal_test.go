@@ -41,6 +41,48 @@ func seedDepthSymbol(state *DepthSymbol) {
 	for range 8 {
 		_, _ = state.score.Push(0.7, 0.8)
 	}
+
+	engine.WarmSymbolConfidence(state.confidence, 0.2, 0.3, 0.4, 0.5)
+}
+
+func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewDepthFlow(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	state := NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
+	signal.symbols["BTC/EUR"] = state
+	seedDepthSymbol(state)
+
+	measurements := signal.broadcasts["measurements"].Subscribe("test:depthflow", 8)
+
+	pool.CreateBroadcastGroup("trade", 0).Send(&qpool.QValue[any]{
+		Value: trade.Data{
+			Symbol:    "BTC/EUR",
+			Side:      "buy",
+			Qty:       0.1,
+			Price:     50000,
+			Timestamp: time.Now(),
+		},
+	})
+
+	if err := signal.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-measurements.Incoming:
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok || measurement.Source != depthflowSource {
+			t.Fatalf("expected depthflow measurement, got %v", value.Value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for depthflow measurement after trade tick")
+	}
 }
 
 func TestDepthFlowTickIgnoresUnknownTrade(t *testing.T) {

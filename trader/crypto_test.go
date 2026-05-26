@@ -10,20 +10,28 @@ import (
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/order"
-	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/price"
 )
 
-func TestCryptoBuffersMeasurement(t *testing.T) {
+func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction) {
+	t.Helper()
+
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
 
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto := NewCrypto(ctx, pool, wallet)
+	predictions := price.NewPrediction(ctx, pool)
+	crypto := NewCrypto(ctx, pool, wallet, predictions)
 
 	if crypto == nil {
 		t.Fatal("expected crypto trader")
 	}
+
+	return crypto, predictions
+}
+
+func TestCryptoBuffersMeasurement(t *testing.T) {
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
 	crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
@@ -40,45 +48,123 @@ func TestCryptoBuffersMeasurement(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if len(crypto.measurements) != 1 {
-		t.Fatalf("expected one buffered measurement, got %d", len(crypto.measurements))
+	if crypto.pulses != 1 {
+		t.Fatalf("expected one rescore pulse, got %d", crypto.pulses)
+	}
+
+	if len(crypto.measurements) != 0 {
+		t.Fatalf("expected measurements consumed on rescore, got %d", len(crypto.measurements))
 	}
 }
 
-func TestCryptoSettlesFeedback(t *testing.T) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
+func TestCryptoPublishConfidence(t *testing.T) {
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
 
-	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26))
-	feedback := pool.CreateBroadcastGroup("feedback", 10*time.Millisecond)
-	subscriber := feedback.Subscribe("test:feedback", 8)
-
-	crypto.returnCount["pumpdump"] = config.System.MinCalibrationSamples
-	returnEMA := adaptive.NewEMA(0)
-	_, _ = returnEMA.Next(0, 0.01)
-	crypto.returns["pumpdump"] = returnEMA
-
-	crypto.pairs["PUMP/EUR"] = &pairState{
-		lastPrice: 1.02,
-		open: map[string]openPrediction{
-			"pumpdump": {
-				measurement: engine.Measurement{
-					Source:     "pumpdump",
-					Type:       engine.Pump,
-					Regime:     "microstructure",
-					Reason:     "actual_pump",
-					Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
-					Confidence: 0.8,
-				},
-				predictedReturn: 0.008,
-				anchorPrice:     1.0,
-				direction:       1,
-				runway:          config.System.ScalpHoldBeforeExit,
-				dueAt:           time.Now().Add(-time.Millisecond),
-				predictedAt:     time.Now().Add(-config.System.ScalpHoldBeforeExit),
-			},
+	crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
+			Confidence: 0.6,
 		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-confidenceSub.Incoming:
+		payload, ok := value.Value.(map[string]any)
+
+		if !ok {
+			t.Fatalf("expected map payload, got %T", value.Value)
+		}
+
+		if payload["source"] != "pumpdump" {
+			t.Fatalf("expected pumpdump source, got %v", payload["source"])
+		}
+
+		confidence, ok := payload["confidence"].(float64)
+
+		if !ok || confidence != 0.6 {
+			t.Fatalf("expected confidence 0.6, got %v", payload["confidence"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for confidence publish")
+	}
+}
+
+func TestCryptoPublishConfidenceMean(t *testing.T) {
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+
+	crypto.measurements = append(crypto.measurements,
+		engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "A/EUR"}},
+			Confidence: 0.2,
+		},
+		engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "B/EUR"}},
+			Confidence: 0.8,
+		},
+	)
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-confidenceSub.Incoming:
+		payload, ok := value.Value.(map[string]any)
+
+		if !ok {
+			t.Fatalf("expected map payload, got %T", value.Value)
+		}
+
+		confidence, ok := payload["confidence"].(float64)
+
+		if !ok || confidence != 0.5 {
+			t.Fatalf("expected mean confidence 0.5, got %v", payload["confidence"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for confidence publish")
+	}
+}
+
+func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+
+	for _, pair := range []struct {
+		symbol     string
+		confidence float64
+	}{
+		{"A/EUR", 0.2},
+		{"B/EUR", 0.8},
+		{"C/EUR", 0.5},
+	} {
+		crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: engine.Measurement{
+				Source:     "pumpdump",
+				Type:       engine.Pump,
+				Regime:     "microstructure",
+				Reason:     "actual_pump",
+				Pairs:      []asset.Pair{{Wsname: pair.symbol}},
+				Confidence: pair.confidence,
+			},
+		})
 	}
 
 	if err := crypto.Tick(); err != nil {
@@ -86,43 +172,39 @@ func TestCryptoSettlesFeedback(t *testing.T) {
 	}
 
 	select {
-	case value := <-subscriber.Incoming:
-		payload, ok := value.Value.(engine.PredictionFeedback)
+	case value := <-confidenceSub.Incoming:
+		payload, ok := value.Value.(map[string]any)
 
 		if !ok {
-			t.Fatalf("expected prediction feedback, got %T", value.Value)
+			t.Fatalf("expected map payload, got %T", value.Value)
 		}
 
-		if payload.Source != "pumpdump" || payload.Symbol != "PUMP/EUR" {
-			t.Fatalf("unexpected feedback: %+v", payload)
+		confidence, ok := payload["confidence"].(float64)
+
+		if !ok || confidence != 0.5 {
+			t.Fatalf("expected mean confidence 0.5, got %v", payload["confidence"])
 		}
 
-		if payload.PredictedReturn <= 0 || payload.ActualReturn <= 0 {
-			t.Fatalf("expected positive returns, got predicted=%v actual=%v", payload.PredictedReturn, payload.ActualReturn)
+		count, ok := payload["count"].(int)
+
+		if !ok || count != 3 {
+			t.Fatalf("expected count 3, got %v", payload["count"])
 		}
 	case <-time.After(time.Second):
-		t.Fatal("expected feedback on settle")
+		t.Fatal("timed out waiting for confidence publish")
 	}
 }
 
 func TestCryptoEnterPaper(t *testing.T) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
-
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto := NewCrypto(ctx, pool, wallet)
+	crypto, predictions := newTestCrypto(t, wallet)
 
 	crypto.pulses = config.System.MinWarmPulses
-	crypto.returnCount["pumpdump"] = config.System.MinCalibrationSamples
-	returnEMA := adaptive.NewEMA(0)
-	_, _ = returnEMA.Next(0, 0.01)
-	crypto.returns["pumpdump"] = returnEMA
+	predictions.SeedReturnCalibration("pumpdump", 0.01)
 	crypto.pairs["BTC/EUR"] = &pairState{
 		lastPrice: 50000,
 		bid:       49999,
 		ask:       50001,
-		open:      make(map[string]openPrediction),
 	}
 
 	crypto.measurements = append(crypto.measurements, engine.Measurement{
@@ -141,38 +223,10 @@ func TestCryptoEnterPaper(t *testing.T) {
 	if wallet.Inventory["BTC"] <= 0 {
 		t.Fatalf("expected paper entry inventory, got %v", wallet.Inventory["BTC"])
 	}
-
-	foundEnter := false
-
-	for {
-		select {
-		case value := <-crypto.subscribers["executions"].Incoming:
-			payload, ok := value.Value.(map[string]any)
-
-			if !ok {
-				continue
-			}
-
-			if payload["event"] == "trade_enter" {
-				foundEnter = true
-			}
-		default:
-			if foundEnter {
-				return
-			}
-
-			t.Fatal("expected trade_enter ui event after paper entry")
-		}
-	}
 }
 
 func TestCryptoApplyFill(t *testing.T) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
-
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto := NewCrypto(ctx, pool, wallet)
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
 	if err := crypto.wallet.ReserveEntry(50); err != nil {
 		t.Fatalf("reserve: %v", err)
@@ -192,11 +246,7 @@ func TestCryptoApplyFill(t *testing.T) {
 }
 
 func TestCryptoCloseCancelsContext(t *testing.T) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
-
-	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
 	if err := crypto.Close(); err != nil {
 		t.Fatalf("close: %v", err)
@@ -208,11 +258,9 @@ func BenchmarkCryptoTick(b *testing.B) {
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
-	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26))
-	crypto.pairs["PUMP/EUR"] = &pairState{
-		lastPrice: 1.0,
-		open:      make(map[string]openPrediction),
-	}
+	predictions := price.NewPrediction(ctx, pool)
+	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26), predictions)
+	crypto.pairs["PUMP/EUR"] = &pairState{lastPrice: 1.0}
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",

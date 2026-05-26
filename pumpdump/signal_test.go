@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
 )
 
 func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
@@ -46,8 +47,44 @@ func seedPumpSymbol(symbolState *PumpSymbol) {
 		_, _ = symbolState.score.Push(1, 0.8, 0.6, 20, 1, 1, 1)
 	}
 
+	engine.WarmSymbolConfidence(symbolState.confidence, 0.2, 0.3, 0.4, 0.5)
+
 	now := time.Unix(1_700_000_000, 0)
 	_, _ = symbolState.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
+}
+
+func TestPumpdumpPublishPulseAfterBook(t *testing.T) {
+	signal, state := testPumpDump(t)
+	seedPumpSymbol(state)
+
+	measurements := signal.broadcasts["measurements"].Subscribe("test:pumpdump", 8)
+
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
+		Value: market.BookLevelsDelta{
+			Symbol: "PUMP/EUR",
+			Bids:   []market.BookLevel{{Price: 1, Volume: 80}},
+			Asks:   []market.BookLevel{{Price: 1.01, Volume: 20}},
+		},
+	})
+
+	if err := signal.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-measurements.Incoming:
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok || measurement.Source != pumpdumpSource {
+			t.Fatalf("expected pumpdump measurement, got %v", value.Value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pumpdump measurement after book tick")
+	}
 }
 
 func TestPumpDumpMeasure(t *testing.T) {

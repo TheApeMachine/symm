@@ -1,3 +1,5 @@
+import "@tanstack/react-start/client-only";
+
 import { memo, useCallback } from "react";
 import { SciChartGroup, SciChartReact } from "scichart-react";
 
@@ -35,7 +37,7 @@ export const TradeChart = memo(function TradeChart({
 		<SciChartReact
 			initChart={initChart}
 			onInit={onInit}
-			className="h-full min-h-[180px] w-full"
+			className="flex w-full h-full"
 			innerContainerProps={{ className: "h-full w-full" }}
 		/>
 	);

@@ -101,32 +101,37 @@ func (exhaust *Exhaust) Tick() error {
 		row := value.Value.(market.TickerRow)
 		exhaust.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
 	default:
-		threshold := config.System.ExitUrgencyThreshold
-
-		for _, symbol := range exhaust.history.symbols() {
-			snapshot, ok := exhaust.history.snapshot(symbol)
-
-			if !ok {
-				continue
-			}
-
-			urgency, reason := exitScoreLong(snapshot)
-
-			if urgency < threshold {
-				continue
-			}
-
-			exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
-				Value: map[string]any{
-					"symbol":  symbol,
-					"urgency": urgency,
-					"reason":  reason,
-				},
-			})
-		}
 	}
 
+	exhaust.publishPulse()
+
 	return nil
+}
+
+func (exhaust *Exhaust) publishPulse() {
+	threshold := config.System.ExitUrgencyThreshold
+
+	for _, symbol := range exhaust.history.symbols() {
+		snapshot, ok := exhaust.history.snapshot(symbol)
+
+		if !ok {
+			continue
+		}
+
+		urgency, reason := exitScoreLong(snapshot)
+
+		if urgency < threshold {
+			continue
+		}
+
+		exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
+			Value: map[string]any{
+				"symbol":  symbol,
+				"urgency": urgency,
+				"reason":  reason,
+			},
+		})
+	}
 }
 
 func (exhaust *Exhaust) Close() error {

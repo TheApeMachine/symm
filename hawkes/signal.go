@@ -88,17 +88,17 @@ func (hawkes *Hawkes) Tick() error {
 		symbolState := hawkes.symbols[row.Symbol]
 
 		if symbolState == nil {
-			return nil
+			break
 		}
 
 		symbolState.state.FeedTicker(row.Last, row.Volume)
 
 		if _, seen := hawkes.requested[row.Symbol]; seen || row.Volume <= 0 {
-			return nil
+			break
 		}
 
 		if pair := symbolState.pair; pair.Quote != config.System.QuoteCurrency {
-			return nil
+			break
 		}
 
 		hawkes.requested[row.Symbol] = struct{}{}
@@ -108,7 +108,7 @@ func (hawkes *Hawkes) Tick() error {
 		symbolState := hawkes.symbols[tick.Symbol]
 
 		if symbolState == nil {
-			return nil
+			break
 		}
 
 		symbolState.ticks = append(symbolState.ticks, tick)
@@ -126,7 +126,7 @@ func (hawkes *Hawkes) Tick() error {
 		symbolState := hawkes.symbols[delta.Symbol]
 
 		if symbolState == nil || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-			return nil
+			break
 		}
 
 		total := delta.Bids[0].Volume + delta.Asks[0].Volume
@@ -135,28 +135,21 @@ func (hawkes *Hawkes) Tick() error {
 			symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
 		}
 	case value := <-hawkes.subscribers["feedback"].Incoming:
-		feedback := value.Value.(engine.PredictionFeedback)
-
-		if feedback.Source != hawkesSource || feedback.Symbol == "" {
-			return nil
-		}
-
-		symbolState := hawkes.symbols[feedback.Symbol]
-
-		if symbolState == nil {
-			return nil
-		}
-
-		symbolState.state.ApplyFeedback(feedback)
+		hawkes.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		for measurement := range hawkes.Measure() {
-			hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
-		}
 	}
 
+	hawkes.publishPulse()
+
 	return nil
+}
+
+func (hawkes *Hawkes) publishPulse() {
+	for measurement := range hawkes.Measure() {
+		hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
+	}
 }
 
 func (hawkes *Hawkes) Close() error {

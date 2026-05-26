@@ -91,7 +91,7 @@ func (depthflow *DepthFlow) Tick() error {
 		state := depthflow.symbols[delta.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		if delta.BidOK {
@@ -106,7 +106,7 @@ func (depthflow *DepthFlow) Tick() error {
 		state := depthflow.symbols[tick.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		sign := -1.0
@@ -119,42 +119,47 @@ func (depthflow *DepthFlow) Tick() error {
 	case value := <-depthflow.subscribers["feedback"].Incoming:
 		depthflow.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		scanCap := config.System.MaxScanSymbols / 8
-
-		if scanCap < 1 {
-			scanCap = 1
-		}
-
-		if len(depthflow.pending) > 0 && len(depthflow.requested) < scanCap {
-			remaining := scanCap - len(depthflow.requested)
-			batch := config.System.SubscribeBatch
-
-			if batch > remaining {
-				batch = remaining
-			}
-
-			if batch > len(depthflow.pending) {
-				batch = len(depthflow.pending)
-			}
-
-			symbols := depthflow.pending[:batch]
-			depthflow.pending = depthflow.pending[batch:]
-
-			for _, symbol := range symbols {
-				depthflow.requested[symbol] = struct{}{}
-			}
-
-			depthflow.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
-		}
-
-		for measurement := range depthflow.Measure() {
-			depthflow.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
-		}
 	}
 
+	depthflow.publishPulse()
+
 	return nil
+}
+
+func (depthflow *DepthFlow) publishPulse() {
+	scanCap := config.System.MaxScanSymbols / 8
+
+	if scanCap < 1 {
+		scanCap = 1
+	}
+
+	if len(depthflow.pending) > 0 && len(depthflow.requested) < scanCap {
+		remaining := scanCap - len(depthflow.requested)
+		batch := config.System.SubscribeBatch
+
+		if batch > remaining {
+			batch = remaining
+		}
+
+		if batch > len(depthflow.pending) {
+			batch = len(depthflow.pending)
+		}
+
+		symbols := depthflow.pending[:batch]
+		depthflow.pending = depthflow.pending[batch:]
+
+		for _, symbol := range symbols {
+			depthflow.requested[symbol] = struct{}{}
+		}
+
+		depthflow.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
+	}
+
+	for measurement := range depthflow.Measure() {
+		depthflow.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
+	}
 }
 
 func (depthflow *DepthFlow) Close() error {
@@ -195,4 +200,5 @@ func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state.confidence.ApplyFeedback(feedback)
 }

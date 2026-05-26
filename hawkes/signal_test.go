@@ -1,10 +1,14 @@
 package hawkes
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
 )
 
@@ -336,5 +340,37 @@ func BenchmarkFitBivariate(b *testing.B) {
 		if fit := fitBivariate(buyEvents, sellEvents, horizon); fit.MuBuy <= 0 {
 			b.Fatal("expected fit")
 		}
+	}
+}
+
+func TestHawkesPublishPulseEveryTick(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewHawkes(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	signal.symbols["BTC/EUR"] = &symbolState{
+		pair:      asset.Pair{Wsname: "BTC/EUR", Quote: "EUR"},
+		state:     NewHawkesSymbol(engine.DefaultCalibrationParams()),
+		ticks:     make([]trade.Data, 0, 32),
+		imbalance: 0.5,
+	}
+
+	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
+		Value: market.BookLevelsDelta{
+			Symbol: "BTC/EUR",
+			Bids:   []market.BookLevel{{Price: 10, Volume: 80}},
+			Asks:   []market.BookLevel{{Price: 10.1, Volume: 20}},
+		},
+	})
+
+	if err := signal.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if signal.symbols["BTC/EUR"].imbalance <= 0 {
+		t.Fatalf("expected book imbalance update, got %v", signal.symbols["BTC/EUR"].imbalance)
 	}
 }

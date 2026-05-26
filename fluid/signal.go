@@ -83,7 +83,7 @@ func (fluid *Fluid) Tick() error {
 		state := fluid.symbols[row.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		state.changePct = row.ChangePct
@@ -92,7 +92,7 @@ func (fluid *Fluid) Tick() error {
 		state := fluid.symbols[delta.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		if delta.BidOK {
@@ -112,20 +112,12 @@ func (fluid *Fluid) Tick() error {
 				state.spreadBPS = (ask - bid) / mid * 10000
 			}
 		}
-
-		measurement, ok := state.Measure()
-
-		if !ok {
-			return nil
-		}
-
-		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	case value := <-fluid.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := fluid.symbols[tick.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		sign := -1.0
@@ -135,21 +127,18 @@ func (fluid *Fluid) Tick() error {
 		}
 
 		state.buyPressure, _ = state.pressure.Next(0, sign)
-
-		measurement, ok := state.Measure()
-
-		if !ok {
-			return nil
-		}
-
-		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	case value := <-fluid.subscribers["feedback"].Incoming:
 		fluid.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		if len(fluid.pending) == 0 || len(fluid.requested) >= config.System.MaxScanSymbols {
-			return nil
-		}
+	}
 
+	fluid.publishPulse()
+
+	return nil
+}
+
+func (fluid *Fluid) publishPulse() {
+	if len(fluid.pending) > 0 && len(fluid.requested) < config.System.MaxScanSymbols {
 		remaining := config.System.MaxScanSymbols - len(fluid.requested)
 		batch := config.System.SubscribeBatch
 
@@ -171,7 +160,9 @@ func (fluid *Fluid) Tick() error {
 		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	}
 
-	return nil
+	for measurement := range fluid.Measure() {
+		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
 }
 
 func (fluid *Fluid) Close() error {

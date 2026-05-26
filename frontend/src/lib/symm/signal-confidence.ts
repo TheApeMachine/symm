@@ -5,7 +5,7 @@ export const SIGNAL_SOURCES = [
 	"causal",
 	"depthflow",
 	"leadlag",
-	"basis",
+	"liquidity",
 	"sentiment",
 ] as const;
 
@@ -20,37 +20,28 @@ export const SIGNAL_LABELS: Record<SignalSource, string> = {
 	causal: "Causal",
 	depthflow: "Depth",
 	leadlag: "LeadLag",
-	basis: "Basis",
+	liquidity: "Basis",
 	sentiment: "Sent",
 };
 
-export function isSignalSource(source: string): source is SignalSource {
-	return SIGNAL_SOURCES.includes(source as SignalSource);
-}
+export const isSignalSource = (source: string): source is SignalSource =>
+	SIGNAL_SOURCES.includes(source as SignalSource);
 
-export function confidenceToGaugePercent(confidence: number): number {
+export const confidenceToGaugePercent = (confidence: number): number => {
 	if (confidence <= 0) {
 		return 0;
 	}
 
-	return Math.min(100, confidence * 100);
-}
+	return confidence * 100;
+};
 
-export function formatSignalConfidence(confidence: number): string {
+export const formatSignalConfidence = (confidence: number): string => {
 	if (confidence <= 0) {
 		return "0";
 	}
 
-	if (confidence >= 100) {
-		return confidence.toFixed(0);
-	}
-
-	if (confidence >= 1) {
-		return confidence.toFixed(2);
-	}
-
-	return confidence.toFixed(3);
-}
+	return (confidence * 100).toFixed(1);
+};
 
 export const emptySignalConfidences = (): SignalConfidenceSnapshot => ({
 	hawkes: 0,
@@ -59,6 +50,6 @@ export const emptySignalConfidences = (): SignalConfidenceSnapshot => ({
 	causal: 0,
 	depthflow: 0,
 	leadlag: 0,
-	basis: 0,
+	liquidity: 0,
 	sentiment: 0,
 });

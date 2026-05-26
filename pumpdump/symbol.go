@@ -33,6 +33,7 @@ type PumpSymbol struct {
 	buyPressure    float64
 	imbalance      float64
 	spreadBPS      float64
+	confidence     *engine.SymbolConfidence
 }
 
 func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
@@ -42,6 +43,7 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 		volumeBaseline: adaptive.NewEMA(0),
 		volumeSpike:    adaptive.NewRatio(0),
 		forecast:       learned.NewForecast(0.35),
+		confidence:     engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 		score: numeric.NewScored(
 			moveClassifier,
 			numeric.NewAccumulate(
@@ -74,7 +76,7 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 }
 
 func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
-	confidence, err := state.score.Push(
+	raw, err := state.score.Push(
 		peakSpike,
 		math.Min(state.imbalance, 1),
 		(state.buyPressure+1)/2,
@@ -84,7 +86,13 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		state.forecast.Scale(),
 	)
 
-	if err != nil || confidence <= 0 {
+	if err != nil || raw <= 0 {
+		return engine.Measurement{}, false
+	}
+
+	confidence, ok := state.confidence.Measure(raw)
+
+	if !ok {
 		return engine.Measurement{}, false
 	}
 

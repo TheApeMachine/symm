@@ -1,30 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-	useSymmConnected,
-	useSymmFeed,
-	useSymmPositionSymbols,
-} from "#/lib/symm/use-symm-ui";
-import { DashboardHeader } from "#/components/header";
-import { DashboardSidebar } from "#/components/sidebar";
-import { ChartSection } from "#/components/chart";
+import { Gauges } from "#/components/gauges";
+import { ForceGraph } from "#/components/symm/ForceGraph";
+import { TradeChart } from "#/components/symm/TradeChart";
+import { Flex } from "#/components/ui/flex";
 
 const TradingDashboard = () => {
-	useSymmFeed();
-	const connected = useSymmConnected();
-	const positionSymbols = useSymmPositionSymbols();
-
 	return (
-		<div className="flex h-full w-full flex-col overflow-hidden bg-(--dash-bg) text-(--dash-text)">
-			<DashboardHeader />
-			<div className="flex min-h-0 flex-1">
-				<ChartSection connected={connected} positionSymbols={positionSymbols} />
-				<DashboardSidebar />
-			</div>
-		</div>
+		<Flex.Row gap={2} fullHeight fullWidth>
+			<Flex.Column gap={2} padding={2} fullHeight fullWidth>
+				<Flex.Row gap={2} fullWidth fullHeight>
+					<Gauges />
+				</Flex.Row>
+				<Flex.Column fullWidth fullHeight>
+					<TradeChart symbol="BTC/EUR" />
+				</Flex.Column>
+			</Flex.Column>
+			<ForceGraph symbol="BTC/EUR" />
+		</Flex.Row>
 	);
 };
 
 export const Route = createFileRoute("/")({
+	ssr: false,
 	component: TradingDashboard,
 });

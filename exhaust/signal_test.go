@@ -3,11 +3,57 @@ package exhaust
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
 )
+
+func TestExhaustPublishPulseEveryTick(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewExhaust(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	for index, bidDepth := range []float64{100, 98, 96, 94, 92, 90, 88, 86, 84, 82, 80, 20, 18, 16, 14} {
+		spreadBPS := 10.0
+
+		if index >= 11 {
+			spreadBPS = 40
+		}
+
+		signal.history.observe(
+			"ALT/EUR",
+			bidDepth,
+			90,
+			bidDepth+90,
+			spreadBPS,
+			0.9-float64(index)*0.05,
+			0.6-float64(index)*0.04,
+			10,
+		)
+	}
+
+	exits := signal.broadcasts["exits"].Subscribe("test:exhaust", 8)
+
+	if err := signal.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-exits.Incoming:
+		payload, ok := value.Value.(map[string]any)
+
+		if !ok || payload["symbol"] != "ALT/EUR" {
+			t.Fatalf("expected exit payload, got %v", value.Value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for exhaust exit publish")
+	}
+}
 
 func TestExhaustTickObservesBook(t *testing.T) {
 	ctx := context.Background()

@@ -68,6 +68,7 @@ func NewPublicClient(
 	publicClient.book = pool.CreateBroadcastGroup("book", 10*time.Millisecond)
 	publicClient.symbols = pool.CreateBroadcastGroup("symbols", 10*time.Millisecond)
 	publicClient.ohlc = pool.CreateBroadcastGroup("ohlc", 10*time.Millisecond)
+	publicClient.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return publicClient
 }

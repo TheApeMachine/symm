@@ -90,14 +90,14 @@ func (pumpdump *PumpDump) Tick() error {
 		state := pumpdump.symbols[row.Symbol]
 
 		if state == nil || row.Last <= 0 {
-			return nil
+			break
 		}
 
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
 
 		if _, seen := pumpdump.requested[row.Symbol]; seen {
-			return nil
+			break
 		}
 
 		volumes := make([]float64, 0, len(pumpdump.symbols))
@@ -109,29 +109,23 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 
 		if len(volumes) < 2 {
-			return nil
+			break
 		}
 
 		median := numeric.PercentileSorted(numeric.CopySorted(volumes), 0.5)
 
 		if state.dailyQuoteVol < median {
-			return nil
+			break
 		}
 
 		pumpdump.requested[row.Symbol] = struct{}{}
 		pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
-
-		for measurement := range pumpdump.Measure() {
-			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
-		}
 	case value := <-pumpdump.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := pumpdump.symbols[tick.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		closed, err := state.volumeWindow.Next(
@@ -142,7 +136,7 @@ func (pumpdump *PumpDump) Tick() error {
 		)
 
 		if err != nil {
-			return nil
+			break
 		}
 
 		if closed != state.volumeWindow.Sum() {
@@ -156,17 +150,11 @@ func (pumpdump *PumpDump) Tick() error {
 
 		if tick.Side == "buy" {
 			state.buyPressure = 1
-			return nil
+			break
 		}
 
 		if tick.Side == "sell" {
 			state.buyPressure = -1
-		}
-
-		for measurement := range pumpdump.Measure() {
-			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
 		}
 	case value := <-pumpdump.subscribers["feedback"].Incoming:
 		pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
@@ -175,11 +163,11 @@ func (pumpdump *PumpDump) Tick() error {
 		state := pumpdump.symbols[delta.Symbol]
 
 		if state == nil {
-			return nil
+			break
 		}
 
 		if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-			return nil
+			break
 		}
 
 		bid := delta.Bids[0].Price
@@ -195,21 +183,20 @@ func (pumpdump *PumpDump) Tick() error {
 		if total > 0 {
 			state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
 		}
-
-		for measurement := range pumpdump.Measure() {
-			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
-		}
 	default:
-		for measurement := range pumpdump.Measure() {
-			pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
-				Value: measurement,
-			})
-		}
 	}
 
+	pumpdump.publishPulse()
+
 	return nil
+}
+
+func (pumpdump *PumpDump) publishPulse() {
+	for measurement := range pumpdump.Measure() {
+		pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
+	}
 }
 
 func (pumpdump *PumpDump) Close() error {
@@ -272,4 +259,5 @@ func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state.confidence.ApplyFeedback(feedback)
 }

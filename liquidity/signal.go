@@ -23,6 +23,7 @@ type symbolState struct {
 	pair          asset.Pair
 	dailyQuoteVol float64
 	forecast      *learned.Forecast
+	confidence    *engine.SymbolConfidence
 }
 
 /*
@@ -81,8 +82,9 @@ func (liquidity *Liquidity) Tick() error {
 			}
 
 			liquidity.symbols[symbol] = &symbolState{
-				pair:     *pair,
-				forecast: learned.NewForecast(0),
+				pair:       *pair,
+				forecast:   learned.NewForecast(0),
+				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 			}
 
 			if pair.Quote != config.System.QuoteCurrency {
@@ -100,47 +102,52 @@ func (liquidity *Liquidity) Tick() error {
 		state := liquidity.symbols[row.Symbol]
 
 		if state == nil || row.Last <= 0 {
-			return nil
+			break
 		}
 
 		state.dailyQuoteVol = row.Volume * row.Last
 	case value := <-liquidity.subscribers["feedback"].Incoming:
 		liquidity.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
-		scanCap := config.System.MaxScanSymbols / 8
-
-		if scanCap < 1 {
-			scanCap = 1
-		}
-
-		if len(liquidity.pending) > 0 && len(liquidity.requested) < scanCap {
-			remaining := scanCap - len(liquidity.requested)
-			batch := config.System.SubscribeBatch
-
-			if batch > remaining {
-				batch = remaining
-			}
-
-			if batch > len(liquidity.pending) {
-				batch = len(liquidity.pending)
-			}
-
-			symbols := liquidity.pending[:batch]
-			liquidity.pending = liquidity.pending[batch:]
-
-			for _, symbol := range symbols {
-				liquidity.requested[symbol] = struct{}{}
-			}
-
-			liquidity.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
-		}
-
-		for measurement := range liquidity.Measure() {
-			liquidity.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-		}
 	}
 
+	liquidity.publishPulse()
+
 	return nil
+}
+
+func (liquidity *Liquidity) publishPulse() {
+	scanCap := config.System.MaxScanSymbols / 8
+
+	if scanCap < 1 {
+		scanCap = 1
+	}
+
+	if len(liquidity.pending) > 0 && len(liquidity.requested) < scanCap {
+		remaining := scanCap - len(liquidity.requested)
+		batch := config.System.SubscribeBatch
+
+		if batch > remaining {
+			batch = remaining
+		}
+
+		if batch > len(liquidity.pending) {
+			batch = len(liquidity.pending)
+		}
+
+		symbols := liquidity.pending[:batch]
+		liquidity.pending = liquidity.pending[batch:]
+
+		for _, symbol := range symbols {
+			liquidity.requested[symbol] = struct{}{}
+		}
+
+		liquidity.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
+	}
+
+	for measurement := range liquidity.Measure() {
+		liquidity.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
 }
 
 func (liquidity *Liquidity) Close() error {
@@ -175,20 +182,27 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 				continue
 			}
 
-			candidates[symbol] = liquid
+			score := adaptive.IlliquidityScore(quoteVol, peers)
+
+			if score <= 0 {
+				continue
+			}
+
+			candidates[symbol] = score
 		}
 
-		for symbol, quoteVol := range candidates {
-			confidence, err := liquidity.peak.Next(quoteVol, adaptive.PeerValues(candidates, symbol)...)
+		for symbol, rawScore := range candidates {
+			peakScore, err := liquidity.peak.Next(rawScore, adaptive.PeerValues(candidates, symbol)...)
 
-			if err != nil || confidence <= 0 {
+			if err != nil || peakScore <= 0 {
 				continue
 			}
 
 			state := liquidity.symbols[symbol]
-			confidence *= state.forecast.Scale()
+			rawScore = peakScore * state.forecast.Scale()
+			confidence, ok := state.confidence.Measure(rawScore)
 
-			if confidence <= 0 {
+			if !ok {
 				continue
 			}
 
@@ -218,4 +232,5 @@ func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state.confidence.ApplyFeedback(feedback)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/leadlag"
 	"github.com/theapemachine/symm/liquidity"
+	"github.com/theapemachine/symm/price"
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
@@ -39,6 +40,8 @@ var rootCmd = &cobra.Command{
 			errnie.Error(err)
 		}).Value()
 
+		predictions := price.NewPrediction(cmd.Context(), pool)
+
 		booter.AddSystems(
 			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
 			pumpdump.NewPumpDump(cmd.Context(), pool),
@@ -50,9 +53,10 @@ var rootCmd = &cobra.Command{
 			fluid.NewFluid(cmd.Context(), pool),
 			causal.NewCausal(cmd.Context(), pool),
 			exhaust.NewExhaust(cmd.Context(), pool),
+			predictions,
 			trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
 				trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
-			)),
+			), predictions),
 		)
 
 		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
