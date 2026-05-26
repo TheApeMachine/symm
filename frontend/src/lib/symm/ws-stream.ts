@@ -22,9 +22,7 @@ const resolveSocketUrl = () => {
 		return custom;
 	}
 
-	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-
-	return `${protocol}//${window.location.host}/ws`;
+	return "ws://127.0.0.1:8765/ws";
 };
 
 const parseWirePayload = (raw: unknown): unknown | null => {

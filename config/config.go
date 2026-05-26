@@ -85,10 +85,8 @@ type Config struct {
 	OHLCEWarmEnabled           bool
 	OHLCIntervalMinutes        int
 	OHLCMaxSymbols             int
-	OHLCFetchDelay             time.Duration
 	OHLCEWarmPulseCredit       int
 	ReplayFile                 string
-	ReplayPace                 time.Duration
 }
 
 var System *Config
@@ -168,19 +166,11 @@ func NewConfig() *Config {
 		OHLCEWarmEnabled:           true,
 		OHLCIntervalMinutes:        5,
 		OHLCMaxSymbols:             64,
-		OHLCFetchDelay:             200 * time.Millisecond,
 		OHLCEWarmPulseCredit:       30,
-		ReplayPace:                 50 * time.Millisecond,
 	}
 
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {
 		cfg.ReplayFile = replayFile
-	}
-
-	if replayPace := strings.TrimSpace(os.Getenv("SYMM_REPLAY_PACE")); replayPace != "" {
-		if parsed, err := time.ParseDuration(replayPace); err == nil {
-			cfg.ReplayPace = parsed
-		}
 	}
 
 	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))

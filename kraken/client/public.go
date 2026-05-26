@@ -175,7 +175,6 @@ func (publicClient *PublicClient) runReplay() {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	pace := config.System.ReplayPace
 
 	for publicClient.ctx.Err() == nil && scanner.Scan() {
 		line := scanner.Bytes()
@@ -185,10 +184,6 @@ func (publicClient *PublicClient) runReplay() {
 		}
 
 		publicClient.read(line)
-
-		if pace > 0 {
-			time.Sleep(pace)
-		}
 	}
 
 	if err := scanner.Err(); err != nil {

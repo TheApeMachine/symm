@@ -116,23 +116,11 @@ func (sentiment *Sentiment) publishPulse() {
 		}
 	}
 
-	scanCap := config.System.MaxScanSymbols / 8
-
-	if scanCap < 1 {
-		scanCap = 1
-	}
+	scanCap := max(config.System.MaxScanSymbols / 8, 1)
 
 	if len(sentiment.pending) > 0 && tickerCount < 4 && len(sentiment.requested) < scanCap {
 		remaining := scanCap - len(sentiment.requested)
-		batch := config.System.SubscribeBatch
-
-		if batch > remaining {
-			batch = remaining
-		}
-
-		if batch > len(sentiment.pending) {
-			batch = len(sentiment.pending)
-		}
+		batch := min(min(config.System.SubscribeBatch, remaining), len(sentiment.pending))
 
 		symbols := sentiment.pending[:batch]
 		sentiment.pending = sentiment.pending[batch:]

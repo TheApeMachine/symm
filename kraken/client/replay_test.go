@@ -20,10 +20,8 @@ func TestPublicClientReplayRoutesTicker(t *testing.T) {
 	}
 
 	config.System.ReplayFile = fixture
-	config.System.ReplayPace = 0
 	t.Cleanup(func() {
 		config.System.ReplayFile = ""
-		config.System.ReplayPace = 50 * time.Millisecond
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -58,7 +56,6 @@ func TestPublicClientReplayRoutesTicker(t *testing.T) {
 
 			return
 		default:
-			time.Sleep(5 * time.Millisecond)
 		}
 	}
 

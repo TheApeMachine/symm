@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/qpool"
@@ -89,7 +88,7 @@ func TestHubConcurrentBroadcasts(t *testing.T) {
 
 	var writers sync.WaitGroup
 
-	for index := 0; index < 32; index++ {
+	for index := range 32 {
 		writers.Add(1)
 
 		go func(value int) {
@@ -104,9 +103,8 @@ func TestHubConcurrentBroadcasts(t *testing.T) {
 	}
 
 	writers.Wait()
-	time.Sleep(100 * time.Millisecond)
 
-	for index := 0; index < 32; index++ {
+	for index := range 32 {
 		_, payload, err := conn.ReadMessage()
 
 		if err != nil {

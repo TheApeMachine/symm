@@ -3,6 +3,7 @@ package price
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,4 +112,66 @@ func TestPredictionRecord(t *testing.T) {
 	if prediction.open["BTC/EUR"]["pumpdump"].predictedReturn != predicted {
 		t.Fatalf("expected open prediction stored")
 	}
+}
+
+func TestPredictionConcurrentRecordAndTick(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 4, 8, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	prediction.SeedReturnCalibration("pumpdump", 0.01)
+	prediction.prices["BTC/EUR"] = 50000
+	prediction.open["BTC/EUR"] = map[string]openPrediction{
+		"pumpdump": {
+			measurement: engine.Measurement{
+				Source:     "pumpdump",
+				Type:       engine.Pump,
+				Regime:     "microstructure",
+				Reason:     "actual_pump",
+				Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+				Confidence: 0.8,
+			},
+			predictedReturn: 0.008,
+			anchorPrice:     49000,
+			direction:       1,
+			runway:          config.System.ScalpHoldBeforeExit,
+			dueAt:           time.Now().Add(-time.Millisecond),
+			predictedAt:     time.Now().Add(-config.System.ScalpHoldBeforeExit),
+		},
+	}
+
+	measurement := engine.Measurement{
+		Source:     "pumpdump",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "actual_pump",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.8,
+	}
+
+	var workers sync.WaitGroup
+
+	for index := 0; index < 32; index++ {
+		workers.Add(1)
+
+		go func() {
+			defer workers.Done()
+			_ = prediction.Tick()
+		}()
+
+		workers.Add(1)
+
+		go func() {
+			defer workers.Done()
+			prediction.Record(
+				engine.Perspective{Type: engine.PerspectiveMicrostructure},
+				measurement,
+				50000,
+				time.Now(),
+			)
+		}()
+	}
+
+	workers.Wait()
 }

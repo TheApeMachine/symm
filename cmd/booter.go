@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -18,6 +17,7 @@ type Booter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	err         error
+	errMu       sync.Mutex
 	pool        *qpool.Q
 	systems     []engine.System
 	broadcasts  map[string]*qpool.BroadcastGroup
@@ -60,26 +60,21 @@ func (booter *Booter) Boot() error {
 
 	go hub.Serve(config.System.UIAddr)
 
+	waiters := make([]chan *qpool.QValue[any], len(booter.systems))
+
 	booter.once.Do(func() {
 		for {
-			select {
-			case <-booter.ctx.Done():
-				booter.cancel()
-				booter.err = errnie.Error(booter.ctx.Err())
-				return
-			default:
-				for _, system := range booter.systems {
-					if system.State() != engine.READY {
-						continue
-					}
+			for idx, system := range booter.systems {
+				waiters[idx] = booter.pool.ScheduleFast(booter.ctx, func(ctx context.Context) (any, error) {
+					system.Tick()
+					return nil, nil
+				})
+			}
 
-					if err := system.Tick(); err != nil {
-						booter.err = errnie.Error(err)
-					}
-				}
-
-				if delay := config.System.RescoreEvery; delay > 0 {
-					time.Sleep(delay)
+			for _, waiter := range waiters {
+				value := <-waiter
+				if value != nil && value.Error != nil {
+					errnie.Error(value.Error)
 				}
 			}
 		}

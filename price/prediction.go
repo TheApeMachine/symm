@@ -3,6 +3,7 @@ package price
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/qpool"
@@ -30,6 +31,7 @@ type Prediction struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pool        *qpool.Q
+	stateMu     sync.Mutex
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	prices      map[string]float64
@@ -79,6 +81,9 @@ func (prediction *Prediction) Close() error {
 }
 
 func (prediction *Prediction) Tick() error {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
 	select {
 	case <-prediction.ctx.Done():
 		return prediction.ctx.Err()
@@ -97,6 +102,9 @@ func (prediction *Prediction) Tick() error {
 }
 
 func (prediction *Prediction) SeedReturnCalibration(source string, magnitude float64) {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
 	returnEMA := prediction.returnEMA(source)
 	_, _ = returnEMA.Next(0, magnitude)
 	prediction.returnCount[source] = config.System.MinCalibrationSamples
@@ -108,6 +116,9 @@ func (prediction *Prediction) Record(
 	anchorPrice float64,
 	now time.Time,
 ) float64 {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
 	if len(measurement.Pairs) == 0 {
 		return 0
 	}
@@ -200,6 +211,9 @@ func (prediction *Prediction) settleDue(now time.Time) {
 }
 
 func (prediction *Prediction) RunningMeanError() float64 {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
 	if prediction.errorCount == 0 {
 		return 0
 	}

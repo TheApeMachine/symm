@@ -6,7 +6,6 @@ import (
 	"net"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/smartystreets/goconvey/convey"
@@ -113,7 +112,6 @@ func TestPublicClientConnect(t *testing.T) {
 
 		convey.Convey("It should connect when the dial target is reachable", func() {
 			convey.So(publicClient.Connect(), convey.ShouldBeNil)
-			time.Sleep(200 * time.Millisecond)
 			defer publicClient.Close()
 		})
 	})
@@ -160,7 +158,6 @@ func TestPublicClientReadLoopExitsOnDisconnect(t *testing.T) {
 
 		convey.Convey("It should not panic when the server closes the socket", func() {
 			convey.So(publicClient.Connect(), convey.ShouldBeNil)
-			time.Sleep(200 * time.Millisecond)
 		})
 	})
 }
