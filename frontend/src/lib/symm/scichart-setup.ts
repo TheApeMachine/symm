@@ -1,5 +1,3 @@
-import "@tanstack/react-start/client-only";
-
 import {
 	SciChart3DSurface,
 	SciChartDefaults,
@@ -7,67 +5,61 @@ import {
 	SciChartSurface,
 } from "scichart";
 
-import scichart2dNoSimdWasm from "scichart/_wasm/scichart2d-nosimd.wasm?url";
-import scichart2dWasm from "scichart/_wasm/scichart2d.wasm?url";
-import scichart3dNoSimdWasm from "scichart/_wasm/scichart3d-nosimd.wasm?url";
-import scichart3dWasm from "scichart/_wasm/scichart3d.wasm?url";
+const DEFAULT_WASM_BASE = "/scichart";
 
 let wasmReady: Promise<void> | null = null;
+let configured = false;
 
-const sciChartCdnEnabled = (): boolean =>
-	import.meta.env.VITE_SCICHART_WASM_CDN === "true";
-
-const sciChartWasmBase = (): string | null => {
+const sciChartWasmBase = (): string => {
 	const custom = import.meta.env.VITE_SCICHART_WASM_BASE?.trim();
 
-	if (!custom) {
-		return null;
-	}
-
-	return custom.replace(/\/$/, "");
+	return (custom || DEFAULT_WASM_BASE).replace(/\/$/, "");
 };
 
 const configureLocalWasm = () => {
-	const base = sciChartWasmBase();
-
-	if (base) {
-		SciChartSurface.configure({
-			wasmUrl: `${base}/scichart2d.wasm`,
-			wasmNoSimdUrl: `${base}/scichart2d-nosimd.wasm`,
-		});
-		SciChart3DSurface.configure({
-			wasmUrl: `${base}/scichart3d.wasm`,
-			wasmNoSimdUrl: `${base}/scichart3d-nosimd.wasm`,
-		});
+	if (configured) {
 		return;
 	}
 
+	const base = sciChartWasmBase();
+
 	SciChartSurface.configure({
-		wasmUrl: scichart2dWasm,
-		wasmNoSimdUrl: scichart2dNoSimdWasm,
+		wasmUrl: `${base}/scichart2d.wasm`,
+		wasmNoSimdUrl: `${base}/scichart2d-nosimd.wasm`,
 	});
 	SciChart3DSurface.configure({
-		wasmUrl: scichart3dWasm,
-		wasmNoSimdUrl: scichart3dNoSimdWasm,
+		wasmUrl: `${base}/scichart3d.wasm`,
+		wasmNoSimdUrl: `${base}/scichart3d-nosimd.wasm`,
 	});
+	configured = true;
 };
 
-export const ensureSciChartWasm = (): Promise<void> => {
+export const ensureSciChartWasm = async (): Promise<void> => {
+	if (typeof window === "undefined") {
+		return;
+	}
+
 	if (wasmReady) {
 		return wasmReady;
 	}
 
-	SciChartSurface.UseCommunityLicense();
-	SciChartDefaults.performanceWarnings = false;
+	wasmReady = (async () => {
+		SciChartSurface.UseCommunityLicense();
+		SciChartDefaults.performanceWarnings = false;
 
-	if (sciChartCdnEnabled()) {
-		SciChartSurface.loadWasmFromCDN();
-		SciChart3DSurface.loadWasmFromCDN();
-		SciChartPolarSurface.loadWasmFromCDN();
-	} else {
+		if (import.meta.env.VITE_SCICHART_WASM_CDN === "true") {
+			SciChartSurface.loadWasmFromCDN();
+			SciChart3DSurface.loadWasmFromCDN();
+			SciChartPolarSurface.loadWasmFromCDN();
+			return;
+		}
+
 		configureLocalWasm();
-	}
+	})();
 
-	wasmReady = Promise.resolve();
 	return wasmReady;
 };
+
+if (typeof window !== "undefined") {
+	void ensureSciChartWasm();
+}

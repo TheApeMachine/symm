@@ -199,6 +199,14 @@ func (prediction *Prediction) settleDue(now time.Time) {
 	}
 }
 
+func (prediction *Prediction) RunningMeanError() float64 {
+	if prediction.errorCount == 0 {
+		return 0
+	}
+
+	return prediction.errorSum / float64(prediction.errorCount)
+}
+
 func (prediction *Prediction) returnEMA(source string) *adaptive.EMA {
 	ema := prediction.returns[source]
 

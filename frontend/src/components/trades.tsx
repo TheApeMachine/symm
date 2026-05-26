@@ -1,21 +1,17 @@
 import {
 	useSymmConnected,
 	useSymmTradePanelRows,
-} from "#/lib/symm/use-symm-ui";
-import { SidebarSection } from "./sidebar";
+} from "#/lib/symm/use-dashboard-data";
+import { SidebarSection } from "./sidebar-section";
 import { EmptyHint } from "./hint";
-import { formatEur, formatPnl, pnlTone } from "#/lib/utils";
+import { formatEur } from "#/lib/utils";
 
 export const TradesPanel = () => {
 	const connected = useSymmConnected();
 	const rows = useSymmTradePanelRows();
 
 	return (
-		<SidebarSection
-			title="Trades"
-			fill
-			className="min-w-0 border-l border-(--dash-border)"
-		>
+		<SidebarSection title="Trades" fill className="min-h-0 min-w-0">
 			{rows.length === 0 ? (
 				<EmptyHint connected={connected} />
 			) : (
@@ -34,25 +30,24 @@ export const TradesPanel = () => {
 											: "ENTER"}{" "}
 									{row.symbol}
 								</span>
-								{row.kind === "open" && row.open_pnl_eur !== undefined ? (
-									<span className={`tabular-nums ${pnlTone(row.open_pnl_eur)}`}>
-										{formatPnl(row.open_pnl_eur)}
+								{row.kind === "open" && row.qty !== undefined ? (
+									<span className="tabular-nums text-(--dash-muted)">
+										{row.qty.toFixed(6)}
 									</span>
 								) : null}
-								{row.kind === "exit" && row.pnl_eur !== undefined ? (
-									<span className={`tabular-nums ${pnlTone(row.pnl_eur)}`}>
-										{formatPnl(row.pnl_eur)}
+								{row.kind !== "open" && row.notionalEur !== undefined ? (
+									<span className="tabular-nums text-(--dash-text)">
+										{formatEur(row.notionalEur)}
 									</span>
 								) : null}
 							</div>
 							<div className="mt-0.5 flex items-center justify-between gap-2 text-(--dash-muted)">
 								<span>
-									{row.regime} · {row.reason}
+									{row.side ?? row.kind}
+									{row.price !== undefined ? ` @ ${row.price.toFixed(2)}` : ""}
 								</span>
-								{row.kind === "open" && row.notional_eur !== undefined ? (
-									<span className="tabular-nums">
-										{formatEur(row.notional_eur)}
-									</span>
+								{row.kind === "open" && row.qty !== undefined ? (
+									<span className="tabular-nums">inventory</span>
 								) : null}
 							</div>
 						</li>

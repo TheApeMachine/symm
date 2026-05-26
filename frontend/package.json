@@ -6,7 +6,7 @@
     "#/*": "./src/*"
   },
   "scripts": {
-    "dev": "vite dev --port 3000",
+    "dev": "pnpm sync:scichart-wasm && vite dev --port 3000",
     "build": "pnpm sync:scichart-wasm && vite build",
     "preview": "vite preview",
     "test": "vitest run",

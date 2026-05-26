@@ -27,8 +27,8 @@ const (
 
 /*
 Measurement is one signal reading for downstream trading.
-Confidence is unitless signal strength in (0, 1): relative to symbol-local history,
-never certainty. Expected return and hold horizon are derived in the trader.
+Confidence is in (0, 1) and describes how completely the current observation
+matches the signal's criteria — not historical warmup or certainty.
 */
 type Measurement struct {
 	Type       MeasurementType

@@ -2,6 +2,7 @@ package price
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -62,6 +63,20 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected feedback on settle")
+	}
+}
+
+func TestPredictionRunningMeanError(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	prediction.errorSum = 0.6
+	prediction.errorCount = 3
+
+	if got := prediction.RunningMeanError(); math.Abs(got-0.2) > 1e-9 {
+		t.Fatalf("expected 0.2, got %v", got)
 	}
 }
 

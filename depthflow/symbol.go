@@ -20,7 +20,6 @@ type DepthSymbol struct {
 	pressure    *adaptive.EMA
 	score       *numeric.Derived
 	forecast    *learned.Forecast
-	confidence  *engine.SymbolConfidence
 }
 
 func NewDepthSymbol(pair asset.Pair) *DepthSymbol {
@@ -31,8 +30,7 @@ func NewDepthSymbol(pair asset.Pair) *DepthSymbol {
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
 		)),
-		forecast:   learned.NewForecast(0.35),
-		confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+		forecast: learned.NewForecast(0.35),
 	}
 }
 
@@ -81,9 +79,9 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	confidence, ok := state.confidence.Measure(raw)
+	confidence := engine.AlignConfidence(math.Abs(imbalance), pressure*state.forecast.Scale())
 
-	if !ok {
+	if confidence <= 0 {
 		return engine.Measurement{}, false
 	}
 

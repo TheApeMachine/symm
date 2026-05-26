@@ -49,6 +49,7 @@ func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
 
 	fluid.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	fluid.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
+	fluid.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return fluid
 }
@@ -87,6 +88,7 @@ func (fluid *Fluid) Tick() error {
 		}
 
 		state.changePct = row.ChangePct
+		state.volume = row.Volume
 	case value := <-fluid.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)
 		state := fluid.symbols[delta.Symbol]
@@ -112,6 +114,17 @@ func (fluid *Fluid) Tick() error {
 				state.spreadBPS = (ask - bid) / mid * 10000
 			}
 		}
+
+		if _, seen := fluid.requested[delta.Symbol]; seen {
+			break
+		}
+
+		if len(state.bids) == 0 || len(state.asks) == 0 {
+			break
+		}
+
+		fluid.requested[delta.Symbol] = struct{}{}
+		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
 	case value := <-fluid.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := fluid.symbols[tick.Symbol]
@@ -163,6 +176,44 @@ func (fluid *Fluid) publishPulse() {
 	for measurement := range fluid.Measure() {
 		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
+
+	fluid.publishFieldRows()
+}
+
+func (fluid *Fluid) publishFieldRows() {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	symbols := make([]map[string]any, 0)
+
+	for symbol, state := range fluid.symbols {
+		if _, subscribed := fluid.requested[symbol]; !subscribed {
+			continue
+		}
+
+		row := state.wireRow()
+
+		if row == nil {
+			continue
+		}
+
+		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "field_row",
+			"ts":     now,
+			"symbol": symbol,
+			"row":    row,
+		}})
+		symbols = append(symbols, row)
+	}
+
+	if len(symbols) == 0 {
+		return
+	}
+
+	fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":        "field_snapshot",
+		"ts":           now,
+		"symbol_count": len(symbols),
+		"symbols":      symbols,
+	}})
 }
 
 func (fluid *Fluid) Close() error {
@@ -174,7 +225,11 @@ func (fluid *Fluid) Source() string { return fluidSource }
 
 func (fluid *Fluid) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		for _, state := range fluid.symbols {
+		for symbol, state := range fluid.symbols {
+			if _, subscribed := fluid.requested[symbol]; !subscribed {
+				continue
+			}
+
 			measurement, ok := state.Measure()
 
 			if !ok {

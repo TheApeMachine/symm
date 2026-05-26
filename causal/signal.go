@@ -193,7 +193,11 @@ func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 		macro := causal.macroMomentum()
 		now := time.Now()
 
-		for _, state := range causal.symbols {
+		for symbol, state := range causal.symbols {
+			if _, subscribed := causal.requested[symbol]; !subscribed {
+				continue
+			}
+
 			measurement, ok := state.Measure(macro, now)
 
 			if !ok {

@@ -1,5 +1,3 @@
-import "@tanstack/react-start/client-only";
-
 import { memo, useCallback } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
@@ -11,7 +9,6 @@ import {
 	type SignalSource,
 } from "#/lib/symm/signal-confidence";
 import "#/lib/symm/scichart-setup";
-import { Flex } from "./ui/flex";
 
 type SignalGaugeProps = {
 	source: SignalSource;
@@ -53,7 +50,7 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 		<SciChartReact
 			initChart={initChart}
 			onInit={onInit}
-			className="flex w-full h-full"
+			className="min-h-0 w-full flex-1"
 			innerContainerProps={{ className: "h-full w-full" }}
 		/>
 	);
@@ -61,23 +58,20 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 
 export const Gauges = () => {
 	return (
-		<Flex.Column gap={1} padding={1} fullWidth fullHeight>
-			<Flex.Row align="center" justify="center" fullWidth fullHeight>
-				{SIGNAL_SOURCES.slice(0, 4).map((source: SignalSource) => (
-					<Flex.Column key={source} fullWidth fullHeight>
-						<small>{SIGNAL_LABELS[source]}</small>
-						<SignalGauge key={source} source={source} />
-					</Flex.Column>
+		<div className="flex h-full min-h-0 flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel) p-1">
+			<div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-2 gap-1">
+				{SIGNAL_SOURCES.map((source: SignalSource) => (
+					<div
+						key={source}
+						className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+					>
+						<small className="truncate px-0.5 text-center text-[9px] text-(--dash-muted)">
+							{SIGNAL_LABELS[source]}
+						</small>
+						<SignalGauge source={source} />
+					</div>
 				))}
-			</Flex.Row>
-			<Flex.Row align="center" justify="center" fullWidth fullHeight>
-				{SIGNAL_SOURCES.slice(4).map((source: SignalSource) => (
-					<Flex.Column key={source} fullWidth fullHeight>
-						<small>{SIGNAL_LABELS[source]}</small>
-						<SignalGauge key={source} source={source} />
-					</Flex.Column>
-				))}
-			</Flex.Row>
-		</Flex.Column>
+			</div>
+		</div>
 	);
 };

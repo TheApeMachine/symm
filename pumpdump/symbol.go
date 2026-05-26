@@ -22,28 +22,28 @@ const (
 )
 
 type PumpSymbol struct {
-	pair           asset.Pair
-	volumeWindow   *adaptive.Window
-	volumeBaseline *adaptive.EMA
-	volumeSpike    *adaptive.Ratio
-	score          *numeric.Scored
-	forecast       *learned.Forecast
-	lastPrice      float64
-	dailyQuoteVol  float64
-	buyPressure    float64
-	imbalance      float64
-	spreadBPS      float64
-	confidence     *engine.SymbolConfidence
+	pair              asset.Pair
+	volumeWindow      *adaptive.Window
+	volumeBaseline    *adaptive.EMA
+	volumeSpike       *adaptive.Ratio
+	score             *numeric.Scored
+	forecast          *learned.Forecast
+	spreadCompression *adaptive.Compression
+	lastPrice         float64
+	dailyQuoteVol     float64
+	buyPressure       float64
+	imbalance         float64
+	spreadBPS         float64
 }
 
 func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 	return &PumpSymbol{
-		pair:           pair,
-		volumeWindow:   adaptive.NewWindow(tradeWindow),
-		volumeBaseline: adaptive.NewEMA(0),
-		volumeSpike:    adaptive.NewRatio(0),
-		forecast:       learned.NewForecast(0.35),
-		confidence:     engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+		pair:              pair,
+		volumeWindow:      adaptive.NewWindow(tradeWindow),
+		volumeBaseline:    adaptive.NewEMA(0),
+		volumeSpike:       adaptive.NewRatio(0),
+		forecast:          learned.NewForecast(0.35),
+		spreadCompression: adaptive.NewCompression(0),
 		score: numeric.NewScored(
 			moveClassifier,
 			numeric.NewAccumulate(
@@ -90,9 +90,9 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	confidence, ok := state.confidence.Measure(raw)
+	confidence, err := state.measureAlignment(peakSpike)
 
-	if !ok {
+	if err != nil || confidence <= 0 {
 		return engine.Measurement{}, false
 	}
 

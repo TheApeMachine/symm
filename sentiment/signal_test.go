@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
@@ -19,11 +18,9 @@ func TestSentimentMeasure(t *testing.T) {
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR", "E/EUR"} {
 		signal.symbols[symbol] = &symbolState{
-			pair:       asset.Pair{Wsname: symbol},
-			changePct:  0.005 + float64(index)*0.002,
-			confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+			pair:      asset.Pair{Wsname: symbol},
+			changePct: 0.005 + float64(index)*0.002,
 		}
-		engine.WarmSymbolConfidence(signal.symbols[symbol].confidence, 0.002, 0.003, 0.004, 0.005)
 	}
 
 	found := false

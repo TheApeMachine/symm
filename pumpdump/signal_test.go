@@ -33,7 +33,7 @@ func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
 }
 
 func seedPumpSymbol(symbolState *PumpSymbol) {
-	symbolState.lastPrice = 1
+	symbolState.lastPrice = 1.003
 	symbolState.dailyQuoteVol = 50
 	symbolState.imbalance = 0.8
 	symbolState.buyPressure = 0.6
@@ -47,7 +47,7 @@ func seedPumpSymbol(symbolState *PumpSymbol) {
 		_, _ = symbolState.score.Push(1, 0.8, 0.6, 20, 1, 1, 1)
 	}
 
-	engine.WarmSymbolConfidence(symbolState.confidence, 0.2, 0.3, 0.4, 0.5)
+	_, _ = symbolState.spreadCompression.Next(15, 10)
 
 	now := time.Unix(1_700_000_000, 0)
 	_, _ = symbolState.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)

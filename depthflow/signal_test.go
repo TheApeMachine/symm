@@ -23,6 +23,7 @@ func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
 	t.Cleanup(func() { _ = signal.Close() })
 
 	signal.symbols["BTC/EUR"] = NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
+	signal.requested["BTC/EUR"] = struct{}{}
 
 	state := signal.symbols["BTC/EUR"]
 
@@ -41,8 +42,6 @@ func seedDepthSymbol(state *DepthSymbol) {
 	for range 8 {
 		_, _ = state.score.Push(0.7, 0.8)
 	}
-
-	engine.WarmSymbolConfidence(state.confidence, 0.2, 0.3, 0.4, 0.5)
 }
 
 func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
@@ -55,6 +54,7 @@ func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
 
 	state := NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
 	signal.symbols["BTC/EUR"] = state
+	signal.requested["BTC/EUR"] = struct{}{}
 	seedDepthSymbol(state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:depthflow", 8)
@@ -163,6 +163,7 @@ func BenchmarkDepthFlowMeasure(b *testing.B) {
 
 	signal := NewDepthFlow(ctx, pool)
 	signal.symbols["BTC/EUR"] = NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
+	signal.requested["BTC/EUR"] = struct{}{}
 
 	seedDepthSymbol(signal.symbols["BTC/EUR"])
 

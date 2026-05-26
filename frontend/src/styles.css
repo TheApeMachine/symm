@@ -102,10 +102,114 @@ body {
 
 body {
   display: flex;
+  flex-direction: column;
+  height: 100%;
   margin: 0;
+  min-height: 0;
+  overflow: hidden;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.dashboard-shell {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "main"
+    "footer";
+}
+
+.dashboard-shell > header {
+  grid-area: header;
+}
+
+.dashboard-main {
+  grid-area: main;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.5rem;
+}
+
+.dashboard-footer {
+  grid-area: footer;
+  display: flex;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  border-top: 1px solid var(--dash-border);
+  padding: 0 0.75rem;
+  font-size: 10px;
+  color: var(--dash-muted);
+}
+
+.dashboard-workspace {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
+  gap: 0.5rem;
+}
+
+.dashboard-primary {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: 280px minmax(0, 1fr);
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.dashboard-top-row {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.dashboard-secondary {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.dashboard-trades-strip {
+  min-height: 0;
+  max-height: 7.5rem;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  border: 1px solid var(--dash-border);
+  background: var(--dash-panel);
+}
+
+.dashboard-trade-panel {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  border: 1px solid var(--dash-border);
+  background: var(--dash-panel);
+}
+
+.dashboard-panel-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--dash-border);
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
 }
 
 code {

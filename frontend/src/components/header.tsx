@@ -1,17 +1,19 @@
 import { memo } from "react";
-import {
-	useSymmConnected,
-	useSymmStatus,
-	useSymmPositionSymbols,
-} from "#/lib/symm/use-symm-ui";
+
 import ThemeToggle from "#/components/ThemeToggle";
 import { Metric } from "./metric";
-import { formatPnl, pnlTone } from "#/lib/utils";
+import {
+	useSymmConnected,
+	useSymmEnginePulse,
+	useSymmWallet,
+} from "#/lib/symm/use-dashboard-data";
+import { formatEur } from "#/lib/utils";
 
 export const DashboardHeader = memo(function DashboardHeader() {
 	const connected = useSymmConnected();
-	const status = useSymmStatus();
-	const positionSymbols = useSymmPositionSymbols();
+	const wallet = useSymmWallet();
+	const pulse = useSymmEnginePulse();
+	const cash = wallet.balance + wallet.reservedEur;
 
 	return (
 		<header className="flex h-11 shrink-0 items-center gap-3 border-b border-(--dash-border) px-3 sm:px-4">
@@ -31,37 +33,22 @@ export const DashboardHeader = memo(function DashboardHeader() {
 			</span>
 
 			<span className="text-xs text-(--dash-muted)">
-				{positionSymbols.length} open chart
-				{positionSymbols.length === 1 ? "" : "s"}
+				{wallet.openCount} open position{wallet.openCount === 1 ? "" : "s"}
 			</span>
 
 			<div className="ml-auto flex items-center gap-4 sm:gap-6">
+				<Metric label="Cash" value={connected ? formatEur(cash) : "…"} />
 				<Metric
-					label="Equity"
-					value={
-						status ? `€${status.equity_eur.toFixed(2)}` : connected ? "—" : "…"
-					}
+					label="Available"
+					value={connected ? formatEur(wallet.balance) : "…"}
 				/>
 				<Metric
-					label="Closed PnL"
-					value={
-						status ? formatPnl(status.closed_pnl_eur) : connected ? "—" : "…"
-					}
-					tone={pnlTone(status?.closed_pnl_eur)}
+					label="Reserved"
+					value={connected ? formatEur(wallet.reservedEur) : "…"}
 				/>
 				<Metric
-					label="Open"
-					value={status ? String(status.open_count) : connected ? "—" : "…"}
-				/>
-				<Metric
-					label="Win rate"
-					value={
-						status
-							? `${(status.win_rate * 100).toFixed(1)}%`
-							: connected
-								? "—"
-								: "…"
-					}
+					label="Tick"
+					value={connected ? String(pulse?.seq ?? 0) : "…"}
 				/>
 				<ThemeToggle />
 			</div>

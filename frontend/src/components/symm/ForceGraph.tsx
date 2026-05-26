@@ -1,4 +1,3 @@
-import "@tanstack/react-start/client-only";
 
 import { memo, useCallback, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";

@@ -22,8 +22,6 @@ func TestFluidSymbolMeasure(t *testing.T) {
 		_, _ = state.score.Push(0.7, 0.8)
 	}
 
-	engine.WarmSymbolConfidence(state.confidence, 0.2, 0.3, 0.4, 0.5)
-
 	for range 6 {
 		measurement, ok := state.Measure()
 
@@ -47,7 +45,6 @@ func TestFluidPublishPulseAfterBook(t *testing.T) {
 	state.buyPressure, _ = state.pressure.Next(0, 0.8)
 	state.bids = []market.BookLevel{{Price: 10, Volume: 80}}
 	state.asks = []market.BookLevel{{Price: 10.01, Volume: 20}}
-	engine.WarmSymbolConfidence(state.confidence, 0.2, 0.3, 0.4, 0.5)
 
 	for range 8 {
 		_, _ = state.score.Push(0.7, 0.8)
@@ -116,6 +113,7 @@ func TestFluidTickAppliesBook(t *testing.T) {
 func BenchmarkFluidMeasure(b *testing.B) {
 	signal := NewFluid(context.Background(), nil)
 	signal.symbols["ALT/EUR"] = NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	signal.requested["ALT/EUR"] = struct{}{}
 	signal.symbols["ALT/EUR"].bids = []market.BookLevel{{Price: 10, Volume: 70}}
 	signal.symbols["ALT/EUR"].asks = []market.BookLevel{{Price: 10.01, Volume: 30}}
 	signal.symbols["ALT/EUR"].spreadBPS = 10

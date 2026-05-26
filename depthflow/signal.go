@@ -101,6 +101,17 @@ func (depthflow *DepthFlow) Tick() error {
 		if delta.AskOK {
 			state.asks = delta.Asks
 		}
+
+		if _, seen := depthflow.requested[delta.Symbol]; seen {
+			break
+		}
+
+		if len(state.bids) == 0 || len(state.asks) == 0 {
+			break
+		}
+
+		depthflow.requested[delta.Symbol] = struct{}{}
+		depthflow.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
 	case value := <-depthflow.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		state := depthflow.symbols[tick.Symbol]
@@ -174,7 +185,11 @@ func (depthflow *DepthFlow) Source() string {
 
 func (depthflow *DepthFlow) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		for _, state := range depthflow.symbols {
+		for symbol, state := range depthflow.symbols {
+			if _, subscribed := depthflow.requested[symbol]; !subscribed {
+				continue
+			}
+
 			measurement, ok := state.Measure()
 
 			if !ok {
@@ -200,5 +215,4 @@ func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
-	state.confidence.ApplyFeedback(feedback)
 }

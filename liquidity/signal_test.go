@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
@@ -23,22 +22,17 @@ func TestLiquidityMeasure(t *testing.T) {
 		pair:          asset.Pair{Wsname: "LOW/EUR"},
 		dailyQuoteVol: 100,
 		forecast:      learned.NewForecast(0),
-		confidence:    engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 	}
 	signal.symbols["MID/EUR"] = &symbolState{
 		pair:          asset.Pair{Wsname: "MID/EUR"},
 		dailyQuoteVol: 200,
 		forecast:      learned.NewForecast(0),
-		confidence:    engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 	}
 	signal.symbols["HIGH/EUR"] = &symbolState{
 		pair:          asset.Pair{Wsname: "HIGH/EUR"},
 		dailyQuoteVol: 300,
 		forecast:      learned.NewForecast(0),
-		confidence:    engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
 	}
-
-	engine.WarmSymbolConfidence(signal.symbols["LOW/EUR"].confidence, 0.2, 0.3, 0.4, 0.5)
 
 	lowFound := false
 	highFound := false

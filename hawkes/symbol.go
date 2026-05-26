@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/trade"
@@ -138,26 +137,19 @@ func (sym *HawkesSymbol) Measure(
 		asymmetry = sellAsymmetry
 	}
 
-	raw := excitationConfidence(
-		fit,
-		asymmetry,
-		sym.baselineIntensityFence(),
-		sellSide,
-	)
-
 	bookSide := imbalance
 
 	if sellSide {
 		bookSide = math.Abs(imbalance)
 	}
 
-	scaled := errnie.Does(func() (float64, error) {
-		return sym.gauge.Push(raw, math.Min(bookSide, 1))
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	confidence := sym.gaugeScore(scaled, true)
+	confidence := hawkesConfidence(
+		fit,
+		asymmetry,
+		sym.baselineIntensityFence(),
+		bookSide,
+		sellSide,
+	)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false

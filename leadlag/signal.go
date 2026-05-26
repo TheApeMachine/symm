@@ -21,9 +21,8 @@ const (
 )
 
 type symbolState struct {
-	pair       asset.Pair
-	changePct  float64
-	confidence *engine.SymbolConfidence
+	pair      asset.Pair
+	changePct float64
 }
 
 /*
@@ -79,10 +78,7 @@ func (leadlag *LeadLag) Tick() error {
 				continue
 			}
 
-			leadlag.symbols[symbol] = &symbolState{
-				pair:       *pair,
-				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
-			}
+			leadlag.symbols[symbol] = &symbolState{pair: *pair}
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
@@ -193,16 +189,17 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		for symbol, lagRatio := range lags {
-			rawScore, err := leadlag.peak.Next(lagRatio, peerValues(lags, symbol)...)
+			peakLag, err := leadlag.peak.Next(lagRatio, peerValues(lags, symbol)...)
 
-			if err != nil || rawScore <= 0 {
+			if err != nil || peakLag <= 0 {
 				continue
 			}
 
 			state := leadlag.symbols[symbol]
-			confidence, ok := state.confidence.Measure(rawScore)
+			anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
+			confidence := engine.AlignConfidence(peakLag, anchorStrength)
 
-			if !ok {
+			if confidence <= 0 {
 				continue
 			}
 
@@ -221,17 +218,9 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != leadlagSource || feedback.Symbol == "" {
+	if feedback.Source != leadlagSource {
 		return
 	}
-
-	state := leadlag.symbols[feedback.Symbol]
-
-	if state == nil {
-		return
-	}
-
-	state.confidence.ApplyFeedback(feedback)
 }
 
 func peerValues(values map[string]float64, skip string) []float64 {

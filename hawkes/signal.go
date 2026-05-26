@@ -165,7 +165,11 @@ func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		now := time.Now()
 
-		for _, symbolState := range hawkes.symbols {
+		for symbol, symbolState := range hawkes.symbols {
+			if _, subscribed := hawkes.requested[symbol]; !subscribed {
+				continue
+			}
+
 			measurement, ok := symbolState.state.Measure(
 				symbolState.ticks,
 				symbolState.imbalance,

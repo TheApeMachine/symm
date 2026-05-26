@@ -259,5 +259,4 @@ func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
-	state.confidence.ApplyFeedback(feedback)
 }

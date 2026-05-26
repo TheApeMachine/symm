@@ -1,9 +1,12 @@
 import { memo, useCallback } from "react";
 import { SciChartReact } from "scichart-react";
 
+import { EnginePulseDataProvider } from "#/components/symm/engine-pulse-data-provider";
 import { initEnginePulseChart } from "#/components/symm/init-engine-pulse";
-import { registerEnginePulseChart } from "#/lib/symm/feed";
-import { useSymmConnected, useSymmEnginePulse } from "#/lib/symm/use-symm-ui";
+import {
+	useSymmConnected,
+	useSymmEnginePulse,
+} from "#/lib/symm/use-dashboard-data";
 import "#/lib/symm/scichart-setup";
 
 type EnginePulseChartProps = {
@@ -24,7 +27,7 @@ export const EnginePulseChart = memo(function EnginePulseChart({
 
 	const onInit = useCallback(
 		(result: Awaited<ReturnType<typeof initEnginePulseChart>>) =>
-			registerEnginePulseChart(result.appendPulse),
+			EnginePulseDataProvider.registerSink(result.appendPulse),
 		[],
 	);
 

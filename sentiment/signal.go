@@ -19,9 +19,8 @@ const (
 )
 
 type symbolState struct {
-	pair       asset.Pair
-	changePct  float64
-	confidence *engine.SymbolConfidence
+	pair      asset.Pair
+	changePct float64
 }
 
 /*
@@ -77,10 +76,7 @@ func (sentiment *Sentiment) Tick() error {
 				continue
 			}
 
-			sentiment.symbols[symbol] = &symbolState{
-				pair:       *pair,
-				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
-			}
+			sentiment.symbols[symbol] = &symbolState{pair: *pair}
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
@@ -192,16 +188,28 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		for symbol, change := range leaders {
-			rawScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
+			peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
 
-			if err != nil || rawScore <= 0 {
+			if err != nil || peakScore <= 0 {
+				continue
+			}
+
+			topChange := 0.0
+
+			for _, leaderChange := range leaders {
+				if leaderChange > topChange {
+					topChange = leaderChange
+				}
+			}
+
+			if topChange <= 0 {
 				continue
 			}
 
 			state := sentiment.symbols[symbol]
-			confidence, ok := state.confidence.Measure(rawScore)
+			confidence := engine.AlignConfidence(breadth, change/topChange)
 
-			if !ok {
+			if confidence <= 0 {
 				continue
 			}
 
@@ -220,17 +228,9 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != sentimentSource || feedback.Symbol == "" {
+	if feedback.Source != sentimentSource {
 		return
 	}
-
-	state := sentiment.symbols[feedback.Symbol]
-
-	if state == nil {
-		return
-	}
-
-	state.confidence.ApplyFeedback(feedback)
 }
 
 func leaderPeers(leaders map[string]float64, skip string) []float64 {

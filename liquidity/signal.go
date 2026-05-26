@@ -23,7 +23,6 @@ type symbolState struct {
 	pair          asset.Pair
 	dailyQuoteVol float64
 	forecast      *learned.Forecast
-	confidence    *engine.SymbolConfidence
 }
 
 /*
@@ -82,9 +81,8 @@ func (liquidity *Liquidity) Tick() error {
 			}
 
 			liquidity.symbols[symbol] = &symbolState{
-				pair:       *pair,
-				forecast:   learned.NewForecast(0),
-				confidence: engine.NewSymbolConfidence(engine.DefaultCalibrationParams()),
+				pair:     *pair,
+				forecast: learned.NewForecast(0),
 			}
 
 			if pair.Quote != config.System.QuoteCurrency {
@@ -199,10 +197,9 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := liquidity.symbols[symbol]
-			rawScore = peakScore * state.forecast.Scale()
-			confidence, ok := state.confidence.Measure(rawScore)
+			confidence := liquidityConfidence(peakScore, adaptive.PeerValues(candidates, symbol))
 
-			if !ok {
+			if confidence <= 0 {
 				continue
 			}
 
@@ -232,5 +229,4 @@ func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
-	state.confidence.ApplyFeedback(feedback)
 }

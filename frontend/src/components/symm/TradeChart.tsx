@@ -1,5 +1,3 @@
-import "@tanstack/react-start/client-only";
-
 import { memo, useCallback } from "react";
 import { SciChartGroup, SciChartReact } from "scichart-react";
 
@@ -11,10 +9,12 @@ import { registerTradeChart } from "#/components/symm/ws";
 
 type TradeChartProps = {
 	symbol: string;
+	className?: string;
 };
 
 export const TradeChart = memo(function TradeChart({
 	symbol,
+	className = "",
 }: TradeChartProps) {
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => {
@@ -37,7 +37,7 @@ export const TradeChart = memo(function TradeChart({
 		<SciChartReact
 			initChart={initChart}
 			onInit={onInit}
-			className="flex w-full h-full"
+			className={`min-h-0 w-full flex-1 ${className}`}
 			innerContainerProps={{ className: "h-full w-full" }}
 		/>
 	);

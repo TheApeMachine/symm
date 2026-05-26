@@ -1,6 +1,5 @@
 import { TradeChartGrid } from "#/components/symm/TradeChart";
 import { EnginePulseChart } from "#/components/symm/EnginePulseChart";
-import { useMarketWatchSymbol } from "#/lib/symm/use-symm-ui";
 import { Gauges } from "./gauges";
 
 interface Props {
@@ -9,13 +8,8 @@ interface Props {
 }
 
 export const ChartSection = ({ connected, positionSymbols }: Props) => {
-	const watchSymbol = useMarketWatchSymbol();
 	const tradeSymbols =
-		positionSymbols.length > 0
-			? positionSymbols
-			: connected
-				? [watchSymbol]
-				: [];
+		positionSymbols.length > 0 ? positionSymbols : connected ? ["BTC/EUR"] : [];
 
 	return (
 		<section className="flex min-w-0 flex-7 flex-col overflow-hidden p-2">

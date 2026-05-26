@@ -30,6 +30,7 @@ type Crypto struct {
 	pool         *qpool.Q
 	broadcasts   map[string]*qpool.BroadcastGroup
 	subscribers  map[string]*qpool.Subscriber
+	ui           *qpool.BroadcastGroup
 	wallet       *Wallet
 	predictions  *price.Prediction
 	measurements []engine.Measurement
@@ -63,6 +64,8 @@ func NewCrypto(
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("crypto:"+channel, 128)
 	}
+
+	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	if errnie.Error(errnie.Require(map[string]any{
 		"ctx":         ctx,
@@ -149,6 +152,9 @@ func (crypto *Crypto) Tick() error {
 	perspectives := make(map[string]map[engine.PerspectiveType]engine.Perspective)
 	bestReturn := 0.0
 	var bestSymbol string
+	predictedSum := 0.0
+	predictedCount := 0
+	measurementCount := len(crypto.measurements)
 
 	for _, measurement := range crypto.measurements {
 		if len(measurement.Pairs) == 0 {
@@ -183,6 +189,11 @@ func (crypto *Crypto) Tick() error {
 
 				predicted := crypto.predictions.Record(perspective, measurement, anchorPrice, now)
 
+				if predicted > 0 {
+					predictedSum += predicted
+					predictedCount++
+				}
+
 				if predicted > bestReturn {
 					bestReturn = predicted
 					bestSymbol = symbol
@@ -200,6 +211,7 @@ func (crypto *Crypto) Tick() error {
 	}
 
 	crypto.publishConfidence()
+	crypto.publishEnginePulse(measurementCount, predictedSum, predictedCount)
 
 	crypto.pulses++
 	crypto.seq++
@@ -347,6 +359,35 @@ func (crypto *Crypto) ingestMeasurements() error {
 			return nil
 		}
 	}
+}
+
+func (crypto *Crypto) publishEnginePulse(
+	measurementCount int,
+	predictedSum float64,
+	predictedCount int,
+) {
+	if crypto.ui == nil {
+		return
+	}
+
+	avgPrediction := 0.0
+
+	if predictedCount > 0 {
+		avgPrediction = predictedSum / float64(predictedCount)
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":            "engine_pulse",
+		"ts":               time.Now().UTC().Format(time.RFC3339Nano),
+		"seq":              crypto.seq,
+		"phase":            "scan",
+		"measurements":     measurementCount,
+		"open":             crypto.openCount(),
+		"ticker_ready":     crypto.quoteReady,
+		"avg_prediction":   avgPrediction,
+		"avg_error":        crypto.predictions.RunningMeanError(),
+		"forecast_symbols": predictedCount,
+	}})
 }
 
 func (crypto *Crypto) publishConfidence() {

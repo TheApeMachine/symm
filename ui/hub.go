@@ -82,6 +82,7 @@ func NewHub(
 		"executions",
 		"exits",
 		"orders",
+		"ui",
 	} {
 		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		hub.subscriptions[channel] = hub.broadcasts[channel].Subscribe("ui:"+channel, 128)
