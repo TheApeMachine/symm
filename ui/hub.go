@@ -12,7 +12,6 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -40,6 +39,12 @@ func allowLocalhostOrigin(request *http.Request) bool {
 type wsClient struct {
 	conn   *websocket.Conn
 	closed atomic.Bool
+}
+
+func (client *wsClient) close() error {
+	client.closed.Store(true)
+
+	return client.conn.Close()
 }
 
 /*
@@ -129,19 +134,21 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	hub.clients.Store(client, struct{}{})
 
-	_ = client.conn.WriteJSON(map[string]any{
+	if err = client.conn.WriteJSON(map[string]any{
 		"event": "hello",
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-	})
+	}); err != nil {
+		errnie.Error(client.close())
+		return
+	}
 
 	go func() {
 		defer func() {
-			client.closed.Store(true)
 			hub.clients.Delete(client)
-			_ = client.conn.Close()
+			errnie.Error(client.close())
 		}()
 
-		for hub.ctx.Err() == nil {
+		for errnie.Error(hub.ctx.Err()) == nil {
 			if _, _, err := client.conn.ReadMessage(); err != nil {
 				return
 			}
@@ -158,26 +165,22 @@ func (hub *Hub) writePump() {
 					continue
 				}
 
-				hub.pool.Schedule("ui:broadcast", func(ctx context.Context) (any, error) {
-					hub.clients.Range(func(key, _ any) bool {
-						client, ok := key.(*wsClient)
+				hub.clients.Range(func(key, _ any) bool {
+					client, ok := key.(*wsClient)
 
-						if !ok || client.closed.Load() {
-							return true
-						}
-
-						_ = client.conn.WriteJSON(value.Value)
+					if !ok || client.closed.Load() {
 						return true
-					})
+					}
 
-					return nil, nil
+					if err := client.conn.WriteJSON(value.Value); err != nil {
+						errnie.Error(client.close())
+						return false
+					}
+
+					return true
 				})
 			default:
 			}
-		}
-
-		if delay := config.System.RescoreEvery; delay > 0 {
-			time.Sleep(delay)
 		}
 	}
 }

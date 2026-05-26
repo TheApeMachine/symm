@@ -143,10 +143,9 @@ func (sym *HawkesSymbol) Measure(
 		bookSide = math.Abs(imbalance)
 	}
 
-	confidence := hawkesConfidence(
+	confidence := sym.clusterConfidence(
 		fit,
 		asymmetry,
-		sym.baselineIntensityFence(),
 		bookSide,
 		sellSide,
 	)
@@ -201,4 +200,52 @@ func (sym *HawkesSymbol) recordIntensityRatio(ratio float64) {
 	if len(sym.intensityRatios) > capacity {
 		sym.intensityRatios = sym.intensityRatios[len(sym.intensityRatios)-capacity:]
 	}
+}
+
+/*
+clusterConfidence scores trade-cluster excitation against book confirmation from the
+current fit and top-of-book imbalance.
+*/
+func (sym *HawkesSymbol) clusterConfidence(
+	fit BivariateFit,
+	asymmetry float64,
+	bookSide float64,
+	sellSide bool,
+) float64 {
+	if asymmetry <= 0 || fit.SpectralRadius >= criticalBranch {
+		return 0
+	}
+
+	ratio := 0.0
+
+	if sellSide {
+		if fit.MuSell <= 0 || fit.SellIntensity <= 0 {
+			return 0
+		}
+
+		ratio = fit.SellIntensity / fit.MuSell
+	}
+
+	if !sellSide {
+		if fit.MuBuy <= 0 || fit.BuyIntensity <= 0 {
+			return 0
+		}
+
+		ratio = fit.BuyIntensity / fit.MuBuy
+	}
+
+	fence := sym.baselineIntensityFence()
+
+	if ratio <= fence {
+		return 0
+	}
+
+	if fence <= 0 {
+		fence = 1
+	}
+
+	cluster := asymmetry * engine.ExcessRatio(ratio/fence)
+	side := math.Min(math.Abs(bookSide), 1)
+
+	return engine.AlignConfidence(cluster, side)
 }

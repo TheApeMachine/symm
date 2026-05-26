@@ -197,7 +197,7 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := liquidity.symbols[symbol]
-			confidence := liquidityConfidence(peakScore, adaptive.PeerValues(candidates, symbol))
+			confidence := liquidity.confidenceFromScore(peakScore, adaptive.PeerValues(candidates, symbol))
 
 			if confidence <= 0 {
 				continue
@@ -229,4 +229,33 @@ func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
 	}
 
 	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+}
+
+/*
+confidenceFromScore scores how illiquid the current symbol is versus peers.
+With peer context it combines illiquidity depth and cross-section lead; alone it
+uses the illiquidity score directly so a single reading is not pinned at 50%.
+*/
+func (liquidity *Liquidity) confidenceFromScore(score float64, peers []float64) float64 {
+	if score <= 0 {
+		return 0
+	}
+
+	if len(peers) > 0 {
+		maxPeer := 0.0
+
+		for _, peer := range peers {
+			if peer > maxPeer {
+				maxPeer = peer
+			}
+		}
+
+		if score > maxPeer {
+			margin := (score - maxPeer) / score
+
+			return engine.AlignConfidence(score, margin)
+		}
+	}
+
+	return engine.ConfidenceFromScore(score)
 }

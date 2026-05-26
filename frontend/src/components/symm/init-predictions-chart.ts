@@ -6,24 +6,32 @@ import {
 	FastLineRenderableSeries,
 	XyDataSeries,
 	AUTO_COLOR,
-	SweepAnimation,
 	ZoomExtentsModifier,
 	MouseWheelZoomModifier,
 	ZoomPanModifier,
 	RolloverModifier,
 } from "scichart";
-import { RandomWalkGenerator } from "#/components/symm/random";
+
 import { GridLayoutModifier } from "#/components/symm/layout-modifier";
+import {
+	SIGNAL_LABELS,
+	SIGNAL_SOURCES,
+	type SignalSource,
+} from "#/lib/symm/signal-confidence";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
+
+const FIFO_CAPACITY = 600;
+
+export type PredictionsChartControls = {
+	appendReading: (source: SignalSource, x: number, value: number) => void;
+};
 
 export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
 
-	// Create a SciChartSurface
 	const { wasmContext, sciChartSurface } =
 		await SciChartSurface.create(rootElement);
 
-	// Create an XAxis and YAxis
 	sciChartSurface.xAxes.add(new NumericAxis(wasmContext));
 	sciChartSurface.yAxes.add(
 		new NumericAxis(wasmContext, {
@@ -32,29 +40,26 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		}),
 	);
 
-	const POINTS = 1000;
-	for (let i = 0; i < 10; i++) {
-		// Create arrays of x, y values (just arrays of numbers)
-		const { xValues, yValues } = new RandomWalkGenerator().getRandomWalkSeries(
-			POINTS,
-		);
+	const seriesBySource = new Map<SignalSource, XyDataSeries>();
 
-		// Create a Series and add to the chart
+	for (const source of SIGNAL_SOURCES) {
+		const dataSeries = new XyDataSeries(wasmContext, {
+			dataSeriesName: SIGNAL_LABELS[source],
+			dataIsSortedInX: true,
+			containsNaN: false,
+			fifoCapacity: FIFO_CAPACITY,
+		});
+
 		sciChartSurface.renderableSeries.add(
 			new FastLineRenderableSeries(wasmContext, {
-				dataSeries: new XyDataSeries(wasmContext, {
-					xValues,
-					yValues,
-					dataSeriesName: `Series ${i + 1}`,
-				}),
+				dataSeries,
 				stroke: AUTO_COLOR,
 				strokeThickness: 3,
-				animation: new SweepAnimation({ duration: 500, fadeEffect: true }),
 			}),
 		);
+		seriesBySource.set(source, dataSeries);
 	}
 
-	// Optional: Add some interactivity to the chart
 	sciChartSurface.chartModifiers.add(
 		new ZoomExtentsModifier({ modifierGroup: "chart" }),
 		new MouseWheelZoomModifier({ modifierGroup: "chart" }),
@@ -62,14 +67,30 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		new RolloverModifier({ modifierGroup: "chart" }),
 	);
 
-	const glm = new GridLayoutModifier();
-	sciChartSurface.chartModifiers.add(glm);
+	const gridLayout = new GridLayoutModifier();
+	sciChartSurface.chartModifiers.add(gridLayout);
 
 	sciChartSurface.zoomExtents();
 
-	const setIsGridLayoutMode = (value: boolean) => {
-		glm.isGrid = value;
+	const appendReading = (source: SignalSource, x: number, value: number) => {
+		const dataSeries = seriesBySource.get(source);
+
+		if (!dataSeries) {
+			return;
+		}
+
+		dataSeries.append(x, value);
+		sciChartSurface.invalidateElement();
 	};
 
-	return { wasmContext, sciChartSurface, setIsGridLayoutMode };
+	const setIsGridLayoutMode = (value: boolean) => {
+		gridLayout.isGrid = value;
+	};
+
+	return {
+		wasmContext,
+		sciChartSurface,
+		setIsGridLayoutMode,
+		controls: { appendReading },
+	};
 };

@@ -3,19 +3,52 @@ import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
 import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
 import { CausalGraphDataProvider } from "#/components/symm/causal-graph-data-provider";
-import { EnginePulseDataProvider } from "#/components/symm/engine-pulse-data-provider";
 import { FluidDataProvider } from "#/components/symm/fluid-data-provider";
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
+import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
-import { isHelloEvent } from "#/lib/symm/events";
+import { isHelloEvent, isPredictionFeedback } from "#/lib/symm/events";
 
-const socketUrl = "ws://localhost:8765/ws";
+const resolveSocketUrl = () => {
+	if (typeof window === "undefined") {
+		return null;
+	}
+
+	const custom = import.meta.env.VITE_SYMM_WS_URL?.trim();
+
+	if (custom) {
+		return custom;
+	}
+
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+
+	return `${protocol}//${window.location.host}/ws`;
+};
+
+const parseWirePayload = (raw: unknown): unknown | null => {
+	if (typeof raw !== "string") {
+		return null;
+	}
+
+	const trimmed = raw.trim();
+
+	if (trimmed.length === 0) {
+		return null;
+	}
+
+	return JSON.parse(trimmed) as unknown;
+};
 
 const routePayload = (payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
+		return;
+	}
+
+	if (isPredictionFeedback(payload)) {
+		PredictionsDataProvider.ingest(payload);
 		return;
 	}
 
@@ -25,7 +58,7 @@ const routePayload = (payload: unknown) => {
 		if (typeof row.event === "string") {
 			switch (row.event) {
 				case "engine_pulse":
-					EnginePulseDataProvider.ingest(payload);
+					PredictionsDataProvider.ingest(payload);
 					return;
 				case "field_row":
 				case "field_snapshot":
@@ -45,22 +78,33 @@ const routePayload = (payload: unknown) => {
 	TradesDataProvider.ingest(payload);
 	CausalGraphDataProvider.ingest(payload);
 	ConfidenceDataProvider.ingest(payload);
+	PredictionsDataProvider.ingest(payload);
 	OhlcDataProvider.ingest(payload);
 };
 
 export const useSymmStream = () => {
-	const { lastMessage } = useWebSocket(
-		typeof window === "undefined" ? null : socketUrl,
-		{
-			shouldReconnect: () => true,
-		},
-	);
+	const { lastMessage } = useWebSocket(resolveSocketUrl(), {
+		shouldReconnect: () => true,
+	});
 
 	useEffect(() => {
 		if (lastMessage === null) {
 			return;
 		}
 
-		routePayload(JSON.parse(lastMessage.data));
+		let payload: unknown | null;
+
+		try {
+			payload = parseWirePayload(lastMessage.data);
+		} catch {
+			ConnectionStore.set(false);
+			return;
+		}
+
+		if (payload === null) {
+			return;
+		}
+
+		routePayload(payload);
 	}, [lastMessage]);
 };

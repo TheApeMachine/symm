@@ -29,6 +29,8 @@ type PumpSymbol struct {
 	score             *numeric.Scored
 	forecast          *learned.Forecast
 	spreadCompression *adaptive.Compression
+	bookGate          *adaptive.Product
+	precursorMove     *adaptive.PositiveMove
 	lastPrice         float64
 	dailyQuoteVol     float64
 	buyPressure       float64
@@ -44,6 +46,8 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 		volumeSpike:       adaptive.NewRatio(0),
 		forecast:          learned.NewForecast(0.35),
 		spreadCompression: adaptive.NewCompression(0),
+		bookGate:          adaptive.NewProduct(),
+		precursorMove:     adaptive.NewPositiveMove(0.001),
 		score: numeric.NewScored(
 			moveClassifier,
 			numeric.NewAccumulate(
@@ -110,4 +114,47 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
 	}, true
+}
+
+/*
+measureAlignment scores how completely the current microstructure matches a pump setup.
+Each factor is derived only from present observations, not symbol history.
+*/
+func (state *PumpSymbol) measureAlignment(peakSpike float64) (float64, error) {
+	spreadScore, err := state.spreadCompression.Next(0, state.spreadBPS)
+
+	if err != nil {
+		return 0, err
+	}
+
+	bookSide, err := state.bookSideStrength()
+
+	if err != nil {
+		return 0, err
+	}
+
+	moveStrength, err := state.precursorMoveStrength()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return engine.AlignConfidence(
+		engine.ExcessRatio(peakSpike),
+		bookSide,
+		engine.ExcessRatio(spreadScore),
+		moveStrength,
+	), nil
+}
+
+func (state *PumpSymbol) bookSideStrength() (float64, error) {
+	return state.bookGate.Next(
+		0,
+		math.Min(math.Abs(state.imbalance), 1),
+		(state.buyPressure+1)/2,
+	)
+}
+
+func (state *PumpSymbol) precursorMoveStrength() (float64, error) {
+	return state.precursorMove.Next(0, state.lastPrice, state.volumeWindow.Anchor())
 }

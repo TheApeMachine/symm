@@ -58,7 +58,7 @@ func (booter *Booter) Boot() error {
 		os.Exit(1)
 	}
 
-	go hub.Serve(":8765")
+	go hub.Serve(config.System.UIAddr)
 
 	booter.once.Do(func() {
 		for {

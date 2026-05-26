@@ -116,6 +116,33 @@ export type ExecutionFill = {
 	Price: number;
 };
 
+export type PredictionFeedback = {
+	Source: string;
+	Symbol: string;
+	PredictedReturn: number;
+	ActualReturn: number;
+	Error: number;
+	Confidence?: number;
+};
+
+export const isPredictionFeedback = (
+	raw: unknown,
+): raw is PredictionFeedback => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return (
+		typeof row.Source === "string" &&
+		typeof row.Symbol === "string" &&
+		typeof row.PredictedReturn === "number" &&
+		typeof row.ActualReturn === "number" &&
+		typeof row.Error === "number"
+	);
+};
+
 export const eventTimeSec = (event: SymmEvent): number => {
 	const parsed = Date.parse(event.ts);
 

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { ConnectionStore } from "#/lib/symm/connection-store";
-import { EnginePulseDataProvider } from "#/components/symm/engine-pulse-data-provider";
+import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 
@@ -14,8 +14,8 @@ export const useSymmConnected = () =>
 
 export const useSymmEnginePulse = () =>
 	useSyncExternalStore(
-		EnginePulseDataProvider.subscribe,
-		EnginePulseDataProvider.snapshot,
+		PredictionsDataProvider.subscribe,
+		PredictionsDataProvider.snapshot,
 		() => undefined,
 	);
 

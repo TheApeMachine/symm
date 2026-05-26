@@ -13,14 +13,74 @@ import {
 	Vector3,
 	zeroArray2D,
 } from "scichart";
+
+import type { FieldSnapshotEvent } from "#/lib/symm/events";
 import { appTheme } from "#/components/symm/theme";
+import {
+	type FluidGrid,
+	gridFromPayload,
+	gridFromSnapshot,
+} from "#/lib/symm/fluid-grid";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
-// SCICHART CODE
+const GRID_Z = 50;
+const GRID_X = 50;
+const Y_MIN = -0.3;
+const Y_MAX = 0.5;
+
+export type FluidSurfaceControls = {
+	update: (snapshot: FieldSnapshotEvent) => void;
+	dispose: () => void;
+};
+
+const applyLiveGrid = (grid: FluidGrid, heightmapArray: number[][]) => {
+	const srcSize = grid.heights.length;
+	const span = grid.max - grid.min;
+	const useSpan = Number.isFinite(span) && span > 1e-6;
+	const scaleMax = useSpan
+		? span
+		: Math.max(grid.outliers.displayMax, grid.max, 0.05);
+	const base = useSpan ? grid.min : 0;
+	const ySpan = Y_MAX - Y_MIN;
+
+	for (let zIndex = 0; zIndex < GRID_Z; zIndex++) {
+		for (let xIndex = 0; xIndex < GRID_X; xIndex++) {
+			heightmapArray[zIndex][xIndex] = 0;
+		}
+	}
+
+	if (srcSize === 0) {
+		return;
+	}
+
+	for (let zIndex = 0; zIndex < GRID_Z; zIndex++) {
+		const srcZ = Math.min(srcSize - 1, Math.floor((zIndex * srcSize) / GRID_Z));
+		const row = grid.heights[srcZ];
+
+		if (!row) {
+			continue;
+		}
+
+		const rowLen = row.length;
+
+		for (let xIndex = 0; xIndex < GRID_X; xIndex++) {
+			const srcX = Math.min(rowLen - 1, Math.floor((xIndex * rowLen) / GRID_X));
+			const raw = row[srcX];
+
+			if (!Number.isFinite(raw) || raw <= 0) {
+				continue;
+			}
+
+			const normalized = useSpan ? (raw - base) / scaleMax : raw / scaleMax;
+
+			heightmapArray[zIndex][xIndex] = Y_MIN + normalized * ySpan;
+		}
+	}
+};
+
 export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
 
-	// Create a SciChart3DSurface
 	const { sciChart3DSurface, wasmContext } = await SciChart3DSurface.create(
 		rootElement,
 		{
@@ -28,33 +88,25 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		},
 	);
 
-	// Create and position the camera in the 3D world
 	sciChart3DSurface.camera = new CameraController(wasmContext, {
 		position: new Vector3(-150, 200, 150),
 		target: new Vector3(0, 50, 0),
 	});
-	// Set the worlddimensions, which defines the Axis cube size
 	sciChart3DSurface.worldDimensions = new Vector3(200, 100, 200);
 
-	// Add an X,Y and Z Axis
 	sciChart3DSurface.xAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "X Axis",
 	});
 	sciChart3DSurface.yAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "Y Axis",
-		visibleRange: new NumberRange(-0.3, 0.3),
+		visibleRange: new NumberRange(Y_MIN, Y_MAX),
 	});
 	sciChart3DSurface.zAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "Z Axis",
 	});
 
-	// Create a 2D array using the helper function zeroArray2D
-	// and fill this with data
-	const zSize = 50;
-	const xSize = 50;
-	const heightmapArray = zeroArray2D([zSize, xSize]);
+	const heightmapArray = zeroArray2D([GRID_Z, GRID_X]);
 
-	// Create a UniformGridDataSeries3D
 	const dataSeries = new UniformGridDataSeries3D(wasmContext, {
 		yValues: heightmapArray,
 		xStep: 1,
@@ -62,20 +114,6 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		dataSeriesName: "Uniform Surface Mesh",
 	});
 
-	const setData = (i: number) => {
-		const f = i / 10;
-		for (let z = 0; z < zSize; z++) {
-			let zVal = z - zSize / 2;
-			for (let x = 0; x < xSize; x++) {
-				let xVal = x - xSize / 2;
-				const y = (Math.cos(xVal * 0.2 + f) + Math.cos(zVal * 0.2 + f)) / 5;
-				heightmapArray[z][x] = y;
-			}
-		}
-		dataSeries.setYValues(heightmapArray);
-	};
-
-	// Create the color map
 	const colorMap = new GradientColorPalette(wasmContext, {
 		gradientStops: [
 			{ offset: 1, color: appTheme.VividPink },
@@ -88,11 +126,10 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		],
 	});
 
-	// Finally, create a SurfaceMeshRenderableSeries3D and add to the chart
 	const series = new SurfaceMeshRenderableSeries3D(wasmContext, {
 		dataSeries,
-		minimum: -0.3,
-		maximum: 0.5,
+		minimum: Y_MIN,
+		maximum: Y_MAX,
 		opacity: 0.9,
 		cellHardnessFactor: 1.0,
 		shininess: 0,
@@ -112,29 +149,26 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 
 	sciChart3DSurface.renderableSeries.add(series);
 
-	// Optional: Add some interactivity modifiers
 	sciChart3DSurface.chartModifiers.add(new MouseWheelZoomModifier3D());
 	sciChart3DSurface.chartModifiers.add(new OrbitModifier3D());
 	sciChart3DSurface.chartModifiers.add(new ResetCamera3DModifier());
 
-	let frame = 0;
-	let timer: NodeJS.Timeout;
-	const updateFunc = () => {
-		setData(frame);
-		frame++;
-	};
-	updateFunc();
-	const startUpdate = () => {
-		frame = 0;
-		timer = setInterval(updateFunc, 20);
-	};
-	const stopUpdate = () => {
-		clearInterval(timer);
+	const controls: FluidSurfaceControls = {
+		update: (snapshot: FieldSnapshotEvent) => {
+			const grid = snapshot.grid?.heights?.length
+				? gridFromPayload(snapshot.grid)
+				: gridFromSnapshot(snapshot);
+
+			applyLiveGrid(grid, heightmapArray);
+			dataSeries.setYValues(heightmapArray);
+			sciChart3DSurface.invalidateElement();
+		},
+		dispose: () => {},
 	};
 
 	return {
 		sciChartSurface: sciChart3DSurface,
 		wasmContext,
-		controls: { startUpdate, stopUpdate },
+		controls,
 	};
 };
