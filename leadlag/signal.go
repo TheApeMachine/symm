@@ -23,14 +23,6 @@ const (
 	minLagFraction = 0.35
 )
 
-type symbolState struct {
-	pair      asset.Pair
-	changePct float64
-	last      float64
-	bid       float64
-	ask       float64
-}
-
 /*
 LeadLag detects altcoins lagging a moving anchor pair.
 */
@@ -87,7 +79,7 @@ func (leadlag *LeadLag) Tick() error {
 					continue
 				}
 
-				leadlag.symbols.Store(symbol, &symbolState{pair: *pair})
+				leadlag.symbols.Store(symbol, newSymbolState(*pair))
 
 				if pair.Quote != config.System.QuoteCurrency {
 					continue
@@ -292,8 +284,22 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != leadlagSource {
+	if feedback.Source != leadlagSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
+	}
+
+	raw, ok := leadlag.symbols.Load(feedback.Symbol)
+
+	if !ok {
+		return
+	}
+
+	state := raw.(*symbolState)
+
+	if _, err := state.forecastLearner().Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
 	}
 }
 
@@ -336,20 +342,24 @@ func lagMeasurement(
 	lagRatio float64,
 ) (engine.Measurement, bool) {
 	anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
-	score := peakLag
+	scale := state.forecastScale()
+	score := peakLag * scale
 
 	if score <= 0 {
-		score = lagRatio
+		score = lagRatio * scale
 	}
 
 	confidence := engine.AlignConfidence(score, anchorStrength)
 
 	if confidence <= 0 {
-		confidence = engine.ProvisionalConfidence(0, math.Abs(anchor.changePct-state.changePct))
+		confidence = engine.ProvisionalConfidence(
+			0,
+			math.Abs(anchor.changePct-state.changePct)*scale,
+		)
 	}
 
 	if confidence <= 0 && state.changePct != 0 {
-		confidence = engine.ConfidenceFromScore(math.Abs(state.changePct))
+		confidence = engine.ConfidenceFromScore(math.Abs(state.changePct) * scale)
 	}
 
 	if confidence <= 0 {

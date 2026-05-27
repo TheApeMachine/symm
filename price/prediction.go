@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -26,6 +27,11 @@ type openPrediction struct {
 	predictedAt     time.Time
 }
 
+type predictionSeriesKey struct {
+	source string
+	symbol string
+}
+
 /*
 Prediction records forward return forecasts and settles them into feedback.
 */
@@ -38,8 +44,9 @@ type Prediction struct {
 	subscribers map[string]*qpool.Subscriber
 	prices      map[string]float64
 	open        map[string]map[string]openPrediction
-	returns     map[string]*adaptive.EMA
-	returnCount map[string]int
+	returns     map[predictionSeriesKey]*numeric.Derived
+	returnSeen  map[predictionSeriesKey]bool
+	marketMoves map[string]*numeric.Derived
 	errorSum    float64
 	errorCount  int
 }
@@ -55,8 +62,9 @@ func NewPrediction(ctx context.Context, pool *qpool.Q) *Prediction {
 		subscribers: make(map[string]*qpool.Subscriber),
 		prices:      make(map[string]float64),
 		open:        make(map[string]map[string]openPrediction),
-		returns:     make(map[string]*adaptive.EMA),
-		returnCount: make(map[string]int),
+		returns:     make(map[predictionSeriesKey]*numeric.Derived),
+		returnSeen:  make(map[predictionSeriesKey]bool),
+		marketMoves: make(map[string]*numeric.Derived),
 	}
 
 	for _, channel := range []string{"tick"} {
@@ -97,23 +105,25 @@ func (prediction *Prediction) Tick() error {
 
 			prediction.stateMu.Lock()
 
-			if row.Last > 0 {
-				prediction.prices[row.Symbol] = row.Last
-			}
-
+			prediction.observeTicker(row)
 			prediction.settleDue(time.Now())
 			prediction.stateMu.Unlock()
 		}
 	}
 }
 
-func (prediction *Prediction) SeedReturnCalibration(source string, magnitude float64) {
+func (prediction *Prediction) SeedReturnCalibration(source, symbol string, magnitude float64) {
 	prediction.stateMu.Lock()
 	defer prediction.stateMu.Unlock()
 
-	returnEMA := prediction.returnEMA(source)
-	_, _ = returnEMA.Next(0, magnitude)
-	prediction.returnCount[source] = config.System.MinCalibrationSamples
+	key := predictionSeriesKey{source: source, symbol: symbol}
+	returns := prediction.returnSeries(key)
+
+	if _, err := returns.Push(magnitude); err != nil {
+		errnie.Error(err)
+	}
+
+	prediction.returnSeen[key] = true
 }
 
 func (prediction *Prediction) Record(
@@ -131,17 +141,9 @@ func (prediction *Prediction) Record(
 
 	symbol := measurement.Pairs[0].Wsname
 	runway := measurementRunway(measurement)
-	scale := math.Abs(prediction.returnEMA(measurement.Source).Value())
-
-	if scale <= 0 {
-		scale = 1.0
-	}
+	scale := prediction.returnScale(measurement.Source, symbol)
 
 	predictedReturn := measurement.Confidence * scale
-
-	if predictedReturn <= 0 {
-		predictedReturn = 0.01 * scale
-	}
 
 	bySource := prediction.open[symbol]
 
@@ -174,13 +176,6 @@ func (prediction *Prediction) Record(
 	return predictedReturn
 }
 
-func (prediction *Prediction) Calibrated(source string) bool {
-	prediction.stateMu.Lock()
-	defer prediction.stateMu.Unlock()
-
-	return prediction.returnCount[source] >= config.System.MinCalibrationSamples
-}
-
 func (prediction *Prediction) settleDue(now time.Time) {
 	for symbol, bySource := range prediction.open {
 		lastPrice := prediction.prices[symbol]
@@ -194,13 +189,20 @@ func (prediction *Prediction) settleDue(now time.Time) {
 				continue
 			}
 
-			actualReturn := float64(open.direction) *
-				(lastPrice - open.anchorPrice) / open.anchorPrice
+			actualReturn := 0.0
 
 			if open.anchorPrice > 0 {
-				returnEMA := prediction.returnEMA(open.measurement.Source)
-				_, _ = returnEMA.Next(0, actualReturn)
-				prediction.returnCount[open.measurement.Source]++
+				actualReturn = float64(open.direction) *
+					(lastPrice - open.anchorPrice) / open.anchorPrice
+
+				key := predictionSeriesKey{source: open.measurement.Source, symbol: symbol}
+				returns := prediction.returnSeries(key)
+
+				if _, err := returns.Push(actualReturn); err != nil {
+					errnie.Error(err)
+				}
+
+				prediction.returnSeen[key] = true
 			}
 
 			if engine.ValidPredictionFeedback(engine.PredictionFeedback{
@@ -254,15 +256,56 @@ func (prediction *Prediction) LastPrice(symbol string) float64 {
 	return prediction.prices[symbol]
 }
 
-func (prediction *Prediction) returnEMA(source string) *adaptive.EMA {
-	ema := prediction.returns[source]
+func (prediction *Prediction) returnSeries(key predictionSeriesKey) *numeric.Derived {
+	returns := prediction.returns[key]
 
-	if ema == nil {
-		ema = adaptive.NewEMA(0)
-		prediction.returns[source] = ema
+	if returns == nil {
+		returns = numeric.NewDerived(numeric.WithDynamics(adaptive.NewEMA(0)))
+		prediction.returns[key] = returns
 	}
 
-	return ema
+	return returns
+}
+
+func (prediction *Prediction) marketMove(symbol string) *numeric.Derived {
+	move := prediction.marketMoves[symbol]
+
+	if move == nil {
+		move = numeric.NewDerived(numeric.WithDynamics(adaptive.NewEMA(0)))
+		prediction.marketMoves[symbol] = move
+	}
+
+	return move
+}
+
+func (prediction *Prediction) observeTicker(row market.TickerRow) {
+	if row.Symbol == "" || row.Last <= 0 {
+		return
+	}
+
+	previous := prediction.prices[row.Symbol]
+
+	if previous > 0 {
+		relativeMove := math.Abs((row.Last - previous) / previous)
+
+		if relativeMove > 0 {
+			if _, err := prediction.marketMove(row.Symbol).Push(relativeMove); err != nil {
+				errnie.Error(err)
+			}
+		}
+	}
+
+	prediction.prices[row.Symbol] = row.Last
+}
+
+func (prediction *Prediction) returnScale(source, symbol string) float64 {
+	key := predictionSeriesKey{source: source, symbol: symbol}
+
+	if prediction.returnSeen[key] {
+		return prediction.returnSeries(key).Value()
+	}
+
+	return prediction.marketMove(symbol).Value()
 }
 
 func measurementDirection(measurement engine.Measurement) int {

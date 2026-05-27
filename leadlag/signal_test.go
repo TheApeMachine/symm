@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
@@ -16,14 +17,13 @@ func TestLeadLagMeasure(t *testing.T) {
 	signal := NewLeadLag(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols.Store(anchorSymbol, &symbolState{
-		pair:      asset.Pair{Wsname: anchorSymbol},
-		changePct: 0.08,
-	})
-	signal.symbols.Store("ALT/EUR", &symbolState{
-		pair:      asset.Pair{Wsname: "ALT/EUR"},
-		changePct: 0.02,
-	})
+	anchor := newSymbolState(asset.Pair{Wsname: anchorSymbol})
+	anchor.changePct = 0.08
+	signal.symbols.Store(anchorSymbol, anchor)
+
+	lagger := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
+	lagger.changePct = 0.02
+	signal.symbols.Store("ALT/EUR", lagger)
 
 	found := false
 
@@ -41,11 +41,62 @@ func TestLeadLagMeasure(t *testing.T) {
 	}
 }
 
+func TestLeadLagFeedbackScalesSymbol(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewLeadLag(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	anchor := newSymbolState(asset.Pair{Wsname: anchorSymbol})
+	anchor.changePct = 0.08
+	lagger := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
+	lagger.changePct = 0.02
+	signal.symbols.Store("ALT/EUR", lagger)
+
+	before, ok := lagMeasurement(anchor, lagger, 0.75, 0.75)
+
+	if !ok {
+		t.Fatal("expected leadlag measurement before feedback")
+	}
+
+	signal.Feedback(engine.PredictionFeedback{
+		Source:          leadlagSource,
+		Symbol:          "ALT/EUR",
+		PredictedReturn: 0.02,
+		ActualReturn:    -0.02,
+	})
+
+	after, ok := lagMeasurement(anchor, lagger, 0.75, 0.75)
+
+	if !ok {
+		t.Fatal("expected leadlag measurement after feedback")
+	}
+
+	if after.Confidence >= before.Confidence {
+		t.Fatalf("expected feedback to lower confidence, before=%v after=%v", before.Confidence, after.Confidence)
+	}
+}
+
 func BenchmarkLeadLagMeasure(b *testing.B) {
-	signal := NewLeadLag(context.Background(), nil)
-	signal.symbols.Store(anchorSymbol, &symbolState{changePct: 0.08})
-	signal.symbols.Store("ALT/EUR", &symbolState{changePct: 0.02})
-	signal.symbols.Store("ETH/EUR", &symbolState{changePct: 0.03})
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	b.Cleanup(func() { pool.Close() })
+
+	signal := NewLeadLag(ctx, pool)
+
+	anchor := newSymbolState(asset.Pair{Wsname: anchorSymbol})
+	anchor.changePct = 0.08
+	signal.symbols.Store(anchorSymbol, anchor)
+
+	alt := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
+	alt.changePct = 0.02
+	signal.symbols.Store("ALT/EUR", alt)
+
+	eth := newSymbolState(asset.Pair{Wsname: "ETH/EUR"})
+	eth.changePct = 0.03
+	signal.symbols.Store("ETH/EUR", eth)
 
 	b.ReportAllocs()
 

@@ -351,9 +351,8 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 	entryAllowed := false
 	entryBlockReason := ""
 
-	if crypto.pulses >= config.System.MinWarmPulses &&
-		openCount < config.System.MaxSlots &&
-		summary.Edge >= config.System.MinEdgeReturn &&
+	if openCount < config.System.MaxSlots &&
+		summary.Edge > 0 &&
 		len(opportunity.Measurement.Pairs) > 0 &&
 		crypto.wallet != nil {
 		slot := crypto.kellySizer.SlotEUR(
@@ -433,6 +432,7 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		"batch_confidence": batchConfidence,
 		"fused_edge":       summary.Edge,
 		"fused_sources":    opportunity.SourceCount,
+		"entry_friction":   opportunity.Friction,
 	}})
 
 	if crypto.wallet != nil {

@@ -48,7 +48,7 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 	predictedReturn := feedback.PredictedReturn
 
 	if predictedReturn <= 0 {
-		predictedReturn = 0.01
+		return
 	}
 
 	if feedback.Runway > 0 && calibrator.forecast.Updates() >= calibrator.params.minCalibrationSamples() {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
 
@@ -17,10 +18,9 @@ func TestSentimentMeasure(t *testing.T) {
 	t.Cleanup(func() { _ = signal.Close() })
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR", "E/EUR"} {
-		signal.symbols.Store(symbol, &symbolState{
-			pair:      asset.Pair{Wsname: symbol},
-			changePct: 0.005 + float64(index)*0.002,
-		})
+		state := newSymbolState(asset.Pair{Wsname: symbol})
+		state.changePct = 0.005 + float64(index)*0.002
+		signal.symbols.Store(symbol, state)
 	}
 
 	found := false
@@ -39,11 +39,49 @@ func TestSentimentMeasure(t *testing.T) {
 	}
 }
 
+func TestSentimentFeedbackScalesSymbol(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewSentiment(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	state := newSymbolState(asset.Pair{Wsname: "A/EUR"})
+	state.changePct = 0.01
+	signal.symbols.Store("A/EUR", state)
+
+	before := state.calibratedConfidence(
+		signal.sentimentConfidence(0.8, state.changePct, 0.02, 0.01),
+	)
+
+	signal.Feedback(engine.PredictionFeedback{
+		Source:          sentimentSource,
+		Symbol:          "A/EUR",
+		PredictedReturn: 0.02,
+		ActualReturn:    -0.02,
+	})
+
+	after := state.calibratedConfidence(
+		signal.sentimentConfidence(0.8, state.changePct, 0.02, 0.01),
+	)
+
+	if after >= before {
+		t.Fatalf("expected feedback to lower confidence, before=%v after=%v", before, after)
+	}
+}
+
 func BenchmarkSentimentMeasure(b *testing.B) {
-	signal := NewSentiment(context.Background(), nil)
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	b.Cleanup(func() { pool.Close() })
+
+	signal := NewSentiment(ctx, pool)
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR", "E/EUR"} {
-		signal.symbols.Store(symbol, &symbolState{changePct: 0.5 + float64(index)*0.2})
+		state := newSymbolState(asset.Pair{Wsname: symbol})
+		state.changePct = 0.5 + float64(index)*0.2
+		signal.symbols.Store(symbol, state)
 	}
 
 	b.ReportAllocs()

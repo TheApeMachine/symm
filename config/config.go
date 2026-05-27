@@ -23,7 +23,6 @@ type Config struct {
 	SlippageBPS                float64
 	BookDepthLevels            int
 	SubscribeBatch             int
-	MinWarmPulses              int
 	MinQuoteCoverage           float64
 	PriceHistory               int
 	MinCostEUR                 float64
@@ -48,8 +47,6 @@ type Config struct {
 	MaxSpreadBPS               float64
 	AllowPaperShorts           bool
 	AllowLiveShorts            bool
-	MinEdgeReturn              float64
-	MinRoundTripEdge           float64
 	KellyFraction              float64
 	UseMakerEntries            bool
 	MakerFeePct                float64
@@ -57,7 +54,6 @@ type Config struct {
 	ForecastSpreadMultiple     float64
 	ExitUrgencyThreshold       float64
 	MaxActivePerspectives      int
-	MinActivePerspectives      int
 	SnapshotFreshnessTTL       time.Duration
 	MinCalibrationSamples      int
 	MinConfidenceHistory       int
@@ -130,7 +126,6 @@ func NewConfig() *Config {
 		BookDepthLevels:            5,
 		ExitEvery:                  10 * time.Millisecond,
 		SubscribeBatch:             50,
-		MinWarmPulses:              50,
 		MinQuoteCoverage:           0.95,
 		PriceHistory:               128,
 		MinCostEUR:                 0.45,
@@ -153,8 +148,6 @@ func NewConfig() *Config {
 		MaxSpreadBPS:               0,
 		AllowPaperShorts:           false,
 		AllowLiveShorts:            false,
-		MinEdgeReturn:              0.0005,
-		MinRoundTripEdge:           0,
 		KellyFraction:              0.5,
 		UseMakerEntries:            true,
 		MakerFeePct:                0.16,
@@ -162,7 +155,6 @@ func NewConfig() *Config {
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,
 		MaxActivePerspectives:      2,
-		MinActivePerspectives:      2,
 		SnapshotFreshnessTTL:       200 * time.Millisecond,
 		MinCalibrationSamples:      12,
 		MinConfidenceHistory:       4,
@@ -219,14 +211,6 @@ func NewConfig() *Config {
 
 	if cfg.MaxDeployPct <= 0 {
 		cfg.MaxDeployPct = cfg.MaxSlotPct * float64(cfg.MaxSlots)
-	}
-
-	if cfg.MinRoundTripEdge <= 0 {
-		cfg.MinRoundTripEdge = 2 * cfg.TakerFeePct / 100 * 1.35
-	}
-
-	if cfg.MinEdgeReturn < cfg.MinRoundTripEdge {
-		cfg.MinEdgeReturn = cfg.MinRoundTripEdge
 	}
 
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {

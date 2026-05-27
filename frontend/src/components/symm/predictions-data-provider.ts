@@ -24,7 +24,7 @@ const MAX_BUFFER = 1200;
 
 const returnToPercent = (value: number) => value * 100;
 
-const dueSec = (value: unknown): number | undefined => {
+const timeSec = (value: unknown): number | undefined => {
 	if (typeof value !== "string" || value.length === 0) {
 		return undefined;
 	}
@@ -117,24 +117,26 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		const due =
-			dueSec(raw.DueAt) ?? dueSec(raw.SettledAt) ?? dueSec(raw.PredictedAt);
+		const predictedAt =
+			timeSec(raw.DueAt) ?? timeSec(raw.PredictedAt) ?? timeSec(raw.SettledAt);
+		const settledAt =
+			timeSec(raw.SettledAt) ?? timeSec(raw.DueAt) ?? timeSec(raw.PredictedAt);
 
-		if (due === undefined) {
+		if (predictedAt === undefined || settledAt === undefined) {
 			return;
 		}
 
-		const key = forecastKey(raw.Source, raw.Symbol, due);
+		const key = forecastKey(raw.Source, raw.Symbol, predictedAt);
 		const hadOpen = this.openForecasts.has(key);
 
 		this.openForecasts.delete(key);
 
 		if (!hadOpen) {
-			this.emit("predicted", raw.Source, due, raw.PredictedReturn);
+			this.emit("predicted", raw.Source, predictedAt, raw.PredictedReturn);
 		}
 
-		this.emit("actual", raw.Source, due, raw.ActualReturn);
-		this.emit("error", raw.Source, due, raw.Error);
+		this.emit("actual", raw.Source, settledAt, raw.ActualReturn);
+		this.emit("error", raw.Source, settledAt, raw.Error);
 	}
 
 	ingestPrediction(raw: unknown) {
@@ -153,7 +155,7 @@ class PredictionsDataProviderImpl {
 		}
 
 		const symbol = typeof row.symbol === "string" ? row.symbol : "";
-		const due = dueSec(row.due_at) ?? dueSec(row.ts);
+		const due = timeSec(row.due_at) ?? timeSec(row.ts);
 
 		if (due === undefined) {
 			return;

@@ -463,12 +463,11 @@ func TestCryptoPublishConfidenceRepublishesAllSources(t *testing.T) {
 	}
 }
 
-func TestCryptoEnterPaperRequiresFusion(t *testing.T) {
+func TestCryptoEnterPaperWithSingleSupportedSignal(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
-	crypto.pulses = config.System.MinWarmPulses
-	predictions.SeedReturnCalibration("pumpdump", 0.01)
+	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.02)
 
 	startCryptoTick(t, crypto)
 
@@ -488,16 +487,14 @@ func TestCryptoEnterPaperRequiresFusion(t *testing.T) {
 
 	waitForCryptoPulse(t, crypto, 1)
 
-	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
-		t.Fatalf("expected fused gate to block single-source entry, got %v", wallet.Inventory["BTC"])
+	if wallet.Inventory["BTC"] <= config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected supported single-source entry, got %v", wallet.Inventory["BTC"])
 	}
 }
 
-func TestCryptoDoesNotEnterBeforePredictionCalibration(t *testing.T) {
+func TestCryptoDoesNotEnterWithoutReturnSupport(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, _, _ := newTestCrypto(t, wallet)
-
-	crypto.pulses = config.System.MinWarmPulses
 
 	if err := crypto.score([]engine.Measurement{
 		{
@@ -527,7 +524,46 @@ func TestCryptoDoesNotEnterBeforePredictionCalibration(t *testing.T) {
 	}
 
 	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
-		t.Fatalf("expected uncalibrated forecasts to block entry, got %v", wallet.Inventory["BTC"])
+		t.Fatalf("expected missing return support to block entry, got %v", wallet.Inventory["BTC"])
+	}
+}
+
+func TestCryptoDoesNotEnterWithReturnSupportFromAnotherSymbol(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto, predictions, _ := newTestCrypto(t, wallet)
+
+	predictions.SeedReturnCalibration("pumpdump", "ETH/EUR", 0.03)
+	predictions.SeedReturnCalibration("hawkes", "ETH/EUR", 0.03)
+
+	if err := crypto.score([]engine.Measurement{
+		{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.95,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+		{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "microstructure",
+			Reason:     "cluster_buy",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.9,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+	}); err != nil {
+		t.Fatalf("score: %v", err)
+	}
+
+	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected other-symbol return support to block entry, got %v", wallet.Inventory["BTC"])
 	}
 }
 
@@ -573,9 +609,8 @@ func TestScorePaperMakerEntry(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, _ := newTestCrypto(t, wallet)
 
-	crypto.pulses = config.System.MinWarmPulses
-	predictions.SeedReturnCalibration("pumpdump", 0.03)
-	predictions.SeedReturnCalibration("hawkes", 0.03)
+	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
 
 	batch := []engine.Measurement{
 		{
@@ -615,9 +650,8 @@ func TestCryptoEnterPaper(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
-	crypto.pulses = config.System.MinWarmPulses
-	predictions.SeedReturnCalibration("pumpdump", 0.03)
-	predictions.SeedReturnCalibration("hawkes", 0.03)
+	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
 
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 

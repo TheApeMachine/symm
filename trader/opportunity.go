@@ -14,6 +14,7 @@ type tradeOpportunity struct {
 	SourceCount     int
 	PredictedReturn float64
 	Edge            float64
+	Friction        float64
 	Measurement     engine.Measurement
 	Perspective     engine.Perspective
 }
@@ -35,7 +36,7 @@ func scoreOpportunities(
 
 	for symbol, byType := range perspectives {
 		for perspectiveType, perspective := range byType {
-			tradableMeasurements := make([]engine.Measurement, 0, len(perspective.Measurements))
+			supportedMeasurements := make([]engine.Measurement, 0, len(perspective.Measurements))
 			maxPredicted := 0.0
 			leadMeasurement := engine.Measurement{}
 
@@ -52,11 +53,11 @@ func scoreOpportunities(
 					summary.PredictedCount++
 				}
 
-				if !predictions.Calibrated(measurement.Source) {
+				if predicted <= 0 {
 					continue
 				}
 
-				tradableMeasurements = append(tradableMeasurements, measurement)
+				supportedMeasurements = append(supportedMeasurements, measurement)
 
 				if predicted > maxPredicted {
 					maxPredicted = predicted
@@ -64,12 +65,10 @@ func scoreOpportunities(
 				}
 			}
 
-			jointConfidence, sourceCount := engine.FuseMeasurements(tradableMeasurements)
-			edge := maxPredicted * jointConfidence
-
-			if sourceCount < config.System.MinActivePerspectives {
-				continue
-			}
+			jointConfidence, sourceCount := engine.FuseMeasurements(supportedMeasurements)
+			grossEdge := maxPredicted
+			friction := entryFrictionReturn(leadMeasurement)
+			edge := grossEdge - friction
 
 			if edge <= bestEdge {
 				continue
@@ -84,6 +83,7 @@ func scoreOpportunities(
 				SourceCount:     sourceCount,
 				PredictedReturn: maxPredicted,
 				Edge:            edge,
+				Friction:        friction,
 				Measurement:     leadMeasurement,
 				Perspective:     perspective,
 			}
@@ -100,5 +100,19 @@ type predictionRecorder interface {
 		anchorPrice float64,
 		now time.Time,
 	) float64
-	Calibrated(source string) bool
+}
+
+func entryFrictionReturn(measurement engine.Measurement) float64 {
+	feePct := config.System.TakerFeePct * 2
+
+	if config.System.UseMakerEntries {
+		feePct = config.System.MakerFeePct + config.System.TakerFeePct
+	}
+
+	feeReturn := feePct / 100
+	spreadReturn := quoteSpreadBPS(
+		anchorPrice(measurement), measurement.Bid, measurement.Ask,
+	) / 10000
+
+	return feeReturn + spreadReturn/2
 }

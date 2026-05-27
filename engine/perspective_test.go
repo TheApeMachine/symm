@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"testing"
 
 	"github.com/theapemachine/symm/kraken/asset"
@@ -16,11 +17,13 @@ func TestFuseMeasurements(t *testing.T) {
 		t.Fatalf("expected two sources, got %d", count)
 	}
 
-	if joint <= 0 || joint >= 1 {
-		t.Fatalf("expected joint confidence in (0,1), got %v", joint)
+	expectedJoint := math.Sqrt(0.8 * 0.6)
+
+	if math.Abs(joint-expectedJoint) > 1e-9 {
+		t.Fatalf("expected geometric source confidence %v, got %v", expectedJoint, joint)
 	}
 
-	_, singleCount := FuseMeasurements([]Measurement{
+	singleJoint, singleCount := FuseMeasurements([]Measurement{
 		{Source: "pumpdump", Confidence: 0.8},
 	})
 
@@ -28,8 +31,8 @@ func TestFuseMeasurements(t *testing.T) {
 		t.Fatalf("expected one source, got %d", singleCount)
 	}
 
-	if joint <= 0 {
-		t.Fatalf("expected positive joint confidence, got %v", joint)
+	if singleJoint != 0.8 {
+		t.Fatalf("expected single-source confidence to pass through, got %v", singleJoint)
 	}
 }
 
@@ -42,12 +45,16 @@ func TestFuseMeasurementsEmpty(t *testing.T) {
 }
 
 func TestFuseMeasurementsDistinctSourcesOnly(t *testing.T) {
-	_, count := FuseMeasurements([]Measurement{
+	joint, count := FuseMeasurements([]Measurement{
 		{Source: "hawkes", Confidence: 0.8, Pairs: []asset.Pair{{Wsname: "BTC/EUR"}}},
 		{Source: "hawkes", Confidence: 0.7, Pairs: []asset.Pair{{Wsname: "BTC/EUR"}}},
 	})
 
 	if count != 1 {
 		t.Fatalf("expected duplicate sources to count once, got %d", count)
+	}
+
+	if joint != 0.8 {
+		t.Fatalf("expected strongest duplicate source confidence, got %v", joint)
 	}
 }

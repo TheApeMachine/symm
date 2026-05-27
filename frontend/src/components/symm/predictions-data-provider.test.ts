@@ -4,9 +4,11 @@ import { PredictionsDataProvider } from "#/components/symm/predictions-data-prov
 
 const dueAt = "2026-05-27T12:00:00.000Z";
 const dueSec = Date.parse(dueAt) / 1000;
+const settledAt = "2026-05-27T12:00:15.000Z";
+const settledSec = Date.parse(settledAt) / 1000;
 
 describe("PredictionsDataProvider", () => {
-	it("pairs predicted and actual at the forecast due time", () => {
+	it("plots predictions at due time and ground truth at settlement time", () => {
 		const readings: Array<{ kind: string; x: number; value: number }> = [];
 
 		const unregister = PredictionsDataProvider.registerSink((reading) => {
@@ -32,6 +34,7 @@ describe("PredictionsDataProvider", () => {
 			ActualReturn: 0.002,
 			Error: 0.175,
 			DueAt: dueAt,
+			SettledAt: settledAt,
 		});
 
 		unregister();
@@ -44,12 +47,12 @@ describe("PredictionsDataProvider", () => {
 		});
 		expect(readings[1]).toMatchObject({
 			kind: "actual",
-			x: dueSec,
+			x: settledSec,
 			value: 0.2,
 		});
 		expect(readings[2]).toMatchObject({
 			kind: "error",
-			x: dueSec,
+			x: settledSec,
 			value: 17.5,
 		});
 	});

@@ -3,7 +3,6 @@ package sentiment
 import (
 	"context"
 	"iter"
-	"math"
 	"sync"
 	"time"
 
@@ -20,14 +19,6 @@ const (
 	sentimentSource = "sentiment"
 	minBreadth      = 0.55
 )
-
-type symbolState struct {
-	pair      asset.Pair
-	changePct float64
-	last      float64
-	bid       float64
-	ask       float64
-}
 
 /*
 Sentiment measures cross-section bullish breadth from ticker change percentages.
@@ -82,7 +73,7 @@ func (sentiment *Sentiment) Tick() error {
 					continue
 				}
 
-				sentiment.symbols.Store(symbol, &symbolState{pair: *pair})
+				sentiment.symbols.Store(symbol, newSymbolState(*pair))
 
 				if pair.Quote != config.System.QuoteCurrency {
 					continue
@@ -171,99 +162,6 @@ func (sentiment *Sentiment) publishPulse() {
 	sentiment.publishMeasurements()
 }
 
-func (sentiment *Sentiment) marketBreadth() (float64, float64, bool) {
-	positive := 0
-	total := 0
-	topChange := 0.0
-
-	sentiment.symbols.Range(func(key, value any) bool {
-		state := value.(*symbolState)
-
-		if state.changePct == 0 {
-			return true
-		}
-
-		total++
-
-		if state.changePct > topChange {
-			topChange = state.changePct
-		}
-
-		if state.changePct <= 0 {
-			return true
-		}
-
-		positive++
-
-		return true
-	})
-
-	if total == 0 {
-		return 0, 0, false
-	}
-
-	return float64(positive) / float64(total), topChange, true
-}
-
-func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, float64, bool) {
-	breadth, topChange, ok := sentiment.marketBreadth()
-
-	if !ok {
-		return 0, nil, 0, false
-	}
-
-	leaders := make(map[string]float64)
-
-	sentiment.symbols.Range(func(key, value any) bool {
-		state := value.(*symbolState)
-
-		if state.changePct <= 0 {
-			return true
-		}
-
-		leaders[key.(string)] = state.changePct
-
-		return true
-	})
-
-	if len(leaders) == 0 {
-		return breadth, nil, topChange, true
-	}
-
-	if breadth < minBreadth || topChange <= 0 {
-		return breadth, leaders, topChange, true
-	}
-
-	return breadth, leaders, topChange, true
-}
-
-func (sentiment *Sentiment) sentimentConfidence(
-	breadth float64,
-	change float64,
-	topChange float64,
-	peakScore float64,
-) float64 {
-	confidence := 0.0
-
-	if topChange > 0 {
-		confidence = engine.AlignConfidence(breadth, change/topChange)
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(peakScore)
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(breadth * math.Abs(change))
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(breadth)
-	}
-
-	return confidence
-}
-
 func (sentiment *Sentiment) publishMeasurements() {
 	breadth, leaders, topChange, ok := sentiment.breadthAndLeaders()
 
@@ -302,7 +200,9 @@ func (sentiment *Sentiment) publishMeasurements() {
 					return nil, err
 				}
 
-				confidence := sentiment.sentimentConfidence(breadth, change, topChange, peakScore)
+				confidence := state.calibratedConfidence(
+					sentiment.sentimentConfidence(breadth, change, topChange, peakScore),
+				)
 
 				if confidence <= 0 {
 					return nil, nil
@@ -386,7 +286,9 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				return true
 			}
 
-			confidence := sentiment.sentimentConfidence(breadth, change, topChange, peakScore)
+			confidence := state.calibratedConfidence(
+				sentiment.sentimentConfidence(breadth, change, topChange, peakScore),
+			)
 
 			if confidence <= 0 {
 				return true
@@ -412,21 +314,21 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != sentimentSource {
+	if feedback.Source != sentimentSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
-}
 
-func leaderPeers(leaders map[string]float64, skip string) []float64 {
-	peers := make([]float64, 0, len(leaders)-1)
+	raw, ok := sentiment.symbols.Load(feedback.Symbol)
 
-	for symbol, value := range leaders {
-		if symbol == skip {
-			continue
-		}
-
-		peers = append(peers, value)
+	if !ok {
+		return
 	}
 
-	return peers
+	state := raw.(*symbolState)
+
+	if _, err := state.forecastLearner().Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
+	}
 }

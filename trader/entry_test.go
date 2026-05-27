@@ -123,9 +123,8 @@ func TestScoreDoesNotReenterOpenSymbol(t *testing.T) {
 	wallet.Inventory["BTC"] = 0.01
 	crypto, predictions, _ := newTestCrypto(t, wallet)
 
-	crypto.pulses = config.System.MinWarmPulses
-	predictions.SeedReturnCalibration("pumpdump", 0.03)
-	predictions.SeedReturnCalibration("hawkes", 0.03)
+	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
 
 	beforeQty := wallet.Inventory["BTC"]
 

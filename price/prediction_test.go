@@ -23,7 +23,7 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 	feedback := pool.CreateBroadcastGroup("feedback", 10*time.Millisecond)
 	subscriber := feedback.Subscribe("test:feedback", 8)
 
-	prediction.SeedReturnCalibration("pumpdump", 0.01)
+	prediction.SeedReturnCalibration("pumpdump", "PUMP/EUR", 0.01)
 	prediction.prices["PUMP/EUR"] = 1.02
 	prediction.open["PUMP/EUR"] = map[string]openPrediction{
 		"pumpdump": {
@@ -115,7 +115,7 @@ func TestPredictionRecord(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
-	prediction.SeedReturnCalibration("pumpdump", 0.01)
+	prediction.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.01)
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
@@ -134,7 +134,7 @@ func TestPredictionRecord(t *testing.T) {
 	)
 
 	if predicted <= 0 {
-		t.Fatalf("expected calibrated predicted return, got %v", predicted)
+		t.Fatalf("expected learned predicted return, got %v", predicted)
 	}
 
 	if prediction.open["BTC/EUR"]["pumpdump"].predictedReturn != predicted {
@@ -142,7 +142,36 @@ func TestPredictionRecord(t *testing.T) {
 	}
 }
 
-func TestPredictionRecordProvisional(t *testing.T) {
+func TestPredictionRecordUsesSymbolLocalReturnSupport(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	prediction.SeedReturnCalibration("pumpdump", "ETH/EUR", 0.01)
+
+	measurement := engine.Measurement{
+		Source:     "pumpdump",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "actual_pump",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.8,
+	}
+
+	predicted := prediction.Record(
+		engine.Perspective{Type: engine.PerspectiveMicrostructure},
+		measurement,
+		50000,
+		time.Now(),
+	)
+
+	if predicted != 0 {
+		t.Fatalf("expected unrelated symbol support not to scale BTC/EUR, got %v", predicted)
+	}
+}
+
+func TestPredictionRecordUsesObservedMarketScale(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -150,6 +179,8 @@ func TestPredictionRecordProvisional(t *testing.T) {
 	prediction := NewPrediction(ctx, pool)
 	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	subscriber := ui.Subscribe("test:prediction-ui", 8)
+	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 100})
+	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 101})
 
 	measurement := engine.Measurement{
 		Source:     "hawkes",
@@ -167,8 +198,8 @@ func TestPredictionRecordProvisional(t *testing.T) {
 		time.Now(),
 	)
 
-	if predicted != 0.42 {
-		t.Fatalf("expected provisional predicted return 0.42, got %v", predicted)
+	if math.Abs(predicted-0.0042) > 1e-9 {
+		t.Fatalf("expected market-scaled predicted return 0.0042, got %v", predicted)
 	}
 
 	select {
@@ -187,21 +218,31 @@ func TestPredictionRecordProvisional(t *testing.T) {
 	}
 }
 
-func TestPredictionCalibrated(t *testing.T) {
+func TestPredictionRecordDoesNotInventScale(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
 
-	if prediction.Calibrated("hawkes") {
-		t.Fatal("expected unseeded source to be uncalibrated")
+	measurement := engine.Measurement{
+		Source:     "hawkes",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "cluster",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.42,
 	}
 
-	prediction.SeedReturnCalibration("hawkes", 0.01)
+	predicted := prediction.Record(
+		engine.Perspective{Type: engine.PerspectiveMicrostructure},
+		measurement,
+		50000,
+		time.Now(),
+	)
 
-	if !prediction.Calibrated("hawkes") {
-		t.Fatal("expected seeded source to be calibrated")
+	if predicted != 0 {
+		t.Fatalf("expected no prediction without learned or market scale, got %v", predicted)
 	}
 }
 
@@ -211,7 +252,7 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
-	prediction.SeedReturnCalibration("pumpdump", 0.01)
+	prediction.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.01)
 	prediction.prices["BTC/EUR"] = 50000
 	prediction.open["BTC/EUR"] = map[string]openPrediction{
 		"pumpdump": {

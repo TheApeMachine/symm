@@ -53,7 +53,7 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		await SciChartSurface.create(rootElement);
 
 	const xAxis = new NumericAxis(wasmContext, {
-		axisTitle: "Due (UTC s)",
+		axisTitle: "Time (UTC s)",
 		growBy: new NumberRange(0.05, 0.05),
 	});
 
