@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/price"
 )
 
@@ -41,6 +40,9 @@ func TestCryptoScoresMeasurement(t *testing.T) {
 			Reason:     "actual_pump",
 			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
 			Confidence: 0.8,
+			Last:       1.0,
+			Bid:        0.99,
+			Ask:        1.01,
 		},
 	})
 
@@ -65,6 +67,7 @@ func TestCryptoPublishConfidence(t *testing.T) {
 			Reason:     "actual_pump",
 			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
 			Confidence: 0.6,
+			Last:       1.0,
 		},
 	})
 
@@ -114,6 +117,7 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 				Reason:     "actual_pump",
 				Pairs:      []asset.Pair{{Wsname: pair.symbol}},
 				Confidence: pair.confidence,
+				Last:       1.0,
 			},
 		})
 	}
@@ -161,6 +165,7 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 				Reason:     "actual_pump",
 				Pairs:      []asset.Pair{{Wsname: pair.symbol}},
 				Confidence: pair.confidence,
+				Last:       1.0,
 			},
 		})
 	}
@@ -199,11 +204,6 @@ func TestCryptoEnterPaper(t *testing.T) {
 
 	crypto.pulses = config.System.MinWarmPulses
 	predictions.SeedReturnCalibration("pumpdump", 0.01)
-	crypto.pairs["BTC/EUR"] = &pairState{
-		lastPrice: 50000,
-		bid:       49999,
-		ask:       50001,
-	}
 
 	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
@@ -213,6 +213,9 @@ func TestCryptoEnterPaper(t *testing.T) {
 			Reason:     "actual_pump",
 			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 			Confidence: 0.8,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
 		},
 	})
 
@@ -222,26 +225,6 @@ func TestCryptoEnterPaper(t *testing.T) {
 
 	if wallet.Inventory["BTC"] <= 0 {
 		t.Fatalf("expected paper entry inventory, got %v", wallet.Inventory["BTC"])
-	}
-}
-
-func TestCryptoApplyFill(t *testing.T) {
-	crypto, _, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
-
-	if err := crypto.wallet.ReserveEntry(50); err != nil {
-		t.Fatalf("reserve: %v", err)
-	}
-
-	crypto.applyFill(order.Fill{
-		OrderID: "ORDER-1",
-		Symbol:  "PUMP/EUR",
-		Side:    "buy",
-		Qty:     10,
-		Price:   1,
-	})
-
-	if crypto.wallet.Inventory["PUMP"] != 10 {
-		t.Fatalf("expected inventory 10, got %v", crypto.wallet.Inventory["PUMP"])
 	}
 }
 
@@ -260,7 +243,6 @@ func BenchmarkCryptoTick(b *testing.B) {
 
 	predictions := price.NewPrediction(ctx, pool)
 	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26), predictions)
-	crypto.pairs["PUMP/EUR"] = &pairState{lastPrice: 1.0}
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	measurement := engine.Measurement{
@@ -270,6 +252,7 @@ func BenchmarkCryptoTick(b *testing.B) {
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
 		Confidence: 0.8,
+		Last:       1.0,
 	}
 
 	b.ReportAllocs()

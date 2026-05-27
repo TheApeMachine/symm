@@ -23,6 +23,9 @@ const (
 type symbolState struct {
 	pair      asset.Pair
 	changePct float64
+	last      float64
+	bid       float64
+	ask       float64
 }
 
 /*
@@ -54,13 +57,10 @@ func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 		requested:   sync.Map{},
 	}
 
-	for _, channel := range []string{"symbols", "tick", "feedback"} {
-		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		sentiment.subscribers[channel] = group.Subscribe("sentiment:"+channel, 128)
+	for _, channel := range []string{"symbols", "tick", "feedback", "measurements", "subscriptions"} {
+		sentiment.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		sentiment.subscribers[channel] = sentiment.broadcasts[channel].Subscribe("sentiment:"+channel, 128)
 	}
-
-	sentiment.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	sentiment.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 
 	return sentiment
 }
@@ -102,6 +102,19 @@ func (sentiment *Sentiment) Tick() error {
 
 		state := raw.(*symbolState)
 		state.changePct = row.ChangePct
+
+		if row.Last > 0 {
+			state.last = row.Last
+		}
+
+		if row.Bid > 0 {
+			state.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			state.ask = row.Ask
+		}
+
 		sentiment.publishPulse()
 	case value := <-sentiment.subscribers["feedback"].Incoming:
 		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
@@ -241,6 +254,9 @@ func (sentiment *Sentiment) publishMeasurements() {
 					Reason:     "breadth_leader",
 					Pairs:      []asset.Pair{state.pair},
 					Confidence: confidence,
+					Last:       state.last,
+					Bid:        state.bid,
+					Ask:        state.ask,
 				}, nil
 			}),
 		)
@@ -317,6 +333,9 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				Reason:     "breadth_leader",
 				Pairs:      []asset.Pair{state.pair},
 				Confidence: confidence,
+				Last:       state.last,
+				Bid:        state.bid,
+				Ask:        state.ask,
 			}) {
 				return
 			}

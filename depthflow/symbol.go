@@ -91,6 +91,10 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
+	bid := state.bids[0].Price
+	ask := state.asks[0].Price
+	last := (bid + ask) / 2
+
 	return engine.Measurement{
 		Type: logic.Or(
 			engine.Dump,
@@ -102,5 +106,8 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		Reason:     "depth_imbalance",
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
+		Last:       last,
+		Bid:        bid,
+		Ask:        ask,
 	}, true
 }

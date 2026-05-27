@@ -84,6 +84,10 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
+	bid := state.bids[0].Price
+	ask := state.asks[0].Price
+	last := (bid + ask) / 2
+
 	return engine.Measurement{
 		Type:       engine.Flow,
 		Source:     fluidSource,
@@ -91,6 +95,9 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 		Reason:     "book_flow",
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
+		Last:       last,
+		Bid:        bid,
+		Ask:        ask,
 	}, true
 }
 

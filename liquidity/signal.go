@@ -24,6 +24,9 @@ const (
 type symbolState struct {
 	pair          asset.Pair
 	dailyQuoteVol float64
+	last          float64
+	bid           float64
+	ask           float64
 	forecast      *learned.Forecast
 }
 
@@ -114,6 +117,16 @@ func (liquidity *Liquidity) Tick() error {
 		}
 
 		state.dailyQuoteVol = row.Volume * row.Last
+		state.last = row.Last
+
+		if row.Bid > 0 {
+			state.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			state.ask = row.Ask
+		}
+
 		liquidity.publishPulse()
 	case value := <-liquidity.subscribers["feedback"].Incoming:
 		liquidity.Feedback(value.Value.(engine.PredictionFeedback))
@@ -251,6 +264,9 @@ func (liquidity *Liquidity) publishMeasurements() {
 					Reason:     "below_median",
 					Pairs:      []asset.Pair{state.pair},
 					Confidence: confidence,
+					Last:       state.last,
+					Bid:        state.bid,
+					Ask:        state.ask,
 				}, nil
 			}),
 		)
@@ -328,6 +344,9 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 				Reason:     "below_median",
 				Pairs:      []asset.Pair{state.pair},
 				Confidence: confidence,
+				Last:       state.last,
+				Bid:        state.bid,
+				Ask:        state.ask,
 			}) {
 				return
 			}

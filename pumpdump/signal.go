@@ -116,6 +116,14 @@ func (pumpdump *PumpDump) Tick() error {
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
 
+		if row.Bid > 0 {
+			state.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			state.ask = row.Ask
+		}
+
 		if _, seen := pumpdump.requested.Load(row.Symbol); seen {
 			break
 		}
@@ -209,6 +217,13 @@ func (pumpdump *PumpDump) Tick() error {
 		bid := delta.Bids[0].Price
 		ask := delta.Asks[0].Price
 		mid := (bid + ask) / 2
+
+		state.bid = bid
+		state.ask = ask
+
+		if state.lastPrice <= 0 && mid > 0 {
+			state.lastPrice = mid
+		}
 
 		if mid > 0 {
 			state.spreadBPS = (ask - bid) / mid * 10000

@@ -37,6 +37,9 @@ type Measurement struct {
 	Reason     string
 	Pairs      []asset.Pair
 	Confidence float64
+	Last       float64
+	Bid        float64
+	Ask        float64
 	Timeframe  Timeframe
 	Err        error
 }

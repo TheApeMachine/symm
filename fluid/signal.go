@@ -180,15 +180,7 @@ func (fluid *Fluid) requestedCount() int {
 func (fluid *Fluid) publishPulse() {
 	if len(fluid.pending) > 0 && fluid.requestedCount() < config.System.MaxScanSymbols {
 		remaining := config.System.MaxScanSymbols - fluid.requestedCount()
-		batch := config.System.SubscribeBatch
-
-		if batch > remaining {
-			batch = remaining
-		}
-
-		if batch > len(fluid.pending) {
-			batch = len(fluid.pending)
-		}
+		batch := min(min(config.System.SubscribeBatch, remaining), len(fluid.pending))
 
 		symbols := fluid.pending[:batch]
 		fluid.pending = fluid.pending[batch:]

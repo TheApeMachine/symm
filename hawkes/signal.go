@@ -21,6 +21,9 @@ type symbolState struct {
 	state     *HawkesSymbol
 	ticks     []trade.Data
 	imbalance float64
+	last      float64
+	bid       float64
+	ask       float64
 }
 
 /*
@@ -97,6 +100,18 @@ func (hawkes *Hawkes) Tick() error {
 		symbolState := raw.(*symbolState)
 		symbolState.state.FeedTicker(row.Last, row.Volume)
 
+		if row.Last > 0 {
+			symbolState.last = row.Last
+		}
+
+		if row.Bid > 0 {
+			symbolState.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			symbolState.ask = row.Ask
+		}
+
 		if _, seen := hawkes.requested.Load(row.Symbol); seen || row.Volume <= 0 {
 			break
 		}
@@ -139,6 +154,13 @@ func (hawkes *Hawkes) Tick() error {
 		}
 
 		symbolState := raw.(*symbolState)
+		symbolState.bid = delta.Bids[0].Price
+		symbolState.ask = delta.Asks[0].Price
+
+		if symbolState.last <= 0 {
+			symbolState.last = (symbolState.bid + symbolState.ask) / 2
+		}
+
 		total := delta.Bids[0].Volume + delta.Asks[0].Volume
 
 		if total > 0 {
@@ -179,6 +201,14 @@ func (hawkes *Hawkes) publishMeasurements() {
 
 		if !ok {
 			return true
+		}
+
+		measurement.Last = symbolState.last
+		measurement.Bid = symbolState.bid
+		measurement.Ask = symbolState.ask
+
+		if measurement.Last <= 0 && measurement.Bid > 0 && measurement.Ask > 0 {
+			measurement.Last = (measurement.Bid + measurement.Ask) / 2
 		}
 
 		hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{

@@ -25,6 +25,9 @@ const (
 type symbolState struct {
 	pair      asset.Pair
 	changePct float64
+	last      float64
+	bid       float64
+	ask       float64
 }
 
 /*
@@ -110,6 +113,19 @@ func (leadlag *LeadLag) Tick() error {
 
 		state := raw.(*symbolState)
 		state.changePct = row.ChangePct
+
+		if row.Last > 0 {
+			state.last = row.Last
+		}
+
+		if row.Bid > 0 {
+			state.bid = row.Bid
+		}
+
+		if row.Ask > 0 {
+			state.ask = row.Ask
+		}
+
 		leadlag.publishPulse()
 	case value := <-leadlag.subscribers["feedback"].Incoming:
 		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
@@ -338,5 +354,8 @@ func lagMeasurement(
 		Reason:     "anchor_lag",
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
+		Last:       state.last,
+		Bid:        state.bid,
+		Ask:        state.ask,
 	}, true
 }

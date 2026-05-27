@@ -27,6 +27,7 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 	prediction.open["PUMP/EUR"] = map[string]openPrediction{
 		"pumpdump": {
 			measurement: engine.Measurement{
+				Last:       100,
 				Source:     "pumpdump",
 				Type:       engine.Pump,
 				Regime:     "microstructure",
@@ -125,6 +126,7 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	prediction.open["BTC/EUR"] = map[string]openPrediction{
 		"pumpdump": {
 			measurement: engine.Measurement{
+				Last:       100,
 				Source:     "pumpdump",
 				Type:       engine.Pump,
 				Regime:     "microstructure",

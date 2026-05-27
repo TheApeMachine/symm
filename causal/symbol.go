@@ -25,6 +25,8 @@ type CausalSymbol struct {
 	upliftHist        []float64
 	confidenceHistory []float64
 	lastPrice         float64
+	bid               float64
+	ask               float64
 	lastAt            time.Time
 	lastElapsed       time.Duration
 	hasPrior          bool
@@ -52,6 +54,14 @@ func (state *CausalSymbol) FeedTicker(row market.TickerRow) {
 	if row.Last > 0 {
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
+	}
+
+	if row.Bid > 0 {
+		state.bid = row.Bid
+	}
+
+	if row.Ask > 0 {
+		state.ask = row.Ask
 	}
 
 	state.changePct = row.ChangePct
@@ -90,6 +100,13 @@ func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {
 	bid := delta.Bids[0].Price
 	ask := delta.Asks[0].Price
 	mid := (bid + ask) / 2
+
+	state.bid = bid
+	state.ask = ask
+
+	if state.lastPrice <= 0 && mid > 0 {
+		state.lastPrice = mid
+	}
 
 	if mid > 0 {
 		state.spreadBPS = (ask - bid) / mid * 10000
@@ -135,6 +152,9 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 		Reason:     reason,
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
+		Last:       state.lastPrice,
+		Bid:        state.bid,
+		Ask:        state.ask,
 	}, true
 }
 

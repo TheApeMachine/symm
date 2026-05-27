@@ -33,6 +33,8 @@ type PumpSymbol struct {
 	bookGate          *adaptive.Product
 	precursorMove     *adaptive.PositiveMove
 	lastPrice         float64
+	bid               float64
+	ask               float64
 	dailyQuoteVol     float64
 	buyPressure       float64
 	imbalance         float64
@@ -124,6 +126,9 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		Reason:     moveClassifier.Label(classCode),
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
+		Last:       state.lastPrice,
+		Bid:        state.bid,
+		Ask:        state.ask,
 	}, true
 }
 
