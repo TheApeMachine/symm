@@ -178,14 +178,15 @@ body {
   display: grid;
   min-height: 0;
   min-width: 0;
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.5rem;
   overflow: hidden;
 }
 
 .dashboard-trades-strip {
+  display: flex;
   min-height: 0;
-  max-height: 7.5rem;
+  flex-direction: column;
   overflow: hidden;
   border-radius: 0.375rem;
   border: 1px solid var(--dash-border);
@@ -194,6 +195,7 @@ body {
 
 .dashboard-trade-panel {
   display: flex;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   flex-direction: column;

@@ -150,11 +150,7 @@ func (causal *Causal) publishPulse() {
 
 	if len(causal.pending) > 0 && len(causal.requested) < scanCap {
 		remaining := scanCap - len(causal.requested)
-		batch := min(config.System.SubscribeBatch, remaining)
-
-		if batch > len(causal.pending) {
-			batch = len(causal.pending)
-		}
+		batch := min(min(config.System.SubscribeBatch, remaining), len(causal.pending))
 
 		symbols := causal.pending[:batch]
 		causal.pending = causal.pending[batch:]
@@ -168,16 +164,6 @@ func (causal *Causal) publishPulse() {
 
 	for measurement := range causal.Measure() {
 		causal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-	}
-
-	macro := causal.macroMomentum()
-	now := time.Now()
-
-	for symbol, state := range causal.symbols {
-		payload := state.GraphSnapshot(macro, now)
-		payload["symbol"] = symbol
-		payload["peers"] = causal.peerLinks(symbol)
-		causal.broadcasts["causal_graph"].Send(&qpool.QValue[any]{Value: payload})
 	}
 }
 

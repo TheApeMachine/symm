@@ -82,7 +82,6 @@ func NewHub(
 		"ohlc",
 		"subscriptions",
 		"confidence",
-		"causal_graph",
 		"feedback",
 		"executions",
 		"exits",

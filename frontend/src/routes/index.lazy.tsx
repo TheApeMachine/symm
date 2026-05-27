@@ -32,12 +32,6 @@ const FluidSurfaceChart = lazy(() =>
 	})),
 );
 
-const ForceGraph = lazy(() =>
-	import("#/components/symm/ForceGraph").then((module) => ({
-		default: module.ForceGraph,
-	})),
-);
-
 const ChartFallback = () => (
 	<div className="flex min-h-0 flex-1 items-center justify-center rounded border border-dashed border-(--dash-border) bg-(--dash-panel) text-xs text-(--dash-muted)">
 		Loading chart…
@@ -75,9 +69,6 @@ const TradingDashboard = () => {
 						</div>
 						<Suspense fallback={<ChartFallback />}>
 							<FluidSurfaceChart />
-						</Suspense>
-						<Suspense fallback={<ChartFallback />}>
-							<ForceGraph symbol="BTC/EUR" className="min-h-0" />
 						</Suspense>
 					</section>
 				</div>

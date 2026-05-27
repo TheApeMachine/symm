@@ -247,7 +247,7 @@ class OhlcDataProviderImpl {
 		this.upsertBar(raw.symbol, ohlcRowToBar(raw));
 	}
 
-	ingest(raw: unknown): OhlcVArrays | void {
+	ingest(raw: unknown): OhlcVArrays | undefined {
 		if (isOhlcBootstrapRequest(raw)) {
 			return this.bootstrap(raw);
 		}
