@@ -37,28 +37,28 @@ THE CORRECT SYSTEM ARCHITECTURE:
 3. All systems use the same Tick() shape:
 
     func (publicClient *PublicClient) Tick() error {
-        select {
-        case <-publicClient.ctx.Done():
-            publicClient.cancel()
-            return publicClient.ctx.Err()
-        case msg := <-publicClient.subscribers["subscriptions"].Incoming:
-            if msg, ok := msg.Value.([]string); !ok {
-                return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
+        for {
+            select {
+            case <-publicClient.ctx.Done():
+                publicClient.cancel()
+                return publicClient.ctx.Err()
+            case msg := <-publicClient.subscribers["subscriptions"].Incoming:
+                if msg, ok := msg.Value.([]string); !ok {
+                    return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
+                }
+
+                for _, symbol := range msg.Value.([]string) {
+                    subscription := errnie.Does(func() (*ohlc.Subscribe, error) {
+                        return ohlc.NewSubscribe([]string{symbol}), nil
+                    }).Or(func(err error) {
+                        errnie.Error(err)
+                    }).Value()
+
+                    publicClient.conn.WriteJSON(subscription)
+                }
+
+                return nil
             }
-
-            for _, symbol := range msg.Value.([]string) {
-                subscription := errnie.Does(func() (*ohlc.Subscribe, error) {
-                    return ohlc.NewSubscribe([]string{symbol}), nil
-                }).Or(func(err error) {
-                    errnie.Error(err)
-                }).Value()
-
-                publicClient.conn.WriteJSON(subscription)
-            }
-
-            return nil
-        default:
-            return nil
         }
     }
 
@@ -148,3 +148,5 @@ AND FINALLY MAKE ABSOLUTELY SURE THAT ALL THE CHARTS ON THE FRONTEND SHOW ACCURA
 AND NEVER EVER RESTORE ANYTHING FROM GIT THAT IS BACKWARDS NOT FORWARDS, TAKE THE SYSTEM AS IT IS.
 
 (Oh and check the Makefile for the linker error)
+
+Please make sure the system accurately reflects the above.
