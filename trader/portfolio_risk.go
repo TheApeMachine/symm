@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/ring"
 )
 
 /*
@@ -18,7 +17,7 @@ type PortfolioRisk struct {
 	dayStartEquity float64
 	dayAnchor      time.Time
 	lastPrices     map[string]float64
-	returns        map[string]ring.FloatRing
+	prices         map[string]priceSampleRing
 	windowCap      int
 	minSamples     int
 }
@@ -35,34 +34,39 @@ func NewPortfolioRisk() *PortfolioRisk {
 
 	return &PortfolioRisk{
 		lastPrices: make(map[string]float64),
-		returns:    make(map[string]ring.FloatRing),
+		prices:     make(map[string]priceSampleRing),
 		windowCap:  windowCap,
 		minSamples: config.System.MinCorrelationSamples,
 	}
 }
 
 /*
-ObserveSymbol records one price tick and its log return when a prior price exists.
+ObserveSymbol records one price tick at the current wall clock.
 */
 func (portfolioRisk *PortfolioRisk) ObserveSymbol(symbol string, price float64) {
+	portfolioRisk.ObserveSymbolAt(symbol, price, time.Now())
+}
+
+/*
+ObserveSymbolAt records one price tick for grid-resampled correlation.
+*/
+func (portfolioRisk *PortfolioRisk) ObserveSymbolAt(symbol string, price float64, at time.Time) {
 	if symbol == "" || price <= 0 {
 		return
 	}
 
-	previous, hasPrevious := portfolioRisk.lastPrices[symbol]
-
-	if hasPrevious && previous > 0 {
-		logReturn := math.Log(price / previous)
-		returnWindow, ok := portfolioRisk.returns[symbol]
-
-		if !ok {
-			returnWindow = ring.NewFloatRing(portfolioRisk.windowCap)
-		}
-
-		returnWindow.Push(logReturn)
-		portfolioRisk.returns[symbol] = returnWindow
+	if at.IsZero() {
+		at = time.Now()
 	}
 
+	sampleWindow, ok := portfolioRisk.prices[symbol]
+
+	if !ok {
+		sampleWindow = newPriceSampleRing(portfolioRisk.windowCap)
+	}
+
+	sampleWindow.push(at, price)
+	portfolioRisk.prices[symbol] = sampleWindow
 	portfolioRisk.lastPrices[symbol] = price
 }
 
@@ -221,25 +225,22 @@ func correlatedSlotCount(
 }
 
 func (portfolioRisk *PortfolioRisk) symbolCorrelation(left, right string) (float64, bool) {
-	leftWindow := portfolioRisk.returns[left]
-	rightWindow := portfolioRisk.returns[right]
+	leftSamples := portfolioRisk.prices[left].ordered()
+	rightSamples := portfolioRisk.prices[right].ordered()
 
-	if leftWindow.Len() < portfolioRisk.minSamples || rightWindow.Len() < portfolioRisk.minSamples {
+	if len(leftSamples) < 2 || len(rightSamples) < 2 {
 		return 0, false
 	}
 
-	leftSamples := leftWindow.Ordered()
-	rightSamples := rightWindow.Ordered()
-	sampleCount := leftWindow.Len()
+	leftReturns, rightReturns, ok := synchronizedLogReturns(
+		leftSamples, rightSamples, correlationBarInterval(),
+	)
 
-	if rightWindow.Len() < sampleCount {
-		sampleCount = rightWindow.Len()
+	if !ok || len(leftReturns) < portfolioRisk.minSamples {
+		return 0, false
 	}
 
-	leftSamples = leftSamples[len(leftSamples)-sampleCount:]
-	rightSamples = rightSamples[len(rightSamples)-sampleCount:]
-
-	return pearson(leftSamples, rightSamples), true
+	return pearson(leftReturns, rightReturns), true
 }
 
 func pearson(left, right []float64) float64 {
@@ -345,7 +346,7 @@ func openSymbols(wallet *Wallet) []string {
 	return symbols
 }
 
-func observeBatch(portfolioRisk *PortfolioRisk, batch []engine.Measurement) {
+func observeBatch(portfolioRisk *PortfolioRisk, batch []engine.Measurement, now time.Time) {
 	for _, measurement := range batch {
 		if len(measurement.Pairs) == 0 {
 			continue
@@ -357,6 +358,12 @@ func observeBatch(portfolioRisk *PortfolioRisk, batch []engine.Measurement) {
 			continue
 		}
 
-		portfolioRisk.ObserveSymbol(measurement.Pairs[0].Wsname, price)
+		at := now
+
+		if measurement.Timeframe.End > 0 {
+			at = time.Unix(0, measurement.Timeframe.End)
+		}
+
+		portfolioRisk.ObserveSymbolAt(measurement.Pairs[0].Wsname, price, at)
 	}
 }

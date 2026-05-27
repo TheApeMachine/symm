@@ -104,8 +104,6 @@ func (crypto *Crypto) State() engine.State {
 }
 
 func (crypto *Crypto) Tick() error {
-	errnie.Info("starting crypto tick")
-
 	for {
 		if crypto.tryScorePendingMeasurements() {
 			continue
@@ -241,6 +239,16 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		crypto.wallet.ClearPosition(base)
 		crypto.wallet.Balance += revenue - fee
 
+		crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{
+			Value: order.Fill{
+				OrderID: fmt.Sprintf("paper:exit:%s:%d", symbol, time.Now().UnixNano()),
+				Symbol:  symbol,
+				Side:    "sell",
+				Qty:     qty,
+				Price:   fillPrice,
+			},
+		})
+
 		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 			"event":   logicEvent(peakExit, "simulated_exit"),
 			"symbol":  symbol,
@@ -336,8 +344,8 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		}
 	}
 
-	observeBatch(crypto.portfolioRisk, batch)
-	crypto.observeOpenPrices(batch)
+	observeBatch(crypto.portfolioRisk, batch, now)
+	crypto.observeOpenPrices(batch, now)
 
 	if crypto.wallet != nil {
 		equity := crypto.wallet.MarkEquity(crypto.portfolioRisk.lastPrices)
@@ -370,6 +378,9 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 			crypto.sendWallet()
 		}
 	}
+
+	crypto.chaseRestingEntries(batch)
+	crypto.fillRestingEntries(batch)
 
 	if entryBlockReason != "" {
 		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -524,7 +535,7 @@ func (crypto *Crypto) observeTicker(row market.TickerRow) error {
 		}
 
 		tracked = true
-		crypto.portfolioRisk.ObserveSymbol(symbol, price)
+		crypto.portfolioRisk.ObserveSymbolAt(symbol, price, time.Now())
 	}
 
 	if !tracked {
@@ -536,7 +547,7 @@ func (crypto *Crypto) observeTicker(row market.TickerRow) error {
 	return nil
 }
 
-func (crypto *Crypto) observeOpenPrices(batch []engine.Measurement) {
+func (crypto *Crypto) observeOpenPrices(batch []engine.Measurement, now time.Time) {
 	if crypto.wallet == nil || crypto.portfolioRisk == nil {
 		return
 	}
@@ -568,7 +579,7 @@ func (crypto *Crypto) observeOpenPrices(batch []engine.Measurement) {
 			continue
 		}
 
-		crypto.portfolioRisk.ObserveSymbol(symbol, price)
+		crypto.portfolioRisk.ObserveSymbolAt(symbol, price, now)
 	}
 }
 

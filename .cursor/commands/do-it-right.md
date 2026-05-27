@@ -149,4 +149,4 @@ AND NEVER EVER RESTORE ANYTHING FROM GIT THAT IS BACKWARDS NOT FORWARDS, TAKE TH
 
 (Oh and check the Makefile for the linker error)
 
-Please make sure the system accurately reflects the above.
+Please make sure the system accurately reflects the above, but also keep thinking things through critically yourself. The objective is to maximize the wallet while minimizing the time it takes to do so. Paper trading must 100% simulate real trading as this is to validate the system before we take it live.

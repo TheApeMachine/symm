@@ -29,7 +29,7 @@ func markPumpRequested(pumpdump *PumpDump, symbol string) {
 	pumpdump.requested.Store(symbol, struct{}{})
 }
 
-func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
+func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol, *qpool.Q) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -48,7 +48,7 @@ func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
 		t.Fatal("expected pump symbol state")
 	}
 
-	return signal, symbolState
+	return signal, symbolState, pool
 }
 
 func seedPumpSymbol(symbolState *PumpSymbol) {
@@ -78,26 +78,22 @@ func seedPumpSymbol(symbolState *PumpSymbol) {
 }
 
 func TestPumpdumpPublishPulseAfterBook(t *testing.T) {
-	signal, state := testPumpDump(t)
+	signal, state, pool := testPumpDump(t)
 	seedPumpSymbol(state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:pumpdump", 8)
 
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
+	go func() {
+		_ = signal.Tick()
+	}()
 
-	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
+	pool.CreateBroadcastGroup("book", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
 			Symbol: "PUMP/EUR",
 			Bids:   []market.BookLevel{{Price: 1, Volume: 80}},
 			Asks:   []market.BookLevel{{Price: 1.01, Volume: 20}},
 		},
 	})
-
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-measurements.Incoming:
@@ -112,7 +108,7 @@ func TestPumpdumpPublishPulseAfterBook(t *testing.T) {
 }
 
 func TestPumpDumpMeasure(t *testing.T) {
-	signal, symbolState := testPumpDump(t)
+	signal, symbolState, _ := testPumpDump(t)
 	seedPumpSymbol(symbolState)
 
 	found := false
@@ -131,7 +127,7 @@ func TestPumpDumpMeasure(t *testing.T) {
 }
 
 func TestPumpDumpFeedbackLowersConfidence(t *testing.T) {
-	signal, symbolState := testPumpDump(t)
+	signal, symbolState, _ := testPumpDump(t)
 	seedPumpSymbol(symbolState)
 
 	before := symbolState.forecast.Scale()

@@ -76,11 +76,6 @@ const TradingDashboard = () => {
 							</Suspense>
 						</div>
 						<div className="dashboard-trade-panel">
-							<div className="dashboard-panel-header">
-								{chartSymbols.length === 1
-									? chartSymbols[0]
-									: `${chartSymbols.length} open positions`}
-							</div>
 							<Suspense fallback={<ChartFallback />}>
 								<TradeChartGrid symbols={chartSymbols} />
 							</Suspense>

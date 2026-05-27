@@ -2,6 +2,7 @@ package price
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -83,26 +84,26 @@ func (prediction *Prediction) Close() error {
 }
 
 func (prediction *Prediction) Tick() error {
-	errnie.Info("starting prediction tick")
-
 	for {
-		prediction.stateMu.Lock()
-
 		select {
 		case <-prediction.ctx.Done():
-			prediction.stateMu.Unlock()
 			return prediction.ctx.Err()
 		case value := <-prediction.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
+			row, ok := value.Value.(market.TickerRow)
+
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
+			}
+
+			prediction.stateMu.Lock()
 
 			if row.Last > 0 {
 				prediction.prices[row.Symbol] = row.Last
 			}
 
 			prediction.settleDue(time.Now())
+			prediction.stateMu.Unlock()
 		}
-
-		prediction.stateMu.Unlock()
 	}
 }
 

@@ -210,7 +210,7 @@ func TestCryptoAttachWalletMarksPrefersLastPrice(t *testing.T) {
 		_ = predictions.Tick()
 	}()
 	t.Cleanup(func() {
-		predictions.cancel()
+		_ = predictions.Close()
 		time.Sleep(10 * time.Millisecond)
 	})
 
@@ -488,6 +488,48 @@ func TestCryptoDefendsRestingEntry(t *testing.T) {
 	}
 }
 
+func TestScorePaperMakerEntry(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto, predictions, _ := newTestCrypto(t, wallet)
+
+	crypto.pulses = config.System.MinWarmPulses
+	predictions.SeedReturnCalibration("pumpdump", 0.03)
+	predictions.SeedReturnCalibration("hawkes", 0.03)
+
+	batch := []engine.Measurement{
+		{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.8,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+		{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "microstructure",
+			Reason:     "cluster_buy",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.7,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+	}
+
+	if err := crypto.score(batch); err != nil {
+		t.Fatalf("score: %v", err)
+	}
+
+	if wallet.Inventory["BTC"] <= 0 {
+		t.Fatalf("expected paper entry inventory, got %v resting=%v", wallet.Inventory["BTC"], crypto.restingEntries)
+	}
+}
+
 func TestCryptoEnterPaper(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, pool := newTestCrypto(t, wallet)
@@ -527,11 +569,17 @@ func TestCryptoEnterPaper(t *testing.T) {
 		measurements.Send(&qpool.QValue[any]{Value: measurement})
 	}
 
-	waitForCryptoPulse(t, crypto, 1)
+	deadline := time.Now().Add(time.Second)
 
-	if wallet.Inventory["BTC"] <= 0 {
-		t.Fatalf("expected paper entry inventory, got %v", wallet.Inventory["BTC"])
+	for time.Now().Before(deadline) {
+		if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
 	}
+
+	t.Fatalf("expected paper entry inventory, got %v resting=%v", wallet.Inventory["BTC"], crypto.restingEntries)
 }
 
 func TestCryptoCloseCancelsContext(t *testing.T) {
@@ -552,7 +600,7 @@ func TestCryptoHandleExitPaper(t *testing.T) {
 		_ = predictions.Tick()
 	}()
 	t.Cleanup(func() {
-		predictions.cancel()
+		_ = predictions.Close()
 		time.Sleep(10 * time.Millisecond)
 	})
 

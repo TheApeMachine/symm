@@ -8,17 +8,56 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/ring"
 )
 
-func seedReturns(portfolioRisk *PortfolioRisk, symbol string, values []float64) {
-	window := ring.NewFloatRing(len(values))
+func seedSynchronizedPrices(
+	portfolioRisk *PortfolioRisk,
+	symbol string,
+	basePrice float64,
+	returns []float64,
+	interval time.Duration,
+	start time.Time,
+) {
+	sampleRing := newPriceSampleRing(len(returns) + 1)
+	price := basePrice
+	sampleRing.push(start, price)
 
-	for _, value := range values {
-		window.Push(value)
+	for index, logReturn := range returns {
+		price *= math.Exp(logReturn)
+		sampleRing.push(start.Add(time.Duration(index+1)*interval), price)
 	}
 
-	portfolioRisk.returns[symbol] = window
+	portfolioRisk.prices[symbol] = sampleRing
+	portfolioRisk.lastPrices[symbol] = price
+}
+
+func seedDenseStalePrices(
+	portfolioRisk *PortfolioRisk,
+	symbol string,
+	basePrice float64,
+	returns []float64,
+	barInterval time.Duration,
+	start time.Time,
+) {
+	tickInterval := time.Second
+	capacity := len(returns)*int(barInterval/tickInterval) + len(returns) + 2
+	sampleRing := newPriceSampleRing(capacity)
+	price := basePrice
+	sampleRing.push(start, price)
+
+	for index, logReturn := range returns {
+		segmentStart := start.Add(time.Duration(index) * barInterval)
+
+		for tick := segmentStart.Add(tickInterval); tick.Before(segmentStart.Add(barInterval)); tick = tick.Add(tickInterval) {
+			sampleRing.push(tick, price)
+		}
+
+		price *= math.Exp(logReturn)
+		sampleRing.push(segmentStart.Add(barInterval), price)
+	}
+
+	portfolioRisk.prices[symbol] = sampleRing
+	portfolioRisk.lastPrices[symbol] = price
 }
 
 func TestPortfolioRiskBlocksDailyLoss(t *testing.T) {
@@ -86,11 +125,17 @@ func TestPortfolioRiskBlocksSpread(t *testing.T) {
 }
 
 func TestPortfolioRiskBlocksCorrelation(t *testing.T) {
+	originalBar := config.System.CorrelationBarSeconds
+	config.System.CorrelationBarSeconds = 10
+	t.Cleanup(func() { config.System.CorrelationBarSeconds = originalBar })
+
 	portfolioRisk := NewPortfolioRisk()
 	values := []float64{0.01, -0.005, 0.002, 0.004, -0.001, 0.003, 0.002, -0.002, 0.001, 0.004, 0.003, 0.002}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	interval := 10 * time.Second
 
-	seedReturns(portfolioRisk, "BTC/EUR", values)
-	seedReturns(portfolioRisk, "ETH/EUR", values)
+	seedSynchronizedPrices(portfolioRisk, "BTC/EUR", 100, values, interval, start)
+	seedSynchronizedPrices(portfolioRisk, "ETH/EUR", 50, values, interval, start)
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	wallet.Inventory["BTC"] = 0.01
@@ -105,6 +150,34 @@ func TestPortfolioRiskBlocksCorrelation(t *testing.T) {
 
 	if allowed || reason != "correlation_limit" {
 		t.Fatalf("expected correlation block, allowed=%v reason=%q", allowed, reason)
+	}
+}
+
+func TestSymbolCorrelationResampledEpps(t *testing.T) {
+	originalBar := config.System.CorrelationBarSeconds
+	config.System.CorrelationBarSeconds = 10
+	t.Cleanup(func() { config.System.CorrelationBarSeconds = originalBar })
+
+	portfolioRisk := NewPortfolioRisk()
+	returns := []float64{
+		0.01, -0.005, 0.002, 0.004, -0.001, 0.003,
+		0.002, -0.002, 0.001, 0.004, 0.003, 0.002,
+		-0.001, 0.002, 0.001, 0.003,
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	barInterval := 10 * time.Second
+
+	seedSynchronizedPrices(portfolioRisk, "GAIA/EUR", 10, returns, barInterval, start)
+	seedDenseStalePrices(portfolioRisk, "BTC/EUR", 100, returns, barInterval, start)
+
+	correlation, ok := portfolioRisk.symbolCorrelation("BTC/EUR", "GAIA/EUR")
+
+	if !ok {
+		t.Fatal("expected resampled correlation to succeed")
+	}
+
+	if math.Abs(correlation-1) > 1e-6 {
+		t.Fatalf("expected resampled correlation ~1, got %v", correlation)
 	}
 }
 
@@ -158,9 +231,11 @@ func TestWalletMarkEquity(t *testing.T) {
 func BenchmarkPortfolioRiskAllowEntry(b *testing.B) {
 	portfolioRisk := NewPortfolioRisk()
 	values := []float64{0.01, -0.005, 0.002, 0.004, -0.001, 0.003, 0.002, -0.002, 0.001, 0.004, 0.003, 0.002}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	interval := 10 * time.Second
 
-	seedReturns(portfolioRisk, "BTC/EUR", values)
-	seedReturns(portfolioRisk, "ETH/EUR", values)
+	seedSynchronizedPrices(portfolioRisk, "BTC/EUR", 100, values, interval, start)
+	seedSynchronizedPrices(portfolioRisk, "ETH/EUR", 50, values, interval, start)
 	portfolioRisk.UpdateEquity(200, time.Now())
 
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
@@ -176,5 +251,35 @@ func BenchmarkPortfolioRiskAllowEntry(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = portfolioRisk.AllowEntry(wallet, measurement, 10, []string{"BTC/EUR"})
+	}
+}
+
+func BenchmarkSymbolCorrelationResampled(b *testing.B) {
+	portfolioRisk := NewPortfolioRisk()
+	returns := []float64{
+		0.01, -0.005, 0.002, 0.004, -0.001, 0.003,
+		0.002, -0.002, 0.001, 0.004, 0.003, 0.002,
+		-0.001, 0.002, 0.001,
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	seedSynchronizedPrices(portfolioRisk, "BTC/EUR", 100, returns, time.Second, start)
+
+	gaiaRing := newPriceSampleRing(len(returns) + 1)
+	price := 10.0
+	gaiaRing.push(start, price)
+
+	for index, logReturn := range returns {
+		price *= math.Exp(logReturn)
+		gaiaRing.push(start.Add(time.Duration((index+1)*10)*time.Second), price)
+	}
+
+	portfolioRisk.prices["GAIA/EUR"] = gaiaRing
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, _ = portfolioRisk.symbolCorrelation("BTC/EUR", "GAIA/EUR")
 	}
 }

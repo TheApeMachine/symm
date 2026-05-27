@@ -43,6 +43,7 @@ type Config struct {
 	MaxSymbolCorrelation       float64
 	MaxCorrelatedSlots         int
 	MinCorrelationSamples      int
+	CorrelationBarSeconds      int
 	MaxEntrySlippageBPS        float64
 	MaxSpreadBPS               float64
 	AllowPaperShorts           bool
@@ -147,6 +148,7 @@ func NewConfig() *Config {
 		MaxSymbolCorrelation:       0.85,
 		MaxCorrelatedSlots:         1,
 		MinCorrelationSamples:      12,
+		CorrelationBarSeconds:      10,
 		MaxEntrySlippageBPS:        50,
 		MaxSpreadBPS:               0,
 		AllowPaperShorts:           false,

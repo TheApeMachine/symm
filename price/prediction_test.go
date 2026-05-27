@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
 )
 
 func TestPredictionSettlesFeedback(t *testing.T) {
@@ -44,9 +45,14 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 		},
 	}
 
-	if err := prediction.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	go func() {
+		_ = prediction.Tick()
+	}()
+	t.Cleanup(func() { _ = prediction.Close() })
+
+	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "PUMP/EUR", Last: 1.02},
+	})
 
 	select {
 	case value := <-subscriber.Incoming:
@@ -218,16 +224,14 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 		Confidence: 0.8,
 	}
 
+	go func() {
+		_ = prediction.Tick()
+	}()
+	t.Cleanup(func() { _ = prediction.Close() })
+
 	var workers sync.WaitGroup
 
 	for index := 0; index < 32; index++ {
-		workers.Add(1)
-
-		go func() {
-			defer workers.Done()
-			_ = prediction.Tick()
-		}()
-
 		workers.Add(1)
 
 		go func() {
@@ -242,4 +246,8 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	}
 
 	workers.Wait()
+
+	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "BTC/EUR", Last: 50000},
+	})
 }
