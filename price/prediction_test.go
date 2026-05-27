@@ -23,10 +23,12 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 	feedback := pool.CreateBroadcastGroup("feedback", 10*time.Millisecond)
 	subscriber := feedback.Subscribe("test:feedback", 8)
 
-	prediction.SeedReturnCalibration("pumpdump", "PUMP/EUR", 0.01)
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "PUMP/EUR", 0.01)
 	prediction.prices["PUMP/EUR"] = 1.02
 	prediction.open["PUMP/EUR"] = map[string]openPrediction{
-		"pumpdump": {
+		source: {
+			perspective: engine.Perspective{Type: engine.PerspectiveMicrostructure},
 			measurement: engine.Measurement{
 				Last:       100,
 				Source:     "pumpdump",
@@ -36,7 +38,10 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 				Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
 				Confidence: 0.8,
 			},
+			source:          source,
+			sources:         []string{"pumpdump"},
 			predictedReturn: 0.008,
+			confidence:      0.8,
 			anchorPrice:     1.0,
 			direction:       1,
 			runway:          config.System.ScalpHoldBeforeExit,
@@ -62,8 +67,12 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 			t.Fatalf("expected prediction feedback, got %T", value.Value)
 		}
 
-		if payload.Source != "pumpdump" || payload.Symbol != "PUMP/EUR" {
+		if payload.Source != source || payload.Symbol != "PUMP/EUR" {
 			t.Fatalf("unexpected feedback: %+v", payload)
+		}
+
+		if !engine.FeedbackIncludesSource(payload, "pumpdump") {
+			t.Fatalf("expected feedback to include pumpdump source: %+v", payload)
 		}
 
 		if payload.PredictedReturn <= 0 || payload.ActualReturn <= 0 {
@@ -109,13 +118,14 @@ func TestPredictionLastPrice(t *testing.T) {
 	}
 }
 
-func TestPredictionRecord(t *testing.T) {
+func TestPredictionRecordPerspective(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
-	prediction.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.01)
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "BTC/EUR", 0.01)
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
@@ -124,12 +134,12 @@ func TestPredictionRecord(t *testing.T) {
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.8,
+		Last:       50000,
 	}
 
-	predicted := prediction.Record(
-		engine.Perspective{Type: engine.PerspectiveMicrostructure},
-		measurement,
-		50000,
+	predicted := prediction.RecordPerspective(
+		"BTC/EUR",
+		testPerspective(measurement),
 		time.Now(),
 	)
 
@@ -137,18 +147,19 @@ func TestPredictionRecord(t *testing.T) {
 		t.Fatalf("expected learned predicted return, got %v", predicted)
 	}
 
-	if prediction.open["BTC/EUR"]["pumpdump"].predictedReturn != predicted {
+	if prediction.open["BTC/EUR"][source].predictedReturn != predicted {
 		t.Fatalf("expected open prediction stored")
 	}
 }
 
-func TestPredictionRecordUsesSymbolLocalReturnSupport(t *testing.T) {
+func TestPredictionRecordPerspectiveUsesSymbolLocalReturnSupport(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
-	prediction.SeedReturnCalibration("pumpdump", "ETH/EUR", 0.01)
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "ETH/EUR", 0.01)
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
@@ -157,12 +168,12 @@ func TestPredictionRecordUsesSymbolLocalReturnSupport(t *testing.T) {
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.8,
+		Last:       50000,
 	}
 
-	predicted := prediction.Record(
-		engine.Perspective{Type: engine.PerspectiveMicrostructure},
-		measurement,
-		50000,
+	predicted := prediction.RecordPerspective(
+		"BTC/EUR",
+		testPerspective(measurement),
 		time.Now(),
 	)
 
@@ -171,7 +182,7 @@ func TestPredictionRecordUsesSymbolLocalReturnSupport(t *testing.T) {
 	}
 }
 
-func TestPredictionRecordUsesObservedMarketScale(t *testing.T) {
+func TestPredictionRecordPerspectiveUsesObservedMarketScale(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -189,12 +200,12 @@ func TestPredictionRecordUsesObservedMarketScale(t *testing.T) {
 		Reason:     "cluster",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.42,
+		Last:       50000,
 	}
 
-	predicted := prediction.Record(
-		engine.Perspective{Type: engine.PerspectiveMicrostructure},
-		measurement,
-		50000,
+	predicted := prediction.RecordPerspective(
+		"BTC/EUR",
+		testPerspective(measurement),
 		time.Now(),
 	)
 
@@ -218,7 +229,39 @@ func TestPredictionRecordUsesObservedMarketScale(t *testing.T) {
 	}
 }
 
-func TestPredictionRecordDoesNotInventScale(t *testing.T) {
+func TestPredictionRecordPerspectiveBlocksNegativeLearnedReturnSupport(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "BTC/EUR", -0.01)
+	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 100})
+	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 101})
+
+	measurement := engine.Measurement{
+		Source:     "hawkes",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "cluster",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.42,
+		Last:       50000,
+	}
+
+	predicted := prediction.RecordPerspective(
+		"BTC/EUR",
+		testPerspective(measurement),
+		time.Now(),
+	)
+
+	if predicted >= 0 {
+		t.Fatalf("expected negative learned support to block market fallback, got %v", predicted)
+	}
+}
+
+func TestPredictionRecordPerspectiveDoesNotInventScale(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -232,12 +275,12 @@ func TestPredictionRecordDoesNotInventScale(t *testing.T) {
 		Reason:     "cluster",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.42,
+		Last:       50000,
 	}
 
-	predicted := prediction.Record(
-		engine.Perspective{Type: engine.PerspectiveMicrostructure},
-		measurement,
-		50000,
+	predicted := prediction.RecordPerspective(
+		"BTC/EUR",
+		testPerspective(measurement),
 		time.Now(),
 	)
 
@@ -252,10 +295,12 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
-	prediction.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.01)
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "BTC/EUR", 0.01)
 	prediction.prices["BTC/EUR"] = 50000
 	prediction.open["BTC/EUR"] = map[string]openPrediction{
-		"pumpdump": {
+		source: {
+			perspective: engine.Perspective{Type: engine.PerspectiveMicrostructure},
 			measurement: engine.Measurement{
 				Last:       100,
 				Source:     "pumpdump",
@@ -265,7 +310,10 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 				Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 				Confidence: 0.8,
 			},
+			source:          source,
+			sources:         []string{"pumpdump"},
 			predictedReturn: 0.008,
+			confidence:      0.8,
 			anchorPrice:     49000,
 			direction:       1,
 			runway:          config.System.ScalpHoldBeforeExit,
@@ -281,6 +329,7 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.8,
+		Last:       50000,
 	}
 
 	go func() {
@@ -295,10 +344,9 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 
 		go func() {
 			defer workers.Done()
-			prediction.Record(
-				engine.Perspective{Type: engine.PerspectiveMicrostructure},
-				measurement,
-				50000,
+			prediction.RecordPerspective(
+				"BTC/EUR",
+				testPerspective(measurement),
 				time.Now(),
 			)
 		}()
@@ -309,4 +357,11 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.TickerRow{Symbol: "BTC/EUR", Last: 50000},
 	})
+}
+
+func testPerspective(measurement engine.Measurement) engine.Perspective {
+	return engine.Perspective{
+		Type:         engine.PerspectiveMicrostructure,
+		Measurements: []engine.Measurement{measurement},
+	}
 }

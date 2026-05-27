@@ -289,7 +289,7 @@ func (depthflow *DepthFlow) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != depthflowSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, depthflowSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

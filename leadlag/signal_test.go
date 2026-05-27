@@ -62,7 +62,8 @@ func TestLeadLagFeedbackScalesSymbol(t *testing.T) {
 	}
 
 	signal.Feedback(engine.PredictionFeedback{
-		Source:          leadlagSource,
+		Source:          engine.PerspectiveSource(engine.PerspectiveCrossAsset),
+		Sources:         []string{leadlagSource},
 		Symbol:          "ALT/EUR",
 		PredictedReturn: 0.02,
 		ActualReturn:    -0.02,

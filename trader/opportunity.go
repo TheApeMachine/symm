@@ -15,6 +15,7 @@ type tradeOpportunity struct {
 	PredictedReturn float64
 	Edge            float64
 	Friction        float64
+	Regime          string
 	Measurement     engine.Measurement
 	Perspective     engine.Perspective
 }
@@ -36,70 +37,113 @@ func scoreOpportunities(
 
 	for symbol, byType := range perspectives {
 		for perspectiveType, perspective := range byType {
-			supportedMeasurements := make([]engine.Measurement, 0, len(perspective.Measurements))
-			maxPredicted := 0.0
-			leadMeasurement := engine.Measurement{}
+			opportunity, predictedSum, predictedCount := scorePerspective(
+				predictions, symbol, perspectiveType, perspective, now,
+			)
+			summary.PredictedSum += predictedSum
+			summary.PredictedCount += predictedCount
 
-			for _, measurement := range perspective.Measurements {
-				predicted := predictions.Record(
-					perspective,
-					measurement,
-					anchorPrice(measurement),
-					now,
-				)
-
-				if predicted > 0 {
-					summary.PredictedSum += predicted
-					summary.PredictedCount++
-				}
-
-				if predicted <= 0 {
-					continue
-				}
-
-				supportedMeasurements = append(supportedMeasurements, measurement)
-
-				if predicted > maxPredicted {
-					maxPredicted = predicted
-					leadMeasurement = measurement
-				}
-			}
-
-			jointConfidence, sourceCount := engine.FuseMeasurements(supportedMeasurements)
-			grossEdge := maxPredicted
-			friction := entryFrictionReturn(leadMeasurement)
-			edge := grossEdge - friction
-
-			if edge <= bestEdge {
+			if opportunity.Edge <= bestEdge {
 				continue
 			}
 
-			bestEdge = edge
-			summary.Edge = edge
-			summary.Opportunity = tradeOpportunity{
-				Symbol:          symbol,
-				PerspectiveType: perspectiveType,
-				JointConfidence: jointConfidence,
-				SourceCount:     sourceCount,
-				PredictedReturn: maxPredicted,
-				Edge:            edge,
-				Friction:        friction,
-				Measurement:     leadMeasurement,
-				Perspective:     perspective,
-			}
+			bestEdge = opportunity.Edge
+			summary.Edge = opportunity.Edge
+			summary.Opportunity = opportunity
 		}
 	}
 
 	return summary
 }
 
+func scorePerspective(
+	predictions predictionRecorder,
+	symbol string,
+	perspectiveType engine.PerspectiveType,
+	perspective engine.Perspective,
+	now time.Time,
+) (tradeOpportunity, float64, int) {
+	predicted := predictions.RecordPerspective(symbol, perspective, now)
+
+	if predicted <= 0 {
+		return tradeOpportunity{}, 0, 0
+	}
+
+	return perspectiveOpportunity(symbol, perspectiveType, perspective, predicted), predicted, 1
+}
+
+func perspectiveOpportunity(
+	symbol string,
+	perspectiveType engine.PerspectiveType,
+	perspective engine.Perspective,
+	predictedReturn float64,
+) tradeOpportunity {
+	measurements := supportedMeasurements(symbol, perspective)
+
+	if len(measurements) == 0 {
+		return tradeOpportunity{}
+	}
+
+	jointConfidence, sourceCount := engine.FuseMeasurements(measurements)
+	leadMeasurement := leadMeasurement(measurements)
+	friction := entryFrictionReturn(leadMeasurement)
+	edge := predictedReturn - friction
+
+	if edge <= 0 {
+		return tradeOpportunity{}
+	}
+
+	return tradeOpportunity{
+		Symbol:          symbol,
+		PerspectiveType: perspectiveType,
+		JointConfidence: jointConfidence,
+		SourceCount:     sourceCount,
+		PredictedReturn: predictedReturn,
+		Edge:            edge,
+		Friction:        friction,
+		Regime:          leadMeasurement.Regime,
+		Measurement:     leadMeasurement,
+		Perspective:     perspective,
+	}
+}
+
+func supportedMeasurements(
+	symbol string,
+	perspective engine.Perspective,
+) []engine.Measurement {
+	measurements := make([]engine.Measurement, 0, len(perspective.Measurements))
+
+	for _, measurement := range perspective.Measurements {
+		if len(measurement.Pairs) == 0 || measurement.Pairs[0].Wsname != symbol {
+			continue
+		}
+
+		if measurement.Confidence <= 0 || anchorPrice(measurement) <= 0 {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements
+}
+
+func leadMeasurement(measurements []engine.Measurement) engine.Measurement {
+	lead := measurements[0]
+
+	for _, measurement := range measurements[1:] {
+		if measurement.Confidence <= lead.Confidence {
+			continue
+		}
+
+		lead = measurement
+	}
+
+	return lead
+}
+
 type predictionRecorder interface {
-	Record(
-		perspective engine.Perspective,
-		measurement engine.Measurement,
-		anchorPrice float64,
-		now time.Time,
-	) float64
+	RecordPerspective(symbol string, perspective engine.Perspective, now time.Time) float64
 }
 
 func entryFrictionReturn(measurement engine.Measurement) float64 {

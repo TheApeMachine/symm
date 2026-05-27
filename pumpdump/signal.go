@@ -541,7 +541,7 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != pumpdumpSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, pumpdumpSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

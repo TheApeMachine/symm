@@ -361,7 +361,7 @@ func (fluid *Fluid) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != fluidSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, fluidSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

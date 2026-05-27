@@ -144,6 +144,46 @@ func TestCryptoPublishConfidence(t *testing.T) {
 	}
 }
 
+func TestCryptoPublishConfidenceZero(t *testing.T) {
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence-zero", 8)
+
+	startCryptoTick(t, crypto)
+
+	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "no_support",
+			Pairs:      []asset.Pair{{Wsname: "PUMP/EUR"}},
+			Confidence: 0,
+			Last:       1.0,
+		},
+	})
+
+	select {
+	case value := <-confidenceSub.Incoming:
+		payload, ok := value.Value.(map[string]any)
+
+		if !ok {
+			t.Fatalf("expected map payload, got %T", value.Value)
+		}
+
+		if payload["source"] != "pumpdump" {
+			t.Fatalf("expected pumpdump source, got %v", payload["source"])
+		}
+
+		confidence, ok := payload["confidence"].(float64)
+
+		if !ok || confidence != 0 {
+			t.Fatalf("expected confidence 0, got %v", payload["confidence"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for zero confidence publish")
+	}
+}
+
 func TestCryptoPublishConfidenceEMA(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
@@ -467,7 +507,7 @@ func TestCryptoEnterPaperWithSingleSupportedSignal(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
-	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.02)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.02)
 
 	startCryptoTick(t, crypto)
 
@@ -489,6 +529,37 @@ func TestCryptoEnterPaperWithSingleSupportedSignal(t *testing.T) {
 
 	if wallet.Inventory["BTC"] <= config.System.LiveInventoryEpsilon {
 		t.Fatalf("expected supported single-source entry, got %v", wallet.Inventory["BTC"])
+	}
+}
+
+func TestCryptoEntryIsNotCappedByFixedSlotCount(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 1000, 0.26)
+	wallet.Inventory["ADA"] = 1
+	wallet.Inventory["DOT"] = 1
+	wallet.Inventory["LINK"] = 1
+	wallet.Inventory["SOL"] = 1
+	crypto, predictions, _ := newTestCrypto(t, wallet)
+
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
+
+	if err := crypto.score([]engine.Measurement{
+		{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.8,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+	}); err != nil {
+		t.Fatalf("score: %v", err)
+	}
+
+	if wallet.Inventory["BTC"] <= config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected entry despite existing slot count, got %v", wallet.Inventory["BTC"])
 	}
 }
 
@@ -532,8 +603,8 @@ func TestCryptoDoesNotEnterWithReturnSupportFromAnotherSymbol(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, _ := newTestCrypto(t, wallet)
 
-	predictions.SeedReturnCalibration("pumpdump", "ETH/EUR", 0.03)
-	predictions.SeedReturnCalibration("hawkes", "ETH/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "ETH/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "ETH/EUR", 0.03)
 
 	if err := crypto.score([]engine.Measurement{
 		{
@@ -609,8 +680,8 @@ func TestScorePaperMakerEntry(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, _ := newTestCrypto(t, wallet)
 
-	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
-	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
 
 	batch := []engine.Measurement{
 		{
@@ -650,8 +721,8 @@ func TestCryptoEnterPaper(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
-	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
-	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
 
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 

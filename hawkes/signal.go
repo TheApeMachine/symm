@@ -259,7 +259,7 @@ func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != hawkesSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, hawkesSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

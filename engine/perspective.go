@@ -27,6 +27,23 @@ type Perspective struct {
 }
 
 /*
+PerspectiveSource returns the synthetic source name used for perspective-level
+forecasts and feedback.
+*/
+func PerspectiveSource(perspectiveType PerspectiveType) string {
+	switch perspectiveType {
+	case PerspectiveFlow:
+		return "perspective:flow"
+	case PerspectiveCrossAsset:
+		return "perspective:cross_asset"
+	case PerspectiveSentiment:
+		return "perspective:sentiment"
+	default:
+		return "perspective:microstructure"
+	}
+}
+
+/*
 FuseMeasurements combines independent source confidences into one joint
 confidence and counts distinct contributing sources.
 */

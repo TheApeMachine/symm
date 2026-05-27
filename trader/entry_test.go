@@ -123,8 +123,8 @@ func TestScoreDoesNotReenterOpenSymbol(t *testing.T) {
 	wallet.Inventory["BTC"] = 0.01
 	crypto, predictions, _ := newTestCrypto(t, wallet)
 
-	predictions.SeedReturnCalibration("pumpdump", "BTC/EUR", 0.03)
-	predictions.SeedReturnCalibration("hawkes", "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
+	predictions.SeedReturnCalibration(engine.PerspectiveSource(engine.PerspectiveMicrostructure), "BTC/EUR", 0.03)
 
 	beforeQty := wallet.Inventory["BTC"]
 

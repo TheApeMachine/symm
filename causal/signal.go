@@ -275,7 +275,7 @@ func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != causalSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, causalSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

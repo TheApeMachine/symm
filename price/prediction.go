@@ -19,7 +19,10 @@ import (
 type openPrediction struct {
 	perspective     engine.Perspective
 	measurement     engine.Measurement
+	source          string
+	sources         []string
 	predictedReturn float64
+	confidence      float64
 	anchorPrice     float64
 	direction       int
 	runway          time.Duration
@@ -126,56 +129,6 @@ func (prediction *Prediction) SeedReturnCalibration(source, symbol string, magni
 	prediction.returnSeen[key] = true
 }
 
-func (prediction *Prediction) Record(
-	perspective engine.Perspective,
-	measurement engine.Measurement,
-	anchorPrice float64,
-	now time.Time,
-) float64 {
-	prediction.stateMu.Lock()
-	defer prediction.stateMu.Unlock()
-
-	if len(measurement.Pairs) == 0 {
-		return 0
-	}
-
-	symbol := measurement.Pairs[0].Wsname
-	runway := measurementRunway(measurement)
-	scale := prediction.returnScale(measurement.Source, symbol)
-
-	predictedReturn := measurement.Confidence * scale
-
-	bySource := prediction.open[symbol]
-
-	if bySource == nil {
-		bySource = make(map[string]openPrediction)
-		prediction.open[symbol] = bySource
-	}
-
-	bySource[measurement.Source] = openPrediction{
-		perspective:     perspective,
-		measurement:     measurement,
-		predictedReturn: predictedReturn,
-		anchorPrice:     anchorPrice,
-		direction:       measurementDirection(measurement),
-		runway:          runway,
-		dueAt:           now.Add(runway),
-		predictedAt:     now,
-	}
-
-	prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":     "prediction",
-		"source":    measurement.Source,
-		"symbol":    symbol,
-		"value":     predictedReturn,
-		"ts":        now.UTC().Format(time.RFC3339Nano),
-		"due_at":    now.Add(runway).UTC().Format(time.RFC3339Nano),
-		"runway_ms": runway.Milliseconds(),
-	}})
-
-	return predictedReturn
-}
-
 func (prediction *Prediction) settleDue(now time.Time) {
 	for symbol, bySource := range prediction.open {
 		lastPrice := prediction.prices[symbol]
@@ -195,7 +148,7 @@ func (prediction *Prediction) settleDue(now time.Time) {
 				actualReturn = float64(open.direction) *
 					(lastPrice - open.anchorPrice) / open.anchorPrice
 
-				key := predictionSeriesKey{source: open.measurement.Source, symbol: symbol}
+				key := predictionSeriesKey{source: open.source, symbol: symbol}
 				returns := prediction.returnSeries(key)
 
 				if _, err := returns.Push(actualReturn); err != nil {
@@ -206,18 +159,20 @@ func (prediction *Prediction) settleDue(now time.Time) {
 			}
 
 			if engine.ValidPredictionFeedback(engine.PredictionFeedback{
-				Source:          open.measurement.Source,
+				Source:          open.source,
 				Symbol:          symbol,
 				PredictedReturn: open.predictedReturn,
 				Unanchored:      open.anchorPrice <= 0,
 			}) {
 				feedback := engine.PredictionFeedback{
-					Source:          open.measurement.Source,
+					Source:          open.source,
+					Sources:         append([]string(nil), open.sources...),
 					Symbol:          symbol,
 					Type:            open.measurement.Type,
+					PerspectiveType: open.perspective.Type,
 					Regime:          open.measurement.Regime,
 					Reason:          open.measurement.Reason,
-					Confidence:      open.measurement.Confidence,
+					Confidence:      open.confidence,
 					PredictedReturn: open.predictedReturn,
 					ActualReturn:    actualReturn,
 					Error:           open.predictedReturn - actualReturn,

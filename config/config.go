@@ -27,7 +27,6 @@ type Config struct {
 	PriceHistory               int
 	MinCostEUR                 float64
 	MaxSlotPct                 float64
-	MaxSlots                   int
 	MinHoldBeforeRotate        time.Duration
 	ScalpHoldBeforeExit        time.Duration
 	FlowHoldBeforeExit         time.Duration
@@ -130,7 +129,6 @@ func NewConfig() *Config {
 		PriceHistory:               128,
 		MinCostEUR:                 0.45,
 		MaxSlotPct:                 5,
-		MaxSlots:                   4,
 		MinHoldBeforeRotate:        time.Minute,
 		ScalpHoldBeforeExit:        15 * time.Second,
 		FlowHoldBeforeExit:         30 * time.Second,
@@ -207,10 +205,6 @@ func NewConfig() *Config {
 
 	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {
 		cfg.MaxPortfolioDrawdownPct = cfg.MaxDailyLossEUR / cfg.WalletEUR
-	}
-
-	if cfg.MaxDeployPct <= 0 {
-		cfg.MaxDeployPct = cfg.MaxSlotPct * float64(cfg.MaxSlots)
 	}
 
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {

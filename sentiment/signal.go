@@ -314,7 +314,7 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != sentimentSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, sentimentSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

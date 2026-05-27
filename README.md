@@ -136,39 +136,39 @@ There is **no averaging**, **no voting**, and **no merge of confidence** at this
 
 That yields **three** perspective objects for this batch, not three symbols × four types unless types differ.
 
-#### Step 3 — Predict per measurement, not per bucket
+#### Step 3 — Predict per perspective bucket
 
-The code then walks **every** perspective and **every** measurement inside it:
+The code then walks **every** perspective bucket:
 
 ```text
-for each symbol → for each perspectiveType → for each measurement in perspective.Measurements
-    Record(perspective, measurement, anchorPrice(measurement), now)
+for each symbol → for each perspectiveType
+    RecordPerspective(symbol, perspective, now)
 ```
 
-So the **same** `engine.Perspective` value (with multiple measurements attached) is passed into `Record` for each member. `Prediction` stores one open forecast per `(symbol, source)`—`source` comes from `measurement.Source`, not from the bucket name. Two signals in the same perspective on the same symbol still produce **two** records if their `Source` strings differ.
+`Prediction` stores one open forecast per `(symbol, perspectiveSource)`, where the source is `perspective:microstructure`, `perspective:flow`, `perspective:cross_asset`, or `perspective:sentiment`. The signal sources inside `perspective.Measurements` stay attached as support metadata so settled prediction error can flow back down to every signal that contributed.
 
-Entry selection uses the single measurement that achieved the highest **predicted return** in that batch (`bestMeasurement`), not the whole perspective aggregate.
+Entry selection uses the perspective forecast. The executable quote still comes from the strongest priced measurement inside that perspective.
 
 ### 3. Predictions (always, not only on entry)
 
-For every measurement in every perspective, `Crypto` calls `price.Prediction.Record`. That stores an open forecast with:
+For every symbol/perspective bucket, `Crypto` calls `price.Prediction.RecordPerspective`, whether or not a trade is entered. That stores an open forecast with:
 
-- **Anchor** — `Last` on the measurement (or mid of bid/ask if needed)
-- **Runway** — hold horizon by type (scalp vs flow vs causal)
-- **Predicted return** — `confidence × return scale` for that `(source, symbol)` series. The scale is learned from settled forward returns when available; before that it comes from the symbol’s observed tick-to-tick return movement. No unit fallback is used.
+- **Anchor** — `Last` on the strongest priced measurement in the perspective (or mid of bid/ask if needed)
+- **Runway** — the longest horizon implied by the measurements in the perspective
+- **Predicted return** — `perspective confidence × return scale` for that `(perspectiveSource, symbol)` series. The signed scale is learned from settled forward returns when available; before that it comes from the symbol’s observed tick-to-tick return movement. No unit fallback is used, and a negative learned scale blocks positive market-move fallback for that perspective-symbol pair.
 
-Until a `(source, symbol)` has settled returns, forecasts use the observed symbol movement scale. Settlement still runs on every anchored open forecast so source-local return scale can take over when it has evidence.
+Until a `(perspectiveSource, symbol)` has settled returns, forecasts use the observed symbol movement scale. Settlement still runs on every anchored open forecast so perspective-local return scale can take over when it has evidence.
 
 ### 4. Settlement and feedback
 
 `Prediction.Tick` runs as its own long-lived worker, ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
 
-Each entry signal subscribes to `feedback` and routes errors into its per-symbol **`PredictionCalibrator`** (`engine` + `numeric/learned`), which scales internal parameters—not post-hoc confidence cosmetics.
+Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics.
 
 Predicted return formula:
 
 ```text
-predictedReturn = measurement.Confidence × derivedReturnScale(source, symbol)
+predictedReturn = perspectiveConfidence × derivedReturnScale(perspectiveSource, symbol)
 ```
 
 ---
@@ -203,14 +203,14 @@ Entry signals share the same shape: subscribe to market channels, request deeper
 
 On each `measurements` message (coalescing any others already queued):
 
-1. Build perspectives and call `Record` for each measurement.
-2. Track the best net opportunity: `predicted return × fused confidence - entry friction`. Every positive-return signal can support an opportunity immediately; there is no elapsed warmup gate.
-3. If slots remain and net edge is positive after observed fee/spread friction, **enter** on that symbol using the winning measurement’s `Last` / `Bid` / `Ask`.
-4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses `prediction` UI events (X = `due_at`) and `PredictionFeedback` (predicted, actual, error at `DueAt`) — not forecast-cycle indices.
+1. Build perspectives and call `RecordPerspective` once for each symbol/perspective bucket.
+2. Track the best net opportunity at the perspective level: `engine.FuseMeasurements` produces perspective confidence, `price.Prediction` produces the perspective forecast, and edge is `perspective predicted return - entry friction`. Every positive-return perspective can support an opportunity immediately; there is no elapsed warmup gate.
+3. If wallet and risk capacity remain and net edge is positive after observed fee/spread friction, **enter** on that symbol using the perspective’s lead executable measurement `Last` / `Bid` / `Ask`.
+4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses `prediction` UI events (predicted at `DueAt`) and `PredictionFeedback` (actual and error at `SettledAt`) — not forecast-cycle indices.
 
 Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace.
 
-Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies fractional Kelly sizing from settled feedback, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
+Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies fractional Kelly sizing from settled feedback and fused confidence, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). There is no fixed global slot count; cash, Kelly sizing, optional deploy cap, drawdown, spread/slippage, and correlation decide capacity. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 
 On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
 
@@ -263,7 +263,7 @@ Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMA
 
 - **A running booter should have one long-lived worker per registered system.** If a `Tick` returns unexpectedly, inspect that system's subscriber input and fatal error path.
 - **Zero `engine_pulse` measurements** usually means no signal passed `Measure()` yet, or measurements are not reaching `Crypto`'s subscriber.
-- **`avg_prediction` and `forecast_symbols` stay at zero** only when no measurement has positive derived return support yet. Observed symbol movement can supply initial scale; settled feedback then replaces it with source-local forward-return scale.
+- **`avg_prediction` and `forecast_symbols` stay at zero** only when no perspective has positive derived return support yet. Observed symbol movement can supply initial scale; settled feedback then replaces it with perspective-local forward-return scale.
 - **Gauge confidence on the UI** is the trader’s per-source EMA of `Measurement.Confidence` on the `confidence` channel. **Prediction chart** data comes from `PredictionFeedback` and `prediction` UI events only—not from gauges.
 
 ---

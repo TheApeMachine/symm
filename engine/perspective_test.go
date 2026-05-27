@@ -36,6 +36,16 @@ func TestFuseMeasurements(t *testing.T) {
 	}
 }
 
+func TestPerspectiveSource(t *testing.T) {
+	if PerspectiveSource(PerspectiveMicrostructure) != "perspective:microstructure" {
+		t.Fatal("expected microstructure perspective source")
+	}
+
+	if PerspectiveSource(PerspectiveFlow) != "perspective:flow" {
+		t.Fatal("expected flow perspective source")
+	}
+}
+
 func TestFuseMeasurementsEmpty(t *testing.T) {
 	joint, count := FuseMeasurements(nil)
 
@@ -56,5 +66,21 @@ func TestFuseMeasurementsDistinctSourcesOnly(t *testing.T) {
 
 	if joint != 0.8 {
 		t.Fatalf("expected strongest duplicate source confidence, got %v", joint)
+	}
+}
+
+func BenchmarkFuseMeasurements(b *testing.B) {
+	measurements := []Measurement{
+		{Source: "pumpdump", Confidence: 0.8},
+		{Source: "hawkes", Confidence: 0.7},
+		{Source: "depthflow", Confidence: 0.6},
+		{Source: "leadlag", Confidence: 0.5},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, _ = FuseMeasurements(measurements)
 	}
 }

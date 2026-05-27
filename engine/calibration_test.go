@@ -63,3 +63,47 @@ func TestPredictionCalibratorApplyLowersScaleOnLosses(t *testing.T) {
 		})
 	})
 }
+
+func TestPredictionCalibratorApplyRejectsMissingPrediction(t *testing.T) {
+	Convey("Given a settled return without a positive prediction", t, func() {
+		calibrator := NewPredictionCalibrator(DefaultCalibrationParams())
+		calibrator.Apply(PredictionFeedback{
+			PredictedReturn: 0,
+			ActualReturn:    -0.01,
+		})
+
+		Convey("It should not invent a calibration denominator", func() {
+			So(calibrator.Scale(), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestPredictionCalibratorBranchesByRegime(t *testing.T) {
+	Convey("Given feedback from distinct regimes", t, func() {
+		calibrator := NewPredictionCalibrator(DefaultCalibrationParams())
+		calibrator.Apply(PredictionFeedback{
+			Regime:          "trending",
+			PredictedReturn: 0.01,
+			ActualReturn:    0.01,
+		})
+		calibrator.Apply(PredictionFeedback{
+			Regime:          "chop",
+			PredictedReturn: 0.01,
+			ActualReturn:    -0.01,
+		})
+
+		Convey("It should keep separate learned scales", func() {
+			So(calibrator.ScaleFor("trending"), ShouldAlmostEqual, 1, 0.0001)
+			So(calibrator.ScaleFor("chop"), ShouldBeLessThan, 1)
+		})
+	})
+}
+
+func TestCalibrationRegime(t *testing.T) {
+	Convey("Given an empty feedback regime", t, func() {
+		Convey("It should use an explicit default bucket", func() {
+			So(CalibrationRegime(""), ShouldEqual, defaultCalibrationRegime)
+			So(CalibrationRegime(" trend "), ShouldEqual, "trend")
+		})
+	})
+}

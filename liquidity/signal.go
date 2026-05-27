@@ -356,7 +356,7 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != liquiditySource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, liquiditySource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 

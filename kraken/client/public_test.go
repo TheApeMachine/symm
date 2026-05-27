@@ -11,6 +11,7 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/trader"
 	"github.com/valyala/fasthttp"
 )
@@ -123,6 +124,53 @@ func TestPublicClientSubscribeSymbolsQueuesWhenDisconnected(t *testing.T) {
 			convey.So(publicClient.subscribeSymbols([]string{"BTC/EUR", "ETH/EUR"}), convey.ShouldBeNil)
 			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "BTC/EUR")
 			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "ETH/EUR")
+		})
+	})
+}
+
+func TestPublicClientReadTickerPublishesTickAndMark(t *testing.T) {
+	convey.Convey("Given a Kraken ticker frame", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		publicClient := NewPublicClient(ctx, pool, "ws://127.0.0.1:1")
+		ticks := pool.CreateBroadcastGroup("tick", 10*time.Millisecond).
+			Subscribe("test:public:ticker", 8)
+		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond).
+			Subscribe("test:public:mark", 8)
+
+		publicClient.read([]byte(`{
+			"channel":"ticker",
+			"type":"update",
+			"data":[{"symbol":"BTC/EUR","last":50000,"bid":49999,"ask":50001}]
+		}`))
+
+		convey.Convey("It should fan the source price to tick subscribers and UI marks", func() {
+			select {
+			case value := <-ticks.Incoming:
+				row, ok := value.Value.(market.TickerRow)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(row.Symbol, convey.ShouldEqual, "BTC/EUR")
+				convey.So(row.Last, convey.ShouldEqual, 50000)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for ticker row")
+			}
+
+			select {
+			case value := <-ui.Incoming:
+				payload, ok := value.Value.(map[string]any)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(payload["event"], convey.ShouldEqual, "mark")
+				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
+				convey.So(payload["price"], convey.ShouldEqual, 50000)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for UI mark")
+			}
 		})
 	})
 }

@@ -56,7 +56,8 @@ func TestSentimentFeedbackScalesSymbol(t *testing.T) {
 	)
 
 	signal.Feedback(engine.PredictionFeedback{
-		Source:          sentimentSource,
+		Source:          engine.PerspectiveSource(engine.PerspectiveSentiment),
+		Sources:         []string{sentimentSource},
 		Symbol:          "A/EUR",
 		PredictedReturn: 0.02,
 		ActualReturn:    -0.02,

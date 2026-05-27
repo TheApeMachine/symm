@@ -14,12 +14,13 @@ func TestKellySizerSlotEUR(t *testing.T) {
 		sizer.ApplyFeedback(engine.PredictionFeedback{
 			Source:          "hawkes",
 			Symbol:          "BTC/EUR",
+			Regime:          "microstructure",
 			PredictedReturn: 0.01,
 			ActualReturn:    0.012,
 		})
 	}
 
-	slot := sizer.SlotEUR(200, "hawkes", 0.8, 0.05)
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
 
 	if slot <= config.System.MinCostEUR {
 		t.Fatalf("expected positive Kelly slot, got %v", slot)
@@ -32,7 +33,7 @@ func TestKellySizerSlotEUR(t *testing.T) {
 
 func TestKellySizerColdSourceUsesMaxFraction(t *testing.T) {
 	sizer := NewKellySizer(engine.DefaultCalibrationParams())
-	slot := sizer.SlotEUR(200, "pumpdump", 1, 0)
+	slot := sizer.SlotEUR(200, "pumpdump", "microstructure", 1, 0)
 
 	maxSlot := 200 * config.System.MaxSlotPct / 100
 
@@ -48,15 +49,48 @@ func TestKellySizerRejectsNegativeEdge(t *testing.T) {
 		sizer.ApplyFeedback(engine.PredictionFeedback{
 			Source:          "hawkes",
 			Symbol:          "BTC/EUR",
+			Regime:          "microstructure",
 			PredictedReturn: 0.01,
 			ActualReturn:    -0.02,
 		})
 	}
 
-	slot := sizer.SlotEUR(200, "hawkes", 0.8, 0.05)
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
 
 	if slot != 0 {
 		t.Fatalf("expected zero slot after losing calibration, got %v", slot)
+	}
+}
+
+func TestKellySizerBranchesByRegime(t *testing.T) {
+	sizer := NewKellySizer(engine.DefaultCalibrationParams())
+
+	for range config.System.MinCalibrationSamples {
+		sizer.ApplyFeedback(engine.PredictionFeedback{
+			Source:          "hawkes",
+			Symbol:          "BTC/EUR",
+			Regime:          "trend",
+			PredictedReturn: 0.01,
+			ActualReturn:    0.012,
+		})
+		sizer.ApplyFeedback(engine.PredictionFeedback{
+			Source:          "hawkes",
+			Symbol:          "BTC/EUR",
+			Regime:          "chop",
+			PredictedReturn: 0.01,
+			ActualReturn:    -0.02,
+		})
+	}
+
+	trendSlot := sizer.SlotEUR(200, "hawkes", "trend", 0.8, 0.05)
+	chopSlot := sizer.SlotEUR(200, "hawkes", "chop", 0.8, 0.05)
+
+	if trendSlot <= config.System.MinCostEUR {
+		t.Fatalf("expected trend slot, got %v", trendSlot)
+	}
+
+	if chopSlot != 0 {
+		t.Fatalf("expected chop regime to reject sizing, got %v", chopSlot)
 	}
 }
 
@@ -67,6 +101,7 @@ func BenchmarkKellySizerSlotEUR(b *testing.B) {
 		sizer.ApplyFeedback(engine.PredictionFeedback{
 			Source:          "hawkes",
 			Symbol:          "BTC/EUR",
+			Regime:          "microstructure",
 			PredictedReturn: 0.01,
 			ActualReturn:    float64(index%3)*0.005 - 0.002,
 		})
@@ -76,7 +111,7 @@ func BenchmarkKellySizerSlotEUR(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_ = sizer.SlotEUR(200, "hawkes", 0.8, 0.05)
+		_ = sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
 	}
 }
 

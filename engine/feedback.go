@@ -9,8 +9,10 @@ and updates a learned.Forecast scale (directly or via PredictionCalibrator).
 */
 type PredictionFeedback struct {
 	Source          string
+	Sources         []string
 	Symbol          string
 	Type            MeasurementType
+	PerspectiveType PerspectiveType
 	Regime          string
 	Reason          string
 	Confidence      float64
@@ -34,4 +36,26 @@ func ValidPredictionFeedback(feedback PredictionFeedback) bool {
 	}
 
 	return !feedback.Unanchored
+}
+
+/*
+FeedbackIncludesSource reports whether a signal source contributed to a
+perspective-level prediction feedback payload.
+*/
+func FeedbackIncludesSource(feedback PredictionFeedback, source string) bool {
+	if source == "" {
+		return false
+	}
+
+	if feedback.Source == source {
+		return true
+	}
+
+	for _, candidate := range feedback.Sources {
+		if candidate == source {
+			return true
+		}
+	}
+
+	return false
 }

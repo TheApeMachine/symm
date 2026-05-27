@@ -120,7 +120,9 @@ export type ExecutionFill = {
 
 export type PredictionFeedback = {
 	Source: string;
+	Sources?: string[];
 	Symbol: string;
+	PerspectiveType?: number;
 	PredictedReturn: number;
 	ActualReturn: number;
 	Error: number;

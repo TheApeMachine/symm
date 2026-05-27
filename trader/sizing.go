@@ -2,6 +2,7 @@ package trader
 
 import (
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/theapemachine/symm/config"
@@ -15,18 +16,23 @@ type sourceSlotStats struct {
 	calibrator engine.PredictionCalibrator
 }
 
+type sourceSlotKey struct {
+	source string
+	regime string
+}
+
 /*
 KellySizer adapts slot notional from settled feedback and calibration trust.
 */
 type KellySizer struct {
 	stateMu  sync.Mutex
-	bySource map[string]*sourceSlotStats
+	bySeries map[sourceSlotKey]*sourceSlotStats
 	params   engine.CalibrationParams
 }
 
 func NewKellySizer(params engine.CalibrationParams) *KellySizer {
 	return &KellySizer{
-		bySource: make(map[string]*sourceSlotStats),
+		bySeries: make(map[sourceSlotKey]*sourceSlotStats),
 		params:   params,
 	}
 }
@@ -39,7 +45,7 @@ func (kellySizer *KellySizer) ApplyFeedback(feedback engine.PredictionFeedback) 
 	kellySizer.stateMu.Lock()
 	defer kellySizer.stateMu.Unlock()
 
-	stats := kellySizer.sourceStats(feedback.Source)
+	stats := kellySizer.sourceStats(feedback.Source, feedback.Regime)
 	stats.calibrator.Apply(feedback)
 	stats.wins.Observe(feedback.ActualReturn > 0)
 
@@ -55,6 +61,7 @@ func (kellySizer *KellySizer) ApplyFeedback(feedback engine.PredictionFeedback) 
 func (kellySizer *KellySizer) SlotEUR(
 	balance float64,
 	source string,
+	regime string,
 	jointConfidence float64,
 	meanError float64,
 ) float64 {
@@ -63,7 +70,7 @@ func (kellySizer *KellySizer) SlotEUR(
 	}
 
 	kellySizer.stateMu.Lock()
-	stats := kellySizer.sourceStats(source)
+	stats := kellySizer.sourceStats(source, regime)
 	kellySizer.stateMu.Unlock()
 
 	maxFraction := config.System.MaxSlotPct / 100
@@ -84,7 +91,7 @@ func (kellySizer *KellySizer) SlotEUR(
 		}
 	}
 
-	fraction *= jointConfidence * trustScale(meanError) * stats.calibrator.Scale()
+	fraction *= jointConfidence * trustScale(meanError) * stats.calibrator.ScaleFor(regime)
 
 	if fraction > maxFraction {
 		fraction = maxFraction
@@ -103,15 +110,19 @@ func (kellySizer *KellySizer) SlotEUR(
 	return slot
 }
 
-func (kellySizer *KellySizer) sourceStats(source string) *sourceSlotStats {
-	stats := kellySizer.bySource[source]
+func (kellySizer *KellySizer) sourceStats(source, regime string) *sourceSlotStats {
+	key := sourceSlotKey{
+		source: strings.TrimSpace(source),
+		regime: engine.CalibrationRegime(regime),
+	}
+	stats := kellySizer.bySeries[key]
 
 	if stats == nil {
 		stats = &sourceSlotStats{
 			payoff:     adaptive.NewEMA(0),
 			calibrator: engine.NewPredictionCalibrator(kellySizer.params),
 		}
-		kellySizer.bySource[source] = stats
+		kellySizer.bySeries[key] = stats
 	}
 
 	return stats

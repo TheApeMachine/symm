@@ -284,7 +284,7 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 }
 
 func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
-	if feedback.Source != leadlagSource || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
+	if !engine.FeedbackIncludesSource(feedback, leadlagSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}
 
