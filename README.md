@@ -1,6 +1,6 @@
 # SYMM — Shake Your Money Maker
 
-A Kraken spot microstructure engine that turns live market data into scored trade ideas, forward-return forecasts, and closed-loop calibration. Signals read the wire; the trader reads only what signals publish. Nothing in the hot path sleeps on a timer—the booter spins every registered `System` in parallel as fast as the machine will run.
+A Kraken spot microstructure engine that turns live market data into scored trade ideas, forward-return forecasts, and closed-loop calibration. Signals read the wire; the trader reads only what signals publish. The booter starts every registered `System` as a long-lived `qpool` worker; market cadence comes from WebSocket, replay, and internal broadcast traffic rather than timer polling.
 
 ---
 
@@ -25,18 +25,19 @@ type System interface {
 }
 ```
 
-Each `Tick` is a tight `select`: handle one incoming message if present, otherwise return immediately. No blocking waits in the default branch. Systems do not call each other; they **publish and subscribe** through named broadcast groups on a shared `qpool.Q`.
+Each `Tick` is the system's long-running event loop. It blocks on that system's subscribed broadcast groups, handles messages as they arrive, and returns only on shutdown or a fatal input error. Systems do not call each other; they **publish and subscribe** through named broadcast groups on a shared `qpool.Q`.
 
-Registration lives in `cmd/root.go`. Order matters only insofar as signals should run before the trader in the same booter round so measurements are on the wire when `Crypto` scores—but all systems are scheduled **concurrently** each loop via `ScheduleFast`, so throughput stays high.
+Registration lives in `cmd/root.go`. `Booter.Boot` starts the UI hub, refreshes wallet publishers, schedules one `Tick` worker per registered system with `ScheduleFast`, and waits for those workers to exit. Throughput comes from the concurrent workers and broadcast queues, not from repeated booter rounds.
 
 ---
 
-## How a booter round works
+## How system workers run
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Booter loop (no sleep — runs as fast as CPUs allow)        │
-│    for each System: ScheduleFast(Tick)  →  wait all         │
+│  Booter startup                                             │
+│    for each System: ScheduleFast(long-running Tick)          │
+│    wait until a worker exits or the context is canceled      │
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
          ▼                    ▼                    ▼
@@ -47,7 +48,7 @@ Registration lives in `cmd/root.go`. Order matters only insofar as signals shoul
 1. **Public client** maintains the WebSocket, parses Kraken v2 frames, and fans out `tick`, `trade`, `book`, `symbols`, `ohlc` (and `ui` events like `candle_bar`).
 2. **Signals** consume those channels, maintain per-symbol state, and when their criteria fire they emit `engine.Measurement` values on the **`measurements`** group.
 3. **`price.Prediction`** subscribes to **`tick`** only to mark prices for settlement; it does not trade.
-4. **`trader.Crypto`** subscribes to **`measurements`** only. When a batch arrives it builds perspectives, records predictions, may enter a position, and publishes `engine_pulse` on **`ui`**.
+4. **`trader.Crypto`** scores **`measurements`**, applies **`feedback`**, handles **`exits`**, observes **`tick`** marks, and publishes `engine_pulse` on **`ui`**.
 
 The UI hub (`ui.Hub`) mirrors `wallet`, `confidence`, `feedback`, `ohlc`, `executions`, `orders`, `exits`, and `ui` to browsers at `ws://127.0.0.1:8765/ws` (configurable via `SYMM_UI_ADDR`). Live marks for open positions and every Kraken-subscribed symbol are pushed from `kraken/client/public.go` as `ui` events (`event: mark`, `symbol`, `price`) on ticker, trade, and OHLC close; `trader.Crypto` also rebroadcasts `wallet.Marks` (from `price.Prediction.LastPrice`) on each wallet update.
 
@@ -154,13 +155,13 @@ For every measurement in every perspective, `Crypto` calls `price.Prediction.Rec
 
 - **Anchor** — `Last` on the measurement (or mid of bid/ask if needed)
 - **Runway** — hold horizon by type (scalp vs flow vs causal)
-- **Predicted return** — `confidence × max(|EWMA(actual forward return)|, 1.0)` from the first measurement; before any settlement the scale is 1.0 (provisional). After runway expires, error feedback refines the EMA—no sample-count gate.
+- **Predicted return** — `confidence × max(|EWMA(actual forward return)|, 1.0)` from the first measurement; before any settlement the scale is 1.0 (provisional). After runway expires, error feedback refines the EMA. Provisional forecasts are recorded and shown for telemetry, but they are not actionable for entries until the source has at least `MinCalibrationSamples` settled forecasts.
 
-Until the return EMA moves off its initial unit scale, forecasts are deliberately coarse; settlement still runs on every anchored open forecast.
+Until the return EMA moves off its initial unit scale, forecasts are deliberately coarse; settlement still runs on every anchored open forecast so sources can become calibrated.
 
 ### 4. Settlement and feedback
 
-`Prediction.Tick` (on its own schedule in the booter) ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
+`Prediction.Tick` runs as its own long-lived worker, ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
 
 Each entry signal subscribes to `feedback` and routes errors into its per-symbol **`PredictionCalibrator`** (`engine` + `numeric/learned`), which scales internal parameters—not post-hoc confidence cosmetics.
 
@@ -203,13 +204,13 @@ Entry signals share the same shape: subscribe to market channels, request deeper
 On each `measurements` message (coalescing any others already queued):
 
 1. Build perspectives and call `Record` for each measurement.
-2. Track the best **predicted return** in the batch.
+2. Track the best **calibrated predicted return** in the batch; uncalibrated sources still record forecasts but cannot open trades.
 3. After `MinWarmPulses` (default 50), if slots remain and `bestReturn ≥ MinEdgeReturn`, **enter** on that symbol using the winning measurement’s `Last` / `Bid` / `Ask`.
 4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses `prediction` UI events (X = `due_at`) and `PredictionFeedback` (predicted, actual, error at `DueAt`) — not forecast-cycle indices.
 
-Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. Taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace.
+Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace.
 
-Before entry, fused perspective scoring requires `MinActivePerspectives` independent sources with joint confidence via `engine.FuseMeasurements`, edge above `MinRoundTripEdge` (derived from round-trip taker fees), fractional Kelly sizing from settled feedback, and `PortfolioRisk` gates. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
+Before entry, fused perspective scoring requires `MinActivePerspectives` independent sources with joint confidence via `engine.FuseMeasurements`, edge above `MinRoundTripEdge` (derived from round-trip taker fees), fractional Kelly sizing from settled feedback, and `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 
 On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
 
@@ -260,8 +261,8 @@ Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMA
 
 ## Mental model for operators
 
-- **High booter tick count** (millions per minute) is expected: every system gets a concurrent `Tick` every loop iteration.
-- **Zero `engine_pulse` measurements** usually means no signal passed `Measure()` yet, or measurements are not reaching `Crypto`’s subscriber— not because the loop is “too fast.”
+- **A running booter should have one long-lived worker per registered system.** If a `Tick` returns unexpectedly, inspect that system's subscriber input and fatal error path.
+- **Zero `engine_pulse` measurements** usually means no signal passed `Measure()` yet, or measurements are not reaching `Crypto`'s subscriber.
 - **`avg_prediction` and `forecast_symbols` stay at zero** until each source accumulates enough settled returns for non-zero predicted return; then feedback starts moving calibrators.
 - **Gauge confidence on the UI** is the trader’s per-source EMA of `Measurement.Confidence` on the `confidence` channel. **Prediction chart** data comes from `PredictionFeedback` and `prediction` UI events only—not from gauges.
 

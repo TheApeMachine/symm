@@ -262,6 +262,49 @@ func TestCryptoObserveTickerUpdatesMarks(t *testing.T) {
 	}
 }
 
+func TestCryptoSendWalletPublishesSnapshot(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet.Inventory["BTC"] = 0.01
+	wallet.AvgEntry["BTC"] = 50000
+
+	crypto, _, _ := newTestCrypto(t, wallet)
+	crypto.portfolioRisk.lastPrices["BTC/EUR"] = 50100
+	walletSub := crypto.broadcasts["wallet"].Subscribe("test:wallet-snapshot", 8)
+
+	crypto.sendWallet()
+
+	select {
+	case value := <-walletSub.Incoming:
+		payload, ok := value.Value.(*Wallet)
+
+		if !ok {
+			t.Fatalf("expected wallet payload, got %T", value.Value)
+		}
+
+		if payload == wallet {
+			t.Fatal("expected wallet snapshot, got live wallet pointer")
+		}
+
+		wallet.Inventory["BTC"] = 0.02
+		wallet.AvgEntry["BTC"] = 51000
+		wallet.Marks["BTC/EUR"] = 50200
+
+		if payload.Inventory["BTC"] != 0.01 {
+			t.Fatalf("expected immutable inventory snapshot, got %v", payload.Inventory["BTC"])
+		}
+
+		if payload.AvgEntry["BTC"] != 50000 {
+			t.Fatalf("expected immutable average entry snapshot, got %v", payload.AvgEntry["BTC"])
+		}
+
+		if payload.Marks["BTC/EUR"] != 50100 {
+			t.Fatalf("expected immutable mark snapshot, got %v", payload.Marks["BTC/EUR"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for wallet snapshot")
+	}
+}
+
 func TestCryptoPublishConfidenceMean(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
@@ -447,6 +490,44 @@ func TestCryptoEnterPaperRequiresFusion(t *testing.T) {
 
 	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
 		t.Fatalf("expected fused gate to block single-source entry, got %v", wallet.Inventory["BTC"])
+	}
+}
+
+func TestCryptoDoesNotEnterBeforePredictionCalibration(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	crypto, _, _ := newTestCrypto(t, wallet)
+
+	crypto.pulses = config.System.MinWarmPulses
+
+	if err := crypto.score([]engine.Measurement{
+		{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.95,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+		{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "microstructure",
+			Reason:     "cluster_buy",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.9,
+			Last:       50000,
+			Bid:        49999,
+			Ask:        50001,
+		},
+	}); err != nil {
+		t.Fatalf("score: %v", err)
+	}
+
+	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected uncalibrated forecasts to block entry, got %v", wallet.Inventory["BTC"])
 	}
 }
 

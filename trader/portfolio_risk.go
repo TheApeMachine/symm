@@ -137,6 +137,12 @@ func (portfolioRisk *PortfolioRisk) AllowEntry(
 		return false, "insufficient_margin"
 	}
 
+	for _, openSymbol := range openSymbols {
+		if openSymbol == symbol {
+			return false, "symbol_already_open"
+		}
+	}
+
 	maxSlotFromLoss := maxSlotNotional(config.System.MaxLossPerTradeEUR)
 
 	if maxSlotFromLoss > 0 && slot > maxSlotFromLoss {
@@ -329,21 +335,39 @@ func sameUTCDate(left, right time.Time) bool {
 }
 
 func openSymbols(wallet *Wallet) []string {
+	return activeSymbols(wallet, nil)
+}
+
+func activeSymbols(wallet *Wallet, resting map[string]restingEntry) []string {
 	if wallet == nil {
 		return nil
 	}
 
-	symbols := make([]string, 0, len(wallet.Inventory))
+	seen := make(map[string]struct{})
 
 	for base, qty := range wallet.Inventory {
 		if qty <= config.System.LiveInventoryEpsilon {
 			continue
 		}
 
-		symbols = append(symbols, base+"/"+wallet.Currency)
+		seen[base+"/"+wallet.Currency] = struct{}{}
+	}
+
+	for symbol := range resting {
+		seen[symbol] = struct{}{}
+	}
+
+	symbols := make([]string, 0, len(seen))
+
+	for symbol := range seen {
+		symbols = append(symbols, symbol)
 	}
 
 	return symbols
+}
+
+func activeSlotCount(wallet *Wallet, resting map[string]restingEntry) int {
+	return len(activeSymbols(wallet, resting))
 }
 
 func observeBatch(portfolioRisk *PortfolioRisk, batch []engine.Measurement, now time.Time) {

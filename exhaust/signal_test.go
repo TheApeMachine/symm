@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,30 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
 )
+
+func startExhaustTick(t *testing.T, exhaust *Exhaust) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := exhaust.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("exhaust tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = exhaust.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for exhaust tick to close")
+		}
+	})
+}
 
 func TestExhaustPublishPulseEveryTick(t *testing.T) {
 	ctx := context.Background()
@@ -39,14 +64,11 @@ func TestExhaustPublishPulseEveryTick(t *testing.T) {
 	}
 
 	exits := signal.broadcasts["exits"].Subscribe("test:exhaust", 8)
+	startExhaustTick(t, signal)
 
 	pool.CreateBroadcastGroup("tick", 0).Send(&qpool.QValue[any]{
 		Value: market.TickerRow{Symbol: "ALT/EUR", Last: 10},
 	})
-
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-exits.Incoming:
@@ -67,6 +89,7 @@ func TestExhaustTickObservesBook(t *testing.T) {
 
 	signal := NewExhaust(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
+	startExhaustTick(t, signal)
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -76,15 +99,19 @@ func TestExhaustTickObservesBook(t *testing.T) {
 		},
 	})
 
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		snapshot, ok := signal.history.snapshot("ALT/EUR")
+
+		if ok && snapshot.bidDepths.Len() > 0 {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 
-	snapshot, ok := signal.history.snapshot("ALT/EUR")
-
-	if !ok || snapshot.bidDepths.Len() == 0 {
-		t.Fatal("expected book history after tick")
-	}
+	t.Fatal("expected book history after tick")
 }
 
 func TestExhaustTickObservesTrade(t *testing.T) {
@@ -94,23 +121,28 @@ func TestExhaustTickObservesTrade(t *testing.T) {
 
 	signal := NewExhaust(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
+	startExhaustTick(t, signal)
 
 	pool.CreateBroadcastGroup("trade", 0).Send(&qpool.QValue[any]{
 		Value: trade.Data{Symbol: "ALT/EUR", Side: "buy", Price: 10},
 	})
 
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		snapshot, ok := signal.history.snapshot("ALT/EUR")
+
+		if ok && snapshot.pressures.Len() > 0 {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 
-	snapshot, ok := signal.history.snapshot("ALT/EUR")
-
-	if !ok || snapshot.pressures.Len() == 0 {
-		t.Fatal("expected trade pressure after tick")
-	}
+	t.Fatal("expected trade pressure after tick")
 }
 
-func BenchmarkExhaustTickDefault(b *testing.B) {
+func BenchmarkExhaustPublishPulse(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -134,6 +166,6 @@ func BenchmarkExhaustTickDefault(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = signal.Tick()
+		signal.publishPulse()
 	}
 }

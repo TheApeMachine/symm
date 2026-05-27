@@ -174,6 +174,13 @@ func (prediction *Prediction) Record(
 	return predictedReturn
 }
 
+func (prediction *Prediction) Calibrated(source string) bool {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
+	return prediction.returnCount[source] >= config.System.MinCalibrationSamples
+}
+
 func (prediction *Prediction) settleDue(now time.Time) {
 	for symbol, bySource := range prediction.open {
 		lastPrice := prediction.prices[symbol]

@@ -337,11 +337,7 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 	openCount := 0
 
 	if crypto.wallet != nil {
-		for _, qty := range crypto.wallet.Inventory {
-			if qty > 0 {
-				openCount++
-			}
-		}
+		openCount = activeSlotCount(crypto.wallet, crypto.restingEntries)
 	}
 
 	observeBatch(crypto.portfolioRisk, batch, now)
@@ -370,7 +366,7 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 			crypto.wallet,
 			opportunity.Measurement,
 			slot,
-			openSymbols(crypto.wallet),
+			activeSymbols(crypto.wallet, crypto.restingEntries),
 		)
 
 		if entryAllowed {
@@ -460,7 +456,7 @@ func (crypto *Crypto) sendWallet() {
 	}
 
 	crypto.attachWalletMarks()
-	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet.Snapshot()})
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 

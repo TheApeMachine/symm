@@ -187,6 +187,24 @@ func TestPredictionRecordProvisional(t *testing.T) {
 	}
 }
 
+func TestPredictionCalibrated(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+
+	if prediction.Calibrated("hawkes") {
+		t.Fatal("expected unseeded source to be uncalibrated")
+	}
+
+	prediction.SeedReturnCalibration("hawkes", 0.01)
+
+	if !prediction.Calibrated("hawkes") {
+		t.Fatal("expected seeded source to be calibrated")
+	}
+}
+
 func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 4, 8, qpool.NewConfig())

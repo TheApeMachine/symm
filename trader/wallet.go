@@ -2,6 +2,7 @@ package trader
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/theapemachine/symm/config"
 )
@@ -49,6 +50,26 @@ func NewWallet(
 		FeePct:    feePct,
 		Inventory: make(map[string]float64),
 		AvgEntry:  make(map[string]float64),
+	}
+}
+
+/*
+Snapshot copies wallet state for immutable cross-goroutine publication.
+*/
+func (wallet *Wallet) Snapshot() *Wallet {
+	if wallet == nil {
+		return nil
+	}
+
+	return &Wallet{
+		Type:        wallet.Type,
+		Currency:    wallet.Currency,
+		Balance:     wallet.Balance,
+		ReservedEUR: wallet.ReservedEUR,
+		FeePct:      wallet.FeePct,
+		Inventory:   copyFloatMap(wallet.Inventory),
+		AvgEntry:    copyFloatMap(wallet.AvgEntry),
+		Marks:       copyFloatMap(wallet.Marks),
 	}
 }
 
@@ -216,4 +237,15 @@ func (wallet *Wallet) MarkEquity(lastPrices map[string]float64) float64 {
 	}
 
 	return equity
+}
+
+func copyFloatMap(source map[string]float64) map[string]float64 {
+	if source == nil {
+		return nil
+	}
+
+	copied := make(map[string]float64, len(source))
+	maps.Copy(copied, source)
+
+	return copied
 }

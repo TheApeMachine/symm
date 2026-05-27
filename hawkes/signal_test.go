@@ -2,7 +2,9 @@ package hawkes
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
@@ -26,6 +28,30 @@ func loadHawkesSymbol(hawkes *Hawkes, symbol string) *symbolState {
 	return raw.(*symbolState)
 }
 
+func startHawkesTick(t *testing.T, hawkes *Hawkes) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := hawkes.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("hawkes tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = hawkes.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for hawkes tick to close")
+		}
+	})
+}
+
 func TestHawkesTick(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -38,8 +64,10 @@ func TestHawkesTick(t *testing.T) {
 		pair:      asset.Pair{Wsname: "BTC/EUR", Quote: "EUR"},
 		state:     NewHawkesSymbol(engine.DefaultCalibrationParams()),
 		ticks:     make([]trade.Data, 0, 32),
-		imbalance: 0.5,
+		imbalance: 0,
 	})
+
+	startHawkesTick(t, signal)
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -51,9 +79,18 @@ func TestHawkesTick(t *testing.T) {
 
 	convey.Convey("Given a subscribed Hawkes symbol with book data", t, func() {
 		convey.Convey("It should update imbalance on tick", func() {
-			convey.So(signal.Tick(), convey.ShouldBeNil)
+			deadline := time.Now().Add(time.Second)
+			var state *symbolState
 
-			state := loadHawkesSymbol(signal, "BTC/EUR")
+			for time.Now().Before(deadline) {
+				state = loadHawkesSymbol(signal, "BTC/EUR")
+
+				if state != nil && state.imbalance > 0 {
+					break
+				}
+
+				time.Sleep(time.Millisecond)
+			}
 
 			convey.So(state, convey.ShouldNotBeNil)
 			convey.So(state.imbalance, convey.ShouldBeGreaterThan, 0)

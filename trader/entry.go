@@ -208,6 +208,16 @@ func (crypto *Crypto) enter(opportunity tradeOpportunity, slot float64) {
 		return
 	}
 
+	base := strings.Split(symbol, "/")[0]
+
+	if crypto.wallet.Inventory[base] > config.System.LiveInventoryEpsilon {
+		return
+	}
+
+	if _, pending := crypto.restingEntries[symbol]; pending {
+		return
+	}
+
 	if config.System.UseMakerEntries {
 		crypto.enterMaker(symbol, bid, ask, slot)
 		return
@@ -252,7 +262,7 @@ func (crypto *Crypto) settlePaperEntry(entry restingEntry) {
 
 	fee := entry.Notional * feePct / 100
 
-	if err := crypto.wallet.SettleEntryReservation(entry.Notional, entry.Notional+fee); err != nil {
+	if err := crypto.wallet.SettleEntryReservation(entry.Notional, entry.Notional); err != nil {
 		crypto.wallet.ReleaseEntryReservation(entry.Notional)
 		return
 	}
@@ -307,7 +317,7 @@ func (crypto *Crypto) enterTaker(
 	cost := slot
 	fee := cost * crypto.wallet.FeePct / 100
 
-	if err := crypto.wallet.SettleEntryReservation(slot, cost+fee); err != nil {
+	if err := crypto.wallet.SettleEntryReservation(slot, cost); err != nil {
 		crypto.wallet.ReleaseEntryReservation(slot)
 		return
 	}

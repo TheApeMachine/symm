@@ -35,7 +35,7 @@ func scoreOpportunities(
 
 	for symbol, byType := range perspectives {
 		for perspectiveType, perspective := range byType {
-			jointConfidence, sourceCount := engine.FuseMeasurements(perspective.Measurements)
+			tradableMeasurements := make([]engine.Measurement, 0, len(perspective.Measurements))
 			maxPredicted := 0.0
 			leadMeasurement := engine.Measurement{}
 
@@ -52,12 +52,19 @@ func scoreOpportunities(
 					summary.PredictedCount++
 				}
 
+				if !predictions.Calibrated(measurement.Source) {
+					continue
+				}
+
+				tradableMeasurements = append(tradableMeasurements, measurement)
+
 				if predicted > maxPredicted {
 					maxPredicted = predicted
 					leadMeasurement = measurement
 				}
 			}
 
+			jointConfidence, sourceCount := engine.FuseMeasurements(tradableMeasurements)
 			edge := maxPredicted * jointConfidence
 
 			if sourceCount < config.System.MinActivePerspectives {
@@ -93,4 +100,5 @@ type predictionRecorder interface {
 		anchorPrice float64,
 		now time.Time,
 	) float64
+	Calibrated(source string) bool
 }

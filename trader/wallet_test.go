@@ -64,3 +64,43 @@ func TestWalletRecordFill(t *testing.T) {
 		})
 	})
 }
+
+func TestWalletSnapshot(t *testing.T) {
+	convey.Convey("Given a wallet with mutable maps", t, func() {
+		wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+		wallet.Inventory["BTC"] = 0.01
+		wallet.AvgEntry["BTC"] = 50000
+		wallet.Marks = map[string]float64{"BTC/EUR": 50100}
+
+		snapshot := wallet.Snapshot()
+
+		wallet.Inventory["BTC"] = 0.02
+		wallet.AvgEntry["BTC"] = 51000
+		wallet.Marks["BTC/EUR"] = 50200
+
+		convey.Convey("It should copy scalar and map state", func() {
+			convey.So(snapshot, convey.ShouldNotEqual, wallet)
+			convey.So(snapshot.Inventory["BTC"], convey.ShouldEqual, 0.01)
+			convey.So(snapshot.AvgEntry["BTC"], convey.ShouldEqual, 50000)
+			convey.So(snapshot.Marks["BTC/EUR"], convey.ShouldEqual, 50100)
+		})
+	})
+}
+
+func BenchmarkWalletSnapshot(b *testing.B) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet.Inventory["BTC"] = 0.01
+	wallet.Inventory["ETH"] = 0.2
+	wallet.AvgEntry["BTC"] = 50000
+	wallet.AvgEntry["ETH"] = 3000
+	wallet.Marks = map[string]float64{
+		"BTC/EUR": 50100,
+		"ETH/EUR": 3010,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = wallet.Snapshot()
+	}
+}

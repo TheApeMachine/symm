@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -30,6 +31,30 @@ func loadDepthSymbol(depthflow *DepthFlow, symbol string) *DepthSymbol {
 
 func markDepthRequested(depthflow *DepthFlow, symbol string) {
 	depthflow.requested.Store(symbol, struct{}{})
+}
+
+func startDepthFlowTick(t *testing.T, depthflow *DepthFlow) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := depthflow.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("depthflow tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = depthflow.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for depthflow tick to close")
+		}
+	})
 }
 
 func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
@@ -84,6 +109,7 @@ func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
 	seedDepthSymbol(state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:depthflow", 8)
+	startDepthFlowTick(t, signal)
 
 	pool.CreateBroadcastGroup("trade", 0).Send(&qpool.QValue[any]{
 		Value: trade.Data{
@@ -94,10 +120,6 @@ func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
 			Timestamp: time.Now(),
 		},
 	})
-
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-measurements.Incoming:
@@ -119,6 +141,9 @@ func TestDepthFlowTickIgnoresUnknownTrade(t *testing.T) {
 	signal := NewDepthFlow(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
+	measurements := signal.broadcasts["measurements"].Subscribe("test:unknown-depthflow", 8)
+	startDepthFlowTick(t, signal)
+
 	trades := pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 	trades.Send(&qpool.QValue[any]{
 		Value: trade.Data{
@@ -130,8 +155,10 @@ func TestDepthFlowTickIgnoresUnknownTrade(t *testing.T) {
 		},
 	})
 
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
+	select {
+	case value := <-measurements.Incoming:
+		t.Fatalf("expected no measurement for unknown trade, got %v", value.Value)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

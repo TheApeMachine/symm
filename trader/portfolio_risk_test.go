@@ -181,6 +181,24 @@ func TestSymbolCorrelationResampledEpps(t *testing.T) {
 	}
 }
 
+func TestPortfolioRiskBlocksExistingSymbol(t *testing.T) {
+	portfolioRisk := NewPortfolioRisk()
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet.Inventory["BTC"] = 0.01
+	measurement := engine.Measurement{
+		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
+		Last:  100,
+		Bid:   99.9,
+		Ask:   100.1,
+	}
+
+	allowed, reason := portfolioRisk.AllowEntry(wallet, measurement, 10, []string{"BTC/EUR"})
+
+	if allowed || reason != "symbol_already_open" {
+		t.Fatalf("expected existing symbol block, allowed=%v reason=%q", allowed, reason)
+	}
+}
+
 func TestPortfolioRiskBlocksDeployLimit(t *testing.T) {
 	original := config.System.MaxDeployPct
 	config.System.MaxDeployPct = 10

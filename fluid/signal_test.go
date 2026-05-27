@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,6 +28,30 @@ func loadFluidSymbol(fluid *Fluid, symbol string) *FluidSymbol {
 
 func markFluidRequested(fluid *Fluid, symbol string) {
 	fluid.requested.Store(symbol, struct{}{})
+}
+
+func startFluidTick(t *testing.T, fluid *Fluid) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := fluid.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("fluid tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = fluid.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for fluid tick to close")
+		}
+	})
 }
 
 func TestFluidSymbolMeasure(t *testing.T) {
@@ -71,6 +96,7 @@ func TestFluidPublishPulseAfterBook(t *testing.T) {
 	storeFluidSymbol(signal, "ALT/EUR", state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:fluid", 8)
+	startFluidTick(t, signal)
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -81,10 +107,6 @@ func TestFluidPublishPulseAfterBook(t *testing.T) {
 			Asks:   []market.BookLevel{{Price: 10.01, Volume: 20}},
 		},
 	})
-
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-measurements.Incoming:
@@ -107,6 +129,7 @@ func TestFluidTickAppliesBook(t *testing.T) {
 	t.Cleanup(func() { _ = signal.Close() })
 
 	storeFluidSymbol(signal, "ALT/EUR", NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"}))
+	startFluidTick(t, signal)
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -118,20 +141,36 @@ func TestFluidTickAppliesBook(t *testing.T) {
 		},
 	})
 
-	if err := signal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		state := loadFluidSymbol(signal, "ALT/EUR")
+
+		if state != nil && len(state.bids) == 1 && state.spreadBPS > 0 {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 
 	state := loadFluidSymbol(signal, "ALT/EUR")
 
-	if state == nil || len(state.bids) != 1 || state.spreadBPS <= 0 {
-		t.Fatalf("expected book state, got bids=%d spread=%v",
-			len(state.bids), state.spreadBPS)
+	if state == nil {
+		t.Fatal("expected book state, got nil")
 	}
+
+	t.Fatalf("expected book state, got bids=%d spread=%v",
+		len(state.bids), state.spreadBPS)
 }
 
 func BenchmarkFluidMeasure(b *testing.B) {
-	signal := NewFluid(context.Background(), nil)
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewFluid(ctx, pool)
+	defer signal.Close()
+
 	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
 	state.bids = []market.BookLevel{{Price: 10, Volume: 70}}
 	state.asks = []market.BookLevel{{Price: 10.01, Volume: 30}}
