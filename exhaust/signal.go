@@ -52,79 +52,79 @@ func (exhaust *Exhaust) Start() error        { return nil }
 func (exhaust *Exhaust) State() engine.State { return engine.READY }
 
 func (exhaust *Exhaust) Tick() error {
-	select {
-	case <-exhaust.ctx.Done():
-		return exhaust.ctx.Err()
-	case value := <-exhaust.subscribers["book"].Incoming:
-		delta := value.Value.(market.BookLevelsDelta)
+	errnie.Info("starting exhaust tick")
 
-		bidDepth := 0.0
-		askDepth := 0.0
+	for {
+		select {
+		case <-exhaust.ctx.Done():
+			return exhaust.ctx.Err()
+		case value := <-exhaust.subscribers["book"].Incoming:
+			delta := value.Value.(market.BookLevelsDelta)
 
-		for _, level := range delta.Bids {
-			bidDepth += level.Volume
-		}
+			bidDepth := 0.0
+			askDepth := 0.0
 
-		for _, level := range delta.Asks {
-			askDepth += level.Volume
-		}
-
-		spreadBPS := 0.0
-		imbalance := 0.0
-
-		if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
-			bid := delta.Bids[0].Price
-			ask := delta.Asks[0].Price
-			mid := (bid + ask) / 2
-
-			if mid > 0 {
-				spreadBPS = (ask - bid) / mid * 10000
+			for _, level := range delta.Bids {
+				bidDepth += level.Volume
 			}
 
-			total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-			if total > 0 {
-				imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+			for _, level := range delta.Asks {
+				askDepth += level.Volume
 			}
+
+			spreadBPS := 0.0
+			imbalance := 0.0
+
+			if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+				bid := delta.Bids[0].Price
+				ask := delta.Asks[0].Price
+				mid := (bid + ask) / 2
+
+				if mid > 0 {
+					spreadBPS = (ask - bid) / mid * 10000
+				}
+
+				total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+				if total > 0 {
+					imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+				}
+			}
+
+			exhaust.history.observe(
+				delta.Symbol,
+				bidDepth,
+				askDepth,
+				bidDepth+askDepth,
+				spreadBPS,
+				0,
+				imbalance,
+				0,
+			)
+
+			exhaust.publishPulse()
+		case value := <-exhaust.subscribers["trade"].Incoming:
+			tick := value.Value.(trade.Data)
+			sign := -1.0
+
+			if tick.Side == "buy" {
+				sign = 1.0
+			}
+
+			exhaust.history.observe(
+				tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
+			)
+
+			exhaust.publishPulse()
+		case value := <-exhaust.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			exhaust.history.observe(
+				row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
+			)
+
+			exhaust.publishPulse()
 		}
-
-		exhaust.history.observe(
-			delta.Symbol,
-			bidDepth,
-			askDepth,
-			bidDepth+askDepth,
-			spreadBPS,
-			0,
-			imbalance,
-			0,
-		)
-
-		exhaust.publishPulse()
-	case value := <-exhaust.subscribers["trade"].Incoming:
-		tick := value.Value.(trade.Data)
-		sign := -1.0
-
-		if tick.Side == "buy" {
-			sign = 1.0
-		}
-
-		exhaust.history.observe(
-			tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
-		)
-
-		exhaust.publishPulse()
-	case value := <-exhaust.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		exhaust.history.observe(
-			row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
-		)
-
-		exhaust.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=exhaust")
 	}
-
-	return nil
 }
 
 func (exhaust *Exhaust) publishPulse() {

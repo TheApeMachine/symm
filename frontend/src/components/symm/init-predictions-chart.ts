@@ -3,27 +3,47 @@ import {
 	NumericAxis,
 	EAxisAlignment,
 	NumberRange,
-	FastLineRenderableSeries,
 	XyDataSeries,
-	AUTO_COLOR,
+	XyScatterRenderableSeries,
+	EllipsePointMarker,
 	ZoomExtentsModifier,
 	MouseWheelZoomModifier,
 	ZoomPanModifier,
 	RolloverModifier,
 } from "scichart";
 
-import { GridLayoutModifier } from "#/components/symm/layout-modifier";
-import {
-	SIGNAL_LABELS,
-	SIGNAL_SOURCES,
-	type SignalSource,
-} from "#/lib/symm/signal-confidence";
+import type {
+	PredictionReading,
+	PredictionSeriesKind,
+} from "#/components/symm/predictions-data-provider";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
-const FIFO_CAPACITY = 600;
+const SERIES_STYLE: Record<
+	PredictionSeriesKind,
+	{ name: string; stroke: string; fill: string; width: number }
+> = {
+	predicted: {
+		name: "Predicted",
+		stroke: "#FBA55A",
+		fill: "rgba(251, 165, 90, 0.35)",
+		width: 9,
+	},
+	actual: {
+		name: "Actual",
+		stroke: "#4EC385",
+		fill: "rgba(78, 195, 133, 0.35)",
+		width: 8,
+	},
+	error: {
+		name: "Error",
+		stroke: "#E85D75",
+		fill: "rgba(232, 93, 117, 0.35)",
+		width: 7,
+	},
+};
 
 export type PredictionsChartControls = {
-	appendReading: (source: SignalSource, x: number, value: number) => void;
+	appendReading: (reading: PredictionReading) => void;
 };
 
 export const drawExample = async (rootElement: string | HTMLDivElement) => {
@@ -32,32 +52,44 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	const { wasmContext, sciChartSurface } =
 		await SciChartSurface.create(rootElement);
 
-	sciChartSurface.xAxes.add(new NumericAxis(wasmContext));
-	sciChartSurface.yAxes.add(
-		new NumericAxis(wasmContext, {
-			axisAlignment: EAxisAlignment.Left,
-			growBy: new NumberRange(0.05, 0.05),
-		}),
-	);
+	const xAxis = new NumericAxis(wasmContext, {
+		axisTitle: "Due (UTC s)",
+		growBy: new NumberRange(0.05, 0.05),
+	});
 
-	const seriesBySource = new Map<SignalSource, XyDataSeries>();
+	const yAxis = new NumericAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Left,
+		axisTitle: "Return %",
+		growBy: new NumberRange(0.15, 0.15),
+	});
 
-	for (const source of SIGNAL_SOURCES) {
+	sciChartSurface.xAxes.add(xAxis);
+	sciChartSurface.yAxes.add(yAxis);
+
+	const seriesByKind = new Map<PredictionSeriesKind, XyDataSeries>();
+
+	for (const kind of ["predicted", "actual", "error"] as const) {
+		const style = SERIES_STYLE[kind];
 		const dataSeries = new XyDataSeries(wasmContext, {
-			dataSeriesName: SIGNAL_LABELS[source],
-			dataIsSortedInX: true,
+			dataSeriesName: style.name,
 			containsNaN: false,
-			fifoCapacity: FIFO_CAPACITY,
 		});
 
 		sciChartSurface.renderableSeries.add(
-			new FastLineRenderableSeries(wasmContext, {
+			new XyScatterRenderableSeries(wasmContext, {
 				dataSeries,
-				stroke: AUTO_COLOR,
-				strokeThickness: 3,
+				stroke: style.stroke,
+				fill: style.fill,
+				pointMarker: new EllipsePointMarker(wasmContext, {
+					width: style.width,
+					height: style.width,
+					strokeThickness: 2,
+					fill: style.fill,
+					stroke: style.stroke,
+				}),
 			}),
 		);
-		seriesBySource.set(source, dataSeries);
+		seriesByKind.set(kind, dataSeries);
 	}
 
 	sciChartSurface.chartModifiers.add(
@@ -67,30 +99,29 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		new RolloverModifier({ modifierGroup: "chart" }),
 	);
 
-	const gridLayout = new GridLayoutModifier();
-	sciChartSurface.chartModifiers.add(gridLayout);
-
 	sciChartSurface.zoomExtents();
 
-	const appendReading = (source: SignalSource, x: number, value: number) => {
-		const dataSeries = seriesBySource.get(source);
+	let zoomed = false;
+
+	const appendReading = (reading: PredictionReading) => {
+		const dataSeries = seriesByKind.get(reading.kind);
 
 		if (!dataSeries) {
 			return;
 		}
 
-		dataSeries.append(x, value);
+		dataSeries.append(reading.x, reading.value);
 		sciChartSurface.invalidateElement();
-	};
 
-	const setIsGridLayoutMode = (value: boolean) => {
-		gridLayout.isGrid = value;
+		if (!zoomed) {
+			sciChartSurface.zoomExtents();
+			zoomed = true;
+		}
 	};
 
 	return {
 		wasmContext,
 		sciChartSurface,
-		setIsGridLayoutMode,
 		controls: { appendReading },
 	};
 };

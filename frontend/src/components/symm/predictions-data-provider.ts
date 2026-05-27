@@ -6,11 +6,13 @@ import {
 } from "#/lib/symm/events";
 import {
 	isSignalSource,
-	SIGNAL_SOURCES,
 	type SignalSource,
 } from "#/lib/symm/signal-confidence";
 
+export type PredictionSeriesKind = "predicted" | "actual" | "error";
+
 export type PredictionReading = {
+	kind: PredictionSeriesKind;
 	source: SignalSource;
 	x: number;
 	value: number;
@@ -18,17 +20,40 @@ export type PredictionReading = {
 
 type ReadingSink = (reading: PredictionReading) => void;
 
-/*
-PredictionsDataProvider feeds per-source predicted returns and settled errors.
-*/
+const MAX_BUFFER = 1200;
+
+const returnToPercent = (value: number) => value * 100;
+
+const dueSec = (value: unknown): number | undefined => {
+	if (typeof value !== "string" || value.length === 0) {
+		return undefined;
+	}
+
+	const parsed = Date.parse(value);
+
+	if (!Number.isFinite(parsed)) {
+		return undefined;
+	}
+
+	return parsed / 1000;
+};
+
+const forecastKey = (source: string, symbol: string, due: number) =>
+	`${source}|${symbol}|${due}`;
+
 class PredictionsDataProviderImpl {
 	private sink: ReadingSink | null = null;
 	private pulse: EnginePulseEvent | undefined;
-	private seq = 0;
+	private openForecasts = new Set<string>();
+	private buffer: PredictionReading[] = [];
 	private listeners = new Set<() => void>();
 
 	registerSink(sink: ReadingSink) {
 		this.sink = sink;
+
+		for (const reading of this.buffer) {
+			sink(reading);
+		}
 
 		return () => {
 			if (this.sink === sink) {
@@ -55,13 +80,36 @@ class PredictionsDataProviderImpl {
 		}
 	}
 
-	private emit(source: string, value: number) {
-		if (!isSignalSource(source) || !Number.isFinite(value)) {
+	private push(reading: PredictionReading) {
+		this.buffer.push(reading);
+
+		if (this.buffer.length > MAX_BUFFER) {
+			this.buffer = this.buffer.slice(-MAX_BUFFER);
+		}
+
+		this.sink?.(reading);
+	}
+
+	private emit(
+		kind: PredictionSeriesKind,
+		source: string,
+		due: number,
+		value: number,
+	) {
+		if (
+			!isSignalSource(source) ||
+			!Number.isFinite(value) ||
+			!Number.isFinite(due)
+		) {
 			return;
 		}
 
-		this.seq++;
-		this.sink?.({ source, x: this.seq, value });
+		this.push({
+			kind,
+			source,
+			x: due,
+			value: returnToPercent(value),
+		});
 	}
 
 	ingestFeedback(raw: unknown) {
@@ -69,8 +117,24 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		this.emit(raw.Source, raw.PredictedReturn);
-		this.emit(raw.Source, raw.Error);
+		const due =
+			dueSec(raw.DueAt) ?? dueSec(raw.SettledAt) ?? dueSec(raw.PredictedAt);
+
+		if (due === undefined) {
+			return;
+		}
+
+		const key = forecastKey(raw.Source, raw.Symbol, due);
+		const hadOpen = this.openForecasts.has(key);
+
+		this.openForecasts.delete(key);
+
+		if (!hadOpen) {
+			this.emit("predicted", raw.Source, due, raw.PredictedReturn);
+		}
+
+		this.emit("actual", raw.Source, due, raw.ActualReturn);
+		this.emit("error", raw.Source, due, raw.Error);
 	}
 
 	ingestPrediction(raw: unknown) {
@@ -88,7 +152,21 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		this.emit(row.source, row.value);
+		const symbol = typeof row.symbol === "string" ? row.symbol : "";
+		const due = dueSec(row.due_at) ?? dueSec(row.ts);
+
+		if (due === undefined) {
+			return;
+		}
+
+		const key = forecastKey(row.source, symbol, due);
+
+		if (this.openForecasts.has(key)) {
+			return;
+		}
+
+		this.openForecasts.add(key);
+		this.emit("predicted", row.source, due, row.value);
 	}
 
 	ingestPulse(raw: unknown) {
@@ -122,7 +200,6 @@ export const PredictionsDataProvider = {
 	subscribe: (listener: () => void) => shared.subscribe(listener),
 	snapshot: () => shared.snapshot(),
 	ingest: (raw: unknown) => shared.ingest(raw),
-	sources: SIGNAL_SOURCES,
 };
 
 export type { PredictionFeedback };

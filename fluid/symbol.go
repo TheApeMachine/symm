@@ -23,6 +23,9 @@ type FluidSymbol struct {
 	buyPressure     float64
 	changePct       float64
 	volume          float64
+	last            float64
+	bid             float64
+	ask             float64
 	pressure        *adaptive.EMA
 	spreadBPS       float64
 	bookFluxWindow  *adaptive.Window
@@ -123,93 +126,111 @@ func (state *FluidSymbol) bookFluxTrustworthy() bool {
 }
 
 func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
-	if !state.bookFluxTrustworthy() {
+	row := state.wireRow()
+
+	if row == nil {
 		return engine.Measurement{}, false
 	}
 
-	if len(state.bids) == 0 || len(state.asks) == 0 {
+	re, ok := row["re"].(float64)
+
+	if !ok || re <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	bid := state.bids[0].Price
-	ask := state.asks[0].Price
-	mid := (bid + ask) / 2
+	bid := 0.0
+	ask := 0.0
+	mid := 0.0
+
+	if len(state.bids) > 0 && len(state.asks) > 0 {
+		bid = state.bids[0].Price
+		ask = state.asks[0].Price
+		mid = (bid + ask) / 2
+	}
+
+	if mid <= 0 && state.last > 0 {
+		bid = state.bid
+		ask = state.ask
+
+		if bid <= 0 {
+			bid = state.last
+		}
+
+		if ask <= 0 {
+			ask = state.last
+		}
+
+		mid = state.last
+
+		if bid > 0 && ask > 0 {
+			mid = (bid + ask) / 2
+		}
+	}
 
 	if mid <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	imbalance, ok := market.WeightedDepthImbalance(
-		state.bids,
-		state.asks,
-		mid,
-		config.System.BookDepthDecayLambda,
-	)
+	confidence := engine.ConfidenceFromScore(re)
+	reason := "field_activity"
 
-	if !ok || imbalance == 0 {
-		return engine.Measurement{}, false
+	if state.bookFluxTrustworthy() {
+		imbalance, imbalanceOK := market.WeightedDepthImbalance(
+			state.bids,
+			state.asks,
+			mid,
+			config.System.BookDepthDecayLambda,
+		)
+
+		if imbalanceOK && imbalance != 0 {
+			level1Imbalance, level1OK := market.Level1Imbalance(state.bids, state.asks)
+
+			if level1OK && !market.IsSpoofSkew(
+				imbalance,
+				level1Imbalance,
+				config.System.SpoofWeightedThreshold,
+				config.System.SpoofLevel1Reject,
+			) {
+				flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
+
+				if !flatOK || !market.IsSpoofSkew(
+					flatImbalance,
+					level1Imbalance,
+					config.System.SpoofWeightedThreshold,
+					config.System.SpoofLevel1Reject,
+				) {
+					pressure := (state.buyPressure + 1) / 2
+
+					if state.spreadBPS > 0 {
+						pressure *= 1 / (1 + state.spreadBPS/100)
+					}
+
+					raw, err := state.score.Push(
+						math.Abs(imbalance),
+						pressure*state.forecast.Scale(),
+					)
+
+					if err != nil {
+						errnie.Error(err)
+					}
+
+					if raw > 0 {
+						confidence = engine.ConfidenceFromScore(raw)
+						reason = "book_flow"
+					}
+				}
+			}
+		}
 	}
-
-	level1Imbalance, ok := market.Level1Imbalance(state.bids, state.asks)
-
-	if !ok {
-		return engine.Measurement{}, false
-	}
-
-	if market.IsSpoofSkew(
-		imbalance,
-		level1Imbalance,
-		config.System.SpoofWeightedThreshold,
-		config.System.SpoofLevel1Reject,
-	) {
-		return engine.Measurement{}, false
-	}
-
-	flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
-
-	if flatOK && market.IsSpoofSkew(
-		flatImbalance,
-		level1Imbalance,
-		config.System.SpoofWeightedThreshold,
-		config.System.SpoofLevel1Reject,
-	) {
-		return engine.Measurement{}, false
-	}
-
-	pressure := (state.buyPressure + 1) / 2
-
-	if state.spreadBPS > 0 {
-		pressure *= 1 / (1 + state.spreadBPS/100)
-	}
-
-	scaledPressure := pressure * state.forecast.Scale()
-	raw, err := state.score.Push(math.Abs(imbalance), scaledPressure)
-
-	if err != nil {
-		errnie.Error(err)
-		return engine.Measurement{}, false
-	}
-
-	if raw <= 0 {
-		return engine.Measurement{}, false
-	}
-
-	confidence := engine.AlignConfidence(math.Abs(imbalance), scaledPressure)
-
-	if confidence <= 0 {
-		return engine.Measurement{}, false
-	}
-
-	last := mid
 
 	return engine.Measurement{
 		Type:       engine.Flow,
 		Source:     fluidSource,
 		Regime:     "fluid",
-		Reason:     "book_flow",
+		Reason:     reason,
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
-		Last:       last,
+		Last:       mid,
 		Bid:        bid,
 		Ask:        ask,
 	}, true
@@ -224,30 +245,33 @@ func (state *FluidSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
 }
 
 func (state *FluidSymbol) wireRow() map[string]any {
-	if len(state.bids) == 0 || len(state.asks) == 0 {
-		return nil
-	}
-
-	bidVolume := 0.0
-	askVolume := 0.0
-
-	for _, level := range state.bids {
-		bidVolume += level.Volume
-	}
-
-	for _, level := range state.asks {
-		askVolume += level.Volume
-	}
-
-	total := bidVolume + askVolume
-
-	if total <= 0 {
-		return nil
-	}
-
-	imbalance := (bidVolume - askVolume) / total
+	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)
+
+	if len(state.bids) > 0 && len(state.asks) > 0 {
+		bidVolume := 0.0
+		askVolume := 0.0
+
+		for _, level := range state.bids {
+			bidVolume += level.Volume
+		}
+
+		for _, level := range state.asks {
+			askVolume += level.Volume
+		}
+
+		total := bidVolume + askVolume
+
+		if total > 0 {
+			imbalance = (bidVolume - askVolume) / total
+		}
+	}
+
+	if state.volume <= 0 && state.changePct == 0 && imbalance == 0 && pressure == 0.5 {
+		return nil
+	}
+
 	re := math.Max(math.Abs(imbalance), math.Abs(pressure)) * state.forecast.Scale()
 
 	return WireRow(map[string]any{

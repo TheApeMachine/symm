@@ -192,6 +192,108 @@ func TestHubReplaysWalletSnapshotOnConnect(t *testing.T) {
 	}
 }
 
+func TestHubConnectDuringBroadcast(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	hub, err := NewHub(ctx, pool)
+
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+
+	t.Cleanup(func() { _ = hub.Close() })
+
+	hub.walletSnap.Store(map[string]any{
+		"Currency":    "EUR",
+		"Balance":     200.0,
+		"ReservedEUR": 0.0,
+		"FeePct":      0.26,
+		"Inventory":   map[string]float64{"BTC": 0.01},
+	})
+
+	for _, source := range []string{"hawkes", "fluid", "pumpdump"} {
+		hub.confidenceSnaps.Store(source, map[string]any{
+			"source":     source,
+			"confidence": 0.42,
+		})
+	}
+
+	server := httptest.NewServer(httpHandler(hub))
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+
+	stop := make(chan struct{})
+	var flood sync.WaitGroup
+	flood.Add(1)
+
+	go func() {
+		defer flood.Done()
+
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				hub.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"Currency":    "EUR",
+					"Balance":     199.0,
+					"ReservedEUR": 0.0,
+					"FeePct":      0.26,
+					"Inventory":   map[string]float64{"BTC": 0.01},
+				}})
+				hub.broadcasts["confidence"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"source":     "hawkes",
+					"confidence": 0.5,
+				}})
+				hub.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"Source":          "hawkes",
+					"Symbol":          "BTC/EUR",
+					"PredictedReturn": 0.01,
+					"ActualReturn":    0.008,
+					"Error":           0.002,
+				}})
+			}
+		}
+	}()
+
+	t.Cleanup(func() {
+		close(stop)
+		flood.Wait()
+	})
+
+	var dials sync.WaitGroup
+
+	for range 16 {
+		dials.Add(1)
+
+		go func() {
+			defer dials.Done()
+
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+
+			if err != nil {
+				t.Errorf("dial hub websocket: %v", err)
+				return
+			}
+
+			defer conn.Close()
+
+			deadline := time.Now().Add(200 * time.Millisecond)
+
+			for time.Now().Before(deadline) {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	dials.Wait()
+}
+
 func httpHandler(hub *Hub) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)

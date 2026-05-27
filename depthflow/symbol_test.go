@@ -18,8 +18,28 @@ func TestDepthSymbolRejectsSpoofSkew(t *testing.T) {
 	}
 	state.buyPressure = 1
 
-	if _, ok := state.Measure(); ok {
-		t.Fatal("expected spoof skew to be rejected")
+	if measurement, ok := state.Measure(); !ok {
+		t.Fatal("expected spoof skew to emit skeptical confidence")
+	} else if measurement.Reason != "depth_skeptic" || measurement.Confidence <= 0 {
+		t.Fatalf("unexpected spoof measurement: %+v", measurement)
+	}
+}
+
+func TestDepthSymbolMeasureTradePressure(t *testing.T) {
+	state := NewDepthSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	state.last = 10
+	state.bid = 9.99
+	state.ask = 10.01
+	state.buyPressure = 0.8
+
+	measurement, ok := state.Measure()
+
+	if !ok {
+		t.Fatal("expected trade pressure measurement")
+	}
+
+	if measurement.Reason != "trade_pressure" || measurement.Confidence <= 0 {
+		t.Fatalf("unexpected trade pressure measurement: %+v", measurement)
 	}
 }
 

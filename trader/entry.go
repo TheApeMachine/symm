@@ -158,6 +158,8 @@ func (crypto *Crypto) enterMaker(
 	}
 
 	crypto.wallet.Inventory[base] += qty
+	crypto.wallet.RecordFill(base, qty, fillPrice)
+	crypto.sendWallet()
 }
 
 func (crypto *Crypto) enterTaker(
@@ -201,4 +203,6 @@ func (crypto *Crypto) enterTaker(
 	}
 
 	crypto.wallet.Inventory[base] += qty
+	crypto.wallet.RecordFill(base, qty, fillPrice)
+	crypto.sendWallet()
 }

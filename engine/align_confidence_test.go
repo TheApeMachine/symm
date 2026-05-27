@@ -39,6 +39,23 @@ func TestConfidenceFromScore(t *testing.T) {
 	})
 }
 
+func TestProvisionalConfidence(t *testing.T) {
+	Convey("Given cold confidence history", t, func() {
+		Convey("It should fall back to score mapping", func() {
+			confidence := ProvisionalConfidence(0, 1.2)
+
+			So(confidence, ShouldBeGreaterThan, 0)
+			So(confidence, ShouldBeLessThan, 1)
+		})
+	})
+
+	Convey("Given normalized confidence", t, func() {
+		Convey("It should keep the normalized value", func() {
+			So(ProvisionalConfidence(0.42, 1.2), ShouldEqual, 0.42)
+		})
+	})
+}
+
 func TestExcessRatio(t *testing.T) {
 	Convey("Given a ratio above unity", t, func() {
 		Convey("It should map excess into (0, 1)", func() {

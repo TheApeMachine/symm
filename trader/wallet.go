@@ -1,6 +1,10 @@
 package trader
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/theapemachine/symm/config"
+)
 
 /*
 WalletType is the type of wallet.
@@ -25,6 +29,8 @@ type Wallet struct {
 	ReservedEUR float64
 	FeePct      float64
 	Inventory   map[string]float64
+	AvgEntry    map[string]float64
+	Marks       map[string]float64
 }
 
 /*
@@ -42,7 +48,56 @@ func NewWallet(
 		Balance:   balance,
 		FeePct:    feePct,
 		Inventory: make(map[string]float64),
+		AvgEntry:  make(map[string]float64),
 	}
+}
+
+/*
+RecordFill updates the volume-weighted average entry for one base asset.
+*/
+func (wallet *Wallet) RecordFill(base string, qty, fillPrice float64) {
+	if wallet == nil || base == "" || qty <= 0 || fillPrice <= 0 {
+		return
+	}
+
+	if wallet.AvgEntry == nil {
+		wallet.AvgEntry = make(map[string]float64)
+	}
+
+	priorQty := wallet.Inventory[base] - qty
+
+	if priorQty <= config.System.LiveInventoryEpsilon {
+		wallet.AvgEntry[base] = fillPrice
+
+		return
+	}
+
+	priorEntry := wallet.AvgEntry[base]
+
+	if priorEntry <= 0 {
+		wallet.AvgEntry[base] = fillPrice
+
+		return
+	}
+
+	newQty := wallet.Inventory[base]
+
+	if newQty <= 0 {
+		return
+	}
+
+	wallet.AvgEntry[base] = (priorQty*priorEntry + qty*fillPrice) / newQty
+}
+
+/*
+ClearPosition removes tracked entry economics for one base asset.
+*/
+func (wallet *Wallet) ClearPosition(base string) {
+	if wallet == nil || base == "" {
+		return
+	}
+
+	delete(wallet.AvgEntry, base)
 }
 
 /*

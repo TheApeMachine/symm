@@ -10,6 +10,7 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/trader"
 	"github.com/valyala/fasthttp"
 )
 
@@ -95,6 +96,19 @@ func newTestWSServer(t *testing.T) *testWSServer {
 
 func (testServer *testWSServer) Close() {
 	_ = testServer.ln.Close()
+}
+
+func TestPublicClientOpenInventorySymbols(t *testing.T) {
+	convey.Convey("Given a wallet with open inventory", t, func() {
+		publicClient := &PublicClient{}
+		wallet := trader.NewWallet(trader.PaperWallet, "EUR", 200, 0.26)
+		wallet.Inventory["SCOR"] = 1.5
+
+		convey.Convey("It should derive Kraken symbols for open bases", func() {
+			symbols := publicClient.openInventorySymbols(wallet)
+			convey.So(symbols, convey.ShouldResemble, []string{"SCOR/EUR"})
+		})
+	})
 }
 
 func TestPublicClientConnect(t *testing.T) {

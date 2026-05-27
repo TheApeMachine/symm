@@ -120,26 +120,56 @@ func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {
 }
 
 func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine.Measurement, bool) {
+	if state.lastPrice <= 0 {
+		return engine.Measurement{}, false
+	}
+
 	batchVolume := state.volumeWindow.Sum()
+	reason := "macro_association"
+	confidence := 0.0
 
-	if state.lastPrice <= 0 || batchVolume <= 0 || state.spreadBPS <= 0 ||
-		state.imbalance <= 0 || state.buyPressure <= 0 {
-		return engine.Measurement{}, false
+	if batchVolume > 0 && state.spreadBPS > 0 && state.imbalance != 0 && state.buyPressure != 0 {
+		localFlow := batchVolume * (state.buyPressure + 1) / 2
+		liquidity := bookLiquidity(state.spreadBPS, batchVolume)
+		sample, ready := state.buildSample(macroMomentum, liquidity, localFlow, state.lastPrice, now)
+
+		if ready {
+			fullConfidence, fullReason := state.evaluate(sample)
+			state.commitSample(sample, state.lastPrice, now)
+
+			if fullConfidence > 0 {
+				return engine.Measurement{
+					Type:       engine.Causal,
+					Source:     causalSource,
+					Regime:     "causal",
+					Reason:     fullReason,
+					Pairs:      []asset.Pair{state.pair},
+					Confidence: fullConfidence,
+					Last:       state.lastPrice,
+					Bid:        state.bid,
+					Ask:        state.ask,
+				}, true
+			}
+		}
+
+		if !ready {
+			state.commitSample(sample, state.lastPrice, now)
+		}
 	}
 
-	localFlow := batchVolume * (state.buyPressure + 1) / 2
-	liquidity := bookLiquidity(state.spreadBPS, batchVolume)
-	sample, ready := state.buildSample(macroMomentum, liquidity, localFlow, state.lastPrice, now)
+	confidence = engine.AlignConfidence(
+		engine.ConfidenceFromScore(math.Abs(state.changePct)),
+		engine.ConfidenceFromScore(math.Abs(macroMomentum)),
+	)
 
-	if !ready {
-		state.commitSample(sample, state.lastPrice, now)
-
-		return engine.Measurement{}, false
+	if confidence <= 0 && state.buyPressure != 0 {
+		confidence = engine.ConfidenceFromScore(math.Abs(state.buyPressure))
+		reason = "flow_pressure"
 	}
 
-	confidence, reason := state.evaluate(sample)
-
-	state.commitSample(sample, state.lastPrice, now)
+	if confidence <= 0 && state.changePct != 0 {
+		confidence = engine.ConfidenceFromScore(math.Abs(state.changePct))
+	}
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false
@@ -227,14 +257,20 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 	model, fitOK := fitNonLinearStructural(samples)
 
 	if !fitOK {
-		return state.calibrator.NormalizeConfidence(intervention, state.interventionHist), "intervention"
+		return engine.ProvisionalConfidence(
+			state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
+			intervention,
+		), "intervention"
 	}
 
 	interventionFlow := flowInterventionLevel(samples)
 	uplift := nonLinearCounterfactualUplift(current, model, interventionFlow)
 
 	if uplift <= 0 {
-		normalized := state.calibrator.NormalizeConfidence(intervention, state.interventionHist)
+		normalized := engine.ProvisionalConfidence(
+			state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
+			intervention,
+		)
 		state.recordConfidence(intervention)
 
 		return normalized, "intervention"
@@ -249,8 +285,14 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 		reason = "counterfactual_like"
 	}
 
-	interventionScore := state.calibrator.NormalizeConfidence(intervention, state.interventionHist)
-	upliftScore := state.calibrator.NormalizeConfidence(uplift, state.upliftHist)
+	interventionScore := engine.ProvisionalConfidence(
+		state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
+		intervention,
+	)
+	upliftScore := engine.ProvisionalConfidence(
+		state.calibrator.NormalizeConfidence(uplift, state.upliftHist),
+		uplift,
+	)
 	score := interventionScore
 
 	if upliftScore > 0 {

@@ -3,6 +3,7 @@ package sentiment
 import (
 	"context"
 	"iter"
+	"math"
 	"sync"
 	"time"
 
@@ -69,61 +70,61 @@ func (sentiment *Sentiment) Start() error        { return nil }
 func (sentiment *Sentiment) State() engine.State { return engine.READY }
 
 func (sentiment *Sentiment) Tick() error {
-	select {
-	case <-sentiment.ctx.Done():
-		return sentiment.ctx.Err()
-	case value := <-sentiment.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting sentiment tick")
+
+	for {
+		select {
+		case <-sentiment.ctx.Done():
+			return sentiment.ctx.Err()
+		case value := <-sentiment.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				sentiment.symbols.Store(symbol, &symbolState{pair: *pair})
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := sentiment.requested.Load(symbol); seen {
+					continue
+				}
+
+				sentiment.pending = append(sentiment.pending, symbol)
 			}
 
-			sentiment.symbols.Store(symbol, &symbolState{pair: *pair})
+			sentiment.publishPulse()
+		case value := <-sentiment.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := sentiment.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok || row.ChangePct == 0 {
+				break
 			}
 
-			if _, seen := sentiment.requested.Load(symbol); seen {
-				continue
+			state := raw.(*symbolState)
+			state.changePct = row.ChangePct
+
+			if row.Last > 0 {
+				state.last = row.Last
 			}
 
-			sentiment.pending = append(sentiment.pending, symbol)
+			if row.Bid > 0 {
+				state.bid = row.Bid
+			}
+
+			if row.Ask > 0 {
+				state.ask = row.Ask
+			}
+
+			sentiment.publishPulse()
+		case value := <-sentiment.subscribers["feedback"].Incoming:
+			sentiment.Feedback(value.Value.(engine.PredictionFeedback))
+			sentiment.publishPulse()
 		}
-
-		sentiment.publishPulse()
-	case value := <-sentiment.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := sentiment.symbols.Load(row.Symbol)
-
-		if !ok || row.ChangePct == 0 {
-			break
-		}
-
-		state := raw.(*symbolState)
-		state.changePct = row.ChangePct
-
-		if row.Last > 0 {
-			state.last = row.Last
-		}
-
-		if row.Bid > 0 {
-			state.bid = row.Bid
-		}
-
-		if row.Ask > 0 {
-			state.ask = row.Ask
-		}
-
-		sentiment.publishPulse()
-	case value := <-sentiment.subscribers["feedback"].Incoming:
-		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
-		sentiment.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=sentiment")
 	}
-
-	return nil
 }
 
 func (sentiment *Sentiment) requestedCount() int {
@@ -170,10 +171,9 @@ func (sentiment *Sentiment) publishPulse() {
 	sentiment.publishMeasurements()
 }
 
-func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, float64, bool) {
+func (sentiment *Sentiment) marketBreadth() (float64, float64, bool) {
 	positive := 0
 	total := 0
-	leaders := make(map[string]float64)
 	topChange := 0.0
 
 	sentiment.symbols.Range(func(key, value any) bool {
@@ -185,31 +185,83 @@ func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, fl
 
 		total++
 
+		if state.changePct > topChange {
+			topChange = state.changePct
+		}
+
 		if state.changePct <= 0 {
 			return true
 		}
 
 		positive++
-		leaders[key.(string)] = state.changePct
-
-		if state.changePct > topChange {
-			topChange = state.changePct
-		}
 
 		return true
 	})
 
-	if total < 4 {
+	if total == 0 {
+		return 0, 0, false
+	}
+
+	return float64(positive) / float64(total), topChange, true
+}
+
+func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, float64, bool) {
+	breadth, topChange, ok := sentiment.marketBreadth()
+
+	if !ok {
 		return 0, nil, 0, false
 	}
 
-	breadth := float64(positive) / float64(total)
+	leaders := make(map[string]float64)
+
+	sentiment.symbols.Range(func(key, value any) bool {
+		state := value.(*symbolState)
+
+		if state.changePct <= 0 {
+			return true
+		}
+
+		leaders[key.(string)] = state.changePct
+
+		return true
+	})
+
+	if len(leaders) == 0 {
+		return breadth, nil, topChange, true
+	}
 
 	if breadth < minBreadth || topChange <= 0 {
-		return 0, nil, 0, false
+		return breadth, leaders, topChange, true
 	}
 
 	return breadth, leaders, topChange, true
+}
+
+func (sentiment *Sentiment) sentimentConfidence(
+	breadth float64,
+	change float64,
+	topChange float64,
+	peakScore float64,
+) float64 {
+	confidence := 0.0
+
+	if topChange > 0 {
+		confidence = engine.AlignConfidence(breadth, change/topChange)
+	}
+
+	if confidence <= 0 {
+		confidence = engine.ConfidenceFromScore(peakScore)
+	}
+
+	if confidence <= 0 {
+		confidence = engine.ConfidenceFromScore(breadth * math.Abs(change))
+	}
+
+	if confidence <= 0 {
+		confidence = engine.ConfidenceFromScore(breadth)
+	}
+
+	return confidence
 }
 
 func (sentiment *Sentiment) publishMeasurements() {
@@ -219,30 +271,38 @@ func (sentiment *Sentiment) publishMeasurements() {
 		return
 	}
 
-	waiters := make([]chan *qpool.QValue[any], 0, len(leaders))
+	waiters := make([]chan *qpool.QValue[any], 0)
 
-	for symbol, change := range leaders {
+	sentiment.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := sentiment.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		state := value.(*symbolState)
+
+		if state.changePct == 0 {
+			return true
+		}
+
+		change := state.changePct
+		leaderSet := leaders
+
+		if len(leaderSet) == 0 {
+			leaderSet = map[string]float64{symbol: change}
+		}
+
 		waiters = append(
 			waiters,
 			sentiment.pool.ScheduleFast(sentiment.ctx, func(ctx context.Context) (any, error) {
-				peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
+				peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
 
 				if err != nil {
 					return nil, err
 				}
 
-				if peakScore <= 0 {
-					return nil, nil
-				}
-
-				raw, loaded := sentiment.symbols.Load(symbol)
-
-				if !loaded {
-					return nil, nil
-				}
-
-				state := raw.(*symbolState)
-				confidence := engine.AlignConfidence(breadth, change/topChange)
+				confidence := sentiment.sentimentConfidence(breadth, change, topChange, peakScore)
 
 				if confidence <= 0 {
 					return nil, nil
@@ -261,7 +321,9 @@ func (sentiment *Sentiment) publishMeasurements() {
 				}, nil
 			}),
 		)
-	}
+
+		return true
+	})
 
 	for _, waiter := range waiters {
 		value := <-waiter
@@ -302,29 +364,32 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 			return
 		}
 
-		for symbol, change := range leaders {
-			peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaders, symbol)...)
+		sentiment.symbols.Range(func(key, value any) bool {
+			symbol := key.(string)
+			state := value.(*symbolState)
+
+			if state.changePct == 0 {
+				return true
+			}
+
+			change := state.changePct
+			leaderSet := leaders
+
+			if len(leaderSet) == 0 {
+				leaderSet = map[string]float64{symbol: change}
+			}
+
+			peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
 
 			if err != nil {
 				errnie.Error(err)
-				continue
+				return true
 			}
 
-			if peakScore <= 0 {
-				continue
-			}
-
-			raw, loaded := sentiment.symbols.Load(symbol)
-
-			if !loaded {
-				continue
-			}
-
-			state := raw.(*symbolState)
-			confidence := engine.AlignConfidence(breadth, change/topChange)
+			confidence := sentiment.sentimentConfidence(breadth, change, topChange, peakScore)
 
 			if confidence <= 0 {
-				continue
+				return true
 			}
 
 			if !yield(engine.Measurement{
@@ -338,9 +403,11 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				Bid:        state.bid,
 				Ask:        state.ask,
 			}) {
-				return
+				return false
 			}
-		}
+
+			return true
+		})
 	}
 }
 

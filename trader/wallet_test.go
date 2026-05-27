@@ -37,3 +37,30 @@ func TestWalletReserveEntry(t *testing.T) {
 		})
 	})
 }
+
+func TestWalletRecordFill(t *testing.T) {
+	convey.Convey("Given a wallet with inventory", t, func() {
+		convey.Convey("It should track average entry on first fill", func() {
+			wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+			wallet.Inventory["BTC"] = 1
+			wallet.RecordFill("BTC", 1, 50000)
+			convey.So(wallet.AvgEntry["BTC"], convey.ShouldEqual, 50000)
+		})
+
+		convey.Convey("It should volume-weight subsequent fills", func() {
+			wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+			wallet.Inventory["BTC"] = 3
+			wallet.AvgEntry["BTC"] = 50000
+			wallet.RecordFill("BTC", 2, 52000)
+			convey.So(wallet.AvgEntry["BTC"], convey.ShouldAlmostEqual, 51333.33333333333, 0.0001)
+		})
+
+		convey.Convey("It should clear entry economics on exit", func() {
+			wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+			wallet.AvgEntry["BTC"] = 50000
+			wallet.ClearPosition("BTC")
+			_, ok := wallet.AvgEntry["BTC"]
+			convey.So(ok, convey.ShouldBeFalse)
+		})
+	})
+}

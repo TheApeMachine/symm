@@ -18,6 +18,9 @@ type DepthSymbol struct {
 	pair        asset.Pair
 	bids        []market.BookLevel
 	asks        []market.BookLevel
+	last        float64
+	bid         float64
+	ask         float64
 	buyPressure float64
 	pressure    *adaptive.EMA
 	score       *numeric.Derived
@@ -36,97 +39,144 @@ func NewDepthSymbol(pair asset.Pair) *DepthSymbol {
 	}
 }
 
-func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
-	if len(state.bids) == 0 || len(state.asks) == 0 {
-		return engine.Measurement{}, false
+func (state *DepthSymbol) FeedTicker(row market.TickerRow) {
+	if row.Last > 0 {
+		state.last = row.Last
 	}
 
-	bid := state.bids[0].Price
-	ask := state.asks[0].Price
-	mid := (bid + ask) / 2
+	if row.Bid > 0 {
+		state.bid = row.Bid
+	}
+
+	if row.Ask > 0 {
+		state.ask = row.Ask
+	}
+}
+
+func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
+	bid := state.bid
+	ask := state.ask
+	mid := state.last
+
+	if len(state.bids) > 0 && len(state.asks) > 0 {
+		bid = state.bids[0].Price
+		ask = state.asks[0].Price
+		mid = (bid + ask) / 2
+	}
+
+	if mid <= 0 && bid > 0 && ask > 0 {
+		mid = (bid + ask) / 2
+	}
 
 	if mid <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	imbalance, ok := market.WeightedDepthImbalance(
-		state.bids,
-		state.asks,
-		mid,
-		config.System.BookDepthDecayLambda,
-	)
+	if len(state.bids) > 0 && len(state.asks) > 0 {
+		imbalance, ok := market.WeightedDepthImbalance(
+			state.bids,
+			state.asks,
+			mid,
+			config.System.BookDepthDecayLambda,
+		)
 
-	if !ok || imbalance == 0 {
-		return engine.Measurement{}, false
+		level1Imbalance, levelOK := market.Level1Imbalance(state.bids, state.asks)
+
+		if ok && imbalance != 0 && levelOK {
+			spoofed := market.IsSpoofSkew(
+				imbalance,
+				level1Imbalance,
+				config.System.SpoofWeightedThreshold,
+				config.System.SpoofLevel1Reject,
+			)
+
+			flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
+
+			if flatOK {
+				spoofed = spoofed || market.IsSpoofSkew(
+					flatImbalance,
+					level1Imbalance,
+					config.System.SpoofWeightedThreshold,
+					config.System.SpoofLevel1Reject,
+				)
+			}
+
+			if !spoofed {
+				pressure := 1.0
+
+				if state.buyPressure > 0 && imbalance > 0 {
+					pressure = (state.buyPressure + 1) / 2
+				}
+
+				if state.buyPressure < 0 && imbalance < 0 {
+					pressure = (1 - state.buyPressure) / 2
+				}
+
+				raw, err := state.score.Push(math.Abs(imbalance), pressure*state.forecast.Scale())
+
+				if err != nil {
+					errnie.Error(err)
+				}
+
+				if raw > 0 {
+					confidence := engine.ConfidenceFromScore(raw)
+
+					return engine.Measurement{
+						Type: logic.Or(
+							engine.Dump,
+							engine.DepthFlow,
+							imbalance < 0,
+						),
+						Source:     depthflowSource,
+						Regime:     "depth",
+						Reason:     "depth_imbalance",
+						Pairs:      []asset.Pair{state.pair},
+						Confidence: confidence,
+						Last:       mid,
+						Bid:        bid,
+						Ask:        ask,
+					}, true
+				}
+			}
+
+			confidence := engine.ConfidenceFromScore(math.Abs(level1Imbalance))
+
+			if confidence > 0 {
+				return engine.Measurement{
+					Type:       engine.DepthFlow,
+					Source:     depthflowSource,
+					Regime:     "depth",
+					Reason:     "depth_skeptic",
+					Pairs:      []asset.Pair{state.pair},
+					Confidence: confidence,
+					Last:       mid,
+					Bid:        bid,
+					Ask:        ask,
+				}, true
+			}
+		}
 	}
 
-	level1Imbalance, ok := market.Level1Imbalance(state.bids, state.asks)
+	flow := math.Abs(state.buyPressure)
 
-	if !ok {
-		return engine.Measurement{}, false
+	if flow <= 0 {
+		flow = math.Abs(state.pressure.Value())
 	}
 
-	if market.IsSpoofSkew(
-		imbalance,
-		level1Imbalance,
-		config.System.SpoofWeightedThreshold,
-		config.System.SpoofLevel1Reject,
-	) {
-		return engine.Measurement{}, false
-	}
-
-	flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
-
-	if flatOK && market.IsSpoofSkew(
-		flatImbalance,
-		level1Imbalance,
-		config.System.SpoofWeightedThreshold,
-		config.System.SpoofLevel1Reject,
-	) {
-		return engine.Measurement{}, false
-	}
-
-	pressure := 1.0
-
-	if state.buyPressure > 0 && imbalance > 0 {
-		pressure = (state.buyPressure + 1) / 2
-	}
-
-	if state.buyPressure < 0 && imbalance < 0 {
-		pressure = (1 - state.buyPressure) / 2
-	}
-
-	raw, err := state.score.Push(math.Abs(imbalance), pressure*state.forecast.Scale())
-
-	if err != nil {
-		errnie.Error(err)
-		return engine.Measurement{}, false
-	}
-
-	if raw <= 0 {
-		return engine.Measurement{}, false
-	}
-
-	confidence := engine.AlignConfidence(math.Abs(imbalance), pressure*state.forecast.Scale())
+	confidence := engine.ConfidenceFromScore(flow)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	last := mid
-
 	return engine.Measurement{
-		Type: logic.Or(
-			engine.Dump,
-			engine.DepthFlow,
-			imbalance < 0,
-		),
+		Type:       engine.DepthFlow,
 		Source:     depthflowSource,
 		Regime:     "depth",
-		Reason:     "depth_imbalance",
+		Reason:     "trade_pressure",
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
-		Last:       last,
+		Last:       mid,
 		Bid:        bid,
 		Ask:        ask,
 	}, true

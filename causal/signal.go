@@ -64,98 +64,98 @@ func (causal *Causal) Start() error        { return nil }
 func (causal *Causal) State() engine.State { return engine.READY }
 
 func (causal *Causal) Tick() error {
-	select {
-	case <-causal.ctx.Done():
-		return causal.ctx.Err()
-	case value := <-causal.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting causal tick")
+
+	for {
+		select {
+		case <-causal.ctx.Done():
+			return causal.ctx.Err()
+		case value := <-causal.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				causal.symbols.Store(symbol, NewCausalSymbol(*pair, causal.calibration))
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := causal.requested.Load(symbol); seen {
+					continue
+				}
+
+				causal.pending = append(causal.pending, symbol)
 			}
 
-			causal.symbols.Store(symbol, NewCausalSymbol(*pair, causal.calibration))
+			causal.publishPulse()
+		case value := <-causal.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := causal.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok {
+				break
 			}
 
-			if _, seen := causal.requested.Load(symbol); seen {
-				continue
+			state := raw.(*CausalSymbol)
+			state.FeedTicker(row)
+
+			if _, seen := causal.requested.Load(row.Symbol); seen || state.changePct == 0 {
+				break
 			}
 
-			causal.pending = append(causal.pending, symbol)
+			causal.requested.Store(row.Symbol, struct{}{})
+			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+
+			causal.publishPulse()
+		case value := <-causal.subscribers["trade"].Incoming:
+			tick := value.Value.(trade.Data)
+			raw, ok := causal.symbols.Load(tick.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*CausalSymbol)
+			state.FeedTrade(tick)
+
+			if _, seen := causal.requested.Load(tick.Symbol); seen {
+				break
+			}
+
+			causal.requested.Store(tick.Symbol, struct{}{})
+			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+
+			causal.publishPulse()
+		case value := <-causal.subscribers["book"].Incoming:
+			delta := value.Value.(market.BookLevelsDelta)
+			raw, ok := causal.symbols.Load(delta.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*CausalSymbol)
+			state.FeedBook(delta)
+
+			if _, seen := causal.requested.Load(delta.Symbol); seen {
+				break
+			}
+
+			if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+				break
+			}
+
+			causal.requested.Store(delta.Symbol, struct{}{})
+			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+
+			causal.publishPulse()
+		case value := <-causal.subscribers["feedback"].Incoming:
+			causal.Feedback(value.Value.(engine.PredictionFeedback))
+			causal.publishPulse()
 		}
-
-		causal.publishPulse()
-	case value := <-causal.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := causal.symbols.Load(row.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*CausalSymbol)
-		state.FeedTicker(row)
-
-		if _, seen := causal.requested.Load(row.Symbol); seen || state.changePct == 0 {
-			break
-		}
-
-		causal.requested.Store(row.Symbol, struct{}{})
-		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
-
-		causal.publishPulse()
-	case value := <-causal.subscribers["trade"].Incoming:
-		tick := value.Value.(trade.Data)
-		raw, ok := causal.symbols.Load(tick.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*CausalSymbol)
-		state.FeedTrade(tick)
-
-		if _, seen := causal.requested.Load(tick.Symbol); seen {
-			break
-		}
-
-		causal.requested.Store(tick.Symbol, struct{}{})
-		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
-
-		causal.publishPulse()
-	case value := <-causal.subscribers["book"].Incoming:
-		delta := value.Value.(market.BookLevelsDelta)
-		raw, ok := causal.symbols.Load(delta.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*CausalSymbol)
-		state.FeedBook(delta)
-
-		if _, seen := causal.requested.Load(delta.Symbol); seen {
-			break
-		}
-
-		if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-			break
-		}
-
-		causal.requested.Store(delta.Symbol, struct{}{})
-		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
-
-		causal.publishPulse()
-	case value := <-causal.subscribers["feedback"].Incoming:
-		causal.Feedback(value.Value.(engine.PredictionFeedback))
-		causal.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=causal")
 	}
-
-	return nil
 }
 
 func (causal *Causal) requestedCount() int {

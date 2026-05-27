@@ -18,22 +18,20 @@ type PredictionFeedback struct {
 	ActualReturn    float64
 	Error           float64
 	Runway          time.Duration
+	PredictedAt     time.Time
+	DueAt           time.Time
 	SettledAt       time.Time
 	Unanchored      bool
 }
 
 /*
 ValidPredictionFeedback reports whether settled feedback should be emitted to signals.
-Unanchored or zero predicted-return feedback is dropped — no silent defaults.
+Only unanchored or incomplete rows are dropped.
 */
 func ValidPredictionFeedback(feedback PredictionFeedback) bool {
 	if feedback.Source == "" || feedback.Symbol == "" {
 		return false
 	}
 
-	if feedback.Unanchored || feedback.PredictedReturn <= 0 {
-		return false
-	}
-
-	return true
+	return !feedback.Unanchored
 }

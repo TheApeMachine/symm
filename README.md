@@ -49,7 +49,7 @@ Registration lives in `cmd/root.go`. Order matters only insofar as signals shoul
 3. **`price.Prediction`** subscribes to **`tick`** only to mark prices for settlement; it does not trade.
 4. **`trader.Crypto`** subscribes to **`measurements`** only. When a batch arrives it builds perspectives, records predictions, may enter a position, and publishes `engine_pulse` on **`ui`**.
 
-The UI hub (`ui.Hub`) mirrors `wallet`, `confidence`, `feedback`, `ohlc`, `executions`, `orders`, `exits`, and `ui` to browsers at `ws://127.0.0.1:8765/ws` (configurable via `SYMM_UI_ADDR`).
+The UI hub (`ui.Hub`) mirrors `wallet`, `confidence`, `feedback`, `ohlc`, `executions`, `orders`, `exits`, and `ui` to browsers at `ws://127.0.0.1:8765/ws` (configurable via `SYMM_UI_ADDR`). Live marks for open positions and every Kraken-subscribed symbol are pushed from `kraken/client/public.go` as `ui` events (`event: mark`, `symbol`, `price`) on ticker, trade, and OHLC close; `trader.Crypto` also rebroadcasts `wallet.Marks` (from `price.Prediction.LastPrice`) on each wallet update.
 
 ---
 
@@ -154,20 +154,20 @@ For every measurement in every perspective, `Crypto` calls `price.Prediction.Rec
 
 - **Anchor** — `Last` on the measurement (or mid of bid/ask if needed)
 - **Runway** — hold horizon by type (scalp vs flow vs causal)
-- **Predicted return** — `confidence × |EWMA(actual forward return)|` once the source has at least `MinCalibrationSamples` (default 12) settled returns
+- **Predicted return** — `confidence × max(|EWMA(actual forward return)|, 1.0)` from the first measurement; before any settlement the scale is 1.0 (provisional). After runway expires, error feedback refines the EMA—no sample-count gate.
 
-Until calibration warms up, predicted return is zero but the open record still exists; settlement still updates the return EMA when anchor and market price are valid.
+Until the return EMA moves off its initial unit scale, forecasts are deliberately coarse; settlement still runs on every anchored open forecast.
 
 ### 4. Settlement and feedback
 
-`Prediction.Tick` (on its own schedule in the booter) ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when `ValidPredictionFeedback` passes (non-zero predicted return, anchored).
+`Prediction.Tick` (on its own schedule in the booter) ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
 
 Each entry signal subscribes to `feedback` and routes errors into its per-symbol **`PredictionCalibrator`** (`engine` + `numeric/learned`), which scales internal parameters—not post-hoc confidence cosmetics.
 
 Predicted return formula:
 
 ```text
-predictedReturn = measurement.Confidence × |EMA(actualReturn per source)|
+predictedReturn = measurement.Confidence × max(|EMA(actualReturn per source)|, 1.0)
 ```
 
 ---
@@ -205,7 +205,7 @@ On each `measurements` message (coalescing any others already queued):
 1. Build perspectives and call `Record` for each measurement.
 2. Track the best **predicted return** in the batch.
 3. After `MinWarmPulses` (default 50), if slots remain and `bestReturn ≥ MinEdgeReturn`, **enter** on that symbol using the winning measurement’s `Last` / `Bid` / `Ask`.
-4. Publish per-source **confidence** averages and an **`engine_pulse`** UI event (`measurements`, `open`, `avg_prediction`, `avg_error`, `forecast_symbols`, `seq`).
+4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses `prediction` UI events (X = `due_at`) and `PredictionFeedback` (predicted, actual, error at `DueAt`) — not forecast-cycle indices.
 
 Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; the private client handles cancel/amend.
 
@@ -263,7 +263,7 @@ Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMA
 - **High booter tick count** (millions per minute) is expected: every system gets a concurrent `Tick` every loop iteration.
 - **Zero `engine_pulse` measurements** usually means no signal passed `Measure()` yet, or measurements are not reaching `Crypto`’s subscriber— not because the loop is “too fast.”
 - **`avg_prediction` and `forecast_symbols` stay at zero** until each source accumulates enough settled returns for non-zero predicted return; then feedback starts moving calibrators.
-- **Confidence on the UI** is the signal’s self-alignment score, not the trader’s edge estimate; edge lives in predicted return after calibration.
+- **Gauge confidence on the UI** is the trader’s per-source EMA of `Measurement.Confidence` on the `confidence` channel. **Prediction chart** data comes from `PredictionFeedback` and `prediction` UI events only—not from gauges.
 
 ---
 

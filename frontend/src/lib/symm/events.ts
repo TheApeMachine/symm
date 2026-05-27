@@ -106,6 +106,8 @@ export type WalletPayload = {
 	ReservedEUR?: number;
 	FeePct?: number;
 	Inventory?: Record<string, number>;
+	AvgEntry?: Record<string, number>;
+	Marks?: Record<string, number>;
 };
 
 export type ExecutionFill = {
@@ -123,6 +125,9 @@ export type PredictionFeedback = {
 	ActualReturn: number;
 	Error: number;
 	Confidence?: number;
+	PredictedAt?: string;
+	DueAt?: string;
+	SettledAt?: string;
 };
 
 export const isPredictionFeedback = (

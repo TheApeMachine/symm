@@ -60,114 +60,127 @@ func (fluid *Fluid) Start() error        { return nil }
 func (fluid *Fluid) State() engine.State { return engine.READY }
 
 func (fluid *Fluid) Tick() error {
-	select {
-	case <-fluid.ctx.Done():
-		return fluid.ctx.Err()
-	case value := <-fluid.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting fluid tick")
+
+	for {
+		select {
+		case <-fluid.ctx.Done():
+			return fluid.ctx.Err()
+		case value := <-fluid.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := fluid.requested.Load(symbol); seen {
+					continue
+				}
+
+				fluid.pending = append(fluid.pending, symbol)
 			}
 
-			fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
+			fluid.publishPulse()
+		case value := <-fluid.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := fluid.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok {
+				break
 			}
 
-			if _, seen := fluid.requested.Load(symbol); seen {
-				continue
+			state := raw.(*FluidSymbol)
+			state.changePct = row.ChangePct
+			state.volume = row.Volume
+
+			if row.Last > 0 {
+				state.last = row.Last
 			}
 
-			fluid.pending = append(fluid.pending, symbol)
-		}
-
-		fluid.publishPulse()
-	case value := <-fluid.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := fluid.symbols.Load(row.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*FluidSymbol)
-		state.changePct = row.ChangePct
-		state.volume = row.Volume
-
-		fluid.publishPulse()
-	case value := <-fluid.subscribers["book"].Incoming:
-		delta := value.Value.(market.BookLevelsDelta)
-		raw, ok := fluid.symbols.Load(delta.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*FluidSymbol)
-
-		if delta.BidOK {
-			state.bids = delta.Bids
-		}
-
-		if delta.AskOK {
-			state.asks = delta.Asks
-		}
-
-		state.FeedBook(delta)
-
-		if len(state.bids) > 0 && len(state.asks) > 0 {
-			bid := state.bids[0].Price
-			ask := state.asks[0].Price
-			mid := (bid + ask) / 2
-
-			if mid > 0 {
-				state.spreadBPS = (ask - bid) / mid * 10000
+			if row.Bid > 0 {
+				state.bid = row.Bid
 			}
+
+			if row.Ask > 0 {
+				state.ask = row.Ask
+			}
+
+			fluid.publishPulse()
+		case value := <-fluid.subscribers["book"].Incoming:
+			delta := value.Value.(market.BookLevelsDelta)
+			raw, ok := fluid.symbols.Load(delta.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*FluidSymbol)
+
+			if delta.BidOK {
+				state.bids = delta.Bids
+			}
+
+			if delta.AskOK {
+				state.asks = delta.Asks
+			}
+
+			state.FeedBook(delta)
+
+			if len(state.bids) > 0 && len(state.asks) > 0 {
+				bid := state.bids[0].Price
+				ask := state.asks[0].Price
+				mid := (bid + ask) / 2
+
+				if mid > 0 {
+					state.spreadBPS = (ask - bid) / mid * 10000
+				}
+			}
+
+			if _, seen := fluid.requested.Load(delta.Symbol); seen {
+				break
+			}
+
+			if len(state.bids) == 0 || len(state.asks) == 0 {
+				break
+			}
+
+			fluid.requested.Store(delta.Symbol, struct{}{})
+			fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+
+			fluid.publishPulse()
+		case value := <-fluid.subscribers["trade"].Incoming:
+			tick := value.Value.(trade.Data)
+			raw, ok := fluid.symbols.Load(tick.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*FluidSymbol)
+			state.FeedTrade(tick.Timestamp, tick.Qty)
+			sign := -1.0
+
+			if tick.Side == "buy" {
+				sign = 1.0
+			}
+
+			state.buyPressure = errnie.Does(func() (float64, error) {
+				return state.pressure.Next(0, sign)
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value()
+
+			fluid.publishPulse()
+		case value := <-fluid.subscribers["feedback"].Incoming:
+			fluid.Feedback(value.Value.(engine.PredictionFeedback))
+			fluid.publishPulse()
 		}
-
-		if _, seen := fluid.requested.Load(delta.Symbol); seen {
-			break
-		}
-
-		if len(state.bids) == 0 || len(state.asks) == 0 {
-			break
-		}
-
-		fluid.requested.Store(delta.Symbol, struct{}{})
-		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
-
-		fluid.publishPulse()
-	case value := <-fluid.subscribers["trade"].Incoming:
-		tick := value.Value.(trade.Data)
-		raw, ok := fluid.symbols.Load(tick.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*FluidSymbol)
-		state.FeedTrade(tick.Timestamp, tick.Qty)
-		sign := -1.0
-
-		if tick.Side == "buy" {
-			sign = 1.0
-		}
-
-		state.buyPressure = errnie.Does(func() (float64, error) {
-			return state.pressure.Next(0, sign)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		fluid.publishPulse()
-	case value := <-fluid.subscribers["feedback"].Incoming:
-		fluid.Feedback(value.Value.(engine.PredictionFeedback))
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=fluid")
 	}
-
-	return nil
 }
 
 func (fluid *Fluid) requestedCount() int {

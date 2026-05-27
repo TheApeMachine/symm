@@ -47,7 +47,7 @@ func NewDepthFlow(ctx context.Context, pool *qpool.Q) *DepthFlow {
 		requested:   sync.Map{},
 	}
 
-	for _, channel := range []string{"symbols", "book", "trade", "feedback"} {
+	for _, channel := range []string{"symbols", "tick", "book", "trade", "feedback"} {
 		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		depthflow.subscribers[channel] = group.Subscribe("depthflow:"+channel, 128)
 	}
@@ -67,91 +67,112 @@ func (depthflow *DepthFlow) State() engine.State {
 }
 
 func (depthflow *DepthFlow) Tick() error {
-	select {
-	case <-depthflow.ctx.Done():
-		return depthflow.ctx.Err()
-	case value := <-depthflow.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting depthflow tick")
+
+	for {
+		select {
+		case <-depthflow.ctx.Done():
+			return depthflow.ctx.Err()
+		case value := <-depthflow.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				depthflow.symbols.Store(symbol, NewDepthSymbol(*pair))
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := depthflow.requested.Load(symbol); seen {
+					continue
+				}
+
+				depthflow.pending = append(depthflow.pending, symbol)
 			}
 
-			depthflow.symbols.Store(symbol, NewDepthSymbol(*pair))
+			depthflow.publishPulse()
+		case value := <-depthflow.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := depthflow.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok {
+				break
 			}
 
-			if _, seen := depthflow.requested.Load(symbol); seen {
-				continue
+			state := raw.(*DepthSymbol)
+			state.FeedTicker(row)
+
+			if _, seen := depthflow.requested.Load(row.Symbol); seen || row.ChangePct == 0 {
+				break
 			}
 
-			depthflow.pending = append(depthflow.pending, symbol)
+			depthflow.requested.Store(row.Symbol, struct{}{})
+			depthflow.broadcasts["subscriptions"].Send(
+				&qpool.QValue[any]{Value: []string{row.Symbol}},
+			)
+
+			depthflow.publishPulse()
+		case value := <-depthflow.subscribers["book"].Incoming:
+			delta := value.Value.(market.BookLevelsDelta)
+			raw, ok := depthflow.symbols.Load(delta.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*DepthSymbol)
+
+			if delta.BidOK {
+				state.bids = delta.Bids
+			}
+
+			if delta.AskOK {
+				state.asks = delta.Asks
+			}
+
+			if _, seen := depthflow.requested.Load(delta.Symbol); seen {
+				break
+			}
+
+			if len(state.bids) == 0 || len(state.asks) == 0 {
+				break
+			}
+
+			depthflow.requested.Store(delta.Symbol, struct{}{})
+			depthflow.broadcasts["subscriptions"].Send(
+				&qpool.QValue[any]{Value: []string{delta.Symbol}},
+			)
+
+			depthflow.publishPulse()
+		case value := <-depthflow.subscribers["trade"].Incoming:
+			tick := value.Value.(trade.Data)
+			raw, ok := depthflow.symbols.Load(tick.Symbol)
+
+			if !ok {
+				break
+			}
+
+			state := raw.(*DepthSymbol)
+			sign := -1.0
+
+			if tick.Side == "buy" {
+				sign = 1.0
+			}
+
+			state.buyPressure = errnie.Does(func() (float64, error) {
+				return state.pressure.Next(0, sign)
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value()
+
+			depthflow.publishPulse()
+		case value := <-depthflow.subscribers["feedback"].Incoming:
+			depthflow.Feedback(value.Value.(engine.PredictionFeedback))
+			depthflow.publishPulse()
 		}
-
-		depthflow.publishPulse()
-	case value := <-depthflow.subscribers["book"].Incoming:
-		delta := value.Value.(market.BookLevelsDelta)
-		raw, ok := depthflow.symbols.Load(delta.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*DepthSymbol)
-
-		if delta.BidOK {
-			state.bids = delta.Bids
-		}
-
-		if delta.AskOK {
-			state.asks = delta.Asks
-		}
-
-		if _, seen := depthflow.requested.Load(delta.Symbol); seen {
-			break
-		}
-
-		if len(state.bids) == 0 || len(state.asks) == 0 {
-			break
-		}
-
-		depthflow.requested.Store(delta.Symbol, struct{}{})
-		depthflow.broadcasts["subscriptions"].Send(
-			&qpool.QValue[any]{Value: []string{delta.Symbol}},
-		)
-
-		depthflow.publishPulse()
-	case value := <-depthflow.subscribers["trade"].Incoming:
-		tick := value.Value.(trade.Data)
-		raw, ok := depthflow.symbols.Load(tick.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*DepthSymbol)
-		sign := -1.0
-
-		if tick.Side == "buy" {
-			sign = 1.0
-		}
-
-		state.buyPressure = errnie.Does(func() (float64, error) {
-			return state.pressure.Next(0, sign)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		depthflow.publishPulse()
-	case value := <-depthflow.subscribers["feedback"].Incoming:
-		depthflow.Feedback(value.Value.(engine.PredictionFeedback))
-		depthflow.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=depthflow")
 	}
-
-	return nil
 }
 
 func (depthflow *DepthFlow) requestedCount() int {

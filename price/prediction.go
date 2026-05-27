@@ -83,25 +83,25 @@ func (prediction *Prediction) Close() error {
 }
 
 func (prediction *Prediction) Tick() error {
-	prediction.stateMu.Lock()
-	defer prediction.stateMu.Unlock()
+	errnie.Info("starting prediction tick")
 
-	select {
-	case <-prediction.ctx.Done():
-		return prediction.ctx.Err()
-	case value := <-prediction.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
+	for {
+		prediction.stateMu.Lock()
+		defer prediction.stateMu.Unlock()
 
-		if row.Last > 0 {
-			prediction.prices[row.Symbol] = row.Last
+		select {
+		case <-prediction.ctx.Done():
+			return prediction.ctx.Err()
+		case value := <-prediction.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+
+			if row.Last > 0 {
+				prediction.prices[row.Symbol] = row.Last
+			}
+
+			prediction.settleDue(time.Now())
 		}
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=prediction")
 	}
-
-	prediction.settleDue(time.Now())
-
-	return nil
 }
 
 func (prediction *Prediction) SeedReturnCalibration(source string, magnitude float64) {
@@ -128,15 +128,16 @@ func (prediction *Prediction) Record(
 
 	symbol := measurement.Pairs[0].Wsname
 	runway := measurementRunway(measurement)
-	predictedReturn := 0.0
-	sourceEMA := prediction.returnEMA(measurement.Source)
+	scale := math.Abs(prediction.returnEMA(measurement.Source).Value())
 
-	if prediction.returnCount[measurement.Source] >= config.System.MinCalibrationSamples {
-		magnitude := math.Abs(sourceEMA.Value())
+	if scale <= 0 {
+		scale = 1.0
+	}
 
-		if magnitude > 0 {
-			predictedReturn = measurement.Confidence * magnitude
-		}
+	predictedReturn := measurement.Confidence * scale
+
+	if predictedReturn <= 0 {
+		predictedReturn = 0.01 * scale
 	}
 
 	bySource := prediction.open[symbol]
@@ -157,13 +158,15 @@ func (prediction *Prediction) Record(
 		predictedAt:     now,
 	}
 
-	if predictedReturn > 0 {
-		prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":  "prediction",
-			"source": measurement.Source,
-			"value":  predictedReturn,
-		}})
-	}
+	prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":     "prediction",
+		"source":    measurement.Source,
+		"symbol":    symbol,
+		"value":     predictedReturn,
+		"ts":        now.UTC().Format(time.RFC3339Nano),
+		"due_at":    now.Add(runway).UTC().Format(time.RFC3339Nano),
+		"runway_ms": runway.Milliseconds(),
+	}})
 
 	return predictedReturn
 }
@@ -207,6 +210,8 @@ func (prediction *Prediction) settleDue(now time.Time) {
 					ActualReturn:    actualReturn,
 					Error:           open.predictedReturn - actualReturn,
 					Runway:          open.runway,
+					PredictedAt:     open.predictedAt,
+					DueAt:           open.dueAt,
 					SettledAt:       now,
 					Unanchored:      open.anchorPrice <= 0,
 				}

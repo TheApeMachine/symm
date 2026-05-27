@@ -65,6 +65,24 @@ func TestCounterfactualUpliftPositive(t *testing.T) {
 	}
 }
 
+func TestCausalMeasureTickerOnly(t *testing.T) {
+	state := NewCausalSymbol(asset.Pair{Wsname: "ALT/EUR"}, engine.DefaultCalibrationParams())
+	state.lastPrice = 10
+	state.bid = 9.99
+	state.ask = 10.01
+	state.changePct = 2.5
+
+	measurement, ok := state.Measure(1.2, time.Now())
+
+	if !ok {
+		t.Fatal("expected ticker-only causal measurement")
+	}
+
+	if measurement.Confidence <= 0 || measurement.Reason != "macro_association" {
+		t.Fatalf("unexpected ticker-only measurement: %+v", measurement)
+	}
+}
+
 func TestSymbolEvaluateIntervention(t *testing.T) {
 	state := NewCausalSymbol(asset.Pair{Wsname: "ALT/EUR"}, engine.DefaultCalibrationParams())
 

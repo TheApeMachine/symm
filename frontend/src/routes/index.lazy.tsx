@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useMemo } from "react";
 import { createLazyFileRoute } from "@tanstack/react-router";
 
 import { DashboardHeader } from "#/components/header";
@@ -6,6 +6,7 @@ import { TradesPanel } from "#/components/trades";
 import {
 	useSymmConnected,
 	useSymmEnginePulse,
+	useSymmWallet,
 } from "#/lib/symm/use-dashboard-data";
 
 const PredictionChart = lazy(() =>
@@ -20,9 +21,9 @@ const Gauges = lazy(() =>
 	})),
 );
 
-const TradeChart = lazy(() =>
+const TradeChartGrid = lazy(() =>
 	import("#/components/symm/TradeChart").then((module) => ({
-		default: module.TradeChart,
+		default: module.TradeChartGrid,
 	})),
 );
 
@@ -38,9 +39,27 @@ const ChartFallback = () => (
 	</div>
 );
 
+const useOpenChartSymbols = () => {
+	const wallet = useSymmWallet();
+
+	return useMemo(() => {
+		const currency = wallet.currency || "EUR";
+		const open = Object.entries(wallet.inventory)
+			.filter(([, qty]) => qty > 0)
+			.map(([base]) => `${base}/${currency}`);
+
+		if (open.length > 0) {
+			return open;
+		}
+
+		return ["BTC/EUR"];
+	}, [wallet.currency, wallet.inventory]);
+};
+
 const TradingDashboard = () => {
 	const connected = useSymmConnected();
 	const pulse = useSymmEnginePulse();
+	const chartSymbols = useOpenChartSymbols();
 
 	return (
 		<div className="dashboard-shell">
@@ -57,9 +76,13 @@ const TradingDashboard = () => {
 							</Suspense>
 						</div>
 						<div className="dashboard-trade-panel">
-							<div className="dashboard-panel-header">BTC/EUR</div>
+							<div className="dashboard-panel-header">
+								{chartSymbols.length === 1
+									? chartSymbols[0]
+									: `${chartSymbols.length} open positions`}
+							</div>
 							<Suspense fallback={<ChartFallback />}>
-								<TradeChart symbol="BTC/EUR" />
+								<TradeChartGrid symbols={chartSymbols} />
 							</Suspense>
 						</div>
 					</section>

@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ohlc"
 	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/trader"
 )
 
 /*
@@ -40,6 +41,7 @@ type PublicClient struct {
 	url         string
 	once        sync.Once
 	subscribed  map[string]struct{}
+	heldSymbols map[string]struct{}
 	catalogAt   time.Time
 	replay      bool
 }
@@ -58,11 +60,14 @@ func NewPublicClient(
 		subscribers: make(map[string]*qpool.Subscriber),
 		url:         url,
 		subscribed:  make(map[string]struct{}),
+		heldSymbols: make(map[string]struct{}),
 		replay:      config.System.ReplayFile != "",
 	}
 
 	subscriptions := pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
 	publicClient.subscribers["subscriptions"] = subscriptions.Subscribe("public:subscriptions", 128)
+	publicClient.subscribers["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond).
+		Subscribe("public:wallet", 128)
 	publicClient.tick = pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
 	publicClient.trade = pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 	publicClient.book = pool.CreateBroadcastGroup("book", 10*time.Millisecond)
@@ -82,69 +87,98 @@ func (publicClient *PublicClient) State() engine.State {
 }
 
 func (publicClient *PublicClient) Tick() error {
-	select {
-	case <-publicClient.ctx.Done():
-		publicClient.cancel()
-		return publicClient.ctx.Err()
-	case msg := <-publicClient.subscribers["subscriptions"].Incoming:
-		symbols, ok := msg.Value.([]string)
+	errnie.Info("starting public client tick")
 
-		if !ok {
-			return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
-		}
+	for {
+		select {
+		case <-publicClient.ctx.Done():
+			publicClient.cancel()
+			return publicClient.ctx.Err()
+		case msg := <-publicClient.subscribers["subscriptions"].Incoming:
+			symbols, ok := msg.Value.([]string)
 
-		if publicClient.replay || publicClient.conn == nil {
-			return nil
-		}
-
-		pending := make([]string, 0, len(symbols))
-
-		for _, symbol := range symbols {
-			if symbol == "" {
-				continue
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
 			}
 
-			if _, seen := publicClient.subscribed[symbol]; seen {
-				continue
+			return publicClient.subscribeSymbols(symbols)
+		case msg := <-publicClient.subscribers["wallet"].Incoming:
+			wallet, ok := msg.Value.(*trader.Wallet)
+
+			if !ok || wallet == nil {
+				return errnie.Error(fmt.Errorf("invalid wallet message: %v", msg.Value))
 			}
 
-			publicClient.subscribed[symbol] = struct{}{}
-			pending = append(pending, symbol)
+			return publicClient.subscribeSymbols(publicClient.openInventorySymbols(wallet))
+		}
+	}
+}
+
+func (publicClient *PublicClient) openInventorySymbols(wallet *trader.Wallet) []string {
+	symbols := make([]string, 0, len(wallet.Inventory))
+
+	for base, qty := range wallet.Inventory {
+		if qty <= config.System.LiveInventoryEpsilon {
+			continue
 		}
 
-		if len(pending) == 0 {
-			return nil
-		}
+		symbols = append(symbols, base+"/"+wallet.Currency)
+	}
 
-		if err := publicClient.conn.WriteJSON(ohlc.NewSubscribe(pending)); err != nil {
-			return errnie.Error(err)
-		}
+	return symbols
+}
 
-		if err := publicClient.conn.WriteJSON(trade.NewSubscribe(pending)); err != nil {
-			return errnie.Error(err)
-		}
-
-		if err := publicClient.conn.WriteJSON(map[string]any{
-			"method": "subscribe",
-			"params": market.SubscribeParams{}.Ticker(pending),
-		}); err != nil {
-			return errnie.Error(err)
-		}
-
-		if err := publicClient.conn.WriteJSON(map[string]any{
-			"method": "subscribe",
-			"params": market.SubscribeParams{}.Book(
-				pending, config.System.BookDepthLevels,
-			),
-		}); err != nil {
-			return errnie.Error(err)
-		}
-
-		return nil
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=public client")
+func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
+	if publicClient.replay || publicClient.conn == nil {
 		return nil
 	}
+
+	pending := make([]string, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		publicClient.heldSymbols[symbol] = struct{}{}
+
+		if _, seen := publicClient.subscribed[symbol]; seen {
+			continue
+		}
+
+		publicClient.subscribed[symbol] = struct{}{}
+		pending = append(pending, symbol)
+	}
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	if err := publicClient.conn.WriteJSON(ohlc.NewSubscribe(pending)); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := publicClient.conn.WriteJSON(trade.NewSubscribe(pending)); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := publicClient.conn.WriteJSON(map[string]any{
+		"method": "subscribe",
+		"params": market.SubscribeParams{}.Ticker(pending),
+	}); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := publicClient.conn.WriteJSON(map[string]any{
+		"method": "subscribe",
+		"params": market.SubscribeParams{}.Book(
+			pending, config.System.BookDepthLevels,
+		),
+	}); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
 }
 
 func (publicClient *PublicClient) Connect() error {
@@ -193,6 +227,8 @@ func (publicClient *PublicClient) runReplay() {
 }
 
 func (publicClient *PublicClient) runLive() {
+	errnie.Info("starting public client live")
+
 	backoff := 30 * time.Second
 
 	for publicClient.ctx.Err() == nil {
@@ -322,6 +358,18 @@ func (publicClient *PublicClient) read(payload []byte) {
 
 		publicClient.catalogAt = time.Now()
 		publicClient.symbols.Send(&qpool.QValue[any]{Value: pairs})
+
+		if len(publicClient.heldSymbols) > 0 {
+			resubscribe := make([]string, 0, len(publicClient.heldSymbols))
+
+			for symbol := range publicClient.heldSymbols {
+				resubscribe = append(resubscribe, symbol)
+			}
+
+			publicClient.subscribed = make(map[string]struct{})
+			_ = publicClient.subscribeSymbols(resubscribe)
+		}
+
 		publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 			"event": "quote_progress",
 			"ts":    time.Now().UTC().Format(time.RFC3339Nano),
@@ -335,8 +383,27 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+
 		for _, row := range rows {
 			publicClient.tick.Send(&qpool.QValue[any]{Value: row})
+
+			price := row.Last
+
+			if price <= 0 && row.Bid > 0 && row.Ask > 0 {
+				price = (row.Bid + row.Ask) / 2
+			}
+
+			if price <= 0 {
+				continue
+			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     now,
+				"symbol": row.Symbol,
+				"price":  price,
+			}})
 		}
 	case core.ChannelTrades, "trade":
 		var message trade.Snapshot
@@ -345,8 +412,21 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+
 		for _, row := range message.Data {
 			publicClient.trade.Send(&qpool.QValue[any]{Value: row})
+
+			if row.Price <= 0 {
+				continue
+			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     now,
+				"symbol": row.Symbol,
+				"price":  row.Price,
+			}})
 		}
 	case core.ChannelOHLC:
 		var message ohlc.Snapshot
@@ -369,6 +449,17 @@ func (publicClient *PublicClient) read(payload []byte) {
 				"low":    row.Low,
 				"close":  row.Close,
 				"volume": row.Volume,
+			}})
+
+			if row.Close <= 0 {
+				continue
+			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     now,
+				"symbol": row.Symbol,
+				"price":  row.Close,
 			}})
 		}
 	case core.ChannelBook:

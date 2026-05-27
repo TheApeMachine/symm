@@ -6,6 +6,20 @@ import { SidebarSection } from "./sidebar-section";
 import { EmptyHint } from "./hint";
 import { formatEur } from "#/lib/utils";
 
+const formatSignedEur = (value: number) => {
+	const prefix = value >= 0 ? "+" : "−";
+
+	return `${prefix}${formatEur(Math.abs(value))}`;
+};
+
+const pnlClass = (value: number | undefined) => {
+	if (value === undefined || value === 0) {
+		return "text-(--dash-muted)";
+	}
+
+	return value > 0 ? "text-emerald-400" : "text-rose-400";
+};
+
 export const TradesPanel = () => {
 	const connected = useSymmConnected();
 	const rows = useSymmTradePanelRows();
@@ -33,7 +47,16 @@ export const TradesPanel = () => {
 											: "ENTER"}{" "}
 									{row.symbol}
 								</span>
-								{row.kind === "open" && row.qty !== undefined ? (
+								{row.kind === "open" && row.unrealizedEur !== undefined ? (
+									<span
+										className={`tabular-nums font-medium ${pnlClass(row.unrealizedEur)}`}
+									>
+										{formatSignedEur(row.unrealizedEur)}
+									</span>
+								) : null}
+								{row.kind === "open" &&
+								row.unrealizedEur === undefined &&
+								row.qty !== undefined ? (
 									<span className="tabular-nums text-(--dash-muted)">
 										{row.qty.toFixed(6)}
 									</span>
@@ -48,8 +71,24 @@ export const TradesPanel = () => {
 								<span>
 									{row.side ?? row.kind}
 									{row.price !== undefined ? ` @ ${row.price.toFixed(2)}` : ""}
+									{row.kind === "open" && row.entryPrice !== undefined
+										? ` · entry ${row.entryPrice.toFixed(2)}`
+										: ""}
+									{row.kind === "open" && row.markPrice !== undefined
+										? ` · mark ${row.markPrice.toFixed(2)}`
+										: ""}
 								</span>
-								{row.kind === "open" && row.qty !== undefined ? (
+								{row.kind === "open" && row.unrealizedPct !== undefined ? (
+									<span
+										className={`tabular-nums ${pnlClass(row.unrealizedEur)}`}
+									>
+										{row.unrealizedPct >= 0 ? "+" : "−"}
+										{Math.abs(row.unrealizedPct).toFixed(2)}%
+									</span>
+								) : null}
+								{row.kind === "open" &&
+								row.unrealizedPct === undefined &&
+								row.qty !== undefined ? (
 									<span className="tabular-nums">inventory</span>
 								) : null}
 							</div>

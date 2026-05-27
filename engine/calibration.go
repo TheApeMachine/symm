@@ -41,8 +41,14 @@ Apply records one settled forecast and updates the running EWMA scale.
 Half-life adapts to the signal runway when enough samples exist.
 */
 func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
-	if feedback.Unanchored || feedback.PredictedReturn <= 0 {
+	if feedback.Unanchored {
 		return
+	}
+
+	predictedReturn := feedback.PredictedReturn
+
+	if predictedReturn <= 0 {
+		predictedReturn = 0.01
 	}
 
 	if feedback.Runway > 0 && calibrator.forecast.Updates() >= calibrator.params.minCalibrationSamples() {
@@ -50,7 +56,7 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 	}
 
 	_ = calibrator.forecast.Absorb(
-		feedback.PredictedReturn,
+		predictedReturn,
 		feedback.ActualReturn,
 		calibrator.ewmaAlpha(),
 	)

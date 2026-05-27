@@ -47,6 +47,18 @@ func (client *wsClient) close() error {
 	return client.conn.Close()
 }
 
+func (client *wsClient) writeJSON(payload any) error {
+	if client.closed.Load() {
+		return websocket.ErrCloseSent
+	}
+
+	if client.closed.Load() {
+		return websocket.ErrCloseSent
+	}
+
+	return client.conn.WriteJSON(payload)
+}
+
 /*
 Hub subscribes to every broadcast group and writes payloads to websocket clients.
 */
@@ -59,6 +71,7 @@ type Hub struct {
 	clients         *sync.Map
 	walletSnap      atomic.Value
 	confidenceSnaps sync.Map
+	fieldSnap       atomic.Value
 }
 
 /*
@@ -82,7 +95,6 @@ func NewHub(
 	for _, channel := range []string{
 		"wallet",
 		"ohlc",
-		"subscriptions",
 		"confidence",
 		"feedback",
 		"executions",
@@ -135,13 +147,10 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	hub.clients.Store(client, struct{}{})
 
-	if err = client.conn.WriteJSON(map[string]any{
+	hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
 		"event": "hello",
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-	}); err != nil {
-		errnie.Error(client.close())
-		return
-	}
+	}})
 
 	hub.sendSnapshots(client)
 
@@ -181,64 +190,95 @@ func (hub *Hub) remember(channel string, payload any) {
 		}
 
 		hub.confidenceSnaps.Store(source, payload)
+	case "ui":
+		row, ok := payload.(map[string]any)
+
+		if !ok {
+			return
+		}
+
+		if row["event"] == "field_snapshot" {
+			hub.fieldSnap.Store(payload)
+		}
 	}
 }
 
 func (hub *Hub) sendSnapshots(client *wsClient) {
 	if wallet := hub.walletSnap.Load(); wallet != nil {
-		if err := client.conn.WriteJSON(wallet); err != nil {
-			errnie.Error(client.close())
-			return
-		}
+		hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: wallet})
 	}
 
 	hub.confidenceSnaps.Range(func(_, value any) bool {
-		if err := client.conn.WriteJSON(value); err != nil {
-			errnie.Error(client.close())
-			return false
-		}
+		hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: value})
 
 		return true
 	})
+
+	if field := hub.fieldSnap.Load(); field != nil {
+		hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: field})
+	}
 }
 
 func (hub *Hub) writePump() {
+	errnie.Info("starting ui hub pump")
+
 	for hub.ctx.Err() == nil {
 		wrote := false
 
-		for channel, sub := range hub.subscriptions {
-			select {
-			case value, open := <-sub.Incoming:
-				if !open || value == nil {
-					continue
-				}
-
-				wrote = true
-				hub.remember(channel, value.Value)
-
-				hub.clients.Range(func(key, _ any) bool {
-					client, ok := key.(*wsClient)
-
-					if !ok || client.closed.Load() {
-						return true
-					}
-
-					if err := client.conn.WriteJSON(value.Value); err != nil {
-						errnie.Error(client.close())
-						return false
-					}
-
-					return true
-				})
-			default:
-				errnie.Warn("this just feels like, spinning plates, system=hub")
-			}
+		select {
+		case value, open := <-hub.subscriptions["ui"].Incoming:
+			hub.write("ui", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["feedback"].Incoming:
+			hub.write("feedback", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["executions"].Incoming:
+			hub.write("executions", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["exits"].Incoming:
+			hub.write("exits", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["orders"].Incoming:
+			hub.write("orders", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["ohlc"].Incoming:
+			hub.write("ohlc", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["confidence"].Incoming:
+			hub.write("confidence", value, open)
+			wrote = true
+		case value, open := <-hub.subscriptions["wallet"].Incoming:
+			hub.write("wallet", value, open)
+			wrote = true
 		}
 
 		if !wrote {
 			time.Sleep(time.Millisecond)
 		}
 	}
+}
+
+func (hub *Hub) write(channel string, value *qpool.QValue[any], open bool) {
+	if !open || value == nil {
+		return
+	}
+
+	hub.remember(channel, value.Value)
+
+	hub.clients.Range(func(key, _ any) bool {
+		client, ok := key.(*wsClient)
+
+		if !ok || client.closed.Load() {
+			return true
+		}
+
+		if err := client.writeJSON(value.Value); err != nil {
+			errnie.Error(client.close())
+			return false
+		}
+
+		return true
+	})
 }
 
 /*

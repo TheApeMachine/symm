@@ -3,6 +3,7 @@ package leadlag
 import (
 	"context"
 	"iter"
+	"math"
 	"sync"
 	"time"
 
@@ -74,67 +75,67 @@ func (leadlag *LeadLag) Start() error        { return nil }
 func (leadlag *LeadLag) State() engine.State { return engine.READY }
 
 func (leadlag *LeadLag) Tick() error {
-	select {
-	case <-leadlag.ctx.Done():
-		return leadlag.ctx.Err()
-	case value := <-leadlag.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting leadlag tick")
+
+	for {
+		select {
+		case <-leadlag.ctx.Done():
+			return leadlag.ctx.Err()
+		case value := <-leadlag.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				leadlag.symbols.Store(symbol, &symbolState{pair: *pair})
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := leadlag.requested.Load(symbol); seen {
+					continue
+				}
+
+				if symbol == anchorSymbol {
+					leadlag.requested.Store(symbol, struct{}{})
+					leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{symbol}})
+					continue
+				}
+
+				leadlag.pending = append(leadlag.pending, symbol)
 			}
 
-			leadlag.symbols.Store(symbol, &symbolState{pair: *pair})
+			leadlag.publishPulse()
+		case value := <-leadlag.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := leadlag.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok || row.ChangePct == 0 {
+				break
 			}
 
-			if _, seen := leadlag.requested.Load(symbol); seen {
-				continue
+			state := raw.(*symbolState)
+			state.changePct = row.ChangePct
+
+			if row.Last > 0 {
+				state.last = row.Last
 			}
 
-			if symbol == anchorSymbol {
-				leadlag.requested.Store(symbol, struct{}{})
-				leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{symbol}})
-				continue
+			if row.Bid > 0 {
+				state.bid = row.Bid
 			}
 
-			leadlag.pending = append(leadlag.pending, symbol)
+			if row.Ask > 0 {
+				state.ask = row.Ask
+			}
+
+			leadlag.publishPulse()
+		case value := <-leadlag.subscribers["feedback"].Incoming:
+			leadlag.Feedback(value.Value.(engine.PredictionFeedback))
+			leadlag.publishPulse()
 		}
-
-		leadlag.publishPulse()
-	case value := <-leadlag.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := leadlag.symbols.Load(row.Symbol)
-
-		if !ok || row.ChangePct == 0 {
-			break
-		}
-
-		state := raw.(*symbolState)
-		state.changePct = row.ChangePct
-
-		if row.Last > 0 {
-			state.last = row.Last
-		}
-
-		if row.Bid > 0 {
-			state.bid = row.Bid
-		}
-
-		if row.Ask > 0 {
-			state.ask = row.Ask
-		}
-
-		leadlag.publishPulse()
-	case value := <-leadlag.subscribers["feedback"].Incoming:
-		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
-		leadlag.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=leadlag")
 	}
-
-	return nil
 }
 
 func (leadlag *LeadLag) requestedCount() int {
@@ -185,19 +186,17 @@ func (leadlag *LeadLag) publishMeasurements() {
 	}
 
 	anchor := anchorRaw.(*symbolState)
-
-	if anchor.changePct < minAnchorMove {
-		return
-	}
-
-	lags := leadlag.buildLags(anchor)
-	anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
+	lags := leadlag.lagRatios(anchor)
 	waiters := make([]chan *qpool.QValue[any], 0, len(lags))
 
 	for symbol, lagRatio := range lags {
-		raw, ok := leadlag.symbols.Load(symbol)
+		if _, subscribed := leadlag.requested.Load(symbol); !subscribed {
+			continue
+		}
 
-		if !ok {
+		raw, loaded := leadlag.symbols.Load(symbol)
+
+		if !loaded {
 			continue
 		}
 
@@ -211,11 +210,7 @@ func (leadlag *LeadLag) publishMeasurements() {
 					return nil, err
 				}
 
-				if peakLag <= 0 {
-					return nil, nil
-				}
-
-				measurement, ok := lagMeasurement(state, peakLag, anchorStrength)
+				measurement, ok := lagMeasurement(anchor, state, peakLag, lagRatio)
 
 				if !ok {
 					return nil, nil
@@ -266,13 +261,7 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		anchor := anchorRaw.(*symbolState)
-
-		if anchor.changePct < minAnchorMove {
-			return
-		}
-
-		lags := leadlag.buildLags(anchor)
-		anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
+		lags := leadlag.lagRatios(anchor)
 
 		for symbol, lagRatio := range lags {
 			peakLag, err := leadlag.peak.Next(lagRatio, adaptive.PeerValues(lags, symbol)...)
@@ -282,18 +271,14 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 				continue
 			}
 
-			if peakLag <= 0 {
-				continue
-			}
+			raw, loaded := leadlag.symbols.Load(symbol)
 
-			raw, ok := leadlag.symbols.Load(symbol)
-
-			if !ok {
+			if !loaded {
 				continue
 			}
 
 			state := raw.(*symbolState)
-			measurement, ok := lagMeasurement(state, peakLag, anchorStrength)
+			measurement, ok := lagMeasurement(anchor, state, peakLag, lagRatio)
 
 			if !ok {
 				continue
@@ -312,37 +297,60 @@ func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
 	}
 }
 
-func (leadlag *LeadLag) buildLags(anchor *symbolState) map[string]float64 {
-	lags := make(map[string]float64)
+func (leadlag *LeadLag) lagRatios(anchor *symbolState) map[string]float64 {
+	ratios := make(map[string]float64)
 
 	leadlag.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
+
+		if symbol == anchorSymbol {
+			return true
+		}
+
 		state := value.(*symbolState)
 
-		if symbol == anchorSymbol || state.changePct <= 0 {
+		if state.changePct == 0 && anchor.changePct == 0 {
 			return true
 		}
 
-		lag := anchor.changePct - state.changePct
+		gap := anchor.changePct - state.changePct
 
-		if lag <= anchor.changePct*minLagFraction {
+		if anchor.changePct > 0 && gap > anchor.changePct*minLagFraction {
+			ratios[symbol] = gap / anchor.changePct
+
 			return true
 		}
 
-		lags[symbol] = lag / anchor.changePct
+		ratios[symbol] = math.Abs(gap)
 
 		return true
 	})
 
-	return lags
+	return ratios
 }
 
 func lagMeasurement(
+	anchor *symbolState,
 	state *symbolState,
 	peakLag float64,
-	anchorStrength float64,
+	lagRatio float64,
 ) (engine.Measurement, bool) {
-	confidence := engine.AlignConfidence(peakLag, anchorStrength)
+	anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
+	score := peakLag
+
+	if score <= 0 {
+		score = lagRatio
+	}
+
+	confidence := engine.AlignConfidence(score, anchorStrength)
+
+	if confidence <= 0 {
+		confidence = engine.ProvisionalConfidence(0, math.Abs(anchor.changePct-state.changePct))
+	}
+
+	if confidence <= 0 && state.changePct != 0 {
+		confidence = engine.ConfidenceFromScore(math.Abs(state.changePct))
+	}
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false

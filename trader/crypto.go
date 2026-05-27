@@ -10,7 +10,9 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/order"
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/price"
 )
 
@@ -18,19 +20,20 @@ import (
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	pool           *qpool.Q
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	ui             *qpool.BroadcastGroup
-	wallet         *Wallet
-	predictions    *price.Prediction
-	portfolioRisk  *PortfolioRisk
-	kellySizer     *KellySizer
-	restingEntries map[string]restingEntry
-	pulses         int
-	seq            int
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.Subscriber
+	ui               *qpool.BroadcastGroup
+	wallet           *Wallet
+	predictions      *price.Prediction
+	portfolioRisk    *PortfolioRisk
+	kellySizer       *KellySizer
+	sourceConfidence map[string]*adaptive.EMA
+	restingEntries   map[string]restingEntry
+	pulses           int
+	seq              int
 }
 
 func NewCrypto(
@@ -42,16 +45,17 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		broadcasts:     make(map[string]*qpool.BroadcastGroup),
-		subscribers:    make(map[string]*qpool.Subscriber),
-		wallet:         wallet,
-		predictions:    predictions,
-		portfolioRisk:  NewPortfolioRisk(),
-		kellySizer:     NewKellySizer(engine.DefaultCalibrationParams()),
-		restingEntries: make(map[string]restingEntry),
+		ctx:              ctx,
+		cancel:           cancel,
+		pool:             pool,
+		broadcasts:       make(map[string]*qpool.BroadcastGroup),
+		subscribers:      make(map[string]*qpool.Subscriber),
+		wallet:           wallet,
+		predictions:      predictions,
+		portfolioRisk:    NewPortfolioRisk(),
+		kellySizer:       NewKellySizer(engine.DefaultCalibrationParams()),
+		sourceConfidence: make(map[string]*adaptive.EMA),
+		restingEntries:   make(map[string]restingEntry),
 	}
 
 	crypto.subscribers["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).
@@ -62,6 +66,9 @@ func NewCrypto(
 
 	crypto.subscribers["feedback"] = pool.CreateBroadcastGroup("feedback", 10*time.Millisecond).
 		Subscribe("crypto:feedback", 128)
+
+	crypto.subscribers["tick"] = pool.CreateBroadcastGroup("tick", 10*time.Millisecond).
+		Subscribe("crypto:tick", 128)
 
 	crypto.broadcasts["confidence"] = pool.CreateBroadcastGroup("confidence", 10*time.Millisecond)
 	crypto.broadcasts["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond)
@@ -81,7 +88,7 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Start() error {
-	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+	crypto.sendWallet()
 	return nil
 }
 
@@ -90,54 +97,63 @@ func (crypto *Crypto) State() engine.State {
 }
 
 func (crypto *Crypto) Tick() error {
-	select {
-	case <-crypto.ctx.Done():
-		crypto.cancel()
-		return crypto.ctx.Err()
-	case value := <-crypto.subscribers["feedback"].Incoming:
-		feedback, ok := value.Value.(engine.PredictionFeedback)
+	errnie.Info("starting crypto tick")
 
-		if !ok {
-			return errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
-		}
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			crypto.cancel()
+			return crypto.ctx.Err()
+		case value := <-crypto.subscribers["feedback"].Incoming:
+			feedback, ok := value.Value.(engine.PredictionFeedback)
 
-		crypto.kellySizer.ApplyFeedback(feedback)
-
-		return nil
-	case value := <-crypto.subscribers["measurements"].Incoming:
-		measurement, ok := value.Value.(engine.Measurement)
-
-		if !ok {
-			return errnie.Error(fmt.Errorf("invalid measurement: %v", value.Value))
-		}
-
-		batch := []engine.Measurement{measurement}
-
-		for {
-			select {
-			case next := <-crypto.subscribers["measurements"].Incoming:
-				payload, ok := next.Value.(engine.Measurement)
-
-				if !ok {
-					return errnie.Error(fmt.Errorf("invalid measurement: %v", next.Value))
-				}
-
-				batch = append(batch, payload)
-			default:
-				return crypto.score(batch)
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
 			}
-		}
-	case value := <-crypto.subscribers["exits"].Incoming:
-		exit, ok := value.Value.(engine.Exit)
 
-		if !ok {
-			return errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
-		}
+			crypto.kellySizer.ApplyFeedback(feedback)
 
-		return crypto.handleExit(exit)
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=crypto")
-		return nil
+			return nil
+		case value := <-crypto.subscribers["measurements"].Incoming:
+			measurement, ok := value.Value.(engine.Measurement)
+
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid measurement: %v", value.Value))
+			}
+
+			batch := []engine.Measurement{measurement}
+
+			for {
+				select {
+				case next := <-crypto.subscribers["measurements"].Incoming:
+					payload, ok := next.Value.(engine.Measurement)
+
+					if !ok {
+						return errnie.Error(fmt.Errorf("invalid measurement: %v", next.Value))
+					}
+
+					batch = append(batch, payload)
+				default:
+					return crypto.score(batch)
+				}
+			}
+		case value := <-crypto.subscribers["exits"].Incoming:
+			exit, ok := value.Value.(engine.Exit)
+
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
+			}
+
+			return crypto.handleExit(exit)
+		case value := <-crypto.subscribers["tick"].Incoming:
+			row, ok := value.Value.(market.TickerRow)
+
+			if !ok {
+				return errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
+			}
+
+			return crypto.observeTicker(row)
+		}
 	}
 }
 
@@ -183,6 +199,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		fee := revenue * crypto.wallet.FeePct / 100
 
 		crypto.wallet.Inventory[base] = 0
+		crypto.wallet.ClearPosition(base)
 		crypto.wallet.Balance += revenue - fee
 
 		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -193,7 +210,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 			"reason":  reason,
 			"urgency": exitSignal.Urgency,
 		}})
-		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+		crypto.sendWallet()
 
 		return nil
 	}
@@ -229,17 +246,25 @@ func logicEvent(peakExit bool, defaultEvent string) string {
 func (crypto *Crypto) score(batch []engine.Measurement) error {
 	now := time.Now()
 	perspectives := make(map[string]map[engine.PerspectiveType]engine.Perspective)
-	confidenceSums := make(map[string]float64)
-	confidenceCounts := make(map[string]int)
+
+	for _, measurement := range batch {
+		if measurement.Source != "" && measurement.Confidence > 0 {
+			ema := crypto.sourceConfidence[measurement.Source]
+
+			if ema == nil {
+				ema = adaptive.NewEMA(0)
+				crypto.sourceConfidence[measurement.Source] = ema
+			}
+
+			if _, err := ema.Next(0, measurement.Confidence); err != nil {
+				errnie.Error(err)
+			}
+		}
+	}
 
 	for _, measurement := range batch {
 		if len(measurement.Pairs) == 0 {
 			continue
-		}
-
-		if measurement.Source != "" {
-			confidenceSums[measurement.Source] += measurement.Confidence
-			confidenceCounts[measurement.Source]++
 		}
 
 		symbol := measurement.Pairs[0].Wsname
@@ -273,6 +298,7 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 	}
 
 	observeBatch(crypto.portfolioRisk, batch)
+	crypto.observeOpenPrices(batch)
 
 	if crypto.wallet != nil {
 		equity := crypto.wallet.MarkEquity(crypto.portfolioRisk.lastPrices)
@@ -302,7 +328,7 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 
 		if entryAllowed {
 			crypto.enter(opportunity, slot)
-			crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+			crypto.sendWallet()
 		}
 	}
 
@@ -314,17 +340,16 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		}})
 	}
 
-	for source, sum := range confidenceSums {
-		count := confidenceCounts[source]
+	for source, ema := range crypto.sourceConfidence {
+		confidence := ema.Value()
 
-		if count == 0 {
+		if confidence <= 0 {
 			continue
 		}
 
 		crypto.broadcasts["confidence"].Send(&qpool.QValue[any]{Value: map[string]any{
 			"source":     source,
-			"confidence": sum / float64(count),
-			"count":      count,
+			"confidence": confidence,
 		}})
 	}
 
@@ -332,6 +357,20 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 
 	if summary.PredictedCount > 0 {
 		avgPrediction = summary.PredictedSum / float64(summary.PredictedCount)
+	}
+
+	batchConfidence := 0.0
+
+	for _, measurement := range batch {
+		if measurement.Confidence > batchConfidence {
+			batchConfidence = measurement.Confidence
+		}
+	}
+
+	pulseConfidence := opportunity.JointConfidence
+
+	if pulseConfidence <= 0 {
+		pulseConfidence = batchConfidence
 	}
 
 	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -344,13 +383,14 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		"avg_error":        crypto.predictions.RunningMeanError(),
 		"forecast_symbols": summary.PredictedCount,
 		"entry_blocked":    entryBlockReason,
-		"joint_confidence": opportunity.JointConfidence,
+		"joint_confidence": pulseConfidence,
+		"batch_confidence": batchConfidence,
 		"fused_edge":       summary.Edge,
 		"fused_sources":    opportunity.SourceCount,
 	}})
 
 	if crypto.wallet != nil {
-		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+		crypto.sendWallet()
 	}
 
 	crypto.pulses++
@@ -362,6 +402,135 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
 	return nil
+}
+
+func (crypto *Crypto) sendWallet() {
+	if crypto.wallet == nil {
+		return
+	}
+
+	crypto.attachWalletMarks()
+	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	for symbol, mark := range crypto.wallet.Marks {
+		if mark <= 0 {
+			continue
+		}
+
+		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "mark",
+			"ts":     now,
+			"symbol": symbol,
+			"price":  mark,
+		}})
+	}
+}
+
+func (crypto *Crypto) attachWalletMarks() {
+	if crypto.wallet == nil {
+		return
+	}
+
+	marks := make(map[string]float64)
+
+	for base, qty := range crypto.wallet.Inventory {
+		if qty <= config.System.LiveInventoryEpsilon {
+			continue
+		}
+
+		symbol := base + "/" + crypto.wallet.Currency
+		mark := 0.0
+
+		if crypto.predictions != nil {
+			mark = crypto.predictions.LastPrice(symbol)
+		}
+
+		if mark <= 0 && crypto.portfolioRisk != nil {
+			mark = crypto.portfolioRisk.Mark(symbol)
+		}
+
+		if mark <= 0 {
+			continue
+		}
+
+		marks[symbol] = mark
+	}
+
+	crypto.wallet.Marks = marks
+}
+
+func (crypto *Crypto) observeTicker(row market.TickerRow) error {
+	if crypto.wallet == nil || crypto.portfolioRisk == nil || row.Symbol == "" {
+		return nil
+	}
+
+	price := row.Last
+
+	if price <= 0 && row.Bid > 0 && row.Ask > 0 {
+		price = (row.Bid + row.Ask) / 2
+	}
+
+	if price <= 0 {
+		return nil
+	}
+
+	open := openSymbols(crypto.wallet)
+	tracked := false
+
+	for _, symbol := range open {
+		if symbol != row.Symbol {
+			continue
+		}
+
+		tracked = true
+		crypto.portfolioRisk.ObserveSymbol(symbol, price)
+	}
+
+	if !tracked {
+		return nil
+	}
+
+	crypto.sendWallet()
+
+	return nil
+}
+
+func (crypto *Crypto) observeOpenPrices(batch []engine.Measurement) {
+	if crypto.wallet == nil || crypto.portfolioRisk == nil {
+		return
+	}
+
+	batchPrices := make(map[string]float64)
+
+	for _, measurement := range batch {
+		if len(measurement.Pairs) == 0 {
+			continue
+		}
+
+		price := anchorPrice(measurement)
+
+		if price <= 0 {
+			continue
+		}
+
+		batchPrices[measurement.Pairs[0].Wsname] = price
+	}
+
+	for _, symbol := range openSymbols(crypto.wallet) {
+		price := batchPrices[symbol]
+
+		if price <= 0 && crypto.predictions != nil {
+			price = crypto.predictions.LastPrice(symbol)
+		}
+
+		if price <= 0 {
+			continue
+		}
+
+		crypto.portfolioRisk.ObserveSymbol(symbol, price)
+	}
 }
 
 func anchorPrice(measurement engine.Measurement) float64 {

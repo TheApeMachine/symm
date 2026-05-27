@@ -54,10 +54,16 @@ export const TradeChartGrid = memo(function TradeChartGrid({
 		symbols.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2";
 
 	return (
-		<div className={`grid min-h-0 flex-1 gap-0 ${gridClass}`}>
+		<div className={`grid min-h-0 flex-1 gap-1 ${gridClass}`}>
 			<SciChartGroup>
 				{symbols.map((symbol) => (
-					<TradeChart key={symbol} symbol={symbol} />
+					<div
+						key={symbol}
+						className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-(--dash-border)"
+					>
+						<div className="dashboard-panel-header shrink-0">{symbol}</div>
+						<TradeChart symbol={symbol} />
+					</div>
 				))}
 			</SciChartGroup>
 		</div>

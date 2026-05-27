@@ -29,7 +29,7 @@ var rootCmd = &cobra.Command{
 	Long:  rootLong,
 	Run: func(cmd *cobra.Command, args []string) {
 		pool := qpool.NewQ(
-			cmd.Context(), 1, runtime.NumCPU()*2, qpool.NewConfig(),
+			cmd.Context(), 1, runtime.NumCPU()*4, qpool.NewConfig(),
 		)
 
 		qpool.SuppressLogging()

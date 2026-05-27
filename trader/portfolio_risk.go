@@ -67,6 +67,17 @@ func (portfolioRisk *PortfolioRisk) ObserveSymbol(symbol string, price float64) 
 }
 
 /*
+Mark returns the latest observed price for one symbol.
+*/
+func (portfolioRisk *PortfolioRisk) Mark(symbol string) float64 {
+	if portfolioRisk == nil {
+		return 0
+	}
+
+	return portfolioRisk.lastPrices[symbol]
+}
+
+/*
 UpdateEquity anchors daily PnL and peak equity for drawdown checks.
 */
 func (portfolioRisk *PortfolioRisk) UpdateEquity(equity float64, now time.Time) {

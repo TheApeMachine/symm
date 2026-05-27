@@ -75,108 +75,108 @@ func (hawkes *Hawkes) State() engine.State {
 }
 
 func (hawkes *Hawkes) Tick() error {
-	select {
-	case <-hawkes.ctx.Done():
-		return hawkes.ctx.Err()
-	case value := <-hawkes.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair != nil {
-				hawkes.symbols.Store(symbol, &symbolState{
-					pair:  *pair,
-					state: NewHawkesSymbol(hawkes.calibration),
-					ticks: make([]trade.Data, 0, 128),
-				})
+	errnie.Info("starting hawkes tick")
+
+	for {
+		select {
+		case <-hawkes.ctx.Done():
+			return hawkes.ctx.Err()
+		case value := <-hawkes.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair != nil {
+					hawkes.symbols.Store(symbol, &symbolState{
+						pair:  *pair,
+						state: NewHawkesSymbol(hawkes.calibration),
+						ticks: make([]trade.Data, 0, 128),
+					})
+				}
 			}
+
+			hawkes.publishPulse()
+		case value := <-hawkes.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := hawkes.symbols.Load(row.Symbol)
+
+			if !ok {
+				break
+			}
+
+			symbolState := raw.(*symbolState)
+			symbolState.state.FeedTicker(row.Last, row.Volume)
+
+			if row.Last > 0 {
+				symbolState.last = row.Last
+			}
+
+			if row.Bid > 0 {
+				symbolState.bid = row.Bid
+			}
+
+			if row.Ask > 0 {
+				symbolState.ask = row.Ask
+			}
+
+			if _, seen := hawkes.requested.Load(row.Symbol); seen || row.Volume <= 0 {
+				break
+			}
+
+			if pair := symbolState.pair; pair.Quote != config.System.QuoteCurrency {
+				break
+			}
+
+			hawkes.requested.Store(row.Symbol, struct{}{})
+			hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+
+			hawkes.publishPulse()
+		case value := <-hawkes.subscribers["trade"].Incoming:
+			tick := value.Value.(trade.Data)
+			raw, ok := hawkes.symbols.Load(tick.Symbol)
+
+			if !ok {
+				break
+			}
+
+			symbolState := raw.(*symbolState)
+			symbolState.ticks = append(symbolState.ticks, tick)
+
+			if len(symbolState.ticks) > 512 {
+				symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
+			}
+
+			if _, seen := hawkes.requested.Load(tick.Symbol); !seen && len(symbolState.ticks) >= 16 {
+				hawkes.requested.Store(tick.Symbol, struct{}{})
+				hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+			}
+
+			hawkes.publishPulse()
+		case value := <-hawkes.subscribers["book"].Incoming:
+			delta := value.Value.(market.BookLevelsDelta)
+			raw, ok := hawkes.symbols.Load(delta.Symbol)
+
+			if !ok || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+				break
+			}
+
+			symbolState := raw.(*symbolState)
+			symbolState.bid = delta.Bids[0].Price
+			symbolState.ask = delta.Asks[0].Price
+
+			if symbolState.last <= 0 {
+				symbolState.last = (symbolState.bid + symbolState.ask) / 2
+			}
+
+			total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+			if total > 0 {
+				symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+			}
+
+			hawkes.publishPulse()
+		case value := <-hawkes.subscribers["feedback"].Incoming:
+			hawkes.Feedback(value.Value.(engine.PredictionFeedback))
+			hawkes.publishPulse()
 		}
-
-		hawkes.publishPulse()
-	case value := <-hawkes.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := hawkes.symbols.Load(row.Symbol)
-
-		if !ok {
-			break
-		}
-
-		symbolState := raw.(*symbolState)
-		symbolState.state.FeedTicker(row.Last, row.Volume)
-
-		if row.Last > 0 {
-			symbolState.last = row.Last
-		}
-
-		if row.Bid > 0 {
-			symbolState.bid = row.Bid
-		}
-
-		if row.Ask > 0 {
-			symbolState.ask = row.Ask
-		}
-
-		if _, seen := hawkes.requested.Load(row.Symbol); seen || row.Volume <= 0 {
-			break
-		}
-
-		if pair := symbolState.pair; pair.Quote != config.System.QuoteCurrency {
-			break
-		}
-
-		hawkes.requested.Store(row.Symbol, struct{}{})
-		hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
-
-		hawkes.publishPulse()
-	case value := <-hawkes.subscribers["trade"].Incoming:
-		tick := value.Value.(trade.Data)
-		raw, ok := hawkes.symbols.Load(tick.Symbol)
-
-		if !ok {
-			break
-		}
-
-		symbolState := raw.(*symbolState)
-		symbolState.ticks = append(symbolState.ticks, tick)
-
-		if len(symbolState.ticks) > 512 {
-			symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
-		}
-
-		if _, seen := hawkes.requested.Load(tick.Symbol); !seen && len(symbolState.ticks) >= 16 {
-			hawkes.requested.Store(tick.Symbol, struct{}{})
-			hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
-		}
-
-		hawkes.publishPulse()
-	case value := <-hawkes.subscribers["book"].Incoming:
-		delta := value.Value.(market.BookLevelsDelta)
-		raw, ok := hawkes.symbols.Load(delta.Symbol)
-
-		if !ok || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-			break
-		}
-
-		symbolState := raw.(*symbolState)
-		symbolState.bid = delta.Bids[0].Price
-		symbolState.ask = delta.Asks[0].Price
-
-		if symbolState.last <= 0 {
-			symbolState.last = (symbolState.bid + symbolState.ask) / 2
-		}
-
-		total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-		if total > 0 {
-			symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
-		}
-
-		hawkes.publishPulse()
-	case value := <-hawkes.subscribers["feedback"].Incoming:
-		hawkes.Feedback(value.Value.(engine.PredictionFeedback))
-		hawkes.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=hawkes")
 	}
-
-	return nil
 }
 
 func (hawkes *Hawkes) publishPulse() {

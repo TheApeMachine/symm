@@ -76,66 +76,66 @@ func (liquidity *Liquidity) Start() error        { return nil }
 func (liquidity *Liquidity) State() engine.State { return engine.READY }
 
 func (liquidity *Liquidity) Tick() error {
-	select {
-	case <-liquidity.ctx.Done():
-		return liquidity.ctx.Err()
-	case value := <-liquidity.subscribers["symbols"].Incoming:
-		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair == nil {
-				continue
+	errnie.Info("starting liquidity tick")
+
+	for {
+		select {
+		case <-liquidity.ctx.Done():
+			return liquidity.ctx.Err()
+		case value := <-liquidity.subscribers["symbols"].Incoming:
+			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				if pair == nil {
+					continue
+				}
+
+				liquidity.symbols.Store(symbol, &symbolState{
+					pair:     *pair,
+					forecast: learned.NewForecast(0),
+				})
+
+				if pair.Quote != config.System.QuoteCurrency {
+					continue
+				}
+
+				if _, seen := liquidity.requested.Load(symbol); seen {
+					continue
+				}
+
+				liquidity.pending = append(liquidity.pending, symbol)
 			}
 
-			liquidity.symbols.Store(symbol, &symbolState{
-				pair:     *pair,
-				forecast: learned.NewForecast(0),
-			})
+			liquidity.publishPulse()
+		case value := <-liquidity.subscribers["tick"].Incoming:
+			row := value.Value.(market.TickerRow)
+			raw, ok := liquidity.symbols.Load(row.Symbol)
 
-			if pair.Quote != config.System.QuoteCurrency {
-				continue
+			if !ok {
+				break
 			}
 
-			if _, seen := liquidity.requested.Load(symbol); seen {
-				continue
+			state := raw.(*symbolState)
+
+			if row.Last <= 0 {
+				break
 			}
 
-			liquidity.pending = append(liquidity.pending, symbol)
+			state.dailyQuoteVol = row.Volume * row.Last
+			state.last = row.Last
+
+			if row.Bid > 0 {
+				state.bid = row.Bid
+			}
+
+			if row.Ask > 0 {
+				state.ask = row.Ask
+			}
+
+			liquidity.publishPulse()
+		case value := <-liquidity.subscribers["feedback"].Incoming:
+			liquidity.Feedback(value.Value.(engine.PredictionFeedback))
+			liquidity.publishPulse()
 		}
-
-		liquidity.publishPulse()
-	case value := <-liquidity.subscribers["tick"].Incoming:
-		row := value.Value.(market.TickerRow)
-		raw, ok := liquidity.symbols.Load(row.Symbol)
-
-		if !ok {
-			break
-		}
-
-		state := raw.(*symbolState)
-
-		if row.Last <= 0 {
-			break
-		}
-
-		state.dailyQuoteVol = row.Volume * row.Last
-		state.last = row.Last
-
-		if row.Bid > 0 {
-			state.bid = row.Bid
-		}
-
-		if row.Ask > 0 {
-			state.ask = row.Ask
-		}
-
-		liquidity.publishPulse()
-	case value := <-liquidity.subscribers["feedback"].Incoming:
-		liquidity.Feedback(value.Value.(engine.PredictionFeedback))
-		liquidity.publishPulse()
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=liquidity")
 	}
-
-	return nil
 }
 
 func (liquidity *Liquidity) requestedCount() int {

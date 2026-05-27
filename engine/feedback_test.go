@@ -21,11 +21,12 @@ func TestValidPredictionFeedback(t *testing.T) {
 		t.Fatal("expected anchored positive forecast to pass")
 	}
 
-	if ValidPredictionFeedback(PredictionFeedback{
+	if !ValidPredictionFeedback(PredictionFeedback{
 		Source:          "pumpdump",
 		Symbol:          "PUMP/EUR",
 		PredictedReturn: 0,
+		Unanchored:      false,
 	}) {
-		t.Fatal("expected zero predicted return to be rejected")
+		t.Fatal("expected zero predicted return to pass when anchored")
 	}
 }

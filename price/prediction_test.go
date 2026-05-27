@@ -63,6 +63,10 @@ func TestPredictionSettlesFeedback(t *testing.T) {
 		if payload.PredictedReturn <= 0 || payload.ActualReturn <= 0 {
 			t.Fatalf("expected positive returns, got predicted=%v actual=%v", payload.PredictedReturn, payload.ActualReturn)
 		}
+
+		if payload.DueAt.IsZero() || payload.PredictedAt.IsZero() || payload.SettledAt.IsZero() {
+			t.Fatalf("expected feedback timing fields, got %+v", payload)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("expected feedback on settle")
 	}
@@ -129,6 +133,51 @@ func TestPredictionRecord(t *testing.T) {
 
 	if prediction.open["BTC/EUR"]["pumpdump"].predictedReturn != predicted {
 		t.Fatalf("expected open prediction stored")
+	}
+}
+
+func TestPredictionRecordProvisional(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	subscriber := ui.Subscribe("test:prediction-ui", 8)
+
+	measurement := engine.Measurement{
+		Source:     "hawkes",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "cluster",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.42,
+	}
+
+	predicted := prediction.Record(
+		engine.Perspective{Type: engine.PerspectiveMicrostructure},
+		measurement,
+		50000,
+		time.Now(),
+	)
+
+	if predicted != 0.42 {
+		t.Fatalf("expected provisional predicted return 0.42, got %v", predicted)
+	}
+
+	select {
+	case value := <-subscriber.Incoming:
+		row, ok := value.Value.(map[string]any)
+
+		if !ok || row["event"] != "prediction" {
+			t.Fatalf("expected prediction ui event, got %v", value.Value)
+		}
+
+		if row["due_at"] == nil || row["ts"] == nil {
+			t.Fatalf("expected prediction timing fields, got %+v", row)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected prediction ui event")
 	}
 }
 

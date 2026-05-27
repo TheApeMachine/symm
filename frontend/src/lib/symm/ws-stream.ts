@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
 import {
@@ -88,6 +88,14 @@ const routePayload = (payload: unknown) => {
 					return;
 				case "candle_bar":
 					OhlcDataProvider.ingest(payload);
+					if (typeof row.symbol === "string" && typeof row.close === "number") {
+						TradesDataProvider.setMark(row.symbol, row.close);
+					}
+					return;
+				case "mark":
+					if (typeof row.symbol === "string" && typeof row.price === "number") {
+						TradesDataProvider.setMark(row.symbol, row.price);
+					}
 					return;
 				default:
 					break;
@@ -100,19 +108,11 @@ const routePayload = (payload: unknown) => {
 };
 
 export const useSymmStream = () => {
-	const { lastMessage } = useWebSocket(resolveSocketUrl(), {
-		shouldReconnect: () => true,
-	});
-
-	useEffect(() => {
-		if (lastMessage === null) {
-			return;
-		}
-
+	const onMessage = useCallback((event: MessageEvent<string>) => {
 		let payload: unknown | null;
 
 		try {
-			payload = parseWirePayload(lastMessage.data);
+			payload = parseWirePayload(event.data);
 		} catch {
 			ConnectionStore.set(false);
 			return;
@@ -123,5 +123,10 @@ export const useSymmStream = () => {
 		}
 
 		routePayload(payload);
-	}, [lastMessage]);
+	}, []);
+
+	useWebSocket(resolveSocketUrl(), {
+		shouldReconnect: () => true,
+		onMessage,
+	});
 };

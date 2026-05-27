@@ -98,6 +98,126 @@ func TestCryptoPublishConfidence(t *testing.T) {
 	}
 }
 
+func TestCryptoPublishConfidenceEMA(t *testing.T) {
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	measurements.Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "fluid",
+			Type:       engine.Flow,
+			Regime:     "fluid",
+			Reason:     "field_activity",
+			Pairs:      []asset.Pair{{Wsname: "ALT/EUR"}},
+			Confidence: 0.4,
+			Last:       1.0,
+			Bid:        0.99,
+			Ask:        1.01,
+		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	<-confidenceSub.Incoming
+
+	measurements.Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "fluid",
+			Type:       engine.Flow,
+			Regime:     "fluid",
+			Reason:     "field_activity",
+			Pairs:      []asset.Pair{{Wsname: "ALT/EUR"}},
+			Confidence: 0.6,
+			Last:       1.0,
+			Bid:        0.99,
+			Ask:        1.01,
+		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	select {
+	case value := <-confidenceSub.Incoming:
+		payload, ok := value.Value.(map[string]any)
+
+		if !ok {
+			t.Fatalf("expected map payload, got %T", value.Value)
+		}
+
+		confidence, ok := payload["confidence"].(float64)
+
+		if !ok || confidence != crypto.sourceConfidence["fluid"].Value() {
+			t.Fatalf("expected fluid EMA %v, got %v", crypto.sourceConfidence["fluid"].Value(), payload["confidence"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for confidence EMA publish")
+	}
+}
+
+func TestCryptoAttachWalletMarksPrefersLastPrice(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet.Inventory["A"] = 10
+	wallet.AvgEntry = map[string]float64{"A": 0.07}
+
+	crypto, predictions, pool := newTestCrypto(t, wallet)
+
+	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "A/EUR", Last: 0.081},
+	})
+
+	if err := predictions.Tick(); err != nil {
+		t.Fatalf("prediction tick: %v", err)
+	}
+
+	crypto.attachWalletMarks()
+
+	if wallet.Marks["A/EUR"] != 0.081 {
+		t.Fatalf("expected last ticker price 0.081, got %v", wallet.Marks["A/EUR"])
+	}
+}
+
+func TestCryptoObserveTickerUpdatesMarks(t *testing.T) {
+	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet.Inventory["MNT"] = 10
+	wallet.AvgEntry = map[string]float64{"MNT": 0.55}
+
+	crypto, _, pool := newTestCrypto(t, wallet)
+	walletSub := crypto.broadcasts["wallet"].Subscribe("test:wallet", 8)
+
+	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: market.TickerRow{
+			Symbol: "MNT/EUR",
+			Last:   0.57,
+		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	select {
+	case value := <-walletSub.Incoming:
+		payload, ok := value.Value.(*Wallet)
+
+		if !ok {
+			t.Fatalf("expected wallet payload, got %T", value.Value)
+		}
+
+		mark := payload.Marks["MNT/EUR"]
+
+		if mark != 0.57 {
+			t.Fatalf("expected mark 0.57, got %v", mark)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for wallet mark update")
+	}
+}
+
 func TestCryptoPublishConfidenceMean(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
@@ -127,6 +247,8 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
+	expected := crypto.sourceConfidence["pumpdump"].Value()
+
 	select {
 	case value := <-confidenceSub.Incoming:
 		payload, ok := value.Value.(map[string]any)
@@ -137,8 +259,8 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 
 		confidence, ok := payload["confidence"].(float64)
 
-		if !ok || confidence != 0.5 {
-			t.Fatalf("expected mean confidence 0.5, got %v", payload["confidence"])
+		if !ok || confidence != expected {
+			t.Fatalf("expected EMA confidence %v, got %v", expected, payload["confidence"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for confidence publish")
@@ -185,17 +307,78 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 
 		confidence, ok := payload["confidence"].(float64)
 
-		if !ok || confidence != 0.5 {
-			t.Fatalf("expected mean confidence 0.5, got %v", payload["confidence"])
-		}
-
-		count, ok := payload["count"].(int)
-
-		if !ok || count != 3 {
-			t.Fatalf("expected count 3, got %v", payload["count"])
+		if !ok || confidence != crypto.sourceConfidence["pumpdump"].Value() {
+			t.Fatalf("expected published EMA %v, got %v", crypto.sourceConfidence["pumpdump"].Value(), payload["confidence"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for confidence publish")
+	}
+}
+
+func TestCryptoPublishConfidenceRepublishesAllSources(t *testing.T) {
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 16)
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	measurements.Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "A/EUR"}},
+			Confidence: 0.6,
+			Last:       1.0,
+		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	<-confidenceSub.Incoming
+
+	measurements.Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "hawkes",
+			Type:       engine.Momentum,
+			Regime:     "microstructure",
+			Reason:     "cluster_buy",
+			Pairs:      []asset.Pair{{Wsname: "B/EUR"}},
+			Confidence: 0.7,
+			Last:       1.0,
+		},
+	})
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	published := make(map[string]float64)
+
+	for range 2 {
+		select {
+		case value := <-confidenceSub.Incoming:
+			payload, ok := value.Value.(map[string]any)
+
+			if !ok {
+				t.Fatalf("expected map payload, got %T", value.Value)
+			}
+
+			source, _ := payload["source"].(string)
+			confidence, _ := payload["confidence"].(float64)
+			published[source] = confidence
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for confidence republish")
+		}
+	}
+
+	if published["pumpdump"] != 0.6 {
+		t.Fatalf("expected pumpdump EMA 0.6 republished, got %v", published["pumpdump"])
+	}
+
+	if published["hawkes"] != 0.7 {
+		t.Fatalf("expected hawkes EMA 0.7, got %v", published["hawkes"])
 	}
 }
 
@@ -333,6 +516,10 @@ func TestCryptoHandleExitPaper(t *testing.T) {
 
 	if err := predictions.Tick(); err != nil {
 		t.Fatalf("prediction tick: %v", err)
+	}
+
+	if err := crypto.Tick(); err != nil {
+		t.Fatalf("drain tick: %v", err)
 	}
 
 	pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Send(&qpool.QValue[any]{

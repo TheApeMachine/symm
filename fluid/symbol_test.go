@@ -133,6 +133,63 @@ func TestBookFluxTrustworthy(t *testing.T) {
 	}
 }
 
+func TestWireRowFromTickOnly(t *testing.T) {
+	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	state.changePct = 2.5
+	state.volume = 1200
+
+	row := state.wireRow()
+
+	if row == nil {
+		t.Fatal("expected tick-only wire row")
+	}
+
+	if row["change_pct"] != 2.5 || row["vol"] != 1200.0 {
+		t.Fatalf("unexpected tick row: %+v", row)
+	}
+}
+
+func TestFluidMeasureFieldActivity(t *testing.T) {
+	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	state.changePct = 4
+	state.volume = 5000
+	state.bids = []market.BookLevel{{Price: 10, Volume: 40}}
+	state.asks = []market.BookLevel{{Price: 10.02, Volume: 40}}
+
+	measurement, ok := state.Measure()
+
+	if !ok {
+		t.Fatal("expected field activity measurement")
+	}
+
+	if measurement.Confidence <= 0 || measurement.Reason != "field_activity" {
+		t.Fatalf("unexpected field measurement: %+v", measurement)
+	}
+}
+
+func TestFluidMeasureTickerOnly(t *testing.T) {
+	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	state.changePct = 4
+	state.volume = 5000
+	state.last = 10.01
+	state.bid = 10
+	state.ask = 10.02
+
+	measurement, ok := state.Measure()
+
+	if !ok {
+		t.Fatal("expected ticker-only field activity measurement")
+	}
+
+	if measurement.Confidence <= 0 || measurement.Reason != "field_activity" {
+		t.Fatalf("unexpected ticker-only measurement: %+v", measurement)
+	}
+
+	if measurement.Last != 10.01 {
+		t.Fatalf("expected last 10.01, got %v", measurement.Last)
+	}
+}
+
 func TestFeedBookIgnoresFirstSnapshot(t *testing.T) {
 	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
 

@@ -42,6 +42,18 @@ func ConfidenceFromScore(score float64) float64 {
 }
 
 /*
+ProvisionalConfidence returns normalized strength when history exists,
+otherwise maps raw score into (0, 1) so cold symbols still emit gauge signal.
+*/
+func ProvisionalConfidence(normalized, rawScore float64) float64 {
+	if normalized > 0 {
+		return normalized
+	}
+
+	return ConfidenceFromScore(rawScore)
+}
+
+/*
 ExcessRatio maps values above unity into (0, 1): how far past the unit threshold.
 */
 func ExcessRatio(value float64) float64 {
