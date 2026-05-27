@@ -13,7 +13,7 @@ import (
 	"github.com/theapemachine/symm/price"
 )
 
-func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction) {
+func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction, *qpool.Q) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -27,13 +27,13 @@ func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction) {
 		t.Fatal("expected crypto trader")
 	}
 
-	return crypto, predictions
+	return crypto, predictions, pool
 }
 
-func TestCryptoBuffersMeasurement(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+func TestCryptoScoresMeasurement(t *testing.T) {
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
-	crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
+	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "pumpdump",
 			Type:       engine.Pump,
@@ -49,19 +49,15 @@ func TestCryptoBuffersMeasurement(t *testing.T) {
 	}
 
 	if crypto.pulses != 1 {
-		t.Fatalf("expected one rescore pulse, got %d", crypto.pulses)
-	}
-
-	if len(crypto.measurements) != 0 {
-		t.Fatalf("expected measurements consumed on rescore, got %d", len(crypto.measurements))
+		t.Fatalf("expected one score pulse, got %d", crypto.pulses)
 	}
 }
 
 func TestCryptoPublishConfidence(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
 
-	crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
+	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "pumpdump",
 			Type:       engine.Pump,
@@ -99,27 +95,28 @@ func TestCryptoPublishConfidence(t *testing.T) {
 }
 
 func TestCryptoPublishConfidenceMean(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
-	crypto.measurements = append(crypto.measurements,
-		engine.Measurement{
-			Source:     "pumpdump",
-			Type:       engine.Pump,
-			Regime:     "microstructure",
-			Reason:     "actual_pump",
-			Pairs:      []asset.Pair{{Wsname: "A/EUR"}},
-			Confidence: 0.2,
-		},
-		engine.Measurement{
-			Source:     "pumpdump",
-			Type:       engine.Pump,
-			Regime:     "microstructure",
-			Reason:     "actual_pump",
-			Pairs:      []asset.Pair{{Wsname: "B/EUR"}},
-			Confidence: 0.8,
-		},
-	)
+	for _, pair := range []struct {
+		symbol     string
+		confidence float64
+	}{
+		{"A/EUR", 0.2},
+		{"B/EUR", 0.8},
+	} {
+		measurements.Send(&qpool.QValue[any]{
+			Value: engine.Measurement{
+				Source:     "pumpdump",
+				Type:       engine.Pump,
+				Regime:     "microstructure",
+				Reason:     "actual_pump",
+				Pairs:      []asset.Pair{{Wsname: pair.symbol}},
+				Confidence: pair.confidence,
+			},
+		})
+	}
 
 	if err := crypto.Tick(); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -144,8 +141,9 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 }
 
 func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	for _, pair := range []struct {
 		symbol     string
@@ -155,7 +153,7 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 		{"B/EUR", 0.8},
 		{"C/EUR", 0.5},
 	} {
-		crypto.broadcasts["measurements"].Send(&qpool.QValue[any]{
+		measurements.Send(&qpool.QValue[any]{
 			Value: engine.Measurement{
 				Source:     "pumpdump",
 				Type:       engine.Pump,
@@ -197,7 +195,7 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 
 func TestCryptoEnterPaper(t *testing.T) {
 	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
-	crypto, predictions := newTestCrypto(t, wallet)
+	crypto, predictions, pool := newTestCrypto(t, wallet)
 
 	crypto.pulses = config.System.MinWarmPulses
 	predictions.SeedReturnCalibration("pumpdump", 0.01)
@@ -207,13 +205,15 @@ func TestCryptoEnterPaper(t *testing.T) {
 		ask:       50001,
 	}
 
-	crypto.measurements = append(crypto.measurements, engine.Measurement{
-		Source:     "pumpdump",
-		Type:       engine.Pump,
-		Regime:     "microstructure",
-		Reason:     "actual_pump",
-		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
-		Confidence: 0.8,
+	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: engine.Measurement{
+			Source:     "pumpdump",
+			Type:       engine.Pump,
+			Regime:     "microstructure",
+			Reason:     "actual_pump",
+			Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+			Confidence: 0.8,
+		},
 	})
 
 	if err := crypto.Tick(); err != nil {
@@ -226,7 +226,7 @@ func TestCryptoEnterPaper(t *testing.T) {
 }
 
 func TestCryptoApplyFill(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
 	if err := crypto.wallet.ReserveEntry(50); err != nil {
 		t.Fatalf("reserve: %v", err)
@@ -246,7 +246,7 @@ func TestCryptoApplyFill(t *testing.T) {
 }
 
 func TestCryptoCloseCancelsContext(t *testing.T) {
-	crypto, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+	crypto, _, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
 	if err := crypto.Close(); err != nil {
 		t.Fatalf("close: %v", err)
@@ -261,6 +261,7 @@ func BenchmarkCryptoTick(b *testing.B) {
 	predictions := price.NewPrediction(ctx, pool)
 	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26), predictions)
 	crypto.pairs["PUMP/EUR"] = &pairState{lastPrice: 1.0}
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
@@ -272,9 +273,10 @@ func BenchmarkCryptoTick(b *testing.B) {
 	}
 
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for b.Loop() {
-		crypto.measurements = append(crypto.measurements[:0], measurement)
+		measurements.Send(&qpool.QValue[any]{Value: measurement})
 		_ = crypto.Tick()
 	}
 }

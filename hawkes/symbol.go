@@ -18,6 +18,7 @@ type HawkesSymbol struct {
 	dailyQuoteVol     float64
 	fit               BivariateFit
 	hasFit            bool
+	lastFitEventKey   fitEventKey
 	minFitEvents      int
 	calibrator        engine.PredictionCalibrator
 	liveScore         float64
@@ -42,25 +43,26 @@ func (sym *HawkesSymbol) FeedTicker(last, volumeBase float64) {
 
 func (sym *HawkesSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
 	sym.calibrator.Apply(feedback)
+	sym.lastFitEventKey = fitEventKey{}
 }
 
 func (sym *HawkesSymbol) FitBivariate(
-	buyEvents, sellEvents []time.Time,
+	stream ArrivalStream,
 	horizon time.Time,
 ) BivariateFit {
 	prior := BivariateFit{}
 
 	if sym.hasFit {
-		prior = applyExcitationCalibration(sym.fit, sym.calibrator.Scale())
+		prior = sym.fit.Calibrated(sym.calibrator.Scale())
 	}
 
-	context, ok := newFitContext(buyEvents, sellEvents, horizon)
+	context, ok := NewFitContext(stream, horizon)
 
 	if ok {
 		sym.minFitEvents = context.MinFitEvents
 	}
 
-	fit := fitBivariateWithPrior(buyEvents, sellEvents, horizon, prior)
+	fit := NewBivariateEstimator(prior).Fit(stream, horizon)
 
 	if fit.MuBuy > 0 {
 		sym.fit = fit
@@ -110,26 +112,54 @@ func (sym *HawkesSymbol) SymbolRisk() (engine.SymbolRisk, bool) {
 	}, true
 }
 
+func (sym *HawkesSymbol) refreshFitIntensities(
+	stream ArrivalStream,
+	horizon time.Time,
+) BivariateFit {
+	return sym.fit.WithIntensitiesAt(stream, horizon)
+}
+
+func (sym *HawkesSymbol) fitForEvents(
+	stream ArrivalStream,
+	horizon time.Time,
+) (BivariateFit, bool) {
+	key := stream.RevisionKey()
+
+	if sym.hasFit && key == sym.lastFitEventKey {
+		return sym.refreshFitIntensities(stream, horizon), true
+	}
+
+	fit := sym.FitBivariate(stream, horizon)
+
+	if fit.MuBuy <= 0 {
+		return BivariateFit{}, false
+	}
+
+	sym.lastFitEventKey = key
+
+	return fit, true
+}
+
 func (sym *HawkesSymbol) Measure(
 	ticks []trade.Data,
 	imbalance float64,
 	now time.Time,
 	pair asset.Pair,
 ) (engine.Measurement, bool) {
-	context, buyTimes, sellTimes, ok := fitContextFromTicks(ticks, time.Time{}, now)
+	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
-	if !ok || !context.enoughEvents(buyTimes, sellTimes) {
+	if !ok || !context.EnoughEvents(stream) {
 		return engine.Measurement{}, false
 	}
 
-	fit := sym.FitBivariate(buyTimes, sellTimes, now)
+	fit, ok := sym.fitForEvents(stream, now)
 
-	if fit.MuBuy <= 0 {
+	if !ok {
 		return engine.Measurement{}, false
 	}
 
-	buyAsymmetry := intensityAsymmetry(fit, false)
-	sellAsymmetry := intensityAsymmetry(fit, true)
+	buyAsymmetry := fit.Asymmetry(false)
+	sellAsymmetry := fit.Asymmetry(true)
 	sellSide := sellAsymmetry > buyAsymmetry
 	asymmetry := buyAsymmetry
 

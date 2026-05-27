@@ -14,27 +14,23 @@ import (
 )
 
 type Booter struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q
-	systems     []engine.System
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	once        sync.Once
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	pool    *qpool.Q
+	systems []engine.System
+	once    sync.Once
 }
 
 func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	booter := &Booter{
+	return &Booter{
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    pool,
 		systems: make([]engine.System, 0),
-	}
-
-	return booter, nil
+	}, nil
 }
 
 func (booter *Booter) AddSystems(systems ...engine.System) {
@@ -59,21 +55,11 @@ func (booter *Booter) Boot() error {
 
 	go hub.Serve(config.System.UIAddr)
 
-	waiters := make([]chan *qpool.QValue[any], len(booter.systems))
-
 	booter.once.Do(func() {
-		for {
-			for idx, system := range booter.systems {
-				waiters[idx] = booter.pool.ScheduleFast(booter.ctx, func(ctx context.Context) (any, error) {
-					system.Tick()
-					return nil, nil
-				})
-			}
-
-			for _, waiter := range waiters {
-				value := <-waiter
-				if value != nil && value.Error != nil {
-					errnie.Error(value.Error)
+		for booter.ctx.Err() == nil {
+			for _, system := range booter.systems {
+				if err := system.Tick(); err != nil {
+					errnie.Error(err)
 				}
 			}
 		}

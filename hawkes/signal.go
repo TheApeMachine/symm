@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -161,7 +160,7 @@ func (hawkes *Hawkes) publishPulse() {
 }
 
 func (hawkes *Hawkes) publishMeasurements() {
-	waiters := make([]chan *qpool.QValue[any], 0)
+	now := time.Now()
 
 	hawkes.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -171,50 +170,23 @@ func (hawkes *Hawkes) publishMeasurements() {
 		}
 
 		symbolState := value.(*symbolState)
-		now := time.Now()
-		waiters = append(
-			waiters,
-			hawkes.pool.ScheduleFast(hawkes.ctx, func(ctx context.Context) (any, error) {
-				measurement, ok := symbolState.state.Measure(
-					symbolState.ticks,
-					symbolState.imbalance,
-					now,
-					symbolState.pair,
-				)
-
-				if !ok {
-					return nil, nil
-				}
-
-				return measurement, nil
-			}),
+		measurement, ok := symbolState.state.Measure(
+			symbolState.ticks,
+			symbolState.imbalance,
+			now,
+			symbolState.pair,
 		)
 
-		return true
-	})
-
-	for _, waiter := range waiters {
-		value := <-waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		measurement, ok := value.Value.(engine.Measurement)
-
 		if !ok {
-			continue
+			return true
 		}
 
 		hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{
 			Value: measurement,
 		})
-	}
+
+		return true
+	})
 }
 
 func (hawkes *Hawkes) Close() error {

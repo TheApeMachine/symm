@@ -25,19 +25,18 @@ type pairState struct {
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	broadcasts   map[string]*qpool.BroadcastGroup
-	subscribers  map[string]*qpool.Subscriber
-	ui           *qpool.BroadcastGroup
-	wallet       *Wallet
-	predictions  *price.Prediction
-	measurements []engine.Measurement
-	pairs        map[string]*pairState
-	pulses       int
-	seq          int
-	quoteReady   int
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	ui          *qpool.BroadcastGroup
+	wallet      *Wallet
+	predictions *price.Prediction
+	pairs       map[string]*pairState
+	pulses      int
+	seq         int
+	quoteReady  int
 }
 
 func NewCrypto(
@@ -49,22 +48,27 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		broadcasts:   make(map[string]*qpool.BroadcastGroup),
-		subscribers:  make(map[string]*qpool.Subscriber),
-		wallet:       wallet,
-		predictions:  predictions,
-		measurements: make([]engine.Measurement, 0),
-		pairs:        make(map[string]*pairState),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		wallet:      wallet,
+		predictions: predictions,
+		pairs:       make(map[string]*pairState),
 	}
 
-	for _, channel := range []string{"measurements", "tick", "executions", "exits", "wallet", "confidence"} {
-		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("crypto:"+channel, 128)
-	}
+	crypto.subscribers["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).
+		Subscribe("crypto:measurements", 128)
+	crypto.subscribers["tick"] = pool.CreateBroadcastGroup("tick", 10*time.Millisecond).
+		Subscribe("crypto:tick", 128)
+	crypto.subscribers["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond).
+		Subscribe("crypto:executions", 128)
+	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
+		Subscribe("crypto:exits", 128)
 
+	crypto.broadcasts["confidence"] = pool.CreateBroadcastGroup("confidence", 10*time.Millisecond)
+	crypto.broadcasts["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond)
 	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	if errnie.Error(errnie.Require(map[string]any{
@@ -81,6 +85,7 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Start() error {
+	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
 	return nil
 }
 
@@ -89,12 +94,36 @@ func (crypto *Crypto) State() engine.State {
 }
 
 func (crypto *Crypto) Tick() error {
-	crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
-
 	select {
 	case <-crypto.ctx.Done():
 		crypto.cancel()
 		return crypto.ctx.Err()
+	case value := <-crypto.subscribers["measurements"].Incoming:
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			return errnie.Error(fmt.Errorf("invalid measurement: %v", value.Value))
+		}
+
+		batch := []engine.Measurement{measurement}
+
+		for {
+			select {
+			case next := <-crypto.subscribers["measurements"].Incoming:
+				payload, ok := next.Value.(engine.Measurement)
+
+				if !ok {
+					return errnie.Error(fmt.Errorf("invalid measurement: %v", next.Value))
+				}
+
+				batch = append(batch, payload)
+			default:
+				goto score
+			}
+		}
+
+	score:
+		return crypto.score(batch)
 	case value := <-crypto.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
 		state := crypto.pairs[row.Symbol]
@@ -119,6 +148,8 @@ func (crypto *Crypto) Tick() error {
 		if row.Ask > 0 {
 			state.ask = row.Ask
 		}
+
+		return nil
 	case value := <-crypto.subscribers["executions"].Incoming:
 		fill, ok := value.Value.(order.Fill)
 
@@ -127,6 +158,9 @@ func (crypto *Crypto) Tick() error {
 		}
 
 		crypto.applyFill(fill)
+		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+
+		return nil
 	case value := <-crypto.subscribers["exits"].Incoming:
 		exit, ok := value.Value.(map[string]any)
 
@@ -141,24 +175,32 @@ func (crypto *Crypto) Tick() error {
 		}
 
 		crypto.exit(symbol, exit["reason"])
+		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+
+		return nil
 	default:
+		return nil
 	}
+}
 
-	if err := crypto.ingestMeasurements(); err != nil {
-		return err
-	}
-
+func (crypto *Crypto) score(batch []engine.Measurement) error {
 	now := time.Now()
 	perspectives := make(map[string]map[engine.PerspectiveType]engine.Perspective)
 	bestReturn := 0.0
-	var bestSymbol string
+	bestSymbol := ""
 	predictedSum := 0.0
 	predictedCount := 0
-	measurementCount := len(crypto.measurements)
+	confidenceSums := make(map[string]float64)
+	confidenceCounts := make(map[string]int)
 
-	for _, measurement := range crypto.measurements {
+	for _, measurement := range batch {
 		if len(measurement.Pairs) == 0 {
 			continue
+		}
+
+		if measurement.Source != "" {
+			confidenceSums[measurement.Source] += measurement.Confidence
+			confidenceCounts[measurement.Source]++
 		}
 
 		symbol := measurement.Pairs[0].Wsname
@@ -180,8 +222,8 @@ func (crypto *Crypto) Tick() error {
 		for _, perspective := range byType {
 			for _, measurement := range perspective.Measurements {
 				symbol := measurement.Pairs[0].Wsname
-				state := crypto.pairs[symbol]
 				anchorPrice := 0.0
+				state := crypto.pairs[symbol]
 
 				if state != nil {
 					anchorPrice = state.lastPrice
@@ -202,20 +244,57 @@ func (crypto *Crypto) Tick() error {
 		}
 	}
 
-	openCount := crypto.openCount()
+	openCount := 0
+
+	if crypto.wallet != nil {
+		for _, qty := range crypto.wallet.Inventory {
+			if qty > 0 {
+				openCount++
+			}
+		}
+	}
 
 	if crypto.pulses >= config.System.MinWarmPulses &&
 		openCount < config.System.MaxSlots &&
 		bestReturn >= config.System.MinEdgeReturn {
 		crypto.enter(bestSymbol)
+		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
 	}
 
-	crypto.publishConfidence()
-	crypto.publishEnginePulse(measurementCount, predictedSum, predictedCount)
+	for source, sum := range confidenceSums {
+		count := confidenceCounts[source]
+
+		if count == 0 {
+			continue
+		}
+
+		crypto.broadcasts["confidence"].Send(&qpool.QValue[any]{Value: map[string]any{
+			"source":     source,
+			"confidence": sum / float64(count),
+			"count":      count,
+		}})
+	}
+
+	avgPrediction := 0.0
+
+	if predictedCount > 0 {
+		avgPrediction = predictedSum / float64(predictedCount)
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":            "engine_pulse",
+		"ts":               now.UTC().Format(time.RFC3339Nano),
+		"seq":              crypto.seq,
+		"measurements":     len(batch),
+		"open":             openCount,
+		"ticker_ready":     crypto.quoteReady,
+		"avg_prediction":   avgPrediction,
+		"avg_error":        crypto.predictions.RunningMeanError(),
+		"forecast_symbols": predictedCount,
+	}})
 
 	crypto.pulses++
 	crypto.seq++
-	crypto.measurements = crypto.measurements[:0]
 
 	return nil
 }
@@ -225,9 +304,7 @@ func (crypto *Crypto) Close() error {
 	return nil
 }
 
-func (crypto *Crypto) enter(
-	symbol string,
-) {
+func (crypto *Crypto) enter(symbol string) {
 	if crypto.wallet == nil {
 		return
 	}
@@ -342,98 +419,6 @@ func (crypto *Crypto) applyFill(fill order.Fill) {
 		crypto.wallet.Inventory[base] -= fill.Qty
 		crypto.wallet.Balance += cost - fee
 	}
-}
-
-func (crypto *Crypto) ingestMeasurements() error {
-	for {
-		select {
-		case measurement := <-crypto.subscribers["measurements"].Incoming:
-			payload, ok := measurement.Value.(engine.Measurement)
-
-			if !ok {
-				return errnie.Error(fmt.Errorf("invalid measurement: %v", measurement.Value))
-			}
-
-			crypto.measurements = append(crypto.measurements, payload)
-		default:
-			return nil
-		}
-	}
-}
-
-func (crypto *Crypto) publishEnginePulse(
-	measurementCount int,
-	predictedSum float64,
-	predictedCount int,
-) {
-	if crypto.ui == nil {
-		return
-	}
-
-	avgPrediction := 0.0
-
-	if predictedCount > 0 {
-		avgPrediction = predictedSum / float64(predictedCount)
-	}
-
-	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":            "engine_pulse",
-		"ts":               time.Now().UTC().Format(time.RFC3339Nano),
-		"seq":              crypto.seq,
-		"phase":            "scan",
-		"measurements":     measurementCount,
-		"open":             crypto.openCount(),
-		"ticker_ready":     crypto.quoteReady,
-		"avg_prediction":   avgPrediction,
-		"avg_error":        crypto.predictions.RunningMeanError(),
-		"forecast_symbols": predictedCount,
-	}})
-}
-
-func (crypto *Crypto) publishConfidence() {
-	sums := make(map[string]float64)
-	counts := make(map[string]int)
-
-	for _, measurement := range crypto.measurements {
-		if measurement.Source == "" {
-			continue
-		}
-
-		sums[measurement.Source] += measurement.Confidence
-		counts[measurement.Source]++
-	}
-
-	for source, sum := range sums {
-		count := counts[source]
-
-		if count == 0 {
-			continue
-		}
-
-		crypto.broadcasts["confidence"].Send(&qpool.QValue[any]{Value: map[string]any{
-			"source":     source,
-			"confidence": sum / float64(count),
-			"count":      count,
-		}})
-	}
-}
-
-func (crypto *Crypto) openCount() int {
-	if crypto.wallet == nil {
-		return 0
-	}
-
-	open := 0
-
-	for _, qty := range crypto.wallet.Inventory {
-		if qty <= 0 {
-			continue
-		}
-
-		open++
-	}
-
-	return open
 }
 
 func perspectiveType(measurement engine.Measurement) engine.PerspectiveType {

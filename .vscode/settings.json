@@ -1,0 +1,4 @@
+{
+	"go.buildFlags": ["-ldflags=-checklinkname=0"],
+	"go.testFlags": ["-ldflags=-checklinkname=0"]
+}

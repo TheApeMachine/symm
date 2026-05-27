@@ -24,7 +24,7 @@ func (system *tickSystem) Tick() error {
 	return nil
 }
 
-func TestBooterConcurrentSystemTicks(t *testing.T) {
+func TestBooterSequentialSystemTicks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -49,11 +49,11 @@ func TestBooterConcurrentSystemTicks(t *testing.T) {
 	cancel()
 
 	if first.ticks.Load() < 2 {
-		t.Fatalf("expected concurrent ticks on first system, got %d", first.ticks.Load())
+		t.Fatalf("expected sequential ticks on first system, got %d", first.ticks.Load())
 	}
 
 	if second.ticks.Load() < 2 {
-		t.Fatalf("expected concurrent ticks on second system, got %d", second.ticks.Load())
+		t.Fatalf("expected sequential ticks on second system, got %d", second.ticks.Load())
 	}
 }
 

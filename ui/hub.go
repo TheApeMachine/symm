@@ -157,12 +157,16 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 func (hub *Hub) writePump() {
 	for hub.ctx.Err() == nil {
+		wrote := false
+
 		for _, sub := range hub.subscriptions {
 			select {
 			case value, open := <-sub.Incoming:
 				if !open || value == nil {
 					continue
 				}
+
+				wrote = true
 
 				hub.clients.Range(func(key, _ any) bool {
 					client, ok := key.(*wsClient)
@@ -180,6 +184,10 @@ func (hub *Hub) writePump() {
 				})
 			default:
 			}
+		}
+
+		if !wrote {
+			time.Sleep(time.Millisecond)
 		}
 	}
 }
