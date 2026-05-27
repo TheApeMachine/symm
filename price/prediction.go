@@ -64,6 +64,7 @@ func NewPrediction(ctx context.Context, pool *qpool.Q) *Prediction {
 	}
 
 	prediction.broadcasts["feedback"] = pool.CreateBroadcastGroup("feedback", 10*time.Millisecond)
+	prediction.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return prediction
 }
@@ -154,6 +155,14 @@ func (prediction *Prediction) Record(
 		runway:          runway,
 		dueAt:           now.Add(runway),
 		predictedAt:     now,
+	}
+
+	if predictedReturn > 0 {
+		prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "prediction",
+			"source": measurement.Source,
+			"value":  predictedReturn,
+		}})
 	}
 
 	return predictedReturn

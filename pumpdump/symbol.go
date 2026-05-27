@@ -2,8 +2,11 @@ package pumpdump
 
 import (
 	"math"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/numeric"
@@ -23,34 +26,44 @@ const (
 )
 
 type PumpSymbol struct {
-	pair              asset.Pair
-	volumeWindow      *adaptive.Window
-	volumeBaseline    *adaptive.EMA
-	volumeSpike       *adaptive.Ratio
-	score             *numeric.Scored
-	forecast          *learned.Forecast
-	spreadCompression *adaptive.Compression
-	bookGate          *adaptive.Product
-	precursorMove     *adaptive.PositiveMove
-	lastPrice         float64
-	bid               float64
-	ask               float64
-	dailyQuoteVol     float64
-	buyPressure       float64
-	imbalance         float64
-	spreadBPS         float64
+	pair                 asset.Pair
+	fastVolumeWindow     *adaptive.Window
+	mediumVolumeWindow   *adaptive.Window
+	hourlyVolumeWindow   *adaptive.Window
+	fastVolumeBaseline   *adaptive.EMA
+	mediumVolumeBaseline *adaptive.EMA
+	fastVolumeSpike      *adaptive.Ratio
+	mediumVolumeSpike    *adaptive.Ratio
+	medianHourlyVolume   float64
+	hourlyBaselineReady  atomic.Bool
+	score                *numeric.Scored
+	forecast             *learned.Forecast
+	spreadCompression    *adaptive.Compression
+	bookGate             *adaptive.Product
+	precursorMove        *adaptive.PositiveMove
+	lastPrice            float64
+	bid                  float64
+	ask                  float64
+	dailyQuoteVol        float64
+	buyPressure          float64
+	imbalance            float64
+	spreadBPS            float64
 }
 
 func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 	return &PumpSymbol{
-		pair:              pair,
-		volumeWindow:      adaptive.NewWindow(tradeWindow),
-		volumeBaseline:    adaptive.NewEMA(0),
-		volumeSpike:       adaptive.NewRatio(0),
-		forecast:          learned.NewForecast(0.35),
-		spreadCompression: adaptive.NewCompression(0),
-		bookGate:          adaptive.NewProduct(),
-		precursorMove:     adaptive.NewPositiveMove(0.001),
+		pair:                 pair,
+		fastVolumeWindow:     adaptive.NewWindow(config.System.FastPumpWindow),
+		mediumVolumeWindow:   adaptive.NewWindow(config.System.MediumPumpWindow),
+		hourlyVolumeWindow:   adaptive.NewWindow(time.Hour),
+		fastVolumeBaseline:   adaptive.NewEMA(0),
+		mediumVolumeBaseline: adaptive.NewEMA(0),
+		fastVolumeSpike:      adaptive.NewRatio(0),
+		mediumVolumeSpike:    adaptive.NewRatio(0),
+		forecast:             learned.NewForecast(0.35),
+		spreadCompression:    adaptive.NewCompression(0),
+		bookGate:             adaptive.NewProduct(),
+		precursorMove:        adaptive.NewPositiveMove(0.001),
 		score: numeric.NewScored(
 			moveClassifier,
 			numeric.NewAccumulate(
@@ -82,14 +95,14 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 	}
 }
 
-func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
+func (state *PumpSymbol) Measure(peakSpike float64, regime string) (engine.Measurement, bool) {
 	raw, err := state.score.Push(
 		peakSpike,
 		math.Min(state.imbalance, 1),
 		(state.buyPressure+1)/2,
 		state.spreadBPS,
 		state.lastPrice,
-		state.volumeWindow.Anchor(),
+		state.mediumVolumeWindow.Anchor(),
 		state.forecast.Scale(),
 	)
 
@@ -114,6 +127,11 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 	}
 
 	classCode := state.score.ClassCode()
+	reason := moveClassifier.Label(classCode)
+
+	if regime != "" {
+		reason = regime
+	}
 
 	return engine.Measurement{
 		Type: logic.Or(
@@ -123,7 +141,7 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		),
 		Source:     pumpdumpSource,
 		Regime:     "microstructure",
-		Reason:     moveClassifier.Label(classCode),
+		Reason:     reason,
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
 		Last:       state.lastPrice,
@@ -172,5 +190,96 @@ func (state *PumpSymbol) bookSideStrength() (float64, error) {
 }
 
 func (state *PumpSymbol) precursorMoveStrength() (float64, error) {
-	return state.precursorMove.Next(0, state.lastPrice, state.volumeWindow.Anchor())
+	return state.precursorMove.Next(0, state.lastPrice, state.mediumVolumeWindow.Anchor())
+}
+
+func (state *PumpSymbol) FeedTradeVolume(at time.Time, qty float64, anchorPrice float64) {
+	nanos := float64(at.UnixNano())
+
+	for _, pair := range []struct {
+		window   *adaptive.Window
+		baseline *adaptive.EMA
+	}{
+		{state.fastVolumeWindow, state.fastVolumeBaseline},
+		{state.mediumVolumeWindow, state.mediumVolumeBaseline},
+		{state.hourlyVolumeWindow, nil},
+	} {
+		closed, err := pair.window.Next(0, nanos, qty, anchorPrice)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if pair.baseline == nil {
+			continue
+		}
+
+		// Window rotation: closed is the volume evicted on this tick; when it
+		// differs from the current rolling sum the window has closed a slice,
+		// so advance the baseline EMA by that closed count via Next(0, closed).
+		if closed != pair.window.Sum() {
+			if _, err := pair.baseline.Next(0, closed); err != nil {
+				errnie.Error(err)
+			}
+		}
+	}
+}
+
+func (state *PumpSymbol) SetMedianHourlyVolume(volume float64) {
+	if volume > 0 {
+		state.medianHourlyVolume = volume
+		state.hourlyBaselineReady.Store(true)
+	}
+}
+
+func (state *PumpSymbol) HourlyBaselineReady() bool {
+	return state.hourlyBaselineReady.Load()
+}
+
+func (state *PumpSymbol) SlowRVOL() float64 {
+	if !state.hourlyBaselineReady.Load() || state.medianHourlyVolume <= 0 {
+		return 0
+	}
+
+	return state.hourlyVolumeWindow.Sum() / state.medianHourlyVolume
+}
+
+func (state *PumpSymbol) BestVolumeSpike() (spike float64, regime string, err error) {
+	fastBaseline := state.fastVolumeBaseline.Value()
+	mediumBaseline := state.mediumVolumeBaseline.Value()
+
+	if fastBaseline <= 0 || mediumBaseline <= 0 {
+		return 0, "", nil
+	}
+
+	fastSpike, err := state.fastVolumeSpike.Next(
+		0,
+		state.fastVolumeWindow.Sum(),
+		fastBaseline,
+	)
+
+	if err != nil {
+		return 0, "", err
+	}
+
+	if fastSpike >= config.System.FastPumpVolumeRatio {
+		return fastSpike, "fast_pump", nil
+	}
+
+	mediumSpike, err := state.mediumVolumeSpike.Next(
+		0,
+		state.mediumVolumeWindow.Sum(),
+		mediumBaseline,
+	)
+
+	if err != nil {
+		return 0, "", err
+	}
+
+	if mediumSpike <= 1 {
+		return mediumSpike, "", nil
+	}
+
+	return mediumSpike, "actual_pump", nil
 }

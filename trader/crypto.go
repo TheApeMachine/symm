@@ -160,6 +160,10 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		return nil
 	}
 
+	peakExit := exitSignal.Urgency >= config.System.ExitPeakUrgency &&
+		(exitSignal.Reason == engine.ExitReasonImbalanceFlip ||
+			exitSignal.Reason == engine.ExitReasonPressureFade)
+
 	if crypto.wallet.Type == PaperWallet {
 		last := crypto.predictions.LastPrice(symbol)
 
@@ -182,15 +186,29 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		crypto.wallet.Balance += revenue - fee
 
 		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":  "simulated_exit",
-			"symbol": symbol,
-			"qty":    qty,
-			"price":  fillPrice,
-			"reason": reason,
+			"event":   logicEvent(peakExit, "simulated_exit"),
+			"symbol":  symbol,
+			"qty":     qty,
+			"price":   fillPrice,
+			"reason":  reason,
+			"urgency": exitSignal.Urgency,
 		}})
 		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
 
 		return nil
+	}
+
+	if peakExit {
+		last := crypto.predictions.LastPrice(symbol)
+
+		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":   "peak_exit",
+			"symbol":  symbol,
+			"qty":     qty,
+			"price":   last,
+			"reason":  reason,
+			"urgency": exitSignal.Urgency,
+		}})
 	}
 
 	crypto.pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Send(&qpool.QValue[any]{
@@ -198,6 +216,14 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	})
 
 	return nil
+}
+
+func logicEvent(peakExit bool, defaultEvent string) string {
+	if peakExit {
+		return "peak_exit"
+	}
+
+	return defaultEvent
 }
 
 func (crypto *Crypto) score(batch []engine.Measurement) error {
@@ -322,6 +348,10 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		"fused_edge":       summary.Edge,
 		"fused_sources":    opportunity.SourceCount,
 	}})
+
+	if crypto.wallet != nil {
+		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+	}
 
 	crypto.pulses++
 	crypto.seq++

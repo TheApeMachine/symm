@@ -1,5 +1,10 @@
 package engine
 
+const (
+	ExitReasonImbalanceFlip = "imbalance_flip"
+	ExitReasonPressureFade  = "pressure_fade"
+)
+
 /*
 Exit is exhaust-driven urgency to close an open long.
 */

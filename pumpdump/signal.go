@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -17,8 +18,6 @@ import (
 )
 
 const pumpdumpSource = "pumpdump"
-
-const tradeWindow = 5 * time.Minute
 
 var (
 	moveClassifier *adaptive.Classifier
@@ -93,9 +92,28 @@ func (pumpdump *PumpDump) Tick() error {
 		return pumpdump.ctx.Err()
 	case value := <-pumpdump.subscribers["symbols"].Incoming:
 		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-			if pair != nil {
-				pumpdump.symbols.Store(symbol, NewPumpSymbol(*pair))
+			if pair == nil {
+				continue
 			}
+
+			state := NewPumpSymbol(*pair)
+			pumpdump.symbols.Store(symbol, state)
+
+			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
+				median, err := WarmHourlyVolumeBaseline(*pair)
+
+				if err != nil {
+					if err != ErrNoVolumeData {
+						errnie.Error(err)
+					}
+
+					return nil, err
+				}
+
+				state.SetMedianHourlyVolume(median)
+
+				return nil, nil
+			})
 		}
 
 		pumpdump.publishPulse()
@@ -163,28 +181,21 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 
 		state := raw.(*PumpSymbol)
+		state.FeedTradeVolume(tick.Timestamp, tick.Qty, state.lastPrice)
 
-		closed, err := state.volumeWindow.Next(
-			0,
-			float64(tick.Timestamp.UnixNano()),
-			tick.Qty,
-			state.lastPrice,
-		)
+		if _, seen := pumpdump.requested.Load(tick.Symbol); !seen {
+			fastBaseline := state.fastVolumeBaseline.Value()
+			mediumBaseline := state.mediumVolumeBaseline.Value()
 
-		if err != nil {
-			errnie.Error(err)
-			break
-		}
-
-		if closed != state.volumeWindow.Sum() {
-			if _, err := state.volumeBaseline.Next(0, closed); err != nil {
-				errnie.Error(err)
+			if fastBaseline <= 0 || mediumBaseline <= 0 {
+				break
 			}
-		}
 
-		if _, seen := pumpdump.requested.Load(tick.Symbol); !seen && closed > state.volumeBaseline.Value() {
-			pumpdump.requested.Store(tick.Symbol, struct{}{})
-			pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+			if state.fastVolumeWindow.Sum() > fastBaseline ||
+				state.mediumVolumeWindow.Sum() > mediumBaseline {
+				pumpdump.requested.Store(tick.Symbol, struct{}{})
+				pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+			}
 		}
 
 		if tick.Side == "buy" {
@@ -261,21 +272,30 @@ func (pumpdump *PumpDump) publishMeasurements() {
 		spikeWaiters = append(
 			spikeWaiters,
 			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-				spike, err := state.volumeSpike.Next(
-					0,
-					state.volumeWindow.Sum(),
-					state.volumeBaseline.Value(),
-				)
+				spike, regime, err := state.BestVolumeSpike()
 
 				if err != nil {
 					return nil, err
+				}
+
+				if spike <= 1 && regime == "" {
+					if state.HourlyBaselineReady() &&
+						state.SlowRVOL() >= config.System.SlowRVOLThreshold {
+						return spikeEntry{
+							symbol: symbol,
+							rvol:   state.SlowRVOL(),
+							regime: "slow_breakout",
+						}, nil
+					}
+
+					return nil, nil
 				}
 
 				if spike <= 1 {
 					return nil, nil
 				}
 
-				return spikeEntry{symbol: symbol, spike: spike}, nil
+				return spikeEntry{symbol: symbol, spike: spike, regime: regime}, nil
 			}),
 		)
 
@@ -283,6 +303,8 @@ func (pumpdump *PumpDump) publishMeasurements() {
 	})
 
 	spikes := make(map[string]float64)
+	spikeRegimes := make(map[string]string)
+	slowRVOLs := make(map[string]float64)
 
 	for _, waiter := range spikeWaiters {
 		value := <-waiter
@@ -302,6 +324,13 @@ func (pumpdump *PumpDump) publishMeasurements() {
 			continue
 		}
 
+		spikeRegimes[entry.symbol] = entry.regime
+
+		if entry.regime == "slow_breakout" {
+			slowRVOLs[entry.symbol] = entry.rvol
+			continue
+		}
+
 		spikes[entry.symbol] = entry.spike
 	}
 
@@ -315,6 +344,7 @@ func (pumpdump *PumpDump) publishMeasurements() {
 		}
 
 		state := raw.(*PumpSymbol)
+		regime := spikeRegimes[symbol]
 		measureWaiters = append(
 			measureWaiters,
 			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
@@ -324,7 +354,42 @@ func (pumpdump *PumpDump) publishMeasurements() {
 					return nil, err
 				}
 
-				measurement, ok := state.Measure(peakSpike)
+				if peakSpike <= 0 && regime != "slow_breakout" {
+					return nil, nil
+				}
+
+				// Slow breakouts skip peer peak gating: RVOL is a gradual regime
+				// shift, not an instantaneous cross-section spike; other regimes
+				// still require peakSpike > 0 from adaptive.PeerValues.
+				if regime == "slow_breakout" {
+					peakSpike = slowRVOLs[symbol]
+				}
+
+				measurement, ok := state.Measure(peakSpike, regime)
+
+				if !ok {
+					return nil, nil
+				}
+
+				return measurement, nil
+			}),
+		)
+	}
+
+	for symbol, rvol := range slowRVOLs {
+		raw, ok := pumpdump.symbols.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		state := raw.(*PumpSymbol)
+		regime := spikeRegimes[symbol]
+		measureWaiters = append(
+			measureWaiters,
+			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
+				// Slow breakouts skip peer peak gating (see comment above).
+				measurement, ok := state.Measure(rvol, regime)
 
 				if !ok {
 					return nil, nil
@@ -361,7 +426,9 @@ func (pumpdump *PumpDump) publishMeasurements() {
 
 type spikeEntry struct {
 	symbol string
-	spike  float64
+	spike  float64 // adaptive.Ratio volume spike (fast/medium)
+	rvol   float64 // 14d-median RVOL (slow_breakout only)
+	regime string
 }
 
 func (pumpdump *PumpDump) Close() error {
@@ -377,6 +444,8 @@ func (pumpdump *PumpDump) Source() string {
 func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		spikes := make(map[string]float64)
+		regimes := make(map[string]string)
+		slowRVOLs := make(map[string]float64)
 
 		pumpdump.symbols.Range(func(key, value any) bool {
 			symbol := key.(string)
@@ -386,14 +455,20 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := value.(*PumpSymbol)
-			spike, err := state.volumeSpike.Next(
-				0,
-				state.volumeWindow.Sum(),
-				state.volumeBaseline.Value(),
-			)
+			spike, regime, err := state.BestVolumeSpike()
 
 			if err != nil {
 				errnie.Error(err)
+				return true
+			}
+
+			if spike <= 1 && regime == "" {
+				if state.HourlyBaselineReady() &&
+					state.SlowRVOL() >= config.System.SlowRVOLThreshold {
+					slowRVOLs[symbol] = state.SlowRVOL()
+					regimes[symbol] = "slow_breakout"
+				}
+
 				return true
 			}
 
@@ -402,6 +477,7 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			spikes[symbol] = spike
+			regimes[symbol] = regime
 
 			return true
 		})
@@ -414,6 +490,7 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := raw.(*PumpSymbol)
+			regime := regimes[symbol]
 			peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
 
 			if err != nil {
@@ -421,7 +498,36 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 				continue
 			}
 
-			measurement, ok := state.Measure(peakSpike)
+			if peakSpike <= 0 && regime != "slow_breakout" {
+				continue
+			}
+
+			// Slow breakouts skip peer peak gating (see publishMeasurements).
+			if regime == "slow_breakout" {
+				peakSpike = slowRVOLs[symbol]
+			}
+
+			measurement, ok := state.Measure(peakSpike, regime)
+
+			if !ok {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
+
+		for symbol, rvol := range slowRVOLs {
+			raw, ok := pumpdump.symbols.Load(symbol)
+
+			if !ok {
+				continue
+			}
+
+			state := raw.(*PumpSymbol)
+			regime := regimes[symbol]
+			measurement, ok := state.Measure(rvol, regime)
 
 			if !ok {
 				continue

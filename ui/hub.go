@@ -51,12 +51,14 @@ func (client *wsClient) close() error {
 Hub subscribes to every broadcast group and writes payloads to websocket clients.
 */
 type Hub struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscriptions map[string]*qpool.Subscriber
-	clients       *sync.Map
+	ctx             context.Context
+	cancel          context.CancelFunc
+	pool            *qpool.Q
+	broadcasts      map[string]*qpool.BroadcastGroup
+	subscriptions   map[string]*qpool.Subscriber
+	clients         *sync.Map
+	walletSnap      atomic.Value
+	confidenceSnaps sync.Map
 }
 
 /*
@@ -141,6 +143,8 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	hub.sendSnapshots(client)
+
 	go func() {
 		defer func() {
 			hub.clients.Delete(client)
@@ -155,11 +159,54 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	}()
 }
 
+func (hub *Hub) remember(channel string, payload any) {
+	if payload == nil {
+		return
+	}
+
+	switch channel {
+	case "wallet":
+		hub.walletSnap.Store(payload)
+	case "confidence":
+		row, ok := payload.(map[string]any)
+
+		if !ok {
+			return
+		}
+
+		source, ok := row["source"].(string)
+
+		if !ok || source == "" {
+			return
+		}
+
+		hub.confidenceSnaps.Store(source, payload)
+	}
+}
+
+func (hub *Hub) sendSnapshots(client *wsClient) {
+	if wallet := hub.walletSnap.Load(); wallet != nil {
+		if err := client.conn.WriteJSON(wallet); err != nil {
+			errnie.Error(client.close())
+			return
+		}
+	}
+
+	hub.confidenceSnaps.Range(func(_, value any) bool {
+		if err := client.conn.WriteJSON(value); err != nil {
+			errnie.Error(client.close())
+			return false
+		}
+
+		return true
+	})
+}
+
 func (hub *Hub) writePump() {
 	for hub.ctx.Err() == nil {
 		wrote := false
 
-		for _, sub := range hub.subscriptions {
+		for channel, sub := range hub.subscriptions {
 			select {
 			case value, open := <-sub.Incoming:
 				if !open || value == nil {
@@ -167,6 +214,7 @@ func (hub *Hub) writePump() {
 				}
 
 				wrote = true
+				hub.remember(channel, value.Value)
 
 				hub.clients.Range(func(key, _ any) bool {
 					client, ok := key.(*wsClient)

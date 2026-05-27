@@ -114,6 +114,8 @@ func (fluid *Fluid) Tick() error {
 			state.asks = delta.Asks
 		}
 
+		state.FeedBook(delta)
+
 		if len(state.bids) > 0 && len(state.asks) > 0 {
 			bid := state.bids[0].Price
 			ask := state.asks[0].Price
@@ -145,6 +147,7 @@ func (fluid *Fluid) Tick() error {
 		}
 
 		state := raw.(*FluidSymbol)
+		state.FeedTrade(tick.Timestamp, tick.Qty)
 		sign := -1.0
 
 		if tick.Side == "buy" {

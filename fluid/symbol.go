@@ -2,8 +2,10 @@ package fluid
 
 import (
 	"math"
+	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -13,22 +15,28 @@ import (
 )
 
 type FluidSymbol struct {
-	pair        asset.Pair
-	bids        []market.BookLevel
-	asks        []market.BookLevel
-	buyPressure float64
-	changePct   float64
-	volume      float64
-	pressure    *adaptive.EMA
-	spreadBPS   float64
-	score       *numeric.Derived
-	forecast    *learned.Forecast
+	pair            asset.Pair
+	bids            []market.BookLevel
+	asks            []market.BookLevel
+	prevBids        []market.BookLevel
+	prevAsks        []market.BookLevel
+	buyPressure     float64
+	changePct       float64
+	volume          float64
+	pressure        *adaptive.EMA
+	spreadBPS       float64
+	bookFluxWindow  *adaptive.Window
+	tradeFluxWindow *adaptive.Window
+	score           *numeric.Derived
+	forecast        *learned.Forecast
 }
 
 func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
 	return &FluidSymbol{
-		pair:     pair,
-		pressure: adaptive.NewEMA(0),
+		pair:            pair,
+		pressure:        adaptive.NewEMA(0),
+		bookFluxWindow:  adaptive.NewWindow(config.System.BookFluxWindow),
+		tradeFluxWindow: adaptive.NewWindow(config.System.BookFluxWindow),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
@@ -37,29 +45,137 @@ func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
 	}
 }
 
+func (state *FluidSymbol) FeedBook(delta market.BookLevelsDelta) {
+	flux := 0.0
+
+	if len(state.prevBids) > 0 || len(state.prevAsks) > 0 {
+		if delta.BidOK {
+			flux += sideChangeFlux(state.prevBids, delta.Bids)
+		}
+
+		if delta.AskOK {
+			flux += sideChangeFlux(state.prevAsks, delta.Asks)
+		}
+	}
+
+	if delta.BidOK {
+		state.prevBids = append([]market.BookLevel(nil), delta.Bids...)
+	}
+
+	if delta.AskOK {
+		state.prevAsks = append([]market.BookLevel(nil), delta.Asks...)
+	}
+
+	if flux <= 0 {
+		return
+	}
+
+	if _, err := state.bookFluxWindow.Next(0, float64(time.Now().UnixNano()), flux); err != nil {
+		errnie.Error(err)
+	}
+}
+
+func sideChangeFlux(previous, updated []market.BookLevel) float64 {
+	previousByPrice := make(map[float64]float64, len(previous))
+
+	for _, level := range previous {
+		previousByPrice[level.Price] = level.Volume
+	}
+
+	flux := 0.0
+	seen := make(map[float64]bool, len(updated))
+
+	for _, level := range updated {
+		flux += math.Abs(level.Volume - previousByPrice[level.Price])
+		seen[level.Price] = true
+	}
+
+	for price, volume := range previousByPrice {
+		if seen[price] {
+			continue
+		}
+
+		flux += volume
+	}
+
+	return flux
+}
+
+func (state *FluidSymbol) FeedTrade(at time.Time, qty float64) {
+	if qty <= 0 {
+		return
+	}
+
+	if _, err := state.tradeFluxWindow.Next(0, float64(at.UnixNano()), qty); err != nil {
+		errnie.Error(err)
+	}
+}
+
+func (state *FluidSymbol) bookFluxTrustworthy() bool {
+	bookFlux := state.bookFluxWindow.Sum()
+	tradeFlux := state.tradeFluxWindow.Sum()
+
+	if bookFlux <= 0 {
+		return true
+	}
+
+	return tradeFlux/bookFlux >= config.System.MinFillToCancelRatio
+}
+
 func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
+	if !state.bookFluxTrustworthy() {
+		return engine.Measurement{}, false
+	}
+
 	if len(state.bids) == 0 || len(state.asks) == 0 {
 		return engine.Measurement{}, false
 	}
 
-	bidVolume := 0.0
-	askVolume := 0.0
+	bid := state.bids[0].Price
+	ask := state.asks[0].Price
+	mid := (bid + ask) / 2
 
-	for _, level := range state.bids {
-		bidVolume += level.Volume
-	}
-
-	for _, level := range state.asks {
-		askVolume += level.Volume
-	}
-
-	total := bidVolume + askVolume
-
-	if total <= 0 {
+	if mid <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	imbalance := (bidVolume - askVolume) / total
+	imbalance, ok := market.WeightedDepthImbalance(
+		state.bids,
+		state.asks,
+		mid,
+		config.System.BookDepthDecayLambda,
+	)
+
+	if !ok || imbalance == 0 {
+		return engine.Measurement{}, false
+	}
+
+	level1Imbalance, ok := market.Level1Imbalance(state.bids, state.asks)
+
+	if !ok {
+		return engine.Measurement{}, false
+	}
+
+	if market.IsSpoofSkew(
+		imbalance,
+		level1Imbalance,
+		config.System.SpoofWeightedThreshold,
+		config.System.SpoofLevel1Reject,
+	) {
+		return engine.Measurement{}, false
+	}
+
+	flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
+
+	if flatOK && market.IsSpoofSkew(
+		flatImbalance,
+		level1Imbalance,
+		config.System.SpoofWeightedThreshold,
+		config.System.SpoofLevel1Reject,
+	) {
+		return engine.Measurement{}, false
+	}
+
 	pressure := (state.buyPressure + 1) / 2
 
 	if state.spreadBPS > 0 {
@@ -84,9 +200,7 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	bid := state.bids[0].Price
-	ask := state.asks[0].Price
-	last := (bid + ask) / 2
+	last := mid
 
 	return engine.Measurement{
 		Type:       engine.Flow,

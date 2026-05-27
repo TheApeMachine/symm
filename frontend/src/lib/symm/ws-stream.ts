@@ -1,14 +1,22 @@
 import { useEffect } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
-import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
+import {
+	ConfidenceDataProvider,
+	isConfidenceRow,
+} from "#/components/symm/confidence-data-provider";
 import { FluidDataProvider } from "#/components/symm/fluid-data-provider";
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
-import { isHelloEvent, isPredictionFeedback } from "#/lib/symm/events";
+import {
+	isEnginePulseEvent,
+	isHelloEvent,
+	isPredictionFeedback,
+	isWalletPayload,
+} from "#/lib/symm/events";
 
 const resolveSocketUrl = () => {
 	if (typeof window === "undefined") {
@@ -49,12 +57,28 @@ const routePayload = (payload: unknown) => {
 		return;
 	}
 
+	if (isConfidenceRow(payload)) {
+		ConfidenceDataProvider.ingest(payload);
+		return;
+	}
+
+	if (isWalletPayload(payload)) {
+		WalletDataProvider.ingest(payload);
+		TradesDataProvider.ingest(payload);
+		return;
+	}
+
+	if (isEnginePulseEvent(payload)) {
+		PredictionsDataProvider.ingest(payload);
+		return;
+	}
+
 	if (typeof payload === "object" && payload !== null) {
 		const row = payload as Record<string, unknown>;
 
 		if (typeof row.event === "string") {
 			switch (row.event) {
-				case "engine_pulse":
+				case "prediction":
 					PredictionsDataProvider.ingest(payload);
 					return;
 				case "field_row":
@@ -71,10 +95,7 @@ const routePayload = (payload: unknown) => {
 		}
 	}
 
-	WalletDataProvider.ingest(payload);
 	TradesDataProvider.ingest(payload);
-	ConfidenceDataProvider.ingest(payload);
-	PredictionsDataProvider.ingest(payload);
 	OhlcDataProvider.ingest(payload);
 };
 

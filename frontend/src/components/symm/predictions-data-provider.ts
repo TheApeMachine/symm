@@ -19,13 +19,12 @@ export type PredictionReading = {
 type ReadingSink = (reading: PredictionReading) => void;
 
 /*
-PredictionsDataProvider feeds per-source prediction series on the grid chart.
-Live confidence updates stream continuously; settled feedback appends predicted return.
+PredictionsDataProvider feeds per-source predicted returns and settled errors.
 */
 class PredictionsDataProviderImpl {
 	private sink: ReadingSink | null = null;
 	private pulse: EnginePulseEvent | undefined;
-	private pulseSeq = 0;
+	private seq = 0;
 	private listeners = new Set<() => void>();
 
 	registerSink(sink: ReadingSink) {
@@ -56,30 +55,13 @@ class PredictionsDataProviderImpl {
 		}
 	}
 
-	private emit(source: SignalSource, value: number) {
-		if (!Number.isFinite(value)) {
+	private emit(source: string, value: number) {
+		if (!isSignalSource(source) || !Number.isFinite(value)) {
 			return;
 		}
 
-		this.sink?.({ source, x: this.pulseSeq, value });
-	}
-
-	ingestConfidence(raw: unknown) {
-		if (typeof raw !== "object" || raw === null) {
-			return;
-		}
-
-		const row = raw as Record<string, unknown>;
-
-		if (typeof row.source !== "string" || typeof row.confidence !== "number") {
-			return;
-		}
-
-		if (!isSignalSource(row.source)) {
-			return;
-		}
-
-		this.emit(row.source, row.confidence);
+		this.seq++;
+		this.sink?.({ source, x: this.seq, value });
 	}
 
 	ingestFeedback(raw: unknown) {
@@ -87,11 +69,26 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		if (!isSignalSource(raw.Source)) {
+		this.emit(raw.Source, raw.PredictedReturn);
+		this.emit(raw.Source, raw.Error);
+	}
+
+	ingestPrediction(raw: unknown) {
+		if (typeof raw !== "object" || raw === null) {
 			return;
 		}
 
-		this.emit(raw.Source, raw.PredictedReturn);
+		const row = raw as Record<string, unknown>;
+
+		if (row.event !== "prediction") {
+			return;
+		}
+
+		if (typeof row.source !== "string" || typeof row.value !== "number") {
+			return;
+		}
+
+		this.emit(row.source, row.value);
 	}
 
 	ingestPulse(raw: unknown) {
@@ -100,7 +97,6 @@ class PredictionsDataProviderImpl {
 		}
 
 		this.pulse = raw;
-		this.pulseSeq = raw.seq;
 		this.notify();
 	}
 
@@ -115,7 +111,7 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		this.ingestConfidence(raw);
+		this.ingestPrediction(raw);
 	}
 }
 

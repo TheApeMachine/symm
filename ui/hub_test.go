@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/qpool"
@@ -120,6 +121,74 @@ func TestHubConcurrentBroadcasts(t *testing.T) {
 		if row["source"] != "hawkes" {
 			t.Fatalf("expected hawkes source, got %#v", row["source"])
 		}
+	}
+}
+
+func TestHubReplaysWalletSnapshotOnConnect(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	hub, err := NewHub(ctx, pool)
+
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+
+	t.Cleanup(func() { _ = hub.Close() })
+
+	hub.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"Currency":    "EUR",
+		"Balance":     200.0,
+		"ReservedEUR": 0.0,
+		"FeePct":      0.26,
+		"Inventory":   map[string]float64{},
+	}})
+
+	time.Sleep(5 * time.Millisecond)
+
+	server := httptest.NewServer(httpHandler(hub))
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+
+	if err != nil {
+		t.Fatalf("dial hub websocket: %v", err)
+	}
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	_, payload, err := conn.ReadMessage()
+
+	if err != nil {
+		t.Fatalf("read hello frame: %v", err)
+	}
+
+	var hello map[string]any
+
+	if err := json.Unmarshal(payload, &hello); err != nil {
+		t.Fatalf("decode hello json: %v", err)
+	}
+
+	if hello["event"] != "hello" {
+		t.Fatalf("expected hello event, got %#v", hello["event"])
+	}
+
+	_, payload, err = conn.ReadMessage()
+
+	if err != nil {
+		t.Fatalf("read wallet snapshot: %v", err)
+	}
+
+	var wallet map[string]any
+
+	if err := json.Unmarshal(payload, &wallet); err != nil {
+		t.Fatalf("decode wallet json: %v", err)
+	}
+
+	if wallet["Balance"] != 200.0 {
+		t.Fatalf("expected wallet balance 200, got %#v", wallet["Balance"])
 	}
 }
 

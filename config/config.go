@@ -71,6 +71,17 @@ type Config struct {
 	TrailReynoldsWidenAt       float64
 	TrailReynoldsWidenGain     float64
 	TrailRiskDebounce          time.Duration
+	BookDepthDecayLambda       float64
+	SpoofWeightedThreshold     float64
+	SpoofLevel1Reject          float64
+	MinFillToCancelRatio       float64
+	BookFluxWindow             time.Duration
+	FastPumpWindow             time.Duration
+	MediumPumpWindow           time.Duration
+	FastPumpVolumeRatio        float64
+	SlowRVOLThreshold          float64
+	SlowRVOLIntervalMinutes    int
+	ExitPeakUrgency            float64
 	HawkesFitCooldown          time.Duration
 	CandleSeconds              int
 	FluidGridSize              int
@@ -164,6 +175,17 @@ func NewConfig() *Config {
 		TrailReynoldsWidenAt:       50,
 		TrailReynoldsWidenGain:     0.01,
 		TrailRiskDebounce:          500 * time.Millisecond,
+		BookDepthDecayLambda:       1000,
+		SpoofWeightedThreshold:     0.5,
+		SpoofLevel1Reject:          -0.1,
+		MinFillToCancelRatio:       0.15,
+		BookFluxWindow:             10 * time.Second,
+		FastPumpWindow:             10 * time.Second,
+		MediumPumpWindow:           5 * time.Minute,
+		FastPumpVolumeRatio:        15,
+		SlowRVOLThreshold:          5,
+		SlowRVOLIntervalMinutes:    60,
+		ExitPeakUrgency:            0.8,
 		HawkesFitCooldown:          5 * time.Second,
 		CandleSeconds:              5,
 		FluidGridSize:              32,

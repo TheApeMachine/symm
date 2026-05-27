@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -40,27 +41,48 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	bidVolume := 0.0
+	bid := state.bids[0].Price
+	ask := state.asks[0].Price
+	mid := (bid + ask) / 2
 
-	for _, level := range state.bids {
-		bidVolume += level.Volume
-	}
-
-	askVolume := 0.0
-
-	for _, level := range state.asks {
-		askVolume += level.Volume
-	}
-
-	total := bidVolume + askVolume
-
-	if total <= 0 {
+	if mid <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	imbalance := (bidVolume - askVolume) / total
+	imbalance, ok := market.WeightedDepthImbalance(
+		state.bids,
+		state.asks,
+		mid,
+		config.System.BookDepthDecayLambda,
+	)
 
-	if imbalance == 0 {
+	if !ok || imbalance == 0 {
+		return engine.Measurement{}, false
+	}
+
+	level1Imbalance, ok := market.Level1Imbalance(state.bids, state.asks)
+
+	if !ok {
+		return engine.Measurement{}, false
+	}
+
+	if market.IsSpoofSkew(
+		imbalance,
+		level1Imbalance,
+		config.System.SpoofWeightedThreshold,
+		config.System.SpoofLevel1Reject,
+	) {
+		return engine.Measurement{}, false
+	}
+
+	flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
+
+	if flatOK && market.IsSpoofSkew(
+		flatImbalance,
+		level1Imbalance,
+		config.System.SpoofWeightedThreshold,
+		config.System.SpoofLevel1Reject,
+	) {
 		return engine.Measurement{}, false
 	}
 
@@ -91,9 +113,7 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	bid := state.bids[0].Price
-	ask := state.asks[0].Price
-	last := (bid + ask) / 2
+	last := mid
 
 	return engine.Measurement{
 		Type: logic.Or(

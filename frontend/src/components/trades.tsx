@@ -13,7 +13,10 @@ export const TradesPanel = () => {
 	return (
 		<SidebarSection title="Trades" fill className="min-h-0 min-w-0">
 			{rows.length === 0 ? (
-				<EmptyHint connected={connected} />
+				<EmptyHint
+					connected={connected}
+					message={connected ? "No open positions or fills yet" : undefined}
+				/>
 			) : (
 				<ul className="space-y-1 px-2 pb-2">
 					{rows.slice(0, 20).map((row) => (

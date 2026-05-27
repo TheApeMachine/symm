@@ -1,5 +1,7 @@
 package exhaust
 
+import "github.com/theapemachine/symm/engine"
+
 /*
 exitScoreLong estimates how urgently a long should be closed from book history.
 */
@@ -61,11 +63,11 @@ func dominantExitReason(thinning, widen, fade, flip float64) string {
 
 	if fade > best {
 		best = fade
-		reason = "pressure_fade"
+		reason = engine.ExitReasonPressureFade
 	}
 
 	if flip > best {
-		reason = "imbalance_flip"
+		reason = engine.ExitReasonImbalanceFlip
 	}
 
 	return reason

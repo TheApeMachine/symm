@@ -59,7 +59,11 @@ func seedPumpSymbol(symbolState *PumpSymbol) {
 	symbolState.spreadBPS = 10
 
 	for range 12 {
-		_, _ = symbolState.volumeBaseline.Next(0, 10)
+		_, _ = symbolState.mediumVolumeBaseline.Next(0, 10)
+	}
+
+	for range 12 {
+		_, _ = symbolState.fastVolumeBaseline.Next(0, 10)
 	}
 
 	for range 8 {
@@ -69,7 +73,8 @@ func seedPumpSymbol(symbolState *PumpSymbol) {
 	_, _ = symbolState.spreadCompression.Next(15, 10)
 
 	now := time.Unix(1_700_000_000, 0)
-	_, _ = symbolState.volumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
+	_, _ = symbolState.mediumVolumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
+	_, _ = symbolState.fastVolumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
 }
 
 func TestPumpdumpPublishPulseAfterBook(t *testing.T) {

@@ -177,13 +177,13 @@ predictedReturn = measurement.Confidence × |EMA(actualReturn per source)|
 | System         | Package         | Role                                                             |
 |----------------|-----------------|------------------------------------------------------------------|
 | Public client  | `kraken/client` | Kraken WS v2: instruments, tickers, trades, book, OHLC           |
-| Pump/dump      | `pumpdump`      | Volume spike vs baseline, book/trade alignment                   |
-| Depth flow     | `depthflow`     | Book imbalance pressure                                          |
+| Pump/dump      | `pumpdump`      | Multi-scale volume spikes: 10s fast pump, 5m medium, 14d RVOL slow breakout |
+| Depth flow     | `depthflow`     | Distance-weighted book imbalance + Level-1 spoof rejection |
 | Hawkes         | `hawkes`        | Bivariate Hawkes trade clustering (buy/sell excitation); MLE refit throttled by `HawkesFitCooldown` |
 | Lead/lag       | `leadlag`       | Anchor pair vs laggard change                                    |
 | Liquidity      | `liquidity`     | Quote volume below cross-section median                          |
 | Sentiment      | `sentiment`     | Cross-section bullish breadth                                    |
-| Fluid          | `fluid`         | Book flow + trade pressure field (also pushes `field_row` to UI) |
+| Fluid          | `fluid`         | Weighted book flow, fill-to-cancel flux gate, trade pressure (also `field_row` to UI) |
 | Causal         | `causal`        | Pearl-ladder style uplift from microstructure samples            |
 | Exhaust        | `exhaust`       | Exit **urgency** on `exits` channel (not an entry measurement)   |
 | Prediction     | `price`         | Open forecasts, settlement, feedback                             |
@@ -191,6 +191,10 @@ predictedReturn = measurement.Confidence × |EMA(actualReturn per source)|
 | Private client | `kraken/client` | Optional; live orders and fills when API keys set                |
 
 Entry signals share the same shape: subscribe to market channels, request deeper subscriptions when a symbol qualifies, `Measure()` per symbol, publish to `measurements` with prices attached.
+
+**Pump regimes (`pumpdump`):** `fast_pump` when 10s volume / fast baseline exceeds `FastPumpVolumeRatio`; `actual_pump` on the 5m medium window; `slow_breakout` when 1h volume / 14d median hourly volume exceeds `SlowRVOLThreshold`. OHLC warm-up seeds the slow baseline via REST.
+
+**Anti-spoof book filters (`depthflow`, `fluid`):** imbalance uses exponential distance decay (`BookDepthDecayLambda`) so deep walls weigh less than the touch. Entries reject when flat or weighted skew contradicts Level-1 touch (`SpoofWeightedThreshold`, `SpoofLevel1Reject`). `fluid` additionally tracks per-level book change flux vs trade flux (`MinFillToCancelRatio` over `BookFluxWindow`); the first snapshot is ignored so resting liquidity is not mistaken for cancel spam.
 
 ---
 
@@ -207,7 +211,7 @@ Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (l
 
 Before entry, fused perspective scoring requires `MinActivePerspectives` independent sources with joint confidence via `engine.FuseMeasurements`, edge above `MinRoundTripEdge` (derived from round-trip taker fees), fractional Kelly sizing from settled feedback, and `PortfolioRisk` gates. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 
-On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`.
+On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
 
 ---
 

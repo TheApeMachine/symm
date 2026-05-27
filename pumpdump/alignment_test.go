@@ -34,7 +34,7 @@ func TestMeasureAlignmentFullBreakout(t *testing.T) {
 		state.buyPressure = 0.8
 		state.spreadBPS = 6
 		_, _ = state.spreadCompression.Next(12, 6)
-		_, _ = state.volumeWindow.Next(0, 1_700_000_000, 50, 1)
+		_, _ = state.mediumVolumeWindow.Next(0, 1_700_000_000, 50, 1)
 
 		confidence, err := state.measureAlignment(2.5)
 

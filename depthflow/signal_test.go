@@ -55,8 +55,14 @@ func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
 }
 
 func seedDepthSymbol(state *DepthSymbol) {
-	state.bids = []market.BookLevel{{Volume: 80}, {Volume: 20}}
-	state.asks = []market.BookLevel{{Volume: 10}, {Volume: 10}}
+	state.bids = []market.BookLevel{
+		{Price: 100, Volume: 80},
+		{Price: 99.5, Volume: 20},
+	}
+	state.asks = []market.BookLevel{
+		{Price: 100.1, Volume: 10},
+		{Price: 100.2, Volume: 10},
+	}
 	state.buyPressure = 0.6
 
 	for range 8 {
