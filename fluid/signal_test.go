@@ -11,6 +11,24 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 )
 
+func storeFluidSymbol(fluid *Fluid, symbol string, state *FluidSymbol) {
+	fluid.symbols.Store(symbol, state)
+}
+
+func loadFluidSymbol(fluid *Fluid, symbol string) *FluidSymbol {
+	raw, ok := fluid.symbols.Load(symbol)
+
+	if !ok {
+		return nil
+	}
+
+	return raw.(*FluidSymbol)
+}
+
+func markFluidRequested(fluid *Fluid, symbol string) {
+	fluid.requested.Store(symbol, struct{}{})
+}
+
 func TestFluidSymbolMeasure(t *testing.T) {
 	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
 	state.bids = []market.BookLevel{{Price: 10, Volume: 80}}
@@ -50,7 +68,7 @@ func TestFluidPublishPulseAfterBook(t *testing.T) {
 		_, _ = state.score.Push(0.7, 0.8)
 	}
 
-	signal.symbols["ALT/EUR"] = state
+	storeFluidSymbol(signal, "ALT/EUR", state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:fluid", 8)
 
@@ -88,7 +106,7 @@ func TestFluidTickAppliesBook(t *testing.T) {
 	signal := NewFluid(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols["ALT/EUR"] = NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	storeFluidSymbol(signal, "ALT/EUR", NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"}))
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -104,19 +122,22 @@ func TestFluidTickAppliesBook(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if len(signal.symbols["ALT/EUR"].bids) != 1 || signal.symbols["ALT/EUR"].spreadBPS <= 0 {
+	state := loadFluidSymbol(signal, "ALT/EUR")
+
+	if state == nil || len(state.bids) != 1 || state.spreadBPS <= 0 {
 		t.Fatalf("expected book state, got bids=%d spread=%v",
-			len(signal.symbols["ALT/EUR"].bids), signal.symbols["ALT/EUR"].spreadBPS)
+			len(state.bids), state.spreadBPS)
 	}
 }
 
 func BenchmarkFluidMeasure(b *testing.B) {
 	signal := NewFluid(context.Background(), nil)
-	signal.symbols["ALT/EUR"] = NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
-	signal.requested["ALT/EUR"] = struct{}{}
-	signal.symbols["ALT/EUR"].bids = []market.BookLevel{{Price: 10, Volume: 70}}
-	signal.symbols["ALT/EUR"].asks = []market.BookLevel{{Price: 10.01, Volume: 30}}
-	signal.symbols["ALT/EUR"].spreadBPS = 10
+	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	state.bids = []market.BookLevel{{Price: 10, Volume: 70}}
+	state.asks = []market.BookLevel{{Price: 10.01, Volume: 30}}
+	state.spreadBPS = 10
+	storeFluidSymbol(signal, "ALT/EUR", state)
+	markFluidRequested(signal, "ALT/EUR")
 
 	b.ReportAllocs()
 

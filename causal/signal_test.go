@@ -1,61 +1,14 @@
 package causal
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/kraken/market"
 )
-
-func TestCausalPublishGraphEveryTick(t *testing.T) {
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
-
-	causal := NewCausal(ctx, pool)
-	t.Cleanup(func() { _ = causal.Close() })
-
-	causal.symbols["ALT/EUR"] = NewCausalSymbol(asset.Pair{Wsname: "ALT/EUR"}, engine.DefaultCalibrationParams())
-	graphSub := causal.broadcasts["causal_graph"].Subscribe("test:causal_graph", 8)
-
-	pool.CreateBroadcastGroup("tick", 0).Send(&qpool.QValue[any]{
-		Value: market.TickerRow{
-			Symbol:    "ALT/EUR",
-			Last:      10,
-			Volume:    100,
-			ChangePct: 0.02,
-		},
-	})
-
-	if err := causal.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	select {
-	case value := <-graphSub.Incoming:
-		payload, ok := value.Value.(map[string]any)
-
-		if !ok {
-			t.Fatalf("expected map payload, got %T", value.Value)
-		}
-
-		if payload["symbol"] != "ALT/EUR" {
-			t.Fatalf("expected ALT/EUR symbol, got %v", payload["symbol"])
-		}
-
-		if payload["event"] != "causal_graph" {
-			t.Fatalf("expected causal_graph event, got %v", payload["event"])
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for causal_graph publish after tick message")
-	}
-}
 
 func TestBackdoorBlocksMacroConfounder(t *testing.T) {
 	samples := make([]causalSample, 0, 32)

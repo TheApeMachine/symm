@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/theapemachine/qpool"
@@ -9,6 +10,19 @@ import (
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
 )
+
+func storeLiquiditySymbol(liquidity *Liquidity, symbol string, state *symbolState) {
+	liquidity.symbols.Store(symbol, state)
+}
+
+func newTestLiquidity() *Liquidity {
+	return &Liquidity{
+		symbols:     sync.Map{},
+		requested:   sync.Map{},
+		belowMedian: adaptive.NewBelowMedian(),
+		peak:        adaptive.NewPeak(),
+	}
+}
 
 func TestLiquidityMeasure(t *testing.T) {
 	ctx := context.Background()
@@ -18,21 +32,21 @@ func TestLiquidityMeasure(t *testing.T) {
 	signal := NewLiquidity(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols["LOW/EUR"] = &symbolState{
+	storeLiquiditySymbol(signal, "LOW/EUR", &symbolState{
 		pair:          asset.Pair{Wsname: "LOW/EUR"},
 		dailyQuoteVol: 100,
 		forecast:      learned.NewForecast(0),
-	}
-	signal.symbols["MID/EUR"] = &symbolState{
+	})
+	storeLiquiditySymbol(signal, "MID/EUR", &symbolState{
 		pair:          asset.Pair{Wsname: "MID/EUR"},
 		dailyQuoteVol: 200,
 		forecast:      learned.NewForecast(0),
-	}
-	signal.symbols["HIGH/EUR"] = &symbolState{
+	})
+	storeLiquiditySymbol(signal, "HIGH/EUR", &symbolState{
 		pair:          asset.Pair{Wsname: "HIGH/EUR"},
 		dailyQuoteVol: 300,
 		forecast:      learned.NewForecast(0),
-	}
+	})
 
 	lowFound := false
 	highFound := false
@@ -62,18 +76,14 @@ func TestLiquidityMeasure(t *testing.T) {
 }
 
 func TestLiquidityMeasureMinPeerGuard(t *testing.T) {
-	signal := &Liquidity{
-		symbols:     make(map[string]*symbolState),
-		belowMedian: adaptive.NewBelowMedian(),
-		peak:        adaptive.NewPeak(),
-	}
+	signal := newTestLiquidity()
 
-	signal.symbols["LOW/EUR"] = &symbolState{
+	storeLiquiditySymbol(signal, "LOW/EUR", &symbolState{
 		pair: asset.Pair{Wsname: "LOW/EUR"}, dailyQuoteVol: 100, forecast: learned.NewForecast(0),
-	}
-	signal.symbols["MID/EUR"] = &symbolState{
+	})
+	storeLiquiditySymbol(signal, "MID/EUR", &symbolState{
 		pair: asset.Pair{Wsname: "MID/EUR"}, dailyQuoteVol: 200, forecast: learned.NewForecast(0),
-	}
+	})
 
 	for range signal.Measure() {
 		t.Fatal("expected min peer guard to fail with one peer")
@@ -81,18 +91,14 @@ func TestLiquidityMeasureMinPeerGuard(t *testing.T) {
 }
 
 func BenchmarkLiquidityMeasure(b *testing.B) {
-	signal := &Liquidity{
-		symbols:     make(map[string]*symbolState),
-		belowMedian: adaptive.NewBelowMedian(),
-		peak:        adaptive.NewPeak(),
-	}
+	signal := newTestLiquidity()
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR"} {
-		signal.symbols[symbol] = &symbolState{
+		storeLiquiditySymbol(signal, symbol, &symbolState{
 			pair:          asset.Pair{Wsname: symbol},
 			dailyQuoteVol: 100 + float64(index)*50,
 			forecast:      learned.NewForecast(0),
-		}
+		})
 	}
 
 	b.ReportAllocs()

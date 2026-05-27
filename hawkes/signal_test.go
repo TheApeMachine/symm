@@ -14,6 +14,24 @@ import (
 
 const testFixtureWindow = 5 * time.Minute
 
+func storeHawkesSymbol(hawkes *Hawkes, symbol string, state *symbolState) {
+	hawkes.symbols.Store(symbol, state)
+}
+
+func loadHawkesSymbol(hawkes *Hawkes, symbol string) *symbolState {
+	raw, ok := hawkes.symbols.Load(symbol)
+
+	if !ok {
+		return nil
+	}
+
+	return raw.(*symbolState)
+}
+
+func markHawkesRequested(hawkes *Hawkes, symbol string) {
+	hawkes.requested.Store(symbol, struct{}{})
+}
+
 func burstEvents(start time.Time, count int, gap time.Duration) []time.Time {
 	events := make([]time.Time, count)
 
@@ -351,12 +369,12 @@ func TestHawkesPublishPulseEveryTick(t *testing.T) {
 	signal := NewHawkes(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols["BTC/EUR"] = &symbolState{
+	storeHawkesSymbol(signal, "BTC/EUR", &symbolState{
 		pair:      asset.Pair{Wsname: "BTC/EUR", Quote: "EUR"},
 		state:     NewHawkesSymbol(engine.DefaultCalibrationParams()),
 		ticks:     make([]trade.Data, 0, 32),
 		imbalance: 0.5,
-	}
+	})
 
 	pool.CreateBroadcastGroup("book", 0).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{
@@ -370,7 +388,9 @@ func TestHawkesPublishPulseEveryTick(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if signal.symbols["BTC/EUR"].imbalance <= 0 {
-		t.Fatalf("expected book imbalance update, got %v", signal.symbols["BTC/EUR"].imbalance)
+	state := loadHawkesSymbol(signal, "BTC/EUR")
+
+	if state == nil || state.imbalance <= 0 {
+		t.Fatalf("expected book imbalance update, got %v", state)
 	}
 }

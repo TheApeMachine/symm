@@ -3,6 +3,7 @@ package fluid
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -68,7 +69,12 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 	scaledPressure := pressure * state.forecast.Scale()
 	raw, err := state.score.Push(math.Abs(imbalance), scaledPressure)
 
-	if err != nil || raw <= 0 {
+	if err != nil {
+		errnie.Error(err)
+		return engine.Measurement{}, false
+	}
+
+	if raw <= 0 {
 		return engine.Measurement{}, false
 	}
 
@@ -89,7 +95,11 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 }
 
 func (state *FluidSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
-	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	if _, err := state.forecast.Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (state *FluidSymbol) wireRow() map[string]any {

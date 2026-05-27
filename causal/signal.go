@@ -3,8 +3,10 @@ package causal
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -26,10 +28,10 @@ type Causal struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	symbols     map[string]*CausalSymbol
+	symbols     sync.Map
 	calibration engine.CalibrationParams
 	pending     []string
-	requested   map[string]struct{}
+	requested   sync.Map
 }
 
 func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
@@ -41,9 +43,9 @@ func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     make(map[string]*CausalSymbol),
+		symbols:     sync.Map{},
 		calibration: engine.DefaultCalibrationParams(),
-		requested:   make(map[string]struct{}),
+		requested:   sync.Map{},
 	}
 
 	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
@@ -51,7 +53,7 @@ func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
 		causal.subscribers[channel] = group.Subscribe("causal:"+channel, 128)
 	}
 
-	for _, channel := range []string{"measurements", "subscriptions", "causal_graph"} {
+	for _, channel := range []string{"measurements", "subscriptions"} {
 		causal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 	}
 
@@ -71,61 +73,70 @@ func (causal *Causal) Tick() error {
 				continue
 			}
 
-			causal.symbols[symbol] = NewCausalSymbol(*pair, causal.calibration)
+			causal.symbols.Store(symbol, NewCausalSymbol(*pair, causal.calibration))
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
 			}
 
-			if _, seen := causal.requested[symbol]; seen {
+			if _, seen := causal.requested.Load(symbol); seen {
 				continue
 			}
 
 			causal.pending = append(causal.pending, symbol)
 		}
+
+		causal.publishPulse()
 	case value := <-causal.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
-		state := causal.symbols[row.Symbol]
+		raw, ok := causal.symbols.Load(row.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*CausalSymbol)
 		state.FeedTicker(row)
 
-		if _, seen := causal.requested[row.Symbol]; seen || state.changePct == 0 {
+		if _, seen := causal.requested.Load(row.Symbol); seen || state.changePct == 0 {
 			break
 		}
 
-		causal.requested[row.Symbol] = struct{}{}
+		causal.requested.Store(row.Symbol, struct{}{})
 		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+
+		causal.publishPulse()
 	case value := <-causal.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
-		state := causal.symbols[tick.Symbol]
+		raw, ok := causal.symbols.Load(tick.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*CausalSymbol)
 		state.FeedTrade(tick)
 
-		if _, seen := causal.requested[tick.Symbol]; seen {
+		if _, seen := causal.requested.Load(tick.Symbol); seen {
 			break
 		}
 
-		causal.requested[tick.Symbol] = struct{}{}
+		causal.requested.Store(tick.Symbol, struct{}{})
 		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+
+		causal.publishPulse()
 	case value := <-causal.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)
-		state := causal.symbols[delta.Symbol]
+		raw, ok := causal.symbols.Load(delta.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*CausalSymbol)
 		state.FeedBook(delta)
 
-		if _, seen := causal.requested[delta.Symbol]; seen {
+		if _, seen := causal.requested.Load(delta.Symbol); seen {
 			break
 		}
 
@@ -133,37 +144,101 @@ func (causal *Causal) Tick() error {
 			break
 		}
 
-		causal.requested[delta.Symbol] = struct{}{}
+		causal.requested.Store(delta.Symbol, struct{}{})
 		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+
+		causal.publishPulse()
 	case value := <-causal.subscribers["feedback"].Incoming:
 		causal.Feedback(value.Value.(engine.PredictionFeedback))
+		causal.publishPulse()
 	default:
 	}
-
-	causal.publishPulse()
 
 	return nil
 }
 
+func (causal *Causal) requestedCount() int {
+	count := 0
+
+	causal.requested.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (causal *Causal) publishPulse() {
 	scanCap := max(config.System.MaxScanSymbols/8, 1)
+	requested := causal.requestedCount()
 
-	if len(causal.pending) > 0 && len(causal.requested) < scanCap {
-		remaining := scanCap - len(causal.requested)
+	if len(causal.pending) > 0 && requested < scanCap {
+		remaining := scanCap - requested
 		batch := min(min(config.System.SubscribeBatch, remaining), len(causal.pending))
 
 		symbols := causal.pending[:batch]
 		causal.pending = causal.pending[batch:]
 
 		for _, symbol := range symbols {
-			causal.requested[symbol] = struct{}{}
+			causal.requested.Store(symbol, struct{}{})
 		}
 
 		causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	}
 
-	for measurement := range causal.Measure() {
-		causal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	causal.publishMeasurements()
+}
+
+func (causal *Causal) publishMeasurements() {
+	macro := causal.macroMomentum()
+	now := time.Now()
+	waiters := make([]chan *qpool.QValue[any], 0)
+
+	causal.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := causal.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		state := value.(*CausalSymbol)
+		waiters = append(
+			waiters,
+			causal.pool.ScheduleFast(causal.ctx, func(ctx context.Context) (any, error) {
+				measurement, ok := state.Measure(macro, now)
+
+				if !ok {
+					return nil, nil
+				}
+
+				return measurement, nil
+			}),
+		)
+
+		return true
+	})
+
+	for _, waiter := range waiters {
+		value := <-waiter
+
+		if value == nil {
+			continue
+		}
+
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
+
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			continue
+		}
+
+		causal.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
 	}
 }
 
@@ -179,21 +254,22 @@ func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 		macro := causal.macroMomentum()
 		now := time.Now()
 
-		for symbol, state := range causal.symbols {
-			if _, subscribed := causal.requested[symbol]; !subscribed {
-				continue
+		causal.symbols.Range(func(key, value any) bool {
+			symbol := key.(string)
+
+			if _, subscribed := causal.requested.Load(symbol); !subscribed {
+				return true
 			}
 
+			state := value.(*CausalSymbol)
 			measurement, ok := state.Measure(macro, now)
 
 			if !ok {
-				continue
+				return true
 			}
 
-			if !yield(measurement) {
-				return
-			}
-		}
+			return yield(measurement)
+		})
 	}
 }
 
@@ -202,23 +278,28 @@ func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
 		return
 	}
 
-	state := causal.symbols[feedback.Symbol]
+	raw, ok := causal.symbols.Load(feedback.Symbol)
 
-	if state == nil {
+	if !ok {
 		return
 	}
 
+	state := raw.(*CausalSymbol)
 	state.ApplyFeedback(feedback)
 }
 
 func (causal *Causal) macroMomentum() float64 {
-	changes := make([]float64, 0, len(causal.symbols))
+	changes := make([]float64, 0)
 
-	for _, state := range causal.symbols {
+	causal.symbols.Range(func(key, value any) bool {
+		state := value.(*CausalSymbol)
+
 		if state.changePct != 0 {
 			changes = append(changes, state.changePct)
 		}
-	}
+
+		return true
+	})
 
 	if len(changes) == 0 {
 		return 0

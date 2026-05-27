@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -57,12 +58,16 @@ func (state *CausalSymbol) FeedTicker(row market.TickerRow) {
 }
 
 func (state *CausalSymbol) FeedTrade(tick trade.Data) {
-	_, _ = state.volumeWindow.Next(
-		0,
-		float64(tick.Timestamp.UnixNano()),
-		tick.Qty,
-		state.lastPrice,
-	)
+	errnie.Does(func() (float64, error) {
+		return state.volumeWindow.Next(
+			0,
+			float64(tick.Timestamp.UnixNano()),
+			tick.Qty,
+			state.lastPrice,
+		)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	})
 
 	sign := -1.0
 
@@ -70,7 +75,11 @@ func (state *CausalSymbol) FeedTrade(tick trade.Data) {
 		sign = 1.0
 	}
 
-	state.buyPressure, _ = state.pressure.Next(0, sign)
+	state.buyPressure = errnie.Does(func() (float64, error) {
+		return state.pressure.Next(0, sign)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 }
 
 func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {

@@ -19,7 +19,6 @@ Config holds runtime parameters for the trading engine.
 type Config struct {
 	QuoteCurrency              string
 	WalletEUR                  float64
-	RescoreEvery               time.Duration
 	TakerFeePct                float64
 	SlippageBPS                float64
 	BookDepthLevels            int
@@ -106,7 +105,6 @@ func NewConfig() *Config {
 		SlippageBPS:                DefaultSlippageBps,
 		BookDepthLevels:            5,
 		ExitEvery:                  10 * time.Millisecond,
-		RescoreEvery:               100 * time.Millisecond,
 		SubscribeBatch:             50,
 		MinWarmPulses:              50,
 		MinQuoteCoverage:           0.95,

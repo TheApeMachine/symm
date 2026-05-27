@@ -17,10 +17,10 @@ func TestSentimentMeasure(t *testing.T) {
 	t.Cleanup(func() { _ = signal.Close() })
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR", "E/EUR"} {
-		signal.symbols[symbol] = &symbolState{
+		signal.symbols.Store(symbol, &symbolState{
 			pair:      asset.Pair{Wsname: symbol},
 			changePct: 0.005 + float64(index)*0.002,
-		}
+		})
 	}
 
 	found := false
@@ -43,7 +43,7 @@ func BenchmarkSentimentMeasure(b *testing.B) {
 	signal := NewSentiment(context.Background(), nil)
 
 	for index, symbol := range []string{"A/EUR", "B/EUR", "C/EUR", "D/EUR", "E/EUR"} {
-		signal.symbols[symbol] = &symbolState{changePct: 0.5 + float64(index)*0.2}
+		signal.symbols.Store(symbol, &symbolState{changePct: 0.5 + float64(index)*0.2})
 	}
 
 	b.ReportAllocs()

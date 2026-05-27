@@ -3,6 +3,7 @@ package depthflow
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -75,7 +76,12 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 
 	raw, err := state.score.Push(math.Abs(imbalance), pressure*state.forecast.Scale())
 
-	if err != nil || raw <= 0 {
+	if err != nil {
+		errnie.Error(err)
+		return engine.Measurement{}, false
+	}
+
+	if raw <= 0 {
 		return engine.Measurement{}, false
 	}
 

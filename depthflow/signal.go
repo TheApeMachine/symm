@@ -3,8 +3,10 @@ package depthflow
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -24,9 +26,9 @@ type DepthFlow struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	symbols     map[string]*DepthSymbol
+	symbols     sync.Map
 	pending     []string
-	requested   map[string]struct{}
+	requested   sync.Map
 }
 
 /*
@@ -41,8 +43,8 @@ func NewDepthFlow(ctx context.Context, pool *qpool.Q) *DepthFlow {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     make(map[string]*DepthSymbol),
-		requested:   make(map[string]struct{}),
+		symbols:     sync.Map{},
+		requested:   sync.Map{},
 	}
 
 	for _, channel := range []string{"symbols", "book", "trade", "feedback"} {
@@ -74,25 +76,29 @@ func (depthflow *DepthFlow) Tick() error {
 				continue
 			}
 
-			depthflow.symbols[symbol] = NewDepthSymbol(*pair)
+			depthflow.symbols.Store(symbol, NewDepthSymbol(*pair))
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
 			}
 
-			if _, seen := depthflow.requested[symbol]; seen {
+			if _, seen := depthflow.requested.Load(symbol); seen {
 				continue
 			}
 
 			depthflow.pending = append(depthflow.pending, symbol)
 		}
+
+		depthflow.publishPulse()
 	case value := <-depthflow.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)
-		state := depthflow.symbols[delta.Symbol]
+		raw, ok := depthflow.symbols.Load(delta.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
+
+		state := raw.(*DepthSymbol)
 
 		if delta.BidOK {
 			state.bids = delta.Bids
@@ -102,7 +108,7 @@ func (depthflow *DepthFlow) Tick() error {
 			state.asks = delta.Asks
 		}
 
-		if _, seen := depthflow.requested[delta.Symbol]; seen {
+		if _, seen := depthflow.requested.Load(delta.Symbol); seen {
 			break
 		}
 
@@ -110,63 +116,120 @@ func (depthflow *DepthFlow) Tick() error {
 			break
 		}
 
-		depthflow.requested[delta.Symbol] = struct{}{}
-		depthflow.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+		depthflow.requested.Store(delta.Symbol, struct{}{})
+		depthflow.broadcasts["subscriptions"].Send(
+			&qpool.QValue[any]{Value: []string{delta.Symbol}},
+		)
+
+		depthflow.publishPulse()
 	case value := <-depthflow.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
-		state := depthflow.symbols[tick.Symbol]
+		raw, ok := depthflow.symbols.Load(tick.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*DepthSymbol)
 		sign := -1.0
 
 		if tick.Side == "buy" {
 			sign = 1.0
 		}
 
-		state.buyPressure, _ = state.pressure.Next(0, sign)
+		state.buyPressure = errnie.Does(func() (float64, error) {
+			return state.pressure.Next(0, sign)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
+
+		depthflow.publishPulse()
 	case value := <-depthflow.subscribers["feedback"].Incoming:
 		depthflow.Feedback(value.Value.(engine.PredictionFeedback))
+		depthflow.publishPulse()
 	default:
 	}
-
-	depthflow.publishPulse()
 
 	return nil
 }
 
+func (depthflow *DepthFlow) requestedCount() int {
+	count := 0
+
+	depthflow.requested.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (depthflow *DepthFlow) publishPulse() {
-	scanCap := config.System.MaxScanSymbols / 8
+	scanCap := max(config.System.MaxScanSymbols/8, 1)
+	requested := depthflow.requestedCount()
 
-	if scanCap < 1 {
-		scanCap = 1
-	}
-
-	if len(depthflow.pending) > 0 && len(depthflow.requested) < scanCap {
-		remaining := scanCap - len(depthflow.requested)
-		batch := config.System.SubscribeBatch
-
-		if batch > remaining {
-			batch = remaining
-		}
-
-		if batch > len(depthflow.pending) {
-			batch = len(depthflow.pending)
-		}
+	if len(depthflow.pending) > 0 && requested < scanCap {
+		remaining := scanCap - requested
+		batch := min(min(config.System.SubscribeBatch, remaining), len(depthflow.pending))
 
 		symbols := depthflow.pending[:batch]
 		depthflow.pending = depthflow.pending[batch:]
 
 		for _, symbol := range symbols {
-			depthflow.requested[symbol] = struct{}{}
+			depthflow.requested.Store(symbol, struct{}{})
 		}
 
 		depthflow.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	}
 
-	for measurement := range depthflow.Measure() {
+	depthflow.publishMeasurements()
+}
+
+func (depthflow *DepthFlow) publishMeasurements() {
+	waiters := make([]chan *qpool.QValue[any], 0)
+
+	depthflow.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := depthflow.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		state := value.(*DepthSymbol)
+		waiters = append(
+			waiters,
+			depthflow.pool.ScheduleFast(depthflow.ctx, func(ctx context.Context) (any, error) {
+				measurement, ok := state.Measure()
+
+				if !ok {
+					return nil, nil
+				}
+
+				return measurement, nil
+			}),
+		)
+
+		return true
+	})
+
+	for _, waiter := range waiters {
+		value := <-waiter
+
+		if value == nil {
+			continue
+		}
+
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
+
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			continue
+		}
+
 		depthflow.broadcasts["measurements"].Send(&qpool.QValue[any]{
 			Value: measurement,
 		})
@@ -175,7 +238,6 @@ func (depthflow *DepthFlow) publishPulse() {
 
 func (depthflow *DepthFlow) Close() error {
 	depthflow.cancel()
-
 	return nil
 }
 
@@ -185,21 +247,22 @@ func (depthflow *DepthFlow) Source() string {
 
 func (depthflow *DepthFlow) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		for symbol, state := range depthflow.symbols {
-			if _, subscribed := depthflow.requested[symbol]; !subscribed {
-				continue
+		depthflow.symbols.Range(func(key, value any) bool {
+			symbol := key.(string)
+
+			if _, subscribed := depthflow.requested.Load(symbol); !subscribed {
+				return true
 			}
 
+			state := value.(*DepthSymbol)
 			measurement, ok := state.Measure()
 
 			if !ok {
-				continue
+				return true
 			}
 
-			if !yield(measurement) {
-				return
-			}
-		}
+			return yield(measurement)
+		})
 	}
 }
 
@@ -208,11 +271,17 @@ func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
 		return
 	}
 
-	state := depthflow.symbols[feedback.Symbol]
+	raw, ok := depthflow.symbols.Load(feedback.Symbol)
 
-	if state == nil {
+	if !ok {
 		return
 	}
 
-	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state := raw.(*DepthSymbol)
+
+	if _, err := state.forecast.Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
+	}
 }

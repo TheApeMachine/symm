@@ -17,7 +17,6 @@ type Booter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	err         error
-	errMu       sync.Mutex
 	pool        *qpool.Q
 	systems     []engine.System
 	broadcasts  map[string]*qpool.BroadcastGroup

@@ -3,8 +3,10 @@ package hawkes
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -31,9 +33,9 @@ type Hawkes struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	symbols     map[string]*symbolState
+	symbols     sync.Map
 	calibration engine.CalibrationParams
-	requested   map[string]struct{}
+	requested   sync.Map
 }
 
 func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
@@ -45,9 +47,9 @@ func NewHawkes(ctx context.Context, pool *qpool.Q) *Hawkes {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     make(map[string]*symbolState),
+		symbols:     sync.Map{},
 		calibration: engine.DefaultCalibrationParams(),
-		requested:   make(map[string]struct{}),
+		requested:   sync.Map{},
 	}
 
 	for _, channel := range []string{"symbols", "tick", "trade", "book", "feedback"} {
@@ -76,24 +78,27 @@ func (hawkes *Hawkes) Tick() error {
 	case value := <-hawkes.subscribers["symbols"].Incoming:
 		for symbol, pair := range value.Value.(map[string]*asset.Pair) {
 			if pair != nil {
-				hawkes.symbols[symbol] = &symbolState{
+				hawkes.symbols.Store(symbol, &symbolState{
 					pair:  *pair,
 					state: NewHawkesSymbol(hawkes.calibration),
 					ticks: make([]trade.Data, 0, 128),
-				}
+				})
 			}
 		}
+
+		hawkes.publishPulse()
 	case value := <-hawkes.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
-		symbolState := hawkes.symbols[row.Symbol]
+		raw, ok := hawkes.symbols.Load(row.Symbol)
 
-		if symbolState == nil {
+		if !ok {
 			break
 		}
 
+		symbolState := raw.(*symbolState)
 		symbolState.state.FeedTicker(row.Last, row.Volume)
 
-		if _, seen := hawkes.requested[row.Symbol]; seen || row.Volume <= 0 {
+		if _, seen := hawkes.requested.Load(row.Symbol); seen || row.Volume <= 0 {
 			break
 		}
 
@@ -101,51 +106,111 @@ func (hawkes *Hawkes) Tick() error {
 			break
 		}
 
-		hawkes.requested[row.Symbol] = struct{}{}
+		hawkes.requested.Store(row.Symbol, struct{}{})
 		hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+
+		hawkes.publishPulse()
 	case value := <-hawkes.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
-		symbolState := hawkes.symbols[tick.Symbol]
+		raw, ok := hawkes.symbols.Load(tick.Symbol)
 
-		if symbolState == nil {
+		if !ok {
 			break
 		}
 
+		symbolState := raw.(*symbolState)
 		symbolState.ticks = append(symbolState.ticks, tick)
 
 		if len(symbolState.ticks) > 512 {
 			symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
 		}
 
-		if _, seen := hawkes.requested[tick.Symbol]; !seen && len(symbolState.ticks) >= 16 {
-			hawkes.requested[tick.Symbol] = struct{}{}
+		if _, seen := hawkes.requested.Load(tick.Symbol); !seen && len(symbolState.ticks) >= 16 {
+			hawkes.requested.Store(tick.Symbol, struct{}{})
 			hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
 		}
+
+		hawkes.publishPulse()
 	case value := <-hawkes.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)
-		symbolState := hawkes.symbols[delta.Symbol]
+		raw, ok := hawkes.symbols.Load(delta.Symbol)
 
-		if symbolState == nil || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+		if !ok || len(delta.Bids) == 0 || len(delta.Asks) == 0 {
 			break
 		}
 
+		symbolState := raw.(*symbolState)
 		total := delta.Bids[0].Volume + delta.Asks[0].Volume
 
 		if total > 0 {
 			symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
 		}
+
+		hawkes.publishPulse()
 	case value := <-hawkes.subscribers["feedback"].Incoming:
 		hawkes.Feedback(value.Value.(engine.PredictionFeedback))
+		hawkes.publishPulse()
 	default:
 	}
-
-	hawkes.publishPulse()
 
 	return nil
 }
 
 func (hawkes *Hawkes) publishPulse() {
-	for measurement := range hawkes.Measure() {
+	hawkes.publishMeasurements()
+}
+
+func (hawkes *Hawkes) publishMeasurements() {
+	waiters := make([]chan *qpool.QValue[any], 0)
+
+	hawkes.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := hawkes.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		symbolState := value.(*symbolState)
+		now := time.Now()
+		waiters = append(
+			waiters,
+			hawkes.pool.ScheduleFast(hawkes.ctx, func(ctx context.Context) (any, error) {
+				measurement, ok := symbolState.state.Measure(
+					symbolState.ticks,
+					symbolState.imbalance,
+					now,
+					symbolState.pair,
+				)
+
+				if !ok {
+					return nil, nil
+				}
+
+				return measurement, nil
+			}),
+		)
+
+		return true
+	})
+
+	for _, waiter := range waiters {
+		value := <-waiter
+
+		if value == nil {
+			continue
+		}
+
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
+
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			continue
+		}
+
 		hawkes.broadcasts["measurements"].Send(&qpool.QValue[any]{
 			Value: measurement,
 		})
@@ -165,11 +230,14 @@ func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		now := time.Now()
 
-		for symbol, symbolState := range hawkes.symbols {
-			if _, subscribed := hawkes.requested[symbol]; !subscribed {
-				continue
+		hawkes.symbols.Range(func(key, value any) bool {
+			symbol := key.(string)
+
+			if _, subscribed := hawkes.requested.Load(symbol); !subscribed {
+				return true
 			}
 
+			symbolState := value.(*symbolState)
 			measurement, ok := symbolState.state.Measure(
 				symbolState.ticks,
 				symbolState.imbalance,
@@ -178,13 +246,11 @@ func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 			)
 
 			if !ok {
-				continue
+				return true
 			}
 
-			if !yield(measurement) {
-				return
-			}
-		}
+			return yield(measurement)
+		})
 	}
 }
 
@@ -193,11 +259,12 @@ func (hawkes *Hawkes) Feedback(feedback engine.PredictionFeedback) {
 		return
 	}
 
-	symbolState := hawkes.symbols[feedback.Symbol]
+	raw, ok := hawkes.symbols.Load(feedback.Symbol)
 
-	if symbolState == nil {
+	if !ok {
 		return
 	}
 
+	symbolState := raw.(*symbolState)
 	symbolState.state.ApplyFeedback(feedback)
 }

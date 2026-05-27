@@ -3,8 +3,10 @@ package fluid
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -24,9 +26,9 @@ type Fluid struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	symbols     map[string]*FluidSymbol
+	symbols     sync.Map
 	pending     []string
-	requested   map[string]struct{}
+	requested   sync.Map
 }
 
 func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
@@ -38,8 +40,8 @@ func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     make(map[string]*FluidSymbol),
-		requested:   make(map[string]struct{}),
+		symbols:     sync.Map{},
+		requested:   sync.Map{},
 	}
 
 	for _, channel := range []string{"symbols", "tick", "book", "trade", "feedback"} {
@@ -67,35 +69,42 @@ func (fluid *Fluid) Tick() error {
 				continue
 			}
 
-			fluid.symbols[symbol] = NewFluidSymbol(*pair)
+			fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
 			}
 
-			if _, seen := fluid.requested[symbol]; seen {
+			if _, seen := fluid.requested.Load(symbol); seen {
 				continue
 			}
 
 			fluid.pending = append(fluid.pending, symbol)
 		}
+
+		fluid.publishPulse()
 	case value := <-fluid.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
-		state := fluid.symbols[row.Symbol]
+		raw, ok := fluid.symbols.Load(row.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*FluidSymbol)
 		state.changePct = row.ChangePct
 		state.volume = row.Volume
+
+		fluid.publishPulse()
 	case value := <-fluid.subscribers["book"].Incoming:
 		delta := value.Value.(market.BookLevelsDelta)
-		state := fluid.symbols[delta.Symbol]
+		raw, ok := fluid.symbols.Load(delta.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
+
+		state := raw.(*FluidSymbol)
 
 		if delta.BidOK {
 			state.bids = delta.Bids
@@ -115,7 +124,7 @@ func (fluid *Fluid) Tick() error {
 			}
 		}
 
-		if _, seen := fluid.requested[delta.Symbol]; seen {
+		if _, seen := fluid.requested.Load(delta.Symbol); seen {
 			break
 		}
 
@@ -123,36 +132,54 @@ func (fluid *Fluid) Tick() error {
 			break
 		}
 
-		fluid.requested[delta.Symbol] = struct{}{}
+		fluid.requested.Store(delta.Symbol, struct{}{})
 		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+
+		fluid.publishPulse()
 	case value := <-fluid.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
-		state := fluid.symbols[tick.Symbol]
+		raw, ok := fluid.symbols.Load(tick.Symbol)
 
-		if state == nil {
+		if !ok {
 			break
 		}
 
+		state := raw.(*FluidSymbol)
 		sign := -1.0
 
 		if tick.Side == "buy" {
 			sign = 1.0
 		}
 
-		state.buyPressure, _ = state.pressure.Next(0, sign)
+		state.buyPressure = errnie.Does(func() (float64, error) {
+			return state.pressure.Next(0, sign)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
+
+		fluid.publishPulse()
 	case value := <-fluid.subscribers["feedback"].Incoming:
 		fluid.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
 	}
 
-	fluid.publishPulse()
-
 	return nil
 }
 
+func (fluid *Fluid) requestedCount() int {
+	count := 0
+
+	fluid.requested.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (fluid *Fluid) publishPulse() {
-	if len(fluid.pending) > 0 && len(fluid.requested) < config.System.MaxScanSymbols {
-		remaining := config.System.MaxScanSymbols - len(fluid.requested)
+	if len(fluid.pending) > 0 && fluid.requestedCount() < config.System.MaxScanSymbols {
+		remaining := config.System.MaxScanSymbols - fluid.requestedCount()
 		batch := config.System.SubscribeBatch
 
 		if batch > remaining {
@@ -167,38 +194,118 @@ func (fluid *Fluid) publishPulse() {
 		fluid.pending = fluid.pending[batch:]
 
 		for _, symbol := range symbols {
-			fluid.requested[symbol] = struct{}{}
+			fluid.requested.Store(symbol, struct{}{})
 		}
 
 		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	}
 
-	for measurement := range fluid.Measure() {
-		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-	}
-
+	fluid.publishMeasurements()
 	fluid.publishFieldRows()
+}
+
+func (fluid *Fluid) publishMeasurements() {
+	waiters := make([]chan *qpool.QValue[any], 0)
+
+	fluid.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := fluid.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		state := value.(*FluidSymbol)
+		waiters = append(
+			waiters,
+			fluid.pool.ScheduleFast(fluid.ctx, func(ctx context.Context) (any, error) {
+				measurement, ok := state.Measure()
+
+				if !ok {
+					return nil, nil
+				}
+
+				return measurement, nil
+			}),
+		)
+
+		return true
+	})
+
+	for _, waiter := range waiters {
+		value := <-waiter
+
+		if value == nil {
+			continue
+		}
+
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
+
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			continue
+		}
+
+		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
+	}
 }
 
 func (fluid *Fluid) publishFieldRows() {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	symbols := make([]map[string]any, 0)
+	waiters := make([]struct {
+		symbol string
+		waiter chan *qpool.QValue[any]
+	}, 0)
 
-	for symbol, state := range fluid.symbols {
-		if _, subscribed := fluid.requested[symbol]; !subscribed {
+	fluid.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if _, subscribed := fluid.requested.Load(symbol); !subscribed {
+			return true
+		}
+
+		state := value.(*FluidSymbol)
+		waiters = append(waiters, struct {
+			symbol string
+			waiter chan *qpool.QValue[any]
+		}{
+			symbol: symbol,
+			waiter: fluid.pool.ScheduleFast(fluid.ctx, func(ctx context.Context) (any, error) {
+				return state.wireRow(), nil
+			}),
+		})
+
+		return true
+	})
+
+	for _, job := range waiters {
+		value := <-job.waiter
+
+		if value == nil {
 			continue
 		}
 
-		row := state.wireRow()
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
 
-		if row == nil {
+		row, ok := value.Value.(map[string]any)
+
+		if !ok || row == nil {
 			continue
 		}
 
 		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
 			"event":  "field_row",
 			"ts":     now,
-			"symbol": symbol,
+			"symbol": job.symbol,
 			"row":    row,
 		}})
 		symbols = append(symbols, row)
@@ -225,21 +332,22 @@ func (fluid *Fluid) Source() string { return fluidSource }
 
 func (fluid *Fluid) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		for symbol, state := range fluid.symbols {
-			if _, subscribed := fluid.requested[symbol]; !subscribed {
-				continue
+		fluid.symbols.Range(func(key, value any) bool {
+			symbol := key.(string)
+
+			if _, subscribed := fluid.requested.Load(symbol); !subscribed {
+				return true
 			}
 
+			state := value.(*FluidSymbol)
 			measurement, ok := state.Measure()
 
 			if !ok {
-				continue
+				return true
 			}
 
-			if !yield(measurement) {
-				return
-			}
-		}
+			return yield(measurement)
+		})
 	}
 }
 
@@ -248,11 +356,12 @@ func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
 		return
 	}
 
-	state := fluid.symbols[feedback.Symbol]
+	raw, ok := fluid.symbols.Load(feedback.Symbol)
 
-	if state == nil {
+	if !ok {
 		return
 	}
 
+	state := raw.(*FluidSymbol)
 	state.ApplyFeedback(feedback)
 }

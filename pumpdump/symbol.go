@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/numeric"
@@ -90,13 +91,23 @@ func (state *PumpSymbol) Measure(peakSpike float64) (engine.Measurement, bool) {
 		state.forecast.Scale(),
 	)
 
-	if err != nil || raw <= 0 {
+	if err != nil {
+		errnie.Error(err)
+		return engine.Measurement{}, false
+	}
+
+	if raw <= 0 {
 		return engine.Measurement{}, false
 	}
 
 	confidence, err := state.measureAlignment(peakSpike)
 
-	if err != nil || confidence <= 0 {
+	if err != nil {
+		errnie.Error(err)
+		return engine.Measurement{}, false
+	}
+
+	if confidence <= 0 {
 		return engine.Measurement{}, false
 	}
 

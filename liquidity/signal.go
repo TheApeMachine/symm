@@ -3,8 +3,10 @@ package liquidity
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -34,11 +36,11 @@ type Liquidity struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	symbols     map[string]*symbolState
+	symbols     sync.Map
 	belowMedian *adaptive.BelowMedian
 	peak        *adaptive.Peak
 	pending     []string
-	requested   map[string]struct{}
+	requested   sync.Map
 }
 
 func NewLiquidity(ctx context.Context, pool *qpool.Q) *Liquidity {
@@ -50,10 +52,10 @@ func NewLiquidity(ctx context.Context, pool *qpool.Q) *Liquidity {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     make(map[string]*symbolState),
+		symbols:     sync.Map{},
 		belowMedian: adaptive.NewBelowMedian(),
 		peak:        adaptive.NewPeak(),
-		requested:   make(map[string]struct{}),
+		requested:   sync.Map{},
 	}
 
 	for _, channel := range []string{"symbols", "tick", "feedback"} {
@@ -80,71 +82,201 @@ func (liquidity *Liquidity) Tick() error {
 				continue
 			}
 
-			liquidity.symbols[symbol] = &symbolState{
+			liquidity.symbols.Store(symbol, &symbolState{
 				pair:     *pair,
 				forecast: learned.NewForecast(0),
-			}
+			})
 
 			if pair.Quote != config.System.QuoteCurrency {
 				continue
 			}
 
-			if _, seen := liquidity.requested[symbol]; seen {
+			if _, seen := liquidity.requested.Load(symbol); seen {
 				continue
 			}
 
 			liquidity.pending = append(liquidity.pending, symbol)
 		}
+
+		liquidity.publishPulse()
 	case value := <-liquidity.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
-		state := liquidity.symbols[row.Symbol]
+		raw, ok := liquidity.symbols.Load(row.Symbol)
 
-		if state == nil || row.Last <= 0 {
+		if !ok {
+			break
+		}
+
+		state := raw.(*symbolState)
+
+		if row.Last <= 0 {
 			break
 		}
 
 		state.dailyQuoteVol = row.Volume * row.Last
+		liquidity.publishPulse()
 	case value := <-liquidity.subscribers["feedback"].Incoming:
 		liquidity.Feedback(value.Value.(engine.PredictionFeedback))
+		liquidity.publishPulse()
 	default:
 	}
-
-	liquidity.publishPulse()
 
 	return nil
 }
 
+func (liquidity *Liquidity) requestedCount() int {
+	count := 0
+
+	liquidity.requested.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (liquidity *Liquidity) publishPulse() {
-	scanCap := config.System.MaxScanSymbols / 8
+	scanCap := max(config.System.MaxScanSymbols/8, 1)
+	requested := liquidity.requestedCount()
 
-	if scanCap < 1 {
-		scanCap = 1
-	}
-
-	if len(liquidity.pending) > 0 && len(liquidity.requested) < scanCap {
-		remaining := scanCap - len(liquidity.requested)
-		batch := config.System.SubscribeBatch
-
-		if batch > remaining {
-			batch = remaining
-		}
-
-		if batch > len(liquidity.pending) {
-			batch = len(liquidity.pending)
-		}
+	if len(liquidity.pending) > 0 && requested < scanCap {
+		remaining := scanCap - requested
+		batch := min(min(config.System.SubscribeBatch, remaining), len(liquidity.pending))
 
 		symbols := liquidity.pending[:batch]
 		liquidity.pending = liquidity.pending[batch:]
 
 		for _, symbol := range symbols {
-			liquidity.requested[symbol] = struct{}{}
+			liquidity.requested.Store(symbol, struct{}{})
 		}
 
 		liquidity.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
 	}
 
-	for measurement := range liquidity.Measure() {
-		liquidity.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	liquidity.publishMeasurements()
+}
+
+func (liquidity *Liquidity) collectQuotes() map[string]float64 {
+	quotes := make(map[string]float64)
+
+	liquidity.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+		state := value.(*symbolState)
+
+		if state.dailyQuoteVol > 0 {
+			quotes[symbol] = state.dailyQuoteVol
+		}
+
+		return true
+	})
+
+	return quotes
+}
+
+func (liquidity *Liquidity) collectCandidates(quotes map[string]float64) map[string]float64 {
+	candidates := make(map[string]float64, len(quotes))
+
+	for symbol, quoteVol := range quotes {
+		peers := adaptive.PeerValues(quotes, symbol)
+
+		if len(peers) < minLiquidityPeers {
+			continue
+		}
+
+		liquid, err := liquidity.belowMedian.Next(quoteVol, peers...)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if liquid <= 0 {
+			continue
+		}
+
+		score := adaptive.IlliquidityScore(quoteVol, peers)
+
+		if score <= 0 {
+			continue
+		}
+
+		candidates[symbol] = score
+	}
+
+	return candidates
+}
+
+func (liquidity *Liquidity) publishMeasurements() {
+	quotes := liquidity.collectQuotes()
+	candidates := liquidity.collectCandidates(quotes)
+	waiters := make([]chan *qpool.QValue[any], 0)
+
+	for symbol, rawScore := range candidates {
+		raw, ok := liquidity.symbols.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		state := raw.(*symbolState)
+		score := rawScore
+
+		waiters = append(
+			waiters,
+			liquidity.pool.ScheduleFast(liquidity.ctx, func(ctx context.Context) (any, error) {
+				peakScore, err := liquidity.peak.Next(
+					score, adaptive.PeerValues(candidates, symbol)...,
+				)
+
+				if err != nil {
+					return nil, err
+				}
+
+				if peakScore <= 0 {
+					return nil, nil
+				}
+
+				confidence := liquidity.confidenceFromScore(
+					peakScore, adaptive.PeerValues(candidates, symbol),
+				)
+
+				if confidence <= 0 {
+					return nil, nil
+				}
+
+				return engine.Measurement{
+					Type:       engine.Liquidity,
+					Source:     liquiditySource,
+					Regime:     "liquidity",
+					Reason:     "below_median",
+					Pairs:      []asset.Pair{state.pair},
+					Confidence: confidence,
+				}, nil
+			}),
+		)
+	}
+
+	for _, waiter := range waiters {
+		value := <-waiter
+
+		if value == nil {
+			continue
+		}
+
+		if value.Error != nil {
+			errnie.Error(value.Error)
+			continue
+		}
+
+		measurement, ok := value.Value.(engine.Measurement)
+
+		if !ok {
+			continue
+		}
+
+		liquidity.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
 	}
 }
 
@@ -157,47 +289,33 @@ func (liquidity *Liquidity) Source() string { return liquiditySource }
 
 func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		quotes := make(map[string]float64, len(liquidity.symbols))
-
-		for symbol, state := range liquidity.symbols {
-			if state.dailyQuoteVol > 0 {
-				quotes[symbol] = state.dailyQuoteVol
-			}
-		}
-
-		candidates := make(map[string]float64, len(quotes))
-
-		for symbol, quoteVol := range quotes {
-			peers := adaptive.PeerValues(quotes, symbol)
-
-			if len(peers) < minLiquidityPeers {
-				continue
-			}
-
-			liquid, err := liquidity.belowMedian.Next(quoteVol, peers...)
-
-			if err != nil || liquid <= 0 {
-				continue
-			}
-
-			score := adaptive.IlliquidityScore(quoteVol, peers)
-
-			if score <= 0 {
-				continue
-			}
-
-			candidates[symbol] = score
-		}
+		quotes := liquidity.collectQuotes()
+		candidates := liquidity.collectCandidates(quotes)
 
 		for symbol, rawScore := range candidates {
-			peakScore, err := liquidity.peak.Next(rawScore, adaptive.PeerValues(candidates, symbol)...)
+			raw, ok := liquidity.symbols.Load(symbol)
 
-			if err != nil || peakScore <= 0 {
+			if !ok {
 				continue
 			}
 
-			state := liquidity.symbols[symbol]
-			confidence := liquidity.confidenceFromScore(peakScore, adaptive.PeerValues(candidates, symbol))
+			state := raw.(*symbolState)
+			peakScore, err := liquidity.peak.Next(
+				rawScore, adaptive.PeerValues(candidates, symbol)...,
+			)
+
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			if peakScore <= 0 {
+				continue
+			}
+
+			confidence := liquidity.confidenceFromScore(
+				peakScore, adaptive.PeerValues(candidates, symbol),
+			)
 
 			if confidence <= 0 {
 				continue
@@ -222,13 +340,19 @@ func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
 		return
 	}
 
-	state := liquidity.symbols[feedback.Symbol]
+	raw, ok := liquidity.symbols.Load(feedback.Symbol)
 
-	if state == nil {
+	if !ok {
 		return
 	}
 
-	_, _ = state.forecast.Next(0, feedback.PredictedReturn, feedback.ActualReturn)
+	state := raw.(*symbolState)
+
+	if _, err := state.forecast.Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
+	}
 }
 
 /*

@@ -37,12 +37,10 @@ func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
 		history:     newHistoryStore(),
 	}
 
-	for _, channel := range []string{"book", "trade", "tick"} {
+	for _, channel := range []string{"book", "trade", "tick", "exits"} {
 		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		exhaust.subscribers[channel] = group.Subscribe("exhaust:"+channel, 128)
 	}
-
-	exhaust.broadcasts["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond)
 
 	return exhaust
 }
@@ -87,7 +85,18 @@ func (exhaust *Exhaust) Tick() error {
 			}
 		}
 
-		exhaust.history.observe(delta.Symbol, bidDepth, askDepth, bidDepth+askDepth, spreadBPS, 0, imbalance, 0)
+		exhaust.history.observe(
+			delta.Symbol,
+			bidDepth,
+			askDepth,
+			bidDepth+askDepth,
+			spreadBPS,
+			0,
+			imbalance,
+			0,
+		)
+
+		exhaust.publishPulse()
 	case value := <-exhaust.subscribers["trade"].Incoming:
 		tick := value.Value.(trade.Data)
 		sign := -1.0
@@ -96,14 +105,20 @@ func (exhaust *Exhaust) Tick() error {
 			sign = 1.0
 		}
 
-		exhaust.history.observe(tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price)
+		exhaust.history.observe(
+			tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
+		)
+
+		exhaust.publishPulse()
 	case value := <-exhaust.subscribers["tick"].Incoming:
 		row := value.Value.(market.TickerRow)
-		exhaust.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
+		exhaust.history.observe(
+			row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
+		)
+
+		exhaust.publishPulse()
 	default:
 	}
-
-	exhaust.publishPulse()
 
 	return nil
 }

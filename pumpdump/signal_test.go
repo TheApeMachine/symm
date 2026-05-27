@@ -11,6 +11,24 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 )
 
+func storePumpSymbol(pumpdump *PumpDump, symbol string, state *PumpSymbol) {
+	pumpdump.symbols.Store(symbol, state)
+}
+
+func loadPumpSymbol(pumpdump *PumpDump, symbol string) *PumpSymbol {
+	raw, ok := pumpdump.symbols.Load(symbol)
+
+	if !ok {
+		return nil
+	}
+
+	return raw.(*PumpSymbol)
+}
+
+func markPumpRequested(pumpdump *PumpDump, symbol string) {
+	pumpdump.requested.Store(symbol, struct{}{})
+}
+
 func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
 	t.Helper()
 
@@ -21,9 +39,10 @@ func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol) {
 	signal := NewPumpDump(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
+	storePumpSymbol(signal, "PUMP/EUR", NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"}))
+	markPumpRequested(signal, "PUMP/EUR")
 
-	symbolState := signal.symbols["PUMP/EUR"]
+	symbolState := loadPumpSymbol(signal, "PUMP/EUR")
 
 	if symbolState == nil {
 		t.Fatal("expected pump symbol state")
@@ -136,9 +155,10 @@ func BenchmarkPumpDumpMeasure(b *testing.B) {
 	defer pool.Close()
 
 	signal := NewPumpDump(ctx, pool)
-	signal.symbols["PUMP/EUR"] = NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
+	storePumpSymbol(signal, "PUMP/EUR", NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"}))
+	markPumpRequested(signal, "PUMP/EUR")
 
-	seedPumpSymbol(signal.symbols["PUMP/EUR"])
+	seedPumpSymbol(loadPumpSymbol(signal, "PUMP/EUR"))
 
 	b.ReportAllocs()
 

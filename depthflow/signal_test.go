@@ -2,6 +2,8 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,24 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
 )
+
+func storeDepthSymbol(depthflow *DepthFlow, symbol string, state *DepthSymbol) {
+	depthflow.symbols.Store(symbol, state)
+}
+
+func loadDepthSymbol(depthflow *DepthFlow, symbol string) *DepthSymbol {
+	raw, ok := depthflow.symbols.Load(symbol)
+
+	if !ok {
+		return nil
+	}
+
+	return raw.(*DepthSymbol)
+}
+
+func markDepthRequested(depthflow *DepthFlow, symbol string) {
+	depthflow.requested.Store(symbol, struct{}{})
+}
 
 func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
 	t.Helper()
@@ -22,10 +42,10 @@ func testDepthFlow(t *testing.T) (*DepthFlow, *DepthSymbol) {
 	signal := NewDepthFlow(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols["BTC/EUR"] = NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
-	signal.requested["BTC/EUR"] = struct{}{}
+	storeDepthSymbol(signal, "BTC/EUR", NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"}))
+	markDepthRequested(signal, "BTC/EUR")
 
-	state := signal.symbols["BTC/EUR"]
+	state := loadDepthSymbol(signal, "BTC/EUR")
 
 	if state == nil {
 		t.Fatal("expected depth symbol state")
@@ -53,8 +73,8 @@ func TestDepthFlowPublishPulseAfterTrade(t *testing.T) {
 	t.Cleanup(func() { _ = signal.Close() })
 
 	state := NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
-	signal.symbols["BTC/EUR"] = state
-	signal.requested["BTC/EUR"] = struct{}{}
+	storeDepthSymbol(signal, "BTC/EUR", state)
+	markDepthRequested(signal, "BTC/EUR")
 	seedDepthSymbol(state)
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:depthflow", 8)
@@ -156,21 +176,71 @@ func TestDepthFlowFeedbackLowersConfidence(t *testing.T) {
 	}
 }
 
+func TestDepthFlowConcurrentSymbolUpdates(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 4, 8, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewDepthFlow(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	for index := 0; index < 32; index++ {
+		symbol := fmt.Sprintf("SYM%d/EUR", index)
+		storeDepthSymbol(signal, symbol, NewDepthSymbol(asset.Pair{Wsname: symbol}))
+		markDepthRequested(signal, symbol)
+		seedDepthSymbol(loadDepthSymbol(signal, symbol))
+	}
+
+	var workers sync.WaitGroup
+
+	for index := 0; index < 32; index++ {
+		workers.Add(1)
+
+		go func() {
+			defer workers.Done()
+			signal.publishMeasurements()
+		}()
+	}
+
+	workers.Wait()
+}
+
 func BenchmarkDepthFlowMeasure(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewDepthFlow(ctx, pool)
-	signal.symbols["BTC/EUR"] = NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"})
-	signal.requested["BTC/EUR"] = struct{}{}
+	storeDepthSymbol(signal, "BTC/EUR", NewDepthSymbol(asset.Pair{Wsname: "BTC/EUR"}))
+	markDepthRequested(signal, "BTC/EUR")
 
-	seedDepthSymbol(signal.symbols["BTC/EUR"])
+	seedDepthSymbol(loadDepthSymbol(signal, "BTC/EUR"))
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		for range signal.Measure() {
 		}
+	}
+}
+
+func BenchmarkDepthFlowPublishMeasurements(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 4, 8, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewDepthFlow(ctx, pool)
+
+	for index := 0; index < 32; index++ {
+		symbol := fmt.Sprintf("SYM%d/EUR", index)
+		storeDepthSymbol(signal, symbol, NewDepthSymbol(asset.Pair{Wsname: symbol}))
+		markDepthRequested(signal, symbol)
+		seedDepthSymbol(loadDepthSymbol(signal, symbol))
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal.publishMeasurements()
 	}
 }

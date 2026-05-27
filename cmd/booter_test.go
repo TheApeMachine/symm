@@ -4,10 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 )
 
@@ -32,10 +30,6 @@ func TestBooterConcurrentSystemTicks(t *testing.T) {
 
 	pool := qpool.NewQ(ctx, 2, 8, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
-
-	original := config.System.RescoreEvery
-	config.System.RescoreEvery = 2 * time.Millisecond
-	t.Cleanup(func() { config.System.RescoreEvery = original })
 
 	first := &tickSystem{}
 	second := &tickSystem{}
@@ -75,10 +69,6 @@ func BenchmarkBooterWaitRescore(b *testing.B) {
 	if err != nil {
 		b.Fatalf("new booter: %v", err)
 	}
-
-	original := config.System.RescoreEvery
-	config.System.RescoreEvery = time.Millisecond
-	b.Cleanup(func() { config.System.RescoreEvery = original })
 
 	b.ReportAllocs()
 	b.ResetTimer()

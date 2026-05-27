@@ -16,14 +16,14 @@ func TestLeadLagMeasure(t *testing.T) {
 	signal := NewLeadLag(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
-	signal.symbols[anchorSymbol] = &symbolState{
+	signal.symbols.Store(anchorSymbol, &symbolState{
 		pair:      asset.Pair{Wsname: anchorSymbol},
 		changePct: 0.08,
-	}
-	signal.symbols["ALT/EUR"] = &symbolState{
+	})
+	signal.symbols.Store("ALT/EUR", &symbolState{
 		pair:      asset.Pair{Wsname: "ALT/EUR"},
 		changePct: 0.02,
-	}
+	})
 
 	found := false
 
@@ -43,9 +43,9 @@ func TestLeadLagMeasure(t *testing.T) {
 
 func BenchmarkLeadLagMeasure(b *testing.B) {
 	signal := NewLeadLag(context.Background(), nil)
-	signal.symbols[anchorSymbol] = &symbolState{changePct: 0.08}
-	signal.symbols["ALT/EUR"] = &symbolState{changePct: 0.02}
-	signal.symbols["ETH/EUR"] = &symbolState{changePct: 0.03}
+	signal.symbols.Store(anchorSymbol, &symbolState{changePct: 0.08})
+	signal.symbols.Store("ALT/EUR", &symbolState{changePct: 0.02})
+	signal.symbols.Store("ETH/EUR", &symbolState{changePct: 0.03})
 
 	b.ReportAllocs()
 

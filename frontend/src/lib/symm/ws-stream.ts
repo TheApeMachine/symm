@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
 import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
-import { CausalGraphDataProvider } from "#/components/symm/causal-graph-data-provider";
 import { FluidDataProvider } from "#/components/symm/fluid-data-provider";
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
@@ -74,7 +73,6 @@ const routePayload = (payload: unknown) => {
 
 	WalletDataProvider.ingest(payload);
 	TradesDataProvider.ingest(payload);
-	CausalGraphDataProvider.ingest(payload);
 	ConfidenceDataProvider.ingest(payload);
 	PredictionsDataProvider.ingest(payload);
 	OhlcDataProvider.ingest(payload);
