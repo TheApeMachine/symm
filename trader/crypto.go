@@ -92,6 +92,13 @@ func (crypto *Crypto) Start() error {
 	return nil
 }
 
+/*
+ResendWallet publishes the current wallet snapshot after the UI hub is listening.
+*/
+func (crypto *Crypto) ResendWallet() {
+	crypto.sendWallet()
+}
+
 func (crypto *Crypto) State() engine.State {
 	return engine.READY
 }
@@ -100,6 +107,10 @@ func (crypto *Crypto) Tick() error {
 	errnie.Info("starting crypto tick")
 
 	for {
+		if crypto.tryScorePendingMeasurements() {
+			continue
+		}
+
 		select {
 		case <-crypto.ctx.Done():
 			crypto.cancel()
@@ -108,51 +119,79 @@ func (crypto *Crypto) Tick() error {
 			feedback, ok := value.Value.(engine.PredictionFeedback)
 
 			if !ok {
-				return errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
+				errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
+				break
 			}
 
 			crypto.kellySizer.ApplyFeedback(feedback)
-
-			return nil
 		case value := <-crypto.subscribers["measurements"].Incoming:
-			measurement, ok := value.Value.(engine.Measurement)
-
-			if !ok {
-				return errnie.Error(fmt.Errorf("invalid measurement: %v", value.Value))
-			}
-
-			batch := []engine.Measurement{measurement}
-
-			for {
-				select {
-				case next := <-crypto.subscribers["measurements"].Incoming:
-					payload, ok := next.Value.(engine.Measurement)
-
-					if !ok {
-						return errnie.Error(fmt.Errorf("invalid measurement: %v", next.Value))
-					}
-
-					batch = append(batch, payload)
-				default:
-					return crypto.score(batch)
-				}
+			if err := crypto.ingestMeasurement(value.Value); err != nil {
+				errnie.Error(err)
 			}
 		case value := <-crypto.subscribers["exits"].Incoming:
 			exit, ok := value.Value.(engine.Exit)
 
 			if !ok {
-				return errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
+				errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
+				break
 			}
 
-			return crypto.handleExit(exit)
+			if err := crypto.handleExit(exit); err != nil {
+				errnie.Error(err)
+			}
 		case value := <-crypto.subscribers["tick"].Incoming:
 			row, ok := value.Value.(market.TickerRow)
 
 			if !ok {
-				return errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
+				errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
+				break
 			}
 
-			return crypto.observeTicker(row)
+			if err := crypto.observeTicker(row); err != nil {
+				errnie.Error(err)
+			}
+		}
+	}
+}
+
+func (crypto *Crypto) tryScorePendingMeasurements() bool {
+	select {
+	case value := <-crypto.subscribers["measurements"].Incoming:
+		if err := crypto.ingestMeasurement(value.Value); err != nil {
+			errnie.Error(err)
+		}
+
+		return true
+	default:
+		return false
+	}
+}
+
+func (crypto *Crypto) ingestMeasurement(raw any) error {
+	measurement, ok := raw.(engine.Measurement)
+
+	if !ok {
+		return fmt.Errorf("invalid measurement: %v", raw)
+	}
+
+	return crypto.scoreBatch(measurement)
+}
+
+func (crypto *Crypto) scoreBatch(first engine.Measurement) error {
+	batch := []engine.Measurement{first}
+
+	for {
+		select {
+		case next := <-crypto.subscribers["measurements"].Incoming:
+			payload, ok := next.Value.(engine.Measurement)
+
+			if !ok {
+				return fmt.Errorf("invalid measurement: %v", next.Value)
+			}
+
+			batch = append(batch, payload)
+		default:
+			return crypto.score(batch)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/smartystreets/goconvey/convey"
@@ -108,6 +109,56 @@ func TestPublicClientOpenInventorySymbols(t *testing.T) {
 			symbols := publicClient.openInventorySymbols(wallet)
 			convey.So(symbols, convey.ShouldResemble, []string{"SCOR/EUR"})
 		})
+	})
+}
+
+func TestPublicClientSubscribeSymbolsQueuesWhenDisconnected(t *testing.T) {
+	convey.Convey("Given a public client without a websocket connection", t, func() {
+		publicClient := &PublicClient{
+			subscribed:  make(map[string]struct{}),
+			heldSymbols: make(map[string]struct{}),
+		}
+
+		convey.Convey("It should remember symbols for a later flush", func() {
+			convey.So(publicClient.subscribeSymbols([]string{"BTC/EUR", "ETH/EUR"}), convey.ShouldBeNil)
+			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "BTC/EUR")
+			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "ETH/EUR")
+		})
+	})
+}
+
+func TestPublicClientTickKeepsListening(t *testing.T) {
+	convey.Convey("Given wallet and subscription broadcasts", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		publicClient := NewPublicClient(ctx, pool, "ws://127.0.0.1:1")
+		walletGroup := pool.CreateBroadcastGroup("wallet", 0)
+		subscriptionGroup := pool.CreateBroadcastGroup("subscriptions", 0)
+
+		go func() {
+			for ctx.Err() == nil {
+				if err := publicClient.Tick(); err != nil {
+					return
+				}
+			}
+		}()
+
+		walletGroup.Send(&qpool.QValue[any]{Value: trader.NewWallet(trader.PaperWallet, "EUR", 200, 0.26)})
+		subscriptionGroup.Send(&qpool.QValue[any]{Value: []string{"BTC/EUR"}})
+		subscriptionGroup.Send(&qpool.QValue[any]{Value: []string{"ETH/EUR"}})
+
+		time.Sleep(10 * time.Millisecond)
+
+		convey.Convey("It should accumulate held symbols across tick cycles", func() {
+			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "BTC/EUR")
+			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "ETH/EUR")
+		})
+
+		cancel()
 	})
 }
 

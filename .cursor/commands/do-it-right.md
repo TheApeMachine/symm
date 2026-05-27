@@ -143,6 +143,8 @@ THE OVERALL SYSTEM WORKS LIKE THIS:
 5. Predictions are evaluated once current time has caught up **THEY ARE PREDICTIONS IN TIME, NOT CYCLES, SO CHART ALSO HAS TO REFLECT THAT**
 6. **!!!The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that makde the prediction use!!!**
 
-AND FINALLY STOP STOPPING ALL THE TIME, JUST KEEP GOING UNTIL IT IS RIGHT, FINALLY.
+AND FINALLY MAKE ABSOLUTELY SURE THAT ALL THE CHARTS ON THE FRONTEND SHOW ACCURATE DATA AND EVERYTHING THAT NEEDS DATA ALSO RECEIVES IT!!!!!
+
+AND NEVER EVER RESTORE ANYTHING FROM GIT THAT IS BACKWARDS NOT FORWARDS, TAKE THE SYSTEM AS IT IS.
 
 (Oh and check the Makefile for the linker error)

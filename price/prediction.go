@@ -87,10 +87,10 @@ func (prediction *Prediction) Tick() error {
 
 	for {
 		prediction.stateMu.Lock()
-		defer prediction.stateMu.Unlock()
 
 		select {
 		case <-prediction.ctx.Done():
+			prediction.stateMu.Unlock()
 			return prediction.ctx.Err()
 		case value := <-prediction.subscribers["tick"].Incoming:
 			row := value.Value.(market.TickerRow)
@@ -101,6 +101,8 @@ func (prediction *Prediction) Tick() error {
 
 			prediction.settleDue(time.Now())
 		}
+
+		prediction.stateMu.Unlock()
 	}
 }
 

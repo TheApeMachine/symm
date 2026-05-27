@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -16,12 +15,10 @@ import (
 type Booter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	err         error
 	pool        *qpool.Q
 	systems     []engine.System
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	once        sync.Once
 }
 
 func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
@@ -59,26 +56,30 @@ func (booter *Booter) Boot() error {
 
 	go hub.Serve(config.System.UIAddr)
 
+	for _, system := range booter.systems {
+		if walletPublisher, ok := system.(interface{ ResendWallet() }); ok {
+			walletPublisher.ResendWallet()
+		}
+	}
+
 	waiters := make([]chan *qpool.QValue[any], len(booter.systems))
 
-	booter.once.Do(func() {
-		for idx, system := range booter.systems {
-			waiters[idx] = booter.pool.ScheduleFast(
-				booter.ctx,
-				func(ctx context.Context) (any, error) {
-					system.Tick()
-					return nil, nil
-				},
-			)
-		}
+	for idx, system := range booter.systems {
+		waiters[idx] = booter.pool.ScheduleFast(
+			booter.ctx,
+			func(ctx context.Context) (any, error) {
+				return nil, system.Tick()
+			},
+		)
+	}
 
-		for _, waiter := range waiters {
-			value := <-waiter
-			if value != nil && value.Error != nil {
-				errnie.Error(value.Error)
-			}
-		}
-	})
+	for _, waiter := range waiters {
+		value := <-waiter
 
-	return booter.err
+		if value != nil && value.Error != nil {
+			errnie.Error(value.Error)
+		}
+	}
+
+	return booter.ctx.Err()
 }

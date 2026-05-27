@@ -101,7 +101,9 @@ func (publicClient *PublicClient) Tick() error {
 				return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
 			}
 
-			return publicClient.subscribeSymbols(symbols)
+			if err := publicClient.subscribeSymbols(symbols); err != nil {
+				return err
+			}
 		case msg := <-publicClient.subscribers["wallet"].Incoming:
 			wallet, ok := msg.Value.(*trader.Wallet)
 
@@ -109,7 +111,9 @@ func (publicClient *PublicClient) Tick() error {
 				return errnie.Error(fmt.Errorf("invalid wallet message: %v", msg.Value))
 			}
 
-			return publicClient.subscribeSymbols(publicClient.openInventorySymbols(wallet))
+			if err := publicClient.subscribeSymbols(publicClient.openInventorySymbols(wallet)); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -129,7 +133,7 @@ func (publicClient *PublicClient) openInventorySymbols(wallet *trader.Wallet) []
 }
 
 func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
-	if publicClient.replay || publicClient.conn == nil {
+	if publicClient.replay {
 		return nil
 	}
 
@@ -150,7 +154,7 @@ func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
 		pending = append(pending, symbol)
 	}
 
-	if len(pending) == 0 {
+	if len(pending) == 0 || publicClient.conn == nil {
 		return nil
 	}
 
@@ -179,6 +183,20 @@ func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
 	}
 
 	return nil
+}
+
+func (publicClient *PublicClient) flushHeldSymbols() error {
+	if len(publicClient.heldSymbols) == 0 {
+		return nil
+	}
+
+	resubscribe := make([]string, 0, len(publicClient.heldSymbols))
+
+	for symbol := range publicClient.heldSymbols {
+		resubscribe = append(resubscribe, symbol)
+	}
+
+	return publicClient.subscribeSymbols(resubscribe)
 }
 
 func (publicClient *PublicClient) Connect() error {
@@ -251,6 +269,20 @@ func (publicClient *PublicClient) runLive() {
 		publicClient.conn = conn
 		publicClient.subscribed = make(map[string]struct{})
 		publicClient.catalogAt = time.Time{}
+
+		if err := publicClient.flushHeldSymbols(); err != nil {
+			errnie.Error(err)
+			conn.Close()
+			publicClient.conn = nil
+
+			select {
+			case <-publicClient.ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			continue
+		}
 
 		if err := conn.WriteJSON(instrument.NewSubscribe()); err != nil {
 			errnie.Error(err)
@@ -359,16 +391,8 @@ func (publicClient *PublicClient) read(payload []byte) {
 		publicClient.catalogAt = time.Now()
 		publicClient.symbols.Send(&qpool.QValue[any]{Value: pairs})
 
-		if len(publicClient.heldSymbols) > 0 {
-			resubscribe := make([]string, 0, len(publicClient.heldSymbols))
-
-			for symbol := range publicClient.heldSymbols {
-				resubscribe = append(resubscribe, symbol)
-			}
-
-			publicClient.subscribed = make(map[string]struct{})
-			_ = publicClient.subscribeSymbols(resubscribe)
-		}
+		publicClient.subscribed = make(map[string]struct{})
+		_ = publicClient.flushHeldSymbols()
 
 		publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 			"event": "quote_progress",

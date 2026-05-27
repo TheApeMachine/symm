@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,8 +31,41 @@ func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction, *q
 	return crypto, predictions, pool
 }
 
+func startCryptoTick(t *testing.T, crypto *Crypto) {
+	t.Helper()
+
+	go func() {
+		if err := crypto.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("crypto tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		crypto.cancel()
+		time.Sleep(10 * time.Millisecond)
+	})
+}
+
+func waitForCryptoPulse(t *testing.T, crypto *Crypto, want int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		if crypto.pulses >= want {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatalf("expected %d score pulses, got %d", want, crypto.pulses)
+}
+
 func TestCryptoScoresMeasurement(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+
+	startCryptoTick(t, crypto)
 
 	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
@@ -47,8 +81,22 @@ func TestCryptoScoresMeasurement(t *testing.T) {
 		},
 	})
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
+	waitForCryptoPulse(t, crypto, 1)
+}
+
+func TestCryptoScoreBatch(t *testing.T) {
+	crypto, _, _ := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
+
+	if err := crypto.scoreBatch(engine.Measurement{
+		Source:     "hawkes",
+		Type:       engine.Momentum,
+		Regime:     "microstructure",
+		Reason:     "buy_cluster",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.55,
+		Last:       50000,
+	}); err != nil {
+		t.Fatalf("score batch: %v", err)
 	}
 
 	if crypto.pulses != 1 {
@@ -59,6 +107,8 @@ func TestCryptoScoresMeasurement(t *testing.T) {
 func TestCryptoPublishConfidence(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
+
+	startCryptoTick(t, crypto)
 
 	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
@@ -71,10 +121,6 @@ func TestCryptoPublishConfidence(t *testing.T) {
 			Last:       1.0,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-confidenceSub.Incoming:
@@ -103,6 +149,8 @@ func TestCryptoPublishConfidenceEMA(t *testing.T) {
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
+	startCryptoTick(t, crypto)
+
 	measurements.Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "fluid",
@@ -116,10 +164,6 @@ func TestCryptoPublishConfidenceEMA(t *testing.T) {
 			Ask:        1.01,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
 
 	<-confidenceSub.Incoming
 
@@ -136,10 +180,6 @@ func TestCryptoPublishConfidenceEMA(t *testing.T) {
 			Ask:        1.01,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("second tick: %v", err)
-	}
 
 	select {
 	case value := <-confidenceSub.Incoming:
@@ -166,13 +206,19 @@ func TestCryptoAttachWalletMarksPrefersLastPrice(t *testing.T) {
 
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
+	go func() {
+		_ = predictions.Tick()
+	}()
+	t.Cleanup(func() {
+		predictions.cancel()
+		time.Sleep(10 * time.Millisecond)
+	})
+
 	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.TickerRow{Symbol: "A/EUR", Last: 0.081},
 	})
 
-	if err := predictions.Tick(); err != nil {
-		t.Fatalf("prediction tick: %v", err)
-	}
+	time.Sleep(20 * time.Millisecond)
 
 	crypto.attachWalletMarks()
 
@@ -189,16 +235,14 @@ func TestCryptoObserveTickerUpdatesMarks(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, wallet)
 	walletSub := crypto.broadcasts["wallet"].Subscribe("test:wallet", 8)
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.TickerRow{
 			Symbol: "MNT/EUR",
 			Last:   0.57,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-walletSub.Incoming:
@@ -223,6 +267,8 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
+	startCryptoTick(t, crypto)
+
 	for _, pair := range []struct {
 		symbol     string
 		confidence float64
@@ -243,9 +289,7 @@ func TestCryptoPublishConfidenceMean(t *testing.T) {
 		})
 	}
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	waitForCryptoPulse(t, crypto, 1)
 
 	expected := crypto.sourceConfidence["pumpdump"].Value()
 
@@ -272,6 +316,8 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 8)
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
+	startCryptoTick(t, crypto)
+
 	for _, pair := range []struct {
 		symbol     string
 		confidence float64
@@ -293,9 +339,7 @@ func TestCryptoPublishConfidenceBatchFromChannel(t *testing.T) {
 		})
 	}
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	waitForCryptoPulse(t, crypto, 1)
 
 	select {
 	case value := <-confidenceSub.Incoming:
@@ -320,6 +364,8 @@ func TestCryptoPublishConfidenceRepublishesAllSources(t *testing.T) {
 	confidenceSub := crypto.broadcasts["confidence"].Subscribe("test:confidence", 16)
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
+	startCryptoTick(t, crypto)
+
 	measurements.Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "pumpdump",
@@ -331,10 +377,6 @@ func TestCryptoPublishConfidenceRepublishesAllSources(t *testing.T) {
 			Last:       1.0,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
 
 	<-confidenceSub.Incoming
 
@@ -349,10 +391,6 @@ func TestCryptoPublishConfidenceRepublishesAllSources(t *testing.T) {
 			Last:       1.0,
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("second tick: %v", err)
-	}
 
 	published := make(map[string]float64)
 
@@ -389,6 +427,8 @@ func TestCryptoEnterPaperRequiresFusion(t *testing.T) {
 	crypto.pulses = config.System.MinWarmPulses
 	predictions.SeedReturnCalibration("pumpdump", 0.01)
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "pumpdump",
@@ -403,9 +443,7 @@ func TestCryptoEnterPaperRequiresFusion(t *testing.T) {
 		},
 	})
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	waitForCryptoPulse(t, crypto, 1)
 
 	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
 		t.Fatalf("expected fused gate to block single-source entry, got %v", wallet.Inventory["BTC"])
@@ -427,6 +465,8 @@ func TestCryptoDefendsRestingEntry(t *testing.T) {
 		t.Fatalf("reserve: %v", err)
 	}
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Measurement{
 			Source:     "depthflow",
@@ -437,9 +477,7 @@ func TestCryptoDefendsRestingEntry(t *testing.T) {
 		},
 	})
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	waitForCryptoPulse(t, crypto, 1)
 
 	if _, ok := crypto.restingEntries["BTC/EUR"]; ok {
 		t.Fatal("expected resting entry to be canceled")
@@ -459,6 +497,8 @@ func TestCryptoEnterPaper(t *testing.T) {
 	predictions.SeedReturnCalibration("hawkes", 0.03)
 
 	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	startCryptoTick(t, crypto)
 
 	for _, measurement := range []engine.Measurement{
 		{
@@ -487,9 +527,7 @@ func TestCryptoEnterPaper(t *testing.T) {
 		measurements.Send(&qpool.QValue[any]{Value: measurement})
 	}
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	waitForCryptoPulse(t, crypto, 1)
 
 	if wallet.Inventory["BTC"] <= 0 {
 		t.Fatalf("expected paper entry inventory, got %v", wallet.Inventory["BTC"])
@@ -510,17 +548,21 @@ func TestCryptoHandleExitPaper(t *testing.T) {
 
 	crypto, predictions, pool := newTestCrypto(t, wallet)
 
+	go func() {
+		_ = predictions.Tick()
+	}()
+	t.Cleanup(func() {
+		predictions.cancel()
+		time.Sleep(10 * time.Millisecond)
+	})
+
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("tick", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.TickerRow{Symbol: "BTC/EUR", Last: 50000},
 	})
 
-	if err := predictions.Tick(); err != nil {
-		t.Fatalf("prediction tick: %v", err)
-	}
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("drain tick: %v", err)
-	}
+	time.Sleep(20 * time.Millisecond)
 
 	pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Exit{
@@ -532,9 +574,7 @@ func TestCryptoHandleExitPaper(t *testing.T) {
 
 	balanceBefore := wallet.Balance
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	time.Sleep(50 * time.Millisecond)
 
 	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
 		t.Fatalf("expected flat BTC inventory, got %v", wallet.Inventory["BTC"])
@@ -552,6 +592,8 @@ func TestCryptoHandleExitLive(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, wallet)
 	orders := pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Subscribe("test:orders", 8)
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Exit{
 			Symbol:  "BTC/EUR",
@@ -559,10 +601,6 @@ func TestCryptoHandleExitLive(t *testing.T) {
 			Reason:  "depth_decay",
 		},
 	})
-
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
 
 	select {
 	case value := <-orders.Incoming:
@@ -577,6 +615,8 @@ func TestCryptoHandleExitLive(t *testing.T) {
 func TestCryptoHandleExitNoInventory(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: engine.Exit{
 			Symbol:  "BTC/EUR",
@@ -585,31 +625,28 @@ func TestCryptoHandleExitNoInventory(t *testing.T) {
 		},
 	})
 
-	if err := crypto.Tick(); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestCryptoHandleExitInvalidPayload(t *testing.T) {
 	crypto, _, pool := newTestCrypto(t, NewWallet(PaperWallet, "EUR", 200, 0.26))
 
+	startCryptoTick(t, crypto)
+
 	pool.CreateBroadcastGroup("exits", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: map[string]any{"symbol": "BTC/EUR"},
 	})
 
-	if err := crypto.Tick(); err == nil {
-		t.Fatal("expected error for invalid exit payload")
-	}
+	time.Sleep(50 * time.Millisecond)
 }
 
-func BenchmarkCryptoTick(b *testing.B) {
+func BenchmarkCryptoScoreBatch(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	predictions := price.NewPrediction(ctx, pool)
 	crypto := NewCrypto(ctx, pool, NewWallet(PaperWallet, "EUR", 200, 0.26), predictions)
-	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
@@ -625,7 +662,6 @@ func BenchmarkCryptoTick(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		measurements.Send(&qpool.QValue[any]{Value: measurement})
-		_ = crypto.Tick()
+		_ = crypto.scoreBatch(measurement)
 	}
 }
