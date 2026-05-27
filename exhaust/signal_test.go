@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
 )
@@ -39,15 +40,19 @@ func TestExhaustPublishPulseEveryTick(t *testing.T) {
 
 	exits := signal.broadcasts["exits"].Subscribe("test:exhaust", 8)
 
+	pool.CreateBroadcastGroup("tick", 0).Send(&qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "ALT/EUR", Last: 10},
+	})
+
 	if err := signal.Tick(); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
 
 	select {
 	case value := <-exits.Incoming:
-		payload, ok := value.Value.(map[string]any)
+		payload, ok := value.Value.(engine.Exit)
 
-		if !ok || payload["symbol"] != "ALT/EUR" {
+		if !ok || payload.Symbol != "ALT/EUR" {
 			t.Fatalf("expected exit payload, got %v", value.Value)
 		}
 	case <-time.After(time.Second):

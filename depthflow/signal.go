@@ -148,6 +148,7 @@ func (depthflow *DepthFlow) Tick() error {
 		depthflow.Feedback(value.Value.(engine.PredictionFeedback))
 		depthflow.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=depthflow")
 	}
 
 	return nil

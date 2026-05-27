@@ -183,6 +183,7 @@ func (hub *Hub) writePump() {
 					return true
 				})
 			default:
+				errnie.Warn("this just feels like, spinning plates, system=hub")
 			}
 		}
 

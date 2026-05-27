@@ -132,6 +132,7 @@ func (liquidity *Liquidity) Tick() error {
 		liquidity.Feedback(value.Value.(engine.PredictionFeedback))
 		liquidity.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=liquidity")
 	}
 
 	return nil

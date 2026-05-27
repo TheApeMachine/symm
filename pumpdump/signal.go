@@ -237,6 +237,7 @@ func (pumpdump *PumpDump) Tick() error {
 
 		pumpdump.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=pumpdump")
 	}
 
 	return nil

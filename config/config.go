@@ -38,10 +38,21 @@ type Config struct {
 	MaxTrailPct                float64
 	MaxLossPerTradeEUR         float64
 	MaxDailyLossEUR            float64
+	MaxPortfolioDrawdownPct    float64
+	MaxDeployPct               float64
+	MaxSymbolCorrelation       float64
+	MaxCorrelatedSlots         int
+	MinCorrelationSamples      int
+	MaxEntrySlippageBPS        float64
 	MaxSpreadBPS               float64
 	AllowPaperShorts           bool
 	AllowLiveShorts            bool
 	MinEdgeReturn              float64
+	MinRoundTripEdge           float64
+	KellyFraction              float64
+	UseMakerEntries            bool
+	MakerFeePct                float64
+	DefensiveOBIConfidence     float64
 	ForecastSpreadMultiple     float64
 	ExitUrgencyThreshold       float64
 	MaxActivePerspectives      int
@@ -60,6 +71,7 @@ type Config struct {
 	TrailReynoldsWidenAt       float64
 	TrailReynoldsWidenGain     float64
 	TrailRiskDebounce          time.Duration
+	HawkesFitCooldown          time.Duration
 	CandleSeconds              int
 	FluidGridSize              int
 	FluidHeightEMAAlpha        float64
@@ -121,14 +133,23 @@ func NewConfig() *Config {
 		MaxTrailPct:                3.0,
 		MaxLossPerTradeEUR:         2,
 		MaxDailyLossEUR:            20,
+		MaxSymbolCorrelation:       0.85,
+		MaxCorrelatedSlots:         1,
+		MinCorrelationSamples:      12,
+		MaxEntrySlippageBPS:        50,
 		MaxSpreadBPS:               0,
 		AllowPaperShorts:           false,
 		AllowLiveShorts:            false,
 		MinEdgeReturn:              0.0005,
+		MinRoundTripEdge:           0,
+		KellyFraction:              0.5,
+		UseMakerEntries:            true,
+		MakerFeePct:                0.16,
+		DefensiveOBIConfidence:     0.5,
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,
 		MaxActivePerspectives:      2,
-		MinActivePerspectives:      1,
+		MinActivePerspectives:      2,
 		SnapshotFreshnessTTL:       200 * time.Millisecond,
 		MinCalibrationSamples:      12,
 		MinConfidenceHistory:       4,
@@ -143,6 +164,7 @@ func NewConfig() *Config {
 		TrailReynoldsWidenAt:       50,
 		TrailReynoldsWidenGain:     0.01,
 		TrailRiskDebounce:          500 * time.Millisecond,
+		HawkesFitCooldown:          5 * time.Second,
 		CandleSeconds:              5,
 		FluidGridSize:              32,
 		FluidHeightEMAAlpha:        0.35,
@@ -165,6 +187,22 @@ func NewConfig() *Config {
 		OHLCIntervalMinutes:        5,
 		OHLCMaxSymbols:             64,
 		OHLCEWarmPulseCredit:       30,
+	}
+
+	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {
+		cfg.MaxPortfolioDrawdownPct = cfg.MaxDailyLossEUR / cfg.WalletEUR
+	}
+
+	if cfg.MaxDeployPct <= 0 {
+		cfg.MaxDeployPct = cfg.MaxSlotPct * float64(cfg.MaxSlots)
+	}
+
+	if cfg.MinRoundTripEdge <= 0 {
+		cfg.MinRoundTripEdge = 2 * cfg.TakerFeePct / 100 * 1.35
+	}
+
+	if cfg.MinEdgeReturn < cfg.MinRoundTripEdge {
+		cfg.MinEdgeReturn = cfg.MinRoundTripEdge
 	}
 
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {

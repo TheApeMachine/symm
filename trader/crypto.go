@@ -18,16 +18,19 @@ import (
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	ui          *qpool.BroadcastGroup
-	wallet      *Wallet
-	predictions *price.Prediction
-	pulses      int
-	seq         int
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *qpool.Q
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	ui             *qpool.BroadcastGroup
+	wallet         *Wallet
+	predictions    *price.Prediction
+	portfolioRisk  *PortfolioRisk
+	kellySizer     *KellySizer
+	restingEntries map[string]restingEntry
+	pulses         int
+	seq            int
 }
 
 func NewCrypto(
@@ -39,17 +42,26 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		wallet:      wallet,
-		predictions: predictions,
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		broadcasts:     make(map[string]*qpool.BroadcastGroup),
+		subscribers:    make(map[string]*qpool.Subscriber),
+		wallet:         wallet,
+		predictions:    predictions,
+		portfolioRisk:  NewPortfolioRisk(),
+		kellySizer:     NewKellySizer(engine.DefaultCalibrationParams()),
+		restingEntries: make(map[string]restingEntry),
 	}
 
 	crypto.subscribers["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).
 		Subscribe("crypto:measurements", 128)
+
+	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
+		Subscribe("crypto:exits", 128)
+
+	crypto.subscribers["feedback"] = pool.CreateBroadcastGroup("feedback", 10*time.Millisecond).
+		Subscribe("crypto:feedback", 128)
 
 	crypto.broadcasts["confidence"] = pool.CreateBroadcastGroup("confidence", 10*time.Millisecond)
 	crypto.broadcasts["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond)
@@ -82,6 +94,16 @@ func (crypto *Crypto) Tick() error {
 	case <-crypto.ctx.Done():
 		crypto.cancel()
 		return crypto.ctx.Err()
+	case value := <-crypto.subscribers["feedback"].Incoming:
+		feedback, ok := value.Value.(engine.PredictionFeedback)
+
+		if !ok {
+			return errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
+		}
+
+		crypto.kellySizer.ApplyFeedback(feedback)
+
+		return nil
 	case value := <-crypto.subscribers["measurements"].Incoming:
 		measurement, ok := value.Value.(engine.Measurement)
 
@@ -105,18 +127,82 @@ func (crypto *Crypto) Tick() error {
 				return crypto.score(batch)
 			}
 		}
+	case value := <-crypto.subscribers["exits"].Incoming:
+		exit, ok := value.Value.(engine.Exit)
+
+		if !ok {
+			return errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
+		}
+
+		return crypto.handleExit(exit)
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=crypto")
 		return nil
 	}
+}
+
+func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
+	if crypto.wallet == nil {
+		return errnie.Error(fmt.Errorf("wallet is required for exit"))
+	}
+
+	if !engine.ValidExit(exitSignal) {
+		return errnie.Error(fmt.Errorf("invalid exit signal: %+v", exitSignal))
+	}
+
+	symbol := exitSignal.Symbol
+	reason := exitSignal.Reason
+
+	base := strings.Split(symbol, "/")[0]
+	qty := crypto.wallet.Inventory[base]
+
+	if qty <= config.System.LiveInventoryEpsilon {
+		return nil
+	}
+
+	if crypto.wallet.Type == PaperWallet {
+		last := crypto.predictions.LastPrice(symbol)
+
+		if last <= 0 {
+			return errnie.Error(fmt.Errorf("no last price for paper exit: %s", symbol))
+		}
+
+		fillPrice := config.System.SlippageFill(
+			last, last, last, "sell", config.System.SlippageBPS, qty*last, nil, nil,
+		)
+
+		if fillPrice <= 0 {
+			return errnie.Error(fmt.Errorf("invalid fill price for paper exit: %s", symbol))
+		}
+
+		revenue := qty * fillPrice
+		fee := revenue * crypto.wallet.FeePct / 100
+
+		crypto.wallet.Inventory[base] = 0
+		crypto.wallet.Balance += revenue - fee
+
+		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "simulated_exit",
+			"symbol": symbol,
+			"qty":    qty,
+			"price":  fillPrice,
+			"reason": reason,
+		}})
+		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+
+		return nil
+	}
+
+	crypto.pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Send(&qpool.QValue[any]{
+		Value: order.MarketSellBase(symbol, qty, ""),
+	})
+
+	return nil
 }
 
 func (crypto *Crypto) score(batch []engine.Measurement) error {
 	now := time.Now()
 	perspectives := make(map[string]map[engine.PerspectiveType]engine.Perspective)
-	bestReturn := 0.0
-	bestMeasurement := engine.Measurement{}
-	predictedSum := 0.0
-	predictedCount := 0
 	confidenceSums := make(map[string]float64)
 	confidenceCounts := make(map[string]int)
 
@@ -145,28 +231,10 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		byType[perspectiveType] = perspective
 	}
 
-	for _, byType := range perspectives {
-		for _, perspective := range byType {
-			for _, measurement := range perspective.Measurements {
-				predicted := crypto.predictions.Record(
-					perspective,
-					measurement,
-					anchorPrice(measurement),
-					now,
-				)
+	crypto.defendRestingEntries(batch)
 
-				if predicted > 0 {
-					predictedSum += predicted
-					predictedCount++
-				}
-
-				if predicted > bestReturn {
-					bestReturn = predicted
-					bestMeasurement = measurement
-				}
-			}
-		}
-	}
+	summary := scoreOpportunities(crypto.predictions, perspectives, now)
+	opportunity := summary.Opportunity
 
 	openCount := 0
 
@@ -178,12 +246,46 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		}
 	}
 
+	observeBatch(crypto.portfolioRisk, batch)
+
+	if crypto.wallet != nil {
+		equity := crypto.wallet.MarkEquity(crypto.portfolioRisk.lastPrices)
+		crypto.portfolioRisk.UpdateEquity(equity, now)
+	}
+
+	entryAllowed := false
+	entryBlockReason := ""
+
 	if crypto.pulses >= config.System.MinWarmPulses &&
 		openCount < config.System.MaxSlots &&
-		bestReturn >= config.System.MinEdgeReturn &&
-		len(bestMeasurement.Pairs) > 0 {
-		crypto.enter(bestMeasurement)
-		crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+		summary.Edge >= config.System.MinEdgeReturn &&
+		len(opportunity.Measurement.Pairs) > 0 &&
+		crypto.wallet != nil {
+		slot := crypto.kellySizer.SlotEUR(
+			crypto.wallet.Balance,
+			opportunity.Measurement.Source,
+			opportunity.JointConfidence,
+			crypto.predictions.RunningMeanError(),
+		)
+		entryAllowed, entryBlockReason = crypto.portfolioRisk.AllowEntry(
+			crypto.wallet,
+			opportunity.Measurement,
+			slot,
+			openSymbols(crypto.wallet),
+		)
+
+		if entryAllowed {
+			crypto.enter(opportunity, slot)
+			crypto.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: crypto.wallet})
+		}
+	}
+
+	if entryBlockReason != "" {
+		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "entry_blocked",
+			"symbol": opportunity.Measurement.Pairs[0].Wsname,
+			"reason": entryBlockReason,
+		}})
 	}
 
 	for source, sum := range confidenceSums {
@@ -202,8 +304,8 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 
 	avgPrediction := 0.0
 
-	if predictedCount > 0 {
-		avgPrediction = predictedSum / float64(predictedCount)
+	if summary.PredictedCount > 0 {
+		avgPrediction = summary.PredictedSum / float64(summary.PredictedCount)
 	}
 
 	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -214,7 +316,11 @@ func (crypto *Crypto) score(batch []engine.Measurement) error {
 		"open":             openCount,
 		"avg_prediction":   avgPrediction,
 		"avg_error":        crypto.predictions.RunningMeanError(),
-		"forecast_symbols": predictedCount,
+		"forecast_symbols": summary.PredictedCount,
+		"entry_blocked":    entryBlockReason,
+		"joint_confidence": opportunity.JointConfidence,
+		"fused_edge":       summary.Edge,
+		"fused_sources":    opportunity.SourceCount,
 	}})
 
 	crypto.pulses++
@@ -238,72 +344,6 @@ func anchorPrice(measurement engine.Measurement) float64 {
 	}
 
 	return 0
-}
-
-func (crypto *Crypto) enter(measurement engine.Measurement) {
-	if crypto.wallet == nil || len(measurement.Pairs) == 0 {
-		return
-	}
-
-	symbol := measurement.Pairs[0].Wsname
-	last := anchorPrice(measurement)
-	bid := measurement.Bid
-	ask := measurement.Ask
-
-	if last <= 0 {
-		return
-	}
-
-	if bid <= 0 {
-		bid = last
-	}
-
-	if ask <= 0 {
-		ask = last
-	}
-
-	slot := crypto.wallet.Balance * config.System.MaxSlotPct / 100
-
-	if slot < config.System.MinCostEUR {
-		return
-	}
-
-	if crypto.wallet.Type == CryptoWallet {
-		if err := crypto.wallet.ReserveEntry(slot); err != nil {
-			return
-		}
-
-		crypto.pool.CreateBroadcastGroup("orders", 10*time.Millisecond).Send(&qpool.QValue[any]{
-			Value: order.MarketBuyCash(symbol, slot, 0, 0, ""),
-		})
-
-		return
-	}
-
-	if err := crypto.wallet.ReserveEntry(slot); err != nil {
-		return
-	}
-
-	fillPrice := config.System.SlippageFill(
-		last, bid, ask, "buy", config.System.SlippageBPS, slot, nil, nil,
-	)
-
-	cost := slot
-	fee := cost * crypto.wallet.FeePct / 100
-
-	if err := crypto.wallet.SettleEntryReservation(slot, cost+fee); err != nil {
-		crypto.wallet.ReleaseEntryReservation(slot)
-		return
-	}
-
-	base := strings.Split(symbol, "/")[0]
-	qty := (cost - fee) / fillPrice
-
-	if qty <= 0 {
-		return
-	}
-
-	crypto.wallet.Inventory[base] += qty
 }
 
 func perspectiveType(measurement engine.Measurement) engine.PerspectiveType {

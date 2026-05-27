@@ -142,6 +142,7 @@ func (publicClient *PublicClient) Tick() error {
 
 		return nil
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=public client")
 		return nil
 	}
 }

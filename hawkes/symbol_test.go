@@ -53,10 +53,29 @@ func TestHawkesSymbolFitForEvents(t *testing.T) {
 
 			convey.So(ok, convey.ShouldBeTrue)
 
-			_, ok = symbol.fitForEvents(updatedStream, now)
+			_, ok = symbol.fitForEvents(updatedStream, now.Add(symbol.fitCooldown))
 
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(len(symbol.intensityRatios), convey.ShouldBeGreaterThan, ratioCount)
+		})
+
+		convey.Convey("When the event window changes inside the fit cooldown", func() {
+			ticks := ticksFromSideEvents(stream.BuyTimes(), stream.SellTimes())
+			ticks = append(ticks, trade.Data{
+				Side:      "buy",
+				Timestamp: now.Add(-time.Second),
+			})
+			_, updatedStream, ok := FitContextFromTicks(ticks, time.Time{}, now)
+
+			convey.So(ok, convey.ShouldBeTrue)
+
+			second, ok := symbol.fitForEvents(updatedStream, now.Add(time.Millisecond))
+
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(symbol.fit.MuBuy, convey.ShouldEqual, firstMuBuy)
+			convey.So(symbol.fit.AlphaBB, convey.ShouldEqual, firstAlphaBB)
+			convey.So(len(symbol.intensityRatios), convey.ShouldEqual, ratioCount)
+			convey.So(second.BuyIntensity, convey.ShouldNotEqual, first.BuyIntensity)
 		})
 	})
 }

@@ -91,20 +91,26 @@ func (privateClient *PrivateClient) Tick() error {
 		privateClient.cancel()
 		return privateClient.ctx.Err()
 	case value := <-privateClient.subscribers["orders"].Incoming:
-		request, ok := value.Value.(order.Request)
+		switch request := value.Value.(type) {
+		case order.Request:
+			request.Params.Token = privateClient.token
 
-		if !ok {
+			if err := privateClient.conn.WriteJSON(request); err != nil {
+				return errnie.Error(err)
+			}
+		case order.CancelRequest:
+			request.Params.Token = privateClient.token
+
+			if err := privateClient.conn.WriteJSON(request); err != nil {
+				return errnie.Error(err)
+			}
+		default:
 			return errnie.Error(fmt.Errorf("invalid order request: %v", value.Value))
-		}
-
-		request.Params.Token = privateClient.token
-
-		if err := privateClient.conn.WriteJSON(request); err != nil {
-			return errnie.Error(err)
 		}
 
 		return nil
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=private client")
 		return nil
 	}
 }

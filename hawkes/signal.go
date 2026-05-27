@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -172,6 +173,7 @@ func (hawkes *Hawkes) Tick() error {
 		hawkes.Feedback(value.Value.(engine.PredictionFeedback))
 		hawkes.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=hawkes")
 	}
 
 	return nil

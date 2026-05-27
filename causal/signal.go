@@ -152,6 +152,7 @@ func (causal *Causal) Tick() error {
 		causal.Feedback(value.Value.(engine.PredictionFeedback))
 		causal.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=causal")
 	}
 
 	return nil

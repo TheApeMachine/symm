@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -37,10 +38,12 @@ func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
 		history:     newHistoryStore(),
 	}
 
-	for _, channel := range []string{"book", "trade", "tick", "exits"} {
+	for _, channel := range []string{"book", "trade", "tick"} {
 		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		exhaust.subscribers[channel] = group.Subscribe("exhaust:"+channel, 128)
 	}
+
+	exhaust.broadcasts["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond)
 
 	return exhaust
 }
@@ -118,6 +121,7 @@ func (exhaust *Exhaust) Tick() error {
 
 		exhaust.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=exhaust")
 	}
 
 	return nil
@@ -140,10 +144,10 @@ func (exhaust *Exhaust) publishPulse() {
 		}
 
 		exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"symbol":  symbol,
-				"urgency": urgency,
-				"reason":  reason,
+			Value: engine.Exit{
+				Symbol:  symbol,
+				Urgency: urgency,
+				Reason:  reason,
 			},
 		})
 	}

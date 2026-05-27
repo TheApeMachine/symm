@@ -131,6 +131,7 @@ func (leadlag *LeadLag) Tick() error {
 		leadlag.Feedback(value.Value.(engine.PredictionFeedback))
 		leadlag.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=leadlag")
 	}
 
 	return nil

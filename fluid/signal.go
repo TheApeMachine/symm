@@ -161,6 +161,7 @@ func (fluid *Fluid) Tick() error {
 	case value := <-fluid.subscribers["feedback"].Incoming:
 		fluid.Feedback(value.Value.(engine.PredictionFeedback))
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=fluid")
 	}
 
 	return nil

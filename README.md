@@ -179,7 +179,7 @@ predictedReturn = measurement.Confidence × |EMA(actualReturn per source)|
 | Public client  | `kraken/client` | Kraken WS v2: instruments, tickers, trades, book, OHLC           |
 | Pump/dump      | `pumpdump`      | Volume spike vs baseline, book/trade alignment                   |
 | Depth flow     | `depthflow`     | Book imbalance pressure                                          |
-| Hawkes         | `hawkes`        | Bivariate Hawkes trade clustering (buy/sell excitation)          |
+| Hawkes         | `hawkes`        | Bivariate Hawkes trade clustering (buy/sell excitation); MLE refit throttled by `HawkesFitCooldown` |
 | Lead/lag       | `leadlag`       | Anchor pair vs laggard change                                    |
 | Liquidity      | `liquidity`     | Quote volume below cross-section median                          |
 | Sentiment      | `sentiment`     | Cross-section bullish breadth                                    |
@@ -187,7 +187,7 @@ predictedReturn = measurement.Confidence × |EMA(actualReturn per source)|
 | Causal         | `causal`        | Pearl-ladder style uplift from microstructure samples            |
 | Exhaust        | `exhaust`       | Exit **urgency** on `exits` channel (not an entry measurement)   |
 | Prediction     | `price`         | Open forecasts, settlement, feedback                             |
-| Crypto         | `trader`        | Consumes measurements only; paper wallet + optional live orders  |
+| Crypto         | `trader`        | Consumes measurements and exhaust exits; paper wallet + optional live orders |
 | Private client | `kraken/client` | Optional; live orders and fills when API keys set                |
 
 Entry signals share the same shape: subscribe to market channels, request deeper subscriptions when a symbol qualifies, `Measure()` per symbol, publish to `measurements` with prices attached.
@@ -203,9 +203,11 @@ On each `measurements` message (coalescing any others already queued):
 3. After `MinWarmPulses` (default 50), if slots remain and `bestReturn ≥ MinEdgeReturn`, **enter** on that symbol using the winning measurement’s `Last` / `Bid` / `Ask`.
 4. Publish per-source **confidence** averages and an **`engine_pulse`** UI event (`measurements`, `open`, `avg_prediction`, `avg_error`, `forecast_symbols`, `seq`).
 
-Paper entries simulate fill via `config.System.SlippageFill`. Live entries send `orders` on the pool; the optional private client handles the exchange side.
+Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; the private client handles cancel/amend.
 
-The trader **does not** subscribe to `tick`, `executions`, or `exits`. Live fill reconciliation and exhaust-driven exits are not wired through `Crypto` in the current tree—exhaust still publishes `exits` for other consumers (e.g. UI).
+Before entry, fused perspective scoring requires `MinActivePerspectives` independent sources with joint confidence via `engine.FuseMeasurements`, edge above `MinRoundTripEdge` (derived from round-trip taker fees), fractional Kelly sizing from settled feedback, and `PortfolioRisk` gates. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
+
+On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`.
 
 ---
 

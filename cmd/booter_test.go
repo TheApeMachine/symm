@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
@@ -46,6 +47,7 @@ func TestBooterConcurrentSystemTicks(t *testing.T) {
 		_ = booter.Boot()
 	}()
 
+	time.Sleep(100 * time.Millisecond)
 	cancel()
 
 	if first.ticks.Load() < 2 {

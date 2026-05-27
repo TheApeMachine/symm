@@ -134,3 +134,31 @@ func (wallet *Wallet) SettleEntryReservation(reserved, actualCost float64) error
 
 	return nil
 }
+
+/*
+MarkEquity is cash plus reserved entry cash and mark-to-market inventory.
+*/
+func (wallet *Wallet) MarkEquity(lastPrices map[string]float64) float64 {
+	if wallet == nil {
+		return 0
+	}
+
+	equity := wallet.Balance + wallet.ReservedEUR
+
+	for base, qty := range wallet.Inventory {
+		if qty <= 0 {
+			continue
+		}
+
+		symbol := base + "/" + wallet.Currency
+		last := lastPrices[symbol]
+
+		if last <= 0 {
+			continue
+		}
+
+		equity += qty * last
+	}
+
+	return equity
+}

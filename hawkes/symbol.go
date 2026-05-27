@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/trade"
@@ -19,6 +20,8 @@ type HawkesSymbol struct {
 	fit               BivariateFit
 	hasFit            bool
 	lastFitEventKey   fitEventKey
+	lastFitTime       time.Time
+	fitCooldown       time.Duration
 	minFitEvents      int
 	calibrator        engine.PredictionCalibrator
 	liveScore         float64
@@ -31,6 +34,7 @@ func NewHawkesSymbol(calibrationParams engine.CalibrationParams) *HawkesSymbol {
 		intensityRatios:   make([]float64, 0, confidenceHistoryCap(bivariateParamCount*2)),
 		minFitEvents:      bivariateParamCount * 2,
 		calibrator:        engine.NewPredictionCalibrator(calibrationParams),
+		fitCooldown:       config.System.HawkesFitCooldown,
 		gauge: numeric.NewDerived(
 			numeric.WithDynamics(adaptive.NewProduct()),
 		),
@@ -44,6 +48,7 @@ func (sym *HawkesSymbol) FeedTicker(last, volumeBase float64) {
 func (sym *HawkesSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
 	sym.calibrator.Apply(feedback)
 	sym.lastFitEventKey = fitEventKey{}
+	sym.lastFitTime = time.Time{}
 }
 
 func (sym *HawkesSymbol) FitBivariate(
@@ -129,6 +134,13 @@ func (sym *HawkesSymbol) fitForEvents(
 		return sym.refreshFitIntensities(stream, horizon), true
 	}
 
+	if sym.hasFit &&
+		sym.fitCooldown > 0 &&
+		!sym.lastFitTime.IsZero() &&
+		horizon.Sub(sym.lastFitTime) < sym.fitCooldown {
+		return sym.refreshFitIntensities(stream, horizon), true
+	}
+
 	fit := sym.FitBivariate(stream, horizon)
 
 	if fit.MuBuy <= 0 {
@@ -136,6 +148,7 @@ func (sym *HawkesSymbol) fitForEvents(
 	}
 
 	sym.lastFitEventKey = key
+	sym.lastFitTime = horizon
 
 	return fit, true
 }

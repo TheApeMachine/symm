@@ -82,6 +82,23 @@ func TestPredictionRunningMeanError(t *testing.T) {
 	}
 }
 
+func TestPredictionLastPrice(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+	prediction.prices["BTC/EUR"] = 50000
+
+	if got := prediction.LastPrice("BTC/EUR"); got != 50000 {
+		t.Fatalf("expected 50000, got %v", got)
+	}
+
+	if got := prediction.LastPrice("MISSING/EUR"); got != 0 {
+		t.Fatalf("expected 0 for unknown symbol, got %v", got)
+	}
+}
+
 func TestPredictionRecord(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

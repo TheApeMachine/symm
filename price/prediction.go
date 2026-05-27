@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -94,6 +95,7 @@ func (prediction *Prediction) Tick() error {
 			prediction.prices[row.Symbol] = row.Last
 		}
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=prediction")
 	}
 
 	prediction.settleDue(time.Now())
@@ -219,6 +221,13 @@ func (prediction *Prediction) RunningMeanError() float64 {
 	}
 
 	return prediction.errorSum / float64(prediction.errorCount)
+}
+
+func (prediction *Prediction) LastPrice(symbol string) float64 {
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
+	return prediction.prices[symbol]
 }
 
 func (prediction *Prediction) returnEMA(source string) *adaptive.EMA {

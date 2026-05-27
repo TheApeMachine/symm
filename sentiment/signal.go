@@ -120,6 +120,7 @@ func (sentiment *Sentiment) Tick() error {
 		sentiment.Feedback(value.Value.(engine.PredictionFeedback))
 		sentiment.publishPulse()
 	default:
+		errnie.Warn("this just feels like, spinning plates, system=sentiment")
 	}
 
 	return nil
