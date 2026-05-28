@@ -53,6 +53,7 @@ position. Observational predictions for the same base must not close it.
 */
 type PositionBinding struct {
 	Source         string
+	Regime         string // optional pump-regime tag (pump_fast / pump_slow); empty otherwise
 	PredictedAt    time.Time
 	DueAt          time.Time
 	HasLotDecimals bool

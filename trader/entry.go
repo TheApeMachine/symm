@@ -27,6 +27,39 @@ func (crypto *Crypto) tryEnter(
 
 	symbol := lead.Pairs[0].Wsname
 	friction := entryFrictionReturn(lead)
+
+	pumpRegime := pumpRegimeOf(lead)
+
+	if pumpRegime == "pump_fast" {
+		peak := crypto.pumpPeak[symbol]
+
+		if peak <= 0 {
+			audit("trade_entry_skip", map[string]any{
+				"symbol": symbol,
+				"reason": "pump_no_peak",
+			})
+
+			return
+		}
+
+		retrace := (peak - lead.Last) / peak
+
+		// Closer than PumpPullbackMin = chasing the vertical; deeper than
+		// PumpPullbackMax = the leg is dead. Enter only the re-spike dip.
+		if retrace < config.System.PumpPullbackMin ||
+			retrace > config.System.PumpPullbackMax {
+			audit("trade_entry_skip", map[string]any{
+				"symbol":  symbol,
+				"reason":  "pump_chase_guard",
+				"retrace": retrace,
+				"peak":    peak,
+				"last":    lead.Last,
+			})
+
+			return
+		}
+	}
+
 	edge := predictedReturn - friction
 	jointConfidence, sourceCount := engine.FuseMeasurements(prediction.Perspective.Measurements)
 
@@ -95,6 +128,13 @@ func (crypto *Crypto) tryEnter(
 		crypto.forecasts.RunningMeanError(),
 	)
 
+	// Pump-regime slots are sized down before the single MinCostEUR gate: a
+	// pump position risks PumpSizeFraction of the normal slot, and the gate
+	// then runs once against the reduced notional.
+	if pumpRegime != "" {
+		slot *= config.System.PumpSizeFraction
+	}
+
 	if slot < config.System.MinCostEUR {
 		audit("trade_entry_skip", map[string]any{
 			"symbol":           symbol,
@@ -154,6 +194,7 @@ func (crypto *Crypto) tryEnter(
 
 	position := wallet.PositionBinding{
 		Source:      engine.PerspectiveSource(prediction.Perspective.Type),
+		Regime:      pumpRegime,
 		PredictedAt: prediction.PredictedAt,
 		DueAt:       prediction.DueAt,
 	}
@@ -166,7 +207,21 @@ func (crypto *Crypto) tryEnter(
 	crypto.wallet.BindPosition(symbolBase(symbol), position)
 	crypto.attachWalletMarks()
 
-	if stopPrice > 0 {
+	if pumpRegime != "" {
+		// Pump positions have no time gate (§15.3); the trailing stop is the
+		// sole downside control. It ratchets its peak up with the spike and
+		// fires PumpTrailPct (fast) / PumpSlowTrailPct (slow) off the high, or
+		// at the PumpHardStopPct floor if the move reverses immediately.
+		trail := config.System.PumpTrailPct
+
+		if pumpRegime == "pump_slow" {
+			trail = config.System.PumpSlowTrailPct
+		}
+
+		crypto.forecasts.RegisterTrailingStop(
+			symbol, fill.Price*(1-config.System.PumpHardStopPct), trail,
+		)
+	} else if stopPrice > 0 {
 		crypto.forecasts.RegisterStop(symbol, stopPrice)
 	}
 
@@ -313,4 +368,26 @@ func measurementDirection(measurement engine.Measurement) int {
 	default:
 		return 1
 	}
+}
+
+// pumpRegimeOf classifies a pump measurement into a fast or slow regime, or ""
+// when it is not a pump signal. Routes off pumpdump's existing reasons
+// (fast_pump / actual_pump / slow_breakout from BestVolumeSpike + SlowRVOL).
+func pumpRegimeOf(measurement engine.Measurement) string {
+	if measurement.Source != "pumpdump" {
+		return ""
+	}
+
+	switch measurement.Reason {
+	case "fast_pump":
+		return "pump_fast"
+	case "actual_pump", "slow_breakout":
+		return "pump_slow"
+	}
+
+	return ""
+}
+
+func isPumpRegime(regime string) bool {
+	return regime == "pump_fast" || regime == "pump_slow"
 }

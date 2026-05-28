@@ -43,13 +43,17 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		})
 
 		crypto.forecasts.ClearStop(symbol)
+		delete(crypto.pumpPeak, symbol)
 
 		return nil
 	}
 
 	if isSoftExitReason(exitSignal.Reason) {
 		if binding, ok := crypto.wallet.PositionBindingFor(symbolBase(symbol)); ok {
-			if time.Since(binding.PredictedAt) < config.System.MinExhaustHold {
+			// Pump positions are never time-blocked from exiting (§15.3);
+			// their downside is bounded by the trailing stop instead.
+			if !isPumpRegime(binding.Regime) &&
+				time.Since(binding.PredictedAt) < config.System.MinExhaustHold {
 				audit("trade_exit_skip", map[string]any{
 					"symbol":  symbol,
 					"reason":  "min_hold",
@@ -160,6 +164,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 
 	crypto.attachWalletMarks()
 	crypto.forecasts.ClearStop(symbol)
+	delete(crypto.pumpPeak, symbol)
 	crypto.recordExitPnL(symbol, fill.Qty, fill.Price, avgEntryBefore)
 	crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: fill,

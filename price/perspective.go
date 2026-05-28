@@ -33,8 +33,19 @@ func (prediction *Prediction) RecordPerspective(
 
 	// The forecast is 0 until this (source, regime) bucket has proven a
 	// statistically positive forward return. A 0 forecast still records an
-	// open prediction so feedback accrues and the bucket can warm up.
-	predictedReturn, _ := prediction.returnModel.Forecast(source, regime, confidence)
+	// open prediction so feedback accrues and the bucket can warm up. Pump
+	// buckets use a lower sample bar (§15.4): pump events are rare, so the
+	// 30-sample bar may never fill, and the significance test plus the
+	// trailing stop bound the risk of trading on thin evidence.
+	minSamples := MinForwardSamples
+
+	if anchorMeasurement.Source == "pumpdump" {
+		minSamples = PumpMinForwardSamples
+	}
+
+	predictedReturn, _ := prediction.returnModel.ForecastWithMin(
+		source, regime, confidence, minSamples,
+	)
 
 	runway := perspectiveRunway(perspective)
 

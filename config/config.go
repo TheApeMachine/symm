@@ -35,6 +35,12 @@ type Config struct {
 	StopVolMultiple            float64       // Multiplier on recent per-tick volatility for stop distance.
 	MinExhaustHold             time.Duration // Minimum hold before soft exhaust exits can close a position.
 	AdverseSelectionBPS        float64       // Maker-fill adverse-selection penalty in basis points.
+	PumpTrailPct               float64       // Fast-pump trailing-stop retrace from peak.
+	PumpSlowTrailPct           float64       // Slow-pump trailing-stop retrace from peak.
+	PumpHardStopPct            float64       // Initial hard floor below entry for any pump.
+	PumpSizeFraction           float64       // Size multiplier applied to pump-regime slots.
+	PumpPullbackMin            float64       // Fast-pump: minimum retrace from peak to enter.
+	PumpPullbackMax            float64       // Fast-pump: maximum retrace from peak to enter.
 	TrailSpreadMultiple        float64
 	DefaultTrailPct            float64
 	MinTrailPct                float64
@@ -142,6 +148,12 @@ func NewConfig() *Config {
 		StopVolMultiple:            8.0,             // Stop distance = 8x recent per-tick volatility, bounded.
 		MinExhaustHold:             5 * time.Second, // Suppress soft exits for first five seconds.
 		AdverseSelectionBPS:        5.0,             // Add 5 bps to filled maker paper entry cost.
+		PumpTrailPct:               0.08,            // Fast-pump trailing stop: 8% retrace from peak.
+		PumpSlowTrailPct:           0.20,            // Slow-pump trailing stop: 20% retrace from peak.
+		PumpHardStopPct:            0.12,            // Hard floor 12% below pump entry.
+		PumpSizeFraction:           0.25,            // Pump slots sized at 25% of the normal slot.
+		PumpPullbackMin:            0.03,            // Fast-pump entry: require >=3% retrace from peak.
+		PumpPullbackMax:            0.20,            // Fast-pump entry: skip if >20% retrace (leg is dead).
 		TrailSpreadMultiple:        2,
 		DefaultTrailPct:            0.35,
 		MinTrailPct:                0.15,

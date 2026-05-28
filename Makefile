@@ -9,7 +9,9 @@ LOG_DIR ?= runs
 
 RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
-.PHONY: build test test-go test-race test-frontend bench run replay
+DUMP_OUTPUT ?= symm.txt
+
+.PHONY: build test test-go test-race test-frontend bench run replay dump
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -44,3 +46,6 @@ REPLAY_PACE ?= 50ms
 replay: build
 	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make replay REPLAY_FILE=replay/fixtures/sample.jsonl" && exit 1)
 	SYMM_REPLAY_FILE=$(REPLAY_FILE) SYMM_REPLAY_PACE=$(REPLAY_PACE) ./$(SYMM_BIN)
+
+dump:
+	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

@@ -35,8 +35,11 @@ type predictionSeriesKey struct {
 }
 
 type stopOrder struct {
-	price float64
-	fired bool
+	price     float64 // hard floor; fire if price <= this
+	trail     bool
+	trailFrac float64 // retrace from peak that fires a trailing stop
+	peak      float64
+	fired     bool
 }
 
 /*

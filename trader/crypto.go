@@ -42,6 +42,7 @@ type Crypto struct {
 	risk         *riskAccount
 	gaugeAvg     *confidenceAverages
 	calibrator   *sourceCalibrator
+	pumpPeak     map[string]float64
 }
 
 func NewCrypto(
@@ -66,6 +67,7 @@ func NewCrypto(
 		risk:         newRiskAccount(tradingWallet),
 		gaugeAvg:     newConfidenceAverages(),
 		calibrator:   newSourceCalibrator(),
+		pumpPeak:     make(map[string]float64),
 	}
 
 	for _, channel := range []string{"measurements", "feedback", "ui"} {
@@ -260,6 +262,15 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 
 	symbol := measurement.Pairs[0].Wsname
 	crypto.risk.ObserveMark(symbol, measurement.AnchorPrice(), time.Time{})
+
+	// Track the running peak price during a fast pump so the entry anti-chase
+	// guard (§15.5) can measure retrace from the high. Accessed only from this
+	// single measurements/exits goroutine, so the plain map needs no lock.
+	if pumpRegimeOf(measurement) == "pump_fast" {
+		if price := measurement.AnchorPrice(); price > crypto.pumpPeak[symbol] {
+			crypto.pumpPeak[symbol] = price
+		}
+	}
 
 	// Top-down feedback loop, step 1: apply the per-source calibrator's
 	// trust score to the raw confidence. The signal's own measurement is

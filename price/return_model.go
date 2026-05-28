@@ -20,6 +20,12 @@ const (
 	// mean realized forward return must clear zero by this many standard
 	// errors before any trade is allowed.
 	significanceZ = 1.96
+
+	// PumpMinForwardSamples is the reduced warmup bar for pump-regime buckets.
+	// Pump events are rare, so 30 samples may never accumulate; 8 is enough
+	// because the significance test self-protects (stderr is large at low n)
+	// and the trailing stop caps downside on a wrong call.
+	PumpMinForwardSamples = 8
 )
 
 type returnModelKey struct {
@@ -98,6 +104,16 @@ func (model *ReturnModel) Observe(source, regime string, confidence, realizedRet
 // the bucket has >= MinForwardSamples settlements AND its mean realized forward
 // return is statistically positive at significanceZ.
 func (model *ReturnModel) Forecast(source, regime string, confidence float64) (float64, bool) {
+	return model.ForecastWithMin(source, regime, confidence, MinForwardSamples)
+}
+
+// ForecastWithMin is Forecast with a caller-supplied minimum sample bar. Pump
+// regimes pass PumpMinForwardSamples; all other callers use Forecast, which
+// passes MinForwardSamples. The significance test is identical regardless of
+// the bar, so a low bar still cannot trade on noise.
+func (model *ReturnModel) ForecastWithMin(
+	source, regime string, confidence float64, minSamples int,
+) (float64, bool) {
 	if confidence <= 0 {
 		return 0, false
 	}
@@ -107,7 +123,7 @@ func (model *ReturnModel) Forecast(source, regime string, confidence float64) (f
 
 	bucket := model.buckets[returnModelKey{source: source, regime: regime}]
 
-	if bucket == nil || bucket.count < MinForwardSamples || !bucket.slopeSeen {
+	if bucket == nil || bucket.count < minSamples || !bucket.slopeSeen {
 		return 0, false
 	}
 
