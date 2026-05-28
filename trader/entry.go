@@ -252,6 +252,9 @@ func (crypto *Crypto) tryEnter(
 		"stop_fraction":    stopFraction,
 		"confidence":       prediction.Confidence,
 		"source_count":     sourceCount,
+		"dominant_source":  dominantSource(prediction.Perspective.Measurements),
+		"contributions":    sourceContributions(prediction.Perspective.Measurements),
+		"perspective_type": uint8(prediction.Perspective.Type),
 		"balance_eur":      crypto.wallet.BalanceCopy(),
 		"reserved_eur":     crypto.wallet.ReservedCopy(),
 		"open_count":       crypto.openCount(),
@@ -295,6 +298,49 @@ func quoteSpreadBPS(last, bid, ask float64) float64 {
 
 func measurementAnchorPrice(measurement engine.Measurement) float64 {
 	return measurement.AnchorPrice()
+}
+
+// sourceContributions returns the per-source max confidence that fed the
+// fusion behind this entry. It is the raw material for per-signal attribution:
+// because FuseMeasurements collapses sources into one joint confidence, the
+// individual contributions are otherwise lost the moment a trade fills. Logged
+// on trade_entry_fill so analysis/attribution.py can join realized PnL back to
+// the signals that authorized each position.
+func sourceContributions(measurements []engine.Measurement) map[string]float64 {
+	contributions := make(map[string]float64, len(measurements))
+
+	for _, measurement := range measurements {
+		if measurement.Confidence <= 0 || measurement.Source == "" {
+			continue
+		}
+
+		if measurement.Confidence > contributions[measurement.Source] {
+			contributions[measurement.Source] = measurement.Confidence
+		}
+	}
+
+	return contributions
+}
+
+// dominantSource is the single source with the highest confidence among the
+// fused measurements — a convenience tag for grouping trades by their primary
+// driver without re-deriving it from the contributions map.
+func dominantSource(measurements []engine.Measurement) string {
+	best := ""
+	bestConfidence := 0.0
+
+	for _, measurement := range measurements {
+		if measurement.Source == "" {
+			continue
+		}
+
+		if measurement.Confidence > bestConfidence {
+			bestConfidence = measurement.Confidence
+			best = measurement.Source
+		}
+	}
+
+	return best
 }
 
 func symbolBase(symbol string) string {
