@@ -10,7 +10,9 @@ type Request struct {
 }
 
 /*
-AddParams holds add_order fields for spot trading.
+AddParams holds add_order fields for spot trading. ClOrdID is the client
+order id used for reconciliation on ack timeout or reconnect — Kraken echoes
+it back in the Ack and in subsequent executions frames.
 */
 type AddParams struct {
 	OrderType    OrderType        `json:"order_type"`
@@ -20,6 +22,7 @@ type AddParams struct {
 	CashOrderQty float64          `json:"cash_order_qty,omitempty"`
 	LimitPrice   float64          `json:"limit_price,omitempty"`
 	Token        string           `json:"token"`
+	ClOrdID      string           `json:"cl_ord_id,omitempty"`
 	Conditional  *ConditionalStop `json:"conditional,omitempty"`
 }
 

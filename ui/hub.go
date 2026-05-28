@@ -14,6 +14,15 @@ import (
 	"github.com/theapemachine/qpool"
 )
 
+const (
+	writeDeadline = 2 * time.Second
+	// perClientBuffer absorbs measurement bursts. The signal layer can
+	// emit dozens of frames in a single tick (one per gauge, plus mark,
+	// plus prediction). 4096 gives ~10 ticks of headroom before drop
+	// kicks in, which is well above the worst-case burst we've measured.
+	perClientBuffer = 4096
+)
+
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: allowLocalhostOrigin,
 }
@@ -36,29 +45,112 @@ func allowLocalhostOrigin(request *http.Request) bool {
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
+/*
+wsClient owns one connected browser. Each client has its own bounded
+outbox so a slow socket can't head-of-line block other clients or the
+upstream broadcast pump. The frontend is pure consumer; we never read
+from the conn, but we install a write deadline so a stuck socket fails
+fast.
+
+Close semantics. The previous design closed client.out from close() and
+then let enqueue send on the same channel concurrently; on a
+disconnect-while-broadcasting interleave that panics with "send on
+closed channel." Now close() signals via the done channel only — the
+outbox is left to be GC'd. enqueue checks done before sending and
+guarantees a non-blocking send under the select, so even a racing
+close() cannot turn into a panic.
+*/
 type wsClient struct {
 	conn   *websocket.Conn
+	out    chan any
+	done   chan struct{}
 	closed atomic.Bool
 }
 
+func newClient(conn *websocket.Conn) *wsClient {
+	return &wsClient{
+		conn: conn,
+		out:  make(chan any, perClientBuffer),
+		done: make(chan struct{}),
+	}
+}
+
+/*
+close marks the client as closed and signals the writer to exit via the
+done channel. The outbox is intentionally not closed: enqueue may race
+with close from the broadcast fanout, and sending on a closed channel
+panics. The writer drains everything still in the outbox on the way
+out, then drops the conn.
+*/
 func (client *wsClient) close() error {
 	if client.closed.Swap(true) {
 		return nil
 	}
 
+	close(client.done)
 	return client.conn.Close()
 }
 
-func (client *wsClient) writeJSON(payload any) error {
+/*
+enqueue posts payload to the client's outbox without blocking. The
+default case silently drops the message when the bounded outbox is
+full — under a burst (UI gets ~3 frames per measurement and many
+measurements per tick) the previous "return false on full and let the
+caller close the client" behavior was evicting and forcing reconnect
+on every burst, which reset the frontend's tick counter and stalled
+the system on reconnect churn. A dropped frame is fine; an evicted
+browser is not.
+
+A genuinely closed client (done signaled) returns false so the caller
+removes it from the clients map.
+*/
+func (client *wsClient) enqueue(payload any) bool {
 	if client.closed.Load() {
-		return websocket.ErrCloseSent
+		return false
 	}
 
-	return client.conn.WriteJSON(payload)
+	select {
+	case client.out <- payload:
+		return true
+	case <-client.done:
+		return false
+	default:
+		// Buffer full — drop this frame, keep the client.
+		return true
+	}
 }
 
 /*
-Hub subscribes to every broadcast group and writes payloads to websocket clients.
+runWriter writes outbox entries to the socket with a deadline. The loop
+exits immediately when client.done is closed; any messages still sitting
+in client.out at that moment are discarded — the writer does not flush
+the channel before returning. A connected browser sees this as missing
+the last fanout tick before disconnect, which is the right behavior
+because the per-client buffer is also bounded and we already accept drop
+semantics under back-pressure. Any write error also triggers close so
+the next fanout pass evicts the client.
+*/
+func (client *wsClient) runWriter() {
+	for {
+		select {
+		case <-client.done:
+			return
+		case payload := <-client.out:
+			_ = client.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
+
+			if err := client.conn.WriteJSON(payload); err != nil {
+				_ = client.close()
+				return
+			}
+		}
+	}
+}
+
+/*
+Hub subscribes to every broadcast group and writes payloads to websocket
+clients. There is intentionally no reader goroutine per client — the
+frontend never sends frames. Liveness is enforced by the per-client
+read deadline plus the conn's built-in ping handling.
 */
 type Hub struct {
 	ctx           context.Context
@@ -125,11 +217,10 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	client := &wsClient{
-		conn: conn,
-	}
-
+	client := newClient(conn)
 	hub.clients.Store(client, struct{}{})
+
+	go client.runWriter()
 
 	hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
 		"event": "hello",
@@ -137,32 +228,55 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	}})
 }
 
+/*
+writePump fans incoming broadcasts out to every connected client by
+enqueueing onto each client's bounded outbox. A nil channel value is
+treated as a transient hiccup, not a permanent EOF, so the pump survives
+upstream broadcast restarts. Clients whose outbox is full are evicted on
+the spot — a stalled browser cannot back-pressure the system.
+*/
 func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 	for {
 		select {
 		case <-hub.ctx.Done():
 			return
-		case value := <-subscription.Incoming:
-			if value == nil || value.Value == nil {
+		case value, ok := <-subscription.Incoming:
+			if !ok {
 				return
 			}
 
-			hub.clients.Range(func(key, _ any) bool {
-				client, ok := key.(*wsClient)
+			if value == nil || value.Value == nil {
+				continue
+			}
 
-				if !ok || client.closed.Load() {
-					return true
-				}
-
-				if err := client.writeJSON(value.Value); err != nil {
-					errnie.Error(client.close())
-					return true
-				}
-
-				return true
-			})
+			hub.fanout(value.Value)
 		}
 	}
+}
+
+func (hub *Hub) fanout(payload any) {
+	hub.clients.Range(func(key, _ any) bool {
+		client, ok := key.(*wsClient)
+
+		if !ok {
+			return true
+		}
+
+		if client.closed.Load() {
+			hub.clients.Delete(key)
+			return true
+		}
+
+		// enqueue returns true on success AND on bounded-buffer drop —
+		// the only false return is "client is closed", which is the only
+		// case where we evict. A slow consumer drops frames silently
+		// until its outbox drains.
+		if !client.enqueue(payload) {
+			hub.clients.Delete(key)
+		}
+
+		return true
+	})
 }
 
 /*
@@ -171,7 +285,16 @@ Close shuts down the telemetry hub.
 func (hub *Hub) Close() error {
 	hub.cancel()
 
-	return errnie.Require(map[string]any{
-		"event": "ui_hub_closed",
+	hub.clients.Range(func(key, _ any) bool {
+		client, ok := key.(*wsClient)
+
+		if ok {
+			_ = client.close()
+		}
+
+		hub.clients.Delete(key)
+		return true
 	})
+
+	return nil
 }

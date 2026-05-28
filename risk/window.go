@@ -104,7 +104,7 @@ func (window *Window) MarketRegime(symbol string) engine.MarketRegime {
 	}
 
 	samples := window.prices[symbol].Ordered()
-	returns := correlation.LogReturnsFromPrices(window.samplePrices(samples))
+	returns := window.returnsFromSamples(samples)
 
 	// minSamples is the required return count, not raw price ticks.
 	if len(returns) < window.minSamples {
@@ -171,18 +171,39 @@ func (window *Window) BuildMatrix(symbols []string) (*Matrix, bool) {
 	return matrix, true
 }
 
-func (window *Window) samplePrices(samples []correlation.PriceSample) []float64 {
-	prices := make([]float64, 0, len(samples))
+/*
+returnsFromSamples computes log returns over adjacent positive-price
+samples. The previous samplePrices filter compressed missing data out
+silently, which had LogReturnsFromPrices computing a fictitious log return
+across the deletion. Here we only emit a return when both endpoints are
+positive and adjacent in the underlying ring, so the regime classifier sees
+genuine bar-by-bar moves and no fabricated jumps spanning gaps.
+*/
+func (window *Window) returnsFromSamples(samples []correlation.PriceSample) []float64 {
+	if len(samples) < 2 {
+		return nil
+	}
 
-	for _, sample := range samples {
-		if sample.Price <= 0 {
+	returns := make([]float64, 0, len(samples)-1)
+
+	for index := 1; index < len(samples); index++ {
+		previous := samples[index-1].Price
+		current := samples[index].Price
+
+		if previous <= 0 || current <= 0 {
 			continue
 		}
 
-		prices = append(prices, sample.Price)
+		ratio := current / previous
+
+		if ratio <= 0 {
+			continue
+		}
+
+		returns = append(returns, math.Log(ratio))
 	}
 
-	return prices
+	return returns
 }
 
 func (window *Window) regimeFromReturns(returns []float64) engine.MarketRegime {

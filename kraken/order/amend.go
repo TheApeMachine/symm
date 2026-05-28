@@ -4,9 +4,9 @@ package order
 AmendRequest updates trigger price on a resting stop order.
 */
 type AmendRequest struct {
-	Method string       `json:"method"`
-	Params AmendParams  `json:"params"`
-	ReqID  int          `json:"req_id,omitempty"`
+	Method string      `json:"method"`
+	Params AmendParams `json:"params"`
+	ReqID  int         `json:"req_id,omitempty"`
 }
 
 /*

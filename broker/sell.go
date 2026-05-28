@@ -17,7 +17,11 @@ type Sell struct {
 }
 
 /*
-FillPaper simulates an immediate market sell of the full position.
+FillPaper simulates an immediate market sell of the full position. Inventory
+is read by atomically zeroing the slot — the quantity returned by
+ZeroInventory is the one used for sizing, fee accounting, and the published
+Fill, so a concurrent AddInventory between a stale read and the zero cannot
+leave dangling base.
 */
 func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	if tradingWallet == nil {
@@ -30,11 +34,6 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 
 	orderSymbol := Symbol(sell.Symbol)
 	base := orderSymbol.BaseAsset()
-	qty := tradingWallet.InventoryQty(base)
-
-	if qty <= config.System.LiveInventoryEpsilon {
-		return order.Fill{}, nil
-	}
 
 	last, _, _, err := sell.Quote.complete()
 
@@ -42,21 +41,37 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, err
 	}
 
+	qty := tradingWallet.InventoryQty(base)
+
+	if qty <= config.System.LiveInventoryEpsilon {
+		return order.Fill{}, nil
+	}
+
+	// Price the fill BEFORE consuming inventory. The previous version
+	// ZeroInventory'd up front and then "restored" via AddInventory(qty, 0)
+	// on a depth-fill failure — which set the cost basis to 0 and destroyed
+	// the position's AvgEntry. Pricing first means the only state mutation
+	// happens once the fill is known good.
 	fillPrice, err := sell.Quote.FillPrice("sell", qty*last)
 
 	if err != nil {
 		return order.Fill{}, err
 	}
 
+	consumed := tradingWallet.ZeroInventory(base)
+
+	if consumed <= config.System.LiveInventoryEpsilon {
+		return order.Fill{}, nil
+	}
+
+	// Use whatever ZeroInventory actually returned: a concurrent
+	// AddInventory between InventoryQty and ZeroInventory would otherwise
+	// hide the real fill quantity. consumed is the value that's already
+	// gone from the wallet — bill it back at the fill price.
+	qty = consumed
 	revenue := qty * fillPrice
 	fee := revenue * tradingWallet.FeePct / 100
 
-	// ZeroInventory atomically returns the prior quantity, zeroes the slot,
-	// and clears the average-entry record. The qty read above can race with
-	// concurrent fills, but the sell only consumes whatever ZeroInventory
-	// returns, so the worst case is a slight over- or under-fill estimate;
-	// the wallet is never mutated while ZeroInventory holds the lock.
-	tradingWallet.ZeroInventory(base)
 	tradingWallet.CreditBalance(revenue - fee)
 
 	return order.Fill{
@@ -92,5 +107,14 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 		return nil
 	}
 
-	return router.Publish(order.MarketSellBase(sell.Symbol, qty, ""))
+	clOrdID, err := order.NextClOrdID()
+
+	if err != nil {
+		return fmt.Errorf("generate cl_ord_id: %w", err)
+	}
+
+	req := order.MarketSellBase(sell.Symbol, qty, "")
+	req.Params.ClOrdID = clOrdID
+
+	return router.Publish(req)
 }

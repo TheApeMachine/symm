@@ -110,6 +110,84 @@ func (crypto *Crypto) openCount() int {
 	return count
 }
 
+/*
+recordEntryPnL informs the risk account about a fresh entry so the equity
+high-water mark stays aligned with the wallet's mark-to-market view.
+*/
+func (crypto *Crypto) recordEntryPnL(symbol string, fillPrice float64) {
+	if crypto.risk == nil || crypto.wallet == nil {
+		return
+	}
+
+	crypto.risk.ObserveMark(symbol, fillPrice, time.Now())
+
+	marks := map[string]float64{}
+
+	for base, qty := range crypto.wallet.InventoryCopy() {
+		if qty <= config.System.LiveInventoryEpsilon {
+			continue
+		}
+
+		marks[base+"/"+crypto.wallet.Currency] = crypto.forecasts.LastPrice(base + "/" + crypto.wallet.Currency)
+	}
+
+	equity := crypto.wallet.MarkEquity(marks)
+	crypto.risk.ApplyFillPnL(0, equity, time.Now())
+}
+
+/*
+recordExitPnL books realized PnL into the daily accumulator. avgEntryBefore
+is captured by the caller before the sell flattens inventory; reading the
+wallet's AvgEntry here would always return 0 because Sell.FillPaper has
+already cleared it via ZeroInventory. delta is qty × (exitPrice -
+avgEntryBefore), which is realized PnL in quote currency for that leg of
+the round-trip.
+*/
+func (crypto *Crypto) recordExitPnL(symbol string, qty, exitPrice, avgEntryBefore float64) {
+	if crypto.risk == nil || crypto.wallet == nil {
+		return
+	}
+
+	delta := (exitPrice - avgEntryBefore) * qty
+
+	crypto.risk.ObserveMark(symbol, exitPrice, time.Now())
+
+	marks := map[string]float64{}
+
+	for held, q := range crypto.wallet.InventoryCopy() {
+		if q <= config.System.LiveInventoryEpsilon {
+			continue
+		}
+
+		marks[held+"/"+crypto.wallet.Currency] = crypto.forecasts.LastPrice(held + "/" + crypto.wallet.Currency)
+	}
+
+	equity := crypto.wallet.MarkEquity(marks)
+	crypto.risk.ApplyFillPnL(delta, equity, time.Now())
+}
+
+/*
+openSymbols returns the wsname for every base currently held. Used by the
+risk gate to assemble the systemic-correlation candidate set.
+*/
+func (crypto *Crypto) openSymbols() []string {
+	if crypto.wallet == nil {
+		return nil
+	}
+
+	symbols := make([]string, 0)
+
+	for base, qty := range crypto.wallet.InventoryCopy() {
+		if qty <= config.System.LiveInventoryEpsilon {
+			continue
+		}
+
+		symbols = append(symbols, base+"/"+crypto.wallet.Currency)
+	}
+
+	return symbols
+}
+
 func (crypto *Crypto) holdsSymbol(tradingWallet *wallet.Wallet, symbol string) bool {
 	if tradingWallet == nil {
 		return false

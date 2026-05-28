@@ -252,14 +252,20 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 		return 0, ""
 	}
 
+	// Normalize against the fence BEFORE recording: otherwise the fresh
+	// observation is part of the percentile cohort that defines its own
+	// gate, which half-saturates the gate on every reading. The fence
+	// represents what we have seen, not what we are currently seeing.
+	interventionNormalized := state.calibrator.NormalizeConfidence(
+		intervention, state.interventionHist,
+	)
 	state.recordIntervention(intervention)
 
 	model, fitOK := fitNonLinearStructural(samples)
 
 	if !fitOK {
 		return engine.ProvisionalConfidence(
-			state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
-			intervention,
+			interventionNormalized, intervention,
 		), "intervention"
 	}
 
@@ -268,14 +274,16 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 
 	if uplift <= 0 {
 		normalized := engine.ProvisionalConfidence(
-			state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
-			intervention,
+			interventionNormalized, intervention,
 		)
 		state.recordConfidence(intervention)
 
 		return normalized, "intervention"
 	}
 
+	upliftNormalized := state.calibrator.NormalizeConfidence(
+		uplift, state.upliftHist,
+	)
 	state.recordUplift(uplift)
 
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
@@ -286,12 +294,10 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 	}
 
 	interventionScore := engine.ProvisionalConfidence(
-		state.calibrator.NormalizeConfidence(intervention, state.interventionHist),
-		intervention,
+		interventionNormalized, intervention,
 	)
 	upliftScore := engine.ProvisionalConfidence(
-		state.calibrator.NormalizeConfidence(uplift, state.upliftHist),
-		uplift,
+		upliftNormalized, uplift,
 	)
 	score := interventionScore
 

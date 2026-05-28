@@ -2,18 +2,22 @@ package broker
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
-Quote is one market snapshot used to price simulated fills.
+Quote is one market snapshot used to price simulated fills. At carries the
+exchange event timestamp so freshness gates can reject stale snapshots before
+they cost money.
 */
 type Quote struct {
 	Last     float64
 	Bid      float64
 	Ask      float64
+	At       time.Time
 	BidDepth []market.BookLevel
 	AskDepth []market.BookLevel
 }

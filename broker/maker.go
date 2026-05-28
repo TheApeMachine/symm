@@ -9,17 +9,21 @@ import (
 )
 
 /*
-Maker is one resting limit bid entry.
+Maker is one resting limit bid entry. OrderID is populated from the live
+exchange ack so Cancel can address the exchange's own identifier.
 */
 type Maker struct {
 	Symbol     string
 	LimitPrice float64
 	Notional   float64
 	OrderID    string
+	ClOrdID    string
 }
 
 /*
-FillPaper settles one maker entry at its limit price.
+FillPaper settles one maker entry at its limit price. Cost basis recorded on
+the wallet is the full notional (which absorbs the maker fee), not the limit
+price, so realized PnL accounts for fees on both sides of every round trip.
 */
 func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	if err := maker.validate(tradingWallet); err != nil {
@@ -50,7 +54,7 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)
 	}
 
-	tradingWallet.AddInventory(base, qty, maker.LimitPrice)
+	tradingWallet.AddInventoryWithCost(base, qty, maker.Notional)
 
 	return order.Fill{
 		OrderID: orderSymbol.PaperOrderID("maker"),
@@ -77,7 +81,26 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 		return nil
 	}
 
-	if err := router.Publish(order.LimitBuyBid(maker.Symbol, maker.Notional, maker.LimitPrice, "")); err != nil {
+	if maker.ClOrdID == "" {
+		clOrdID, err := order.NextClOrdID()
+
+		if err != nil {
+			tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+			return fmt.Errorf("generate cl_ord_id: %w", err)
+		}
+
+		maker.ClOrdID = clOrdID
+	}
+
+	req := order.LimitBuyBid(maker.Symbol, maker.Notional, maker.LimitPrice, "")
+	// LimitBuyBid stamps the token only; ClOrdID is set directly so the
+	// path matches Buy.SubmitLive (which constructs MarketBuyCash and then
+	// sets ClOrdID on the returned Request) and so reconcile-by-cl-ord-id
+	// works on the ack path.
+	req.Params.ClOrdID = maker.ClOrdID
+
+	if err := router.Publish(req); err != nil {
 		tradingWallet.ReleaseEntryReservation(maker.Notional)
 
 		return err

@@ -99,7 +99,11 @@ func PercentileSorted(sorted []float64, quantile float64) float64 {
 }
 
 /*
-Quartiles returns the lower and upper quartiles of values.
+Quartiles returns the lower and upper quartiles of values using linear
+interpolation between order statistics (PercentileSorted at 0.25 and 0.75).
+The previous implementation used the raw indices n/4 and 3n/4 which (a)
+produced Q1 == Q3 for n ≤ 2, (b) was systematically off for any small n,
+and (c) disagreed with PercentileSorted used elsewhere in the codebase.
 */
 func Quartiles(values []float64) (lower, upper float64) {
 	if len(values) == 0 {
@@ -107,9 +111,8 @@ func Quartiles(values []float64) (lower, upper float64) {
 	}
 
 	sorted := CopySorted(values)
-	n := len(sorted)
-	lower = sorted[n/4]
-	upper = sorted[(3*n)/4]
+	lower = PercentileSorted(sorted, 0.25)
+	upper = PercentileSorted(sorted, 0.75)
 
 	return lower, upper
 }

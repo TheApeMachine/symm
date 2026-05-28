@@ -37,9 +37,19 @@ func (sample causalSample) value(node int) float64 {
 	return sample.nodes[node]
 }
 
+// minSpreadBPSFloor caps the effective denominator in bookLiquidity. Without
+// it, a 1e-4 bps spread on a tight pair generates a feature value four orders
+// of magnitude above the typical sample and dominates the normal matrix's
+// trace, which then drives ridgeLambda for the whole fit.
+const minSpreadBPSFloor = 0.5
+
 func bookLiquidity(spreadBPS, batchVolume float64) float64 {
 	if spreadBPS <= 0 || batchVolume <= 0 {
 		return 0
+	}
+
+	if spreadBPS < minSpreadBPSFloor {
+		spreadBPS = minSpreadBPSFloor
 	}
 
 	return batchVolume / spreadBPS

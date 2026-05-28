@@ -272,7 +272,6 @@ func (causal *Causal) publishPulse() {
 }
 
 func (causal *Causal) publishMeasurements() {
-	macro := causal.macroMomentum()
 	now := time.Now()
 	waiters := make([]chan *qpool.QValue[any], 0)
 
@@ -284,6 +283,7 @@ func (causal *Causal) publishMeasurements() {
 		}
 
 		state := value.(*CausalSymbol)
+		macro := causal.macroMomentum(symbol)
 		waiters = append(
 			waiters,
 			causal.pool.ScheduleFast(causal.ctx, func(ctx context.Context) (any, error) {
@@ -333,7 +333,6 @@ func (causal *Causal) Source() string { return causalSource }
 
 func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
-		macro := causal.macroMomentum()
 		now := time.Now()
 
 		causal.symbols.Range(func(key, value any) bool {
@@ -344,6 +343,7 @@ func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := value.(*CausalSymbol)
+			macro := causal.macroMomentum(symbol)
 			measurement, ok := state.Measure(macro, now)
 
 			if !ok {
@@ -370,10 +370,25 @@ func (causal *Causal) Feedback(feedback engine.PredictionFeedback) {
 	state.ApplyFeedback(feedback)
 }
 
-func (causal *Causal) macroMomentum() float64 {
+/*
+macroMomentum returns the median change_pct across every symbol *other than*
+candidate. The candidate's own change is excluded because it would otherwise
+appear on both sides of the structural regression — as both the outcome
+(via priceVelocity) and as a regressor (via macro) — producing contemporaneous
+self-correlation that the backdoor / counterfactual estimands quietly inherit.
+For tiny universes where excluding the candidate would leave fewer than two
+observations the function returns 0 rather than fabricating a degenerate one.
+*/
+func (causal *Causal) macroMomentum(candidate string) float64 {
 	changes := make([]float64, 0)
 
 	causal.symbols.Range(func(key, value any) bool {
+		symbol, _ := key.(string)
+
+		if symbol == candidate {
+			return true
+		}
+
 		state := value.(*CausalSymbol)
 
 		if state.changePct != 0 {
@@ -383,7 +398,7 @@ func (causal *Causal) macroMomentum() float64 {
 		return true
 	})
 
-	if len(changes) == 0 {
+	if len(changes) < 2 {
 		return 0
 	}
 

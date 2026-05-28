@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
@@ -93,10 +96,18 @@ var rootCmd = &cobra.Command{
 }
 
 /*
-Execute runs the root command with graceful shutdown on SIGINT/SIGTERM.
+Execute runs the root command with graceful shutdown on SIGINT/SIGTERM. The
+signal handler cancels the root context so every system started by Boot
+observes ctx.Done() and runs its Close, including the wallet snapshot
+persist and the WebSocket goodbye frame.
 */
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, cancel := signal.NotifyContext(
+		context.Background(), os.Interrupt, syscall.SIGTERM,
+	)
+	defer cancel()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }

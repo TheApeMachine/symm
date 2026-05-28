@@ -128,25 +128,43 @@ func SynchronizedLogReturns(
 		gridStart = gridStart.Add(interval)
 	}
 
-	leftPrices := forwardFillGrid(left, gridStart, overlapEnd, interval)
-	rightPrices := forwardFillGrid(right, gridStart, overlapEnd, interval)
+	leftPrices, leftPresent := observedGrid(left, gridStart, overlapEnd, interval)
+	rightPrices, rightPresent := observedGrid(right, gridStart, overlapEnd, interval)
 
 	if len(leftPrices) != len(rightPrices) || len(leftPrices) < 2 {
 		return nil, nil, false
 	}
 
-	return LogReturnsFromPrices(leftPrices), LogReturnsFromPrices(rightPrices), true
+	leftReturns, rightReturns := alignedLogReturns(leftPrices, rightPrices, leftPresent, rightPresent)
+
+	if len(leftReturns) < 2 {
+		return nil, nil, false
+	}
+
+	return leftReturns, rightReturns, true
 }
 
-func forwardFillGrid(samples []PriceSample, start, end time.Time, interval time.Duration) []float64 {
+/*
+observedGrid carries the last seen price across the grid for indexing but
+also returns a parallel slice of "this bar saw a fresh sample" flags. The
+flag is what alignedLogReturns uses to skip bars on either side that had no
+fresh observation — forward-filling the price into the bar would otherwise
+fabricate a zero return that depresses the illiquid leg's variance and
+biases the Pearson denominator toward 0.
+*/
+func observedGrid(samples []PriceSample, start, end time.Time, interval time.Duration) ([]float64, []bool) {
 	prices := make([]float64, 0)
+	present := make([]bool, 0)
 	sampleIndex := 0
 	currentPrice := 0.0
 
 	for grid := start; !grid.After(end); grid = grid.Add(interval) {
+		freshThisBar := false
+
 		for sampleIndex < len(samples) && !samples[sampleIndex].At.After(grid) {
 			if samples[sampleIndex].Price > 0 {
 				currentPrice = samples[sampleIndex].Price
+				freshThisBar = true
 			}
 
 			sampleIndex++
@@ -157,9 +175,49 @@ func forwardFillGrid(samples []PriceSample, start, end time.Time, interval time.
 		}
 
 		prices = append(prices, currentPrice)
+		present = append(present, freshThisBar)
 	}
 
-	return prices
+	return prices, present
+}
+
+/*
+alignedLogReturns emits a log-return only when both sides saw a fresh
+observation in the bar pair that spans the return. A bar with no fresh
+sample is treated as missing — its return is dropped rather than zeroed —
+so the resulting Pearson is computed over genuinely observed comovement.
+*/
+func alignedLogReturns(left, right []float64, leftPresent, rightPresent []bool) ([]float64, []float64) {
+	if len(left) != len(right) || len(left) < 2 {
+		return nil, nil
+	}
+
+	leftReturns := make([]float64, 0, len(left)-1)
+	rightReturns := make([]float64, 0, len(right)-1)
+
+	for index := 1; index < len(left); index++ {
+		// A return at index spans bar[index-1] → bar[index]; both endpoints
+		// must be fresh observations. If only the current bar is fresh and
+		// the prior was forward-filled, the computed log return would
+		// straddle a stale bar and re-introduce the fabricated-zero bias
+		// the present check is meant to avoid.
+		if !leftPresent[index] || !rightPresent[index] {
+			continue
+		}
+
+		if !leftPresent[index-1] || !rightPresent[index-1] {
+			continue
+		}
+
+		if left[index-1] <= 0 || right[index-1] <= 0 {
+			continue
+		}
+
+		leftReturns = append(leftReturns, math.Log(left[index]/left[index-1]))
+		rightReturns = append(rightReturns, math.Log(right[index]/right[index-1]))
+	}
+
+	return leftReturns, rightReturns
 }
 
 /*

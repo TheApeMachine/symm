@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"math"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
@@ -14,7 +15,19 @@ import (
 	"github.com/theapemachine/symm/numeric/logic"
 )
 
+/*
+DepthSymbol owns the mutable per-symbol state for one DepthFlow consumer.
+
+Concurrency. The signal layer mutates bids / asks / last / bid / ask /
+buyPressure from the book and tick consumer goroutines while the
+publisher reads them through Measure(). mu is per-symbol so cross-symbol
+ingest stays parallel; within one symbol the critical sections are
+microsecond field updates and a slice-header swap. The slice-header swap
+allocates a fresh backing array so a reader that holds the old header is
+not racing with append into the same backing memory.
+*/
 type DepthSymbol struct {
+	mu          sync.RWMutex
 	pair        asset.Pair
 	bids        []market.BookLevel
 	asks        []market.BookLevel
@@ -25,6 +38,80 @@ type DepthSymbol struct {
 	pressure    *adaptive.EMA
 	score       *numeric.Derived
 	forecast    *learned.Forecast
+}
+
+/*
+SetBook replaces the depth slices with fresh copies so concurrent readers
+do not see torn updates. The slice-header swap is atomic from the
+reader's perspective because mu serializes against Measure().
+*/
+func (state *DepthSymbol) SetBook(bids, asks []market.BookLevel) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if len(bids) > 0 {
+		copyBids := make([]market.BookLevel, len(bids))
+		copy(copyBids, bids)
+		state.bids = copyBids
+	}
+
+	if len(asks) > 0 {
+		copyAsks := make([]market.BookLevel, len(asks))
+		copy(copyAsks, asks)
+		state.asks = copyAsks
+	}
+}
+
+/*
+PushTradePressure advances the EMA under the same mutex Measure() takes
+when it reads PressureValue(). adaptive.EMA carries internal running
+state, so an unsynchronized Next-vs-Value pair is a data race on the
+EMA's fields. The buyPressure scalar is updated in the same critical
+section so the EMA tick and the scalar can be read consistently.
+*/
+func (state *DepthSymbol) PushTradePressure(sign float64) (float64, error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	value, err := state.pressure.Next(0, sign)
+
+	if err != nil {
+		return 0, err
+	}
+
+	state.buyPressure = value
+
+	return value, nil
+}
+
+/*
+PressureValue returns the current EMA reading under the read lock so
+Measure() observes a consistent snapshot relative to PushTradePressure.
+*/
+func (state *DepthSymbol) PressureValue() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.pressure.Value()
+}
+
+/*
+HasBook reports whether at least one bid and one ask have been recorded
+under the read lock.
+*/
+func (state *DepthSymbol) HasBook() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return len(state.bids) > 0 && len(state.asks) > 0
+}
+
+func selectIfOK(levels []market.BookLevel, ok bool) []market.BookLevel {
+	if !ok {
+		return nil
+	}
+
+	return levels
 }
 
 func NewDepthSymbol(pair asset.Pair) *DepthSymbol {
@@ -40,6 +127,9 @@ func NewDepthSymbol(pair asset.Pair) *DepthSymbol {
 }
 
 func (state *DepthSymbol) FeedTicker(row market.TickerRow) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if row.Last > 0 {
 		state.last = row.Last
 	}
@@ -54,13 +144,18 @@ func (state *DepthSymbol) FeedTicker(row market.TickerRow) {
 }
 
 func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
+	state.mu.RLock()
 	bid := state.bid
 	ask := state.ask
 	mid := state.last
+	bids := state.bids
+	asks := state.asks
+	buyPressure := state.buyPressure
+	state.mu.RUnlock()
 
-	if len(state.bids) > 0 && len(state.asks) > 0 {
-		bid = state.bids[0].Price
-		ask = state.asks[0].Price
+	if len(bids) > 0 && len(asks) > 0 {
+		bid = bids[0].Price
+		ask = asks[0].Price
 		mid = (bid + ask) / 2
 	}
 
@@ -72,15 +167,15 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		return engine.Measurement{}, false
 	}
 
-	if len(state.bids) > 0 && len(state.asks) > 0 {
+	if len(bids) > 0 && len(asks) > 0 {
 		imbalance, ok := market.WeightedDepthImbalance(
-			state.bids,
-			state.asks,
+			bids,
+			asks,
 			mid,
 			config.System.BookDepthDecayLambda,
 		)
 
-		level1Imbalance, levelOK := market.Level1Imbalance(state.bids, state.asks)
+		level1Imbalance, levelOK := market.Level1Imbalance(bids, asks)
 
 		if ok && imbalance != 0 && levelOK {
 			spoofed := market.IsSpoofSkew(
@@ -90,7 +185,7 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 				config.System.SpoofLevel1Reject,
 			)
 
-			flatImbalance, flatOK := market.FlatDepthImbalance(state.bids, state.asks)
+			flatImbalance, flatOK := market.FlatDepthImbalance(bids, asks)
 
 			if flatOK {
 				spoofed = spoofed || market.IsSpoofSkew(
@@ -104,12 +199,12 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 			if !spoofed {
 				pressure := 1.0
 
-				if state.buyPressure > 0 && imbalance > 0 {
-					pressure = (state.buyPressure + 1) / 2
+				if buyPressure > 0 && imbalance > 0 {
+					pressure = (buyPressure + 1) / 2
 				}
 
-				if state.buyPressure < 0 && imbalance < 0 {
-					pressure = (1 - state.buyPressure) / 2
+				if buyPressure < 0 && imbalance < 0 {
+					pressure = (1 - buyPressure) / 2
 				}
 
 				raw, err := state.score.Push(math.Abs(imbalance), pressure*state.forecast.Scale())
@@ -157,10 +252,10 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		}
 	}
 
-	flow := math.Abs(state.buyPressure)
+	flow := math.Abs(buyPressure)
 
 	if flow <= 0 {
-		flow = math.Abs(state.pressure.Value())
+		flow = math.Abs(state.PressureValue())
 	}
 
 	confidence := engine.ConfidenceFromScore(flow)

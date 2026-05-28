@@ -169,17 +169,13 @@ func (depthflow *DepthFlow) Tick() error {
 
 				if ok {
 					state := raw.(*DepthSymbol)
-
-					if delta.BidOK {
-						state.bids = delta.Bids
-					}
-
-					if delta.AskOK {
-						state.asks = delta.Asks
-					}
+					state.SetBook(
+						selectIfOK(delta.Bids, delta.BidOK),
+						selectIfOK(delta.Asks, delta.AskOK),
+					)
 
 					if _, seen := depthflow.requested.Load(delta.Symbol); !seen &&
-						len(state.bids) > 0 && len(state.asks) > 0 {
+						state.HasBook() {
 						depthflow.requested.Store(delta.Symbol, struct{}{})
 						depthflow.broadcasts["subscriptions"].Send(
 							&qpool.QValue[any]{Value: []string{delta.Symbol}},
@@ -219,11 +215,9 @@ func (depthflow *DepthFlow) Tick() error {
 						sign = 1.0
 					}
 
-					state.buyPressure = errnie.Does(func() (float64, error) {
-						return state.pressure.Next(0, sign)
-					}).Or(func(err error) {
+					if _, err := state.PushTradePressure(sign); err != nil {
 						errnie.Error(err)
-					}).Value()
+					}
 
 					depthflow.publishPulse()
 				}

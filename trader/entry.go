@@ -27,6 +27,7 @@ func (crypto *Crypto) tryEnter(
 	symbol := lead.Pairs[0].Wsname
 	friction := entryFrictionReturn(lead)
 	edge := predictedReturn - friction
+	jointConfidence, sourceCount := engine.FuseMeasurements(prediction.Perspective.Measurements)
 
 	audit("trade_entry_eval", map[string]any{
 		"symbol":           symbol,
@@ -34,7 +35,8 @@ func (crypto *Crypto) tryEnter(
 		"friction":         friction,
 		"edge":             edge,
 		"confidence":       prediction.Confidence,
-		"joint_confidence": jointConfidence(prediction.Perspective),
+		"joint_confidence": jointConfidence,
+		"source_count":     sourceCount,
 		"open_count":       crypto.openCount(),
 	})
 
@@ -57,7 +59,16 @@ func (crypto *Crypto) tryEnter(
 		return
 	}
 
-	jointConfidence, sourceCount := engine.FuseMeasurements(prediction.Perspective.Measurements)
+	if err := crypto.preTradeGate(symbol, edge, jointConfidence); err != nil {
+		audit("trade_entry_skip", map[string]any{
+			"symbol": symbol,
+			"reason": "risk_gate",
+			"error":  err.Error(),
+		})
+
+		return
+	}
+
 	slot := crypto.kellySizer.SlotEUR(
 		crypto.wallet.AvailableEUR(),
 		engine.PerspectiveSource(prediction.Perspective.Type),
@@ -68,36 +79,47 @@ func (crypto *Crypto) tryEnter(
 
 	if slot < config.System.MinCostEUR {
 		audit("trade_entry_skip", map[string]any{
-			"symbol":          symbol,
-			"reason":          "slot_below_min",
-			"slot_eur":        slot,
-			"min_cost_eur":    config.System.MinCostEUR,
+			"symbol":           symbol,
+			"reason":           "slot_below_min",
+			"slot_eur":         slot,
+			"min_cost_eur":     config.System.MinCostEUR,
 			"joint_confidence": jointConfidence,
-			"source_count":    sourceCount,
+			"source_count":     sourceCount,
 		})
 
 		return
+	}
+
+	quoteAt := time.Time{}
+
+	if _, _, _, at, ok := crypto.forecasts.LastQuote(symbol); ok {
+		quoteAt = at
 	}
 
 	quote := broker.Quote{
 		Last: lead.Last,
 		Bid:  lead.Bid,
 		Ask:  lead.Ask,
+		At:   quoteAt,
 	}
 
+	stopPrice, stopLimit := crypto.stopPricesFor(lead, predictedReturn)
+
 	buy := broker.Buy{
-		Symbol:   symbol,
-		Notional: slot,
-		Quote:    quote,
+		Symbol:         symbol,
+		Notional:       slot,
+		Quote:          quote,
+		StopPrice:      stopPrice,
+		LimitBelowStop: stopLimit,
 	}
 
 	fill, err := buy.FillPaper(crypto.wallet)
 
 	if err != nil {
 		audit("trade_entry_error", map[string]any{
-			"symbol": symbol,
+			"symbol":   symbol,
 			"slot_eur": slot,
-			"error":  err.Error(),
+			"error":    err.Error(),
 		})
 
 		return
@@ -113,6 +135,7 @@ func (crypto *Crypto) tryEnter(
 	}
 
 	crypto.attachWalletMarks()
+	crypto.recordEntryPnL(symbol, fill.Price)
 	crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: fill,
 	})
@@ -138,8 +161,8 @@ func (crypto *Crypto) tryEnter(
 		"predicted_return": predictedReturn,
 		"confidence":       prediction.Confidence,
 		"source_count":     sourceCount,
-		"balance_eur":      crypto.wallet.Balance,
-		"reserved_eur":     crypto.wallet.ReservedEUR,
+		"balance_eur":      crypto.wallet.BalanceCopy(),
+		"reserved_eur":     crypto.wallet.ReservedCopy(),
 		"open_count":       crypto.openCount(),
 	})
 
@@ -181,12 +204,6 @@ func quoteSpreadBPS(last, bid, ask float64) float64 {
 
 func measurementAnchorPrice(measurement engine.Measurement) float64 {
 	return measurement.AnchorPrice()
-}
-
-func jointConfidence(perspective engine.Perspective) float64 {
-	confidence, _ := engine.FuseMeasurements(perspective.Measurements)
-
-	return confidence
 }
 
 func symbolBase(symbol string) string {

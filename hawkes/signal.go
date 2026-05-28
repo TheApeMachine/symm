@@ -18,7 +18,23 @@ import (
 
 const hawkesSource = "hawkes"
 
+/*
+symbolState owns the mutable per-symbol state for one Hawkes consumer.
+
+Concurrency. tick / trade / book / feedback / publishMeasurements all
+operate against the same symbolState concurrently for different events
+on the same symbol. mu is per-symbol — different symbols use different
+mutexes, so cross-symbol parallelism is preserved (BTC ticks and ETH
+ticks update in true parallel). Writes hold mu.Lock for the duration of
+field updates only, which is microseconds; reads from the publisher
+take mu.RLock for a few field copies and then release. The mutex is the
+correctness floor; the snapshot.Cell pattern in the snapshot package
+provides an even more concurrent path for the cases that hit a hot
+per-symbol writer contention point, and is the planned target for the
+next migration pass.
+*/
 type symbolState struct {
+	mu        sync.RWMutex
 	pair      asset.Pair
 	state     *HawkesSymbol
 	ticks     []trade.Data
@@ -26,6 +42,75 @@ type symbolState struct {
 	last      float64
 	bid       float64
 	ask       float64
+}
+
+func (state *symbolState) setLast(value float64) {
+	state.mu.Lock()
+	state.last = value
+	state.mu.Unlock()
+}
+
+func (state *symbolState) setBidAsk(bid, ask float64) {
+	state.mu.Lock()
+	state.bid = bid
+	state.ask = ask
+	state.mu.Unlock()
+}
+
+func (state *symbolState) setImbalance(value float64) {
+	state.mu.Lock()
+	state.imbalance = value
+	state.mu.Unlock()
+}
+
+func (state *symbolState) appendTick(tick trade.Data, capacity int) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if capacity > 0 && len(state.ticks) >= capacity {
+		next := make([]trade.Data, 0, capacity)
+		next = append(next, state.ticks[len(state.ticks)-capacity+1:]...)
+		next = append(next, tick)
+		state.ticks = next
+
+		return
+	}
+
+	state.ticks = append(state.ticks, tick)
+}
+
+/*
+readSnapshot copies the read-relevant fields of state under the RLock so
+the publisher and downstream measure paths consume a consistent
+point-in-time view without coordinating with concurrent writers. The
+returned ticks slice is a copy when the read happens during a write
+(safe to iterate even if the writer immediately appends again).
+*/
+type hawkesReadView struct {
+	last      float64
+	bid       float64
+	ask       float64
+	imbalance float64
+	ticks     []trade.Data
+}
+
+func (state *symbolState) readSnapshot() hawkesReadView {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	view := hawkesReadView{
+		last:      state.last,
+		bid:       state.bid,
+		ask:       state.ask,
+		imbalance: state.imbalance,
+	}
+
+	if len(state.ticks) > 0 {
+		view.ticks = make([]trade.Data, len(state.ticks))
+		copy(view.ticks, state.ticks)
+	}
+
+	return view
 }
 
 /*
@@ -136,15 +221,23 @@ func (hawkes *Hawkes) Tick() error {
 					symbolState.state.FeedTicker(row.Last, row.Volume)
 
 					if row.Last > 0 {
-						symbolState.last = row.Last
+						symbolState.setLast(row.Last)
 					}
 
-					if row.Bid > 0 {
-						symbolState.bid = row.Bid
-					}
+					if row.Bid > 0 || row.Ask > 0 {
+						snap := symbolState.readSnapshot()
+						bid := snap.bid
+						ask := snap.ask
 
-					if row.Ask > 0 {
-						symbolState.ask = row.Ask
+						if row.Bid > 0 {
+							bid = row.Bid
+						}
+
+						if row.Ask > 0 {
+							ask = row.Ask
+						}
+
+						symbolState.setBidAsk(bid, ask)
 					}
 
 					if _, seen := hawkes.requested.Load(row.Symbol); !seen && row.Volume > 0 {
@@ -181,13 +274,11 @@ func (hawkes *Hawkes) Tick() error {
 
 				if ok {
 					symbolState := raw.(*symbolState)
-					symbolState.ticks = append(symbolState.ticks, tick)
+					symbolState.appendTick(tick, 512)
 
-					if len(symbolState.ticks) > 512 {
-						symbolState.ticks = symbolState.ticks[len(symbolState.ticks)-512:]
-					}
+					snap := symbolState.readSnapshot()
 
-					if _, seen := hawkes.requested.Load(tick.Symbol); !seen && len(symbolState.ticks) >= 16 {
+					if _, seen := hawkes.requested.Load(tick.Symbol); !seen && len(snap.ticks) >= 16 {
 						hawkes.requested.Store(tick.Symbol, struct{}{})
 						hawkes.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
 					}
@@ -220,17 +311,20 @@ func (hawkes *Hawkes) Tick() error {
 
 				if ok && len(delta.Bids) > 0 && len(delta.Asks) > 0 {
 					symbolState := raw.(*symbolState)
-					symbolState.bid = delta.Bids[0].Price
-					symbolState.ask = delta.Asks[0].Price
+					bid := delta.Bids[0].Price
+					ask := delta.Asks[0].Price
+					symbolState.setBidAsk(bid, ask)
 
-					if symbolState.last <= 0 {
-						symbolState.last = (symbolState.bid + symbolState.ask) / 2
+					if snap := symbolState.readSnapshot(); snap.last <= 0 {
+						symbolState.setLast((bid + ask) / 2)
 					}
 
 					total := delta.Bids[0].Volume + delta.Asks[0].Volume
 
 					if total > 0 {
-						symbolState.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+						symbolState.setImbalance(
+							(delta.Bids[0].Volume - delta.Asks[0].Volume) / total,
+						)
 					}
 
 					hawkes.publishPulse()
@@ -282,9 +376,10 @@ func (hawkes *Hawkes) publishMeasurements() {
 		}
 
 		symbolState := value.(*symbolState)
+		snap := symbolState.readSnapshot()
 		measurement, ok := symbolState.state.Measure(
-			symbolState.ticks,
-			symbolState.imbalance,
+			snap.ticks,
+			snap.imbalance,
 			now,
 			symbolState.pair,
 		)
@@ -293,9 +388,9 @@ func (hawkes *Hawkes) publishMeasurements() {
 			return true
 		}
 
-		measurement.Last = symbolState.last
-		measurement.Bid = symbolState.bid
-		measurement.Ask = symbolState.ask
+		measurement.Last = snap.last
+		measurement.Bid = snap.bid
+		measurement.Ask = snap.ask
 
 		if measurement.Last <= 0 && measurement.Bid > 0 && measurement.Ask > 0 {
 			measurement.Last = (measurement.Bid + measurement.Ask) / 2
@@ -330,9 +425,10 @@ func (hawkes *Hawkes) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			symbolState := value.(*symbolState)
+			snap := symbolState.readSnapshot()
 			measurement, ok := symbolState.state.Measure(
-				symbolState.ticks,
-				symbolState.imbalance,
+				snap.ticks,
+				snap.imbalance,
 				now,
 				symbolState.pair,
 			)

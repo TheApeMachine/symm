@@ -49,7 +49,7 @@ func TestPredictionFeedbackUsesPerspectiveRegime(t *testing.T) {
 			},
 		}
 
-		prediction.settleDue(now)
+		prediction.settleDueAt(now)
 
 		Convey("It should settle feedback into the market-regime bucket", func() {
 			select {

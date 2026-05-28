@@ -24,19 +24,30 @@ const (
 	minLagFraction = 0.35
 )
 
+// publishInterval throttles leadlag's cross-correlation recompute. The
+// per-symbol crossLag work is O(ringSize × maxLagBars) — orders of magnitude
+// more expensive than the old changePct gap calc that ran per ticker. With
+// ~64 symbols this would saturate a core if it ran on every tick.
+// 200ms is well below the runway of any signal the trader acts on so
+// lead-lag freshness is unaffected; what changes is that we don't burn
+// CPU recomputing a 256-bar Pearson three times per second.
+const publishInterval = 200 * time.Millisecond
+
 /*
 LeadLag detects altcoins lagging a moving anchor pair.
 */
 type LeadLag struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map
-	peak        *adaptive.Peak
-	pending     []string
-	requested   sync.Map
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	peak          *adaptive.Peak
+	pending       []string
+	requested     sync.Map
+	lastPublishMu sync.Mutex
+	lastPublish   time.Time
 }
 
 func NewLeadLag(ctx context.Context, pool *qpool.Q) *LeadLag {
@@ -137,13 +148,10 @@ func (leadlag *LeadLag) Tick() error {
 
 				raw, ok := leadlag.symbols.Load(row.Symbol)
 
-				if ok && row.ChangePct != 0 {
+				if ok && row.Last > 0 {
 					state := raw.(*symbolState)
 					state.changePct = row.ChangePct
-
-					if row.Last > 0 {
-						state.last = row.Last
-					}
+					state.last = row.Last
 
 					if row.Bid > 0 {
 						state.bid = row.Bid
@@ -152,6 +160,18 @@ func (leadlag *LeadLag) Tick() error {
 					if row.Ask > 0 {
 						state.ask = row.Ask
 					}
+
+					// Push every ticker observation into the price ring so
+					// the cross-correlation has a real time-series to lag
+					// against. Without this the ring stays empty and
+					// crossLag returns (0, 0, false) for every symbol.
+					eventTime := parseLeadlagTimestamp(row.Timestamp)
+
+					if eventTime.IsZero() {
+						eventTime = time.Now()
+					}
+
+					state.observe(eventTime, row.Last)
 
 					leadlag.publishPulse()
 				}
@@ -228,6 +248,19 @@ func (leadlag *LeadLag) publishPulse() {
 }
 
 func (leadlag *LeadLag) publishMeasurements() {
+	// Skip if we've published within the throttle window. crossLag is
+	// expensive enough that running it per tick saturates a core; the
+	// throttle bounds the worst-case rate to 5Hz regardless of incoming
+	// ticker volume.
+	leadlag.lastPublishMu.Lock()
+	if time.Since(leadlag.lastPublish) < publishInterval {
+		leadlag.lastPublishMu.Unlock()
+		return
+	}
+
+	leadlag.lastPublish = time.Now()
+	leadlag.lastPublishMu.Unlock()
+
 	anchorRaw, ok := leadlag.symbols.Load(anchorSymbol)
 
 	if !ok {
@@ -235,10 +268,10 @@ func (leadlag *LeadLag) publishMeasurements() {
 	}
 
 	anchor := anchorRaw.(*symbolState)
-	lags := leadlag.lagRatios(anchor)
-	waiters := make([]chan *qpool.QValue[any], 0, len(lags))
+	scores := leadlag.lagScores(anchor)
+	waiters := make([]chan *qpool.QValue[any], 0, len(scores))
 
-	for symbol, lagRatio := range lags {
+	for symbol, score := range scores {
 		if _, subscribed := leadlag.requested.Load(symbol); !subscribed {
 			continue
 		}
@@ -250,21 +283,24 @@ func (leadlag *LeadLag) publishMeasurements() {
 		}
 
 		state := raw.(*symbolState)
+		score := score
 		waiters = append(
 			waiters,
 			leadlag.pool.ScheduleFast(leadlag.ctx, func(ctx context.Context) (any, error) {
-				peakLag, err := leadlag.peak.Next(lagRatio, adaptive.PeerValues(lags, symbol)...)
+				peerScores := adaptive.PeerValues(toRatioMap(scores), symbol)
+				peakLag, err := leadlag.peak.Next(score.correlation, peerScores...)
 
 				if err != nil {
 					return nil, err
 				}
 
-				measurement, ok := lagMeasurement(anchor, state, peakLag, lagRatio)
+				measurement, ok := lagMeasurement(anchor, state, peakLag, score.correlation)
 
 				if !ok {
 					return nil, nil
 				}
 
+				measurement.Reason = score.reason
 				return measurement, nil
 			}),
 		)
@@ -310,10 +346,11 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 		}
 
 		anchor := anchorRaw.(*symbolState)
-		lags := leadlag.lagRatios(anchor)
+		scores := leadlag.lagScores(anchor)
+		peerMap := toRatioMap(scores)
 
-		for symbol, lagRatio := range lags {
-			peakLag, err := leadlag.peak.Next(lagRatio, adaptive.PeerValues(lags, symbol)...)
+		for symbol, score := range scores {
+			peakLag, err := leadlag.peak.Next(score.correlation, adaptive.PeerValues(peerMap, symbol)...)
 
 			if err != nil {
 				errnie.Error(err)
@@ -327,11 +364,13 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := raw.(*symbolState)
-			measurement, ok := lagMeasurement(anchor, state, peakLag, lagRatio)
+			measurement, ok := lagMeasurement(anchor, state, peakLag, score.correlation)
 
 			if !ok {
 				continue
 			}
+
+			measurement.Reason = score.reason
 
 			if !yield(measurement) {
 				return
@@ -360,8 +399,20 @@ func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
 	}
 }
 
-func (leadlag *LeadLag) lagRatios(anchor *symbolState) map[string]float64 {
-	ratios := make(map[string]float64)
+/*
+lagScore packages the output of crossLag plus a reason string the
+measurement can carry forward. It replaces the prior dispersion-based
+lagRatios, which computed (anchor.changePct - state.changePct) at the
+same instant — a cross-section spread, not a lag.
+*/
+type lagScore struct {
+	bars        int
+	correlation float64
+	reason      string
+}
+
+func (leadlag *LeadLag) lagScores(anchor *symbolState) map[string]lagScore {
+	scores := make(map[string]lagScore)
 
 	leadlag.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -371,25 +422,46 @@ func (leadlag *LeadLag) lagRatios(anchor *symbolState) map[string]float64 {
 		}
 
 		state := value.(*symbolState)
+		bars, corr, ok := crossLag(anchor, state)
 
-		if state.changePct == 0 && anchor.changePct == 0 {
+		if !ok || bars <= 0 || corr <= 0 {
 			return true
 		}
 
-		gap := anchor.changePct - state.changePct
-
-		if anchor.changePct > 0 && gap > anchor.changePct*minLagFraction {
-			ratios[symbol] = gap / anchor.changePct
-
-			return true
+		scores[symbol] = lagScore{
+			bars:        bars,
+			correlation: corr,
+			reason:      "leadlag_follower",
 		}
-
-		ratios[symbol] = math.Abs(gap)
 
 		return true
 	})
 
+	return scores
+}
+
+func toRatioMap(scores map[string]lagScore) map[string]float64 {
+	ratios := make(map[string]float64, len(scores))
+
+	for symbol, score := range scores {
+		ratios[symbol] = score.correlation
+	}
+
 	return ratios
+}
+
+func parseLeadlagTimestamp(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t
+		}
+	}
+
+	return time.Time{}
 }
 
 func lagMeasurement(
@@ -407,7 +479,6 @@ func lagMeasurement(
 	}
 
 	confidence := engine.AlignConfidence(score, anchorStrength)
-	fmt.Println("confidence", confidence)
 
 	if confidence <= 0 {
 		confidence = engine.ProvisionalConfidence(

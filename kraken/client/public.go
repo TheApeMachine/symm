@@ -171,15 +171,19 @@ func (publicClient *PublicClient) Tick() error {
 	}
 }
 
-func (publicClient *PublicClient) openInventorySymbols(wallet *wallet.Wallet) []string {
-	symbols := make([]string, 0, len(wallet.Inventory))
+func (publicClient *PublicClient) openInventorySymbols(tradingWallet *wallet.Wallet) []string {
+	// InventoryCopy snapshots the wallet under its own mutex; iterating
+	// the live Inventory map without that lock would panic with
+	// "concurrent map iteration and map write" the moment a fill arrives.
+	inventory := tradingWallet.InventoryCopy()
+	symbols := make([]string, 0, len(inventory))
 
-	for base, qty := range wallet.Inventory {
+	for base, qty := range inventory {
 		if qty <= config.System.LiveInventoryEpsilon {
 			continue
 		}
 
-		symbols = append(symbols, base+"/"+wallet.Currency)
+		symbols = append(symbols, base+"/"+tradingWallet.Currency)
 	}
 
 	return symbols
@@ -562,7 +566,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 			}})
 		}
 	case market.Channel(channel).IsBook():
-		delta, err := market.ParseBookLevelsDelta(payload)
+		delta, err := market.ParseBookLevelsDeltaWithDepth(payload, config.System.BookDepthLevels)
 
 		if err != nil {
 			return

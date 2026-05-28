@@ -3,12 +3,14 @@ package trader
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/price"
 	"github.com/theapemachine/symm/wallet"
 )
@@ -39,6 +41,7 @@ type Crypto struct {
 	perspectives map[bucketKey]*Perspective
 	predictions  []*engine.Prediction
 	kellySizer   *KellySizer
+	risk         *riskAccount
 }
 
 func NewCrypto(
@@ -60,6 +63,7 @@ func NewCrypto(
 		perspectives: make(map[bucketKey]*Perspective),
 		predictions:  make([]*engine.Prediction, 0),
 		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
+		risk:         newRiskAccount(tradingWallet),
 	}
 
 	for _, channel := range []string{"measurements", "feedback", "ui"} {
@@ -69,6 +73,18 @@ func NewCrypto(
 
 	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
 		Subscribe("crypto:exits", 128)
+
+	// executions carries live fills emitted by the private WS client. The
+	// trader is the only system that owns the wallet, so the executions
+	// consumer applies each fill through wallet.ApplyFill (which dedupes
+	// on ExecKey). Paper fills, which already mutate the wallet inline in
+	// Buy.FillPaper / Sell.FillPaper, will land here too as informational
+	// frames and be a no-op because the ExecKey ring will report them as
+	// already-seen.
+	crypto.subscribers["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond).
+		Subscribe("crypto:executions", 128)
+	crypto.subscribers["order_acks"] = pool.CreateBroadcastGroup("order_acks", 10*time.Millisecond).
+		Subscribe("crypto:order_acks", 128)
 
 	if errnie.Error(errnie.Require(map[string]any{
 		"ctx":       ctx,
@@ -140,6 +156,20 @@ func (crypto *Crypto) Tick() error {
 					"confidence":       feedback.Confidence,
 					"regime":           feedback.Regime,
 				})
+			case raw, ok := <-crypto.subscribers["executions"].Incoming:
+				if !ok {
+					errnie.Error(fmt.Errorf("crypto executions channel closed"))
+					return
+				}
+
+				crypto.applyFill(raw.Value)
+			case raw, ok := <-crypto.subscribers["order_acks"].Incoming:
+				if !ok {
+					errnie.Error(fmt.Errorf("crypto order_acks channel closed"))
+					return
+				}
+
+				crypto.handleOrderAck(raw.Value)
 			case raw, ok := <-crypto.subscribers["exits"].Incoming:
 				if !ok {
 					errnie.Error(fmt.Errorf("crypto exits channel closed"))
@@ -171,6 +201,88 @@ func (crypto *Crypto) Tick() error {
 
 	wg.Wait()
 	return nil
+}
+
+/*
+applyFill is the single live-side write-back path for executions. It
+dedupes via wallet.ApplyFill on the fill's ExecKey, so a reconnect that
+replays the same execution does not double-credit inventory or
+double-debit cash.
+
+Paper fills mutate the wallet inline inside broker.{Buy,Sell}.FillPaper.
+They still flow through this channel as informational frames, but the
+"paper-" OrderID prefix is the marker we use to skip them — applying
+their state again would double everything. Live OrderIDs from Kraken
+never carry that prefix.
+*/
+func (crypto *Crypto) applyFill(raw any) {
+	fill, ok := raw.(order.Fill)
+
+	if !ok {
+		errnie.Error(fmt.Errorf("invalid execution payload: %T", raw))
+		return
+	}
+
+	if crypto.wallet == nil {
+		return
+	}
+
+	if strings.HasPrefix(fill.OrderID, "paper-") {
+		return
+	}
+
+	base := symbolBase(fill.Symbol)
+	cashDelta := 0.0
+
+	switch fill.Side {
+	case "buy":
+		cashDelta = -fill.Qty*fill.Price - fill.Fee
+	case "sell":
+		cashDelta = fill.Qty*fill.Price - fill.Fee
+	}
+
+	if !crypto.wallet.ApplyFill(fill.ExecKey, fill.Side, base, fill.Qty, fill.Price, cashDelta) {
+		audit("fill_dedupe", map[string]any{
+			"exec_key": fill.ExecKey,
+			"order_id": fill.OrderID,
+			"symbol":   fill.Symbol,
+		})
+
+		return
+	}
+
+	audit("fill_applied", map[string]any{
+		"exec_key": fill.ExecKey,
+		"order_id": fill.OrderID,
+		"symbol":   fill.Symbol,
+		"side":     fill.Side,
+		"qty":      fill.Qty,
+		"price":    fill.Price,
+	})
+}
+
+/*
+handleOrderAck records the exchange-assigned OrderID against the
+client-side cl_ord_id so subsequent Cancel / Amend can address the
+exchange's identifier. Errors from the exchange are surfaced via the
+audit log.
+*/
+func (crypto *Crypto) handleOrderAck(raw any) {
+	ack, ok := raw.(*order.Ack)
+
+	if !ok {
+		errnie.Error(fmt.Errorf("invalid order ack payload: %T", raw))
+		return
+	}
+
+	audit("order_ack", map[string]any{
+		"method":    ack.Method,
+		"req_id":    ack.ReqID,
+		"success":   ack.Success,
+		"error":     ack.Error,
+		"order_id":  ack.Result.OrderID,
+		"cl_ord_id": ack.Result.ClOrdID,
+	})
 }
 
 func (crypto *Crypto) ingestMeasurement(raw any) error {

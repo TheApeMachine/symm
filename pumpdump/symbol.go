@@ -41,6 +41,7 @@ type PumpSymbol struct {
 	spreadCompression    *adaptive.Compression
 	bookGate             *adaptive.Product
 	precursorMove        *adaptive.PositiveMove
+	peakGate             *adaptive.Peak
 	lastPrice            float64
 	bid                  float64
 	ask                  float64
@@ -64,6 +65,7 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 		spreadCompression:    adaptive.NewCompression(0),
 		bookGate:             adaptive.NewProduct(),
 		precursorMove:        adaptive.NewPositiveMove(0.001),
+		peakGate:             adaptive.NewPeak(),
 		score: numeric.NewScored(
 			moveClassifier,
 			numeric.NewAccumulate(

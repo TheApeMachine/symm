@@ -2,11 +2,14 @@ package wallet
 
 import (
 	"fmt"
+	"log"
 	"maps"
 	"sync"
 
 	"github.com/theapemachine/symm/config"
 )
+
+const seenFillCap = 4096
 
 /*
 WalletType is the type of wallet.
@@ -28,15 +31,18 @@ mu guards every mutable field. Direct field access from outside the wallet
 package is unsafe across goroutines; use the methods on this type instead.
 */
 type Wallet struct {
-	mu          sync.Mutex
-	Type        WalletType
-	Currency    string
-	Balance     float64
-	ReservedEUR float64
-	FeePct      float64
-	Inventory   map[string]float64
-	AvgEntry    map[string]float64
-	Marks       map[string]float64
+	mu           sync.Mutex
+	Type         WalletType
+	Currency     string
+	Balance      float64
+	ReservedEUR  float64
+	FeePct       float64
+	Inventory    map[string]float64
+	AvgEntry     map[string]float64
+	Marks        map[string]float64
+	seenFills    map[string]struct{}
+	seenFillRing []string
+	seenFillHead int
 }
 
 /*
@@ -49,13 +55,71 @@ func NewWallet(
 	feePct float64,
 ) *Wallet {
 	return &Wallet{
-		Type:      walletType,
-		Currency:  currency,
-		Balance:   balance,
-		FeePct:    feePct,
-		Inventory: make(map[string]float64),
-		AvgEntry:  make(map[string]float64),
+		Type:         walletType,
+		Currency:     currency,
+		Balance:      balance,
+		FeePct:       feePct,
+		Inventory:    make(map[string]float64),
+		AvgEntry:     make(map[string]float64),
+		seenFills:    make(map[string]struct{}, seenFillCap),
+		seenFillRing: make([]string, seenFillCap),
 	}
+}
+
+/*
+SeenFill reports whether execKey has already been applied. Empty keys are
+never deduped — they are treated as un-keyed and applied unconditionally.
+*/
+func (wallet *Wallet) SeenFill(execKey string) bool {
+	if wallet == nil || execKey == "" {
+		return false
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	_, ok := wallet.seenFills[execKey]
+
+	return ok
+}
+
+/*
+MarkFill records execKey in a bounded LRU-style ring so subsequent SeenFill
+returns true. Empty keys are ignored.
+*/
+func (wallet *Wallet) MarkFill(execKey string) {
+	if wallet == nil || execKey == "" {
+		return
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	wallet.markFillLocked(execKey)
+}
+
+func (wallet *Wallet) markFillLocked(execKey string) {
+	if wallet.seenFills == nil {
+		wallet.seenFills = make(map[string]struct{}, seenFillCap)
+	}
+
+	if wallet.seenFillRing == nil {
+		wallet.seenFillRing = make([]string, seenFillCap)
+	}
+
+	if _, exists := wallet.seenFills[execKey]; exists {
+		return
+	}
+
+	evicted := wallet.seenFillRing[wallet.seenFillHead]
+
+	if evicted != "" {
+		delete(wallet.seenFills, evicted)
+	}
+
+	wallet.seenFillRing[wallet.seenFillHead] = execKey
+	wallet.seenFillHead = (wallet.seenFillHead + 1) % len(wallet.seenFillRing)
+	wallet.seenFills[execKey] = struct{}{}
 }
 
 /*
@@ -82,7 +146,38 @@ func (wallet *Wallet) Snapshot() *Wallet {
 }
 
 /*
-AddInventory atomically credits base inventory and records the fill economics.
+BalanceCopy returns the balance under the wallet lock for safe external reads.
+*/
+func (wallet *Wallet) BalanceCopy() float64 {
+	if wallet == nil {
+		return 0
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	return wallet.Balance
+}
+
+/*
+ReservedCopy returns reserved cash under the wallet lock.
+*/
+func (wallet *Wallet) ReservedCopy() float64 {
+	if wallet == nil {
+		return 0
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	return wallet.ReservedEUR
+}
+
+/*
+AddInventory atomically credits base inventory and records the fill economics
+using fillPrice as the per-unit cost basis. Prefer AddInventoryWithCost when
+the fee is paid in the quote currency: fillPrice underestimates true cost by
+the fee fraction, biasing realized PnL.
 */
 func (wallet *Wallet) AddInventory(base string, qty, fillPrice float64) {
 	if wallet == nil || base == "" || qty <= 0 {
@@ -97,6 +192,92 @@ func (wallet *Wallet) AddInventory(base string, qty, fillPrice float64) {
 	if fillPrice > 0 {
 		wallet.recordFillLocked(base, qty, fillPrice)
 	}
+}
+
+/*
+AddInventoryWithCost atomically credits base inventory and records cost basis
+from the actual cash spent on the fill (including fees). The recorded average
+entry is cashSpent/qty, which is what AvgEntryFor returns and what realized
+PnL is computed against. Cash leaves the wallet through ReserveEntry /
+SettleEntryReservation independently.
+*/
+func (wallet *Wallet) AddInventoryWithCost(base string, qty, cashSpent float64) {
+	if wallet == nil || base == "" || qty <= 0 {
+		return
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	wallet.inventoryAddLocked(base, qty)
+
+	if cashSpent > 0 {
+		wallet.recordFillLocked(base, qty, cashSpent/qty)
+	}
+}
+
+/*
+ApplyFill records a live fill atomically: dedupes against execKey, credits or
+debits inventory, settles any matching reservation, and records cost basis from
+cashDelta. side is "buy" or "sell". Returns true when the fill was applied,
+false when execKey was already seen.
+*/
+func (wallet *Wallet) ApplyFill(
+	execKey, side, base string,
+	qty, fillPrice, cashDelta float64,
+) bool {
+	if wallet == nil || base == "" || qty <= 0 {
+		return false
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	if execKey != "" {
+		if _, seen := wallet.seenFills[execKey]; seen {
+			return false
+		}
+
+		wallet.markFillLocked(execKey)
+	}
+
+	switch side {
+	case "buy":
+		wallet.inventoryAddLocked(base, qty)
+
+		if cashDelta > 0 {
+			wallet.recordFillLocked(base, qty, cashDelta/qty)
+		} else if fillPrice > 0 {
+			wallet.recordFillLocked(base, qty, fillPrice)
+		}
+	case "sell":
+		current := wallet.Inventory[base]
+
+		if qty > current {
+			// Exchange reported a sell larger than our tracked inventory.
+			// Most likely cause: the local wallet missed a prior buy fill
+			// (reconnect snapshot gap), or two clients are sharing the
+			// account. We cap inventory at 0 and still credit the cash so
+			// the exchange-side truth wins, but we surface the anomaly so
+			// the operator notices.
+			log.Printf(
+				"wallet: sell qty %.10f exceeds tracked inventory %.10f for %s "+
+					"(execKey=%q cashDelta=%.4f); inventory capped at 0",
+				qty, current, base, execKey, cashDelta,
+			)
+		}
+
+		if qty >= current {
+			wallet.Inventory[base] = 0
+			delete(wallet.AvgEntry, base)
+		} else {
+			wallet.Inventory[base] = current - qty
+		}
+
+		wallet.Balance += cashDelta
+	}
+
+	return true
 }
 
 /*

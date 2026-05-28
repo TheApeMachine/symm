@@ -20,10 +20,12 @@ import (
 
 const pumpdumpSource = "pumpdump"
 
-var (
-	moveClassifier *adaptive.Classifier
-	peakGate       = adaptive.NewPeak()
-)
+// moveClassifier is the only legitimate package-scope adaptive primitive
+// here: Classifier carries no per-symbol state and its Next is read-only
+// (it returns a label from immutable thresholds). The previous package-scope
+// peakGate was a data race and a cross-symbol leakage path; it is now a
+// per-symbol field on PumpSymbol.
+var moveClassifier *adaptive.Classifier
 
 func init() {
 	var err error
@@ -392,7 +394,7 @@ func (pumpdump *PumpDump) publishMeasurements() {
 		measureWaiters = append(
 			measureWaiters,
 			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-				peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
+				peakSpike, err := state.peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
 
 				if err != nil {
 					return nil, err
@@ -535,7 +537,7 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 
 			state := raw.(*PumpSymbol)
 			regime := regimes[symbol]
-			peakSpike, err := peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
+			peakSpike, err := state.peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
 
 			if err != nil {
 				errnie.Error(err)

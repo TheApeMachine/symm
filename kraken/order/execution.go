@@ -3,32 +3,48 @@ package order
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 /*
-Fill is one trade execution extracted from the executions channel.
+Fill is one trade execution extracted from the executions channel. ExecKey is
+the per-execution unique identifier used by Wallet.ApplyFill to dedupe
+reconnect-replays — when ExecID is empty the parser falls back to
+OrderID:TradeID:Timestamp.
 */
 type Fill struct {
 	OrderID string
+	ClOrdID string
 	Symbol  string
 	Side    string
 	Qty     float64
 	Price   float64
+	ExecKey string
+	Fee     float64
+	FeeCcy  string
 }
 
 /*
-ExecutionEvent is one Kraken v2 executions row.
+ExecutionEvent is one Kraken v2 executions row. TradeID is an integer per
+the v2 schema (docs.kraken.com/api/docs/websocket-v2/executions). ExecID is
+a string UUID used as the unique key for fill dedupe.
 */
 type ExecutionEvent struct {
 	OrderID   string
+	ClOrdID   string
 	Symbol    string
 	Side      string
 	OrderType string
 	ExecType  string
 	OrdRefID  string
+	ExecID    string
+	TradeID   int64
+	Timestamp string
 	LastQty   float64
 	LastPrice float64
+	Fee       float64
+	FeeCcy    string
 }
 
 /*
@@ -54,14 +70,34 @@ func ParseExecutionFills(payload []byte) ([]Fill, error) {
 
 		fills = append(fills, Fill{
 			OrderID: event.OrderID,
+			ClOrdID: event.ClOrdID,
 			Symbol:  event.Symbol,
 			Side:    event.Side,
 			Qty:     event.LastQty,
 			Price:   event.LastPrice,
+			ExecKey: execKeyFor(event),
+			Fee:     event.Fee,
+			FeeCcy:  event.FeeCcy,
 		})
 	}
 
 	return fills, nil
+}
+
+func execKeyFor(event ExecutionEvent) string {
+	if event.ExecID != "" {
+		return event.ExecID
+	}
+
+	if event.TradeID > 0 {
+		return event.OrderID + ":" + strconv.FormatInt(event.TradeID, 10)
+	}
+
+	if event.Timestamp != "" {
+		return event.OrderID + ":" + event.Timestamp
+	}
+
+	return ""
 }
 
 /*
@@ -72,13 +108,19 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 		Channel string `json:"channel"`
 		Data    []struct {
 			OrderID   string  `json:"order_id"`
+			ClOrdID   string  `json:"cl_ord_id"`
 			Symbol    string  `json:"symbol"`
 			Side      string  `json:"side"`
 			OrderType string  `json:"order_type"`
 			ExecType  string  `json:"exec_type"`
 			OrdRefID  string  `json:"ord_ref_id"`
+			ExecID    string  `json:"exec_id"`
+			TradeID   int64   `json:"trade_id"`
+			Timestamp string  `json:"timestamp"`
 			LastQty   float64 `json:"last_qty"`
 			LastPrice float64 `json:"last_price"`
+			Fee       float64 `json:"fee_usd_equiv"`
+			FeeCcy    string  `json:"fee_ccy"`
 		} `json:"data"`
 	}
 
@@ -95,13 +137,19 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 	for _, row := range frame.Data {
 		events = append(events, ExecutionEvent{
 			OrderID:   row.OrderID,
+			ClOrdID:   row.ClOrdID,
 			Symbol:    row.Symbol,
 			Side:      row.Side,
 			OrderType: row.OrderType,
 			ExecType:  row.ExecType,
 			OrdRefID:  row.OrdRefID,
+			ExecID:    row.ExecID,
+			TradeID:   row.TradeID,
+			Timestamp: row.Timestamp,
 			LastQty:   row.LastQty,
 			LastPrice: row.LastPrice,
+			Fee:       row.Fee,
+			FeeCcy:    row.FeeCcy,
 		})
 	}
 

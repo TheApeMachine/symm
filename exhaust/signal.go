@@ -14,14 +14,21 @@ import (
 	"github.com/theapemachine/symm/kraken/trade"
 )
 
-const exhaustSource = "exhaust"
-
 /*
 Exhaust tracks book/trade microstructure decay and advises exit urgency.
+
+mu is exposed so the per-channel goroutine independence test
+(TestExhaustTickDrainsEachChannelGoroutine) can hold the lock and
+demonstrate that the channel consumers continue to drain without
+acquiring it. None of the production handlers take mu — it is a
+documentation seam for that invariant. If a future change introduces
+shared state that *should* be guarded, take mu inside the handler and
+the test catches the regression.
 */
 type Exhaust struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
