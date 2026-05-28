@@ -157,15 +157,22 @@ class PredictionsDataProviderImpl {
 		}
 
 		if (isPredictionSettledEvent(raw)) {
-			// Place the realised return and error at the settlement instant so
-			// the chart can compare predicted vs actual at the same x-axis
-			// position the forecast pointed to.
-			const settledSec = timeSec(raw.ts);
-			if (settledSec === undefined) {
+			// Plot the realised return at the x of the prediction it
+			// corresponds to (predicted_at), NOT at the settlement instant.
+			// A prediction made at T with runway R is settled at T+R; the
+			// previous version plotted prediction at T and actual at T+R,
+			// so within any visible time window the on-screen orange and
+			// blue points were for DIFFERENT prediction cohorts (the
+			// blues you see are for predictions made R seconds earlier
+			// than the oranges you see). Plotting actual at predicted_at
+			// keeps each cohort visually aligned, which is what makes
+			// the chart actually compare predicted vs realised.
+			const anchorSec = timeSec(raw.predicted_at) ?? timeSec(raw.ts);
+			if (anchorSec === undefined) {
 				return;
 			}
-			this.emitPoint("actual", settledSec, raw.actual_return);
-			this.emitPoint("error", settledSec, raw.error);
+			this.emitPoint("actual", anchorSec, raw.actual_return);
+			this.emitPoint("error", anchorSec, raw.error);
 			return;
 		}
 	}

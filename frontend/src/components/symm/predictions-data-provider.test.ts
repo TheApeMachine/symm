@@ -60,7 +60,7 @@ describe("PredictionsDataProvider", () => {
 		]);
 	});
 
-	it("plots realised return and error from prediction_settled at the settlement ts", () => {
+	it("plots realised return and error at the predicted_at anchor so cohorts align", () => {
 		const readings: Array<{ kind: string; x: number; value: number }> = [];
 
 		const unregister = PredictionsDataProvider.registerSink((reading) => {
@@ -82,8 +82,8 @@ describe("PredictionsDataProvider", () => {
 		unregister();
 
 		expect(readings).toEqual([
-			{ kind: "actual", x: secondSec, value: 0.018 },
-			{ kind: "error", x: secondSec, value: 0.002 },
+			{ kind: "actual", x: firstSec, value: 0.018 },
+			{ kind: "error", x: firstSec, value: 0.002 },
 		]);
 	});
 
