@@ -63,3 +63,46 @@ func ExcessRatio(value float64) float64 {
 
 	return (value - 1) / value
 }
+
+/*
+TrustCalibratedConfidence applies the top-down feedback signal to a
+raw confidence reading: when a signal's track record (modelled by the
+per-(source,symbol) learned.Forecast trust score) is good, raw
+confidence is published as-is; when it is poor, confidence is damped
+toward zero. This is what closes the feedback loop the spec
+describes — prediction error → forecast.weight update → trust → next
+measurement's confidence is scaled by that trust → the trader's
+perspective uses a calibrated confidence → the next prediction is
+informed by past accuracy.
+
+Bootstrapping is deliberate: until the calibrator has accumulated
+minSamples settled predictions, the raw confidence passes through
+unchanged so the signal can keep emitting predictions and feedback
+can accumulate at all. After minSamples the factor is blended
+0.5 + 0.5*trust so even a chronically-wrong signal still publishes at
+half strength rather than disappearing — disappearance would starve
+the calibrator of fresh feedback and trap the signal in its hole.
+
+trust is expected in [0,1]; values outside that range are clipped.
+*/
+func TrustCalibratedConfidence(raw, trust float64, samples, minSamples int) float64 {
+	if raw <= 0 {
+		return 0
+	}
+
+	if samples < minSamples {
+		return raw
+	}
+
+	if trust < 0 {
+		trust = 0
+	}
+
+	if trust > 1 {
+		trust = 1
+	}
+
+	factor := 0.5 + 0.5*trust
+
+	return raw * factor
+}

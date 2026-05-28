@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/phuslu/log"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
@@ -16,7 +17,32 @@ import (
 	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/order"
+	"github.com/theapemachine/symm/runstats"
 )
+
+/*
+logEvent emits one structured log line so private-client lifecycle is
+searchable in the run log alongside the trader's audit lines. errnie's
+Info path also feeds the same file writer, so the lines interleave with
+the rest of the audit stream.
+*/
+func logEvent(event string, fields map[string]any) {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+
+	fields["event"] = event
+	fields["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
+
+	payload, err := json.Marshal(fields)
+
+	if err != nil {
+		log.Error().Err(err).Str("event", event).Msg("private: log marshal")
+		return
+	}
+
+	errnie.Info(string(payload))
+}
 
 const (
 	privateWriteDeadline      = 5 * time.Second
@@ -154,12 +180,24 @@ returns; an exponential backoff caps reconnect frequency.
 */
 func (privateClient *PrivateClient) runSupervisor() {
 	backoff := privateReconnectBackoffMs
+	connected := false
 
 	for privateClient.ctx.Err() == nil {
 		if err := privateClient.connectOnce(); err != nil {
 			errnie.Error(err)
 			privateClient.sleepBackoff(&backoff)
 			continue
+		}
+
+		if connected {
+			runstats.WSReconnect()
+			logEvent("private_ws_reconnected", map[string]any{
+				"backoff_ms": backoff,
+			})
+		} else {
+			runstats.WSConnect()
+			logEvent("private_ws_connected", nil)
+			connected = true
 		}
 
 		backoff = privateReconnectBackoffMs
@@ -377,7 +415,16 @@ func (privateClient *PrivateClient) runTokenWatcher(stop <-chan struct{}) {
 
 			if err := token.Refresh(privateClient.apiKey, privateClient.apiSecret); err != nil {
 				errnie.Error(err)
+				runstats.TokenRefresh(false)
+				logEvent("token_refresh_failed", map[string]any{
+					"error": err.Error(),
+				})
+
+				continue
 			}
+
+			runstats.TokenRefresh(true)
+			logEvent("token_refreshed", nil)
 		}
 	}
 }

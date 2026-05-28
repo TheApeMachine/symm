@@ -135,13 +135,13 @@ THE OVERALL SYSTEM WORKS LIKE THIS:
 
 1. Signals convert raw market data into Measurement
    Each Signal MUST emit a Measurement on each Tick, which includes a CONFIDENCE
-   Each Signal decides for themselves which asset pairs to subscribe to, and EVERY SUBSCRIBED ASSET PAIR SHOULD SEND ITS PRICE TO THE FRONTEND FROM THE SOURCE (public Kraken websocket connection), THIS IS ALSO TRUE FOR EVERY ACTIVE TRADE THOUGH THAT SHOULD ALREADY BE SUBSCRIBED TO SINCE THE SIGNALS ADVICE THE TRADES.
+   Each Signal decides for themselves which asset pairs to subscribe to.
 2. Measurements are picked up by the trader
    The trader takes the running average of the CONFIDENCE of each Signal and sends this to the UI for the GAUGES
 3. The trader combines Measurements into !!!Perspectives!!!
 4. The trader !!!uses Perspectives to make Predictions!!! (**always, not just when entering a trade**)
 5. Predictions are evaluated once current time has caught up **THEY ARE PREDICTIONS IN TIME, NOT CYCLES, SO CHART ALSO HAS TO REFLECT THAT**
-6. **!!!The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that makde the prediction use!!!**
+6. **!!!The error of the Prediction is used as top-down feedback to modulate the paramters/values the Signals that were part of the Perspective that make the prediction use!!!**
 
 AND FINALLY MAKE ABSOLUTELY SURE THAT ALL THE CHARTS ON THE FRONTEND SHOW ACCURATE DATA AND EVERYTHING THAT NEEDS DATA ALSO RECEIVES IT!!!!!
 

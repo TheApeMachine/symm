@@ -12,7 +12,17 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/runstats"
 )
+
+// anchorSymbol is always forwarded to the frontend regardless of open
+// position state — BTC/EUR is the dashboard's reference price and the
+// lead-lag anchor; without it the price chart goes blank between
+// trades. Per-symbol frames for symbols that are neither anchor nor
+// open positions are filtered out at the hub so the frontend isn't
+// drowned in altcoin ticks it doesn't render.
+const anchorSymbol = "BTC/EUR"
 
 const (
 	writeDeadline = 2 * time.Second
@@ -111,11 +121,15 @@ func (client *wsClient) enqueue(payload any) bool {
 
 	select {
 	case client.out <- payload:
+		runstats.UIFramesSent(1)
 		return true
 	case <-client.done:
 		return false
 	default:
-		// Buffer full — drop this frame, keep the client.
+		// Buffer full — drop this frame, keep the client. The drop is
+		// counted in run_stats so a post-run jq can see how often the
+		// signal layer is overwhelming the browser link.
+		runstats.UIFramesDropped(1)
 		return true
 	}
 }
@@ -159,6 +173,10 @@ type Hub struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscriptions map[string]*qpool.Subscriber
 	clients       *sync.Map
+
+	// focus = {anchor} ∪ {open-position symbols}. Updated atomically
+	// from every "wallet" frame.
+	focus atomic.Pointer[map[string]struct{}]
 }
 
 /*
@@ -181,6 +199,9 @@ func NewHub(
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	hub.subscriptions["ui"] = hub.broadcasts["ui"].Subscribe("ui", 128)
+
+	initial := map[string]struct{}{anchorSymbol: {}}
+	hub.focus.Store(&initial)
 
 	go hub.writePump(hub.subscriptions["ui"])
 
@@ -249,9 +270,77 @@ func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 				continue
 			}
 
+			hub.maybeUpdateFocus(value.Value)
+
+			if hub.shouldDrop(value.Value) {
+				runstats.UIFramesFiltered(1)
+				continue
+			}
+
 			hub.fanout(value.Value)
 		}
 	}
+}
+
+/*
+maybeUpdateFocus rebuilds the focus set on every "wallet" frame so the
+hub forwards per-symbol data for symbols we actually hold. Aggregate
+frames and the wallet frame itself always pass.
+*/
+func (hub *Hub) maybeUpdateFocus(payload any) {
+	frame, ok := payload.(map[string]any)
+
+	if !ok || frame["event"] != "wallet" {
+		return
+	}
+
+	inventory, _ := frame["Inventory"].(map[string]float64)
+	currency, _ := frame["Currency"].(string)
+
+	if currency == "" {
+		currency = config.System.QuoteCurrency
+	}
+
+	next := map[string]struct{}{anchorSymbol: {}}
+
+	for base, qty := range inventory {
+		if qty <= 0 || base == "" || currency == "" {
+			continue
+		}
+
+		next[base+"/"+currency] = struct{}{}
+	}
+
+	hub.focus.Store(&next)
+}
+
+/*
+shouldDrop returns true for per-symbol frames whose symbol is not in
+focus. Aggregate frames (no symbol field) always pass.
+*/
+func (hub *Hub) shouldDrop(payload any) bool {
+	frame, ok := payload.(map[string]any)
+
+	if !ok {
+		return false
+	}
+
+	symbol, hasSymbol := frame["symbol"].(string)
+
+	if !hasSymbol || symbol == "" {
+		return false
+	}
+
+	focusPtr := hub.focus.Load()
+
+	if focusPtr == nil {
+		return false
+	}
+
+	focus := *focusPtr
+	_, present := focus[symbol]
+
+	return !present
 }
 
 func (hub *Hub) fanout(payload any) {

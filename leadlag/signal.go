@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/runstats"
 )
 
 const (
@@ -255,11 +256,13 @@ func (leadlag *LeadLag) publishMeasurements() {
 	leadlag.lastPublishMu.Lock()
 	if time.Since(leadlag.lastPublish) < publishInterval {
 		leadlag.lastPublishMu.Unlock()
+		runstats.LeadlagThrottle()
 		return
 	}
 
 	leadlag.lastPublish = time.Now()
 	leadlag.lastPublishMu.Unlock()
+	runstats.LeadlagRecompute()
 
 	anchorRaw, ok := leadlag.symbols.Load(anchorSymbol)
 

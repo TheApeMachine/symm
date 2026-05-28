@@ -141,3 +141,35 @@ func trustScale(meanError float64) float64 {
 
 	return 1 / (1 + meanError)
 }
+
+/*
+SlotDistribution returns one entry per (source, regime) the sizer has
+seen, holding the live win rate, payoff ratio, calibrator scale, and
+sample count. This is what emitRunStats publishes alongside the global
+counters so a post-run analysis can answer "which source-regime
+combinations are actually generating sized slots and which are stuck
+under MinCalibrationSamples".
+*/
+func (kellySizer *KellySizer) SlotDistribution() []map[string]any {
+	if kellySizer == nil {
+		return nil
+	}
+
+	kellySizer.stateMu.Lock()
+	defer kellySizer.stateMu.Unlock()
+
+	rows := make([]map[string]any, 0, len(kellySizer.bySeries))
+
+	for key, slotStats := range kellySizer.bySeries {
+		rows = append(rows, map[string]any{
+			"source":           key.source,
+			"regime":           key.regime,
+			"win_rate":         slotStats.wins.Ratio(),
+			"sample_count":     slotStats.wins.Total(),
+			"payoff_ratio":     slotStats.payoff.Value(),
+			"calibrator_scale": slotStats.calibrator.ScaleFor(key.regime),
+		})
+	}
+
+	return rows
+}

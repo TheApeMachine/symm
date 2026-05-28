@@ -167,6 +167,55 @@ func (crypto *Crypto) recordExitPnL(symbol string, qty, exitPrice, avgEntryBefor
 }
 
 /*
+emitRunStats logs the cumulative counter snapshot together with the live
+wallet and risk numbers. It is called from a 10-second ticker in Tick
+and is also safe to call directly from tests.
+
+The output is one "run_stats" JSON line per emit so the post-run
+analysis path stays "tail | jq". Every field is either an int64
+counter, a float, or a string; nothing in the payload requires
+side-channel context to interpret.
+*/
+func (crypto *Crypto) emitRunStats() {
+	snapshot := stats.Snapshot()
+
+	if crypto.wallet != nil {
+		walletSnap := crypto.wallet.Snapshot()
+		marks := walletSnap.Marks
+
+		if marks == nil {
+			marks = map[string]float64{}
+		}
+
+		snapshot["balance_eur"] = walletSnap.Balance
+		snapshot["reserved_eur"] = walletSnap.ReservedEUR
+		snapshot["fee_pct"] = walletSnap.FeePct
+		snapshot["mark_equity_eur"] = crypto.wallet.MarkEquity(marks)
+		snapshot["open_positions"] = crypto.openCount()
+		snapshot["open_symbols"] = crypto.openSymbols()
+	}
+
+	if crypto.risk != nil {
+		snapshot["realized_day_eur"] = crypto.risk.RealizedDay()
+		snapshot["drawdown_pct"] = crypto.risk.Drawdown()
+	}
+
+	if crypto.kellySizer != nil {
+		snapshot["kelly_slot_distribution"] = crypto.kellySizer.SlotDistribution()
+	}
+
+	if crypto.calibrator != nil {
+		snapshot["source_calibrators"] = crypto.calibrator.Snapshot()
+	}
+
+	if crypto.gaugeAvg != nil {
+		snapshot["gauge_confidence"] = crypto.gaugeAvg.Snapshot()
+	}
+
+	audit("run_stats", snapshot)
+}
+
+/*
 openSymbols returns the wsname for every base currently held. Used by the
 risk gate to assemble the systemic-correlation candidate set.
 */

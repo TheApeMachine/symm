@@ -42,6 +42,8 @@ type Crypto struct {
 	predictions  []*engine.Prediction
 	kellySizer   *KellySizer
 	risk         *riskAccount
+	gaugeAvg     *confidenceAverages
+	calibrator   *sourceCalibrator
 }
 
 func NewCrypto(
@@ -64,6 +66,8 @@ func NewCrypto(
 		predictions:  make([]*engine.Prediction, 0),
 		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
 		risk:         newRiskAccount(tradingWallet),
+		gaugeAvg:     newConfidenceAverages(),
+		calibrator:   newSourceCalibrator(),
 	}
 
 	for _, channel := range []string{"measurements", "feedback", "ui"} {
@@ -129,6 +133,25 @@ func (crypto *Crypto) Tick() error {
 	})
 
 	wg.Go(func() {
+		// run_stats is the offline-analysis seam. Every 10 seconds the
+		// trader dumps a cumulative counter snapshot plus the live wallet
+		// and risk numbers, so a post-run jq can compute per-window
+		// throughput, gate hit rates, slot decisions, and PnL trajectory
+		// without having to reconstruct counts from per-event lines.
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case <-ticker.C:
+				crypto.emitRunStats()
+			}
+		}
+	})
+
+	wg.Go(func() {
 		for {
 			select {
 			case <-crypto.ctx.Done():
@@ -147,14 +170,37 @@ func (crypto *Crypto) Tick() error {
 				}
 
 				crypto.kellySizer.ApplyFeedback(feedback)
+
+				// Top-down feedback loop, step 2: every signal source
+				// that contributed to this prediction gets its
+				// calibrator updated with the predicted-vs-actual
+				// return. feedback.Sources is the multi-source list
+				// from perspectiveSources; if it's empty (single-
+				// source path), fall back to feedback.Source. The next
+				// raw measurement from each of those sources will be
+				// multiplied by the updated trust factor at intake.
+				sources := feedback.Sources
+
+				if len(sources) == 0 && feedback.Source != "" {
+					sources = []string{feedback.Source}
+				}
+
+				for _, source := range sources {
+					crypto.calibrator.ApplyFeedback(
+						source, feedback.PredictedReturn, feedback.ActualReturn,
+					)
+				}
+
 				audit("prediction_feedback", map[string]any{
 					"source":           feedback.Source,
+					"sources":          sources,
 					"symbol":           feedback.Symbol,
 					"predicted_return": feedback.PredictedReturn,
 					"actual_return":    feedback.ActualReturn,
 					"error":            feedback.Error,
 					"confidence":       feedback.Confidence,
 					"regime":           feedback.Regime,
+					"trust":            crypto.calibratorTrust(feedback.Source),
 				})
 			case raw, ok := <-crypto.subscribers["executions"].Incoming:
 				if !ok {
@@ -298,23 +344,46 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 
 	symbol := measurement.Pairs[0].Wsname
 
+	// Top-down feedback loop, step 1: apply the per-source calibrator's
+	// trust score to the raw confidence. The signal's own measurement is
+	// honest about its current strength; the calibrator's job is to tell
+	// the trader "this source has been accurate / inaccurate lately" so
+	// the perspective layer, the gauge, and any downstream consumer all
+	// see a track-record-adjusted number. Step 2 happens in
+	// applyPredictionFeedback below, which feeds the prediction error
+	// back into the calibrator so the next measurement from this source
+	// is weighted by its post-error trust.
+	rawConfidence := measurement.Confidence
+	measurement.Confidence = crypto.calibrator.CalibrateConfidence(
+		measurement.Source, rawConfidence,
+	)
+
 	audit("measurement_ingest", map[string]any{
-		"source":     measurement.Source,
-		"symbol":     symbol,
-		"confidence": measurement.Confidence,
-		"regime":     measurement.Regime,
-		"reason":     measurement.Reason,
-		"type":       measurement.Type,
-		"last":       measurement.Last,
-		"bid":        measurement.Bid,
-		"ask":        measurement.Ask,
+		"source":                measurement.Source,
+		"symbol":                symbol,
+		"confidence":            measurement.Confidence,
+		"raw_confidence":        rawConfidence,
+		"regime":                measurement.Regime,
+		"reason":                measurement.Reason,
+		"type":                  measurement.Type,
+		"last":                  measurement.Last,
+		"bid":                   measurement.Bid,
+		"ask":                   measurement.Ask,
 	})
 
+	// The gauge shows the running EMA of CALIBRATED confidence per
+	// source, not raw per-measurement reading. EMA smooths anomalies
+	// and the calibration multiplier is what makes the gauge
+	// self-tuning to feedback.
+	smoothed := crypto.gaugeAvg.Observe(measurement.Source, measurement.Confidence)
+
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":      "confidence",
-		"source":     measurement.Source,
-		"confidence": measurement.Confidence,
-		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+		"event":          "confidence",
+		"source":         measurement.Source,
+		"confidence":     smoothed,
+		"raw_confidence": rawConfidence,
+		"trust":          crypto.calibratorTrust(measurement.Source),
+		"ts":             time.Now().UTC().Format(time.RFC3339Nano),
 	}})
 
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
@@ -343,6 +412,24 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 	})
 
 	return crypto.tryPerspective(key, bucket)
+}
+
+/*
+calibratorTrust exposes the per-source trust value to callers that need
+to surface it in run_stats / UI events. Safe under concurrent access.
+*/
+func (crypto *Crypto) calibratorTrust(source string) float64 {
+	if crypto == nil || crypto.calibrator == nil {
+		return 0
+	}
+
+	entry := crypto.calibrator.entry(source)
+
+	if entry == nil {
+		return 0
+	}
+
+	return entry.forecast.Trust()
 }
 
 func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) error {
