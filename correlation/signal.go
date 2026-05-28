@@ -24,7 +24,6 @@ Signal measures synchronized return correlation across subscribed symbols.
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -82,8 +81,13 @@ func (signal *Signal) Tick() error {
 					return
 				}
 
-				signal.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("signal: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -102,7 +106,6 @@ func (signal *Signal) Tick() error {
 				}
 
 				signal.publishPulse()
-				signal.mu.Unlock()
 			}
 		}
 	})
@@ -118,8 +121,12 @@ func (signal *Signal) Tick() error {
 					return
 				}
 
-				signal.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("signal: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := signal.symbols.Load(row.Symbol)
 
 				if ok && row.Last > 0 {
@@ -128,7 +135,6 @@ func (signal *Signal) Tick() error {
 					signal.publishPulse()
 				}
 
-				signal.mu.Unlock()
 			}
 		}
 	})
@@ -144,10 +150,14 @@ func (signal *Signal) Tick() error {
 					return
 				}
 
-				signal.mu.Lock()
-				signal.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("signal: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				signal.Feedback(fb)
 				signal.publishPulse()
-				signal.mu.Unlock()
 			}
 		}
 	})

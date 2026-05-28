@@ -31,14 +31,19 @@ func TestKellySizerSlotEUR(t *testing.T) {
 	}
 }
 
-func TestKellySizerColdSourceUsesMaxFraction(t *testing.T) {
+/*
+TestKellySizerColdSourceReturnsZero guards the no-cold-trading policy: a
+(source, regime) slot with fewer settled samples than MinCalibrationSamples
+must not produce a slot. Predictions are still recorded (spec step 4) and
+feedback flows even without entries (step 6); trading only begins once the
+calibrator has actually seen this combination settle.
+*/
+func TestKellySizerColdSourceReturnsZero(t *testing.T) {
 	sizer := NewKellySizer(engine.DefaultCalibrationParams())
 	slot := sizer.SlotEUR(200, "pumpdump", "microstructure", 1, 0)
 
-	maxSlot := 200 * config.System.MaxSlotPct / 100
-
-	if slot <= 0 || slot > maxSlot+1e-9 {
-		t.Fatalf("expected cold-source slot within max fraction, got %v", slot)
+	if slot != 0 {
+		t.Fatalf("expected zero slot before MinCalibrationSamples settlements, got %v", slot)
 	}
 }
 

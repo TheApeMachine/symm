@@ -87,6 +87,7 @@ export const routePayload = (payload: unknown) => {
 		if (typeof row.event === "string") {
 			switch (row.event) {
 				case "prediction":
+				case "prediction_settled":
 					PredictionsDataProvider.ingest(payload);
 					return;
 				case "field_row":

@@ -14,6 +14,17 @@ import (
 )
 
 /*
+bucketKey identifies one perspective accumulator. Measurements belong to the
+same Perspective only when they share a symbol and a perspective lens
+(microstructure / flow / cross-asset / sentiment); otherwise they live in
+different buckets and produce independent predictions.
+*/
+type bucketKey struct {
+	symbol string
+	ptype  engine.PerspectiveType
+}
+
+/*
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
@@ -25,7 +36,7 @@ type Crypto struct {
 	subscribers  map[string]*qpool.Subscriber
 	wallet       *wallet.Wallet
 	forecasts    *price.Prediction
-	perspectives []*Perspective
+	perspectives map[bucketKey]*Perspective
 	predictions  []*engine.Prediction
 	kellySizer   *KellySizer
 }
@@ -46,7 +57,7 @@ func NewCrypto(
 		subscribers:  make(map[string]*qpool.Subscriber),
 		wallet:       tradingWallet,
 		forecasts:    forecasts,
-		perspectives: make([]*Perspective, 0),
+		perspectives: make(map[bucketKey]*Perspective),
 		predictions:  make([]*engine.Prediction, 0),
 		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
 	}
@@ -169,11 +180,11 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		return fmt.Errorf("invalid measurement: %v", raw)
 	}
 
-	symbol := ""
-
-	if len(measurement.Pairs) > 0 {
-		symbol = measurement.Pairs[0].Wsname
+	if len(measurement.Pairs) == 0 || measurement.Pairs[0].Wsname == "" {
+		return nil
 	}
+
+	symbol := measurement.Pairs[0].Wsname
 
 	audit("measurement_ingest", map[string]any{
 		"source":     measurement.Source,
@@ -201,42 +212,34 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 
 	crypto.settlePredictions(measurement)
 
-	if len(crypto.perspectives) > 0 {
-		lastPerspective := crypto.perspectives[len(crypto.perspectives)-1]
+	key := bucketKey{symbol: symbol, ptype: perspectiveType(measurement)}
+	bucket := crypto.perspectives[key]
 
-		if !lastPerspective.Ready {
-			lastPerspective.AddMeasurement(measurement)
-			audit("perspective_accumulate", map[string]any{
-				"symbol":                 symbol,
-				"measurement_count":      len(lastPerspective.measurements),
-				"source":                 measurement.Source,
-				"measurement_confidence": measurement.Confidence,
-			})
-
-			return crypto.tryPerspective(lastPerspective)
-		}
+	if bucket == nil {
+		bucket = NewPerspective([]engine.Measurement{measurement})
+		crypto.perspectives[key] = bucket
+	} else {
+		bucket.AddMeasurement(measurement)
 	}
 
-	crypto.perspectives = append(
-		crypto.perspectives,
-		NewPerspective([]engine.Measurement{measurement}),
-	)
+	audit("perspective_accumulate", map[string]any{
+		"symbol":                 symbol,
+		"perspective_type":       key.ptype,
+		"measurement_count":      len(bucket.measurements),
+		"source":                 measurement.Source,
+		"measurement_confidence": measurement.Confidence,
+	})
 
-	return crypto.tryPerspective(crypto.perspectives[len(crypto.perspectives)-1])
+	return crypto.tryPerspective(key, bucket)
 }
 
-func (crypto *Crypto) tryPerspective(perspective *Perspective) error {
-	prediction, err := perspective.Predict()
+func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) error {
+	prediction, err := perspective.Predict(key.ptype)
 
 	if err != nil {
-		symbol := ""
-
-		if len(perspective.measurements) > 0 && len(perspective.measurements[0].Pairs) > 0 {
-			symbol = perspective.measurements[0].Pairs[0].Wsname
-		}
-
 		audit("perspective_not_ready", map[string]any{
-			"symbol":            symbol,
+			"symbol":            key.symbol,
+			"perspective_type":  key.ptype,
 			"measurement_count": len(perspective.measurements),
 			"error":             err.Error(),
 		})
@@ -284,7 +287,9 @@ func (crypto *Crypto) settlePredictions(measurement engine.Measurement) {
 			SettledAt:       now,
 		}
 
-		crypto.kellySizer.ApplyFeedback(feedback)
+		// Do not call kellySizer.ApplyFeedback here: this trader subscribes to
+		// the "feedback" channel, so publishing is sufficient and applying
+		// locally would double-count the same feedback into the calibrator.
 		crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: feedback})
 
 		audit("prediction_settled", map[string]any{

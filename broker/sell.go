@@ -30,7 +30,7 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 
 	orderSymbol := Symbol(sell.Symbol)
 	base := orderSymbol.BaseAsset()
-	qty := tradingWallet.Inventory[base]
+	qty := tradingWallet.InventoryQty(base)
 
 	if qty <= config.System.LiveInventoryEpsilon {
 		return order.Fill{}, nil
@@ -51,9 +51,13 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	revenue := qty * fillPrice
 	fee := revenue * tradingWallet.FeePct / 100
 
-	tradingWallet.Inventory[base] = 0
-	tradingWallet.ClearPosition(base)
-	tradingWallet.Balance += revenue - fee
+	// ZeroInventory atomically returns the prior quantity, zeroes the slot,
+	// and clears the average-entry record. The qty read above can race with
+	// concurrent fills, but the sell only consumes whatever ZeroInventory
+	// returns, so the worst case is a slight over- or under-fill estimate;
+	// the wallet is never mutated while ZeroInventory holds the lock.
+	tradingWallet.ZeroInventory(base)
+	tradingWallet.CreditBalance(revenue - fee)
 
 	return order.Fill{
 		OrderID: orderSymbol.PaperOrderID("sell"),
@@ -82,7 +86,7 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 
 	orderSymbol := Symbol(sell.Symbol)
 	base := orderSymbol.BaseAsset()
-	qty := tradingWallet.Inventory[base]
+	qty := tradingWallet.InventoryQty(base)
 
 	if qty <= config.System.LiveInventoryEpsilon {
 		return nil

@@ -30,7 +30,6 @@ LeadLag detects altcoins lagging a moving anchor pair.
 type LeadLag struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -84,8 +83,13 @@ func (leadlag *LeadLag) Tick() error {
 					return
 				}
 
-				leadlag.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("leadlag: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -110,7 +114,6 @@ func (leadlag *LeadLag) Tick() error {
 				}
 
 				leadlag.publishPulse()
-				leadlag.mu.Unlock()
 			}
 		}
 	})
@@ -126,8 +129,12 @@ func (leadlag *LeadLag) Tick() error {
 					return
 				}
 
-				leadlag.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("leadlag: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := leadlag.symbols.Load(row.Symbol)
 
 				if ok && row.ChangePct != 0 {
@@ -149,7 +156,6 @@ func (leadlag *LeadLag) Tick() error {
 					leadlag.publishPulse()
 				}
 
-				leadlag.mu.Unlock()
 			}
 		}
 	})
@@ -165,10 +171,14 @@ func (leadlag *LeadLag) Tick() error {
 					return
 				}
 
-				leadlag.mu.Lock()
-				leadlag.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("leadlag: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				leadlag.Feedback(fb)
 				leadlag.publishPulse()
-				leadlag.mu.Unlock()
 			}
 		}
 	})

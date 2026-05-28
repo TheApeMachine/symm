@@ -50,6 +50,15 @@ func (prediction *Prediction) RecordPerspective(
 		prediction.open[symbol] = bySource
 	}
 
+	// Predictions live in time, not in cycles. If a forecast for this
+	// (symbol, source) is already open, leave it alone — settleDue will
+	// evaluate it when its dueAt is past, and a fresh prediction opens then.
+	// Subsequent measurements only refine the bucket; they do not reset the
+	// clock or replace the in-flight forecast.
+	if existing, ok := bySource[source]; ok {
+		return existing.predictedReturn
+	}
+
 	bySource[source] = openPrediction{
 		perspective:     perspective,
 		measurement:     anchorMeasurement,

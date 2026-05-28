@@ -34,7 +34,6 @@ Hawkes detects buy-side trade clustering via a bivariate self-exciting Hawkes mo
 type Hawkes struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -92,8 +91,13 @@ func (hawkes *Hawkes) Tick() error {
 					return
 				}
 
-				hawkes.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("hawkes: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair != nil {
 						hawkes.symbols.Store(symbol, &symbolState{
 							pair:  *pair,
@@ -104,7 +108,6 @@ func (hawkes *Hawkes) Tick() error {
 				}
 
 				hawkes.publishPulse()
-				hawkes.mu.Unlock()
 			}
 		}
 	})
@@ -120,8 +123,12 @@ func (hawkes *Hawkes) Tick() error {
 					return
 				}
 
-				hawkes.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("hawkes: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := hawkes.symbols.Load(row.Symbol)
 
 				if ok {
@@ -149,7 +156,6 @@ func (hawkes *Hawkes) Tick() error {
 					}
 				}
 
-				hawkes.mu.Unlock()
 			}
 		}
 	})
@@ -165,8 +171,12 @@ func (hawkes *Hawkes) Tick() error {
 					return
 				}
 
-				hawkes.mu.Lock()
-				tick := value.Value.(trade.Data)
+				tick, tickOK := value.Value.(trade.Data)
+				if !tickOK {
+					errnie.Error(fmt.Errorf("hawkes: invalid trade payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := hawkes.symbols.Load(tick.Symbol)
 
 				if ok {
@@ -185,7 +195,6 @@ func (hawkes *Hawkes) Tick() error {
 					hawkes.publishPulse()
 				}
 
-				hawkes.mu.Unlock()
 			}
 		}
 	})
@@ -201,8 +210,12 @@ func (hawkes *Hawkes) Tick() error {
 					return
 				}
 
-				hawkes.mu.Lock()
-				delta := value.Value.(market.BookLevelsDelta)
+				delta, deltaOK := value.Value.(market.BookLevelsDelta)
+				if !deltaOK {
+					errnie.Error(fmt.Errorf("hawkes: invalid book payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := hawkes.symbols.Load(delta.Symbol)
 
 				if ok && len(delta.Bids) > 0 && len(delta.Asks) > 0 {
@@ -223,7 +236,6 @@ func (hawkes *Hawkes) Tick() error {
 					hawkes.publishPulse()
 				}
 
-				hawkes.mu.Unlock()
 			}
 		}
 	})
@@ -239,10 +251,14 @@ func (hawkes *Hawkes) Tick() error {
 					return
 				}
 
-				hawkes.mu.Lock()
-				hawkes.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("hawkes: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				hawkes.Feedback(fb)
 				hawkes.publishPulse()
-				hawkes.mu.Unlock()
 			}
 		}
 	})

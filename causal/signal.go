@@ -26,7 +26,6 @@ DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor c
 type Causal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -81,8 +80,13 @@ func (causal *Causal) Tick() error {
 					return
 				}
 
-				causal.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("causal: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -101,7 +105,6 @@ func (causal *Causal) Tick() error {
 				}
 
 				causal.publishPulse()
-				causal.mu.Unlock()
 			}
 		}
 	})
@@ -117,8 +120,12 @@ func (causal *Causal) Tick() error {
 					return
 				}
 
-				causal.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("causal: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := causal.symbols.Load(row.Symbol)
 
 				if ok {
@@ -132,7 +139,6 @@ func (causal *Causal) Tick() error {
 					}
 				}
 
-				causal.mu.Unlock()
 			}
 		}
 	})
@@ -148,8 +154,12 @@ func (causal *Causal) Tick() error {
 					return
 				}
 
-				causal.mu.Lock()
-				tick := value.Value.(trade.Data)
+				tick, tickOK := value.Value.(trade.Data)
+				if !tickOK {
+					errnie.Error(fmt.Errorf("causal: invalid trade payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := causal.symbols.Load(tick.Symbol)
 
 				if ok {
@@ -163,7 +173,6 @@ func (causal *Causal) Tick() error {
 					}
 				}
 
-				causal.mu.Unlock()
 			}
 		}
 	})
@@ -179,8 +188,12 @@ func (causal *Causal) Tick() error {
 					return
 				}
 
-				causal.mu.Lock()
-				delta := value.Value.(market.BookLevelsDelta)
+				delta, deltaOK := value.Value.(market.BookLevelsDelta)
+				if !deltaOK {
+					errnie.Error(fmt.Errorf("causal: invalid book payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := causal.symbols.Load(delta.Symbol)
 
 				if ok {
@@ -195,7 +208,6 @@ func (causal *Causal) Tick() error {
 					}
 				}
 
-				causal.mu.Unlock()
 			}
 		}
 	})
@@ -211,10 +223,14 @@ func (causal *Causal) Tick() error {
 					return
 				}
 
-				causal.mu.Lock()
-				causal.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("causal: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				causal.Feedback(fb)
 				causal.publishPulse()
-				causal.mu.Unlock()
 			}
 		}
 	})

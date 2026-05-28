@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -73,27 +72,25 @@ func (perspective *Perspective) AddMeasurement(measurement engine.Measurement) {
 }
 
 /*
-Predict makes a short-horizon prediction on the future market.
+Predict makes a short-horizon prediction for this bucket's (symbol, type).
+Predictions are always produced for non-empty buckets — the spec calls for
+predictions on every batch, not only on entry. Trade selectivity lives
+downstream in tryEnter's edge gate, not here.
 */
-func (perspective *Perspective) Predict() (engine.Prediction, error) {
-	jointConfidence, _ := engine.FuseMeasurements(perspective.measurements)
-
-	if jointConfidence < config.System.DefensiveOBIConfidence {
+func (perspective *Perspective) Predict(kind engine.PerspectiveType) (engine.Prediction, error) {
+	if len(perspective.measurements) == 0 {
 		return engine.Prediction{}, ErrNotReady
 	}
 
-	if len(perspective.measurements) == 0 {
+	jointConfidence, _ := engine.FuseMeasurements(perspective.measurements)
+
+	if jointConfidence <= 0 {
 		return engine.Prediction{}, ErrNotReady
 	}
 
 	perspective.Ready = true
 
 	now := time.Now()
-	kind := engine.PerspectiveMicrostructure
-
-	if len(perspective.measurements) > 0 {
-		kind = perspectiveType(perspective.measurements[len(perspective.measurements)-1])
-	}
 
 	enginePerspective := engine.Perspective{
 		Type:         kind,
@@ -103,11 +100,8 @@ func (perspective *Perspective) Predict() (engine.Prediction, error) {
 	runway := runwayForPerspective(enginePerspective)
 
 	prediction := engine.Prediction{
-		Type: engine.PredictionTypePump,
-		Perspective: engine.Perspective{
-			Type:         kind,
-			Measurements: enginePerspective.Measurements,
-		},
+		Type:           engine.PredictionTypePump,
+		Perspective:    enginePerspective,
 		Confidence:     jointConfidence,
 		Direction:      predictionDirection(enginePerspective),
 		Runway:         runway,

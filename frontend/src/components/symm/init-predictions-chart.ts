@@ -29,13 +29,18 @@ const SERIES_STYLE: Record<
 		strokeThickness: 2,
 	},
 	prediction: {
-		name: "Next frame prediction",
+		name: "Predicted return",
 		stroke: "#FBA55A",
 		strokeDashArray: [8, 5],
 		strokeThickness: 2,
 	},
+	actual: {
+		name: "Realised return",
+		stroke: "#5EA5FF",
+		strokeThickness: 2,
+	},
 	error: {
-		name: "Average error",
+		name: "Forecast error",
 		stroke: "#E85D75",
 		strokeThickness: 1,
 	},
@@ -73,7 +78,7 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 
 	const seriesByKind = new Map<PredictionSeriesKind, XyDataSeries>();
 
-	for (const kind of ["average", "prediction", "error"] as const) {
+	for (const kind of ["average", "prediction", "actual", "error"] as const) {
 		const style = SERIES_STYLE[kind];
 		const dataSeries = new XyDataSeries(wasmContext, {
 			dataSeriesName: style.name,

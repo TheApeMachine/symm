@@ -27,7 +27,6 @@ Sentiment measures cross-section bullish breadth from ticker change percentages.
 type Sentiment struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -89,8 +88,13 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				sentiment.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("sentiment: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -109,7 +113,6 @@ func (sentiment *Sentiment) Tick() error {
 				}
 
 				sentiment.publishPulse()
-				sentiment.mu.Unlock()
 			}
 		}
 	})
@@ -125,8 +128,12 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				sentiment.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("sentiment: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := sentiment.symbols.Load(row.Symbol)
 
 				if ok && row.ChangePct != 0 {
@@ -148,7 +155,6 @@ func (sentiment *Sentiment) Tick() error {
 					sentiment.publishPulse()
 				}
 
-				sentiment.mu.Unlock()
 			}
 		}
 	})
@@ -164,10 +170,14 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				sentiment.mu.Lock()
-				sentiment.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("sentiment: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				sentiment.Feedback(fb)
 				sentiment.publishPulse()
-				sentiment.mu.Unlock()
 			}
 		}
 	})

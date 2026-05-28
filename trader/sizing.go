@@ -74,23 +74,29 @@ func (kellySizer *KellySizer) SlotEUR(
 	kellySizer.stateMu.Unlock()
 
 	maxFraction := config.System.MaxSlotPct / 100
-	fraction := maxFraction
 
-	if stats.wins.Total() >= float64(kellySizer.params.MinCalibrationSamples) {
-		winRate := stats.wins.Ratio()
-		payoffRatio := stats.payoff.Value()
-
-		if payoffRatio > 0 {
-			kelly := (winRate*payoffRatio - (1 - winRate)) / payoffRatio
-
-			if kelly <= 0 {
-				return 0
-			}
-
-			fraction = kelly * config.System.KellyFraction
-		}
+	// No cold-start trading: predictions are always recorded (spec step 4),
+	// feedback flows even without entries (spec step 6), so we wait until this
+	// (source, regime) slot has actually seen its settlements before risking
+	// capital on it. The calibrator learns from non-traded predictions.
+	if stats.wins.Total() < float64(kellySizer.params.MinCalibrationSamples) {
+		return 0
 	}
 
+	winRate := stats.wins.Ratio()
+	payoffRatio := stats.payoff.Value()
+
+	if payoffRatio <= 0 {
+		return 0
+	}
+
+	kelly := (winRate*payoffRatio - (1 - winRate)) / payoffRatio
+
+	if kelly <= 0 {
+		return 0
+	}
+
+	fraction := kelly * config.System.KellyFraction
 	fraction *= jointConfidence * trustScale(meanError) * stats.calibrator.ScaleFor(regime)
 
 	if fraction > maxFraction {

@@ -22,7 +22,6 @@ Exhaust tracks book/trade microstructure decay and advises exit urgency.
 type Exhaust struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -70,8 +69,11 @@ func (exhaust *Exhaust) Tick() error {
 					return
 				}
 
-				exhaust.mu.Lock()
-				delta := value.Value.(market.BookLevelsDelta)
+				delta, deltaOK := value.Value.(market.BookLevelsDelta)
+				if !deltaOK {
+					errnie.Error(fmt.Errorf("exhaust: invalid book payload: %T", value.Value))
+					continue
+				}
 
 				bidDepth := 0.0
 				askDepth := 0.0
@@ -115,7 +117,6 @@ func (exhaust *Exhaust) Tick() error {
 				)
 
 				exhaust.publishPulse()
-				exhaust.mu.Unlock()
 			}
 		}
 	})
@@ -131,8 +132,12 @@ func (exhaust *Exhaust) Tick() error {
 					return
 				}
 
-				exhaust.mu.Lock()
-				tick := value.Value.(trade.Data)
+				tick, tickOK := value.Value.(trade.Data)
+				if !tickOK {
+					errnie.Error(fmt.Errorf("exhaust: invalid trade payload: %T", value.Value))
+					continue
+				}
+
 				sign := -1.0
 
 				if tick.Side == "buy" {
@@ -144,7 +149,6 @@ func (exhaust *Exhaust) Tick() error {
 				)
 
 				exhaust.publishPulse()
-				exhaust.mu.Unlock()
 			}
 		}
 	})
@@ -160,14 +164,17 @@ func (exhaust *Exhaust) Tick() error {
 					return
 				}
 
-				exhaust.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("exhaust: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				exhaust.history.observe(
 					row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
 				)
 
 				exhaust.publishPulse()
-				exhaust.mu.Unlock()
 			}
 		}
 	})

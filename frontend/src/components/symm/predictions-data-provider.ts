@@ -1,7 +1,15 @@
 import type { EnginePulseEvent } from "#/lib/symm/events";
-import { isEnginePulseEvent } from "#/lib/symm/events";
+import {
+	isEnginePulseEvent,
+	isPredictionEvent,
+	isPredictionSettledEvent,
+} from "#/lib/symm/events";
 
-export type PredictionSeriesKind = "average" | "prediction" | "error";
+export type PredictionSeriesKind =
+	| "average"
+	| "prediction"
+	| "error"
+	| "actual";
 
 export type PredictionReading = {
 	kind: PredictionSeriesKind;
@@ -123,35 +131,41 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
-		const averagePrediction = raw.avg_prediction;
-
-		if (typeof averagePrediction === "number") {
-			this.emitPoint("average", pulseSec, averagePrediction);
-		}
-
-		if (typeof raw.avg_error === "number") {
-			this.emitPoint("error", pulseSec, raw.avg_error);
+		if (typeof raw.avg_prediction === "number") {
+			this.emitPoint("average", pulseSec, raw.avg_prediction);
 		}
 
 		this.updateHorizon(pulseSec);
-
-		if (
-			this.pulseHorizonSec === undefined ||
-			typeof averagePrediction !== "number"
-		) {
-			return;
-		}
-
-		this.emitPoint(
-			"prediction",
-			pulseSec + this.pulseHorizonSec,
-			averagePrediction,
-		);
 	}
 
 	ingest(raw: unknown) {
 		if (isEnginePulseEvent(raw)) {
 			this.ingestPulse(raw);
+			return;
+		}
+
+		if (isPredictionEvent(raw)) {
+			// Plot the forecast at its anchored emission time. Each prediction
+			// has its own clock — anchored at `ts`, due at `due_at` — so the
+			// chart shows the forecast where it lives in time, not at a
+			// per-cycle index.
+			const tsSec = timeSec(raw.ts);
+			if (tsSec !== undefined) {
+				this.emitPoint("prediction", tsSec, raw.value);
+			}
+			return;
+		}
+
+		if (isPredictionSettledEvent(raw)) {
+			// Place the realised return and error at the settlement instant so
+			// the chart can compare predicted vs actual at the same x-axis
+			// position the forecast pointed to.
+			const settledSec = timeSec(raw.ts);
+			if (settledSec === undefined) {
+				return;
+			}
+			this.emitPoint("actual", settledSec, raw.actual_return);
+			this.emitPoint("error", settledSec, raw.error);
 			return;
 		}
 	}

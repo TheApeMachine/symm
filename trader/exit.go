@@ -34,8 +34,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	last := crypto.forecasts.LastPrice(symbol)
 
 	if last <= 0 {
-		base := symbolBase(symbol)
-		last = crypto.wallet.AvgEntry[base]
+		last = crypto.wallet.AvgEntryFor(symbolBase(symbol))
 	}
 
 	if last <= 0 {

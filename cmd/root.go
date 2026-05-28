@@ -44,7 +44,7 @@ var rootCmd = &cobra.Command{
 
 		predictions := price.NewPrediction(cmd.Context(), pool)
 
-		booter.AddSystems(
+		if err := booter.AddSystems(
 			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
 			pumpdump.NewPumpDump(cmd.Context(), pool),
 			correlation.NewSignal(cmd.Context(), pool),
@@ -67,16 +67,22 @@ var rootCmd = &cobra.Command{
 					config.System.TakerFeePct,
 				), predictions,
 			),
-		)
+		); err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
 
 		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
-			booter.AddSystems(client.NewPrivateClient(
+			if err := booter.AddSystems(client.NewPrivateClient(
 				cmd.Context(),
 				pool,
 				core.KRAKEN_WS_AUTH_URL,
 				config.System.KrakenAPIKey,
 				config.System.KrakenAPISecret,
-			))
+			)); err != nil {
+				errnie.Error(err)
+				os.Exit(1)
+			}
 		}
 
 		if err := booter.Boot(); err != nil {

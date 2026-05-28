@@ -45,7 +45,6 @@ PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker str
 type PumpDump struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -104,7 +103,6 @@ func (pumpdump *PumpDump) Tick() error {
 					return
 				}
 
-				pumpdump.mu.Lock()
 				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
 					if pair == nil {
 						continue
@@ -131,7 +129,6 @@ func (pumpdump *PumpDump) Tick() error {
 				}
 
 				pumpdump.publishPulse()
-				pumpdump.mu.Unlock()
 			}
 		}
 	})
@@ -147,7 +144,6 @@ func (pumpdump *PumpDump) Tick() error {
 					return
 				}
 
-				pumpdump.mu.Lock()
 				row := value.Value.(market.TickerRow)
 				raw, ok := pumpdump.symbols.Load(row.Symbol)
 
@@ -189,7 +185,6 @@ func (pumpdump *PumpDump) Tick() error {
 					}
 				}
 
-				pumpdump.mu.Unlock()
 			}
 		}
 	})
@@ -205,7 +200,6 @@ func (pumpdump *PumpDump) Tick() error {
 					return
 				}
 
-				pumpdump.mu.Lock()
 				tick := value.Value.(trade.Data)
 				raw, ok := pumpdump.symbols.Load(tick.Symbol)
 
@@ -235,7 +229,6 @@ func (pumpdump *PumpDump) Tick() error {
 					}
 				}
 
-				pumpdump.mu.Unlock()
 			}
 		}
 	})
@@ -251,7 +244,6 @@ func (pumpdump *PumpDump) Tick() error {
 					return
 				}
 
-				pumpdump.mu.Lock()
 				delta := value.Value.(market.BookLevelsDelta)
 				raw, ok := pumpdump.symbols.Load(delta.Symbol)
 
@@ -281,7 +273,6 @@ func (pumpdump *PumpDump) Tick() error {
 					pumpdump.publishPulse()
 				}
 
-				pumpdump.mu.Unlock()
 			}
 		}
 	})
@@ -297,10 +288,8 @@ func (pumpdump *PumpDump) Tick() error {
 					return
 				}
 
-				pumpdump.mu.Lock()
 				pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
 				pumpdump.publishPulse()
-				pumpdump.mu.Unlock()
 			}
 		}
 	})

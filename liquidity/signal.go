@@ -37,7 +37,6 @@ Liquidity ranks cross-section quote volume below the peer median.
 type Liquidity struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -93,8 +92,13 @@ func (liquidity *Liquidity) Tick() error {
 					return
 				}
 
-				liquidity.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("liquidity: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -116,7 +120,6 @@ func (liquidity *Liquidity) Tick() error {
 				}
 
 				liquidity.publishPulse()
-				liquidity.mu.Unlock()
 			}
 		}
 	})
@@ -132,8 +135,12 @@ func (liquidity *Liquidity) Tick() error {
 					return
 				}
 
-				liquidity.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("liquidity: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := liquidity.symbols.Load(row.Symbol)
 
 				if ok && row.Last > 0 {
@@ -152,7 +159,6 @@ func (liquidity *Liquidity) Tick() error {
 					liquidity.publishPulse()
 				}
 
-				liquidity.mu.Unlock()
 			}
 		}
 	})
@@ -168,10 +174,14 @@ func (liquidity *Liquidity) Tick() error {
 					return
 				}
 
-				liquidity.mu.Lock()
-				liquidity.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("liquidity: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				liquidity.Feedback(fb)
 				liquidity.publishPulse()
-				liquidity.mu.Unlock()
 			}
 		}
 	})

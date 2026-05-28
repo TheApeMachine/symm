@@ -19,9 +19,19 @@ func (crypto *Crypto) sendWallet() {
 	crypto.attachWalletMarks()
 	snapshot := crypto.wallet.Snapshot()
 	inventory := snapshot.Inventory
+	avgEntry := snapshot.AvgEntry
+	marks := snapshot.Marks
 
 	if inventory == nil {
 		inventory = map[string]float64{}
+	}
+
+	if avgEntry == nil {
+		avgEntry = map[string]float64{}
+	}
+
+	if marks == nil {
+		marks = map[string]float64{}
 	}
 
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
@@ -31,6 +41,8 @@ func (crypto *Crypto) sendWallet() {
 		"ReservedEUR": snapshot.ReservedEUR,
 		"FeePct":      snapshot.FeePct,
 		"Inventory":   inventory,
+		"AvgEntry":    avgEntry,
+		"Marks":       marks,
 	}})
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -61,9 +73,10 @@ func (crypto *Crypto) attachWalletMarks() {
 		return
 	}
 
-	marks := make(map[string]float64)
+	inventory := crypto.wallet.InventoryCopy()
+	marks := make(map[string]float64, len(inventory))
 
-	for base, qty := range crypto.wallet.Inventory {
+	for base, qty := range inventory {
 		if qty <= config.System.LiveInventoryEpsilon {
 			continue
 		}
@@ -78,7 +91,7 @@ func (crypto *Crypto) attachWalletMarks() {
 		marks[symbol] = mark
 	}
 
-	crypto.wallet.Marks = marks
+	crypto.wallet.SetMarks(marks)
 }
 
 func (crypto *Crypto) openCount() int {
@@ -88,7 +101,7 @@ func (crypto *Crypto) openCount() int {
 
 	count := 0
 
-	for _, qty := range crypto.wallet.Inventory {
+	for _, qty := range crypto.wallet.InventoryCopy() {
 		if qty > config.System.LiveInventoryEpsilon {
 			count++
 		}
@@ -104,5 +117,5 @@ func (crypto *Crypto) holdsSymbol(tradingWallet *wallet.Wallet, symbol string) b
 
 	base := symbolBase(symbol)
 
-	return tradingWallet.Inventory[base] > config.System.LiveInventoryEpsilon
+	return tradingWallet.InventoryQty(base) > config.System.LiveInventoryEpsilon
 }

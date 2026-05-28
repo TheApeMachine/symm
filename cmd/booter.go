@@ -35,12 +35,16 @@ func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
 	return booter, nil
 }
 
-func (booter *Booter) AddSystems(systems ...engine.System) {
+func (booter *Booter) AddSystems(systems ...engine.System) error {
 	booter.systems = append(booter.systems, systems...)
 
 	for _, system := range systems {
-		system.Start()
+		if err := system.Start(); err != nil {
+			return errnie.Error(err)
+		}
 	}
+
+	return nil
 }
 
 func (booter *Booter) Boot() error {
@@ -64,10 +68,32 @@ func (booter *Booter) Boot() error {
 	}
 
 	var wg sync.WaitGroup
+	var shutdown sync.Once
+
+	closeAll := func() {
+		shutdown.Do(func() {
+			booter.cancel()
+
+			// Systems hold contexts that are siblings (not children) of
+			// booter.ctx, so cancelling the booter is not enough to stop them.
+			// Call Close on each so its internal cancel runs.
+			for _, system := range booter.systems {
+				if err := system.Close(); err != nil {
+					errnie.Error(err)
+				}
+			}
+		})
+	}
 
 	for _, system := range booter.systems {
 		wg.Go(func() {
-			errnie.Error(system.Tick())
+			// If any system's Tick exits (error or clean return), tear down
+			// the remaining systems rather than letting them spin on stale
+			// data from the failed peer.
+			if err := system.Tick(); err != nil {
+				errnie.Error(err)
+			}
+			closeAll()
 		})
 	}
 

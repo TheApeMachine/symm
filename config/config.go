@@ -49,7 +49,6 @@ type Config struct {
 	KellyFraction              float64
 	UseMakerEntries            bool
 	MakerFeePct                float64
-	DefensiveOBIConfidence     float64
 	ForecastSpreadMultiple     float64
 	ExitUrgencyThreshold       float64
 	MaxActivePerspectives      int
@@ -150,7 +149,6 @@ func NewConfig() *Config {
 		KellyFraction:              0.5,
 		UseMakerEntries:            true,
 		MakerFeePct:                0.16,
-		DefensiveOBIConfidence:     0.5,
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,
 		MaxActivePerspectives:      2,

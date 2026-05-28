@@ -40,11 +40,17 @@ func TestWalletReserve(t *testing.T) {
 			convey.So(wallet.Balance, convey.ShouldEqual, 190)
 			convey.So(wallet.ReservedEUR, convey.ShouldEqual, 10)
 		})
+		convey.Convey("It should reject reservations larger than the balance", func() {
+			err := wallet.Reserve(250)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(wallet.Balance, convey.ShouldEqual, 200)
+			convey.So(wallet.ReservedEUR, convey.ShouldEqual, 0)
+		})
 	})
 }
 
 func BenchmarkWalletPut(b *testing.B) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet := NewWallet(PaperWallet, "EUR", 1e12, 0.26)
 
 	for i := 0; i < b.N; i++ {
 		wallet.Put(10)
@@ -61,7 +67,7 @@ func BenchmarkWalletTake(b *testing.B) {
 }
 
 func BenchmarkWalletReserve(b *testing.B) {
-	wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+	wallet := NewWallet(PaperWallet, "EUR", 1e12, 0.26)
 
 	for i := 0; i < b.N; i++ {
 		wallet.Reserve(10)

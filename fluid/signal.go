@@ -24,7 +24,6 @@ Fluid applies book-flow dynamics per symbol and streams field_row updates to ui.
 type Fluid struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -77,8 +76,13 @@ func (fluid *Fluid) Tick() error {
 					return
 				}
 
-				fluid.mu.Lock()
-				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				if !pairsOK {
+					errnie.Error(fmt.Errorf("fluid: invalid symbols payload: %T", value.Value))
+					continue
+				}
+
+				for symbol, pair := range pairs {
 					if pair == nil {
 						continue
 					}
@@ -97,7 +101,6 @@ func (fluid *Fluid) Tick() error {
 				}
 
 				fluid.publishPulse()
-				fluid.mu.Unlock()
 			}
 		}
 	})
@@ -113,8 +116,12 @@ func (fluid *Fluid) Tick() error {
 					return
 				}
 
-				fluid.mu.Lock()
-				row := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TickerRow)
+				if !rowOK {
+					errnie.Error(fmt.Errorf("fluid: invalid ticker payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := fluid.symbols.Load(row.Symbol)
 
 				if ok {
@@ -137,7 +144,6 @@ func (fluid *Fluid) Tick() error {
 					fluid.publishPulse()
 				}
 
-				fluid.mu.Unlock()
 			}
 		}
 	})
@@ -153,8 +159,12 @@ func (fluid *Fluid) Tick() error {
 					return
 				}
 
-				fluid.mu.Lock()
-				delta := value.Value.(market.BookLevelsDelta)
+				delta, deltaOK := value.Value.(market.BookLevelsDelta)
+				if !deltaOK {
+					errnie.Error(fmt.Errorf("fluid: invalid book payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := fluid.symbols.Load(delta.Symbol)
 
 				if ok {
@@ -188,7 +198,6 @@ func (fluid *Fluid) Tick() error {
 					}
 				}
 
-				fluid.mu.Unlock()
 			}
 		}
 	})
@@ -204,8 +213,12 @@ func (fluid *Fluid) Tick() error {
 					return
 				}
 
-				fluid.mu.Lock()
-				tick := value.Value.(trade.Data)
+				tick, tickOK := value.Value.(trade.Data)
+				if !tickOK {
+					errnie.Error(fmt.Errorf("fluid: invalid trade payload: %T", value.Value))
+					continue
+				}
+
 				raw, ok := fluid.symbols.Load(tick.Symbol)
 
 				if ok {
@@ -226,7 +239,6 @@ func (fluid *Fluid) Tick() error {
 					fluid.publishPulse()
 				}
 
-				fluid.mu.Unlock()
 			}
 		}
 	})
@@ -242,10 +254,14 @@ func (fluid *Fluid) Tick() error {
 					return
 				}
 
-				fluid.mu.Lock()
-				fluid.Feedback(value.Value.(engine.PredictionFeedback))
+				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				if !fbOK {
+					errnie.Error(fmt.Errorf("fluid: invalid feedback payload: %T", value.Value))
+					continue
+				}
+
+				fluid.Feedback(fb)
 				fluid.publishPulse()
-				fluid.mu.Unlock()
 			}
 		}
 	})

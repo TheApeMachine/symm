@@ -498,6 +498,13 @@ func (publicClient *PublicClient) read(payload []byte) {
 			if price <= 0 {
 				continue
 			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     tickerTimestamp(row, time.Now().UTC()),
+				"symbol": row.Symbol,
+				"price":  price,
+			}})
 		}
 	case market.Channel(channel).IsTrade():
 		var message trade.Snapshot
@@ -512,6 +519,13 @@ func (publicClient *PublicClient) read(payload []byte) {
 			if row.Price <= 0 {
 				continue
 			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     row.Timestamp.UTC().Format(time.RFC3339Nano),
+				"symbol": row.Symbol,
+				"price":  row.Price,
+			}})
 		}
 	case channel == core.ChannelOHLC:
 		var message ohlc.Snapshot
@@ -539,6 +553,13 @@ func (publicClient *PublicClient) read(payload []byte) {
 			if row.Close <= 0 {
 				continue
 			}
+
+			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				"event":  "mark",
+				"ts":     timestampOrNow(row.IntervalBegin, now),
+				"symbol": row.Symbol,
+				"price":  row.Close,
+			}})
 		}
 	case market.Channel(channel).IsBook():
 		delta, err := market.ParseBookLevelsDelta(payload)

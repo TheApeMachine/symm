@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/price"
@@ -23,6 +24,23 @@ func TestCryptoEnterAndExit(t *testing.T) {
 	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
 	t.Cleanup(func() { _ = crypto.Close() })
+
+	// Warm the calibrator: no-cold-trading policy means entries only fire
+	// after MinCalibrationSamples settlements exist for this (source, regime).
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	regime := engine.CalibrationRegime(engine.FeedbackRegime(
+		engine.Perspective{Type: engine.PerspectiveMicrostructure},
+		engine.Measurement{Regime: "cluster"},
+	))
+	for range config.System.MinCalibrationSamples + 1 {
+		crypto.kellySizer.ApplyFeedback(engine.PredictionFeedback{
+			Source:          source,
+			Symbol:          "BTC/EUR",
+			Regime:          regime,
+			PredictedReturn: 0.01,
+			ActualReturn:    0.015,
+		})
+	}
 
 	measurement := engine.Measurement{
 		Type:       engine.Momentum,
@@ -61,7 +79,13 @@ func TestCryptoEnterAndExit(t *testing.T) {
 	}
 }
 
-func TestCryptoEnterColdStart(t *testing.T) {
+/*
+TestCryptoColdStartDoesNotEnter guards the no-cold-trading policy at the
+trader level. A measurement that would have triggered an entry under the
+old MaxFraction fallback must now produce zero inventory until the
+calibrator has settled enough samples to size it.
+*/
+func TestCryptoColdStartDoesNotEnter(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -89,8 +113,68 @@ func TestCryptoEnterColdStart(t *testing.T) {
 		t.Fatalf("ingest measurement: %v", err)
 	}
 
-	if tradingWallet.Inventory["ETH"] <= 0 {
-		t.Fatal("expected cold-start paper entry without seeded return calibration")
+	if tradingWallet.Inventory["ETH"] > 0 {
+		t.Fatalf("expected cold start to skip entry, got %v ETH", tradingWallet.Inventory["ETH"])
+	}
+}
+
+// TestSettlePredictionsDoesNotApplyFeedbackLocally guards against
+// double-counting: settlePredictions must publish on the "feedback" channel
+// only, leaving ApplyFeedback to the trader's subscriber loop (or any other
+// subscriber). Otherwise the calibrator slot receives the same feedback twice.
+func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	forecasts := price.NewPrediction(ctx, pool)
+	t.Cleanup(func() { _ = forecasts.Close() })
+
+	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
+	t.Cleanup(func() { _ = crypto.Close() })
+
+	before := 0.0
+	if stats := crypto.kellySizer.bySeries[sourceSlotKey{source: "hawkes", regime: engine.CalibrationRegime("cluster")}]; stats != nil {
+		before = stats.wins.Total()
+	}
+
+	due := &engine.Prediction{
+		Perspective: engine.Perspective{
+			Type: engine.PerspectiveMicrostructure,
+			Measurements: []engine.Measurement{{
+				Source:     "hawkes",
+				Regime:     "cluster",
+				Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+				Confidence: 0.8,
+				Last:       100,
+				Bid:        99.9,
+				Ask:        100.1,
+			}},
+		},
+		Confidence:     0.8,
+		Direction:      1,
+		ExpectedReturn: 0.01,
+		ActualReturn:   0.012,
+		Runway:         time.Second,
+		PredictedAt:    time.Now().Add(-2 * time.Second),
+		DueAt:          time.Now().Add(-time.Second),
+	}
+
+	crypto.predictions = append(crypto.predictions, due)
+	crypto.settlePredictions(engine.Measurement{
+		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
+		Last:  101.2,
+	})
+
+	stats := crypto.kellySizer.bySeries[sourceSlotKey{
+		source: engine.PerspectiveSource(engine.PerspectiveMicrostructure),
+		regime: engine.CalibrationRegime(engine.FeedbackRegime(due.Perspective, due.Perspective.Measurements[0])),
+	}]
+
+	if stats != nil && stats.wins.Total() > before {
+		t.Fatalf("settlePredictions must not call ApplyFeedback directly; wins moved by %v",
+			stats.wins.Total()-before)
 	}
 }
 

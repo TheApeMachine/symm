@@ -3,6 +3,7 @@ package wallet
 import (
 	"fmt"
 	"maps"
+	"sync"
 
 	"github.com/theapemachine/symm/config"
 )
@@ -22,8 +23,12 @@ const (
 
 /*
 Wallet is spot cash for the trading engine: available balance plus entry reservations.
+
+mu guards every mutable field. Direct field access from outside the wallet
+package is unsafe across goroutines; use the methods on this type instead.
 */
 type Wallet struct {
+	mu          sync.Mutex
 	Type        WalletType
 	Currency    string
 	Balance     float64
@@ -61,6 +66,9 @@ func (wallet *Wallet) Snapshot() *Wallet {
 		return nil
 	}
 
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
 	return &Wallet{
 		Type:        wallet.Type,
 		Currency:    wallet.Currency,
@@ -74,13 +82,123 @@ func (wallet *Wallet) Snapshot() *Wallet {
 }
 
 /*
-RecordFill updates the volume-weighted average entry for one base asset.
+AddInventory atomically credits base inventory and records the fill economics.
 */
-func (wallet *Wallet) RecordFill(base string, qty, fillPrice float64) {
-	if wallet == nil || base == "" || qty <= 0 || fillPrice <= 0 {
+func (wallet *Wallet) AddInventory(base string, qty, fillPrice float64) {
+	if wallet == nil || base == "" || qty <= 0 {
 		return
 	}
 
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	wallet.inventoryAddLocked(base, qty)
+
+	if fillPrice > 0 {
+		wallet.recordFillLocked(base, qty, fillPrice)
+	}
+}
+
+/*
+ZeroInventory atomically returns the held quantity for base, zeroes it, and
+clears any tracked average entry. The returned quantity is the position prior
+to clearing.
+*/
+func (wallet *Wallet) ZeroInventory(base string) float64 {
+	if wallet == nil || base == "" {
+		return 0
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	qty := wallet.Inventory[base]
+	wallet.Inventory[base] = 0
+	delete(wallet.AvgEntry, base)
+
+	return qty
+}
+
+/*
+CreditBalance applies a signed delta to Balance under the wallet lock.
+*/
+func (wallet *Wallet) CreditBalance(delta float64) {
+	if wallet == nil || delta == 0 {
+		return
+	}
+
+	wallet.mu.Lock()
+	wallet.Balance += delta
+	wallet.mu.Unlock()
+}
+
+/*
+SetMarks replaces the mark-to-market price map under the wallet lock.
+*/
+func (wallet *Wallet) SetMarks(marks map[string]float64) {
+	if wallet == nil {
+		return
+	}
+
+	wallet.mu.Lock()
+	wallet.Marks = copyFloatMap(marks)
+	wallet.mu.Unlock()
+}
+
+/*
+InventoryQty returns the held quantity for one base asset under the wallet
+lock. Returns 0 when the wallet or base is unknown.
+*/
+func (wallet *Wallet) InventoryQty(base string) float64 {
+	if wallet == nil || base == "" {
+		return 0
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	return wallet.Inventory[base]
+}
+
+/*
+InventoryCopy returns a detached snapshot of the inventory map suitable for
+iteration outside the wallet lock.
+*/
+func (wallet *Wallet) InventoryCopy() map[string]float64 {
+	if wallet == nil {
+		return nil
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	return copyFloatMap(wallet.Inventory)
+}
+
+/*
+AvgEntryFor returns the volume-weighted entry price for one base asset under
+the wallet lock. Returns 0 when none is tracked.
+*/
+func (wallet *Wallet) AvgEntryFor(base string) float64 {
+	if wallet == nil || base == "" {
+		return 0
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	return wallet.AvgEntry[base]
+}
+
+func (wallet *Wallet) inventoryAddLocked(base string, qty float64) {
+	if wallet.Inventory == nil {
+		wallet.Inventory = make(map[string]float64)
+	}
+
+	wallet.Inventory[base] += qty
+}
+
+func (wallet *Wallet) recordFillLocked(base string, qty, fillPrice float64) {
 	if wallet.AvgEntry == nil {
 		wallet.AvgEntry = make(map[string]float64)
 	}
@@ -111,6 +229,19 @@ func (wallet *Wallet) RecordFill(base string, qty, fillPrice float64) {
 }
 
 /*
+RecordFill updates the volume-weighted average entry for one base asset.
+*/
+func (wallet *Wallet) RecordFill(base string, qty, fillPrice float64) {
+	if wallet == nil || base == "" || qty <= 0 || fillPrice <= 0 {
+		return
+	}
+
+	wallet.mu.Lock()
+	wallet.recordFillLocked(base, qty, fillPrice)
+	wallet.mu.Unlock()
+}
+
+/*
 ClearPosition removes tracked entry economics for one base asset.
 */
 func (wallet *Wallet) ClearPosition(base string) {
@@ -118,7 +249,9 @@ func (wallet *Wallet) ClearPosition(base string) {
 		return
 	}
 
+	wallet.mu.Lock()
 	delete(wallet.AvgEntry, base)
+	wallet.mu.Unlock()
 }
 
 /*
@@ -128,6 +261,9 @@ func (wallet *Wallet) AvailableEUR() float64 {
 	if wallet == nil {
 		return 0
 	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
 
 	return wallet.Balance
 }
@@ -147,6 +283,9 @@ func (wallet *Wallet) Take(amount float64) error {
 		return fmt.Errorf("invalid amount")
 	}
 
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
 	if amount > wallet.ReservedEUR {
 		amount = wallet.ReservedEUR
 	}
@@ -163,6 +302,13 @@ Reserve moves cash from the wallet's balance to the reserved balance.
 func (wallet *Wallet) Reserve(amount float64) error {
 	if wallet == nil || amount <= 0 {
 		return fmt.Errorf("invalid amount")
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	if wallet.Balance < amount {
+		return fmt.Errorf("insufficient available cash")
 	}
 
 	wallet.Balance -= amount
@@ -183,6 +329,9 @@ func (wallet *Wallet) ReserveEntry(amount float64) error {
 		return fmt.Errorf("reservation amount must be positive")
 	}
 
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
 	if wallet.Balance < amount {
 		return fmt.Errorf("insufficient available cash")
 	}
@@ -201,6 +350,9 @@ func (wallet *Wallet) ReleaseEntryReservation(amount float64) {
 		return
 	}
 
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
 	if amount > wallet.ReservedEUR {
 		amount = wallet.ReservedEUR
 	}
@@ -216,6 +368,9 @@ func (wallet *Wallet) SettleEntryReservation(reserved, actualCost float64) error
 	if wallet == nil {
 		return fmt.Errorf("wallet is required")
 	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
 
 	if reserved <= 0 {
 		if actualCost > wallet.Balance {
@@ -257,6 +412,9 @@ func (wallet *Wallet) MarkEquity(lastPrices map[string]float64) float64 {
 	if wallet == nil {
 		return 0
 	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
 
 	equity := wallet.Balance + wallet.ReservedEUR
 

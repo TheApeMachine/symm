@@ -198,6 +198,21 @@ func (prediction *Prediction) settleDue(now time.Time) {
 				prediction.errorSum += math.Abs(feedback.Error)
 				prediction.errorCount++
 				prediction.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: feedback})
+
+				// Mirror the settlement to the UI so the prediction chart can
+				// place the realised return next to the forecast at the same
+				// time-axis position. Predictions live in time, not cycles.
+				prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"event":            "prediction_settled",
+					"ts":               now.UTC().Format(time.RFC3339Nano),
+					"predicted_at":     open.predictedAt.UTC().Format(time.RFC3339Nano),
+					"due_at":           open.dueAt.UTC().Format(time.RFC3339Nano),
+					"symbol":           symbol,
+					"source":           open.source,
+					"predicted_return": open.predictedReturn,
+					"actual_return":    actualReturn,
+					"error":            feedback.Error,
+				}})
 			}
 
 			delete(bySource, source)

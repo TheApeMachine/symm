@@ -359,6 +359,66 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	})
 }
 
+// TestRecordPerspectiveDoesNotOverwriteOpen proves that predictions live in
+// time, not in cycles: a second RecordPerspective call for the same
+// (symbol, source) while a forecast is still open does not replace it. The
+// open forecast keeps its original anchor and dueAt, so the settler can
+// evaluate the actual forward return when time has caught up.
+func TestRecordPerspectiveDoesNotOverwriteOpen(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	prediction := NewPrediction(ctx, pool)
+
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+	prediction.SeedReturnCalibration(source, "BTC/EUR", 0.01)
+
+	first := engine.Measurement{
+		Source:     "pumpdump",
+		Type:       engine.Pump,
+		Regime:     "microstructure",
+		Reason:     "actual_pump",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.8,
+		Last:       1.0,
+	}
+
+	now := time.Now()
+	predictedFirst := prediction.RecordPerspective("BTC/EUR", testPerspective(first), now)
+
+	open, ok := prediction.open["BTC/EUR"][source]
+	if !ok {
+		t.Fatal("expected first record to open a forecast")
+	}
+	originalAnchor := open.anchorPrice
+	originalDueAt := open.dueAt
+
+	second := first
+	second.Last = 1.02
+	predictedSecond := prediction.RecordPerspective("BTC/EUR", testPerspective(second), now.Add(time.Millisecond))
+
+	if predictedSecond != predictedFirst {
+		t.Fatalf("expected no-op overwrite to return prior predictedReturn (%v), got %v",
+			predictedFirst, predictedSecond)
+	}
+
+	stillOpen, ok := prediction.open["BTC/EUR"][source]
+	if !ok {
+		t.Fatal("expected forecast to remain open after second record")
+	}
+
+	if stillOpen.anchorPrice != originalAnchor {
+		t.Fatalf("expected anchor preserved: original=%v, after=%v",
+			originalAnchor, stillOpen.anchorPrice)
+	}
+
+	if !stillOpen.dueAt.Equal(originalDueAt) {
+		t.Fatalf("expected dueAt preserved: original=%v, after=%v",
+			originalDueAt, stillOpen.dueAt)
+	}
+}
+
 func testPerspective(measurement engine.Measurement) engine.Perspective {
 	return engine.Perspective{
 		Type:         engine.PerspectiveMicrostructure,

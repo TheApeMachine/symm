@@ -8,7 +8,9 @@ export type SymmEventName =
 	| "field_row"
 	| "field_grid"
 	| "candle_bar"
-	| "mark";
+	| "mark"
+	| "prediction"
+	| "prediction_settled";
 
 export type SymmEvent = {
 	event: SymmEventName;
@@ -172,6 +174,62 @@ export const isEnginePulseEvent = (raw: unknown): raw is EnginePulseEvent => {
 	const row = raw as Record<string, unknown>;
 
 	return row.event === "engine_pulse" && typeof row.seq === "number";
+};
+
+export type PredictionEvent = SymmEvent & {
+	event: "prediction";
+	symbol: string;
+	source: string;
+	sources?: string[];
+	value: number;
+	due_at: string;
+	runway_ms: number;
+};
+
+export type PredictionSettledEvent = SymmEvent & {
+	event: "prediction_settled";
+	symbol: string;
+	source: string;
+	predicted_at: string;
+	due_at: string;
+	predicted_return: number;
+	actual_return: number;
+	error: number;
+};
+
+export const isPredictionEvent = (raw: unknown): raw is PredictionEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return (
+		row.event === "prediction" &&
+		typeof row.ts === "string" &&
+		typeof row.symbol === "string" &&
+		typeof row.source === "string" &&
+		typeof row.value === "number"
+	);
+};
+
+export const isPredictionSettledEvent = (
+	raw: unknown,
+): raw is PredictionSettledEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return (
+		row.event === "prediction_settled" &&
+		typeof row.ts === "string" &&
+		typeof row.symbol === "string" &&
+		typeof row.predicted_return === "number" &&
+		typeof row.actual_return === "number" &&
+		typeof row.error === "number"
+	);
 };
 
 export const isTickEvent = (raw: unknown): raw is TickEvent => {

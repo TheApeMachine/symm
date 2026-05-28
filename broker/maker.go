@@ -50,8 +50,7 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)
 	}
 
-	tradingWallet.Inventory[base] += qty
-	tradingWallet.RecordFill(base, qty, maker.LimitPrice)
+	tradingWallet.AddInventory(base, qty, maker.LimitPrice)
 
 	return order.Fill{
 		OrderID: orderSymbol.PaperOrderID("maker"),

@@ -1,6 +1,8 @@
 # qpool uses go:linkname runtime hooks; Go 1.26+ needs this when linking symm.
 # Always use make test-go / make build — bare `go test ./...` fails at link time.
-LDFLAGS := -ldflags='-checklinkname=0'
+# No inner quotes: a single shell layer can pass the flag through unambiguously,
+# but quoted forms break in nested shells (cgo, subprocesses).
+LDFLAGS := -ldflags=-checklinkname=0
 
 SYMM_BIN := bin/symm
 LOG_DIR ?= runs
@@ -16,7 +18,7 @@ build:
 test: test-go test-race test-frontend
 
 test-go:
-	go test $(LDFLAGS) ./...
+	go test $(LDFLAGS) -race ./...
 
 test-race:
 ifeq ($(shell uname -s),Darwin)

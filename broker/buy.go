@@ -52,8 +52,7 @@ func (buy *Buy) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, fmt.Errorf("invalid buy quantity for %s", buy.Symbol)
 	}
 
-	tradingWallet.Inventory[base] += qty
-	tradingWallet.RecordFill(base, qty, fillPrice)
+	tradingWallet.AddInventory(base, qty, fillPrice)
 
 	return order.Fill{
 		OrderID: orderSymbol.PaperOrderID("buy"),
