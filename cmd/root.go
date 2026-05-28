@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/correlation"
+	"github.com/theapemachine/symm/cvd"
 	"github.com/theapemachine/symm/depthflow"
 	"github.com/theapemachine/symm/exhaust"
 	"github.com/theapemachine/symm/fluid"
@@ -24,6 +25,7 @@ import (
 	"github.com/theapemachine/symm/price"
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/sentiment"
+	"github.com/theapemachine/symm/toxicity"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/wallet"
 )
@@ -58,6 +60,8 @@ var rootCmd = &cobra.Command{
 			sentiment.NewSentiment(cmd.Context(), pool),
 			fluid.NewFluid(cmd.Context(), pool),
 			causal.NewCausal(cmd.Context(), pool),
+			cvd.NewCVD(cmd.Context(), pool),
+			toxicity.NewToxicity(cmd.Context(), pool),
 			exhaust.NewExhaust(cmd.Context(), pool),
 			predictions,
 			trader.NewCrypto(
@@ -76,13 +80,26 @@ var rootCmd = &cobra.Command{
 		}
 
 		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
-			if err := booter.AddSystems(client.NewPrivateClient(
-				cmd.Context(),
-				pool,
-				core.KRAKEN_WS_AUTH_URL,
-				config.System.KrakenAPIKey,
-				config.System.KrakenAPISecret,
-			)); err != nil {
+			if err := booter.AddSystems(
+				client.NewPrivateClient(
+					cmd.Context(),
+					pool,
+					core.KRAKEN_WS_AUTH_URL,
+					config.System.KrakenAPIKey,
+					config.System.KrakenAPISecret,
+				),
+				// The L3 (order-by-order) feed is authenticated like the
+				// private client; it powers the toxicity tracker (§16.4). With
+				// no credentials it is simply absent and toxicity rides the
+				// public L2 book fallback for every symbol.
+				client.NewL3Client(
+					cmd.Context(),
+					pool,
+					core.KRAKEN_WS_L3_URL,
+					config.System.KrakenAPIKey,
+					config.System.KrakenAPISecret,
+				),
+			); err != nil {
 				errnie.Error(err)
 				os.Exit(1)
 			}

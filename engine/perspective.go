@@ -119,7 +119,7 @@ func clampUnit01(value float64) float64 {
 // listed is its own family (treated as independent).
 func sourceFamily(source string) string {
 	switch source {
-	case "depthflow", "fluid", "hawkes", "pumpdump":
+	case "depthflow", "fluid", "hawkes", "pumpdump", "cvd", "bookflow":
 		return "microstructure"
 	case "correlation", "leadlag", "liquidity", "sentiment":
 		return "cross_section"

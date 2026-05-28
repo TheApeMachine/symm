@@ -4,6 +4,7 @@ const KRAKEN_API_URL = "https://api.kraken.com"
 const KRAKEN_BASE_URL = "https://api.kraken.com/0/public"
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2"
 const KRAKEN_WS_AUTH_URL = "wss://ws-auth.kraken.com/v2"
+const KRAKEN_WS_L3_URL = "wss://ws-l3.kraken.com/v2"
 
 const (
 	WebSocketToken = "/0/private/GetWebSocketsToken"
@@ -17,4 +18,5 @@ const (
 	ChannelOHLC       = "ohlc"
 	ChannelExecutions = "executions"
 	ChannelBalances   = "balances"
+	ChannelLevel3     = "level3"
 )

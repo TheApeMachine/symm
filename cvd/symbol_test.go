@@ -151,7 +151,7 @@ func TestCVDWindowTrimDropsStaleTrades(t *testing.T) {
 
 func TestCVDIgnoresInvalidTrades(t *testing.T) {
 	state := NewCVDSymbol(testPair())
-	feed(state, 50, 0, true)     // price <= 0 ignored
+	feed(state, 50, 0, true)                // price <= 0 ignored
 	state.FeedTrade(100, 0, true, testBase) // volume <= 0 ignored
 
 	if _, ok := state.Measure(testBase.Add(time.Minute)); ok {

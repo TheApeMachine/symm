@@ -13,7 +13,17 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
+	"github.com/theapemachine/symm/toxicity"
 )
+
+// toxicLevelFilter returns a per-level predicate that excludes toxicity-flagged
+// book levels (large, young, near-touch cancels) from the weighted imbalance
+// (§16.3). Returns false for every level until the tracker flags one.
+func toxicLevelFilter(symbol string) func(price float64) bool {
+	return func(price float64) bool {
+		return toxicity.IsToxic(symbol, price, time.Now())
+	}
+}
 
 type FluidSymbol struct {
 	mu              sync.RWMutex
@@ -273,11 +283,12 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 	reason := "field_activity"
 
 	if state.bookFluxTrustworthyLocked() {
-		imbalance, imbalanceOK := market.WeightedDepthImbalance(
+		imbalance, imbalanceOK := market.WeightedDepthImbalanceFiltered(
 			state.bids,
 			state.asks,
 			mid,
 			config.System.BookDepthDecayLambda,
+			toxicLevelFilter(state.pair.Wsname),
 		)
 
 		if imbalanceOK && imbalance != 0 {

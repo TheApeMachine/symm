@@ -3,6 +3,7 @@ package depthflow
 import (
 	"math"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
@@ -13,7 +14,18 @@ import (
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
 	"github.com/theapemachine/symm/numeric/logic"
+	"github.com/theapemachine/symm/toxicity"
 )
+
+// toxicLevelFilter returns a per-level predicate that excludes book levels the
+// toxicity subsystem has flagged — large, young, near-touch blocks cancelled
+// rather than filled — from the weighted imbalance (§16.3). It is cheap and
+// returns false for every level until the toxicity tracker flags one.
+func toxicLevelFilter(symbol string) func(price float64) bool {
+	return func(price float64) bool {
+		return toxicity.IsToxic(symbol, price, time.Now())
+	}
+}
 
 /*
 DepthSymbol owns the mutable per-symbol state for one DepthFlow consumer.
@@ -169,11 +181,12 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 	}
 
 	if len(bids) > 0 && len(asks) > 0 {
-		imbalance, ok := market.WeightedDepthImbalance(
+		imbalance, ok := market.WeightedDepthImbalanceFiltered(
 			bids,
 			asks,
 			mid,
 			config.System.BookDepthDecayLambda,
+			toxicLevelFilter(state.pair.Wsname),
 		)
 
 		level1Imbalance, levelOK := market.Level1Imbalance(bids, asks)
