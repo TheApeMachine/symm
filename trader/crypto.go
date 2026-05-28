@@ -189,7 +189,7 @@ func (crypto *Crypto) Tick() error {
 					)
 				}
 
-				audit("prediction_feedback", map[string]any{
+				audit("prediction_settled", map[string]any{
 					"source":           feedback.Source,
 					"sources":          sources,
 					"symbol":           feedback.Symbol,
@@ -199,14 +199,6 @@ func (crypto *Crypto) Tick() error {
 					"confidence":       feedback.Confidence,
 					"regime":           feedback.Regime,
 					"trust":            crypto.calibratorTrust(feedback.Source),
-				})
-
-				audit("prediction_settled", map[string]any{
-					"source":           feedback.Source,
-					"symbol":           feedback.Symbol,
-					"predicted_return": feedback.PredictedReturn,
-					"actual_return":    feedback.ActualReturn,
-					"error":            feedback.Error,
 				})
 			case raw, ok := <-crypto.subscribers["executions"].Incoming:
 				if !ok {
@@ -316,7 +308,7 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
 	}})
 
-	crypto.settlePredictions(measurement)
+	crypto.settlePredictions()
 
 	key := bucketKey{symbol: symbol, ptype: perspectiveType(measurement)}
 	bucket := crypto.perspectives[key]

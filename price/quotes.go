@@ -62,6 +62,9 @@ func (prediction *Prediction) observeTicker(row market.TickerRow) time.Time {
 		return time.Time{}
 	}
 
+	prediction.stateMu.Lock()
+	defer prediction.stateMu.Unlock()
+
 	previous := prediction.prices[row.Symbol]
 
 	if previous > 0 {

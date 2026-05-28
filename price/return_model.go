@@ -35,13 +35,17 @@ type returnBucket struct {
 	m2Return   float64 // Welford sum of squared deviations
 }
 
-// ReturnModel maps signal confidence to expected forward return, learned from
-// settled predictions, keyed by (source, regime).
+// ReturnModel maps signal confidence to expected forward return from settled
+// predictions, keyed by (source, regime). It is safe for concurrent callers:
+// Observe and Forecast serialize access through mu. Callers record every
+// settled anchored prediction with Observe and ask Forecast whether a fresh
+// confidence value has enough positive evidence to trade.
 type ReturnModel struct {
 	mu      sync.Mutex
 	buckets map[returnModelKey]*returnBucket
 }
 
+// NewReturnModel returns an initialized ReturnModel with an empty bucket map.
 func NewReturnModel() *ReturnModel {
 	return &ReturnModel{buckets: make(map[returnModelKey]*returnBucket)}
 }

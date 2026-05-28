@@ -1,8 +1,10 @@
 package price
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/numeric"
@@ -44,6 +46,16 @@ func measurementRunway(measurement engine.Measurement) time.Duration {
 		return time.Duration(
 			measurement.Timeframe.End-measurement.Timeframe.Start,
 		) * time.Second
+	}
+
+	if measurement.Timeframe.End < measurement.Timeframe.Start {
+		errnie.Info(fmt.Sprintf(
+			"warning: invalid measurement timeframe source=%s reason=%s start=%d end=%d",
+			measurement.Source,
+			measurement.Reason,
+			measurement.Timeframe.Start,
+			measurement.Timeframe.End,
+		))
 	}
 
 	switch measurement.Type {

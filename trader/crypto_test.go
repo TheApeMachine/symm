@@ -169,10 +169,7 @@ func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
 	}
 
 	crypto.predictions = append(crypto.predictions, due)
-	crypto.settlePredictions(engine.Measurement{
-		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
-		Last:  101.2,
-	})
+	crypto.settlePredictions()
 
 	stats := crypto.kellySizer.bySeries[sourceSlotKey{
 		source: engine.PerspectiveSource(engine.PerspectiveMicrostructure),
@@ -220,10 +217,7 @@ func TestSettlePredictionsDoesNotExitUnboundPosition(t *testing.T) {
 	)
 	crypto.predictions = append(crypto.predictions, due)
 
-	crypto.settlePredictions(engine.Measurement{
-		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
-		Last:  101,
-	})
+	crypto.settlePredictions()
 
 	if tradingWallet.InventoryQty("BTC") <= config.System.LiveInventoryEpsilon {
 		t.Fatal("observational prediction settlement closed an unrelated position")
@@ -257,10 +251,7 @@ func TestSettlePredictionsExitsBoundPosition(t *testing.T) {
 	})
 	crypto.predictions = append(crypto.predictions, due)
 
-	crypto.settlePredictions(engine.Measurement{
-		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
-		Last:  101,
-	})
+	crypto.settlePredictions()
 
 	if tradingWallet.InventoryQty("BTC") > config.System.LiveInventoryEpsilon {
 		t.Fatalf("expected bound position closed, got %v", tradingWallet.InventoryQty("BTC"))

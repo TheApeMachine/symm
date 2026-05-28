@@ -8,9 +8,7 @@ import (
 	"github.com/theapemachine/symm/engine"
 )
 
-func (crypto *Crypto) settlePredictions(measurement engine.Measurement) {
-	_ = measurement
-
+func (crypto *Crypto) settlePredictions() {
 	if len(crypto.predictions) == 0 {
 		return
 	}

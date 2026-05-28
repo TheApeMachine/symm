@@ -12,6 +12,10 @@ import (
 
 func TestMakerFillPaper(t *testing.T) {
 	Convey("Given a reserved maker entry", t, func() {
+		originalPenalty := config.System.AdverseSelectionBPS
+		config.System.AdverseSelectionBPS = 5
+		t.Cleanup(func() { config.System.AdverseSelectionBPS = originalPenalty })
+
 		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 
 		if err := tradingWallet.ReserveEntry(10); err != nil {

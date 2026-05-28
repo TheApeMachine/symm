@@ -145,8 +145,9 @@ func (prediction *Prediction) Tick() error {
 					return
 				}
 
-				prediction.stateMu.Lock()
 				eventTime := prediction.observeTicker(row)
+
+				prediction.stateMu.Lock()
 				prediction.settleDue(row, eventTime)
 				stopExit, fired := prediction.checkStopLocked(row.Symbol, row.Last)
 				prediction.stateMu.Unlock()

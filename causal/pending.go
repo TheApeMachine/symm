@@ -47,10 +47,10 @@ func (state *CausalSymbol) resolvePendingLocked(now time.Time) {
 			pending.macroMomentum, pending.liquidity, pending.localFlow, forwardReturn,
 		)
 		state.samples = append(state.samples, sample)
+	}
 
-		if len(state.samples) > causalHistoryCap {
-			state.samples = state.samples[len(state.samples)-causalHistoryCap:]
-		}
+	if len(state.samples) > causalHistoryCap {
+		state.samples = state.samples[len(state.samples)-causalHistoryCap:]
 	}
 
 	state.pendingSamples = kept

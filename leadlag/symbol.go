@@ -1,6 +1,7 @@
 package leadlag
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -10,15 +11,37 @@ import (
 )
 
 const (
-	priceHistoryCap = 256
-	maxLagBars      = 12
-	minLagSamples   = 16
-
-	// leadlagDominanceMargin is how much a lagged correlation must exceed the
-	// contemporaneous correlation (in correlation units) to count as genuine
-	// leadership rather than shared beta.
-	leadlagDominanceMargin = 0.1
+	priceHistoryCap              = 256
+	maxLagBars                   = 12
+	minLagSamples                = 16
+	leadlagDominanceMarginAbs    = 0.1
+	leadlagDominanceMarginRel    = 0.15
+	leadlagMinimumLagCorrelation = 0.1
 )
+
+func computeLeadlagMargin(contemporaneousCorr float64) float64 {
+	relative := leadlagDominanceMarginRel * math.Abs(contemporaneousCorr)
+
+	if relative > leadlagDominanceMarginAbs {
+		return relative
+	}
+
+	return leadlagDominanceMarginAbs
+}
+
+func leadlagDominates(bestLag int, bestCorr, contemporaneousCorr float64) bool {
+	if bestLag <= 0 || bestCorr <= leadlagMinimumLagCorrelation {
+		return false
+	}
+
+	baseline := contemporaneousCorr
+
+	if baseline < 0 {
+		baseline = 0
+	}
+
+	return bestCorr > baseline+computeLeadlagMargin(contemporaneousCorr)
+}
 
 /*
 symbolState tracks the rolling price path needed to compute a real
@@ -182,8 +205,9 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 	}
 
 	// Require a strictly positive lag whose correlation dominates the
-	// contemporaneous baseline by the margin. Otherwise this is beta, not lead.
-	if bestLag <= 0 || bestCorr <= corr0+leadlagDominanceMargin {
+	// contemporaneous baseline by an adaptive margin. Otherwise this is beta,
+	// not lead.
+	if !leadlagDominates(bestLag, bestCorr, corr0) {
 		return 0, 0, false
 	}
 

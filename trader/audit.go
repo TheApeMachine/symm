@@ -164,7 +164,6 @@ func recordStats(event string, fields map[string]any) {
 		stats.exitsErrored.Add(1)
 	case "prediction_settled":
 		stats.predictionsSettled.Add(1)
-	case "prediction_feedback":
 		stats.feedbackApplied.Add(1)
 
 		if err, ok := fields["error"].(float64); ok {

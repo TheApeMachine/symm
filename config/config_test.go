@@ -32,10 +32,24 @@ func TestNewConfigDefaults(t *testing.T) {
 		t.Fatalf("expected 90s scalp hold, got %v", cfg.ScalpHoldBeforeExit)
 	}
 
-	if cfg.EntryEdgeMultiple != 2 || cfg.TakeProfitR != 2 ||
-		cfg.StopVolMultiple != 8 || cfg.MinExhaustHold != 5*time.Second ||
-		cfg.AdverseSelectionBPS != 5 {
-		t.Fatalf("unexpected strategy defaults: %+v", cfg)
+	if cfg.EntryEdgeMultiple != 2 {
+		t.Fatalf("expected EntryEdgeMultiple 2, got %v", cfg.EntryEdgeMultiple)
+	}
+
+	if cfg.TakeProfitR != 2 {
+		t.Fatalf("expected TakeProfitR 2, got %v", cfg.TakeProfitR)
+	}
+
+	if cfg.StopVolMultiple != 8 {
+		t.Fatalf("expected StopVolMultiple 8, got %v", cfg.StopVolMultiple)
+	}
+
+	if cfg.MinExhaustHold != 5*time.Second {
+		t.Fatalf("expected MinExhaustHold 5s, got %v", cfg.MinExhaustHold)
+	}
+
+	if cfg.AdverseSelectionBPS != 5 {
+		t.Fatalf("expected AdverseSelectionBPS 5, got %v", cfg.AdverseSelectionBPS)
 	}
 }
 

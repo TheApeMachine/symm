@@ -117,3 +117,45 @@ func TestCrossLagRejectsContemporaneousBeta(t *testing.T) {
 		t.Fatalf("expected beta path to be rejected, bars=%d correlation=%v", bars, correlation)
 	}
 }
+
+func TestComputeLeadlagMarginUsesFloorAndRelativeScale(t *testing.T) {
+	if got := computeLeadlagMargin(0.2); got != leadlagDominanceMarginAbs {
+		t.Fatalf("expected absolute leadlag dominance margin floor, got %v", got)
+	}
+
+	expected := leadlagDominanceMarginRel * 0.9
+
+	if got := computeLeadlagMargin(0.9); math.Abs(got-expected) > 1e-12 {
+		t.Fatalf("expected relative leadlag dominance margin %v, got %v", expected, got)
+	}
+}
+
+func TestLeadlagDominanceRejectsBestCorrAtCorr0PlusMargin(t *testing.T) {
+	corr0 := 0.4
+	bestCorr := corr0 + computeLeadlagMargin(corr0)
+	ok := leadlagDominates(1, bestCorr, corr0)
+
+	if ok {
+		t.Fatalf("expected tie at bestCorr == corr0 + leadlag dominance margin to reject")
+	}
+}
+
+func TestLeadlagDominanceRejectsNegativeCorr0WeakPositiveLag(t *testing.T) {
+	corr0 := -0.8
+	bestCorr := leadlagMinimumLagCorrelation
+	ok := leadlagDominates(1, bestCorr, corr0)
+
+	if ok {
+		t.Fatalf("expected negative corr0 with weak positive bestCorr to reject")
+	}
+}
+
+func TestLeadlagDominanceRejectsStrongCorrBelowAdaptiveMargin(t *testing.T) {
+	corr0 := 0.9
+	bestCorr := 1.0
+	ok := leadlagDominates(1, bestCorr, corr0)
+
+	if ok {
+		t.Fatalf("expected strong corr0 with bestCorr below adaptive margin to reject")
+	}
+}

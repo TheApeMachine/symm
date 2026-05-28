@@ -3,3 +3,4 @@
 *.log
 .pnpm-store/v10/projects/fe23cbc9f508f93c645d0baca457da49
 .cursor/commands/do-it-right.md
+trader/runs/

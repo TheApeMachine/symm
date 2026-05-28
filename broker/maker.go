@@ -59,7 +59,7 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 
 	orderSymbol := Symbol(maker.Symbol)
 	base := orderSymbol.BaseAsset()
-	effectivePrice := maker.LimitPrice * (1 + config.System.AdverseSelectionBPS/10000)
+	effectivePrice := maker.LimitPrice * (1 + float64(config.System.AdverseSelectionBPS)/10000)
 	qty := (maker.Notional - fee) / effectivePrice
 
 	if qty <= 0 {

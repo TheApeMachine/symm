@@ -30,11 +30,11 @@ type Config struct {
 	MinHoldBeforeRotate        time.Duration
 	ScalpHoldBeforeExit        time.Duration
 	FlowHoldBeforeExit         time.Duration
-	EntryEdgeMultiple          float64
-	TakeProfitR                float64
-	StopVolMultiple            float64
-	MinExhaustHold             time.Duration
-	AdverseSelectionBPS        float64
+	EntryEdgeMultiple          float64       // Multiple of round-trip friction required before entry.
+	TakeProfitR                float64       // Minimum profit ratio versus stop distance, in R units.
+	StopVolMultiple            float64       // Multiplier on recent per-tick volatility for stop distance.
+	MinExhaustHold             time.Duration // Minimum hold before soft exhaust exits can close a position.
+	AdverseSelectionBPS        float64       // Maker-fill adverse-selection penalty in basis points.
 	TrailSpreadMultiple        float64
 	DefaultTrailPct            float64
 	MinTrailPct                float64
@@ -137,11 +137,11 @@ func NewConfig() *Config {
 		MinHoldBeforeRotate:        time.Minute,
 		ScalpHoldBeforeExit:        90 * time.Second,
 		FlowHoldBeforeExit:         30 * time.Second,
-		EntryEdgeMultiple:          2.0,
-		TakeProfitR:                2.0,
-		StopVolMultiple:            8.0,
-		MinExhaustHold:             5 * time.Second,
-		AdverseSelectionBPS:        5.0,
+		EntryEdgeMultiple:          2.0,             // Require forecast >= 2x round-trip friction.
+		TakeProfitR:                2.0,             // Require forecast >= 2R relative to stop distance.
+		StopVolMultiple:            8.0,             // Stop distance = 8x recent per-tick volatility, bounded.
+		MinExhaustHold:             5 * time.Second, // Suppress soft exits for first five seconds.
+		AdverseSelectionBPS:        5.0,             // Add 5 bps to filled maker paper entry cost.
 		TrailSpreadMultiple:        2,
 		DefaultTrailPct:            0.35,
 		MinTrailPct:                0.15,
