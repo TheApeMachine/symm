@@ -71,24 +71,16 @@ func (depthflow *DepthFlow) State() engine.State {
 func (depthflow *DepthFlow) Tick() error {
 	errnie.Info("starting depthflow tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			depthflow.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-depthflow.ctx.Done():
 				return
 			case value, ok := <-depthflow.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("depthflow symbols channel closed"))
+					errnie.Error(fmt.Errorf("depthflow symbols channel closed"))
 					return
 				}
 
@@ -117,14 +109,14 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-depthflow.ctx.Done():
 				return
 			case value, ok := <-depthflow.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("depthflow tick channel closed"))
+					errnie.Error(fmt.Errorf("depthflow tick channel closed"))
 					return
 				}
 
@@ -150,14 +142,14 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-depthflow.ctx.Done():
 				return
 			case value, ok := <-depthflow.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("depthflow book channel closed"))
+					errnie.Error(fmt.Errorf("depthflow book channel closed"))
 					return
 				}
 
@@ -191,14 +183,14 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-depthflow.ctx.Done():
 				return
 			case value, ok := <-depthflow.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("depthflow trade channel closed"))
+					errnie.Error(fmt.Errorf("depthflow trade channel closed"))
 					return
 				}
 
@@ -228,14 +220,14 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-depthflow.ctx.Done():
 				return
 			case value, ok := <-depthflow.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("depthflow feedback channel closed"))
+					errnie.Error(fmt.Errorf("depthflow feedback channel closed"))
 					return
 				}
 
@@ -247,23 +239,8 @@ func (depthflow *DepthFlow) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-depthflow.ctx.Done():
-		workers.Wait()
-		return depthflow.ctx.Err()
-	case <-done:
-		return depthflow.ctx.Err()
-	}
+	wg.Wait()
+	return depthflow.ctx.Err()
 }
 
 func (depthflow *DepthFlow) requestedCount() int {

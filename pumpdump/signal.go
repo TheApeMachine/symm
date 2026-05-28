@@ -91,24 +91,16 @@ func (pumpdump *PumpDump) State() engine.State {
 func (pumpdump *PumpDump) Tick() error {
 	errnie.Info("starting pumpdump tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			pumpdump.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-pumpdump.ctx.Done():
 				return
 			case value, ok := <-pumpdump.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("pumpdump symbols channel closed"))
+					errnie.Error(fmt.Errorf("pumpdump symbols channel closed"))
 					return
 				}
 
@@ -144,14 +136,14 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-pumpdump.ctx.Done():
 				return
 			case value, ok := <-pumpdump.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("pumpdump tick channel closed"))
+					errnie.Error(fmt.Errorf("pumpdump tick channel closed"))
 					return
 				}
 
@@ -202,14 +194,14 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-pumpdump.ctx.Done():
 				return
 			case value, ok := <-pumpdump.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("pumpdump trade channel closed"))
+					errnie.Error(fmt.Errorf("pumpdump trade channel closed"))
 					return
 				}
 
@@ -248,14 +240,14 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-pumpdump.ctx.Done():
 				return
 			case value, ok := <-pumpdump.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("pumpdump book channel closed"))
+					errnie.Error(fmt.Errorf("pumpdump book channel closed"))
 					return
 				}
 
@@ -294,14 +286,14 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-pumpdump.ctx.Done():
 				return
 			case value, ok := <-pumpdump.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("pumpdump feedback channel closed"))
+					errnie.Error(fmt.Errorf("pumpdump feedback channel closed"))
 					return
 				}
 
@@ -313,23 +305,8 @@ func (pumpdump *PumpDump) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-pumpdump.ctx.Done():
-		workers.Wait()
-		return pumpdump.ctx.Err()
-	case <-done:
-		return pumpdump.ctx.Err()
-	}
+	wg.Wait()
+	return pumpdump.ctx.Err()
 }
 
 func (pumpdump *PumpDump) publishPulse() {

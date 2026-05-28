@@ -2,6 +2,7 @@ package trader
 
 import (
 	"errors"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/engine"
@@ -25,10 +26,16 @@ type Perspective struct {
 NewPerspective creates a new Perspective from a slice of measurements.
 */
 func NewPerspective(measurements []engine.Measurement) *Perspective {
-	return &Perspective{
-		measurements: measurements,
+	perspective := &Perspective{
+		measurements: make([]engine.Measurement, 0, len(measurements)),
 		regimes:      make(map[string]map[string]*numeric.Derived),
 	}
+
+	for _, measurement := range measurements {
+		perspective.AddMeasurement(measurement)
+	}
+
+	return perspective
 }
 
 /*
@@ -96,18 +103,32 @@ func (perspective *Perspective) Predict() (engine.Prediction, error) {
 
 	perspective.Ready = true
 
-	// 3. Formulate the prediction using the derived dynamics
-	// Here, we leverage the trend direction and current smoothed value from Derived
+	now := time.Now()
+	kind := engine.PerspectiveMicrostructure
+
+	if len(perspective.measurements) > 0 {
+		kind = perspectiveType(perspective.measurements[len(perspective.measurements)-1])
+	}
+
+	enginePerspective := engine.Perspective{
+		Type:         kind,
+		Measurements: append([]engine.Measurement(nil), perspective.measurements...),
+	}
+
+	runway := runwayForPerspective(enginePerspective)
+
 	prediction := engine.Prediction{
 		Type: engine.PredictionTypePump,
 		Perspective: engine.Perspective{
-			Type:         engine.PerspectiveMicrostructure,
-			Measurements: perspective.measurements,
+			Type:         kind,
+			Measurements: enginePerspective.Measurements,
 		},
-		Confidence: maxConfidence,
-		// Example fields depending on your engine.Prediction struct definitions:
-		// Direction:  bestDerived.Trend(), // e.g. Up, Down, Flat
-		// Target:     bestDerived.Value() + bestDerived.Slope(),
+		Confidence:     maxConfidence,
+		Direction:      predictionDirection(enginePerspective),
+		Runway:         runway,
+		DueAt:          now.Add(runway),
+		PredictedAt:    now,
+		ExpectedReturn: maxConfidence,
 	}
 
 	return prediction, nil

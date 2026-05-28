@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/correlation"
 	"github.com/theapemachine/symm/depthflow"
 	"github.com/theapemachine/symm/exhaust"
 	"github.com/theapemachine/symm/fluid"
@@ -46,6 +47,7 @@ var rootCmd = &cobra.Command{
 		booter.AddSystems(
 			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
 			pumpdump.NewPumpDump(cmd.Context(), pool),
+			correlation.NewSignal(cmd.Context(), pool),
 			depthflow.NewDepthFlow(cmd.Context(), pool),
 			hawkes.NewHawkes(cmd.Context(), pool),
 			leadlag.NewLeadLag(cmd.Context(), pool),

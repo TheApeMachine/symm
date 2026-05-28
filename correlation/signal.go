@@ -69,24 +69,16 @@ func (signal *Signal) State() engine.State { return engine.READY }
 func (signal *Signal) Tick() error {
 	errnie.Info("starting correlation tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			signal.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
 			case value, ok := <-signal.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("correlation symbols channel closed"))
+					errnie.Error(fmt.Errorf("correlation symbols channel closed"))
 					return
 				}
 
@@ -115,14 +107,14 @@ func (signal *Signal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
 			case value, ok := <-signal.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("correlation tick channel closed"))
+					errnie.Error(fmt.Errorf("correlation tick channel closed"))
 					return
 				}
 
@@ -141,14 +133,14 @@ func (signal *Signal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
 			case value, ok := <-signal.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("correlation feedback channel closed"))
+					errnie.Error(fmt.Errorf("correlation feedback channel closed"))
 					return
 				}
 
@@ -160,23 +152,8 @@ func (signal *Signal) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-signal.ctx.Done():
-		workers.Wait()
-		return signal.ctx.Err()
-	case <-done:
-		return signal.ctx.Err()
-	}
+	wg.Wait()
+	return signal.ctx.Err()
 }
 
 func (signal *Signal) requestedCount() int {

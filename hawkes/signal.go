@@ -79,24 +79,16 @@ func (hawkes *Hawkes) State() engine.State {
 func (hawkes *Hawkes) Tick() error {
 	errnie.Info("starting hawkes tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			hawkes.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-hawkes.ctx.Done():
 				return
 			case value, ok := <-hawkes.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("hawkes symbols channel closed"))
+					errnie.Error(fmt.Errorf("hawkes symbols channel closed"))
 					return
 				}
 
@@ -117,14 +109,14 @@ func (hawkes *Hawkes) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-hawkes.ctx.Done():
 				return
 			case value, ok := <-hawkes.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("hawkes tick channel closed"))
+					errnie.Error(fmt.Errorf("hawkes tick channel closed"))
 					return
 				}
 
@@ -162,14 +154,14 @@ func (hawkes *Hawkes) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-hawkes.ctx.Done():
 				return
 			case value, ok := <-hawkes.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("hawkes trade channel closed"))
+					errnie.Error(fmt.Errorf("hawkes trade channel closed"))
 					return
 				}
 
@@ -198,14 +190,14 @@ func (hawkes *Hawkes) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-hawkes.ctx.Done():
 				return
 			case value, ok := <-hawkes.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("hawkes book channel closed"))
+					errnie.Error(fmt.Errorf("hawkes book channel closed"))
 					return
 				}
 
@@ -236,14 +228,14 @@ func (hawkes *Hawkes) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-hawkes.ctx.Done():
 				return
 			case value, ok := <-hawkes.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("hawkes feedback channel closed"))
+					errnie.Error(fmt.Errorf("hawkes feedback channel closed"))
 					return
 				}
 
@@ -255,23 +247,8 @@ func (hawkes *Hawkes) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-hawkes.ctx.Done():
-		workers.Wait()
-		return hawkes.ctx.Err()
-	case <-done:
-		return hawkes.ctx.Err()
-	}
+	wg.Wait()
+	return hawkes.ctx.Err()
 }
 
 func (hawkes *Hawkes) publishPulse() {

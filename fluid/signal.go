@@ -64,24 +64,16 @@ func (fluid *Fluid) State() engine.State { return engine.READY }
 func (fluid *Fluid) Tick() error {
 	errnie.Info("starting fluid tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			fluid.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-fluid.ctx.Done():
 				return
 			case value, ok := <-fluid.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("fluid symbols channel closed"))
+					errnie.Error(fmt.Errorf("fluid symbols channel closed"))
 					return
 				}
 
@@ -110,14 +102,14 @@ func (fluid *Fluid) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-fluid.ctx.Done():
 				return
 			case value, ok := <-fluid.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("fluid tick channel closed"))
+					errnie.Error(fmt.Errorf("fluid tick channel closed"))
 					return
 				}
 
@@ -150,14 +142,14 @@ func (fluid *Fluid) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-fluid.ctx.Done():
 				return
 			case value, ok := <-fluid.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("fluid book channel closed"))
+					errnie.Error(fmt.Errorf("fluid book channel closed"))
 					return
 				}
 
@@ -201,14 +193,14 @@ func (fluid *Fluid) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-fluid.ctx.Done():
 				return
 			case value, ok := <-fluid.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("fluid trade channel closed"))
+					errnie.Error(fmt.Errorf("fluid trade channel closed"))
 					return
 				}
 
@@ -239,14 +231,14 @@ func (fluid *Fluid) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-fluid.ctx.Done():
 				return
 			case value, ok := <-fluid.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("fluid feedback channel closed"))
+					errnie.Error(fmt.Errorf("fluid feedback channel closed"))
 					return
 				}
 
@@ -258,23 +250,8 @@ func (fluid *Fluid) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-fluid.ctx.Done():
-		workers.Wait()
-		return fluid.ctx.Err()
-	case <-done:
-		return fluid.ctx.Err()
-	}
+	wg.Wait()
+	return fluid.ctx.Err()
 }
 
 func (fluid *Fluid) requestedCount() int {

@@ -66,9 +66,9 @@ func NewPublicClient(
 	}
 
 	subscriptions := pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
-	publicClient.subscribers["subscriptions"] = subscriptions.Subscribe("public:subscriptions", 128)
+	publicClient.subscribers["subscriptions"] = subscriptions.Subscribe("subscriptions", 128)
 	publicClient.subscribers["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond).
-		Subscribe("public:wallet", 128)
+		Subscribe("wallet", 128)
 	publicClient.tick = pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
 	publicClient.trade = pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
 	publicClient.book = pool.CreateBroadcastGroup("book", 10*time.Millisecond)
@@ -486,8 +486,6 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		now := time.Now().UTC()
-
 		for _, row := range rows {
 			publicClient.tick.Send(&qpool.QValue[any]{Value: row})
 
@@ -500,13 +498,6 @@ func (publicClient *PublicClient) read(payload []byte) {
 			if price <= 0 {
 				continue
 			}
-
-			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-				"event":  "mark",
-				"ts":     tickerTimestamp(row, now),
-				"symbol": row.Symbol,
-				"price":  price,
-			}})
 		}
 	case market.Channel(channel).IsTrade():
 		var message trade.Snapshot
@@ -515,21 +506,12 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		now := time.Now().UTC()
-
 		for _, row := range message.Data {
 			publicClient.trade.Send(&qpool.QValue[any]{Value: row})
 
 			if row.Price <= 0 {
 				continue
 			}
-
-			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-				"event":  "mark",
-				"ts":     timestampOrNow(row.Timestamp, now),
-				"symbol": row.Symbol,
-				"price":  row.Price,
-			}})
 		}
 	case channel == core.ChannelOHLC:
 		var message ohlc.Snapshot
@@ -557,13 +539,6 @@ func (publicClient *PublicClient) read(payload []byte) {
 			if row.Close <= 0 {
 				continue
 			}
-
-			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-				"event":  "mark",
-				"ts":     timestampOrNow(row.IntervalBegin, now),
-				"symbol": row.Symbol,
-				"price":  row.Close,
-			}})
 		}
 	case market.Channel(channel).IsBook():
 		delta, err := market.ParseBookLevelsDelta(payload)

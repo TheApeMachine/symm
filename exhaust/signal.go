@@ -57,24 +57,16 @@ func (exhaust *Exhaust) State() engine.State { return engine.READY }
 func (exhaust *Exhaust) Tick() error {
 	errnie.Info("starting exhaust tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			exhaust.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-exhaust.ctx.Done():
 				return
 			case value, ok := <-exhaust.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("exhaust book channel closed"))
+					errnie.Error(fmt.Errorf("exhaust book channel closed"))
 					return
 				}
 
@@ -128,14 +120,14 @@ func (exhaust *Exhaust) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-exhaust.ctx.Done():
 				return
 			case value, ok := <-exhaust.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("exhaust trade channel closed"))
+					errnie.Error(fmt.Errorf("exhaust trade channel closed"))
 					return
 				}
 
@@ -157,14 +149,14 @@ func (exhaust *Exhaust) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-exhaust.ctx.Done():
 				return
 			case value, ok := <-exhaust.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("exhaust tick channel closed"))
+					errnie.Error(fmt.Errorf("exhaust tick channel closed"))
 					return
 				}
 
@@ -180,23 +172,8 @@ func (exhaust *Exhaust) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-exhaust.ctx.Done():
-		workers.Wait()
-		return exhaust.ctx.Err()
-	case <-done:
-		return exhaust.ctx.Err()
-	}
+	wg.Wait()
+	return exhaust.ctx.Err()
 }
 
 func (exhaust *Exhaust) publishPulse() {

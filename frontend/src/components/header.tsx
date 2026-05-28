@@ -4,7 +4,7 @@ import ThemeToggle from "#/components/ThemeToggle";
 import { Metric } from "./metric";
 import {
 	useSymmConnected,
-	useSymmEnginePulse,
+	useSymmTick,
 	useSymmWallet,
 } from "#/lib/symm/use-dashboard-data";
 import { formatEur } from "#/lib/utils";
@@ -12,7 +12,7 @@ import { formatEur } from "#/lib/utils";
 export const DashboardHeader = memo(function DashboardHeader() {
 	const connected = useSymmConnected();
 	const wallet = useSymmWallet();
-	const pulse = useSymmEnginePulse();
+	const tick = useSymmTick();
 	const cash = wallet.balance + wallet.reservedEur;
 
 	return (
@@ -46,10 +46,7 @@ export const DashboardHeader = memo(function DashboardHeader() {
 					label="Reserved"
 					value={connected ? formatEur(wallet.reservedEur) : "…"}
 				/>
-				<Metric
-					label="Tick"
-					value={connected ? String(pulse?.seq ?? 0) : "…"}
-				/>
+				<Metric label="Tick" value={connected ? String(tick) : "…"} />
 				<ThemeToggle />
 			</div>
 		</header>

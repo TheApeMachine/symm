@@ -33,7 +33,7 @@ func allowLocalhostOrigin(request *http.Request) bool {
 
 	host := strings.ToLower(parsed.Hostname())
 
-	return host == "*"
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 type wsClient struct {
@@ -87,12 +87,8 @@ func NewHub(
 		clients:       &sync.Map{},
 	}
 
-	for _, channel := range []string{
-		"ui",
-	} {
-		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		hub.subscriptions[channel] = hub.broadcasts[channel].Subscribe("ui:"+channel, 128)
-	}
+	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	hub.subscriptions["ui"] = hub.broadcasts["ui"].Subscribe("ui", 128)
 
 	go hub.writePump(hub.subscriptions["ui"])
 

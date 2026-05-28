@@ -71,24 +71,16 @@ func (leadlag *LeadLag) State() engine.State { return engine.READY }
 func (leadlag *LeadLag) Tick() error {
 	errnie.Info("starting leadlag tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			leadlag.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-leadlag.ctx.Done():
 				return
 			case value, ok := <-leadlag.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("leadlag symbols channel closed"))
+					errnie.Error(fmt.Errorf("leadlag symbols channel closed"))
 					return
 				}
 
@@ -123,14 +115,14 @@ func (leadlag *LeadLag) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-leadlag.ctx.Done():
 				return
 			case value, ok := <-leadlag.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("leadlag tick channel closed"))
+					errnie.Error(fmt.Errorf("leadlag tick channel closed"))
 					return
 				}
 
@@ -162,14 +154,14 @@ func (leadlag *LeadLag) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-leadlag.ctx.Done():
 				return
 			case value, ok := <-leadlag.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("leadlag feedback channel closed"))
+					errnie.Error(fmt.Errorf("leadlag feedback channel closed"))
 					return
 				}
 
@@ -181,23 +173,8 @@ func (leadlag *LeadLag) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-leadlag.ctx.Done():
-		workers.Wait()
-		return leadlag.ctx.Err()
-	case <-done:
-		return leadlag.ctx.Err()
-	}
+	wg.Wait()
+	return leadlag.ctx.Err()
 }
 
 func (leadlag *LeadLag) requestedCount() int {
@@ -420,6 +397,7 @@ func lagMeasurement(
 	}
 
 	confidence := engine.AlignConfidence(score, anchorStrength)
+	fmt.Println("confidence", confidence)
 
 	if confidence <= 0 {
 		confidence = engine.ProvisionalConfidence(

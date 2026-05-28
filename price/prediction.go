@@ -95,31 +95,23 @@ func (prediction *Prediction) Close() error {
 }
 
 func (prediction *Prediction) Tick() error {
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			prediction.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-prediction.ctx.Done():
 				return
 			case value, ok := <-prediction.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("prediction tick channel closed"))
+					errnie.Error(fmt.Errorf("prediction tick channel closed"))
 					return
 				}
 
 				row, ok := value.Value.(market.TickerRow)
 
 				if !ok {
-					fail(fmt.Errorf("invalid ticker row: %v", value.Value))
+					errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
 					return
 				}
 
@@ -131,23 +123,8 @@ func (prediction *Prediction) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-prediction.ctx.Done():
-		workers.Wait()
-		return prediction.ctx.Err()
-	case <-done:
-		return prediction.ctx.Err()
-	}
+	wg.Wait()
+	return prediction.ctx.Err()
 }
 
 func (prediction *Prediction) SeedReturnCalibration(source, symbol string, magnitude float64) {

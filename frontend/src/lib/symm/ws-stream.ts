@@ -15,8 +15,10 @@ import {
 	isEnginePulseEvent,
 	isHelloEvent,
 	isPredictionFeedback,
+	isTickEvent,
 	isWalletPayload,
 } from "#/lib/symm/events";
+import { TickStore } from "#/lib/symm/tick-store";
 
 const resolveSocketUrl = () => {
 	if (typeof window === "undefined") {
@@ -49,6 +51,12 @@ const parseWirePayload = (raw: unknown): unknown | null => {
 export const routePayload = (payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
+		TickStore.reset();
+		return;
+	}
+
+	if (isTickEvent(payload)) {
+		TickStore.ingest();
 		return;
 	}
 

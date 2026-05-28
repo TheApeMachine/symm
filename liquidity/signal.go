@@ -80,24 +80,16 @@ func (liquidity *Liquidity) State() engine.State { return engine.READY }
 func (liquidity *Liquidity) Tick() error {
 	errnie.Info("starting liquidity tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			liquidity.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-liquidity.ctx.Done():
 				return
 			case value, ok := <-liquidity.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("liquidity symbols channel closed"))
+					errnie.Error(fmt.Errorf("liquidity symbols channel closed"))
 					return
 				}
 
@@ -129,14 +121,14 @@ func (liquidity *Liquidity) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-liquidity.ctx.Done():
 				return
 			case value, ok := <-liquidity.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("liquidity tick channel closed"))
+					errnie.Error(fmt.Errorf("liquidity tick channel closed"))
 					return
 				}
 
@@ -165,14 +157,14 @@ func (liquidity *Liquidity) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-liquidity.ctx.Done():
 				return
 			case value, ok := <-liquidity.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("liquidity feedback channel closed"))
+					errnie.Error(fmt.Errorf("liquidity feedback channel closed"))
 					return
 				}
 
@@ -184,23 +176,8 @@ func (liquidity *Liquidity) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-liquidity.ctx.Done():
-		workers.Wait()
-		return liquidity.ctx.Err()
-	case <-done:
-		return liquidity.ctx.Err()
-	}
+	wg.Wait()
+	return liquidity.ctx.Err()
 }
 
 func (liquidity *Liquidity) requestedCount() int {

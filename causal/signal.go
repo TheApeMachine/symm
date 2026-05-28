@@ -68,24 +68,16 @@ func (causal *Causal) State() engine.State { return engine.READY }
 func (causal *Causal) Tick() error {
 	errnie.Info("starting causal tick")
 
-	var workers sync.WaitGroup
-	errs := make(chan error, 1)
-	fail := func(err error) {
-		select {
-		case errs <- err:
-			causal.cancel()
-		default:
-		}
-	}
+	var wg sync.WaitGroup
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-causal.ctx.Done():
 				return
 			case value, ok := <-causal.subscribers["symbols"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("causal symbols channel closed"))
+					errnie.Error(fmt.Errorf("causal symbols channel closed"))
 					return
 				}
 
@@ -114,14 +106,14 @@ func (causal *Causal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-causal.ctx.Done():
 				return
 			case value, ok := <-causal.subscribers["tick"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("causal tick channel closed"))
+					errnie.Error(fmt.Errorf("causal tick channel closed"))
 					return
 				}
 
@@ -145,14 +137,14 @@ func (causal *Causal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-causal.ctx.Done():
 				return
 			case value, ok := <-causal.subscribers["trade"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("causal trade channel closed"))
+					errnie.Error(fmt.Errorf("causal trade channel closed"))
 					return
 				}
 
@@ -176,14 +168,14 @@ func (causal *Causal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-causal.ctx.Done():
 				return
 			case value, ok := <-causal.subscribers["book"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("causal book channel closed"))
+					errnie.Error(fmt.Errorf("causal book channel closed"))
 					return
 				}
 
@@ -208,14 +200,14 @@ func (causal *Causal) Tick() error {
 		}
 	})
 
-	workers.Go(func() {
+	wg.Go(func() {
 		for {
 			select {
 			case <-causal.ctx.Done():
 				return
 			case value, ok := <-causal.subscribers["feedback"].Incoming:
 				if !ok {
-					fail(fmt.Errorf("causal feedback channel closed"))
+					errnie.Error(fmt.Errorf("causal feedback channel closed"))
 					return
 				}
 
@@ -227,23 +219,8 @@ func (causal *Causal) Tick() error {
 		}
 	})
 
-	done := make(chan struct{})
-
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-errs:
-		workers.Wait()
-		return errnie.Error(err)
-	case <-causal.ctx.Done():
-		workers.Wait()
-		return causal.ctx.Err()
-	case <-done:
-		return causal.ctx.Err()
-	}
+	wg.Wait()
+	return causal.ctx.Err()
 }
 
 func (causal *Causal) requestedCount() int {
