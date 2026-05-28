@@ -102,6 +102,8 @@ type Liquidity struct {
 	adaptiveMu  sync.Mutex
 	belowMedian *adaptive.BelowMedian
 	peak        *adaptive.Peak
+	pendingMu   sync.Mutex
+	pendingSeen sync.Map
 	pending     []string
 	requested   sync.Map
 }
@@ -172,7 +174,7 @@ func (liquidity *Liquidity) Tick() error {
 						continue
 					}
 
-					liquidity.pending = append(liquidity.pending, symbol)
+					liquidity.queuePending(symbol)
 				}
 
 				liquidity.publishPulse()
@@ -250,15 +252,8 @@ func (liquidity *Liquidity) requestedCount() int {
 
 func (liquidity *Liquidity) publishPulse() {
 	scanCap := max(config.System.MaxScanSymbols/8, 1)
-	requested := liquidity.requestedCount()
 
-	if len(liquidity.pending) > 0 && requested < scanCap {
-		remaining := scanCap - requested
-		batch := min(min(config.System.SubscribeBatch, remaining), len(liquidity.pending))
-
-		symbols := liquidity.pending[:batch]
-		liquidity.pending = liquidity.pending[batch:]
-
+	if symbols := liquidity.pendingBatch(scanCap); len(symbols) > 0 {
 		for _, symbol := range symbols {
 			liquidity.requested.Store(symbol, struct{}{})
 		}
@@ -267,6 +262,57 @@ func (liquidity *Liquidity) publishPulse() {
 	}
 
 	liquidity.publishMeasurements()
+}
+
+func (liquidity *Liquidity) queuePending(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	if _, queued := liquidity.pendingSeen.LoadOrStore(symbol, struct{}{}); queued {
+		return
+	}
+
+	liquidity.pendingMu.Lock()
+	defer liquidity.pendingMu.Unlock()
+
+	liquidity.pending = append(liquidity.pending, symbol)
+}
+
+func (liquidity *Liquidity) pendingBatch(scanCap int) []string {
+	requested := liquidity.requestedCount()
+
+	if requested >= scanCap {
+		return nil
+	}
+
+	liquidity.pendingMu.Lock()
+	defer liquidity.pendingMu.Unlock()
+
+	if len(liquidity.pending) == 0 {
+		return nil
+	}
+
+	remaining := scanCap - requested
+	limit := min(min(config.System.SubscribeBatch, remaining), len(liquidity.pending))
+	symbols := make([]string, 0, limit)
+	pending := liquidity.pending[:0]
+
+	for _, symbol := range liquidity.pending {
+		if _, alreadyRequested := liquidity.requested.Load(symbol); alreadyRequested {
+			continue
+		}
+
+		if len(symbols) >= limit {
+			pending = append(pending, symbol)
+			continue
+		}
+		symbols = append(symbols, symbol)
+	}
+
+	liquidity.pending = pending
+
+	return symbols
 }
 
 func (liquidity *Liquidity) collectQuotes() map[string]float64 {

@@ -54,31 +54,48 @@ func ridgeLambda(normal [][]float64) float64 {
 }
 
 func conditionEstimate(normal [][]float64) float64 {
-	if len(normal) == 0 {
+	size := len(normal)
+
+	if size == 0 {
 		return 0
+	}
+
+	diagonals := make([]float64, size)
+
+	for row := 0; row < size; row++ {
+		if len(normal[row]) != size {
+			return math.Inf(1)
+		}
+
+		diagonals[row] = normal[row][row]
+
+		if diagonals[row] <= 0 {
+			return math.Inf(1)
+		}
 	}
 
 	maxEigenBound := 0.0
 	minEigenBound := math.Inf(1)
 
-	for row := 0; row < len(normal); row++ {
-		if len(normal[row]) != len(normal) {
-			return math.Inf(1)
-		}
-
-		diagonal := normal[row][row]
+	for row := 0; row < size; row++ {
 		radius := 0.0
 
-		for col := 0; col < len(normal); col++ {
+		for col := 0; col < size; col++ {
 			if col == row {
 				continue
 			}
 
-			radius += math.Abs(normal[row][col])
+			normalizer := math.Sqrt(diagonals[row] * diagonals[col])
+
+			if normalizer <= 0 {
+				return math.Inf(1)
+			}
+
+			radius += math.Abs(normal[row][col]) / normalizer
 		}
 
-		upper := diagonal + radius
-		lower := diagonal - radius
+		upper := 1 + radius
+		lower := 1 - radius
 
 		if upper > maxEigenBound {
 			maxEigenBound = upper

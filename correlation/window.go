@@ -7,6 +7,8 @@ import (
 	"github.com/theapemachine/symm/config"
 )
 
+const maxHayashiYoshidaInterval = 5 * time.Minute
+
 /*
 PriceSample is one timestamped price observation for return resampling.
 */
@@ -144,35 +146,60 @@ func SynchronizedLogReturns(
 	return leftReturns, rightReturns, true
 }
 
-type returnInterval struct {
-	start time.Time
-	end   time.Time
-	ret   float64
-}
-
 /*
 HayashiYoshidaCorrelation estimates asynchronous high-frequency correlation
-from every pair of overlapping return intervals. It does not require both
-symbols to trade inside the same grid bar.
+with a sliding sweep over overlapping return intervals. It does not require
+both symbols to trade inside the same grid bar.
 */
 func HayashiYoshidaCorrelation(left, right []PriceSample) (float64, bool) {
-	leftIntervals, leftVariance := priceReturnIntervals(left)
-	rightIntervals, rightVariance := priceReturnIntervals(right)
+	if len(left) < 2 || len(right) < 2 {
+		return 0, false
+	}
 
-	if len(leftIntervals) == 0 || len(rightIntervals) == 0 ||
-		leftVariance <= 0 || rightVariance <= 0 {
+	leftVariance := varianceSum(left)
+	rightVariance := varianceSum(right)
+
+	if leftVariance <= 0 || rightVariance <= 0 {
 		return 0, false
 	}
 
 	covariance := 0.0
+	rightStart := 0
 
-	for _, leftInterval := range leftIntervals {
-		for _, rightInterval := range rightIntervals {
-			if !intervalsOverlap(leftInterval, rightInterval) {
+	for leftIndex := 0; leftIndex < len(left)-1; leftIndex++ {
+		leftStart := left[leftIndex].At
+		leftEnd := left[leftIndex+1].At
+
+		if !validHYInterval(left[leftIndex], left[leftIndex+1]) {
+			continue
+		}
+
+		leftReturn := math.Log(left[leftIndex+1].Price / left[leftIndex].Price)
+
+		for rightStart < len(right)-1 {
+			if !validHYInterval(right[rightStart], right[rightStart+1]) ||
+				!leftStart.Before(right[rightStart+1].At) {
+				rightStart++
 				continue
 			}
 
-			covariance += leftInterval.ret * rightInterval.ret
+			break
+		}
+
+		for rightIndex := rightStart; rightIndex < len(right)-1; rightIndex++ {
+			rightIntervalStart := right[rightIndex].At
+
+			if !rightIntervalStart.Before(leftEnd) {
+				break
+			}
+
+			if !validHYInterval(right[rightIndex], right[rightIndex+1]) {
+				continue
+			}
+
+			covariance += leftReturn * math.Log(
+				right[rightIndex+1].Price/right[rightIndex].Price,
+			)
 		}
 	}
 
@@ -195,37 +222,31 @@ func HayashiYoshidaCorrelation(left, right []PriceSample) (float64, bool) {
 	return correlation, true
 }
 
-func priceReturnIntervals(samples []PriceSample) ([]returnInterval, float64) {
+func varianceSum(samples []PriceSample) float64 {
 	if len(samples) < 2 {
-		return nil, 0
+		return 0
 	}
 
-	intervals := make([]returnInterval, 0, len(samples)-1)
-	variance := 0.0
+	sum := 0.0
 
 	for index := 1; index < len(samples); index++ {
-		previous := samples[index-1]
-		current := samples[index]
-
-		if previous.Price <= 0 || current.Price <= 0 ||
-			!previous.At.Before(current.At) {
+		if !validHYInterval(samples[index-1], samples[index]) {
 			continue
 		}
 
-		ret := math.Log(current.Price / previous.Price)
-		intervals = append(intervals, returnInterval{
-			start: previous.At,
-			end:   current.At,
-			ret:   ret,
-		})
-		variance += ret * ret
+		ret := math.Log(samples[index].Price / samples[index-1].Price)
+		sum += ret * ret
 	}
 
-	return intervals, variance
+	return sum
 }
 
-func intervalsOverlap(left, right returnInterval) bool {
-	return left.start.Before(right.end) && right.start.Before(left.end)
+func validHYInterval(previous, current PriceSample) bool {
+	if previous.Price <= 0 || current.Price <= 0 || !previous.At.Before(current.At) {
+		return false
+	}
+
+	return current.At.Sub(previous.At) <= maxHayashiYoshidaInterval
 }
 
 /*

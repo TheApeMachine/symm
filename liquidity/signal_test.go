@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -127,6 +128,27 @@ func TestSymbolStateConcurrentObserveAndFeedback(t *testing.T) {
 	})
 
 	waiters.Wait()
+}
+
+func TestLiquidityQueuePendingDeduplicates(t *testing.T) {
+	originalMaxScan := config.System.MaxScanSymbols
+	originalBatch := config.System.SubscribeBatch
+	config.System.MaxScanSymbols = 32
+	config.System.SubscribeBatch = 4
+	t.Cleanup(func() {
+		config.System.MaxScanSymbols = originalMaxScan
+		config.System.SubscribeBatch = originalBatch
+	})
+
+	signal := newTestLiquidity()
+	signal.queuePending("BTC/EUR")
+	signal.queuePending("BTC/EUR")
+
+	symbols := signal.pendingBatch(4)
+
+	if len(symbols) != 1 || symbols[0] != "BTC/EUR" {
+		t.Fatalf("expected one pending symbol, got %v", symbols)
+	}
 }
 
 func BenchmarkLiquidityMeasure(b *testing.B) {

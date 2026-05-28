@@ -73,6 +73,18 @@ func TestConditionEstimateRejectsRaggedMatrix(t *testing.T) {
 	}
 }
 
+func TestConditionEstimateIgnoresScaleDisparity(t *testing.T) {
+	normal := [][]float64{
+		{1e-4, 0, 0},
+		{0, 1e8, 0},
+		{0, 0, 1},
+	}
+
+	if condition := conditionEstimate(normal); condition != 1 {
+		t.Fatalf("expected unit condition estimate, got %v", condition)
+	}
+}
+
 func ols3Plain(
 	target, first, second, third []float64,
 ) ([]float64, bool) {

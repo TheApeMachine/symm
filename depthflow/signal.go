@@ -29,6 +29,7 @@ type DepthFlow struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
 	pendingMu   sync.Mutex
+	pendingSeen sync.Map
 	pending     []string
 	requested   sync.Map
 }
@@ -282,6 +283,14 @@ func (depthflow *DepthFlow) publishPulse() {
 }
 
 func (depthflow *DepthFlow) queuePending(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	if _, queued := depthflow.pendingSeen.LoadOrStore(symbol, struct{}{}); queued {
+		return
+	}
+
 	depthflow.pendingMu.Lock()
 	defer depthflow.pendingMu.Unlock()
 
@@ -301,9 +310,23 @@ func (depthflow *DepthFlow) pendingBatch(scanCap, requested int) []string {
 	}
 
 	remaining := scanCap - requested
-	batch := min(min(config.System.SubscribeBatch, remaining), len(depthflow.pending))
-	symbols := append([]string(nil), depthflow.pending[:batch]...)
-	depthflow.pending = depthflow.pending[batch:]
+	limit := min(min(config.System.SubscribeBatch, remaining), len(depthflow.pending))
+	symbols := make([]string, 0, limit)
+	pending := depthflow.pending[:0]
+
+	for _, symbol := range depthflow.pending {
+		if _, alreadyRequested := depthflow.requested.Load(symbol); alreadyRequested {
+			continue
+		}
+
+		if len(symbols) >= limit {
+			pending = append(pending, symbol)
+			continue
+		}
+		symbols = append(symbols, symbol)
+	}
+
+	depthflow.pending = pending
 
 	return symbols
 }

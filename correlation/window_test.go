@@ -38,6 +38,50 @@ func TestHayashiYoshidaCorrelationUsesAsynchronousIntervals(t *testing.T) {
 	}
 }
 
+func TestHayashiYoshidaCorrelationRejectsStaleIntervals(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	left := []PriceSample{
+		{At: start, Price: 100},
+		{At: start.Add(maxHayashiYoshidaInterval + time.Second), Price: 101},
+	}
+	right := []PriceSample{
+		{At: start.Add(time.Second), Price: 50},
+		{At: start.Add(2 * time.Second), Price: 50.5},
+		{At: start.Add(3 * time.Second), Price: 51},
+	}
+
+	if correlation, ok := HayashiYoshidaCorrelation(left, right); ok {
+		t.Fatalf("expected stale interval rejection, got %v", correlation)
+	}
+}
+
+func TestHayashiYoshidaCorrelationAllocatesNoHeap(t *testing.T) {
+	start := time.Unix(0, 0)
+	left := make([]PriceSample, 32)
+	right := make([]PriceSample, 32)
+
+	for index := range left {
+		left[index] = PriceSample{
+			At:    start.Add(time.Duration(index) * 10 * time.Second),
+			Price: 100 * math.Exp(float64(index)*0.001),
+		}
+		right[index] = PriceSample{
+			At:    start.Add(time.Duration(index)*10*time.Second + 5*time.Second),
+			Price: 50 * math.Exp(float64(index)*0.001),
+		}
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if _, ok := HayashiYoshidaCorrelation(left, right); !ok {
+			t.Fatal("expected correlation")
+		}
+	})
+
+	if allocs != 0 {
+		t.Fatalf("expected zero allocations, got %v", allocs)
+	}
+}
+
 func TestShiftPriceSamples(t *testing.T) {
 	start := time.Unix(0, 0)
 	samples := []PriceSample{{At: start, Price: 100}}

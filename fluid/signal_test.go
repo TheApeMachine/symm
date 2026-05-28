@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
@@ -169,6 +170,27 @@ func TestFluidTickAppliesBook(t *testing.T) {
 	bidCount, spreadBPS := state.BookStatus()
 	t.Fatalf("expected book state, got bids=%d spread=%v",
 		bidCount, spreadBPS)
+}
+
+func TestFluidQueuePendingDeduplicates(t *testing.T) {
+	originalMaxScan := config.System.MaxScanSymbols
+	originalBatch := config.System.SubscribeBatch
+	config.System.MaxScanSymbols = 4
+	config.System.SubscribeBatch = 4
+	t.Cleanup(func() {
+		config.System.MaxScanSymbols = originalMaxScan
+		config.System.SubscribeBatch = originalBatch
+	})
+
+	signal := &Fluid{}
+	signal.queuePending("BTC/EUR")
+	signal.queuePending("BTC/EUR")
+
+	symbols := signal.pendingBatch()
+
+	if len(symbols) != 1 || symbols[0] != "BTC/EUR" {
+		t.Fatalf("expected one pending symbol, got %v", symbols)
+	}
 }
 
 func BenchmarkFluidMeasure(b *testing.B) {

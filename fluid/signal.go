@@ -28,6 +28,8 @@ type Fluid struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	pendingMu   sync.Mutex
+	pendingSeen sync.Map
 	pending     []string
 	requested   sync.Map
 }
@@ -97,7 +99,7 @@ func (fluid *Fluid) Tick() error {
 						continue
 					}
 
-					fluid.pending = append(fluid.pending, symbol)
+					fluid.queuePending(symbol)
 				}
 
 				fluid.publishPulse()
@@ -238,13 +240,7 @@ func (fluid *Fluid) requestedCount() int {
 }
 
 func (fluid *Fluid) publishPulse() {
-	if len(fluid.pending) > 0 && fluid.requestedCount() < config.System.MaxScanSymbols {
-		remaining := config.System.MaxScanSymbols - fluid.requestedCount()
-		batch := min(min(config.System.SubscribeBatch, remaining), len(fluid.pending))
-
-		symbols := fluid.pending[:batch]
-		fluid.pending = fluid.pending[batch:]
-
+	if symbols := fluid.pendingBatch(); len(symbols) > 0 {
 		for _, symbol := range symbols {
 			fluid.requested.Store(symbol, struct{}{})
 		}
@@ -254,6 +250,57 @@ func (fluid *Fluid) publishPulse() {
 
 	fluid.publishMeasurements()
 	fluid.publishFieldRows()
+}
+
+func (fluid *Fluid) queuePending(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	if _, queued := fluid.pendingSeen.LoadOrStore(symbol, struct{}{}); queued {
+		return
+	}
+
+	fluid.pendingMu.Lock()
+	defer fluid.pendingMu.Unlock()
+
+	fluid.pending = append(fluid.pending, symbol)
+}
+
+func (fluid *Fluid) pendingBatch() []string {
+	requested := fluid.requestedCount()
+
+	if requested >= config.System.MaxScanSymbols {
+		return nil
+	}
+
+	fluid.pendingMu.Lock()
+	defer fluid.pendingMu.Unlock()
+
+	if len(fluid.pending) == 0 {
+		return nil
+	}
+
+	remaining := config.System.MaxScanSymbols - requested
+	limit := min(min(config.System.SubscribeBatch, remaining), len(fluid.pending))
+	symbols := make([]string, 0, limit)
+	pending := fluid.pending[:0]
+
+	for _, symbol := range fluid.pending {
+		if _, alreadyRequested := fluid.requested.Load(symbol); alreadyRequested {
+			continue
+		}
+
+		if len(symbols) >= limit {
+			pending = append(pending, symbol)
+			continue
+		}
+		symbols = append(symbols, symbol)
+	}
+
+	fluid.pending = pending
+
+	return symbols
 }
 
 func (fluid *Fluid) publishMeasurements() {

@@ -33,6 +33,8 @@ type Sentiment struct {
 	symbols     sync.Map
 	peakMu      sync.Mutex
 	peak        *adaptive.Peak
+	pendingMu   sync.Mutex
+	pendingSeen sync.Map
 	pending     []string
 	requested   sync.Map
 }
@@ -110,7 +112,7 @@ func (sentiment *Sentiment) Tick() error {
 						continue
 					}
 
-					sentiment.pending = append(sentiment.pending, symbol)
+					sentiment.queuePending(symbol)
 				}
 
 				sentiment.publishPulse()
@@ -215,15 +217,8 @@ func (sentiment *Sentiment) publishPulse() {
 	})
 
 	scanCap := max(config.System.MaxScanSymbols/8, 1)
-	requested := sentiment.requestedCount()
 
-	if len(sentiment.pending) > 0 && tickerCount < 4 && requested < scanCap {
-		remaining := scanCap - requested
-		batch := min(min(config.System.SubscribeBatch, remaining), len(sentiment.pending))
-
-		symbols := sentiment.pending[:batch]
-		sentiment.pending = sentiment.pending[batch:]
-
+	if symbols := sentiment.pendingBatch(scanCap, tickerCount); len(symbols) > 0 {
 		for _, symbol := range symbols {
 			sentiment.requested.Store(symbol, struct{}{})
 		}
@@ -232,6 +227,57 @@ func (sentiment *Sentiment) publishPulse() {
 	}
 
 	sentiment.publishMeasurements()
+}
+
+func (sentiment *Sentiment) queuePending(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	if _, queued := sentiment.pendingSeen.LoadOrStore(symbol, struct{}{}); queued {
+		return
+	}
+
+	sentiment.pendingMu.Lock()
+	defer sentiment.pendingMu.Unlock()
+
+	sentiment.pending = append(sentiment.pending, symbol)
+}
+
+func (sentiment *Sentiment) pendingBatch(scanCap, tickerCount int) []string {
+	requested := sentiment.requestedCount()
+
+	if tickerCount >= 4 || requested >= scanCap {
+		return nil
+	}
+
+	sentiment.pendingMu.Lock()
+	defer sentiment.pendingMu.Unlock()
+
+	if len(sentiment.pending) == 0 {
+		return nil
+	}
+
+	remaining := scanCap - requested
+	limit := min(min(config.System.SubscribeBatch, remaining), len(sentiment.pending))
+	symbols := make([]string, 0, limit)
+	pending := sentiment.pending[:0]
+
+	for _, symbol := range sentiment.pending {
+		if _, alreadyRequested := sentiment.requested.Load(symbol); alreadyRequested {
+			continue
+		}
+
+		if len(symbols) >= limit {
+			pending = append(pending, symbol)
+			continue
+		}
+		symbols = append(symbols, symbol)
+	}
+
+	sentiment.pending = pending
+
+	return symbols
 }
 
 func (sentiment *Sentiment) publishMeasurements() {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 )
@@ -69,6 +70,27 @@ func TestSentimentFeedbackScalesSymbol(t *testing.T) {
 
 	if after >= before {
 		t.Fatalf("expected feedback to lower confidence, before=%v after=%v", before, after)
+	}
+}
+
+func TestSentimentQueuePendingDeduplicates(t *testing.T) {
+	originalMaxScan := config.System.MaxScanSymbols
+	originalBatch := config.System.SubscribeBatch
+	config.System.MaxScanSymbols = 32
+	config.System.SubscribeBatch = 4
+	t.Cleanup(func() {
+		config.System.MaxScanSymbols = originalMaxScan
+		config.System.SubscribeBatch = originalBatch
+	})
+
+	signal := &Sentiment{}
+	signal.queuePending("BTC/EUR")
+	signal.queuePending("BTC/EUR")
+
+	symbols := signal.pendingBatch(4, 0)
+
+	if len(symbols) != 1 || symbols[0] != "BTC/EUR" {
+		t.Fatalf("expected one pending symbol, got %v", symbols)
 	}
 }
 

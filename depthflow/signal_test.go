@@ -238,6 +238,18 @@ func TestDepthFlowConcurrentSymbolUpdates(t *testing.T) {
 	workers.Wait()
 }
 
+func TestDepthFlowQueuePendingDeduplicates(t *testing.T) {
+	signal := &DepthFlow{}
+	signal.queuePending("BTC/EUR")
+	signal.queuePending("BTC/EUR")
+
+	symbols := signal.pendingBatch(4, 0)
+
+	if len(symbols) != 1 || symbols[0] != "BTC/EUR" {
+		t.Fatalf("expected one pending symbol, got %v", symbols)
+	}
+}
+
 func BenchmarkDepthFlowMeasure(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

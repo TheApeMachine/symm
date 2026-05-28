@@ -255,7 +255,7 @@ Use `make` targets, not bare `go test ./...`, unless you pass `-ldflags=-checkli
 
 ## Numeric layer
 
-Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMAs, windows, peaks, fences, learned forecast ratios, robust median/MAD scaling)—not magic constants in the trader. Hawkes in particular fits a bivariate self-exciting model via constrained MLE (`hawkes/`), with timelines and decay helpers under `numeric/timeline` and `numeric/decay`. The causal package maps financial observations into indexed DAG nodes before regression, backdoor adjustment, kernels, and counterfactual scoring; the math layer works on node indexes rather than finance-named fields.
+Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMAs, windows, peaks, fences, learned forecast ratios, robust median/MAD scaling)—not magic constants in the trader. Hawkes in particular fits a bivariate self-exciting model via constrained MLE (`hawkes/`), with timelines and decay helpers under `numeric/timeline` and `numeric/decay`. The causal package maps financial observations into indexed DAG nodes before regression, backdoor adjustment, kernels, and counterfactual scoring; the math layer works on node indexes rather than finance-named fields. Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap with stale intervals capped to the current microstructure window.
 
 ---
 
