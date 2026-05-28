@@ -347,23 +347,6 @@ func alignedLogReturns(left, right []float64, leftPresent, rightPresent []bool) 
 }
 
 /*
-LogReturnsFromPrices converts a price path into log returns.
-*/
-func LogReturnsFromPrices(prices []float64) []float64 {
-	if len(prices) < 2 {
-		return nil
-	}
-
-	returns := make([]float64, len(prices)-1)
-
-	for index := 1; index < len(prices); index++ {
-		returns[index-1] = math.Log(prices[index] / prices[index-1])
-	}
-
-	return returns
-}
-
-/*
 Pearson computes the sample correlation between two equal-length series.
 */
 func Pearson(left, right []float64) float64 {

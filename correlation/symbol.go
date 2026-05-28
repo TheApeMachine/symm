@@ -54,13 +54,6 @@ func (state *symbolState) snapshot() symbolSnapshot {
 	}
 }
 
-func (state *symbolState) forecastScale() float64 {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
-	return forecastScale(state.forecast)
-}
-
 func forecastScale(forecast *learned.Forecast) float64 {
 	if forecast == nil {
 		return 1

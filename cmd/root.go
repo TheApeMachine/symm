@@ -112,10 +112,6 @@ func Execute() {
 	}
 }
 
-type errString string
-
-func (err errString) Error() string { return string(err) }
-
 const rootLong = `
 S.Y.M.M. - Shake Your Money Maker
 

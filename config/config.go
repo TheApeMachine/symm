@@ -221,14 +221,3 @@ func NewConfig() *Config {
 
 	return cfg
 }
-
-/*
-TakerFee models Kraken-style taker fee on notional (percent).
-*/
-func (cfg Config) TakerFee(notionalEUR, feePct float64) float64 {
-	if notionalEUR <= 0 || feePct <= 0 {
-		return 0
-	}
-
-	return notionalEUR * feePct / 100
-}

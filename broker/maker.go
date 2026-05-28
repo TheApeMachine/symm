@@ -127,21 +127,6 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 	return nil
 }
 
-/*
-Cancel releases reservation and cancels a live order when present.
-*/
-func (maker *Maker) Cancel(router *Router, tradingWallet *wallet.Wallet) error {
-	if tradingWallet != nil && maker.Notional > 0 {
-		tradingWallet.ReleaseEntryReservation(maker.Notional)
-	}
-
-	if maker.OrderID == "" || router == nil {
-		return nil
-	}
-
-	return router.Publish(order.CancelOrder(maker.OrderID, ""))
-}
-
 func (maker *Maker) validate(tradingWallet *wallet.Wallet) error {
 	if tradingWallet == nil {
 		return fmt.Errorf("wallet is required")

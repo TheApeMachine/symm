@@ -52,13 +52,6 @@ func newSymbolState(pair asset.Pair) *symbolState {
 	}
 }
 
-func (state *symbolState) observe(at time.Time, price float64) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	state.prices.Push(at, price)
-}
-
 func (state *symbolState) observeTicker(
 	changePct float64,
 	last float64,

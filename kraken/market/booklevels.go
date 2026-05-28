@@ -42,16 +42,6 @@ func (delta BookLevelsDelta) IsSnapshot() bool {
 }
 
 /*
-ParseBookLevelsDelta extracts up to maxBookParseLevels from each side of
-a book frame. Callers that want to honour a configured depth should
-invoke ParseBookLevelsDeltaWithDepth directly; this wrapper preserves the
-original signature for transitional callers.
-*/
-func ParseBookLevelsDelta(payload []byte) (BookLevelsDelta, error) {
-	return ParseBookLevelsDeltaWithDepth(payload, maxBookParseLevels)
-}
-
-/*
 ParseBookLevelsDeltaWithDepth extracts up to depth levels from each side
 of a book frame. depth is bounded above by maxBookParseLevels. A zero or
 negative depth falls back to maxBookParseLevels so callers cannot

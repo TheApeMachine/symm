@@ -73,13 +73,6 @@ func (state *symbolState) forecastLearner() *learned.Forecast {
 	return state.forecast
 }
 
-func (state *symbolState) forecastScale() float64 {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return state.forecastScaleLocked()
-}
-
 func (state *symbolState) forecastScaleLocked() float64 {
 	return state.forecastLearner().Scale()
 }

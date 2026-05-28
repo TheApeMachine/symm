@@ -14,7 +14,7 @@ type cellState struct {
 	ticks []float64
 }
 
-func TestCellLoadStoreMutate(t *testing.T) {
+func TestCellLoadMutate(t *testing.T) {
 	Convey("Given a fresh Cell", t, func() {
 		cell := New(cellState{last: 1, bid: 2, ask: 3})
 

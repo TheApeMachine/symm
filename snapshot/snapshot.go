@@ -34,7 +34,7 @@ import "sync/atomic"
 
 /*
 Cell wraps an atomic.Pointer to an immutable T and exposes the standard
-load / store / mutate primitives. Zero value is ready to use; Load on an
+load / mutate primitives. Zero value is ready to use; Load on an
 uninitialized Cell returns the zero value of T via the second return.
 */
 type Cell[T any] struct {
@@ -67,18 +67,6 @@ func (cell *Cell[T]) Load() (*T, bool) {
 }
 
 /*
-Store replaces the current snapshot atomically. Existing readers continue
-to see the prior value until they re-Load.
-*/
-func (cell *Cell[T]) Store(value T) {
-	if cell == nil {
-		return
-	}
-
-	cell.ptr.Store(&value)
-}
-
-/*
 Mutate runs fn against a copy of the current snapshot and atomically
 swaps it in. fn is called once on the no-contention path; concurrent
 writers retry with the updated snapshot. The provided pointer points at a
@@ -86,8 +74,7 @@ private copy fn can freely mutate. Returning false from fn aborts the
 update; the Cell is left untouched.
 
 Mutate is the only correct way to update a Cell from a writer that wants
-its update to compose with other writers. Direct Store discards any
-intervening writes.
+its update to compose with other writers.
 */
 func (cell *Cell[T]) Mutate(fn func(*T) bool) {
 	if cell == nil || fn == nil {
@@ -135,28 +122,6 @@ func Append[T any](source []T, value T, cap int) []T {
 	next := make([]T, 0, cap)
 	next = append(next, source...)
 	next = append(next, value)
-
-	return next
-}
-
-/*
-TrimFront returns a slice with the first n elements dropped, allocating a
-new backing array. n is treated as if clamped to [0, len(source)]:
-negative n is a no-op (source is returned unchanged), n >= len(source)
-yields nil, and any n in the open range allocates and returns the
-remaining tail.
-*/
-func TrimFront[T any](source []T, n int) []T {
-	if n <= 0 {
-		return source
-	}
-
-	if n >= len(source) {
-		return nil
-	}
-
-	next := make([]T, len(source)-n)
-	copy(next, source[n:])
 
 	return next
 }

@@ -367,23 +367,3 @@ func (hub *Hub) fanout(payload any) {
 		return true
 	})
 }
-
-/*
-Close shuts down the telemetry hub.
-*/
-func (hub *Hub) Close() error {
-	hub.cancel()
-
-	hub.clients.Range(func(key, _ any) bool {
-		client, ok := key.(*wsClient)
-
-		if ok {
-			_ = client.close()
-		}
-
-		hub.clients.Delete(key)
-		return true
-	})
-
-	return nil
-}

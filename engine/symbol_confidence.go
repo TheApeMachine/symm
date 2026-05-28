@@ -24,13 +24,6 @@ func NewSymbolConfidence(params CalibrationParams) *SymbolConfidence {
 }
 
 /*
-ApplyFeedback records settled forecast error into the parameter calibrator.
-*/
-func (tracker *SymbolConfidence) ApplyFeedback(feedback PredictionFeedback) {
-	tracker.calibrator.Apply(feedback)
-}
-
-/*
 Measure normalizes rawScore against prior raw history and records this observation.
 Returns false until enough history exists or rawScore is non-positive.
 */

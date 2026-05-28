@@ -82,19 +82,3 @@ func MarketSellBase(symbol string, baseQty float64, token string) Request {
 		},
 	}
 }
-
-/*
-MarketBuyBase builds a base-quantity market buy to close a short.
-*/
-func MarketBuyBase(symbol string, baseQty float64, token string) Request {
-	return Request{
-		Method: MethodAddOrder,
-		Params: AddParams{
-			OrderType: Market,
-			Side:      Buy,
-			Symbol:    symbol,
-			OrderQty:  baseQty,
-			Token:     token,
-		},
-	}
-}

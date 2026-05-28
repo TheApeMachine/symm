@@ -36,22 +36,3 @@ func ParseAck(payload []byte) (*Ack, error) {
 
 	return &ack, nil
 }
-
-/*
-ReqIDFromFrame extracts req_id from any JSON websocket frame.
-*/
-func ReqIDFromFrame(payload []byte) (int, bool) {
-	var frame struct {
-		ReqID int `json:"req_id"`
-	}
-
-	if err := json.Unmarshal(payload, &frame); err != nil {
-		return 0, false
-	}
-
-	if frame.ReqID <= 0 {
-		return 0, false
-	}
-
-	return frame.ReqID, true
-}
