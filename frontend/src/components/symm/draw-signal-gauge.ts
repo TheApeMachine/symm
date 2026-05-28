@@ -131,7 +131,7 @@ const buildGaugeArcs = (
 		x1: 0,
 		y1: 0,
 		textColor: "#FFFFFF",
-		fontSize: 16,
+		fontSize: 12,
 		padding: new Thickness(0, 0, 16, 0),
 		xCoordinateMode: ECoordinateMode.DataValue,
 		yCoordinateMode: ECoordinateMode.DataValue,
@@ -170,6 +170,9 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 			drawMajorGridLines: false,
 			drawMajorTickLines: false,
 			drawMinorTickLines: false,
+			labelStyle: {
+				fontSize: 12,
+			},
 		}),
 	);
 
@@ -189,6 +192,9 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 			drawMinorTickLines: false,
 			drawMajorTickLines: false,
 			labelPrecision: 0,
+			labelStyle: {
+				fontSize: 12,
+			},
 		}),
 	);
 

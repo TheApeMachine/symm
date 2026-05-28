@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ Liquidity ranks cross-section quote volume below the peer median.
 type Liquidity struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -78,63 +80,126 @@ func (liquidity *Liquidity) State() engine.State { return engine.READY }
 func (liquidity *Liquidity) Tick() error {
 	errnie.Info("starting liquidity tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-liquidity.ctx.Done():
-			return liquidity.ctx.Err()
-		case value := <-liquidity.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				liquidity.symbols.Store(symbol, &symbolState{
-					pair:     *pair,
-					forecast: learned.NewForecast(0),
-				})
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := liquidity.requested.Load(symbol); seen {
-					continue
-				}
-
-				liquidity.pending = append(liquidity.pending, symbol)
-			}
-
-			liquidity.publishPulse()
-		case value := <-liquidity.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := liquidity.symbols.Load(row.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*symbolState)
-
-			if row.Last <= 0 {
-				break
-			}
-
-			state.dailyQuoteVol = row.Volume * row.Last
-			state.last = row.Last
-
-			if row.Bid > 0 {
-				state.bid = row.Bid
-			}
-
-			if row.Ask > 0 {
-				state.ask = row.Ask
-			}
-
-			liquidity.publishPulse()
-		case value := <-liquidity.subscribers["feedback"].Incoming:
-			liquidity.Feedback(value.Value.(engine.PredictionFeedback))
-			liquidity.publishPulse()
+		case errs <- err:
+			liquidity.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-liquidity.ctx.Done():
+				return
+			case value, ok := <-liquidity.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("liquidity symbols channel closed"))
+					return
+				}
+
+				liquidity.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					liquidity.symbols.Store(symbol, &symbolState{
+						pair:     *pair,
+						forecast: learned.NewForecast(0),
+					})
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := liquidity.requested.Load(symbol); seen {
+						continue
+					}
+
+					liquidity.pending = append(liquidity.pending, symbol)
+				}
+
+				liquidity.publishPulse()
+				liquidity.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-liquidity.ctx.Done():
+				return
+			case value, ok := <-liquidity.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("liquidity tick channel closed"))
+					return
+				}
+
+				liquidity.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := liquidity.symbols.Load(row.Symbol)
+
+				if ok && row.Last > 0 {
+					state := raw.(*symbolState)
+					state.dailyQuoteVol = row.Volume * row.Last
+					state.last = row.Last
+
+					if row.Bid > 0 {
+						state.bid = row.Bid
+					}
+
+					if row.Ask > 0 {
+						state.ask = row.Ask
+					}
+
+					liquidity.publishPulse()
+				}
+
+				liquidity.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-liquidity.ctx.Done():
+				return
+			case value, ok := <-liquidity.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("liquidity feedback channel closed"))
+					return
+				}
+
+				liquidity.mu.Lock()
+				liquidity.Feedback(value.Value.(engine.PredictionFeedback))
+				liquidity.publishPulse()
+				liquidity.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-liquidity.ctx.Done():
+		workers.Wait()
+		return liquidity.ctx.Err()
+	case <-done:
+		return liquidity.ctx.Err()
 	}
 }
 

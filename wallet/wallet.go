@@ -1,4 +1,4 @@
-package trader
+package wallet
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ const (
 )
 
 /*
-Wallet is spot cash for the trader: available balance plus entry reservations.
+Wallet is spot cash for the trading engine: available balance plus entry reservations.
 */
 type Wallet struct {
 	Type        WalletType
@@ -130,6 +130,45 @@ func (wallet *Wallet) AvailableEUR() float64 {
 	}
 
 	return wallet.Balance
+}
+
+/*
+Put moves cash from the wallet's balance to the reserved balance.
+*/
+func (wallet *Wallet) Put(amount float64) error {
+	return wallet.Reserve(amount)
+}
+
+/*
+Take moves cash from the reserved balance to the wallet's balance.
+*/
+func (wallet *Wallet) Take(amount float64) error {
+	if wallet == nil || amount <= 0 {
+		return fmt.Errorf("invalid amount")
+	}
+
+	if amount > wallet.ReservedEUR {
+		amount = wallet.ReservedEUR
+	}
+
+	wallet.ReservedEUR -= amount
+	wallet.Balance += amount
+
+	return nil
+}
+
+/*
+Reserve moves cash from the wallet's balance to the reserved balance.
+*/
+func (wallet *Wallet) Reserve(amount float64) error {
+	if wallet == nil || amount <= 0 {
+		return fmt.Errorf("invalid amount")
+	}
+
+	wallet.Balance -= amount
+	wallet.ReservedEUR += amount
+
+	return nil
 }
 
 /*

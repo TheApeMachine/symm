@@ -6,7 +6,8 @@ export type SymmEventName =
 	| "field_snapshot"
 	| "field_row"
 	| "field_grid"
-	| "candle_bar";
+	| "candle_bar"
+	| "mark";
 
 export type SymmEvent = {
 	event: SymmEventName;

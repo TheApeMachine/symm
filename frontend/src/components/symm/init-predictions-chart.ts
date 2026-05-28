@@ -2,10 +2,11 @@ import {
 	SciChartSurface,
 	NumericAxis,
 	EAxisAlignment,
+	EAutoRange,
+	ENumericFormat,
 	NumberRange,
 	XyDataSeries,
-	XyScatterRenderableSeries,
-	EllipsePointMarker,
+	FastLineRenderableSeries,
 	ZoomExtentsModifier,
 	MouseWheelZoomModifier,
 	ZoomPanModifier,
@@ -20,25 +21,23 @@ import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
 const SERIES_STYLE: Record<
 	PredictionSeriesKind,
-	{ name: string; stroke: string; fill: string; width: number }
+	{ name: string; stroke: string; strokeDashArray?: number[]; strokeThickness: number }
 > = {
-	predicted: {
-		name: "Predicted",
-		stroke: "#FBA55A",
-		fill: "rgba(251, 165, 90, 0.35)",
-		width: 9,
-	},
-	actual: {
-		name: "Actual",
+	average: {
+		name: "Average prediction",
 		stroke: "#4EC385",
-		fill: "rgba(78, 195, 133, 0.35)",
-		width: 8,
+		strokeThickness: 2,
+	},
+	prediction: {
+		name: "Next frame prediction",
+		stroke: "#FBA55A",
+		strokeDashArray: [8, 5],
+		strokeThickness: 2,
 	},
 	error: {
-		name: "Error",
+		name: "Average error",
 		stroke: "#E85D75",
-		fill: "rgba(232, 93, 117, 0.35)",
-		width: 7,
+		strokeThickness: 1,
 	},
 };
 
@@ -54,12 +53,18 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 
 	const xAxis = new NumericAxis(wasmContext, {
 		axisTitle: "Time (UTC s)",
+		labelFormat: ENumericFormat.Date_HHMMSS,
+		visibleRange: new NumberRange(
+			Math.floor(Date.now() / 1000) - 60,
+			Math.floor(Date.now() / 1000) + 60,
+		),
 		growBy: new NumberRange(0.05, 0.05),
 	});
 
 	const yAxis = new NumericAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Left,
-		axisTitle: "Return %",
+		autoRange: EAutoRange.Always,
+		axisTitle: "Return",
 		growBy: new NumberRange(0.15, 0.15),
 	});
 
@@ -68,25 +73,20 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 
 	const seriesByKind = new Map<PredictionSeriesKind, XyDataSeries>();
 
-	for (const kind of ["predicted", "actual", "error"] as const) {
+	for (const kind of ["average", "prediction", "error"] as const) {
 		const style = SERIES_STYLE[kind];
 		const dataSeries = new XyDataSeries(wasmContext, {
 			dataSeriesName: style.name,
 			containsNaN: false,
+			isSorted: false,
 		});
 
 		sciChartSurface.renderableSeries.add(
-			new XyScatterRenderableSeries(wasmContext, {
+			new FastLineRenderableSeries(wasmContext, {
 				dataSeries,
 				stroke: style.stroke,
-				fill: style.fill,
-				pointMarker: new EllipsePointMarker(wasmContext, {
-					width: style.width,
-					height: style.width,
-					strokeThickness: 2,
-					fill: style.fill,
-					stroke: style.stroke,
-				}),
+				strokeThickness: style.strokeThickness,
+				strokeDashArray: style.strokeDashArray,
 			}),
 		);
 		seriesByKind.set(kind, dataSeries);
@@ -99,9 +99,8 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		new RolloverModifier({ modifierGroup: "chart" }),
 	);
 
-	sciChartSurface.zoomExtents();
-
-	let zoomed = false;
+	let minX = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
 
 	const appendReading = (reading: PredictionReading) => {
 		const dataSeries = seriesByKind.get(reading.kind);
@@ -113,9 +112,15 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		dataSeries.append(reading.x, reading.value);
 		sciChartSurface.invalidateElement();
 
-		if (!zoomed) {
-			sciChartSurface.zoomExtents();
-			zoomed = true;
+		if (!Number.isFinite(reading.x) || !Number.isFinite(reading.value)) {
+			return;
+		}
+
+		minX = Math.min(minX, reading.x);
+		maxX = Math.max(maxX, reading.x);
+
+		if (Number.isFinite(minX) && Number.isFinite(maxX)) {
+			xAxis.visibleRange = new NumberRange(minX - 2, maxX + 2);
 		}
 	};
 

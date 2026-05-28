@@ -1,4 +1,8 @@
-Welcome to your new TanStack Start app! 
+# SYMM Frontend
+
+The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header and the trades panel; the trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. Mark events also update the trade charts. When a browser reconnects, the backend replays the latest wallet and per-symbol mark snapshots; mark timestamps are used as chart x-values so empty or freshly reconnected charts do not fall back to the Unix epoch.
+
+The prediction chart uses aggregate `engine_pulse` data only: solid green for `avg_prediction`, dashed orange for the same average projected one pulse interval into the next time frame, and a thin error line for `avg_error`. It does not render per-symbol forecast segments, prediction dots, or circular markers.
 
 # Getting Started
 
@@ -23,6 +27,12 @@ This project uses [Vitest](https://vitest.dev/) for testing. You can run the tes
 
 ```bash
 npm run test
+```
+
+Benchmarks use the same Vitest runner:
+
+```bash
+npm run bench
 ```
 
 ## Styling

@@ -46,7 +46,7 @@ const parseWirePayload = (raw: unknown): unknown | null => {
 	return JSON.parse(trimmed) as unknown;
 };
 
-const routePayload = (payload: unknown) => {
+export const routePayload = (payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
 		return;

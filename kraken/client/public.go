@@ -29,6 +29,7 @@ PublicClient maintains an unauthenticated Kraken WebSocket v2 session.
 type PublicClient struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	subscribers map[string]*qpool.Subscriber
 	tick        *qpool.BroadcastGroup
@@ -89,32 +90,84 @@ func (publicClient *PublicClient) State() engine.State {
 func (publicClient *PublicClient) Tick() error {
 	errnie.Info("starting public client tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-publicClient.ctx.Done():
+		case errs <- err:
 			publicClient.cancel()
-			return publicClient.ctx.Err()
-		case msg := <-publicClient.subscribers["subscriptions"].Incoming:
-			symbols, ok := msg.Value.([]string)
+		default:
+		}
+	}
 
-			if !ok {
-				return errnie.Error(fmt.Errorf("invalid subscriptions message: %v", msg))
-			}
+	workers.Go(func() {
+		for {
+			select {
+			case <-publicClient.ctx.Done():
+				return
+			case msg, ok := <-publicClient.subscribers["subscriptions"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("public subscriptions channel closed"))
+					return
+				}
 
-			if err := publicClient.subscribeSymbols(symbols); err != nil {
-				return err
-			}
-		case msg := <-publicClient.subscribers["wallet"].Incoming:
-			wallet, ok := msg.Value.(*trader.Wallet)
+				symbols, ok := msg.Value.([]string)
 
-			if !ok || wallet == nil {
-				return errnie.Error(fmt.Errorf("invalid wallet message: %v", msg.Value))
-			}
+				if !ok {
+					fail(fmt.Errorf("invalid subscriptions message: %v", msg))
+					return
+				}
 
-			if err := publicClient.subscribeSymbols(publicClient.openInventorySymbols(wallet)); err != nil {
-				return err
+				if err := publicClient.subscribeSymbols(symbols); err != nil {
+					fail(err)
+					return
+				}
 			}
 		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-publicClient.ctx.Done():
+				return
+			case msg, ok := <-publicClient.subscribers["wallet"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("public wallet channel closed"))
+					return
+				}
+
+				wallet, ok := msg.Value.(*trader.Wallet)
+
+				if !ok || wallet == nil {
+					fail(fmt.Errorf("invalid wallet message: %v", msg.Value))
+					return
+				}
+
+				if err := publicClient.subscribeSymbols(publicClient.openInventorySymbols(wallet)); err != nil {
+					fail(err)
+					return
+				}
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-publicClient.ctx.Done():
+		workers.Wait()
+		return publicClient.ctx.Err()
+	case <-done:
+		return publicClient.ctx.Err()
 	}
 }
 
@@ -133,6 +186,9 @@ func (publicClient *PublicClient) openInventorySymbols(wallet *trader.Wallet) []
 }
 
 func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
+	publicClient.mu.Lock()
+	defer publicClient.mu.Unlock()
+
 	if publicClient.replay {
 		return nil
 	}
@@ -186,7 +242,10 @@ func (publicClient *PublicClient) subscribeSymbols(symbols []string) error {
 }
 
 func (publicClient *PublicClient) flushHeldSymbols() error {
+	publicClient.mu.Lock()
+
 	if len(publicClient.heldSymbols) == 0 {
+		publicClient.mu.Unlock()
 		return nil
 	}
 
@@ -195,6 +254,8 @@ func (publicClient *PublicClient) flushHeldSymbols() error {
 	for symbol := range publicClient.heldSymbols {
 		resubscribe = append(resubscribe, symbol)
 	}
+
+	publicClient.mu.Unlock()
 
 	return publicClient.subscribeSymbols(resubscribe)
 }
@@ -266,14 +327,18 @@ func (publicClient *PublicClient) runLive() {
 			continue
 		}
 
+		publicClient.mu.Lock()
 		publicClient.conn = conn
 		publicClient.subscribed = make(map[string]struct{})
 		publicClient.catalogAt = time.Time{}
+		publicClient.mu.Unlock()
 
 		if err := publicClient.flushHeldSymbols(); err != nil {
 			errnie.Error(err)
 			conn.Close()
+			publicClient.mu.Lock()
 			publicClient.conn = nil
+			publicClient.mu.Unlock()
 
 			select {
 			case <-publicClient.ctx.Done():
@@ -287,7 +352,9 @@ func (publicClient *PublicClient) runLive() {
 		if err := conn.WriteJSON(instrument.NewSubscribe()); err != nil {
 			errnie.Error(err)
 			conn.Close()
+			publicClient.mu.Lock()
 			publicClient.conn = nil
+			publicClient.mu.Unlock()
 
 			select {
 			case <-publicClient.ctx.Done():
@@ -311,9 +378,12 @@ func (publicClient *PublicClient) runLive() {
 				case <-pingStop:
 					return
 				case <-ticker.C:
+					publicClient.mu.Lock()
 					if err := conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
+						publicClient.mu.Unlock()
 						return
 					}
+					publicClient.mu.Unlock()
 				}
 			}
 		}()
@@ -331,7 +401,9 @@ func (publicClient *PublicClient) runLive() {
 
 		close(pingStop)
 		conn.Close()
+		publicClient.mu.Lock()
 		publicClient.conn = nil
+		publicClient.mu.Unlock()
 
 		select {
 		case <-publicClient.ctx.Done():
@@ -361,14 +433,18 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		if message.Type != "snapshot" && !publicClient.catalogAt.IsZero() {
+		publicClient.mu.Lock()
+		catalogAt := publicClient.catalogAt
+		publicClient.mu.Unlock()
+
+		if message.Type != "snapshot" && !catalogAt.IsZero() {
 			return
 		}
 
-		if !publicClient.catalogAt.IsZero() {
+		if !catalogAt.IsZero() {
 			refresh := 6 * time.Hour
 
-			if time.Since(publicClient.catalogAt) < refresh {
+			if time.Since(catalogAt) < refresh {
 				return
 			}
 		}
@@ -388,10 +464,13 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
+		publicClient.mu.Lock()
 		publicClient.catalogAt = time.Now()
+		publicClient.subscribed = make(map[string]struct{})
+		publicClient.mu.Unlock()
+
 		publicClient.symbols.Send(&qpool.QValue[any]{Value: pairs})
 
-		publicClient.subscribed = make(map[string]struct{})
 		_ = publicClient.flushHeldSymbols()
 
 		publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -407,7 +486,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339Nano)
+		now := time.Now().UTC()
 
 		for _, row := range rows {
 			publicClient.tick.Send(&qpool.QValue[any]{Value: row})
@@ -424,7 +503,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 
 			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 				"event":  "mark",
-				"ts":     now,
+				"ts":     tickerTimestamp(row, now),
 				"symbol": row.Symbol,
 				"price":  price,
 			}})
@@ -436,7 +515,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339Nano)
+		now := time.Now().UTC()
 
 		for _, row := range message.Data {
 			publicClient.trade.Send(&qpool.QValue[any]{Value: row})
@@ -447,7 +526,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 
 			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 				"event":  "mark",
-				"ts":     now,
+				"ts":     timestampOrNow(row.Timestamp, now),
 				"symbol": row.Symbol,
 				"price":  row.Price,
 			}})
@@ -459,15 +538,15 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339Nano)
+		now := time.Now().UTC()
 
 		for _, row := range message.Data {
 			publicClient.ohlc.Send(&qpool.QValue[any]{Value: row})
 			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 				"event":  "candle_bar",
-				"ts":     now,
+				"ts":     timestampOrNow(row.IntervalBegin, now),
 				"symbol": row.Symbol,
-				"sec":    row.IntervalBegin.Unix(),
+				"sec":    unixTimestampOrNow(row.IntervalBegin, now),
 				"open":   row.Open,
 				"high":   row.High,
 				"low":    row.Low,
@@ -481,7 +560,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 
 			publicClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 				"event":  "mark",
-				"ts":     now,
+				"ts":     timestampOrNow(row.IntervalBegin, now),
 				"symbol": row.Symbol,
 				"price":  row.Close,
 			}})
@@ -495,4 +574,30 @@ func (publicClient *PublicClient) read(payload []byte) {
 
 		publicClient.book.Send(&qpool.QValue[any]{Value: delta})
 	}
+}
+
+func tickerTimestamp(row market.TickerRow, now time.Time) string {
+	timestamp, err := time.Parse(time.RFC3339Nano, row.Timestamp)
+
+	if err != nil || timestamp.IsZero() {
+		return now.UTC().Format(time.RFC3339Nano)
+	}
+
+	return timestamp.UTC().Format(time.RFC3339Nano)
+}
+
+func timestampOrNow(timestamp time.Time, now time.Time) string {
+	if timestamp.IsZero() {
+		return now.UTC().Format(time.RFC3339Nano)
+	}
+
+	return timestamp.UTC().Format(time.RFC3339Nano)
+}
+
+func unixTimestampOrNow(timestamp time.Time, now time.Time) int64 {
+	if timestamp.IsZero() {
+		return now.UTC().Unix()
+	}
+
+	return timestamp.UTC().Unix()
 }

@@ -142,6 +142,56 @@ func TestExhaustTickObservesTrade(t *testing.T) {
 	t.Fatal("expected trade pressure after tick")
 }
 
+func TestExhaustTickDrainsEachChannelGoroutine(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	signal := NewExhaust(ctx, pool)
+	t.Cleanup(func() { _ = signal.Close() })
+
+	signal.mu.Lock()
+	locked := true
+
+	defer func() {
+		if locked {
+			signal.mu.Unlock()
+		}
+	}()
+
+	startExhaustTick(t, signal)
+
+	signal.subscribers["book"].Incoming <- &qpool.QValue[any]{
+		Value: market.BookLevelsDelta{
+			Symbol: "ALT/EUR",
+			Bids:   []market.BookLevel{{Price: 10, Volume: 100}},
+			Asks:   []market.BookLevel{{Price: 10.1, Volume: 90}},
+		},
+	}
+	signal.subscribers["trade"].Incoming <- &qpool.QValue[any]{
+		Value: trade.Data{Symbol: "ALT/EUR", Side: "buy", Price: 10},
+	}
+	signal.subscribers["tick"].Incoming <- &qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "ALT/EUR", Last: 10},
+	}
+
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		if len(signal.subscribers["book"].Incoming) == 0 &&
+			len(signal.subscribers["trade"].Incoming) == 0 &&
+			len(signal.subscribers["tick"].Incoming) == 0 {
+			signal.mu.Unlock()
+			locked = false
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatal("expected every channel to drain while handlers waited on shared state")
+}
+
 func BenchmarkExhaustPublishPulse(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -167,5 +217,51 @@ func BenchmarkExhaustPublishPulse(b *testing.B) {
 
 	for b.Loop() {
 		signal.publishPulse()
+	}
+}
+
+func BenchmarkExhaustTickConcurrentChannels(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewExhaust(ctx, pool)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		_ = signal.Tick()
+	}()
+
+	defer func() {
+		_ = signal.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			b.Fatal("timed out waiting for exhaust tick to close")
+		}
+	}()
+
+	book := &qpool.QValue[any]{
+		Value: market.BookLevelsDelta{
+			Symbol: "ALT/EUR",
+			Bids:   []market.BookLevel{{Price: 10, Volume: 100}},
+			Asks:   []market.BookLevel{{Price: 10.1, Volume: 90}},
+		},
+	}
+	tradeTick := &qpool.QValue[any]{
+		Value: trade.Data{Symbol: "ALT/EUR", Side: "buy", Price: 10},
+	}
+	priceTick := &qpool.QValue[any]{
+		Value: market.TickerRow{Symbol: "ALT/EUR", Last: 10},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal.subscribers["book"].Incoming <- book
+		signal.subscribers["trade"].Incoming <- tradeTick
+		signal.subscribers["tick"].Incoming <- priceTick
 	}
 }

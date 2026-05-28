@@ -181,6 +181,11 @@ export const createFinancialChart = async (
 		);
 	}
 
+	if (xValues.length === 0) {
+		const nowSec = Math.floor(Date.now() / 1000);
+		xAxis.visibleRange = new NumberRange(nowSec - 60, nowSec);
+	}
+
 	const candleDataSeries = new OhlcDataSeries(wasmContext, {
 		xValues,
 		openValues,

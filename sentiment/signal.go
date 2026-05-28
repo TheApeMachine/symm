@@ -2,6 +2,7 @@ package sentiment
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ Sentiment measures cross-section bullish breadth from ticker change percentages.
 type Sentiment struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -51,6 +53,9 @@ func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 
 	for _, channel := range []string{"symbols", "tick", "feedback", "measurements", "subscriptions"} {
 		sentiment.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+	}
+
+	for _, channel := range []string{"symbols", "tick", "feedback"} {
 		sentiment.subscribers[channel] = sentiment.broadcasts[channel].Subscribe("sentiment:"+channel, 128)
 	}
 
@@ -63,58 +68,126 @@ func (sentiment *Sentiment) State() engine.State { return engine.READY }
 func (sentiment *Sentiment) Tick() error {
 	errnie.Info("starting sentiment tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-sentiment.ctx.Done():
-			return sentiment.ctx.Err()
-		case value := <-sentiment.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				sentiment.symbols.Store(symbol, newSymbolState(*pair))
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := sentiment.requested.Load(symbol); seen {
-					continue
-				}
-
-				sentiment.pending = append(sentiment.pending, symbol)
-			}
-
-			sentiment.publishPulse()
-		case value := <-sentiment.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := sentiment.symbols.Load(row.Symbol)
-
-			if !ok || row.ChangePct == 0 {
-				break
-			}
-
-			state := raw.(*symbolState)
-			state.changePct = row.ChangePct
-
-			if row.Last > 0 {
-				state.last = row.Last
-			}
-
-			if row.Bid > 0 {
-				state.bid = row.Bid
-			}
-
-			if row.Ask > 0 {
-				state.ask = row.Ask
-			}
-
-			sentiment.publishPulse()
-		case value := <-sentiment.subscribers["feedback"].Incoming:
-			sentiment.Feedback(value.Value.(engine.PredictionFeedback))
-			sentiment.publishPulse()
+		case errs <- err:
+			sentiment.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-sentiment.ctx.Done():
+				return
+			case value, ok := <-sentiment.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("sentiment symbols channel closed"))
+					return
+				}
+
+				sentiment.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					sentiment.symbols.Store(symbol, newSymbolState(*pair))
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := sentiment.requested.Load(symbol); seen {
+						continue
+					}
+
+					sentiment.pending = append(sentiment.pending, symbol)
+				}
+
+				sentiment.publishPulse()
+				sentiment.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-sentiment.ctx.Done():
+				return
+			case value, ok := <-sentiment.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("sentiment tick channel closed"))
+					return
+				}
+
+				sentiment.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := sentiment.symbols.Load(row.Symbol)
+
+				if ok && row.ChangePct != 0 {
+					state := raw.(*symbolState)
+					state.changePct = row.ChangePct
+
+					if row.Last > 0 {
+						state.last = row.Last
+					}
+
+					if row.Bid > 0 {
+						state.bid = row.Bid
+					}
+
+					if row.Ask > 0 {
+						state.ask = row.Ask
+					}
+
+					sentiment.publishPulse()
+				}
+
+				sentiment.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-sentiment.ctx.Done():
+				return
+			case value, ok := <-sentiment.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("sentiment feedback channel closed"))
+					return
+				}
+
+				sentiment.mu.Lock()
+				sentiment.Feedback(value.Value.(engine.PredictionFeedback))
+				sentiment.publishPulse()
+				sentiment.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-sentiment.ctx.Done():
+		workers.Wait()
+		return sentiment.ctx.Err()
+	case <-done:
+		return sentiment.ctx.Err()
 	}
 }
 

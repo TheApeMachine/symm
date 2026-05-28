@@ -25,7 +25,6 @@ const positionEconomics = (
 	qty: number,
 	payload: WalletPayload,
 ) => {
-	const currency = payload.Currency ?? "EUR";
 	const entryPrice = payload.AvgEntry?.[base];
 	const markPrice = payload.Marks?.[symbol];
 
@@ -50,7 +49,7 @@ const positionEconomics = (
 };
 
 /*
-TradesDataProvider lists recent fills and open inventory for the aside panel.
+TradesDataProvider lists open inventory for the aside panel.
 */
 class TradesDataProviderImpl {
 	private rows: TradePanelRow[] = [];
@@ -82,14 +81,6 @@ class TradesDataProviderImpl {
 		for (const listener of this.listeners) {
 			listener();
 		}
-	}
-
-	private prepend(row: TradePanelRow) {
-		this.rows = [
-			row,
-			...this.rows.filter((entry) => entry.key !== row.key),
-		].slice(0, MAX_ROWS);
-		this.notify();
 	}
 
 	private refreshOpenMarks() {
@@ -168,23 +159,12 @@ class TradesDataProviderImpl {
 			});
 		}
 
-		const fills = this.rows.filter((row) => row.kind !== "open");
-		this.rows = [...openRows, ...fills].slice(0, MAX_ROWS);
+		this.rows = openRows.slice(0, MAX_ROWS);
 		this.notify();
 	}
 
-	ingestFill(fill: ExecutionFill) {
-		const notionalEur = fill.Qty * fill.Price;
-
-		this.prepend({
-			key: `${fill.OrderID}:${fill.Side}:${fill.Price}`,
-			kind: fill.Side === "sell" ? "exit" : "enter",
-			symbol: fill.Symbol,
-			side: fill.Side,
-			qty: fill.Qty,
-			price: fill.Price,
-			notionalEur,
-		});
+	ingestFill(_fill: ExecutionFill) {
+		return;
 	}
 
 	ingest(raw: unknown) {
@@ -199,6 +179,12 @@ class TradesDataProviderImpl {
 
 		this.syncInventory(raw);
 	}
+
+	reset() {
+		this.rows = [];
+		this.markFallback.clear();
+		this.notify();
+	}
 }
 
 const shared = new TradesDataProviderImpl();
@@ -209,4 +195,5 @@ export const TradesDataProvider = {
 	ingest: (raw: unknown) => shared.ingest(raw),
 	setMark: (symbol: string, markPrice: number) =>
 		shared.setMark(symbol, markPrice),
+	reset: () => shared.reset(),
 };

@@ -34,7 +34,11 @@ func newTestCrypto(t *testing.T, wallet *Wallet) (*Crypto, *price.Prediction, *q
 func startCryptoTick(t *testing.T, crypto *Crypto) {
 	t.Helper()
 
+	done := make(chan struct{})
+
 	go func() {
+		defer close(done)
+
 		if err := crypto.Tick(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("crypto tick: %v", err)
 		}
@@ -42,7 +46,12 @@ func startCryptoTick(t *testing.T, crypto *Crypto) {
 
 	t.Cleanup(func() {
 		crypto.cancel()
-		time.Sleep(10 * time.Millisecond)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for crypto tick to close")
+		}
 	})
 }
 
@@ -52,14 +61,22 @@ func waitForCryptoPulse(t *testing.T, crypto *Crypto, want int) {
 	deadline := time.Now().Add(time.Second)
 
 	for time.Now().Before(deadline) {
-		if crypto.pulses >= want {
+		crypto.mu.Lock()
+		pulses := crypto.pulses
+		crypto.mu.Unlock()
+
+		if pulses >= want {
 			return
 		}
 
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	t.Fatalf("expected %d score pulses, got %d", want, crypto.pulses)
+	crypto.mu.Lock()
+	pulses := crypto.pulses
+	crypto.mu.Unlock()
+
+	t.Fatalf("expected %d score pulses, got %d", want, pulses)
 }
 
 func TestCryptoScoresMeasurement(t *testing.T) {
@@ -667,12 +684,17 @@ func TestCryptoDefendsRestingEntry(t *testing.T) {
 
 	waitForCryptoPulse(t, crypto, 1)
 
-	if _, ok := crypto.restingEntries["BTC/EUR"]; ok {
+	crypto.mu.Lock()
+	_, resting := crypto.restingEntries["BTC/EUR"]
+	reservedEUR := wallet.ReservedEUR
+	crypto.mu.Unlock()
+
+	if resting {
 		t.Fatal("expected resting entry to be canceled")
 	}
 
-	if wallet.ReservedEUR > 0 {
-		t.Fatalf("expected reservation released, reserved=%v", wallet.ReservedEUR)
+	if reservedEUR > 0 {
+		t.Fatalf("expected reservation released, reserved=%v", reservedEUR)
 	}
 }
 
@@ -758,14 +780,23 @@ func TestCryptoEnterPaper(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 
 	for time.Now().Before(deadline) {
-		if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
+		crypto.mu.Lock()
+		inventory := wallet.Inventory["BTC"]
+		crypto.mu.Unlock()
+
+		if inventory > config.System.LiveInventoryEpsilon {
 			return
 		}
 
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	t.Fatalf("expected paper entry inventory, got %v resting=%v", wallet.Inventory["BTC"], crypto.restingEntries)
+	crypto.mu.Lock()
+	inventory := wallet.Inventory["BTC"]
+	restingCount := len(crypto.restingEntries)
+	crypto.mu.Unlock()
+
+	t.Fatalf("expected paper entry inventory, got %v resting=%v", inventory, restingCount)
 }
 
 func TestCryptoCloseCancelsContext(t *testing.T) {
@@ -806,16 +837,23 @@ func TestCryptoHandleExitPaper(t *testing.T) {
 		},
 	})
 
+	crypto.mu.Lock()
 	balanceBefore := wallet.Balance
+	crypto.mu.Unlock()
 
 	time.Sleep(50 * time.Millisecond)
 
-	if wallet.Inventory["BTC"] > config.System.LiveInventoryEpsilon {
-		t.Fatalf("expected flat BTC inventory, got %v", wallet.Inventory["BTC"])
+	crypto.mu.Lock()
+	inventory := wallet.Inventory["BTC"]
+	balance := wallet.Balance
+	crypto.mu.Unlock()
+
+	if inventory > config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected flat BTC inventory, got %v", inventory)
 	}
 
-	if wallet.Balance <= balanceBefore {
-		t.Fatalf("expected balance increase after exit, before=%v after=%v", balanceBefore, wallet.Balance)
+	if balance <= balanceBefore {
+		t.Fatalf("expected balance increase after exit, before=%v after=%v", balanceBefore, balance)
 	}
 }
 

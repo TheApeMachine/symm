@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -44,6 +45,7 @@ PumpDump detects pre-pump microstructure from Kraken book, trade, and ticker str
 type PumpDump struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -89,168 +91,244 @@ func (pumpdump *PumpDump) State() engine.State {
 func (pumpdump *PumpDump) Tick() error {
 	errnie.Info("starting pumpdump tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-pumpdump.ctx.Done():
-			return pumpdump.ctx.Err()
-		case value := <-pumpdump.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
+		case errs <- err:
+			pumpdump.cancel()
+		default:
+		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-pumpdump.ctx.Done():
+				return
+			case value, ok := <-pumpdump.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("pumpdump symbols channel closed"))
+					return
 				}
 
-				state := NewPumpSymbol(*pair)
-				pumpdump.symbols.Store(symbol, state)
-
-				pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-					median, err := WarmHourlyVolumeBaseline(*pair)
-
-					if err != nil {
-						if err != ErrNoVolumeData {
-							errnie.Error(err)
-						}
-
-						return nil, err
+				pumpdump.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
 					}
 
-					state.SetMedianHourlyVolume(median)
+					state := NewPumpSymbol(*pair)
+					pumpdump.symbols.Store(symbol, state)
 
-					return nil, nil
-				})
-			}
+					pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
+						median, err := WarmHourlyVolumeBaseline(*pair)
 
-			pumpdump.publishPulse()
-		case value := <-pumpdump.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := pumpdump.symbols.Load(row.Symbol)
+						if err != nil {
+							if err != ErrNoVolumeData {
+								errnie.Error(err)
+							}
 
-			if !ok {
-				break
-			}
+							return nil, err
+						}
 
-			state := raw.(*PumpSymbol)
+						state.SetMedianHourlyVolume(median)
 
-			if row.Last <= 0 {
-				break
-			}
-
-			state.lastPrice = row.Last
-			state.dailyQuoteVol = row.Volume * row.Last
-
-			if row.Bid > 0 {
-				state.bid = row.Bid
-			}
-
-			if row.Ask > 0 {
-				state.ask = row.Ask
-			}
-
-			if _, seen := pumpdump.requested.Load(row.Symbol); seen {
-				break
-			}
-
-			volumes := make([]float64, 0)
-
-			pumpdump.symbols.Range(func(key, value any) bool {
-				symbolState := value.(*PumpSymbol)
-
-				if symbolState.dailyQuoteVol > 0 {
-					volumes = append(volumes, symbolState.dailyQuoteVol)
+						return nil, nil
+					})
 				}
 
-				return true
-			})
-
-			if len(volumes) < 2 {
-				break
+				pumpdump.publishPulse()
+				pumpdump.mu.Unlock()
 			}
-
-			median := numeric.PercentileSorted(numeric.CopySorted(volumes), 0.5)
-
-			if state.dailyQuoteVol < median {
-				break
-			}
-
-			pumpdump.requested.Store(row.Symbol, struct{}{})
-			pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
-
-			pumpdump.publishPulse()
-		case value := <-pumpdump.subscribers["trade"].Incoming:
-			tick := value.Value.(trade.Data)
-			raw, ok := pumpdump.symbols.Load(tick.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*PumpSymbol)
-			state.FeedTradeVolume(tick.Timestamp, tick.Qty, state.lastPrice)
-
-			if _, seen := pumpdump.requested.Load(tick.Symbol); !seen {
-				fastBaseline := state.fastVolumeBaseline.Value()
-				mediumBaseline := state.mediumVolumeBaseline.Value()
-
-				if fastBaseline <= 0 || mediumBaseline <= 0 {
-					break
-				}
-
-				if state.fastVolumeWindow.Sum() > fastBaseline ||
-					state.mediumVolumeWindow.Sum() > mediumBaseline {
-					pumpdump.requested.Store(tick.Symbol, struct{}{})
-					pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
-				}
-			}
-
-			if tick.Side == "buy" {
-				state.buyPressure = 1
-				break
-			}
-
-			if tick.Side == "sell" {
-				state.buyPressure = -1
-			}
-
-			pumpdump.publishPulse()
-		case value := <-pumpdump.subscribers["feedback"].Incoming:
-			pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
-			pumpdump.publishPulse()
-		case value := <-pumpdump.subscribers["book"].Incoming:
-			delta := value.Value.(market.BookLevelsDelta)
-			raw, ok := pumpdump.symbols.Load(delta.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*PumpSymbol)
-
-			if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-				break
-			}
-
-			bid := delta.Bids[0].Price
-			ask := delta.Asks[0].Price
-			mid := (bid + ask) / 2
-
-			state.bid = bid
-			state.ask = ask
-
-			if state.lastPrice <= 0 && mid > 0 {
-				state.lastPrice = mid
-			}
-
-			if mid > 0 {
-				state.spreadBPS = (ask - bid) / mid * 10000
-			}
-
-			total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-			if total > 0 {
-				state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
-			}
-
-			pumpdump.publishPulse()
 		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-pumpdump.ctx.Done():
+				return
+			case value, ok := <-pumpdump.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("pumpdump tick channel closed"))
+					return
+				}
+
+				pumpdump.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := pumpdump.symbols.Load(row.Symbol)
+
+				if ok && row.Last > 0 {
+					state := raw.(*PumpSymbol)
+					state.lastPrice = row.Last
+					state.dailyQuoteVol = row.Volume * row.Last
+
+					if row.Bid > 0 {
+						state.bid = row.Bid
+					}
+
+					if row.Ask > 0 {
+						state.ask = row.Ask
+					}
+
+					if _, seen := pumpdump.requested.Load(row.Symbol); !seen {
+						volumes := make([]float64, 0)
+
+						pumpdump.symbols.Range(func(key, value any) bool {
+							symbolState := value.(*PumpSymbol)
+
+							if symbolState.dailyQuoteVol > 0 {
+								volumes = append(volumes, symbolState.dailyQuoteVol)
+							}
+
+							return true
+						})
+
+						if len(volumes) >= 2 {
+							median := numeric.PercentileSorted(numeric.CopySorted(volumes), 0.5)
+
+							if state.dailyQuoteVol >= median {
+								pumpdump.requested.Store(row.Symbol, struct{}{})
+								pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+								pumpdump.publishPulse()
+							}
+						}
+					}
+				}
+
+				pumpdump.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-pumpdump.ctx.Done():
+				return
+			case value, ok := <-pumpdump.subscribers["trade"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("pumpdump trade channel closed"))
+					return
+				}
+
+				pumpdump.mu.Lock()
+				tick := value.Value.(trade.Data)
+				raw, ok := pumpdump.symbols.Load(tick.Symbol)
+
+				if ok {
+					state := raw.(*PumpSymbol)
+					state.FeedTradeVolume(tick.Timestamp, tick.Qty, state.lastPrice)
+
+					if _, seen := pumpdump.requested.Load(tick.Symbol); !seen {
+						fastBaseline := state.fastVolumeBaseline.Value()
+						mediumBaseline := state.mediumVolumeBaseline.Value()
+
+						if fastBaseline > 0 && mediumBaseline > 0 &&
+							(state.fastVolumeWindow.Sum() > fastBaseline ||
+								state.mediumVolumeWindow.Sum() > mediumBaseline) {
+							pumpdump.requested.Store(tick.Symbol, struct{}{})
+							pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+						}
+					}
+
+					if tick.Side == "buy" {
+						state.buyPressure = 1
+					}
+
+					if tick.Side == "sell" {
+						state.buyPressure = -1
+						pumpdump.publishPulse()
+					}
+				}
+
+				pumpdump.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-pumpdump.ctx.Done():
+				return
+			case value, ok := <-pumpdump.subscribers["book"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("pumpdump book channel closed"))
+					return
+				}
+
+				pumpdump.mu.Lock()
+				delta := value.Value.(market.BookLevelsDelta)
+				raw, ok := pumpdump.symbols.Load(delta.Symbol)
+
+				if ok && len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+					state := raw.(*PumpSymbol)
+					bid := delta.Bids[0].Price
+					ask := delta.Asks[0].Price
+					mid := (bid + ask) / 2
+
+					state.bid = bid
+					state.ask = ask
+
+					if state.lastPrice <= 0 && mid > 0 {
+						state.lastPrice = mid
+					}
+
+					if mid > 0 {
+						state.spreadBPS = (ask - bid) / mid * 10000
+					}
+
+					total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+					if total > 0 {
+						state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+					}
+
+					pumpdump.publishPulse()
+				}
+
+				pumpdump.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-pumpdump.ctx.Done():
+				return
+			case value, ok := <-pumpdump.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("pumpdump feedback channel closed"))
+					return
+				}
+
+				pumpdump.mu.Lock()
+				pumpdump.Feedback(value.Value.(engine.PredictionFeedback))
+				pumpdump.publishPulse()
+				pumpdump.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-pumpdump.ctx.Done():
+		workers.Wait()
+		return pumpdump.ctx.Err()
+	case <-done:
+		return pumpdump.ctx.Err()
 	}
 }
 

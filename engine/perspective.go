@@ -14,7 +14,9 @@ const (
 type MarketRegime uint8
 
 const (
-	RegimeDead MarketRegime = iota
+	RegimeUnknown MarketRegime = iota
+	RegimeDead
+	RegimeChoppy
 	RegimeTrending
 	RegimeBullish
 	RegimeBearish

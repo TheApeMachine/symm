@@ -16,10 +16,8 @@ func opportunityRunway(samples []causalSample, lastElapsed time.Duration) time.D
 	}
 
 	current := samples[len(samples)-1]
-	speed := math.Abs(current.priceVelocity)
-	typical := numeric.MedianAbsolute(extract(samples, func(sample causalSample) float64 {
-		return sample.priceVelocity
-	}))
+	speed := math.Abs(current.value(priceVelocityNode))
+	typical := numeric.MedianAbsolute(extract(samples, priceVelocityNode))
 
 	if speed <= 0 {
 		return lastElapsed

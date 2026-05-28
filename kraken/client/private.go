@@ -24,6 +24,7 @@ type PrivateClient struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	err         error
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -86,32 +87,73 @@ func (privateClient *PrivateClient) State() engine.State {
 }
 
 func (privateClient *PrivateClient) Tick() error {
-	select {
-	case <-privateClient.ctx.Done():
-		privateClient.cancel()
-		return privateClient.ctx.Err()
-	case value := <-privateClient.subscribers["orders"].Incoming:
-		switch request := value.Value.(type) {
-		case order.Request:
-			request.Params.Token = privateClient.token
-
-			if err := privateClient.conn.WriteJSON(request); err != nil {
-				return errnie.Error(err)
-			}
-		case order.CancelRequest:
-			request.Params.Token = privateClient.token
-
-			if err := privateClient.conn.WriteJSON(request); err != nil {
-				return errnie.Error(err)
-			}
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
+		select {
+		case errs <- err:
+			privateClient.cancel()
 		default:
-			return errnie.Error(fmt.Errorf("invalid order request: %v", value.Value))
 		}
+	}
 
-		return nil
-	default:
-		errnie.Warn("this just feels like, spinning plates, system=private client")
-		return nil
+	workers.Go(func() {
+		for {
+			select {
+			case <-privateClient.ctx.Done():
+				return
+			case value, ok := <-privateClient.subscribers["orders"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("private client orders channel closed"))
+					return
+				}
+
+				privateClient.mu.Lock()
+
+				switch request := value.Value.(type) {
+				case order.Request:
+					request.Params.Token = privateClient.token
+
+					if err := privateClient.conn.WriteJSON(request); err != nil {
+						privateClient.mu.Unlock()
+						fail(err)
+						return
+					}
+				case order.CancelRequest:
+					request.Params.Token = privateClient.token
+
+					if err := privateClient.conn.WriteJSON(request); err != nil {
+						privateClient.mu.Unlock()
+						fail(err)
+						return
+					}
+				default:
+					privateClient.mu.Unlock()
+					fail(fmt.Errorf("invalid order request: %v", value.Value))
+					return
+				}
+
+				privateClient.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-privateClient.ctx.Done():
+		workers.Wait()
+		return privateClient.ctx.Err()
+	case <-done:
+		return privateClient.ctx.Err()
 	}
 }
 
@@ -184,13 +226,19 @@ func (privateClient *PrivateClient) ReadLoop() {
 					case <-pingStop:
 						return
 					case <-ticker.C:
+						privateClient.mu.Lock()
+
 						if privateClient.conn == nil {
+							privateClient.mu.Unlock()
 							return
 						}
 
 						if err := privateClient.conn.WriteJSON(map[string]string{"method": "ping"}); err != nil {
+							privateClient.mu.Unlock()
 							return
 						}
+
+						privateClient.mu.Unlock()
 					}
 				}
 			}()

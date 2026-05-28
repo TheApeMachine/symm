@@ -206,12 +206,7 @@ func (state *CausalSymbol) buildSample(
 		}
 	}
 
-	sample := causalSample{
-		macroMomentum: macroMomentum,
-		liquidity:     liquidity,
-		localFlow:     localFlow,
-		priceVelocity: velocity,
-	}
+	sample := newCausalSample(macroMomentum, liquidity, localFlow, velocity)
 
 	if !state.hasPrior {
 		state.lastAt = now

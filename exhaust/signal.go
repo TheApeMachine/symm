@@ -2,6 +2,8 @@ package exhaust
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -20,6 +22,7 @@ Exhaust tracks book/trade microstructure decay and advises exit urgency.
 type Exhaust struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -54,76 +57,145 @@ func (exhaust *Exhaust) State() engine.State { return engine.READY }
 func (exhaust *Exhaust) Tick() error {
 	errnie.Info("starting exhaust tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-exhaust.ctx.Done():
-			return exhaust.ctx.Err()
-		case value := <-exhaust.subscribers["book"].Incoming:
-			delta := value.Value.(market.BookLevelsDelta)
-
-			bidDepth := 0.0
-			askDepth := 0.0
-
-			for _, level := range delta.Bids {
-				bidDepth += level.Volume
-			}
-
-			for _, level := range delta.Asks {
-				askDepth += level.Volume
-			}
-
-			spreadBPS := 0.0
-			imbalance := 0.0
-
-			if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
-				bid := delta.Bids[0].Price
-				ask := delta.Asks[0].Price
-				mid := (bid + ask) / 2
-
-				if mid > 0 {
-					spreadBPS = (ask - bid) / mid * 10000
-				}
-
-				total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-				if total > 0 {
-					imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
-				}
-			}
-
-			exhaust.history.observe(
-				delta.Symbol,
-				bidDepth,
-				askDepth,
-				bidDepth+askDepth,
-				spreadBPS,
-				0,
-				imbalance,
-				0,
-			)
-
-			exhaust.publishPulse()
-		case value := <-exhaust.subscribers["trade"].Incoming:
-			tick := value.Value.(trade.Data)
-			sign := -1.0
-
-			if tick.Side == "buy" {
-				sign = 1.0
-			}
-
-			exhaust.history.observe(
-				tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
-			)
-
-			exhaust.publishPulse()
-		case value := <-exhaust.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			exhaust.history.observe(
-				row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
-			)
-
-			exhaust.publishPulse()
+		case errs <- err:
+			exhaust.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-exhaust.ctx.Done():
+				return
+			case value, ok := <-exhaust.subscribers["book"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("exhaust book channel closed"))
+					return
+				}
+
+				exhaust.mu.Lock()
+				delta := value.Value.(market.BookLevelsDelta)
+
+				bidDepth := 0.0
+				askDepth := 0.0
+
+				for _, level := range delta.Bids {
+					bidDepth += level.Volume
+				}
+
+				for _, level := range delta.Asks {
+					askDepth += level.Volume
+				}
+
+				spreadBPS := 0.0
+				imbalance := 0.0
+
+				if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+					bid := delta.Bids[0].Price
+					ask := delta.Asks[0].Price
+					mid := (bid + ask) / 2
+
+					if mid > 0 {
+						spreadBPS = (ask - bid) / mid * 10000
+					}
+
+					total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+					if total > 0 {
+						imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+					}
+				}
+
+				exhaust.history.observe(
+					delta.Symbol,
+					bidDepth,
+					askDepth,
+					bidDepth+askDepth,
+					spreadBPS,
+					0,
+					imbalance,
+					0,
+				)
+
+				exhaust.publishPulse()
+				exhaust.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-exhaust.ctx.Done():
+				return
+			case value, ok := <-exhaust.subscribers["trade"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("exhaust trade channel closed"))
+					return
+				}
+
+				exhaust.mu.Lock()
+				tick := value.Value.(trade.Data)
+				sign := -1.0
+
+				if tick.Side == "buy" {
+					sign = 1.0
+				}
+
+				exhaust.history.observe(
+					tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
+				)
+
+				exhaust.publishPulse()
+				exhaust.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-exhaust.ctx.Done():
+				return
+			case value, ok := <-exhaust.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("exhaust tick channel closed"))
+					return
+				}
+
+				exhaust.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				exhaust.history.observe(
+					row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
+				)
+
+				exhaust.publishPulse()
+				exhaust.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-exhaust.ctx.Done():
+		workers.Wait()
+		return exhaust.ctx.Err()
+	case <-done:
+		return exhaust.ctx.Err()
 	}
 }
 

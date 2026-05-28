@@ -3,12 +3,12 @@ package trader
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/price"
 )
@@ -19,18 +19,16 @@ Crypto combines measurements into perspectives, records predictions, and enters 
 type Crypto struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
+	err              error
 	pool             *qpool.Q
 	broadcasts       map[string]*qpool.BroadcastGroup
 	subscribers      map[string]*qpool.Subscriber
-	ui               *qpool.BroadcastGroup
 	wallet           *Wallet
-	predictions      *price.Prediction
+	perspectives     []*Perspective
+	predictions      []*engine.Prediction
 	portfolioRisk    *PortfolioRisk
 	kellySizer       *KellySizer
 	sourceConfidence map[string]*adaptive.EMA
-	restingEntries   map[string]restingEntry
-	pulses           int
-	seq              int
 }
 
 func NewCrypto(
@@ -48,28 +46,17 @@ func NewCrypto(
 		broadcasts:       make(map[string]*qpool.BroadcastGroup),
 		subscribers:      make(map[string]*qpool.Subscriber),
 		wallet:           wallet,
-		predictions:      predictions,
+		perspectives:     make([]*Perspective, 0),
+		predictions:      make([]*engine.Prediction, 0),
 		portfolioRisk:    NewPortfolioRisk(),
 		kellySizer:       NewKellySizer(engine.DefaultCalibrationParams()),
 		sourceConfidence: make(map[string]*adaptive.EMA),
-		restingEntries:   make(map[string]restingEntry),
 	}
 
-	crypto.subscribers["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond).
-		Subscribe("crypto:measurements", 128)
-
-	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
-		Subscribe("crypto:exits", 128)
-
-	crypto.subscribers["feedback"] = pool.CreateBroadcastGroup("feedback", 10*time.Millisecond).
-		Subscribe("crypto:feedback", 128)
-
-	crypto.subscribers["tick"] = pool.CreateBroadcastGroup("tick", 10*time.Millisecond).
-		Subscribe("crypto:tick", 128)
-
-	crypto.broadcasts["confidence"] = pool.CreateBroadcastGroup("confidence", 10*time.Millisecond)
-	crypto.broadcasts["wallet"] = pool.CreateBroadcastGroup("wallet", 10*time.Millisecond)
-	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	for _, channel := range []string{"measurements", "ui"} {
+		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	if errnie.Error(errnie.Require(map[string]any{
 		"ctx":         ctx,
@@ -84,69 +71,98 @@ func NewCrypto(
 	return crypto
 }
 
-func (crypto *Crypto) Start() error {
-	crypto.sendWallet()
-	return nil
-}
-
-/*
-ResendWallet publishes the current wallet snapshot after the UI hub is listening.
-*/
-func (crypto *Crypto) ResendWallet() {
-	crypto.sendWallet()
-}
-
 func (crypto *Crypto) State() engine.State {
 	return engine.READY
 }
 
 func (crypto *Crypto) Tick() error {
-	for {
-		if crypto.tryScorePendingMeasurements() {
-			continue
+	var (
+		wg          sync.WaitGroup
+		measurement engine.Measurement
+		prediction  engine.Prediction
+	)
+
+	wg.Go(func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case raw, ok := <-crypto.subscribers["measurements"].Incoming:
+				if !ok {
+					errnie.Error(fmt.Errorf("crypto measurements channel closed"))
+				}
+
+				if measurement, ok = raw.Value.(engine.Measurement); !ok {
+					errnie.Error(fmt.Errorf("invalid measurement: %v", raw))
+					return
+				}
+
+				// Check if ground truth has caught up with any predictions
+				if len(crypto.predictions) > 0 {
+					due := crypto.predictions[len(crypto.predictions)-1]
+
+					if due.DueAt.Before(time.Now()) {
+						lead := leadMeasurement(due.Perspective.Measurements)
+
+						if len(measurement.Pairs) > 0 && len(lead.Pairs) > 0 &&
+							measurement.Pairs[0].Wsname == lead.Pairs[0].Wsname {
+							anchor := anchorPrice(lead)
+							lastPrice := anchorPrice(measurement)
+
+							if anchor > 0 && lastPrice > 0 {
+								due.ActualReturn = float64(due.Direction) * (lastPrice - anchor) / anchor
+								due.Err = due.ExpectedReturn - due.ActualReturn
+
+								crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: map[string]any{
+									"event":       "feedback",
+									"perspective": due.Perspective.Measurements[0].Pairs[0].Wsname,
+									"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+								}})
+							}
+						}
+
+						crypto.predictions = crypto.predictions[:len(crypto.predictions)-1]
+					}
+				}
+
+				// Check if the last perspective is ready
+				if len(crypto.perspectives) > 0 {
+					if !crypto.perspectives[len(
+						crypto.perspectives,
+					)-1].Ready {
+						// Keep adding measurements to the last perspective until it is ready
+						crypto.perspectives[len(
+							crypto.perspectives,
+						)-1].AddMeasurement(measurement)
+						continue
+					}
+				}
+
+				// Create a new perspective and add the measurement to it
+				crypto.perspectives = append(
+					crypto.perspectives, NewPerspective(
+						[]engine.Measurement{measurement},
+					),
+				)
+
+				// Try to predict the perspective
+				if prediction, crypto.err = crypto.perspectives[len(
+					crypto.perspectives,
+				)-1].Predict(); crypto.err != nil {
+					errnie.Error(crypto.err)
+					return
+				}
+
+				crypto.predictions = append(
+					crypto.predictions, &prediction,
+				)
+			}
 		}
+	})
 
-		select {
-		case <-crypto.ctx.Done():
-			crypto.cancel()
-			return crypto.ctx.Err()
-		case value := <-crypto.subscribers["feedback"].Incoming:
-			feedback, ok := value.Value.(engine.PredictionFeedback)
+	wg.Wait()
 
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid prediction feedback: %v", value.Value))
-				break
-			}
-
-			crypto.kellySizer.ApplyFeedback(feedback)
-		case value := <-crypto.subscribers["measurements"].Incoming:
-			if err := crypto.ingestMeasurement(value.Value); err != nil {
-				errnie.Error(err)
-			}
-		case value := <-crypto.subscribers["exits"].Incoming:
-			exit, ok := value.Value.(engine.Exit)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid exit data: %v", value.Value))
-				break
-			}
-
-			if err := crypto.handleExit(exit); err != nil {
-				errnie.Error(err)
-			}
-		case value := <-crypto.subscribers["tick"].Incoming:
-			row, ok := value.Value.(market.TickerRow)
-
-			if !ok {
-				errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
-				break
-			}
-
-			if err := crypto.observeTicker(row); err != nil {
-				errnie.Error(err)
-			}
-		}
-	}
+	return nil
 }
 
 func (crypto *Crypto) Close() error {

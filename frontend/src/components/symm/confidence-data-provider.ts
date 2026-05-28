@@ -6,6 +6,16 @@ export type ConfidenceRow = {
 
 type SourceSink = (confidence: number) => void;
 
+const sourceAliases: Record<string, string> = {
+	basis: "liquidity",
+	pump: "pumpdump",
+	depth: "depthflow",
+	sent: "sentiment",
+};
+
+const normalizeSource = (source: string): string =>
+	sourceAliases[source] ?? source;
+
 export const isConfidenceRow = (raw: unknown): raw is ConfidenceRow => {
 	if (typeof raw !== "object" || raw === null) {
 		return false;
@@ -24,16 +34,17 @@ class ConfidenceDataProviderImpl {
 	private latest = new Map<string, number>();
 
 	registerSource(source: string, sink: SourceSink) {
-		this.sinks.set(source, sink);
-
-		const confidence = this.latest.get(source);
+		const normalized = normalizeSource(source);
+		const confidence = this.latest.get(normalized);
 
 		if (confidence !== undefined) {
 			sink(confidence);
 		}
 
+		this.sinks.set(normalized, sink);
+
 		return () => {
-			this.sinks.delete(source);
+			this.sinks.delete(normalized);
 		};
 	}
 
@@ -46,8 +57,15 @@ class ConfidenceDataProviderImpl {
 			return;
 		}
 
-		this.latest.set(raw.source, raw.confidence);
-		this.sinks.get(raw.source)?.(raw.confidence);
+		const source = normalizeSource(raw.source);
+
+		this.latest.set(source, raw.confidence);
+		this.sinks.get(source)?.(raw.confidence);
+	}
+
+	reset() {
+		this.sinks.clear();
+		this.latest.clear();
 	}
 }
 
@@ -58,4 +76,5 @@ export const ConfidenceDataProvider = {
 		shared.registerSource(source, sink),
 	snapshot: () => shared.snapshot(),
 	ingest: (raw: unknown) => shared.ingest(raw),
+	reset: () => shared.reset(),
 };

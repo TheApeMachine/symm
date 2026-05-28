@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ Fluid applies book-flow dynamics per symbol and streams field_row updates to ui.
 type Fluid struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -62,124 +64,216 @@ func (fluid *Fluid) State() engine.State { return engine.READY }
 func (fluid *Fluid) Tick() error {
 	errnie.Info("starting fluid tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-fluid.ctx.Done():
-			return fluid.ctx.Err()
-		case value := <-fluid.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := fluid.requested.Load(symbol); seen {
-					continue
-				}
-
-				fluid.pending = append(fluid.pending, symbol)
-			}
-
-			fluid.publishPulse()
-		case value := <-fluid.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := fluid.symbols.Load(row.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*FluidSymbol)
-			state.changePct = row.ChangePct
-			state.volume = row.Volume
-
-			if row.Last > 0 {
-				state.last = row.Last
-			}
-
-			if row.Bid > 0 {
-				state.bid = row.Bid
-			}
-
-			if row.Ask > 0 {
-				state.ask = row.Ask
-			}
-
-			fluid.publishPulse()
-		case value := <-fluid.subscribers["book"].Incoming:
-			delta := value.Value.(market.BookLevelsDelta)
-			raw, ok := fluid.symbols.Load(delta.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*FluidSymbol)
-
-			if delta.BidOK {
-				state.bids = delta.Bids
-			}
-
-			if delta.AskOK {
-				state.asks = delta.Asks
-			}
-
-			state.FeedBook(delta)
-
-			if len(state.bids) > 0 && len(state.asks) > 0 {
-				bid := state.bids[0].Price
-				ask := state.asks[0].Price
-				mid := (bid + ask) / 2
-
-				if mid > 0 {
-					state.spreadBPS = (ask - bid) / mid * 10000
-				}
-			}
-
-			if _, seen := fluid.requested.Load(delta.Symbol); seen {
-				break
-			}
-
-			if len(state.bids) == 0 || len(state.asks) == 0 {
-				break
-			}
-
-			fluid.requested.Store(delta.Symbol, struct{}{})
-			fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
-
-			fluid.publishPulse()
-		case value := <-fluid.subscribers["trade"].Incoming:
-			tick := value.Value.(trade.Data)
-			raw, ok := fluid.symbols.Load(tick.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*FluidSymbol)
-			state.FeedTrade(tick.Timestamp, tick.Qty)
-			sign := -1.0
-
-			if tick.Side == "buy" {
-				sign = 1.0
-			}
-
-			state.buyPressure = errnie.Does(func() (float64, error) {
-				return state.pressure.Next(0, sign)
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
-
-			fluid.publishPulse()
-		case value := <-fluid.subscribers["feedback"].Incoming:
-			fluid.Feedback(value.Value.(engine.PredictionFeedback))
-			fluid.publishPulse()
+		case errs <- err:
+			fluid.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-fluid.ctx.Done():
+				return
+			case value, ok := <-fluid.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("fluid symbols channel closed"))
+					return
+				}
+
+				fluid.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := fluid.requested.Load(symbol); seen {
+						continue
+					}
+
+					fluid.pending = append(fluid.pending, symbol)
+				}
+
+				fluid.publishPulse()
+				fluid.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-fluid.ctx.Done():
+				return
+			case value, ok := <-fluid.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("fluid tick channel closed"))
+					return
+				}
+
+				fluid.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := fluid.symbols.Load(row.Symbol)
+
+				if ok {
+					state := raw.(*FluidSymbol)
+					state.changePct = row.ChangePct
+					state.volume = row.Volume
+
+					if row.Last > 0 {
+						state.last = row.Last
+					}
+
+					if row.Bid > 0 {
+						state.bid = row.Bid
+					}
+
+					if row.Ask > 0 {
+						state.ask = row.Ask
+					}
+
+					fluid.publishPulse()
+				}
+
+				fluid.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-fluid.ctx.Done():
+				return
+			case value, ok := <-fluid.subscribers["book"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("fluid book channel closed"))
+					return
+				}
+
+				fluid.mu.Lock()
+				delta := value.Value.(market.BookLevelsDelta)
+				raw, ok := fluid.symbols.Load(delta.Symbol)
+
+				if ok {
+					state := raw.(*FluidSymbol)
+
+					if delta.BidOK {
+						state.bids = delta.Bids
+					}
+
+					if delta.AskOK {
+						state.asks = delta.Asks
+					}
+
+					state.FeedBook(delta)
+
+					if len(state.bids) > 0 && len(state.asks) > 0 {
+						bid := state.bids[0].Price
+						ask := state.asks[0].Price
+						mid := (bid + ask) / 2
+
+						if mid > 0 {
+							state.spreadBPS = (ask - bid) / mid * 10000
+						}
+					}
+
+					if _, seen := fluid.requested.Load(delta.Symbol); !seen &&
+						len(state.bids) > 0 && len(state.asks) > 0 {
+						fluid.requested.Store(delta.Symbol, struct{}{})
+						fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+						fluid.publishPulse()
+					}
+				}
+
+				fluid.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-fluid.ctx.Done():
+				return
+			case value, ok := <-fluid.subscribers["trade"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("fluid trade channel closed"))
+					return
+				}
+
+				fluid.mu.Lock()
+				tick := value.Value.(trade.Data)
+				raw, ok := fluid.symbols.Load(tick.Symbol)
+
+				if ok {
+					state := raw.(*FluidSymbol)
+					state.FeedTrade(tick.Timestamp, tick.Qty)
+					sign := -1.0
+
+					if tick.Side == "buy" {
+						sign = 1.0
+					}
+
+					state.buyPressure = errnie.Does(func() (float64, error) {
+						return state.pressure.Next(0, sign)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
+
+					fluid.publishPulse()
+				}
+
+				fluid.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-fluid.ctx.Done():
+				return
+			case value, ok := <-fluid.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("fluid feedback channel closed"))
+					return
+				}
+
+				fluid.mu.Lock()
+				fluid.Feedback(value.Value.(engine.PredictionFeedback))
+				fluid.publishPulse()
+				fluid.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-fluid.ctx.Done():
+		workers.Wait()
+		return fluid.ctx.Err()
+	case <-done:
+		return fluid.ctx.Err()
 	}
 }
 

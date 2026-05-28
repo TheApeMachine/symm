@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ DepthFlow detects multi-level order-book imbalance and depth-weighted flow press
 type DepthFlow struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -69,109 +71,198 @@ func (depthflow *DepthFlow) State() engine.State {
 func (depthflow *DepthFlow) Tick() error {
 	errnie.Info("starting depthflow tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-depthflow.ctx.Done():
-			return depthflow.ctx.Err()
-		case value := <-depthflow.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				depthflow.symbols.Store(symbol, NewDepthSymbol(*pair))
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := depthflow.requested.Load(symbol); seen {
-					continue
-				}
-
-				depthflow.pending = append(depthflow.pending, symbol)
-			}
-
-			depthflow.publishPulse()
-		case value := <-depthflow.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := depthflow.symbols.Load(row.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*DepthSymbol)
-			state.FeedTicker(row)
-
-			if _, seen := depthflow.requested.Load(row.Symbol); seen || row.ChangePct == 0 {
-				break
-			}
-
-			depthflow.requested.Store(row.Symbol, struct{}{})
-			depthflow.broadcasts["subscriptions"].Send(
-				&qpool.QValue[any]{Value: []string{row.Symbol}},
-			)
-
-			depthflow.publishPulse()
-		case value := <-depthflow.subscribers["book"].Incoming:
-			delta := value.Value.(market.BookLevelsDelta)
-			raw, ok := depthflow.symbols.Load(delta.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*DepthSymbol)
-
-			if delta.BidOK {
-				state.bids = delta.Bids
-			}
-
-			if delta.AskOK {
-				state.asks = delta.Asks
-			}
-
-			if _, seen := depthflow.requested.Load(delta.Symbol); seen {
-				break
-			}
-
-			if len(state.bids) == 0 || len(state.asks) == 0 {
-				break
-			}
-
-			depthflow.requested.Store(delta.Symbol, struct{}{})
-			depthflow.broadcasts["subscriptions"].Send(
-				&qpool.QValue[any]{Value: []string{delta.Symbol}},
-			)
-
-			depthflow.publishPulse()
-		case value := <-depthflow.subscribers["trade"].Incoming:
-			tick := value.Value.(trade.Data)
-			raw, ok := depthflow.symbols.Load(tick.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*DepthSymbol)
-			sign := -1.0
-
-			if tick.Side == "buy" {
-				sign = 1.0
-			}
-
-			state.buyPressure = errnie.Does(func() (float64, error) {
-				return state.pressure.Next(0, sign)
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
-
-			depthflow.publishPulse()
-		case value := <-depthflow.subscribers["feedback"].Incoming:
-			depthflow.Feedback(value.Value.(engine.PredictionFeedback))
-			depthflow.publishPulse()
+		case errs <- err:
+			depthflow.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-depthflow.ctx.Done():
+				return
+			case value, ok := <-depthflow.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("depthflow symbols channel closed"))
+					return
+				}
+
+				depthflow.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					depthflow.symbols.Store(symbol, NewDepthSymbol(*pair))
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := depthflow.requested.Load(symbol); seen {
+						continue
+					}
+
+					depthflow.pending = append(depthflow.pending, symbol)
+				}
+
+				depthflow.publishPulse()
+				depthflow.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-depthflow.ctx.Done():
+				return
+			case value, ok := <-depthflow.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("depthflow tick channel closed"))
+					return
+				}
+
+				depthflow.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := depthflow.symbols.Load(row.Symbol)
+
+				if ok {
+					state := raw.(*DepthSymbol)
+					state.FeedTicker(row)
+
+					if _, seen := depthflow.requested.Load(row.Symbol); !seen && row.ChangePct != 0 {
+						depthflow.requested.Store(row.Symbol, struct{}{})
+						depthflow.broadcasts["subscriptions"].Send(
+							&qpool.QValue[any]{Value: []string{row.Symbol}},
+						)
+						depthflow.publishPulse()
+					}
+				}
+
+				depthflow.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-depthflow.ctx.Done():
+				return
+			case value, ok := <-depthflow.subscribers["book"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("depthflow book channel closed"))
+					return
+				}
+
+				depthflow.mu.Lock()
+				delta := value.Value.(market.BookLevelsDelta)
+				raw, ok := depthflow.symbols.Load(delta.Symbol)
+
+				if ok {
+					state := raw.(*DepthSymbol)
+
+					if delta.BidOK {
+						state.bids = delta.Bids
+					}
+
+					if delta.AskOK {
+						state.asks = delta.Asks
+					}
+
+					if _, seen := depthflow.requested.Load(delta.Symbol); !seen &&
+						len(state.bids) > 0 && len(state.asks) > 0 {
+						depthflow.requested.Store(delta.Symbol, struct{}{})
+						depthflow.broadcasts["subscriptions"].Send(
+							&qpool.QValue[any]{Value: []string{delta.Symbol}},
+						)
+						depthflow.publishPulse()
+					}
+				}
+
+				depthflow.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-depthflow.ctx.Done():
+				return
+			case value, ok := <-depthflow.subscribers["trade"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("depthflow trade channel closed"))
+					return
+				}
+
+				depthflow.mu.Lock()
+				tick := value.Value.(trade.Data)
+				raw, ok := depthflow.symbols.Load(tick.Symbol)
+
+				if ok {
+					state := raw.(*DepthSymbol)
+					sign := -1.0
+
+					if tick.Side == "buy" {
+						sign = 1.0
+					}
+
+					state.buyPressure = errnie.Does(func() (float64, error) {
+						return state.pressure.Next(0, sign)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
+
+					depthflow.publishPulse()
+				}
+
+				depthflow.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-depthflow.ctx.Done():
+				return
+			case value, ok := <-depthflow.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("depthflow feedback channel closed"))
+					return
+				}
+
+				depthflow.mu.Lock()
+				depthflow.Feedback(value.Value.(engine.PredictionFeedback))
+				depthflow.publishPulse()
+				depthflow.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-depthflow.ctx.Done():
+		workers.Wait()
+		return depthflow.ctx.Err()
+	case <-done:
+		return depthflow.ctx.Err()
 	}
 }
 

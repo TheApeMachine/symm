@@ -1,19 +1,10 @@
 import type { EnginePulseEvent } from "#/lib/symm/events";
-import {
-	isEnginePulseEvent,
-	isPredictionFeedback,
-	type PredictionFeedback,
-} from "#/lib/symm/events";
-import {
-	isSignalSource,
-	type SignalSource,
-} from "#/lib/symm/signal-confidence";
+import { isEnginePulseEvent } from "#/lib/symm/events";
 
-export type PredictionSeriesKind = "predicted" | "actual" | "error";
+export type PredictionSeriesKind = "average" | "prediction" | "error";
 
 export type PredictionReading = {
 	kind: PredictionSeriesKind;
-	source: SignalSource;
 	x: number;
 	value: number;
 };
@@ -21,8 +12,6 @@ export type PredictionReading = {
 type ReadingSink = (reading: PredictionReading) => void;
 
 const MAX_BUFFER = 1200;
-
-const returnToPercent = (value: number) => value * 100;
 
 const timeSec = (value: unknown): number | undefined => {
 	if (typeof value !== "string" || value.length === 0) {
@@ -38,15 +27,13 @@ const timeSec = (value: unknown): number | undefined => {
 	return parsed / 1000;
 };
 
-const forecastKey = (source: string, symbol: string, due: number) =>
-	`${source}|${symbol}|${due}`;
-
 class PredictionsDataProviderImpl {
 	private sink: ReadingSink | null = null;
 	private pulse: EnginePulseEvent | undefined;
-	private openForecasts = new Set<string>();
 	private buffer: PredictionReading[] = [];
 	private listeners = new Set<() => void>();
+	private previousPulseSec: number | undefined;
+	private pulseHorizonSec: number | undefined;
 
 	registerSink(sink: ReadingSink) {
 		this.sink = sink;
@@ -90,85 +77,36 @@ class PredictionsDataProviderImpl {
 		this.sink?.(reading);
 	}
 
-	private emit(
+	private emitPoint(
 		kind: PredictionSeriesKind,
-		source: string,
-		due: number,
+		x: number,
 		value: number,
 	) {
-		if (
-			!isSignalSource(source) ||
-			!Number.isFinite(value) ||
-			!Number.isFinite(due)
-		) {
+		if (!Number.isFinite(value) || !Number.isFinite(x)) {
 			return;
 		}
 
 		this.push({
 			kind,
-			source,
-			x: due,
-			value: returnToPercent(value),
+			x,
+			value,
 		});
 	}
 
-	ingestFeedback(raw: unknown) {
-		if (!isPredictionFeedback(raw)) {
+	private updateHorizon(pulseSec: number) {
+		if (this.previousPulseSec === undefined) {
+			this.previousPulseSec = pulseSec;
 			return;
 		}
 
-		const predictedAt =
-			timeSec(raw.DueAt) ?? timeSec(raw.PredictedAt) ?? timeSec(raw.SettledAt);
-		const settledAt =
-			timeSec(raw.SettledAt) ?? timeSec(raw.DueAt) ?? timeSec(raw.PredictedAt);
+		const observedHorizonSec = pulseSec - this.previousPulseSec;
+		this.previousPulseSec = pulseSec;
 
-		if (predictedAt === undefined || settledAt === undefined) {
+		if (!Number.isFinite(observedHorizonSec) || observedHorizonSec <= 0) {
 			return;
 		}
 
-		const key = forecastKey(raw.Source, raw.Symbol, predictedAt);
-		const hadOpen = this.openForecasts.has(key);
-
-		this.openForecasts.delete(key);
-
-		if (!hadOpen) {
-			this.emit("predicted", raw.Source, predictedAt, raw.PredictedReturn);
-		}
-
-		this.emit("actual", raw.Source, settledAt, raw.ActualReturn);
-		this.emit("error", raw.Source, settledAt, raw.Error);
-	}
-
-	ingestPrediction(raw: unknown) {
-		if (typeof raw !== "object" || raw === null) {
-			return;
-		}
-
-		const row = raw as Record<string, unknown>;
-
-		if (row.event !== "prediction") {
-			return;
-		}
-
-		if (typeof row.source !== "string" || typeof row.value !== "number") {
-			return;
-		}
-
-		const symbol = typeof row.symbol === "string" ? row.symbol : "";
-		const due = timeSec(row.due_at) ?? timeSec(row.ts);
-
-		if (due === undefined) {
-			return;
-		}
-
-		const key = forecastKey(row.source, symbol, due);
-
-		if (this.openForecasts.has(key)) {
-			return;
-		}
-
-		this.openForecasts.add(key);
-		this.emit("predicted", row.source, due, row.value);
+		this.pulseHorizonSec = observedHorizonSec;
 	}
 
 	ingestPulse(raw: unknown) {
@@ -178,6 +116,37 @@ class PredictionsDataProviderImpl {
 
 		this.pulse = raw;
 		this.notify();
+
+		const pulseSec = timeSec(raw.ts);
+
+		if (pulseSec === undefined) {
+			return;
+		}
+
+		const averagePrediction = raw.avg_prediction;
+
+		if (typeof averagePrediction === "number") {
+			this.emitPoint("average", pulseSec, averagePrediction);
+		}
+
+		if (typeof raw.avg_error === "number") {
+			this.emitPoint("error", pulseSec, raw.avg_error);
+		}
+
+		this.updateHorizon(pulseSec);
+
+		if (
+			this.pulseHorizonSec === undefined ||
+			typeof averagePrediction !== "number"
+		) {
+			return;
+		}
+
+		this.emitPoint(
+			"prediction",
+			pulseSec + this.pulseHorizonSec,
+			averagePrediction,
+		);
 	}
 
 	ingest(raw: unknown) {
@@ -185,13 +154,15 @@ class PredictionsDataProviderImpl {
 			this.ingestPulse(raw);
 			return;
 		}
+	}
 
-		if (isPredictionFeedback(raw)) {
-			this.ingestFeedback(raw);
-			return;
-		}
-
-		this.ingestPrediction(raw);
+	reset() {
+		this.sink = null;
+		this.pulse = undefined;
+		this.buffer = [];
+		this.previousPulseSec = undefined;
+		this.pulseHorizonSec = undefined;
+		this.notify();
 	}
 }
 
@@ -202,6 +173,5 @@ export const PredictionsDataProvider = {
 	subscribe: (listener: () => void) => shared.subscribe(listener),
 	snapshot: () => shared.snapshot(),
 	ingest: (raw: unknown) => shared.ingest(raw),
+	reset: () => shared.reset(),
 };
-
-export type { PredictionFeedback };

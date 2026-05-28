@@ -19,12 +19,7 @@ func TestBackdoorBlocksMacroConfounder(t *testing.T) {
 		flow := macro*50 + float64(index%5)*0.2
 		velocity := macro*40 + flow*0.2
 
-		samples = append(samples, causalSample{
-			macroMomentum: macro,
-			liquidity:     liquidity,
-			localFlow:     flow,
-			priceVelocity: velocity,
-		})
+		samples = append(samples, newCausalSample(macro, liquidity, flow, velocity))
 	}
 
 	association := associationEffect(samples)
@@ -43,12 +38,12 @@ func TestCounterfactualUpliftPositive(t *testing.T) {
 	samples := make([]causalSample, 0, minCausalHistory)
 
 	for index := 0; index < minCausalHistory; index++ {
-		samples = append(samples, causalSample{
-			macroMomentum: float64(index%4) * 0.005,
-			liquidity:     1 + float64(index%3)*0.1,
-			localFlow:     float64(index) * 0.5,
-			priceVelocity: float64(index) * 0.1,
-		})
+		samples = append(samples, newCausalSample(
+			float64(index%4)*0.005,
+			1+float64(index%3)*0.1,
+			float64(index)*0.5,
+			float64(index)*0.1,
+		))
 	}
 
 	coef, ok := fitStructural(samples)
@@ -87,24 +82,19 @@ func TestSymbolEvaluateIntervention(t *testing.T) {
 	state := NewCausalSymbol(asset.Pair{Wsname: "ALT/EUR"}, engine.DefaultCalibrationParams())
 
 	for index := 0; index < minCausalHistory; index++ {
-		state.samples = append(state.samples, causalSample{
-			macroMomentum: float64(index%4) * 0.005,
-			liquidity:     1 + float64(index%3)*0.15,
-			localFlow:     float64(index) * 0.4,
-			priceVelocity: float64(index) * 0.08,
-		})
+		state.samples = append(state.samples, newCausalSample(
+			float64(index%4)*0.005,
+			1+float64(index%3)*0.15,
+			float64(index)*0.4,
+			float64(index)*0.08,
+		))
 	}
 
 	for _, effect := range []float64{0.1, 0.2, 0.3, 0.4} {
 		state.recordIntervention(effect)
 	}
 
-	sample := causalSample{
-		macroMomentum: 0.015,
-		liquidity:     2.0,
-		localFlow:     2.0,
-		priceVelocity: 0.2,
-	}
+	sample := newCausalSample(0.015, 2.0, 2.0, 0.2)
 
 	confidence, reason := state.evaluate(sample)
 
@@ -123,9 +113,9 @@ func TestSymbolEvaluateIntervention(t *testing.T) {
 
 func TestAssociationEffectReturnsPearson(t *testing.T) {
 	samples := []causalSample{
-		{localFlow: 1, priceVelocity: 2},
-		{localFlow: 2, priceVelocity: 4},
-		{localFlow: 3, priceVelocity: 6},
+		newCausalSample(0, 0, 1, 2),
+		newCausalSample(0, 0, 2, 4),
+		newCausalSample(0, 0, 3, 6),
 	}
 
 	correlation := associationEffect(samples)
@@ -137,9 +127,9 @@ func TestAssociationEffectReturnsPearson(t *testing.T) {
 
 func TestOpportunityRunway(t *testing.T) {
 	samples := []causalSample{
-		{priceVelocity: 0.01},
-		{priceVelocity: 0.02},
-		{priceVelocity: 0.08},
+		newCausalSample(0, 0, 0, 0.01),
+		newCausalSample(0, 0, 0, 0.02),
+		newCausalSample(0, 0, 0, 0.08),
 	}
 
 	convey.Convey("Given excess velocity versus history", t, func() {
@@ -156,12 +146,12 @@ func BenchmarkBackdoorFlowEffect(b *testing.B) {
 	samples := make([]causalSample, 0, causalHistoryCap)
 
 	for index := 0; index < causalHistoryCap; index++ {
-		samples = append(samples, causalSample{
-			macroMomentum: float64(index%5) * 0.01,
-			liquidity:     1 + float64(index%4)*0.2,
-			localFlow:     float64(index) * 0.3,
-			priceVelocity: float64(index) * 0.05,
-		})
+		samples = append(samples, newCausalSample(
+			float64(index%5)*0.01,
+			1+float64(index%4)*0.2,
+			float64(index)*0.3,
+			float64(index)*0.05,
+		))
 	}
 
 	b.ReportAllocs()
@@ -177,12 +167,12 @@ func BenchmarkFitStructural(b *testing.B) {
 	samples := make([]causalSample, 0, causalHistoryCap)
 
 	for index := 0; index < causalHistoryCap; index++ {
-		samples = append(samples, causalSample{
-			macroMomentum: float64(index%5) * 0.01,
-			liquidity:     1 + float64(index%4)*0.2,
-			localFlow:     float64(index) * 0.3,
-			priceVelocity: float64(index) * 0.05,
-		})
+		samples = append(samples, newCausalSample(
+			float64(index%5)*0.01,
+			1+float64(index%4)*0.2,
+			float64(index)*0.3,
+			float64(index)*0.05,
+		))
 	}
 
 	b.ReportAllocs()

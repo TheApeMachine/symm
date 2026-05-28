@@ -2,6 +2,7 @@ package causal
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ DAG: MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as backdoor c
 type Causal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -66,95 +68,181 @@ func (causal *Causal) State() engine.State { return engine.READY }
 func (causal *Causal) Tick() error {
 	errnie.Info("starting causal tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-causal.ctx.Done():
-			return causal.ctx.Err()
-		case value := <-causal.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				causal.symbols.Store(symbol, NewCausalSymbol(*pair, causal.calibration))
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := causal.requested.Load(symbol); seen {
-					continue
-				}
-
-				causal.pending = append(causal.pending, symbol)
-			}
-
-			causal.publishPulse()
-		case value := <-causal.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := causal.symbols.Load(row.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*CausalSymbol)
-			state.FeedTicker(row)
-
-			if _, seen := causal.requested.Load(row.Symbol); seen || state.changePct == 0 {
-				break
-			}
-
-			causal.requested.Store(row.Symbol, struct{}{})
-			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
-
-			causal.publishPulse()
-		case value := <-causal.subscribers["trade"].Incoming:
-			tick := value.Value.(trade.Data)
-			raw, ok := causal.symbols.Load(tick.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*CausalSymbol)
-			state.FeedTrade(tick)
-
-			if _, seen := causal.requested.Load(tick.Symbol); seen {
-				break
-			}
-
-			causal.requested.Store(tick.Symbol, struct{}{})
-			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
-
-			causal.publishPulse()
-		case value := <-causal.subscribers["book"].Incoming:
-			delta := value.Value.(market.BookLevelsDelta)
-			raw, ok := causal.symbols.Load(delta.Symbol)
-
-			if !ok {
-				break
-			}
-
-			state := raw.(*CausalSymbol)
-			state.FeedBook(delta)
-
-			if _, seen := causal.requested.Load(delta.Symbol); seen {
-				break
-			}
-
-			if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-				break
-			}
-
-			causal.requested.Store(delta.Symbol, struct{}{})
-			causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
-
-			causal.publishPulse()
-		case value := <-causal.subscribers["feedback"].Incoming:
-			causal.Feedback(value.Value.(engine.PredictionFeedback))
-			causal.publishPulse()
+		case errs <- err:
+			causal.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-causal.ctx.Done():
+				return
+			case value, ok := <-causal.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("causal symbols channel closed"))
+					return
+				}
+
+				causal.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					causal.symbols.Store(symbol, NewCausalSymbol(*pair, causal.calibration))
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := causal.requested.Load(symbol); seen {
+						continue
+					}
+
+					causal.pending = append(causal.pending, symbol)
+				}
+
+				causal.publishPulse()
+				causal.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-causal.ctx.Done():
+				return
+			case value, ok := <-causal.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("causal tick channel closed"))
+					return
+				}
+
+				causal.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := causal.symbols.Load(row.Symbol)
+
+				if ok {
+					state := raw.(*CausalSymbol)
+					state.FeedTicker(row)
+
+					if _, seen := causal.requested.Load(row.Symbol); !seen && state.changePct != 0 {
+						causal.requested.Store(row.Symbol, struct{}{})
+						causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
+						causal.publishPulse()
+					}
+				}
+
+				causal.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-causal.ctx.Done():
+				return
+			case value, ok := <-causal.subscribers["trade"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("causal trade channel closed"))
+					return
+				}
+
+				causal.mu.Lock()
+				tick := value.Value.(trade.Data)
+				raw, ok := causal.symbols.Load(tick.Symbol)
+
+				if ok {
+					state := raw.(*CausalSymbol)
+					state.FeedTrade(tick)
+
+					if _, seen := causal.requested.Load(tick.Symbol); !seen {
+						causal.requested.Store(tick.Symbol, struct{}{})
+						causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
+						causal.publishPulse()
+					}
+				}
+
+				causal.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-causal.ctx.Done():
+				return
+			case value, ok := <-causal.subscribers["book"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("causal book channel closed"))
+					return
+				}
+
+				causal.mu.Lock()
+				delta := value.Value.(market.BookLevelsDelta)
+				raw, ok := causal.symbols.Load(delta.Symbol)
+
+				if ok {
+					state := raw.(*CausalSymbol)
+					state.FeedBook(delta)
+
+					if _, seen := causal.requested.Load(delta.Symbol); !seen &&
+						len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+						causal.requested.Store(delta.Symbol, struct{}{})
+						causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
+						causal.publishPulse()
+					}
+				}
+
+				causal.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-causal.ctx.Done():
+				return
+			case value, ok := <-causal.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("causal feedback channel closed"))
+					return
+				}
+
+				causal.mu.Lock()
+				causal.Feedback(value.Value.(engine.PredictionFeedback))
+				causal.publishPulse()
+				causal.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-causal.ctx.Done():
+		workers.Wait()
+		return causal.ctx.Err()
+	case <-done:
+		return causal.ctx.Err()
 	}
 }
 

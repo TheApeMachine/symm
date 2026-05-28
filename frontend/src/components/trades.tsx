@@ -4,12 +4,19 @@ import {
 } from "#/lib/symm/use-dashboard-data";
 import { SidebarSection } from "./sidebar-section";
 import { EmptyHint } from "./hint";
-import { formatEur } from "#/lib/utils";
 
 const formatSignedEur = (value: number) => {
 	const prefix = value >= 0 ? "+" : "−";
 
-	return `${prefix}${formatEur(Math.abs(value))}`;
+	return `${prefix}€${Math.abs(value).toFixed(4)}`;
+};
+
+const formatPrice = (value: number) => {
+	if (Math.abs(value) < 1) {
+		return value.toFixed(4);
+	}
+
+	return value.toFixed(2);
 };
 
 const pnlClass = (value: number | undefined) => {
@@ -29,7 +36,7 @@ export const TradesPanel = () => {
 			{rows.length === 0 ? (
 				<EmptyHint
 					connected={connected}
-					message={connected ? "No open positions or fills yet" : undefined}
+					message={connected ? "No open positions" : undefined}
 				/>
 			) : (
 				<ul className="space-y-1 px-2 pb-2">
@@ -40,17 +47,13 @@ export const TradesPanel = () => {
 						>
 							<div className="flex items-center justify-between gap-2">
 								<span className="font-medium">
-									{row.kind === "exit"
-										? "EXIT"
-										: row.kind === "open"
-											? "OPEN"
-											: "ENTER"}{" "}
-									{row.symbol}
+									OPEN {row.symbol}
 								</span>
 								{row.kind === "open" && row.unrealizedEur !== undefined ? (
 									<span
 										className={`tabular-nums font-medium ${pnlClass(row.unrealizedEur)}`}
 									>
+										<span className="mr-1 text-(--dash-muted)">P/L</span>
 										{formatSignedEur(row.unrealizedEur)}
 									</span>
 								) : null}
@@ -61,24 +64,18 @@ export const TradesPanel = () => {
 										{row.qty.toFixed(6)}
 									</span>
 								) : null}
-								{row.kind !== "open" && row.notionalEur !== undefined ? (
-									<span className="tabular-nums text-(--dash-text)">
-										{formatEur(row.notionalEur)}
-									</span>
-								) : null}
 							</div>
 							<div className="mt-0.5 flex items-center justify-between gap-2 text-(--dash-muted)">
 								<span>
-									{row.side ?? row.kind}
-									{row.price !== undefined ? ` @ ${row.price.toFixed(2)}` : ""}
-									{row.kind === "open" && row.entryPrice !== undefined
-										? ` · entry ${row.entryPrice.toFixed(2)}`
+									open
+									{row.entryPrice !== undefined
+										? ` · entry ${formatPrice(row.entryPrice)}`
 										: ""}
-									{row.kind === "open" && row.markPrice !== undefined
-										? ` · mark ${row.markPrice.toFixed(2)}`
+									{row.markPrice !== undefined
+										? ` · mark ${formatPrice(row.markPrice)}`
 										: ""}
 								</span>
-								{row.kind === "open" && row.unrealizedPct !== undefined ? (
+								{row.unrealizedPct !== undefined ? (
 									<span
 										className={`tabular-nums ${pnlClass(row.unrealizedEur)}`}
 									>
@@ -86,9 +83,7 @@ export const TradesPanel = () => {
 										{Math.abs(row.unrealizedPct).toFixed(2)}%
 									</span>
 								) : null}
-								{row.kind === "open" &&
-								row.unrealizedPct === undefined &&
-								row.qty !== undefined ? (
+								{row.unrealizedPct === undefined && row.qty !== undefined ? (
 									<span className="tabular-nums">inventory</span>
 								) : null}
 							</div>

@@ -11,12 +11,7 @@ func TestFitNonLinearStructural(t *testing.T) {
 
 	for index := 0; index < minCausalHistory; index++ {
 		flow := float64(index) / float64(minCausalHistory)
-		samples = append(samples, causalSample{
-			macroMomentum: 0.1,
-			liquidity:     1,
-			localFlow:     flow,
-			priceVelocity: flow * flow,
-		})
+		samples = append(samples, newCausalSample(0.1, 1, flow, flow*flow))
 	}
 
 	convey.Convey("Given non-linear flow-velocity samples", t, func() {
@@ -34,12 +29,7 @@ func TestKernelBackdoorFlowEffect(t *testing.T) {
 
 	for index := 0; index < minCausalHistory; index++ {
 		flow := float64(index+1) / 10
-		samples = append(samples, causalSample{
-			macroMomentum: 0.05,
-			liquidity:     1,
-			localFlow:     flow,
-			priceVelocity: flow * 1.5,
-		})
+		samples = append(samples, newCausalSample(0.05, 1, flow, flow*1.5))
 	}
 
 	effect := kernelBackdoorFlowEffect(samples)

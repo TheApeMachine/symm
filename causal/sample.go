@@ -5,15 +5,36 @@ const (
 	minCausalHistory = 12
 )
 
+const (
+	macroMomentumNode = iota
+	liquidityNode
+	localFlowNode
+	priceVelocityNode
+	causalNodeCount
+)
+
 /*
-causalSample is one DAG observation:
-MacroMomentum → PriceVelocity ← LocalFlow, with Liquidity as a backdoor node.
+causalSample is one indexed DAG observation supplied by the financial adapter.
 */
 type causalSample struct {
-	macroMomentum float64
-	liquidity     float64
-	localFlow     float64
-	priceVelocity float64
+	nodes [causalNodeCount]float64
+}
+
+func newCausalSample(
+	macroMomentum, liquidity, localFlow, priceVelocity float64,
+) causalSample {
+	return causalSample{
+		nodes: [causalNodeCount]float64{
+			macroMomentumNode: macroMomentum,
+			liquidityNode:     liquidity,
+			localFlowNode:     localFlow,
+			priceVelocityNode: priceVelocity,
+		},
+	}
+}
+
+func (sample causalSample) value(node int) float64 {
+	return sample.nodes[node]
 }
 
 func bookLiquidity(spreadBPS, batchVolume float64) float64 {

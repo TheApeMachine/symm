@@ -192,7 +192,7 @@ func TestHubReplaysWalletSnapshotOnConnect(t *testing.T) {
 	}
 }
 
-func TestHubConnectDuringBroadcast(t *testing.T) {
+func TestHubReplaysWalletAndMarksOnReconnect(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -205,20 +205,95 @@ func TestHubConnectDuringBroadcast(t *testing.T) {
 
 	t.Cleanup(func() { _ = hub.Close() })
 
-	hub.walletSnap.Store(map[string]any{
+	server := httptest.NewServer(httpHandler(hub))
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+	firstConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+
+	if err != nil {
+		t.Fatalf("dial first websocket: %v", err)
+	}
+
+	if frame := readSocketJSON(t, firstConn); frame["event"] != "hello" {
+		t.Fatalf("expected first hello, got %#v", frame)
+	}
+
+	hub.broadcasts["wallet"].Send(&qpool.QValue[any]{Value: map[string]any{
 		"Currency":    "EUR",
-		"Balance":     200.0,
-		"ReservedEUR": 0.0,
+		"Balance":     193.69,
+		"ReservedEUR": 6.31,
 		"FeePct":      0.26,
-		"Inventory":   map[string]float64{"BTC": 0.01},
+		"Inventory":   map[string]float64{"H": 26.29},
+		"AvgEntry":    map[string]float64{"H": 0.24},
+		"Marks":       map[string]float64{"H/EUR": 0.245},
+	}})
+	hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":  "mark",
+		"ts":     "2026-05-28T01:10:10Z",
+		"symbol": "H/EUR",
+		"price":  0.245,
+	}})
+
+	seenWallet := false
+	seenMark := false
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) && (!seenWallet || !seenMark) {
+		frame := readSocketJSON(t, firstConn)
+		seenWallet = seenWallet || frame["Balance"] == 193.69
+		seenMark = seenMark || frame["event"] == "mark" && frame["symbol"] == "H/EUR"
+	}
+
+	if !seenWallet || !seenMark {
+		t.Fatalf("expected first connection to receive wallet=%v mark=%v", seenWallet, seenMark)
+	}
+
+	if err := firstConn.Close(); err != nil {
+		t.Fatalf("close first websocket: %v", err)
+	}
+
+	secondConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+
+	if err != nil {
+		t.Fatalf("dial second websocket: %v", err)
+	}
+
+	t.Cleanup(func() { _ = secondConn.Close() })
+
+	if frame := readSocketJSON(t, secondConn); frame["event"] != "hello" {
+		t.Fatalf("expected reconnect hello, got %#v", frame)
+	}
+
+	wallet := readUntilSocketJSON(t, secondConn, func(frame map[string]any) bool {
+		return frame["Balance"] == 193.69
 	})
 
-	for _, source := range []string{"hawkes", "fluid", "pumpdump"} {
-		hub.confidenceSnaps.Store(source, map[string]any{
-			"source":     source,
-			"confidence": 0.42,
-		})
+	if wallet["ReservedEUR"] != 6.31 {
+		t.Fatalf("expected reserved EUR replay, got %#v", wallet["ReservedEUR"])
 	}
+
+	mark := readUntilSocketJSON(t, secondConn, func(frame map[string]any) bool {
+		return frame["event"] == "mark" && frame["symbol"] == "H/EUR"
+	})
+
+	if mark["price"] != 0.245 {
+		t.Fatalf("expected H/EUR mark replay, got %#v", mark["price"])
+	}
+}
+
+func TestHubConnectDuringBroadcast(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	hub, err := NewHub(ctx, pool)
+
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+
+	t.Cleanup(func() { _ = hub.Close() })
 
 	server := httptest.NewServer(httpHandler(hub))
 	t.Cleanup(server.Close)
@@ -299,4 +374,48 @@ func httpHandler(hub *Hub) http.Handler {
 	mux.HandleFunc("/ws", hub.handleWS)
 
 	return mux
+}
+
+func readSocketJSON(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+
+	_, payload, err := conn.ReadMessage()
+
+	if err != nil {
+		t.Fatalf("read websocket frame: %v", err)
+	}
+
+	var frame map[string]any
+
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		t.Fatalf("decode websocket frame: %v", err)
+	}
+
+	return frame
+}
+
+func readUntilSocketJSON(
+	t *testing.T,
+	conn *websocket.Conn,
+	matches func(map[string]any) bool,
+) map[string]any {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		frame := readSocketJSON(t, conn)
+
+		if matches(frame) {
+			return frame
+		}
+	}
+
+	t.Fatal("timed out waiting for matching websocket frame")
+
+	return nil
 }

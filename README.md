@@ -25,7 +25,7 @@ type System interface {
 }
 ```
 
-Each `Tick` is the system's long-running event loop. It blocks on that system's subscribed broadcast groups, handles messages as they arrive, and returns only on shutdown or a fatal input error. Systems do not call each other; they **publish and subscribe** through named broadcast groups on a shared `qpool.Q`.
+Each `Tick` is the system's long-running event loop. It starts one goroutine per subscribed broadcast channel, so `tick`, `book`, `trade`, `feedback`, and control channels drain independently instead of competing inside one multiplexed select. Systems do not call each other; they **publish and subscribe** through named broadcast groups on a shared `qpool.Q`.
 
 Registration lives in `cmd/root.go`. `Booter.Boot` starts the UI hub, refreshes wallet publishers, schedules one `Tick` worker per registered system with `ScheduleFast`, and waits for those workers to exit. Throughput comes from the concurrent workers and broadcast queues, not from repeated booter rounds.
 
@@ -46,11 +46,11 @@ Registration lives in `cmd/root.go`. `Booter.Boot` starts the UI hub, refreshes 
 ```
 
 1. **Public client** maintains the WebSocket, parses Kraken v2 frames, and fans out `tick`, `trade`, `book`, `symbols`, `ohlc` (and `ui` events like `candle_bar`).
-2. **Signals** consume those channels, maintain per-symbol state, and when their criteria fire they emit `engine.Measurement` values on the **`measurements`** group.
+2. **Signals** consume those channels through per-channel subscriber readers, maintain per-symbol state, and when their criteria fire they emit `engine.Measurement` values on the **`measurements`** group.
 3. **`price.Prediction`** subscribes to **`tick`** only to mark prices for settlement; it does not trade.
 4. **`trader.Crypto`** scores **`measurements`**, applies **`feedback`**, handles **`exits`**, observes **`tick`** marks, and publishes `engine_pulse` on **`ui`**.
 
-The UI hub (`ui.Hub`) mirrors `wallet`, `confidence`, `feedback`, `ohlc`, `executions`, `orders`, `exits`, and `ui` to browsers at `ws://127.0.0.1:8765/ws` (configurable via `SYMM_UI_ADDR`). Live marks for open positions and every Kraken-subscribed symbol are pushed from `kraken/client/public.go` as `ui` events (`event: mark`, `symbol`, `price`) on ticker, trade, and OHLC close; `trader.Crypto` also rebroadcasts `wallet.Marks` (from `price.Prediction.LastPrice`) on each wallet update.
+The UI hub (`ui.Hub`) mirrors `wallet`, `confidence`, `feedback`, `ohlc`, `executions`, `orders`, `exits`, and `ui` to browsers at `ws://127.0.0.1:8765/ws` (configurable via `SYMM_UI_ADDR`). Each mirrored channel has its own reader goroutine; websocket writes are serialized per browser connection. On reconnect the hub writes the latest wallet, confidence, field, candle, and mark snapshots directly to the new socket before live streaming continues. Live marks for open positions and every Kraken-subscribed symbol are pushed from `kraken/client/public.go` as `ui` events (`event: mark`, `symbol`, `price`) on ticker, trade, and OHLC close; `trader.Crypto` also rebroadcasts `wallet.Marks` (from `price.Prediction.LastPrice`) on each wallet update.
 
 ---
 
@@ -163,7 +163,7 @@ Until a `(perspectiveSource, symbol)` has settled returns, forecasts use the obs
 
 `Prediction.Tick` runs as its own long-lived worker, ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
 
-Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics.
+Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics. When the trader has enough symbol return history, the feedback bucket is the derived market regime (`choppy`, `bullish`, `bearish`, etc.); otherwise it preserves the signal's source-local regime label.
 
 Predicted return formula:
 
@@ -206,11 +206,11 @@ On each `measurements` message (coalescing any others already queued):
 1. Build perspectives and call `RecordPerspective` once for each symbol/perspective bucket.
 2. Track the best net opportunity at the perspective level: `engine.FuseMeasurements` produces perspective confidence, `price.Prediction` produces the perspective forecast, and edge is `perspective predicted return - entry friction`. Every positive-return perspective can support an opportunity immediately; there is no elapsed warmup gate.
 3. If wallet and risk capacity remain and net edge is positive after observed fee/spread friction, **enter** on that symbol using the perspective’s lead executable measurement `Last` / `Bid` / `Ask`.
-4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses `prediction` UI events (predicted at `DueAt`) and `PredictionFeedback` (actual and error at `SettledAt`) — not forecast-cycle indices.
+4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses aggregate `engine_pulse.avg_prediction` and `engine_pulse.avg_error`; it does not plot per-symbol forecast segments.
 
 Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace.
 
-Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies fractional Kelly sizing from settled feedback and fused confidence, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). There is no fixed global slot count; cash, Kelly sizing, optional deploy cap, drawdown, spread/slippage, and correlation decide capacity. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
+Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies a portfolio risk dampener to executable confidence/edge, applies fractional Kelly sizing from settled feedback and fused confidence, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). The dampener is derived from remaining drawdown capacity and the candidate's systemic covariance eigenmode against open symbols; it leaves the underlying signal forecast recorded while suppressing entries when portfolio state makes the standalone signal unsafe. There is no fixed global slot count; cash, Kelly sizing, optional deploy cap, drawdown, spread/slippage, and correlation decide capacity. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 
 On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
 
@@ -255,7 +255,7 @@ Use `make` targets, not bare `go test ./...`, unless you pass `-ldflags=-checkli
 
 ## Numeric layer
 
-Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMAs, windows, peaks, fences, learned forecast ratios)—not magic constants in the trader. Hawkes in particular fits a bivariate self-exciting model via constrained MLE (`hawkes/`), with timelines and decay helpers under `numeric/timeline` and `numeric/decay`.
+Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMAs, windows, peaks, fences, learned forecast ratios, robust median/MAD scaling)—not magic constants in the trader. Hawkes in particular fits a bivariate self-exciting model via constrained MLE (`hawkes/`), with timelines and decay helpers under `numeric/timeline` and `numeric/decay`. The causal package maps financial observations into indexed DAG nodes before regression, backdoor adjustment, kernels, and counterfactual scoring; the math layer works on node indexes rather than finance-named fields.
 
 ---
 
@@ -264,7 +264,7 @@ Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` (EMA
 - **A running booter should have one long-lived worker per registered system.** If a `Tick` returns unexpectedly, inspect that system's subscriber input and fatal error path.
 - **Zero `engine_pulse` measurements** usually means no signal passed `Measure()` yet, or measurements are not reaching `Crypto`'s subscriber.
 - **`avg_prediction` and `forecast_symbols` stay at zero** only when no perspective has positive derived return support yet. Observed symbol movement can supply initial scale; settled feedback then replaces it with perspective-local forward-return scale.
-- **Gauge confidence on the UI** is the trader’s per-source EMA of `Measurement.Confidence` on the `confidence` channel. **Prediction chart** data comes from `PredictionFeedback` and `prediction` UI events only—not from gauges.
+- **Gauge confidence on the UI** is the trader’s per-source EMA of `Measurement.Confidence` on the `confidence` channel. **Prediction chart** data comes from `engine_pulse.avg_prediction` and `engine_pulse.avg_error`. The solid green line is the current aggregate prediction, the dashed orange line projects that average one observed pulse interval ahead, and the error line is the running average error.
 
 ---
 

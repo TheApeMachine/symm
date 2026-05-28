@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -62,24 +63,15 @@ func (booter *Booter) Boot() error {
 		}
 	}
 
-	waiters := make([]chan *qpool.QValue[any], len(booter.systems))
+	var wg sync.WaitGroup
 
-	for idx, system := range booter.systems {
-		waiters[idx] = booter.pool.ScheduleFast(
-			booter.ctx,
-			func(ctx context.Context) (any, error) {
-				return nil, system.Tick()
-			},
-		)
+	for _, system := range booter.systems {
+		wg.Go(func() {
+			errnie.Error(system.Tick())
+		})
 	}
 
-	for _, waiter := range waiters {
-		value := <-waiter
-
-		if value != nil && value.Error != nil {
-			errnie.Error(value.Error)
-		}
-	}
+	wg.Wait()
 
 	return booter.ctx.Err()
 }

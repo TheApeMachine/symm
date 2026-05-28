@@ -26,7 +26,7 @@ import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 const GRID_Z = 50;
 const GRID_X = 50;
 const Y_MIN = -0.3;
-const Y_MAX = 0.5;
+const Y_MAX = 0.3;
 
 export type FluidSurfaceControls = {
 	update: (snapshot: FieldSnapshotEvent) => void;
@@ -95,14 +95,19 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	sciChart3DSurface.worldDimensions = new Vector3(200, 100, 200);
 
 	sciChart3DSurface.xAxis = new NumericAxis3D(wasmContext, {
-		axisTitle: "X Axis",
+		labelStyle: {
+			fontSize: 0,
+		},
 	});
 	sciChart3DSurface.yAxis = new NumericAxis3D(wasmContext, {
-		axisTitle: "Y Axis",
-		visibleRange: new NumberRange(Y_MIN, Y_MAX),
+		labelStyle: {
+			fontSize: 0,
+		},
 	});
 	sciChart3DSurface.zAxis = new NumericAxis3D(wasmContext, {
-		axisTitle: "Z Axis",
+		labelStyle: {
+			fontSize: 0,
+		},
 	});
 
 	const heightmapArray = zeroArray2D([GRID_Z, GRID_X]);
@@ -131,16 +136,16 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		minimum: Y_MIN,
 		maximum: Y_MAX,
 		opacity: 0.9,
-		cellHardnessFactor: 1.0,
-		shininess: 0,
+		cellHardnessFactor: 0.5,
+		shininess: 0.5,
 		lightingFactor: 0.0,
 		highlight: 1.0,
 		stroke: appTheme.VividBlue,
 		strokeThickness: 2.0,
 		contourStroke: appTheme.VividBlue,
-		contourInterval: 2,
+		contourInterval: 1,
 		contourOffset: 0,
-		contourStrokeThickness: 2,
+		contourStrokeThickness: 4,
 		drawSkirt: false,
 		drawMeshAs: EDrawMeshAs.SOLID_WITH_CONTOURS,
 		meshColorPalette: colorMap,

@@ -12,6 +12,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/ohlc"
 	"github.com/theapemachine/symm/trader"
 	"github.com/valyala/fasthttp"
 )
@@ -145,7 +146,7 @@ func TestPublicClientReadTickerPublishesTickAndMark(t *testing.T) {
 		publicClient.read([]byte(`{
 			"channel":"ticker",
 			"type":"update",
-			"data":[{"symbol":"BTC/EUR","last":50000,"bid":49999,"ask":50001}]
+			"data":[{"symbol":"BTC/EUR","last":50000,"bid":49999,"ask":50001,"timestamp":"2026-05-28T01:10:10.123456789Z"}]
 		}`))
 
 		convey.Convey("It should fan the source price to tick subscribers and UI marks", func() {
@@ -168,8 +169,80 @@ func TestPublicClientReadTickerPublishesTickAndMark(t *testing.T) {
 				convey.So(payload["event"], convey.ShouldEqual, "mark")
 				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
 				convey.So(payload["price"], convey.ShouldEqual, 50000)
+				convey.So(payload["ts"], convey.ShouldEqual, "2026-05-28T01:10:10.123456789Z")
 			case <-time.After(time.Second):
 				t.Fatal("timed out waiting for UI mark")
+			}
+		})
+	})
+}
+
+func TestPublicClientReadOHLCPublishesTimedCandleAndMark(t *testing.T) {
+	convey.Convey("Given a Kraken OHLC frame", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		publicClient := NewPublicClient(ctx, pool, "ws://127.0.0.1:1")
+		ohlcRows := pool.CreateBroadcastGroup("ohlc", 10*time.Millisecond).
+			Subscribe("test:public:ohlc", 8)
+		uiRows := pool.CreateBroadcastGroup("ui", 10*time.Millisecond).
+			Subscribe("test:public:ohlc-ui", 8)
+		expectedSec := time.Date(2026, 5, 28, 1, 10, 0, 0, time.UTC).Unix()
+
+		publicClient.read([]byte(`{
+			"channel":"ohlc",
+			"type":"update",
+			"data":[{
+				"symbol":"H/EUR",
+				"open":0.24,
+				"high":0.246,
+				"low":0.239,
+				"close":0.245,
+				"volume":1024,
+				"interval":1,
+				"interval_begin":"2026-05-28T01:10:00Z"
+			}]
+		}`))
+
+		convey.Convey("It should preserve the exchange candle timestamp", func() {
+			select {
+			case value := <-ohlcRows.Incoming:
+				row, ok := value.Value.(ohlc.Data)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(row.Symbol, convey.ShouldEqual, "H/EUR")
+				convey.So(row.IntervalBegin.Unix(), convey.ShouldEqual, expectedSec)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for ohlc row")
+			}
+
+			select {
+			case value := <-uiRows.Incoming:
+				payload, ok := value.Value.(map[string]any)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(payload["event"], convey.ShouldEqual, "candle_bar")
+				convey.So(payload["symbol"], convey.ShouldEqual, "H/EUR")
+				convey.So(payload["ts"], convey.ShouldEqual, "2026-05-28T01:10:00Z")
+				convey.So(payload["sec"], convey.ShouldEqual, expectedSec)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for candle bar")
+			}
+
+			select {
+			case value := <-uiRows.Incoming:
+				payload, ok := value.Value.(map[string]any)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(payload["event"], convey.ShouldEqual, "mark")
+				convey.So(payload["symbol"], convey.ShouldEqual, "H/EUR")
+				convey.So(payload["price"], convey.ShouldEqual, 0.245)
+				convey.So(payload["ts"], convey.ShouldEqual, "2026-05-28T01:10:00Z")
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for ohlc mark")
 			}
 		})
 	})
@@ -202,8 +275,13 @@ func TestPublicClientTickKeepsListening(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		convey.Convey("It should accumulate held symbols across tick cycles", func() {
-			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "BTC/EUR")
-			convey.So(publicClient.heldSymbols, convey.ShouldContainKey, "ETH/EUR")
+			publicClient.mu.Lock()
+			_, hasBTC := publicClient.heldSymbols["BTC/EUR"]
+			_, hasETH := publicClient.heldSymbols["ETH/EUR"]
+			publicClient.mu.Unlock()
+
+			convey.So(hasBTC, convey.ShouldBeTrue)
+			convey.So(hasETH, convey.ShouldBeTrue)
 		})
 
 		cancel()

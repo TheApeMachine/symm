@@ -10,10 +10,7 @@ import (
 structuralCoef holds fitted SCM coefficients for price velocity.
 */
 type structuralCoef struct {
-	intercept float64
-	macro     float64
-	liquidity float64
-	flow      float64
+	model dagLinearModel
 }
 
 const minBackdoorDenominator = 1e-9
@@ -22,50 +19,65 @@ const minBackdoorDenominator = 1e-9
 associationEffect is rung-1 P(velocity | flow): observational correlation.
 */
 func associationEffect(samples []causalSample) float64 {
-	flows := extract(samples, func(sample causalSample) float64 { return sample.localFlow })
-	vels := extract(samples, func(sample causalSample) float64 { return sample.priceVelocity })
+	nodeTable, err := causalTableWithMin(samples, 1)
 
-	return pearson(flows, vels)
+	if err != nil {
+		return 0
+	}
+
+	association, err := nodeTable.Association(localFlowNode)
+
+	if err != nil {
+		return 0
+	}
+
+	return association
 }
 
 /*
 backdoorFlowEffect is rung-2 P(velocity | do(flow)) via backdoor adjustment on macro and liquidity.
 */
 func backdoorFlowEffect(samples []causalSample) float64 {
-	macro := extract(samples, func(sample causalSample) float64 { return sample.macroMomentum })
-	liquidity := extract(samples, func(sample causalSample) float64 { return sample.liquidity })
-	flows := extract(samples, func(sample causalSample) float64 { return sample.localFlow })
-	vels := extract(samples, func(sample causalSample) float64 { return sample.priceVelocity })
+	nodeTable, err := causalTable(samples)
 
-	residualVel := residualize(vels, macro, liquidity)
-	residualFlow := residualize(flows, macro, liquidity)
+	if err != nil {
+		return 0
+	}
 
-	denom := math.Max(dot(residualFlow, residualFlow), minBackdoorDenominator)
+	effect, err := nodeTable.BackdoorEffect(
+		localFlowNode,
+		macroMomentumNode,
+		liquidityNode,
+	)
 
-	return dot(residualVel, residualFlow) / denom
+	if err != nil {
+		return 0
+	}
+
+	return effect
 }
 
 /*
 fitStructural estimates the SCM velocity = a + b_m*macro + b_l*liquidity + b_f*flow.
 */
 func fitStructural(samples []causalSample) (structuralCoef, bool) {
-	macro := extract(samples, func(sample causalSample) float64 { return sample.macroMomentum })
-	liquidity := extract(samples, func(sample causalSample) float64 { return sample.liquidity })
-	flows := extract(samples, func(sample causalSample) float64 { return sample.localFlow })
-	vels := extract(samples, func(sample causalSample) float64 { return sample.priceVelocity })
+	nodeTable, err := causalTable(samples)
 
-	coef, ok := ols3(vels, macro, liquidity, flows)
-
-	if !ok {
+	if err != nil {
 		return structuralCoef{}, false
 	}
 
-	return structuralCoef{
-		intercept: coef[0],
-		macro:     coef[1],
-		liquidity: coef[2],
-		flow:      coef[3],
-	}, true
+	model, err := nodeTable.LinearModel(
+		macroMomentumNode,
+		liquidityNode,
+		localFlowNode,
+	)
+
+	if err != nil {
+		return structuralCoef{}, false
+	}
+
+	return structuralCoef{model: model}, true
 }
 
 /*
@@ -76,115 +88,137 @@ func counterfactualUplift(
 	coef structuralCoef,
 	interventionFlow float64,
 ) float64 {
-	observed := predictVelocity(current, coef, current.localFlow)
-	counterfactual := predictVelocity(current, coef, interventionFlow)
+	uplift, err := coef.model.CounterfactualUplift(
+		current.nodes[:],
+		localFlowNode,
+		interventionFlow,
+	)
 
-	return counterfactual - observed
-}
-
-func flowInterventionLevel(samples []causalSample) float64 {
-	flows := extract(samples, func(sample causalSample) float64 { return sample.localFlow })
-
-	if len(flows) == 0 {
+	if err != nil {
 		return 0
 	}
 
-	return numeric.PercentileSorted(numeric.CopySorted(flows), 0.75)
+	return uplift
+}
+
+func flowInterventionLevel(samples []causalSample) float64 {
+	nodeTable, err := causalTableWithMin(samples, 1)
+
+	if err != nil {
+		return 0
+	}
+
+	value, err := nodeTable.Percentile(localFlowNode, 0.75)
+
+	if err != nil {
+		return 0
+	}
+
+	return value
 }
 
 func predictVelocity(sample causalSample, coef structuralCoef, flow float64) float64 {
-	return coef.intercept +
-		coef.macro*sample.macroMomentum +
-		coef.liquidity*sample.liquidity +
-		coef.flow*flow
+	prediction, err := coef.model.Predict(sample.nodes[:], localFlowNode, flow)
+
+	if err != nil {
+		return 0
+	}
+
+	return prediction
 }
 
-func extract(samples []causalSample, pick func(causalSample) float64) []float64 {
+func causalTable(samples []causalSample) (dagNodeTable, error) {
+	return causalTableWithMin(samples, minCausalHistory)
+}
+
+func causalTableWithMin(samples []causalSample, minRows int) (dagNodeTable, error) {
+	rows := make([][]float64, len(samples))
+
+	for index := range samples {
+		rows[index] = samples[index].nodes[:]
+	}
+
+	return newDAGNodeTable(rows, priceVelocityNode, minRows)
+}
+
+func extract(samples []causalSample, node int) []float64 {
 	values := make([]float64, len(samples))
 
-	for index, sample := range samples {
-		values[index] = pick(sample)
+	for index := range samples {
+		values[index] = samples[index].value(node)
 	}
 
 	return values
 }
 
-func residualize(target, macro, liquidity []float64) []float64 {
-	coef, ok := ols2(target, macro, liquidity)
+func residualize(target []float64, controls ...[]float64) ([]float64, bool) {
+	if len(controls) == 0 {
+		return append([]float64(nil), target...), true
+	}
+
+	coef, ok := ols(target, controls...)
 
 	if !ok {
-		return target
+		return nil, false
 	}
 
 	residuals := make([]float64, len(target))
 
 	for index := range target {
-		fitted := coef[0] + coef[1]*macro[index] + coef[2]*liquidity[index]
+		fitted := coef[0]
+
+		for controlIndex, control := range controls {
+			fitted += coef[controlIndex+1] * control[index]
+		}
+
 		residuals[index] = target[index] - fitted
 	}
 
-	return residuals
+	return residuals, true
 }
 
 func ols2(target, first, second []float64) ([]float64, bool) {
-	if len(target) < minCausalHistory {
-		return nil, false
-	}
-
-	if len(first) != len(target) || len(second) != len(target) {
-		return nil, false
-	}
-
-	size := len(target)
-	normal := make([][]float64, 3)
-
-	for row := 0; row < 3; row++ {
-		normal[row] = make([]float64, 3)
-	}
-
-	targetVec := make([]float64, 3)
-
-	for index := 0; index < size; index++ {
-		predictors := []float64{1, first[index], second[index]}
-
-		for row := 0; row < 3; row++ {
-			targetVec[row] += predictors[row] * target[index]
-
-			for col := 0; col < 3; col++ {
-				normal[row][col] += predictors[row] * predictors[col]
-			}
-		}
-	}
-
-	return ridgeSolve(normal, targetVec)
+	return ols(target, first, second)
 }
 
 func ols3(target, first, second, third []float64) ([]float64, bool) {
+	return ols(target, first, second, third)
+}
+
+func ols(target []float64, predictors ...[]float64) ([]float64, bool) {
 	if len(target) < minCausalHistory {
 		return nil, false
 	}
 
-	if len(first) != len(target) || len(second) != len(target) || len(third) != len(target) {
-		return nil, false
+	for _, predictor := range predictors {
+		if len(predictor) != len(target) {
+			return nil, false
+		}
 	}
 
 	size := len(target)
-	normal := make([][]float64, 4)
+	width := len(predictors) + 1
+	normal := make([][]float64, width)
 
-	for row := 0; row < 4; row++ {
-		normal[row] = make([]float64, 4)
+	for row := range width {
+		normal[row] = make([]float64, width)
 	}
 
-	targetVec := make([]float64, 4)
+	targetVec := make([]float64, width)
+	rowValues := make([]float64, width)
 
 	for index := 0; index < size; index++ {
-		predictors := []float64{1, first[index], second[index], third[index]}
+		rowValues[0] = 1
 
-		for row := 0; row < 4; row++ {
-			targetVec[row] += predictors[row] * target[index]
+		for predictorIndex, predictor := range predictors {
+			rowValues[predictorIndex+1] = predictor[index]
+		}
 
-			for col := 0; col < 4; col++ {
-				normal[row][col] += predictors[row] * predictors[col]
+		for row := 0; row < width; row++ {
+			targetVec[row] += rowValues[row] * target[index]
+
+			for col := 0; col < width; col++ {
+				normal[row][col] += rowValues[row] * rowValues[col]
 			}
 		}
 	}

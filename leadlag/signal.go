@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"math"
 	"sync"
@@ -29,6 +30,7 @@ LeadLag detects altcoins lagging a moving anchor pair.
 type LeadLag struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
@@ -69,64 +71,132 @@ func (leadlag *LeadLag) State() engine.State { return engine.READY }
 func (leadlag *LeadLag) Tick() error {
 	errnie.Info("starting leadlag tick")
 
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-leadlag.ctx.Done():
-			return leadlag.ctx.Err()
-		case value := <-leadlag.subscribers["symbols"].Incoming:
-			for symbol, pair := range value.Value.(map[string]*asset.Pair) {
-				if pair == nil {
-					continue
-				}
-
-				leadlag.symbols.Store(symbol, newSymbolState(*pair))
-
-				if pair.Quote != config.System.QuoteCurrency {
-					continue
-				}
-
-				if _, seen := leadlag.requested.Load(symbol); seen {
-					continue
-				}
-
-				if symbol == anchorSymbol {
-					leadlag.requested.Store(symbol, struct{}{})
-					leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{symbol}})
-					continue
-				}
-
-				leadlag.pending = append(leadlag.pending, symbol)
-			}
-
-			leadlag.publishPulse()
-		case value := <-leadlag.subscribers["tick"].Incoming:
-			row := value.Value.(market.TickerRow)
-			raw, ok := leadlag.symbols.Load(row.Symbol)
-
-			if !ok || row.ChangePct == 0 {
-				break
-			}
-
-			state := raw.(*symbolState)
-			state.changePct = row.ChangePct
-
-			if row.Last > 0 {
-				state.last = row.Last
-			}
-
-			if row.Bid > 0 {
-				state.bid = row.Bid
-			}
-
-			if row.Ask > 0 {
-				state.ask = row.Ask
-			}
-
-			leadlag.publishPulse()
-		case value := <-leadlag.subscribers["feedback"].Incoming:
-			leadlag.Feedback(value.Value.(engine.PredictionFeedback))
-			leadlag.publishPulse()
+		case errs <- err:
+			leadlag.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-leadlag.ctx.Done():
+				return
+			case value, ok := <-leadlag.subscribers["symbols"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("leadlag symbols channel closed"))
+					return
+				}
+
+				leadlag.mu.Lock()
+				for symbol, pair := range value.Value.(map[string]*asset.Pair) {
+					if pair == nil {
+						continue
+					}
+
+					leadlag.symbols.Store(symbol, newSymbolState(*pair))
+
+					if pair.Quote != config.System.QuoteCurrency {
+						continue
+					}
+
+					if _, seen := leadlag.requested.Load(symbol); seen {
+						continue
+					}
+
+					if symbol == anchorSymbol {
+						leadlag.requested.Store(symbol, struct{}{})
+						leadlag.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{symbol}})
+						continue
+					}
+
+					leadlag.pending = append(leadlag.pending, symbol)
+				}
+
+				leadlag.publishPulse()
+				leadlag.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-leadlag.ctx.Done():
+				return
+			case value, ok := <-leadlag.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("leadlag tick channel closed"))
+					return
+				}
+
+				leadlag.mu.Lock()
+				row := value.Value.(market.TickerRow)
+				raw, ok := leadlag.symbols.Load(row.Symbol)
+
+				if ok && row.ChangePct != 0 {
+					state := raw.(*symbolState)
+					state.changePct = row.ChangePct
+
+					if row.Last > 0 {
+						state.last = row.Last
+					}
+
+					if row.Bid > 0 {
+						state.bid = row.Bid
+					}
+
+					if row.Ask > 0 {
+						state.ask = row.Ask
+					}
+
+					leadlag.publishPulse()
+				}
+
+				leadlag.mu.Unlock()
+			}
+		}
+	})
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-leadlag.ctx.Done():
+				return
+			case value, ok := <-leadlag.subscribers["feedback"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("leadlag feedback channel closed"))
+					return
+				}
+
+				leadlag.mu.Lock()
+				leadlag.Feedback(value.Value.(engine.PredictionFeedback))
+				leadlag.publishPulse()
+				leadlag.mu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-leadlag.ctx.Done():
+		workers.Wait()
+		return leadlag.ctx.Err()
+	case <-done:
+		return leadlag.ctx.Err()
 	}
 }
 

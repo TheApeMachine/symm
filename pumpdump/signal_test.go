@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,6 +28,30 @@ func loadPumpSymbol(pumpdump *PumpDump, symbol string) *PumpSymbol {
 
 func markPumpRequested(pumpdump *PumpDump, symbol string) {
 	pumpdump.requested.Store(symbol, struct{}{})
+}
+
+func startPumpDumpTick(t *testing.T, pumpdump *PumpDump) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := pumpdump.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("pumpdump tick: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		_ = pumpdump.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for pumpdump tick to close")
+		}
+	})
 }
 
 func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol, *qpool.Q) {
@@ -83,9 +108,7 @@ func TestPumpdumpPublishPulseAfterBook(t *testing.T) {
 
 	measurements := signal.broadcasts["measurements"].Subscribe("test:pumpdump", 8)
 
-	go func() {
-		_ = signal.Tick()
-	}()
+	startPumpDumpTick(t, signal)
 
 	pool.CreateBroadcastGroup("book", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: market.BookLevelsDelta{

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
 	ConfidenceDataProvider,
@@ -30,6 +30,10 @@ describe("isConfidenceRow", () => {
 });
 
 describe("ConfidenceDataProvider.ingest", () => {
+	beforeEach(() => {
+		ConfidenceDataProvider.reset();
+	});
+
 	it("routes mean confidence to registered sources", () => {
 		const received: number[] = [];
 		const unregister = ConfidenceDataProvider.registerSource(
@@ -66,6 +70,25 @@ describe("ConfidenceDataProvider.ingest", () => {
 		);
 
 		expect(received).toEqual([0.12]);
+		unregister();
+	});
+
+	it("routes backend aliases to the visible gauge source", () => {
+		const received: number[] = [];
+		const unregister = ConfidenceDataProvider.registerSource(
+			"liquidity",
+			(confidence) => {
+				received.push(confidence);
+			},
+		);
+
+		ConfidenceDataProvider.ingest({
+			source: "basis",
+			confidence: 0.64,
+		});
+
+		expect(received).toEqual([0.64]);
+		expect(ConfidenceDataProvider.snapshot().get("liquidity")).toBe(0.64);
 		unregister();
 	});
 });

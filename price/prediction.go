@@ -95,23 +95,58 @@ func (prediction *Prediction) Close() error {
 }
 
 func (prediction *Prediction) Tick() error {
-	for {
+	var workers sync.WaitGroup
+	errs := make(chan error, 1)
+	fail := func(err error) {
 		select {
-		case <-prediction.ctx.Done():
-			return prediction.ctx.Err()
-		case value := <-prediction.subscribers["tick"].Incoming:
-			row, ok := value.Value.(market.TickerRow)
-
-			if !ok {
-				return errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
-			}
-
-			prediction.stateMu.Lock()
-
-			prediction.observeTicker(row)
-			prediction.settleDue(time.Now())
-			prediction.stateMu.Unlock()
+		case errs <- err:
+			prediction.cancel()
+		default:
 		}
+	}
+
+	workers.Go(func() {
+		for {
+			select {
+			case <-prediction.ctx.Done():
+				return
+			case value, ok := <-prediction.subscribers["tick"].Incoming:
+				if !ok {
+					fail(fmt.Errorf("prediction tick channel closed"))
+					return
+				}
+
+				row, ok := value.Value.(market.TickerRow)
+
+				if !ok {
+					fail(fmt.Errorf("invalid ticker row: %v", value.Value))
+					return
+				}
+
+				prediction.stateMu.Lock()
+				prediction.observeTicker(row)
+				prediction.settleDue(time.Now())
+				prediction.stateMu.Unlock()
+			}
+		}
+	})
+
+	done := make(chan struct{})
+
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errs:
+		workers.Wait()
+		return errnie.Error(err)
+	case <-prediction.ctx.Done():
+		workers.Wait()
+		return prediction.ctx.Err()
+	case <-done:
+		return prediction.ctx.Err()
 	}
 }
 
@@ -170,7 +205,7 @@ func (prediction *Prediction) settleDue(now time.Time) {
 					Symbol:          symbol,
 					Type:            open.measurement.Type,
 					PerspectiveType: open.perspective.Type,
-					Regime:          open.measurement.Regime,
+					Regime:          engine.FeedbackRegime(open.perspective, open.measurement),
 					Reason:          open.measurement.Reason,
 					Confidence:      open.confidence,
 					PredictedReturn: open.predictedReturn,
