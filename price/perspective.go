@@ -1,7 +1,6 @@
 package price
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/qpool"
@@ -25,22 +24,18 @@ func (prediction *Prediction) RecordPerspective(
 
 	source := engine.PerspectiveSource(perspective.Type)
 	confidence, _ := engine.FuseMeasurements(perspective.Measurements)
-	key := predictionSeriesKey{source: source, symbol: symbol}
-	scale := prediction.returnScale(source, symbol)
 
-	if prediction.returnSeen[key] {
-		if scale == 0 {
-			return 0
-		}
-	} else if scale <= 0 {
-		scale = impliedReturnScale(anchorMeasurement)
-
-		if scale <= 0 {
-			return 0
-		}
+	if confidence <= 0 {
+		return 0
 	}
 
-	predictedReturn := confidence * scale
+	regime := engine.FeedbackRegime(perspective, anchorMeasurement)
+
+	// The forecast is 0 until this (source, regime) bucket has proven a
+	// statistically positive forward return. A 0 forecast still records an
+	// open prediction so feedback accrues and the bucket can warm up.
+	predictedReturn, _ := prediction.returnModel.Forecast(source, regime, confidence)
+
 	runway := perspectiveRunway(perspective)
 
 	bySource := prediction.open[symbol]
@@ -50,11 +45,8 @@ func (prediction *Prediction) RecordPerspective(
 		prediction.open[symbol] = bySource
 	}
 
-	// Predictions live in time, not in cycles. If a forecast for this
-	// (symbol, source) is already open, leave it alone — settleDue will
-	// evaluate it when its dueAt is past, and a fresh prediction opens then.
-	// Subsequent measurements only refine the bucket; they do not reset the
-	// clock or replace the in-flight forecast.
+	// One open prediction per (symbol, source) at a time; refinements do not
+	// reset the clock.
 	if existing, ok := bySource[source]; ok {
 		return existing.predictedReturn
 	}
@@ -64,6 +56,7 @@ func (prediction *Prediction) RecordPerspective(
 		measurement:     anchorMeasurement,
 		source:          source,
 		sources:         perspectiveSources(perspective),
+		regime:          regime,
 		predictedReturn: predictedReturn,
 		confidence:      confidence,
 		anchorPrice:     anchorPrice(anchorMeasurement),
@@ -174,34 +167,4 @@ func anchorPrice(measurement engine.Measurement) float64 {
 	}
 
 	return 0
-}
-
-func impliedReturnScale(measurement engine.Measurement) float64 {
-	anchor := anchorPrice(measurement)
-
-	if anchor <= 0 {
-		return 0
-	}
-
-	spreadReturn := 0.0
-
-	if measurement.Bid > 0 && measurement.Ask > 0 {
-		spreadReturn = (measurement.Ask - measurement.Bid) / anchor
-	}
-
-	feePct := config.System.TakerFeePct * 2
-
-	if config.System.UseMakerEntries {
-		feePct = config.System.MakerFeePct + config.System.TakerFeePct
-	}
-
-	feeReturn := feePct / 100
-
-	if spreadReturn <= 0 {
-		return 0
-	}
-
-	implied := spreadReturn/2 + feeReturn + spreadReturn*config.System.ForecastSpreadMultiple
-
-	return math.Max(implied, feeReturn)
 }

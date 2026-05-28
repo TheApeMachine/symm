@@ -3,14 +3,12 @@ package trader
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/price"
 	"github.com/theapemachine/symm/wallet"
 )
@@ -202,6 +200,14 @@ func (crypto *Crypto) Tick() error {
 					"regime":           feedback.Regime,
 					"trust":            crypto.calibratorTrust(feedback.Source),
 				})
+
+				audit("prediction_settled", map[string]any{
+					"source":           feedback.Source,
+					"symbol":           feedback.Symbol,
+					"predicted_return": feedback.PredictedReturn,
+					"actual_return":    feedback.ActualReturn,
+					"error":            feedback.Error,
+				})
 			case raw, ok := <-crypto.subscribers["executions"].Incoming:
 				if !ok {
 					errnie.Error(fmt.Errorf("crypto executions channel closed"))
@@ -249,88 +255,6 @@ func (crypto *Crypto) Tick() error {
 	return nil
 }
 
-/*
-applyFill is the single live-side write-back path for executions. It
-dedupes via wallet.ApplyFill on the fill's ExecKey, so a reconnect that
-replays the same execution does not double-credit inventory or
-double-debit cash.
-
-Paper fills mutate the wallet inline inside broker.{Buy,Sell}.FillPaper.
-They still flow through this channel as informational frames, but the
-"paper-" OrderID prefix is the marker we use to skip them — applying
-their state again would double everything. Live OrderIDs from Kraken
-never carry that prefix.
-*/
-func (crypto *Crypto) applyFill(raw any) {
-	fill, ok := raw.(order.Fill)
-
-	if !ok {
-		errnie.Error(fmt.Errorf("invalid execution payload: %T", raw))
-		return
-	}
-
-	if crypto.wallet == nil {
-		return
-	}
-
-	if strings.HasPrefix(fill.OrderID, "paper-") {
-		return
-	}
-
-	base := symbolBase(fill.Symbol)
-	cashDelta := 0.0
-
-	switch fill.Side {
-	case "buy":
-		cashDelta = -fill.Qty*fill.Price - fill.Fee
-	case "sell":
-		cashDelta = fill.Qty*fill.Price - fill.Fee
-	}
-
-	if !crypto.wallet.ApplyFill(fill.ExecKey, fill.Side, base, fill.Qty, fill.Price, cashDelta) {
-		audit("fill_dedupe", map[string]any{
-			"exec_key": fill.ExecKey,
-			"order_id": fill.OrderID,
-			"symbol":   fill.Symbol,
-		})
-
-		return
-	}
-
-	audit("fill_applied", map[string]any{
-		"exec_key": fill.ExecKey,
-		"order_id": fill.OrderID,
-		"symbol":   fill.Symbol,
-		"side":     fill.Side,
-		"qty":      fill.Qty,
-		"price":    fill.Price,
-	})
-}
-
-/*
-handleOrderAck records the exchange-assigned OrderID against the
-client-side cl_ord_id so subsequent Cancel / Amend can address the
-exchange's identifier. Errors from the exchange are surfaced via the
-audit log.
-*/
-func (crypto *Crypto) handleOrderAck(raw any) {
-	ack, ok := raw.(*order.Ack)
-
-	if !ok {
-		errnie.Error(fmt.Errorf("invalid order ack payload: %T", raw))
-		return
-	}
-
-	audit("order_ack", map[string]any{
-		"method":    ack.Method,
-		"req_id":    ack.ReqID,
-		"success":   ack.Success,
-		"error":     ack.Error,
-		"order_id":  ack.Result.OrderID,
-		"cl_ord_id": ack.Result.ClOrdID,
-	})
-}
-
 func (crypto *Crypto) ingestMeasurement(raw any) error {
 	measurement, ok := raw.(engine.Measurement)
 
@@ -343,6 +267,7 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 	}
 
 	symbol := measurement.Pairs[0].Wsname
+	crypto.risk.ObserveMark(symbol, measurement.AnchorPrice(), time.Time{})
 
 	// Top-down feedback loop, step 1: apply the per-source calibrator's
 	// trust score to the raw confidence. The signal's own measurement is
@@ -447,109 +372,6 @@ func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) er
 	}
 
 	return crypto.actOnPrediction(prediction)
-}
-
-func (crypto *Crypto) settlePredictions(measurement engine.Measurement) {
-	if len(crypto.predictions) == 0 {
-		return
-	}
-
-	now := time.Now()
-	remaining := crypto.predictions[:0]
-
-	for _, due := range crypto.predictions {
-		if !due.DueAt.Before(now) {
-			remaining = append(remaining, due)
-			continue
-		}
-
-		if _, ok := due.Error(measurement); !ok {
-			remaining = append(remaining, due)
-			continue
-		}
-
-		lead, _ := due.LeadMeasurement()
-
-		feedback := engine.PredictionFeedback{
-			Source:          engine.PerspectiveSource(due.Perspective.Type),
-			Symbol:          lead.Pairs[0].Wsname,
-			PerspectiveType: due.Perspective.Type,
-			Regime:          engine.FeedbackRegime(due.Perspective, lead),
-			Reason:          lead.Reason,
-			Confidence:      due.Confidence,
-			PredictedReturn: due.ExpectedReturn,
-			ActualReturn:    due.ActualReturn,
-			Error:           due.Err,
-			Runway:          due.Runway,
-			PredictedAt:     due.PredictedAt,
-			DueAt:           due.DueAt,
-			SettledAt:       now,
-		}
-
-		// Do not call kellySizer.ApplyFeedback here: this trader subscribes to
-		// the "feedback" channel, so publishing is sufficient and applying
-		// locally would double-count the same feedback into the calibrator.
-		crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: feedback})
-
-		audit("prediction_settled", map[string]any{
-			"source":           feedback.Source,
-			"symbol":           feedback.Symbol,
-			"predicted_return": feedback.PredictedReturn,
-			"actual_return":    feedback.ActualReturn,
-			"error":            feedback.Error,
-			"confidence":       feedback.Confidence,
-		})
-
-		if crypto.holdsPrediction(
-			crypto.wallet,
-			feedback.Symbol,
-			feedback.Source,
-			due.DueAt,
-		) {
-			if err := crypto.handleExit(engine.Exit{
-				Symbol:  feedback.Symbol,
-				Urgency: 1,
-				Reason:  engine.ExitReasonRunwayExpired,
-			}); err != nil {
-				errnie.Error(err)
-			}
-		}
-	}
-
-	crypto.predictions = remaining
-}
-
-func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
-	lead, ok := prediction.LeadMeasurement()
-
-	if !ok {
-		return fmt.Errorf("prediction missing lead measurement")
-	}
-
-	symbol := lead.Pairs[0].Wsname
-	now := time.Now()
-	predictedReturn := crypto.forecasts.RecordPerspective(symbol, prediction.Perspective, now)
-
-	prediction.ExpectedReturn = predictedReturn
-	prediction.PredictedAt = now
-	prediction.Runway = runwayForPerspective(prediction.Perspective)
-	prediction.DueAt = now.Add(prediction.Runway)
-
-	crypto.predictions = append(crypto.predictions, &prediction)
-
-	audit("perspective_ready", map[string]any{
-		"symbol":            symbol,
-		"confidence":        prediction.Confidence,
-		"predicted_return":  predictedReturn,
-		"direction":         prediction.Direction,
-		"runway_ms":         prediction.Runway.Milliseconds(),
-		"perspective_type":  prediction.Perspective.Type,
-		"measurement_count": len(prediction.Perspective.Measurements),
-	})
-
-	crypto.tryEnter(prediction, predictedReturn)
-
-	return nil
 }
 
 func (crypto *Crypto) Close() error {

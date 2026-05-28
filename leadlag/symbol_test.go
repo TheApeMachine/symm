@@ -88,3 +88,32 @@ func TestSymbolStateConcurrentObserveAndLag(t *testing.T) {
 		t.Fatalf("expected lag measurement, got %+v ok=%v", measurement, ok)
 	}
 }
+
+func TestCrossLagRejectsContemporaneousBeta(t *testing.T) {
+	anchor := newSymbolState(asset.Pair{Wsname: "BTC/EUR"})
+	lagger := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
+	start := time.Unix(1_700_000_000, 0)
+	returns := []float64{
+		0.010, -0.007, 0.009, -0.006, 0.008, -0.005,
+		0.007, -0.004, 0.006, -0.003, 0.005, -0.002,
+		0.004, -0.003, 0.006, -0.004,
+	}
+	anchorPrice := 100.0
+	laggerPrice := 50.0
+
+	for index := range 128 {
+		movement := returns[index%len(returns)]
+		anchorPrice *= math.Exp(movement)
+		laggerPrice *= math.Exp(movement)
+		at := start.Add(time.Duration(index) * time.Second)
+
+		anchor.observeTicker(0.08, anchorPrice, anchorPrice*0.999, anchorPrice*1.001, at)
+		lagger.observeTicker(0.02, laggerPrice, laggerPrice*0.999, laggerPrice*1.001, at)
+	}
+
+	bars, correlation, ok := crossLag(anchor, lagger)
+
+	if ok {
+		t.Fatalf("expected beta path to be rejected, bars=%d correlation=%v", bars, correlation)
+	}
+}

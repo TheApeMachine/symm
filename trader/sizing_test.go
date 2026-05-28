@@ -67,6 +67,26 @@ func TestKellySizerRejectsNegativeEdge(t *testing.T) {
 	}
 }
 
+func TestKellySizerTreatsFeeFloorAsLoss(t *testing.T) {
+	sizer := NewKellySizer(engine.DefaultCalibrationParams())
+
+	for range config.System.MinCalibrationSamples {
+		sizer.ApplyFeedback(engine.PredictionFeedback{
+			Source:          "hawkes",
+			Symbol:          "BTC/EUR",
+			Regime:          "microstructure",
+			PredictedReturn: 0.01,
+			ActualReturn:    roundTripFeeReturn() * 0.5,
+		})
+	}
+
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
+
+	if slot != 0 {
+		t.Fatalf("expected sub-fee positive returns to size as losses, got %v", slot)
+	}
+}
+
 func TestKellySizerBranchesByRegime(t *testing.T) {
 	sizer := NewKellySizer(engine.DefaultCalibrationParams())
 

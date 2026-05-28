@@ -6,6 +6,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/trade"
 )
 
@@ -86,9 +87,10 @@ func TestHawkesSymbolApplyFeedback(t *testing.T) {
 	convey.Convey("Given a cached Hawkes fit", t, func() {
 		symbol := NewHawkesSymbol(engine.DefaultCalibrationParams())
 
-		_, ok := symbol.fitForEvents(stream, now)
+		fit, ok := symbol.fitForEvents(stream, now)
 
 		convey.So(ok, convey.ShouldBeTrue)
+		t.Logf("fit ratio buy=%v sell=%v asym=%v fence=%v spectral=%v", fit.BuyIntensity/fit.MuBuy, fit.SellIntensity/fit.MuSell, fit.Asymmetry(false), symbol.baselineIntensityFence(), fit.SpectralRadius)
 
 		ratioCount := len(symbol.intensityRatios)
 
@@ -191,6 +193,33 @@ func TestHawkesSymbolGaugeScore(t *testing.T) {
 			convey.So(first, convey.ShouldBeLessThanOrEqualTo, 1)
 			convey.So(second, convey.ShouldBeGreaterThan, 0)
 			convey.So(second, convey.ShouldBeLessThanOrEqualTo, 1)
+		})
+	})
+}
+
+func TestHawkesSymbolMeasureStampsRunway(t *testing.T) {
+	now, stream := fitForEventsFixture(t)
+
+	convey.Convey("Given a Hawkes cluster measurement", t, func() {
+		symbol := NewHawkesSymbol(engine.DefaultCalibrationParams())
+		ticks := ticksFromSideEvents(stream.BuyTimes(), stream.SellTimes())
+
+		symbol.fit = sampleFit()
+		symbol.hasFit = true
+		symbol.lastFitEventKey = stream.RevisionKey()
+		symbol.intensityRatios = []float64{1, 1.1, 1.2, 1, 1.1, 1.2, 1, 1.1, 1.2}
+
+		measurement, ok := symbol.Measure(
+			ticks,
+			0.8,
+			now,
+			asset.Pair{Wsname: "BTC/EUR"},
+		)
+
+		convey.Convey("It should stamp the fitted runway on the measurement", func() {
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(measurement.Timeframe.Start, convey.ShouldEqual, now.Unix())
+			convey.So(measurement.Timeframe.End, convey.ShouldBeGreaterThan, measurement.Timeframe.Start)
 		})
 	})
 }

@@ -9,18 +9,18 @@ import (
 
 func TestFuseMeasurements(t *testing.T) {
 	joint, count := FuseMeasurements([]Measurement{
-		{Source: "hawkes", Confidence: 0.8},
-		{Source: "depthflow", Confidence: 0.6},
+		{Source: "hawkes", Confidence: 0.9},
+		{Source: "leadlag", Confidence: 0.5},
 	})
 
 	if count != 2 {
 		t.Fatalf("expected two sources, got %d", count)
 	}
 
-	expectedJoint := math.Sqrt(0.8 * 0.6)
+	expectedJoint := 0.95
 
 	if math.Abs(joint-expectedJoint) > 1e-9 {
-		t.Fatalf("expected geometric source confidence %v, got %v", expectedJoint, joint)
+		t.Fatalf("expected cross-family noisy-or confidence %v, got %v", expectedJoint, joint)
 	}
 
 	singleJoint, singleCount := FuseMeasurements([]Measurement{
@@ -33,6 +33,23 @@ func TestFuseMeasurements(t *testing.T) {
 
 	if singleJoint != 0.8 {
 		t.Fatalf("expected single-source confidence to pass through, got %v", singleJoint)
+	}
+}
+
+func TestFuseMeasurementsDiscountsSharedFamily(t *testing.T) {
+	joint, count := FuseMeasurements([]Measurement{
+		{Source: "hawkes", Confidence: 0.6},
+		{Source: "depthflow", Confidence: 0.6},
+		{Source: "fluid", Confidence: 0.6},
+		{Source: "pumpdump", Confidence: 0.6},
+	})
+
+	if count != 4 {
+		t.Fatalf("expected four sources, got %d", count)
+	}
+
+	if math.Abs(joint-0.84) > 1e-9 {
+		t.Fatalf("expected shared-family discounted confidence 0.84, got %v", joint)
 	}
 }
 

@@ -30,6 +30,11 @@ type Config struct {
 	MinHoldBeforeRotate        time.Duration
 	ScalpHoldBeforeExit        time.Duration
 	FlowHoldBeforeExit         time.Duration
+	EntryEdgeMultiple          float64
+	TakeProfitR                float64
+	StopVolMultiple            float64
+	MinExhaustHold             time.Duration
+	AdverseSelectionBPS        float64
 	TrailSpreadMultiple        float64
 	DefaultTrailPct            float64
 	MinTrailPct                float64
@@ -130,8 +135,13 @@ func NewConfig() *Config {
 		MinCostEUR:                 0.45,
 		MaxSlotPct:                 5,
 		MinHoldBeforeRotate:        time.Minute,
-		ScalpHoldBeforeExit:        15 * time.Second,
+		ScalpHoldBeforeExit:        90 * time.Second,
 		FlowHoldBeforeExit:         30 * time.Second,
+		EntryEdgeMultiple:          2.0,
+		TakeProfitR:                2.0,
+		StopVolMultiple:            8.0,
+		MinExhaustHold:             5 * time.Second,
+		AdverseSelectionBPS:        5.0,
 		TrailSpreadMultiple:        2,
 		DefaultTrailPct:            0.35,
 		MinTrailPct:                0.15,
@@ -147,7 +157,7 @@ func NewConfig() *Config {
 		AllowPaperShorts:           false,
 		AllowLiveShorts:            false,
 		KellyFraction:              0.5,
-		UseMakerEntries:            true,
+		UseMakerEntries:            false,
 		MakerFeePct:                0.16,
 		ForecastSpreadMultiple:     4,
 		ExitUrgencyThreshold:       0.65,

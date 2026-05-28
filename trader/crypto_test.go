@@ -58,9 +58,15 @@ func TestCryptoEnterAndExit(t *testing.T) {
 		},
 	}
 
-	if err := crypto.ingestMeasurement(measurement); err != nil {
-		t.Fatalf("ingest measurement: %v", err)
-	}
+	crypto.tryEnter(engine.Prediction{
+		Perspective: engine.Perspective{
+			Type:         engine.PerspectiveMicrostructure,
+			Measurements: []engine.Measurement{measurement},
+		},
+		Confidence:  0.9,
+		PredictedAt: time.Now().Add(-10 * time.Second),
+		DueAt:       time.Now().Add(30 * time.Second),
+	}, 0.02)
 
 	if tradingWallet.Inventory["BTC"] <= 0 {
 		t.Fatal("expected paper entry to open BTC inventory")
@@ -69,7 +75,7 @@ func TestCryptoEnterAndExit(t *testing.T) {
 	if err := crypto.handleExit(engine.Exit{
 		Symbol:  "BTC/EUR",
 		Urgency: 0.9,
-		Reason:  engine.ExitReasonPressureFade,
+		Reason:  engine.ExitReasonRunwayExpired,
 	}); err != nil {
 		t.Fatalf("handle exit: %v", err)
 	}
@@ -119,9 +125,8 @@ func TestCryptoColdStartDoesNotEnter(t *testing.T) {
 }
 
 // TestSettlePredictionsDoesNotApplyFeedbackLocally guards against
-// double-counting: settlePredictions must publish on the "feedback" channel
-// only, leaving ApplyFeedback to the trader's subscriber loop (or any other
-// subscriber). Otherwise the calibrator slot receives the same feedback twice.
+// double-counting: settlePredictions must not publish feedback or apply it
+// locally. price.Prediction.settleDue is the sole feedback authority.
 func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -133,6 +138,8 @@ func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
 	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
 	t.Cleanup(func() { _ = crypto.Close() })
+	feedbacks := pool.CreateBroadcastGroup("feedback", 10*time.Millisecond).
+		Subscribe("test:settle-feedback", 8)
 
 	before := 0.0
 	if stats := crypto.kellySizer.bySeries[sourceSlotKey{source: "hawkes", regime: engine.CalibrationRegime("cluster")}]; stats != nil {
@@ -175,6 +182,12 @@ func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
 	if stats != nil && stats.wins.Total() > before {
 		t.Fatalf("settlePredictions must not call ApplyFeedback directly; wins moved by %v",
 			stats.wins.Total()-before)
+	}
+
+	select {
+	case value := <-feedbacks.Incoming:
+		t.Fatalf("settlePredictions must not publish feedback, got %v", value.Value)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

@@ -41,11 +41,28 @@ func (crypto *Crypto) tryEnter(
 		"open_count":       crypto.openCount(),
 	})
 
-	if edge <= 0 {
+	if predictedReturn < config.System.EntryEdgeMultiple*friction {
 		audit("trade_entry_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "edge_non_positive",
-			"edge":   edge,
+			"symbol":            symbol,
+			"reason":            "edge_below_threshold",
+			"edge":              edge,
+			"predicted_return":  predictedReturn,
+			"friction":          friction,
+			"required_multiple": config.System.EntryEdgeMultiple,
+		})
+
+		return
+	}
+
+	stopFraction := crypto.stopFractionFor(symbol)
+
+	if predictedReturn < config.System.TakeProfitR*stopFraction {
+		audit("trade_entry_skip", map[string]any{
+			"symbol":           symbol,
+			"reason":           "r_multiple_below_threshold",
+			"predicted_return": predictedReturn,
+			"stop_fraction":    stopFraction,
+			"required_r":       config.System.TakeProfitR,
 		})
 
 		return
@@ -73,7 +90,7 @@ func (crypto *Crypto) tryEnter(
 	slot := crypto.kellySizer.SlotEUR(
 		crypto.wallet.AvailableEUR(),
 		engine.PerspectiveSource(prediction.Perspective.Type),
-		lead.Regime,
+		engine.FeedbackRegime(prediction.Perspective, lead),
 		jointConfidence,
 		crypto.forecasts.RunningMeanError(),
 	)
@@ -148,6 +165,11 @@ func (crypto *Crypto) tryEnter(
 
 	crypto.wallet.BindPosition(symbolBase(symbol), position)
 	crypto.attachWalletMarks()
+
+	if stopPrice > 0 {
+		crypto.forecasts.RegisterStop(symbol, stopPrice)
+	}
+
 	crypto.recordEntryPnL(symbol, fill.Price)
 	crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: fill,
@@ -172,6 +194,7 @@ func (crypto *Crypto) tryEnter(
 		"slot_eur":         slot,
 		"edge":             edge,
 		"predicted_return": predictedReturn,
+		"stop_fraction":    stopFraction,
 		"confidence":       prediction.Confidence,
 		"source_count":     sourceCount,
 		"balance_eur":      crypto.wallet.BalanceCopy(),
@@ -196,7 +219,7 @@ func entryFrictionReturn(measurement engine.Measurement) float64 {
 		measurement.Ask,
 	) / 10000
 
-	return feeReturn + spreadReturn/2
+	return feeReturn + spreadReturn
 }
 
 func quoteSpreadBPS(last, bid, ask float64) float64 {
@@ -255,6 +278,15 @@ func runwayForPerspective(perspective engine.Perspective) time.Duration {
 
 	if runway > 0 {
 		return runway
+	}
+
+	for _, measurement := range perspective.Measurements {
+		switch measurement.Type {
+		case engine.Flow, engine.DepthFlow:
+			return config.System.FlowHoldBeforeExit
+		case engine.Causal:
+			return config.System.MinHoldBeforeRotate
+		}
 	}
 
 	return config.System.ScalpHoldBeforeExit

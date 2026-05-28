@@ -37,6 +37,19 @@ func NewKellySizer(params engine.CalibrationParams) *KellySizer {
 	}
 }
 
+// roundTripFeeReturn is the fee-only round-trip cost as a return fraction. A
+// "win" must clear this, not merely zero, or Kelly learns the base rate of
+// up-ticks instead of the signal's edge.
+func roundTripFeeReturn() float64 {
+	feePct := config.System.TakerFeePct * 2
+
+	if config.System.UseMakerEntries {
+		feePct = config.System.MakerFeePct + config.System.TakerFeePct
+	}
+
+	return feePct / 100
+}
+
 func (kellySizer *KellySizer) ApplyFeedback(feedback engine.PredictionFeedback) {
 	if !engine.ValidPredictionFeedback(feedback) {
 		return
@@ -47,7 +60,7 @@ func (kellySizer *KellySizer) ApplyFeedback(feedback engine.PredictionFeedback) 
 
 	stats := kellySizer.sourceStats(feedback.Source, feedback.Regime)
 	stats.calibrator.Apply(feedback)
-	stats.wins.Observe(feedback.ActualReturn > 0)
+	stats.wins.Observe(feedback.ActualReturn > roundTripFeeReturn())
 
 	if feedback.PredictedReturn > 0 {
 		payoffSample := math.Abs(feedback.ActualReturn / feedback.PredictedReturn)

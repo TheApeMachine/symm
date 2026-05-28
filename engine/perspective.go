@@ -50,8 +50,8 @@ FuseMeasurements combines independent source confidences into one joint
 confidence and counts distinct contributing sources.
 */
 func FuseMeasurements(measurements []Measurement) (jointConfidence float64, sourceCount int) {
-	anonymous := make([]float64, 0, len(measurements))
 	sources := make(map[string]float64)
+	anonymous := make([]float64, 0, len(measurements))
 
 	for _, measurement := range measurements {
 		if measurement.Confidence <= 0 {
@@ -68,23 +68,62 @@ func FuseMeasurements(measurements []Measurement) (jointConfidence float64, sour
 		}
 	}
 
-	factors := make([]float64, 0, len(sources)+len(anonymous))
+	// Effective independent count per family is sqrt(k): each member's
+	// noisy-OR exponent is 1/sqrt(k) so within-family corroboration does not
+	// compound as if the sources were independent.
+	familyCount := make(map[string]int)
 
-	for _, confidence := range sources {
-		factors = append(factors, confidence)
+	for source := range sources {
+		familyCount[sourceFamily(source)]++
 	}
 
-	factors = append(factors, anonymous...)
+	complement := 1.0
 
-	if len(factors) == 0 {
+	for source, confidence := range sources {
+		weight := 1.0
+
+		if count := familyCount[sourceFamily(source)]; count > 1 {
+			weight = 1.0 / math.Sqrt(float64(count))
+		}
+
+		complement *= math.Pow(1-clampUnit01(confidence), weight)
+	}
+
+	// Sourceless measurements are treated as fully independent.
+	for _, confidence := range anonymous {
+		complement *= 1 - clampUnit01(confidence)
+	}
+
+	if complement >= 1 {
 		return 0, len(sources)
 	}
 
-	product := 1.0
+	return 1 - complement, len(sources)
+}
 
-	for _, confidence := range factors {
-		product *= confidence
+func clampUnit01(value float64) float64 {
+	if value < 0 {
+		return 0
 	}
 
-	return math.Pow(product, 1/float64(len(factors))), len(sources)
+	if value > 1 {
+		return 1
+	}
+
+	return value
+}
+
+// sourceFamily groups signals that consume the same market-data stream and are
+// therefore positively correlated. Members of one family are down-weighted in
+// fusion so co-firing does not overstate joint confidence. Any source not
+// listed is its own family (treated as independent).
+func sourceFamily(source string) string {
+	switch source {
+	case "depthflow", "fluid", "hawkes", "pumpdump":
+		return "microstructure"
+	case "correlation", "leadlag", "liquidity", "sentiment":
+		return "cross_section"
+	default:
+		return source
+	}
 }

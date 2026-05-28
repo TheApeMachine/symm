@@ -23,6 +23,20 @@ func TestNewConfigDefaults(t *testing.T) {
 	if cfg.LogStdoutActive != false {
 		t.Fatalf("expected console logging disabled by default")
 	}
+
+	if cfg.UseMakerEntries {
+		t.Fatal("expected paper defaults to use taker entry friction")
+	}
+
+	if cfg.ScalpHoldBeforeExit != 90*time.Second {
+		t.Fatalf("expected 90s scalp hold, got %v", cfg.ScalpHoldBeforeExit)
+	}
+
+	if cfg.EntryEdgeMultiple != 2 || cfg.TakeProfitR != 2 ||
+		cfg.StopVolMultiple != 8 || cfg.MinExhaustHold != 5*time.Second ||
+		cfg.AdverseSelectionBPS != 5 {
+		t.Fatalf("unexpected strategy defaults: %+v", cfg)
+	}
 }
 
 func TestLogStdoutEnvOverride(t *testing.T) {

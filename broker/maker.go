@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"math/rand"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
@@ -44,13 +45,22 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 
 	fee := maker.Notional * feePct / 100
 
+	if config.System.PaperOrderRejectRate > 0 {
+		if rand.Float64() < config.System.PaperOrderRejectRate {
+			tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+			return order.Fill{}, nil
+		}
+	}
+
 	if err := tradingWallet.SettleEntryReservation(maker.Notional, maker.Notional); err != nil {
 		return order.Fill{}, err
 	}
 
 	orderSymbol := Symbol(maker.Symbol)
 	base := orderSymbol.BaseAsset()
-	qty := (maker.Notional - fee) / maker.LimitPrice
+	effectivePrice := maker.LimitPrice * (1 + config.System.AdverseSelectionBPS/10000)
+	qty := (maker.Notional - fee) / effectivePrice
 
 	if qty <= 0 {
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)
@@ -63,7 +73,7 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		Symbol:  maker.Symbol,
 		Side:    "buy",
 		Qty:     qty,
-		Price:   maker.LimitPrice,
+		Price:   effectivePrice,
 	}, nil
 }
 

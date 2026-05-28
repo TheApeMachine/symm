@@ -197,6 +197,12 @@ func (sym *HawkesSymbol) Measure(
 		return engine.Measurement{}, false
 	}
 
+	runwaySec := int64(fit.Runway().Seconds())
+
+	if runwaySec < 1 {
+		runwaySec = 1
+	}
+
 	return engine.Measurement{
 		Type: logic.Or(
 			engine.Momentum,
@@ -216,6 +222,10 @@ func (sym *HawkesSymbol) Measure(
 		),
 		Pairs:      []asset.Pair{pair},
 		Confidence: confidence,
+		Timeframe: engine.Timeframe{
+			Start: now.Unix(),
+			End:   now.Unix() + runwaySec,
+		},
 	}, true
 }
 

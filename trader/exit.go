@@ -7,8 +7,22 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 )
+
+// softExitReasons are the exhaust-driven book-decay exits. They are suppressed
+// for config.MinExhaustHold after entry so a position is not flushed before it
+// can clear its entry fee. Runway-expiry and stop exits are never suppressed.
+func isSoftExitReason(reason string) bool {
+	switch reason {
+	case "book_thinning", "spread_widen",
+		engine.ExitReasonPressureFade, engine.ExitReasonImbalanceFlip:
+		return true
+	default:
+		return false
+	}
+}
 
 func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	if crypto.wallet == nil {
@@ -28,7 +42,24 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 			"urgency": exitSignal.Urgency,
 		})
 
+		crypto.forecasts.ClearStop(symbol)
+
 		return nil
+	}
+
+	if isSoftExitReason(exitSignal.Reason) {
+		if binding, ok := crypto.wallet.PositionBindingFor(symbolBase(symbol)); ok {
+			if time.Since(binding.PredictedAt) < config.System.MinExhaustHold {
+				audit("trade_exit_skip", map[string]any{
+					"symbol":  symbol,
+					"reason":  "min_hold",
+					"signal":  exitSignal.Reason,
+					"held_ms": time.Since(binding.PredictedAt).Milliseconds(),
+				})
+
+				return nil
+			}
+		}
 	}
 
 	// Source bid/ask/last from the price cache directly so the sell pays
@@ -62,6 +93,23 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 
 	if ask <= 0 {
 		ask = last
+	}
+
+	if exitSignal.Reason == engine.ExitReasonStopHit && exitSignal.LimitPrice > 0 {
+		// A stop never credits a price above its trigger. Take the worse of
+		// the trigger and the current quote so paper PnL does not flatter
+		// stop-outs relative to live execution.
+		if exitSignal.LimitPrice < last {
+			last = exitSignal.LimitPrice
+		}
+
+		if exitSignal.LimitPrice < bid {
+			bid = exitSignal.LimitPrice
+		}
+
+		if exitSignal.LimitPrice < ask {
+			ask = exitSignal.LimitPrice
+		}
 	}
 
 	audit("trade_exit_eval", map[string]any{
@@ -111,6 +159,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	}
 
 	crypto.attachWalletMarks()
+	crypto.forecasts.ClearStop(symbol)
 	crypto.recordExitPnL(symbol, fill.Qty, fill.Price, avgEntryBefore)
 	crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{
 		Value: fill,

@@ -2,7 +2,6 @@ package trader
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -62,6 +61,18 @@ func (account *riskAccount) ObserveMark(symbol string, price float64, at time.Ti
 	}
 
 	account.portfolio.ObserveSymbolAt(symbol, price, at)
+}
+
+// MarketRegime classifies recent price-path efficiency for one symbol.
+func (account *riskAccount) MarketRegime(symbol string) engine.MarketRegime {
+	if account == nil || account.portfolio == nil {
+		return engine.RegimeUnknown
+	}
+
+	account.mu.Lock()
+	defer account.mu.Unlock()
+
+	return account.portfolio.MarketRegime(symbol)
 }
 
 /*
@@ -207,6 +218,29 @@ func (crypto *Crypto) preTradeGate(symbol string, edge, jointConfidence float64)
 	return nil
 }
 
+// stopFractionFor returns the fractional stop distance for one symbol, derived
+// from recent realized volatility and floored/capped by the configured trail
+// bounds. StopVolMultiple is a calibration constant approximating volatility
+// accumulation over the hold; tune against backtests.
+func (crypto *Crypto) stopFractionFor(symbol string) float64 {
+	cfg := config.System
+
+	floor := cfg.MinTrailPct / 100
+	ceil := cfg.MaxTrailPct / 100
+
+	frac := cfg.StopVolMultiple * crypto.forecasts.RecentVolatility(symbol)
+
+	if frac < floor {
+		frac = floor
+	}
+
+	if frac > ceil {
+		frac = ceil
+	}
+
+	return frac
+}
+
 /*
 stopPricesFor computes an OTO stop level from the measurement's anchor
 price and the predicted-return magnitude. The stop is placed at a fraction
@@ -229,29 +263,7 @@ func (crypto *Crypto) stopPricesFor(
 		return 0, 0
 	}
 
-	trailPct := cfg.DefaultTrailPct
-
-	if trailPct < cfg.MinTrailPct {
-		trailPct = cfg.MinTrailPct
-	}
-
-	if trailPct > cfg.MaxTrailPct {
-		trailPct = cfg.MaxTrailPct
-	}
-
-	// Combine a fraction of the predicted upside with the configured trail
-	// floor so volatile signals widen the stop and quiet ones tighten it.
-	// The min(predictedReturn*0.5, trailPct/100) on its own can shrink to
-	// near-zero for tiny predicted moves, producing a stop one tick away
-	// from entry that the exchange's first jitter will trip. The MinTrailPct
-	// floor below guarantees a baseline stop distance regardless of how
-	// quiet the signal is.
-	stopFraction := math.Min(predictedReturn*0.5, trailPct/100)
-	minStopFraction := cfg.MinTrailPct / 100
-
-	if stopFraction < minStopFraction {
-		stopFraction = minStopFraction
-	}
+	stopFraction := crypto.stopFractionFor(lead.Pairs[0].Wsname)
 
 	if stopFraction <= 0 {
 		return 0, 0

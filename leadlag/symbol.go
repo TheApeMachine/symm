@@ -13,6 +13,11 @@ const (
 	priceHistoryCap = 256
 	maxLagBars      = 12
 	minLagSamples   = 16
+
+	// leadlagDominanceMargin is how much a lagged correlation must exceed the
+	// contemporaneous correlation (in correlation units) to count as genuine
+	// leadership rather than shared beta.
+	leadlagDominanceMargin = 0.1
 )
 
 /*
@@ -150,13 +155,18 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 		return 0, 0, false
 	}
 
-	bestCorr := 0.0
-	bestLag := 0
 	interval := correlation.BarInterval()
 
-	if corr, ok := correlation.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok && corr > 0 {
-		bestCorr = corr
+	// Contemporaneous correlation is the co-movement baseline a lagged
+	// relationship must beat to qualify as leadership.
+	corr0 := 0.0
+
+	if corr, ok := correlation.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok {
+		corr0 = corr
 	}
+
+	bestCorr := 0.0
+	bestLag := 0
 
 	for lag := 1; lag <= maxLagBars; lag++ {
 		shiftedAnchor := correlation.ShiftPriceSamples(
@@ -171,7 +181,9 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 		}
 	}
 
-	if bestLag <= 0 || bestCorr <= 0 {
+	// Require a strictly positive lag whose correlation dominates the
+	// contemporaneous baseline by the margin. Otherwise this is beta, not lead.
+	if bestLag <= 0 || bestCorr <= corr0+leadlagDominanceMargin {
 		return 0, 0, false
 	}
 

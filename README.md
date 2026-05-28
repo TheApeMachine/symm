@@ -155,9 +155,9 @@ For every symbol/perspective bucket, `Crypto` calls `price.Prediction.RecordPers
 
 - **Anchor** — `Last` on the strongest priced measurement in the perspective (or mid of bid/ask if needed)
 - **Runway** — the longest horizon implied by the measurements in the perspective
-- **Predicted return** — `perspective confidence × return scale` for that `(perspectiveSource, symbol)` series. The signed scale is learned from settled forward returns when available; before that it comes from the symbol’s observed tick-to-tick return movement. No unit fallback is used, and a negative learned scale blocks positive market-move fallback for that perspective-symbol pair.
+- **Predicted return** — learned by `price.ReturnModel` from settled `(confidence, realized forward return)` pairs for the `(perspectiveSource, marketRegime)` bucket.
 
-Until a `(perspectiveSource, symbol)` has settled returns, forecasts use the observed symbol movement scale. Settlement still runs on every anchored open forecast so perspective-local return scale can take over when it has evidence.
+Until a bucket has at least 30 anchored settlements and a statistically positive mean realized return, `RecordPerspective` stores the open forecast with `predictedReturn = 0`. That cold-start forecast is still settled, so the bucket can accumulate evidence without risking capital.
 
 ### 4. Settlement and feedback
 
@@ -165,10 +165,10 @@ Until a `(perspectiveSource, symbol)` has settled returns, forecasts use the obs
 
 Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics. When the trader has enough symbol return history, the feedback bucket is the derived market regime (`choppy`, `bullish`, `bearish`, etc.); otherwise it preserves the signal's source-local regime label. Forecasts are observational by default; an active position is bound separately to the perspective source and `dueAt` that authorized entry, so settlement of an unrelated shorter forecast cannot close that position.
 
-Predicted return formula:
+The trader's local prediction list no longer emits feedback. It only closes a bound position whose runway expired; `price.Prediction.settleDue` is the single settlement and feedback authority.
 
 ```text
-predictedReturn = perspectiveConfidence × derivedReturnScale(perspectiveSource, symbol)
+predictedReturn = ReturnModel.Forecast(perspectiveSource, marketRegime, perspectiveConfidence)
 ```
 
 ---
@@ -204,15 +204,15 @@ Entry signals share the same shape: subscribe to market channels, request deeper
 On each `measurements` message (coalescing any others already queued):
 
 1. Build perspectives and call `RecordPerspective` once for each symbol/perspective bucket.
-2. Track the best net opportunity at the perspective level: `engine.FuseMeasurements` produces perspective confidence, `price.Prediction` produces the perspective forecast, and edge is `perspective predicted return - entry friction`. Every positive-return perspective can support an opportunity immediately; there is no elapsed warmup gate.
-3. If wallet and risk capacity remain and net edge is positive after observed fee/spread friction, **enter** on that symbol using the perspective’s lead executable measurement `Last` / `Bid` / `Ask`.
+2. Track the best net opportunity at the perspective level: `engine.FuseMeasurements` produces perspective confidence with shared-data discounting, `price.Prediction` produces the learned forward-return forecast, and edge is `perspective predicted return - entry friction`.
+3. If wallet and risk capacity remain, enter only when the forecast clears `EntryEdgeMultiple × round-trip friction` and `TakeProfitR × stop distance`. Cold or statistically weak buckets forecast zero and cannot trade.
 4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses aggregate `engine_pulse.avg_prediction` and `engine_pulse.avg_error`; it does not plot per-symbol forecast segments.
 
-Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`; if visible book depth is insufficient, the remaining notional is priced at an adverse impact level instead of dropping the trade. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace. Live maker prices require exchange price precision, and live sells floor base quantity to Kraken lot precision from the instrument snapshot or bound wallet position.
+Paper entries default to taker market fills (`UseMakerEntries=false`) so friction matches `broker.Buy`/`broker.Sell`: taker fee both ways plus the full quoted spread. Maker paper fills remain available but include a configured reject rate and an adverse-selection price penalty; they should not be re-enabled for entries until the entry path actually uses `broker.Maker`.
 
 Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies a portfolio risk dampener to executable confidence/edge, applies fractional Kelly sizing from settled feedback and fused confidence, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). The dampener is derived from remaining drawdown capacity and the candidate's systemic covariance eigenmode against open symbols; it leaves the underlying signal forecast recorded while suppressing entries when portfolio state makes the standalone signal unsafe. There is no fixed global slot count; cash, Kelly sizing, optional deploy cap, drawdown, spread/slippage, and correlation decide capacity. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 
-On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
+On each `exits` message from `exhaust` (urgency ≥ `ExitUrgencyThreshold`), `Crypto` closes inventory for that symbol: paper exits use `SlippageFill` with the last tick price from `price.Prediction`; live exits send `MarketSellBase` on `orders`. Soft exhaust exits are suppressed for `MinExhaustHold` after entry. Paper stops are armed in `price.Prediction`, evaluated on every tick, and emitted as `stop_hit` exits with the stop trigger as the maximum credited fill price. Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top.
 
 ---
 

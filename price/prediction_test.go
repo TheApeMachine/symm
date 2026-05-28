@@ -125,12 +125,16 @@ func TestPredictionRecordPerspective(t *testing.T) {
 
 	prediction := NewPrediction(ctx, pool)
 	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
-	prediction.SeedReturnCalibration(source, "BTC/EUR", 0.01)
+	regime := "microstructure"
+
+	for range MinForwardSamples {
+		prediction.returnModel.Observe(source, regime, 0.8, 0.012)
+	}
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
 		Type:       engine.Pump,
-		Regime:     "microstructure",
+		Regime:     regime,
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.8,
@@ -152,19 +156,22 @@ func TestPredictionRecordPerspective(t *testing.T) {
 	}
 }
 
-func TestPredictionRecordPerspectiveUsesSymbolLocalReturnSupport(t *testing.T) {
+func TestPredictionRecordPerspectiveUsesRegimeLocalReturnSupport(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
 
 	prediction := NewPrediction(ctx, pool)
 	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
-	prediction.SeedReturnCalibration(source, "ETH/EUR", 0.01)
+
+	for range MinForwardSamples {
+		prediction.returnModel.Observe(source, "warmed", 0.8, 0.012)
+	}
 
 	measurement := engine.Measurement{
 		Source:     "pumpdump",
 		Type:       engine.Pump,
-		Regime:     "microstructure",
+		Regime:     "cold",
 		Reason:     "actual_pump",
 		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
 		Confidence: 0.8,
@@ -178,11 +185,11 @@ func TestPredictionRecordPerspectiveUsesSymbolLocalReturnSupport(t *testing.T) {
 	)
 
 	if predicted != 0 {
-		t.Fatalf("expected unrelated symbol support not to scale BTC/EUR, got %v", predicted)
+		t.Fatalf("expected unrelated regime support not to forecast BTC/EUR, got %v", predicted)
 	}
 }
 
-func TestPredictionRecordPerspectiveUsesObservedMarketScale(t *testing.T) {
+func TestPredictionRecordPerspectiveRecordsColdBucketWithZeroForecast(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	t.Cleanup(func() { pool.Close() })
@@ -209,8 +216,14 @@ func TestPredictionRecordPerspectiveUsesObservedMarketScale(t *testing.T) {
 		time.Now(),
 	)
 
-	if math.Abs(predicted-0.0042) > 1e-9 {
-		t.Fatalf("expected market-scaled predicted return 0.0042, got %v", predicted)
+	if predicted != 0 {
+		t.Fatalf("expected cold return model forecast to be zero, got %v", predicted)
+	}
+
+	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
+
+	if _, ok := prediction.open["BTC/EUR"][source]; !ok {
+		t.Fatal("expected cold bucket to still record an open prediction")
 	}
 
 	select {
@@ -236,9 +249,10 @@ func TestPredictionRecordPerspectiveBlocksNegativeLearnedReturnSupport(t *testin
 
 	prediction := NewPrediction(ctx, pool)
 	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
-	prediction.SeedReturnCalibration(source, "BTC/EUR", -0.01)
-	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 100})
-	prediction.observeTicker(market.TickerRow{Symbol: "BTC/EUR", Last: 101})
+
+	for range MinForwardSamples {
+		prediction.returnModel.Observe(source, "microstructure", 0.8, -0.012)
+	}
 
 	measurement := engine.Measurement{
 		Source:     "hawkes",
@@ -256,8 +270,8 @@ func TestPredictionRecordPerspectiveBlocksNegativeLearnedReturnSupport(t *testin
 		time.Now(),
 	)
 
-	if predicted >= 0 {
-		t.Fatalf("expected negative learned support to block market fallback, got %v", predicted)
+	if predicted != 0 {
+		t.Fatalf("expected negative return model bucket to block forecast, got %v", predicted)
 	}
 }
 

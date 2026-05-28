@@ -23,16 +23,13 @@ type CausalSymbol struct {
 	mu                sync.RWMutex
 	pair              asset.Pair
 	samples           []causalSample
+	pendingSamples    []pendingCausalSample
 	interventionHist  []float64
 	upliftHist        []float64
 	confidenceHistory []float64
 	lastPrice         float64
-	lastSamplePrice   float64
 	bid               float64
 	ask               float64
-	lastAt            time.Time
-	lastElapsed       time.Duration
-	hasPrior          bool
 	dailyQuoteVol     float64
 	changePct         float64
 	spreadBPS         float64
@@ -139,6 +136,9 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 		return engine.Measurement{}, false
 	}
 
+	// Promote any pending readings whose forward return has matured.
+	state.resolvePendingLocked(now)
+
 	batchVolume := state.volumeWindow.Sum()
 	reason := "macro_association"
 	confidence := 0.0
@@ -146,29 +146,28 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 	if batchVolume > 0 && state.spreadBPS > 0 && state.imbalance != 0 && state.buyPressure != 0 {
 		localFlow := batchVolume * (state.buyPressure + 1) / 2
 		liquidity := bookLiquidity(state.spreadBPS, batchVolume)
-		sample, ready := state.buildSample(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
-		if ready {
-			fullConfidence, fullReason := state.evaluate(sample)
-			state.commitSample(sample, state.lastPrice, now)
+		// Record this reading; it will be labeled with its forward return
+		// causalForwardWindow from now.
+		state.enqueuePendingLocked(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
-			if fullConfidence > 0 {
-				return engine.Measurement{
-					Type:       engine.Causal,
-					Source:     causalSource,
-					Regime:     "causal",
-					Reason:     fullReason,
-					Pairs:      []asset.Pair{state.pair},
-					Confidence: fullConfidence,
-					Last:       state.lastPrice,
-					Bid:        state.bid,
-					Ask:        state.ask,
-				}, true
-			}
-		}
+		// Predict the forward velocity for the current feature vector using the
+		// model fitted on already-labeled (forward) samples.
+		currentSample := newCausalSample(macroMomentum, liquidity, localFlow, 0)
+		fullConfidence, fullReason := state.evaluate(currentSample)
 
-		if !ready {
-			state.commitSample(sample, state.lastPrice, now)
+		if fullConfidence > 0 {
+			return engine.Measurement{
+				Type:       engine.Causal,
+				Source:     causalSource,
+				Regime:     "causal",
+				Reason:     fullReason,
+				Pairs:      []asset.Pair{state.pair},
+				Confidence: fullConfidence,
+				Last:       state.lastPrice,
+				Bid:        state.bid,
+				Ask:        state.ask,
+			}, true
 		}
 	}
 
@@ -215,50 +214,6 @@ func (state *CausalSymbol) ChangePct() float64 {
 	defer state.mu.RUnlock()
 
 	return state.changePct
-}
-
-func (state *CausalSymbol) buildSample(
-	macroMomentum, liquidity, localFlow, price float64,
-	now time.Time,
-) (causalSample, bool) {
-	velocity := 0.0
-
-	if state.hasPrior && !state.lastAt.IsZero() && state.lastSamplePrice > 0 && price > 0 {
-		elapsedSec := now.Sub(state.lastAt).Seconds()
-
-		if elapsedSec > 0 {
-			velocity = (price - state.lastSamplePrice) / state.lastSamplePrice / elapsedSec
-		}
-	}
-
-	sample := newCausalSample(macroMomentum, liquidity, localFlow, velocity)
-
-	if !state.hasPrior {
-		state.lastAt = now
-		state.hasPrior = true
-
-		return sample, false
-	}
-
-	return sample, len(state.samples) >= minCausalHistory
-}
-
-func (state *CausalSymbol) commitSample(sample causalSample, price float64, now time.Time) {
-	if !state.lastAt.IsZero() {
-		state.lastElapsed = now.Sub(state.lastAt)
-	}
-
-	state.samples = append(state.samples, sample)
-
-	if len(state.samples) > causalHistoryCap {
-		state.samples = state.samples[len(state.samples)-causalHistoryCap:]
-	}
-
-	if price > 0 {
-		state.lastSamplePrice = price
-	}
-
-	state.lastAt = now
 }
 
 func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
