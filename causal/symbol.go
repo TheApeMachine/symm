@@ -25,6 +25,7 @@ type CausalSymbol struct {
 	upliftHist        []float64
 	confidenceHistory []float64
 	lastPrice         float64
+	lastSamplePrice   float64
 	bid               float64
 	ask               float64
 	lastAt            time.Time
@@ -135,7 +136,7 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 
 		if ready {
 			fullConfidence, fullReason := state.evaluate(sample)
-			state.commitSample(sample, now)
+			state.commitSample(sample, state.lastPrice, now)
 
 			if fullConfidence > 0 {
 				return engine.Measurement{
@@ -153,7 +154,7 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 		}
 
 		if !ready {
-			state.commitSample(sample, now)
+			state.commitSample(sample, state.lastPrice, now)
 		}
 	}
 
@@ -198,11 +199,11 @@ func (state *CausalSymbol) buildSample(
 ) (causalSample, bool) {
 	velocity := 0.0
 
-	if state.hasPrior && !state.lastAt.IsZero() && state.lastPrice > 0 && price > 0 {
+	if state.hasPrior && !state.lastAt.IsZero() && state.lastSamplePrice > 0 && price > 0 {
 		elapsedSec := now.Sub(state.lastAt).Seconds()
 
 		if elapsedSec > 0 {
-			velocity = (price - state.lastPrice) / state.lastPrice / elapsedSec
+			velocity = (price - state.lastSamplePrice) / state.lastSamplePrice / elapsedSec
 		}
 	}
 
@@ -218,7 +219,7 @@ func (state *CausalSymbol) buildSample(
 	return sample, len(state.samples) >= minCausalHistory
 }
 
-func (state *CausalSymbol) commitSample(sample causalSample, now time.Time) {
+func (state *CausalSymbol) commitSample(sample causalSample, price float64, now time.Time) {
 	if !state.lastAt.IsZero() {
 		state.lastElapsed = now.Sub(state.lastAt)
 	}
@@ -227,6 +228,10 @@ func (state *CausalSymbol) commitSample(sample causalSample, now time.Time) {
 
 	if len(state.samples) > causalHistoryCap {
 		state.samples = state.samples[len(state.samples)-causalHistoryCap:]
+	}
+
+	if price > 0 {
+		state.lastSamplePrice = price
 	}
 
 	state.lastAt = now

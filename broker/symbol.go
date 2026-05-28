@@ -1,6 +1,9 @@
 package broker
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 /*
 Symbol is one Kraken wsname such as BTC/EUR.
@@ -11,15 +14,9 @@ type Symbol string
 BaseAsset returns the asset prefix before the quote currency separator.
 */
 func (symbol Symbol) BaseAsset() string {
-	wsname := string(symbol)
+	base, _, _ := strings.Cut(string(symbol), "/")
 
-	for index := range wsname {
-		if wsname[index] == '/' {
-			return wsname[:index]
-		}
-	}
-
-	return wsname
+	return base
 }
 
 /*

@@ -16,16 +16,14 @@ type Channel string
 IsTrade reports trade channel aliases on the websocket feed.
 */
 func (channel Channel) IsTrade() bool {
-	name := string(channel)
-
-	return name == core.ChannelTrades || name == "trade"
+	return channel == core.ChannelTrades || channel == "trade"
 }
 
 /*
 IsBook reports the order-book channel.
 */
 func (channel Channel) IsBook() bool {
-	return string(channel) == core.ChannelBook
+	return channel == core.ChannelBook
 }
 
 /*

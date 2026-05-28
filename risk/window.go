@@ -29,11 +29,17 @@ func NewWindow() *Window {
 		windowCap = config.System.PriceHistory
 	}
 
+	minSamples := config.System.MinCorrelationSamples
+
+	if minSamples > windowCap {
+		minSamples = windowCap
+	}
+
 	return &Window{
 		lastPrices: make(map[string]float64),
 		prices:     make(map[string]correlation.PriceSampleRing),
 		windowCap:  windowCap,
-		minSamples: config.System.MinCorrelationSamples,
+		minSamples: minSamples,
 	}
 }
 
@@ -98,12 +104,14 @@ func (window *Window) MarketRegime(symbol string) engine.MarketRegime {
 	}
 
 	samples := window.prices[symbol].Ordered()
+	returns := correlation.LogReturnsFromPrices(window.samplePrices(samples))
 
-	if len(samples) < window.minSamples+1 {
+	// minSamples is the required return count, not raw price ticks.
+	if len(returns) < window.minSamples {
 		return engine.RegimeUnknown
 	}
 
-	return window.regimeFromReturns(correlation.LogReturnsFromPrices(window.samplePrices(samples)))
+	return window.regimeFromReturns(returns)
 }
 
 /*
@@ -155,7 +163,6 @@ func (window *Window) BuildMatrix(symbols []string) (*Matrix, bool) {
 				return nil, false
 			}
 
-			pairCorrelation = math.Max(pairCorrelation, 0)
 			matrix.rows[row][col] = pairCorrelation
 			matrix.rows[col][row] = pairCorrelation
 		}
@@ -210,5 +217,5 @@ func (window *Window) regimeFromReturns(returns []float64) engine.MarketRegime {
 		return engine.RegimeBearish
 	}
 
-	return engine.RegimeTrending
+	return engine.RegimeChoppy
 }

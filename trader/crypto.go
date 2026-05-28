@@ -18,17 +18,17 @@ import (
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	pool             *qpool.Q
-	broadcasts       map[string]*qpool.BroadcastGroup
-	subscribers      map[string]*qpool.Subscriber
-	wallet           *wallet.Wallet
-	perspectives     []*Perspective
-	predictions      []*engine.Prediction
-	kellySizer       *KellySizer
-	sourceConfidence map[string]*adaptive.EMA
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q
+	broadcasts   map[string]*qpool.BroadcastGroup
+	subscribers  map[string]*qpool.Subscriber
+	wallet       *wallet.Wallet
+	perspectives []*Perspective
+	predictions  []*engine.Prediction
+	confidence   map[string]*adaptive.EMA
+	kellySizer   *KellySizer
 }
 
 func NewCrypto(
@@ -40,19 +40,19 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:              ctx,
-		cancel:           cancel,
-		pool:             pool,
-		broadcasts:       make(map[string]*qpool.BroadcastGroup),
-		subscribers:      make(map[string]*qpool.Subscriber),
-		wallet:           wallet,
-		perspectives:     make([]*Perspective, 0),
-		predictions:      make([]*engine.Prediction, 0),
-		kellySizer:       NewKellySizer(engine.DefaultCalibrationParams()),
-		sourceConfidence: make(map[string]*adaptive.EMA),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		broadcasts:   make(map[string]*qpool.BroadcastGroup),
+		subscribers:  make(map[string]*qpool.Subscriber),
+		wallet:       wallet,
+		perspectives: make([]*Perspective, 0),
+		predictions:  make([]*engine.Prediction, 0),
+		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
+		confidence:   make(map[string]*adaptive.EMA),
 	}
 
-	for _, channel := range []string{"measurements", "ui"} {
+	for _, channel := range []string{"measurements", "feedback", "ui"} {
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(channel, 128)
 	}
@@ -98,6 +98,17 @@ func (crypto *Crypto) Tick() error {
 				if measurement, ok = raw.Value.(engine.Measurement); !ok {
 					errnie.Error(fmt.Errorf("invalid measurement: %v", raw))
 					return
+				}
+
+				if confidence, ok := crypto.confidence[measurement.Source]; !ok {
+					confidence = adaptive.NewEMA(0.1)
+					crypto.confidence[measurement.Source] = confidence
+				}
+
+				if _, err := crypto.confidence[measurement.Source].Next(
+					measurement.Confidence,
+				); err != nil {
+					errnie.Error(err)
 				}
 
 				// Check if ground truth has caught up with any predictions
@@ -161,7 +172,6 @@ func (crypto *Crypto) Tick() error {
 	})
 
 	wg.Wait()
-
 	return nil
 }
 

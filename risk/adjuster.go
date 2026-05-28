@@ -57,7 +57,7 @@ func (adjuster *Adjuster) applyDrawdownDampener() {
 	}
 
 	remaining := 1 - adjuster.DrawdownPct/limit
-	adjuster.applyDampener(adjuster.clampUnit(remaining), "drawdown_dampened")
+	adjuster.applyDampener(clampUnit(remaining), "drawdown_dampened")
 }
 
 func (adjuster *Adjuster) applySystemicDampener() {
@@ -68,7 +68,7 @@ func (adjuster *Adjuster) applySystemicDampener() {
 	}
 
 	remaining := 1 - adjuster.SystemicCorrelation/limit
-	adjuster.applyDampener(adjuster.clampUnit(remaining), "covariance_dampened")
+	adjuster.applyDampener(clampUnit(remaining), "covariance_dampened")
 }
 
 func (adjuster *Adjuster) applyDampener(candidate float64, reason string) {
@@ -78,16 +78,4 @@ func (adjuster *Adjuster) applyDampener(candidate float64, reason string) {
 
 	adjuster.Dampener = candidate
 	adjuster.Reason = reason
-}
-
-func (adjuster *Adjuster) clampUnit(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	if value >= 1 {
-		return 1
-	}
-
-	return value
 }

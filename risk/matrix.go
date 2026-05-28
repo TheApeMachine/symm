@@ -60,17 +60,5 @@ func (matrix *Matrix) SystemicConcentration() (float64, bool) {
 
 	concentration := (eigenvalue - 1) / (float64(len(matrix.rows)) - 1)
 
-	return matrix.clampUnit(concentration), true
-}
-
-func (matrix *Matrix) clampUnit(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	if value >= 1 {
-		return 1
-	}
-
-	return value
+	return clampUnit(concentration), true
 }

@@ -67,6 +67,34 @@ func TestPredictionError(t *testing.T) {
 		})
 	})
 
+	Convey("Given a short prediction and a downward move", t, func() {
+		prediction := Prediction{
+			Direction:      -1,
+			ExpectedReturn: 0.02,
+			Perspective: Perspective{
+				Measurements: []Measurement{
+					{
+						Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+						Confidence: 0.9,
+						Last:       100,
+					},
+				},
+			},
+		}
+
+		forecastError, ok := prediction.Error(Measurement{
+			Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
+			Last:  98,
+		})
+
+		Convey("It should flip sign so a down move counts as gain for shorts", func() {
+			So(ok, ShouldBeTrue)
+			So(prediction.ActualReturn, ShouldAlmostEqual, 0.02, 1e-9)
+			So(forecastError, ShouldAlmostEqual, 0, 1e-9)
+			So(prediction.Err, ShouldAlmostEqual, 0, 1e-9)
+		})
+	})
+
 	Convey("Given ground truth for a different symbol", t, func() {
 		prediction := Prediction{
 			Perspective: Perspective{
