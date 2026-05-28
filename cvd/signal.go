@@ -218,7 +218,6 @@ func (cvd *CVD) Source() string {
 func (cvd *CVD) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		now := time.Now()
-		done := false
 
 		cvd.symbols.Range(func(_, value any) bool {
 			measurement, ok := value.(*CVDSymbol).Measure(now)
@@ -227,16 +226,8 @@ func (cvd *CVD) Measure() iter.Seq[engine.Measurement] {
 				return true
 			}
 
-			if !yield(measurement) {
-				done = true
-
-				return false
-			}
-
-			return true
+			return yield(measurement)
 		})
-
-		_ = done
 	}
 }
 
