@@ -268,9 +268,9 @@ func (sentiment *Sentiment) publishMeasurements() {
 		waiters = append(
 			waiters,
 			sentiment.pool.ScheduleFast(sentiment.ctx, func(ctx context.Context) (any, error) {
-				sentiment.peakMu.Lock()
-				peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
-				sentiment.peakMu.Unlock()
+				peakScore, err := sentiment.peakNext(
+					change*breadth, leaderPeers(leaderSet, symbol)...,
+				)
 
 				if err != nil {
 					return nil, err
@@ -356,9 +356,9 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				leaderSet = map[string]float64{symbol: change}
 			}
 
-			sentiment.peakMu.Lock()
-			peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
-			sentiment.peakMu.Unlock()
+			peakScore, err := sentiment.peakNext(
+				change*breadth, leaderPeers(leaderSet, symbol)...,
+			)
 
 			if err != nil {
 				errnie.Error(err)
@@ -390,6 +390,13 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 			return true
 		})
 	}
+}
+
+func (sentiment *Sentiment) peakNext(score float64, peers ...float64) (float64, error) {
+	sentiment.peakMu.Lock()
+	defer sentiment.peakMu.Unlock()
+
+	return sentiment.peak.Next(score, peers...)
 }
 
 func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {

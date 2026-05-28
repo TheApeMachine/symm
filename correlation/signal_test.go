@@ -130,6 +130,7 @@ func TestSymbolStateConcurrentObserveAndMeasure(t *testing.T) {
 	state := newSymbolState(asset.Pair{Wsname: "BTC/EUR"}, windowCap())
 	start := time.Unix(1_700_000_000, 0)
 	var waiters sync.WaitGroup
+	feedbackErrors := make(chan error, 128)
 
 	waiters.Go(func() {
 		for index := range 128 {
@@ -149,10 +150,15 @@ func TestSymbolStateConcurrentObserveAndMeasure(t *testing.T) {
 	waiters.Go(func() {
 		for range 128 {
 			if err := state.applyFeedback(0.02, -0.01); err != nil {
-				t.Errorf("feedback: %v", err)
+				feedbackErrors <- err
 			}
 		}
 	})
 
 	waiters.Wait()
+	close(feedbackErrors)
+
+	for err := range feedbackErrors {
+		t.Fatalf("feedback: %v", err)
+	}
 }

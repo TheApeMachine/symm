@@ -84,8 +84,14 @@ func (state *symbolState) observeTicker(
 }
 
 func (state *symbolState) snapshot() symbolSnapshot {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	scale := 1.0
+
+	if state.forecast != nil {
+		scale = state.forecast.Scale()
+	}
 
 	return symbolSnapshot{
 		pair:      state.pair,
@@ -93,7 +99,7 @@ func (state *symbolState) snapshot() symbolSnapshot {
 		last:      state.last,
 		bid:       state.bid,
 		ask:       state.ask,
-		scale:     state.forecastLearner().Scale(),
+		scale:     scale,
 	}
 }
 

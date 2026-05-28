@@ -62,14 +62,14 @@ func conditionEstimate(normal [][]float64) float64 {
 	minEigenBound := math.Inf(1)
 
 	for row := 0; row < len(normal); row++ {
-		if row >= len(normal[row]) {
+		if len(normal[row]) != len(normal) {
 			return math.Inf(1)
 		}
 
 		diagonal := normal[row][row]
 		radius := 0.0
 
-		for col := 0; col < len(normal[row]); col++ {
+		for col := 0; col < len(normal); col++ {
 			if col == row {
 				continue
 			}

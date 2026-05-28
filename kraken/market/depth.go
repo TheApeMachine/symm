@@ -45,6 +45,10 @@ func DepthFillVWAPSide(
 }
 
 func adverseImpactPrice(levels []BookLevel, side string) float64 {
+	return adverseImpactPriceBPS(levels, side, insufficientDepthImpactBPS)
+}
+
+func adverseImpactPriceBPS(levels []BookLevel, side string, impactBPS float64) float64 {
 	worst := 0.0
 
 	for _, level := range levels {
@@ -57,11 +61,17 @@ func adverseImpactPrice(levels []BookLevel, side string) float64 {
 		return 0
 	}
 
-	impact := worst * insufficientDepthImpactBPS / 10000
+	impact := worst * impactBPS / 10000
 
 	switch side {
 	case "sell":
-		return math.Max(worst-impact, math.SmallestNonzeroFloat64)
+		penalty := worst - impact
+
+		if penalty <= 0 {
+			return 0
+		}
+
+		return math.Max(penalty, 0)
 	default:
 		return worst + impact
 	}

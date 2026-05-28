@@ -56,7 +56,7 @@ func TestMakerSubmitLiveRoundsLimitPrice(t *testing.T) {
 
 func TestMakerSubmitLiveRequiresPriceDecimals(t *testing.T) {
 	Convey("Given a live maker bid without price precision", t, func() {
-		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)
+		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 5, 0.26)
 		orders := make([]any, 0, 1)
 		router := NewRouter(func(value any) { orders = append(orders, value) })
 
@@ -66,10 +66,12 @@ func TestMakerSubmitLiveRequiresPriceDecimals(t *testing.T) {
 			Notional:   10,
 		}).SubmitLive(router, tradingWallet)
 
-		Convey("It should release the reservation and avoid publishing", func() {
+		Convey("It should reject before reserving cash", func() {
 			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "price decimals")
 			So(orders, ShouldHaveLength, 0)
 			So(tradingWallet.ReservedEUR, ShouldEqual, 0)
+			So(tradingWallet.Balance, ShouldEqual, 5)
 		})
 	})
 }

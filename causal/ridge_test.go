@@ -1,6 +1,9 @@
 package causal
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestRidgeSolveHandlesCollinearPredictors(t *testing.T) {
 	size := minCausalHistory
@@ -56,6 +59,17 @@ func TestConditionEstimateDetectsCollinearity(t *testing.T) {
 
 	if ridgeLambda(normal) <= 0 {
 		t.Fatal("expected positive ridge lambda")
+	}
+}
+
+func TestConditionEstimateRejectsRaggedMatrix(t *testing.T) {
+	normal := [][]float64{
+		{1, 0},
+		{0},
+	}
+
+	if !math.IsInf(conditionEstimate(normal), 1) {
+		t.Fatal("expected infinite condition estimate for ragged matrix")
 	}
 }
 

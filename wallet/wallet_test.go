@@ -66,6 +66,15 @@ func TestWalletPositionBinding(t *testing.T) {
 			convey.So(wallet.PositionMatches("BTC", "perspective:flow", dueAt.Add(time.Second)), convey.ShouldBeFalse)
 			convey.So(wallet.PositionMatches("BTC", "perspective:microstructure", dueAt), convey.ShouldBeFalse)
 		})
+
+		convey.Convey("It should reject bindings without predicted time", func() {
+			wallet.BindPosition("ETH", PositionBinding{
+				Source: "perspective:flow",
+				DueAt:  dueAt,
+			})
+
+			convey.So(wallet.PositionMatches("ETH", "perspective:flow", dueAt), convey.ShouldBeFalse)
+		})
 	})
 }
 

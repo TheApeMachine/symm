@@ -75,6 +75,22 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 		return err
 	}
 
+	limitPrice := maker.LimitPrice
+
+	if tradingWallet.Type == wallet.CryptoWallet {
+		if !maker.HasPriceDecimals {
+			return fmt.Errorf("price decimals required for live maker: %s", maker.Symbol)
+		}
+
+		roundedPrice, err := roundQuotePrice(maker.LimitPrice, maker.PriceDecimals)
+
+		if err != nil {
+			return err
+		}
+
+		limitPrice = roundedPrice
+	}
+
 	if err := tradingWallet.ReserveEntry(maker.Notional); err != nil {
 		return err
 	}
@@ -82,24 +98,6 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 	if tradingWallet.Type != wallet.CryptoWallet {
 		return nil
 	}
-
-	limitPrice := maker.LimitPrice
-
-	if !maker.HasPriceDecimals {
-		tradingWallet.ReleaseEntryReservation(maker.Notional)
-
-		return fmt.Errorf("price decimals required for live maker: %s", maker.Symbol)
-	}
-
-	roundedPrice, err := roundQuotePrice(maker.LimitPrice, maker.PriceDecimals)
-
-	if err != nil {
-		tradingWallet.ReleaseEntryReservation(maker.Notional)
-
-		return err
-	}
-
-	limitPrice = roundedPrice
 
 	if maker.ClOrdID == "" {
 		clOrdID, err := order.NextClOrdID()

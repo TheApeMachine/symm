@@ -24,6 +24,15 @@ func TestDepthFillVWAPPenalizesInsufficientDepth(t *testing.T) {
 	}
 }
 
+func TestDepthFillVWAPSideRejectsNonPositiveSellPenalty(t *testing.T) {
+	levels := []BookLevel{{Price: 0.0001, Volume: 0.5}}
+	fill := adverseImpactPriceBPS(levels, "sell", 15000)
+
+	if fill != 0 {
+		t.Fatalf("expected sell penalty fallback signal, got %v", fill)
+	}
+}
+
 func TestDepthSlopeUsesCumulativeVolume(t *testing.T) {
 	levels := []BookLevel{
 		{Price: 100, Volume: 2},

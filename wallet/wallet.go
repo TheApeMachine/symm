@@ -459,7 +459,8 @@ BindPosition attaches an open base inventory slot to the prediction that
 authorized it.
 */
 func (wallet *Wallet) BindPosition(base string, binding PositionBinding) {
-	if wallet == nil || base == "" || binding.Source == "" || binding.DueAt.IsZero() {
+	if wallet == nil || base == "" || binding.Source == "" ||
+		binding.PredictedAt.IsZero() || binding.DueAt.IsZero() {
 		return
 	}
 

@@ -297,9 +297,7 @@ func (liquidity *Liquidity) collectCandidates(quotes map[string]float64) map[str
 			continue
 		}
 
-		liquidity.adaptiveMu.Lock()
-		liquid, err := liquidity.belowMedian.Next(quoteVol, peers...)
-		liquidity.adaptiveMu.Unlock()
+		liquid, err := liquidity.belowMedianNext(quoteVol, peers...)
 
 		if err != nil {
 			errnie.Error(err)
@@ -341,11 +339,9 @@ func (liquidity *Liquidity) publishMeasurements() {
 		waiters = append(
 			waiters,
 			liquidity.pool.ScheduleFast(liquidity.ctx, func(ctx context.Context) (any, error) {
-				liquidity.adaptiveMu.Lock()
-				peakScore, err := liquidity.peak.Next(
+				peakScore, err := liquidity.peakNext(
 					score, adaptive.PeerValues(candidates, symbol)...,
 				)
-				liquidity.adaptiveMu.Unlock()
 
 				if err != nil {
 					return nil, err
@@ -423,11 +419,9 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 
 			state := raw.(*symbolState)
 			snapshot := state.snapshot()
-			liquidity.adaptiveMu.Lock()
-			peakScore, err := liquidity.peak.Next(
+			peakScore, err := liquidity.peakNext(
 				rawScore, adaptive.PeerValues(candidates, symbol)...,
 			)
-			liquidity.adaptiveMu.Unlock()
 
 			if err != nil {
 				errnie.Error(err)
@@ -461,6 +455,26 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 			}
 		}
 	}
+}
+
+func (liquidity *Liquidity) belowMedianNext(
+	quoteVol float64,
+	peers ...float64,
+) (float64, error) {
+	liquidity.adaptiveMu.Lock()
+	defer liquidity.adaptiveMu.Unlock()
+
+	return liquidity.belowMedian.Next(quoteVol, peers...)
+}
+
+func (liquidity *Liquidity) peakNext(
+	score float64,
+	peers ...float64,
+) (float64, error) {
+	liquidity.adaptiveMu.Lock()
+	defer liquidity.adaptiveMu.Unlock()
+
+	return liquidity.peak.Next(score, peers...)
 }
 
 func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
