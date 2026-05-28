@@ -23,12 +23,70 @@ const (
 )
 
 type symbolState struct {
+	mu            sync.RWMutex
 	pair          asset.Pair
 	dailyQuoteVol float64
 	last          float64
 	bid           float64
 	ask           float64
 	forecast      *learned.Forecast
+}
+
+type symbolSnapshot struct {
+	pair          asset.Pair
+	dailyQuoteVol float64
+	last          float64
+	bid           float64
+	ask           float64
+}
+
+func newSymbolState(pair asset.Pair) *symbolState {
+	return &symbolState{
+		pair:     pair,
+		forecast: learned.NewForecast(0),
+	}
+}
+
+func (state *symbolState) observeTicker(row market.TickerRow) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.dailyQuoteVol = row.Volume * row.Last
+	state.last = row.Last
+
+	if row.Bid > 0 {
+		state.bid = row.Bid
+	}
+
+	if row.Ask > 0 {
+		state.ask = row.Ask
+	}
+}
+
+func (state *symbolState) snapshot() symbolSnapshot {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return symbolSnapshot{
+		pair:          state.pair,
+		dailyQuoteVol: state.dailyQuoteVol,
+		last:          state.last,
+		bid:           state.bid,
+		ask:           state.ask,
+	}
+}
+
+func (state *symbolState) applyFeedback(predictedReturn, actualReturn float64) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.forecast == nil {
+		state.forecast = learned.NewForecast(0)
+	}
+
+	_, err := state.forecast.Next(0, predictedReturn, actualReturn)
+
+	return err
 }
 
 /*
@@ -41,6 +99,7 @@ type Liquidity struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	adaptiveMu  sync.Mutex
 	belowMedian *adaptive.BelowMedian
 	peak        *adaptive.Peak
 	pending     []string
@@ -103,10 +162,7 @@ func (liquidity *Liquidity) Tick() error {
 						continue
 					}
 
-					liquidity.symbols.Store(symbol, &symbolState{
-						pair:     *pair,
-						forecast: learned.NewForecast(0),
-					})
+					liquidity.symbols.Store(symbol, newSymbolState(*pair))
 
 					if pair.Quote != config.System.QuoteCurrency {
 						continue
@@ -145,16 +201,7 @@ func (liquidity *Liquidity) Tick() error {
 
 				if ok && row.Last > 0 {
 					state := raw.(*symbolState)
-					state.dailyQuoteVol = row.Volume * row.Last
-					state.last = row.Last
-
-					if row.Bid > 0 {
-						state.bid = row.Bid
-					}
-
-					if row.Ask > 0 {
-						state.ask = row.Ask
-					}
+					state.observeTicker(row)
 
 					liquidity.publishPulse()
 				}
@@ -228,9 +275,10 @@ func (liquidity *Liquidity) collectQuotes() map[string]float64 {
 	liquidity.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
 		state := value.(*symbolState)
+		snapshot := state.snapshot()
 
-		if state.dailyQuoteVol > 0 {
-			quotes[symbol] = state.dailyQuoteVol
+		if snapshot.dailyQuoteVol > 0 {
+			quotes[symbol] = snapshot.dailyQuoteVol
 		}
 
 		return true
@@ -249,7 +297,9 @@ func (liquidity *Liquidity) collectCandidates(quotes map[string]float64) map[str
 			continue
 		}
 
+		liquidity.adaptiveMu.Lock()
 		liquid, err := liquidity.belowMedian.Next(quoteVol, peers...)
+		liquidity.adaptiveMu.Unlock()
 
 		if err != nil {
 			errnie.Error(err)
@@ -285,14 +335,17 @@ func (liquidity *Liquidity) publishMeasurements() {
 		}
 
 		state := raw.(*symbolState)
+		snapshot := state.snapshot()
 		score := rawScore
 
 		waiters = append(
 			waiters,
 			liquidity.pool.ScheduleFast(liquidity.ctx, func(ctx context.Context) (any, error) {
+				liquidity.adaptiveMu.Lock()
 				peakScore, err := liquidity.peak.Next(
 					score, adaptive.PeerValues(candidates, symbol)...,
 				)
+				liquidity.adaptiveMu.Unlock()
 
 				if err != nil {
 					return nil, err
@@ -315,11 +368,11 @@ func (liquidity *Liquidity) publishMeasurements() {
 					Source:     liquiditySource,
 					Regime:     "liquidity",
 					Reason:     "below_median",
-					Pairs:      []asset.Pair{state.pair},
+					Pairs:      []asset.Pair{snapshot.pair},
 					Confidence: confidence,
-					Last:       state.last,
-					Bid:        state.bid,
-					Ask:        state.ask,
+					Last:       snapshot.last,
+					Bid:        snapshot.bid,
+					Ask:        snapshot.ask,
 				}, nil
 			}),
 		)
@@ -369,9 +422,12 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := raw.(*symbolState)
+			snapshot := state.snapshot()
+			liquidity.adaptiveMu.Lock()
 			peakScore, err := liquidity.peak.Next(
 				rawScore, adaptive.PeerValues(candidates, symbol)...,
 			)
+			liquidity.adaptiveMu.Unlock()
 
 			if err != nil {
 				errnie.Error(err)
@@ -395,11 +451,11 @@ func (liquidity *Liquidity) Measure() iter.Seq[engine.Measurement] {
 				Source:     liquiditySource,
 				Regime:     "liquidity",
 				Reason:     "below_median",
-				Pairs:      []asset.Pair{state.pair},
+				Pairs:      []asset.Pair{snapshot.pair},
 				Confidence: confidence,
-				Last:       state.last,
-				Bid:        state.bid,
-				Ask:        state.ask,
+				Last:       snapshot.last,
+				Bid:        snapshot.bid,
+				Ask:        snapshot.ask,
 			}) {
 				return
 			}
@@ -420,9 +476,7 @@ func (liquidity *Liquidity) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*symbolState)
 
-	if _, err := state.forecast.Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
+	if err := state.applyFeedback(feedback.PredictedReturn, feedback.ActualReturn); err != nil {
 		errnie.Error(err)
 	}
 }

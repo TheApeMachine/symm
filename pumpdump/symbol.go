@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
@@ -26,6 +29,7 @@ const (
 )
 
 type PumpSymbol struct {
+	mu                   sync.RWMutex
 	pair                 asset.Pair
 	fastVolumeWindow     *adaptive.Window
 	mediumVolumeWindow   *adaptive.Window
@@ -49,6 +53,88 @@ type PumpSymbol struct {
 	buyPressure          float64
 	imbalance            float64
 	spreadBPS            float64
+}
+
+func (state *PumpSymbol) FeedTicker(row market.TickerRow) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if row.Last > 0 {
+		state.lastPrice = row.Last
+		state.dailyQuoteVol = row.Volume * row.Last
+	}
+
+	if row.Bid > 0 {
+		state.bid = row.Bid
+	}
+
+	if row.Ask > 0 {
+		state.ask = row.Ask
+	}
+}
+
+func (state *PumpSymbol) FeedBook(delta market.BookLevelsDelta) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
+		return
+	}
+
+	bid := delta.Bids[0].Price
+	ask := delta.Asks[0].Price
+	mid := (bid + ask) / 2
+
+	state.bid = bid
+	state.ask = ask
+
+	if state.lastPrice <= 0 && mid > 0 {
+		state.lastPrice = mid
+	}
+
+	if mid > 0 {
+		state.spreadBPS = (ask - bid) / mid * 10000
+	}
+
+	total := delta.Bids[0].Volume + delta.Asks[0].Volume
+
+	if total > 0 {
+		state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
+	}
+}
+
+func (state *PumpSymbol) FeedTrade(tick trade.Data) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.feedTradeVolumeLocked(tick.Timestamp, tick.Qty, state.lastPrice)
+
+	if tick.Side == "buy" {
+		state.buyPressure = 1
+	}
+
+	if tick.Side == "sell" {
+		state.buyPressure = -1
+	}
+}
+
+func (state *PumpSymbol) DailyQuoteVol() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.dailyQuoteVol
+}
+
+func (state *PumpSymbol) HasVolumeLift() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	fastBaseline := state.fastVolumeBaseline.Value()
+	mediumBaseline := state.mediumVolumeBaseline.Value()
+
+	return fastBaseline > 0 && mediumBaseline > 0 &&
+		(state.fastVolumeWindow.Sum() > fastBaseline ||
+			state.mediumVolumeWindow.Sum() > mediumBaseline)
 }
 
 func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
@@ -98,6 +184,9 @@ func NewPumpSymbol(pair asset.Pair) *PumpSymbol {
 }
 
 func (state *PumpSymbol) Measure(peakSpike float64, regime string) (engine.Measurement, bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	raw, err := state.score.Push(
 		peakSpike,
 		math.Min(state.imbalance, 1),
@@ -196,6 +285,17 @@ func (state *PumpSymbol) precursorMoveStrength() (float64, error) {
 }
 
 func (state *PumpSymbol) FeedTradeVolume(at time.Time, qty float64, anchorPrice float64) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.feedTradeVolumeLocked(at, qty, anchorPrice)
+}
+
+func (state *PumpSymbol) feedTradeVolumeLocked(at time.Time, qty float64, anchorPrice float64) {
+	if anchorPrice <= 0 {
+		anchorPrice = state.lastPrice
+	}
+
 	nanos := float64(at.UnixNano())
 
 	for _, pair := range []struct {
@@ -229,6 +329,9 @@ func (state *PumpSymbol) FeedTradeVolume(at time.Time, qty float64, anchorPrice 
 }
 
 func (state *PumpSymbol) SetMedianHourlyVolume(volume float64) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if volume > 0 {
 		state.medianHourlyVolume = volume
 		state.hourlyBaselineReady.Store(true)
@@ -240,6 +343,9 @@ func (state *PumpSymbol) HourlyBaselineReady() bool {
 }
 
 func (state *PumpSymbol) SlowRVOL() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
 	if !state.hourlyBaselineReady.Load() || state.medianHourlyVolume <= 0 {
 		return 0
 	}
@@ -248,6 +354,9 @@ func (state *PumpSymbol) SlowRVOL() float64 {
 }
 
 func (state *PumpSymbol) BestVolumeSpike() (spike float64, regime string, err error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	fastBaseline := state.fastVolumeBaseline.Value()
 	mediumBaseline := state.mediumVolumeBaseline.Value()
 
@@ -284,4 +393,22 @@ func (state *PumpSymbol) BestVolumeSpike() (spike float64, regime string, err er
 	}
 
 	return mediumSpike, "actual_pump", nil
+}
+
+func (state *PumpSymbol) PeakSpike(spike float64, peers ...float64) (float64, error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	return state.peakGate.Next(spike, peers...)
+}
+
+func (state *PumpSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if _, err := state.forecast.Next(
+		0, feedback.PredictedReturn, feedback.ActualReturn,
+	); err != nil {
+		errnie.Error(err)
+	}
 }

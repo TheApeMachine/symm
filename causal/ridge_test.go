@@ -44,6 +44,21 @@ func TestConditionEstimateDetectsIllConditionedMatrix(t *testing.T) {
 	}
 }
 
+func TestConditionEstimateDetectsCollinearity(t *testing.T) {
+	normal := [][]float64{
+		{1, 1},
+		{1, 1.00001},
+	}
+
+	if conditionEstimate(normal) <= minConditionRatio {
+		t.Fatal("expected high condition estimate for collinear matrix")
+	}
+
+	if ridgeLambda(normal) <= 0 {
+		t.Fatal("expected positive ridge lambda")
+	}
+}
+
 func ols3Plain(
 	target, first, second, third []float64,
 ) ([]float64, bool) {

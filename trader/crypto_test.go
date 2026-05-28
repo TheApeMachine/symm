@@ -178,6 +178,108 @@ func TestSettlePredictionsDoesNotApplyFeedbackLocally(t *testing.T) {
 	}
 }
 
+func TestSettlePredictionsDoesNotExitUnboundPosition(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	forecasts := price.NewPrediction(ctx, pool)
+	t.Cleanup(func() { _ = forecasts.Close() })
+
+	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+	tradingWallet.Inventory["BTC"] = 0.1
+	tradingWallet.AvgEntry["BTC"] = 100
+
+	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
+	t.Cleanup(func() { _ = crypto.Close() })
+
+	now := time.Now()
+	activeDue := now.Add(10 * time.Minute)
+	tradingWallet.BindPosition("BTC", wallet.PositionBinding{
+		Source:      engine.PerspectiveSource(engine.PerspectiveFlow),
+		PredictedAt: now.Add(-time.Minute),
+		DueAt:       activeDue,
+	})
+
+	due := settledTestPrediction(
+		engine.PerspectiveMicrostructure,
+		now.Add(-2*time.Second),
+	)
+	crypto.predictions = append(crypto.predictions, due)
+
+	crypto.settlePredictions(engine.Measurement{
+		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
+		Last:  101,
+	})
+
+	if tradingWallet.InventoryQty("BTC") <= config.System.LiveInventoryEpsilon {
+		t.Fatal("observational prediction settlement closed an unrelated position")
+	}
+}
+
+func TestSettlePredictionsExitsBoundPosition(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	forecasts := price.NewPrediction(ctx, pool)
+	t.Cleanup(func() { _ = forecasts.Close() })
+
+	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+	tradingWallet.Inventory["BTC"] = 0.1
+	tradingWallet.AvgEntry["BTC"] = 100
+
+	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
+	t.Cleanup(func() { _ = crypto.Close() })
+
+	now := time.Now()
+	due := settledTestPrediction(
+		engine.PerspectiveMicrostructure,
+		now.Add(-2*time.Second),
+	)
+	tradingWallet.BindPosition("BTC", wallet.PositionBinding{
+		Source:      engine.PerspectiveSource(due.Perspective.Type),
+		PredictedAt: due.PredictedAt,
+		DueAt:       due.DueAt,
+	})
+	crypto.predictions = append(crypto.predictions, due)
+
+	crypto.settlePredictions(engine.Measurement{
+		Pairs: []asset.Pair{{Wsname: "BTC/EUR"}},
+		Last:  101,
+	})
+
+	if tradingWallet.InventoryQty("BTC") > config.System.LiveInventoryEpsilon {
+		t.Fatalf("expected bound position closed, got %v", tradingWallet.InventoryQty("BTC"))
+	}
+}
+
+func settledTestPrediction(
+	perspectiveType engine.PerspectiveType,
+	dueAt time.Time,
+) *engine.Prediction {
+	return &engine.Prediction{
+		Perspective: engine.Perspective{
+			Type: perspectiveType,
+			Measurements: []engine.Measurement{{
+				Source:     "hawkes",
+				Regime:     "cluster",
+				Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+				Confidence: 0.8,
+				Last:       100,
+				Bid:        99.9,
+				Ask:        100.1,
+			}},
+		},
+		Confidence:     0.8,
+		Direction:      1,
+		ExpectedReturn: 0.01,
+		Runway:         time.Second,
+		PredictedAt:    dueAt.Add(-time.Second),
+		DueAt:          dueAt,
+	}
+}
+
 func TestNewPerspectiveSeedsRegimes(t *testing.T) {
 	measurement := engine.Measurement{
 		Source:     "hawkes",

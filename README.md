@@ -163,7 +163,7 @@ Until a `(perspectiveSource, symbol)` has settled returns, forecasts use the obs
 
 `Prediction.Tick` runs as its own long-lived worker, ingests ticks for **mark prices**, expires forecasts whose `dueAt` has passed, compares **actual** forward return to **predicted**, and broadcasts `PredictionFeedback` on **`feedback`** when the forecast was anchored.
 
-Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics. When the trader has enough symbol return history, the feedback bucket is the derived market regime (`choppy`, `bullish`, `bearish`, etc.); otherwise it preserves the signal's source-local regime label.
+Each entry signal subscribes to `feedback`; `PredictionFeedback.Sources` identifies which signals contributed to the settled perspective. Matching signals route that top-down error into their per-symbol **`PredictionCalibrator`** or `learned.Forecast`, which scales internal parameters and values—not post-hoc confidence cosmetics. When the trader has enough symbol return history, the feedback bucket is the derived market regime (`choppy`, `bullish`, `bearish`, etc.); otherwise it preserves the signal's source-local regime label. Forecasts are observational by default; an active position is bound separately to the perspective source and `dueAt` that authorized entry, so settlement of an unrelated shorter forecast cannot close that position.
 
 Predicted return formula:
 
@@ -181,7 +181,7 @@ predictedReturn = perspectiveConfidence × derivedReturnScale(perspectiveSource,
 | Pump/dump      | `pumpdump`      | Multi-scale volume spikes: 10s fast pump, 5m medium, 14d RVOL slow breakout |
 | Depth flow     | `depthflow`     | Distance-weighted book imbalance + Level-1 spoof rejection |
 | Hawkes         | `hawkes`        | Bivariate Hawkes trade clustering (buy/sell excitation); MLE refit throttled by `HawkesFitCooldown` |
-| Lead/lag       | `leadlag`       | Anchor pair vs laggard change                                    |
+| Lead/lag       | `leadlag`       | Anchor pair vs laggard path using asynchronous HY correlation     |
 | Liquidity      | `liquidity`     | Quote volume below cross-section median                          |
 | Sentiment      | `sentiment`     | Cross-section bullish breadth                                    |
 | Fluid          | `fluid`         | Weighted book flow, fill-to-cancel flux gate, trade pressure (also `field_row` to UI) |
@@ -208,7 +208,7 @@ On each `measurements` message (coalescing any others already queued):
 3. If wallet and risk capacity remain and net edge is positive after observed fee/spread friction, **enter** on that symbol using the perspective’s lead executable measurement `Last` / `Bid` / `Ask`.
 4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses aggregate `engine_pulse.avg_prediction` and `engine_pulse.avg_error`; it does not plot per-symbol forecast segments.
 
-Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace.
+Paper entries use maker limit fills at the bid when `UseMakerEntries` is true (lower `MakerFeePct`); resting bids chase the inner bid up to `MaxEntrySlippageBPS` before abandonment. The paper entry slot is the quote-currency budget: buy fees reduce acquired base, and the wallet does not require extra cash above the reserved slot. Taker fallback uses `SlippageFill`; if visible book depth is insufficient, the remaining notional is priced at an adverse impact level instead of dropping the trade. Live entries post `LimitBuyBid` or `MarketBuyCash` on `orders`; chase re-quotes via cancel/replace. Live maker prices require exchange price precision, and live sells floor base quantity to Kraken lot precision from the instrument snapshot or bound wallet position.
 
 Before entry, fused perspective scoring uses `engine.FuseMeasurements` for source agreement, subtracts fee/spread friction derived from the current quote and entry mode, applies a portfolio risk dampener to executable confidence/edge, applies fractional Kelly sizing from settled feedback and fused confidence, and then runs `PortfolioRisk` gates (one slot per symbol — open inventory or resting maker bid blocks re-entry). The dampener is derived from remaining drawdown capacity and the candidate's systemic covariance eigenmode against open symbols; it leaves the underlying signal forecast recorded while suppressing entries when portfolio state makes the standalone signal unsafe. There is no fixed global slot count; cash, Kelly sizing, optional deploy cap, drawdown, spread/slippage, and correlation decide capacity. Blocked entries emit `entry_blocked`; adverse `depthflow`/`Dump` measurements cancel resting bids.
 

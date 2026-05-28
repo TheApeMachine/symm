@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/config"
@@ -13,12 +14,22 @@ import (
 const correlationSource = "correlation"
 
 type symbolState struct {
+	mu       sync.RWMutex
 	pair     asset.Pair
 	window   PriceSampleRing
 	last     float64
 	bid      float64
 	ask      float64
 	forecast *learned.Forecast
+}
+
+type symbolSnapshot struct {
+	pair    asset.Pair
+	samples []PriceSample
+	last    float64
+	bid     float64
+	ask     float64
+	scale   float64
 }
 
 func newSymbolState(pair asset.Pair, windowCap int) *symbolState {
@@ -29,27 +40,64 @@ func newSymbolState(pair asset.Pair, windowCap int) *symbolState {
 	}
 }
 
-func (symbolState *symbolState) forecastScale() float64 {
-	if symbolState.forecast == nil {
+func (state *symbolState) snapshot() symbolSnapshot {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return symbolSnapshot{
+		pair:    state.pair,
+		samples: state.window.Ordered(),
+		last:    state.last,
+		bid:     state.bid,
+		ask:     state.ask,
+		scale:   forecastScale(state.forecast),
+	}
+}
+
+func (state *symbolState) forecastScale() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return forecastScale(state.forecast)
+}
+
+func forecastScale(forecast *learned.Forecast) float64 {
+	if forecast == nil {
 		return 1
 	}
 
-	return symbolState.forecast.Scale()
+	return forecast.Scale()
 }
 
-func (symbolState *symbolState) observeTick(row market.TickerRow, at time.Time) {
+func (state *symbolState) observeTick(row market.TickerRow, at time.Time) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if row.Last > 0 {
-		symbolState.last = row.Last
-		symbolState.window.Push(at, row.Last)
+		state.last = row.Last
+		state.window.Push(at, row.Last)
 	}
 
 	if row.Bid > 0 {
-		symbolState.bid = row.Bid
+		state.bid = row.Bid
 	}
 
 	if row.Ask > 0 {
-		symbolState.ask = row.Ask
+		state.ask = row.Ask
 	}
+}
+
+func (state *symbolState) applyFeedback(predictedReturn, actualReturn float64) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.forecast == nil {
+		state.forecast = learned.NewForecast(0.35)
+	}
+
+	_, err := state.forecast.Next(0, predictedReturn, actualReturn)
+
+	return err
 }
 
 func pairCorrelation(
@@ -57,28 +105,27 @@ func pairCorrelation(
 	rightState *symbolState,
 	minSamples int,
 ) (float64, bool) {
-	leftReturns, rightReturns, ok := SynchronizedLogReturns(
-		leftState.window.Ordered(),
-		rightState.window.Ordered(),
-		BarInterval(),
-	)
+	leftSnapshot := leftState.snapshot()
+	rightSnapshot := rightState.snapshot()
 
-	if !ok || len(leftReturns) < minSamples {
+	if len(leftSnapshot.samples) < minSamples || len(rightSnapshot.samples) < minSamples {
 		return 0, false
 	}
 
-	return Pearson(leftReturns, rightReturns), true
+	return HayashiYoshidaCorrelation(leftSnapshot.samples, rightSnapshot.samples)
 }
 
 func correlationMeasurement(
 	state *symbolState,
 	peakScore float64,
 ) (engine.Measurement, bool) {
-	if peakScore <= 0 || state.last <= 0 {
+	snapshot := state.snapshot()
+
+	if peakScore <= 0 || snapshot.last <= 0 {
 		return engine.Measurement{}, false
 	}
 
-	confidence := engine.ConfidenceFromScore(peakScore * state.forecastScale())
+	confidence := engine.ConfidenceFromScore(peakScore * snapshot.scale)
 
 	if confidence <= 0 {
 		return engine.Measurement{}, false
@@ -89,11 +136,11 @@ func correlationMeasurement(
 		Source:     correlationSource,
 		Regime:     "correlation",
 		Reason:     "pair_correlation",
-		Pairs:      []asset.Pair{state.pair},
+		Pairs:      []asset.Pair{snapshot.pair},
 		Confidence: confidence,
-		Last:       state.last,
-		Bid:        state.bid,
-		Ask:        state.ask,
+		Last:       snapshot.last,
+		Bid:        snapshot.bid,
+		Ask:        snapshot.ask,
 	}, true
 }
 

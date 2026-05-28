@@ -15,12 +15,12 @@ func TestDepthFillVWAPWalksLevels(t *testing.T) {
 	}
 }
 
-func TestDepthFillVWAPReturnsZeroWhenInsufficientDepth(t *testing.T) {
+func TestDepthFillVWAPPenalizesInsufficientDepth(t *testing.T) {
 	levels := []BookLevel{{Price: 100, Volume: 0.5}}
 	fill := DepthFillVWAP(levels, 100)
 
-	if fill != 0 {
-		t.Fatalf("expected zero fill, got %v", fill)
+	if fill <= 100 {
+		t.Fatalf("expected adverse fill above visible ask, got %v", fill)
 	}
 }
 

@@ -31,6 +31,7 @@ type Sentiment struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	peakMu      sync.Mutex
 	peak        *adaptive.Peak
 	pending     []string
 	requested   sync.Map
@@ -138,19 +139,7 @@ func (sentiment *Sentiment) Tick() error {
 
 				if ok && row.ChangePct != 0 {
 					state := raw.(*symbolState)
-					state.changePct = row.ChangePct
-
-					if row.Last > 0 {
-						state.last = row.Last
-					}
-
-					if row.Bid > 0 {
-						state.bid = row.Bid
-					}
-
-					if row.Ask > 0 {
-						state.ask = row.Ask
-					}
+					state.observeTicker(row)
 
 					sentiment.publishPulse()
 				}
@@ -218,7 +207,7 @@ func (sentiment *Sentiment) publishPulse() {
 	sentiment.symbols.Range(func(key, value any) bool {
 		state := value.(*symbolState)
 
-		if state.changePct != 0 {
+		if state.snapshot().changePct != 0 {
 			tickerCount++
 		}
 
@@ -263,11 +252,13 @@ func (sentiment *Sentiment) publishMeasurements() {
 
 		state := value.(*symbolState)
 
-		if state.changePct == 0 {
+		snapshot := state.snapshot()
+
+		if snapshot.changePct == 0 {
 			return true
 		}
 
-		change := state.changePct
+		change := snapshot.changePct
 		leaderSet := leaders
 
 		if len(leaderSet) == 0 {
@@ -277,7 +268,9 @@ func (sentiment *Sentiment) publishMeasurements() {
 		waiters = append(
 			waiters,
 			sentiment.pool.ScheduleFast(sentiment.ctx, func(ctx context.Context) (any, error) {
+				sentiment.peakMu.Lock()
 				peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
+				sentiment.peakMu.Unlock()
 
 				if err != nil {
 					return nil, err
@@ -296,11 +289,11 @@ func (sentiment *Sentiment) publishMeasurements() {
 					Source:     sentimentSource,
 					Regime:     "sentiment",
 					Reason:     "breadth_leader",
-					Pairs:      []asset.Pair{state.pair},
+					Pairs:      []asset.Pair{snapshot.pair},
 					Confidence: confidence,
-					Last:       state.last,
-					Bid:        state.bid,
-					Ask:        state.ask,
+					Last:       snapshot.last,
+					Bid:        snapshot.bid,
+					Ask:        snapshot.ask,
 				}, nil
 			}),
 		)
@@ -350,19 +343,22 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 		sentiment.symbols.Range(func(key, value any) bool {
 			symbol := key.(string)
 			state := value.(*symbolState)
+			snapshot := state.snapshot()
 
-			if state.changePct == 0 {
+			if snapshot.changePct == 0 {
 				return true
 			}
 
-			change := state.changePct
+			change := snapshot.changePct
 			leaderSet := leaders
 
 			if len(leaderSet) == 0 {
 				leaderSet = map[string]float64{symbol: change}
 			}
 
+			sentiment.peakMu.Lock()
 			peakScore, err := sentiment.peak.Next(change*breadth, leaderPeers(leaderSet, symbol)...)
+			sentiment.peakMu.Unlock()
 
 			if err != nil {
 				errnie.Error(err)
@@ -382,11 +378,11 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				Source:     sentimentSource,
 				Regime:     "sentiment",
 				Reason:     "breadth_leader",
-				Pairs:      []asset.Pair{state.pair},
+				Pairs:      []asset.Pair{snapshot.pair},
 				Confidence: confidence,
-				Last:       state.last,
-				Bid:        state.bid,
-				Ask:        state.ask,
+				Last:       snapshot.last,
+				Bid:        snapshot.bid,
+				Ask:        snapshot.ask,
 			}) {
 				return false
 			}
@@ -409,9 +405,7 @@ func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*symbolState)
 
-	if _, err := state.forecastLearner().Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
+	if err := state.applyFeedback(feedback.PredictedReturn, feedback.ActualReturn); err != nil {
 		errnie.Error(err)
 	}
 }

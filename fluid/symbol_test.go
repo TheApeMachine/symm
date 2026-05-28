@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -203,4 +204,45 @@ func TestFeedBookIgnoresFirstSnapshot(t *testing.T) {
 	if state.bookFluxWindow.Sum() != 0 {
 		t.Fatalf("expected first snapshot to produce zero flux, got %v", state.bookFluxWindow.Sum())
 	}
+}
+
+func TestFluidSymbolConcurrentFeedAndMeasure(t *testing.T) {
+	state := NewFluidSymbol(asset.Pair{Wsname: "ALT/EUR"})
+	now := time.Unix(1_700_000_000, 0)
+	var waiters sync.WaitGroup
+
+	waiters.Go(func() {
+		for index := range 128 {
+			state.FeedTicker(market.TickerRow{
+				Last:      10 + float64(index)*0.001,
+				Bid:       10,
+				Ask:       10.02,
+				Volume:    5000,
+				ChangePct: 4,
+			})
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			state.FeedBook(market.BookLevelsDelta{
+				BidOK: true,
+				AskOK: true,
+				Bids:  []market.BookLevel{{Price: 10, Volume: 40}},
+				Asks:  []market.BookLevel{{Price: 10.02, Volume: 35}},
+			})
+		}
+	})
+	waiters.Go(func() {
+		for index := range 128 {
+			state.FeedTradeSide(now.Add(time.Duration(index)*time.Millisecond), 1, "buy")
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			state.Measure()
+			state.wireRow()
+		}
+	})
+
+	waiters.Wait()
 }

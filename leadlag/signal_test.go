@@ -2,7 +2,9 @@ package leadlag
 
 import (
 	"context"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
@@ -17,12 +19,20 @@ func TestLeadLagMeasure(t *testing.T) {
 	signal := NewLeadLag(ctx, pool)
 	t.Cleanup(func() { _ = signal.Close() })
 
+	returns := []float64{
+		0.010, -0.007, 0.009, -0.006, 0.008, -0.005,
+		0.007, -0.004, 0.006, -0.003, 0.005, -0.002,
+		0.004, -0.003, 0.006, -0.004, 0.008, -0.005,
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	interval := 10 * time.Second
+
 	anchor := newSymbolState(asset.Pair{Wsname: anchorSymbol})
-	anchor.changePct = 0.08
+	seedLeadLagWindow(anchor, 100, returns, start, interval, 0, 0.08)
 	signal.symbols.Store(anchorSymbol, anchor)
 
 	lagger := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
-	lagger.changePct = 0.02
+	seedLeadLagWindow(lagger, 50, returns, start, interval, interval, 0.02)
 	signal.symbols.Store("ALT/EUR", lagger)
 
 	found := false
@@ -87,16 +97,24 @@ func BenchmarkLeadLagMeasure(b *testing.B) {
 
 	signal := NewLeadLag(ctx, pool)
 
+	returns := []float64{
+		0.010, -0.007, 0.009, -0.006, 0.008, -0.005,
+		0.007, -0.004, 0.006, -0.003, 0.005, -0.002,
+		0.004, -0.003, 0.006, -0.004, 0.008, -0.005,
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	interval := 10 * time.Second
+
 	anchor := newSymbolState(asset.Pair{Wsname: anchorSymbol})
-	anchor.changePct = 0.08
+	seedLeadLagWindow(anchor, 100, returns, start, interval, 0, 0.08)
 	signal.symbols.Store(anchorSymbol, anchor)
 
 	alt := newSymbolState(asset.Pair{Wsname: "ALT/EUR"})
-	alt.changePct = 0.02
+	seedLeadLagWindow(alt, 50, returns, start, interval, interval, 0.02)
 	signal.symbols.Store("ALT/EUR", alt)
 
 	eth := newSymbolState(asset.Pair{Wsname: "ETH/EUR"})
-	eth.changePct = 0.03
+	seedLeadLagWindow(eth, 80, returns, start, interval, 2*interval, 0.03)
 	signal.symbols.Store("ETH/EUR", eth)
 
 	b.ReportAllocs()
@@ -104,5 +122,29 @@ func BenchmarkLeadLagMeasure(b *testing.B) {
 	for b.Loop() {
 		for range signal.Measure() {
 		}
+	}
+}
+
+func seedLeadLagWindow(
+	state *symbolState,
+	basePrice float64,
+	returns []float64,
+	start time.Time,
+	interval time.Duration,
+	offset time.Duration,
+	changePct float64,
+) {
+	price := basePrice
+	state.observeTicker(changePct, price, price*0.999, price*1.001, start.Add(offset))
+
+	for index, logReturn := range returns {
+		price *= math.Exp(logReturn)
+		state.observeTicker(
+			changePct,
+			price,
+			price*0.999,
+			price*1.001,
+			start.Add(time.Duration(index+1)*interval+offset),
+		)
 	}
 }

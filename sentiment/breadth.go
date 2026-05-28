@@ -13,18 +13,19 @@ func (sentiment *Sentiment) marketBreadth() (float64, float64, bool) {
 
 	sentiment.symbols.Range(func(key, value any) bool {
 		state := value.(*symbolState)
+		snapshot := state.snapshot()
 
-		if state.changePct == 0 {
+		if snapshot.changePct == 0 {
 			return true
 		}
 
 		total++
 
-		if state.changePct > topChange {
-			topChange = state.changePct
+		if snapshot.changePct > topChange {
+			topChange = snapshot.changePct
 		}
 
-		if state.changePct <= 0 {
+		if snapshot.changePct <= 0 {
 			return true
 		}
 
@@ -51,12 +52,13 @@ func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, fl
 
 	sentiment.symbols.Range(func(key, value any) bool {
 		state := value.(*symbolState)
+		snapshot := state.snapshot()
 
-		if state.changePct <= 0 {
+		if snapshot.changePct <= 0 {
 			return true
 		}
 
-		leaders[key.(string)] = state.changePct
+		leaders[key.(string)] = snapshot.changePct
 
 		return true
 	})

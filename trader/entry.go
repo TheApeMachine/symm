@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/wallet"
 )
 
 func (crypto *Crypto) tryEnter(
@@ -134,6 +135,18 @@ func (crypto *Crypto) tryEnter(
 		return
 	}
 
+	position := wallet.PositionBinding{
+		Source:      engine.PerspectiveSource(prediction.Perspective.Type),
+		PredictedAt: prediction.PredictedAt,
+		DueAt:       prediction.DueAt,
+	}
+
+	if lead.Pairs[0].LotDecimals > 0 {
+		position.HasLotDecimals = true
+		position.LotDecimals = lead.Pairs[0].LotDecimals
+	}
+
+	crypto.wallet.BindPosition(symbolBase(symbol), position)
 	crypto.attachWalletMarks()
 	crypto.recordEntryPnL(symbol, fill.Price)
 	crypto.pool.CreateBroadcastGroup("executions", 10*time.Millisecond).Send(&qpool.QValue[any]{

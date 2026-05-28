@@ -90,6 +90,33 @@ func TestBivariateEstimatorMaximizeLikelihood(t *testing.T) {
 	})
 }
 
+func TestLogParamBoundsSoftplusJacobianStaysActiveAtUpperSide(t *testing.T) {
+	bounds := logParamBounds{
+		lower: [bivariateParamCount]float64{},
+		upper: [bivariateParamCount]float64{
+			1, 1, 1, 1, 1, 1, 1,
+		},
+	}
+	free := []float64{30, 30, 30, 30, 30, 30, 30}
+
+	params := bounds.decode(free)
+	jacobian := bounds.softplusJacobian(free)
+
+	for index := range params {
+		if params[index] <= bounds.lower[index] || params[index] >= bounds.upper[index] {
+			t.Fatalf("expected param %d inside bounds, got %v", index, params[index])
+		}
+
+		if params[index] < 0.95 {
+			t.Fatalf("expected param %d near upper side, got %v", index, params[index])
+		}
+
+		if jacobian[index] <= 0.001 {
+			t.Fatalf("expected active softplus gradient, got %v", jacobian[index])
+		}
+	}
+}
+
 func BenchmarkBivariateEstimatorMaximizeLikelihood(b *testing.B) {
 	start := time.Unix(0, 0)
 	buyEvents := burstEvents(start, 12, 40*time.Millisecond)

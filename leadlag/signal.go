@@ -44,6 +44,7 @@ type LeadLag struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscribers   map[string]*qpool.Subscriber
 	symbols       sync.Map
+	peakMu        sync.Mutex
 	peak          *adaptive.Peak
 	pending       []string
 	requested     sync.Map
@@ -151,17 +152,6 @@ func (leadlag *LeadLag) Tick() error {
 
 				if ok && row.Last > 0 {
 					state := raw.(*symbolState)
-					state.changePct = row.ChangePct
-					state.last = row.Last
-
-					if row.Bid > 0 {
-						state.bid = row.Bid
-					}
-
-					if row.Ask > 0 {
-						state.ask = row.Ask
-					}
-
 					// Push every ticker observation into the price ring so
 					// the cross-correlation has a real time-series to lag
 					// against. Without this the ring stays empty and
@@ -172,7 +162,13 @@ func (leadlag *LeadLag) Tick() error {
 						eventTime = time.Now()
 					}
 
-					state.observe(eventTime, row.Last)
+					state.observeTicker(
+						row.ChangePct,
+						row.Last,
+						row.Bid,
+						row.Ask,
+						eventTime,
+					)
 
 					leadlag.publishPulse()
 				}
@@ -225,7 +221,7 @@ func (leadlag *LeadLag) publishPulse() {
 	if ok {
 		anchor := anchorRaw.(*symbolState)
 
-		if anchor.changePct >= minAnchorMove {
+		if anchor.change() >= minAnchorMove {
 			scanCap := max(config.System.MaxScanSymbols/8, 1)
 			requested := leadlag.requestedCount()
 
@@ -291,7 +287,9 @@ func (leadlag *LeadLag) publishMeasurements() {
 			waiters,
 			leadlag.pool.ScheduleFast(leadlag.ctx, func(ctx context.Context) (any, error) {
 				peerScores := adaptive.PeerValues(toRatioMap(scores), symbol)
+				leadlag.peakMu.Lock()
 				peakLag, err := leadlag.peak.Next(score.correlation, peerScores...)
+				leadlag.peakMu.Unlock()
 
 				if err != nil {
 					return nil, err
@@ -353,7 +351,9 @@ func (leadlag *LeadLag) Measure() iter.Seq[engine.Measurement] {
 		peerMap := toRatioMap(scores)
 
 		for symbol, score := range scores {
+			leadlag.peakMu.Lock()
 			peakLag, err := leadlag.peak.Next(score.correlation, adaptive.PeerValues(peerMap, symbol)...)
+			leadlag.peakMu.Unlock()
 
 			if err != nil {
 				errnie.Error(err)
@@ -395,9 +395,7 @@ func (leadlag *LeadLag) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*symbolState)
 
-	if _, err := state.forecastLearner().Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
+	if err := state.applyFeedback(feedback.PredictedReturn, feedback.ActualReturn); err != nil {
 		errnie.Error(err)
 	}
 }
@@ -473,8 +471,10 @@ func lagMeasurement(
 	peakLag float64,
 	lagRatio float64,
 ) (engine.Measurement, bool) {
-	anchorStrength := engine.ExcessRatio(anchor.changePct / minAnchorMove)
-	scale := state.forecastScale()
+	anchorSnapshot := anchor.snapshot()
+	stateSnapshot := state.snapshot()
+	anchorStrength := engine.ExcessRatio(anchorSnapshot.changePct / minAnchorMove)
+	scale := stateSnapshot.scale
 	score := peakLag * scale
 
 	if score <= 0 {
@@ -486,12 +486,12 @@ func lagMeasurement(
 	if confidence <= 0 {
 		confidence = engine.ProvisionalConfidence(
 			0,
-			math.Abs(anchor.changePct-state.changePct)*scale,
+			math.Abs(anchorSnapshot.changePct-stateSnapshot.changePct)*scale,
 		)
 	}
 
-	if confidence <= 0 && state.changePct != 0 {
-		confidence = engine.ConfidenceFromScore(math.Abs(state.changePct) * scale)
+	if confidence <= 0 && stateSnapshot.changePct != 0 {
+		confidence = engine.ConfidenceFromScore(math.Abs(stateSnapshot.changePct) * scale)
 	}
 
 	if confidence <= 0 {
@@ -503,10 +503,10 @@ func lagMeasurement(
 		Source:     leadlagSource,
 		Regime:     "cross_asset",
 		Reason:     "anchor_lag",
-		Pairs:      []asset.Pair{state.pair},
+		Pairs:      []asset.Pair{stateSnapshot.pair},
 		Confidence: confidence,
-		Last:       state.last,
-		Bid:        state.bid,
-		Ask:        state.ask,
+		Last:       stateSnapshot.last,
+		Bid:        stateSnapshot.bid,
+		Ask:        stateSnapshot.ask,
 	}, true
 }

@@ -132,7 +132,7 @@ func (causal *Causal) Tick() error {
 					state := raw.(*CausalSymbol)
 					state.FeedTicker(row)
 
-					if _, seen := causal.requested.Load(row.Symbol); !seen && state.changePct != 0 {
+					if _, seen := causal.requested.Load(row.Symbol); !seen && state.ChangePct() != 0 {
 						causal.requested.Store(row.Symbol, struct{}{})
 						causal.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
 						causal.publishPulse()
@@ -391,8 +391,8 @@ func (causal *Causal) macroMomentum(candidate string) float64 {
 
 		state := value.(*CausalSymbol)
 
-		if state.changePct != 0 {
-			changes = append(changes, state.changePct)
+		if changePct := state.ChangePct(); changePct != 0 {
+			changes = append(changes, changePct)
 		}
 
 		return true

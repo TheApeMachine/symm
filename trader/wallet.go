@@ -246,3 +246,22 @@ func (crypto *Crypto) holdsSymbol(tradingWallet *wallet.Wallet, symbol string) b
 
 	return tradingWallet.InventoryQty(base) > config.System.LiveInventoryEpsilon
 }
+
+func (crypto *Crypto) holdsPrediction(
+	tradingWallet *wallet.Wallet,
+	symbol string,
+	source string,
+	dueAt time.Time,
+) bool {
+	if tradingWallet == nil {
+		return false
+	}
+
+	base := symbolBase(symbol)
+
+	if tradingWallet.InventoryQty(base) <= config.System.LiveInventoryEpsilon {
+		return false
+	}
+
+	return tradingWallet.PositionMatches(base, source, dueAt)
+}

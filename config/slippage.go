@@ -27,7 +27,7 @@ func (cfg Config) SlippageFill(
 	}
 
 	if quoteNotional > 0 && len(levels) > 0 {
-		fill := market.DepthFillVWAP(levels, quoteNotional)
+		fill := market.DepthFillVWAPSide(levels, quoteNotional, side)
 
 		if fill > 0 {
 			extra := fill * extraBPS / 10000

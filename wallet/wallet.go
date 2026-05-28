@@ -5,6 +5,7 @@ import (
 	"log"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 )
@@ -40,9 +41,22 @@ type Wallet struct {
 	Inventory    map[string]float64
 	AvgEntry     map[string]float64
 	Marks        map[string]float64
+	Positions    map[string]PositionBinding
 	seenFills    map[string]struct{}
 	seenFillRing []string
 	seenFillHead int
+}
+
+/*
+PositionBinding records the prediction maturity that authorized one open
+position. Observational predictions for the same base must not close it.
+*/
+type PositionBinding struct {
+	Source         string
+	PredictedAt    time.Time
+	DueAt          time.Time
+	HasLotDecimals bool
+	LotDecimals    int
 }
 
 /*
@@ -61,6 +75,7 @@ func NewWallet(
 		FeePct:       feePct,
 		Inventory:    make(map[string]float64),
 		AvgEntry:     make(map[string]float64),
+		Positions:    make(map[string]PositionBinding),
 		seenFills:    make(map[string]struct{}, seenFillCap),
 		seenFillRing: make([]string, seenFillCap),
 	}
@@ -142,6 +157,7 @@ func (wallet *Wallet) Snapshot() *Wallet {
 		Inventory:   copyFloatMap(wallet.Inventory),
 		AvgEntry:    copyFloatMap(wallet.AvgEntry),
 		Marks:       copyFloatMap(wallet.Marks),
+		Positions:   copyPositionMap(wallet.Positions),
 	}
 }
 
@@ -270,6 +286,7 @@ func (wallet *Wallet) ApplyFill(
 		if qty >= current {
 			wallet.Inventory[base] = 0
 			delete(wallet.AvgEntry, base)
+			delete(wallet.Positions, base)
 		} else {
 			wallet.Inventory[base] = current - qty
 		}
@@ -296,6 +313,7 @@ func (wallet *Wallet) ZeroInventory(base string) float64 {
 	qty := wallet.Inventory[base]
 	wallet.Inventory[base] = 0
 	delete(wallet.AvgEntry, base)
+	delete(wallet.Positions, base)
 
 	return qty
 }
@@ -432,7 +450,64 @@ func (wallet *Wallet) ClearPosition(base string) {
 
 	wallet.mu.Lock()
 	delete(wallet.AvgEntry, base)
+	delete(wallet.Positions, base)
 	wallet.mu.Unlock()
+}
+
+/*
+BindPosition attaches an open base inventory slot to the prediction that
+authorized it.
+*/
+func (wallet *Wallet) BindPosition(base string, binding PositionBinding) {
+	if wallet == nil || base == "" || binding.Source == "" || binding.DueAt.IsZero() {
+		return
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	if wallet.Positions == nil {
+		wallet.Positions = make(map[string]PositionBinding)
+	}
+
+	wallet.Positions[base] = binding
+}
+
+/*
+PositionBindingFor returns the prediction binding for one base asset.
+*/
+func (wallet *Wallet) PositionBindingFor(base string) (PositionBinding, bool) {
+	if wallet == nil || base == "" {
+		return PositionBinding{}, false
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	binding, ok := wallet.Positions[base]
+
+	return binding, ok
+}
+
+/*
+PositionMatches reports whether base is still bound to the exact source and
+maturity that opened it.
+*/
+func (wallet *Wallet) PositionMatches(base string, source string, dueAt time.Time) bool {
+	if wallet == nil || base == "" || source == "" || dueAt.IsZero() {
+		return false
+	}
+
+	wallet.mu.Lock()
+	defer wallet.mu.Unlock()
+
+	binding, ok := wallet.Positions[base]
+
+	if !ok {
+		return false
+	}
+
+	return binding.Source == source && binding.DueAt.Equal(dueAt)
 }
 
 /*
@@ -626,4 +701,12 @@ func copyFloatMap(source map[string]float64) map[string]float64 {
 	maps.Copy(copied, source)
 
 	return copied
+}
+
+func copyPositionMap(source map[string]PositionBinding) map[string]PositionBinding {
+	if source == nil {
+		return nil
+	}
+
+	return maps.Clone(source)
 }

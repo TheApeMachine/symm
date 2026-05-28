@@ -1,10 +1,13 @@
 package pumpdump
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trade"
 )
 
 const minFastPumpSpike = 15.0 // matches default FastPumpVolumeRatio; test is config-independent
@@ -87,4 +90,48 @@ func TestErrNoVolumeData(t *testing.T) {
 	if ErrNoVolumeData.Error() != "no valid volume data" {
 		t.Fatalf("unexpected ErrNoVolumeData message: %v", ErrNoVolumeData)
 	}
+}
+
+func TestPumpSymbolConcurrentFeedAndMeasure(t *testing.T) {
+	state := NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"})
+	state.SetMedianHourlyVolume(10)
+	now := time.Unix(1_700_000_000, 0)
+	var waiters sync.WaitGroup
+
+	waiters.Go(func() {
+		for index := range 128 {
+			state.FeedTicker(market.TickerRow{
+				Last:   1 + float64(index)*0.0001,
+				Bid:    0.99,
+				Ask:    1.01,
+				Volume: 100,
+			})
+		}
+	})
+	waiters.Go(func() {
+		for index := range 128 {
+			state.FeedTrade(trade.Data{
+				Side:      "buy",
+				Qty:       1,
+				Timestamp: now.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			state.FeedBook(market.BookLevelsDelta{
+				Bids: []market.BookLevel{{Price: 0.99, Volume: 2}},
+				Asks: []market.BookLevel{{Price: 1.01, Volume: 1}},
+			})
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			state.BestVolumeSpike()
+			state.SlowRVOL()
+			state.Measure(2, "fast_pump")
+		}
+	})
+
+	waiters.Wait()
 }

@@ -144,6 +144,111 @@ func SynchronizedLogReturns(
 	return leftReturns, rightReturns, true
 }
 
+type returnInterval struct {
+	start time.Time
+	end   time.Time
+	ret   float64
+}
+
+/*
+HayashiYoshidaCorrelation estimates asynchronous high-frequency correlation
+from every pair of overlapping return intervals. It does not require both
+symbols to trade inside the same grid bar.
+*/
+func HayashiYoshidaCorrelation(left, right []PriceSample) (float64, bool) {
+	leftIntervals, leftVariance := priceReturnIntervals(left)
+	rightIntervals, rightVariance := priceReturnIntervals(right)
+
+	if len(leftIntervals) == 0 || len(rightIntervals) == 0 ||
+		leftVariance <= 0 || rightVariance <= 0 {
+		return 0, false
+	}
+
+	covariance := 0.0
+
+	for _, leftInterval := range leftIntervals {
+		for _, rightInterval := range rightIntervals {
+			if !intervalsOverlap(leftInterval, rightInterval) {
+				continue
+			}
+
+			covariance += leftInterval.ret * rightInterval.ret
+		}
+	}
+
+	denominator := math.Sqrt(leftVariance * rightVariance)
+
+	if denominator <= 0 {
+		return 0, false
+	}
+
+	correlation := covariance / denominator
+
+	if correlation > 1 {
+		return 1, true
+	}
+
+	if correlation < -1 {
+		return -1, true
+	}
+
+	return correlation, true
+}
+
+func priceReturnIntervals(samples []PriceSample) ([]returnInterval, float64) {
+	if len(samples) < 2 {
+		return nil, 0
+	}
+
+	intervals := make([]returnInterval, 0, len(samples)-1)
+	variance := 0.0
+
+	for index := 1; index < len(samples); index++ {
+		previous := samples[index-1]
+		current := samples[index]
+
+		if previous.Price <= 0 || current.Price <= 0 ||
+			!previous.At.Before(current.At) {
+			continue
+		}
+
+		ret := math.Log(current.Price / previous.Price)
+		intervals = append(intervals, returnInterval{
+			start: previous.At,
+			end:   current.At,
+			ret:   ret,
+		})
+		variance += ret * ret
+	}
+
+	return intervals, variance
+}
+
+func intervalsOverlap(left, right returnInterval) bool {
+	return left.start.Before(right.end) && right.start.Before(left.end)
+}
+
+/*
+ShiftPriceSamples moves timestamps by offset without changing prices. Lead-lag
+scoring uses this to test whether an anchor path explains a later follower path.
+*/
+func ShiftPriceSamples(samples []PriceSample, offset time.Duration) []PriceSample {
+	if len(samples) == 0 || offset == 0 {
+		return append([]PriceSample(nil), samples...)
+	}
+
+	shifted := make([]PriceSample, len(samples))
+
+	for index := range samples {
+		shifted[index] = PriceSample{
+			At:    samples[index].At.Add(offset),
+			Price: samples[index].Price,
+		}
+	}
+
+	return shifted
+}
+
 /*
 observedGrid carries the last seen price across the grid for indexing but
 also returns a parallel slice of "this bar saw a fresh sample" flags. The

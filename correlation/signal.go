@@ -28,6 +28,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	peakMu      sync.Mutex
 	peak        *adaptive.Peak
 	pending     []string
 	requested   sync.Map
@@ -217,9 +218,11 @@ func (signal *Signal) publishMeasurements() {
 		waiters = append(
 			waiters,
 			signal.pool.ScheduleFast(signal.ctx, func(ctx context.Context) (any, error) {
+				signal.peakMu.Lock()
 				peakScore, err := signal.peak.Next(
 					correlation, adaptive.PeerValues(correlations, symbol)...,
 				)
+				signal.peakMu.Unlock()
 
 				if err != nil {
 					return nil, err
@@ -335,9 +338,11 @@ func (signal *Signal) Measure() iter.Seq[engine.Measurement] {
 			}
 
 			state := raw.(*symbolState)
+			signal.peakMu.Lock()
 			peakScore, err := signal.peak.Next(
 				correlation, adaptive.PeerValues(correlations, symbol)...,
 			)
+			signal.peakMu.Unlock()
 
 			if err != nil {
 				errnie.Error(err)
@@ -371,9 +376,7 @@ func (signal *Signal) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*symbolState)
 
-	if _, err := state.forecast.Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
+	if err := state.applyFeedback(feedback.PredictedReturn, feedback.ActualReturn); err != nil {
 		errnie.Error(err)
 	}
 }

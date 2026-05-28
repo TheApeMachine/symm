@@ -28,6 +28,7 @@ type DepthFlow struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	pendingMu   sync.Mutex
 	pending     []string
 	requested   sync.Map
 }
@@ -104,7 +105,7 @@ func (depthflow *DepthFlow) Tick() error {
 						continue
 					}
 
-					depthflow.pending = append(depthflow.pending, symbol)
+					depthflow.queuePending(symbol)
 				}
 
 				depthflow.publishPulse()
@@ -267,14 +268,9 @@ func (depthflow *DepthFlow) requestedCount() int {
 func (depthflow *DepthFlow) publishPulse() {
 	scanCap := max(config.System.MaxScanSymbols/8, 1)
 	requested := depthflow.requestedCount()
+	symbols := depthflow.pendingBatch(scanCap, requested)
 
-	if len(depthflow.pending) > 0 && requested < scanCap {
-		remaining := scanCap - requested
-		batch := min(min(config.System.SubscribeBatch, remaining), len(depthflow.pending))
-
-		symbols := depthflow.pending[:batch]
-		depthflow.pending = depthflow.pending[batch:]
-
+	if len(symbols) > 0 {
 		for _, symbol := range symbols {
 			depthflow.requested.Store(symbol, struct{}{})
 		}
@@ -285,9 +281,34 @@ func (depthflow *DepthFlow) publishPulse() {
 	depthflow.publishMeasurements()
 }
 
-func (depthflow *DepthFlow) publishMeasurements() {
-	waiters := make([]chan *qpool.QValue[any], 0)
+func (depthflow *DepthFlow) queuePending(symbol string) {
+	depthflow.pendingMu.Lock()
+	defer depthflow.pendingMu.Unlock()
 
+	depthflow.pending = append(depthflow.pending, symbol)
+}
+
+func (depthflow *DepthFlow) pendingBatch(scanCap, requested int) []string {
+	if requested >= scanCap {
+		return nil
+	}
+
+	depthflow.pendingMu.Lock()
+	defer depthflow.pendingMu.Unlock()
+
+	if len(depthflow.pending) == 0 {
+		return nil
+	}
+
+	remaining := scanCap - requested
+	batch := min(min(config.System.SubscribeBatch, remaining), len(depthflow.pending))
+	symbols := append([]string(nil), depthflow.pending[:batch]...)
+	depthflow.pending = depthflow.pending[batch:]
+
+	return symbols
+}
+
+func (depthflow *DepthFlow) publishMeasurements() {
 	depthflow.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
 
@@ -296,44 +317,18 @@ func (depthflow *DepthFlow) publishMeasurements() {
 		}
 
 		state := value.(*DepthSymbol)
-		waiters = append(
-			waiters,
-			depthflow.pool.ScheduleFast(depthflow.ctx, func(ctx context.Context) (any, error) {
-				measurement, ok := state.Measure()
-
-				if !ok {
-					return nil, nil
-				}
-
-				return measurement, nil
-			}),
-		)
-
-		return true
-	})
-
-	for _, waiter := range waiters {
-		value := <-waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		measurement, ok := value.Value.(engine.Measurement)
+		measurement, ok := state.Measure()
 
 		if !ok {
-			continue
+			return true
 		}
 
 		depthflow.broadcasts["measurements"].Send(&qpool.QValue[any]{
 			Value: measurement,
 		})
-	}
+
+		return true
+	})
 }
 
 func (depthflow *DepthFlow) Close() error {
@@ -379,9 +374,7 @@ func (depthflow *DepthFlow) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*DepthSymbol)
 
-	if _, err := state.forecast.Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
+	if err := state.ApplyFeedback(feedback.PredictedReturn, feedback.ActualReturn); err != nil {
 		errnie.Error(err)
 	}
 }

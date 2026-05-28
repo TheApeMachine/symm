@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
@@ -12,8 +13,10 @@ import (
 Sell closes one spot long.
 */
 type Sell struct {
-	Symbol string
-	Quote  Quote
+	Symbol         string
+	Quote          Quote
+	LotDecimals    int
+	HasLotDecimals bool
 }
 
 /*
@@ -107,14 +110,70 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 		return nil
 	}
 
+	lotDecimals, ok := sell.liveLotDecimals(base, tradingWallet)
+
+	if !ok {
+		return fmt.Errorf("lot decimals required for live sell: %s", sell.Symbol)
+	}
+
+	roundedQty, err := roundBaseQuantity(qty, lotDecimals)
+
+	if err != nil {
+		return err
+	}
+
+	if roundedQty <= config.System.LiveInventoryEpsilon {
+		return nil
+	}
+
 	clOrdID, err := order.NextClOrdID()
 
 	if err != nil {
 		return fmt.Errorf("generate cl_ord_id: %w", err)
 	}
 
-	req := order.MarketSellBase(sell.Symbol, qty, "")
+	req := order.MarketSellBase(sell.Symbol, roundedQty, "")
 	req.Params.ClOrdID = clOrdID
 
 	return router.Publish(req)
+}
+
+func (sell *Sell) liveLotDecimals(base string, tradingWallet *wallet.Wallet) (int, bool) {
+	if sell.HasLotDecimals {
+		return sell.LotDecimals, true
+	}
+
+	binding, ok := tradingWallet.PositionBindingFor(base)
+
+	if !ok || !binding.HasLotDecimals {
+		return 0, false
+	}
+
+	return binding.LotDecimals, true
+}
+
+func roundBaseQuantity(qty float64, decimals int) (float64, error) {
+	return roundDownPositive(qty, decimals, "quantity")
+}
+
+func roundQuotePrice(price float64, decimals int) (float64, error) {
+	return roundDownPositive(price, decimals, "price")
+}
+
+func roundDownPositive(value float64, decimals int, label string) (float64, error) {
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be positive", label)
+	}
+
+	if decimals < 0 {
+		return 0, fmt.Errorf("%s decimals must be non-negative", label)
+	}
+
+	multiplier := math.Pow10(decimals)
+
+	if multiplier <= 0 || math.IsInf(multiplier, 0) {
+		return 0, fmt.Errorf("invalid %s decimals: %d", label, decimals)
+	}
+
+	return math.Floor(value*multiplier) / multiplier, nil
 }

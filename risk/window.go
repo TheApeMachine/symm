@@ -23,16 +23,24 @@ type Window struct {
 NewWindow builds rolling return windows sized from config.
 */
 func NewWindow() *Window {
-	windowCap := config.System.MinCorrelationSamples
+	minSamples := config.System.MinCorrelationSamples
 
-	if config.System.PriceHistory > 0 && config.System.PriceHistory < windowCap {
+	if minSamples <= 0 {
+		minSamples = 1
+	}
+
+	windowCap := minSamples + 1
+
+	if config.System.PriceHistory > 0 {
 		windowCap = config.System.PriceHistory
 	}
 
-	minSamples := config.System.MinCorrelationSamples
+	if windowCap < 2 {
+		windowCap = 2
+	}
 
-	if minSamples > windowCap {
-		minSamples = windowCap
+	if minSamples >= windowCap {
+		minSamples = windowCap - 1
 	}
 
 	return &Window{

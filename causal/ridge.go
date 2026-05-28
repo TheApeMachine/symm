@@ -46,8 +46,8 @@ func ridgeLambda(normal [][]float64) float64 {
 	condition := conditionEstimate(normal)
 	extra := 0.0
 
-	if condition > minConditionRatio {
-		extra = base * (condition/minConditionRatio - 1) * ridgeScaleFactor
+	if condition > minConditionRatio || math.IsInf(condition, 0) {
+		extra = base * ridgeScaleFactor
 	}
 
 	return base*1e-8 + extra
@@ -58,28 +58,40 @@ func conditionEstimate(normal [][]float64) float64 {
 		return 0
 	}
 
-	maxRowSum := 0.0
-	minRowSum := math.Inf(1)
+	maxEigenBound := 0.0
+	minEigenBound := math.Inf(1)
 
 	for row := 0; row < len(normal); row++ {
-		rowSum := 0.0
+		if row >= len(normal[row]) {
+			return math.Inf(1)
+		}
+
+		diagonal := normal[row][row]
+		radius := 0.0
 
 		for col := 0; col < len(normal[row]); col++ {
-			rowSum += math.Abs(normal[row][col])
+			if col == row {
+				continue
+			}
+
+			radius += math.Abs(normal[row][col])
 		}
 
-		if rowSum > maxRowSum {
-			maxRowSum = rowSum
+		upper := diagonal + radius
+		lower := diagonal - radius
+
+		if upper > maxEigenBound {
+			maxEigenBound = upper
 		}
 
-		if rowSum < minRowSum {
-			minRowSum = rowSum
+		if lower < minEigenBound {
+			minEigenBound = lower
 		}
 	}
 
-	if minRowSum <= solverPivotFloor {
+	if minEigenBound <= solverPivotFloor {
 		return math.Inf(1)
 	}
 
-	return maxRowSum / minRowSum
+	return maxEigenBound / minEigenBound
 }

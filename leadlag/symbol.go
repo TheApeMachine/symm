@@ -1,6 +1,7 @@
 package leadlag
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/correlation"
@@ -24,6 +25,7 @@ ticker frame, so lagBars/lagMaxCorr can measure leadership in bars rather
 than in 24-hour dispersion.
 */
 type symbolState struct {
+	mu        sync.RWMutex
 	pair      asset.Pair
 	changePct float64
 	last      float64
@@ -31,6 +33,15 @@ type symbolState struct {
 	ask       float64
 	prices    correlation.PriceSampleRing
 	forecast  *learned.Forecast
+}
+
+type symbolSnapshot struct {
+	pair      asset.Pair
+	changePct float64
+	last      float64
+	bid       float64
+	ask       float64
+	scale     float64
 }
 
 func newSymbolState(pair asset.Pair) *symbolState {
@@ -42,7 +53,62 @@ func newSymbolState(pair asset.Pair) *symbolState {
 }
 
 func (state *symbolState) observe(at time.Time, price float64) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	state.prices.Push(at, price)
+}
+
+func (state *symbolState) observeTicker(
+	changePct float64,
+	last float64,
+	bid float64,
+	ask float64,
+	at time.Time,
+) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.changePct = changePct
+	state.last = last
+
+	if bid > 0 {
+		state.bid = bid
+	}
+
+	if ask > 0 {
+		state.ask = ask
+	}
+
+	state.prices.Push(at, last)
+}
+
+func (state *symbolState) snapshot() symbolSnapshot {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	return symbolSnapshot{
+		pair:      state.pair,
+		changePct: state.changePct,
+		last:      state.last,
+		bid:       state.bid,
+		ask:       state.ask,
+		scale:     state.forecastLearner().Scale(),
+	}
+}
+
+func (state *symbolState) priceSamples() []correlation.PriceSample {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.prices.Ordered()
+}
+
+func (state *symbolState) change() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.changePct
 }
 
 func (state *symbolState) forecastLearner() *learned.Forecast {
@@ -54,7 +120,19 @@ func (state *symbolState) forecastLearner() *learned.Forecast {
 }
 
 func (state *symbolState) forecastScale() float64 {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	return state.forecastLearner().Scale()
+}
+
+func (state *symbolState) applyFeedback(predictedReturn, actualReturn float64) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	_, err := state.forecastLearner().Next(0, predictedReturn, actualReturn)
+
+	return err
 }
 
 /*
@@ -66,46 +144,37 @@ Returns (lagBars, correlation, ok); ok is false when there is insufficient
 overlap to compute a reliable estimate.
 */
 func crossLag(anchor, state *symbolState) (int, float64, bool) {
-	anchorSeries := anchor.prices.Ordered()
-	stateSeries := state.prices.Ordered()
+	anchorSeries := anchor.priceSamples()
+	stateSeries := state.priceSamples()
 
 	if len(anchorSeries) < minLagSamples || len(stateSeries) < minLagSamples {
 		return 0, 0, false
 	}
 
-	anchorReturns, stateReturns, ok := correlation.SynchronizedLogReturns(
-		anchorSeries, stateSeries, correlation.BarInterval(),
-	)
+	bestCorr := 0.0
+	bestLag := 0
+	interval := correlation.BarInterval()
 
-	if !ok || len(anchorReturns) < minLagSamples {
-		return 0, 0, false
+	if corr, ok := correlation.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok && corr > 0 {
+		bestCorr = corr
 	}
 
-	bestLag := 0
-	bestCorr := correlation.Pearson(anchorReturns, stateReturns)
-
 	for lag := 1; lag <= maxLagBars; lag++ {
-		if lag >= len(anchorReturns) {
-			break
-		}
+		shiftedAnchor := correlation.ShiftPriceSamples(
+			anchorSeries,
+			time.Duration(lag)*interval,
+		)
+		corr, ok := correlation.HayashiYoshidaCorrelation(shiftedAnchor, stateSeries)
 
-		// Positive lag: state's return at t is correlated with anchor's
-		// return at t-lag. We slice the anchor older and state newer.
-		anchorLead := anchorReturns[:len(anchorReturns)-lag]
-		stateFollow := stateReturns[lag:]
-
-		corr := correlation.Pearson(anchorLead, stateFollow)
-
-		if corr > bestCorr {
+		if ok && corr > bestCorr {
 			bestCorr = corr
 			bestLag = lag
 		}
 	}
 
-	if bestCorr <= 0 {
+	if bestLag <= 0 || bestCorr <= 0 {
 		return 0, 0, false
 	}
 
 	return bestLag, bestCorr, true
 }
-

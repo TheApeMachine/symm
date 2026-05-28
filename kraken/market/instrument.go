@@ -112,12 +112,15 @@ AssetPair maps a websocket instrument record into the shared asset pair shape.
 */
 func (instrument Instrument) AssetPair() asset.Pair {
 	return asset.Pair{
-		Wsname:  instrument.Symbol,
-		Altname: instrument.Symbol,
-		Base:    instrument.Base,
-		Quote:   instrument.Quote,
-		Costmin: strconv.FormatFloat(instrument.CostMin, 'f', -1, 64),
-		Status:  string(instrument.Status),
+		Wsname:       instrument.Symbol,
+		Altname:      instrument.Symbol,
+		Base:         instrument.Base,
+		Quote:        instrument.Quote,
+		Costmin:      strconv.FormatFloat(instrument.CostMin, 'f', -1, 64),
+		CostDecimals: instrument.CostPrecision,
+		PairDecimals: instrument.PricePrecision,
+		LotDecimals:  instrument.QtyPrecision,
+		Status:       string(instrument.Status),
 	}
 }
 

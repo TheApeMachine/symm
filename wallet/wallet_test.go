@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 )
@@ -45,6 +46,25 @@ func TestWalletReserve(t *testing.T) {
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(wallet.Balance, convey.ShouldEqual, 200)
 			convey.So(wallet.ReservedEUR, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestWalletPositionBinding(t *testing.T) {
+	convey.Convey("Given a wallet position binding", t, func() {
+		wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+		dueAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		wallet.BindPosition("BTC", PositionBinding{
+			Source:      "perspective:flow",
+			PredictedAt: dueAt.Add(-time.Minute),
+			DueAt:       dueAt,
+		})
+
+		convey.Convey("It should match only the exact source and maturity", func() {
+			convey.So(wallet.PositionMatches("BTC", "perspective:flow", dueAt), convey.ShouldBeTrue)
+			convey.So(wallet.PositionMatches("BTC", "perspective:flow", dueAt.Add(time.Second)), convey.ShouldBeFalse)
+			convey.So(wallet.PositionMatches("BTC", "perspective:microstructure", dueAt), convey.ShouldBeFalse)
 		})
 	})
 }

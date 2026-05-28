@@ -9,11 +9,14 @@ import (
 func TestDataPair(t *testing.T) {
 	convey.Convey("Given instrument channel data", t, func() {
 		row := Data{
-			Symbol:  "BTC/EUR",
-			Base:    "BTC",
-			Quote:   "EUR",
-			Status:  "online",
-			CostMin: 0.45,
+			Symbol:         "BTC/EUR",
+			Base:           "BTC",
+			Quote:          "EUR",
+			Status:         "online",
+			CostMin:        0.45,
+			QtyPrecision:   8,
+			PricePrecision: 1,
+			CostPrecision:  5,
 		}
 
 		convey.Convey("It should map into asset.Pair", func() {
@@ -22,6 +25,9 @@ func TestDataPair(t *testing.T) {
 			convey.So(pair.Base, convey.ShouldEqual, "BTC")
 			convey.So(pair.Quote, convey.ShouldEqual, "EUR")
 			convey.So(pair.Costmin, convey.ShouldEqual, "0.45")
+			convey.So(pair.LotDecimals, convey.ShouldEqual, 8)
+			convey.So(pair.PairDecimals, convey.ShouldEqual, 1)
+			convey.So(pair.CostDecimals, convey.ShouldEqual, 5)
 			convey.So(pair.Status, convey.ShouldEqual, "online")
 		})
 	})

@@ -16,6 +16,9 @@ type Data struct {
 	Status         string  `json:"status"`
 	CostMin        float64 `json:"cost_min"`
 	QtyMin         float64 `json:"qty_min"`
+	QtyPrecision   int     `json:"qty_precision"`
+	PricePrecision int     `json:"price_precision"`
+	CostPrecision  int     `json:"cost_precision"`
 	PriceIncrement float64 `json:"price_increment"`
 }
 
@@ -24,11 +27,14 @@ Pair maps instrument channel data into the shared asset pair shape.
 */
 func (data Data) Pair() asset.Pair {
 	return asset.Pair{
-		Wsname:  data.Symbol,
-		Altname: data.Symbol,
-		Base:    data.Base,
-		Quote:   data.Quote,
-		Costmin: strconv.FormatFloat(data.CostMin, 'f', -1, 64),
-		Status:  data.Status,
+		Wsname:       data.Symbol,
+		Altname:      data.Symbol,
+		Base:         data.Base,
+		Quote:        data.Quote,
+		Costmin:      strconv.FormatFloat(data.CostMin, 'f', -1, 64),
+		CostDecimals: data.CostPrecision,
+		PairDecimals: data.PricePrecision,
+		LotDecimals:  data.QtyPrecision,
+		Status:       data.Status,
 	}
 }

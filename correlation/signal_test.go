@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,7 +93,7 @@ func TestSignalFeedbackScalesSymbol(t *testing.T) {
 		Sources:         []string{correlationSource},
 		Symbol:          "ETH/EUR",
 		PredictedReturn: 0.02,
-		ActualReturn:    -0.02,
+		ActualReturn:    -0.01,
 	})
 
 	after, ok := correlationMeasurement(state, 0.85)
@@ -123,4 +124,35 @@ func TestSignalObserveTick(t *testing.T) {
 	if len(state.window.Ordered()) != 1 {
 		t.Fatalf("expected one price sample, got %d", len(state.window.Ordered()))
 	}
+}
+
+func TestSymbolStateConcurrentObserveAndMeasure(t *testing.T) {
+	state := newSymbolState(asset.Pair{Wsname: "BTC/EUR"}, windowCap())
+	start := time.Unix(1_700_000_000, 0)
+	var waiters sync.WaitGroup
+
+	waiters.Go(func() {
+		for index := range 128 {
+			state.observeTick(market.TickerRow{
+				Last: 100 + float64(index)*0.01,
+				Bid:  99,
+				Ask:  101,
+			}, start.Add(time.Duration(index)*time.Second))
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			correlationMeasurement(state, 0.8)
+			state.snapshot()
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			if err := state.applyFeedback(0.02, -0.01); err != nil {
+				t.Errorf("feedback: %v", err)
+			}
+		}
+	})
+
+	waiters.Wait()
 }

@@ -85,7 +85,7 @@ func TestHawkesTick(t *testing.T) {
 			for time.Now().Before(deadline) {
 				state = loadHawkesSymbol(signal, "BTC/EUR")
 
-				if state != nil && state.imbalance > 0 {
+				if state != nil && state.readSnapshot().imbalance > 0 {
 					break
 				}
 
@@ -93,7 +93,7 @@ func TestHawkesTick(t *testing.T) {
 			}
 
 			convey.So(state, convey.ShouldNotBeNil)
-			convey.So(state.imbalance, convey.ShouldBeGreaterThan, 0)
+			convey.So(state.readSnapshot().imbalance, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }

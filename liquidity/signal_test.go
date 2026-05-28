@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/numeric/learned"
 )
@@ -88,6 +90,43 @@ func TestLiquidityMeasureMinPeerGuard(t *testing.T) {
 	for range signal.Measure() {
 		t.Fatal("expected min peer guard to fail with one peer")
 	}
+}
+
+func TestSymbolStateConcurrentObserveAndFeedback(t *testing.T) {
+	state := newSymbolState(asset.Pair{Wsname: "LOW/EUR"})
+	var waiters sync.WaitGroup
+
+	waiters.Go(func() {
+		for index := range 128 {
+			state.observeTicker(market.TickerRow{
+				Last:   10 + float64(index)*0.01,
+				Bid:    9.9,
+				Ask:    10.1,
+				Volume: 100,
+			})
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			state.snapshot()
+		}
+	})
+	waiters.Go(func() {
+		for range 128 {
+			if err := state.applyFeedback(0.02, -0.01); err != nil {
+				t.Errorf("feedback: %v", err)
+			}
+		}
+	})
+	waiters.Go(func() {
+		deadline := time.Now().Add(10 * time.Millisecond)
+
+		for time.Now().Before(deadline) {
+			state.snapshot()
+		}
+	})
+
+	waiters.Wait()
 }
 
 func BenchmarkLiquidityMeasure(b *testing.B) {

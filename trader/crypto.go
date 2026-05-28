@@ -359,16 +359,16 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 	)
 
 	audit("measurement_ingest", map[string]any{
-		"source":                measurement.Source,
-		"symbol":                symbol,
-		"confidence":            measurement.Confidence,
-		"raw_confidence":        rawConfidence,
-		"regime":                measurement.Regime,
-		"reason":                measurement.Reason,
-		"type":                  measurement.Type,
-		"last":                  measurement.Last,
-		"bid":                   measurement.Bid,
-		"ask":                   measurement.Ask,
+		"source":         measurement.Source,
+		"symbol":         symbol,
+		"confidence":     measurement.Confidence,
+		"raw_confidence": rawConfidence,
+		"regime":         measurement.Regime,
+		"reason":         measurement.Reason,
+		"type":           measurement.Type,
+		"last":           measurement.Last,
+		"bid":            measurement.Bid,
+		"ask":            measurement.Ask,
 	})
 
 	// The gauge shows the running EMA of CALIBRATED confidence per
@@ -500,7 +500,12 @@ func (crypto *Crypto) settlePredictions(measurement engine.Measurement) {
 			"confidence":       feedback.Confidence,
 		})
 
-		if crypto.holdsSymbol(crypto.wallet, feedback.Symbol) {
+		if crypto.holdsPrediction(
+			crypto.wallet,
+			feedback.Symbol,
+			feedback.Source,
+			due.DueAt,
+		) {
 			if err := crypto.handleExit(engine.Exit{
 				Symbol:  feedback.Symbol,
 				Urgency: 1,

@@ -146,7 +146,14 @@ func TestFluidTickAppliesBook(t *testing.T) {
 	for time.Now().Before(deadline) {
 		state := loadFluidSymbol(signal, "ALT/EUR")
 
-		if state != nil && len(state.bids) == 1 && state.spreadBPS > 0 {
+		if state == nil {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+
+		bidCount, spreadBPS := state.BookStatus()
+
+		if bidCount == 1 && spreadBPS > 0 {
 			return
 		}
 
@@ -159,8 +166,9 @@ func TestFluidTickAppliesBook(t *testing.T) {
 		t.Fatal("expected book state, got nil")
 	}
 
+	bidCount, spreadBPS := state.BookStatus()
 	t.Fatalf("expected book state, got bids=%d spread=%v",
-		len(state.bids), state.spreadBPS)
+		bidCount, spreadBPS)
 }
 
 func BenchmarkFluidMeasure(b *testing.B) {

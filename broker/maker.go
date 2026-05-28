@@ -13,11 +13,13 @@ Maker is one resting limit bid entry. OrderID is populated from the live
 exchange ack so Cancel can address the exchange's own identifier.
 */
 type Maker struct {
-	Symbol     string
-	LimitPrice float64
-	Notional   float64
-	OrderID    string
-	ClOrdID    string
+	Symbol           string
+	LimitPrice       float64
+	Notional         float64
+	OrderID          string
+	ClOrdID          string
+	PriceDecimals    int
+	HasPriceDecimals bool
 }
 
 /*
@@ -81,6 +83,24 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 		return nil
 	}
 
+	limitPrice := maker.LimitPrice
+
+	if !maker.HasPriceDecimals {
+		tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+		return fmt.Errorf("price decimals required for live maker: %s", maker.Symbol)
+	}
+
+	roundedPrice, err := roundQuotePrice(maker.LimitPrice, maker.PriceDecimals)
+
+	if err != nil {
+		tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+		return err
+	}
+
+	limitPrice = roundedPrice
+
 	if maker.ClOrdID == "" {
 		clOrdID, err := order.NextClOrdID()
 
@@ -93,7 +113,7 @@ func (maker *Maker) SubmitLive(router *Router, tradingWallet *wallet.Wallet) err
 		maker.ClOrdID = clOrdID
 	}
 
-	req := order.LimitBuyBid(maker.Symbol, maker.Notional, maker.LimitPrice, "")
+	req := order.LimitBuyBid(maker.Symbol, maker.Notional, limitPrice, "")
 	// LimitBuyBid stamps the token only; ClOrdID is set directly so the
 	// path matches Buy.SubmitLive (which constructs MarketBuyCash and then
 	// sets ClOrdID on the returned Request) and so reconcile-by-cl-ord-id

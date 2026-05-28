@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -15,6 +16,7 @@ import (
 )
 
 type FluidSymbol struct {
+	mu              sync.RWMutex
 	pair            asset.Pair
 	bids            []market.BookLevel
 	asks            []market.BookLevel
@@ -48,7 +50,34 @@ func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
 	}
 }
 
+func (state *FluidSymbol) FeedTicker(row market.TickerRow) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.changePct = row.ChangePct
+	state.volume = row.Volume
+
+	if row.Last > 0 {
+		state.last = row.Last
+	}
+
+	if row.Bid > 0 {
+		state.bid = row.Bid
+	}
+
+	if row.Ask > 0 {
+		state.ask = row.Ask
+	}
+}
+
 func (state *FluidSymbol) FeedBook(delta market.BookLevelsDelta) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.feedBookLocked(delta)
+}
+
+func (state *FluidSymbol) feedBookLocked(delta market.BookLevelsDelta) {
 	flux := 0.0
 
 	if len(state.prevBids) > 0 || len(state.prevAsks) > 0 {
@@ -62,11 +91,30 @@ func (state *FluidSymbol) FeedBook(delta market.BookLevelsDelta) {
 	}
 
 	if delta.BidOK {
+		state.bids = append([]market.BookLevel(nil), delta.Bids...)
 		state.prevBids = append([]market.BookLevel(nil), delta.Bids...)
 	}
 
 	if delta.AskOK {
+		state.asks = append([]market.BookLevel(nil), delta.Asks...)
 		state.prevAsks = append([]market.BookLevel(nil), delta.Asks...)
+	}
+
+	if len(state.bids) > 0 && len(state.asks) > 0 {
+		bid := state.bids[0].Price
+		ask := state.asks[0].Price
+		mid := (bid + ask) / 2
+
+		state.bid = bid
+		state.ask = ask
+
+		if state.last <= 0 && mid > 0 {
+			state.last = mid
+		}
+
+		if mid > 0 {
+			state.spreadBPS = (ask - bid) / mid * 10000
+		}
 	}
 
 	if flux <= 0 {
@@ -105,6 +153,32 @@ func sideChangeFlux(previous, updated []market.BookLevel) float64 {
 }
 
 func (state *FluidSymbol) FeedTrade(at time.Time, qty float64) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.feedTradeLocked(at, qty)
+}
+
+func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.feedTradeLocked(at, qty)
+
+	sign := -1.0
+
+	if side == "buy" {
+		sign = 1.0
+	}
+
+	state.buyPressure = errnie.Does(func() (float64, error) {
+		return state.pressure.Next(0, sign)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
+}
+
+func (state *FluidSymbol) feedTradeLocked(at time.Time, qty float64) {
 	if qty <= 0 {
 		return
 	}
@@ -114,7 +188,28 @@ func (state *FluidSymbol) FeedTrade(at time.Time, qty float64) {
 	}
 }
 
+func (state *FluidSymbol) HasBook() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return len(state.bids) > 0 && len(state.asks) > 0
+}
+
+func (state *FluidSymbol) BookStatus() (int, float64) {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return len(state.bids), state.spreadBPS
+}
+
 func (state *FluidSymbol) bookFluxTrustworthy() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.bookFluxTrustworthyLocked()
+}
+
+func (state *FluidSymbol) bookFluxTrustworthyLocked() bool {
 	bookFlux := state.bookFluxWindow.Sum()
 	tradeFlux := state.tradeFluxWindow.Sum()
 
@@ -126,7 +221,10 @@ func (state *FluidSymbol) bookFluxTrustworthy() bool {
 }
 
 func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
-	row := state.wireRow()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	row := state.wireRowLocked()
 
 	if row == nil {
 		return engine.Measurement{}, false
@@ -174,7 +272,7 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 	confidence := engine.ConfidenceFromScore(re)
 	reason := "field_activity"
 
-	if state.bookFluxTrustworthy() {
+	if state.bookFluxTrustworthyLocked() {
 		imbalance, imbalanceOK := market.WeightedDepthImbalance(
 			state.bids,
 			state.asks,
@@ -237,6 +335,9 @@ func (state *FluidSymbol) Measure() (engine.Measurement, bool) {
 }
 
 func (state *FluidSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if _, err := state.forecast.Next(
 		0, feedback.PredictedReturn, feedback.ActualReturn,
 	); err != nil {
@@ -245,6 +346,13 @@ func (state *FluidSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
 }
 
 func (state *FluidSymbol) wireRow() map[string]any {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.wireRowLocked()
+}
+
+func (state *FluidSymbol) wireRowLocked() map[string]any {
 	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)

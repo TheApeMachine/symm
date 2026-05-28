@@ -20,6 +20,16 @@ func TestSlippageFillUsesDepthVWAP(t *testing.T) {
 	}
 }
 
+func TestSlippageFillPenalizesIncompleteDepth(t *testing.T) {
+	cfg := NewConfig()
+	asks := []market.BookLevel{{Price: 100, Volume: 0.5}}
+	fill := cfg.SlippageFill(100, 99, 101, "buy", 0, 100, nil, asks)
+
+	if fill <= 100 {
+		t.Fatalf("expected penalized incomplete-depth fill, got %v", fill)
+	}
+}
+
 func TestSlippageFillFallsBackToHalfSpread(t *testing.T) {
 	cfg := NewConfig()
 	fill := cfg.SlippageFill(100, 99, 101, "buy", 0, 500, nil, nil)

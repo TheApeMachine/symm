@@ -151,16 +151,7 @@ func (pumpdump *PumpDump) Tick() error {
 
 				if ok && row.Last > 0 {
 					state := raw.(*PumpSymbol)
-					state.lastPrice = row.Last
-					state.dailyQuoteVol = row.Volume * row.Last
-
-					if row.Bid > 0 {
-						state.bid = row.Bid
-					}
-
-					if row.Ask > 0 {
-						state.ask = row.Ask
-					}
+					state.FeedTicker(row)
 
 					if _, seen := pumpdump.requested.Load(row.Symbol); !seen {
 						volumes := make([]float64, 0)
@@ -168,8 +159,8 @@ func (pumpdump *PumpDump) Tick() error {
 						pumpdump.symbols.Range(func(key, value any) bool {
 							symbolState := value.(*PumpSymbol)
 
-							if symbolState.dailyQuoteVol > 0 {
-								volumes = append(volumes, symbolState.dailyQuoteVol)
+							if quoteVol := symbolState.DailyQuoteVol(); quoteVol > 0 {
+								volumes = append(volumes, quoteVol)
 							}
 
 							return true
@@ -178,7 +169,7 @@ func (pumpdump *PumpDump) Tick() error {
 						if len(volumes) >= 2 {
 							median := numeric.PercentileSorted(numeric.CopySorted(volumes), 0.5)
 
-							if state.dailyQuoteVol >= median {
+							if state.DailyQuoteVol() >= median {
 								pumpdump.requested.Store(row.Symbol, struct{}{})
 								pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{row.Symbol}})
 								pumpdump.publishPulse()
@@ -207,26 +198,16 @@ func (pumpdump *PumpDump) Tick() error {
 
 				if ok {
 					state := raw.(*PumpSymbol)
-					state.FeedTradeVolume(tick.Timestamp, tick.Qty, state.lastPrice)
+					state.FeedTrade(tick)
 
 					if _, seen := pumpdump.requested.Load(tick.Symbol); !seen {
-						fastBaseline := state.fastVolumeBaseline.Value()
-						mediumBaseline := state.mediumVolumeBaseline.Value()
-
-						if fastBaseline > 0 && mediumBaseline > 0 &&
-							(state.fastVolumeWindow.Sum() > fastBaseline ||
-								state.mediumVolumeWindow.Sum() > mediumBaseline) {
+						if state.HasVolumeLift() {
 							pumpdump.requested.Store(tick.Symbol, struct{}{})
 							pumpdump.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{tick.Symbol}})
 						}
 					}
 
-					if tick.Side == "buy" {
-						state.buyPressure = 1
-					}
-
 					if tick.Side == "sell" {
-						state.buyPressure = -1
 						pumpdump.publishPulse()
 					}
 				}
@@ -251,26 +232,7 @@ func (pumpdump *PumpDump) Tick() error {
 
 				if ok && len(delta.Bids) > 0 && len(delta.Asks) > 0 {
 					state := raw.(*PumpSymbol)
-					bid := delta.Bids[0].Price
-					ask := delta.Asks[0].Price
-					mid := (bid + ask) / 2
-
-					state.bid = bid
-					state.ask = ask
-
-					if state.lastPrice <= 0 && mid > 0 {
-						state.lastPrice = mid
-					}
-
-					if mid > 0 {
-						state.spreadBPS = (ask - bid) / mid * 10000
-					}
-
-					total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-					if total > 0 {
-						state.imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
-					}
+					state.FeedBook(delta)
 
 					pumpdump.publishPulse()
 				}
@@ -305,8 +267,9 @@ func (pumpdump *PumpDump) publishPulse() {
 }
 
 func (pumpdump *PumpDump) publishMeasurements() {
-	spikeWaiters := make([]chan *qpool.QValue[any], 0)
-
+	spikes := make(map[string]float64)
+	spikeRegimes := make(map[string]string)
+	slowRVOLs := make(map[string]float64)
 	pumpdump.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
 
@@ -315,72 +278,33 @@ func (pumpdump *PumpDump) publishMeasurements() {
 		}
 
 		state := value.(*PumpSymbol)
-		spikeWaiters = append(
-			spikeWaiters,
-			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-				spike, regime, err := state.BestVolumeSpike()
+		spike, regime, err := state.BestVolumeSpike()
 
-				if err != nil {
-					return nil, err
-				}
+		if err != nil {
+			errnie.Error(err)
+			return true
+		}
 
-				if spike <= 1 && regime == "" {
-					if state.HourlyBaselineReady() &&
-						state.SlowRVOL() >= config.System.SlowRVOLThreshold {
-						return spikeEntry{
-							symbol: symbol,
-							rvol:   state.SlowRVOL(),
-							regime: "slow_breakout",
-						}, nil
-					}
+		if spike <= 1 && regime == "" {
+			rvol := state.SlowRVOL()
 
-					return nil, nil
-				}
+			if state.HourlyBaselineReady() && rvol >= config.System.SlowRVOLThreshold {
+				spikeRegimes[symbol] = "slow_breakout"
+				slowRVOLs[symbol] = rvol
+			}
 
-				if spike <= 1 {
-					return nil, nil
-				}
+			return true
+		}
 
-				return spikeEntry{symbol: symbol, spike: spike, regime: regime}, nil
-			}),
-		)
+		if spike <= 1 {
+			return true
+		}
+
+		spikeRegimes[symbol] = regime
+		spikes[symbol] = spike
 
 		return true
 	})
-
-	spikes := make(map[string]float64)
-	spikeRegimes := make(map[string]string)
-	slowRVOLs := make(map[string]float64)
-
-	for _, waiter := range spikeWaiters {
-		value := <-waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		entry, ok := value.Value.(spikeEntry)
-
-		if !ok {
-			continue
-		}
-
-		spikeRegimes[entry.symbol] = entry.regime
-
-		if entry.regime == "slow_breakout" {
-			slowRVOLs[entry.symbol] = entry.rvol
-			continue
-		}
-
-		spikes[entry.symbol] = entry.spike
-	}
-
-	measureWaiters := make([]chan *qpool.QValue[any], 0)
 
 	for symbol, spike := range spikes {
 		raw, ok := pumpdump.symbols.Load(symbol)
@@ -391,35 +315,26 @@ func (pumpdump *PumpDump) publishMeasurements() {
 
 		state := raw.(*PumpSymbol)
 		regime := spikeRegimes[symbol]
-		measureWaiters = append(
-			measureWaiters,
-			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-				peakSpike, err := state.peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
+		peakSpike, err := state.PeakSpike(spike, adaptive.PeerValues(spikes, symbol)...)
 
-				if err != nil {
-					return nil, err
-				}
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
 
-				if peakSpike <= 0 && regime != "slow_breakout" {
-					return nil, nil
-				}
+		if peakSpike <= 0 && regime != "slow_breakout" {
+			continue
+		}
 
-				// Slow breakouts skip peer peak gating: RVOL is a gradual regime
-				// shift, not an instantaneous cross-section spike; other regimes
-				// still require peakSpike > 0 from adaptive.PeerValues.
-				if regime == "slow_breakout" {
-					peakSpike = slowRVOLs[symbol]
-				}
+		measurement, ok := state.Measure(peakSpike, regime)
 
-				measurement, ok := state.Measure(peakSpike, regime)
+		if !ok {
+			continue
+		}
 
-				if !ok {
-					return nil, nil
-				}
-
-				return measurement, nil
-			}),
-		)
+		pumpdump.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: measurement,
+		})
 	}
 
 	for symbol, rvol := range slowRVOLs {
@@ -431,34 +346,7 @@ func (pumpdump *PumpDump) publishMeasurements() {
 
 		state := raw.(*PumpSymbol)
 		regime := spikeRegimes[symbol]
-		measureWaiters = append(
-			measureWaiters,
-			pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-				// Slow breakouts skip peer peak gating (see comment above).
-				measurement, ok := state.Measure(rvol, regime)
-
-				if !ok {
-					return nil, nil
-				}
-
-				return measurement, nil
-			}),
-		)
-	}
-
-	for _, waiter := range measureWaiters {
-		value := <-waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		measurement, ok := value.Value.(engine.Measurement)
+		measurement, ok := state.Measure(rvol, regime)
 
 		if !ok {
 			continue
@@ -468,13 +356,6 @@ func (pumpdump *PumpDump) publishMeasurements() {
 			Value: measurement,
 		})
 	}
-}
-
-type spikeEntry struct {
-	symbol string
-	spike  float64 // adaptive.Ratio volume spike (fast/medium)
-	rvol   float64 // 14d-median RVOL (slow_breakout only)
-	regime string
 }
 
 func (pumpdump *PumpDump) Close() error {
@@ -537,7 +418,7 @@ func (pumpdump *PumpDump) Measure() iter.Seq[engine.Measurement] {
 
 			state := raw.(*PumpSymbol)
 			regime := regimes[symbol]
-			peakSpike, err := state.peakGate.Next(spike, adaptive.PeerValues(spikes, symbol)...)
+			peakSpike, err := state.PeakSpike(spike, adaptive.PeerValues(spikes, symbol)...)
 
 			if err != nil {
 				errnie.Error(err)
@@ -599,9 +480,5 @@ func (pumpdump *PumpDump) Feedback(feedback engine.PredictionFeedback) {
 
 	state := raw.(*PumpSymbol)
 
-	if _, err := state.forecast.Next(
-		0, feedback.PredictedReturn, feedback.ActualReturn,
-	); err != nil {
-		errnie.Error(err)
-	}
+	state.ApplyFeedback(feedback)
 }

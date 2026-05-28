@@ -11,6 +11,9 @@ import (
 const (
 	lbfgsMemory          = 12
 	lbfgsMajorIterations = 80
+	softplusLinearAt     = 20
+	softplusFloor        = 1e-12
+	paramRatioFloor      = 1e-9
 )
 
 type logParamBounds struct {
@@ -62,8 +65,15 @@ func (bounds logParamBounds) decode(free []float64) [bivariateParamCount]float64
 	params := [bivariateParamCount]float64{}
 
 	for index := range free {
-		sigmoid := 1 / (1 + math.Exp(-free[index]))
-		params[index] = bounds.lower[index] + (bounds.upper[index]-bounds.lower[index])*sigmoid
+		span := bounds.upper[index] - bounds.lower[index]
+
+		if span <= 0 {
+			params[index] = bounds.lower[index]
+			continue
+		}
+
+		lift := softplus(free[index])
+		params[index] = bounds.lower[index] + span*lift/(1+lift)
 	}
 
 	return params
@@ -81,22 +91,60 @@ func (bounds logParamBounds) encode(params [bivariateParamCount]float64) []float
 		}
 
 		ratio := (params[index] - bounds.lower[index]) / span
-		ratio = math.Max(1e-9, math.Min(1-1e-9, ratio))
-		free[index] = math.Log(ratio / (1 - ratio))
+		ratio = math.Max(paramRatioFloor, math.Min(1-paramRatioFloor, ratio))
+		free[index] = inverseSoftplus(ratio / (1 - ratio))
 	}
 
 	return free
 }
 
-func (bounds logParamBounds) sigmoidJacobian(free []float64) [bivariateParamCount]float64 {
+func (bounds logParamBounds) softplusJacobian(free []float64) [bivariateParamCount]float64 {
 	jacobian := [bivariateParamCount]float64{}
 
 	for index := range free {
-		sigmoid := 1 / (1 + math.Exp(-free[index]))
-		jacobian[index] = (bounds.upper[index] - bounds.lower[index]) * sigmoid * (1 - sigmoid)
+		span := bounds.upper[index] - bounds.lower[index]
+
+		if span <= 0 {
+			continue
+		}
+
+		lift := softplus(free[index])
+		jacobian[index] = span * softplusDerivative(free[index]) / ((1 + lift) * (1 + lift))
 	}
 
 	return jacobian
+}
+
+func softplus(value float64) float64 {
+	if value > softplusLinearAt {
+		return value
+	}
+
+	return math.Log1p(math.Exp(value))
+}
+
+func inverseSoftplus(value float64) float64 {
+	if value > softplusLinearAt {
+		return value
+	}
+
+	if value <= softplusFloor {
+		value = softplusFloor
+	}
+
+	return math.Log(math.Expm1(value))
+}
+
+func softplusDerivative(value float64) float64 {
+	if value > softplusLinearAt {
+		return 1
+	}
+
+	if value < -softplusLinearAt {
+		return math.Exp(value)
+	}
+
+	return 1 / (1 + math.Exp(-value))
 }
 
 func fitFromLogParams(
@@ -170,7 +218,7 @@ func (estimator *BivariateEstimator) maximizeLikelihood(
 				return
 			}
 
-			jacobian := bounds.sigmoidJacobian(free)
+			jacobian := bounds.softplusJacobian(free)
 
 			for index := range grad {
 				grad[index] = naturalGrad[index] * jacobian[index]

@@ -144,14 +144,15 @@ func (state *DepthSymbol) FeedTicker(row market.TickerRow) {
 }
 
 func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
-	state.mu.RLock()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	bid := state.bid
 	ask := state.ask
 	mid := state.last
 	bids := state.bids
 	asks := state.asks
 	buyPressure := state.buyPressure
-	state.mu.RUnlock()
 
 	if len(bids) > 0 && len(asks) > 0 {
 		bid = bids[0].Price
@@ -255,7 +256,7 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 	flow := math.Abs(buyPressure)
 
 	if flow <= 0 {
-		flow = math.Abs(state.PressureValue())
+		flow = math.Abs(state.pressure.Value())
 	}
 
 	confidence := engine.ConfidenceFromScore(flow)
@@ -275,4 +276,16 @@ func (state *DepthSymbol) Measure() (engine.Measurement, bool) {
 		Bid:        bid,
 		Ask:        ask,
 	}, true
+}
+
+func (state *DepthSymbol) ApplyFeedback(
+	predictedReturn float64,
+	actualReturn float64,
+) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	_, err := state.forecast.Next(0, predictedReturn, actualReturn)
+
+	return err
 }

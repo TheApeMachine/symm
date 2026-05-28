@@ -126,20 +126,7 @@ func (fluid *Fluid) Tick() error {
 
 				if ok {
 					state := raw.(*FluidSymbol)
-					state.changePct = row.ChangePct
-					state.volume = row.Volume
-
-					if row.Last > 0 {
-						state.last = row.Last
-					}
-
-					if row.Bid > 0 {
-						state.bid = row.Bid
-					}
-
-					if row.Ask > 0 {
-						state.ask = row.Ask
-					}
+					state.FeedTicker(row)
 
 					fluid.publishPulse()
 				}
@@ -169,29 +156,9 @@ func (fluid *Fluid) Tick() error {
 
 				if ok {
 					state := raw.(*FluidSymbol)
-
-					if delta.BidOK {
-						state.bids = delta.Bids
-					}
-
-					if delta.AskOK {
-						state.asks = delta.Asks
-					}
-
 					state.FeedBook(delta)
 
-					if len(state.bids) > 0 && len(state.asks) > 0 {
-						bid := state.bids[0].Price
-						ask := state.asks[0].Price
-						mid := (bid + ask) / 2
-
-						if mid > 0 {
-							state.spreadBPS = (ask - bid) / mid * 10000
-						}
-					}
-
-					if _, seen := fluid.requested.Load(delta.Symbol); !seen &&
-						len(state.bids) > 0 && len(state.asks) > 0 {
+					if _, seen := fluid.requested.Load(delta.Symbol); !seen && state.HasBook() {
 						fluid.requested.Store(delta.Symbol, struct{}{})
 						fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
 						fluid.publishPulse()
@@ -223,18 +190,7 @@ func (fluid *Fluid) Tick() error {
 
 				if ok {
 					state := raw.(*FluidSymbol)
-					state.FeedTrade(tick.Timestamp, tick.Qty)
-					sign := -1.0
-
-					if tick.Side == "buy" {
-						sign = 1.0
-					}
-
-					state.buyPressure = errnie.Does(func() (float64, error) {
-						return state.pressure.Next(0, sign)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
+					state.FeedTradeSide(tick.Timestamp, tick.Qty, tick.Side)
 
 					fluid.publishPulse()
 				}
@@ -301,8 +257,6 @@ func (fluid *Fluid) publishPulse() {
 }
 
 func (fluid *Fluid) publishMeasurements() {
-	waiters := make([]chan *qpool.QValue[any], 0)
-
 	fluid.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
 
@@ -311,53 +265,23 @@ func (fluid *Fluid) publishMeasurements() {
 		}
 
 		state := value.(*FluidSymbol)
-		waiters = append(
-			waiters,
-			fluid.pool.ScheduleFast(fluid.ctx, func(ctx context.Context) (any, error) {
-				measurement, ok := state.Measure()
-
-				if !ok {
-					return nil, nil
-				}
-
-				return measurement, nil
-			}),
-		)
-
-		return true
-	})
-
-	for _, waiter := range waiters {
-		value := <-waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		measurement, ok := value.Value.(engine.Measurement)
+		measurement, ok := state.Measure()
 
 		if !ok {
-			continue
+			return true
 		}
 
 		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{
 			Value: measurement,
 		})
-	}
+
+		return true
+	})
 }
 
 func (fluid *Fluid) publishFieldRows() {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	symbols := make([]map[string]any, 0)
-	waiters := make([]struct {
-		symbol string
-		waiter chan *qpool.QValue[any]
-	}, 0)
 
 	fluid.symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -367,45 +291,22 @@ func (fluid *Fluid) publishFieldRows() {
 		}
 
 		state := value.(*FluidSymbol)
-		waiters = append(waiters, struct {
-			symbol string
-			waiter chan *qpool.QValue[any]
-		}{
-			symbol: symbol,
-			waiter: fluid.pool.ScheduleFast(fluid.ctx, func(ctx context.Context) (any, error) {
-				return state.wireRow(), nil
-			}),
-		})
+		row := state.wireRow()
 
-		return true
-	})
-
-	for _, job := range waiters {
-		value := <-job.waiter
-
-		if value == nil {
-			continue
-		}
-
-		if value.Error != nil {
-			errnie.Error(value.Error)
-			continue
-		}
-
-		row, ok := value.Value.(map[string]any)
-
-		if !ok || row == nil {
-			continue
+		if row == nil {
+			return true
 		}
 
 		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
 			"event":  "field_row",
 			"ts":     now,
-			"symbol": job.symbol,
+			"symbol": symbol,
 			"row":    row,
 		}})
 		symbols = append(symbols, row)
-	}
+
+		return true
+	})
 
 	if len(symbols) == 0 {
 		return

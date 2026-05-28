@@ -2,6 +2,7 @@ package causal
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -19,6 +20,7 @@ CausalSymbol holds per-symbol Pearl-ladder history and microstructure state.
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, Liquidity backdoors macro/flow.
 */
 type CausalSymbol struct {
+	mu                sync.RWMutex
 	pair              asset.Pair
 	samples           []causalSample
 	interventionHist  []float64
@@ -52,6 +54,9 @@ func NewCausalSymbol(pair asset.Pair, params engine.CalibrationParams) *CausalSy
 }
 
 func (state *CausalSymbol) FeedTicker(row market.TickerRow) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if row.Last > 0 {
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
@@ -69,6 +74,9 @@ func (state *CausalSymbol) FeedTicker(row market.TickerRow) {
 }
 
 func (state *CausalSymbol) FeedTrade(tick trade.Data) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	errnie.Does(func() (float64, error) {
 		return state.volumeWindow.Next(
 			0,
@@ -94,6 +102,9 @@ func (state *CausalSymbol) FeedTrade(tick trade.Data) {
 }
 
 func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
 		return
 	}
@@ -121,6 +132,9 @@ func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {
 }
 
 func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine.Measurement, bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	if state.lastPrice <= 0 {
 		return engine.Measurement{}, false
 	}
@@ -190,7 +204,17 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 }
 
 func (state *CausalSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	state.calibrator.Apply(feedback)
+}
+
+func (state *CausalSymbol) ChangePct() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.changePct
 }
 
 func (state *CausalSymbol) buildSample(
