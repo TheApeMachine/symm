@@ -171,7 +171,7 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 			drawMajorTickLines: false,
 			drawMinorTickLines: false,
 			labelStyle: {
-				fontSize: 12,
+				fontSize: 8,
 			},
 		}),
 	);
@@ -193,7 +193,7 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 			drawMajorTickLines: false,
 			labelPrecision: 0,
 			labelStyle: {
-				fontSize: 12,
+				fontSize: 8,
 			},
 		}),
 	);

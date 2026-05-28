@@ -98,6 +98,7 @@ type Config struct {
 	LiveInventoryEpsilon       float64
 	LogLevel                   string
 	LogFileActive              bool
+	LogStdoutActive            bool
 	KrakenAPIKey               string
 	KrakenAPISecret            string
 	OHLCEWarmEnabled           bool
@@ -197,6 +198,7 @@ func NewConfig() *Config {
 		LiveInventoryEpsilon:       1e-8,
 		LogLevel:                   "info",
 		LogFileActive:              true,
+		LogStdoutActive:            false,
 		OHLCEWarmEnabled:           true,
 		OHLCIntervalMinutes:        5,
 		OHLCMaxSymbols:             64,
@@ -213,6 +215,11 @@ func NewConfig() *Config {
 
 	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
 	cfg.KrakenAPISecret = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_SECRET"))
+
+	if stdout := strings.TrimSpace(os.Getenv("SYMM_LOG_STDOUT")); stdout == "1" ||
+		strings.EqualFold(stdout, "true") {
+		cfg.LogStdoutActive = true
+	}
 
 	return cfg
 }

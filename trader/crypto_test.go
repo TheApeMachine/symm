@@ -20,12 +20,6 @@ func TestCryptoEnterAndExit(t *testing.T) {
 	forecasts := price.NewPrediction(ctx, pool)
 	t.Cleanup(func() { _ = forecasts.Close() })
 
-	forecasts.SeedReturnCalibration(
-		engine.PerspectiveSource(engine.PerspectiveMicrostructure),
-		"BTC/EUR",
-		0.02,
-	)
-
 	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
 	t.Cleanup(func() { _ = crypto.Close() })
@@ -64,6 +58,39 @@ func TestCryptoEnterAndExit(t *testing.T) {
 
 	if tradingWallet.Inventory["BTC"] > 0 {
 		t.Fatalf("expected BTC inventory cleared after exit, got %v", tradingWallet.Inventory["BTC"])
+	}
+}
+
+func TestCryptoEnterColdStart(t *testing.T) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	t.Cleanup(func() { pool.Close() })
+
+	forecasts := price.NewPrediction(ctx, pool)
+	t.Cleanup(func() { _ = forecasts.Close() })
+
+	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+	crypto := NewCrypto(ctx, pool, tradingWallet, forecasts)
+	t.Cleanup(func() { _ = crypto.Close() })
+
+	measurement := engine.Measurement{
+		Type:       engine.Momentum,
+		Source:     "hawkes",
+		Regime:     "cluster",
+		Reason:     "burst",
+		Pairs:      []asset.Pair{{Wsname: "ETH/EUR"}},
+		Confidence: 0.85,
+		Last:       3000,
+		Bid:        2999,
+		Ask:        3001,
+	}
+
+	if err := crypto.ingestMeasurement(measurement); err != nil {
+		t.Fatalf("ingest measurement: %v", err)
+	}
+
+	if tradingWallet.Inventory["ETH"] <= 0 {
+		t.Fatal("expected cold-start paper entry without seeded return calibration")
 	}
 }
 

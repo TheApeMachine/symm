@@ -87,6 +87,21 @@ func (crypto *Crypto) Tick() error {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case <-ticker.C:
+				crypto.attachWalletMarks()
+				crypto.sendWallet()
+			}
+		}
+	})
+
+	wg.Go(func() {
 		for {
 			select {
 			case <-crypto.ctx.Done():
@@ -192,13 +207,13 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		if !lastPerspective.Ready {
 			lastPerspective.AddMeasurement(measurement)
 			audit("perspective_accumulate", map[string]any{
-				"symbol":              symbol,
-				"measurement_count":   len(lastPerspective.measurements),
-				"source":              measurement.Source,
+				"symbol":                 symbol,
+				"measurement_count":      len(lastPerspective.measurements),
+				"source":                 measurement.Source,
 				"measurement_confidence": measurement.Confidence,
 			})
 
-			return nil
+			return crypto.tryPerspective(lastPerspective)
 		}
 	}
 
@@ -207,14 +222,23 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		NewPerspective([]engine.Measurement{measurement}),
 	)
 
-	lastPerspective := crypto.perspectives[len(crypto.perspectives)-1]
-	prediction, err := lastPerspective.Predict()
+	return crypto.tryPerspective(crypto.perspectives[len(crypto.perspectives)-1])
+}
+
+func (crypto *Crypto) tryPerspective(perspective *Perspective) error {
+	prediction, err := perspective.Predict()
 
 	if err != nil {
+		symbol := ""
+
+		if len(perspective.measurements) > 0 && len(perspective.measurements[0].Pairs) > 0 {
+			symbol = perspective.measurements[0].Pairs[0].Wsname
+		}
+
 		audit("perspective_not_ready", map[string]any{
-			"symbol": symbol,
-			"source": measurement.Source,
-			"error":  err.Error(),
+			"symbol":            symbol,
+			"measurement_count": len(perspective.measurements),
+			"error":             err.Error(),
 		})
 
 		return nil
@@ -271,6 +295,16 @@ func (crypto *Crypto) settlePredictions(measurement engine.Measurement) {
 			"error":            feedback.Error,
 			"confidence":       feedback.Confidence,
 		})
+
+		if crypto.holdsSymbol(crypto.wallet, feedback.Symbol) {
+			if err := crypto.handleExit(engine.Exit{
+				Symbol:  feedback.Symbol,
+				Urgency: 1,
+				Reason:  engine.ExitReasonRunwayExpired,
+			}); err != nil {
+				errnie.Error(err)
+			}
+		}
 	}
 
 	crypto.predictions = remaining
@@ -295,12 +329,12 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 	crypto.predictions = append(crypto.predictions, &prediction)
 
 	audit("perspective_ready", map[string]any{
-		"symbol":           symbol,
-		"confidence":       prediction.Confidence,
-		"predicted_return": predictedReturn,
-		"direction":        prediction.Direction,
-		"runway_ms":        prediction.Runway.Milliseconds(),
-		"perspective_type": prediction.Perspective.Type,
+		"symbol":            symbol,
+		"confidence":        prediction.Confidence,
+		"predicted_return":  predictedReturn,
+		"direction":         prediction.Direction,
+		"runway_ms":         prediction.Runway.Milliseconds(),
+		"perspective_type":  prediction.Perspective.Type,
 		"measurement_count": len(prediction.Perspective.Measurements),
 	})
 

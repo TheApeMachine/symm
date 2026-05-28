@@ -23,8 +23,8 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 
 	if !crypto.holdsSymbol(crypto.wallet, symbol) {
 		audit("trade_exit_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "no_position",
+			"symbol":  symbol,
+			"reason":  "no_position",
 			"urgency": exitSignal.Urgency,
 		})
 
@@ -40,12 +40,16 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 
 	if last <= 0 {
 		audit("trade_exit_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "missing_quote",
+			"symbol":  symbol,
+			"reason":  "missing_quote",
 			"urgency": exitSignal.Urgency,
 		})
 
+		return fmt.Errorf("no quote for exit: %s", symbol)
+	}
+
 	audit("trade_exit_eval", map[string]any{
+		"symbol":  symbol,
 		"urgency": exitSignal.Urgency,
 		"reason":  exitSignal.Reason,
 		"mark":    last,
@@ -97,12 +101,12 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	}})
 
 	audit("trade_exit_fill", map[string]any{
-		"symbol":  symbol,
-		"side":    fill.Side,
-		"qty":     fill.Qty,
-		"price":   fill.Price,
-		"reason":  exitSignal.Reason,
-		"urgency": exitSignal.Urgency,
+		"symbol":       symbol,
+		"side":         fill.Side,
+		"qty":          fill.Qty,
+		"price":        fill.Price,
+		"reason":       exitSignal.Reason,
+		"urgency":      exitSignal.Urgency,
 		"balance_eur":  crypto.wallet.Balance,
 		"reserved_eur": crypto.wallet.ReservedEUR,
 		"open_count":   crypto.openCount(),

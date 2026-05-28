@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -62,12 +63,8 @@ func (perspective *Perspective) AddMeasurement(measurement engine.Measurement) {
 			)
 		}
 
-		// Push the values into the tracker (including the first measurement)
 		if _, err := perspective.regimes[pair.Wsname][measurement.Regime].Push(
 			measurement.Confidence,
-			measurement.Last,
-			measurement.Bid,
-			measurement.Ask,
 		); err != nil {
 			errnie.Error(err)
 			return
@@ -79,25 +76,13 @@ func (perspective *Perspective) AddMeasurement(measurement engine.Measurement) {
 Predict makes a short-horizon prediction on the future market.
 */
 func (perspective *Perspective) Predict() (engine.Prediction, error) {
-	var bestDerived *numeric.Derived
-	var maxConfidence float64
+	jointConfidence, _ := engine.FuseMeasurements(perspective.measurements)
 
-	// 1. Scan your structured regimes to find the one with the highest confidence
-	for _, regimes := range perspective.regimes {
-		for _, derived := range regimes {
-			// Assuming numeric.Derived exposes the current smoothed confidence value
-			currentConfidence := derived.Value()
-
-			if currentConfidence > maxConfidence {
-				maxConfidence = currentConfidence
-				bestDerived = derived
-			}
-		}
+	if jointConfidence < config.System.DefensiveOBIConfidence {
+		return engine.Prediction{}, ErrNotReady
 	}
 
-	// 2. Check if the leading candidate has enough "structural support"
-	const structuralSupportThreshold = 0.75 // Define based on your risk tolerance
-	if maxConfidence < structuralSupportThreshold || bestDerived == nil {
+	if len(perspective.measurements) == 0 {
 		return engine.Prediction{}, ErrNotReady
 	}
 
@@ -123,12 +108,12 @@ func (perspective *Perspective) Predict() (engine.Prediction, error) {
 			Type:         kind,
 			Measurements: enginePerspective.Measurements,
 		},
-		Confidence:     maxConfidence,
+		Confidence:     jointConfidence,
 		Direction:      predictionDirection(enginePerspective),
 		Runway:         runway,
 		DueAt:          now.Add(runway),
 		PredictedAt:    now,
-		ExpectedReturn: maxConfidence,
+		ExpectedReturn: jointConfidence,
 	}
 
 	return prediction, nil

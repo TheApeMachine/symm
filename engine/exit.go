@@ -3,6 +3,7 @@ package engine
 const (
 	ExitReasonImbalanceFlip = "imbalance_flip"
 	ExitReasonPressureFade  = "pressure_fade"
+	ExitReasonRunwayExpired = "runway_expired"
 )
 
 /*

@@ -105,6 +105,10 @@ export const routePayload = (payload: unknown) => {
 						TradesDataProvider.setMark(row.symbol, row.price);
 					}
 					return;
+				case "wallet":
+					WalletDataProvider.ingest(payload);
+					TradesDataProvider.ingest(payload);
+					return;
 				default:
 					break;
 			}

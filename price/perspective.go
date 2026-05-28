@@ -1,6 +1,7 @@
 package price
 
 import (
+	"math"
 	"time"
 
 	"github.com/theapemachine/qpool"
@@ -24,7 +25,21 @@ func (prediction *Prediction) RecordPerspective(
 
 	source := engine.PerspectiveSource(perspective.Type)
 	confidence, _ := engine.FuseMeasurements(perspective.Measurements)
+	key := predictionSeriesKey{source: source, symbol: symbol}
 	scale := prediction.returnScale(source, symbol)
+
+	if prediction.returnSeen[key] {
+		if scale == 0 {
+			return 0
+		}
+	} else if scale <= 0 {
+		scale = impliedReturnScale(anchorMeasurement)
+
+		if scale <= 0 {
+			return 0
+		}
+	}
+
 	predictedReturn := confidence * scale
 	runway := perspectiveRunway(perspective)
 
@@ -150,4 +165,34 @@ func anchorPrice(measurement engine.Measurement) float64 {
 	}
 
 	return 0
+}
+
+func impliedReturnScale(measurement engine.Measurement) float64 {
+	anchor := anchorPrice(measurement)
+
+	if anchor <= 0 {
+		return 0
+	}
+
+	spreadReturn := 0.0
+
+	if measurement.Bid > 0 && measurement.Ask > 0 {
+		spreadReturn = (measurement.Ask - measurement.Bid) / anchor
+	}
+
+	feePct := config.System.TakerFeePct * 2
+
+	if config.System.UseMakerEntries {
+		feePct = config.System.MakerFeePct + config.System.TakerFeePct
+	}
+
+	feeReturn := feePct / 100
+
+	if spreadReturn <= 0 {
+		return 0
+	}
+
+	implied := spreadReturn/2 + feeReturn + spreadReturn*config.System.ForecastSpreadMultiple
+
+	return math.Max(implied, feeReturn)
 }

@@ -16,8 +16,22 @@ func (crypto *Crypto) sendWallet() {
 		return
 	}
 
+	crypto.attachWalletMarks()
 	snapshot := crypto.wallet.Snapshot()
-	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: snapshot})
+	inventory := snapshot.Inventory
+
+	if inventory == nil {
+		inventory = map[string]float64{}
+	}
+
+	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":       "wallet",
+		"Currency":    snapshot.Currency,
+		"Balance":     snapshot.Balance,
+		"ReservedEUR": snapshot.ReservedEUR,
+		"FeePct":      snapshot.FeePct,
+		"Inventory":   inventory,
+	}})
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 

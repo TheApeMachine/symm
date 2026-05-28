@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/phuslu/log"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 )
@@ -20,6 +23,21 @@ func configureLogging() {
 	cfg.File.Path = path
 
 	errnie.Apply(cfg)
+
+	if config.System.LogStdoutActive {
+		return
+	}
+
+	if !config.System.LogFileActive || strings.TrimSpace(path) == "" {
+		return
+	}
+
+	log.DefaultLogger.Writer = &log.FileWriter{
+		Filename:     path,
+		EnsureFolder: true,
+	}
+
+	fmt.Fprintf(os.Stderr, "symm: logging to %s (SYMM_LOG_STDOUT=1 for console)\n", path)
 }
 
 func init() {
