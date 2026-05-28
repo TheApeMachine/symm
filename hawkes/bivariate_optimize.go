@@ -253,7 +253,6 @@ func (estimator *BivariateEstimator) negLogLikelihoodGrad(
 
 func (estimator *BivariateEstimator) multiStartSeeds(
 	context FitContext,
-	stream ArrivalStream,
 ) [][bivariateParamCount]float64 {
 	muBuyStart := context.MuBuyStart()
 	muSellStart := context.MuSellStart()

@@ -117,16 +117,6 @@ func flowInterventionLevel(samples []causalSample) float64 {
 	return value
 }
 
-func predictVelocity(sample causalSample, coef structuralCoef, flow float64) float64 {
-	prediction, err := coef.model.Predict(sample.nodes[:], localFlowNode, flow)
-
-	if err != nil {
-		return 0
-	}
-
-	return prediction
-}
-
 func causalTable(samples []causalSample) (dagNodeTable, error) {
 	return causalTableWithMin(samples, minCausalHistory)
 }
@@ -175,10 +165,6 @@ func residualize(target []float64, controls ...[]float64) ([]float64, bool) {
 	}
 
 	return residuals, true
-}
-
-func ols2(target, first, second []float64) ([]float64, bool) {
-	return ols(target, first, second)
 }
 
 func ols3(target, first, second, third []float64) ([]float64, bool) {

@@ -94,7 +94,7 @@ func NewHub(
 		hub.subscriptions[channel] = hub.broadcasts[channel].Subscribe("ui:"+channel, 128)
 	}
 
-	go hub.writePump("ui", hub.subscriptions["ui"])
+	go hub.writePump(hub.subscriptions["ui"])
 
 	return hub, errnie.Require(map[string]any{
 		"ctx":           hub.ctx,
@@ -141,12 +141,12 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	}})
 }
 
-func (hub *Hub) writePump(channel string, subscription *qpool.Subscriber) {
+func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 	for {
 		select {
 		case <-hub.ctx.Done():
 			return
-		case value := <-hub.subscriptions["ui"].Incoming:
+		case value := <-subscription.Incoming:
 			if value == nil || value.Value == nil {
 				return
 			}

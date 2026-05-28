@@ -88,19 +88,6 @@ func numericMean(values []float64) float64 {
 }
 
 /*
-predictNonLinearVelocity returns the ensemble prediction at one observation.
-*/
-func predictNonLinearVelocity(sample causalSample, model nonLinearModel, flow float64) float64 {
-	prediction, err := model.Predict(sample.nodes[:], localFlowNode, flow)
-
-	if err != nil {
-		return 0
-	}
-
-	return prediction
-}
-
-/*
 kernelBackdoorFlowEffect estimates rung-2 uplift with Nadaraya-Watson kernel regression.
 */
 func kernelBackdoorFlowEffect(samples []causalSample) float64 {
@@ -236,14 +223,6 @@ func splitGain(
 	}
 
 	return before - after
-}
-
-func stumpPrediction(sample causalSample, split stumpSplit) float64 {
-	return stumpPredictionRow(sample.nodes[:], split, -1, 0)
-}
-
-func stumpPredictionWithFlow(sample causalSample, split stumpSplit, flow float64) float64 {
-	return stumpPredictionRow(sample.nodes[:], split, localFlowNode, flow)
 }
 
 func stumpPredictionRow(

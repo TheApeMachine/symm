@@ -21,6 +21,7 @@ import (
 	"github.com/theapemachine/symm/pumpdump"
 	"github.com/theapemachine/symm/sentiment"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/wallet"
 )
 
 var rootCmd = &cobra.Command{
@@ -54,9 +55,16 @@ var rootCmd = &cobra.Command{
 			causal.NewCausal(cmd.Context(), pool),
 			exhaust.NewExhaust(cmd.Context(), pool),
 			predictions,
-			trader.NewCrypto(cmd.Context(), pool, trader.NewWallet(
-				trader.PaperWallet, config.System.QuoteCurrency, config.System.WalletEUR, config.System.TakerFeePct,
-			), predictions),
+			trader.NewCrypto(
+				cmd.Context(),
+				pool,
+				wallet.NewWallet(
+					wallet.PaperWallet,
+					config.System.QuoteCurrency,
+					config.System.WalletEUR,
+					config.System.TakerFeePct,
+				), predictions,
+			),
 		)
 
 		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {

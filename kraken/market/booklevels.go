@@ -28,7 +28,7 @@ func ParseBookLevelsDelta(payload []byte) (BookLevelsDelta, error) {
 		return BookLevelsDelta{}, err
 	}
 
-	if !isBookChannel(channel) {
+	if !Channel(channel).IsBook() {
 		return BookLevelsDelta{}, fmt.Errorf("not a book event: channel=%q", channel)
 	}
 

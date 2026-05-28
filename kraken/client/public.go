@@ -20,7 +20,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ohlc"
 	"github.com/theapemachine/symm/kraken/trade"
-	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/wallet"
 )
 
 /*
@@ -137,7 +137,7 @@ func (publicClient *PublicClient) Tick() error {
 					return
 				}
 
-				wallet, ok := msg.Value.(*trader.Wallet)
+				wallet, ok := msg.Value.(*wallet.Wallet)
 
 				if !ok || wallet == nil {
 					fail(fmt.Errorf("invalid wallet message: %v", msg.Value))
@@ -171,7 +171,7 @@ func (publicClient *PublicClient) Tick() error {
 	}
 }
 
-func (publicClient *PublicClient) openInventorySymbols(wallet *trader.Wallet) []string {
+func (publicClient *PublicClient) openInventorySymbols(wallet *wallet.Wallet) []string {
 	symbols := make([]string, 0, len(wallet.Inventory))
 
 	for base, qty := range wallet.Inventory {
@@ -420,8 +420,8 @@ func (publicClient *PublicClient) read(payload []byte) {
 		return
 	}
 
-	switch channel {
-	case core.ChannelInstrument:
+	switch {
+	case channel == core.ChannelInstrument:
 		var message struct {
 			Type string `json:"type"`
 			Data struct {
@@ -479,7 +479,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 			"ready": 0,
 			"total": len(pairs),
 		}})
-	case core.ChannelTicker:
+	case channel == core.ChannelTicker:
 		rows, err := market.ParseTickerRows(payload)
 
 		if err != nil {
@@ -508,7 +508,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 				"price":  price,
 			}})
 		}
-	case core.ChannelTrades, "trade":
+	case market.Channel(channel).IsTrade():
 		var message trade.Snapshot
 
 		if json.Unmarshal(payload, &message) != nil {
@@ -531,7 +531,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 				"price":  row.Price,
 			}})
 		}
-	case core.ChannelOHLC:
+	case channel == core.ChannelOHLC:
 		var message ohlc.Snapshot
 
 		if json.Unmarshal(payload, &message) != nil {
@@ -565,7 +565,7 @@ func (publicClient *PublicClient) read(payload []byte) {
 				"price":  row.Close,
 			}})
 		}
-	case core.ChannelBook:
+	case market.Channel(channel).IsBook():
 		delta, err := market.ParseBookLevelsDelta(payload)
 
 		if err != nil {

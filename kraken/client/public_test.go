@@ -13,7 +13,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ohlc"
-	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/wallet"
 	"github.com/valyala/fasthttp"
 )
 
@@ -104,7 +104,7 @@ func (testServer *testWSServer) Close() {
 func TestPublicClientOpenInventorySymbols(t *testing.T) {
 	convey.Convey("Given a wallet with open inventory", t, func() {
 		publicClient := &PublicClient{}
-		wallet := trader.NewWallet(trader.PaperWallet, "EUR", 200, 0.26)
+		wallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 		wallet.Inventory["SCOR"] = 1.5
 
 		convey.Convey("It should derive Kraken symbols for open bases", func() {
@@ -268,7 +268,7 @@ func TestPublicClientTickKeepsListening(t *testing.T) {
 			}
 		}()
 
-		walletGroup.Send(&qpool.QValue[any]{Value: trader.NewWallet(trader.PaperWallet, "EUR", 200, 0.26)})
+		walletGroup.Send(&qpool.QValue[any]{Value: wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)})
 		subscriptionGroup.Send(&qpool.QValue[any]{Value: []string{"BTC/EUR"}})
 		subscriptionGroup.Send(&qpool.QValue[any]{Value: []string{"ETH/EUR"}})
 

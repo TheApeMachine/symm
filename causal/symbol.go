@@ -135,7 +135,7 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 
 		if ready {
 			fullConfidence, fullReason := state.evaluate(sample)
-			state.commitSample(sample, state.lastPrice, now)
+			state.commitSample(sample, now)
 
 			if fullConfidence > 0 {
 				return engine.Measurement{
@@ -153,7 +153,7 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 		}
 
 		if !ready {
-			state.commitSample(sample, state.lastPrice, now)
+			state.commitSample(sample, now)
 		}
 	}
 
@@ -218,7 +218,7 @@ func (state *CausalSymbol) buildSample(
 	return sample, len(state.samples) >= minCausalHistory
 }
 
-func (state *CausalSymbol) commitSample(sample causalSample, price float64, now time.Time) {
+func (state *CausalSymbol) commitSample(sample causalSample, now time.Time) {
 	if !state.lastAt.IsZero() {
 		state.lastElapsed = now.Sub(state.lastAt)
 	}

@@ -43,3 +43,18 @@ type Measurement struct {
 	Timeframe  Timeframe
 	Err        error
 }
+
+/*
+AnchorPrice returns the best available reference price from Last or the quote mid.
+*/
+func (measurement Measurement) AnchorPrice() float64 {
+	if measurement.Last > 0 {
+		return measurement.Last
+	}
+
+	if measurement.Bid > 0 && measurement.Ask > 0 {
+		return (measurement.Bid + measurement.Ask) / 2
+	}
+
+	return 0
+}

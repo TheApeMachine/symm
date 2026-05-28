@@ -42,7 +42,8 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		return order.Fill{}, err
 	}
 
-	base := baseAsset(maker.Symbol)
+	orderSymbol := Symbol(maker.Symbol)
+	base := orderSymbol.BaseAsset()
 	qty := (maker.Notional - fee) / maker.LimitPrice
 
 	if qty <= 0 {
@@ -53,7 +54,7 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 	tradingWallet.RecordFill(base, qty, maker.LimitPrice)
 
 	return order.Fill{
-		OrderID: paperOrderID("maker", maker.Symbol),
+		OrderID: orderSymbol.PaperOrderID("maker"),
 		Symbol:  maker.Symbol,
 		Side:    "buy",
 		Qty:     qty,

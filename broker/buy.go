@@ -44,7 +44,8 @@ func (buy *Buy) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, err
 	}
 
-	base := baseAsset(buy.Symbol)
+	orderSymbol := Symbol(buy.Symbol)
+	base := orderSymbol.BaseAsset()
 	qty := (buy.Notional - fee) / fillPrice
 
 	if qty <= 0 {
@@ -55,7 +56,7 @@ func (buy *Buy) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	tradingWallet.RecordFill(base, qty, fillPrice)
 
 	return order.Fill{
-		OrderID: paperOrderID("buy", buy.Symbol),
+		OrderID: orderSymbol.PaperOrderID("buy"),
 		Symbol:  buy.Symbol,
 		Side:    "buy",
 		Qty:     qty,

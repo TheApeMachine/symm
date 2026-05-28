@@ -28,7 +28,8 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, fmt.Errorf("invalid sell")
 	}
 
-	base := baseAsset(sell.Symbol)
+	orderSymbol := Symbol(sell.Symbol)
+	base := orderSymbol.BaseAsset()
 	qty := tradingWallet.Inventory[base]
 
 	if qty <= config.System.LiveInventoryEpsilon {
@@ -55,7 +56,7 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	tradingWallet.Balance += revenue - fee
 
 	return order.Fill{
-		OrderID: paperOrderID("sell", sell.Symbol),
+		OrderID: orderSymbol.PaperOrderID("sell"),
 		Symbol:  sell.Symbol,
 		Side:    "sell",
 		Qty:     qty,
@@ -79,7 +80,8 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 		return fmt.Errorf("live sell requires crypto wallet")
 	}
 
-	base := baseAsset(sell.Symbol)
+	orderSymbol := Symbol(sell.Symbol)
+	base := orderSymbol.BaseAsset()
 	qty := tradingWallet.Inventory[base]
 
 	if qty <= config.System.LiveInventoryEpsilon {

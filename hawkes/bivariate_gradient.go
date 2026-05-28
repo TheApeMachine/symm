@@ -9,15 +9,15 @@ import (
 )
 
 type likelihoodGradient struct {
-	muBuy     float64
-	muSell    float64
-	alphaBB   float64
-	alphaBS   float64
-	alphaSB   float64
-	alphaSS   float64
-	beta      float64
-	logSum    float64
-	valid     bool
+	muBuy   float64
+	muSell  float64
+	alphaBB float64
+	alphaBS float64
+	alphaSB float64
+	alphaSS float64
+	beta    float64
+	logSum  float64
+	valid   bool
 }
 
 /*
@@ -68,8 +68,8 @@ func (fit BivariateFit) LogLikelihoodGradient(
 	gradient[3] = eventGradient.alphaBS - sellSupport/beta
 	gradient[4] = eventGradient.alphaSB - buySupport/beta
 	gradient[5] = eventGradient.alphaSS - sellSupport/beta
-	gradient[6] = eventGradient.beta - compensatorBetaDerivative(
-		fit, span, buySupport, sellSupport, buySupportBeta, sellSupportBeta,
+	gradient[6] = eventGradient.beta - fit.compensatorBetaDerivative(
+		buySupport, sellSupport, buySupportBeta, sellSupportBeta,
 	)
 
 	logLikelihood = eventGradient.logSum - compensator
@@ -184,9 +184,8 @@ func kernelSupportBetaDerivative(
 	return derivative
 }
 
-func compensatorBetaDerivative(
-	fit BivariateFit,
-	span, buySupport, sellSupport, buySupportBeta, sellSupportBeta float64,
+func (fit BivariateFit) compensatorBetaDerivative(
+	buySupport, sellSupport, buySupportBeta, sellSupportBeta float64,
 ) float64 {
 	beta := fit.Beta
 	branchBuy := fit.AlphaBB / beta

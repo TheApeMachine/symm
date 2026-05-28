@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/price"
+	"github.com/theapemachine/symm/wallet"
 )
 
 /*
@@ -23,10 +24,9 @@ type Crypto struct {
 	pool             *qpool.Q
 	broadcasts       map[string]*qpool.BroadcastGroup
 	subscribers      map[string]*qpool.Subscriber
-	wallet           *Wallet
+	wallet           *wallet.Wallet
 	perspectives     []*Perspective
 	predictions      []*engine.Prediction
-	portfolioRisk    *PortfolioRisk
 	kellySizer       *KellySizer
 	sourceConfidence map[string]*adaptive.EMA
 }
@@ -34,7 +34,7 @@ type Crypto struct {
 func NewCrypto(
 	ctx context.Context,
 	pool *qpool.Q,
-	wallet *Wallet,
+	wallet *wallet.Wallet,
 	predictions *price.Prediction,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
@@ -48,7 +48,6 @@ func NewCrypto(
 		wallet:           wallet,
 		perspectives:     make([]*Perspective, 0),
 		predictions:      make([]*engine.Prediction, 0),
-		portfolioRisk:    NewPortfolioRisk(),
 		kellySizer:       NewKellySizer(engine.DefaultCalibrationParams()),
 		sourceConfidence: make(map[string]*adaptive.EMA),
 	}
@@ -69,6 +68,10 @@ func NewCrypto(
 	}
 
 	return crypto
+}
+
+func (crypto *Crypto) Start() error {
+	return nil
 }
 
 func (crypto *Crypto) State() engine.State {
@@ -99,30 +102,27 @@ func (crypto *Crypto) Tick() error {
 
 				// Check if ground truth has caught up with any predictions
 				if len(crypto.predictions) > 0 {
-					due := crypto.predictions[len(crypto.predictions)-1]
+					now := time.Now()
+					remaining := crypto.predictions[:0]
 
-					if due.DueAt.Before(time.Now()) {
-						lead := leadMeasurement(due.Perspective.Measurements)
-
-						if len(measurement.Pairs) > 0 && len(lead.Pairs) > 0 &&
-							measurement.Pairs[0].Wsname == lead.Pairs[0].Wsname {
-							anchor := anchorPrice(lead)
-							lastPrice := anchorPrice(measurement)
-
-							if anchor > 0 && lastPrice > 0 {
-								due.ActualReturn = float64(due.Direction) * (lastPrice - anchor) / anchor
-								due.Err = due.ExpectedReturn - due.ActualReturn
-
-								crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: map[string]any{
-									"event":       "feedback",
-									"perspective": due.Perspective.Measurements[0].Pairs[0].Wsname,
-									"ts":          time.Now().UTC().Format(time.RFC3339Nano),
-								}})
-							}
+					for _, due := range crypto.predictions {
+						if !due.DueAt.Before(now) {
+							remaining = append(remaining, due)
+							continue
 						}
 
-						crypto.predictions = crypto.predictions[:len(crypto.predictions)-1]
+						if _, ok := due.Error(measurement); ok {
+							lead, _ := due.LeadMeasurement()
+
+							crypto.broadcasts["feedback"].Send(&qpool.QValue[any]{Value: map[string]any{
+								"event":       "feedback",
+								"perspective": lead.Pairs[0].Wsname,
+								"ts":          now.UTC().Format(time.RFC3339Nano),
+							}})
+						}
 					}
+
+					crypto.predictions = remaining
 				}
 
 				// Check if the last perspective is ready

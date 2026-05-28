@@ -78,7 +78,7 @@ func TestBivariateEstimatorMaximizeLikelihood(t *testing.T) {
 		convey.So(ok, convey.ShouldBeTrue)
 
 		estimator := NewBivariateEstimator(BivariateFit{})
-		seeds := estimator.multiStartSeeds(context, stream)
+		seeds := estimator.multiStartSeeds(context)
 
 		convey.So(len(seeds), convey.ShouldBeGreaterThan, 0)
 
@@ -98,7 +98,7 @@ func BenchmarkBivariateEstimatorMaximizeLikelihood(b *testing.B) {
 	stream := NewArrivalStream(buyEvents, sellEvents)
 	context, _ := NewFitContext(stream, horizon)
 	estimator := NewBivariateEstimator(BivariateFit{})
-	seeds := estimator.multiStartSeeds(context, stream)
+	seeds := estimator.multiStartSeeds(context)
 
 	b.ReportAllocs()
 

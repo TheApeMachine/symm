@@ -35,7 +35,7 @@ func (estimator *BivariateEstimator) Fit(
 	best := BivariateFit{}
 	bestLL := math.Inf(-1)
 
-	for _, seed := range estimator.multiStartSeeds(context, stream) {
+	for _, seed := range estimator.multiStartSeeds(context) {
 		candidate := estimator.maximizeLikelihood(stream, horizon, context, seed)
 
 		if candidate.MuBuy <= 0 {
