@@ -21,6 +21,7 @@ type Buy struct {
 	StopPrice      float64
 	LimitBelowStop float64
 	ClOrdID        string
+	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
 }
 
 /*
@@ -56,7 +57,7 @@ func (buy *Buy) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, err
 	}
 
-	fee := buy.Notional * tradingWallet.FeePct / 100
+	fee := buy.Notional * feeOr(buy.FeePct, tradingWallet.FeePct) / 100
 
 	if err := tradingWallet.SettleEntryReservation(buy.Notional, buy.Notional); err != nil {
 		tradingWallet.ReleaseEntryReservation(buy.Notional)
@@ -189,6 +190,18 @@ func (buy *Buy) preflightFill(fillPrice float64) error {
 	}
 
 	return nil
+}
+
+/*
+feeOr returns the per-trade fee percent when one was supplied (the real
+per-pair fee threaded in by the trader), otherwise the wallet's flat fallback.
+*/
+func feeOr(perTrade, fallback float64) float64 {
+	if perTrade > 0 {
+		return perTrade
+	}
+
+	return fallback
 }
 
 func (buy *Buy) validate(tradingWallet *wallet.Wallet) error {

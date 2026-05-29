@@ -216,6 +216,27 @@ func (model *ReturnModel) ExpectedReturn(source, regime string) (expected float6
 	return mean * reliability, reliability
 }
 
+// SampleCount returns the number of settled forward-return samples a
+// (source, regime) bucket has accumulated. The trader uses it to decide whether
+// a bucket is still cold (explore) or has enough evidence to be edge-gated
+// (exploit). Locks ReturnModel.mu, matching ExpectedReturn.
+func (model *ReturnModel) SampleCount(source, regime string) int {
+	if model == nil {
+		return 0
+	}
+
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	bucket := model.buckets[returnModelKey{source: source, regime: regime}]
+
+	if bucket == nil {
+		return 0
+	}
+
+	return bucket.count
+}
+
 // Snapshot returns a serializable view of the forward-return buckets for run
 // stats and offline analysis.
 func (model *ReturnModel) Snapshot() []map[string]any {

@@ -21,6 +21,7 @@ type Maker struct {
 	ClOrdID          string
 	PriceDecimals    int
 	HasPriceDecimals bool
+	FeePct           float64 // real per-pair maker fee; falls back to config/wallet when <= 0
 }
 
 /*
@@ -37,7 +38,11 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		return order.Fill{}, fmt.Errorf("maker fill is paper-only")
 	}
 
-	feePct := config.System.MakerFeePct
+	feePct := maker.FeePct
+
+	if feePct <= 0 {
+		feePct = config.System.MakerFeePct
+	}
 
 	if feePct <= 0 {
 		feePct = tradingWallet.FeePct

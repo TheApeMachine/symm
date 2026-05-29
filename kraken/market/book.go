@@ -1,118 +1,66 @@
 package market
 
 import (
-	"fmt"
+	"context"
 
-	"github.com/qntfy/jsonparser"
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/core"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
-/*
-BookLevel is one order book price level.
-*/
+type BookParams struct {
+	Channel  string   `json:"channel"`
+	Symbol   []string `json:"symbol"`
+	Depth    int      `json:"depth"`
+	Snapshot bool     `json:"snapshot"`
+}
+
 type BookLevel struct {
-	Price  float64
-	Volume float64
+	Price float64 `json:"price"`
+	Qty   float64 `json:"qty"`
 }
 
-/*
-BookTop holds the best bid and ask from a Kraken v2 book frame.
-*/
-type BookTop struct {
-	Symbol  string
-	BestBid BookLevel
-	BestAsk BookLevel
+type BookUpdate struct {
+	Symbol    string      `json:"symbol"`
+	Bids      []BookLevel `json:"bids"`
+	Asks      []BookLevel `json:"asks"`
+	Checksum  int64       `json:"checksum"`
+	Timestamp string      `json:"timestamp"`
 }
 
-/*
-BookTopDelta holds optional bid and ask updates from one book frame.
-*/
-type BookTopDelta struct {
-	Symbol  string
-	BestBid BookLevel
-	BestAsk BookLevel
-	BidOK   bool
-	AskOK   bool
-}
-
-/*
-ParseBookTopDelta extracts optional top bid and ask updates from a book frame.
-*/
-func ParseBookTopDelta(payload []byte) (BookTopDelta, error) {
-	channel, err := ChannelName(payload)
-	if err != nil {
-		return BookTopDelta{}, err
+func NewBookSubscription(
+	ctx context.Context,
+	recv chan *BookUpdate,
+	depth int,
+	symbols ...string,
+) {
+	if depth <= 0 {
+		depth = 10
 	}
 
-	if !Channel(channel).IsBook() {
-		return BookTopDelta{}, fmt.Errorf("not a book event: channel=%q", channel)
-	}
+	ws := errnie.Does(func() (*public.WebSocket, error) {
+		return public.NewWebSocket(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-	bestBid, bidOK, err := parseTopLevel(payload, "bids")
-	if err != nil {
-		return BookTopDelta{}, err
-	}
+	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
+		return ws.Generate(core.ChannelBook)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-	bestAsk, askOK, err := parseTopLevel(payload, "asks")
-	if err != nil {
-		return BookTopDelta{}, err
-	}
+	for message := range messages {
+		var rows []BookUpdate
 
-	if !bidOK && !askOK {
-		return BookTopDelta{}, fmt.Errorf("book frame has no top-of-book levels")
-	}
-
-	symbol, err := jsonparser.GetUnsafeString(payload, "data", "[0]", "symbol")
-	if err != nil {
-		return BookTopDelta{}, fmt.Errorf("parse book symbol: %w", err)
-	}
-
-	return BookTopDelta{
-		Symbol:  string(symbol),
-		BestBid: bestBid,
-		BestAsk: bestAsk,
-		BidOK:   bidOK,
-		AskOK:   askOK,
-	}, nil
-}
-
-/*
-ParseTopBook extracts the top bid and ask from a complete Kraken v2 book frame.
-*/
-func ParseTopBook(payload []byte) (BookTop, error) {
-	delta, err := ParseBookTopDelta(payload)
-	if err != nil {
-		return BookTop{}, err
-	}
-
-	if !delta.BidOK || !delta.AskOK {
-		return BookTop{}, fmt.Errorf("incomplete top-of-book frame")
-	}
-
-	return BookTop{
-		Symbol:  delta.Symbol,
-		BestBid: delta.BestBid,
-		BestAsk: delta.BestAsk,
-	}, nil
-}
-
-func parseTopLevel(payload []byte, side string) (BookLevel, bool, error) {
-	price, err := jsonparser.GetFloat(payload, "data", "[0]", side, "[0]", "price")
-	if err != nil {
-		if err == jsonparser.KeyPathNotFoundError {
-			return BookLevel{}, false, nil
+		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
+			continue
 		}
 
-		return BookLevel{}, false, fmt.Errorf("parse %s price: %w", side, err)
-	}
-
-	volume, err := jsonparser.GetFloat(payload, "data", "[0]", side, "[0]", "qty")
-	if err != nil {
-		if err == jsonparser.KeyPathNotFoundError {
-			return BookLevel{}, false, nil
+		for _, row := range rows {
+			update := row
+			recv <- &update
 		}
-
-		return BookLevel{}, false, fmt.Errorf("parse %s qty: %w", side, err)
 	}
-
-	return BookLevel{Price: price, Volume: volume}, true, nil
 }

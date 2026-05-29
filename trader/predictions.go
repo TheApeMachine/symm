@@ -103,27 +103,35 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 		return nil
 	}
 
-	if !record.Tradable {
+	// The decision tree -- not a break-even friction gate -- decides entry. It
+	// reads the whole market story (every signal's verdict for this symbol) and
+	// only authorizes a long when those verdicts tell a coherent bullish story.
+	// A weak or contradictory story yields ActionNone and we simply pass.
+	verdict := crypto.storyVerdict(symbol, false)
+
+	if verdict.Action != engine.ActionEnter {
 		fields := requirement.auditFields(symbol, record.PredictedReturn)
 		fields["source"] = record.Source
-		fields["contributions"] = record.Contributions
-		crypto.recordEntrySkip(prediction, "forward_model_not_ready", fields)
+		fields["verdict"] = verdict.Action.String()
+		fields["node"] = verdict.Node
+		fields["story_reason"] = verdict.Reason
+		crypto.recordEntrySkip(prediction, "verdict_"+verdict.Action.String(), fields)
 
 		return nil
 	}
 
-	crypto.tryEnter(prediction, record.PredictedReturn)
+	crypto.tryEnter(prediction, record.PredictedReturn, verdict)
 
 	return nil
 }
 
 /*
-reviewOpenPosition is the "is my edge still here?" loop. Positions in this
-system are long, so the entry thesis is always "price advances". On each fresh
-perspective for a symbol we already hold, we re-read that thesis: if the live
-direction has flipped down, or the (source, regime) forward-return estimate has
-gone negative, the reason we entered is gone and we exit now via
-ExitReasonEdgeFaded rather than holding to the runway timer.
+reviewOpenPosition is the "does the thesis still persist?" loop -- the exit half
+of the same decision tree that authorized entry. On each fresh perspective for a
+symbol we hold, we re-read the whole market story through Decide(holding=true):
+a decay/reversal verdict (book collapsing, tape turning, driver downgraded to
+beta, momentum fading) closes the position now rather than waiting for the
+runway timer; a Hold verdict leaves the runway and stops as the backstop.
 
 A position is given at least config.MinExhaustHold to clear its entry friction
 before this thesis-decay exit can fire, so a momentary post-entry wobble does
@@ -140,8 +148,9 @@ func (crypto *Crypto) reviewOpenPosition(
 		}
 	}
 
-	// Thesis still intact: still pointing up and still a non-negative edge.
-	if prediction.Direction >= 0 && predictedReturn >= 0 {
+	verdict := crypto.storyVerdict(symbol, true)
+
+	if verdict.Action != engine.ActionExit {
 		return
 	}
 
@@ -149,11 +158,14 @@ func (crypto *Crypto) reviewOpenPosition(
 		"symbol":           symbol,
 		"direction":        prediction.Direction,
 		"predicted_return": predictedReturn,
+		"node":             verdict.Node,
+		"story_reason":     verdict.Reason,
+		"urgency":          verdict.Urgency,
 	})
 
 	if err := crypto.handleExit(engine.Exit{
 		Symbol:  symbol,
-		Urgency: 1,
+		Urgency: verdict.Urgency,
 		Reason:  engine.ExitReasonEdgeFaded,
 	}); err != nil {
 		errnie.Error(err)

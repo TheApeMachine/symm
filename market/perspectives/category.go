@@ -1,0 +1,52 @@
+package perspectives
+
+type CategoryType uint8
+
+const (
+	CategoryTypeNone CategoryType = iota
+	CategoryLaminar
+	CategoryTurbulent
+	CategoryInertial
+	CategoryViscous
+	CategoryFrenzy
+	CategorySaturation
+	CategoryOrganic
+	CategoryExhaustion
+	CategoryHiddenAbsorption
+	CategoryAggressiveDrive
+	CategoryStochasticBalance
+	CategoryVolumeStarvation
+	CategoryLoadedImbalance
+	CategorySpoofTrap
+	CategoryBookThinning
+	CategoryDenseNeutrality
+	CategoryInefficientLag
+	CategorySynchronizedDrift
+	CategoryDecoupledMove
+	CategoryAnchorStall
+	CategoryVerticalIgnition
+	CategoryCoiledCompression
+	CategoryOrganicTrend
+	CategoryFadedExhaustion
+	CategoryExtremeScarcity
+	CategoryMedianDepth
+	CategoryRobustLiquidity
+	CategoryRiskOnSurge
+	CategoryDivergentMove
+	CategorySystemicSlump
+	CategoryLiquidityVacuum
+	CategoryToxicBluff
+	CategoryHardSupport
+	CategorySystemicHerd
+	CategoryDecoupledAlpha
+	CategoryStochasticNoise
+	CategoryDivergentStress
+	CategoryEndogenousAlpha
+	CategorySystemicBeta
+	CategoryLiquidityShock
+	CategoryCausalNoise
+	CategoryMechanicalCollapse
+	CategoryThermalExhaustion
+	CategoryFragileExpansion
+	CategoryActiveReversal
+)

@@ -127,6 +127,14 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		"ask":     ask,
 	})
 
+	// Bill the exit at the same real per-pair taker fee the entry recorded, so a
+	// round-trip's friction is symmetric and matches what the entry gate priced.
+	exitFeePct := crypto.wallet.FeePct
+
+	if binding, ok := crypto.wallet.PositionBindingFor(symbolBase(symbol)); ok && binding.TakerFeePct > 0 {
+		exitFeePct = binding.TakerFeePct
+	}
+
 	sell := broker.Sell{
 		Symbol: symbol,
 		Quote: broker.Quote{
@@ -135,6 +143,7 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 			Ask:  ask,
 			At:   eventAt,
 		},
+		FeePct: exitFeePct,
 	}
 
 	// Snapshot the cost basis BEFORE the sell zeroes the slot. Sell.FillPaper
@@ -165,12 +174,12 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	}
 
 	exitNotional := fill.Qty * fill.Price
-	exitFee := exitNotional * crypto.wallet.FeePct / 100
+	exitFee := exitNotional * exitFeePct / 100
 	realizedNet := (fill.Price-avgEntryBefore)*fill.Qty - exitFee
 	realizedReturnNet := 0.0
 
 	if avgEntryBefore > 0 {
-		realizedReturnNet = (fill.Price-avgEntryBefore)/avgEntryBefore - crypto.wallet.FeePct/100
+		realizedReturnNet = (fill.Price-avgEntryBefore)/avgEntryBefore - exitFeePct/100
 	}
 
 	crypto.attachWalletMarks()

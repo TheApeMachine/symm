@@ -67,6 +67,11 @@ run: build
 	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
 	./$(SYMM_BIN)
 
+run-profile: build
+	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
+	SYMM_PPROF=1 ./$(SYMM_BIN)
+
 REPLAY_FILE ?=
 REPLAY_PACE ?= 50ms
 

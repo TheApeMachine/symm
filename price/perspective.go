@@ -20,6 +20,8 @@ type PerspectiveRecord struct {
 	Runway          time.Duration
 	Fresh           bool
 	Tradable        bool
+	Explorable      bool // priced & confident, but no demonstrated edge yet -- eligible for exploration
+	SampleCount     int  // settled forward-return samples in this (source, regime) bucket
 	Confidence      float64
 	Source          string
 	Sources         []string
@@ -61,6 +63,14 @@ func (prediction *Prediction) RecordPerspective(
 	// show an edge in the current regime.
 	predictedReturn, reliability := prediction.returnModel.ExpectedReturn(source, regime)
 	tradable := reliability > 0
+
+	// A priced, confident perspective with no demonstrated edge yet is not
+	// tradable on the disciplined gate, but it IS explorable: exploration can
+	// take a small position to gather the forward returns this bucket needs to
+	// learn its edge. sampleCount lets the trader decide cold vs warm. Both
+	// anchor-priced and confidence>0 are already guaranteed above, so any record
+	// that reaches here is explorable.
+	sampleCount := prediction.returnModel.SampleCount(source, regime)
 
 	runway := perspectiveRunway(perspective)
 	predictedAt := now
@@ -129,6 +139,8 @@ func (prediction *Prediction) RecordPerspective(
 		Runway:          runway,
 		Fresh:           true,
 		Tradable:        tradable,
+		Explorable:      true,
+		SampleCount:     sampleCount,
 		Confidence:      confidence,
 		Source:          source,
 		Sources:         sources,

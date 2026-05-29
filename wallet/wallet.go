@@ -58,6 +58,8 @@ type PositionBinding struct {
 	DueAt          time.Time
 	HasLotDecimals bool
 	LotDecimals    int
+	TakerFeePct    float64 // real per-pair taker fee at entry; billed again on the exit sell
+	Exploratory    bool    // opened by exploration (cold bucket), not the disciplined edge gate
 }
 
 /*

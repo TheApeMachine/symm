@@ -66,7 +66,7 @@ func TestCryptoEnterAndExit(t *testing.T) {
 		Confidence:  0.9,
 		PredictedAt: time.Now().Add(-10 * time.Second),
 		DueAt:       time.Now().Add(30 * time.Second),
-	}, 0.02)
+	}, 0.02, engine.Verdict{Action: engine.ActionEnter, Direction: 1, Node: "stage4_node8"})
 
 	if tradingWallet.Inventory["BTC"] <= 0 {
 		t.Fatal("expected paper entry to open BTC inventory")
@@ -86,10 +86,10 @@ func TestCryptoEnterAndExit(t *testing.T) {
 }
 
 /*
-TestCryptoColdStartDoesNotEnter guards the no-cold-trading policy at the
-trader level. A measurement that would have triggered an entry under the
-old MaxFraction fallback must now produce zero inventory until the
-calibrator has settled enough samples to size it.
+TestCryptoColdStartDoesNotEnter guards the no-cold-trading policy: a single
+measurement cannot tell a coherent market story, so the decision tree returns
+ActionNone (it never reaches ALLOW ENTRY) and no position is opened. Only a full
+multi-signal confluence authorizes an entry.
 */
 func TestCryptoColdStartDoesNotEnter(t *testing.T) {
 	ctx := context.Background()

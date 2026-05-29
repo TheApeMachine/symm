@@ -112,6 +112,32 @@ func (crypto *Crypto) openCount() int {
 }
 
 /*
+exploratoryOpenCount counts open positions opened by exploration (cold-bucket
+information-gathering trades), used to enforce ExplorationMaxConcurrent. A
+position counts only when it still holds inventory and its binding is tagged
+exploratory.
+*/
+func (crypto *Crypto) exploratoryOpenCount() int {
+	if crypto.wallet == nil {
+		return 0
+	}
+
+	count := 0
+
+	for base, qty := range crypto.wallet.InventoryCopy() {
+		if qty <= config.System.LiveInventoryEpsilon {
+			continue
+		}
+
+		if binding, ok := crypto.wallet.PositionBindingFor(base); ok && binding.Exploratory {
+			count++
+		}
+	}
+
+	return count
+}
+
+/*
 recordEntryPnL informs the risk account about a fresh entry so the equity
 high-water mark stays aligned with the wallet's mark-to-market view.
 */

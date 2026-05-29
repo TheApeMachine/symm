@@ -35,6 +35,7 @@ type Measurement struct {
 	Source     string
 	Regime     string
 	Reason     string
+	Category   Category // signal's self-classified verdict (one row of its perspective table)
 	Pairs      []asset.Pair
 	Confidence float64
 	Last       float64

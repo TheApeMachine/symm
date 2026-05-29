@@ -49,6 +49,8 @@ type Crypto struct {
 	hindsight      *hindsightTracker
 	pulseSeq       atomic.Uint64
 	pumpPeak       map[string]float64
+	stories        map[string]*engine.MarketStory
+	storiesMu      sync.Mutex
 }
 
 func NewCrypto(
@@ -77,6 +79,7 @@ func NewCrypto(
 		shock:        shock,
 		hindsight:    newHindsightTracker(),
 		pumpPeak:     make(map[string]float64),
+		stories:      make(map[string]*engine.MarketStory),
 	}
 	crypto.execution = newExecutionManager(crypto)
 
@@ -251,7 +254,7 @@ func (crypto *Crypto) Tick() error {
 					continue
 				}
 
-				if err := crypto.handleExit(exitSignal); err != nil {
+				if err := crypto.routeExit(exitSignal); err != nil {
 					errnie.Error(err)
 				}
 			case raw, ok := <-crypto.subscribers["measurements"].Incoming:
@@ -315,6 +318,10 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		measurement.Source, rawConfidence,
 	)
 	crypto.execution.ReviewMeasurement(measurement)
+
+	// Fold this signal's verdict into the symbol's market story before the
+	// perspective/decision pass below reads it.
+	crypto.recordStory(measurement)
 
 	audit("measurement_ingest", map[string]any{
 		"source":         measurement.Source,

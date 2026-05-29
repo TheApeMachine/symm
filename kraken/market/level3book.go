@@ -1,0 +1,24 @@
+package market
+
+/*
+Level3Order is one resting order from POST /private/Level3.
+See https://docs.kraken.com/api/docs/rest-api/get-level-3-order-book
+
+Fetching requires an authenticated private REST client; this package only models
+the response shape. WebSocket level3 parsing lives in kraken/level3.
+*/
+type Level3Order struct {
+	OrderID    string `json:"order_id"`
+	LimitPrice string `json:"limit_price"`
+	OrderQty   string `json:"order_qty"`
+	Timestamp  string `json:"timestamp"`
+}
+
+/*
+Level3Book is the Level3 order book payload for one symbol.
+*/
+type Level3Book struct {
+	Symbol string        `json:"symbol"`
+	Bids   []Level3Order `json:"bids"`
+	Asks   []Level3Order `json:"asks"`
+}

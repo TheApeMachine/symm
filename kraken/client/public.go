@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/kraken/instrument"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/ohlc"
+	"github.com/theapemachine/symm/kraken/rest"
 	"github.com/theapemachine/symm/kraken/trade"
 	"github.com/theapemachine/symm/wallet"
 )
@@ -486,6 +488,12 @@ func (publicClient *PublicClient) read(payload []byte) {
 			return
 		}
 
+		// The instrument feed carries no fees; enrich the catalog with Kraken's
+		// real per-pair fee schedules so friction and realized PnL stop guessing.
+		// Best-effort: on failure the pairs keep empty schedules and downstream
+		// fee lookups fall back to the configured defaults.
+		enrichPairFees(pairs)
+
 		publicClient.mu.Lock()
 		publicClient.catalogAt = time.Now()
 		publicClient.subscribed = make(map[string]struct{})
@@ -618,4 +626,50 @@ func unixTimestampOrNow(timestamp time.Time, now time.Time) int64 {
 	}
 
 	return timestamp.UTC().Unix()
+}
+
+/*
+enrichPairFees fetches Kraken's real per-pair fee schedules over REST and merges
+them into the catalog in place. The instrument-feed wsname mostly matches the
+REST AssetPairs wsname, with the long-standing Bitcoin exception (REST publishes
+"XBT/..." where the WS feed uses "BTC/..."), which normalizePairFeeKey bridges.
+Unmatched pairs are left with empty schedules so their fee lookups fall back to
+the configured defaults.
+*/
+func enrichPairFees(pairs map[string]*asset.Pair) {
+	fees, err := rest.FetchAssetPairFees()
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	matched := 0
+
+	for _, pair := range pairs {
+		fee, ok := fees[pair.Wsname]
+
+		if !ok {
+			fee, ok = fees[normalizePairFeeKey(pair.Wsname)]
+		}
+
+		if !ok {
+			continue
+		}
+
+		pair.Fees = fee.Fees
+		pair.FeesMaker = fee.FeesMaker
+		pair.FeeVolumeCurrency = fee.FeeVolumeCurrency
+		matched++
+	}
+
+	errnie.Info(fmt.Sprintf("pair fees enriched: %d/%d matched", matched, len(pairs)))
+}
+
+func normalizePairFeeKey(wsname string) string {
+	if quote, ok := strings.CutPrefix(wsname, "BTC/"); ok {
+		return "XBT/" + quote
+	}
+
+	return wsname
 }

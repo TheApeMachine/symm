@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/correlation"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/signal/correlation"
 )
 
 /*

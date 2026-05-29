@@ -340,24 +340,64 @@ func (tracker *Tracker) Measure(symbol string, now time.Time) (engine.Measuremen
 	bidPull := state.cancelBid / (state.fillBid + epsilon)
 
 	if askPull > bidPull && state.fillBid > 0 {
-		return state.emit(engine.Momentum, "bookflow", "ask_pull", squash(askPull-bidPull), now), true
+		return state.emit(engine.Momentum, "bookflow", "ask_pull", state.pullCategory(now), squash(askPull-bidPull), now), true
 	}
 
 	if bidPull > askPull && state.fillAsk > 0 {
-		return state.emit(engine.Dump, "bookflow", "bid_pull", squash(bidPull-askPull), now), true
+		return state.emit(engine.Dump, "bookflow", "bid_pull", state.pullCategory(now), squash(bidPull-askPull), now), true
+	}
+
+	// Neither side is retreating and fills dominate cancels on both sides (pull
+	// ratio below 1): the book is sincere -- hard support. Confidence rises as
+	// cancels fall further below fills.
+	if (state.fillBid > 0 || state.fillAsk > 0) && askPull < 1 && bidPull < 1 {
+		return state.emit(engine.Momentum, "bookflow", "hard_support", engine.CatHardSupport,
+			squash(1-(askPull+bidPull)/2), now), true
 	}
 
 	return engine.Measurement{}, false
 }
 
+/*
+pullCategory distinguishes a manipulative near-touch bluff (a large, young
+order being cancelled rather than filled, the signature of fake support) from
+an honest liquidity vacuum (one side simply retreating). The toxic-bluff read
+is what the decision layer treats as a hard manipulation veto.
+*/
+func (state *symbolState) pullCategory(now time.Time) engine.Category {
+	if state.hasToxicLevel(now) {
+		return engine.CatToxicBluff
+	}
+
+	return engine.CatLiquidityVacuum
+}
+
+// hasToxicLevel reports whether any large/young/near-touch cancel is still
+// within its toxic cooldown, pruning expired entries as it scans.
+func (state *symbolState) hasToxicLevel(now time.Time) bool {
+	active := false
+
+	for price, expiry := range state.toxic {
+		if now.After(expiry) {
+			delete(state.toxic, price)
+			continue
+		}
+
+		active = true
+	}
+
+	return active
+}
+
 func (state *symbolState) emit(
-	mtype engine.MeasurementType, regime, reason string, confidence float64, now time.Time,
+	mtype engine.MeasurementType, regime, reason string, category engine.Category, confidence float64, now time.Time,
 ) engine.Measurement {
 	return engine.Measurement{
 		Type:       mtype,
 		Source:     "bookflow",
 		Regime:     regime,
 		Reason:     reason,
+		Category:   category,
 		Pairs:      []asset.Pair{state.pair},
 		Confidence: confidence,
 		Last:       state.mid,

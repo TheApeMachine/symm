@@ -13,6 +13,7 @@ import (
 func (crypto *Crypto) tryEnter(
 	prediction engine.Prediction,
 	predictedReturn float64,
+	verdict engine.Verdict,
 ) {
 	lead, ok := prediction.LeadMeasurement()
 
@@ -63,23 +64,14 @@ func (crypto *Crypto) tryEnter(
 	entryFields["joint_confidence"] = jointConfidence
 	entryFields["source_count"] = sourceCount
 	entryFields["open_count"] = crypto.openCount()
+	entryFields["node"] = verdict.Node
+	entryFields["pump_regime"] = pumpRegime
 
 	audit("trade_entry_eval", entryFields)
 
-	// One economic truth replaces the friction-multiple and R-multiple gates:
-	// the expected forward return must beat the round-trip friction it pays.
-	// Breakeven (edge == 0) is the boundary, not a guessed 2x. How much edge is
-	// "enough" is answered continuously by Kelly sizing below -- which scales
-	// with win rate, payoff, confidence and horizon -- not by another threshold.
-	if edge <= 0 {
-		crypto.recordEntrySkip(
-			prediction,
-			"negative_edge",
-			requirement.auditFields(symbol, predictedReturn),
-		)
-
-		return
-	}
+	// No break-even friction gate here: the decision tree already authorized this
+	// entry by reading the whole market story (see actOnPrediction). tryEnter's
+	// remaining job is risk and sizing, not a second go/no-go on edge.
 
 	if crypto.holdsSymbol(crypto.wallet, symbol) {
 		crypto.recordEntrySkip(
@@ -108,20 +100,26 @@ func (crypto *Crypto) tryEnter(
 		prediction.Runway,
 	)
 
-	// Pump-regime slots are sized down before the single MinCostEUR gate: a
-	// pump position risks PumpSizeFraction of the normal slot, and the gate
-	// then runs once against the reduced notional.
+	// Pump-regime slots are sized down: a pump position risks PumpSizeFraction
+	// of the normal slot.
 	if pumpRegime != "" {
 		slot *= config.System.PumpSizeFraction
 	}
 
+	// The decision tree is the authority on whether to enter; Kelly only scales
+	// the size. A cold Kelly (no settled feedback yet) returns zero, but that
+	// must NOT silently veto the tree's decision -- floor the slot at the minimum
+	// tradeable notional so the entry is always honored, and let Kelly scale it
+	// up as it learns. Only an outright lack of cash can prevent the trade.
 	if slot < config.System.MinCostEUR {
+		slot = config.System.MinCostEUR
+	}
+
+	if crypto.wallet.AvailableEUR() < slot {
 		fields := requirement.auditFields(symbol, predictedReturn)
 		fields["slot_eur"] = slot
-		fields["min_cost_eur"] = config.System.MinCostEUR
-		fields["joint_confidence"] = jointConfidence
-		fields["source_count"] = sourceCount
-		crypto.recordEntrySkip(prediction, "slot_below_min", fields)
+		fields["available_eur"] = crypto.wallet.AvailableEUR()
+		crypto.recordEntrySkip(prediction, "insufficient_cash", fields)
 
 		return
 	}
@@ -142,12 +140,18 @@ func (crypto *Crypto) tryEnter(
 	stopPrice, stopLimit := crypto.stopPricesFor(lead, predictedReturn)
 	takeProfitPrice := takeProfitPriceFor(lead, predictedReturn)
 
+	// Real per-pair taker fee, threaded into the paper fill so realized PnL is
+	// charged the same fee the entry economics gated on, and stored on the
+	// binding so the exit sell bills the matching fee.
+	takerFeePct, _ := pairFeePcts(lead)
+
 	buy := broker.Buy{
 		Symbol:         symbol,
 		Notional:       slot,
 		Quote:          quote,
 		StopPrice:      stopPrice,
 		LimitBelowStop: stopLimit,
+		FeePct:         takerFeePct,
 	}
 
 	if crypto.wallet.Type == wallet.CryptoWallet {
@@ -199,6 +203,7 @@ func (crypto *Crypto) tryEnter(
 		Regime:      pumpRegime,
 		PredictedAt: prediction.PredictedAt,
 		DueAt:       prediction.DueAt,
+		TakerFeePct: takerFeePct,
 	}
 
 	if lead.Pairs[0].LotDecimals > 0 {
@@ -271,6 +276,9 @@ func (crypto *Crypto) tryEnter(
 	fillFields["balance_eur"] = crypto.wallet.BalanceCopy()
 	fillFields["reserved_eur"] = crypto.wallet.ReservedCopy()
 	fillFields["open_count"] = crypto.openCount()
+	fillFields["node"] = verdict.Node
+	fillFields["pump_regime"] = pumpRegime
+	fillFields["taker_fee_pct"] = takerFeePct
 
 	audit("trade_entry_fill", fillFields)
 
@@ -288,10 +296,14 @@ func takeProfitPriceFor(measurement engine.Measurement, predictedReturn float64)
 }
 
 func entryFrictionReturn(measurement engine.Measurement) float64 {
-	feePct := config.System.TakerFeePct * 2
+	taker, maker := pairFeePcts(measurement)
+
+	// Round trip = entry leg + exit leg. The exit is always a taker market sell;
+	// the entry is taker unless maker entries are enabled.
+	feePct := taker * 2
 
 	if config.System.UseMakerEntries {
-		feePct = config.System.MakerFeePct + config.System.TakerFeePct
+		feePct = maker + taker
 	}
 
 	feeReturn := feePct / 100
@@ -302,6 +314,26 @@ func entryFrictionReturn(measurement engine.Measurement) float64 {
 	) / 10000
 
 	return feeReturn + spreadReturn
+}
+
+/*
+pairFeePcts returns the real per-pair taker and maker fee percents for the
+measurement's pair, read from Kraken's fee schedule at the configured 30-day
+volume tier. When the pair carries no schedule (e.g. the REST enrichment has not
+run), the configured fallback fees are used. This is the single source of fee
+truth for both the entry friction gate and the paper-fill PnL accounting.
+*/
+func pairFeePcts(measurement engine.Measurement) (taker, maker float64) {
+	taker = config.System.TakerFeePct
+	maker = config.System.MakerFeePct
+
+	if len(measurement.Pairs) > 0 {
+		pair := measurement.Pairs[0]
+		taker = pair.TakerFeePctOr(config.System.Fee30DVolume, config.System.TakerFeePct)
+		maker = pair.MakerFeePctOr(config.System.Fee30DVolume, config.System.MakerFeePct)
+	}
+
+	return taker, maker
 }
 
 func quoteSpreadBPS(last, bid, ask float64) float64 {

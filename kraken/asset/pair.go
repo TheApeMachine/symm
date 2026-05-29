@@ -33,6 +33,55 @@ func NewPair(base, quote string) *Pair {
 }
 
 /*
+TakerFeePctOr returns this pair's taker fee percent for a given 30-day traded
+volume (in the pair's fee_volume_currency), reading Kraken's tiered Fees
+schedule. When the schedule is absent -- e.g. the pair came from the WebSocket
+instrument feed, which carries no fees, and the REST AssetPairs enrichment has
+not populated it -- the supplied fallback is returned instead. Pass volume 0
+for a small/paper account to get the bottom (highest) tier.
+*/
+func (pair Pair) TakerFeePctOr(volume, fallback float64) float64 {
+	return feeAtVolume(pair.Fees, volume, fallback)
+}
+
+/*
+MakerFeePctOr is TakerFeePctOr for the maker (resting limit) schedule.
+*/
+func (pair Pair) MakerFeePctOr(volume, fallback float64) float64 {
+	return feeAtVolume(pair.FeesMaker, volume, fallback)
+}
+
+/*
+feeAtVolume resolves a Kraken fee schedule -- a list of [volumeThreshold,
+percent] rows sorted ascending by threshold -- to the percent that applies at
+the given 30-day volume. It picks the last row whose threshold the volume has
+reached. A malformed or empty schedule yields the fallback.
+*/
+func feeAtVolume(schedule [][]float64, volume, fallback float64) float64 {
+	percent := fallback
+	matched := false
+
+	for _, row := range schedule {
+		if len(row) < 2 {
+			continue
+		}
+
+		if volume < row[0] {
+			break
+		}
+
+		percent = row[1]
+		matched = true
+	}
+
+	if !matched {
+		return fallback
+	}
+
+	return percent
+}
+
+/*
 Symbol returns the websocket display name for one pair.
 */
 func Symbol(pair Pair) string {

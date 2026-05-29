@@ -6,8 +6,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/correlation"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/wallet"
 )
 

@@ -1,5 +1,68 @@
 package market
 
+var sampleTickerFrame = []byte(`{
+  "channel":"ticker",
+  "type":"update",
+  "data":[
+    {
+      "symbol":"BTC/EUR",
+      "bid":49999.5,
+      "bid_qty":1.2,
+      "ask":50000.5,
+      "ask_qty":0.8,
+      "last":50000.0,
+      "volume":12.5,
+      "vwap":49995.0,
+      "low":49800.0,
+      "high":50100.0,
+      "change":100.0,
+      "change_pct":0.2,
+      "timestamp":"2026-05-23T02:00:00.123456789Z"
+    }
+  ]
+}`)
+
+var sampleCandleFrame = []byte(`{
+  "channel":"ohlc",
+  "type":"update",
+  "data":[
+    {
+      "symbol":"BTC/EUR",
+      "open":49900.0,
+      "high":50100.0,
+      "low":49800.0,
+      "close":50000.0,
+      "vwap":49950.0,
+      "trades":42,
+      "volume":12.5,
+      "interval_begin":"2026-05-23T02:00:00.000000000Z",
+      "interval":1
+    }
+  ]
+}`)
+
+var sampleLevel3Frame = []byte(`{
+  "channel":"level3",
+  "type":"update",
+  "data":[
+    {
+      "symbol":"BTC/EUR",
+      "checksum":123456,
+      "timestamp":"2026-05-23T02:00:00.123456789Z",
+      "bids":[
+        {
+          "event":"add",
+          "order_id":"OABC-123",
+          "limit_price":49999.5,
+          "order_qty":1.2,
+          "timestamp":"2026-05-23T02:00:00.123456789Z"
+        }
+      ],
+      "asks":[]
+    }
+  ]
+}`)
+
 var sampleTradeFrame = []byte(`{
   "channel":"trade",
   "type":"update",

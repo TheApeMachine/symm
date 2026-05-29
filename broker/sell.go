@@ -17,6 +17,7 @@ type Sell struct {
 	Quote          Quote
 	LotDecimals    int
 	HasLotDecimals bool
+	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
 }
 
 /*
@@ -73,7 +74,7 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	// gone from the wallet — bill it back at the fill price.
 	qty = consumed
 	revenue := qty * fillPrice
-	fee := revenue * tradingWallet.FeePct / 100
+	fee := revenue * feeOr(sell.FeePct, tradingWallet.FeePct) / 100
 
 	tradingWallet.CreditBalance(revenue - fee)
 

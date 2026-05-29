@@ -1,94 +1,64 @@
 package market
 
 import (
-	"fmt"
+	"context"
 
-	"github.com/qntfy/jsonparser"
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/core"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
-// TickerRow is one element from a ticker channel snapshot/update.
-type TickerRow struct {
+type TickerParams struct {
+	Channel      string   `json:"channel"`
+	Symbol       []string `json:"symbol"`
+	Snapshot     bool     `json:"snapshot"`
+	EventTrigger string   `json:"event_trigger,omitempty"`
+}
+
+type TickerUpdate struct {
 	Symbol    string  `json:"symbol"`
-	Last      float64 `json:"last"`
-	Bid       float64 `json:"bid"`
-	BidQty    float64 `json:"bid_qty"`
 	Ask       float64 `json:"ask"`
 	AskQty    float64 `json:"ask_qty"`
-	High      float64 `json:"high"`
-	Low       float64 `json:"low"`
+	Bid       float64 `json:"bid"`
+	BidQty    float64 `json:"bid_qty"`
 	Change    float64 `json:"change"`
 	ChangePct float64 `json:"change_pct"`
+	High      float64 `json:"high"`
+	Last      float64 `json:"last"`
+	Low       float64 `json:"low"`
 	Volume    float64 `json:"volume"`
 	VWAP      float64 `json:"vwap"`
 	Timestamp string  `json:"timestamp"`
 }
 
-// TickerMessage is a Kraken WebSocket v2 ticker channel message.
-type TickerMessage struct {
-	Channel string      `json:"channel"`
-	Type    string      `json:"type"`
-	Data    []TickerRow `json:"data"`
-}
+func NewTickerSubscription(
+	ctx context.Context,
+	recv chan *TickerUpdate,
+	symbols ...string,
+) {
+	ws := errnie.Does(func() (*public.WebSocket, error) {
+		return public.NewWebSocket(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-/*
-ParseTickerRows extracts ticker rows from a Kraken v2 ticker frame.
-*/
-func ParseTickerRows(payload []byte) ([]TickerRow, error) {
-	channel, err := ChannelName(payload)
-	if err != nil {
-		return nil, err
-	}
+	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
+		return ws.Generate(core.ChannelTicker)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-	if channel != core.ChannelTicker {
-		return nil, fmt.Errorf("not a ticker event: channel=%q", channel)
-	}
+	for message := range messages {
+		var rows []TickerUpdate
 
-	rows := make([]TickerRow, 0, 4)
-
-	_, err = jsonparser.ArrayEach(payload, func(value []byte, _ jsonparser.ValueType, _ int, err error) {
-		if err != nil {
-			return
+		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
+			continue
 		}
 
-		row, ok := parseTickerEntry(value)
-		if !ok {
-			return
+		for _, row := range rows {
+			update := row
+			recv <- &update
 		}
-
-		rows = append(rows, row)
-	}, "data")
-	if err != nil {
-		return nil, fmt.Errorf("parse ticker data: %w", err)
 	}
-
-	return rows, nil
-}
-
-func parseTickerEntry(value []byte) (TickerRow, bool) {
-	symbol, err := jsonparser.GetUnsafeString(value, "symbol")
-	if err != nil {
-		return TickerRow{}, false
-	}
-
-	last, err := jsonparser.GetFloat(value, "last")
-	if err != nil {
-		return TickerRow{}, false
-	}
-
-	bid, _ := jsonparser.GetFloat(value, "bid")
-	ask, _ := jsonparser.GetFloat(value, "ask")
-	changePctPoints, _ := jsonparser.GetFloat(value, "change_pct")
-	volume, _ := jsonparser.GetFloat(value, "volume")
-	timestamp, _ := jsonparser.GetUnsafeString(value, "timestamp")
-
-	return TickerRow{
-		Symbol:    string(symbol),
-		Last:      last,
-		Bid:       bid,
-		Ask:       ask,
-		ChangePct: changePctPoints / 100,
-		Volume:    volume,
-		Timestamp: string(timestamp),
-	}, true
 }
