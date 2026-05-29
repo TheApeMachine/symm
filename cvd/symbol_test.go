@@ -158,3 +158,40 @@ func TestCVDIgnoresInvalidTrades(t *testing.T) {
 		t.Fatal("invalid trades must be ignored, leaving no samples")
 	}
 }
+
+func TestCVDFeedQuoteUpdatesMeasurement(t *testing.T) {
+	state := NewCVDSymbol(testPair())
+	feed(state, 45, 100, true)
+	feed(state, 5, 100, false)
+	state.FeedQuote(99.5, 100.5, 100)
+
+	measurement, ok := state.Measure(testBase.Add(time.Minute))
+
+	if !ok {
+		t.Fatal("expected measurement")
+	}
+
+	if measurement.Bid != 99.5 || measurement.Ask != 100.5 || measurement.Last != 100 {
+		t.Fatalf("expected quote fields on measurement, got bid=%v ask=%v last=%v",
+			measurement.Bid, measurement.Ask, measurement.Last)
+	}
+}
+
+func BenchmarkCVDFeedTrade(b *testing.B) {
+	state := NewCVDSymbol(testPair())
+
+	for b.Loop() {
+		state.FeedTrade(100, 1, true, testBase)
+	}
+}
+
+func BenchmarkCVDMeasure(b *testing.B) {
+	state := NewCVDSymbol(testPair())
+	feed(state, 45, 100, true)
+	feed(state, 5, 100, false)
+	at := testBase.Add(time.Minute)
+
+	for b.Loop() {
+		_, _ = state.Measure(at)
+	}
+}

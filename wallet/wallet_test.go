@@ -7,6 +7,27 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+func TestWalletPositionBindingFor(t *testing.T) {
+	convey.Convey("Given a bound position", t, func() {
+		tradingWallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
+		dueAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		binding := PositionBinding{
+			Source:      "perspective:flow",
+			PredictedAt: dueAt.Add(-time.Minute),
+			DueAt:       dueAt,
+		}
+		tradingWallet.BindPosition("BTC", binding)
+
+		got, ok := tradingWallet.PositionBindingFor("BTC")
+
+		convey.Convey("It should return the stored binding", func() {
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(got.Source, convey.ShouldEqual, binding.Source)
+			convey.So(got.DueAt, convey.ShouldEqual, binding.DueAt)
+		})
+	})
+}
+
 func TestWalletPut(t *testing.T) {
 	convey.Convey("Given a wallet", t, func() {
 		wallet := NewWallet(PaperWallet, "EUR", 200, 0.26)
