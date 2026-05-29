@@ -20,7 +20,7 @@ func TestKellySizerSlotEUR(t *testing.T) {
 		})
 	}
 
-	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05, 0)
 
 	if slot <= config.System.MinCostEUR {
 		t.Fatalf("expected positive Kelly slot, got %v", slot)
@@ -32,15 +32,15 @@ func TestKellySizerSlotEUR(t *testing.T) {
 }
 
 /*
-TestKellySizerColdSourceReturnsZero guards the no-cold-trading policy: a
-(source, regime) slot with fewer settled samples than MinCalibrationSamples
-must not produce a slot. Predictions are still recorded (spec step 4) and
-feedback flows even without entries (step 6); trading only begins once the
-calibrator has actually seen this combination settle.
+TestKellySizerColdSourceReturnsZero guards graceful cold-start: a (source,
+regime) slot with no settled feedback must not produce a slot. There is no hard
+minimum-sample cliff anymore -- the Beta(1,1)-shrunk win rate of a never-settled
+slot is exactly 0.5, the no-information prior, which yields a non-positive Kelly
+and therefore zero size. Evidence lifts size continuously from there.
 */
 func TestKellySizerColdSourceReturnsZero(t *testing.T) {
 	sizer := NewKellySizer(engine.DefaultCalibrationParams())
-	slot := sizer.SlotEUR(200, "pumpdump", "microstructure", 1, 0)
+	slot := sizer.SlotEUR(200, "pumpdump", "microstructure", 1, 0, 0)
 
 	if slot != 0 {
 		t.Fatalf("expected zero slot before MinCalibrationSamples settlements, got %v", slot)
@@ -60,7 +60,7 @@ func TestKellySizerRejectsNegativeEdge(t *testing.T) {
 		})
 	}
 
-	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05, 0)
 
 	if slot != 0 {
 		t.Fatalf("expected zero slot after losing calibration, got %v", slot)
@@ -80,7 +80,7 @@ func TestKellySizerTreatsFeeFloorAsLoss(t *testing.T) {
 		})
 	}
 
-	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
+	slot := sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05, 0)
 
 	if slot != 0 {
 		t.Fatalf("expected sub-fee positive returns to size as losses, got %v", slot)
@@ -107,8 +107,8 @@ func TestKellySizerBranchesByRegime(t *testing.T) {
 		})
 	}
 
-	trendSlot := sizer.SlotEUR(200, "hawkes", "trend", 0.8, 0.05)
-	chopSlot := sizer.SlotEUR(200, "hawkes", "chop", 0.8, 0.05)
+	trendSlot := sizer.SlotEUR(200, "hawkes", "trend", 0.8, 0.05, 0)
+	chopSlot := sizer.SlotEUR(200, "hawkes", "chop", 0.8, 0.05, 0)
 
 	if trendSlot <= config.System.MinCostEUR {
 		t.Fatalf("expected trend slot, got %v", trendSlot)
@@ -136,7 +136,7 @@ func BenchmarkKellySizerSlotEUR(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_ = sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05)
+		_ = sizer.SlotEUR(200, "hawkes", "microstructure", 0.8, 0.05, 0)
 	}
 }
 

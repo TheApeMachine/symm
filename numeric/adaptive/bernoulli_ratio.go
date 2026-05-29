@@ -31,6 +31,16 @@ func (ratio *BernoulliRatio) Total() float64 {
 }
 
 /*
+Hits is the number of recorded successes as float64. Exposed so callers can
+form a Beta-shrunk rate ((hits+1)/(trials+2)) that degrades gracefully to the
+no-information prior of 0.5 at low sample counts instead of needing a hard
+minimum-sample gate.
+*/
+func (ratio *BernoulliRatio) Hits() float64 {
+	return float64(atomic.LoadInt64(&ratio.hits))
+}
+
+/*
 Ratio returns successes divided by trials, or zero when empty.
 */
 func (ratio *BernoulliRatio) Ratio() float64 {

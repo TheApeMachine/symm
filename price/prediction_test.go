@@ -270,8 +270,13 @@ func TestPredictionRecordPerspectiveBlocksNegativeLearnedReturnSupport(t *testin
 		time.Now(),
 	)
 
-	if predicted.PredictedReturn != 0 {
-		t.Fatalf("expected negative return model bucket to block forecast, got %v", predicted.PredictedReturn)
+	// The forecast no longer masks a negative bucket as 0; it reports the honest
+	// non-positive expectation, and the entry economics (edge = expected -
+	// friction > 0) are what refuse the trade. The invariant that matters here is
+	// that a consistently-negative bucket can never surface a positive forecast,
+	// so no positive edge can ever arise from it.
+	if predicted.PredictedReturn > 0 {
+		t.Fatalf("expected negative return model bucket to yield a non-positive forecast, got %v", predicted.PredictedReturn)
 	}
 }
 
@@ -373,11 +378,17 @@ func TestPredictionConcurrentRecordAndTick(t *testing.T) {
 	})
 }
 
-// TestRecordPerspectiveDoesNotOverwriteOpen proves that predictions live in
-// time, not in cycles: a second RecordPerspective call for the same
-// (symbol, source) while a forecast is still open does not replace it. The
-// open forecast keeps its original anchor and dueAt, so the settler can
-// evaluate the actual forward return when time has caught up.
+// TestRecordPerspectiveDoesNotOverwriteOpen proves two things that must hold
+// together:
+//
+//  1. The forward-return training slot lives in time, not in cycles: a second
+//     RecordPerspective call for the same (symbol, source) while a measurement
+//     is still in flight does not replace it. The slot keeps its original
+//     anchor and dueAt, so the settler evaluates the real forward return once
+//     time has caught up.
+//  2. Entry eligibility is decoupled from that slot: the second record is still
+//     Fresh, carrying a forecast recomputed from the current perspective, so a
+//     pending measurement no longer starves the trader of entries.
 func TestRecordPerspectiveDoesNotOverwriteOpen(t *testing.T) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -412,13 +423,15 @@ func TestRecordPerspectiveDoesNotOverwriteOpen(t *testing.T) {
 	second.Last = 1.02
 	predictedSecond := prediction.RecordPerspective("BTC/EUR", testPerspective(second), now.Add(time.Millisecond))
 
+	// Confidence and model state are unchanged between the two calls, so the
+	// recomputed forecast matches the first.
 	if predictedSecond.PredictedReturn != predictedFirst.PredictedReturn {
-		t.Fatalf("expected no-op overwrite to return prior predictedReturn (%v), got %v",
+		t.Fatalf("expected recomputed forecast to match prior predictedReturn (%v), got %v",
 			predictedFirst.PredictedReturn, predictedSecond.PredictedReturn)
 	}
 
-	if predictedSecond.Fresh {
-		t.Fatalf("expected stale second record, got Fresh=true")
+	if !predictedSecond.Fresh {
+		t.Fatalf("expected second record to stay Fresh (entry decoupled from open slot), got Fresh=false")
 	}
 
 	stillOpen, ok := prediction.open["BTC/EUR"][source]

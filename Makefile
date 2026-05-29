@@ -11,7 +11,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-frontend bench run replay dump
+.PHONY: build test test-go test-race test-frontend bench run replay dump profile profile-stack profile-report
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -34,6 +34,33 @@ test-frontend:
 
 bench:
 	go test $(LDFLAGS) -bench=. -benchmem ./...
+
+PROFILE_DIR ?= runs/profiles
+
+profile:
+	@mkdir -p $(PROFILE_DIR)
+	go test $(LDFLAGS) -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
+
+profile-stack:
+	@mkdir -p $(PROFILE_DIR)
+	go test $(LDFLAGS) \
+		-cpuprofile=$(PROFILE_DIR)/stack-cpu.prof \
+		-memprofile=$(PROFILE_DIR)/stack-mem.prof \
+		-bench=BenchmarkProfileStack \
+		-benchtime=15s \
+		./profile/...
+
+profile-report:
+	@chmod +x scripts/profile-report.sh
+	PROFILE_DIR=$(PROFILE_DIR) ./scripts/profile-report.sh
+
+profile-replay: build
+	@mkdir -p $(PROFILE_DIR)
+	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required" && exit 1)
+	@echo "Starting replay with pprof on :6060 — capture with:"
+	@echo "  curl -o $(PROFILE_DIR)/replay-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
+	SYMM_PPROF=1 SYMM_REPLAY_LOOP=1 SYMM_LOG_STDOUT=1 \
+		SYMM_REPLAY_FILE=$(REPLAY_FILE) ./$(SYMM_BIN)
 
 run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"

@@ -119,6 +119,8 @@ observes ctx.Done() and runs its Close, including the wallet snapshot
 persist and the WebSocket goodbye frame.
 */
 func Execute() {
+	startProfileServer()
+
 	ctx, cancel := signal.NotifyContext(
 		context.Background(), os.Interrupt, syscall.SIGTERM,
 	)

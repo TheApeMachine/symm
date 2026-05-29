@@ -102,6 +102,11 @@ func (crypto *Crypto) trackSubmittedLiveEntry(
 	stopLimit float64,
 	takeProfitPrice float64,
 ) error {
+	// Track for runway-expiry exit (paper appends this at fill; live tracks at
+	// submission). settlePredictions only flattens a symbol it actually holds,
+	// so an unfilled submission is harmlessly pruned when its runway elapses.
+	crypto.predictions = append(crypto.predictions, &prediction)
+
 	return crypto.execution.Track(liveEntryOrder{
 		Symbol:          symbol,
 		ClOrdID:         clOrdID,

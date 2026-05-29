@@ -9,8 +9,10 @@ import (
 )
 
 // PerspectiveRecord is the result of recording one perspective-level forecast.
-// Fresh is false when an unsettled (symbol, perspective-source) forecast already
-// exists; callers should not trade again off that stale anchor.
+// Fresh is true whenever a usable forecast was produced; it is only false for an
+// empty record (no priceable anchor or non-positive confidence). It no longer
+// gates on an in-flight forward-return measurement -- entry eligibility is
+// decided from Tradable and the entry economics, not from settlement state.
 type PerspectiveRecord struct {
 	PredictedReturn float64
 	PredictedAt     time.Time
@@ -49,15 +51,16 @@ func (prediction *Prediction) RecordPerspective(
 	sources := perspectiveSources(perspective)
 	contributions := perspectiveContributions(perspective)
 
-	minSamples := configuredForwardMinSamples()
-
-	if anchorMeasurement.Source == "pumpdump" {
-		minSamples = configuredPumpForwardMinSamples()
-	}
-
-	predictedReturn, tradable := prediction.returnModel.ForecastWithMin(
-		source, regime, confidence, minSamples,
-	)
+	// Forward-return estimate is the data-shrunk realized mean for this
+	// (source, regime) -- no minimum-sample or significance cliff (see
+	// ReturnModel.ExpectedReturn). Confidence is not folded in here; it scales
+	// position size downstream via Kelly. A (source, regime) with no
+	// demonstrated edge yields ~0, which the entry economics treat as "no trade"
+	// without an explicit gate. This is the dynamic, per-regime signal
+	// selection: a signal only earns size where its own settled forward returns
+	// show an edge in the current regime.
+	predictedReturn, reliability := prediction.returnModel.ExpectedReturn(source, regime)
+	tradable := reliability > 0
 
 	runway := perspectiveRunway(perspective)
 	predictedAt := now
@@ -70,54 +73,54 @@ func (prediction *Prediction) RecordPerspective(
 		prediction.open[symbol] = bySource
 	}
 
-	// One open prediction per (symbol, source) at a time; refinements do not
-	// reset the clock. Returning Fresh=false prevents the trader from entering
-	// on an old forecast whose anchor price/runway belong to a previous book
-	// state.
-	if existing, ok := bySource[source]; ok {
-		return PerspectiveRecord{
-			PredictedReturn: existing.predictedReturn,
-			PredictedAt:     existing.predictedAt,
-			DueAt:           existing.dueAt,
-			Runway:          existing.runway,
-			Fresh:           false,
-			Tradable:        existing.predictedReturn > 0,
-			Confidence:      existing.confidence,
-			Source:          existing.source,
-			Sources:         append([]string(nil), existing.sources...),
-			Contributions:   copyContributions(existing.contributions),
+	// Maintain exactly one in-flight forward-return measurement per (symbol,
+	// source). It settles on its own schedule in settleDue to feed the return
+	// model; refinements must NOT reset its clock, or it would never reach its
+	// due time and the model would starve of training samples.
+	//
+	// Entry eligibility is a SEPARATE question, answered by the forecast just
+	// computed off the *current* perspective (predictedReturn/tradable above).
+	// A measurement already being in flight no longer blocks a fresh entry --
+	// conflating the two was the trade-starvation bug: every perspective after
+	// the first logged "open_prediction_pending" and skipped for the entire
+	// runway window, so the trader could enter at most once per (symbol,
+	// source) per runway and only if the model happened to be ready on that
+	// exact tick. The forecast is recomputed from current confidence and a
+	// current anchor, so there is no stale-anchor risk; re-entering a symbol we
+	// already hold is prevented downstream by holdsSymbol.
+	if _, ok := bySource[source]; !ok {
+		bySource[source] = openPrediction{
+			perspective:     perspective,
+			measurement:     anchorMeasurement,
+			source:          source,
+			sources:         sources,
+			contributions:   contributions,
+			regime:          regime,
+			predictedReturn: predictedReturn,
+			confidence:      confidence,
+			anchorPrice:     anchorPrice(anchorMeasurement),
+			direction:       perspectiveDirection(perspective),
+			runway:          runway,
+			dueAt:           dueAt,
+			predictedAt:     predictedAt,
 		}
-	}
 
-	bySource[source] = openPrediction{
-		perspective:     perspective,
-		measurement:     anchorMeasurement,
-		source:          source,
-		sources:         sources,
-		contributions:   contributions,
-		regime:          regime,
-		predictedReturn: predictedReturn,
-		confidence:      confidence,
-		anchorPrice:     anchorPrice(anchorMeasurement),
-		direction:       perspectiveDirection(perspective),
-		runway:          runway,
-		dueAt:           dueAt,
-		predictedAt:     predictedAt,
+		// Broadcast the forecast only when a new measurement opens, not on every
+		// refinement, so the UI/prediction chart keeps one point per forecast.
+		prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":         "prediction",
+			"source":        source,
+			"sources":       sources,
+			"contributions": contributions,
+			"symbol":        symbol,
+			"value":         predictedReturn,
+			"tradable":      tradable,
+			"confidence":    confidence,
+			"ts":            predictedAt.UTC().Format(time.RFC3339Nano),
+			"due_at":        dueAt.UTC().Format(time.RFC3339Nano),
+			"runway_ms":     runway.Milliseconds(),
+		}})
 	}
-
-	prediction.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":         "prediction",
-		"source":        source,
-		"sources":       sources,
-		"contributions": contributions,
-		"symbol":        symbol,
-		"value":         predictedReturn,
-		"tradable":      tradable,
-		"confidence":    confidence,
-		"ts":            predictedAt.UTC().Format(time.RFC3339Nano),
-		"due_at":        dueAt.UTC().Format(time.RFC3339Nano),
-		"runway_ms":     runway.Milliseconds(),
-	}})
 
 	return PerspectiveRecord{
 		PredictedReturn: predictedReturn,

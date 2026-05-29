@@ -162,6 +162,60 @@ func (model *ReturnModel) ForecastWithMin(
 	return expected, true
 }
 
+/*
+ExpectedReturn is the data-derived forward-return estimate for a fresh
+(source, regime), with NO hard significance bar or minimum-sample cliff. It
+shrinks the bucket's realized-return mean toward zero by the mean's own
+signal-to-noise ratio:
+
+	reliability = mean^2 / (mean^2 + stderr^2)
+	expected    = mean * reliability
+
+The shrinkage factor is the James-Stein / Wiener form: it is computed entirely
+from the bucket's own statistics, not a tuned constant. A cold or noisy bucket
+has a large standard error, so reliability -> 0 and the estimate collapses to
+zero on its own -- there is no Z threshold and no MinForwardSamples gate to
+guess. A bucket whose realized mean is consistently nonzero over many samples
+has a small standard error, so reliability -> 1 and the full mean survives.
+
+Sign comes from the data: a (source, regime) whose realized direction-signed
+forward return is negative returns a negative expectation, which the caller's
+edge>0 economics rejects without any explicit gate. reliability in [0,1] is
+returned too, as a confidence weight the caller may surface or size on.
+*/
+func (model *ReturnModel) ExpectedReturn(source, regime string) (expected float64, reliability float64) {
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	bucket := model.buckets[returnModelKey{source: source, regime: regime}]
+
+	// Need at least two samples to form a variance; with fewer, the standard
+	// error is undefined and there is no basis to trust the mean as an edge.
+	if bucket == nil || bucket.count < 2 {
+		return 0, 0
+	}
+
+	mean := bucket.meanReturn
+	variance := bucket.m2Return / float64(bucket.count-1)
+
+	if variance <= 0 {
+		// A reproducible mean across >=2 samples is as reliable as the data can
+		// show; let it through at full weight.
+		return mean, 1
+	}
+
+	stderr := math.Sqrt(variance / float64(bucket.count))
+	denom := mean*mean + stderr*stderr
+
+	if denom <= 0 {
+		return 0, 0
+	}
+
+	reliability = mean * mean / denom
+
+	return mean * reliability, reliability
+}
+
 // Snapshot returns a serializable view of the forward-return buckets for run
 // stats and offline analysis.
 func (model *ReturnModel) Snapshot() []map[string]any {

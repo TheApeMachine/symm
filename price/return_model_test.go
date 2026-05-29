@@ -15,7 +15,10 @@ func TestReturnModelForecast(t *testing.T) {
 		}
 
 		Convey("It should refuse to forecast", func() {
-			expected, tradable := model.Forecast("hawkes", "bullish", 0.5)
+			// Pin the bar to MinForwardSamples (the constant this test loops
+			// against) rather than the configurable default, which is tuned
+			// separately and may sit below MinForwardSamples.
+			expected, tradable := model.ForecastWithMin("hawkes", "bullish", 0.5, MinForwardSamples)
 
 			So(expected, ShouldEqual, 0)
 			So(tradable, ShouldBeFalse)
@@ -30,7 +33,7 @@ func TestReturnModelForecast(t *testing.T) {
 		}
 
 		Convey("It should map confidence to expected forward return", func() {
-			expected, tradable := model.Forecast("hawkes", "bullish", 0.5)
+			expected, tradable := model.ForecastWithMin("hawkes", "bullish", 0.5, MinForwardSamples)
 
 			So(tradable, ShouldBeTrue)
 			So(expected, ShouldAlmostEqual, 0.01, 1e-9)
@@ -51,7 +54,7 @@ func TestReturnModelForecast(t *testing.T) {
 		}
 
 		Convey("It should remain non-tradable", func() {
-			expected, tradable := model.Forecast("hawkes", "choppy", 0.5)
+			expected, tradable := model.ForecastWithMin("hawkes", "choppy", 0.5, MinForwardSamples)
 
 			So(expected, ShouldEqual, 0)
 			So(tradable, ShouldBeFalse)

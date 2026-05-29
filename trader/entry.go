@@ -66,20 +66,15 @@ func (crypto *Crypto) tryEnter(
 
 	audit("trade_entry_eval", entryFields)
 
-	if predictedReturn < requirement.requiredEdgeReturn {
+	// One economic truth replaces the friction-multiple and R-multiple gates:
+	// the expected forward return must beat the round-trip friction it pays.
+	// Breakeven (edge == 0) is the boundary, not a guessed 2x. How much edge is
+	// "enough" is answered continuously by Kelly sizing below -- which scales
+	// with win rate, payoff, confidence and horizon -- not by another threshold.
+	if edge <= 0 {
 		crypto.recordEntrySkip(
 			prediction,
-			"edge_below_threshold",
-			requirement.auditFields(symbol, predictedReturn),
-		)
-
-		return
-	}
-
-	if predictedReturn < requirement.requiredRReturn {
-		crypto.recordEntrySkip(
-			prediction,
-			"r_multiple_below_threshold",
+			"negative_edge",
 			requirement.auditFields(symbol, predictedReturn),
 		)
 
@@ -110,6 +105,7 @@ func (crypto *Crypto) tryEnter(
 		engine.FeedbackRegime(prediction.Perspective, lead),
 		jointConfidence,
 		crypto.forecasts.RunningMeanError(),
+		prediction.Runway,
 	)
 
 	// Pump-regime slots are sized down before the single MinCostEUR gate: a
@@ -212,6 +208,13 @@ func (crypto *Crypto) tryEnter(
 
 	crypto.wallet.BindPosition(symbolBase(symbol), position)
 	crypto.attachWalletMarks()
+
+	// Track this prediction for runway-expiry exit. Done here, at the moment a
+	// position is actually opened, rather than on every fresh forecast: the
+	// prediction's DueAt matches the position binding's DueAt, so
+	// settlePredictions/holdsPrediction can pair them, and the slice stays
+	// bounded by open positions instead of the perspective firehose.
+	crypto.predictions = append(crypto.predictions, &prediction)
 
 	if pumpRegime != "" {
 		// Pump positions have no time gate (§15.3); the trailing stop is the

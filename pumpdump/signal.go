@@ -113,21 +113,30 @@ func (pumpdump *PumpDump) Tick() error {
 					state := NewPumpSymbol(*pair)
 					pumpdump.symbols.Store(symbol, state)
 
-					pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
-						median, err := WarmHourlyVolumeBaseline(*pair)
+					// The hourly-volume baseline is warmed from the live Kraken
+					// REST API. In replay/backtest there is no live endpoint to
+					// call -- and firing a burst of these per symbol drives
+					// concurrent traffic through fiber's shared HTTP client, which
+					// is not goroutine-safe and corrupts process memory. Skip the
+					// warm under replay; SlowRVOL simply stays unready, which is the
+					// correct behaviour for a feed that carries no REST history.
+					if config.System.ReplayFile == "" {
+						pumpdump.pool.ScheduleFast(pumpdump.ctx, func(ctx context.Context) (any, error) {
+							median, err := WarmHourlyVolumeBaseline(*pair)
 
-						if err != nil {
-							if err != ErrNoVolumeData {
-								errnie.Error(err)
+							if err != nil {
+								if err != ErrNoVolumeData {
+									errnie.Error(err)
+								}
+
+								return nil, err
 							}
 
-							return nil, err
-						}
+							state.SetMedianHourlyVolume(median)
 
-						state.SetMedianHourlyVolume(median)
-
-						return nil, nil
-					})
+							return nil, nil
+						})
+					}
 				}
 
 				pumpdump.publishPulse()

@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
@@ -27,13 +28,18 @@ KellySizer adapts slot notional from settled feedback and calibration trust.
 type KellySizer struct {
 	stateMu  sync.Mutex
 	bySeries map[sourceSlotKey]*sourceSlotStats
-	params   engine.CalibrationParams
+	// meanHorizon is the running-mean settled runway (seconds) across all
+	// feedback. It is the data-derived reference for the time-preference term in
+	// SlotEUR -- no fixed "expected hold" constant.
+	meanHorizon *adaptive.EMA
+	params      engine.CalibrationParams
 }
 
 func NewKellySizer(params engine.CalibrationParams) *KellySizer {
 	return &KellySizer{
-		bySeries: make(map[sourceSlotKey]*sourceSlotStats),
-		params:   params,
+		bySeries:    make(map[sourceSlotKey]*sourceSlotStats),
+		meanHorizon: adaptive.NewEMA(0),
+		params:      params,
 	}
 }
 
@@ -62,6 +68,12 @@ func (kellySizer *KellySizer) ApplyFeedback(feedback engine.PredictionFeedback) 
 	stats.calibrator.Apply(feedback)
 	stats.wins.Observe(feedback.ActualReturn > roundTripFeeReturn())
 
+	// Track how long settled predictions actually run so SlotEUR has a
+	// data-derived reference horizon for its time-preference term.
+	if feedback.Runway > 0 {
+		_, _ = kellySizer.meanHorizon.Next(0, feedback.Runway.Seconds())
+	}
+
 	if feedback.PredictedReturn > 0 {
 		payoffSample := math.Abs(feedback.ActualReturn / feedback.PredictedReturn)
 
@@ -77,6 +89,7 @@ func (kellySizer *KellySizer) SlotEUR(
 	regime string,
 	jointConfidence float64,
 	meanError float64,
+	horizon time.Duration,
 ) float64 {
 	if balance <= 0 || jointConfidence <= 0 {
 		return 0
@@ -84,23 +97,25 @@ func (kellySizer *KellySizer) SlotEUR(
 
 	kellySizer.stateMu.Lock()
 	stats := kellySizer.sourceStats(source, regime)
+	meanHorizon := kellySizer.meanHorizon.Value()
 	kellySizer.stateMu.Unlock()
 
 	maxFraction := config.System.MaxSlotPct / 100
 
-	// No cold-start trading: predictions are always recorded (spec step 4),
-	// feedback flows even without entries (spec step 6), so we wait until this
-	// (source, regime) slot has actually seen its settlements before risking
-	// capital on it. The calibrator learns from non-traded predictions.
-	if stats.wins.Total() < float64(kellySizer.params.MinCalibrationSamples) {
-		return 0
-	}
+	// Beta(1,1)-shrunk win rate: (hits+1)/(trials+2). With no settlements this
+	// is 0.5 -- the no-information prior, which yields a non-positive Kelly and
+	// therefore zero size -- and it converges to the empirical rate as feedback
+	// accumulates. This replaces the old hard MinCalibrationSamples cliff: thin
+	// evidence shrinks the bet toward zero continuously instead of switching it
+	// off at an arbitrary count.
+	winRate := (stats.wins.Hits() + 1) / (stats.wins.Total() + 2)
 
-	winRate := stats.wins.Ratio()
+	// Payoff is neutral (1:1) until the EMA has learned a ratio, so a fresh slot
+	// sizes on its (shrunk) win rate rather than being blocked outright.
 	payoffRatio := stats.payoff.Value()
 
 	if payoffRatio <= 0 {
-		return 0
+		payoffRatio = 1
 	}
 
 	kelly := (winRate*payoffRatio - (1 - winRate)) / payoffRatio
@@ -111,6 +126,16 @@ func (kellySizer *KellySizer) SlotEUR(
 
 	fraction := kelly * config.System.KellyFraction
 	fraction *= jointConfidence * trustScale(meanError) * stats.calibrator.ScaleFor(regime)
+
+	// Time preference -- the "minimize time" half of the objective. For equal
+	// edge, commit more capital to faster-recycling trades and less to slow
+	// ones: capital freed sooner compounds sooner. The reference is the
+	// running-mean settled horizon (data-derived, not a constant), so a hold at
+	// the average horizon is unscaled, shorter holds are up-weighted, longer
+	// holds down-weighted.
+	if horizon > 0 && meanHorizon > 0 {
+		fraction *= meanHorizon / horizon.Seconds()
+	}
 
 	if fraction > maxFraction {
 		fraction = maxFraction

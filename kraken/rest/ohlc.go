@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3/client"
@@ -13,6 +14,16 @@ import (
 )
 
 const ohlcPath = "/0/public/OHLC"
+
+// restMu serializes use of fiber's package-level default HTTP client. That
+// client is shared process-wide and is not safe to drive from many goroutines
+// at once: pumpdump warms an hourly-volume baseline per symbol on the instrument
+// snapshot, firing a burst of concurrent FetchOHLC calls, which corrupted the
+// shared client's pooled request/response state -- surfacing as a SIGSEGV inside
+// the client and, in non-race builds, as heap corruption (a sync.Map panic)
+// elsewhere. Warming is an infrequent background step, so serializing the
+// request leg costs nothing measurable while removing the concurrent access.
+var restMu sync.Mutex
 
 /*
 Candle is one Kraken OHLC interval.
@@ -41,17 +52,31 @@ func FetchOHLC(pair string, intervalMinutes int) ([]Candle, error) {
 
 	requestURL := strings.Join([]string{core.KRAKEN_API_URL, ohlcPath}, "") + "?" + query.Encode()
 
-	response, err := client.Get(requestURL)
+	// Hold restMu only for the network leg: issue the request, copy the body out
+	// of the pooled response, and release it before the (CPU-bound) unmarshal so
+	// concurrent callers serialize on I/O, not on parsing.
+	body, err := func() ([]byte, error) {
+		restMu.Lock()
+		defer restMu.Unlock()
+
+		response, err := client.Get(requestURL)
+
+		if err != nil {
+			return nil, err
+		}
+
+		defer response.Close()
+
+		return append([]byte(nil), response.Body()...), nil
+	}()
 
 	if err != nil {
 		return nil, err
 	}
 
-	defer response.Close()
-
 	var payload ohlcResponse
 
-	if err = json.Unmarshal(response.Body(), &payload); err != nil {
+	if err = json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal ohlc: %w", err)
 	}
 

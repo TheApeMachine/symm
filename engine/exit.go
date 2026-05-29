@@ -6,6 +6,11 @@ const (
 	ExitReasonRunwayExpired = "runway_expired"
 	ExitReasonStopHit       = "stop_hit"
 	ExitReasonProfitTarget  = "profit_target"
+	// ExitReasonEdgeFaded closes a position when a live re-read of the
+	// perspective no longer supports the entry thesis (direction flipped or the
+	// forward-return edge went negative), rather than waiting for the runway
+	// timer. It is a thesis-decay exit, not a book-decay (soft) exit.
+	ExitReasonEdgeFaded = "edge_faded"
 )
 
 /*

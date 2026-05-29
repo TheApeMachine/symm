@@ -283,11 +283,23 @@ func (publicClient *PublicClient) Close() error {
 }
 
 func (publicClient *PublicClient) runReplay() {
+	for publicClient.ctx.Err() == nil {
+		if err := publicClient.replayOnce(); err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		if !config.System.ReplayLoop {
+			return
+		}
+	}
+}
+
+func (publicClient *PublicClient) replayOnce() error {
 	file, err := os.Open(config.System.ReplayFile)
 
 	if err != nil {
-		errnie.Error(err)
-		return
+		return err
 	}
 
 	defer file.Close()
@@ -304,9 +316,15 @@ func (publicClient *PublicClient) runReplay() {
 		publicClient.read(line)
 	}
 
-	if err := scanner.Err(); err != nil {
-		errnie.Error(err)
-	}
+	return scanner.Err()
+}
+
+/*
+IngestReplayLine routes one captured WebSocket payload through the public
+client demux path. Replay fixtures and profile harnesses use this entry point.
+*/
+func (publicClient *PublicClient) IngestReplayLine(line []byte) {
+	publicClient.read(line)
 }
 
 func (publicClient *PublicClient) runLive() {
