@@ -67,7 +67,7 @@ func TestCausalMeasureTickerOnly(t *testing.T) {
 	state.ask = 10.01
 	state.changePct = 2.5
 
-	measurement, ok := state.Measure(1.2, time.Now())
+	measurement, ok := state.Measure(1.2, 0, time.Now())
 
 	if !ok {
 		t.Fatal("expected ticker-only causal measurement")
@@ -91,12 +91,12 @@ func TestSymbolEvaluateIntervention(t *testing.T) {
 	}
 
 	for _, effect := range []float64{0.1, 0.2, 0.3, 0.4} {
-		state.recordIntervention(effect)
+		state.recordIntervention(regimeNormal, effect)
 	}
 
 	sample := newCausalSample(0.015, 2.0, 2.0, 0.2)
 
-	confidence, reason := state.evaluate(sample)
+	confidence, reason := state.evaluate(sample, 0)
 
 	if confidence <= 0 {
 		t.Fatalf("expected causal confidence, got %v", confidence)

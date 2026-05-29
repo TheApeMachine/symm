@@ -24,20 +24,21 @@ type nonLinearModel struct {
 }
 
 /*
-fitNonLinearStructural estimates a non-linear SCM for price velocity.
+fitNonLinearStructural estimates a non-linear SCM for price velocity in the normal regime.
+fitNonLinearStructuralFor fits the predictor set of any regime.
 */
 func fitNonLinearStructural(samples []causalSample) (nonLinearModel, bool) {
+	return fitNonLinearStructuralFor(samples, normalRoles())
+}
+
+func fitNonLinearStructuralFor(samples []causalSample, roles causalRoles) (nonLinearModel, bool) {
 	nodeTable, err := causalTable(samples)
 
 	if err != nil {
 		return nonLinearModel{}, false
 	}
 
-	return fitNonLinearTable(nodeTable, []int{
-		macroMomentumNode,
-		liquidityNode,
-		localFlowNode,
-	})
+	return fitNonLinearTable(nodeTable, roles.predictors())
 }
 
 func fitNonLinearTable(
@@ -88,9 +89,14 @@ func numericMean(values []float64) float64 {
 }
 
 /*
-kernelBackdoorFlowEffect estimates rung-2 uplift with Nadaraya-Watson kernel regression.
+kernelBackdoorFlowEffect estimates rung-2 uplift with Nadaraya-Watson kernel regression in the
+normal regime. kernelBackdoorEffectFor scores the treatment of any regime under its controls.
 */
 func kernelBackdoorFlowEffect(samples []causalSample) float64 {
+	return kernelBackdoorEffectFor(samples, normalRoles())
+}
+
+func kernelBackdoorEffectFor(samples []causalSample, roles causalRoles) float64 {
 	nodeTable, err := causalTable(samples)
 
 	if err != nil {
@@ -98,10 +104,9 @@ func kernelBackdoorFlowEffect(samples []causalSample) float64 {
 	}
 
 	effect, err := nodeTable.KernelBackdoorEffect(
-		localFlowNode,
+		roles.treatment,
 		kernelBandwidth,
-		macroMomentumNode,
-		liquidityNode,
+		roles.controls...,
 	)
 
 	if err != nil {
@@ -116,9 +121,18 @@ func nonLinearCounterfactualUplift(
 	model nonLinearModel,
 	interventionFlow float64,
 ) float64 {
+	return nonLinearCounterfactualUpliftFor(current, model, interventionFlow, normalRoles())
+}
+
+func nonLinearCounterfactualUpliftFor(
+	current causalSample,
+	model nonLinearModel,
+	interventionFlow float64,
+	roles causalRoles,
+) float64 {
 	uplift, err := model.CounterfactualUplift(
 		current.nodes[:],
-		localFlowNode,
+		roles.treatment,
 		interventionFlow,
 	)
 

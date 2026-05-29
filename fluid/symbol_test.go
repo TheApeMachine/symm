@@ -72,8 +72,8 @@ func TestBookFluxTrustworthy(t *testing.T) {
 		Asks:  []market.BookLevel{{Price: 10.01, Volume: 50}},
 	})
 
-	if state.bookFluxWindow.Sum() <= 0 {
-		t.Fatalf("expected book flux after update, got %v", state.bookFluxWindow.Sum())
+	if state.flux.bookFlux() <= 0 {
+		t.Fatalf("expected book flux after update, got %v", state.flux.bookFlux())
 	}
 
 	withMinFillToCancelRatio(0.15, func() {
@@ -83,8 +83,8 @@ func TestBookFluxTrustworthy(t *testing.T) {
 
 		state.FeedTrade(now, 5)
 
-		if state.tradeFluxWindow.Sum() != 5 {
-			t.Fatalf("expected trade flux 5, got %v", state.tradeFluxWindow.Sum())
+		if state.flux.tradeFlux() != 5 {
+			t.Fatalf("expected trade flux 5, got %v", state.flux.tradeFlux())
 		}
 
 		if state.bookFluxTrustworthy() {
@@ -96,9 +96,9 @@ func TestBookFluxTrustworthy(t *testing.T) {
 		if !state.bookFluxTrustworthy() {
 			t.Fatalf(
 				"expected trustworthy at ratio %v, book=%v trade=%v",
-				state.tradeFluxWindow.Sum()/state.bookFluxWindow.Sum(),
-				state.bookFluxWindow.Sum(),
-				state.tradeFluxWindow.Sum(),
+				state.flux.tradeFlux()/state.flux.bookFlux(),
+				state.flux.bookFlux(),
+				state.flux.tradeFlux(),
 			)
 		}
 	})
@@ -129,8 +129,8 @@ func TestBookFluxTrustworthy(t *testing.T) {
 	state.FeedTrade(now.Add(2*time.Millisecond), 0)
 	state.FeedTrade(now.Add(3*time.Millisecond), -1)
 
-	if state.tradeFluxWindow.Sum() != 50 {
-		t.Fatalf("expected zero/negative trades ignored, trade flux=%v", state.tradeFluxWindow.Sum())
+	if state.flux.tradeFlux() != 50 {
+		t.Fatalf("expected zero/negative trades ignored, trade flux=%v", state.flux.tradeFlux())
 	}
 }
 
@@ -201,8 +201,8 @@ func TestFeedBookIgnoresFirstSnapshot(t *testing.T) {
 		Asks:  []market.BookLevel{{Price: 10.01, Volume: 20}},
 	})
 
-	if state.bookFluxWindow.Sum() != 0 {
-		t.Fatalf("expected first snapshot to produce zero flux, got %v", state.bookFluxWindow.Sum())
+	if state.flux.bookFlux() != 0 {
+		t.Fatalf("expected first snapshot to produce zero flux, got %v", state.flux.bookFlux())
 	}
 }
 

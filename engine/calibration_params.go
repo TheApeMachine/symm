@@ -12,6 +12,11 @@ type CalibrationParams struct {
 	HalfLifeFloor         time.Duration
 	HalfLifeCeiling       time.Duration
 	RunwayFactor          float64
+	ShockSigma            float64
+	RecoveryFactor        float64
+	RecoveryBand          float64
+	RecoverySamples       int
+	BaselineAlpha         float64
 }
 
 /*
@@ -24,6 +29,25 @@ func DefaultCalibrationParams() CalibrationParams {
 		HalfLifeFloor:         2 * time.Second,
 		HalfLifeCeiling:       15 * time.Minute,
 		RunwayFactor:          0.5,
+		ShockSigma:            3,
+		RecoveryFactor:        6,
+		RecoveryBand:          0.1,
+		RecoverySamples:       3,
+		BaselineAlpha:         0.05,
+	}
+}
+
+/*
+gateParams projects the calibration parameters onto the asymmetric, volatility-gated gain
+used by the per-regime scale tracker.
+*/
+func (params CalibrationParams) gateParams() calibrationGateParams {
+	return calibrationGateParams{
+		shockSigma:      params.ShockSigma,
+		recoveryFactor:  params.RecoveryFactor,
+		recoveryBand:    params.RecoveryBand,
+		recoverySamples: params.RecoverySamples,
+		baselineAlpha:   params.BaselineAlpha,
 	}
 }
 

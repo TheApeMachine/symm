@@ -82,6 +82,15 @@ type Config struct {
 	CalibrationHalfLifeFloor    time.Duration
 	CalibrationHalfLifeCeiling  time.Duration
 	CalibrationRunwayFactor     float64
+	CalibrationShockSigma       float64
+	CalibrationRecoveryFactor   float64
+	CalibrationRecoveryBand     float64
+	CalibrationRecoverySamples  int
+	CalibrationBaselineAlpha    float64
+	CausalConditionSwitch       float64
+	CausalContagionBreak        float64
+	CausalContagionMinSamples   int
+	CausalContagionWindow       int
 	TrailRiskEMAAlpha           float64
 	TrailSpectralWidenAt        float64
 	TrailSpectralWidenGain      float64
@@ -95,6 +104,9 @@ type Config struct {
 	SpoofLevel1Reject           float64
 	MinFillToCancelRatio        float64
 	BookFluxWindow              time.Duration
+	VolumeClockBarsPerDay       float64
+	FractionalDiffOrder         float64
+	FractionalDiffWidth         int
 	FastPumpWindow              time.Duration
 	MediumPumpWindow            time.Duration
 	FastPumpVolumeRatio         float64
@@ -208,6 +220,15 @@ func NewConfig() *Config {
 		CalibrationHalfLifeFloor:    2 * time.Second,
 		CalibrationHalfLifeCeiling:  15 * time.Minute,
 		CalibrationRunwayFactor:     0.5,
+		CalibrationShockSigma:       3,
+		CalibrationRecoveryFactor:   6,
+		CalibrationRecoveryBand:     0.1,
+		CalibrationRecoverySamples:  3,
+		CalibrationBaselineAlpha:    0.05,
+		CausalConditionSwitch:       1000,
+		CausalContagionBreak:        0.9,
+		CausalContagionMinSamples:   16,
+		CausalContagionWindow:       128,
 		TrailRiskEMAAlpha:           0.2,
 		TrailSpectralWidenAt:        0.85,
 		TrailSpectralWidenGain:      4,
@@ -221,6 +242,9 @@ func NewConfig() *Config {
 		SpoofLevel1Reject:           -0.1,
 		MinFillToCancelRatio:        0.15,
 		BookFluxWindow:              10 * time.Second,
+		VolumeClockBarsPerDay:       8640,
+		FractionalDiffOrder:         0.4,
+		FractionalDiffWidth:         16,
 		FastPumpWindow:              10 * time.Second,
 		MediumPumpWindow:            5 * time.Minute,
 		FastPumpVolumeRatio:         15,

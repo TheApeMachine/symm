@@ -18,9 +18,14 @@ const (
 /*
 PredictionCalibrator tracks running actual/predicted return ratios from settled forecasts.
 Scale feeds back into signal parameters, not post-hoc confidence output.
+
+Each regime keeps a calibrationScale: a robust scalar Kalman filter under an asymmetric,
+volatility-gated gain. The half-life sets the calm-market gain; the gate makes downside
+immediate while letting upside fast-track once a shock has passed, so a flash crash no longer
+sidelines the engine into a starvation loop.
 */
 type PredictionCalibrator struct {
-	forecasts    map[string]*learned.Forecast
+	scales       map[string]*calibrationScale
 	halfLives    map[string]time.Duration
 	activeRegime string
 	halfLife     time.Duration
@@ -33,14 +38,14 @@ NewPredictionCalibrator returns a neutral calibrator with injected calibration p
 */
 func NewPredictionCalibrator(params CalibrationParams) PredictionCalibrator {
 	calibrator := PredictionCalibrator{
-		forecasts:    make(map[string]*learned.Forecast),
+		scales:       make(map[string]*calibrationScale),
 		halfLives:    make(map[string]time.Duration),
 		activeRegime: defaultCalibrationRegime,
 		halfLife:     defaultCalibrationHalfLife,
 		tickInterval: defaultCalibrationTick,
 		params:       params,
 	}
-	calibrator.forecasts[defaultCalibrationRegime] = learned.NewForecast(0.35)
+	calibrator.scales[defaultCalibrationRegime] = newCalibrationScale(params.gateParams())
 	calibrator.halfLives[defaultCalibrationRegime] = defaultCalibrationHalfLife
 
 	return calibrator
@@ -62,17 +67,19 @@ func (calibrator *PredictionCalibrator) Apply(feedback PredictionFeedback) {
 	}
 
 	regime := CalibrationRegime(feedback.Regime)
-	forecast := calibrator.forecastFor(regime)
+	scale := calibrator.scaleFor(regime)
 
-	if feedback.Runway > 0 && forecast.Updates() >= calibrator.params.minCalibrationSamples() {
+	if feedback.Runway > 0 && scale.Updates() >= calibrator.params.minCalibrationSamples() {
 		calibrator.halfLives[regime] = calibrator.params.adaptiveHalfLife(feedback.Runway)
 	}
 
-	_ = forecast.Absorb(
-		predictedReturn,
-		feedback.ActualReturn,
-		calibrator.ewmaAlpha(regime),
-	)
+	sample, ok := learned.SampleRatio(predictedReturn, feedback.ActualReturn)
+
+	if !ok {
+		return
+	}
+
+	scale.Observe(sample, calibrator.ewmaAlpha(regime))
 	calibrator.activeRegime = regime
 }
 
@@ -87,7 +94,7 @@ func (calibrator *PredictionCalibrator) Scale() float64 {
 ScaleFor returns the calibration multiplier for one feedback regime.
 */
 func (calibrator *PredictionCalibrator) ScaleFor(regime string) float64 {
-	return calibrator.forecastFor(CalibrationRegime(regime)).Scale()
+	return calibrator.scaleFor(CalibrationRegime(regime)).Scale()
 }
 
 /*
@@ -112,24 +119,24 @@ func (calibrator *PredictionCalibrator) ewmaAlpha(regime string) float64 {
 	return 1 - math.Exp(-math.Log(2)*calibrator.tickInterval.Seconds()/halfLife.Seconds())
 }
 
-func (calibrator *PredictionCalibrator) forecastFor(regime string) *learned.Forecast {
-	if calibrator.forecasts == nil {
-		calibrator.forecasts = make(map[string]*learned.Forecast)
+func (calibrator *PredictionCalibrator) scaleFor(regime string) *calibrationScale {
+	if calibrator.scales == nil {
+		calibrator.scales = make(map[string]*calibrationScale)
 	}
 
 	if calibrator.halfLives == nil {
 		calibrator.halfLives = make(map[string]time.Duration)
 	}
 
-	forecast := calibrator.forecasts[regime]
+	scale := calibrator.scales[regime]
 
-	if forecast == nil {
-		forecast = learned.NewForecast(0.35)
-		calibrator.forecasts[regime] = forecast
+	if scale == nil {
+		scale = newCalibrationScale(calibrator.params.gateParams())
+		calibrator.scales[regime] = scale
 		calibrator.halfLives[regime] = defaultCalibrationHalfLife
 	}
 
-	return forecast
+	return scale
 }
 
 /*

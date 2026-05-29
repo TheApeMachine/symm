@@ -16,16 +16,21 @@ type structuralCoef struct {
 const minBackdoorDenominator = 1e-9
 
 /*
-associationEffect is rung-1 P(velocity | flow): observational correlation.
+associationEffect is rung-1 P(velocity | treatment): observational correlation in the normal
+regime. associationEffectFor reads the same correlation for an arbitrary regime's treatment.
 */
 func associationEffect(samples []causalSample) float64 {
+	return associationEffectFor(samples, normalRoles())
+}
+
+func associationEffectFor(samples []causalSample, roles causalRoles) float64 {
 	nodeTable, err := causalTableWithMin(samples, 1)
 
 	if err != nil {
 		return 0
 	}
 
-	association, err := nodeTable.Association(localFlowNode)
+	association, err := nodeTable.Association(roles.treatment)
 
 	if err != nil {
 		return 0
@@ -35,20 +40,22 @@ func associationEffect(samples []causalSample) float64 {
 }
 
 /*
-backdoorFlowEffect is rung-2 P(velocity | do(flow)) via backdoor adjustment on macro and liquidity.
+backdoorFlowEffect is rung-2 P(velocity | do(treatment)) via backdoor adjustment. The normal
+regime controls macro and liquidity; backdoorEffectFor adjusts on whatever controls the supplied
+regime declares.
 */
 func backdoorFlowEffect(samples []causalSample) float64 {
+	return backdoorEffectFor(samples, normalRoles())
+}
+
+func backdoorEffectFor(samples []causalSample, roles causalRoles) float64 {
 	nodeTable, err := causalTable(samples)
 
 	if err != nil {
 		return 0
 	}
 
-	effect, err := nodeTable.BackdoorEffect(
-		localFlowNode,
-		macroMomentumNode,
-		liquidityNode,
-	)
+	effect, err := nodeTable.BackdoorEffect(roles.treatment, roles.controls...)
 
 	if err != nil {
 		return 0
@@ -58,20 +65,21 @@ func backdoorFlowEffect(samples []causalSample) float64 {
 }
 
 /*
-fitStructural estimates the SCM velocity = a + b_m*macro + b_l*liquidity + b_f*flow.
+fitStructural estimates the SCM velocity = a + Σ b*predictors for the normal regime
+(macro, liquidity, flow). fitStructuralFor fits the predictor set of any regime.
 */
 func fitStructural(samples []causalSample) (structuralCoef, bool) {
+	return fitStructuralFor(samples, normalRoles())
+}
+
+func fitStructuralFor(samples []causalSample, roles causalRoles) (structuralCoef, bool) {
 	nodeTable, err := causalTable(samples)
 
 	if err != nil {
 		return structuralCoef{}, false
 	}
 
-	model, err := nodeTable.LinearModel(
-		macroMomentumNode,
-		liquidityNode,
-		localFlowNode,
-	)
+	model, err := nodeTable.LinearModel(roles.predictors()...)
 
 	if err != nil {
 		return structuralCoef{}, false
@@ -81,16 +89,25 @@ func fitStructural(samples []causalSample) (structuralCoef, bool) {
 }
 
 /*
-counterfactualUplift is rung-3 uplift from do(flow = interventionFlow) vs observed flow.
+counterfactualUplift is rung-3 uplift from do(treatment = intervention) vs observed treatment.
 */
 func counterfactualUplift(
 	current causalSample,
 	coef structuralCoef,
 	interventionFlow float64,
 ) float64 {
+	return counterfactualUpliftFor(current, coef, interventionFlow, normalRoles())
+}
+
+func counterfactualUpliftFor(
+	current causalSample,
+	coef structuralCoef,
+	interventionFlow float64,
+	roles causalRoles,
+) float64 {
 	uplift, err := coef.model.CounterfactualUplift(
 		current.nodes[:],
-		localFlowNode,
+		roles.treatment,
 		interventionFlow,
 	)
 
@@ -102,13 +119,17 @@ func counterfactualUplift(
 }
 
 func flowInterventionLevel(samples []causalSample) float64 {
+	return flowInterventionLevelFor(samples, normalRoles())
+}
+
+func flowInterventionLevelFor(samples []causalSample, roles causalRoles) float64 {
 	nodeTable, err := causalTableWithMin(samples, 1)
 
 	if err != nil {
 		return 0
 	}
 
-	value, err := nodeTable.Percentile(localFlowNode, 0.75)
+	value, err := nodeTable.Percentile(roles.treatment, 0.75)
 
 	if err != nil {
 		return 0

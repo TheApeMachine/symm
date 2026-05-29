@@ -273,6 +273,7 @@ func (causal *Causal) publishPulse() {
 
 func (causal *Causal) publishMeasurements() {
 	now := time.Now()
+	contagion := causal.contagion()
 	waiters := make([]chan *qpool.QValue[any], 0)
 
 	causal.symbols.Range(func(key, value any) bool {
@@ -287,7 +288,7 @@ func (causal *Causal) publishMeasurements() {
 		waiters = append(
 			waiters,
 			causal.pool.ScheduleFast(causal.ctx, func(ctx context.Context) (any, error) {
-				measurement, ok := state.Measure(macro, now)
+				measurement, ok := state.Measure(macro, contagion, now)
 
 				if !ok {
 					return nil, nil
@@ -334,6 +335,7 @@ func (causal *Causal) Source() string { return causalSource }
 func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 	return func(yield func(engine.Measurement) bool) {
 		now := time.Now()
+		contagion := causal.contagion()
 
 		causal.symbols.Range(func(key, value any) bool {
 			symbol := key.(string)
@@ -344,7 +346,7 @@ func (causal *Causal) Measure() iter.Seq[engine.Measurement] {
 
 			state := value.(*CausalSymbol)
 			macro := causal.macroMomentum(symbol)
-			measurement, ok := state.Measure(macro, now)
+			measurement, ok := state.Measure(macro, contagion, now)
 
 			if !ok {
 				return true

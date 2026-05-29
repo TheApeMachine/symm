@@ -140,6 +140,36 @@ func (nodeTable dagNodeTable) LinearModel(
 	}, nil
 }
 
+/*
+PairConditionNumber returns the condition number of the 2x2 correlation matrix of two columns,
+(1 + |r|) / (1 - |r|). It diverges precisely as the two regressors collapse onto a single axis,
+which is the linear-algebra signature of their structural edges no longer being separately
+identifiable. Unlike a Gershgorin bound on the full normal matrix — which saturates to infinity
+for almost any design carrying an intercept — this stays finite and discriminating until the two
+columns are genuinely collinear, so it is a usable trigger for a regime swap.
+*/
+func (nodeTable dagNodeTable) PairConditionNumber(left, right int) (float64, error) {
+	leftColumn, err := nodeTable.column(left)
+
+	if err != nil {
+		return 0, err
+	}
+
+	rightColumn, err := nodeTable.column(right)
+
+	if err != nil {
+		return 0, err
+	}
+
+	correlation := math.Abs(pearson(leftColumn, rightColumn))
+
+	if correlation >= 1 {
+		return math.Inf(1), nil
+	}
+
+	return (1 + correlation) / (1 - correlation), nil
+}
+
 func (nodeTable dagNodeTable) Percentile(node int, percentile float64) (float64, error) {
 	values, err := nodeTable.column(node)
 

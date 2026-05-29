@@ -46,7 +46,7 @@ func TestCausalSymbolConcurrentFeedAndMeasure(t *testing.T) {
 	})
 	waiters.Go(func() {
 		for index := range 128 {
-			state.Measure(0.2, now.Add(time.Duration(index)*time.Millisecond))
+			state.Measure(0.2, 0, now.Add(time.Duration(index)*time.Millisecond))
 		}
 	})
 

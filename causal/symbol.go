@@ -24,9 +24,10 @@ type CausalSymbol struct {
 	pair              asset.Pair
 	samples           []causalSample
 	pendingSamples    []pendingCausalSample
-	interventionHist  []float64
-	upliftHist        []float64
+	interventionHist  map[string][]float64
+	upliftHist        map[string][]float64
 	confidenceHistory []float64
+	hy                *hyReturns
 	lastPrice         float64
 	bid               float64
 	ask               float64
@@ -42,11 +43,14 @@ type CausalSymbol struct {
 
 func NewCausalSymbol(pair asset.Pair, params engine.CalibrationParams) *CausalSymbol {
 	return &CausalSymbol{
-		pair:         pair,
-		samples:      make([]causalSample, 0, causalHistoryCap),
-		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure:     adaptive.NewEMA(0),
-		calibrator:   engine.NewPredictionCalibrator(params),
+		pair:             pair,
+		samples:          make([]causalSample, 0, causalHistoryCap),
+		interventionHist: make(map[string][]float64),
+		upliftHist:       make(map[string][]float64),
+		volumeWindow:     adaptive.NewWindow(tradeWindow),
+		pressure:         adaptive.NewEMA(0),
+		calibrator:       engine.NewPredictionCalibrator(params),
+		hy:               newHYReturns(contagionWindow()),
 	}
 }
 
@@ -84,6 +88,13 @@ func (state *CausalSymbol) FeedTrade(tick trade.Data) {
 	}).Or(func(err error) {
 		errnie.Error(err)
 	})
+
+	// Feed the asynchronous price print into the Hayashi-Yoshida return series that backs
+	// cross-asset contagion detection. Trade prints carry both a price and a timestamp, so
+	// they are the natural clock for an estimator built to tolerate non-synchronous sampling.
+	if tick.Price > 0 {
+		state.hy.Observe(tick.Timestamp.UnixNano(), tick.Price)
+	}
 
 	sign := -1.0
 
@@ -128,7 +139,7 @@ func (state *CausalSymbol) FeedBook(delta market.BookLevelsDelta) {
 	}
 }
 
-func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine.Measurement, bool) {
+func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Time) (engine.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -154,7 +165,7 @@ func (state *CausalSymbol) Measure(macroMomentum float64, now time.Time) (engine
 		// Predict the forward velocity for the current feature vector using the
 		// model fitted on already-labeled (forward) samples.
 		currentSample := newCausalSample(macroMomentum, liquidity, localFlow, 0)
-		fullConfidence, fullReason := state.evaluate(currentSample)
+		fullConfidence, fullReason := state.evaluate(currentSample, contagion)
 
 		if fullConfidence > 0 {
 			return engine.Measurement{
@@ -216,17 +227,37 @@ func (state *CausalSymbol) ChangePct() float64 {
 	return state.changePct
 }
 
-func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
+/*
+HYSnapshot returns an independent copy of the symbol's Hayashi-Yoshida return series so the
+signal can compute cross-asset correlation without holding this symbol's lock during the sweep.
+*/
+func (state *CausalSymbol) HYSnapshot() *hyReturns {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.hy.clone()
+}
+
+func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (float64, string) {
 	if len(state.samples) < minCausalHistory {
 		return 0, ""
 	}
 
 	samples := state.samples
-	association := associationEffect(samples)
-	intervention := kernelBackdoorFlowEffect(samples) * state.calibrator.Scale()
+	roles, inverted := selectRoles(samples, contagion)
+	suffix := ""
+
+	if inverted {
+		// The edges have flipped: liquidity is now the driving treatment and local flow a
+		// lagging response. Tag the reason so the inversion is visible downstream.
+		suffix = "_regime_inversion"
+	}
+
+	association := associationEffectFor(samples, roles)
+	intervention := kernelBackdoorEffectFor(samples, roles) * state.calibrator.Scale()
 
 	if intervention <= 0 {
-		state.recordIntervention(intervention)
+		state.recordIntervention(roles.label, intervention)
 
 		return 0, ""
 	}
@@ -234,22 +265,24 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 	// Normalize against the fence BEFORE recording: otherwise the fresh
 	// observation is part of the percentile cohort that defines its own
 	// gate, which half-saturates the gate on every reading. The fence
-	// represents what we have seen, not what we are currently seeing.
+	// represents what we have seen, not what we are currently seeing. The
+	// fences are kept per regime so flow-effect and liquidity-effect
+	// magnitudes — which live on different scales — never contaminate one another.
 	interventionNormalized := state.calibrator.NormalizeConfidence(
-		intervention, state.interventionHist,
+		intervention, state.interventionHist[roles.label],
 	)
-	state.recordIntervention(intervention)
+	state.recordIntervention(roles.label, intervention)
 
-	model, fitOK := fitNonLinearStructural(samples)
+	model, fitOK := fitNonLinearStructuralFor(samples, roles)
 
 	if !fitOK {
 		return engine.ProvisionalConfidence(
 			interventionNormalized, intervention,
-		), "intervention"
+		), "intervention" + suffix
 	}
 
-	interventionFlow := flowInterventionLevel(samples)
-	uplift := nonLinearCounterfactualUplift(current, model, interventionFlow)
+	interventionFlow := flowInterventionLevelFor(samples, roles)
+	uplift := nonLinearCounterfactualUpliftFor(current, model, interventionFlow, roles)
 
 	if uplift <= 0 {
 		normalized := engine.ProvisionalConfidence(
@@ -257,19 +290,19 @@ func (state *CausalSymbol) evaluate(current causalSample) (float64, string) {
 		)
 		state.recordConfidence(intervention)
 
-		return normalized, "intervention"
+		return normalized, "intervention" + suffix
 	}
 
 	upliftNormalized := state.calibrator.NormalizeConfidence(
-		uplift, state.upliftHist,
+		uplift, state.upliftHist[roles.label],
 	)
-	state.recordUplift(uplift)
+	state.recordUplift(roles.label, uplift)
 
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
-	reason := "intervention"
+	reason := "intervention" + suffix
 
 	if confounded && uplift > 0 {
-		reason = "counterfactual_like"
+		reason = "counterfactual_like" + suffix
 	}
 
 	interventionScore := engine.ProvisionalConfidence(
@@ -305,26 +338,30 @@ func (state *CausalSymbol) recordConfidence(confidence float64) {
 	}
 }
 
-func (state *CausalSymbol) recordIntervention(effect float64) {
+func (state *CausalSymbol) recordIntervention(label string, effect float64) {
 	if effect == 0 {
 		return
 	}
 
-	state.interventionHist = append(state.interventionHist, effect)
+	history := append(state.interventionHist[label], effect)
 
-	if len(state.interventionHist) > causalHistoryCap {
-		state.interventionHist = state.interventionHist[len(state.interventionHist)-causalHistoryCap:]
+	if len(history) > causalHistoryCap {
+		history = history[len(history)-causalHistoryCap:]
 	}
+
+	state.interventionHist[label] = history
 }
 
-func (state *CausalSymbol) recordUplift(uplift float64) {
+func (state *CausalSymbol) recordUplift(label string, uplift float64) {
 	if uplift <= 0 {
 		return
 	}
 
-	state.upliftHist = append(state.upliftHist, uplift)
+	history := append(state.upliftHist[label], uplift)
 
-	if len(state.upliftHist) > causalHistoryCap {
-		state.upliftHist = state.upliftHist[len(state.upliftHist)-causalHistoryCap:]
+	if len(history) > causalHistoryCap {
+		history = history[len(history)-causalHistoryCap:]
 	}
+
+	state.upliftHist[label] = history
 }

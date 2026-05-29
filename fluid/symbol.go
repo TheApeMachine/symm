@@ -40,18 +40,24 @@ type FluidSymbol struct {
 	ask             float64
 	pressure        *adaptive.EMA
 	spreadBPS       float64
-	bookFluxWindow  *adaptive.Window
-	tradeFluxWindow *adaptive.Window
+	flux            *fluxAccumulator
+	priceFD         *adaptive.FracDiff
+	fracScale       adaptive.AlphaEMA
+	fracReturn      float64
 	score           *numeric.Derived
 	forecast        *learned.Forecast
 }
 
+// fracScaleAlpha smooths the running magnitude of the fractional price return, the baseline
+// against which turbulence is measured as an excess over the norm.
+const fracScaleAlpha = 0.05
+
 func NewFluidSymbol(pair asset.Pair) *FluidSymbol {
 	return &FluidSymbol{
-		pair:            pair,
-		pressure:        adaptive.NewEMA(0),
-		bookFluxWindow:  adaptive.NewWindow(config.System.BookFluxWindow),
-		tradeFluxWindow: adaptive.NewWindow(config.System.BookFluxWindow),
+		pair:     pair,
+		pressure: adaptive.NewEMA(0),
+		flux:     newFluxAccumulator(config.System.BookFluxWindow),
+		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
@@ -67,8 +73,15 @@ func (state *FluidSymbol) FeedTicker(row market.TickerRow) {
 	state.changePct = row.ChangePct
 	state.volume = row.Volume
 
+	// Size one volume bar as a fixed slice of the day's base volume, so bars close on traded
+	// activity rather than the wall clock and accelerate automatically when the tape speeds up.
+	if row.Volume > 0 && config.System.VolumeClockBarsPerDay > 0 {
+		state.flux.setTarget(row.Volume / config.System.VolumeClockBarsPerDay)
+	}
+
 	if row.Last > 0 {
 		state.last = row.Last
+		state.observePriceLocked(row.Last)
 	}
 
 	if row.Bid > 0 {
@@ -78,6 +91,25 @@ func (state *FluidSymbol) FeedTicker(row market.TickerRow) {
 	if row.Ask > 0 {
 		state.ask = row.Ask
 	}
+}
+
+/*
+observePriceLocked folds the latest price into the fractional differencing filter, producing a
+stationary, memory-preserving price velocity and tracking its rolling magnitude for turbulence.
+*/
+func (state *FluidSymbol) observePriceLocked(price float64) {
+	if price <= 0 {
+		return
+	}
+
+	value, ok := state.priceFD.Push(math.Log(price))
+
+	if !ok {
+		return
+	}
+
+	state.fracReturn = value
+	_ = state.fracScale.Update(math.Abs(value), fracScaleAlpha)
 }
 
 func (state *FluidSymbol) FeedBook(delta market.BookLevelsDelta) {
@@ -131,9 +163,7 @@ func (state *FluidSymbol) feedBookLocked(delta market.BookLevelsDelta) {
 		return
 	}
 
-	if _, err := state.bookFluxWindow.Next(0, float64(time.Now().UnixNano()), flux); err != nil {
-		errnie.Error(err)
-	}
+	state.flux.addBook(time.Now(), flux)
 }
 
 func sideChangeFlux(previous, updated []market.BookLevel) float64 {
@@ -193,9 +223,7 @@ func (state *FluidSymbol) feedTradeLocked(at time.Time, qty float64) {
 		return
 	}
 
-	if _, err := state.tradeFluxWindow.Next(0, float64(at.UnixNano()), qty); err != nil {
-		errnie.Error(err)
-	}
+	state.flux.addTrade(at, qty)
 }
 
 func (state *FluidSymbol) HasBook() bool {
@@ -220,8 +248,8 @@ func (state *FluidSymbol) bookFluxTrustworthy() bool {
 }
 
 func (state *FluidSymbol) bookFluxTrustworthyLocked() bool {
-	bookFlux := state.bookFluxWindow.Sum()
-	tradeFlux := state.tradeFluxWindow.Sum()
+	bookFlux := state.flux.bookFlux()
+	tradeFlux := state.flux.tradeFlux()
 
 	if bookFlux <= 0 {
 		return true
@@ -391,7 +419,21 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		return nil
 	}
 
-	re := math.Max(math.Abs(imbalance), math.Abs(pressure)) * state.forecast.Scale()
+	// Turbulence from the stationary, memory-preserving price velocity: the excess of the current
+	// fractional return over its rolling norm. Calm or warming-up price action contributes zero, so
+	// the Reynolds number only rises from price when the flow is genuinely turbulent — not because a
+	// quiet book's spread has widened.
+	turbulence := 0.0
+	fracScale := state.fracScale.Value()
+
+	if fracScale > 0 {
+		turbulence = math.Max(0, math.Abs(state.fracReturn)/fracScale-1)
+	}
+
+	re := math.Max(
+		math.Max(math.Abs(imbalance), math.Abs(pressure)),
+		turbulence,
+	) * state.forecast.Scale()
 
 	return WireRow(map[string]any{
 		"symbol":     state.pair.Wsname,
@@ -400,6 +442,8 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"div":        imbalance,
 		"vort":       state.buyPressure,
 		"turb":       pressure * state.spreadBPS / 100,
+		"turb_fd":    turbulence,
+		"fd_ret":     state.fracReturn,
 		"visc":       visc,
 		"re":         re,
 	})
