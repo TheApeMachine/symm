@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
+import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { routePayload } from "#/lib/symm/ws-stream";
 import { TickStore } from "#/lib/symm/tick-store";
 
@@ -21,10 +22,42 @@ describe("routePayload", () => {
 		TickStore.reset();
 	});
 
-	it("feeds mark events into trade chart history", () => {
+	it("updates tick count from heartbeat proof of life events", () => {
+		TickStore.reset();
+
+		routePayload({
+			event: "heartbeat",
+			ts: "2026-05-28T01:10:10Z",
+			seq: 42,
+			throttled: true,
+			queue_depth: 4,
+			dropped: 2,
+		});
+
+		expect(TickStore.snapshot()).toBe(42);
+		expect(TickStore.statusSnapshot()).toEqual({
+			seq: 42,
+			throttled: true,
+			queueDepth: 4,
+			dropped: 2,
+		});
+		TickStore.reset();
+	});
+
+	it("routes mark events to trades without mutating candle history", () => {
+		TradesDataProvider.reset();
 		const bars: number[] = [];
 		const unregister = OhlcDataProvider.registerSymbol("ROUTE/EUR", (bar) => {
 			bars.push(bar.sec);
+		});
+
+		routePayload({
+			Type: "paper",
+			Currency: "EUR",
+			Balance: 198.9,
+			Inventory: { ROUTE: 10 },
+			AvgEntry: { ROUTE: 0.4 },
+			Marks: { "ROUTE/EUR": 0.4 },
 		});
 
 		routePayload({
@@ -34,9 +67,9 @@ describe("routePayload", () => {
 			price: 0.42,
 		});
 
-		expect(bars).toEqual([
-			Math.floor(Date.parse("2026-05-28T01:10:10Z") / 1000),
-		]);
+		expect(bars).toEqual([]);
+		expect(TradesDataProvider.snapshot()[0]?.markPrice).toBe(0.42);
+		TradesDataProvider.reset();
 		unregister();
 	});
 });

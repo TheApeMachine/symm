@@ -51,6 +51,22 @@ func TestNewConfigDefaults(t *testing.T) {
 	if cfg.AdverseSelectionBPS != 5 {
 		t.Fatalf("expected AdverseSelectionBPS 5, got %v", cfg.AdverseSelectionBPS)
 	}
+
+	if cfg.RegimeShockMinSamples != 64 {
+		t.Fatalf("expected RegimeShockMinSamples 64, got %v", cfg.RegimeShockMinSamples)
+	}
+
+	if cfg.ExecutionMakerFallbackTicks != 4 {
+		t.Fatalf("expected ExecutionMakerFallbackTicks 4, got %v", cfg.ExecutionMakerFallbackTicks)
+	}
+
+	if cfg.UITelemetryBuffer != 512 {
+		t.Fatalf("expected UITelemetryBuffer 512, got %v", cfg.UITelemetryBuffer)
+	}
+
+	if cfg.UIHeartbeatInterval != 250*time.Millisecond {
+		t.Fatalf("expected UIHeartbeatInterval 250ms, got %v", cfg.UIHeartbeatInterval)
+	}
 }
 
 func TestLogStdoutEnvOverride(t *testing.T) {

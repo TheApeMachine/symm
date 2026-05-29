@@ -2,6 +2,7 @@
 
 export type SymmEventName =
 	| "hello"
+	| "heartbeat"
 	| "tick"
 	| "engine_pulse"
 	| "field_snapshot"
@@ -79,6 +80,16 @@ export type EnginePulseEvent = SymmEvent & {
 
 export type TickEvent = SymmEvent & {
 	event: "tick";
+};
+
+export type HeartbeatEvent = SymmEvent & {
+	event: "heartbeat";
+	seq: number;
+	queue_depth?: number;
+	queue_cap?: number;
+	dropped?: number;
+	dropped_delta?: number;
+	throttled?: boolean;
 };
 
 export type DecisionRow = {
@@ -240,6 +251,16 @@ export const isTickEvent = (raw: unknown): raw is TickEvent => {
 	const row = raw as Record<string, unknown>;
 
 	return row.event === "tick" && typeof row.ts === "string";
+};
+
+export const isHeartbeatEvent = (raw: unknown): raw is HeartbeatEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return row.event === "heartbeat" && typeof row.seq === "number";
 };
 
 export const isFieldRowEvent = (raw: unknown): raw is FieldRowEvent => {

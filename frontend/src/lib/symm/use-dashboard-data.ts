@@ -16,6 +16,13 @@ export const useSymmConnected = () =>
 export const useSymmTick = () =>
 	useSyncExternalStore(TickStore.subscribe, TickStore.snapshot, () => 0);
 
+export const useSymmTelemetryStatus = () =>
+	useSyncExternalStore(
+		TickStore.subscribe,
+		TickStore.statusSnapshot,
+		TickStore.statusSnapshot,
+	);
+
 export const useSymmEnginePulse = () =>
 	useSyncExternalStore(
 		PredictionsDataProvider.subscribe,

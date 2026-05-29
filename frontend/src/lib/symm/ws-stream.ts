@@ -13,6 +13,7 @@ import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
 import {
 	isEnginePulseEvent,
+	isHeartbeatEvent,
 	isHelloEvent,
 	isPredictionFeedback,
 	isTickEvent,
@@ -57,6 +58,11 @@ export const routePayload = (payload: unknown) => {
 
 	if (isTickEvent(payload)) {
 		TickStore.ingest();
+		return;
+	}
+
+	if (isHeartbeatEvent(payload)) {
+		TickStore.ingestHeartbeat(payload);
 		return;
 	}
 

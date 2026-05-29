@@ -172,6 +172,31 @@ describe("OhlcDataProvider.ingest hub", () => {
 		expect(received).toEqual([2]);
 		unregister();
 	});
+
+	it("rejects mark events so ticks do not become zero-height candles", () => {
+		const received: number[] = [];
+		const unregister = OhlcDataProvider.registerSymbol("MARKLESS/EUR", (bar) => {
+			received.push(bar.close);
+		});
+
+		OhlcDataProvider.ingest({
+			event: "mark",
+			ts: "2026-05-28T01:10:10Z",
+			symbol: "MARKLESS/EUR",
+			price: 0.42,
+		});
+
+		const data = OhlcDataProvider.ingest({
+			symbol: "MARKLESS/EUR",
+			interval: 60,
+			startDate: new Date("2026-05-28T00:00:00Z"),
+			count: 10,
+		});
+
+		expect(received).toEqual([]);
+		expect(data?.xValues).toEqual([]);
+		unregister();
+	});
 });
 
 describe("OhlcDataProvider.getRandomOHLCVData", () => {

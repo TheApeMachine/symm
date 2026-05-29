@@ -28,15 +28,17 @@ inner *learned.Forecast lock implicitly through Next.
 type sourceCalibrator struct {
 	mu       sync.RWMutex
 	bySource map[string]*sourceForecast
+	shock    *regimeShockBreaker
 }
 
 type sourceForecast struct {
 	forecast *learned.Forecast
 }
 
-func newSourceCalibrator() *sourceCalibrator {
+func newSourceCalibrator(shock *regimeShockBreaker) *sourceCalibrator {
 	return &sourceCalibrator{
 		bySource: make(map[string]*sourceForecast),
+		shock:    shock,
 	}
 }
 
@@ -77,6 +79,10 @@ func (calibrator *sourceCalibrator) CalibrateConfidence(source string, rawConfid
 		return rawConfidence
 	}
 
+	if calibrator.shock != nil && calibrator.shock.Mutes(source) {
+		return rawConfidence * calibrator.shock.TrustFloor()
+	}
+
 	entry := calibrator.entry(source)
 
 	if entry == nil {
@@ -100,6 +106,10 @@ penalises surprises, and Trust() reflects that learned weight.
 */
 func (calibrator *sourceCalibrator) ApplyFeedback(source string, predicted, actual float64) {
 	if calibrator == nil {
+		return
+	}
+
+	if calibrator.shock != nil && calibrator.shock.Mutes(source) {
 		return
 	}
 

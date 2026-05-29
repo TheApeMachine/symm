@@ -34,12 +34,14 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	}
 
 	symbol := exitSignal.Symbol
+	pendingHandled := crypto.execution.HandleExit(exitSignal)
 
 	if !crypto.holdsSymbol(crypto.wallet, symbol) {
 		audit("trade_exit_skip", map[string]any{
 			"symbol":  symbol,
 			"reason":  "no_position",
 			"urgency": exitSignal.Urgency,
+			"pending": pendingHandled,
 		})
 
 		crypto.forecasts.ClearStop(symbol)

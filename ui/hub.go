@@ -56,111 +56,6 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 /*
-wsClient owns one connected browser. Each client has its own bounded
-outbox so a slow socket can't head-of-line block other clients or the
-upstream broadcast pump. The frontend is pure consumer; we never read
-from the conn, but we install a write deadline so a stuck socket fails
-fast.
-
-Close semantics. The previous design closed client.out from close() and
-then let enqueue send on the same channel concurrently; on a
-disconnect-while-broadcasting interleave that panics with "send on
-closed channel." Now close() signals via the done channel only — the
-outbox is left to be GC'd. enqueue checks done before sending and
-guarantees a non-blocking send under the select, so even a racing
-close() cannot turn into a panic.
-*/
-type wsClient struct {
-	conn   *websocket.Conn
-	out    chan any
-	done   chan struct{}
-	closed atomic.Bool
-}
-
-func newClient(conn *websocket.Conn) *wsClient {
-	return &wsClient{
-		conn: conn,
-		out:  make(chan any, perClientBuffer),
-		done: make(chan struct{}),
-	}
-}
-
-/*
-close marks the client as closed and signals the writer to exit via the
-done channel. The outbox is intentionally not closed: enqueue may race
-with close from the broadcast fanout, and sending on a closed channel
-panics. The writer drains everything still in the outbox on the way
-out, then drops the conn.
-*/
-func (client *wsClient) close() error {
-	if client.closed.Swap(true) {
-		return nil
-	}
-
-	close(client.done)
-	return client.conn.Close()
-}
-
-/*
-enqueue posts payload to the client's outbox without blocking. The
-default case silently drops the message when the bounded outbox is
-full — under a burst (UI gets ~3 frames per measurement and many
-measurements per tick) the previous "return false on full and let the
-caller close the client" behavior was evicting and forcing reconnect
-on every burst, which reset the frontend's tick counter and stalled
-the system on reconnect churn. A dropped frame is fine; an evicted
-browser is not.
-
-A genuinely closed client (done signaled) returns false so the caller
-removes it from the clients map.
-*/
-func (client *wsClient) enqueue(payload any) bool {
-	if client.closed.Load() {
-		return false
-	}
-
-	select {
-	case client.out <- payload:
-		runstats.UIFramesSent(1)
-		return true
-	case <-client.done:
-		return false
-	default:
-		// Buffer full — drop this frame, keep the client. The drop is
-		// counted in run_stats so a post-run jq can see how often the
-		// signal layer is overwhelming the browser link.
-		runstats.UIFramesDropped(1)
-		return true
-	}
-}
-
-/*
-runWriter writes outbox entries to the socket with a deadline. The loop
-exits immediately when client.done is closed; any messages still sitting
-in client.out at that moment are discarded — the writer does not flush
-the channel before returning. A connected browser sees this as missing
-the last fanout tick before disconnect, which is the right behavior
-because the per-client buffer is also bounded and we already accept drop
-semantics under back-pressure. Any write error also triggers close so
-the next fanout pass evicts the client.
-*/
-func (client *wsClient) runWriter() {
-	for {
-		select {
-		case <-client.done:
-			return
-		case payload := <-client.out:
-			_ = client.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
-
-			if err := client.conn.WriteJSON(payload); err != nil {
-				_ = client.close()
-				return
-			}
-		}
-	}
-}
-
-/*
 Hub subscribes to every broadcast group and writes payloads to websocket
 clients. There is intentionally no reader goroutine per client — the
 frontend never sends frames. Liveness is enforced by the per-client
@@ -173,6 +68,8 @@ type Hub struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscriptions map[string]*qpool.Subscriber
 	clients       *sync.Map
+	telemetry     *TelemetryBuffer
+	heartbeatSeq  atomic.Uint64
 
 	// focus = {anchor} ∪ {open-position symbols}. Updated atomically
 	// from every "wallet" frame.
@@ -195,6 +92,7 @@ func NewHub(
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
 		subscriptions: make(map[string]*qpool.Subscriber),
 		clients:       &sync.Map{},
+		telemetry:     NewTelemetryBuffer(config.System.UITelemetryBuffer),
 	}
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
@@ -204,6 +102,8 @@ func NewHub(
 	hub.focus.Store(&initial)
 
 	go hub.writePump(hub.subscriptions["ui"])
+	go hub.telemetry.Run(hub.ctx, hub.deliverTelemetry)
+	go hub.runHeartbeat()
 
 	return hub, errnie.Require(map[string]any{
 		"ctx":           hub.ctx,
@@ -212,6 +112,7 @@ func NewHub(
 		"broadcasts":    hub.broadcasts,
 		"subscriptions": hub.subscriptions,
 		"clients":       hub.clients,
+		"telemetry":     hub.telemetry,
 	})
 }
 
@@ -250,11 +151,8 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 }
 
 /*
-writePump fans incoming broadcasts out to every connected client by
-enqueueing onto each client's bounded outbox. A nil channel value is
-treated as a transient hiccup, not a permanent EOF, so the pump survives
-upstream broadcast restarts. Clients whose outbox is full are evicted on
-the spot — a stalled browser cannot back-pressure the system.
+writePump drains qpool into the lossy telemetry ring. Websocket fanout runs
+from that ring so the qpool subscriber never waits on browser pressure.
 */
 func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 	for {
@@ -270,14 +168,53 @@ func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 				continue
 			}
 
-			hub.maybeUpdateFocus(value.Value)
+			hub.telemetry.Push(value.Value)
+		}
+	}
+}
 
-			if hub.shouldDrop(value.Value) {
-				runstats.UIFramesFiltered(1)
-				continue
-			}
+func (hub *Hub) deliverTelemetry(payload any) {
+	hub.maybeUpdateFocus(payload)
 
-			hub.fanout(value.Value)
+	if hub.shouldDrop(payload) {
+		runstats.UIFramesFiltered(1)
+		return
+	}
+
+	hub.fanout(payload)
+}
+
+func (hub *Hub) runHeartbeat() {
+	interval := config.System.UIHeartbeatInterval
+
+	if interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	lastDropped := int64(0)
+
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case <-ticker.C:
+			dropped := hub.telemetry.Dropped()
+			droppedDelta := dropped - lastDropped
+			lastDropped = dropped
+
+			hub.fanoutPriority(map[string]any{
+				"event":         "heartbeat",
+				"ts":            time.Now().UTC().Format(time.RFC3339Nano),
+				"seq":           hub.heartbeatSeq.Add(1),
+				"queue_depth":   hub.telemetry.Depth(),
+				"queue_cap":     hub.telemetry.Capacity(),
+				"dropped":       dropped,
+				"dropped_delta": droppedDelta,
+				"throttled":     droppedDelta > 0,
+			})
 		}
 	}
 }
@@ -361,6 +298,27 @@ func (hub *Hub) fanout(payload any) {
 		// case where we evict. A slow consumer drops frames silently
 		// until its outbox drains.
 		if !client.enqueue(payload) {
+			hub.clients.Delete(key)
+		}
+
+		return true
+	})
+}
+
+func (hub *Hub) fanoutPriority(payload any) {
+	hub.clients.Range(func(key, _ any) bool {
+		client, ok := key.(*wsClient)
+
+		if !ok {
+			return true
+		}
+
+		if client.closed.Load() {
+			hub.clients.Delete(key)
+			return true
+		}
+
+		if !client.enqueuePriority(payload) {
 			hub.clients.Delete(key)
 		}
 

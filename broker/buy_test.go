@@ -54,6 +54,26 @@ func TestBuySubmitLive(t *testing.T) {
 	})
 }
 
+func TestBuySubmitLiveUsesExistingClOrdID(t *testing.T) {
+	Convey("Given a live buy with a client order id", t, func() {
+		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)
+		orders := make([]any, 0, 1)
+		router := NewRouter(func(value any) { orders = append(orders, value) })
+
+		err := (&Buy{
+			Symbol:   "BTC/EUR",
+			Notional: 10,
+			Quote:    Quote{Last: 50000},
+			ClOrdID:  "CLIENT-1",
+		}).SubmitLive(router, tradingWallet)
+
+		Convey("It should route the supplied cl_ord_id", func() {
+			So(err, ShouldBeNil)
+			So(orders[0].(order.Request).Params.ClOrdID, ShouldEqual, "CLIENT-1")
+		})
+	})
+}
+
 func BenchmarkBuyFillPaper(b *testing.B) {
 	buy := &Buy{
 		Symbol:   "BTC/EUR",

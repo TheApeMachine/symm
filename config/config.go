@@ -56,6 +56,7 @@ type Config struct {
 	CorrelationBarSeconds       int
 	MaxEntrySlippageBPS         float64
 	MaxSpreadBPS                float64
+	ExecutionMakerFallbackTicks int
 	AllowPaperShorts            bool
 	AllowLiveShorts             bool
 	KellyFraction               float64
@@ -71,6 +72,11 @@ type Config struct {
 	PumpForwardReturnMinSamples int
 	ForwardReturnSignificanceZ  float64
 	ForwardReturnSlopeAlpha     float64
+	RegimeShockWindow           int
+	RegimeShockMinSamples       int
+	RegimeShockZScore           float64
+	RegimeShockRecoverySamples  int
+	RegimeShockTrustFloor       float64
 	PerspectiveTTL              time.Duration
 	MaxPerspectiveMeasurements  int
 	CalibrationHalfLifeFloor    time.Duration
@@ -102,6 +108,8 @@ type Config struct {
 	FluidQuantileClip           float64
 	ExitEvery                   time.Duration
 	WSPingInterval              time.Duration
+	UITelemetryBuffer           int
+	UIHeartbeatInterval         time.Duration
 	UIAddr                      string
 	MaxPendingPerSignal         int
 	MaxPendingGlobal            int
@@ -174,6 +182,7 @@ func NewConfig() *Config {
 		CorrelationBarSeconds:       10,
 		MaxEntrySlippageBPS:         50,
 		MaxSpreadBPS:                0,
+		ExecutionMakerFallbackTicks: 4,
 		AllowPaperShorts:            false,
 		AllowLiveShorts:             false,
 		KellyFraction:               0.5,
@@ -189,6 +198,11 @@ func NewConfig() *Config {
 		PumpForwardReturnMinSamples: 8,
 		ForwardReturnSignificanceZ:  1.96,
 		ForwardReturnSlopeAlpha:     0.05,
+		RegimeShockWindow:           128,
+		RegimeShockMinSamples:       64,
+		RegimeShockZScore:           6,
+		RegimeShockRecoverySamples:  64,
+		RegimeShockTrustFloor:       0.02,
 		PerspectiveTTL:              30 * time.Second,
 		MaxPerspectiveMeasurements:  256,
 		CalibrationHalfLifeFloor:    2 * time.Second,
@@ -219,6 +233,8 @@ func NewConfig() *Config {
 		FluidHeightEMAAlpha:         0.35,
 		FluidQuantileClip:           0.95,
 		WSPingInterval:              30 * time.Second,
+		UITelemetryBuffer:           512,
+		UIHeartbeatInterval:         250 * time.Millisecond,
 		UIAddr:                      ":8765",
 		MaxPendingPerSignal:         4096,
 		MaxPendingGlobal:            0,

@@ -55,6 +55,7 @@ func (crypto *Crypto) applyFill(raw any) {
 
 		return
 	}
+	crypto.execution.HandleFill(fill)
 
 	audit("fill_applied", map[string]any{
 		"exec_key": fill.ExecKey,
@@ -88,4 +89,5 @@ func (crypto *Crypto) handleOrderAck(raw any) {
 		"order_id":  ack.Result.OrderID,
 		"cl_ord_id": ack.Result.ClOrdID,
 	})
+	crypto.execution.HandleAck(ack)
 }

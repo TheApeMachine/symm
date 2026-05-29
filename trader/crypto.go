@@ -42,6 +42,8 @@ type Crypto struct {
 	risk         *riskAccount
 	gaugeAvg     *confidenceAverages
 	calibrator   *sourceCalibrator
+	shock        *regimeShockBreaker
+	execution    *executionManager
 	pumpPeak     map[string]float64
 }
 
@@ -52,6 +54,7 @@ func NewCrypto(
 	forecasts *price.Prediction,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
+	shock := newRegimeShockBreaker()
 
 	crypto := &Crypto{
 		ctx:          ctx,
@@ -66,15 +69,18 @@ func NewCrypto(
 		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
 		risk:         newRiskAccount(tradingWallet),
 		gaugeAvg:     newConfidenceAverages(),
-		calibrator:   newSourceCalibrator(),
+		calibrator:   newSourceCalibrator(shock),
+		shock:        shock,
 		pumpPeak:     make(map[string]float64),
 	}
+	crypto.execution = newExecutionManager(crypto)
 
 	for _, channel := range []string{"measurements", "feedback", "ui"} {
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("crypto:"+channel, 128)
 	}
 
+	crypto.broadcasts["orders"] = pool.CreateBroadcastGroup("orders", 10*time.Millisecond)
 	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
 		Subscribe("crypto:exits", 128)
 
@@ -262,6 +268,13 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 
 	symbol := measurement.Pairs[0].Wsname
 	crypto.risk.ObserveMark(symbol, measurement.AnchorPrice(), time.Time{})
+	shockBefore := crypto.shock.Active()
+	crypto.shock.Observe(measurement)
+	shockAfter := crypto.shock.Active()
+
+	if shockAfter != shockBefore {
+		audit("regime_shock", crypto.shock.Snapshot())
+	}
 
 	// Track the running peak price during a fast pump so the entry anti-chase
 	// guard (§15.5) can measure retrace from the high. Accessed only from this
@@ -285,6 +298,7 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 	measurement.Confidence = crypto.calibrator.CalibrateConfidence(
 		measurement.Source, rawConfidence,
 	)
+	crypto.execution.ReviewMeasurement(measurement)
 
 	audit("measurement_ingest", map[string]any{
 		"source":         measurement.Source,
@@ -311,6 +325,7 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 		"confidence":     smoothed,
 		"raw_confidence": rawConfidence,
 		"trust":          crypto.calibratorTrust(measurement.Source),
+		"shock_active":   shockAfter,
 		"ts":             time.Now().UTC().Format(time.RFC3339Nano),
 	}})
 

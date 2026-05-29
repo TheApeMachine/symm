@@ -20,6 +20,7 @@ type Buy struct {
 	Quote          Quote
 	StopPrice      float64
 	LimitBelowStop float64
+	ClOrdID        string
 }
 
 /*
@@ -104,18 +105,22 @@ func (buy *Buy) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error {
 		return err
 	}
 
-	clOrdID, err := order.NextClOrdID()
+	if buy.ClOrdID == "" {
+		clOrdID, err := order.NextClOrdID()
 
-	if err != nil {
-		tradingWallet.ReleaseEntryReservation(buy.Notional)
+		if err != nil {
+			tradingWallet.ReleaseEntryReservation(buy.Notional)
 
-		return fmt.Errorf("generate cl_ord_id: %w", err)
+			return fmt.Errorf("generate cl_ord_id: %w", err)
+		}
+
+		buy.ClOrdID = clOrdID
 	}
 
 	req := order.MarketBuyCash(
 		buy.Symbol, buy.Notional, buy.StopPrice, buy.LimitBelowStop, "",
 	)
-	req.Params.ClOrdID = clOrdID
+	req.Params.ClOrdID = buy.ClOrdID
 
 	if err := router.Publish(req); err != nil {
 		tradingWallet.ReleaseEntryReservation(buy.Notional)

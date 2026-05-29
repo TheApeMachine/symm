@@ -4,6 +4,7 @@ import ThemeToggle from "#/components/ThemeToggle";
 import { Metric } from "./metric";
 import {
 	useSymmConnected,
+	useSymmTelemetryStatus,
 	useSymmTick,
 	useSymmWallet,
 } from "#/lib/symm/use-dashboard-data";
@@ -13,6 +14,7 @@ export const DashboardHeader = memo(function DashboardHeader() {
 	const connected = useSymmConnected();
 	const wallet = useSymmWallet();
 	const tick = useSymmTick();
+	const telemetry = useSymmTelemetryStatus();
 	const cash = wallet.balance + wallet.reservedEur;
 
 	return (
@@ -35,6 +37,12 @@ export const DashboardHeader = memo(function DashboardHeader() {
 			<span className="text-xs text-(--dash-muted)">
 				{wallet.openCount} open position{wallet.openCount === 1 ? "" : "s"}
 			</span>
+
+			{connected && telemetry.throttled ? (
+				<span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+					chart throttled
+				</span>
+			) : null}
 
 			<div className="ml-auto flex items-center gap-4 sm:gap-6">
 				<Metric label="Cash" value={connected ? formatEur(cash) : "…"} />
