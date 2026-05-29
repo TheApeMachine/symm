@@ -107,3 +107,13 @@ func ParseEventTime(value string) time.Time {
 
 	return time.Time{}
 }
+
+// ReturnModelSnapshot returns the live forward-return calibration buckets for
+// run_stats and offline diagnosis.
+func (prediction *Prediction) ReturnModelSnapshot() []map[string]any {
+	if prediction == nil || prediction.returnModel == nil {
+		return nil
+	}
+
+	return prediction.returnModel.Snapshot()
+}

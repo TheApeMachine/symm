@@ -10,6 +10,7 @@ and updates a learned.Forecast scale (directly or via PredictionCalibrator).
 type PredictionFeedback struct {
 	Source          string
 	Sources         []string
+	Contributions   map[string]float64
 	Symbol          string
 	Type            MeasurementType
 	PerspectiveType PerspectiveType

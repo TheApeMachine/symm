@@ -162,6 +162,15 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 		return nil
 	}
 
+	exitNotional := fill.Qty * fill.Price
+	exitFee := exitNotional * crypto.wallet.FeePct / 100
+	realizedNet := (fill.Price-avgEntryBefore)*fill.Qty - exitFee
+	realizedReturnNet := 0.0
+
+	if avgEntryBefore > 0 {
+		realizedReturnNet = (fill.Price-avgEntryBefore)/avgEntryBefore - crypto.wallet.FeePct/100
+	}
+
 	crypto.attachWalletMarks()
 	crypto.forecasts.ClearStop(symbol)
 	delete(crypto.pumpPeak, symbol)
@@ -171,26 +180,33 @@ func (crypto *Crypto) handleExit(exitSignal engine.Exit) error {
 	})
 
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":   "trade_exit",
-		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-		"symbol":  symbol,
-		"side":    fill.Side,
-		"qty":     fill.Qty,
-		"price":   fill.Price,
-		"reason":  exitSignal.Reason,
-		"urgency": exitSignal.Urgency,
+		"event":               "trade_exit",
+		"ts":                  time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol":              symbol,
+		"side":                fill.Side,
+		"qty":                 fill.Qty,
+		"price":               fill.Price,
+		"reason":              exitSignal.Reason,
+		"urgency":             exitSignal.Urgency,
+		"realized_net_eur":    realizedNet,
+		"realized_return_net": realizedReturnNet,
 	}})
 
 	audit("trade_exit_fill", map[string]any{
-		"symbol":       symbol,
-		"side":         fill.Side,
-		"qty":          fill.Qty,
-		"price":        fill.Price,
-		"reason":       exitSignal.Reason,
-		"urgency":      exitSignal.Urgency,
-		"balance_eur":  crypto.wallet.BalanceCopy(),
-		"reserved_eur": crypto.wallet.ReservedCopy(),
-		"open_count":   crypto.openCount(),
+		"symbol":              symbol,
+		"side":                fill.Side,
+		"qty":                 fill.Qty,
+		"price":               fill.Price,
+		"avg_entry":           avgEntryBefore,
+		"exit_notional_eur":   exitNotional,
+		"exit_fee_eur":        exitFee,
+		"realized_net_eur":    realizedNet,
+		"realized_return_net": realizedReturnNet,
+		"reason":              exitSignal.Reason,
+		"urgency":             exitSignal.Urgency,
+		"balance_eur":         crypto.wallet.BalanceCopy(),
+		"reserved_eur":        crypto.wallet.ReservedCopy(),
+		"open_count":          crypto.openCount(),
 	})
 
 	crypto.sendWallet()

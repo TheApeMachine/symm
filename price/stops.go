@@ -3,14 +3,21 @@ package price
 import "github.com/theapemachine/symm/engine"
 
 // RegisterStop arms a stop for one symbol. A later tick at or below stopPrice
-// fires exactly one stop_hit exit. Re-registering resets the fired flag.
+// fires exactly one stop_hit exit. Re-registering resets the stop side while
+// preserving any existing take-profit target.
 func (prediction *Prediction) RegisterStop(symbol string, stopPrice float64) {
 	if symbol == "" || stopPrice <= 0 {
 		return
 	}
 
 	prediction.stateMu.Lock()
-	prediction.stops[symbol] = stopOrder{price: stopPrice}
+	stop := prediction.stops[symbol]
+	stop.price = stopPrice
+	stop.trail = false
+	stop.trailFrac = 0
+	stop.peak = 0
+	stop.fired = false
+	prediction.stops[symbol] = stop
 	prediction.stateMu.Unlock()
 }
 
@@ -24,7 +31,29 @@ func (prediction *Prediction) RegisterTrailingStop(symbol string, hardFloor, tra
 	}
 
 	prediction.stateMu.Lock()
-	prediction.stops[symbol] = stopOrder{price: hardFloor, trail: true, trailFrac: trailFrac}
+	stop := prediction.stops[symbol]
+	stop.price = hardFloor
+	stop.trail = true
+	stop.trailFrac = trailFrac
+	stop.peak = 0
+	stop.fired = false
+	prediction.stops[symbol] = stop
+	prediction.stateMu.Unlock()
+}
+
+// RegisterTakeProfit arms a fixed upside exit. This lets calibrated forecasts
+// harvest their expected move instead of waiting for runway expiry on every
+// round-trip.
+func (prediction *Prediction) RegisterTakeProfit(symbol string, targetPrice float64) {
+	if symbol == "" || targetPrice <= 0 {
+		return
+	}
+
+	prediction.stateMu.Lock()
+	stop := prediction.stops[symbol]
+	stop.takeProfit = targetPrice
+	stop.fired = false
+	prediction.stops[symbol] = stop
 	prediction.stateMu.Unlock()
 }
 
@@ -36,8 +65,8 @@ func (prediction *Prediction) ClearStop(symbol string) {
 	prediction.stateMu.Unlock()
 }
 
-// checkStopLocked returns a stop_hit exit when price breaches an armed,
-// unfired stop. A trailing stop ratchets its peak up with price and fires at
+// checkStopLocked returns a stop_hit or profit_target exit when price breaches
+// an armed level. A trailing stop ratchets its peak up with price and fires at
 // the higher of the hard floor and peak*(1-trailFrac); a fixed stop fires at
 // its single level. Must be called with stateMu held; the caller emits after
 // releasing the lock.
@@ -50,6 +79,17 @@ func (prediction *Prediction) checkStopLocked(symbol string, price float64) (eng
 
 	if !ok || stop.fired {
 		return engine.Exit{}, false
+	}
+
+	if stop.takeProfit > 0 && price >= stop.takeProfit {
+		stop.fired = true
+		prediction.stops[symbol] = stop
+
+		return engine.Exit{
+			Symbol:  symbol,
+			Urgency: 1,
+			Reason:  engine.ExitReasonProfitTarget,
+		}, true
 	}
 
 	trigger := stop.price

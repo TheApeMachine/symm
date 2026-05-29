@@ -63,26 +63,64 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 	symbol := lead.Pairs[0].Wsname
 	now := time.Now()
 	prediction.Perspective.Regime = crypto.risk.MarketRegime(symbol)
-	predictedReturn := crypto.forecasts.RecordPerspective(symbol, prediction.Perspective, now)
+	record := crypto.forecasts.RecordPerspective(symbol, prediction.Perspective, now)
 
-	prediction.ExpectedReturn = predictedReturn
-	prediction.PredictedAt = now
-	prediction.Runway = runwayForPerspective(prediction.Perspective)
-	prediction.DueAt = now.Add(prediction.Runway)
+	prediction.ExpectedReturn = record.PredictedReturn
+	prediction.PredictedAt = record.PredictedAt
+	prediction.Runway = record.Runway
+	prediction.DueAt = record.DueAt
 
-	crypto.predictions = append(crypto.predictions, &prediction)
+	if record.Source == "" {
+		audit("trade_entry_skip", map[string]any{
+			"symbol": symbol,
+			"reason": "prediction_record_empty",
+		})
+
+		return nil
+	}
 
 	audit("perspective_ready", map[string]any{
 		"symbol":            symbol,
 		"confidence":        prediction.Confidence,
-		"predicted_return":  predictedReturn,
+		"predicted_return":  record.PredictedReturn,
 		"direction":         prediction.Direction,
-		"runway_ms":         prediction.Runway.Milliseconds(),
+		"runway_ms":         record.Runway.Milliseconds(),
 		"perspective_type":  prediction.Perspective.Type,
 		"measurement_count": len(prediction.Perspective.Measurements),
+		"fresh":             record.Fresh,
+		"tradable":          record.Tradable,
+		"contributions":     record.Contributions,
 	})
 
-	crypto.tryEnter(prediction, predictedReturn)
+	// Do not enter on a reused open forecast. Its anchor price and due time
+	// belong to an earlier market state; waiting for settlement keeps feedback
+	// flowing without letting stale confidence authorize a fresh position.
+	if !record.Fresh {
+		audit("trade_entry_skip", map[string]any{
+			"symbol": symbol,
+			"reason": "open_prediction_pending",
+			"source": record.Source,
+			"due_at": record.DueAt.UTC().Format(time.RFC3339Nano),
+		})
+
+		return nil
+	}
+
+	crypto.predictions = append(crypto.predictions, &prediction)
+
+	if !record.Tradable {
+		audit("trade_entry_skip", map[string]any{
+			"symbol":           symbol,
+			"reason":           "forward_model_not_ready",
+			"source":           record.Source,
+			"predicted_return": record.PredictedReturn,
+			"contributions":    record.Contributions,
+		})
+
+		return nil
+	}
+
+	crypto.tryEnter(prediction, record.PredictedReturn)
 
 	return nil
 }

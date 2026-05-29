@@ -3,28 +3,28 @@ package price
 import (
 	"math"
 	"sync"
+
+	"github.com/theapemachine/symm/config"
 )
 
 const (
-	// MinForwardSamples is the number of settled, anchored predictions a
-	// (source, regime) bucket must accumulate before it is permitted to emit
-	// a nonzero forward-return forecast. Below this the bucket's forecast is
-	// 0, so the entry edge gate rejects the trade while feedback keeps
-	// accumulating.
+	// MinForwardSamples is the fallback number of settled, anchored predictions
+	// a (source, regime) bucket must accumulate before it is permitted to emit
+	// a nonzero forward-return forecast. config.ForwardReturnMinSamples can
+	// override this at runtime.
 	MinForwardSamples = 30
 
-	// forwardSlopeAlpha smooths the per-sample realized/confidence slope.
+	// forwardSlopeAlpha is the fallback EWMA smoothing factor for the per-sample
+	// realized/confidence slope. config.ForwardReturnSlopeAlpha can override it.
 	forwardSlopeAlpha = 0.05
 
-	// significanceZ is the 97.5 % one-sided normal quantile. The bucket's
-	// mean realized forward return must clear zero by this many standard
-	// errors before any trade is allowed.
+	// significanceZ is the fallback one-sided normal quantile. The bucket's
+	// mean realized forward return must clear zero by this many standard errors
+	// before any trade is allowed.
 	significanceZ = 1.96
 
-	// PumpMinForwardSamples is the reduced warmup bar for pump-regime buckets.
-	// Pump events are rare, so 30 samples may never accumulate; 8 is enough
-	// because the significance test self-protects (stderr is large at low n)
-	// and the trailing stop caps downside on a wrong call.
+	// PumpMinForwardSamples is the fallback reduced warmup bar for pump-regime
+	// buckets. config.PumpForwardReturnMinSamples can override it.
 	PumpMinForwardSamples = 8
 )
 
@@ -96,26 +96,35 @@ func (model *ReturnModel) Observe(source, regime string, confidence, realizedRet
 		return
 	}
 
-	bucket.slope += forwardSlopeAlpha * (sample - bucket.slope)
+	bucket.slope += configuredForwardSlopeAlpha() * (sample - bucket.slope)
 }
 
 // Forecast returns the expected forward return for a fresh measurement and
 // whether the bucket is tradable. tradable is false (and expected is 0) until
-// the bucket has >= MinForwardSamples settlements AND its mean realized forward
-// return is statistically positive at significanceZ.
+// the bucket has enough settlements AND its mean realized forward return is
+// statistically positive. The returned expected return is capped by the lower
+// confidence bound of the bucket's realized forward-return mean; this prevents
+// confidence spikes from projecting returns an order of magnitude larger than
+// the edge the bucket has actually demonstrated.
 func (model *ReturnModel) Forecast(source, regime string, confidence float64) (float64, bool) {
-	return model.ForecastWithMin(source, regime, confidence, MinForwardSamples)
+	return model.ForecastWithMin(source, regime, confidence, configuredForwardMinSamples())
 }
 
 // ForecastWithMin is Forecast with a caller-supplied minimum sample bar. Pump
-// regimes pass PumpMinForwardSamples; all other callers use Forecast, which
-// passes MinForwardSamples. The significance test is identical regardless of
-// the bar, so a low bar still cannot trade on noise.
+// regimes pass the reduced pump sample bar; all other callers use Forecast. The
+// significance test is identical regardless of the bar, so a low bar still
+// cannot trade on noise.
 func (model *ReturnModel) ForecastWithMin(
-	source, regime string, confidence float64, minSamples int,
+	source, regime string,
+	confidence float64,
+	minSamples int,
 ) (float64, bool) {
 	if confidence <= 0 {
 		return 0, false
+	}
+
+	if minSamples <= 0 {
+		minSamples = configuredForwardMinSamples()
 	}
 
 	model.mu.Lock()
@@ -134,8 +143,9 @@ func (model *ReturnModel) ForecastWithMin(
 	}
 
 	stderr := math.Sqrt(variance / float64(bucket.count))
+	lowerBound := bucket.meanReturn - configuredForwardSignificanceZ()*stderr
 
-	if bucket.meanReturn-significanceZ*stderr <= 0 {
+	if lowerBound <= 0 {
 		return 0, false
 	}
 
@@ -145,5 +155,88 @@ func (model *ReturnModel) ForecastWithMin(
 		return 0, false
 	}
 
+	if expected > lowerBound {
+		expected = lowerBound
+	}
+
 	return expected, true
+}
+
+// Snapshot returns a serializable view of the forward-return buckets for run
+// stats and offline analysis.
+func (model *ReturnModel) Snapshot() []map[string]any {
+	if model == nil {
+		return nil
+	}
+
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	rows := make([]map[string]any, 0, len(model.buckets))
+
+	for key, bucket := range model.buckets {
+		variance := 0.0
+
+		if bucket.count > 1 {
+			variance = bucket.m2Return / float64(bucket.count-1)
+		}
+
+		stderr := 0.0
+
+		if bucket.count > 0 {
+			stderr = math.Sqrt(variance / float64(bucket.count))
+		}
+
+		lowerBound := bucket.meanReturn - configuredForwardSignificanceZ()*stderr
+
+		rows = append(rows, map[string]any{
+			"source":        key.source,
+			"regime":        key.regime,
+			"sample_count":  bucket.count,
+			"mean_return":   bucket.meanReturn,
+			"stderr":        stderr,
+			"lower_bound":   lowerBound,
+			"slope":         bucket.slope,
+			"slope_seen":    bucket.slopeSeen,
+			"tradable_mean": lowerBound > 0,
+		})
+	}
+
+	return rows
+}
+
+func configuredForwardMinSamples() int {
+	if config.System != nil && config.System.ForwardReturnMinSamples > 0 {
+		return config.System.ForwardReturnMinSamples
+	}
+
+	return MinForwardSamples
+}
+
+func configuredPumpForwardMinSamples() int {
+	if config.System != nil && config.System.PumpForwardReturnMinSamples > 0 {
+		return config.System.PumpForwardReturnMinSamples
+	}
+
+	return PumpMinForwardSamples
+}
+
+func configuredForwardSignificanceZ() float64 {
+	if config.System != nil && config.System.ForwardReturnSignificanceZ > 0 {
+		return config.System.ForwardReturnSignificanceZ
+	}
+
+	return significanceZ
+}
+
+func configuredForwardSlopeAlpha() float64 {
+	if config.System != nil && config.System.ForwardReturnSlopeAlpha > 0 {
+		if config.System.ForwardReturnSlopeAlpha > 1 {
+			return 1
+		}
+
+		return config.System.ForwardReturnSlopeAlpha
+	}
+
+	return forwardSlopeAlpha
 }

@@ -19,6 +19,7 @@ type openPrediction struct {
 	measurement     engine.Measurement
 	source          string
 	sources         []string
+	contributions   map[string]float64
 	regime          string
 	predictedReturn float64
 	confidence      float64
@@ -35,11 +36,12 @@ type predictionSeriesKey struct {
 }
 
 type stopOrder struct {
-	price     float64 // hard floor; fire if price <= this
-	trail     bool
-	trailFrac float64 // retrace from peak that fires a trailing stop
-	peak      float64
-	fired     bool
+	price      float64 // hard floor; fire if price <= this
+	takeProfit float64 // upside target; fire if price >= this
+	trail      bool
+	trailFrac  float64 // retrace from peak that fires a trailing stop
+	peak       float64
+	fired      bool
 }
 
 /*
@@ -263,6 +265,7 @@ func (prediction *Prediction) settleDue(row market.TickerRow, eventTime time.Tim
 				feedback := engine.PredictionFeedback{
 					Source:          open.source,
 					Sources:         append([]string(nil), open.sources...),
+					Contributions:   copyContributions(open.contributions),
 					Symbol:          symbol,
 					Type:            open.measurement.Type,
 					PerspectiveType: open.perspective.Type,
@@ -293,6 +296,8 @@ func (prediction *Prediction) settleDue(row market.TickerRow, eventTime time.Tim
 					"due_at":           open.dueAt.UTC().Format(time.RFC3339Nano),
 					"symbol":           symbol,
 					"source":           open.source,
+					"sources":          open.sources,
+					"contributions":    open.contributions,
 					"predicted_return": open.predictedReturn,
 					"actual_return":    actualReturn,
 					"error":            feedback.Error,

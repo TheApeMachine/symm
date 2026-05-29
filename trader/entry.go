@@ -162,6 +162,7 @@ func (crypto *Crypto) tryEnter(
 	}
 
 	stopPrice, stopLimit := crypto.stopPricesFor(lead, predictedReturn)
+	takeProfitPrice := takeProfitPriceFor(lead, predictedReturn)
 
 	buy := broker.Buy{
 		Symbol:         symbol,
@@ -221,8 +222,14 @@ func (crypto *Crypto) tryEnter(
 		crypto.forecasts.RegisterTrailingStop(
 			symbol, fill.Price*(1-config.System.PumpHardStopPct), trail,
 		)
-	} else if stopPrice > 0 {
-		crypto.forecasts.RegisterStop(symbol, stopPrice)
+	} else {
+		if stopPrice > 0 {
+			crypto.forecasts.RegisterStop(symbol, stopPrice)
+		}
+
+		if takeProfitPrice > 0 {
+			crypto.forecasts.RegisterTakeProfit(symbol, takeProfitPrice)
+		}
 	}
 
 	crypto.recordEntryPnL(symbol, fill.Price)
@@ -231,14 +238,15 @@ func (crypto *Crypto) tryEnter(
 	})
 
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":  "trade_entry",
-		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
-		"symbol": symbol,
-		"side":   fill.Side,
-		"qty":    fill.Qty,
-		"price":  fill.Price,
-		"slot":   slot,
-		"edge":   edge,
+		"event":       "trade_entry",
+		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol":      symbol,
+		"side":        fill.Side,
+		"qty":         fill.Qty,
+		"price":       fill.Price,
+		"slot":        slot,
+		"edge":        edge,
+		"take_profit": takeProfitPrice,
 	}})
 
 	audit("trade_entry_fill", map[string]any{
@@ -250,6 +258,7 @@ func (crypto *Crypto) tryEnter(
 		"edge":             edge,
 		"predicted_return": predictedReturn,
 		"stop_fraction":    stopFraction,
+		"take_profit":      takeProfitPrice,
 		"confidence":       prediction.Confidence,
 		"source_count":     sourceCount,
 		"dominant_source":  dominantSource(prediction.Perspective.Measurements),
@@ -261,6 +270,16 @@ func (crypto *Crypto) tryEnter(
 	})
 
 	crypto.sendWallet()
+}
+
+func takeProfitPriceFor(measurement engine.Measurement, predictedReturn float64) float64 {
+	anchor := measurement.AnchorPrice()
+
+	if anchor <= 0 || predictedReturn <= 0 || config.System.TakeProfitCapture <= 0 {
+		return 0
+	}
+
+	return anchor * (1 + predictedReturn*config.System.TakeProfitCapture)
 }
 
 func entryFrictionReturn(measurement engine.Measurement) float64 {

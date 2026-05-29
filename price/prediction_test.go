@@ -147,11 +147,11 @@ func TestPredictionRecordPerspective(t *testing.T) {
 		time.Now(),
 	)
 
-	if predicted <= 0 {
-		t.Fatalf("expected learned predicted return, got %v", predicted)
+	if predicted.PredictedReturn <= 0 {
+		t.Fatalf("expected learned predicted return, got %v", predicted.PredictedReturn)
 	}
 
-	if prediction.open["BTC/EUR"][source].predictedReturn != predicted {
+	if prediction.open["BTC/EUR"][source].predictedReturn != predicted.PredictedReturn {
 		t.Fatalf("expected open prediction stored")
 	}
 }
@@ -184,8 +184,8 @@ func TestPredictionRecordPerspectiveUsesRegimeLocalReturnSupport(t *testing.T) {
 		time.Now(),
 	)
 
-	if predicted != 0 {
-		t.Fatalf("expected unrelated regime support not to forecast BTC/EUR, got %v", predicted)
+	if predicted.PredictedReturn != 0 {
+		t.Fatalf("expected unrelated regime support not to forecast BTC/EUR, got %v", predicted.PredictedReturn)
 	}
 }
 
@@ -216,8 +216,8 @@ func TestPredictionRecordPerspectiveRecordsColdBucketWithZeroForecast(t *testing
 		time.Now(),
 	)
 
-	if predicted != 0 {
-		t.Fatalf("expected cold return model forecast to be zero, got %v", predicted)
+	if predicted.PredictedReturn != 0 {
+		t.Fatalf("expected cold return model forecast to be zero, got %v", predicted.PredictedReturn)
 	}
 
 	source := engine.PerspectiveSource(engine.PerspectiveMicrostructure)
@@ -270,8 +270,8 @@ func TestPredictionRecordPerspectiveBlocksNegativeLearnedReturnSupport(t *testin
 		time.Now(),
 	)
 
-	if predicted != 0 {
-		t.Fatalf("expected negative return model bucket to block forecast, got %v", predicted)
+	if predicted.PredictedReturn != 0 {
+		t.Fatalf("expected negative return model bucket to block forecast, got %v", predicted.PredictedReturn)
 	}
 }
 
@@ -298,8 +298,8 @@ func TestPredictionRecordPerspectiveDoesNotInventScale(t *testing.T) {
 		time.Now(),
 	)
 
-	if predicted != 0 {
-		t.Fatalf("expected no prediction without learned or market scale, got %v", predicted)
+	if predicted.PredictedReturn != 0 {
+		t.Fatalf("expected no prediction without learned or market scale, got %v", predicted.PredictedReturn)
 	}
 }
 
@@ -412,9 +412,13 @@ func TestRecordPerspectiveDoesNotOverwriteOpen(t *testing.T) {
 	second.Last = 1.02
 	predictedSecond := prediction.RecordPerspective("BTC/EUR", testPerspective(second), now.Add(time.Millisecond))
 
-	if predictedSecond != predictedFirst {
+	if predictedSecond.PredictedReturn != predictedFirst.PredictedReturn {
 		t.Fatalf("expected no-op overwrite to return prior predictedReturn (%v), got %v",
-			predictedFirst, predictedSecond)
+			predictedFirst.PredictedReturn, predictedSecond.PredictedReturn)
+	}
+
+	if predictedSecond.Fresh {
+		t.Fatalf("expected stale second record, got Fresh=true")
 	}
 
 	stillOpen, ok := prediction.open["BTC/EUR"][source]

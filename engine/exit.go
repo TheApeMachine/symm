@@ -5,6 +5,7 @@ const (
 	ExitReasonPressureFade  = "pressure_fade"
 	ExitReasonRunwayExpired = "runway_expired"
 	ExitReasonStopHit       = "stop_hit"
+	ExitReasonProfitTarget  = "profit_target"
 )
 
 /*

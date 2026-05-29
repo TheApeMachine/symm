@@ -148,7 +148,8 @@ func (crypto *Crypto) recordExitPnL(symbol string, qty, exitPrice, avgEntryBefor
 		return
 	}
 
-	delta := (exitPrice - avgEntryBefore) * qty
+	exitFee := qty * exitPrice * crypto.wallet.FeePct / 100
+	delta := (exitPrice-avgEntryBefore)*qty - exitFee
 
 	crypto.risk.ObserveMark(symbol, exitPrice, time.Now())
 
@@ -206,6 +207,10 @@ func (crypto *Crypto) emitRunStats() {
 
 	if crypto.calibrator != nil {
 		snapshot["source_calibrators"] = crypto.calibrator.Snapshot()
+	}
+
+	if crypto.forecasts != nil {
+		snapshot["forward_return_model"] = crypto.forecasts.ReturnModelSnapshot()
 	}
 
 	if crypto.gaugeAvg != nil {

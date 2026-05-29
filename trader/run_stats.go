@@ -64,8 +64,8 @@ type runStats struct {
 	uiFramesDropped  atomic.Int64
 	uiFramesFiltered atomic.Int64
 
-	leadlagThrottleHits  atomic.Int64
-	leadlagRecomputes    atomic.Int64
+	leadlagThrottleHits atomic.Int64
+	leadlagRecomputes   atomic.Int64
 
 	wsConnects       atomic.Int64
 	wsReconnects     atomic.Int64
@@ -187,44 +187,44 @@ func (stats *runStats) Snapshot() map[string]any {
 	}
 
 	return map[string]any{
-		"uptime_sec":                time.Since(stats.startedAt).Seconds(),
-		"measurements_ingested":     stats.measurementsIngested.Load(),
-		"measurements_skipped":      stats.measurementsSkipped.Load(),
-		"perspectives_accumulated":  stats.perspectivesAccumulated.Load(),
-		"perspectives_ready":        stats.perspectivesReady.Load(),
-		"perspectives_not_ready":    stats.perspectivesNotReady.Load(),
-		"predictions_opened":        stats.predictionsOpened.Load(),
-		"predictions_settled":       stats.predictionsSettled.Load(),
-		"predictions_expired":       stats.predictionsExpired.Load(),
-		"feedback_applied":          feedbackCount,
-		"feedback_mean_abs_error":   meanAbsError,
-		"entries_evaluated":         stats.entriesEvaluated.Load(),
-		"entries_filled":            stats.entriesFilled.Load(),
-		"entries_skipped":           stats.entriesSkipped.Load(),
-		"entries_errored":           stats.entriesErrored.Load(),
-		"exits_evaluated":           stats.exitsEvaluated.Load(),
-		"exits_filled":              stats.exitsFilled.Load(),
-		"exits_skipped":             stats.exitsSkipped.Load(),
-		"exits_errored":             stats.exitsErrored.Load(),
-		"fills_applied":             stats.fillsApplied.Load(),
-		"fills_deduped":             stats.fillsDeduped.Load(),
-		"order_acks_success":        stats.orderAcksSuccess.Load(),
-		"order_acks_failure":        stats.orderAcksFailure.Load(),
-		"pre_trade_gate_hits":       stats.preTradeGateHits.Load(),
-		"pre_trade_gate_allow":      stats.preTradeGateAllow.Load(),
-		"ui_frames_sent":            stats.uiFramesSent.Load(),
-		"ui_frames_dropped":         stats.uiFramesDropped.Load(),
-		"ui_frames_filtered":        stats.uiFramesFiltered.Load(),
-		"leadlag_throttle_hits":     stats.leadlagThrottleHits.Load(),
-		"leadlag_recomputes":        stats.leadlagRecomputes.Load(),
-		"ws_connects":               stats.wsConnects.Load(),
-		"ws_reconnects":             stats.wsReconnects.Load(),
-		"token_refreshes":           stats.tokenRefreshes.Load(),
-		"token_refresh_failures":    stats.tokenRefreshFail.Load(),
-		"skip_reasons":              skipReasons,
-		"source_measurements":       sourceMeasurements,
-		"source_predictions":        sourcePredictions,
-		"source_fills":              sourceFills,
+		"uptime_sec":               time.Since(stats.startedAt).Seconds(),
+		"measurements_ingested":    stats.measurementsIngested.Load(),
+		"measurements_skipped":     stats.measurementsSkipped.Load(),
+		"perspectives_accumulated": stats.perspectivesAccumulated.Load(),
+		"perspectives_ready":       stats.perspectivesReady.Load(),
+		"perspectives_not_ready":   stats.perspectivesNotReady.Load(),
+		"predictions_opened":       stats.predictionsOpened.Load(),
+		"predictions_settled":      stats.predictionsSettled.Load(),
+		"predictions_expired":      stats.predictionsExpired.Load(),
+		"feedback_applied":         feedbackCount,
+		"feedback_mean_abs_error":  meanAbsError,
+		"entries_evaluated":        stats.entriesEvaluated.Load(),
+		"entries_filled":           stats.entriesFilled.Load(),
+		"entries_skipped":          stats.entriesSkipped.Load(),
+		"entries_errored":          stats.entriesErrored.Load(),
+		"exits_evaluated":          stats.exitsEvaluated.Load(),
+		"exits_filled":             stats.exitsFilled.Load(),
+		"exits_skipped":            stats.exitsSkipped.Load(),
+		"exits_errored":            stats.exitsErrored.Load(),
+		"fills_applied":            stats.fillsApplied.Load(),
+		"fills_deduped":            stats.fillsDeduped.Load(),
+		"order_acks_success":       stats.orderAcksSuccess.Load(),
+		"order_acks_failure":       stats.orderAcksFailure.Load(),
+		"pre_trade_gate_hits":      stats.preTradeGateHits.Load(),
+		"pre_trade_gate_allow":     stats.preTradeGateAllow.Load(),
+		"ui_frames_sent":           stats.uiFramesSent.Load(),
+		"ui_frames_dropped":        stats.uiFramesDropped.Load(),
+		"ui_frames_filtered":       stats.uiFramesFiltered.Load(),
+		"leadlag_throttle_hits":    stats.leadlagThrottleHits.Load(),
+		"leadlag_recomputes":       stats.leadlagRecomputes.Load(),
+		"ws_connects":              stats.wsConnects.Load(),
+		"ws_reconnects":            stats.wsReconnects.Load(),
+		"token_refreshes":          stats.tokenRefreshes.Load(),
+		"token_refresh_failures":   stats.tokenRefreshFail.Load(),
+		"skip_reasons":             skipReasons,
+		"source_measurements":      sourceMeasurements,
+		"source_predictions":       sourcePredictions,
+		"source_fills":             sourceFills,
 	}
 }
 
