@@ -127,10 +127,8 @@ func publishAuditFrame(event string, fields map[string]any) {
 func realtimeAuditEvent(event string) bool {
 	switch event {
 	case "trade_entry_fill",
-		"trade_entry_skip",
 		"trade_entry_error",
 		"trade_exit_fill",
-		"trade_exit_skip",
 		"trade_exit_error":
 		return true
 	default:

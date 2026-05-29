@@ -10,7 +10,7 @@ describe("AuditDataProvider", () => {
 	it("keeps newest audit rows first with compact summaries", () => {
 		AuditDataProvider.ingest({
 			event: "audit",
-			audit_event: "trade_entry_eval",
+			audit_event: "trade_entry_fill",
 			seq: 1,
 			ts: "2026-05-29T01:02:03Z",
 			symbol: "BTC/EUR",
@@ -23,7 +23,7 @@ describe("AuditDataProvider", () => {
 
 		expect(row).toMatchObject({
 			seq: 1,
-			event: "trade_entry_eval",
+			event: "trade_entry_fill",
 			symbol: "BTC/EUR",
 			source: "cvd",
 		});

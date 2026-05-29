@@ -1,15 +1,10 @@
 import type { EnginePulseEvent } from "#/lib/symm/events";
-import {
-	isEnginePulseEvent,
-	isPredictionEvent,
-	isPredictionSettledEvent,
-} from "#/lib/symm/events";
+import { isEnginePulseEvent } from "#/lib/symm/events";
 
 export type PredictionSeriesKind =
 	| "average"
 	| "prediction"
-	| "error"
-	| "actual";
+	| "error";
 
 export type PredictionReading = {
 	kind: PredictionSeriesKind;
@@ -34,6 +29,19 @@ const timeSec = (value: unknown): number | undefined => {
 
 	return parsed / 1000;
 };
+
+const finiteNumber = (value: unknown): number | undefined => {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return undefined;
+	}
+
+	return value;
+};
+
+const scaledValue = (
+	preferred: unknown,
+	fallback: unknown,
+): number | undefined => finiteNumber(preferred) ?? finiteNumber(fallback);
 
 class PredictionsDataProviderImpl {
 	private sink: ReadingSink | null = null;
@@ -135,55 +143,28 @@ class PredictionsDataProviderImpl {
 
 		const horizonSec = this.updateHorizon(pulseSec);
 
-		if (typeof raw.avg_prediction === "number") {
-			this.emitPoint("average", pulseSec, raw.avg_prediction);
+		const predictionValue = scaledValue(
+			raw.avg_prediction_multiple,
+			raw.avg_prediction,
+		);
+		const errorValue = scaledValue(raw.avg_error_multiple, raw.avg_error);
+
+		if (predictionValue !== undefined) {
+			this.emitPoint("average", pulseSec, predictionValue);
 
 			if (horizonSec !== undefined) {
-				this.emitPoint("prediction", pulseSec + horizonSec, raw.avg_prediction);
+				this.emitPoint("prediction", pulseSec + horizonSec, predictionValue);
 			}
 		}
 
-		if (typeof raw.avg_error === "number") {
-			this.emitPoint("error", pulseSec, raw.avg_error);
+		if (errorValue !== undefined) {
+			this.emitPoint("error", pulseSec, errorValue);
 		}
 	}
 
 	ingest(raw: unknown) {
 		if (isEnginePulseEvent(raw)) {
 			this.ingestPulse(raw);
-			return;
-		}
-
-		if (isPredictionEvent(raw)) {
-			// Plot the forecast at its anchored emission time. Each prediction
-			// has its own clock — anchored at `ts`, due at `due_at` — so the
-			// chart shows the forecast where it lives in time, not at a
-			// per-cycle index.
-			const tsSec = timeSec(raw.ts);
-			if (tsSec !== undefined) {
-				this.emitPoint("prediction", tsSec, raw.value);
-			}
-			return;
-		}
-
-		if (isPredictionSettledEvent(raw)) {
-			// Plot the realised return at the x of the prediction it
-			// corresponds to (predicted_at), NOT at the settlement instant.
-			// A prediction made at T with runway R is settled at T+R; the
-			// previous version plotted prediction at T and actual at T+R,
-			// so within any visible time window the on-screen orange and
-			// blue points were for DIFFERENT prediction cohorts (the
-			// blues you see are for predictions made R seconds earlier
-			// than the oranges you see). Plotting actual at predicted_at
-			// keeps each cohort visually aligned, which is what makes
-			// the chart actually compare predicted vs realised.
-			const anchorSec = timeSec(raw.predicted_at) ?? timeSec(raw.ts);
-			if (anchorSec === undefined) {
-				return;
-			}
-			this.emitPoint("actual", anchorSec, raw.actual_return);
-			this.emitPoint("error", anchorSec, raw.error);
-			return;
 		}
 	}
 

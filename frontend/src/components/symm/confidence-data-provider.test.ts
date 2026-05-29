@@ -91,4 +91,24 @@ describe("ConfidenceDataProvider.ingest", () => {
 		expect(ConfidenceDataProvider.snapshot().get("liquidity")).toBe(0.64);
 		unregister();
 	});
+
+	it("hydrates gauges from wallet snapshot confidence", () => {
+		const received: number[] = [];
+		const unregister = ConfidenceDataProvider.registerSource(
+			"hawkes",
+			(confidence) => {
+				received.push(confidence);
+			},
+		);
+
+		ConfidenceDataProvider.ingestSnapshot({
+			hawkes: 0.51,
+			causal: "stale",
+		});
+
+		expect(received).toEqual([0.51]);
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toBe(0.51);
+		expect(ConfidenceDataProvider.snapshot().has("causal")).toBe(false);
+		unregister();
+	});
 });

@@ -63,6 +63,16 @@ class ConfidenceDataProviderImpl {
 		this.sinks.get(source)?.(raw.confidence);
 	}
 
+	ingestSnapshot(raw: unknown) {
+		if (typeof raw !== "object" || raw === null) {
+			return;
+		}
+
+		for (const [source, confidence] of Object.entries(raw)) {
+			this.ingest({ source, confidence });
+		}
+	}
+
 	reset() {
 		this.sinks.clear();
 		this.latest.clear();
@@ -76,5 +86,6 @@ export const ConfidenceDataProvider = {
 		shared.registerSource(source, sink),
 	snapshot: () => shared.snapshot(),
 	ingest: (raw: unknown) => shared.ingest(raw),
+	ingestSnapshot: (raw: unknown) => shared.ingestSnapshot(raw),
 	reset: () => shared.reset(),
 };

@@ -54,7 +54,6 @@ const parseWirePayload = (raw: unknown): unknown | null => {
 export const routePayload = (payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
-		TickStore.reset();
 		return;
 	}
 
@@ -86,6 +85,7 @@ export const routePayload = (payload: unknown) => {
 	if (isWalletPayload(payload)) {
 		WalletDataProvider.ingest(payload);
 		TradesDataProvider.ingest(payload);
+		ConfidenceDataProvider.ingestSnapshot(payload.gauge_confidence);
 		return;
 	}
 
@@ -122,6 +122,7 @@ export const routePayload = (payload: unknown) => {
 				case "wallet":
 					WalletDataProvider.ingest(payload);
 					TradesDataProvider.ingest(payload);
+					ConfidenceDataProvider.ingestSnapshot(row.gauge_confidence);
 					return;
 				default:
 					break;
@@ -154,5 +155,7 @@ export const useSymmStream = () => {
 	useWebSocket(resolveSocketUrl(), {
 		shouldReconnect: () => true,
 		onMessage,
+		onClose: () => ConnectionStore.set(false),
+		onError: () => ConnectionStore.set(false),
 	});
 };

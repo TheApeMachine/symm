@@ -1,11 +1,77 @@
 package trader
 
 import (
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
+
+func perspectiveTestMeasurement(index int) engine.Measurement {
+	return engine.Measurement{
+		Source:     "hawkes",
+		Regime:     "cluster",
+		Pairs:      []asset.Pair{{Wsname: "BTC/EUR"}},
+		Confidence: 0.3,
+		Last:       float64(100 + index),
+	}
+}
+
+func TestPerspectivePruneMeasurementsAtLimit(t *testing.T) {
+	Convey("Given a perspective at the measurement cap", t, func() {
+		limit := config.System.MaxPerspectiveMeasurements
+		perspective := NewPerspective(nil)
+
+		for index := 0; index < limit; index++ {
+			perspective.AddMeasurement(perspectiveTestMeasurement(index))
+		}
+
+		Convey("It should stay capped when more measurements arrive", func() {
+			perspective.AddMeasurement(perspectiveTestMeasurement(limit))
+
+			So(perspective.measurementCount(), ShouldEqual, limit)
+		})
+	})
+}
+
+func TestPerspectiveConcurrentAddAndActiveCount(t *testing.T) {
+	Convey("Given concurrent adds and active measurement counts", t, func() {
+		perspective := NewPerspective(nil)
+		stop := make(chan struct{})
+		var waitGroup sync.WaitGroup
+
+		waitGroup.Add(1)
+
+		go func() {
+			defer waitGroup.Done()
+
+			now := time.Now()
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = perspective.activeMeasurementCount(now)
+				}
+			}
+		}()
+
+		for index := 0; index < 512; index++ {
+			perspective.AddMeasurement(perspectiveTestMeasurement(index))
+		}
+
+		close(stop)
+		waitGroup.Wait()
+
+		So(perspective.measurementCount(), ShouldBeLessThanOrEqualTo, config.System.MaxPerspectiveMeasurements)
+	})
+}
 
 /*
 TestPerspectivePredictAlwaysReturns proves that any non-empty bucket produces

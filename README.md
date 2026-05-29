@@ -171,6 +171,10 @@ The trader's local prediction list no longer emits feedback; the trader's local 
 predictedReturn = ReturnModel.Forecast(perspectiveSource, marketRegime, perspectiveConfidence)
 ```
 
+### 5. Hindsight audit
+
+`trader.Crypto` records entry skip decisions against the same `(symbol, perspectiveSource, predictedAt, dueAt)` key used by `PredictionFeedback`. When the forecast settles, skipped entries are written to `runs/hindsight-*.jsonl` only if the realized forward return would have cleared the same economic return gates used for entry: `EntryEdgeMultiple × friction` and, when known, `TakeProfitR × stop_fraction`. Post-due skip decisions are ignored so the decision trail describes the live trade window, not stale retries after settlement time. The row keeps the original skip reason, the last valid skip reason, required return, return multiple, and decision fields next to the settled ground truth so tuning can group genuinely actionable misses by gate.
+
 ---
 
 ## Registered systems
@@ -206,7 +210,7 @@ On each `measurements` message (coalescing any others already queued):
 1. Build perspectives and call `RecordPerspective` once for each symbol/perspective bucket.
 2. Track the best net opportunity at the perspective level: `engine.FuseMeasurements` produces perspective confidence with shared-data discounting, `price.Prediction` produces the learned forward-return forecast, and edge is `perspective predicted return - entry friction`.
 3. If wallet and risk capacity remain, enter only when the forecast exceeds both thresholds: `EntryEdgeMultiple × round-trip friction` AND `TakeProfitR × stop distance`. `TakeProfitR × stop distance` is the minimum expected profit relative to the stop-loss distance (profit ratio × stop distance). Cold or statistically weak buckets forecast zero and cannot trade.
-4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses aggregate `engine_pulse.avg_prediction` and `engine_pulse.avg_error`; it does not plot per-symbol forecast segments.
+4. Publish per-source **confidence** EMA on `confidence` (gauges) and **`engine_pulse`** on `ui`. **Prediction chart** uses aggregate required-return multiples from `engine_pulse.avg_prediction_multiple` and `engine_pulse.avg_error_multiple`; `1.0` means the current forecast clears the stricter of `EntryEdgeMultiple × friction` and `TakeProfitR × stop distance`. Raw fractional `avg_prediction` and `avg_error` remain in the pulse for analysis, and per-symbol forecast segments stay off the aggregate chart.
 
 Paper entries default to taker market fills (`UseMakerEntries=false`) so friction matches `broker.Buy`/`broker.Sell`: taker fee both ways plus the full bid-ask spread. Maker paper fills remain available but include a configured reject rate and an adverse-selection price penalty; they should not be re-enabled for entries until the entry path actually uses `broker.Maker`.
 

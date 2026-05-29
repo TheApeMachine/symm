@@ -75,8 +75,12 @@ export type EnginePulseEvent = SymmEvent & {
 	symbols_total?: number;
 	fluid_sampled?: number;
 	avg_prediction?: number;
+	avg_prediction_multiple?: number;
+	avg_required_return?: number;
 	avg_error?: number;
+	avg_error_multiple?: number;
 	forecast_symbols?: number;
+	scaled_forecast_symbols?: number;
 };
 
 export type TickEvent = SymmEvent & {
@@ -137,6 +141,7 @@ export type WalletPayload = {
 	Inventory?: Record<string, number>;
 	AvgEntry?: Record<string, number>;
 	Marks?: Record<string, number>;
+	gauge_confidence?: Record<string, number>;
 };
 
 export type ExecutionFill = {

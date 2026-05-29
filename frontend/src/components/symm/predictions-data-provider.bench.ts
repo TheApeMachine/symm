@@ -17,7 +17,9 @@ describe("PredictionsDataProvider", () => {
 			open: 2,
 			ts: firstPulseAt,
 			avg_prediction: 0.005,
+			avg_prediction_multiple: 0.5,
 			avg_error: 0.0038,
+			avg_error_multiple: 0.38,
 		});
 		PredictionsDataProvider.ingest({
 			event: "engine_pulse",
@@ -27,7 +29,9 @@ describe("PredictionsDataProvider", () => {
 			open: 2,
 			ts: secondPulseAt,
 			avg_prediction: 0.0054,
+			avg_prediction_multiple: 0.54,
 			avg_error: 0.004,
+			avg_error_multiple: 0.4,
 		});
 	});
 });

@@ -57,7 +57,13 @@ func (averages *confidenceAverages) Observe(source string, confidence float64) f
 		ema = adaptive.NewEMA(confidence)
 		averages.emas[source] = ema
 
-		return confidence
+		value, err := ema.Next(0, confidence)
+
+		if err != nil {
+			return confidence
+		}
+
+		return value
 	}
 
 	value, err := ema.Next(0, confidence)

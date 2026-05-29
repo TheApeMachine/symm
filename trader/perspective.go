@@ -2,6 +2,7 @@ package trader
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -23,6 +24,7 @@ continue to authorize fresh predictions long after the book/trade state had
 changed. The bucket now keeps only a short TTL-limited, capped window.
 */
 type Perspective struct {
+	mu           sync.Mutex
 	Ready        bool
 	measurements []engine.Measurement
 	observedAt   []time.Time
@@ -50,11 +52,18 @@ func NewPerspective(measurements []engine.Measurement) *Perspective {
 AddMeasurement adds a measurement to the Perspective.
 */
 func (perspective *Perspective) AddMeasurement(measurement engine.Measurement) {
+	if perspective == nil {
+		return
+	}
+
+	perspective.mu.Lock()
+	defer perspective.mu.Unlock()
+
 	now := time.Now()
-	perspective.pruneMeasurements(now)
+	perspective.pruneMeasurementsLocked(now)
 	perspective.measurements = append(perspective.measurements, measurement)
 	perspective.observedAt = append(perspective.observedAt, now)
-	perspective.pruneMeasurements(now)
+	perspective.pruneMeasurementsLocked(now)
 
 	// Ensure there is a valid regime to track.
 	if measurement.Regime == "" {
@@ -83,8 +92,32 @@ func (perspective *Perspective) AddMeasurement(measurement engine.Measurement) {
 	}
 }
 
-func (perspective *Perspective) pruneMeasurements(now time.Time) {
-	if perspective == nil || len(perspective.measurements) == 0 {
+func (perspective *Perspective) activeMeasurementCount(now time.Time) int {
+	if perspective == nil {
+		return 0
+	}
+
+	perspective.mu.Lock()
+	defer perspective.mu.Unlock()
+
+	perspective.pruneMeasurementsLocked(now)
+
+	return len(perspective.measurements)
+}
+
+func (perspective *Perspective) measurementCount() int {
+	if perspective == nil {
+		return 0
+	}
+
+	perspective.mu.Lock()
+	defer perspective.mu.Unlock()
+
+	return len(perspective.measurements)
+}
+
+func (perspective *Perspective) pruneMeasurementsLocked(now time.Time) {
+	if len(perspective.measurements) == 0 {
 		return
 	}
 
@@ -99,21 +132,23 @@ func (perspective *Perspective) pruneMeasurements(now time.Time) {
 
 	ttl := config.System.PerspectiveTTL
 	write := 0
+	measurements := perspective.measurements
+	observedAt := perspective.observedAt
 
-	for index, measurement := range perspective.measurements {
-		observedAt := perspective.observedAt[index]
+	for index, measurement := range measurements {
+		observedAtValue := observedAt[index]
 
-		if ttl > 0 && !observedAt.IsZero() && observedAt.Before(now.Add(-ttl)) {
+		if ttl > 0 && !observedAtValue.IsZero() && observedAtValue.Before(now.Add(-ttl)) {
 			continue
 		}
 
-		perspective.measurements[write] = measurement
-		perspective.observedAt[write] = observedAt
+		measurements[write] = measurement
+		observedAt[write] = observedAtValue
 		write++
 	}
 
-	perspective.measurements = perspective.measurements[:write]
-	perspective.observedAt = perspective.observedAt[:write]
+	perspective.measurements = measurements[:write]
+	perspective.observedAt = observedAt[:write]
 
 	limit := config.System.MaxPerspectiveMeasurements
 
@@ -137,7 +172,14 @@ predictions on every batch, not only on entry. Trade selectivity lives
 downstream in tryEnter's edge gate, not here.
 */
 func (perspective *Perspective) Predict(kind engine.PerspectiveType) (engine.Prediction, error) {
-	perspective.pruneMeasurements(time.Now())
+	if perspective == nil {
+		return engine.Prediction{}, ErrNotReady
+	}
+
+	perspective.mu.Lock()
+	defer perspective.mu.Unlock()
+
+	perspective.pruneMeasurementsLocked(time.Now())
 
 	if len(perspective.measurements) == 0 {
 		return engine.Prediction{}, ErrNotReady

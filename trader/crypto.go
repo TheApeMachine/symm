@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -28,23 +29,26 @@ type bucketKey struct {
 Crypto combines measurements into perspectives, records predictions, and enters trades.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q
-	broadcasts   map[string]*qpool.BroadcastGroup
-	subscribers  map[string]*qpool.Subscriber
-	wallet       *wallet.Wallet
-	forecasts    *price.Prediction
-	perspectives map[bucketKey]*Perspective
-	predictions  []*engine.Prediction
-	kellySizer   *KellySizer
-	risk         *riskAccount
-	gaugeAvg     *confidenceAverages
-	calibrator   *sourceCalibrator
-	shock        *regimeShockBreaker
-	execution    *executionManager
-	pumpPeak     map[string]float64
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	wallet         *wallet.Wallet
+	forecasts      *price.Prediction
+	perspectives   map[bucketKey]*Perspective
+	perspectivesMu sync.RWMutex
+	predictions    []*engine.Prediction
+	kellySizer     *KellySizer
+	risk           *riskAccount
+	gaugeAvg       *confidenceAverages
+	calibrator     *sourceCalibrator
+	shock          *regimeShockBreaker
+	execution      *executionManager
+	hindsight      *hindsightTracker
+	pulseSeq       atomic.Uint64
+	pumpPeak       map[string]float64
 }
 
 func NewCrypto(
@@ -71,6 +75,7 @@ func NewCrypto(
 		gaugeAvg:     newConfidenceAverages(),
 		calibrator:   newSourceCalibrator(shock),
 		shock:        shock,
+		hindsight:    newHindsightTracker(),
 		pumpPeak:     make(map[string]float64),
 	}
 	crypto.execution = newExecutionManager(crypto)
@@ -135,6 +140,7 @@ func (crypto *Crypto) Tick() error {
 			case <-ticker.C:
 				crypto.attachWalletMarks()
 				crypto.sendWallet()
+				crypto.emitEnginePulse("idle")
 			}
 		}
 	})
@@ -209,6 +215,15 @@ func (crypto *Crypto) Tick() error {
 					"regime":           feedback.Regime,
 					"trust":            crypto.calibratorTrust(feedback.Source),
 				})
+
+				if crypto.hindsight == nil {
+					errnie.Error(fmt.Errorf("hindsight tracker missing"))
+					continue
+				}
+
+				if err := crypto.hindsight.Settle(feedback); err != nil {
+					errnie.Error(err)
+				}
 			case raw, ok := <-crypto.subscribers["executions"].Incoming:
 				if !ok {
 					errnie.Error(fmt.Errorf("crypto executions channel closed"))
@@ -338,24 +353,31 @@ func (crypto *Crypto) ingestMeasurement(raw any) error {
 	crypto.settlePredictions()
 
 	key := bucketKey{symbol: symbol, ptype: perspectiveType(measurement)}
+
+	crypto.perspectivesMu.Lock()
 	bucket := crypto.perspectives[key]
 
 	if bucket == nil {
 		bucket = NewPerspective([]engine.Measurement{measurement})
 		crypto.perspectives[key] = bucket
+		crypto.perspectivesMu.Unlock()
 	} else {
+		crypto.perspectivesMu.Unlock()
 		bucket.AddMeasurement(measurement)
 	}
 
 	audit("perspective_accumulate", map[string]any{
 		"symbol":                 symbol,
 		"perspective_type":       key.ptype,
-		"measurement_count":      len(bucket.measurements),
+		"measurement_count":      bucket.measurementCount(),
 		"source":                 measurement.Source,
 		"measurement_confidence": measurement.Confidence,
 	})
 
-	return crypto.tryPerspective(key, bucket)
+	err := crypto.tryPerspective(key, bucket)
+	crypto.emitEnginePulse("scan")
+
+	return err
 }
 
 /*
@@ -383,7 +405,7 @@ func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) er
 		audit("perspective_not_ready", map[string]any{
 			"symbol":            key.symbol,
 			"perspective_type":  key.ptype,
-			"measurement_count": len(perspective.measurements),
+			"measurement_count": perspective.measurementCount(),
 			"error":             err.Error(),
 		})
 

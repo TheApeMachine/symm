@@ -64,6 +64,7 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 	now := time.Now()
 	prediction.Perspective.Regime = crypto.risk.MarketRegime(symbol)
 	record := crypto.forecasts.RecordPerspective(symbol, prediction.Perspective, now)
+	requirement := crypto.entryReturnRequirement(symbol, lead)
 
 	prediction.ExpectedReturn = record.PredictedReturn
 	prediction.PredictedAt = record.PredictedAt
@@ -71,37 +72,34 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 	prediction.DueAt = record.DueAt
 
 	if record.Source == "" {
-		audit("trade_entry_skip", map[string]any{
+		crypto.recordEntrySkip(prediction, "prediction_record_empty", map[string]any{
 			"symbol": symbol,
-			"reason": "prediction_record_empty",
 		})
 
 		return nil
 	}
 
-	audit("perspective_ready", map[string]any{
-		"symbol":            symbol,
-		"confidence":        prediction.Confidence,
-		"predicted_return":  record.PredictedReturn,
-		"direction":         prediction.Direction,
-		"runway_ms":         record.Runway.Milliseconds(),
-		"perspective_type":  prediction.Perspective.Type,
-		"measurement_count": len(prediction.Perspective.Measurements),
-		"fresh":             record.Fresh,
-		"tradable":          record.Tradable,
-		"contributions":     record.Contributions,
-	})
+	fields := requirement.auditFields(symbol, record.PredictedReturn)
+	fields["source"] = record.Source
+	fields["confidence"] = prediction.Confidence
+	fields["direction"] = prediction.Direction
+	fields["runway_ms"] = record.Runway.Milliseconds()
+	fields["perspective_type"] = prediction.Perspective.Type
+	fields["measurement_count"] = len(prediction.Perspective.Measurements)
+	fields["fresh"] = record.Fresh
+	fields["tradable"] = record.Tradable
+	fields["contributions"] = record.Contributions
+
+	audit("perspective_ready", fields)
 
 	// Do not enter on a reused open forecast. Its anchor price and due time
 	// belong to an earlier market state; waiting for settlement keeps feedback
 	// flowing without letting stale confidence authorize a fresh position.
 	if !record.Fresh {
-		audit("trade_entry_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "open_prediction_pending",
-			"source": record.Source,
-			"due_at": record.DueAt.UTC().Format(time.RFC3339Nano),
-		})
+		fields := requirement.auditFields(symbol, record.PredictedReturn)
+		fields["source"] = record.Source
+		fields["due_at"] = record.DueAt.UTC().Format(time.RFC3339Nano)
+		crypto.recordEntrySkip(prediction, "open_prediction_pending", fields)
 
 		return nil
 	}
@@ -109,13 +107,10 @@ func (crypto *Crypto) actOnPrediction(prediction engine.Prediction) error {
 	crypto.predictions = append(crypto.predictions, &prediction)
 
 	if !record.Tradable {
-		audit("trade_entry_skip", map[string]any{
-			"symbol":           symbol,
-			"reason":           "forward_model_not_ready",
-			"source":           record.Source,
-			"predicted_return": record.PredictedReturn,
-			"contributions":    record.Contributions,
-		})
+		fields := requirement.auditFields(symbol, record.PredictedReturn)
+		fields["source"] = record.Source
+		fields["contributions"] = record.Contributions
+		crypto.recordEntrySkip(prediction, "forward_model_not_ready", fields)
 
 		return nil
 	}

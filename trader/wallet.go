@@ -35,14 +35,15 @@ func (crypto *Crypto) sendWallet() {
 	}
 
 	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":       "wallet",
-		"Currency":    snapshot.Currency,
-		"Balance":     snapshot.Balance,
-		"ReservedEUR": snapshot.ReservedEUR,
-		"FeePct":      snapshot.FeePct,
-		"Inventory":   inventory,
-		"AvgEntry":    avgEntry,
-		"Marks":       marks,
+		"event":            "wallet",
+		"Currency":         snapshot.Currency,
+		"Balance":          snapshot.Balance,
+		"ReservedEUR":      snapshot.ReservedEUR,
+		"FeePct":           snapshot.FeePct,
+		"Inventory":        inventory,
+		"AvgEntry":         avgEntry,
+		"Marks":            marks,
+		"gauge_confidence": crypto.gaugeAvg.Snapshot(),
 	}})
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)

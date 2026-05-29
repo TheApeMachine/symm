@@ -17,15 +17,13 @@ func (crypto *Crypto) tryEnter(
 	lead, ok := prediction.LeadMeasurement()
 
 	if !ok {
-		audit("trade_entry_skip", map[string]any{
-			"reason": "no_lead_measurement",
-		})
+		crypto.recordEntrySkip(prediction, "no_lead_measurement", nil)
 
 		return
 	}
 
 	symbol := lead.Pairs[0].Wsname
-	friction := entryFrictionReturn(lead)
+	requirement := crypto.entryReturnRequirement(symbol, lead)
 
 	pumpRegime := pumpRegimeOf(lead)
 
@@ -33,10 +31,11 @@ func (crypto *Crypto) tryEnter(
 		peak := crypto.pumpPeak[symbol]
 
 		if peak <= 0 {
-			audit("trade_entry_skip", map[string]any{
-				"symbol": symbol,
-				"reason": "pump_no_peak",
-			})
+			crypto.recordEntrySkip(
+				prediction,
+				"pump_no_peak",
+				requirement.auditFields(symbol, predictedReturn),
+			)
 
 			return
 		}
@@ -47,74 +46,60 @@ func (crypto *Crypto) tryEnter(
 		// PumpPullbackMax = the leg is dead. Enter only the re-spike dip.
 		if retrace < config.System.PumpPullbackMin ||
 			retrace > config.System.PumpPullbackMax {
-			audit("trade_entry_skip", map[string]any{
-				"symbol":  symbol,
-				"reason":  "pump_chase_guard",
-				"retrace": retrace,
-				"peak":    peak,
-				"last":    lead.Last,
-			})
+			fields := requirement.auditFields(symbol, predictedReturn)
+			fields["retrace"] = retrace
+			fields["peak"] = peak
+			fields["last"] = lead.Last
+			crypto.recordEntrySkip(prediction, "pump_chase_guard", fields)
 
 			return
 		}
 	}
 
-	edge := predictedReturn - friction
+	edge := requirement.edge(predictedReturn)
 	jointConfidence, sourceCount := engine.FuseMeasurements(prediction.Perspective.Measurements)
+	entryFields := requirement.auditFields(symbol, predictedReturn)
+	entryFields["confidence"] = prediction.Confidence
+	entryFields["joint_confidence"] = jointConfidence
+	entryFields["source_count"] = sourceCount
+	entryFields["open_count"] = crypto.openCount()
 
-	audit("trade_entry_eval", map[string]any{
-		"symbol":           symbol,
-		"predicted_return": predictedReturn,
-		"friction":         friction,
-		"edge":             edge,
-		"confidence":       prediction.Confidence,
-		"joint_confidence": jointConfidence,
-		"source_count":     sourceCount,
-		"open_count":       crypto.openCount(),
-	})
+	audit("trade_entry_eval", entryFields)
 
-	if predictedReturn < config.System.EntryEdgeMultiple*friction {
-		audit("trade_entry_skip", map[string]any{
-			"symbol":            symbol,
-			"reason":            "edge_below_threshold",
-			"edge":              edge,
-			"predicted_return":  predictedReturn,
-			"friction":          friction,
-			"required_multiple": config.System.EntryEdgeMultiple,
-		})
+	if predictedReturn < requirement.requiredEdgeReturn {
+		crypto.recordEntrySkip(
+			prediction,
+			"edge_below_threshold",
+			requirement.auditFields(symbol, predictedReturn),
+		)
 
 		return
 	}
 
-	stopFraction := crypto.stopFractionFor(symbol)
-
-	if predictedReturn < config.System.TakeProfitR*stopFraction {
-		audit("trade_entry_skip", map[string]any{
-			"symbol":           symbol,
-			"reason":           "r_multiple_below_threshold",
-			"predicted_return": predictedReturn,
-			"stop_fraction":    stopFraction,
-			"required_r":       config.System.TakeProfitR,
-		})
+	if predictedReturn < requirement.requiredRReturn {
+		crypto.recordEntrySkip(
+			prediction,
+			"r_multiple_below_threshold",
+			requirement.auditFields(symbol, predictedReturn),
+		)
 
 		return
 	}
 
 	if crypto.holdsSymbol(crypto.wallet, symbol) {
-		audit("trade_entry_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "already_open",
-		})
+		crypto.recordEntrySkip(
+			prediction,
+			"already_open",
+			requirement.auditFields(symbol, predictedReturn),
+		)
 
 		return
 	}
 
 	if err := crypto.preTradeGate(symbol, edge, jointConfidence); err != nil {
-		audit("trade_entry_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "risk_gate",
-			"error":  err.Error(),
-		})
+		fields := requirement.auditFields(symbol, predictedReturn)
+		fields["error"] = err.Error()
+		crypto.recordEntrySkip(prediction, "risk_gate", fields)
 
 		return
 	}
@@ -135,14 +120,12 @@ func (crypto *Crypto) tryEnter(
 	}
 
 	if slot < config.System.MinCostEUR {
-		audit("trade_entry_skip", map[string]any{
-			"symbol":           symbol,
-			"reason":           "slot_below_min",
-			"slot_eur":         slot,
-			"min_cost_eur":     config.System.MinCostEUR,
-			"joint_confidence": jointConfidence,
-			"source_count":     sourceCount,
-		})
+		fields := requirement.auditFields(symbol, predictedReturn)
+		fields["slot_eur"] = slot
+		fields["min_cost_eur"] = config.System.MinCostEUR
+		fields["joint_confidence"] = jointConfidence
+		fields["source_count"] = sourceCount
+		crypto.recordEntrySkip(prediction, "slot_below_min", fields)
 
 		return
 	}
@@ -206,10 +189,11 @@ func (crypto *Crypto) tryEnter(
 	}
 
 	if fill.Qty <= 0 {
-		audit("trade_entry_skip", map[string]any{
-			"symbol": symbol,
-			"reason": "empty_fill",
-		})
+		crypto.recordEntrySkip(
+			prediction,
+			"empty_fill",
+			requirement.auditFields(symbol, predictedReturn),
+		)
 
 		return
 	}
@@ -270,25 +254,22 @@ func (crypto *Crypto) tryEnter(
 		"take_profit": takeProfitPrice,
 	}})
 
-	audit("trade_entry_fill", map[string]any{
-		"symbol":           symbol,
-		"side":             fill.Side,
-		"qty":              fill.Qty,
-		"price":            fill.Price,
-		"slot_eur":         slot,
-		"edge":             edge,
-		"predicted_return": predictedReturn,
-		"stop_fraction":    stopFraction,
-		"take_profit":      takeProfitPrice,
-		"confidence":       prediction.Confidence,
-		"source_count":     sourceCount,
-		"dominant_source":  dominantSource(prediction.Perspective.Measurements),
-		"contributions":    sourceContributions(prediction.Perspective.Measurements),
-		"perspective_type": uint8(prediction.Perspective.Type),
-		"balance_eur":      crypto.wallet.BalanceCopy(),
-		"reserved_eur":     crypto.wallet.ReservedCopy(),
-		"open_count":       crypto.openCount(),
-	})
+	fillFields := requirement.auditFields(symbol, predictedReturn)
+	fillFields["side"] = fill.Side
+	fillFields["qty"] = fill.Qty
+	fillFields["price"] = fill.Price
+	fillFields["slot_eur"] = slot
+	fillFields["take_profit"] = takeProfitPrice
+	fillFields["confidence"] = prediction.Confidence
+	fillFields["source_count"] = sourceCount
+	fillFields["dominant_source"] = dominantSource(prediction.Perspective.Measurements)
+	fillFields["contributions"] = sourceContributions(prediction.Perspective.Measurements)
+	fillFields["perspective_type"] = uint8(prediction.Perspective.Type)
+	fillFields["balance_eur"] = crypto.wallet.BalanceCopy()
+	fillFields["reserved_eur"] = crypto.wallet.ReservedCopy()
+	fillFields["open_count"] = crypto.openCount()
+
+	audit("trade_entry_fill", fillFields)
 
 	crypto.sendWallet()
 }

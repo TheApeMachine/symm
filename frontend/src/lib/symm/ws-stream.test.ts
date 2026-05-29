@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { AuditDataProvider } from "#/components/symm/audit-data-provider";
+import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
+import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { routePayload } from "#/lib/symm/ws-stream";
 import { TickStore } from "#/lib/symm/tick-store";
@@ -20,6 +22,22 @@ describe("routePayload", () => {
 		});
 
 		expect(TickStore.snapshot()).toBe(2);
+		TickStore.reset();
+	});
+
+	it("does not reset tick count on hello frames", () => {
+		TickStore.reset();
+
+		routePayload({
+			event: "tick",
+			ts: "2026-05-28T01:10:10Z",
+		});
+		routePayload({
+			event: "hello",
+			ts: "2026-05-28T01:10:11Z",
+		});
+
+		expect(TickStore.snapshot()).toBe(1);
 		TickStore.reset();
 	});
 
@@ -50,19 +68,18 @@ describe("routePayload", () => {
 
 		routePayload({
 			event: "audit",
-			audit_event: "trade_entry_skip",
+			audit_event: "trade_entry_fill",
 			seq: 8,
 			ts: "2026-05-28T01:10:10Z",
 			symbol: "BTC/EUR",
-			reason: "edge_below_threshold",
-			edge: 0.004,
+			slot_eur: 10,
+			confidence: 0.9,
 		});
 
 		expect(AuditDataProvider.snapshot()[0]).toMatchObject({
 			seq: 8,
-			event: "trade_entry_skip",
+			event: "trade_entry_fill",
 			symbol: "BTC/EUR",
-			reason: "edge_below_threshold",
 		});
 		AuditDataProvider.reset();
 	});
@@ -94,5 +111,46 @@ describe("routePayload", () => {
 		expect(TradesDataProvider.snapshot()[0]?.markPrice).toBe(0.42);
 		TradesDataProvider.reset();
 		unregister();
+	});
+
+	it("routes engine pulse events to the prediction provider", () => {
+		PredictionsDataProvider.reset();
+
+		routePayload({
+			event: "engine_pulse",
+			seq: 7,
+			phase: "scan",
+			measurements: 3,
+			open: 0,
+			ts: "2026-05-28T01:10:10Z",
+			avg_prediction: 0.004,
+			avg_error: 0.001,
+		});
+
+		expect(PredictionsDataProvider.snapshot()).toMatchObject({
+			event: "engine_pulse",
+			seq: 7,
+			avg_prediction: 0.004,
+		});
+		PredictionsDataProvider.reset();
+	});
+
+	it("hydrates confidence gauges from wallet frames", () => {
+		ConfidenceDataProvider.reset();
+
+		routePayload({
+			event: "wallet",
+			Currency: "EUR",
+			Balance: 198.9,
+			Inventory: {},
+			AvgEntry: {},
+			Marks: {},
+			gauge_confidence: {
+				hawkes: 0.33,
+			},
+		});
+
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toBe(0.33);
+		ConfidenceDataProvider.reset();
 	});
 });
