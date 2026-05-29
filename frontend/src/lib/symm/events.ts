@@ -2,6 +2,7 @@
 
 export type SymmEventName =
 	| "hello"
+	| "audit"
 	| "heartbeat"
 	| "tick"
 	| "engine_pulse"
@@ -90,6 +91,15 @@ export type HeartbeatEvent = SymmEvent & {
 	dropped?: number;
 	dropped_delta?: number;
 	throttled?: boolean;
+};
+
+export type AuditEvent = SymmEvent & {
+	event: "audit";
+	seq: number;
+	audit_event: string;
+	symbol?: string;
+	source?: string;
+	reason?: string;
 };
 
 export type DecisionRow = {
@@ -261,6 +271,21 @@ export const isHeartbeatEvent = (raw: unknown): raw is HeartbeatEvent => {
 	const row = raw as Record<string, unknown>;
 
 	return row.event === "heartbeat" && typeof row.seq === "number";
+};
+
+export const isAuditEvent = (raw: unknown): raw is AuditEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return (
+		row.event === "audit" &&
+		typeof row.audit_event === "string" &&
+		typeof row.seq === "number" &&
+		typeof row.ts === "string"
+	);
 };
 
 export const isFieldRowEvent = (raw: unknown): raw is FieldRowEvent => {

@@ -3,13 +3,16 @@ package trader
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 )
 
@@ -64,6 +67,7 @@ func audit(event string, fields map[string]any) {
 	}
 
 	errnie.Info(string(payload))
+	publishAuditFrame(event, fields)
 	writeAuditLine(payload)
 }
 
@@ -77,7 +81,62 @@ var (
 	auditPath    string
 	auditOnce    sync.Once
 	auditInitErr error
+	auditSeq     atomic.Uint64
+
+	auditBroadcastMu sync.RWMutex
+	auditBroadcast   *qpool.BroadcastGroup
 )
+
+func setAuditBroadcast(group *qpool.BroadcastGroup) {
+	auditBroadcastMu.Lock()
+	auditBroadcast = group
+	auditBroadcastMu.Unlock()
+}
+
+func clearAuditBroadcast(group *qpool.BroadcastGroup) {
+	auditBroadcastMu.Lock()
+	defer auditBroadcastMu.Unlock()
+
+	if auditBroadcast == group {
+		auditBroadcast = nil
+	}
+}
+
+func publishAuditFrame(event string, fields map[string]any) {
+	if !realtimeAuditEvent(event) {
+		return
+	}
+
+	auditBroadcastMu.RLock()
+	group := auditBroadcast
+	auditBroadcastMu.RUnlock()
+
+	if group == nil {
+		return
+	}
+
+	frame := make(map[string]any, len(fields)+3)
+	maps.Copy(frame, fields)
+	frame["event"] = "audit"
+	frame["audit_event"] = event
+	frame["seq"] = auditSeq.Add(1)
+
+	group.Send(&qpool.QValue[any]{Value: frame})
+}
+
+func realtimeAuditEvent(event string) bool {
+	switch event {
+	case "trade_entry_fill",
+		"trade_entry_skip",
+		"trade_entry_error",
+		"trade_exit_fill",
+		"trade_exit_skip",
+		"trade_exit_error":
+		return true
+	default:
+		return false
+	}
+}
 
 func writeAuditLine(payload []byte) {
 	auditOnce.Do(initAuditWriter)

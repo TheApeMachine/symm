@@ -262,6 +262,11 @@ func (hub *Hub) shouldDrop(payload any) bool {
 		return false
 	}
 
+	switch frame["event"] {
+	case "audit", "prediction", "prediction_settled":
+		return false
+	}
+
 	symbol, hasSymbol := frame["symbol"].(string)
 
 	if !hasSymbol || symbol == "" {

@@ -101,20 +101,22 @@ class PredictionsDataProviderImpl {
 		});
 	}
 
-	private updateHorizon(pulseSec: number) {
+	private updateHorizon(pulseSec: number): number | undefined {
 		if (this.previousPulseSec === undefined) {
 			this.previousPulseSec = pulseSec;
-			return;
+			return undefined;
 		}
 
 		const observedHorizonSec = pulseSec - this.previousPulseSec;
 		this.previousPulseSec = pulseSec;
 
 		if (!Number.isFinite(observedHorizonSec) || observedHorizonSec <= 0) {
-			return;
+			return this.pulseHorizonSec;
 		}
 
 		this.pulseHorizonSec = observedHorizonSec;
+
+		return observedHorizonSec;
 	}
 
 	ingestPulse(raw: unknown) {
@@ -131,11 +133,19 @@ class PredictionsDataProviderImpl {
 			return;
 		}
 
+		const horizonSec = this.updateHorizon(pulseSec);
+
 		if (typeof raw.avg_prediction === "number") {
 			this.emitPoint("average", pulseSec, raw.avg_prediction);
+
+			if (horizonSec !== undefined) {
+				this.emitPoint("prediction", pulseSec + horizonSec, raw.avg_prediction);
+			}
 		}
 
-		this.updateHorizon(pulseSec);
+		if (typeof raw.avg_error === "number") {
+			this.emitPoint("error", pulseSec, raw.avg_error);
+		}
 	}
 
 	ingest(raw: unknown) {

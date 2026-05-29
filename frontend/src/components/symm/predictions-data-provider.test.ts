@@ -12,7 +12,7 @@ describe("PredictionsDataProvider", () => {
 		PredictionsDataProvider.reset();
 	});
 
-	it("plots the average prediction from each engine pulse at its own timestamp", () => {
+	it("plots engine pulse averages and the projected dashed prediction line", () => {
 		const readings: Array<{ kind: string; x: number; value: number }> = [];
 
 		const unregister = PredictionsDataProvider.registerSink((reading) => {
@@ -27,12 +27,32 @@ describe("PredictionsDataProvider", () => {
 			open: 2,
 			ts: firstAt,
 			avg_prediction: 0.005,
+			avg_error: 0.002,
+		});
+
+		PredictionsDataProvider.ingest({
+			event: "engine_pulse",
+			seq: 2,
+			phase: "scan",
+			measurements: 9,
+			open: 2,
+			ts: secondAt,
+			avg_prediction: 0.006,
+			avg_error: 0.003,
 		});
 
 		unregister();
 
 		expect(readings).toEqual([
 			{ kind: "average", x: firstSec, value: 0.005 },
+			{ kind: "error", x: firstSec, value: 0.002 },
+			{ kind: "average", x: secondSec, value: 0.006 },
+			{
+				kind: "prediction",
+				x: secondSec + (secondSec - firstSec),
+				value: 0.006,
+			},
+			{ kind: "error", x: secondSec, value: 0.003 },
 		]);
 	});
 

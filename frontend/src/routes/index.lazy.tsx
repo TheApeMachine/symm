@@ -1,6 +1,7 @@
 import { Suspense, lazy, useMemo } from "react";
 import { createLazyFileRoute } from "@tanstack/react-router";
 
+import { AuditPanel } from "#/components/audit";
 import { DashboardHeader } from "#/components/header";
 import { TradesPanel } from "#/components/trades";
 import {
@@ -84,6 +85,7 @@ const TradingDashboard = () => {
 					<section className="dashboard-secondary">
 						<div className="dashboard-trades-strip">
 							<TradesPanel />
+							<AuditPanel />
 						</div>
 						<Suspense fallback={<ChartFallback />}>
 							<FluidSurfaceChart />

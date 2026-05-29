@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from "react";
 
-import { ConnectionStore } from "#/lib/symm/connection-store";
+import { AuditDataProvider } from "#/components/symm/audit-data-provider";
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
-import { TickStore } from "#/lib/symm/tick-store";
-import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
+import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
+import { ConnectionStore } from "#/lib/symm/connection-store";
+import { TickStore } from "#/lib/symm/tick-store";
 
 export const useSymmConnected = () =>
 	useSyncExternalStore(
@@ -42,4 +43,11 @@ export const useSymmTradePanelRows = () =>
 		TradesDataProvider.subscribe,
 		TradesDataProvider.snapshot,
 		() => TradesDataProvider.snapshot(),
+	);
+
+export const useSymmAuditRows = () =>
+	useSyncExternalStore(
+		AuditDataProvider.subscribe,
+		AuditDataProvider.snapshot,
+		() => AuditDataProvider.snapshot(),
 	);

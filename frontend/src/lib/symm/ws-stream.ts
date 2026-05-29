@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
+import { AuditDataProvider } from "#/components/symm/audit-data-provider";
 import {
 	ConfidenceDataProvider,
 	isConfidenceRow,
@@ -12,6 +13,7 @@ import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
 import {
+	isAuditEvent,
 	isEnginePulseEvent,
 	isHeartbeatEvent,
 	isHelloEvent,
@@ -63,6 +65,11 @@ export const routePayload = (payload: unknown) => {
 
 	if (isHeartbeatEvent(payload)) {
 		TickStore.ingestHeartbeat(payload);
+		return;
+	}
+
+	if (isAuditEvent(payload)) {
+		AuditDataProvider.ingest(payload);
 		return;
 	}
 

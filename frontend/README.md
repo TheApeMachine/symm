@@ -1,8 +1,8 @@
 # SYMM Frontend
 
-The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header and the trades panel; the trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. Mark events also update the trade charts. When a browser reconnects, the backend replays the latest wallet and per-symbol mark snapshots; mark timestamps are used as chart x-values so empty or freshly reconnected charts do not fall back to the Unix epoch.
+The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header and the trades panel; the trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. The right rail splits trades and audit 50/50. The audit half receives realtime entry/exit decision events only (`trade_*_fill`, `trade_*_skip`, `trade_*_error`); high-volume measurement and perspective audit lines remain in the JSONL sidecar but do not stream to the dashboard. Trade charts consume candle rows only; raw mark ticks do not become synthetic candles.
 
-The prediction chart uses aggregate `engine_pulse` data only: solid green for `avg_prediction`, dashed orange for the same average projected one pulse interval into the next time frame, and a thin error line for `avg_error`. It does not render per-symbol forecast segments, prediction dots, or circular markers.
+The prediction chart uses aggregate `engine_pulse` data for the solid average line, the dashed orange average projected one pulse interval into the next time frame, and the thin error line. Per-symbol `prediction` and `prediction_settled` events are also accepted when available so forecast and realised cohorts stay aligned by their prediction timestamp.
 
 # Getting Started
 

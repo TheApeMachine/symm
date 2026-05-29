@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AuditDataProvider } from "#/components/symm/audit-data-provider";
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
 import { routePayload } from "#/lib/symm/ws-stream";
@@ -42,6 +43,28 @@ describe("routePayload", () => {
 			dropped: 2,
 		});
 		TickStore.reset();
+	});
+
+	it("routes audit events into the audit panel provider", () => {
+		AuditDataProvider.reset();
+
+		routePayload({
+			event: "audit",
+			audit_event: "trade_entry_skip",
+			seq: 8,
+			ts: "2026-05-28T01:10:10Z",
+			symbol: "BTC/EUR",
+			reason: "edge_below_threshold",
+			edge: 0.004,
+		});
+
+		expect(AuditDataProvider.snapshot()[0]).toMatchObject({
+			seq: 8,
+			event: "trade_entry_skip",
+			symbol: "BTC/EUR",
+			reason: "edge_below_threshold",
+		});
+		AuditDataProvider.reset();
 	});
 
 	it("routes mark events to trades without mutating candle history", () => {

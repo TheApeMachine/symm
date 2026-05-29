@@ -79,6 +79,7 @@ func NewCrypto(
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("crypto:"+channel, 128)
 	}
+	setAuditBroadcast(crypto.broadcasts["ui"])
 
 	crypto.broadcasts["orders"] = pool.CreateBroadcastGroup("orders", 10*time.Millisecond)
 	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
@@ -393,6 +394,7 @@ func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) er
 }
 
 func (crypto *Crypto) Close() error {
+	clearAuditBroadcast(crypto.broadcasts["ui"])
 	crypto.cancel()
 	return nil
 }
