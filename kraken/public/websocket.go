@@ -60,6 +60,17 @@ func (ws *WebSocket) Send(channel string, message any) error {
 }
 
 /*
+envelopeTyped is implemented by row types that need the channel envelope's "type"
+tag — for the book channel, "snapshot" versus "update". Stream hands the tag to any
+row that opts in; rows that do not implement it are decoded exactly as before. This
+is how the snapshot/delta distinction survives the generic decode instead of being
+discarded with the envelope.
+*/
+type envelopeTyped interface {
+	SetEnvelopeType(string)
+}
+
+/*
 Stream owns the single reader goroutine for a connected channel: it reads each
 frame, decodes the envelope, and unmarshals the data array into []T, emitting one
 *T per row on the returned channel. The connection's read loop and the typed
@@ -100,6 +111,10 @@ func Stream[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 				}
 
 				for index := range rows {
+					if tagged, ok := any(&rows[index]).(envelopeTyped); ok {
+						tagged.SetEnvelopeType(message.Type)
+					}
+
 					out <- &rows[index]
 				}
 			}

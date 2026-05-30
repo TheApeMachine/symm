@@ -7,9 +7,14 @@ type Tree struct {
 }
 
 /*
-Walk traverses the tree and returns the Action at the deepest reachable leaf,
-given measurements and active observation states. Branch thresholds on UnitSNR
-compare against Measurement.SNR supplied by the signal.
+Walk traverses the tree and returns the Action at the deepest reachable leaf the
+measurements and observations support. It does not stop at the first branch that
+yields an action: every branch is explored as far as the data allows, and the most
+specific verdict — the one gated behind the most confirmations — wins. Depth is the
+proxy for specificity because each extra level is another category or observation
+the measurements had to satisfy to get there. Ties in depth resolve to the earlier
+branch, so branch order still expresses priority among equally specific paths.
+Branch thresholds on UnitSNR compare against Measurement.SNR supplied by the signal.
 */
 func (tree *Tree) Walk(
 	measurements []Measurement,
@@ -19,36 +24,63 @@ func (tree *Tree) Walk(
 		return nil
 	}
 
-	for _, branch := range tree.Branches {
-		if action := branch.walk(measurements, observations); action != nil {
-			return action
+	action, _ := deepest(tree.Branches, measurements, observations)
+
+	return action
+}
+
+/*
+deepest returns the action at the deepest reachable leaf across a set of sibling
+branches and the depth (in branches) at which it was found. depth is -1 when no
+sibling yields an action. The first branch wins a depth tie, preserving order as
+priority among equally specific paths.
+*/
+func deepest(
+	branches []Branch,
+	measurements []Measurement,
+	observations []ObservationType,
+) (*ActionType, int) {
+	var best *ActionType
+	bestDepth := -1
+
+	for index := range branches {
+		action, depth := branches[index].walk(measurements, observations)
+
+		if action != nil && depth > bestDepth {
+			best = action
+			bestDepth = depth
 		}
 	}
 
-	return nil
+	return best, bestDepth
 }
 
+/*
+walk returns the action at the deepest reachable leaf under this branch and the
+depth of that leaf relative to this branch — 0 when the action is the branch's own
+fallback, deeper when a confirmed child supplies it. It returns (nil, -1) when the
+branch does not match or exposes no action, so a non-matching branch never competes
+on depth.
+*/
 func (branch *Branch) walk(
 	measurements []Measurement,
 	observations []ObservationType,
-) *ActionType {
+) (*ActionType, int) {
 	if !branch.matches(measurements, observations) {
-		return nil
+		return nil, -1
 	}
 
-	for _, child := range branch.Branches {
-		if action := child.walk(measurements, observations); action != nil {
-			return action
-		}
+	if action, depth := deepest(branch.Branches, measurements, observations); action != nil {
+		return action, depth + 1
 	}
 
 	if branch.Action == ActionNone {
-		return nil
+		return nil, -1
 	}
 
 	action := branch.Action
 
-	return &action
+	return &action, 0
 }
 
 func (branch *Branch) matches(

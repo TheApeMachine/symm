@@ -3,6 +3,7 @@ module github.com/theapemachine/symm
 go 1.26.1
 
 require (
+	github.com/bytedance/sonic v1.15.1
 	github.com/phuslu/log v1.0.124
 	github.com/qntfy/jsonparser v1.0.2
 	github.com/smartystreets/goconvey v1.8.1
@@ -13,7 +14,6 @@ require (
 require (
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
-	github.com/bytedance/sonic v1.15.1 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect

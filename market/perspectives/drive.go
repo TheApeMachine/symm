@@ -51,10 +51,14 @@ func (drive *DrivePerspective) Walk(measurements []Measurement) Perspective {
 }
 
 /*
-Decide returns ActionEnter when a drive reading clears the floor, else nil.
+Decide returns ActionEnter when a drive reading clears the floor, else nil. The
+drive playbook has no observation-gated leaves, so observations do not change its
+verdict; the parameter exists to satisfy the unified entry/exit Perspective contract.
 */
-func (drive *DrivePerspective) Decide(measurements []Measurement) *ActionType {
-	return drive.Tree.Walk(measurements, nil)
+func (drive *DrivePerspective) Decide(
+	measurements []Measurement, observations []ObservationType,
+) *ActionType {
+	return drive.Tree.Walk(measurements, observations)
 }
 
 func (drive *DrivePerspective) Regime() Regime {

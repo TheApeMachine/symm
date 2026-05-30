@@ -2,133 +2,106 @@ package toxicity
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
 Toxicity is the executed-flow book-quality service. It feeds the shared Tracker
-from the public L2 book joined against the public trade tape, splitting
-liquidity removals into fills vs cancels, and (via the package-level IsToxic)
-lets the weighted-book readers in depthflow/fluid exclude toxic near-touch
-walls. It is a service, not a perspectives source — it emits no measurements.
+from the public L2 book joined against the public trade tape, splitting liquidity
+removals into fills vs cancels, and (via the package-level IsToxic) lets the
+weighted-book readers in depthflow/fluid exclude toxic near-touch walls. It is a
+service, not a perspectives source — it emits no measurements.
+
+It consumes the same shared market subscriptions the live signals do
+(market.NewTradeSubscription / NewTickerSubscription / NewBookSubscription) rather
+than a separate qpool fan-out, so the book quality it tracks is the book the rest of
+the engine is actually reading.
 */
 type Toxicity struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	subscribers map[string]*qpool.Subscriber
-	tracker     *Tracker
+	ctx     context.Context
+	cancel  context.CancelFunc
+	pool    *qpool.Q
+	tracker *Tracker
 }
 
 func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	ctx, cancel := context.WithCancel(ctx)
 
-	tox := &Toxicity{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: make(map[string]*qpool.Subscriber),
-		tracker:     Default(),
+	return &Toxicity{
+		ctx:     ctx,
+		cancel:  cancel,
+		pool:    pool,
+		tracker: Default(),
 	}
-
-	for _, channel := range []string{"trades", "tick", "book"} {
-		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		tox.subscribers[channel] = group.Subscribe("toxicity:"+channel, 128)
-	}
-
-	return tox
 }
 
+/*
+Tick joins the live trade tape, ticker, and L2 book onto the shared Tracker. A trade
+is executed flow, a ticker refreshes the mid the tracker prices removals against, and
+each book level is a maker action — a zero-quantity level is liquidity leaving, which
+the tracker splits into a fill or a cancel.
+*/
 func (tox *Toxicity) Tick() error {
-	var wg sync.WaitGroup
+	symbols := config.System.Symbols
+	trades := market.NewTradeSubscription(tox.ctx, symbols...)
+	ticks := market.NewTickerSubscription(tox.ctx, symbols...)
+	books := market.NewBookSubscription(tox.ctx, config.System.BookDepthLevels, symbols...)
 
-	wg.Go(func() { tox.consumeTrades() })
-	wg.Go(func() { tox.consumeTicks() })
-	wg.Go(func() { tox.consumeBook() })
-
-	wg.Wait()
-	return tox.ctx.Err()
-}
-
-func (tox *Toxicity) consumeTrades() {
 	for {
 		select {
 		case <-tox.ctx.Done():
-			return
-		case value, ok := <-tox.subscribers["trades"].Incoming:
+			return tox.ctx.Err()
+		case trade, ok := <-trades:
 			if !ok {
-				errnie.Error(fmt.Errorf("toxicity trades channel closed"))
-				return
-			}
+				trades = nil
 
-			trades, tradesOK := value.Value.([]market.TradeUpdate)
-
-			if !tradesOK {
 				continue
 			}
 
-			for _, tick := range trades {
-				tox.tracker.ObserveTrade(tick.Symbol, market.Pair{}, tick.Price, tick.Qty, tick.Timestamp)
+			if trade != nil {
+				tox.observeTrade(*trade)
+			}
+		case row, ok := <-ticks:
+			if !ok {
+				ticks = nil
+
+				continue
+			}
+
+			if row != nil {
+				tox.tracker.ObserveMid(row.Symbol, market.Pair{}, midOf(*row))
+			}
+		case update, ok := <-books:
+			if !ok {
+				books = nil
+
+				continue
+			}
+
+			if update != nil {
+				tox.observeBook(*update)
 			}
 		}
 	}
 }
 
-func (tox *Toxicity) consumeTicks() {
-	for {
-		select {
-		case <-tox.ctx.Done():
-			return
-		case value, ok := <-tox.subscribers["tick"].Incoming:
-			if !ok {
-				errnie.Error(fmt.Errorf("toxicity tick channel closed"))
-				return
-			}
-
-			row, rowOK := value.Value.(market.TickerUpdate)
-
-			if !rowOK {
-				continue
-			}
-
-			tox.tracker.ObserveMid(row.Symbol, market.Pair{}, midOf(row))
-		}
-	}
+func (tox *Toxicity) observeTrade(trade market.TradeUpdate) {
+	tox.tracker.ObserveTrade(trade.Symbol, market.Pair{}, trade.Price, trade.Qty, trade.Timestamp)
 }
 
-func (tox *Toxicity) consumeBook() {
-	for {
-		select {
-		case <-tox.ctx.Done():
-			return
-		case value, ok := <-tox.subscribers["book"].Incoming:
-			if !ok {
-				errnie.Error(fmt.Errorf("toxicity book channel closed"))
-				return
-			}
+func (tox *Toxicity) observeBook(update market.BookUpdate) {
+	now := time.Now()
 
-			delta, deltaOK := value.Value.(market.BookUpdate)
+	for _, level := range update.Bids {
+		tox.tracker.ApplyBookLevel(update.Symbol, market.Pair{}, SideBid, level.Price, level.Qty, now)
+	}
 
-			if !deltaOK {
-				continue
-			}
-
-			now := time.Now()
-
-			for _, level := range delta.Bids {
-				tox.tracker.ApplyBookLevel(delta.Symbol, market.Pair{}, SideBid, level.Price, level.Qty, now)
-			}
-
-			for _, level := range delta.Asks {
-				tox.tracker.ApplyBookLevel(delta.Symbol, market.Pair{}, SideAsk, level.Price, level.Qty, now)
-			}
-		}
+	for _, level := range update.Asks {
+		tox.tracker.ApplyBookLevel(update.Symbol, market.Pair{}, SideAsk, level.Price, level.Qty, now)
 	}
 }
 

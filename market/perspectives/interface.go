@@ -25,7 +25,7 @@ structure from market/perspectives (e.g. NewPumpPerspective().Tree).
 */
 type Perspective interface {
 	Walk(measurements []Measurement) Perspective
-	Decide(measurements []Measurement) *ActionType
+	Decide(measurements []Measurement, observations []ObservationType) *ActionType
 	Regime() Regime
 	Confidence() float64
 }

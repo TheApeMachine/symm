@@ -1,6 +1,7 @@
 package depthflow
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -28,12 +30,17 @@ DepthSymbol owns the per-symbol book/flow state for one DepthFlow consumer and
 classifies book shape onto the weight-of-the-book perspective. SNR is each
 strength metric scored against its own running noise floor (adaptive.SNRField),
 so the reading is in noise-sigma units and comparable to every other signal.
+
+The order book is a maintained orderbook.Book, not the raw last delta: Kraken sends
+a snapshot then checksum-verified deltas, and folding each delta into the local book
+is what makes the imbalance and spoof reads correct. Reading the delta as if it were
+a whole book — the prior bug — discarded every level the delta did not mention.
 */
 type DepthSymbol struct {
 	mu          sync.RWMutex
 	symbol      string
-	bids        []market.BookLevel
-	asks        []market.BookLevel
+	book        *orderbook.Book
+	diverged    bool
 	last        float64
 	bid         float64
 	ask         float64
@@ -46,6 +53,7 @@ type DepthSymbol struct {
 func NewDepthSymbol(symbol string) *DepthSymbol {
 	return &DepthSymbol{
 		symbol:   symbol,
+		book:     orderbook.NewBook(config.System.BookDepthLevels),
 		pressure: adaptive.NewEMA(0),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
@@ -55,17 +63,46 @@ func NewDepthSymbol(symbol string) *DepthSymbol {
 	}
 }
 
-func (state *DepthSymbol) SetBook(bids, asks []market.BookLevel) {
+/*
+ApplyBook folds one book frame into the maintained local book — a snapshot replaces
+it, a delta is merged in with zero-qty levels removed — then verifies the exchange
+checksum against the result so a divergence is reported rather than fed silently into
+the imbalance read.
+*/
+func (state *DepthSymbol) ApplyBook(update market.BookUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if len(bids) > 0 {
-		state.bids = append(state.bids[:0:0], bids...)
+	state.applyFrameLocked(update)
+	state.verifyLocked(uint32(update.Checksum))
+}
+
+func (state *DepthSymbol) applyFrameLocked(update market.BookUpdate) {
+	if update.IsSnapshot() {
+		state.book.ApplySnapshot(update.BidLevels(), update.AskLevels())
+
+		return
 	}
 
-	if len(asks) > 0 {
-		state.asks = append(state.asks[:0:0], asks...)
+	state.book.ApplyDelta(update.BidLevels(), update.AskLevels())
+}
+
+// verifyLocked compares the maintained book against the exchange checksum, reporting
+// a divergence only on the transition into the diverged state so a persistent
+// mismatch does not spam the hot path. A divergence means a delta was missed or
+// misapplied; the book corrects itself on the next snapshot the feed sends.
+func (state *DepthSymbol) verifyLocked(checksum uint32) {
+	if checksum == 0 || !state.book.Ready() {
+		return
 	}
+
+	matches := state.book.Verify(checksum)
+
+	if !matches && !state.diverged {
+		errnie.Error(fmt.Errorf("depthflow: book checksum diverged for %s", state.symbol))
+	}
+
+	state.diverged = !matches
 }
 
 func (state *DepthSymbol) PushTradePressure(sign float64) (float64, error) {
@@ -87,7 +124,7 @@ func (state *DepthSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return len(state.bids) > 0 && len(state.asks) > 0
+	return state.book.Ready()
 }
 
 func (state *DepthSymbol) FeedTicker(row market.TickerUpdate) {
@@ -111,8 +148,8 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	bids := state.bids
-	asks := state.asks
+	bids := toMarketLevels(state.book.Bids())
+	asks := toMarketLevels(state.book.Asks())
 	mid := state.last
 
 	if len(bids) > 0 && len(asks) > 0 {
@@ -194,4 +231,16 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 		Category: depthflowCategory("trade_pressure", 0, 0, false),
 		SNR:      state.floors.Score("flow", flow),
 	}, true
+}
+
+// toMarketLevels converts maintained-book levels back to the market.BookLevel shape
+// the imbalance helpers consume.
+func toMarketLevels(levels []orderbook.Level) []market.BookLevel {
+	out := make([]market.BookLevel, len(levels))
+
+	for index, level := range levels {
+		out[index] = market.BookLevel{Price: level.Price, Qty: level.Qty}
+	}
+
+	return out
 }

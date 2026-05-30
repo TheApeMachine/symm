@@ -27,17 +27,7 @@ The Pump Perspective break down to the following decisions:
 */
 func NewPumpPerspective() *PumpPerspective {
 	return &PumpPerspective{
-		Tree: &Tree{
-			Branches: []Branch{
-				{
-					Category:  CategoryCoiledCompression,
-					Unit:      UnitSNR,
-					Condition: ConditionIsGreaterThan,
-					Value:     1.0,
-					Branches:  coiledCompression,
-				},
-			},
-		},
+		Tree: &Tree{Branches: pumpBranches},
 	}
 }
 
@@ -49,10 +39,14 @@ func (pump *PumpPerspective) Walk(measurements []Measurement) Perspective {
 	return pump
 }
 
-// Decide returns the Action at the deepest reachable leaf of the pump tree for
-// the current measurement set, or nil when no playbook path is traversable.
-func (pump *PumpPerspective) Decide(measurements []Measurement) *ActionType {
-	return pump.Tree.Walk(measurements, nil)
+// Decide returns the Action at the deepest reachable leaf of the pump tree for the
+// current measurement set and observation state, or nil when no playbook path is
+// traversable. Observations reach the position-management leaves; nil is the
+// flat-entry view.
+func (pump *PumpPerspective) Decide(
+	measurements []Measurement, observations []ObservationType,
+) *ActionType {
+	return pump.Tree.Walk(measurements, observations)
 }
 
 func (pump *PumpPerspective) Regime() Regime {
@@ -63,67 +57,53 @@ func (pump *PumpPerspective) Confidence() float64 {
 	return 0.0
 }
 
-var coiledCompression = []Branch{
+/*
+pumpBranches is the pump playbook as a decision tree. Each entry branch carries
+its own ActionEnter as the fallback, with deeper observation-gated branches that
+manage an already-open position. Every threshold is an SNR noise floor (1 = one
+sigma above the signal's own noise), so the tree is self-scaling, not tuned to
+fixed prices.
+
+  - Coiled compression clearing the floor is the slow-pump entry. While the
+    position is held and the move continues, the stop ratchets up; when the move
+    ends, profit is taken. A vertical-ignition confirmation under the same branch
+    is the flash-pump (still an entry).
+  - A spoof trap clearing the floor is an early entry; once held, a vertical
+    ignition is the cue to flip the long into a short.
+*/
+var pumpBranches = []Branch{
 	{
-		Category:  CategoryVerticalIgnition,
+		Category:  CategoryCoiledCompression,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
 		Value:     1.0,
 		Action:    ActionEnter,
 		Branches: []Branch{
 			{
-				Observation: ObservationHasContinued,
+				Observation: ObservationHolding,
 				Branches: []Branch{
-					{
-						Observation: ObservationHolding,
-						Action:      ActionStopLoss,
-					},
-					{
-						Observation: ObservationNotHolding,
-						Action:      ActionStopLoss,
-					},
+					{Observation: ObservationHasContinued, Action: ActionStopLoss},
+					{Observation: ObservationHasEnded, Action: ActionTakeProfit},
 				},
 			},
+		},
+	},
+	{
+		Category:  CategorySpoofTrap,
+		Unit:      UnitSNR,
+		Condition: ConditionIsGreaterThan,
+		Value:     1.0,
+		Action:    ActionEnter,
+		Branches: []Branch{
 			{
-				Category:  CategoryVerticalIgnition,
-				Unit:      UnitSNR,
-				Condition: ConditionIsGreaterThan,
-				Value:     1.0,
-				Action:    ActionEnter,
+				Observation: ObservationHolding,
 				Branches: []Branch{
 					{
-						Observation: ObservationHasContinued,
-						Branches: []Branch{
-							{
-								Observation: ObservationHolding,
-								Action:      ActionStopLoss,
-							},
-							{
-								Observation: ObservationNotHolding,
-								Action:      ActionStopLoss,
-							},
-						},
-					},
-				},
-			},
-			{
-				Action: ActionEnter,
-				Branches: []Branch{
-					{
-						Observation: ObservationHasContinued,
-						Branches: []Branch{
-							{
-								Observation: ObservationHolding,
-								Action:      ActionStopLoss,
-								Branches: []Branch{
-									{Category: CategoryVerticalIgnition, Action: ActionShort},
-								},
-							},
-							{
-								Observation: ObservationNotHolding,
-								Action:      ActionStopLoss,
-							},
-						},
+						Category:  CategoryVerticalIgnition,
+						Unit:      UnitSNR,
+						Condition: ConditionIsGreaterThan,
+						Value:     1.0,
+						Action:    ActionShort,
 					},
 				},
 			},

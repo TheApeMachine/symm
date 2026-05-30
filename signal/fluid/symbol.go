@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -18,14 +20,17 @@ FluidSymbol models one symbol's order book as a fluid field — divergence
 viscosity (spread), and a Reynolds number combining them — and maps that onto
 the mechanical perspective. SNR is the Reynolds number: a high-energy field
 clears the noise floor, a calm laminar one does not.
+
+The book is a maintained orderbook.Book. Liquidity flux — the field's vorticity
+input — is measured as the change between the local book before and after each frame
+is folded in, not between consecutive raw deltas, so it reflects genuine book churn
+rather than the size of whatever slice the feed happened to send.
 */
 type FluidSymbol struct {
 	mu          sync.RWMutex
 	symbol      string
-	bids        []market.BookLevel
-	asks        []market.BookLevel
-	prevBids    []market.BookLevel
-	prevAsks    []market.BookLevel
+	book        *orderbook.Book
+	diverged    bool
 	buyPressure float64
 	changePct   float64
 	volume      float64
@@ -48,6 +53,7 @@ const fracScaleAlpha = 0.05
 func NewFluidSymbol(symbol string) *FluidSymbol {
 	return &FluidSymbol{
 		symbol:   symbol,
+		book:     orderbook.NewBook(config.System.BookDepthLevels),
 		pressure: adaptive.NewEMA(0),
 		flux:     newFluxAccumulator(config.System.BookFluxWindow),
 		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
@@ -95,54 +101,26 @@ func (state *FluidSymbol) observePriceLocked(price float64) {
 	_ = state.fracScale.Update(math.Abs(value), fracScaleAlpha)
 }
 
-func (state *FluidSymbol) FeedBook(delta market.BookUpdate) {
+func (state *FluidSymbol) FeedBook(update market.BookUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.feedBookLocked(delta)
+	state.feedBookLocked(update)
 }
 
-func (state *FluidSymbol) feedBookLocked(delta market.BookUpdate) {
-	flux := 0.0
-	bidOK := len(delta.Bids) > 0
-	askOK := len(delta.Asks) > 0
+func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
+	beforeBids := state.book.Bids()
+	beforeAsks := state.book.Asks()
 
-	if len(state.prevBids) > 0 || len(state.prevAsks) > 0 {
-		if bidOK {
-			flux += sideChangeFlux(state.prevBids, delta.Bids)
-		}
+	state.applyFrameLocked(update)
+	state.verifyLocked(uint32(update.Checksum))
 
-		if askOK {
-			flux += sideChangeFlux(state.prevAsks, delta.Asks)
-		}
-	}
+	afterBids := state.book.Bids()
+	afterAsks := state.book.Asks()
 
-	if bidOK {
-		state.bids = append([]market.BookLevel(nil), delta.Bids...)
-		state.prevBids = append([]market.BookLevel(nil), delta.Bids...)
-	}
+	flux := sideChangeFlux(beforeBids, afterBids) + sideChangeFlux(beforeAsks, afterAsks)
 
-	if askOK {
-		state.asks = append([]market.BookLevel(nil), delta.Asks...)
-		state.prevAsks = append([]market.BookLevel(nil), delta.Asks...)
-	}
-
-	if len(state.bids) > 0 && len(state.asks) > 0 {
-		bid := state.bids[0].Price
-		ask := state.asks[0].Price
-		mid := (bid + ask) / 2
-
-		state.bid = bid
-		state.ask = ask
-
-		if state.last <= 0 && mid > 0 {
-			state.last = mid
-		}
-
-		if mid > 0 {
-			state.spreadBPS = (ask - bid) / mid * 10000
-		}
-	}
+	state.updateTouchLocked(afterBids, afterAsks)
 
 	if flux <= 0 {
 		return
@@ -151,7 +129,55 @@ func (state *FluidSymbol) feedBookLocked(delta market.BookUpdate) {
 	state.flux.addBook(time.Now(), flux)
 }
 
-func sideChangeFlux(previous, updated []market.BookLevel) float64 {
+func (state *FluidSymbol) applyFrameLocked(update market.BookUpdate) {
+	if update.IsSnapshot() {
+		state.book.ApplySnapshot(update.BidLevels(), update.AskLevels())
+
+		return
+	}
+
+	state.book.ApplyDelta(update.BidLevels(), update.AskLevels())
+}
+
+// verifyLocked compares the maintained book against the exchange checksum, reporting
+// a divergence only on the transition into the diverged state so a persistent
+// mismatch does not spam the hot path. The book corrects itself on the next snapshot.
+func (state *FluidSymbol) verifyLocked(checksum uint32) {
+	if checksum == 0 || !state.book.Ready() {
+		return
+	}
+
+	matches := state.book.Verify(checksum)
+
+	if !matches && !state.diverged {
+		errnie.Error(fmt.Errorf("fluid: book checksum diverged for %s", state.symbol))
+	}
+
+	state.diverged = !matches
+}
+
+func (state *FluidSymbol) updateTouchLocked(bids, asks []orderbook.Level) {
+	if len(bids) == 0 || len(asks) == 0 {
+		return
+	}
+
+	bid := bids[0].Price
+	ask := asks[0].Price
+	mid := (bid + ask) / 2
+
+	state.bid = bid
+	state.ask = ask
+
+	if state.last <= 0 && mid > 0 {
+		state.last = mid
+	}
+
+	if mid > 0 {
+		state.spreadBPS = (ask - bid) / mid * 10000
+	}
+}
+
+func sideChangeFlux(previous, updated []orderbook.Level) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))
 
 	for _, level := range previous {
@@ -202,7 +228,7 @@ func (state *FluidSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return len(state.bids) > 0 && len(state.asks) > 0
+	return state.book.Ready()
 }
 
 /*
@@ -266,19 +292,21 @@ func fluidCategory(divergence, turbulence, viscosity, reynolds float64) perspect
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {
+	bids := state.book.Bids()
+	asks := state.book.Asks()
 	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)
 
-	if len(state.bids) > 0 && len(state.asks) > 0 {
+	if len(bids) > 0 && len(asks) > 0 {
 		bidVolume := 0.0
 		askVolume := 0.0
 
-		for _, level := range state.bids {
+		for _, level := range bids {
 			bidVolume += level.Qty
 		}
 
-		for _, level := range state.asks {
+		for _, level := range asks {
 			askVolume += level.Qty
 		}
 

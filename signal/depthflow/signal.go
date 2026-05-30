@@ -84,7 +84,7 @@ func (signal *Signal) Tick() error {
 			}
 
 			if delta != nil {
-				signal.state(delta.Symbol).SetBook(delta.Bids, delta.Asks)
+				signal.state(delta.Symbol).ApplyBook(*delta)
 				signal.emit(delta.Symbol)
 			}
 		}
