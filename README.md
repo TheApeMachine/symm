@@ -294,7 +294,7 @@ Per-pair taker fees come from Kraken `AssetPairs` at boot (`market.LoadPairCatal
 
 Gauges display `Measurement.Strength` (raw signal energy). Playbook trees still gate on `SNR` after each signal's adaptive noise floor warms up (~12 samples per symbol).
 
-Live submission (`broker.SubmitLive`) is implemented but not wired into `Crypto.Tick` yet; paper and live share quote construction and fee math once live is enabled.
+Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk uses `wallet.CryptoWallet`, routes entries/exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), and records the same economics labels on exchange fills as paper does on `FillPaper`. Pending entries block duplicate signals until the fill or reject ack arrives.
 
 **Execution economics** (`trader/economics/`): every entry/exit/forward label records post-fee net returns per playbook. Enable pessimistic paper with `ExecutionStressEnabled` (stale quote age, shallow depth, Bernoulli rejects, toxicity-scaled adverse selection on the ask). Audit frames include `quote_age_ms`, `depth_coverage`, `playbook_econ_mean`, and `forward` events when the forward window matures.
 
@@ -413,8 +413,9 @@ cd frontend && pnpm install && pnpm dev
 |--------------------------|--------------------------------------------|
 | `SYMM_REPLAY_FILE`       | JSONL replay instead of live WebSocket     |
 | `SYMM_REPLAY_PACE`       | Delay between replay lines (e.g., `50ms`)  |
-| `SYMM_KRAKEN_API_KEY`    | Reserved for live order submission         |
-| `SYMM_KRAKEN_API_SECRET` | Paired with above                          |
+| `SYMM_KRAKEN_API_KEY`    | Kraken API key for live WebSocket v2 orders |
+| `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                  |
+| `SYMM_LIVE`              | `1` or `true` enables live desk + crypto wallet |
 | `SYMM_UI_ADDR`           | WebSocket listen address (default `:8765`) |
 | `SYMM_WALLET_EUR`        | Starting paper wallet (default `200.0`)    |
 | `SYMM_QUOTE_CURRENCY`    | Quote currency (default `EUR`)             |

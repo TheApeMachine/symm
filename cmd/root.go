@@ -27,7 +27,6 @@ import (
 	"github.com/theapemachine/symm/toxicity"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/view"
-	"github.com/theapemachine/symm/wallet"
 )
 
 var rootCmd = &cobra.Command{
@@ -83,12 +82,7 @@ var rootCmd = &cobra.Command{
 			trader.NewCrypto(
 				cmd.Context(),
 				pool,
-				wallet.NewWallet(
-					wallet.PaperWallet,
-					config.System.QuoteCurrency,
-					config.System.WalletEUR,
-					config.System.TakerFeePct,
-				),
+				newTradingWallet(),
 				tracker,
 			),
 			view.NewOHLC(cmd.Context(), pool, tracker),

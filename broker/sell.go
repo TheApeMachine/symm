@@ -18,6 +18,7 @@ type Sell struct {
 	LotDecimals    int
 	HasLotDecimals bool
 	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
+	ClOrdID        string
 }
 
 /*
@@ -127,14 +128,18 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 		return nil
 	}
 
-	clOrdID, err := order.NextClOrdID()
+	if sell.ClOrdID == "" {
+		clOrdID, err := order.NextClOrdID()
 
-	if err != nil {
-		return fmt.Errorf("generate cl_ord_id: %w", err)
+		if err != nil {
+			return fmt.Errorf("generate cl_ord_id: %w", err)
+		}
+
+		sell.ClOrdID = clOrdID
 	}
 
 	req := order.MarketSellBase(sell.Symbol, roundedQty, "")
-	req.Params.ClOrdID = clOrdID
+	req.Params.ClOrdID = sell.ClOrdID
 
 	return router.Publish(req)
 }
