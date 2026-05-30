@@ -10,10 +10,7 @@ import (
 )
 
 /*
-opportunity is the trader's cross-section-calibrated entry candidate. Score is the
-symbol's live thesis strength; Baseline and Spread are the current market's robust
-median and MAD, so Edge is how far this symbol stands above what the rest of the
-market is doing now.
+opportunity is the trader's cross-section-calibrated entry candidate.
 */
 type opportunity struct {
 	Symbol   string
@@ -40,26 +37,26 @@ func (crypto *Crypto) entryOpportunity(
 		return opportunity{}, false
 	}
 
-	score := thesisScore(measurements, len(names))
+	score := thesisScore(measurements, names)
 
 	if score <= 0 {
+		return opportunity{}, false
+	}
+
+	feePct := crypto.wallet.FeePct
+
+	if !entryClearsFriction(score, feePct) {
 		return opportunity{}, false
 	}
 
 	return opportunity{
 		Symbol:  symbol,
 		Score:   score,
-		Trigger: strongest(measurements),
+		Trigger: strongestPlaybook(measurements, names),
 		Names:   names,
 	}, true
 }
 
-/*
-marketCalibrated accepts only candidates that are outliers versus the current
-cross-section of all observed symbols. This keeps a broad, uniform warm-up signal
-from opening the entire wallet while still allowing several simultaneous entries
-when several symbols genuinely stand above the live market distribution.
-*/
 func (crypto *Crypto) marketCalibrated(candidate opportunity) bool {
 	_, ok := crypto.calibrateOpportunity(candidate)
 
@@ -85,13 +82,6 @@ func (crypto *Crypto) calibrateOpportunity(candidate opportunity) (opportunity, 
 	return candidate, candidate.Edge > 0
 }
 
-/*
-opportunityShare sizes a candidate by its positive edge as a share of all live
-thesis energy currently visible in the market. The denominator includes the whole
-observed cross-section, not just qualified candidates, so a single outlier does not
-automatically consume the whole wallet and later concurrent strategies still have
-capital to work with.
-*/
 func (crypto *Crypto) opportunityShare(candidate opportunity) float64 {
 	calibrated, ok := crypto.calibrateOpportunity(candidate)
 
@@ -136,9 +126,12 @@ func (crypto *Crypto) marketScores() []float64 {
 	now := time.Now()
 	scores := make([]float64, 0, len(crypto.readings))
 
-	for _, set := range crypto.readings {
+	for symbol, set := range crypto.readings {
 		measurements := snapshotTimedMeasurements(set, now)
-		scores = append(scores, thesisScore(measurements, 0))
+		names := entryNames(decision.Decisions(measurements, nil))
+		scores = append(scores, thesisScore(measurements, names))
+
+		_ = symbol
 	}
 
 	return scores
@@ -158,19 +151,24 @@ func entryNames(decisions []decision.Decision) []string {
 	return names
 }
 
+/*
+thesisScore aggregates SNR only from measurements relevant to the authorizing
+playbooks (categories those trees can read).
+*/
 func thesisScore(
 	measurements []perspectives.Measurement,
-	confirmations int,
+	playbookNames []string,
 ) float64 {
+	relevant := playbookCategories(playbookNames)
 	energy := 0.0
 	observations := 0
 
 	for _, measurement := range measurements {
-		strength := measurement.SNR
-
-		if strength <= 0 {
-			strength = measurement.Confidence
+		if len(relevant) > 0 && !relevant[measurement.Category] {
+			continue
 		}
+
+		strength := measurement.SNR
 
 		if strength <= 0 {
 			continue
@@ -186,11 +184,89 @@ func thesisScore(
 
 	score := math.Sqrt(energy / float64(observations))
 
-	if confirmations <= 1 {
+	if len(playbookNames) <= 1 {
 		return score
 	}
 
-	return score * math.Sqrt(float64(confirmations))
+	return score * math.Sqrt(float64(len(playbookNames)))
+}
+
+func playbookCategories(playbookNames []string) map[perspectives.CategoryType]bool {
+	if len(playbookNames) == 0 {
+		return nil
+	}
+
+	allowed := make(map[perspectives.CategoryType]bool)
+
+	for _, name := range playbookNames {
+		for _, category := range categoriesForPlaybook(name) {
+			allowed[category] = true
+		}
+	}
+
+	return allowed
+}
+
+func categoriesForPlaybook(name string) []perspectives.CategoryType {
+	switch perspectives.PlaybookName(name) {
+	case perspectives.PlaybookTrend:
+		return []perspectives.CategoryType{
+			perspectives.CategoryRiskOnSurge,
+			perspectives.CategoryDivergentMove,
+			perspectives.CategoryDecoupledAlpha,
+			perspectives.CategoryEndogenousAlpha,
+			perspectives.CategoryFrenzy,
+			perspectives.CategoryLaminar,
+			perspectives.CategoryInertial,
+			perspectives.CategoryAggressiveDrive,
+		}
+	case perspectives.PlaybookDrive:
+		return []perspectives.CategoryType{
+			perspectives.CategoryAggressiveDrive,
+			perspectives.CategoryHiddenAbsorption,
+		}
+	case perspectives.PlaybookLeadLag:
+		return []perspectives.CategoryType{
+			perspectives.CategoryRiskOnSurge,
+			perspectives.CategoryDivergentMove,
+			perspectives.CategoryDecoupledAlpha,
+			perspectives.CategoryInefficientLag,
+		}
+	case perspectives.PlaybookScarcity:
+		return []perspectives.CategoryType{
+			perspectives.CategoryExtremeScarcity,
+			perspectives.CategoryVerticalIgnition,
+			perspectives.CategoryCoiledCompression,
+		}
+	case perspectives.PlaybookPump:
+		return []perspectives.CategoryType{
+			perspectives.CategoryCoiledCompression,
+			perspectives.CategorySpoofTrap,
+			perspectives.CategoryVerticalIgnition,
+		}
+	default:
+		return nil
+	}
+}
+
+func strongestPlaybook(
+	measurements []perspectives.Measurement,
+	playbookNames []string,
+) perspectives.Measurement {
+	relevant := playbookCategories(playbookNames)
+	var best perspectives.Measurement
+
+	for _, measurement := range measurements {
+		if len(relevant) > 0 && !relevant[measurement.Category] {
+			continue
+		}
+
+		if measurement.SNR > best.SNR {
+			best = measurement
+		}
+	}
+
+	return best
 }
 
 func robustCenter(values []float64) (median, mad float64) {

@@ -102,10 +102,8 @@ func (branch *Branch) matches(
 	}
 
 	switch branch.Unit {
-	case UnitSNR:
+	case UnitSNR, UnitConfidence:
 		return matchesCondition(branch.Condition, measurement.SNR, branch.Value)
-	case UnitConfidence:
-		return matchesCondition(branch.Condition, measurement.Confidence, branch.Value)
 	default:
 		return true
 	}

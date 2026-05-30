@@ -3,43 +3,60 @@ package perspectives
 /*
 noiseFloorSNR is the boundary a category reading must clear to count as present
 rather than noise. SNR is a z-score each signal computes live against its own
-running noise floor, so 1.0 means "one sigma above this signal's own noise" — the
-canonical point where a reading stops being indistinguishable from the signal's
-baseline churn. It is not a tuned market value: the scaling is the signal's and
-moves with conditions. What separates one strategy from another is which categories
-it requires and how many must agree to reach a leaf, never a hand-picked threshold.
+running noise floor, so 1.0 means "one sigma above this signal's own noise".
 */
 const noiseFloorSNR = 1.0
 
 /*
-strategy is the shared decision-tree body every named playbook is built from. A
-playbook is just a branch set plus the regime it reads the market as; the walking,
-the entry/exit verdict, and the Perspective contract are identical across all of
-them and live here so each strategy file stays a declaration of its tree, not a
-re-implementation of the engine.
+strategy is the shared decision-tree body every named playbook uses. Entry and
+exit are separate trees so a decayed entry gate does not strand an open position.
 */
 type strategy struct {
-	tree   *Tree
+	name   PlaybookName
 	regime Regime
+	policy EntryPolicy
+	deny   *Tree
+	entry  *Tree
+	exit   *Tree
 }
 
 /*
-newStrategy builds a strategy perspective from a branch set and the regime it
-reads the market as.
+newStrategy builds a playbook with separate entry and exit trees.
 */
-func newStrategy(regime Regime, branches []Branch) *strategy {
+func newStrategy(
+	name PlaybookName,
+	regime Regime,
+	policy EntryPolicy,
+	entry []Branch,
+	exit Branch,
+) *strategy {
 	return &strategy{
-		tree:   &Tree{Branches: branches},
+		name:   name,
 		regime: regime,
+		policy: policy,
+		deny:   denyTreeFor(policy),
+		entry:  &Tree{Branches: entry},
+		exit:   &Tree{Branches: []Branch{exit}},
 	}
 }
 
+func (strat *strategy) Name() PlaybookName {
+	return strat.name
+}
+
+// DecideExit satisfies Perspective.
+func (strat *strategy) DecideExit(
+	measurements []Measurement,
+	observations []ObservationType,
+) *ActionType {
+	return strat.decideExit(measurements, observations)
+}
+
 /*
-Walk reports whether the playbook is traversable for the measurement set, returning
-the perspective itself when a leaf is reachable and nil when it is not.
+Walk reports whether the entry playbook is traversable while flat.
 */
 func (strat *strategy) Walk(measurements []Measurement) Perspective {
-	if strat.tree.Walk(measurements, nil) == nil {
+	if strat.entry.Walk(measurements, nil) == nil {
 		return nil
 	}
 
@@ -47,30 +64,75 @@ func (strat *strategy) Walk(measurements []Measurement) Perspective {
 }
 
 /*
-Decide returns the action at the deepest reachable leaf for the current measurements
-and observation state, or nil when no path is traversable. With no observations it is
-the flat-entry view; passing ObservationHolding reaches the exit-thesis leaves, so the
-same method that authorizes an entry also calls the exit — entries and exits are one
-continuously re-evaluated thesis, not two strategies.
+Decide returns an entry, exit, deny, or wait verdict for the measurement set.
 */
 func (strat *strategy) Decide(
-	measurements []Measurement, observations []ObservationType,
+	measurements []Measurement,
+	observations []ObservationType,
 ) *ActionType {
-	return strat.tree.Walk(measurements, observations)
+	if holding(observations) {
+		return strat.decideExit(measurements, observations)
+	}
+
+	return strat.decideEntry(measurements, observations)
 }
 
 func (strat *strategy) Regime() Regime {
 	return strat.regime
 }
 
-func (strat *strategy) Confidence() float64 {
-	return 0.0
+func (strat *strategy) decideEntry(
+	measurements []Measurement,
+	observations []ObservationType,
+) *ActionType {
+	if action := strat.deny.Walk(measurements, observations); action != nil {
+		if IsEntryBlocked(*action) {
+			return action
+		}
+	}
+
+	action := strat.entry.Walk(measurements, observations)
+
+	if action == nil || *action == ActionNone {
+		return nil
+	}
+
+	if IsEntryBlocked(*action) {
+		return action
+	}
+
+	if *action != ActionEnter {
+		return nil
+	}
+
+	return action
+}
+
+func (strat *strategy) decideExit(
+	measurements []Measurement,
+	observations []ObservationType,
+) *ActionType {
+	action := strat.exit.Walk(measurements, observations)
+
+	if action == nil || !IsExitAction(*action) {
+		return nil
+	}
+
+	return action
+}
+
+func holding(observations []ObservationType) bool {
+	for _, observation := range observations {
+		if observation == ObservationHolding {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
-snrBranch is a leaf that fires action once category clears its own noise floor. It
-is the atom every playbook is assembled from: a single category answering a single
-question with a single verdict.
+snrBranch is a leaf that fires action once category clears its own noise floor.
 */
 func snrBranch(category CategoryType, action ActionType) Branch {
 	return Branch{
@@ -83,12 +145,7 @@ func snrBranch(category CategoryType, action ActionType) Branch {
 }
 
 /*
-snrGate is a category that must be present above its noise floor to reach its
-children but carries no verdict of its own. It expresses a hard precondition: the
-path beyond it is dead unless this category confirms, and because each signal emits
-exactly one category at a time, requiring the confirming category also excludes its
-contradicting siblings (requiring HardSupport excludes ToxicBluff) with no need for
-negation.
+snrGate is a category that must be present above its noise floor to reach children.
 */
 func snrGate(category CategoryType, children ...Branch) Branch {
 	return Branch{
@@ -101,29 +158,20 @@ func snrGate(category CategoryType, children ...Branch) Branch {
 }
 
 /*
-entryBranch is a trigger category that authorizes entry on its own, while also
-carrying the position-management subtree that takes over once the trade is held.
-While flat the management subtree is unreachable (it is observation-gated) so the
-branch falls back to ActionEnter; once held, the deeper management leaves win.
+entryLeaf authorizes entry when its trigger category clears the floor.
 */
-func entryBranch(trigger CategoryType, management Branch) Branch {
+func entryLeaf(trigger CategoryType) Branch {
 	return Branch{
 		Category:  trigger,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
 		Value:     noiseFloorSNR,
 		Action:    ActionEnter,
-		Branches:  []Branch{management},
 	}
 }
 
 /*
-holdingExitBranch is the exit thesis shared by every entry playbook: once a position
-is held, an urgent decay category trips the stop, while softer ones harvest profit.
-It is reached only when ObservationHolding is active, so it never fires on a flat
-book, and it embodies the principle that entry and exit are one continuously
-re-evaluated thesis rather than two strategies — the same tree that opened the trade
-decides when its reason is gone.
+holdingExitBranch is the exit thesis reached only when ObservationHolding is active.
 */
 func holdingExitBranch(urgentStop CategoryType, softExits ...CategoryType) Branch {
 	children := []Branch{snrBranch(urgentStop, ActionStopLoss)}

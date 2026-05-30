@@ -53,7 +53,9 @@ position. Observational predictions for the same base must not close it.
 */
 type PositionBinding struct {
 	Source         string
+	Playbook       string // perspective that authorized entry (trend, drive, pump, …)
 	Regime         string // optional pump-regime tag (pump_fast / pump_slow); empty otherwise
+	EntryScore     float64
 	PredictedAt    time.Time
 	DueAt          time.Time
 	HasLotDecimals bool

@@ -41,6 +41,8 @@ type ActionType uint8
 const (
 	ActionNone ActionType = iota
 	ActionEnter
+	ActionDeny // hard block (manipulation, overheating, passenger move)
+	ActionWait // soft block (systemic slump — retry when breadth returns)
 	ActionStopLoss
 	ActionTakeProfit
 	ActionShort // flip an open long to a short

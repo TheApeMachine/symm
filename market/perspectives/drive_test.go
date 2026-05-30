@@ -35,6 +35,18 @@ func TestNewDrivePerspective(t *testing.T) {
 				convey.So(action, convey.ShouldBeNil)
 			})
 		})
+
+		convey.Convey("When holding and reversal fires", func() {
+			action := drive.DecideExit(
+				[]Measurement{measurement(CategoryActiveReversal, 1.3)},
+				[]ObservationType{ObservationHolding},
+			)
+
+			convey.Convey("It should stop out", func() {
+				convey.So(action, convey.ShouldNotBeNil)
+				convey.So(*action, convey.ShouldEqual, ActionStopLoss)
+			})
+		})
 	})
 }
 

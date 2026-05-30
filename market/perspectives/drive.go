@@ -1,52 +1,20 @@
 package perspectives
 
 /*
-DrivePerspective is the simplest tradable playbook: enter when executed order flow
-shows a one-sided drive (CVD's AggressiveDrive) or hidden accumulation
-(HiddenAbsorption) clearing that signal's own noise floor. It only authorizes
-entries; the trade desk owns the exit via the same global perspective pass with
-ObservationHolding.
+NewDrivePerspective builds the executed-flow playbook with manipulation denies and
+a full exit thesis (unlike the prior entry-only tree).
 */
-type DrivePerspective struct {
-	Tree *Tree
-}
-
-/*
-NewDrivePerspective builds the drive entry playbook.
-*/
-func NewDrivePerspective() *DrivePerspective {
-	return &DrivePerspective{
-		Tree: &Tree{Branches: []Branch{
-			snrBranch(CategoryAggressiveDrive, ActionEnter),
-			snrBranch(CategoryHiddenAbsorption, ActionEnter),
-		}},
-	}
-}
-
-func (drive *DrivePerspective) Walk(measurements []Measurement) Perspective {
-	if drive.Tree.Walk(measurements, nil) == nil {
-		return nil
+func NewDrivePerspective() *strategy {
+	entry := []Branch{
+		entryLeaf(CategoryAggressiveDrive),
+		entryLeaf(CategoryHiddenAbsorption),
 	}
 
-	return drive
-}
+	exit := holdingExitBranch(
+		CategoryActiveReversal,
+		CategoryThermalExhaustion,
+		CategoryMechanicalCollapse,
+	)
 
-/*
-Decide returns ActionEnter when a drive reading clears the floor, else nil. The
-drive playbook has no observation-gated leaves, so observations do not change its
-verdict; the parameter exists to satisfy the unified entry/exit Perspective contract.
-*/
-func (drive *DrivePerspective) Decide(
-	measurements []Measurement,
-	observations []ObservationType,
-) *ActionType {
-	return drive.Tree.Walk(measurements, observations)
-}
-
-func (drive *DrivePerspective) Regime() Regime {
-	return RegimeTrending
-}
-
-func (drive *DrivePerspective) Confidence() float64 {
-	return 0.0
+	return newStrategy(PlaybookDrive, RegimeTrending, EntryPolicyDrive, entry, exit)
 }

@@ -19,17 +19,9 @@ import (
 )
 
 /*
-Crypto is the trade desk. It is deliberately thin: the decision of whether to enter,
-hold, or leave a position is not made here — it is made by the perspectives system,
-which reads the live measurement set for a symbol and returns a verdict. The desk's
-only jobs are to keep each symbol's latest readings, ask the perspectives for the
-verdict, and turn that verdict into a paper order sized by the wallet's own policy.
-
-Entry and exit are the same thesis re-evaluated, not two strategies: a flat symbol is
-offered to the playbooks for an entry verdict, a held one is offered the identical
-playbooks with ObservationHolding for an exit verdict. Entry permission and sizing
-are calibrated against the currently observed cross-section; static config remains
-only for venue/risk boundaries such as minimum cost and prediction maturity.
+Crypto is the trade desk. Entry and exit verdicts come from the perspectives
+system; the desk records readings, applies cross-section sizing, friction gates,
+TTL, and pump trailing stops, then fills paper orders.
 */
 type Crypto struct {
 	ctx          context.Context
@@ -39,6 +31,8 @@ type Crypto struct {
 	ui           *qpool.BroadcastGroup
 	wallet       *wallet.Wallet
 	tracker      *focus.Set
+	story        *decision.Story
+	positions    *positionBook
 	mu           sync.RWMutex
 	readings     map[string]map[perspectives.SourceType]timedMeasurement
 	open         atomic.Int64
@@ -54,12 +48,14 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		wallet:   tradingWallet,
-		tracker:  tracker,
-		readings: make(map[string]map[perspectives.SourceType]timedMeasurement),
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		wallet:    tradingWallet,
+		tracker:   tracker,
+		story:     decision.NewStory(),
+		positions: newPositionBook(),
+		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 
 	group := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
@@ -69,13 +65,6 @@ func NewCrypto(
 	return crypto
 }
 
-/*
-Tick consumes the measurement bus directly: every reading is recorded and the
-affected symbol re-evaluated. The price the desk needs to size and fill rides in on
-the measurement itself, so there is no separate market feed. The wallet snapshot is
-republished on the configured heartbeat so a dashboard that connects late still sees
-the balance.
-*/
 func (crypto *Crypto) Tick() error {
 	heartbeat := time.NewTicker(config.System.UIHeartbeatInterval)
 	defer heartbeat.Stop()
@@ -108,8 +97,6 @@ func (crypto *Crypto) Close() error {
 	return nil
 }
 
-// ResendWallet publishes the current wallet snapshot so a freshly connected
-// dashboard shows the opening balance before any trade happens.
 func (crypto *Crypto) ResendWallet() {
 	crypto.publishWallet()
 }
@@ -128,9 +115,6 @@ func (crypto *Crypto) record(measurement perspectives.Measurement) {
 	set[measurement.Source] = newTimedMeasurement(measurement, set[measurement.Source])
 }
 
-// evaluate routes a symbol to the entry or the exit view of its perspective: a held
-// symbol is offered the playbooks with ObservationHolding for an exit verdict, a flat
-// one is offered them for an entry verdict.
 func (crypto *Crypto) evaluate(symbol string, last float64) {
 	measurements := crypto.snapshot(symbol)
 
@@ -150,9 +134,10 @@ func (crypto *Crypto) snapshot(symbol string) []perspectives.Measurement {
 	return snapshotTimedMeasurements(crypto.readings[symbol], time.Now())
 }
 
-// consider asks the playbooks for an entry verdict on a flat symbol and enters when
-// one authorizes it.
 func (crypto *Crypto) consider(symbol string, last float64, measurements []perspectives.Measurement) {
+	entryDecisions := decision.Decisions(measurements, nil)
+	crypto.story.RecordEntry(symbol, entryDecisions)
+
 	opportunity, ok := crypto.entryOpportunity(symbol, measurements)
 
 	if !ok {
@@ -168,25 +153,42 @@ func (crypto *Crypto) consider(symbol string, last float64, measurements []persp
 	crypto.enter(symbol, last, opportunity)
 }
 
-// manage asks the same playbooks for the exit verdict on a held symbol, walking them
-// with ObservationHolding. A stop, a take-profit, or a flip all close the position —
-// the reason the trade was opened deciding when it is closed.
 func (crypto *Crypto) manage(symbol string, last float64, measurements []perspectives.Measurement) {
-	action, _ := decision.Decide(measurements, []perspectives.ObservationType{perspectives.ObservationHolding})
+	base := baseOf(symbol)
+	binding, _ := crypto.wallet.PositionBindingFor(base)
+
+	if last > 0 {
+		crypto.positions.UpdatePeak(symbol, last)
+	}
+
+	if crypto.positions.PumpTrailBreached(symbol, last) {
+		crypto.exit(symbol, last, perspectives.ActionStopLoss, "pump trail breached")
+
+		return
+	}
+
+	if time.Now().After(binding.DueAt) {
+		crypto.exit(symbol, last, perspectives.ActionTakeProfit, "perspective TTL elapsed")
+
+		return
+	}
+
+	observations := []perspectives.ObservationType{perspectives.ObservationHolding}
+	softAllowed := time.Since(binding.PredictedAt) >= config.System.MinExhaustHold
+	exitDecisions := decision.ExitDecisions(
+		measurements, observations, binding.Playbook, softAllowed,
+	)
+	crypto.story.RecordExit(symbol, exitDecisions)
+
+	action := decision.MostUrgentExit(exitDecisions)
 
 	if action == nil {
 		return
 	}
 
-	switch *action {
-	case perspectives.ActionStopLoss, perspectives.ActionTakeProfit, perspectives.ActionShort:
-		crypto.exit(symbol, last, *action)
-	}
+	crypto.exit(symbol, last, *action, exitReason(*action))
 }
 
-// enter opens a paper position sized by the candidate's live cross-section edge.
-// Capital is split across currently qualified opportunities instead of a fixed
-// position count, while config.MinCostEUR remains the exchange-cost floor.
 func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity) {
 	if last <= 0 {
 		return
@@ -213,10 +215,20 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	}
 
 	now := time.Now()
+	playbook := primaryPlaybook(opportunity.Names)
+
 	crypto.wallet.BindPosition(baseOf(symbol), wallet.PositionBinding{
 		Source:      "perspective",
+		Playbook:    playbook,
+		EntryScore:  opportunity.Score,
 		PredictedAt: now,
 		DueAt:       now.Add(config.System.PerspectiveTTL),
+	})
+	crypto.positions.Open(symbol, positionState{
+		Playbook:   playbook,
+		EntryScore: opportunity.Score,
+		Peak:       last,
+		EntryAt:    now,
 	})
 	crypto.open.Add(1)
 	crypto.tracker.Add(symbol)
@@ -226,14 +238,19 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 		"conviction":   opportunity.Score,
 		"edge":         opportunity.Edge,
 		"perspectives": opportunity.Names,
+		"playbook":     playbook,
 		"slot_eur":     notional,
 	})
 	crypto.publishFill(fill)
 	crypto.publishWallet()
 }
 
-// exit closes the full position at the live price and settles the wallet.
-func (crypto *Crypto) exit(symbol string, last float64, action perspectives.ActionType) {
+func (crypto *Crypto) exit(
+	symbol string,
+	last float64,
+	action perspectives.ActionType,
+	reason string,
+) {
 	if last <= 0 {
 		return
 	}
@@ -260,20 +277,21 @@ func (crypto *Crypto) exit(symbol string, last float64, action perspectives.Acti
 	}
 
 	crypto.wallet.ClearPosition(base)
+	crypto.positions.Close(symbol)
 	crypto.open.Add(-1)
 	crypto.tracker.Remove(symbol)
 
 	realized := realizedReturn(entry, fill.Price)
-	crypto.publishAudit("exit", symbol, exitReason(action), map[string]any{
+	crypto.publishAudit("exit", symbol, reason, map[string]any{
 		"actual_return": realized,
 		"success":       realized > 0,
 		"held_ms":       time.Since(binding.PredictedAt).Milliseconds(),
+		"playbook":      binding.Playbook,
 	})
 	crypto.publishFill(fill)
 	crypto.publishWallet()
 }
 
-// slot sizes one entry as its share of the current positive opportunity edge.
 func (crypto *Crypto) slot(opportunity opportunity) float64 {
 	free := crypto.wallet.BalanceCopy()
 
@@ -290,18 +308,12 @@ func (crypto *Crypto) slot(opportunity opportunity) float64 {
 	return free * share
 }
 
-// strongest returns the highest-SNR reading in the set: the measurement that most
-// clears its own noise floor, taken as the trigger that authorized the entry.
-func strongest(measurements []perspectives.Measurement) perspectives.Measurement {
-	var best perspectives.Measurement
-
-	for _, measurement := range measurements {
-		if measurement.SNR > best.SNR {
-			best = measurement
-		}
+func primaryPlaybook(names []string) string {
+	if len(names) == 0 {
+		return ""
 	}
 
-	return best
+	return names[0]
 }
 
 func triggerLabel(trigger perspectives.Measurement) string {
@@ -321,7 +333,6 @@ func exitReason(action perspectives.ActionType) string {
 	}
 }
 
-// realizedReturn is the fractional move from entry to exit price.
 func realizedReturn(entry, exit float64) float64 {
 	if entry <= 0 {
 		return 0
@@ -330,8 +341,11 @@ func realizedReturn(entry, exit float64) float64 {
 	return (exit - entry) / entry
 }
 
-// publishAudit narrates a desk decision to the dashboard's audit log.
 func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map[string]any) {
+	if crypto.ui == nil {
+		return
+	}
+
 	frame := map[string]any{
 		"event":       "audit",
 		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
@@ -351,10 +365,18 @@ func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map
 }
 
 func (crypto *Crypto) publishFill(fill order.Fill) {
+	if crypto.ui == nil {
+		return
+	}
+
 	crypto.ui.Send(&qpool.QValue[any]{Value: fill})
 }
 
 func (crypto *Crypto) publishWallet() {
+	if crypto.ui == nil {
+		return
+	}
+
 	snapshot := crypto.wallet.Snapshot()
 
 	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -370,7 +392,6 @@ func (crypto *Crypto) publishWallet() {
 	}})
 }
 
-// baseOf returns the base currency of a "BASE/QUOTE" pair symbol.
 func baseOf(symbol string) string {
 	if base, _, found := strings.Cut(symbol, "/"); found {
 		return base

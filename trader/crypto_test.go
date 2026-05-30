@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/wallet"
@@ -12,9 +13,11 @@ import (
 
 func newTestCrypto() *Crypto {
 	return &Crypto{
-		wallet:   wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26),
-		tracker:  focus.NewSet(),
-		readings: make(map[string]map[perspectives.SourceType]timedMeasurement),
+		wallet:    wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26),
+		tracker:   focus.NewSet(),
+		story:     decision.NewStory(),
+		positions: newPositionBook(),
+		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 }
 
@@ -25,12 +28,11 @@ func traderMeasurement(
 	snr float64,
 ) perspectives.Measurement {
 	return perspectives.Measurement{
-		Symbol:     symbol,
-		Source:     source,
-		Category:   category,
-		SNR:        snr,
-		Confidence: snr,
-		Last:       100,
+		Symbol:   symbol,
+		Source:   source,
+		Category: category,
+		SNR:      snr,
+		Last:     100,
 	}
 }
 

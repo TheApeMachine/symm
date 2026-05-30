@@ -1,8 +1,8 @@
 # SYMM — Shake Your Money Maker
 
-A Kraken spot microstructure engine. Live market data flows through twelve independent signal systems, each emitting calibrated observations. A trader fuses those observations into perspectives, forecasts forward returns, and manages a wallet. Forecasts settle against realized prices, and the error feeds back into every signal that contributed — tightening their calibration without touching their logic.
+A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic category and scoring it against its own noise floor (SNR). The trader holds the latest reading per source per symbol, asks the perspective playbooks whether to enter or exit, and sizes entries against the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
 
-The default wallet is paper (€200). Point it at Kraken WebSocket v2 for live data; add API keys for real orders; or replay a JSONL fixture for offline analysis.
+Category semantics and the design rationale behind each signal row live in [`DECISION.md`](DECISION.md).
 
 ---
 
@@ -13,11 +13,10 @@ The default wallet is paper (€200). Point it at Kraken WebSocket v2 for live d
 - [Everything is a `System`](#everything-is-a-system)
 - [Boot sequence](#boot-sequence)
 - [Core types](#core-types)
+- [Perspectives and playbooks](#perspectives-and-playbooks)
 - [Signal systems](#signal-systems)
 - [Trader mechanics](#trader-mechanics)
-- [Prediction and feedback](#prediction-and-feedback)
-- [Risk and sizing](#risk-and-sizing)
-- [Calibration](#calibration)
+- [Sizing](#sizing)
 - [UI and telemetry](#ui-and-telemetry)
 - [Numeric layer](#numeric-layer)
 - [Build and run](#build-and-run)
@@ -30,87 +29,90 @@ The default wallet is paper (€200). Point it at Kraken WebSocket v2 for live d
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Kraken WebSocket v2                                             │
-│    tick · trade · book · symbols · ohlc                          │
+│  Kraken WebSocket v2 (shared feeds in kraken/market)             │
+│    trade · ticker · book · instruments · ohlc                    │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  qpool broadcast
+               │  one upstream per channel, fan-out to all signals
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  12 Signal Systems                                               │
+│  11 signals (signal/*) + toxicity (toxicity/ → measurements)    │
 │  pumpdump · depthflow · hawkes · leadlag · liquidity             │
-│  sentiment · correlation · fluid · causal · cvd · toxicity       │
-│  exhaust (exit-only)                                             │
+│  sentiment · correlation · fluid · causal · cvd · exhaust        │
+│  toxicity → shared book-quality service (no measurements)        │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  measurements broadcast
+               │  perspectives.Measurement on "measurements" bus
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Trader (Crypto)                                                 │
-│  bucket measurements by (symbol, perspective-type)               │
-│  fuse → predict → entry gates → broker → wallet                  │
+│  market — perspective playbooks (decision trees)                 │
+│  trend · drive · leadlag · scarcity · pump                       │
+└──────────────┬───────────────────────────────────────────────────┘
+               │  entry / exit verdicts
+               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  trader.Crypto                                                   │
+│  latest readings per (symbol, source) → Decide → paper fills     │
+│  cross-section edge calibration → wallet allocation              │
 └──────────────┬──────────────────────┬────────────────────────────┘
-               │  predictions         │  feedback broadcast
+               │  ui frames           │  focus.Set (open positions)
                ▼                      ▼
-┌─────────────────────┐   ┌────────────────────────────────────────┐
-│  price.Prediction   │   │  Every signal updates its calibrator   │
-│  settle at DueAt    │──►│  for each symbol/regime bucket         │
-│  emit feedback      │   └────────────────────────────────────────┘
-└─────────────────────┘
-               │  ui broadcast
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  ui.Hub  →  ws://127.0.0.1:8765/ws  →  React dashboard           │
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────────┐ ┌────────────────────────────────────┐
+│  view.Gauges · view.OHLC  │ │  ui.Hub → ws://127.0.0.1:8765/ws   │
+└───────────────────────────┘ │           → React dashboard        │
+                              └────────────────────────────────────┘
 ```
 
-SYMM is not a model. It is a **fleet of observers** — each signal is a standalone system with its own statistical machinery — plus a **trader** that fuses their outputs and a **prediction layer** that learns whether those fusions were right.
+SYMM is not a single model. It is a **fleet of classifiers** — each signal is a standalone system with its own adaptive machinery — plus a **market layer** that encodes trade theses as decision trees, and a **trader** that turns those theses into wallet events.
 
 ---
 
 ## The data pipeline
 
-This is the thing to understand. Everything else is support for this loop.
+This is the loop to understand. Everything else supports it.
 
 ```
-Kraken WS ──► Signals ──► measurements ──► Crypto (trader)
-                                │                │
-                                │                ├──► Perspective buckets
-                                │                ├──► Prediction.Record (always)
-                                │                └──► optional paper/live entry
-                                │
-                                ▼
-                     (Last, Bid, Ask on each Measurement)
-
-Prediction ◄── tick (settlement prices only)
-     │
-     └──► feedback ──► Signals.Feedback (calibrator scale)
+Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Last}
+                                    │
+                                    ▼
+                         trader: latest reading per source
+                                    │
+                                    ▼
+                         market.Decisions / Decide
+                           (perspective trees)
+                                    │
+                    ┌───────────────┴───────────────┐
+                    ▼                               ▼
+              flat → consider entry          held → manage exit
+                    │                               │
+                    └──────── broker.FillPaper ─────┘
+                                    │
+                                    ▼
+                              wallet + ui audit
 ```
 
-**Three key properties of this design:**
+**Three properties of this design:**
 
-1. **Predictions are always recorded**, not only on entry. Cold-start buckets accumulate evidence without risking capital; they start trading once they have ≥30 settled samples and statistically positive mean realized return.
+1. **Signals never call each other.** They subscribe to shared Kraken feeds and publish to the `measurements` broadcast. Coupling is only through categorized readings on the bus.
 
-2. **Feedback flows top-down.** `price.Prediction` is the single settlement authority. Each signal gets the realized return error for every settled forecast it contributed to, regardless of whether a trade was taken. This keeps calibration honest.
+2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks with `ObservationHolding`, which unlocks stop-loss and take-profit leaves in the tree. The reason the trade opened decides when it closes.
 
-3. **Signals never call each other.** They publish to named broadcast groups and subscribe from them. The only coupling is through the `measurements` and `feedback` channels.
+3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against an adaptive noise floor (`numeric/adaptive.SNR`). Perspective branches compare `Measurement.SNR` to a unitless floor (1 = one sigma above the signal's own baseline churn). Thresholds are self-scaling, not hand-tuned prices.
 
 ---
 
 ## Everything is a `System`
 
-Every runnable unit implements the same interface:
+Every runnable unit implements:
 
 ```go
 type System interface {
-    Start() error
-    State() State
     Tick() error
     Close() error
 }
 ```
 
-`Tick` is the long-running event loop. It spawns one goroutine per subscribed broadcast channel so that `tick`, `book`, `trade`, `feedback`, and control channels drain independently — no shared select, no head-of-line blocking.
+`Tick` is the long-running event loop. Signals typically `range` over a shared feed channel (`market.NewTradeSubscription`, `NewBookSubscription`, etc.); the trader and view systems `select` on broadcast subscribers and heartbeats.
 
-Registration lives in `cmd/root.go`. Systems do not call each other; they publish and subscribe through named broadcast groups on a shared `qpool.Q`.
+Registration lives in `cmd/root.go`. Systems communicate only through named broadcast groups on a shared `qpool.Q`. The booter starts `ui.Hub` first, then launches each system's `Tick` in its own goroutine; any fatal `Tick` error cancels the rest.
 
 ---
 
@@ -120,455 +122,190 @@ Registration lives in `cmd/root.go`. Systems do not call each other; they publis
 cmd.Execute()
   └─ rootCmd.Run
        ├─ create qpool (1 producer, NumCPU×4 workers)
-       ├─ instantiate all systems (ordered)
+       ├─ DiscoverSymbols(QuoteCurrency) → config.System.Symbols
+       ├─ focus.NewSet()  (shared open-position symbol set)
+       ├─ instantiate all systems
        └─ Booter.Boot()
             ├─ start ui.Hub on config.UIAddr (:8765)
-            ├─ for each System: Start() → ScheduleFast(Tick)
-            └─ wait; any Tick error cancels context → all Close()
+            ├─ ResendWallet() on systems that implement it
+            └─ for each System: go Tick(); wait; any error → Close all
 ```
 
 **System registration order:**
 
-| #  | System                      | Package         |
-|----|-----------------------------|-----------------|
-| 1  | Public client               | `kraken/client` |
-| 2  | PumpDump                    | `pumpdump`      |
-| 3  | Correlation                 | `correlation`   |
-| 4  | DepthFlow                   | `depthflow`     |
-| 5  | Hawkes                      | `hawkes`        |
-| 6  | LeadLag                     | `leadlag`       |
-| 7  | Liquidity                   | `liquidity`     |
-| 8  | Sentiment                   | `sentiment`     |
-| 9  | Fluid                       | `fluid`         |
-| 10 | Causal                      | `causal`        |
-| 11 | CVD                         | `cvd`           |
-| 12 | Toxicity                    | `toxicity`      |
-| 13 | Exhaust                     | `exhaust`       |
-| 14 | Prediction                  | `price`         |
-| 15 | Crypto (trader)             | `trader`        |
-| 16 | Private client *(optional)* | `kraken/client` |
-| 17 | L3 client *(optional)*      | `kraken/client` |
+| #  | System      | Package              |
+|----|-------------|----------------------|
+| 1  | PumpDump    | `signal/pumpdump`    |
+| 2  | Correlation | `signal/correlation` |
+| 3  | DepthFlow   | `signal/depthflow`   |
+| 4  | Hawkes      | `signal/hawkes`      |
+| 5  | LeadLag     | `signal/leadlag`     |
+| 6  | Liquidity   | `signal/liquidity`   |
+| 7  | Sentiment   | `signal/sentiment`   |
+| 8  | Fluid       | `signal/fluid`       |
+| 9  | Causal      | `signal/causal`      |
+| 10 | CVD         | `signal/cvd`         |
+| 11 | Toxicity    | `toxicity`           |
+| 12 | Exhaust     | `signal/exhaust`     |
+| 13 | Crypto      | `trader`             |
+| 14 | OHLC view   | `view`               |
+| 15 | Gauges view | `view`               |
 
-Private and L3 clients start only when API keys are configured. L3 powers the toxicity detector.
+There is no separate public-client system. Kraken connectivity lives in `kraken/market` as shared, auto-reconnecting feeds multiplexed across every subscriber.
+
+At startup, `market.DiscoverSymbols` replaces the symbol list with every online pair in the configured quote currency (default EUR), so signals watch the full tradable universe rather than a fixed watch list.
 
 ---
 
 ## Core types
 
-### 📐 Measurement
+### Measurement
 
-One signal's reading on one moment in the market.
+One signal's classified reading on one symbol at one moment.
 
 ```go
 type Measurement struct {
-    Type       MeasurementType  // Pump, Dump, Momentum, Flow, Causal, …
-    Source     string           // "pumpdump", "depthflow", "hawkes", …
-    Regime     string           // "pump_fast", "choppy", "dead", …
-    Reason     string           // "volume_spike", "imbalance_flip", …
-    Pairs      []asset.Pair     // symbol + quote currency
-    Confidence float64          // (0, 1): match strength against current criteria
-    Last       float64          // last trade price at emit time
-    Bid, Ask   float64          // best bid/ask at emit time
-    Timeframe  Timeframe        // nanosecond start/end
+    Symbol     string
+    Source     SourceType   // fluid, hawkes, pumpdump, cvd, toxicity, …
+    Category   CategoryType // semantic row from DECISION.md
+    SNR        float64      // strength vs the signal's own noise floor (sole score)
+    Last       float64      // last trade price at emit time (for sizing/fill)
 }
 ```
 
-> [!IMPORTANT]
-> `Confidence` is **not** a historical win rate. It is how completely the current observation matches this signal's criteria right now. History enters only through calibration and feedback — not through raw confidence values.
+Each signal emits exactly one category at a time. Requiring a category in a perspective tree implicitly excludes that signal's contradicting siblings — a CVD tree demanding `AggressiveDrive` will not see `StochasticBalance` on the same source simultaneously.
 
-`AnchorPrice()` returns `Last` if populated, otherwise the bid/ask midpoint. The trader uses this anchor — not its own tick feed — to price entries and predictions.
+Freshness is trader-local: the desk keeps the newest reading per `(symbol, source)` and drops stale slots based on each source's observed inter-arrival cadence.
 
-### 🗂️ Perspective
+### Perspective and Decision
 
-A fusion bucket: all measurements on the same `(symbol, perspective-type)` pair, accumulated in one batch.
+A perspective is a **playbook** — a static decision tree over categories and observations.
 
 ```go
-type Perspective struct {
-    Type         PerspectiveType    // Microstructure, Flow, CrossAsset, Sentiment
-    Measurements []Measurement
-    Regime       MarketRegime       // Unknown, Dead, Choppy, Trending, Bullish, Bearish
+type Decision struct {
+    Name        string          // "trend", "drive", "pump", …
+    Action      ActionType      // Enter, StopLoss, TakeProfit, Short
+    Perspective Perspective
 }
 ```
 
-**Perspective-type mapping:**
+`market.Decisions` returns every playbook that authorizes action for the current measurement set. `market.Decide` returns the first actionable verdict in fixed priority order (for callers that need one deterministic answer).
 
-| Measurement types     | Bucket                      | Fusion family  |
-|-----------------------|-----------------------------|----------------|
-| `Flow`, `DepthFlow`   | `PerspectiveFlow`           | cross_section  |
-| `Basis`, `LeadLag`    | `PerspectiveCrossAsset`     | independent    |
-| `Sentiment`, `Causal` | `PerspectiveSentiment`      | independent    |
-| Everything else       | `PerspectiveMicrostructure` | microstructure |
+**Actions:** `ActionEnter`, `ActionDeny`, `ActionWait`, `ActionStopLoss`, `ActionTakeProfit`, `ActionShort` (close long on flip cue).
 
-**Fusion logic** (`FuseMeasurements`): independent sources combine via noisy-OR. Sources in the same family (e.g., two microstructure signals) are down-weighted by 1/√k to avoid compounding correlated evidence. Final: `1 - ∏(1 - clamp(conf))^weight`.
+**Entry gates:** every standard playbook walks shared deny branches (toxic bluff, saturation, turbulent chaos, liquidity shock, systemic beta/herd, …). Pump allows `SpoofTrap` entries; trend/leadlag require breadth (`RiskOnSurge`, `DivergentMove`, or `DecoupledAlpha`).
 
-### 🔮 Prediction
+**Exit gates:** entry and exit trees are separate — decayed entry categories do not block exit leaves. `market.ExitDecisions` merges a universal exhaust overlay with the opening playbook's exit tree; the trader picks the most urgent action. `MinExhaustHold` suppresses soft take-profits; `PerspectiveTTL` forces exit when the thesis horizon expires; pump positions also ratchet on `PumpTrailPct` from peak price.
 
-A mature perspective, ready for trading decisions.
+---
 
-```go
-type Prediction struct {
-    Type           PredictionType
-    Perspective    Perspective
-    Confidence     float64
-    ExpectedReturn float64        // calibrated forecast (0 until bucket has ≥30 samples)
-    Direction      int            // -1 short, +1 long
-    Runway         time.Duration  // forecast validity window
-    DueAt          time.Time      // settlement time
-    PredictedAt    time.Time
-    Err            float64        // populated after settlement
-}
-```
+## Perspectives and playbooks
 
-### 📬 PredictionFeedback
+Playbooks live in `market/perspectives/` and are registered in priority order in `market/perspective.go`. Order is conviction-first: playbooks that demand more confirming categories before entry sit earlier, so the best-supported thesis wins when several apply.
 
-The realized outcome, emitted at `DueAt` by `price.Prediction`.
+| Priority | Playbook   | Thesis (summary)                                                                                                                                 |
+|----------|------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1        | `trend`    | Breadth + `EndogenousAlpha` + (`Frenzy`/`Laminar`/`Inertial`) + `AggressiveDrive`. Denies manipulation/overheating.                             |
+| 2        | `drive`    | `AggressiveDrive` or `HiddenAbsorption` with lighter denies; full exit thesis.                                                                   |
+| 3        | `leadlag`  | Breadth + `InefficientLag`; exit on `ActiveReversal`, `AnchorStall`, `SynchronizedDrift`.                                                        |
+| 4        | `scarcity` | `ExtremeScarcity` + ignition; exit on reversal, fade, or mechanical collapse.                                                                    |
+| 5        | `pump`     | `CoiledCompression` or `SpoofTrap` entry; category exits + trader peak trail (`PumpTrailPct`).                                                   |
 
-```go
-type PredictionFeedback struct {
-    Source, Sources  string, []string  // which signals contributed
-    Symbol, Regime   string
-    Confidence       float64
-    PredictedReturn  float64
-    ActualReturn     float64
-    Error            float64           // predicted - actual
-    Runway           time.Duration
-    PredictedAt, DueAt, SettledAt time.Time
-    Unanchored       bool              // true → skip calibration update
-}
-```
+**Tree walking:** at each branch, the tree checks whether the measurement set includes the required category with `SNR > 1`. Gates (`snrGate`) require a category but carry no action themselves. The deepest reachable leaf wins — more confirmations mean a more specific verdict. Full category names and signal mappings are in `market/perspectives/category.go` and [`DECISION.md`](DECISION.md).
 
 ---
 
 ## Signal systems
 
 Each signal follows the same contract:
-- Subscribe to `symbols`, `tick`/`book`/`trade` (as needed), `feedback`
-- Maintain per-symbol state under a mutex
-- Emit `Measurement` values to the `measurements` broadcast
-- Ingest `PredictionFeedback` to update its per-symbol `PredictionCalibrator`
 
----
+- Subscribe to the shared Kraken feeds it needs (`trade`, `ticker`, `book`, …)
+- Maintain per-symbol state
+- Fuse raw metrics through adaptive pipelines (`numeric.Classed`, EMA baselines, sigma clamps)
+- Emit `perspectives.Measurement` values on the `measurements` broadcast
 
-### 💥 PumpDump
+Signals classify into four-category families (see DECISION.md for semantics). Summaries:
 
-Detects rapid, directional volume surges.
+| Signal          | Package              | Categories (examples)                                                               | Feeds               |
+|-----------------|----------------------|-------------------------------------------------------------------------------------|---------------------|
+| **PumpDump**    | `signal/pumpdump`    | `vertical_ignition`, `coiled_compression`, `organic_trend`, `faded_exhaustion`      | trade               |
+| **DepthFlow**   | `signal/depthflow`   | `loaded_imbalance`, `spoof_trap`, `book_thinning`, `dense_neutrality`               | book                |
+| **Hawkes**      | `signal/hawkes`      | `frenzy`, `saturation`, `organic`, `exhaustion`                                     | trade               |
+| **LeadLag**     | `signal/leadlag`     | `inefficient_lag`, `synchronized_drift`, `decoupled_move`, `anchor_stall`           | trade, ticker       |
+| **Liquidity**   | `signal/liquidity`   | `extreme_scarcity`, `median_depth`, `robust_liquidity`                              | trade               |
+| **Sentiment**   | `signal/sentiment`   | `risk_on_surge`, `divergent_move`, `systemic_slump`                                 | trade               |
+| **Correlation** | `signal/correlation` | `decoupled_alpha`, `stochastic_noise`, `divergent_stress`, `systemic_herd`          | trade               |
+| **Fluid**       | `signal/fluid`       | `laminar`, `turbulent`, `inertial`, `viscous`                                       | book, trade, ticker |
+| **Causal**      | `signal/causal`      | `endogenous_alpha`, `systemic_beta`, `liquidity_shock`, `causal_noise`              | trade, book         |
+| **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade               |
+| **Toxicity**    | `toxicity`           | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade, ticker |
+| **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade, ticker |
 
-Three parallel detectors operate independently:
+**PumpDump** hunts verticality: volume lift (RVOL) and price precursor off a rolling window, self-scaled against per-symbol EMA baselines, fused and banded into ignition categories.
 
-| Detector        | Window | Trigger                                                            |
-|-----------------|--------|--------------------------------------------------------------------|
-| `fast_pump`     | 10 s   | 10s volume ÷ fast baseline ≥ `FastPumpVolumeRatio` (×15)           |
-| `actual_pump`   | 5 m    | 5m volume ÷ medium baseline above threshold                        |
-| `slow_breakout` | 1 h    | 1h volume ÷ 14-day median hourly volume ≥ `SlowRVOLThreshold` (×5) |
+**DepthFlow** applies distance-decayed book imbalance with anti-spoof filtering; toxic near-touch walls are excluded via the shared `toxicity.Tracker`.
 
-OHLC warm-up seeds the slow baseline via REST before the WebSocket stream is live. The peak tracker records per-symbol highs for the anti-chase guard in the trader.
+**Toxicity** joins the L2 book and trade tape to split liquidity removals into fills vs cancels, publishes book-quality measurements on the `measurements` bus, and still feeds `toxicity.IsToxic` into depthflow and fluid.
 
-**Anti-chase guard**: entry into a `pump_fast` regime requires a retrace from the tracked peak of at least `PumpPullbackMin` (3%) and at most `PumpPullbackMax` (20%). Below 3%: still chasing. Above 20%: the leg is over.
+**Hawkes** fits a bivariate self-exciting process on the trade stream; MLE refit is cooldown-throttled per symbol.
 
----
+**LeadLag** uses BTC/EUR as anchor; measures correlation and unfinished lag fraction for altcoin catch-up.
 
-### 📚 DepthFlow
+**Fluid** partitions book depth into a `FluidGridSize × FluidGridSize` grid, tracks field dynamics (Reynolds, divergence, vorticity, turbulence), and also publishes `field_row` frames to the UI bus.
 
-Distance-weighted order-book imbalance with anti-spoof filtering.
+**Causal** implements Pearl's ladder (association → intervention → counterfactual) on a microstructure DAG with Hayashi-Yoshida covariance and regime switching under contagion.
 
-- Aggregates bid/ask volumes across `BookDepthLevels` (5) levels
-- Applies exponential distance decay (`BookDepthDecayLambda = 1000 ms`) so deep walls weigh less than the touch
-- Rejects signals when flat or weighted skew contradicts the Level-1 touch (`SpoofWeightedThreshold`, `SpoofLevel1Reject`)
-- Emits `DepthFlow` measurements with bid depth, ask depth, and directional pressure
-
-Adverse `DepthFlow` or `Dump` measurements from this signal cancel resting maker bids in the trader.
-
----
-
-### ⚡ Hawkes
-
-Bivariate self-exciting point process fitted on the trade stream.
-
-Hawkes processes model how trade arrivals excite future arrivals: a burst of buys raises the intensity of subsequent buys. This captures clustering that moving averages miss.
-
-- Per-symbol ring of recent trades (capped slice)
-- Bivariate fit: separate buy/sell intensity with mutual excitation
-- MLE refit throttled by `HawkesFitCooldown` (5 s) to avoid churning on thin symbols
-- Per-symbol RWMutex allows cross-symbol parallelism
-- Emits `Momentum` measurements with current arrival intensity
-
----
-
-### 📡 LeadLag
-
-Altcoin catch-up signal using asynchronous cross-correlation.
-
-- BTC/EUR serves as the anchor asset
-- Peak detector fires on anchor moves; lag time to altcoin response is measured
-- Per-symbol 256-bar ring buffer; Pearson correlation computed at 200ms throttle (avoids O(ring × maxLag × symbols) explosion)
-- Emits `LeadLag` measurements: when BTC moves and an altcoin hasn't yet, the signal forecasts the catch-up
-
----
-
-### 💧 Liquidity
-
-Cross-section quote volume relative to peer median.
-
-- Tracks daily quote volume (sum of `trade volume × price`) per symbol
-- Compares against the running cross-section median
-- Emits `Liquidity` measurements; illiquid symbols get negative values
-- The prediction model learns whether low liquidity is a leading indicator for the symbol
-
----
-
-### 🌡️ Sentiment
-
-Breadth of bullish returns across the full symbol set.
-
-- Tracks per-symbol return since the last observation
-- A `Sentiment` measurement fires when the breadth (fraction of symbols up) exceeds `minBreadth` (0.55) and an anchor price move threshold is crossed
-- Designed as a macro overlay, not a per-symbol trigger
-
----
-
-### 🔗 Correlation
-
-Synchronized return correlation across asset pairs.
-
-- Maintains `CorrelationBarSeconds × MinCorrelationSamples` bar windows
-- Computes Pearson cross-symbol correlation matrix
-- Emits `Momentum` measurements when correlation exceeds threshold
-- Also feeds the portfolio risk gate: if two symbols have r > `MaxSymbolCorrelation` (0.85), a new entry for the second is blocked when `MaxCorrelatedSlots` (1) is already open
-
----
-
-### 🌊 Fluid
-
-Book-flow field dynamics using a spatial grid.
-
-- Partitions order-book depth into a `FluidGridSize × FluidGridSize` (32×32) grid
-- Tracks order residence time (time-of-flight) per price level
-- Height EMA smoothed at `FluidHeightEMAAlpha` (0.35)
-- Fill-to-cancel flux gate (`MinFillToCancelRatio = 0.15` over `BookFluxWindow = 10 s`) — the first snapshot is discarded so resting liquidity is not mistaken for cancel spam
-- Emits `Flow` measurements; also sends `field_row` frames directly to the UI
-
----
-
-### 🧪 Causal
-
-Pearl's causal ladder applied to microstructure data.
-
-Implements association → intervention → counterfactual reasoning on a small DAG:
-
-```
-MacroMomentum ──► PriceVelocity ◄── LocalFlow
-                       ▲
-                   Liquidity (backdoor control)
-```
-
-- Hayashi-Yoshida estimator for asynchronous covariance (handles irregular tick times)
-- Nonlinear ridge regression under structural breaks (Kalman-gated Q threshold: `CausalConditionSwitch = 1000`)
-- Contagion break detection (`CausalContagionBreak = 0.9`, `CausalContagionWindow = 128`)
-- The math layer operates on indexed DAG nodes, not finance-named fields
-- Emits `Causal` measurements with treatment effect estimates
-
----
-
-### 📊 CVD
-
-Cumulative Volume Delta — aggregate order-flow imbalance.
-
-- Tracks running buy volume minus sell volume across the trade stream
-- Simpler than DepthFlow (no book-level decay, purely trade-side)
-- Emits `Pump` or `Dump` measurements based on delta sign and magnitude
-- Complements DepthFlow: one reads the book, the other reads executed flow
-
----
-
-### ☠️ Toxicity
-
-Order-book toxicity via fill-to-cancel ratio.
-
-- Requires L3 (order-by-order) feed; disabled when `SYMM_KRAKEN_API_KEY` is absent
-- Monitors order add/cancel/fill events at individual order granularity
-- Low `fill_to_cancel` ratio signals spoof-heavy conditions
-- Emits `Momentum` measurements; high toxicity acts as a caution overlay
-
----
-
-### 🚪 Exhaust *(exit-only)*
-
-Detects when a position's microstructure support has degraded.
-
-Exhaust is the only signal that does not emit `Measurement` values to the `measurements` broadcast. It emits `Exit` signals directly to the `exits` channel.
-
-**Soft exits** (suppressed for `MinExhaustHold = 5 s` after entry):
-
-| Reason           | Trigger                                   |
-|------------------|-------------------------------------------|
-| `book_thinning`  | Order-book depth drops below threshold    |
-| `spread_widen`   | Bid-ask spread expands beyond normal band |
-| `imbalance_flip` | Book imbalance reverses sharply           |
-| `pressure_fade`  | Trade pressure decays below entry level   |
-
-**Hard exits** (always immediate):
-
-| Reason           | Trigger                                        |
-|------------------|------------------------------------------------|
-| `stop_hit`       | Price crosses stop level in `price.Prediction` |
-| `profit_target`  | Price reaches take-profit level                |
-| `runway_expired` | `DueAt` elapsed, no structural exit yet        |
-
-Peak exits (`imbalance_flip`, `pressure_fade` with urgency ≥ `ExitPeakUrgency`) emit a `peak_exit` UI event for immediate escape at the pump top. Urgency is a continuous `[0, 1]` value; only exits with urgency ≥ `ExitUrgencyThreshold` (0.65) reach the trader.
+**Exhaust** classifies microstructure decay modes; exit timing is decided by perspective trees (`ActionStopLoss` / `ActionTakeProfit`), not a separate exit channel.
 
 ---
 
 ## Trader mechanics
 
-`trader.Crypto` is the system that turns signal output into wallet events.
+`trader.Crypto` is deliberately thin. It does not score signals itself — the perspectives do.
 
 ### Measurement ingestion
 
-On each `measurements` message (coalescing any others already queued):
+On each `measurements` message:
 
-1. Observe price mark on the risk account
-2. Check and update regime shock state
-3. Apply per-source calibrator trust multiplier to raw confidence
-4. Emit confidence gauge event to UI
-5. Settle any predictions whose `DueAt` has passed
-6. Find or create the perspective bucket for `(symbol, perspective-type)`
-7. Add measurement to bucket
-8. Attempt perspective prediction
+1. **Record** the reading in `readings[symbol][source]`, replacing the prior category for that source
+2. **Snapshot** non-stale measurements for the symbol
+3. **Route** to entry (`consider`) or exit (`manage`) depending on whether the wallet holds the base asset
 
-### Entry gates (in order)
+### Entry path
 
-Before any position is opened, the candidate must clear every gate:
+1. `market.Decisions(measurements, nil)` — collect every playbook authorizing `ActionEnter` (deny/wait omitted)
+2. **Thesis score** — RMS of playbook-relevant SNRs, scaled by √confirmations when multiple playbooks agree
+3. **Friction gate** — require `thesisScore ≥ EntryEdgeMultiple × round_trip_friction` (fees + slippage)
+4. **Cross-section calibration** — compare the symbol's score to the robust median + MAD of all observed symbols; require positive edge
+5. **Size** — allocate cash proportional to edge share of total market score mass
+6. **Fill** — `broker.Buy.FillPaper` at `Last`; reject below `MinCostEUR`; bind `Playbook` + `PerspectiveTTL`
 
-| Gate                     | Default       | Description                                             |
-|--------------------------|---------------|---------------------------------------------------------|
-| Cold-start               | ≥30 samples   | Bucket must have settled enough forecasts               |
-| Statistical significance | z ≥ 1.96      | Mean realized return must be positive                   |
-| Edge multiple            | ≥2× friction  | `predictedReturn ≥ EntryEdgeMultiple × round-trip cost` |
-| Take-profit ratio        | ≥2R           | `predictedReturn ≥ TakeProfitR × stop_distance`         |
-| Spread cap               | configurable  | `spread_bps ≤ MaxSpreadBPS` (0 = disabled)              |
-| Slippage cap             | 50 bps        | Estimated fill slippage must be within bounds           |
-| Pump anti-chase          | 3–20% retrace | For `pump_fast` regime only                             |
-| Daily loss               | €20           | Running daily loss below limit                          |
-| Per-trade loss           | €2            | Worst-case loss on this position below limit            |
-| Drawdown                 | derived       | Portfolio drawdown below limit                          |
-| Correlation              | r ≤ 0.85      | At most one open position per correlation cluster       |
-| Portfolio dampener       | continuous    | Eigenmode covariance against open positions             |
+### Exit path
 
-The portfolio dampener applies a continuous multiplier derived from remaining drawdown capacity and the candidate's covariance with open symbols. It suppresses the executable edge without discarding the underlying forecast.
+For held symbols: enforce pump peak trail and `PerspectiveTTL`, then `market.ExitDecisions` with `ObservationHolding` (opening playbook + universal overlay). `MostUrgentExit` chooses stop before take-profit. Soft exits respect `MinExhaustHold`.
 
-### Execution path
+### Paper vs live
 
-**Paper (default):**
-- Immediate fill at ask + slippage for entries; bid − adverse-selection for exits
-- Friction model: taker fee both ways plus full bid-ask spread
-- No maker entries by default (`UseMakerEntries = false`)
+The current desk path calls `FillPaper` only. The `broker` package also implements `SubmitLive` for Kraken WebSocket v2 market orders (with optional OTO stop-loss-limit on entry); wiring live submission into `Crypto` is not yet in the boot path.
 
-**Live (API keys required):**
-- Market order via Kraken WebSocket v2 private client
-- Optional OTO stop-loss-limit attached at entry
-- Fill deduplication via LRU ring (4096 slots) prevents double-application
-- Maker fallback: after `ExecutionMakerFallbackTicks` (4) retries, falls back to market; only after cancel acknowledgement confirms the resting order is no longer live
+### Focus set
 
-### Regime shock breaker
-
-`regimeShockBreaker` watches shock-capable telemetry (`correlation`, `fluid`) against its own rolling median/MAD history. When a discontinuous outlier breaches 6σ:
-
-- Non-foundational sources are muted to `RegimeShockTrustFloor` (0.02)
-- Feedback learning for those sources is paused
-- Recovery requires `RegimeShockRecoverySamples` (64) consecutive non-shock samples
-- **Foundational sources** (`cvd`, `depthflow`) continue unaffected — the engine falls back to raw executed flow and book imbalance rather than stale parameterized fits
-
-### Hindsight audit
-
-Every entry *skip* decision is recorded against the same `(symbol, perspectiveSource, predictedAt, dueAt)` key used by `PredictionFeedback`. When the forecast settles, skipped entries are written to `runs/hindsight-*.jsonl` only if the realized forward return would have cleared the same economic gates used for entry. Post-due skip decisions are dropped. The row includes original skip reason, last valid skip reason, required return, return multiple, and realized ground truth — so tuning can distinguish genuinely actionable misses from noise.
+`focus.Set` tracks symbols with open positions. The trader adds on entry and removes on exit. `view.OHLC` reconciles candle streams against this set so chart data is only published for the anchor symbol (BTC/EUR) and symbols being traded.
 
 ---
 
-## Prediction and feedback
+## Sizing
 
-`price.Prediction` runs as its own long-lived worker. It is the **only** settlement authority.
-
-### Open prediction lifecycle
-
-1. **Record**: `RecordPerspective(symbol, perspective, now)` stores anchor price, runway, `DueAt`, and `predictedReturn` (0 during cold-start)
-2. **Observe**: every ticker arrival updates `quotes[symbol]` with `{last, bid, ask, event-time, local-time}`
-3. **Settle**: when `DueAt` passes, compute realized return against stored quote; populate `Err`
-4. **Emit**: `PredictionFeedback` on `feedback` broadcast
-
-### Return model
-
-`price.ReturnModel` learns per `(perspectiveSource, marketRegime)` bucket:
-- Input: `(calibrated confidence, observed forward return)` pairs
-- Requires `ForwardReturnMinSamples` (30) anchored settlements
-- Requires mean return passing z ≥ `ForwardReturnSignificanceZ` (1.96)
-- Until both conditions are met, `predictedReturn = 0`
-- Smoothed via `ForwardReturnSlopeAlpha` (0.05 EMA)
-
-### Stop management
-
-`price.Prediction` arms and evaluates stops on every tick:
-
-| Stop type       | Trigger                         | Notes                                |
-|-----------------|---------------------------------|--------------------------------------|
-| Hard floor      | price ≤ floor                   | Set at entry; absolute minimum       |
-| Take-profit     | price ≥ target                  | `TakeProfitCapture × ExpectedReturn` |
-| Trailing stop   | retrace from peak > `trailFrac` | Updates peak on each new high        |
-| Pump trailing   | retrace > `PumpTrailPct` (8%)   | Tighter; for `pump_fast` regime      |
-| Pump hard floor | 12% below entry                 | Absolute floor for pump positions    |
-
-Stops fire as `stop_hit` exits with fill price capped at the trigger level; they bypass `MinExhaustHold` and are never suppressed.
-
----
-
-## Risk and sizing
-
-### Kelly sizer
-
-Per-source fractional Kelly from settled feedback history:
+There is no fixed slot count or Kelly fraction in the current desk. Capital allocation is **edge-proportional across the live cross-section**:
 
 ```
-f* = (p × b − q) / b
+thesisScore(symbol) = RMS(playbook-relevant SNR) × √confirmations
+edge(symbol)        = thesisScore − median(all scores) − MAD(all scores)
+share(symbol)       = edge(symbol) / (thesisScore(symbol) + Σ positive scores)
+notional            = free_cash × share(symbol)
 ```
 
-where `p` = win ratio, `q` = 1 − p, `b` = average win / average loss.
-
-Executable size = `f* × KellyFraction (0.5) × available_cash`. The 0.5 multiplier is a deliberate safety factor — full Kelly is theoretically optimal only under distributional assumptions that are rarely satisfied in microstructure data.
-
-### Portfolio risk gates
-
-| Gate                  | Parameter              | Default             |
-|-----------------------|------------------------|---------------------|
-| Max slot %            | `MaxSlotPct`           | 5% of wallet        |
-| Max loss per trade    | `MaxLossPerTradeEUR`   | €2                  |
-| Max daily loss        | `MaxDailyLossEUR`      | €20                 |
-| Max drawdown          | derived                | daily loss ÷ wallet |
-| Max correlated slots  | `MaxCorrelatedSlots`   | 1                   |
-| Correlation threshold | `MaxSymbolCorrelation` | 0.85                |
-
-There is no fixed global slot count. Capacity is determined jointly by cash, Kelly sizing, optional deploy cap, drawdown headroom, spread/slippage estimates, and correlation structure.
-
----
-
-## Calibration
-
-### PredictionCalibrator
-
-Each signal maintains one calibrator per `(symbol, regime)` bucket. The calibrator is an asymmetric scalar Kalman filter:
-
-- **Downside fast**: gain spikes on 6σ loss events — immediate contraction of trust
-- **Upside gradual**: recovery delayed over `RegimeShockRecoverySamples` (64) samples
-- **Baseline drift**: α = 0.05 (slow in calm markets)
-
-Adaptive half-life: between `CalibrationHalfLifeFloor` (2 s) and `CalibrationHalfLifeCeiling` (15 m), scaled to the measurement's runway.
-
-The calibrator adjusts the **scale** of internal signal parameters — it does not post-hoc decorate raw confidence with a historical win rate.
-
-### Confidence fence
-
-Per `(symbol, source)` confidence history:
-- Fence = Q3 + 1.5 × IQR (robust upper bound for the source on this symbol)
-- Normalized confidence = `raw / (raw + fence)`, clamped `[0, 1]`
-- Returns 0 until `MinConfidenceHistory` (4) samples exist
+This lets several symbols enter concurrently when each is a genuine outlier versus the rest of the market, while preventing a single broad signal from consuming the wallet. `MinCostEUR` remains the exchange-cost floor.
 
 ---
 
@@ -576,64 +313,62 @@ Per `(symbol, source)` confidence history:
 
 `ui.Hub` subscribes to the `ui` broadcast and fans out to WebSocket clients at `ws://127.0.0.1:8765/ws`.
 
-**Lossy telemetry ring:** default 512 slots. When browsers or chart payloads fall behind, old frames are overwritten rather than back-pressuring trading goroutines.
+**Lossy telemetry ring:** default 512 slots (`UITelemetryBuffer`). Slow clients drop frames rather than back-pressuring producers.
 
-**Focus set**: `{BTC/EUR anchor} ∪ {symbols with open positions}`. Symbol-specific frames outside the focus set are dropped before client write. Aggregate frames (audit, prediction, wallet) always pass.
+**Audit replay:** the hub keeps a ring of recent audit frames and replays them to newly connected clients so the decision log is not empty after a late connect.
 
-**On reconnect**: the hub writes the latest wallet, confidence, field, candle, and mark snapshots directly to the new socket before live streaming resumes.
+**Producers:**
 
-**Priority heartbeat**: a monotonic sequence + throttling counters so the dashboard can distinguish chart throttling from engine offline.
+| Component       | Frames                                          |
+|-----------------|-------------------------------------------------|
+| `view.Gauges`   | per-source SNR gauge (rate-limited 200 ms)      |
+| `view.OHLC`     | `candle_bar` for anchor + open-position symbols |
+| `signal/fluid`  | `field_row` for spatial book visualization      |
+| `trader.Crypto` | `wallet`, `audit`, fill events                  |
+| `ui.Hub`        | `heartbeat` (monotonic seq, queue depth)        |
 
 ### UI frame events
 
-| Event                | Source                | Contents                                         |
-|----------------------|-----------------------|--------------------------------------------------|
-| `tick`               | PublicClient          | price, volume per symbol                         |
-| `confidence`         | Crypto                | per-source EMA confidence gauge                  |
-| `wallet`             | Crypto                | balance, inventory, marks, PnL                   |
-| `audit`              | Crypto                | gate checks, edge calc, entry/exit detail        |
-| `prediction`         | Crypto                | perspective source, predicted return, confidence |
-| `prediction_settled` | Crypto                | realized vs predicted, error, sources            |
-| `engine_pulse`       | Crypto                | `avg_prediction_multiple`, `avg_error_multiple`  |
-| `candle_bar`         | PublicClient          | OHLC + volume for chart                          |
-| `mark`               | PublicClient / Crypto | live mark price per symbol                       |
-| `field_row`          | Fluid                 | book-flow grid row for spatial visualization     |
-| `heartbeat`          | Hub                   | monotonic seq, queue depth, drop count           |
+| Event        | Source      | Contents                                          |
+|--------------|-------------|---------------------------------------------------|
+| `confidence` | view.Gauges | per-source SNR gauge                              |
+| `wallet`     | Crypto      | balance, inventory, marks                         |
+| `audit`      | Crypto      | entry/exit detail, conviction, edge, perspectives |
+| `candle_bar` | view.OHLC   | OHLC + volume                                     |
+| `field_row`  | Fluid       | book-flow grid row                                |
+| `heartbeat`  | Hub         | seq, queue depth, drop count                      |
+| fill         | Crypto      | order fill payload                                |
 
 ---
 
 ## Numeric layer
 
-Signal internals and calibration lean on `numeric/` and `numeric/adaptive/` rather than hand-written constants.
+Signal internals lean on `numeric/` and `numeric/adaptive/` rather than hand-written constants.
 
 ### Derived pipeline
 
 `numeric/dynamic.go` chains `Dynamic` filters:
 
 ```
-EMA → SigmaClamp → Peak → ...
+EMA → SigmaClamp → Peak → …
 ```
 
-Each stage calls `Next(out, ...values)` and feeds into the next. Stages nest freely; `Value()` reads the last output without pushing a new observation.
+Each stage calls `Next(out, ...values)` and feeds into the next.
 
 ### Adaptive primitives
 
-| Type         | Location                 | Behavior                                                                                                     |
-|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------|
-| `EMA`        | `adaptive/ema.go`        | Auto-bootstraps on first observation; adaptive rate derived from per-tick delta relative to observed range   |
-| `SigmaClamp` | `adaptive/`              | Kalman-like volatility detector; clamps outliers beyond N-sigma                                              |
-| `Peak`       | `adaptive/peak.go`       | Stateless; returns new peak on every observation                                                             |
-| `Classifier` | `adaptive/classifier.go` | Discretizes continuous values using configurable thresholds                                                  |
-| `FracDiff`   | `adaptive/fracdiff.go`   | Fractional differentiation (order 0.4, width 16); preserves long-range memory while reducing AR(1) structure |
-| `Kalman`     | `adaptive/kalman.go`     | Scalar Kalman with state-dependent measurement covariance and asymmetric gain                                |
-
-### Hayashi-Yoshida covariance
-
-Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap — handles asynchronous, irregularly-sampled tick data without interpolation. Stale intervals are capped to the current microstructure window.
+| Type         | Location                 | Behavior                                                    |
+|--------------|--------------------------|-------------------------------------------------------------|
+| `EMA`        | `adaptive/ema.go`        | Auto-bootstraps; adaptive rate from observed range          |
+| `SigmaClamp` | `adaptive/`              | Kalman-like volatility detector; clamps N-sigma outliers    |
+| `SNR`        | `adaptive/snr.go`        | Scores strength vs running noise floor (z-score)            |
+| `Classifier` | `adaptive/classifier.go` | Discretizes continuous values into named bands              |
+| `FracDiff`   | `adaptive/fracdiff.go`   | Fractional differentiation; preserves memory, reduces AR(1) |
+| `Kalman`     | `adaptive/kalman.go`     | Scalar Kalman with asymmetric gain                          |
 
 ### Robust statistics
 
-`numeric/` provides `Median`, `Mean`, `PercentileSorted`, `Quartiles`, and `MedianAbsoluteDeviation` — robust statistics that resist the outliers that are routine in microstructure data.
+`numeric/` provides `Median`, `Mean`, `PercentileSorted`, `Quartiles`, and `MedianAbsoluteDeviation` — used by the trader's cross-section calibration and throughout signal pipelines.
 
 ---
 
@@ -668,7 +403,7 @@ cd frontend && pnpm install && pnpm dev
 |--------------------------|--------------------------------------------|
 | `SYMM_REPLAY_FILE`       | JSONL replay instead of live WebSocket     |
 | `SYMM_REPLAY_PACE`       | Delay between replay lines (e.g., `50ms`)  |
-| `SYMM_KRAKEN_API_KEY`    | Enables private client + live orders       |
+| `SYMM_KRAKEN_API_KEY`    | Reserved for live order submission         |
 | `SYMM_KRAKEN_API_SECRET` | Paired with above                          |
 | `SYMM_UI_ADDR`           | WebSocket listen address (default `:8765`) |
 | `SYMM_WALLET_EUR`        | Starting paper wallet (default `200.0`)    |
@@ -681,104 +416,25 @@ Full environment wiring is in `config/config.go`.
 ## Configuration reference
 
 <details>
-<summary>📋 Risk &amp; position sizing</summary>
+<summary>📋 Wallet and desk</summary>
 
-| Field                     | Default | Description                               |
-|---------------------------|---------|-------------------------------------------|
-| `WalletEUR`               | `200.0` | Paper trading capital                     |
-| `MaxSlotPct`              | `0.05`  | Max per-position fraction of wallet       |
-| `MaxLossPerTradeEUR`      | `2.0`   | Hard loss cap per trade                   |
-| `MaxDailyLossEUR`         | `20.0`  | Daily loss ceiling                        |
-| `MaxPortfolioDrawdownPct` | derived | Daily loss ÷ wallet                       |
-| `MaxDeployPct`            | `1.0`   | Max fraction of wallet deployed at once   |
-| `KellyFraction`           | `0.5`   | Conservative multiplier on Kelly estimate |
-| `AllowPaperShorts`        | `false` | Enable short selling in paper mode        |
-| `AllowLiveShorts`         | `false` | Enable short selling with live orders     |
+| Field            | Default | Description                                       |
+|------------------|---------|---------------------------------------------------|
+| `WalletEUR`      | `200.0` | Paper trading capital                             |
+| `MinCostEUR`     | `0.45`  | Minimum trade size (avoids fee domination)        |
+| `PerspectiveTTL` | `30s`   | Position binding horizon stamped at entry         |
+| `TakerFeePct`    | `0.40`  | Fallback taker fee when pair schedule unavailable |
 
 </details>
 
 <details>
-<summary>📋 Entry economics</summary>
+<summary>📋 Market data</summary>
 
-| Field                    | Default | Description                                |
-|--------------------------|---------|--------------------------------------------|
-| `EntryEdgeMultiple`      | `2.0`   | Forecast must be ≥ N× round-trip friction  |
-| `TakeProfitR`            | `2.0`   | Forecast must be ≥ N× stop distance        |
-| `TakeProfitCapture`      | `0.75`  | Exit at this fraction of expected return   |
-| `MinCostEUR`             | `0.45`  | Minimum trade size (avoids fee domination) |
-| `MinQuoteCoverage`       | `0.95`  | Require 95% bid/ask book coverage          |
-| `MaxEntrySlippageBPS`    | `50`    | Hard slippage cap                          |
-| `MaxSpreadBPS`           | `0`     | Max allowed spread (0 = disabled)          |
-| `ForecastSpreadMultiple` | `4`     | Forecast must be ≥ N× spread               |
-| `UseMakerEntries`        | `false` | Use limit orders for entries               |
-| `MakerFeePct`            | `0.16`  | Maker fee rate                             |
-| `AdverseSelectionBPS`    | `5.0`   | Extra cost added to maker entry estimates  |
-
-</details>
-
-<details>
-<summary>📋 Exit &amp; hold times</summary>
-
-| Field                  | Default | Description                                 |
-|------------------------|---------|---------------------------------------------|
-| `ScalpHoldBeforeExit`  | `90s`   | Minimum hold before scalp exit eligibility  |
-| `FlowHoldBeforeExit`   | `30s`   | Minimum hold before flow exit eligibility   |
-| `MinHoldBeforeRotate`  | `1m`    | Minimum hold before re-entry on same symbol |
-| `MinExhaustHold`       | `5s`    | Suppress soft exits after entry             |
-| `ExitEvery`            | `10ms`  | Exit scan frequency                         |
-| `ExitUrgencyThreshold` | `0.65`  | Exhaust urgency threshold for acting        |
-
-</details>
-
-<details>
-<summary>📋 Stop &amp; trail parameters</summary>
-
-| Field                 | Default | Description                                        |
-|-----------------------|---------|----------------------------------------------------|
-| `StopVolMultiple`     | `8.0`   | Stop = N× recent per-tick volatility               |
-| `PumpTrailPct`        | `0.08`  | Fast pump trailing stop: 8% retrace from peak      |
-| `PumpSlowTrailPct`    | `0.20`  | Slow pump trailing stop                            |
-| `PumpHardStopPct`     | `0.12`  | Hard floor 12% below entry for pump positions      |
-| `PumpSizeFraction`    | `0.25`  | Pump positions sized at 25% of normal slot         |
-| `PumpPullbackMin`     | `0.03`  | Minimum retrace before pump entry (anti-chase)     |
-| `PumpPullbackMax`     | `0.20`  | Maximum retrace before pump leg is considered dead |
-| `TrailSpreadMultiple` | `2`     | Trail width = N× mid-spread                        |
-| `DefaultTrailPct`     | `0.35`  | Default trailing stop percentage                   |
-| `MinTrailPct`         | `0.15`  | Minimum trail width                                |
-| `MaxTrailPct`         | `3.0`   | Maximum trail width                                |
-| `TrailRiskEMAAlpha`   | `0.2`   | Trail risk smoothing                               |
-
-</details>
-
-<details>
-<summary>📋 Prediction &amp; calibration</summary>
-
-| Field                         | Default | Description                                    |
-|-------------------------------|---------|------------------------------------------------|
-| `PriceHistory`                | `128`   | Return model window                            |
-| `ForwardReturnMinSamples`     | `30`    | Min settlements before a bucket can trade      |
-| `PumpForwardReturnMinSamples` | `8`     | Reduced requirement for pump buckets           |
-| `ForwardReturnSignificanceZ`  | `1.96`  | Min z-score for positive return (95% CI)       |
-| `ForwardReturnSlopeAlpha`     | `0.05`  | EMA smoothing on slope                         |
-| `MaxActivePerspectives`       | `2`     | Max concurrent bets per symbol                 |
-| `PerspectiveTTL`              | `30s`   | Discard measurements older than this           |
-| `MaxPerspectiveMeasurements`  | `256`   | Cap on measurements per perspective bucket     |
-| `MinCalibrationSamples`       | `12`    | Min feedback samples before calibration adapts |
-| `CalibrationHalfLifeFloor`    | `2s`    | Minimum calibration half-life                  |
-| `CalibrationHalfLifeCeiling`  | `15m`   | Maximum calibration half-life                  |
-
-</details>
-
-<details>
-<summary>📋 Regime shock detection</summary>
-
-| Field                        | Default | Description                          |
-|------------------------------|---------|--------------------------------------|
-| `RegimeShockWindow`          | `128`   | Rolling history for shock detector   |
-| `RegimeShockMinSamples`      | `64`    | Min samples before shock can trigger |
-| `RegimeShockZScore`          | `6`     | Sigma threshold for shock detection  |
-| `RegimeShockRecoverySamples` | `64`    | Samples needed for recovery          |
-| `RegimeShockTrustFloor`      | `0.02`  | Muted trust level during shock       |
+| Field             | Default | Description                          |
+|-------------------|---------|--------------------------------------|
+| `QuoteCurrency`   | `EUR`   | Universe filter for symbol discovery |
+| `BookDepthLevels` | `5`     | Order book snapshot depth            |
+| `SubscribeBatch`  | `50`    | Symbol subscribe batch size          |
 
 </details>
 
@@ -792,82 +448,59 @@ Full environment wiring is in `config/config.go`.
 | `FastPumpVolumeRatio`    | `15`    | Fast pump RVOL threshold                   |
 | `SlowRVOLThreshold`      | `5`     | Slow breakout RVOL threshold               |
 | `HawkesFitCooldown`      | `5s`    | Hawkes MLE refit minimum interval          |
-| `BookDepthLevels`        | `5`     | Order book snapshot depth                  |
 | `BookDepthDecayLambda`   | `1000`  | Volume weight decay half-life (ms)         |
 | `SpoofWeightedThreshold` | `0.5`   | Spoof detection weighted skew threshold    |
 | `SpoofLevel1Reject`      | `-0.1`  | Level-1 contradiction threshold            |
 | `MinFillToCancelRatio`   | `0.15`  | Toxicity gate threshold                    |
 | `BookFluxWindow`         | `10s`   | Book flux measurement window               |
 | `FluidGridSize`          | `32`    | Fluid dynamics grid dimension              |
+| `FluidHeightEMAAlpha`    | `0.35`  | Field height smoothing                     |
 | `CorrelationBarSeconds`  | `10`    | Bar size for correlation computation       |
-| `MaxSymbolCorrelation`   | `0.85`  | Correlation gate threshold                 |
-| `MaxCorrelatedSlots`     | `1`     | Max open positions per correlation cluster |
+| `CausalConditionSwitch`  | `1000`  | Kalman-gated Q threshold for regime switch |
+| `CausalContagionBreak`   | `0.9`   | Contagion break detection threshold        |
+| `FractionalDiffOrder`    | `0.4`   | FracDiff order                             |
+| `FractionalDiffWidth`    | `16`    | FracDiff window width                      |
 
 </details>
 
 <details>
-<summary>📋 Symbol selection &amp; sampling</summary>
+<summary>📋 UI and infrastructure</summary>
 
-| Field                    | Default | Description                           |
-|--------------------------|---------|---------------------------------------|
-| `MaxScanSymbols`         | `64`    | Max symbols under active watch        |
-| `SubscribeBatch`         | `50`    | Symbol subscribe batch size           |
-| `SymbolActivityHalfLife` | `30s`   | Activity score decay rate             |
-| `WinBoostHalfLife`       | `2h`    | Up-weight recently profitable symbols |
-| `OHLCIntervalMinutes`    | `5`     | OHLC bar interval for warm-up         |
-| `OHLCMaxSymbols`         | `64`    | Max symbols subscribed for OHLC       |
-| `VolumeClockBarsPerDay`  | `8640`  | Volume clock resolution               |
+| Field                 | Default | Description               |
+|-----------------------|---------|---------------------------|
+| `UIAddr`              | `:8765` | WebSocket listen address  |
+| `UITelemetryBuffer`   | `512`   | Lossy telemetry ring size |
+| `UIHeartbeatInterval` | `250ms` | Wallet republish cadence  |
+| `LogDir`              | `runs`  | Directory for run logs    |
+| `LogLevel`            | `info`  | Logging verbosity         |
 
 </details>
 
-<details>
-<summary>📋 Execution &amp; infrastructure</summary>
-
-| Field                         | Default | Description                                |
-|-------------------------------|---------|--------------------------------------------|
-| `ExecutionMakerFallbackTicks` | `4`     | Retries before maker falls back to market  |
-| `PaperOrderLatency`           | `0`     | Simulated paper order latency              |
-| `PaperMinFillCoverage`        | `1`     | Minimum fill coverage in paper mode        |
-| `PaperOrderRejectRate`        | `0`     | Simulated paper order reject rate          |
-| `LiveInventoryEpsilon`        | `1e-8`  | Precision tolerance for live inventory     |
-| `UIAddr`                      | `:8765` | WebSocket listen address                   |
-| `UITelemetryBuffer`           | `512`   | Lossy telemetry ring size                  |
-| `UIHeartbeatInterval`         | `250ms` | Heartbeat cadence                          |
-| `LogDir`                      | `runs`  | Directory for run logs and hindsight files |
-| `LogLevel`                    | `info`  | Logging verbosity                          |
-
-</details>
+Active desk fields include `EntryEdgeMultiple`, `MinExhaustHold`, `PerspectiveTTL`, and pump trail/stop percents. `config/config.go` still carries exploration/Kelly/forward-return learning knobs for future calibration wiring; they do not change the current perspective desk path.
 
 ---
 
 ## Repository map
 
-| Path                | Contents                                                                   |
-|---------------------|----------------------------------------------------------------------------|
-| `cmd/`              | Cobra entry point, booter, system registration                             |
-| `engine/`           | `Measurement`, `Perspective`, `Prediction`, feedback and calibration types |
-| `kraken/`           | WebSocket clients (public, private, L3), market types, OHLC helpers        |
-| `pumpdump/`         | Multi-scale volume spike detector                                          |
-| `depthflow/`        | Distance-weighted book imbalance                                           |
-| `hawkes/`           | Bivariate self-exciting process                                            |
-| `leadlag/`          | Anchor/laggard cross-correlation                                           |
-| `liquidity/`        | Cross-section quote volume                                                 |
-| `sentiment/`        | Bullish breadth signal                                                     |
-| `correlation/`      | Return correlation matrix                                                  |
-| `fluid/`            | Book-flow field dynamics                                                   |
-| `causal/`           | Pearl-ladder DAG causal inference                                          |
-| `cvd/`              | Cumulative volume delta                                                    |
-| `toxicity/`         | L3 fill-to-cancel toxicity                                                 |
-| `exhaust/`          | Exit urgency signal                                                        |
-| `trader/`           | Wallet, Crypto scorer, sizing, risk gates                                  |
-| `price/`            | Prediction lifecycle, stop management, return model                        |
-| `broker/`           | Buy/sell execution (paper and live)                                        |
-| `wallet/`           | Balance, inventory, fill deduplication                                     |
-| `ui/`               | WebSocket hub, telemetry ring                                              |
-| `frontend/`         | React dashboard                                                            |
-| `numeric/`          | Derived pipelines, EMA, SigmaClamp, FracDiff, Kalman, Hayashi-Yoshida      |
-| `numeric/adaptive/` | Adaptive EMA, peak, classifier, robust statistics                          |
-| `config/`           | All config fields, defaults, and environment wiring                        |
-| `AGENTS.md`         | Agent contract: tests, benchmarks, style                                   |
+| Path                   | Contents                                                     |
+|------------------------|--------------------------------------------------------------|
+| `cmd/`                 | Cobra entry point, booter, system registration               |
+| `market/`              | Perspective registry, `Decide` / `Decisions`, playbook trees |
+| `market/perspectives/` | Category types, decision trees, individual playbooks         |
+| `signal/`              | All microstructure signal systems                            |
+| `toxicity/`            | L3 fill-to-cancel toxicity detector                          |
+| `trader/`              | Crypto desk, cross-section sizing, reading freshness         |
+| `kraken/`              | WebSocket clients, shared feeds, market types                |
+| `broker/`              | Paper and live order execution                               |
+| `wallet/`              | Balance, inventory, position bindings                        |
+| `view/`                | Dashboard feeds (gauges, OHLC)                               |
+| `focus/`               | Open-position symbol set                                     |
+| `ui/`                  | WebSocket hub, telemetry ring                                |
+| `frontend/`            | React dashboard                                              |
+| `numeric/`             | Derived pipelines, adaptive filters, robust stats            |
+| `numeric/adaptive/`    | EMA, SNR, classifier, fracdiff, Kalman                       |
+| `config/`              | Runtime parameters and environment wiring                    |
+| `DECISION.md`          | Category semantics and signal design rationale               |
+| `AGENTS.md`            | Agent contract: tests, benchmarks, style                     |
 
-Adding a signal means: implement `System`, subscribe to the market channels you need, publish `Measurement` values with prices attached, and register the constructor in `cmd/root.go`. The existing trader, prediction machinery, and feedback loop handle the rest.
+Adding a signal means: implement `Tick`/`Close`, subscribe to the feeds you need, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` attached, and register the constructor in `cmd/root.go`. Register or extend a perspective tree in `market/perspectives/` when the new categories should authorize trades.

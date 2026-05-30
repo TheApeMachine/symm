@@ -10,40 +10,33 @@ import (
 )
 
 /*
-Toxicity is the executed-flow book-quality service. It feeds the shared Tracker
-from the public L2 book joined against the public trade tape, splitting liquidity
-removals into fills vs cancels, and (via the package-level IsToxic) lets the
-weighted-book readers in depthflow/fluid exclude toxic near-touch walls. It is a
-service, not a perspectives source — it emits no measurements.
-
-It consumes the same shared market subscriptions the live signals do
-(market.NewTradeSubscription / NewTickerSubscription / NewBookSubscription) rather
-than a separate qpool fan-out, so the book quality it tracks is the book the rest of
-the engine is actually reading.
+Toxicity tracks executed-flow book quality and publishes toxicity perspective
+measurements while feeding IsToxic for depthflow and fluid.
 */
 type Toxicity struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	pool    *qpool.Q
-	tracker *Tracker
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	tracker      *Tracker
+	measurements *qpool.BroadcastGroup
 }
 
 func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Toxicity{
+	tox := &Toxicity{
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    pool,
 		tracker: Default(),
 	}
+	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	return tox
 }
 
 /*
-Tick joins the live trade tape, ticker, and L2 book onto the shared Tracker. A trade
-is executed flow, a ticker refreshes the mid the tracker prices removals against, and
-each book level is a maker action — a zero-quantity level is liquidity leaving, which
-the tracker splits into a fill or a cancel.
+Tick joins the live trade tape, ticker, and L2 book onto the shared Tracker.
 */
 func (tox *Toxicity) Tick() error {
 	symbols := config.System.Symbols
@@ -74,6 +67,7 @@ func (tox *Toxicity) Tick() error {
 
 			if row != nil {
 				tox.tracker.ObserveMid(row.Symbol, market.Pair{}, midOf(*row))
+				tox.publishMeasurement(row.Symbol, row.Last)
 			}
 		case update, ok := <-books:
 			if !ok {
@@ -84,6 +78,7 @@ func (tox *Toxicity) Tick() error {
 
 			if update != nil {
 				tox.observeBook(*update)
+				tox.publishMeasurement(update.Symbol, 0)
 			}
 		}
 	}
@@ -103,6 +98,20 @@ func (tox *Toxicity) observeBook(update market.BookUpdate) {
 	for _, level := range update.Asks {
 		tox.tracker.ApplyBookLevel(update.Symbol, market.Pair{}, SideAsk, level.Price, level.Qty, now)
 	}
+}
+
+func (tox *Toxicity) publishMeasurement(symbol string, last float64) {
+	now := time.Now()
+	measurement, ok := tox.tracker.Measure(symbol, now)
+
+	if !ok {
+		return
+	}
+
+	measurement.Symbol = symbol
+	measurement.Last = last
+
+	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 }
 
 func (tox *Toxicity) Close() error {

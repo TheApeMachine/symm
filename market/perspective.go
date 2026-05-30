@@ -12,10 +12,6 @@ type registeredPerspective struct {
 
 /*
 Decision is one actionable verdict from a registered perspective.
-
-Several playbooks can be true at the same time. The trader consumes the full set
-so independent theses can reinforce each other, while Decide remains as the
-backwards-compatible priority view for callers that need one deterministic answer.
 */
 type Decision struct {
 	Name        string
@@ -23,27 +19,21 @@ type Decision struct {
 	Perspective perspectives.Perspective
 }
 
-/*
-perspectiveRegistry is the priority-ordered list of playbooks the market layer
-matches against. Order is significant and deterministic: when a caller asks for a
-single verdict, the first actionable playbook wins.
+var universalExitTree = &perspectives.Tree{Branches: perspectives.UniversalExitBranches()}
 
-Order is conviction-first: the more confirmations a playbook demands before it will
-open a trade, the earlier it sits, so the best-supported thesis is preferred when
-several apply to the same symbol. Callers that need concurrent theses use Decisions.
+/*
+perspectiveRegistry is conviction-first: more confirming categories rank earlier.
 */
 var perspectiveRegistry = []registeredPerspective{
-	{name: "trend", perspective: perspectives.NewTrendPerspective()},
-	{name: "drive", perspective: perspectives.NewDrivePerspective()},
-	{name: "leadlag", perspective: perspectives.NewLeadLagPerspective()},
-	{name: "scarcity", perspective: perspectives.NewScarcityPerspective()},
-	{name: "pump", perspective: perspectives.NewPumpPerspective()},
+	{name: string(perspectives.PlaybookTrend), perspective: perspectives.NewTrendPerspective()},
+	{name: string(perspectives.PlaybookDrive), perspective: perspectives.NewDrivePerspective()},
+	{name: string(perspectives.PlaybookLeadLag), perspective: perspectives.NewLeadLagPerspective()},
+	{name: string(perspectives.PlaybookScarcity), perspective: perspectives.NewScarcityPerspective()},
+	{name: string(perspectives.PlaybookPump), perspective: perspectives.NewPumpPerspective()},
 }
 
 /*
-NewPerspective returns the highest-priority perspective that is traversable for
-the measurement set, or nil when none apply. Selection is deterministic: the
-registry is scanned in fixed priority order.
+NewPerspective returns the highest-priority traversable entry playbook, or nil.
 */
 func NewPerspective(measurements []perspectives.Measurement) perspectives.Perspective {
 	for _, entry := range perspectiveRegistry {
@@ -56,10 +46,8 @@ func NewPerspective(measurements []perspectives.Measurement) perspectives.Perspe
 }
 
 /*
-Decisions walks every registered perspective against the measurement set and live
-observation state in fixed priority order, returning every actionable verdict.
-With no observations it is the entry view; passing ObservationHolding asks the
-same playbooks for the exit verdict on an open position.
+Decisions returns every flat-entry playbook that authorizes ActionEnter.
+Deny and wait verdicts are omitted.
 */
 func Decisions(
 	measurements []perspectives.Measurement,
@@ -70,7 +58,7 @@ func Decisions(
 	for _, entry := range perspectiveRegistry {
 		action := entry.perspective.Decide(measurements, observations)
 
-		if action == nil {
+		if action == nil || *action != perspectives.ActionEnter {
 			continue
 		}
 
@@ -85,7 +73,7 @@ func Decisions(
 }
 
 /*
-Decide returns the first actionable verdict in deterministic priority order.
+Decide returns the first actionable entry verdict in registry order.
 */
 func Decide(
 	measurements []perspectives.Measurement,
@@ -98,4 +86,59 @@ func Decide(
 	}
 
 	return nil, nil
+}
+
+/*
+ExitDecisions collects exit verdicts from the universal overlay and from the
+opening playbook (or every playbook when opener is empty). Soft take-profit
+leaves are suppressed until MinExhaustHold when the trader passes hold timing.
+*/
+func ExitDecisions(
+	measurements []perspectives.Measurement,
+	observations []perspectives.ObservationType,
+	openerPlaybook string,
+	softExitsAllowed bool,
+) []Decision {
+	decisions := make([]Decision, 0, len(perspectiveRegistry)+1)
+
+	if action := universalExitTree.Walk(measurements, observations); action != nil {
+		if perspectives.IsExitAction(*action) && exitAllowed(*action, softExitsAllowed) {
+			decisions = append(decisions, Decision{
+				Name:   string(perspectives.PlaybookUniversal),
+				Action: *action,
+			})
+		}
+	}
+
+	for _, entry := range perspectiveRegistry {
+		if openerPlaybook != "" && entry.name != openerPlaybook {
+			continue
+		}
+
+		action := entry.perspective.DecideExit(measurements, observations)
+
+		if action == nil || !perspectives.IsExitAction(*action) {
+			continue
+		}
+
+		if !exitAllowed(*action, softExitsAllowed) {
+			continue
+		}
+
+		decisions = append(decisions, Decision{
+			Name:        entry.name,
+			Action:      *action,
+			Perspective: entry.perspective,
+		})
+	}
+
+	return decisions
+}
+
+func exitAllowed(action perspectives.ActionType, softExitsAllowed bool) bool {
+	if action == perspectives.ActionTakeProfit {
+		return softExitsAllowed
+	}
+
+	return true
 }

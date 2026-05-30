@@ -10,20 +10,20 @@ import (
 func TestThesisScore(t *testing.T) {
 	convey.Convey("Given a thesis supported by multiple measurements", t, func() {
 		measurements := []perspectives.Measurement{
-			{SNR: 2.0},
-			{SNR: 4.0},
+			{Category: perspectives.CategoryAggressiveDrive, SNR: 2.0},
+			{Category: perspectives.CategoryAggressiveDrive, SNR: 4.0},
 		}
 
 		convey.Convey("It should score root-mean-square signal energy", func() {
-			score := thesisScore(measurements, 1)
+			score := thesisScore(measurements, []string{"drive"})
 
 			convey.So(score, convey.ShouldBeGreaterThan, 3.0)
 			convey.So(score, convey.ShouldBeLessThan, 3.2)
 		})
 
 		convey.Convey("It should reward independent perspective confirmations", func() {
-			plain := thesisScore(measurements, 1)
-			confirmed := thesisScore(measurements, 2)
+			plain := thesisScore(measurements, []string{"drive"})
+			confirmed := thesisScore(measurements, []string{"drive", "trend"})
 
 			convey.So(confirmed, convey.ShouldBeGreaterThan, plain)
 		})
@@ -43,12 +43,11 @@ func TestRobustCenter(t *testing.T) {
 
 func BenchmarkThesisScore(b *testing.B) {
 	measurements := []perspectives.Measurement{
-		{SNR: 2.0},
-		{SNR: 4.0},
-		{Confidence: 0.5},
+		{Category: perspectives.CategoryAggressiveDrive, SNR: 2.0},
+		{Category: perspectives.CategoryAggressiveDrive, SNR: 4.0},
 	}
 
 	for b.Loop() {
-		_ = thesisScore(measurements, 2)
+		_ = thesisScore(measurements, []string{"drive", "trend"})
 	}
 }

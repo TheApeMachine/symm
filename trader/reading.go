@@ -6,6 +6,8 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+const minMeasurementTTL = 250 * time.Millisecond
+
 /*
 timedMeasurement is the trader-local freshness wrapper around one signal's latest
 verdict for a symbol. The trader stores only the newest category per source: a CVD
@@ -36,6 +38,10 @@ func newTimedMeasurement(
 
 		if interval > 0 {
 			ttl = interval + interval
+		}
+
+		if ttl < minMeasurementTTL {
+			ttl = minMeasurementTTL
 		}
 	}
 
