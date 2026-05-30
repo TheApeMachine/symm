@@ -10,7 +10,6 @@ import {
 	ZoomExtentsModifier,
 	MouseWheelZoomModifier,
 	ZoomPanModifier,
-	RolloverModifier,
 } from "scichart";
 
 import type {
@@ -29,18 +28,18 @@ const SERIES_STYLE: Record<
 	}
 > = {
 	average: {
-		name: "Average prediction multiple",
+		name: "Realized cross-section multiple",
 		stroke: "#4EC385",
 		strokeThickness: 2,
 	},
 	prediction: {
-		name: "Projected prediction multiple",
+		name: "Forward forecast (next pulse)",
 		stroke: "#FBA55A",
 		strokeDashArray: [8, 5],
 		strokeThickness: 2,
 	},
 	error: {
-		name: "Forecast error multiple",
+		name: "Catch-up forecast miss",
 		stroke: "#E85D75",
 		strokeThickness: 1,
 	},
@@ -57,7 +56,6 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		await SciChartSurface.create(rootElement);
 
 	const xAxis = new NumericAxis(wasmContext, {
-		axisTitle: "Time (UTC s)",
 		labelFormat: ENumericFormat.Date_HHMMSS,
 		visibleRange: new NumberRange(
 			Math.floor(Date.now() / 1000) - 60,
@@ -65,15 +63,17 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		),
 		growBy: new NumberRange(0.05, 0.05),
 		labelStyle: {
-			fontSize: 8,
+			fontSize: 10,
 		},
 	});
 
 	const yAxis = new NumericAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Left,
 		autoRange: EAutoRange.Always,
-		axisTitle: "Required Return Multiple",
 		growBy: new NumberRange(0.15, 0.15),
+		labelStyle: {
+			fontSize: 10,
+		},
 	});
 
 	sciChartSurface.xAxes.add(xAxis);
@@ -104,7 +104,6 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		new ZoomExtentsModifier({ modifierGroup: "chart" }),
 		new MouseWheelZoomModifier({ modifierGroup: "chart" }),
 		new ZoomPanModifier({ modifierGroup: "chart" }),
-		new RolloverModifier({ modifierGroup: "chart" }),
 	);
 
 	let minX = Number.POSITIVE_INFINITY;
@@ -128,7 +127,9 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		maxX = Math.max(maxX, reading.x);
 
 		if (Number.isFinite(minX) && Number.isFinite(maxX)) {
-			xAxis.visibleRange = new NumberRange(minX - 2, maxX + 2);
+			const pad = Math.max(2, (maxX - minX) * 0.05);
+
+			xAxis.visibleRange = new NumberRange(minX - pad, maxX + pad);
 		}
 	};
 

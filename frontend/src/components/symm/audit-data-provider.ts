@@ -15,16 +15,25 @@ export type AuditRow = {
 type Listener = () => void;
 
 const MAX_ROWS = 120;
+
 const SUMMARY_KEYS = [
+	"why",
+	"playbook",
+	"perspectives",
+	"conviction",
 	"edge",
 	"confidence",
 	"predicted_return",
 	"actual_return",
+	"net_return",
+	"forward_return",
 	"error",
 	"urgency",
 	"success",
-	"why",
+	"held_ms",
 	"slot_eur",
+	"spread_bps",
+	"fill_price",
 ] as const;
 
 const formatValue = (value: unknown): string => {
@@ -38,6 +47,13 @@ const formatValue = (value: unknown): string => {
 
 	if (typeof value === "string") {
 		return value;
+	}
+
+	if (Array.isArray(value)) {
+		return value
+			.map((entry) => formatValue(entry))
+			.filter(Boolean)
+			.join("+");
 	}
 
 	return "";
@@ -63,6 +79,25 @@ const summarize = (event: AuditEvent): string => {
 	}
 
 	return parts.join(" · ");
+};
+
+const eventLabel = (event: string): string => {
+	switch (event) {
+		case "entry_submit":
+			return "Entry submit";
+		case "entry":
+			return "Entry filled";
+		case "exit_submit":
+			return "Exit submit";
+		case "exit":
+			return "Exit filled";
+		case "forward":
+			return "Forward matured";
+		case "order_reject":
+			return "Order rejected";
+		default:
+			return event.replaceAll("_", " ");
+	}
 };
 
 class AuditDataProviderImpl {
@@ -96,7 +131,7 @@ class AuditDataProviderImpl {
 			{
 				key: `${raw.seq}:${raw.audit_event}`,
 				seq: raw.seq,
-				event: raw.audit_event,
+				event: eventLabel(raw.audit_event),
 				ts: raw.ts,
 				symbol: raw.symbol,
 				source: raw.source,

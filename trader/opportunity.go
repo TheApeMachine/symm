@@ -2,7 +2,6 @@ package trader
 
 import (
 	"math"
-	"time"
 
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -70,13 +69,14 @@ func (crypto *Crypto) marketCalibrated(candidate opportunity) bool {
 }
 
 func (crypto *Crypto) calibrateOpportunity(candidate opportunity) (opportunity, bool) {
-	scores := crypto.marketScores()
+	snapshot := crypto.ensureCrossSection()
 
-	if len(scores) < 2 {
+	if len(snapshot.Scores) < 2 {
 		return opportunity{}, false
 	}
 
-	baseline, spread := robustCenter(scores)
+	baseline := snapshot.Baseline
+	spread := snapshot.Spread
 	candidate.Baseline = baseline
 	candidate.Spread = spread
 	candidate.Edge = candidate.Score - baseline - spread
@@ -126,21 +126,7 @@ func (crypto *Crypto) marketScoreMass() float64 {
 }
 
 func (crypto *Crypto) marketScores() []float64 {
-	crypto.mu.RLock()
-	defer crypto.mu.RUnlock()
-
-	now := time.Now()
-	scores := make([]float64, 0, len(crypto.readings))
-
-	for symbol, set := range crypto.readings {
-		measurements := snapshotTimedMeasurements(set, now)
-		names := entryNames(decision.Decisions(measurements, nil))
-		scores = append(scores, thesisScore(measurements, names))
-
-		_ = symbol
-	}
-
-	return scores
+	return crypto.ensureCrossSection().Scores
 }
 
 func entryNames(decisions []decision.Decision) []string {

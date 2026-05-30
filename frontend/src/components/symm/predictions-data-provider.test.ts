@@ -51,12 +51,12 @@ describe("PredictionsDataProvider", () => {
 			{ kind: "average", x: firstSec, value: 0.5 },
 			{ kind: "error", x: firstSec, value: 0.2 },
 			{ kind: "average", x: secondSec, value: 0.6 },
+			{ kind: "error", x: secondSec, value: 0.3 },
 			{
 				kind: "prediction",
 				x: secondSec + (secondSec - firstSec),
 				value: 0.6,
 			},
-			{ kind: "error", x: secondSec, value: 0.3 },
 		]);
 	});
 

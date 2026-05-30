@@ -70,7 +70,7 @@ func (crypto *Crypto) submitEntryLive(
 		return err
 	}
 
-	crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, true)
+	crypto.publishEntrySubmit(buy.Symbol, opportunity, playbook, clOrdID, buy.Notional, spreadBPS, true)
 
 	return nil
 }
@@ -87,14 +87,14 @@ func (crypto *Crypto) submitEntryPaper(
 		if clOrdID != "" {
 			crypto.paper.trackEntry(clOrdID, buy.Symbol, entryIntent(buy, opportunity, playbook, spreadBPS))
 			crypto.paper.EnqueueReject(clOrdID, err.Error())
-			crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, false)
+			crypto.publishEntrySubmit(buy.Symbol, opportunity, playbook, clOrdID, buy.Notional, spreadBPS, false)
 		}
 
 		return nil
 	}
 
 	crypto.paper.trackEntry(clOrdID, buy.Symbol, entryIntent(buy, opportunity, playbook, spreadBPS))
-	crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, false)
+	crypto.publishEntrySubmit(buy.Symbol, opportunity, playbook, clOrdID, buy.Notional, spreadBPS, false)
 
 	fill, buildErr := buy.BuildPaperFill(crypto.wallet)
 
@@ -348,16 +348,24 @@ func (crypto *Crypto) handleExitFill(fill order.Fill, intent orderIntent) {
 }
 
 func (crypto *Crypto) publishEntrySubmit(
-	symbol, playbook, clOrdID string,
+	symbol string,
+	opportunity opportunity,
+	playbook, clOrdID string,
 	notional, spreadBPS float64,
 	live bool,
 ) {
-	crypto.publishAudit("entry_submit", symbol, "entry submitted", map[string]any{
-		"playbook":   playbook,
-		"cl_ord_id":  clOrdID,
-		"slot_eur":   notional,
-		"spread_bps": spreadBPS,
-		"live":       live,
+	trigger := triggerLabel(opportunity.Trigger)
+
+	crypto.publishAudit("entry_submit", symbol, trigger, map[string]any{
+		"why":          trigger,
+		"playbook":     playbook,
+		"perspectives": opportunity.Names,
+		"conviction":   opportunity.Score,
+		"edge":         opportunity.Edge,
+		"cl_ord_id":    clOrdID,
+		"slot_eur":     notional,
+		"spread_bps":   spreadBPS,
+		"live":         live,
 	})
 }
 
@@ -366,6 +374,7 @@ func (crypto *Crypto) publishExitSubmit(
 	live bool,
 ) {
 	crypto.publishAudit("exit_submit", symbol, reason, map[string]any{
+		"why":       reason,
 		"playbook":  playbook,
 		"cl_ord_id": clOrdID,
 		"live":      live,
@@ -445,6 +454,7 @@ func (crypto *Crypto) completeExit(
 
 	realized := realizedReturn(entryPrice, fill.Price)
 	crypto.publishAudit("exit", symbol, reason, map[string]any{
+		"why":           reason,
 		"actual_return": realized,
 		"net_return":    exitLabel.NetReturn,
 		"success":       exitLabel.NetReturn > 0,

@@ -26,23 +26,27 @@ system; the desk records readings, applies cross-section sizing, friction gates,
 TTL, and pump trailing stops, then fills paper orders.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	measurements *qpool.Subscriber
-	ui           *qpool.BroadcastGroup
-	wallet       *wallet.Wallet
-	tracker      *focus.Set
-	story        *decision.Story
-	positions    *positionBook
-	mu           sync.RWMutex
-	readings     map[string]map[perspectives.SourceType]timedMeasurement
-	quotes       *quoteCache
-	economics    *economics.Desk
-	paper        *paperSession
-	live         *liveSession
-	open         atomic.Int64
-	auditSeq     atomic.Uint64
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	pool                    *qpool.Q
+	measurements            *qpool.Subscriber
+	ui                      *qpool.BroadcastGroup
+	wallet                  *wallet.Wallet
+	tracker                 *focus.Set
+	story                   *decision.Story
+	positions               *positionBook
+	mu                      sync.RWMutex
+	readings                map[string]map[perspectives.SourceType]timedMeasurement
+	quotes                  *quoteCache
+	economics               *economics.Desk
+	paper                   *paperSession
+	live                    *liveSession
+	open                    atomic.Int64
+	auditSeq                atomic.Uint64
+	pulseSeq                atomic.Uint64
+	crossSection            atomic.Pointer[crossSectionSnapshot]
+	priorPulseMultiple      float64
+	priorPulseMultipleValid bool
 }
 
 func NewCrypto(
@@ -106,6 +110,8 @@ func (crypto *Crypto) Tick() error {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
 		case <-heartbeat.C:
+			crypto.refreshCrossSection()
+			crypto.publishEnginePulse()
 			crypto.publishWallet()
 		case row, ok := <-tickers:
 			if !ok {

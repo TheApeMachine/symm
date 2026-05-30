@@ -91,6 +91,21 @@ func (cache *quoteCache) snapshot(symbol string, fallbackLast float64) broker.Qu
 	return quote
 }
 
+func (cache *quoteCache) readyCount() int {
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+
+	ready := 0
+
+	for _, quote := range cache.quotes {
+		if quote.Last > 0 {
+			ready++
+		}
+	}
+
+	return ready
+}
+
 func (cache *quoteCache) spreadBPS(symbol string) float64 {
 	quote := cache.snapshot(symbol, 0)
 

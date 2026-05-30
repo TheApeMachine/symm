@@ -1,10 +1,7 @@
 import type { EnginePulseEvent } from "#/lib/symm/events";
 import { isEnginePulseEvent } from "#/lib/symm/events";
 
-export type PredictionSeriesKind =
-	| "average"
-	| "prediction"
-	| "error";
+export type PredictionSeriesKind = "average" | "prediction" | "error";
 
 export type PredictionReading = {
 	kind: PredictionSeriesKind;
@@ -49,7 +46,7 @@ class PredictionsDataProviderImpl {
 	private buffer: PredictionReading[] = [];
 	private listeners = new Set<() => void>();
 	private previousPulseSec: number | undefined;
-	private pulseHorizonSec: number | undefined;
+	private priorPulseMultiple: number | undefined;
 
 	registerSink(sink: ReadingSink) {
 		this.sink = sink;
@@ -93,11 +90,7 @@ class PredictionsDataProviderImpl {
 		this.sink?.(reading);
 	}
 
-	private emitPoint(
-		kind: PredictionSeriesKind,
-		x: number,
-		value: number,
-	) {
+	private emitPoint(kind: PredictionSeriesKind, x: number, value: number) {
 		if (!Number.isFinite(value) || !Number.isFinite(x)) {
 			return;
 		}
@@ -119,10 +112,8 @@ class PredictionsDataProviderImpl {
 		this.previousPulseSec = pulseSec;
 
 		if (!Number.isFinite(observedHorizonSec) || observedHorizonSec <= 0) {
-			return this.pulseHorizonSec;
+			return undefined;
 		}
-
-		this.pulseHorizonSec = observedHorizonSec;
 
 		return observedHorizonSec;
 	}
@@ -143,23 +134,32 @@ class PredictionsDataProviderImpl {
 
 		const horizonSec = this.updateHorizon(pulseSec);
 
-		const predictionValue = scaledValue(
+		const realizedMultiple = scaledValue(
 			raw.avg_prediction_multiple,
 			raw.avg_prediction,
 		);
-		const errorValue = scaledValue(raw.avg_error_multiple, raw.avg_error);
+		const wireError = scaledValue(raw.avg_error_multiple, raw.avg_error);
 
-		if (predictionValue !== undefined) {
-			this.emitPoint("average", pulseSec, predictionValue);
-
-			if (horizonSec !== undefined) {
-				this.emitPoint("prediction", pulseSec + horizonSec, predictionValue);
-			}
+		if (realizedMultiple === undefined) {
+			return;
 		}
 
-		if (errorValue !== undefined) {
+		this.emitPoint("average", pulseSec, realizedMultiple);
+
+		if (this.priorPulseMultiple !== undefined) {
+			const catchUpError = Math.abs(realizedMultiple - this.priorPulseMultiple);
+			const errorValue = wireError ?? catchUpError;
+
 			this.emitPoint("error", pulseSec, errorValue);
+		} else if (wireError !== undefined) {
+			this.emitPoint("error", pulseSec, wireError);
 		}
+
+		if (horizonSec !== undefined) {
+			this.emitPoint("prediction", pulseSec + horizonSec, realizedMultiple);
+		}
+
+		this.priorPulseMultiple = realizedMultiple;
 	}
 
 	ingest(raw: unknown) {
@@ -173,7 +173,7 @@ class PredictionsDataProviderImpl {
 		this.pulse = undefined;
 		this.buffer = [];
 		this.previousPulseSec = undefined;
-		this.pulseHorizonSec = undefined;
+		this.priorPulseMultiple = undefined;
 		this.notify();
 	}
 }

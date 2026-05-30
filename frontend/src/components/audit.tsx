@@ -38,19 +38,23 @@ export const AuditPanel = () => {
 							key={row.key}
 							className="border-t border-(--dash-border) py-1.5 text-[11px]"
 						>
-							<div className="flex items-center justify-between gap-2">
-								<span className="truncate font-medium">{row.event}</span>
+							<div className="flex items-start justify-between gap-2">
+								<div className="min-w-0 flex-1">
+									<div className="font-medium text-(--dash-text) wrap-break-word">
+										{row.reason ?? row.event}
+									</div>
+									<div className="mt-0.5 text-(--dash-muted)">
+										{[row.event, row.symbol, row.source]
+											.filter(Boolean)
+											.join(" · ")}
+									</div>
+								</div>
 								<span className="shrink-0 tabular-nums text-(--dash-muted)">
 									#{row.seq} · {formatTime(row.ts)}
 								</span>
 							</div>
-							<div className="mt-0.5 truncate text-(--dash-muted)">
-								{[row.symbol, row.source, row.reason]
-									.filter(Boolean)
-									.join(" · ")}
-							</div>
 							{row.summary ? (
-								<div className="mt-0.5 truncate tabular-nums text-(--dash-muted)">
+								<div className="mt-1 wrap-break-word tabular-nums text-[10px] leading-snug text-(--dash-muted)">
 									{row.summary}
 								</div>
 							) : null}
