@@ -10,23 +10,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/causal"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/correlation"
-	"github.com/theapemachine/symm/cvd"
-	"github.com/theapemachine/symm/depthflow"
-	"github.com/theapemachine/symm/exhaust"
-	"github.com/theapemachine/symm/fluid"
-	"github.com/theapemachine/symm/hawkes"
-	"github.com/theapemachine/symm/kraken/client"
-	"github.com/theapemachine/symm/kraken/core"
-	"github.com/theapemachine/symm/leadlag"
-	"github.com/theapemachine/symm/liquidity"
-	"github.com/theapemachine/symm/price"
-	"github.com/theapemachine/symm/pumpdump"
-	"github.com/theapemachine/symm/sentiment"
+	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/signal/causal"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/fluid"
+	"github.com/theapemachine/symm/signal/hawkes"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/toxicity"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/view"
 	"github.com/theapemachine/symm/wallet"
 )
 
@@ -41,29 +41,35 @@ var rootCmd = &cobra.Command{
 
 		qpool.SuppressLogging()
 
+		// Discover the full tradable universe (every online pair in the quote
+		// currency) so the signals watch the whole market, not a fixed list.
+		if universe := market.DiscoverSymbols(
+			cmd.Context(), config.System.QuoteCurrency,
+		); len(universe) > 0 {
+			config.System.Symbols = universe
+		}
+
+		tracker := focus.NewSet()
+
 		booter := errnie.Does(func() (*Booter, error) {
 			return NewBooter(cmd.Context(), pool)
 		}).Or(func(err error) {
 			errnie.Error(err)
 		}).Value()
 
-		predictions := price.NewPrediction(cmd.Context(), pool)
-
 		if err := booter.AddSystems(
-			client.NewPublicClient(cmd.Context(), pool, core.KRAKEN_WS_URL),
-			pumpdump.NewPumpDump(cmd.Context(), pool),
+			pumpdump.NewSignal(cmd.Context(), pool),
 			correlation.NewSignal(cmd.Context(), pool),
-			depthflow.NewDepthFlow(cmd.Context(), pool),
-			hawkes.NewHawkes(cmd.Context(), pool),
-			leadlag.NewLeadLag(cmd.Context(), pool),
-			liquidity.NewLiquidity(cmd.Context(), pool),
-			sentiment.NewSentiment(cmd.Context(), pool),
-			fluid.NewFluid(cmd.Context(), pool),
-			causal.NewCausal(cmd.Context(), pool),
-			cvd.NewCVD(cmd.Context(), pool),
+			depthflow.NewSignal(cmd.Context(), pool),
+			hawkes.NewSignal(cmd.Context(), pool),
+			leadlag.NewSignal(cmd.Context(), pool),
+			liquidity.NewSignal(cmd.Context(), pool),
+			sentiment.NewSignal(cmd.Context(), pool),
+			fluid.NewSignal(cmd.Context(), pool),
+			causal.NewSignal(cmd.Context(), pool),
+			cvd.NewSignal(cmd.Context(), pool),
 			toxicity.NewToxicity(cmd.Context(), pool),
-			exhaust.NewExhaust(cmd.Context(), pool),
-			predictions,
+			exhaust.NewSignal(cmd.Context(), pool),
 			trader.NewCrypto(
 				cmd.Context(),
 				pool,
@@ -72,37 +78,14 @@ var rootCmd = &cobra.Command{
 					config.System.QuoteCurrency,
 					config.System.WalletEUR,
 					config.System.TakerFeePct,
-				), predictions,
+				),
+				tracker,
 			),
+			view.NewOHLC(cmd.Context(), pool, tracker),
+			view.NewGauges(cmd.Context(), pool),
 		); err != nil {
 			errnie.Error(err)
 			os.Exit(1)
-		}
-
-		if config.System.KrakenAPIKey != "" && config.System.KrakenAPISecret != "" {
-			if err := booter.AddSystems(
-				client.NewPrivateClient(
-					cmd.Context(),
-					pool,
-					core.KRAKEN_WS_AUTH_URL,
-					config.System.KrakenAPIKey,
-					config.System.KrakenAPISecret,
-				),
-				// The L3 (order-by-order) feed is authenticated like the
-				// private client; it powers the toxicity tracker (§16.4). With
-				// no credentials it is simply absent and toxicity rides the
-				// public L2 book fallback for every symbol.
-				client.NewL3Client(
-					cmd.Context(),
-					pool,
-					core.KRAKEN_WS_L3_URL,
-					config.System.KrakenAPIKey,
-					config.System.KrakenAPISecret,
-				),
-			); err != nil {
-				errnie.Error(err)
-				os.Exit(1)
-			}
 		}
 
 		if err := booter.Boot(); err != nil {
@@ -115,8 +98,7 @@ var rootCmd = &cobra.Command{
 /*
 Execute runs the root command with graceful shutdown on SIGINT/SIGTERM. The
 signal handler cancels the root context so every system started by Boot
-observes ctx.Done() and runs its Close, including the wallet snapshot
-persist and the WebSocket goodbye frame.
+observes ctx.Done() and runs its Close.
 */
 func Execute() {
 	startProfileServer()

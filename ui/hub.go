@@ -13,16 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/runstats"
 )
-
-// anchorSymbol is always forwarded to the frontend regardless of open
-// position state — BTC/EUR is the dashboard's reference price and the
-// lead-lag anchor; without it the price chart goes blank between
-// trades. Per-symbol frames for symbols that are neither anchor nor
-// open positions are filtered out at the hub so the frontend isn't
-// drowned in altcoin ticks it doesn't render.
-const anchorSymbol = "BTC/EUR"
 
 const (
 	writeDeadline = 2 * time.Second
@@ -56,10 +47,11 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 /*
-Hub subscribes to every broadcast group and writes payloads to websocket
-clients. There is intentionally no reader goroutine per client — the
-frontend never sends frames. Liveness is enforced by the per-client
-read deadline plus the conn's built-in ping handling.
+Hub subscribes to the "ui" broadcast group and ships whatever lands there to the
+websocket clients. Producers decide what to publish and gate per-symbol frames by
+open position at the source, so the hub does no filtering — it only buffers
+(lossy telemetry ring) and fans out. There is intentionally no reader goroutine
+per client; the frontend never sends frames.
 */
 type Hub struct {
 	ctx           context.Context
@@ -71,10 +63,15 @@ type Hub struct {
 	telemetry     *TelemetryBuffer
 	heartbeatSeq  atomic.Uint64
 
-	// focus = {anchor} ∪ {open-position symbols}. Updated atomically
-	// from every "wallet" frame.
-	focus atomic.Pointer[map[string]struct{}]
+	// audits is a small ring of recent audit frames replayed to each newly
+	// connected client, so the decision log is not empty just because the trades
+	// happened before the dashboard was open.
+	auditMu sync.Mutex
+	audits  []any
 }
+
+// auditHistory bounds the replayed audit ring.
+const auditHistory = 50
 
 /*
 NewHub subscribes to all broadcast groups on pool.
@@ -97,9 +94,6 @@ func NewHub(
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	hub.subscriptions["ui"] = hub.broadcasts["ui"].Subscribe("ui", 128)
-
-	initial := map[string]struct{}{anchorSymbol: {}}
-	hub.focus.Store(&initial)
 
 	go hub.writePump(hub.subscriptions["ui"])
 	go hub.telemetry.Run(hub.ctx, hub.deliverTelemetry)
@@ -148,6 +142,38 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		"event": "hello",
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
 	}})
+
+	hub.replayAudits(client)
+}
+
+// replayAudits sends the recent audit log to one freshly connected client so its
+// decision panel is populated with what already happened.
+func (hub *Hub) replayAudits(client *wsClient) {
+	hub.auditMu.Lock()
+	recent := append([]any(nil), hub.audits...)
+	hub.auditMu.Unlock()
+
+	for _, frame := range recent {
+		client.enqueue(frame)
+	}
+}
+
+// cacheAudit keeps a bounded ring of audit frames for replay to new clients.
+func (hub *Hub) cacheAudit(payload any) {
+	frame, ok := payload.(map[string]any)
+
+	if !ok || frame["event"] != "audit" {
+		return
+	}
+
+	hub.auditMu.Lock()
+	defer hub.auditMu.Unlock()
+
+	hub.audits = append(hub.audits, payload)
+
+	if len(hub.audits) > auditHistory {
+		hub.audits = hub.audits[len(hub.audits)-auditHistory:]
+	}
 }
 
 /*
@@ -174,13 +200,7 @@ func (hub *Hub) writePump(subscription *qpool.Subscriber) {
 }
 
 func (hub *Hub) deliverTelemetry(payload any) {
-	hub.maybeUpdateFocus(payload)
-
-	if hub.shouldDrop(payload) {
-		runstats.UIFramesFiltered(1)
-		return
-	}
-
+	hub.cacheAudit(payload)
 	hub.fanout(payload)
 }
 
@@ -217,72 +237,6 @@ func (hub *Hub) runHeartbeat() {
 			})
 		}
 	}
-}
-
-/*
-maybeUpdateFocus rebuilds the focus set on every "wallet" frame so the
-hub forwards per-symbol data for symbols we actually hold. Aggregate
-frames and the wallet frame itself always pass.
-*/
-func (hub *Hub) maybeUpdateFocus(payload any) {
-	frame, ok := payload.(map[string]any)
-
-	if !ok || frame["event"] != "wallet" {
-		return
-	}
-
-	inventory, _ := frame["Inventory"].(map[string]float64)
-	currency, _ := frame["Currency"].(string)
-
-	if currency == "" {
-		currency = config.System.QuoteCurrency
-	}
-
-	next := map[string]struct{}{anchorSymbol: {}}
-
-	for base, qty := range inventory {
-		if qty <= 0 || base == "" || currency == "" {
-			continue
-		}
-
-		next[base+"/"+currency] = struct{}{}
-	}
-
-	hub.focus.Store(&next)
-}
-
-/*
-shouldDrop returns true for per-symbol frames whose symbol is not in
-focus. Aggregate frames (no symbol field) always pass.
-*/
-func (hub *Hub) shouldDrop(payload any) bool {
-	frame, ok := payload.(map[string]any)
-
-	if !ok {
-		return false
-	}
-
-	switch frame["event"] {
-	case "audit", "prediction", "prediction_settled":
-		return false
-	}
-
-	symbol, hasSymbol := frame["symbol"].(string)
-
-	if !hasSymbol || symbol == "" {
-		return false
-	}
-
-	focusPtr := hub.focus.Load()
-
-	if focusPtr == nil {
-		return false
-	}
-
-	focus := *focusPtr
-	_, present := focus[symbol]
-
-	return !present
 }
 
 func (hub *Hub) fanout(payload any) {

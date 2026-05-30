@@ -36,6 +36,7 @@ Config holds runtime parameters for the trading engine.
 */
 type Config struct {
 	QuoteCurrency               string
+	Symbols                     []string // watch list every signal subscribes to
 	WalletEUR                   float64
 	TakerFeePct                 float64 // fallback taker fee when a pair has no real schedule
 	Fee30DVolume                float64 // 30-day traded volume (fee_volume_currency) for fee-tier selection
@@ -177,11 +178,31 @@ func init() {
 }
 
 /*
+DefaultSymbols is the watch list every signal subscribes to: a set of liquid
+EUR spot pairs with BTC/EUR as the dashboard anchor.
+*/
+func DefaultSymbols() []string {
+	return []string{
+		"BTC/EUR",
+		"ETH/EUR",
+		"SOL/EUR",
+		"XRP/EUR",
+		"ADA/EUR",
+		"DOGE/EUR",
+		"DOT/EUR",
+		"LINK/EUR",
+		"AVAX/EUR",
+		"LTC/EUR",
+	}
+}
+
+/*
 NewConfig returns paper-trading defaults for the €200 challenge.
 */
 func NewConfig() *Config {
 	cfg := &Config{
 		QuoteCurrency:               DefaultQuoteCurrency,
+		Symbols:                     DefaultSymbols(),
 		WalletEUR:                   DefaultWalletEUR,
 		TakerFeePct:                 DefaultTakerFeePct,
 		Fee30DVolume:                0, // small/paper account sits at the bottom (highest) fee tier

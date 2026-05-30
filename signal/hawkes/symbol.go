@@ -1,69 +1,46 @@
 package hawkes
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/kraken/trade"
-	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/numeric/logic"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
+/*
+HawkesSymbol fits a bivariate self-exciting Hawkes process to one symbol's
+buy/sell trade arrivals and classifies the excitation state onto the thermal
+perspective. The fit is cooldown-throttled and refreshed in place between
+refits — a full MLE per tick would saturate a core.
+
+SNR is the dominant side's current intensity over its own exogenous baseline μ:
+a feedback loop running hot above background clears the noise floor.
+*/
 type HawkesSymbol struct {
-	confidenceHistory []float64
-	intensityRatios   []float64
-	dailyQuoteVol     float64
-	fit               BivariateFit
-	hasFit            bool
-	lastFitEventKey   fitEventKey
-	lastFitTime       time.Time
-	fitCooldown       time.Duration
-	minFitEvents      int
-	calibrator        engine.PredictionCalibrator
-	liveScore         float64
-	gauge             *numeric.Derived
+	fit             BivariateFit
+	hasFit          bool
+	lastFitEventKey fitEventKey
+	lastFitTime     time.Time
+	fitCooldown     time.Duration
+	minFitEvents    int
 }
 
-func NewHawkesSymbol(calibrationParams engine.CalibrationParams) *HawkesSymbol {
+func NewHawkesSymbol() *HawkesSymbol {
 	return &HawkesSymbol{
-		confidenceHistory: make([]float64, 0, confidenceHistoryCap(bivariateParamCount*2)),
-		intensityRatios:   make([]float64, 0, confidenceHistoryCap(bivariateParamCount*2)),
-		minFitEvents:      bivariateParamCount * 2,
-		calibrator:        engine.NewPredictionCalibrator(calibrationParams),
-		fitCooldown:       config.System.HawkesFitCooldown,
-		gauge: numeric.NewDerived(
-			numeric.WithDynamics(adaptive.NewProduct()),
-		),
+		minFitEvents: bivariateParamCount * 2,
+		fitCooldown:  config.System.HawkesFitCooldown,
 	}
 }
 
-func (sym *HawkesSymbol) FeedTicker(last, volumeBase float64) {
-	sym.dailyQuoteVol = volumeBase * last
-}
-
-func (sym *HawkesSymbol) ApplyFeedback(feedback engine.PredictionFeedback) {
-	sym.calibrator.Apply(feedback)
-	sym.lastFitEventKey = fitEventKey{}
-	sym.lastFitTime = time.Time{}
-}
-
-func (sym *HawkesSymbol) FitBivariate(
-	stream ArrivalStream,
-	horizon time.Time,
-) BivariateFit {
+func (sym *HawkesSymbol) FitBivariate(stream ArrivalStream, horizon time.Time) BivariateFit {
 	prior := BivariateFit{}
 
 	if sym.hasFit {
-		prior = sym.fit.Calibrated(sym.calibrator.Scale())
+		prior = sym.fit
 	}
 
-	context, ok := NewFitContext(stream, horizon)
-
-	if ok {
+	if context, ok := NewFitContext(stream, horizon); ok {
 		sym.minFitEvents = context.MinFitEvents
 	}
 
@@ -72,73 +49,23 @@ func (sym *HawkesSymbol) FitBivariate(
 	if fit.MuBuy > 0 {
 		sym.fit = fit
 		sym.hasFit = true
-		sym.recordIntensityRatio(fit.BuyIntensity / fit.MuBuy)
 	}
 
 	return fit
 }
 
-func (sym *HawkesSymbol) baselineIntensityFence() float64 {
-	if len(sym.intensityRatios) == 0 {
-		return 1
-	}
-
-	fence := engine.ConfidenceFence(sym.intensityRatios)
-
-	if fence <= 0 {
-		return 1
-	}
-
-	return fence
-}
-
-func (sym *HawkesSymbol) gaugeScore(rawScore float64, persist bool) float64 {
-	if rawScore <= 0 {
-		return 0
-	}
-
-	normalized := sym.calibrator.NormalizeConfidence(rawScore, sym.confidenceHistory)
-	sym.liveScore = normalized
-
-	if persist {
-		sym.recordConfidence(rawScore)
-	}
-
-	return normalized
-}
-
-func (sym *HawkesSymbol) SymbolRisk() (engine.SymbolRisk, bool) {
-	if !sym.hasFit || sym.fit.SpectralRadius <= 0 {
-		return engine.SymbolRisk{}, false
-	}
-
-	return engine.SymbolRisk{
-		SpectralRadius: sym.fit.SpectralRadius,
-	}, true
-}
-
-func (sym *HawkesSymbol) refreshFitIntensities(
-	stream ArrivalStream,
-	horizon time.Time,
-) BivariateFit {
-	return sym.fit.WithIntensitiesAt(stream, horizon)
-}
-
-func (sym *HawkesSymbol) fitForEvents(
-	stream ArrivalStream,
-	horizon time.Time,
-) (BivariateFit, bool) {
+func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (BivariateFit, bool) {
 	key := stream.RevisionKey()
 
 	if sym.hasFit && key == sym.lastFitEventKey {
-		return sym.refreshFitIntensities(stream, horizon), true
+		return sym.fit.WithIntensitiesAt(stream, horizon), true
 	}
 
 	if sym.hasFit &&
 		sym.fitCooldown > 0 &&
 		!sym.lastFitTime.IsZero() &&
 		horizon.Sub(sym.lastFitTime) < sym.fitCooldown {
-		return sym.refreshFitIntensities(stream, horizon), true
+		return sym.fit.WithIntensitiesAt(stream, horizon), true
 	}
 
 	fit := sym.FitBivariate(stream, horizon)
@@ -153,91 +80,52 @@ func (sym *HawkesSymbol) fitForEvents(
 	return fit, true
 }
 
-func (sym *HawkesSymbol) Measure(
-	ticks []trade.Data,
-	imbalance float64,
-	now time.Time,
-	pair asset.Pair,
-) (engine.Measurement, bool) {
+/*
+Measure fits the arrival stream and emits the thermal reading. SNR is the
+dominant-side intensity relative to its exogenous baseline μ.
+*/
+func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (perspectives.Measurement, bool) {
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
 	if !ok || !context.EnoughEvents(stream) {
-		return engine.Measurement{}, false
+		return perspectives.Measurement{}, false
 	}
 
 	fit, ok := sym.fitForEvents(stream, now)
 
 	if !ok {
-		return engine.Measurement{}, false
+		return perspectives.Measurement{}, false
 	}
 
-	buyAsymmetry := fit.Asymmetry(false)
-	sellAsymmetry := fit.Asymmetry(true)
-	sellSide := sellAsymmetry > buyAsymmetry
-	asymmetry := buyAsymmetry
+	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
+	asymmetry := fit.Asymmetry(sellSide)
+
+	intensity, mu := fit.BuyIntensity, fit.MuBuy
 
 	if sellSide {
-		asymmetry = sellAsymmetry
+		intensity, mu = fit.SellIntensity, fit.MuSell
 	}
 
-	bookSide := imbalance
+	snr := 1.0
 
-	if sellSide {
-		bookSide = math.Abs(imbalance)
+	if mu > 0 {
+		snr = intensity / mu
 	}
 
-	confidence := sym.clusterConfidence(
-		fit,
-		asymmetry,
-		bookSide,
-		sellSide,
-	)
-
-	if confidence <= 0 {
-		return engine.Measurement{}, false
-	}
-
-	runwaySec := int64(fit.Runway().Seconds())
-
-	if runwaySec < 1 {
-		runwaySec = 1
-	}
-
-	return engine.Measurement{
-		Type: logic.Or(
-			engine.Momentum,
-			engine.Dump,
-			sellSide,
-		),
-		Source: "hawkes",
-		Regime: logic.Or(
-			"momentum",
-			"dump",
-			sellSide,
-		),
-		Reason: logic.Or(
-			"cluster_buy",
-			"cluster_sell",
-			sellSide,
-		),
-		Category:   hawkesCategory(fit, asymmetry, sellSide),
-		Pairs:      []asset.Pair{pair},
-		Confidence: confidence,
-		Timeframe: engine.Timeframe{
-			Start: now.Unix(),
-			End:   now.Unix() + runwaySec,
-		},
+	return perspectives.Measurement{
+		Source:   perspectives.SourceHawkes,
+		Category: hawkesCategory(fit, asymmetry, sellSide),
+		SNR:      snr,
 	}, true
 }
 
 /*
-hawkesCategory maps the fitted Hawkes state onto the thermal perspective. A
+hawkesCategory maps the fitted Hawkes state onto the thermal perspective: a
 spectral radius approaching the critical branch is contested saturation; a
-dominant-side intensity that has fallen below its own exogenous baseline is
-exhaustion; a strongly one-sided cluster is a directional frenzy; everything
-else is organic (running cool near baseline).
+dominant-side intensity below its own exogenous baseline is exhaustion; a
+strongly one-sided cluster is a directional frenzy; otherwise organic.
 */
-func hawkesCategory(fit BivariateFit, asymmetry float64, sellSide bool) engine.Category {
+func hawkesCategory(fit BivariateFit, asymmetry float64, sellSide bool) perspectives.CategoryType {
 	intensity, mu := fit.BuyIntensity, fit.MuBuy
 
 	if sellSide {
@@ -246,86 +134,12 @@ func hawkesCategory(fit BivariateFit, asymmetry float64, sellSide bool) engine.C
 
 	switch {
 	case fit.SpectralRadius >= 0.85:
-		return engine.CatSaturation
+		return perspectives.CategorySaturation
 	case mu > 0 && intensity < mu:
-		return engine.CatExhaustion
+		return perspectives.CategoryExhaustion
 	case asymmetry >= 0.15:
-		return engine.CatFrenzy
+		return perspectives.CategoryFrenzy
 	default:
-		return engine.CatOrganic
+		return perspectives.CategoryOrganic
 	}
-}
-
-func (sym *HawkesSymbol) recordConfidence(confidence float64) {
-	if confidence <= 0 {
-		return
-	}
-
-	capacity := confidenceHistoryCap(sym.minFitEvents)
-	sym.confidenceHistory = append(sym.confidenceHistory, confidence)
-
-	if len(sym.confidenceHistory) > capacity {
-		sym.confidenceHistory = sym.confidenceHistory[len(sym.confidenceHistory)-capacity:]
-	}
-}
-
-func (sym *HawkesSymbol) recordIntensityRatio(ratio float64) {
-	if ratio <= 0 {
-		return
-	}
-
-	capacity := confidenceHistoryCap(sym.minFitEvents)
-	sym.intensityRatios = append(sym.intensityRatios, ratio)
-
-	if len(sym.intensityRatios) > capacity {
-		sym.intensityRatios = sym.intensityRatios[len(sym.intensityRatios)-capacity:]
-	}
-}
-
-/*
-clusterConfidence scores trade-cluster excitation against book confirmation from the
-current fit and top-of-book imbalance.
-*/
-func (sym *HawkesSymbol) clusterConfidence(
-	fit BivariateFit,
-	asymmetry float64,
-	bookSide float64,
-	sellSide bool,
-) float64 {
-	if asymmetry <= 0 || fit.SpectralRadius >= criticalBranch {
-		return 0
-	}
-
-	ratio := 0.0
-
-	if sellSide {
-		if fit.MuSell <= 0 || fit.SellIntensity <= 0 {
-			return 0
-		}
-
-		ratio = fit.SellIntensity / fit.MuSell
-	}
-
-	if !sellSide {
-		if fit.MuBuy <= 0 || fit.BuyIntensity <= 0 {
-			return 0
-		}
-
-		ratio = fit.BuyIntensity / fit.MuBuy
-	}
-
-	fence := sym.baselineIntensityFence()
-
-	if ratio <= fence {
-		return 0
-	}
-
-	if fence <= 0 {
-		fence = 1
-	}
-
-	cluster := asymmetry * engine.ExcessRatio(ratio/fence)
-	side := math.Min(math.Abs(bookSide), 1)
-
-	return engine.AlignConfidence(cluster, side)
 }

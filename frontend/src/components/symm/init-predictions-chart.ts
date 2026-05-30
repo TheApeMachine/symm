@@ -21,7 +21,12 @@ import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
 const SERIES_STYLE: Record<
 	PredictionSeriesKind,
-	{ name: string; stroke: string; strokeDashArray?: number[]; strokeThickness: number }
+	{
+		name: string;
+		stroke: string;
+		strokeDashArray?: number[];
+		strokeThickness: number;
+	}
 > = {
 	average: {
 		name: "Average prediction multiple",
@@ -59,6 +64,9 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 			Math.floor(Date.now() / 1000) + 60,
 		),
 		growBy: new NumberRange(0.05, 0.05),
+		labelStyle: {
+			fontSize: 8,
+		},
 	});
 
 	const yAxis = new NumericAxis(wasmContext, {

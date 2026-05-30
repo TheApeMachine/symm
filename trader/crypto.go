@@ -3,426 +3,450 @@ package trader
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/price"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/kraken/order"
+	decision "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/wallet"
 )
 
-/*
-bucketKey identifies one perspective accumulator. Measurements belong to the
-same Perspective only when they share a symbol and a perspective lens
-(microstructure / flow / cross-asset / sentiment); otherwise they live in
-different buckets and produce independent predictions.
-*/
-type bucketKey struct {
-	symbol string
-	ptype  engine.PerspectiveType
+const (
+	// riskFractionPerTrade is the share of free balance committed to one entry.
+	riskFractionPerTrade = 0.02
+	// stopFraction places the protective stop this far below entry.
+	stopFraction = 0.03
+	// takeFraction takes profit this far above entry.
+	takeFraction = 0.05
+	// maxConcurrentPositions caps simultaneous exposure across the book.
+	maxConcurrentPositions = 5
+	// predictionTargetReturn is the favorable move a perspective entry is a bet
+	// on; it is the predicted return reported to the dashboard's prediction
+	// chart and settled against the realized move on exit.
+	predictionTargetReturn = 0.05
+	// predictionHorizon is the runway shown for an open prediction.
+	predictionHorizon = 30 * time.Minute
+	// walletResendInterval republishes the wallet snapshot on a cadence so a
+	// dashboard that connects after startup still sees the balance promptly (the
+	// boot-time frame is fanned out to zero clients and lost).
+	walletResendInterval = 2 * time.Second
+)
+
+// position is the trade desk's protective bracket for one open symbol: the price
+// it bought at and the stop/target that close it. Exits are price-based and live
+// here in the desk — risk is not a side-door.
+type position struct {
+	entry  float64
+	stop   float64
+	target float64
+	mark   float64 // last seen price, re-marked to keep P/L fresh between ticks
 }
 
 /*
-Crypto combines measurements into perspectives, records predictions, and enters trades.
+Crypto is the whole trade desk: it receives signal measurements, finds the
+perspective they form for each symbol, and makes the buy/sell call. Risk is not
+a side-door — it is the position sizing, the protective stop and take-profit
+bracket, and the exposure cap, all computed at the moment the order is placed.
 */
 type Crypto struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	wallet         *wallet.Wallet
-	forecasts      *price.Prediction
-	perspectives   map[bucketKey]*Perspective
-	perspectivesMu sync.RWMutex
-	predictions    []*engine.Prediction
-	kellySizer     *KellySizer
-	risk           *riskAccount
-	gaugeAvg       *confidenceAverages
-	calibrator     *sourceCalibrator
-	shock          *regimeShockBreaker
-	execution      *executionManager
-	hindsight      *hindsightTracker
-	pulseSeq       atomic.Uint64
-	pumpPeak       map[string]float64
-	stories        map[string]*engine.MarketStory
-	storiesMu      sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	measurements *qpool.Subscriber
+	ui           *qpool.BroadcastGroup
+	wallet       *wallet.Wallet
+	tracker      *focus.Set
+	mu           sync.RWMutex
+	readings     map[string]map[perspectives.CategoryType]perspectives.Measurement
+	positions    map[string]position
+	open         atomic.Int64
+	auditSeq     atomic.Uint64
 }
 
 func NewCrypto(
 	ctx context.Context,
 	pool *qpool.Q,
 	tradingWallet *wallet.Wallet,
-	forecasts *price.Prediction,
+	tracker *focus.Set,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
-	shock := newRegimeShockBreaker()
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		broadcasts:   make(map[string]*qpool.BroadcastGroup),
-		subscribers:  make(map[string]*qpool.Subscriber),
-		wallet:       tradingWallet,
-		forecasts:    forecasts,
-		perspectives: make(map[bucketKey]*Perspective),
-		predictions:  make([]*engine.Prediction, 0),
-		kellySizer:   NewKellySizer(engine.DefaultCalibrationParams()),
-		risk:         newRiskAccount(tradingWallet),
-		gaugeAvg:     newConfidenceAverages(),
-		calibrator:   newSourceCalibrator(shock),
-		shock:        shock,
-		hindsight:    newHindsightTracker(),
-		pumpPeak:     make(map[string]float64),
-		stories:      make(map[string]*engine.MarketStory),
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		wallet:    tradingWallet,
+		tracker:   tracker,
+		readings:  make(map[string]map[perspectives.CategoryType]perspectives.Measurement),
+		positions: make(map[string]position),
 	}
-	crypto.execution = newExecutionManager(crypto)
 
-	for _, channel := range []string{"measurements", "feedback", "ui"} {
-		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("crypto:"+channel, 128)
-	}
-	setAuditBroadcast(crypto.broadcasts["ui"])
-
-	crypto.broadcasts["orders"] = pool.CreateBroadcastGroup("orders", 10*time.Millisecond)
-	crypto.subscribers["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond).
-		Subscribe("crypto:exits", 128)
-
-	// executions carries live fills emitted by the private WS client. The
-	// trader is the only system that owns the wallet, so the executions
-	// consumer applies each fill through wallet.ApplyFill (which dedupes
-	// on ExecKey). Paper fills, which already mutate the wallet inline in
-	// Buy.FillPaper / Sell.FillPaper, will land here too as informational
-	// frames and be a no-op because the ExecKey ring will report them as
-	// already-seen.
-	crypto.subscribers["executions"] = pool.CreateBroadcastGroup("executions", 10*time.Millisecond).
-		Subscribe("crypto:executions", 128)
-	crypto.subscribers["order_acks"] = pool.CreateBroadcastGroup("order_acks", 10*time.Millisecond).
-		Subscribe("crypto:order_acks", 128)
-
-	if errnie.Error(errnie.Require(map[string]any{
-		"ctx":       ctx,
-		"cancel":    cancel,
-		"pool":      pool,
-		"wallet":    tradingWallet,
-		"forecasts": forecasts,
-	})) != nil {
-		return nil
-	}
+	group := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	crypto.measurements = group.Subscribe("trader:measurements", 128)
+	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	return crypto
 }
 
-func (crypto *Crypto) Start() error {
-	crypto.sendWallet()
-	return nil
-}
-
-func (crypto *Crypto) State() engine.State {
-	return engine.READY
-}
-
+// Tick consumes the measurement bus directly: every reading is recorded and the
+// affected symbol's perspective is re-decided. No raw market feed — the price
+// the trader needs to size and fill rides in on the measurement itself.
 func (crypto *Crypto) Tick() error {
-	errnie.Info("starting crypto tick")
+	wallet := time.NewTicker(walletResendInterval)
+	defer wallet.Stop()
 
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
-			case <-ticker.C:
-				crypto.attachWalletMarks()
-				crypto.sendWallet()
-				crypto.emitEnginePulse("idle")
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			return crypto.ctx.Err()
+		case <-wallet.C:
+			crypto.publishWallet()
+			crypto.republishMarks()
+		case value, ok := <-crypto.measurements.Incoming:
+			if !ok || value.Value == nil {
+				continue
 			}
-		}
-	})
 
-	wg.Go(func() {
-		// run_stats is the offline-analysis seam. Every 10 seconds the
-		// trader dumps a cumulative counter snapshot plus the live wallet
-		// and risk numbers, so a post-run jq can compute per-window
-		// throughput, gate hit rates, slot decisions, and PnL trajectory
-		// without having to reconstruct counts from per-event lines.
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
+			measurement, measurementOK := value.Value.(perspectives.Measurement)
 
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
-			case <-ticker.C:
-				crypto.emitRunStats()
+			if !measurementOK || measurement.Symbol == "" {
+				continue
 			}
-		}
-	})
 
-	wg.Go(func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
-			case raw, ok := <-crypto.subscribers["feedback"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("crypto feedback channel closed"))
-					return
-				}
+			crypto.record(measurement)
 
-				feedback, ok := raw.Value.(engine.PredictionFeedback)
-
-				if !ok {
-					errnie.Error(fmt.Errorf("invalid prediction feedback: %v", raw.Value))
-					continue
-				}
-
-				crypto.kellySizer.ApplyFeedback(feedback)
-
-				// Top-down feedback loop, step 2: every signal source
-				// that contributed to this prediction gets its
-				// calibrator updated with the predicted-vs-actual
-				// return. feedback.Sources is the multi-source list
-				// from perspectiveSources; if it's empty (single-
-				// source path), fall back to feedback.Source. The next
-				// raw measurement from each of those sources will be
-				// multiplied by the updated trust factor at intake.
-				sources := feedback.Sources
-
-				if len(sources) == 0 && feedback.Source != "" {
-					sources = []string{feedback.Source}
-				}
-
-				for _, source := range sources {
-					crypto.calibrator.ApplyFeedback(
-						source, feedback.PredictedReturn, feedback.ActualReturn,
-					)
-				}
-
-				audit("prediction_settled", map[string]any{
-					"source":           feedback.Source,
-					"sources":          sources,
-					"symbol":           feedback.Symbol,
-					"predicted_return": feedback.PredictedReturn,
-					"actual_return":    feedback.ActualReturn,
-					"error":            feedback.Error,
-					"confidence":       feedback.Confidence,
-					"regime":           feedback.Regime,
-					"trust":            crypto.calibratorTrust(feedback.Source),
-				})
-
-				if crypto.hindsight == nil {
-					errnie.Error(fmt.Errorf("hindsight tracker missing"))
-					continue
-				}
-
-				if err := crypto.hindsight.Settle(feedback); err != nil {
-					errnie.Error(err)
-				}
-			case raw, ok := <-crypto.subscribers["executions"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("crypto executions channel closed"))
-					return
-				}
-
-				crypto.applyFill(raw.Value)
-			case raw, ok := <-crypto.subscribers["order_acks"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("crypto order_acks channel closed"))
-					return
-				}
-
-				crypto.handleOrderAck(raw.Value)
-			case raw, ok := <-crypto.subscribers["exits"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("crypto exits channel closed"))
-					return
-				}
-
-				exitSignal, ok := raw.Value.(engine.Exit)
-
-				if !ok {
-					errnie.Error(fmt.Errorf("invalid exit signal: %v", raw.Value))
-					continue
-				}
-
-				if err := crypto.routeExit(exitSignal); err != nil {
-					errnie.Error(err)
-				}
-			case raw, ok := <-crypto.subscribers["measurements"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("crypto measurements channel closed"))
-					return
-				}
-
-				if err := crypto.ingestMeasurement(raw.Value); err != nil {
-					errnie.Error(err)
-				}
+			// A held symbol is marked-to-market in real time and managed by its
+			// protective bracket; an open slot is offered to the entry playbooks.
+			if _, held := crypto.wallet.PositionBindingFor(baseOf(measurement.Symbol)); held {
+				crypto.remark(measurement.Symbol, measurement.Last)
+				crypto.manageExit(measurement.Symbol, measurement.Last)
+				continue
 			}
-		}
-	})
 
-	wg.Wait()
-	return nil
+			crypto.decide(measurement.Symbol, measurement.Last)
+		}
+	}
 }
 
-func (crypto *Crypto) ingestMeasurement(raw any) error {
-	measurement, ok := raw.(engine.Measurement)
+func (crypto *Crypto) record(measurement perspectives.Measurement) {
+	crypto.mu.Lock()
+	defer crypto.mu.Unlock()
 
-	if !ok {
-		return fmt.Errorf("invalid measurement: %v", raw)
+	set := crypto.readings[measurement.Symbol]
+
+	if set == nil {
+		set = make(map[perspectives.CategoryType]perspectives.Measurement)
+		crypto.readings[measurement.Symbol] = set
 	}
 
-	if len(measurement.Pairs) == 0 || measurement.Pairs[0].Wsname == "" {
-		return nil
+	set[measurement.Category] = measurement
+}
+
+// decide forms the symbol's perspective from its readings and acts on the verdict.
+func (crypto *Crypto) decide(symbol string, last float64) {
+	crypto.mu.RLock()
+	set := crypto.readings[symbol]
+	measurements := make([]perspectives.Measurement, 0, len(set))
+
+	for _, measurement := range set {
+		measurements = append(measurements, measurement)
 	}
 
-	symbol := measurement.Pairs[0].Wsname
-	crypto.risk.ObserveMark(symbol, measurement.AnchorPrice(), time.Time{})
-	shockBefore := crypto.shock.Active()
-	crypto.shock.Observe(measurement)
-	shockAfter := crypto.shock.Active()
+	crypto.mu.RUnlock()
 
-	if shockAfter != shockBefore {
-		audit("regime_shock", crypto.shock.Snapshot())
+	action, _ := decision.Decide(measurements)
+
+	if action != nil && *action == perspectives.ActionEnter {
+		crypto.enter(symbol, last, entryReason(measurements))
+	}
+}
+
+// entryReason narrates which signal triggered an entry: the strongest drive-class
+// reading among the measurements, with its source and SNR.
+func entryReason(measurements []perspectives.Measurement) string {
+	best, found := strongestDrive(measurements)
+
+	if !found {
+		return "entry authorized"
 	}
 
-	// Track the running peak price during a fast pump so the entry anti-chase
-	// guard (§15.5) can measure retrace from the high. Accessed only from this
-	// single measurements/exits goroutine, so the plain map needs no lock.
-	if pumpRegimeOf(measurement) == "pump_fast" {
-		if price := measurement.AnchorPrice(); price > crypto.pumpPeak[symbol] {
-			crypto.pumpPeak[symbol] = price
-		}
-	}
-
-	// Top-down feedback loop, step 1: apply the per-source calibrator's
-	// trust score to the raw confidence. The signal's own measurement is
-	// honest about its current strength; the calibrator's job is to tell
-	// the trader "this source has been accurate / inaccurate lately" so
-	// the perspective layer, the gauge, and any downstream consumer all
-	// see a track-record-adjusted number. Step 2 happens in
-	// applyPredictionFeedback below, which feeds the prediction error
-	// back into the calibrator so the next measurement from this source
-	// is weighted by its post-error trust.
-	rawConfidence := measurement.Confidence
-	measurement.Confidence = crypto.calibrator.CalibrateConfidence(
-		measurement.Source, rawConfidence,
+	return fmt.Sprintf(
+		"%s.%s snr=%.2f", best.Source.String(), best.Category.String(), best.SNR,
 	)
-	crypto.execution.ReviewMeasurement(measurement)
-
-	// Fold this signal's verdict into the symbol's market story before the
-	// perspective/decision pass below reads it.
-	crypto.recordStory(measurement)
-
-	audit("measurement_ingest", map[string]any{
-		"source":         measurement.Source,
-		"symbol":         symbol,
-		"confidence":     measurement.Confidence,
-		"raw_confidence": rawConfidence,
-		"regime":         measurement.Regime,
-		"reason":         measurement.Reason,
-		"type":           measurement.Type,
-		"last":           measurement.Last,
-		"bid":            measurement.Bid,
-		"ask":            measurement.Ask,
-	})
-
-	// The gauge shows the running EMA of CALIBRATED confidence per
-	// source, not raw per-measurement reading. EMA smooths anomalies
-	// and the calibration multiplier is what makes the gauge
-	// self-tuning to feedback.
-	smoothed := crypto.gaugeAvg.Observe(measurement.Source, measurement.Confidence)
-
-	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":          "confidence",
-		"source":         measurement.Source,
-		"confidence":     smoothed,
-		"raw_confidence": rawConfidence,
-		"trust":          crypto.calibratorTrust(measurement.Source),
-		"shock_active":   shockAfter,
-		"ts":             time.Now().UTC().Format(time.RFC3339Nano),
-	}})
-
-	crypto.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event": "tick",
-		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-	}})
-
-	crypto.settlePredictions()
-
-	key := bucketKey{symbol: symbol, ptype: perspectiveType(measurement)}
-
-	crypto.perspectivesMu.Lock()
-	bucket := crypto.perspectives[key]
-
-	if bucket == nil {
-		bucket = NewPerspective([]engine.Measurement{measurement})
-		crypto.perspectives[key] = bucket
-		crypto.perspectivesMu.Unlock()
-	} else {
-		crypto.perspectivesMu.Unlock()
-		bucket.AddMeasurement(measurement)
-	}
-
-	audit("perspective_accumulate", map[string]any{
-		"symbol":                 symbol,
-		"perspective_type":       key.ptype,
-		"measurement_count":      bucket.measurementCount(),
-		"source":                 measurement.Source,
-		"measurement_confidence": measurement.Confidence,
-	})
-
-	err := crypto.tryPerspective(key, bucket)
-	crypto.emitEnginePulse("scan")
-
-	return err
 }
 
-/*
-calibratorTrust exposes the per-source trust value to callers that need
-to surface it in run_stats / UI events. Safe under concurrent access.
-*/
-func (crypto *Crypto) calibratorTrust(source string) float64 {
-	if crypto == nil || crypto.calibrator == nil {
-		return 0
+// strongestDrive returns the highest-SNR drive-class reading (the categories the
+// drive playbook enters on).
+func strongestDrive(measurements []perspectives.Measurement) (perspectives.Measurement, bool) {
+	var best perspectives.Measurement
+	found := false
+
+	for _, measurement := range measurements {
+		drive := measurement.Category == perspectives.CategoryAggressiveDrive ||
+			measurement.Category == perspectives.CategoryHiddenAbsorption
+
+		if drive && measurement.SNR > best.SNR {
+			best = measurement
+			found = true
+		}
 	}
 
-	entry := crypto.calibrator.entry(source)
-
-	if entry == nil {
-		return 0
-	}
-
-	return entry.forecast.Trust()
+	return best, found
 }
 
-func (crypto *Crypto) tryPerspective(key bucketKey, perspective *Perspective) error {
-	prediction, err := perspective.Predict(key.ptype)
+// enter opens a position: it sizes by free balance, caps concurrent exposure, and
+// records the protective stop/target bracket that the desk will close against.
+func (crypto *Crypto) enter(symbol string, last float64, reason string) {
+	if crypto.open.Load() >= maxConcurrentPositions || last <= 0 {
+		return
+	}
+
+	notional := crypto.wallet.BalanceCopy() * riskFractionPerTrade
+
+	if notional <= 0 {
+		return
+	}
+
+	buy := broker.Buy{
+		Symbol:    symbol,
+		Notional:  notional,
+		Quote:     broker.Quote{Last: last, Bid: last, Ask: last, At: time.Now()},
+		StopPrice: last * (1 - stopFraction),
+	}
+
+	fill, err := buy.FillPaper(crypto.wallet)
 
 	if err != nil {
-		audit("perspective_not_ready", map[string]any{
-			"symbol":            key.symbol,
-			"perspective_type":  key.ptype,
-			"measurement_count": perspective.measurementCount(),
-			"error":             err.Error(),
-		})
-
-		return nil
+		errnie.Error(err)
+		return
 	}
 
-	return crypto.actOnPrediction(prediction)
+	crypto.wallet.BindPosition(baseOf(symbol), wallet.PositionBinding{
+		Source:      "perspective",
+		PredictedAt: time.Now(),
+	})
+	crypto.open.Add(1)
+	crypto.tracker.Add(symbol)
+
+	crypto.mu.Lock()
+	crypto.positions[symbol] = position{
+		entry:  fill.Price,
+		stop:   fill.Price * (1 - stopFraction),
+		target: fill.Price * (1 + takeFraction),
+		mark:   fill.Price,
+	}
+	crypto.mu.Unlock()
+
+	crypto.publishAudit("entry", symbol, fmt.Sprintf("bought %.2f %s — %s", notional, crypto.wallet.Snapshot().Currency, reason))
+	crypto.publishFill(fill)
+	crypto.publishWallet()
+	crypto.publishPrediction(symbol)
+}
+
+// manageExit closes a held position when price reaches its stop or target. This
+// is the risk bracket: the perspective layer never has to signal an exit.
+func (crypto *Crypto) manageExit(symbol string, last float64) {
+	crypto.mu.RLock()
+	bracket, tracked := crypto.positions[symbol]
+	crypto.mu.RUnlock()
+
+	if !tracked || last <= 0 {
+		return
+	}
+
+	if last > bracket.stop && last < bracket.target {
+		return
+	}
+
+	trigger := "stop"
+
+	if last >= bracket.target {
+		trigger = "target"
+	}
+
+	base := baseOf(symbol)
+	binding, _ := crypto.wallet.PositionBindingFor(base)
+	entry := crypto.wallet.AvgEntryFor(base)
+
+	sell := broker.Sell{
+		Symbol: symbol,
+		Quote:  broker.Quote{Last: last, Bid: last, Ask: last, At: time.Now()},
+	}
+
+	fill, err := sell.FillPaper(crypto.wallet)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	crypto.wallet.ClearPosition(base)
+	crypto.open.Add(-1)
+	crypto.tracker.Remove(symbol)
+
+	crypto.mu.Lock()
+	delete(crypto.positions, symbol)
+	crypto.mu.Unlock()
+
+	realized := realizedReturn(entry, fill.Price)
+	crypto.publishAudit("exit", symbol, fmt.Sprintf("%s hit at %.6g — return %.2f%%", trigger, last, realized*100))
+	crypto.publishFill(fill)
+	crypto.publishWallet()
+	crypto.publishPredictionSettled(symbol, realized, binding.PredictedAt)
+}
+
+// remark records the latest price for a held symbol and marks it to market, so
+// P/L tracks live whenever fresh measurements arrive.
+func (crypto *Crypto) remark(symbol string, last float64) {
+	if last <= 0 {
+		return
+	}
+
+	crypto.mu.Lock()
+	if bracket, ok := crypto.positions[symbol]; ok {
+		bracket.mark = last
+		crypto.positions[symbol] = bracket
+	}
+	crypto.mu.Unlock()
+
+	crypto.publishMark(symbol, last)
+}
+
+// republishMarks re-marks every open position at its last known price on a
+// cadence, so a dashboard that connects late — or a thin coin that has stopped
+// printing — still shows live P/L rather than a bare inventory row.
+func (crypto *Crypto) republishMarks() {
+	crypto.mu.RLock()
+	marks := make(map[string]float64, len(crypto.positions))
+
+	for symbol, bracket := range crypto.positions {
+		marks[symbol] = bracket.mark
+	}
+
+	crypto.mu.RUnlock()
+
+	for symbol, mark := range marks {
+		crypto.publishMark(symbol, mark)
+	}
+}
+
+// publishMark marks a held position to market so the dashboard shows live P/L,
+// independent of whether the symbol produces OHLC candles.
+func (crypto *Crypto) publishMark(symbol string, last float64) {
+	if last <= 0 {
+		return
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":  "mark",
+		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol": symbol,
+		"price":  last,
+	}})
+}
+
+// publishAudit narrates a trade-desk decision to the dashboard's audit log.
+func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string) {
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":       "audit",
+		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		"seq":         crypto.auditSeq.Add(1),
+		"audit_event": auditEvent,
+		"symbol":      symbol,
+		"source":      "trader",
+		"reason":      reason,
+	}})
+}
+
+// publishPrediction reports a new entry thesis to the dashboard prediction chart.
+func (crypto *Crypto) publishPrediction(symbol string) {
+	now := time.Now()
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":     "prediction",
+		"ts":        now.UTC().Format(time.RFC3339Nano),
+		"symbol":    symbol,
+		"source":    "perspective",
+		"value":     predictionTargetReturn,
+		"due_at":    now.Add(predictionHorizon).UTC().Format(time.RFC3339Nano),
+		"runway_ms": predictionHorizon.Milliseconds(),
+	}})
+}
+
+// publishPredictionSettled reports the realized outcome of an entry thesis.
+func (crypto *Crypto) publishPredictionSettled(
+	symbol string, actualReturn float64, predictedAt time.Time,
+) {
+	now := time.Now()
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":            "prediction_settled",
+		"ts":               now.UTC().Format(time.RFC3339Nano),
+		"symbol":           symbol,
+		"source":           "perspective",
+		"predicted_at":     predictedAt.UTC().Format(time.RFC3339Nano),
+		"due_at":           now.UTC().Format(time.RFC3339Nano),
+		"predicted_return": predictionTargetReturn,
+		"actual_return":    actualReturn,
+		"error":            actualReturn - predictionTargetReturn,
+	}})
+}
+
+// realizedReturn is the fractional move from entry to exit price.
+func realizedReturn(entry, exit float64) float64 {
+	if entry <= 0 {
+		return 0
+	}
+
+	return (exit - entry) / entry
+}
+
+// publishFill ships one execution to the dashboard's trades panel.
+func (crypto *Crypto) publishFill(fill order.Fill) {
+	crypto.ui.Send(&qpool.QValue[any]{Value: fill})
+}
+
+// publishWallet ships the current balance and inventory snapshot to the wallet
+// and trades panels.
+func (crypto *Crypto) publishWallet() {
+	snapshot := crypto.wallet.Snapshot()
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":       "wallet",
+		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		"Currency":    snapshot.Currency,
+		"Balance":     snapshot.Balance,
+		"ReservedEUR": snapshot.ReservedEUR,
+		"FeePct":      snapshot.FeePct,
+		"Inventory":   snapshot.Inventory,
+		"AvgEntry":    snapshot.AvgEntry,
+		"Marks":       snapshot.Marks,
+	}})
+}
+
+// ResendWallet publishes the current wallet snapshot. The booter calls it at
+// startup so the dashboard shows the opening balance before any trade happens.
+func (crypto *Crypto) ResendWallet() {
+	crypto.publishWallet()
 }
 
 func (crypto *Crypto) Close() error {
-	clearAuditBroadcast(crypto.broadcasts["ui"])
 	crypto.cancel()
 	return nil
+}
+
+// baseOf returns the base currency of a "BASE/QUOTE" pair symbol.
+func baseOf(symbol string) string {
+	if base, _, found := strings.Cut(symbol, "/"); found {
+		return base
+	}
+
+	return symbol
 }

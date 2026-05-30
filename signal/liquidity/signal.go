@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const minLiquidityPeers = 2
@@ -32,6 +34,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -43,10 +46,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		floor:       adaptive.NewSNRField(),
 	}
-
-	tickGroup := pool.CreateBroadcastGroup("tick", 10*time.Millisecond)
-	signal.subscribers["tick"] = tickGroup.Subscribe("tick", 128)
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
@@ -56,38 +57,20 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case value, ok := <-signal.subscribers["tick"].Incoming:
-				if !ok || value.Value == nil {
-					continue
-				}
-
-				row, ok := value.Value.(market.TickerUpdate)
-
-				if !ok || row.Last <= 0 {
-					continue
-				}
-
-				measurement, ok := signal.measure(row)
-
-				if !ok {
-					continue
-				}
-
-				signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-					Value: measurement,
-				})
-			}
+	for row := range market.NewTickerSubscription(signal.ctx, config.System.Symbols...) {
+		if row == nil || row.Last <= 0 {
+			continue
 		}
-	})
 
-	wg.Wait()
+		measurement, ok := signal.measure(*row)
+
+		if !ok {
+			continue
+		}
+
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
+
 	return signal.ctx.Err()
 }
 
@@ -113,9 +96,11 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 	ratio := quoteVol / median
 
 	return perspectives.Measurement{
+		Symbol:   row.Symbol,
 		Source:   perspectives.SourceLiquidity,
 		Category: signal.category(ratio),
-		SNR:      signal.snr(ratio),
+		SNR:      signal.floor.Score(row.Symbol, signal.strength(ratio)),
+		Last:     row.Last,
 	}, true
 }
 
@@ -134,9 +119,10 @@ func (signal *Signal) category(ratio float64) perspectives.CategoryType {
 }
 
 /*
-snr is how far quote volume stands from the peer median, in either direction.
+strength is the raw distance of quote volume from the peer median, in either
+direction; it is scored against the symbol's own noise floor to form the SNR.
 */
-func (signal *Signal) snr(ratio float64) float64 {
+func (signal *Signal) strength(ratio float64) float64 {
 	if ratio < 1 {
 		return 1 / ratio
 	}

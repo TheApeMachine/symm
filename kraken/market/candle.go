@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -44,37 +43,43 @@ NewCandleSubscription opens the ohlc channel at intervalMinutes and forwards row
 It blocks until ctx is canceled or the socket closes.
 */
 func NewCandleSubscription(
-	ctx context.Context,
-	recv chan *CandleUpdate,
-	intervalMinutes int,
-	symbols ...string,
-) {
+	ctx context.Context, intervalMinutes int, symbols ...string,
+) <-chan *CandleUpdate {
 	if intervalMinutes <= 0 {
 		intervalMinutes = 1
 	}
 
-	ws := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
+	ws, err := public.NewWebSocket(ctx)
+
+	if err != nil {
 		errnie.Error(err)
-	}).Value()
-
-	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(public.CandlesChannel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	for message := range messages {
-		var rows []CandleUpdate
-
-		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-			continue
-		}
-
-		for _, row := range rows {
-			update := row
-			recv <- &update
-		}
+		return closed[CandleUpdate]()
 	}
+
+	if err := ws.Connect(public.WebSocketURL, public.CandlesChannel); err != nil {
+		errnie.Error(err)
+		return closed[CandleUpdate]()
+	}
+
+	if err := ws.Send(public.CandlesChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: CandleParams{
+			Channel:  public.CandlesChannel,
+			Symbol:   symbols,
+			Interval: intervalMinutes,
+			Snapshot: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
+		return closed[CandleUpdate]()
+	}
+
+	stream, err := public.Stream[CandleUpdate](ws, public.CandlesChannel)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[CandleUpdate]()
+	}
+
+	return stream
 }

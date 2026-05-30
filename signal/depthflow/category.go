@@ -3,7 +3,13 @@ package depthflow
 import (
 	"math"
 
-	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/market/perspectives"
+)
+
+const (
+	reasonDepthSkeptic  = "depth_skeptic"
+	reasonBookThinning  = "book_thinning"
+	reasonDepthImbalance = "depth_imbalance"
 )
 
 /*
@@ -14,23 +20,23 @@ func depthflowCategory(
 	weightedImbalance float64,
 	flatImbalance float64,
 	flatOK bool,
-) engine.Category {
-	if reason == "depth_skeptic" {
-		return engine.CatSpoofTrap
+) perspectives.CategoryType {
+	if reason == reasonDepthSkeptic {
+		return perspectives.CategorySpoofTrap
 	}
 
-	if reason == "book_thinning" {
-		return engine.CatBookThinning
+	if reason == reasonBookThinning {
+		return perspectives.CategoryBookThinning
 	}
 
-	if reason == "depth_imbalance" {
-		return engine.CatLoadedImbalance
+	if reason == reasonDepthImbalance {
+		return perspectives.CategoryLoadedImbalance
 	}
 
 	if flatOK && math.Abs(weightedImbalance) > 0 &&
 		math.Abs(flatImbalance) < math.Abs(weightedImbalance)*0.5 {
-		return engine.CatBookThinning
+		return perspectives.CategoryBookThinning
 	}
 
-	return engine.CatDenseNeutrality
+	return perspectives.CategoryDenseNeutrality
 }

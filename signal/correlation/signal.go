@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -18,6 +19,10 @@ import (
 const (
 	gridBars = 32 // length of each coin's movement fingerprint
 	hashBits = 64 // fingerprint width: one uint64
+	// correlationBatchInterval is the cross-section window: trades accumulate
+	// per symbol and the SimHash herd pass runs once per interval, since the
+	// correlation structure is meaningful across the cross-section, not per trade.
+	correlationBatchInterval = 250 * time.Millisecond
 )
 
 /*
@@ -60,6 +65,7 @@ type Signal struct {
 	planes       [hashBits][gridBars]float64 // random hyperplanes: the fingerprint stamp
 	marketEnergy *adaptive.EMA               // slow activity baseline (the Noise gate)
 	categories   map[string]perspectives.CategoryType
+	floor        *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -78,6 +84,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  perspectives.CategoryDecoupledAlpha,
 			"systemic_herd":    perspectives.CategorySystemicHerd,
 		},
+		floor: adaptive.NewSNRField(),
 	}
 
 	// One fixed random stamp, shared by every coin so fingerprints are comparable.
@@ -89,9 +96,6 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		}
 	}
 
-	tradeGroup := pool.CreateBroadcastGroup("trades", 10*time.Millisecond)
-	signal.subscribers["trades"] = tradeGroup.Subscribe("trades", 128)
-
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
 	)
@@ -100,7 +104,11 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 // newClassed is one coin's classification pipeline:
-// fused = EMA(energy · (1 + 2·corr)) / slow market energy, clamped, then banded.
+// fused = clamp(EMA( energy · (1 + 2·corr) / slow market energy )), then banded.
+// The normalization by the slow market-energy baseline happens in the projection
+// (baseline is guaranteed > 0 by the caller), so the chain is a single reshape
+// into EMA then clamp — the market energy moves slowly enough that smoothing the
+// ratio is equivalent to smoothing the numerator and dividing.
 func newClassed() *numeric.Classed {
 	return numeric.NewClassed(
 		adaptive.NewClassifier(
@@ -110,13 +118,9 @@ func newClassed() *numeric.Classed {
 		),
 
 		numeric.NewProject(func(_ float64, v []float64) []float64 {
-			return []float64{v[1] * (1 + 2*v[0])} // energy · (1 + 2·correlation)
+			return []float64{v[1] * (1 + 2*v[0]) / v[2]} // (energy · (1 + 2·corr)) / market energy
 		}),
 		adaptive.NewEMA(0),
-		numeric.NewProject(func(out float64, v []float64) []float64 {
-			return []float64{out, v[2]} // numerator, slow market-energy baseline
-		}),
-		adaptive.NewRatio(0),
 		adaptive.NewSigmaClamp(3, 8, 0.0625),
 	)
 }
@@ -141,118 +145,134 @@ func (signal *Signal) fingerprint(state *symbolState) uint64 {
 }
 
 func (signal *Signal) Tick() error {
-	var wg sync.WaitGroup
+	trades := market.NewTradeSubscription(signal.ctx, config.System.Symbols...)
+	batch := time.NewTicker(correlationBatchInterval)
+	defer batch.Stop()
 
-	wg.Go(func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case value, ok := <-signal.subscribers["trades"].Incoming:
-				if !ok || value.Value == nil {
-					continue
-				}
+	latest := make(map[string]float64)
 
-				trades, ok := value.Value.([]market.TradeUpdate)
-
-				if !ok {
-					continue
-				}
-
-				latest := make(map[string]float64, len(trades))
-
-				for _, trade := range trades {
-					if trade.Price > 0 {
-						latest[trade.Symbol] = trade.Price
-					}
-				}
-
-				// Pass 1 — update each coin's fingerprint + energy. O(n).
-				type live struct {
-					state *symbolState
-					sig   uint64
-				}
-
-				active := make([]live, 0, len(latest))
-				meanEnergy := 0.0
-
-				for symbol, price := range latest {
-					stored, _ := signal.symbols.LoadOrStore(symbol, &symbolState{
-						energy: adaptive.NewEMA(0),
-						pipe:   newClassed(),
-					})
-					state := stored.(*symbolState)
-
-					if state.prev <= 0 {
-						state.prev = price
-						continue
-					}
-
-					ret := price/state.prev - 1
-					state.prev = price
-					state.hist[state.cursor] = ret
-					state.cursor = (state.cursor + 1) % gridBars
-
-					energy, _ := state.energy.Next(0, ret*ret)
-					active = append(active, live{state: state, sig: signal.fingerprint(state)})
-					meanEnergy += energy
-				}
-
-				if len(active) == 0 {
-					continue
-				}
-
-				meanEnergy /= float64(len(active))
-
-				baseline, err := signal.marketEnergy.Next(0, meanEnergy)
-
-				if err != nil || baseline <= 0 {
-					continue
-				}
-
-				// The market's fingerprint = bit-by-bit majority vote (the dominant mode). O(n).
-				var ones [hashBits]int
-
-				for _, coin := range active {
-					for k := 0; k < hashBits; k++ {
-						ones[k] += int(coin.sig >> uint(k) & 1)
-					}
-				}
-
-				var market uint64
-
-				for k := 0; k < hashBits; k++ {
-					if ones[k]*2 > len(active) {
-						market |= 1 << uint(k)
-					}
-				}
-
-				// Pass 2 — each coin's bit-agreement with the market is its correlation. O(n).
-				for _, coin := range active {
-					agree := hashBits - bits.OnesCount64(coin.sig^market)                    // 0..64
-					corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2) // -1..1
-
-					code, err := coin.state.pipe.Push(corr, coin.state.energy.Value(), baseline)
-
-					if err != nil {
-						errnie.Error(err)
-						continue
-					}
-
-					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-						Value: perspectives.Measurement{
-							Source:   perspectives.SourceCorrelation,
-							Category: signal.categories[coin.state.pipe.Label(code)],
-							SNR:      1,
-						},
-					})
-				}
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case trade, ok := <-trades:
+			if !ok {
+				trades = nil
+				continue
 			}
-		}
-	})
 
-	wg.Wait()
-	return signal.ctx.Err()
+			if trade != nil && trade.Price > 0 {
+				latest[trade.Symbol] = trade.Price
+			}
+		case <-batch.C:
+			if len(latest) == 0 {
+				continue
+			}
+
+			signal.process(latest)
+			latest = make(map[string]float64)
+		}
+	}
+}
+
+// live is one coin's per-batch fingerprint and the data needed to emit for it.
+type live struct {
+	symbol string
+	price  float64
+	state  *symbolState
+	sig    uint64
+}
+
+// process runs one SimHash herd pass over the symbols that traded this window:
+// stamp each coin's fingerprint, vote the market's dominant mode, then score each
+// coin's agreement with it. O(symbols) per window, not per trade.
+func (signal *Signal) process(latest map[string]float64) {
+	active := make([]live, 0, len(latest))
+	meanEnergy := 0.0
+
+	for symbol, price := range latest {
+		stored, _ := signal.symbols.LoadOrStore(symbol, &symbolState{
+			energy: adaptive.NewEMA(0),
+			pipe:   newClassed(),
+		})
+		state := stored.(*symbolState)
+
+		if state.prev <= 0 {
+			state.prev = price
+			continue
+		}
+
+		ret := price/state.prev - 1
+		state.prev = price
+		state.hist[state.cursor] = ret
+		state.cursor = (state.cursor + 1) % gridBars
+
+		energy, _ := state.energy.Next(0, ret*ret)
+		active = append(active, live{symbol: symbol, price: price, state: state, sig: signal.fingerprint(state)})
+		meanEnergy += energy
+	}
+
+	if len(active) == 0 {
+		return
+	}
+
+	meanEnergy /= float64(len(active))
+
+	baseline, err := signal.marketEnergy.Next(0, meanEnergy)
+
+	if err != nil || baseline <= 0 {
+		return
+	}
+
+	signal.emitActive(active, signal.marketMode(active), baseline)
+}
+
+// marketMode is the bit-by-bit majority vote across fingerprints — the dominant
+// shared direction of the cross-section.
+func (signal *Signal) marketMode(active []live) uint64 {
+	var ones [hashBits]int
+
+	for _, coin := range active {
+		for bit := 0; bit < hashBits; bit++ {
+			ones[bit] += int(coin.sig >> uint(bit) & 1)
+		}
+	}
+
+	var mode uint64
+
+	for bit := 0; bit < hashBits; bit++ {
+		if ones[bit]*2 > len(active) {
+			mode |= 1 << uint(bit)
+		}
+	}
+
+	return mode
+}
+
+// emitActive scores each coin's agreement with the market mode and publishes it.
+func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
+	for _, coin := range active {
+		agree := hashBits - bits.OnesCount64(coin.sig^mode)                     // 0..64
+		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2) // -1..1
+		energy := coin.state.energy.Value()
+
+		code, err := coin.state.pipe.Push(corr, energy, baseline)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
+			Value: perspectives.Measurement{
+				Symbol:   coin.symbol,
+				Source:   perspectives.SourceCorrelation,
+				Category: signal.categories[coin.state.pipe.Label(code)],
+				SNR:      signal.floor.Score(coin.symbol, energy*(1+2*corr)/baseline),
+				Last:     coin.price,
+			},
+		})
+	}
 }
 
 func (signal *Signal) Close() error {

@@ -22,15 +22,15 @@ func TestNewWebSocket(t *testing.T) {
 	})
 }
 
-func TestWebSocketGenerate(t *testing.T) {
+func TestStream(t *testing.T) {
 	convey.Convey("Given a websocket without a connection", t, func() {
 		ctx := context.Background()
 		socket, err := NewWebSocket(ctx)
 
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("It should reject generate for unknown channels", func() {
-			_, err := socket.Generate("ticker")
+		convey.Convey("It should reject Stream for unknown channels", func() {
+			_, err := Stream[SocketMessage](socket, "ticker")
 
 			convey.So(err, convey.ShouldNotBeNil)
 		})

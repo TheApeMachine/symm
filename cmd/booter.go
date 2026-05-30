@@ -86,8 +86,9 @@ func (booter *Booter) Boot() error {
 		wg.Go(func() {
 			// If any system's Tick exits (error or clean return), tear down
 			// the remaining systems rather than letting them spin on stale
-			// data from the failed peer.
-			if err := system.Tick(); err != nil {
+			// data from the failed peer. A canceled context is the normal
+			// shutdown path, not an error worth logging.
+			if err := system.Tick(); err != nil && !errors.Is(err, context.Canceled) {
 				errnie.Error(err)
 			}
 			closeAll()

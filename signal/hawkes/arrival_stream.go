@@ -3,7 +3,7 @@ package hawkes
 import (
 	"time"
 
-	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/decay"
 	"github.com/theapemachine/symm/numeric/timeline"
 )
@@ -52,7 +52,7 @@ func NewArrivalStream(buyTimes, sellTimes []time.Time) ArrivalStream {
 ArrivalStreamFromTicks extracts buy and sell timestamps from ticks inside a window.
 */
 func ArrivalStreamFromTicks(
-	ticks []trade.Data,
+	ticks []market.TradeUpdate,
 	windowStart, horizon time.Time,
 ) ArrivalStream {
 	buyTimes := make([]time.Time, 0, len(ticks))

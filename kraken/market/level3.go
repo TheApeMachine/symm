@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -52,38 +51,44 @@ NewLevel3Subscription opens the level3 channel with token at depth and forwards 
 It blocks until ctx is canceled or the socket closes.
 */
 func NewLevel3Subscription(
-	ctx context.Context,
-	recv chan *Level3Update,
-	token string,
-	depth int,
-	symbols ...string,
-) {
+	ctx context.Context, token string, depth int, symbols ...string,
+) <-chan *Level3Update {
 	if depth <= 0 {
 		depth = 10
 	}
 
-	ws := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
+	ws, err := public.NewWebSocket(ctx)
+
+	if err != nil {
 		errnie.Error(err)
-	}).Value()
-
-	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(public.Level3Channel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	for message := range messages {
-		var rows []Level3Update
-
-		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-			continue
-		}
-
-		for _, row := range rows {
-			update := row
-			recv <- &update
-		}
+		return closed[Level3Update]()
 	}
+
+	if err := ws.Connect(public.WebSocketL3URL, public.Level3Channel); err != nil {
+		errnie.Error(err)
+		return closed[Level3Update]()
+	}
+
+	if err := ws.Send(public.Level3Channel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: Level3Params{
+			Channel:  public.Level3Channel,
+			Symbol:   symbols,
+			Depth:    depth,
+			Snapshot: true,
+			Token:    token,
+		},
+	}); err != nil {
+		errnie.Error(err)
+		return closed[Level3Update]()
+	}
+
+	stream, err := public.Stream[Level3Update](ws, public.Level3Channel)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[Level3Update]()
+	}
+
+	return stream
 }

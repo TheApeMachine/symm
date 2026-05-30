@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -43,41 +42,55 @@ type BookUpdate struct {
 }
 
 /*
-NewBookSubscription opens the book channel at depth and forwards unmarshaled rows to recv.
-It blocks until ctx is canceled or the socket closes.
+NewBookSubscription returns a channel of L2 book snapshots and deltas for symbols
+at depth. All callers share one upstream connection via the book feed. The
+caller's ctx detaches it from the shared feed; the upstream keeps running.
 */
 func NewBookSubscription(
-	ctx context.Context,
-	recv chan *BookUpdate,
-	depth int,
-	symbols ...string,
-) {
-	if depth <= 0 {
-		depth = 10
+	ctx context.Context, depth int, symbols ...string,
+) <-chan *BookUpdate {
+	return bookFeed.subscribe(ctx, func() <-chan *BookUpdate {
+		return dialBook(context.Background(), depth, symbols)
+	})
+}
+
+// dialBook opens one upstream connection to the public L2 book channel.
+func dialBook(
+	ctx context.Context, depth int, symbols []string,
+) <-chan *BookUpdate {
+	depth = validBookDepth(depth)
+
+	ws, err := public.NewWebSocket(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[BookUpdate]()
 	}
 
-	ws := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
+	if err := ws.Connect(public.WebSocketURL, public.BookChannel); err != nil {
 		errnie.Error(err)
-	}).Value()
-
-	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(public.BookChannel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	for message := range messages {
-		var rows []BookUpdate
-
-		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-			continue
-		}
-
-		for _, row := range rows {
-			update := row
-			recv <- &update
-		}
+		return closed[BookUpdate]()
 	}
+
+	if err := ws.Send(public.BookChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: BookParams{
+			Channel:  public.BookChannel,
+			Symbol:   symbols,
+			Depth:    depth,
+			Snapshot: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
+		return closed[BookUpdate]()
+	}
+
+	stream, err := public.Stream[BookUpdate](ws, public.BookChannel)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[BookUpdate]()
+	}
+
+	return stream
 }

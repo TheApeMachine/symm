@@ -5,8 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
+	"github.com/theapemachine/symm/kraken/market"
 )
 
 const (
@@ -20,6 +19,12 @@ const (
 	flowAlpha         = 0.05
 	tradeRingCap      = 512
 	epsilon           = 1e-12
+)
+
+// SideBid and SideAsk are the byte side codes the tracker keys book levels by.
+const (
+	SideBid byte = 'b'
+	SideAsk byte = 'a'
 )
 
 type orderState struct {
@@ -48,7 +53,7 @@ type l2Key struct {
 }
 
 type symbolState struct {
-	pair      asset.Pair
+	pair      market.Pair
 	orders    map[string]*orderState // order_id -> resting order (L3)
 	levels    map[l2Key]*l2Level     // (side, price) -> aggregate (L2 fallback)
 	bidTotal  float64                // summed visible bid qty
@@ -76,7 +81,7 @@ func NewTracker() *Tracker {
 	return &Tracker{symbols: make(map[string]*symbolState)}
 }
 
-func (tracker *Tracker) stateLocked(symbol string, pair asset.Pair) *symbolState {
+func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolState {
 	state := tracker.symbols[symbol]
 
 	if state == nil {
@@ -92,7 +97,7 @@ func (tracker *Tracker) stateLocked(symbol string, pair asset.Pair) *symbolState
 	return state
 }
 
-func (tracker *Tracker) ObserveTrade(symbol string, pair asset.Pair, price, volume float64, at time.Time) {
+func (tracker *Tracker) ObserveTrade(symbol string, pair market.Pair, price, volume float64, at time.Time) {
 	if price <= 0 || volume <= 0 {
 		return
 	}
@@ -108,7 +113,7 @@ func (tracker *Tracker) ObserveTrade(symbol string, pair asset.Pair, price, volu
 	}
 }
 
-func (tracker *Tracker) ObserveMid(symbol string, pair asset.Pair, mid float64) {
+func (tracker *Tracker) ObserveMid(symbol string, pair market.Pair, mid float64) {
 	if mid <= 0 {
 		return
 	}
@@ -122,7 +127,7 @@ func (tracker *Tracker) ObserveMid(symbol string, pair asset.Pair, mid float64) 
 // ApplyOrder ingests one L3 event. event is "add", "delete", or "amend"; ts is
 // the order's matching-engine timestamp from the level3 message.
 func (tracker *Tracker) ApplyOrder(
-	symbol string, pair asset.Pair, event, orderID string,
+	symbol string, pair market.Pair, event, orderID string,
 	side byte, price, qty float64, ts, now time.Time,
 ) {
 	if orderID == "" {
@@ -188,7 +193,7 @@ func (tracker *Tracker) ApplyOrder(
 // level. A decrement is joined to the trade tape exactly like an L3 removal,
 // keyed by price level with the level's first-seen time as the age proxy.
 func (tracker *Tracker) ApplyBookLevel(
-	symbol string, pair asset.Pair, side byte, price, qty float64, now time.Time,
+	symbol string, pair market.Pair, side byte, price, qty float64, now time.Time,
 ) {
 	if price <= 0 {
 		return
@@ -324,90 +329,3 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 	return true
 }
 
-// Measure emits a directional read from the cancel-to-fill asymmetry: a side
-// whose resting liquidity is pulled (high cancel-to-fill) while the other side
-// keeps executing signals intent to move price away from the pulled side.
-func (tracker *Tracker) Measure(symbol string, now time.Time) (engine.Measurement, bool) {
-	tracker.mu.Lock()
-	defer tracker.mu.Unlock()
-
-	state := tracker.symbols[symbol]
-	if state == nil {
-		return engine.Measurement{}, false
-	}
-
-	askPull := state.cancelAsk / (state.fillAsk + epsilon)
-	bidPull := state.cancelBid / (state.fillBid + epsilon)
-
-	if askPull > bidPull && state.fillBid > 0 {
-		return state.emit(engine.Momentum, "bookflow", "ask_pull", state.pullCategory(now), squash(askPull-bidPull), now), true
-	}
-
-	if bidPull > askPull && state.fillAsk > 0 {
-		return state.emit(engine.Dump, "bookflow", "bid_pull", state.pullCategory(now), squash(bidPull-askPull), now), true
-	}
-
-	// Neither side is retreating and fills dominate cancels on both sides (pull
-	// ratio below 1): the book is sincere -- hard support. Confidence rises as
-	// cancels fall further below fills.
-	if (state.fillBid > 0 || state.fillAsk > 0) && askPull < 1 && bidPull < 1 {
-		return state.emit(engine.Momentum, "bookflow", "hard_support", engine.CatHardSupport,
-			squash(1-(askPull+bidPull)/2), now), true
-	}
-
-	return engine.Measurement{}, false
-}
-
-/*
-pullCategory distinguishes a manipulative near-touch bluff (a large, young
-order being cancelled rather than filled, the signature of fake support) from
-an honest liquidity vacuum (one side simply retreating). The toxic-bluff read
-is what the decision layer treats as a hard manipulation veto.
-*/
-func (state *symbolState) pullCategory(now time.Time) engine.Category {
-	if state.hasToxicLevel(now) {
-		return engine.CatToxicBluff
-	}
-
-	return engine.CatLiquidityVacuum
-}
-
-// hasToxicLevel reports whether any large/young/near-touch cancel is still
-// within its toxic cooldown, pruning expired entries as it scans.
-func (state *symbolState) hasToxicLevel(now time.Time) bool {
-	active := false
-
-	for price, expiry := range state.toxic {
-		if now.After(expiry) {
-			delete(state.toxic, price)
-			continue
-		}
-
-		active = true
-	}
-
-	return active
-}
-
-func (state *symbolState) emit(
-	mtype engine.MeasurementType, regime, reason string, category engine.Category, confidence float64, now time.Time,
-) engine.Measurement {
-	return engine.Measurement{
-		Type:       mtype,
-		Source:     "bookflow",
-		Regime:     regime,
-		Reason:     reason,
-		Category:   category,
-		Pairs:      []asset.Pair{state.pair},
-		Confidence: confidence,
-		Last:       state.mid,
-	}
-}
-
-func squash(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	return value / (1 + value)
-}

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/kraken/asset"
-	"github.com/theapemachine/symm/numeric/learned"
-	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const (
@@ -19,116 +19,48 @@ const (
 	leadlagMinimumLagCorrelation = 0.1
 )
 
-func computeLeadlagMargin(contemporaneousCorr float64) float64 {
-	relative := leadlagDominanceMarginRel * math.Abs(contemporaneousCorr)
-
-	if relative > leadlagDominanceMarginAbs {
-		return relative
-	}
-
-	return leadlagDominanceMarginAbs
-}
-
-func leadlagDominates(bestLag int, bestCorr, contemporaneousCorr float64) bool {
-	if bestLag <= 0 || bestCorr <= leadlagMinimumLagCorrelation {
-		return false
-	}
-
-	baseline := contemporaneousCorr
-
-	if baseline < 0 {
-		baseline = 0
-	}
-
-	return bestCorr > baseline+computeLeadlagMargin(contemporaneousCorr)
-}
-
 /*
 symbolState tracks the rolling price path needed to compute a real
-cross-correlation against the anchor pair. The previous implementation
-stored only the most recent change_pct, which could not produce a lag —
-two scalars at the same instant carry no information about ordering. The
-ring buffer here records (timestamp, last) pairs, sampled on every
-ticker frame, so lagBars/lagMaxCorr can measure leadership in bars rather
-than in 24-hour dispersion.
+cross-correlation against the anchor pair. The ring records (timestamp, price)
+pairs sampled on every ticker frame, so the lag can be measured in bars rather
+than in a same-instant cross-section spread.
 */
 type symbolState struct {
 	mu        sync.RWMutex
-	pair      asset.Pair
 	changePct float64
 	last      float64
-	bid       float64
-	ask       float64
-	prices    correlation.PriceSampleRing
-	forecast  *learned.Forecast
+	prices    numeric.PriceSampleRing
+	floor     *adaptive.SNR
 }
 
-type symbolSnapshot struct {
-	pair      asset.Pair
-	changePct float64
-	last      float64
-	bid       float64
-	ask       float64
-	scale     float64
-}
-
-func newSymbolState(pair asset.Pair) *symbolState {
+func newSymbolState() *symbolState {
 	return &symbolState{
-		pair:     pair,
-		prices:   correlation.NewPriceSampleRing(priceHistoryCap),
-		forecast: learned.NewForecast(0.35),
+		prices: numeric.NewPriceSampleRing(priceHistoryCap),
+		floor:  adaptive.NewSNR(),
 	}
 }
 
-func (state *symbolState) observeTicker(
-	changePct float64,
-	last float64,
-	bid float64,
-	ask float64,
-	at time.Time,
-) {
+func (state *symbolState) observeTicker(changePct, last float64, at time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	state.changePct = changePct
 	state.last = last
-
-	if bid > 0 {
-		state.bid = bid
-	}
-
-	if ask > 0 {
-		state.ask = ask
-	}
-
 	state.prices.Push(at, last)
 }
 
-func (state *symbolState) snapshot() symbolSnapshot {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
-	scale := 1.0
-
-	if state.forecast != nil {
-		scale = state.forecast.Scale()
-	}
-
-	return symbolSnapshot{
-		pair:      state.pair,
-		changePct: state.changePct,
-		last:      state.last,
-		bid:       state.bid,
-		ask:       state.ask,
-		scale:     scale,
-	}
-}
-
-func (state *symbolState) priceSamples() []correlation.PriceSample {
+func (state *symbolState) priceSamples() []numeric.PriceSample {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
 	return state.prices.Ordered()
+}
+
+func (state *symbolState) lastPrice() float64 {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.last
 }
 
 func (state *symbolState) change() float64 {
@@ -138,39 +70,13 @@ func (state *symbolState) change() float64 {
 	return state.changePct
 }
 
-func (state *symbolState) forecastLearner() *learned.Forecast {
-	if state.forecast == nil {
-		state.forecast = learned.NewForecast(0.35)
-	}
-
-	return state.forecast
-}
-
-func (state *symbolState) forecastScale() float64 {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return state.forecastLearner().Scale()
-}
-
-func (state *symbolState) applyFeedback(predictedReturn, actualReturn float64) error {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	_, err := state.forecastLearner().Next(0, predictedReturn, actualReturn)
-
-	return err
-}
-
 /*
-crossLag computes the bar lag at which anchor's returns most strongly
-predict state's returns over the configured correlation window. Positive
-lag means anchor leads state by lag bars; negative means state leads
-anchor (and is therefore not a lead-lag opportunity in this direction).
-Returns (lagBars, correlation, ok); ok is false when there is insufficient
-overlap to compute a reliable estimate.
+crossLag computes the bar lag at which the anchor's returns most strongly
+predict this symbol's returns. Positive lag means the anchor leads. The best
+lagged correlation must dominate the contemporaneous baseline by an adaptive
+margin, otherwise the co-movement is beta, not lead. Returns (lagBars, corr, ok).
 */
-func crossLag(anchor, state *symbolState) (int, float64, bool) {
+func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
 	anchorSeries := anchor.priceSamples()
 	stateSeries := state.priceSamples()
 
@@ -178,25 +84,19 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 		return 0, 0, false
 	}
 
-	interval := correlation.BarInterval()
+	interval := config.BarInterval()
+	baseline := 0.0
 
-	// Contemporaneous correlation is the co-movement baseline a lagged
-	// relationship must beat to qualify as leadership.
-	corr0 := 0.0
-
-	if corr, ok := correlation.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok {
-		corr0 = corr
+	if corr, ok := numeric.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok {
+		baseline = corr
 	}
 
 	bestCorr := 0.0
 	bestLag := 0
 
 	for lag := 1; lag <= maxLagBars; lag++ {
-		shiftedAnchor := correlation.ShiftPriceSamples(
-			anchorSeries,
-			time.Duration(lag)*interval,
-		)
-		corr, ok := correlation.HayashiYoshidaCorrelation(shiftedAnchor, stateSeries)
+		shifted := numeric.ShiftPriceSamples(anchorSeries, time.Duration(lag)*interval)
+		corr, ok := numeric.HayashiYoshidaCorrelation(shifted, stateSeries)
 
 		if ok && corr > bestCorr {
 			bestCorr = corr
@@ -204,10 +104,23 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 		}
 	}
 
-	// Require a strictly positive lag whose correlation dominates the
-	// contemporaneous baseline by an adaptive margin. Otherwise this is beta,
-	// not lead.
-	if !leadlagDominates(bestLag, bestCorr, corr0) {
+	if bestLag <= 0 || bestCorr <= leadlagMinimumLagCorrelation {
+		return 0, 0, false
+	}
+
+	floor := baseline
+
+	if floor < 0 {
+		floor = 0
+	}
+
+	margin := leadlagDominanceMarginRel * math.Abs(baseline)
+
+	if margin < leadlagDominanceMarginAbs {
+		margin = leadlagDominanceMarginAbs
+	}
+
+	if bestCorr <= floor+margin {
 		return 0, 0, false
 	}
 
@@ -215,10 +128,10 @@ func crossLag(anchor, state *symbolState) (int, float64, bool) {
 }
 
 /*
-contemporaneousCorrelation returns the unlagged Hayashi-Yoshida correlation between
-anchor and state when both series have enough overlap.
+contemporaneous returns the unlagged Hayashi-Yoshida correlation against the
+anchor when both series have enough overlap.
 */
-func contemporaneousCorrelation(anchor, state *symbolState) (float64, bool) {
+func (state *symbolState) contemporaneous(anchor *symbolState) (float64, bool) {
 	anchorSeries := anchor.priceSamples()
 	stateSeries := state.priceSamples()
 
@@ -226,7 +139,5 @@ func contemporaneousCorrelation(anchor, state *symbolState) (float64, bool) {
 		return 0, false
 	}
 
-	correlation, ok := correlation.HayashiYoshidaCorrelation(anchorSeries, stateSeries)
-
-	return correlation, ok
+	return numeric.HayashiYoshidaCorrelation(anchorSeries, stateSeries)
 }

@@ -1,16 +1,20 @@
 package exhaust
 
-import (
-	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
+import "github.com/theapemachine/symm/market/perspectives"
+
+const (
+	reasonBookThinning  = "book_thinning"
+	reasonSpreadWiden   = "spread_widen"
+	reasonPressureFade  = "pressure_fade"
+	reasonImbalanceFlip = "imbalance_flip"
 )
 
-const exhaustSource = "exhaust"
-
 /*
-exhaustMeasurement maps rolling exit features onto the exit-thesis perspective.
+exhaustMeasurement maps rolling exit features onto the exhaustion perspective.
+SNR is the urgency expressed as odds — a decisively exhausting book clears the
+noise floor, a marginal one does not.
 */
-func exhaustMeasurement(symbol string, history symbolHistory) (engine.Measurement, bool) {
+func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) {
 	urgency, reason := exitScoreLong(history)
 
 	if urgency <= 0 {
@@ -18,23 +22,16 @@ func exhaustMeasurement(symbol string, history symbolHistory) (engine.Measuremen
 	}
 
 	if urgency <= 0 || reason == "" {
-		return engine.Measurement{}, false
+		return perspectives.Measurement{}, false
 	}
 
-	confidence := engine.ConfidenceFromScore(urgency)
-
-	if confidence <= 0 {
-		return engine.Measurement{}, false
+	if urgency > 0.999 {
+		urgency = 0.999
 	}
 
-	return engine.Measurement{
-		Type:       engine.Momentum,
-		Source:     exhaustSource,
-		Regime:     "exhaust",
-		Reason:     reason,
-		Category:   exhaustCategory(reason),
-		Pairs:      []asset.Pair{{Wsname: symbol}},
-		Confidence: confidence,
-		Last:       history.lastPrice,
+	return perspectives.Measurement{
+		Source:   perspectives.SourceExhaustion,
+		Category: exhaustCategory(reason),
+		SNR:      urgency / (1 - urgency),
 	}, true
 }

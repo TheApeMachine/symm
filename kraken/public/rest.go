@@ -38,6 +38,7 @@ func NewRest(ctx context.Context, endpoint EndpointType) *Rest {
 func (rest *Rest) Get(
 	ctx context.Context, request fiber.Map, model any,
 ) error {
+	errnie.Debug("kraken.public.rest.Get", request, model)
 	params := url.Values{}
 
 	for key, value := range request {

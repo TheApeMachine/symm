@@ -49,6 +49,12 @@ func (pump *PumpPerspective) Walk(measurements []Measurement) Perspective {
 	return pump
 }
 
+// Decide returns the Action at the deepest reachable leaf of the pump tree for
+// the current measurement set, or nil when no playbook path is traversable.
+func (pump *PumpPerspective) Decide(measurements []Measurement) *ActionType {
+	return pump.Tree.Walk(measurements, nil)
+}
+
 func (pump *PumpPerspective) Regime() Regime {
 	return RegimeTrending
 }

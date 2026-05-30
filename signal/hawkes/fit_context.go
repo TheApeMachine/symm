@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -133,7 +133,7 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 FitContextFromTicks builds an adaptive fit context and arrival stream from ticks.
 */
 func FitContextFromTicks(
-	ticks []trade.Data,
+	ticks []market.TradeUpdate,
 	windowStart, horizon time.Time,
 ) (FitContext, ArrivalStream, bool) {
 	stream := ArrivalStreamFromTicks(ticks, windowStart, horizon)

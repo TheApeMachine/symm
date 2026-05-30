@@ -1,21 +1,21 @@
 package exhaust
 
-import "github.com/theapemachine/symm/engine"
+import "github.com/theapemachine/symm/market/perspectives"
 
 /*
-exhaustCategory maps the dominant exit reason onto the exit-thesis perspective.
+exhaustCategory maps the dominant exit reason onto the exhaustion perspective.
 */
-func exhaustCategory(reason string) engine.Category {
+func exhaustCategory(reason string) perspectives.CategoryType {
 	switch reason {
-	case "book_thinning":
-		return engine.CatMechanicalCollapse
-	case "spread_widen":
-		return engine.CatFragileExpansion
-	case engine.ExitReasonPressureFade:
-		return engine.CatThermalExhaustion
-	case engine.ExitReasonImbalanceFlip:
-		return engine.CatActiveReversal
+	case reasonBookThinning:
+		return perspectives.CategoryMechanicalCollapse
+	case reasonSpreadWiden:
+		return perspectives.CategoryFragileExpansion
+	case reasonPressureFade:
+		return perspectives.CategoryThermalExhaustion
+	case reasonImbalanceFlip:
+		return perspectives.CategoryActiveReversal
 	default:
-		return engine.CatThermalExhaustion
+		return perspectives.CategoryThermalExhaustion
 	}
 }

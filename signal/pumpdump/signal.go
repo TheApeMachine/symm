@@ -33,6 +33,12 @@ looking for sudden "verticality" in volume and price.
 | Coiled Compression | Moderate    | Low             | Pre-Pump / Loaded    |
 | Organic Trend      | Low/Steady  | Moderate        | Healthy Momentum     |
 | Faded Exhaustion   | Falling     | Flat            | Leg is Dead          |
+
+NOTE: input migration to the shared trade feed is deferred until the classifier
+is settled. The pipeline still needs its last/anchor/typical inputs wired, and as
+written it reshapes the value vector with a Project then reads an original index
+past it — which panics once real trades flow. It currently consumes the (idle)
+qpool "trades" group so it does not run.
 */
 type Signal struct {
 	ctx         context.Context

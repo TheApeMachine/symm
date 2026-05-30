@@ -27,12 +27,18 @@ export const SIGNAL_LABELS: Record<SignalSource, string> = {
 export const isSignalSource = (source: string): source is SignalSource =>
 	SIGNAL_SOURCES.includes(source as SignalSource);
 
+// Confidence is now a signal-to-noise ratio in noise-sigma units. The gauge maps
+// 0..GAUGE_FULL_SIGMA sigma onto 0..100% and caps there, so a reading sits at the
+// noise floor (1 sigma) around a quarter of the dial and pins at strong spikes
+// instead of running off to thousands.
+const GAUGE_FULL_SIGMA = 4;
+
 export const confidenceToGaugePercent = (confidence: number): number => {
 	if (confidence <= 0) {
 		return 0;
 	}
 
-	return confidence * 100;
+	return Math.min(100, (confidence / GAUGE_FULL_SIGMA) * 100);
 };
 
 export const formatSignalConfidence = (confidence: number): string => {
@@ -40,7 +46,7 @@ export const formatSignalConfidence = (confidence: number): string => {
 		return "0";
 	}
 
-	return (confidence * 100).toFixed(1);
+	return confidenceToGaugePercent(confidence).toFixed(1);
 };
 
 export const emptySignalConfidences = (): SignalConfidenceSnapshot => ({

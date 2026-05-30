@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -38,36 +37,54 @@ type TradeUpdate struct {
 }
 
 /*
-NewTradeSubscription opens the trade channel and forwards unmarshaled rows to recv.
-It blocks until ctx is canceled or the socket closes.
+NewTradeSubscription returns a channel of executed trades for symbols. All
+callers share one upstream connection via the trade feed, so the connection count
+stays flat no matter how many signals subscribe. The caller's ctx detaches it
+from the shared feed; the upstream keeps running for the others.
 */
 func NewTradeSubscription(
-	ctx context.Context,
-	recv chan *TradeUpdate,
-	symbols ...string,
-) {
-	ws := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
+	ctx context.Context, symbols ...string,
+) <-chan *TradeUpdate {
+	return tradeFeed.subscribe(ctx, func() <-chan *TradeUpdate {
+		return dialTrades(context.Background(), symbols)
+	})
+}
+
+// dialTrades opens one upstream connection to the public trade channel for
+// symbols. It is the shared feed's reopen function, not called per consumer.
+func dialTrades(
+	ctx context.Context, symbols []string,
+) <-chan *TradeUpdate {
+	ws, err := public.NewWebSocket(ctx)
+
+	if err != nil {
 		errnie.Error(err)
-	}).Value()
-
-	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(public.TradesChannel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	for message := range messages {
-		var rows []TradeUpdate
-
-		if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-			continue
-		}
-
-		for _, row := range rows {
-			update := row
-			recv <- &update
-		}
+		return closed[TradeUpdate]()
 	}
+
+	if err := ws.Connect(public.WebSocketURL, public.TradesChannel); err != nil {
+		errnie.Error(err)
+		return closed[TradeUpdate]()
+	}
+
+	if err := ws.Send(public.TradesChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: TradeParams{
+			Channel:  public.TradesChannel,
+			Symbol:   symbols,
+			Snapshot: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
+		return closed[TradeUpdate]()
+	}
+
+	stream, err := public.Stream[TradeUpdate](ws, public.TradesChannel)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[TradeUpdate]()
+	}
+
+	return stream
 }

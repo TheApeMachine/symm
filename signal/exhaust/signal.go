@@ -2,269 +2,157 @@ package exhaust
 
 import (
 	"context"
-	"fmt"
-	"iter"
-	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/trade"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
-Exhaust tracks book/trade microstructure decay and advises exit urgency.
-
-mu is exposed so the per-channel goroutine independence test
-(TestExhaustTickDrainsEachChannelGoroutine) can hold the lock and
-demonstrate that the channel consumers continue to drain without
-acquiring it. None of the production handlers take mu — it is a
-documentation seam for that invariant. If a future change introduces
-shared state that *should* be guarded, take mu inside the handler and
-the test catches the regression.
+Signal tracks book/trade microstructure decay and classifies the dominant
+exhaustion mode onto the exhaustion perspective. Exit timing itself is decided
+at the perspective layer (ActionStopLoss / ActionExit); this signal only
+publishes the classified reading.
 */
-type Exhaust struct {
+type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	mu          sync.Mutex
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	history     *historyStore
+	floor       *adaptive.SNRField
 }
 
-func NewExhaust(ctx context.Context, pool *qpool.Q) *Exhaust {
+func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	exhaust := &Exhaust{
+	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		history:     newHistoryStore(),
+		floor:       adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"book", "trade", "tick"} {
-		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		exhaust.subscribers[channel] = group.Subscribe("exhaust:"+channel, 128)
-	}
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
+		"measurements", 10*time.Millisecond,
+	)
 
-	exhaust.broadcasts["exits"] = pool.CreateBroadcastGroup("exits", 10*time.Millisecond)
-	exhaust.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-
-	return exhaust
+	return signal
 }
 
-func (exhaust *Exhaust) Start() error        { return nil }
-func (exhaust *Exhaust) State() engine.State { return engine.READY }
+func (signal *Signal) Tick() error {
+	symbols := config.System.Symbols
+	trades := market.NewTradeSubscription(signal.ctx, symbols...)
+	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
+	books := market.NewBookSubscription(signal.ctx, config.System.BookDepthLevels, symbols...)
 
-func (exhaust *Exhaust) Tick() error {
-	errnie.Info("starting exhaust tick")
-
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-exhaust.ctx.Done():
-				return
-			case value, ok := <-exhaust.subscribers["book"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("exhaust book channel closed"))
-					return
-				}
-
-				delta, deltaOK := value.Value.(market.BookLevelsDelta)
-				if !deltaOK {
-					errnie.Error(fmt.Errorf("exhaust: invalid book payload: %T", value.Value))
-					continue
-				}
-
-				bidDepth := 0.0
-				askDepth := 0.0
-
-				for _, level := range delta.Bids {
-					bidDepth += level.Volume
-				}
-
-				for _, level := range delta.Asks {
-					askDepth += level.Volume
-				}
-
-				spreadBPS := 0.0
-				imbalance := 0.0
-
-				if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
-					bid := delta.Bids[0].Price
-					ask := delta.Asks[0].Price
-					mid := (bid + ask) / 2
-
-					if mid > 0 {
-						spreadBPS = (ask - bid) / mid * 10000
-					}
-
-					total := delta.Bids[0].Volume + delta.Asks[0].Volume
-
-					if total > 0 {
-						imbalance = (delta.Bids[0].Volume - delta.Asks[0].Volume) / total
-					}
-				}
-
-				exhaust.history.observe(
-					delta.Symbol,
-					bidDepth,
-					askDepth,
-					bidDepth+askDepth,
-					spreadBPS,
-					0,
-					imbalance,
-					0,
-				)
-
-				exhaust.publishPulse()
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case trade, ok := <-trades:
+			if !ok {
+				trades = nil
+				continue
 			}
-		}
-	})
 
-	wg.Go(func() {
-		for {
-			select {
-			case <-exhaust.ctx.Done():
-				return
-			case value, ok := <-exhaust.subscribers["trade"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("exhaust trade channel closed"))
-					return
-				}
-
-				tick, tickOK := value.Value.(trade.Data)
-				if !tickOK {
-					errnie.Error(fmt.Errorf("exhaust: invalid trade payload: %T", value.Value))
-					continue
-				}
-
+			if trade != nil {
 				sign := -1.0
 
-				if tick.Side == "buy" {
+				if trade.Side == "buy" {
 					sign = 1.0
 				}
 
-				exhaust.history.observe(
-					tick.Symbol, 0, 0, 0, 0, sign, 0, tick.Price,
-				)
-
-				exhaust.publishPulse()
+				signal.history.observe(trade.Symbol, 0, 0, 0, 0, sign, 0, trade.Price)
+				signal.emit(trade.Symbol)
 			}
-		}
-	})
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-exhaust.ctx.Done():
-				return
-			case value, ok := <-exhaust.subscribers["tick"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("exhaust tick channel closed"))
-					return
-				}
-
-				row, rowOK := value.Value.(market.TickerRow)
-				if !rowOK {
-					errnie.Error(fmt.Errorf("exhaust: invalid ticker payload: %T", value.Value))
-					continue
-				}
-
-				exhaust.history.observe(
-					row.Symbol, 0, 0, 0, 0, 0, 0, row.Last,
-				)
-
-				exhaust.publishPulse()
-			}
-		}
-	})
-
-	wg.Wait()
-	return exhaust.ctx.Err()
-}
-
-func (exhaust *Exhaust) publishPulse() {
-	threshold := config.System.ExitUrgencyThreshold
-
-	for _, symbol := range exhaust.history.symbols() {
-		snapshot, ok := exhaust.history.snapshot(symbol)
-
-		if !ok {
-			continue
-		}
-
-		urgency, reason := exitScoreLong(snapshot)
-
-		if urgency < threshold {
-			continue
-		}
-
-		exhaust.broadcasts["exits"].Send(&qpool.QValue[any]{
-			Value: engine.Exit{
-				Symbol:  symbol,
-				Urgency: urgency,
-				Reason:  reason,
-			},
-		})
-	}
-
-	exhaust.publishMeasurements()
-}
-
-func (exhaust *Exhaust) publishMeasurements() {
-	for _, symbol := range exhaust.history.symbols() {
-		snapshot, ok := exhaust.history.snapshot(symbol)
-
-		if !ok {
-			continue
-		}
-
-		measurement, ok := exhaustMeasurement(symbol, snapshot)
-
-		if !ok {
-			continue
-		}
-
-		exhaust.broadcasts["measurements"].Send(&qpool.QValue[any]{
-			Value: measurement,
-		})
-	}
-}
-
-func (exhaust *Exhaust) Source() string { return exhaustSource }
-
-func (exhaust *Exhaust) Measure() iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		for _, symbol := range exhaust.history.symbols() {
-			snapshot, ok := exhaust.history.snapshot(symbol)
-
+		case row, ok := <-ticks:
 			if !ok {
+				ticks = nil
 				continue
 			}
 
-			measurement, ok := exhaustMeasurement(symbol, snapshot)
-
+			if row != nil {
+				signal.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
+				signal.emit(row.Symbol)
+			}
+		case delta, ok := <-books:
 			if !ok {
+				books = nil
 				continue
 			}
 
-			if !yield(measurement) {
-				return
+			if delta != nil {
+				signal.observeBook(*delta)
+				signal.emit(delta.Symbol)
 			}
 		}
 	}
 }
 
-func (exhaust *Exhaust) Close() error {
-	exhaust.cancel()
+// observeBook folds one book delta's depth, spread, and imbalance into history.
+func (signal *Signal) observeBook(delta market.BookUpdate) {
+	bidDepth := 0.0
+	askDepth := 0.0
+
+	for _, level := range delta.Bids {
+		bidDepth += level.Qty
+	}
+
+	for _, level := range delta.Asks {
+		askDepth += level.Qty
+	}
+
+	spreadBPS := 0.0
+	imbalance := 0.0
+
+	if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
+		bid := delta.Bids[0].Price
+		ask := delta.Asks[0].Price
+		mid := (bid + ask) / 2
+
+		if mid > 0 {
+			spreadBPS = (ask - bid) / mid * 10000
+		}
+
+		total := delta.Bids[0].Qty + delta.Asks[0].Qty
+
+		if total > 0 {
+			imbalance = (delta.Bids[0].Qty - delta.Asks[0].Qty) / total
+		}
+	}
+
+	signal.history.observe(delta.Symbol, bidDepth, askDepth, bidDepth+askDepth, spreadBPS, 0, imbalance, 0)
+}
+
+// emit publishes the exhaustion reading for the one symbol an event touched.
+// Each symbol's reading is independent, so there is no need to re-measure the
+// whole cross-section on every event.
+func (signal *Signal) emit(symbol string) {
+	snapshot, ok := signal.history.snapshot(symbol)
+
+	if !ok {
+		return
+	}
+
+	measurement, ok := exhaustMeasurement(snapshot)
+
+	if !ok {
+		return
+	}
+
+	measurement.Symbol = symbol
+	measurement.SNR = signal.floor.Score(symbol, measurement.SNR)
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
 	return nil
 }

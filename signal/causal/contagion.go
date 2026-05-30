@@ -34,17 +34,11 @@ the spike toward one — every asset moving as a single block during a liquidati
 flips the structural causal model into its panic regime. Returns zero when too few symbols carry
 enough return history to form a stable estimate.
 */
-func (causal *Causal) contagion() float64 {
+func (signal *Signal) contagion() float64 {
 	snapshots := make([]*hyReturns, 0, contagionSymbolCap)
 	minSamples := contagionMinSamples()
 
-	causal.symbols.Range(func(key, value any) bool {
-		symbol := key.(string)
-
-		if _, subscribed := causal.requested.Load(symbol); !subscribed {
-			return true
-		}
-
+	signal.symbols.Range(func(key, value any) bool {
 		state := value.(*CausalSymbol)
 		snapshot := state.HYSnapshot()
 

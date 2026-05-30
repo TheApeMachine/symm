@@ -2,410 +2,149 @@ package fluid
 
 import (
 	"context"
-	"fmt"
-	"iter"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/trade"
 )
 
-const fluidSource = "fluid"
-
 /*
-Fluid applies book-flow dynamics per symbol and streams field_row updates to ui.
+Signal applies order-book fluid dynamics per symbol and maps the field onto the
+mechanical perspective (Laminar / Turbulent / Inertial / Viscous). It consumes
+book, trades, and ticks; the field model lives in FluidSymbol.
 */
-type Fluid struct {
+// fieldInterval rate-limits each symbol's field row to the surface. The frontend
+// rebuilds the whole 32x32 grid on every row, so streaming one per book delta
+// (across the full universe) burns CPU on both ends for updates the eye cannot
+// resolve; a few per second per symbol keeps the surface live and cheap.
+const fieldInterval = 200 * time.Millisecond
+
+type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
-	pendingMu   sync.Mutex
-	pendingSeen sync.Map
-	pending     []string
-	requested   sync.Map
+	ui          *qpool.BroadcastGroup
+	fieldEmit   sync.Map
 }
 
-func NewFluid(ctx context.Context, pool *qpool.Q) *Fluid {
+func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	fluid := &Fluid{
+	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		symbols:     sync.Map{},
-		requested:   sync.Map{},
 	}
 
-	for _, channel := range []string{"symbols", "tick", "book", "trade", "feedback"} {
-		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		fluid.subscribers[channel] = group.Subscribe("fluid:"+channel, 128)
-	}
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
+		"measurements", 10*time.Millisecond,
+	)
+	signal.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	fluid.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	fluid.broadcasts["subscriptions"] = pool.CreateBroadcastGroup("subscriptions", 10*time.Millisecond)
-	fluid.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	return fluid
+	return signal
 }
 
-func (fluid *Fluid) Start() error        { return nil }
-func (fluid *Fluid) State() engine.State { return engine.READY }
-
-func (fluid *Fluid) Tick() error {
-	errnie.Info("starting fluid tick")
-
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case value, ok := <-fluid.subscribers["symbols"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("fluid symbols channel closed"))
-					return
-				}
-
-				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
-				if !pairsOK {
-					errnie.Error(fmt.Errorf("fluid: invalid symbols payload: %T", value.Value))
-					continue
-				}
-
-				for symbol, pair := range pairs {
-					if pair == nil {
-						continue
-					}
-
-					fluid.symbols.Store(symbol, NewFluidSymbol(*pair))
-
-					if pair.Quote != config.System.QuoteCurrency {
-						continue
-					}
-
-					if _, seen := fluid.requested.Load(symbol); seen {
-						continue
-					}
-
-					fluid.queuePending(symbol)
-				}
-
-				fluid.publishPulse()
-			}
-		}
-	})
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case value, ok := <-fluid.subscribers["tick"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("fluid tick channel closed"))
-					return
-				}
-
-				row, rowOK := value.Value.(market.TickerRow)
-				if !rowOK {
-					errnie.Error(fmt.Errorf("fluid: invalid ticker payload: %T", value.Value))
-					continue
-				}
-
-				raw, ok := fluid.symbols.Load(row.Symbol)
-
-				if ok {
-					state := raw.(*FluidSymbol)
-					state.FeedTicker(row)
-
-					fluid.publishPulse()
-				}
-
-			}
-		}
-	})
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case value, ok := <-fluid.subscribers["book"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("fluid book channel closed"))
-					return
-				}
-
-				delta, deltaOK := value.Value.(market.BookLevelsDelta)
-				if !deltaOK {
-					errnie.Error(fmt.Errorf("fluid: invalid book payload: %T", value.Value))
-					continue
-				}
-
-				raw, ok := fluid.symbols.Load(delta.Symbol)
-
-				if ok {
-					state := raw.(*FluidSymbol)
-					state.FeedBook(delta)
-
-					if _, seen := fluid.requested.Load(delta.Symbol); !seen && state.HasBook() {
-						fluid.requested.Store(delta.Symbol, struct{}{})
-						fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: []string{delta.Symbol}})
-						fluid.publishPulse()
-					}
-				}
-
-			}
-		}
-	})
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case value, ok := <-fluid.subscribers["trade"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("fluid trade channel closed"))
-					return
-				}
-
-				tick, tickOK := value.Value.(trade.Data)
-				if !tickOK {
-					errnie.Error(fmt.Errorf("fluid: invalid trade payload: %T", value.Value))
-					continue
-				}
-
-				raw, ok := fluid.symbols.Load(tick.Symbol)
-
-				if ok {
-					state := raw.(*FluidSymbol)
-					state.FeedTradeSide(tick.Timestamp, tick.Qty, tick.Side)
-
-					fluid.publishPulse()
-				}
-
-			}
-		}
-	})
-
-	wg.Go(func() {
-		for {
-			select {
-			case <-fluid.ctx.Done():
-				return
-			case value, ok := <-fluid.subscribers["feedback"].Incoming:
-				if !ok {
-					errnie.Error(fmt.Errorf("fluid feedback channel closed"))
-					return
-				}
-
-				fb, fbOK := value.Value.(engine.PredictionFeedback)
-				if !fbOK {
-					errnie.Error(fmt.Errorf("fluid: invalid feedback payload: %T", value.Value))
-					continue
-				}
-
-				fluid.Feedback(fb)
-				fluid.publishPulse()
-			}
-		}
-	})
-
-	wg.Wait()
-	return fluid.ctx.Err()
+func (signal *Signal) state(symbol string) *FluidSymbol {
+	stored, _ := signal.symbols.LoadOrStore(symbol, NewFluidSymbol(symbol))
+	return stored.(*FluidSymbol)
 }
 
-func (fluid *Fluid) requestedCount() int {
-	count := 0
+func (signal *Signal) Tick() error {
+	symbols := config.System.Symbols
+	trades := market.NewTradeSubscription(signal.ctx, symbols...)
+	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
+	books := market.NewBookSubscription(signal.ctx, config.System.BookDepthLevels, symbols...)
 
-	fluid.requested.Range(func(key, value any) bool {
-		count++
-		return true
-	})
-
-	return count
-}
-
-func (fluid *Fluid) publishPulse() {
-	if symbols := fluid.pendingBatch(); len(symbols) > 0 {
-		for _, symbol := range symbols {
-			fluid.requested.Store(symbol, struct{}{})
-		}
-
-		fluid.broadcasts["subscriptions"].Send(&qpool.QValue[any]{Value: symbols})
-	}
-
-	fluid.publishMeasurements()
-	fluid.publishFieldRows()
-}
-
-func (fluid *Fluid) queuePending(symbol string) {
-	if symbol == "" {
-		return
-	}
-
-	if _, queued := fluid.pendingSeen.LoadOrStore(symbol, struct{}{}); queued {
-		return
-	}
-
-	fluid.pendingMu.Lock()
-	defer fluid.pendingMu.Unlock()
-
-	fluid.pending = append(fluid.pending, symbol)
-}
-
-func (fluid *Fluid) pendingBatch() []string {
-	requested := fluid.requestedCount()
-
-	if requested >= config.System.MaxScanSymbols {
-		return nil
-	}
-
-	fluid.pendingMu.Lock()
-	defer fluid.pendingMu.Unlock()
-
-	if len(fluid.pending) == 0 {
-		return nil
-	}
-
-	remaining := config.System.MaxScanSymbols - requested
-	limit := min(min(config.System.SubscribeBatch, remaining), len(fluid.pending))
-	symbols := make([]string, 0, limit)
-	pending := fluid.pending[:0]
-
-	for _, symbol := range fluid.pending {
-		if _, alreadyRequested := fluid.requested.Load(symbol); alreadyRequested {
-			continue
-		}
-
-		if len(symbols) >= limit {
-			pending = append(pending, symbol)
-			continue
-		}
-		symbols = append(symbols, symbol)
-	}
-
-	fluid.pending = pending
-
-	return symbols
-}
-
-func (fluid *Fluid) publishMeasurements() {
-	fluid.symbols.Range(func(key, value any) bool {
-		symbol := key.(string)
-
-		if _, subscribed := fluid.requested.Load(symbol); !subscribed {
-			return true
-		}
-
-		state := value.(*FluidSymbol)
-		measurement, ok := state.Measure()
-
-		if !ok {
-			return true
-		}
-
-		fluid.broadcasts["measurements"].Send(&qpool.QValue[any]{
-			Value: measurement,
-		})
-
-		return true
-	})
-}
-
-func (fluid *Fluid) publishFieldRows() {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	symbols := make([]map[string]any, 0)
-
-	fluid.symbols.Range(func(key, value any) bool {
-		symbol := key.(string)
-
-		if _, subscribed := fluid.requested.Load(symbol); !subscribed {
-			return true
-		}
-
-		state := value.(*FluidSymbol)
-		row := state.wireRow()
-
-		if row == nil {
-			return true
-		}
-
-		fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":  "field_row",
-			"ts":     now,
-			"symbol": symbol,
-			"row":    row,
-		}})
-		symbols = append(symbols, row)
-
-		return true
-	})
-
-	if len(symbols) == 0 {
-		return
-	}
-
-	fluid.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":        "field_snapshot",
-		"ts":           now,
-		"symbol_count": len(symbols),
-		"symbols":      symbols,
-	}})
-}
-
-func (fluid *Fluid) Close() error {
-	fluid.cancel()
-	return nil
-}
-
-func (fluid *Fluid) Source() string { return fluidSource }
-
-func (fluid *Fluid) Measure() iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
-		fluid.symbols.Range(func(key, value any) bool {
-			symbol := key.(string)
-
-			if _, subscribed := fluid.requested.Load(symbol); !subscribed {
-				return true
-			}
-
-			state := value.(*FluidSymbol)
-			measurement, ok := state.Measure()
-
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case trade, ok := <-trades:
 			if !ok {
-				return true
+				trades = nil
+				continue
 			}
 
-			return yield(measurement)
-		})
+			if trade != nil {
+				signal.state(trade.Symbol).FeedTradeSide(trade.Timestamp, trade.Qty, trade.Side)
+				signal.emit(trade.Symbol)
+			}
+		case row, ok := <-ticks:
+			if !ok {
+				ticks = nil
+				continue
+			}
+
+			if row != nil {
+				signal.state(row.Symbol).FeedTicker(*row)
+			}
+		case delta, ok := <-books:
+			if !ok {
+				books = nil
+				continue
+			}
+
+			if delta != nil {
+				signal.state(delta.Symbol).FeedBook(*delta)
+				signal.emit(delta.Symbol)
+			}
+		}
 	}
 }
 
-func (fluid *Fluid) Feedback(feedback engine.PredictionFeedback) {
-	if !engine.FeedbackIncludesSource(feedback, fluidSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
-		return
-	}
-
-	raw, ok := fluid.symbols.Load(feedback.Symbol)
+func (signal *Signal) emit(symbol string) {
+	raw, ok := signal.symbols.Load(symbol)
 
 	if !ok {
 		return
 	}
 
 	state := raw.(*FluidSymbol)
-	state.ApplyFeedback(feedback)
+	measurement, ok := state.Measure()
+
+	if ok {
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	}
+
+	signal.publishField(symbol, state)
+}
+
+// publishField ships the symbol's fluid-field row to the dashboard surface, rate
+// limited per symbol so the universe-wide field does not flood the bus or the
+// frontend grid rebuild.
+func (signal *Signal) publishField(symbol string, state *FluidSymbol) {
+	now := time.Now()
+
+	if last, seen := signal.fieldEmit.Load(symbol); seen {
+		if now.Sub(last.(time.Time)) < fieldInterval {
+			return
+		}
+	}
+
+	row := state.Row()
+
+	if row == nil {
+		return
+	}
+
+	signal.fieldEmit.Store(symbol, now)
+
+	signal.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":  "field_row",
+		"ts":     now.UTC().Format(time.RFC3339Nano),
+		"symbol": symbol,
+		"row":    row,
+	}})
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
+	return nil
 }

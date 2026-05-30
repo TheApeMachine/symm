@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -69,30 +68,36 @@ type InstrumentUpdate struct {
 NewInstrumentSubscription opens the instrument channel and forwards snapshots to recv.
 It blocks until ctx is canceled or the socket closes.
 */
-func NewInstrumentSubscription(
-	ctx context.Context,
-	recv chan *InstrumentUpdate,
-) {
-	ws := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
+func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
+	ws, err := public.NewWebSocket(ctx)
+
+	if err != nil {
 		errnie.Error(err)
-	}).Value()
-
-	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(public.InstrumentsChannel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	for message := range messages {
-		var update InstrumentUpdate
-
-		if err := sonic.Unmarshal(message.Data, &update); err != nil {
-			continue
-		}
-
-		copied := update
-		recv <- &copied
+		return closed[InstrumentUpdate]()
 	}
+
+	if err := ws.Connect(public.WebSocketURL, public.InstrumentsChannel); err != nil {
+		errnie.Error(err)
+		return closed[InstrumentUpdate]()
+	}
+
+	if err := ws.Send(public.InstrumentsChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: InstrumentParams{
+			Channel:  public.InstrumentsChannel,
+			Snapshot: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
+		return closed[InstrumentUpdate]()
+	}
+
+	stream, err := public.StreamSnapshot[InstrumentUpdate](ws, public.InstrumentsChannel)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[InstrumentUpdate]()
+	}
+
+	return stream
 }

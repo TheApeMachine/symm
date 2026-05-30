@@ -19,8 +19,8 @@ const (
 	TickerChannel                        = "ticker"
 	BookChannel                          = "book"
 	OrdersChannel                        = "orders"
-	CandlesChannel                       = "candles"
-	TradesChannel                        = "trades"
-	InstrumentsChannel                   = "instruments"
+	CandlesChannel                       = "ohlc"
+	TradesChannel                        = "trade"
+	InstrumentsChannel                   = "instrument"
 	Level3Channel                        = "level3"
 )

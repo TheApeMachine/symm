@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -46,6 +47,7 @@ type cvdState struct {
 	actBase   *adaptive.EMA    // self-scaling baseline for activity
 	driftBase *adaptive.EMA    // self-scaling baseline for drift
 	pipe      *numeric.Classed
+	floor     *adaptive.SNR // noise floor for the fused absorption strength
 	last      float64
 }
 
@@ -76,9 +78,6 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		},
 	}
 
-	tradeGroup := pool.CreateBroadcastGroup("trades", 10*time.Millisecond)
-	signal.subscribers["trades"] = tradeGroup.Subscribe("trades", 128)
-
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
 	)
@@ -107,6 +106,7 @@ func newCVDState() *cvdState {
 			adaptive.NewEMA(0),
 			adaptive.NewSigmaClamp(3, 8, 0.0625),
 		),
+		floor: adaptive.NewSNR(),
 	}
 }
 
@@ -124,82 +124,64 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	var wg sync.WaitGroup
+	for trade := range market.NewTradeSubscription(signal.ctx, config.System.Symbols...) {
+		signal.observe(*trade)
+	}
 
-	wg.Go(func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case value, ok := <-signal.subscribers["trades"].Incoming:
-				if !ok || value.Value == nil {
-					continue
-				}
-
-				trades, ok := value.Value.([]market.TradeUpdate)
-
-				if !ok {
-					continue
-				}
-
-				touched := make(map[string]*cvdState, len(trades))
-
-				for _, trade := range trades {
-					if trade.Price <= 0 || trade.Qty <= 0 {
-						continue
-					}
-
-					stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newCVDState())
-					state := stored.(*cvdState)
-
-					signed := trade.Qty // taker buy lifts the ask
-
-					if trade.Side != "buy" {
-						signed = -trade.Qty
-					}
-
-					nanos := float64(trade.Timestamp.UnixNano())
-					state.signed.Next(0, nanos, signed, trade.Price) // anchor = opening price
-					state.gross.Next(0, nanos, trade.Qty)
-					state.count.Next(0, nanos, 1)
-					state.last = trade.Price
-
-					touched[trade.Symbol] = state
-				}
-
-				for _, state := range touched {
-					gross := state.gross.Sum()
-					anchor := state.signed.Anchor()
-
-					if gross <= 0 || anchor <= 0 {
-						continue
-					}
-
-					conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
-					activity := state.scale(state.count.Sum(), state.actBase)
-					drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
-
-					code, err := state.pipe.Push(activity, conviction, drift)
-
-					if err != nil {
-						errnie.Error(err)
-						continue
-					}
-
-					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-						Value: perspectives.Measurement{
-							Source:   perspectives.SourceCVD,
-							Category: signal.categories[state.pipe.Label(code)],
-							SNR:      1,
-						},
-					})
-				}
-			}
-		}
-	})
-
-	wg.Wait()
 	return signal.ctx.Err()
+}
+
+// observe folds one executed trade into its symbol's window state and emits the
+// absorption reading for that symbol.
+func (signal *Signal) observe(trade market.TradeUpdate) {
+	if trade.Price <= 0 || trade.Qty <= 0 {
+		return
+	}
+
+	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newCVDState())
+	state := stored.(*cvdState)
+
+	signed := trade.Qty // taker buy lifts the ask
+
+	if trade.Side != "buy" {
+		signed = -trade.Qty
+	}
+
+	nanos := float64(trade.Timestamp.UnixNano())
+	state.signed.Next(0, nanos, signed, trade.Price) // anchor = opening price
+	state.gross.Next(0, nanos, trade.Qty)
+	state.count.Next(0, nanos, 1)
+	state.last = trade.Price
+
+	gross := state.gross.Sum()
+	anchor := state.signed.Anchor()
+
+	if gross <= 0 || anchor <= 0 {
+		return
+	}
+
+	conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
+	activity := state.scale(state.count.Sum(), state.actBase)
+	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
+
+	code, err := state.pipe.Push(activity, conviction, drift)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	fused := activity * conviction * (1 + drift) // same strength the classifier bands
+
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
+		Value: perspectives.Measurement{
+			Symbol:   trade.Symbol,
+			Source:   perspectives.SourceCVD,
+			Category: signal.categories[state.pipe.Label(code)],
+			SNR:      state.floor.Score(fused),
+			Last:     trade.Price,
+		},
+	})
 }
 
 func (signal *Signal) Close() error {
