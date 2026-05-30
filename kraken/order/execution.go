@@ -14,15 +14,17 @@ reconnect-replays — when ExecID is empty the parser falls back to
 OrderID:TradeID:Timestamp.
 */
 type Fill struct {
-	OrderID string
-	ClOrdID string
-	Symbol  string
-	Side    string
-	Qty     float64
-	Price   float64
-	ExecKey string
-	Fee     float64
-	FeeCcy  string
+	OrderID  string
+	ClOrdID  string
+	Symbol   string
+	Side     string
+	Qty      float64
+	Price    float64
+	CumQty   float64
+	OrderQty float64
+	ExecKey  string
+	Fee      float64
+	FeeCcy   string
 }
 
 /*
@@ -43,8 +45,22 @@ type ExecutionEvent struct {
 	Timestamp string
 	LastQty   float64
 	LastPrice float64
+	CumQty    float64
+	OrderQty  float64
 	Fee       float64
 	FeeCcy    string
+}
+
+/*
+OrderFillTerminal reports whether an execution row completes the parent order.
+When order_qty is absent (paper simulator), one trade fill is treated as terminal.
+*/
+func OrderFillTerminal(fill Fill) bool {
+	if fill.OrderQty <= 0 {
+		return true
+	}
+
+	return fill.CumQty >= fill.OrderQty
 }
 
 /*
@@ -69,15 +85,17 @@ func ParseExecutionFills(payload []byte) ([]Fill, error) {
 		}
 
 		fills = append(fills, Fill{
-			OrderID: event.OrderID,
-			ClOrdID: event.ClOrdID,
-			Symbol:  event.Symbol,
-			Side:    event.Side,
-			Qty:     event.LastQty,
-			Price:   event.LastPrice,
-			ExecKey: execKeyFor(event),
-			Fee:     event.Fee,
-			FeeCcy:  event.FeeCcy,
+			OrderID:  event.OrderID,
+			ClOrdID:  event.ClOrdID,
+			Symbol:   event.Symbol,
+			Side:     event.Side,
+			Qty:      event.LastQty,
+			Price:    event.LastPrice,
+			CumQty:   event.CumQty,
+			OrderQty: event.OrderQty,
+			ExecKey:  execKeyFor(event),
+			Fee:      event.Fee,
+			FeeCcy:   event.FeeCcy,
 		})
 	}
 
@@ -119,6 +137,8 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 			Timestamp string  `json:"timestamp"`
 			LastQty   float64 `json:"last_qty"`
 			LastPrice float64 `json:"last_price"`
+			CumQty    float64 `json:"cum_qty"`
+			OrderQty  float64 `json:"order_qty"`
 			Fee       float64 `json:"fee_usd_equiv"`
 			FeeCcy    string  `json:"fee_ccy"`
 		} `json:"data"`
@@ -148,6 +168,8 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 			Timestamp: row.Timestamp,
 			LastQty:   row.LastQty,
 			LastPrice: row.LastPrice,
+			CumQty:    row.CumQty,
+			OrderQty:  row.OrderQty,
 			Fee:       row.Fee,
 			FeeCcy:    row.FeeCcy,
 		})

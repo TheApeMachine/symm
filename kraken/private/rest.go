@@ -17,7 +17,7 @@ import (
 	"github.com/gofiber/fiber/v3/client"
 )
 
-const baseURL = "https://api.kraken.com/0/private"
+const baseURL = "https://api.kraken.com"
 
 /*
 Rest is the Kraken private REST API client for authenticated endpoints.
@@ -90,9 +90,10 @@ func (rest *Rest) post(ctx context.Context, path string, form url.Values, model 
 		form = url.Values{}
 	}
 
-	form.Set("nonce", rest.nextNonce())
+	nonce := rest.nextNonce()
+	form.Set("nonce", nonce)
 	body := form.Encode()
-	signature, err := rest.sign(path, body)
+	signature, err := rest.sign(path, nonce, body)
 
 	if err != nil {
 		return err
@@ -131,9 +132,9 @@ func (rest *Rest) nextNonce() string {
 	return strconv.FormatInt(time.Now().UnixNano()+int64(sequence), 10)
 }
 
-func (rest *Rest) sign(path string, body string) (string, error) {
+func (rest *Rest) sign(path, nonce, body string) (string, error) {
 	sha := sha256.New()
-	sha.Write([]byte(body))
+	sha.Write([]byte(nonce + body))
 	digest := sha.Sum(nil)
 
 	mac := hmac.New(sha512.New, rest.secret)

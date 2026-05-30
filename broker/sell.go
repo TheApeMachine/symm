@@ -22,13 +22,38 @@ type Sell struct {
 }
 
 /*
-FillPaper simulates an immediate market sell of the full position. Inventory
-is read by atomically zeroing the slot — the quantity returned by
-ZeroInventory is the one used for sizing, fee accounting, and the published
-Fill, so a concurrent AddInventory between a stale read and the zero cannot
-leave dangling base.
+SubmitPaper validates a sell and assigns a client order id without filling.
 */
-func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
+func (sell *Sell) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
+	if tradingWallet == nil {
+		return "", fmt.Errorf("wallet is required")
+	}
+
+	if sell.Symbol == "" {
+		return "", fmt.Errorf("invalid sell")
+	}
+
+	if sell.ClOrdID == "" {
+		clOrdID, err := order.NextClOrdID()
+
+		if err != nil {
+			return "", fmt.Errorf("generate cl_ord_id: %w", err)
+		}
+
+		sell.ClOrdID = clOrdID
+	}
+
+	if err := ShouldRejectPaperOrder(); err != nil {
+		return sell.ClOrdID, err
+	}
+
+	return sell.ClOrdID, nil
+}
+
+/*
+BuildPaperFill prices a full-position sell for the paper execution simulator.
+*/
+func (sell *Sell) BuildPaperFill(tradingWallet *wallet.Wallet) (order.Fill, error) {
 	if tradingWallet == nil {
 		return order.Fill{}, fmt.Errorf("wallet is required")
 	}
@@ -39,6 +64,11 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 
 	orderSymbol := Symbol(sell.Symbol)
 	base := orderSymbol.BaseAsset()
+	qty := tradingWallet.InventoryQty(base)
+
+	if qty <= config.System.LiveInventoryEpsilon {
+		return order.Fill{}, nil
+	}
 
 	last, _, _, err := sell.Quote.complete()
 
@@ -46,46 +76,58 @@ func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
 		return order.Fill{}, err
 	}
 
-	qty := tradingWallet.InventoryQty(base)
-
-	if qty <= config.System.LiveInventoryEpsilon {
-		return order.Fill{}, nil
-	}
-
-	// Price the fill BEFORE consuming inventory. The previous version
-	// ZeroInventory'd up front and then "restored" via AddInventory(qty, 0)
-	// on a depth-fill failure — which set the cost basis to 0 and destroyed
-	// the position's AvgEntry. Pricing first means the only state mutation
-	// happens once the fill is known good.
 	fillPrice, err := sell.Quote.FillPrice("sell", qty*last)
 
 	if err != nil {
 		return order.Fill{}, err
 	}
 
+	revenue := qty * fillPrice
+	fee := revenue * feeOr(sell.FeePct, tradingWallet.FeePct) / 100
+
+	return order.Fill{
+		OrderID: orderSymbol.PaperOrderID("sell"),
+		ClOrdID: sell.ClOrdID,
+		Symbol:  sell.Symbol,
+		Side:    "sell",
+		Qty:     qty,
+		Price:   fillPrice,
+		Fee:     fee,
+		FeeCcy:  tradingWallet.Currency,
+		ExecKey: "paper-" + sell.ClOrdID,
+	}, nil
+}
+
+/*
+FillPaper simulates an immediate market sell of the full position. Inventory
+is read by atomically zeroing the slot — the quantity returned by
+ZeroInventory is the one used for sizing, fee accounting, and the published
+Fill, so a concurrent AddInventory between a stale read and the zero cannot
+leave dangling base.
+*/
+func (sell *Sell) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
+	if _, err := sell.SubmitPaper(tradingWallet); err != nil {
+		return order.Fill{}, err
+	}
+
+	fill, err := sell.BuildPaperFill(tradingWallet)
+
+	if err != nil || fill.Qty <= 0 {
+		return fill, err
+	}
+
+	base := Symbol(sell.Symbol).BaseAsset()
 	consumed := tradingWallet.ZeroInventory(base)
 
 	if consumed <= config.System.LiveInventoryEpsilon {
 		return order.Fill{}, nil
 	}
 
-	// Use whatever ZeroInventory actually returned: a concurrent
-	// AddInventory between InventoryQty and ZeroInventory would otherwise
-	// hide the real fill quantity. consumed is the value that's already
-	// gone from the wallet — bill it back at the fill price.
-	qty = consumed
-	revenue := qty * fillPrice
-	fee := revenue * feeOr(sell.FeePct, tradingWallet.FeePct) / 100
+	fill.Qty = consumed
+	proceeds := CashDeltaSell(fill, tradingWallet.Currency)
+	tradingWallet.CreditBalance(proceeds)
 
-	tradingWallet.CreditBalance(revenue - fee)
-
-	return order.Fill{
-		OrderID: orderSymbol.PaperOrderID("sell"),
-		Symbol:  sell.Symbol,
-		Side:    "sell",
-		Qty:     qty,
-		Price:   fillPrice,
-	}, nil
+	return fill, nil
 }
 
 /*

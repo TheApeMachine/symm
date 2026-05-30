@@ -27,4 +27,5 @@ type orderIntent struct {
 	lotDecimals    int
 	hasLotDecimals bool
 	predictedAt    time.Time
+	entryBound     bool
 }

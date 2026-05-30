@@ -1,24 +1,30 @@
 package private
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
 )
 
-func TestRestSign(t *testing.T) {
-	convey.Convey("Given a known secret and body", t, func() {
-		secret := base64.StdEncoding.EncodeToString([]byte("secret"))
-		rest, err := NewRest("key", secret)
+const (
+	krakenDocPrivateKey = "kQH5HW/8p1uGOVjbgWA7FunAmGO8lsSUXNsu3eow76sz84Q18fWxnyRzBHCd3pd5nE9qa99HAZtuZuj6F1huXg=="
+	krakenDocNonce      = "1616492376594"
+	krakenDocBody       = "nonce=1616492376594&ordertype=limit&pair=XBTUSD&price=37500&type=buy&volume=1.25"
+	krakenDocPath       = "/0/private/AddOrder"
+	krakenDocAPISign    = "4/dpxb3iT4tp/ZCVEwSnEsLxx0bqyhLpdfOpc6fn7OR8+UClSV5n9E6aSS8MPtnRfp32bAb0nmbRn6H8ndwLUQ=="
+)
+
+func TestRestSignKrakenDocVector(t *testing.T) {
+	convey.Convey("Given Kraken's documented AddOrder example", t, func() {
+		rest, err := NewRest("key", krakenDocPrivateKey)
 
 		convey.So(err, convey.ShouldBeNil)
 
-		signature, signErr := rest.sign("/0/private/GetWebSocketsToken", "nonce=1")
+		signature, signErr := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
 
-		convey.Convey("It should produce a non-empty API-Sign", func() {
+		convey.Convey("It should match the published API-Sign", func() {
 			convey.So(signErr, convey.ShouldBeNil)
-			convey.So(signature, convey.ShouldNotBeBlank)
+			convey.So(signature, convey.ShouldEqual, krakenDocAPISign)
 		})
 	})
 }

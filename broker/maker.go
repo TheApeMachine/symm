@@ -2,7 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"math/rand"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
@@ -50,12 +49,10 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 
 	fee := maker.Notional * feePct / 100
 
-	if config.System.PaperOrderRejectRate > 0 {
-		if rand.Float64() < config.System.PaperOrderRejectRate {
-			tradingWallet.ReleaseEntryReservation(maker.Notional)
+	if err := ShouldRejectPaperOrder(); err != nil {
+		tradingWallet.ReleaseEntryReservation(maker.Notional)
 
-			return order.Fill{}, nil
-		}
+		return order.Fill{}, err
 	}
 
 	if err := tradingWallet.SettleEntryReservation(maker.Notional, maker.Notional); err != nil {

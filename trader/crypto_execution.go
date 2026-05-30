@@ -8,9 +8,45 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/trader/economics"
 	"github.com/theapemachine/symm/wallet"
 )
+
+func (crypto *Crypto) prepareEntryQuote(
+	symbol string,
+	last float64,
+	measurements []perspectives.Measurement,
+) broker.Quote {
+	quote := crypto.quotes.snapshot(symbol, last)
+
+	if !config.System.ExecutionStressEnabled {
+		return quote
+	}
+
+	return economics.StressQuote(quote, economics.AdverseSelectionBPS(measurements))
+}
+
+func (crypto *Crypto) hasPendingEntry(symbol string) bool {
+	if crypto.live != nil && crypto.live.HasPendingEntry(symbol) {
+		return true
+	}
+
+	return crypto.paper != nil && crypto.paper.HasPendingEntry(symbol)
+}
+
+func (crypto *Crypto) submitEntry(
+	buy broker.Buy,
+	opportunity opportunity,
+	playbook string,
+	spreadBPS float64,
+) error {
+	if crypto.live != nil {
+		return crypto.submitEntryLive(buy, opportunity, playbook, spreadBPS)
+	}
+
+	return crypto.submitEntryPaper(buy, opportunity, playbook, spreadBPS)
+}
 
 func (crypto *Crypto) submitEntryLive(
 	buy broker.Buy,
@@ -25,18 +61,7 @@ func (crypto *Crypto) submitEntryLive(
 	}
 
 	buy.ClOrdID = clOrdID
-	crypto.live.trackEntry(clOrdID, buy.Symbol, orderIntent{
-		kind:      "entry",
-		symbol:    buy.Symbol,
-		playbook:  playbook,
-		notional:  buy.Notional,
-		quote:     buy.Quote,
-		feePct:    buy.FeePct,
-		spreadBPS: spreadBPS,
-		score:     opportunity.Score,
-		names:     opportunity.Names,
-		trigger:   opportunity.Trigger,
-	})
+	crypto.live.trackEntry(clOrdID, buy.Symbol, entryIntent(buy, opportunity, playbook, spreadBPS))
 
 	if err := buy.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
 		crypto.live.dropIntent(clOrdID, buy.Symbol)
@@ -45,14 +70,57 @@ func (crypto *Crypto) submitEntryLive(
 		return err
 	}
 
-	crypto.publishAudit("entry_submit", buy.Symbol, "live entry submitted", map[string]any{
-		"playbook":   playbook,
-		"cl_ord_id":  clOrdID,
-		"slot_eur":   buy.Notional,
-		"spread_bps": spreadBPS,
-	})
+	crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, true)
 
 	return nil
+}
+
+func (crypto *Crypto) submitEntryPaper(
+	buy broker.Buy,
+	opportunity opportunity,
+	playbook string,
+	spreadBPS float64,
+) error {
+	clOrdID, err := buy.SubmitPaper(crypto.wallet)
+
+	if err != nil {
+		if clOrdID != "" {
+			crypto.paper.trackEntry(clOrdID, buy.Symbol, entryIntent(buy, opportunity, playbook, spreadBPS))
+			crypto.paper.EnqueueReject(clOrdID, err.Error())
+			crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, false)
+		}
+
+		return nil
+	}
+
+	crypto.paper.trackEntry(clOrdID, buy.Symbol, entryIntent(buy, opportunity, playbook, spreadBPS))
+	crypto.publishEntrySubmit(buy.Symbol, playbook, clOrdID, buy.Notional, spreadBPS, false)
+
+	fill, buildErr := buy.BuildPaperFill(crypto.wallet)
+
+	if buildErr != nil {
+		crypto.paper.dropIntent(clOrdID, buy.Symbol)
+		releaseEntryReservation(crypto.wallet, buy.Notional)
+
+		return buildErr
+	}
+
+	crypto.paper.ScheduleFill(fill)
+
+	return nil
+}
+
+func (crypto *Crypto) submitExit(
+	sell broker.Sell,
+	binding wallet.PositionBinding,
+	entry float64,
+	reason string,
+) error {
+	if crypto.live != nil {
+		return crypto.submitExitLive(sell, binding, entry, reason)
+	}
+
+	return crypto.submitExitPaper(sell, binding, entry, reason)
 }
 
 func (crypto *Crypto) submitExitLive(
@@ -61,10 +129,8 @@ func (crypto *Crypto) submitExitLive(
 	entry float64,
 	reason string,
 ) error {
-	lotDecimalsValue, hasLot := liveLotDecimals(sell.Symbol, orderIntent{
-		hasLotDecimals: binding.HasLotDecimals,
-		lotDecimals:    binding.LotDecimals,
-	})
+	lotDecimalsValue := binding.LotDecimals
+	hasLot := binding.HasLotDecimals
 
 	sell.HasLotDecimals = hasLot
 	sell.LotDecimals = lotDecimalsValue
@@ -76,17 +142,7 @@ func (crypto *Crypto) submitExitLive(
 	}
 
 	sell.ClOrdID = clOrdID
-	crypto.live.trackExit(clOrdID, orderIntent{
-		kind:        "exit",
-		symbol:      sell.Symbol,
-		playbook:    binding.Playbook,
-		quote:       sell.Quote,
-		feePct:      binding.TakerFeePct,
-		spreadBPS:   crypto.quotes.spreadBPS(sell.Symbol),
-		entryPrice:  entry,
-		exitReason:  reason,
-		predictedAt: binding.PredictedAt,
-	})
+	crypto.live.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
 
 	if err := sell.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
 		crypto.live.dropIntent(clOrdID, sell.Symbol)
@@ -94,50 +150,167 @@ func (crypto *Crypto) submitExitLive(
 		return err
 	}
 
-	crypto.publishAudit("exit_submit", sell.Symbol, reason, map[string]any{
-		"playbook":  binding.Playbook,
-		"cl_ord_id": clOrdID,
-	})
+	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, true)
 
 	return nil
 }
 
-func (crypto *Crypto) handleLiveAck(ack order.Ack) {
+func (crypto *Crypto) submitExitPaper(
+	sell broker.Sell,
+	binding wallet.PositionBinding,
+	entry float64,
+	reason string,
+) error {
+	clOrdID, err := sell.SubmitPaper(crypto.wallet)
+
+	if err != nil {
+		if clOrdID != "" {
+			crypto.paper.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
+			crypto.paper.EnqueueReject(clOrdID, err.Error())
+			crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, false)
+		}
+
+		return nil
+	}
+
+	crypto.paper.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
+	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, false)
+
+	fill, buildErr := sell.BuildPaperFill(crypto.wallet)
+
+	if buildErr != nil {
+		crypto.paper.dropIntent(clOrdID, sell.Symbol)
+
+		return buildErr
+	}
+
+	if fill.Qty <= 0 {
+		crypto.paper.dropIntent(clOrdID, sell.Symbol)
+
+		return nil
+	}
+
+	crypto.paper.ScheduleFill(fill)
+
+	return nil
+}
+
+func entryIntent(
+	buy broker.Buy,
+	opportunity opportunity,
+	playbook string,
+	spreadBPS float64,
+) orderIntent {
+	return orderIntent{
+		kind:           "entry",
+		symbol:         buy.Symbol,
+		playbook:       playbook,
+		notional:       buy.Notional,
+		quote:          buy.Quote,
+		feePct:         buy.FeePct,
+		spreadBPS:      spreadBPS,
+		score:          opportunity.Score,
+		names:          opportunity.Names,
+		trigger:        opportunity.Trigger,
+		hasLotDecimals: lotDecimalsKnown(buy.Symbol),
+		lotDecimals:    lotDecimals(buy.Symbol),
+	}
+}
+
+func exitIntent(
+	sell broker.Sell,
+	binding wallet.PositionBinding,
+	entry float64,
+	reason string,
+) orderIntent {
+	return orderIntent{
+		kind:        "exit",
+		symbol:      sell.Symbol,
+		playbook:    binding.Playbook,
+		quote:       sell.Quote,
+		feePct:      binding.TakerFeePct,
+		entryPrice:  entry,
+		exitReason:  reason,
+		predictedAt: binding.PredictedAt,
+	}
+}
+
+func (crypto *Crypto) intentSession(clOrdID string) (*orderSession, orderIntent, bool) {
+	if crypto.live != nil {
+		intent, ok := crypto.live.intentFor(clOrdID)
+
+		if ok {
+			return &crypto.live.orderSession, intent, true
+		}
+	}
+
+	if crypto.paper != nil {
+		intent, ok := crypto.paper.intentFor(clOrdID)
+
+		if ok {
+			return &crypto.paper.orderSession, intent, true
+		}
+	}
+
+	return nil, orderIntent{}, false
+}
+
+func (crypto *Crypto) handleOrderAck(ack order.Ack) {
 	if ack.Success {
 		return
 	}
 
-	crypto.live.handleRejectAck(crypto.wallet, ack)
-	crypto.publishAudit("order_reject", "", ack.Error, map[string]any{
-		"method":    ack.Method,
-		"cl_ord_id": ack.Result.ClOrdID,
-	})
-}
-
-func (crypto *Crypto) handleLiveFill(fill order.Fill) {
-	intent, ok := crypto.live.intentFor(fill.ClOrdID)
+	session, intent, ok := crypto.intentSession(ack.Result.ClOrdID)
 
 	if !ok {
 		return
 	}
 
-	crypto.live.dropIntent(fill.ClOrdID, intent.symbol)
+	handleRejectAck(session, crypto.wallet, ack)
+	crypto.publishAudit("order_reject", intent.symbol, ack.Error, map[string]any{
+		"method":    ack.Method,
+		"cl_ord_id": ack.Result.ClOrdID,
+		"live":      crypto.live != nil,
+	})
+}
+
+func (crypto *Crypto) handleOrderFill(fill order.Fill) {
+	session, intent, ok := crypto.intentSession(fill.ClOrdID)
+
+	if !ok {
+		return
+	}
 
 	switch intent.kind {
 	case "entry":
-		crypto.handleLiveEntryFill(fill, intent)
+		crypto.handleEntryFill(fill, intent, session)
+
+		if order.OrderFillTerminal(fill) {
+			session.dropIntent(fill.ClOrdID, intent.symbol)
+		}
 	case "exit":
-		crypto.handleLiveExitFill(fill, intent)
+		crypto.handleExitFill(fill, intent)
+		session.dropIntent(fill.ClOrdID, intent.symbol)
 	}
 }
 
-func (crypto *Crypto) handleLiveEntryFill(fill order.Fill, intent orderIntent) {
-	if err := crypto.live.applyBuyFill(crypto.wallet, fill, intent); err != nil {
+func (crypto *Crypto) handleEntryFill(
+	fill order.Fill,
+	intent orderIntent,
+	session *orderSession,
+) {
+	if err := applyBuyFill(crypto.wallet, fill, intent); err != nil {
 		errnie.Error(err)
 		releaseEntryReservation(crypto.wallet, intent.notional)
 
 		return
 	}
+
+	if session.entryBound(fill.ClOrdID) {
+		return
+	}
+
+	session.markEntryBound(fill.ClOrdID)
 
 	opportunity := opportunity{
 		Symbol:  intent.symbol,
@@ -150,12 +323,14 @@ func (crypto *Crypto) handleLiveEntryFill(fill order.Fill, intent orderIntent) {
 		intent.symbol, intent.playbook, "buy", intent.quote, intent.notional,
 		fill.Price, intent.feePct, intent.spreadBPS, now,
 	)
-	crypto.completeEntry(intent.symbol, fill.Price, fill.Price, opportunity, intent.playbook, entryLabel, now)
+	crypto.completeEntry(
+		intent.symbol, fill.Price, fill.Price, opportunity, intent.playbook, entryLabel, now, intent,
+	)
 	crypto.publishFill(fill)
 }
 
-func (crypto *Crypto) handleLiveExitFill(fill order.Fill, intent orderIntent) {
-	if err := crypto.live.applySellFill(crypto.wallet, fill); err != nil {
+func (crypto *Crypto) handleExitFill(fill order.Fill, intent orderIntent) {
+	if err := applySellFill(crypto.wallet, fill); err != nil {
 		errnie.Error(err)
 
 		return
@@ -172,6 +347,31 @@ func (crypto *Crypto) handleLiveExitFill(fill order.Fill, intent orderIntent) {
 	crypto.publishFill(fill)
 }
 
+func (crypto *Crypto) publishEntrySubmit(
+	symbol, playbook, clOrdID string,
+	notional, spreadBPS float64,
+	live bool,
+) {
+	crypto.publishAudit("entry_submit", symbol, "entry submitted", map[string]any{
+		"playbook":   playbook,
+		"cl_ord_id":  clOrdID,
+		"slot_eur":   notional,
+		"spread_bps": spreadBPS,
+		"live":       live,
+	})
+}
+
+func (crypto *Crypto) publishExitSubmit(
+	symbol, playbook, clOrdID, reason string,
+	live bool,
+) {
+	crypto.publishAudit("exit_submit", symbol, reason, map[string]any{
+		"playbook":  playbook,
+		"cl_ord_id": clOrdID,
+		"live":      live,
+	})
+}
+
 func (crypto *Crypto) completeEntry(
 	symbol string,
 	last float64,
@@ -180,6 +380,7 @@ func (crypto *Crypto) completeEntry(
 	playbook string,
 	entryLabel economics.Label,
 	now time.Time,
+	intent orderIntent,
 ) {
 	feePct := crypto.takerFeePct(symbol)
 
@@ -191,8 +392,8 @@ func (crypto *Crypto) completeEntry(
 		PredictedAt:    now,
 		DueAt:          now.Add(config.System.PerspectiveTTL),
 		TakerFeePct:    feePct,
-		HasLotDecimals: lotDecimalsKnown(symbol),
-		LotDecimals:    lotDecimals(symbol),
+		HasLotDecimals: intent.hasLotDecimals,
+		LotDecimals:    intent.lotDecimals,
 	})
 	crypto.positions.Open(symbol, positionState{
 		Playbook:   playbook,

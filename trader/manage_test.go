@@ -28,6 +28,7 @@ func TestCryptoManageTTL(t *testing.T) {
 
 		convey.Convey("It should exit on manage even without exit categories", func() {
 			crypto.manage(symbol, 100, nil)
+			drainOrderEvents(crypto)
 			_, held := crypto.wallet.PositionBindingFor(base)
 
 			convey.So(held, convey.ShouldBeFalse)
@@ -55,6 +56,7 @@ func TestCryptoPumpTrail(t *testing.T) {
 		convey.Convey("It should exit before asking the tree", func() {
 			last := 100 * (1 - config.System.PumpTrailPct - 0.01)
 			crypto.manage(symbol, last, nil)
+			drainOrderEvents(crypto)
 			_, held := crypto.wallet.PositionBindingFor("PUMP")
 
 			convey.So(held, convey.ShouldBeFalse)

@@ -56,7 +56,7 @@ func TestMakerFillPaperRejectsConfiguredOrders(t *testing.T) {
 		}).FillPaper(tradingWallet)
 
 		Convey("It should release the reservation without filling", func() {
-			So(err, ShouldBeNil)
+			So(err, ShouldNotBeNil)
 			So(fill.Qty, ShouldEqual, 0)
 			So(tradingWallet.ReservedEUR, ShouldEqual, 0)
 			So(tradingWallet.BalanceCopy(), ShouldEqual, 200)

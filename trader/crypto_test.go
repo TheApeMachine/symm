@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -13,13 +14,17 @@ import (
 )
 
 func newTestCrypto() *Crypto {
+	ctx := context.Background()
+
 	return &Crypto{
+		ctx:       ctx,
 		wallet:    wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26),
 		tracker:   focus.NewSet(),
 		story:     decision.NewStory(),
 		positions: newPositionBook(),
 		quotes:    newQuoteCache(),
 		economics: economics.NewDesk(),
+		paper:     NewPaperSession(ctx),
 		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 }

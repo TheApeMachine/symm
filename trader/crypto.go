@@ -39,6 +39,7 @@ type Crypto struct {
 	readings     map[string]map[perspectives.SourceType]timedMeasurement
 	quotes       *quoteCache
 	economics    *economics.Desk
+	paper        *paperSession
 	live         *liveSession
 	open         atomic.Int64
 	auditSeq     atomic.Uint64
@@ -68,6 +69,7 @@ func NewCrypto(
 	group := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	crypto.measurements = group.Subscribe("trader:measurements", 128)
 	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	crypto.paper = NewPaperSession(ctx)
 
 	if liveEnabled(tradingWallet) {
 		session, sessionErr := NewLiveSession(ctx, config.System.KrakenAPIKey, config.System.KrakenAPISecret)
@@ -91,8 +93,8 @@ func (crypto *Crypto) Tick() error {
 		crypto.ctx, config.System.BookDepthLevels, config.System.Symbols...,
 	)
 
-	var fills <-chan order.Fill
-	var acks <-chan order.Ack
+	fills := crypto.paper.Fills()
+	acks := crypto.paper.Acks()
 
 	if crypto.live != nil {
 		fills = crypto.live.Fills()
@@ -145,7 +147,7 @@ func (crypto *Crypto) Tick() error {
 				continue
 			}
 
-			crypto.handleLiveFill(fill)
+			crypto.handleOrderFill(fill)
 		case ack, ok := <-acks:
 			if !ok {
 				acks = nil
@@ -153,13 +155,19 @@ func (crypto *Crypto) Tick() error {
 				continue
 			}
 
-			crypto.handleLiveAck(ack)
+			crypto.handleOrderAck(ack)
 		}
 	}
 }
 
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if crypto.paper != nil {
+		if err := crypto.paper.Close(); err != nil {
+			return err
+		}
+	}
 
 	if crypto.live != nil {
 		if err := crypto.live.Close(); err != nil {
@@ -212,7 +220,7 @@ func (crypto *Crypto) snapshot(symbol string) []perspectives.Measurement {
 }
 
 func (crypto *Crypto) consider(symbol string, last float64, measurements []perspectives.Measurement) {
-	if crypto.live != nil && crypto.live.HasPendingEntry(symbol) {
+	if crypto.hasPendingEntry(symbol) {
 		return
 	}
 
@@ -284,17 +292,8 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	feePct := crypto.takerFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
 	measurements := crypto.snapshot(symbol)
-	quote := crypto.quotes.snapshot(symbol, last)
-
-	if crypto.live == nil {
-		quote = economics.StressQuote(quote, economics.AdverseSelectionBPS(measurements))
-
-		if rejectErr := economics.ShouldReject(); rejectErr != nil {
-			errnie.Error(rejectErr)
-
-			return
-		}
-	}
+	quote := crypto.prepareEntryQuote(symbol, last, measurements)
+	playbook := primaryPlaybook(opportunity.Names)
 
 	buy := broker.Buy{
 		Symbol:   symbol,
@@ -302,30 +301,10 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 		Quote:    quote,
 		FeePct:   feePct,
 	}
-	playbook := primaryPlaybook(opportunity.Names)
 
-	if crypto.live != nil {
-		if err := crypto.submitEntryLive(buy, opportunity, playbook, spreadBPS); err != nil {
-			errnie.Error(err)
-		}
-
-		return
-	}
-
-	fill, err := buy.FillPaper(crypto.wallet)
-
-	if err != nil {
+	if err := crypto.submitEntry(buy, opportunity, playbook, spreadBPS); err != nil {
 		errnie.Error(err)
-
-		return
 	}
-
-	now := time.Now()
-	entryLabel := economics.EntryLabel(
-		symbol, playbook, "buy", quote, notional, fill.Price, feePct, spreadBPS, now,
-	)
-	crypto.completeEntry(symbol, last, fill.Price, opportunity, playbook, entryLabel, now)
-	crypto.publishFill(fill)
 }
 
 func (crypto *Crypto) exit(
@@ -341,8 +320,6 @@ func (crypto *Crypto) exit(
 	base := baseOf(symbol)
 	binding, _ := crypto.wallet.PositionBindingFor(base)
 	entry := crypto.wallet.AvgEntryFor(base)
-	predictedAt := binding.PredictedAt
-	playbook := binding.Playbook
 
 	sell := broker.Sell{
 		Symbol: symbol,
@@ -350,31 +327,9 @@ func (crypto *Crypto) exit(
 		FeePct: binding.TakerFeePct,
 	}
 
-	if crypto.live != nil {
-		if err := crypto.submitExitLive(sell, binding, entry, reason); err != nil {
-			errnie.Error(err)
-		}
-
-		return
-	}
-
-	fill, err := sell.FillPaper(crypto.wallet)
-
-	if err != nil {
+	if err := crypto.submitExit(sell, binding, entry, reason); err != nil {
 		errnie.Error(err)
-
-		return
 	}
-
-	if fill.Qty <= 0 {
-		return
-	}
-
-	exitSpreadBPS := crypto.quotes.spreadBPS(symbol)
-	exitLabel := economics.ExitLabel(
-		symbol, playbook, entry, fill.Price, binding.TakerFeePct, exitSpreadBPS, time.Now(),
-	)
-	crypto.completeExit(symbol, reason, exitLabel, fill, entry, playbook, predictedAt)
 }
 
 func (crypto *Crypto) slot(opportunity opportunity) float64 {

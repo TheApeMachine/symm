@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/order"
 )
 
 func TestCashDeltaBuyIncludesQuoteFee(t *testing.T) {
 	convey.Convey("Given a buy fill with EUR fee", t, func() {
-		delta := cashDeltaBuy(order.Fill{
+		delta := broker.CashDeltaBuy(order.Fill{
 			Qty:    1,
 			Price:  100,
 			Fee:    0.4,
@@ -24,7 +25,7 @@ func TestCashDeltaBuyIncludesQuoteFee(t *testing.T) {
 
 func TestCashDeltaSellSubtractsQuoteFee(t *testing.T) {
 	convey.Convey("Given a sell fill with EUR fee", t, func() {
-		delta := cashDeltaSell(order.Fill{
+		delta := broker.CashDeltaSell(order.Fill{
 			Qty:    1,
 			Price:  100,
 			Fee:    0.4,

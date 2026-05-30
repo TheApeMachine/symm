@@ -280,7 +280,7 @@ On each `measurements` message:
 4. **Playbook economics gate** — `trader/economics` ledger: cold playbooks gather samples; warm playbooks require post-fee net forward/exit returns above `ForwardReturnSignificanceZ` (pump uses `PumpForwardReturnMinSamples`)
 5. **Cross-section calibration** — compare the symbol's score to the robust median + MAD of all observed symbols; require positive edge
 6. **Size** — allocate cash proportional to edge share of total market score mass
-7. **Fill** — `broker.Buy.FillPaper` on stressed quote when `ExecutionStressEnabled`; label spread, quote age, depth coverage, slippage; track `ExecutionForwardWindow` forward returns; reject below `MinCostEUR`; bind `Playbook` + `PerspectiveTTL`
+7. **Fill** — `submitEntry` / `submitExit` (paper simulates live: submit, ack, delayed fill); stressed quote when `ExecutionStressEnabled`; economics labels; bind `Playbook` + `PerspectiveTTL`
 
 ### Exit path
 
@@ -296,7 +296,9 @@ Gauges display `Measurement.Strength` (raw signal energy). Playbook trees still 
 
 Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk uses `wallet.CryptoWallet`, routes entries/exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), and records the same economics labels on exchange fills as paper does on `FillPaper`. Pending entries block duplicate signals until the fill or reject ack arrives.
 
-**Execution economics** (`trader/economics/`): every entry/exit/forward label records post-fee net returns per playbook. Enable pessimistic paper with `ExecutionStressEnabled` (stale quote age, shallow depth, Bernoulli rejects, toxicity-scaled adverse selection on the ask). Audit frames include `quote_age_ms`, `depth_coverage`, `playbook_econ_mean`, and `forward` events when the forward window matures.
+**Execution economics** (`trader/economics/`): every entry/exit/forward label records post-fee net returns per playbook. Audit frames include `quote_age_ms`, `depth_coverage`, `playbook_econ_mean`, and `forward` events when the forward window matures.
+
+**Paper/live parity:** paper uses the same pipeline as live — `entry_submit` → (optional `PaperOrderLatency`) → fill or `order_reject` ack → `entry`/`exit` on the shared `applyBuyFill` / `applySellFill` wallet path. `PaperOrderRejectRate` simulates exchange rejects; `ExecutionStressEnabled` applies the same quote stress (stale age, shallow depth, adverse ask) to **both** modes. Any new live execution behavior must be mirrored in `trader/paper.go` / `broker.SubmitPaper`.
 
 ### Focus set
 
