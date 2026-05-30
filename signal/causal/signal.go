@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trade"
@@ -30,7 +29,6 @@ type Causal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
-	calibration engine.CalibrationParams
 	pending     []string
 	requested   sync.Map
 }
@@ -45,7 +43,6 @@ func NewCausal(ctx context.Context, pool *qpool.Q) *Causal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		symbols:     sync.Map{},
-		calibration: engine.DefaultCalibrationParams(),
 		requested:   sync.Map{},
 	}
 

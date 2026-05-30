@@ -1,5 +1,7 @@
 package perspectives
 
+const aboveNoiseFloor = 1.0
+
 type PumpPerspective struct {
 	Tree *Tree
 }
@@ -25,42 +27,91 @@ The Pump Perspective break down to the following decisions:
  3. We dedicate a high-priority process to monitor the asset pair
  4. The moment we see the signal spike we predict the best moment to switch our long to a short positoin
 */
+
+func pumpInPosition() []Branch {
+	return 
+}
+
+func aboveFloorBranch(category CategoryType, children ...Branch) Branch {
+	return Branch{
+		Category:  category,
+		Unit:      UnitSNR,
+		Condition: ConditionIsGreaterThan,
+		Value:     aboveNoiseFloor,
+		Branches:  children,
+	}
+}
+
 func NewPumpPerspective() *PumpPerspective {
 	return &PumpPerspective{
 		Tree: &Tree{
-			Branch: &map[CategoryType]*Tree{
-				CategoryCoiledCompression: {
-					Branch: &map[CategoryType]*Tree{
-						CategoryVerticalIgnition: {
-							Action: &Action{
-								ActionType: ActionStopLoss,
-								Value:      0.0,
+			Branches: []Branch{
+				aboveFloorBranch(CategoryCoiledCompression, Branch{
+					Category:  CategoryVerticalIgnition,
+					Unit:      UnitSNR,
+					Condition: ConditionIsGreaterThan,
+					Value:     aboveNoiseFloor,
+					Action:    ActionEnter,
+					Branches:  []Branch{
+						{
+							Observation: ObservationHasContinued,
+							Branches: []Branch{
+								{
+									Observation: ObservationHolding,
+									Action:      ActionStopLoss,
+								},
+								{
+									Observation: ObservationNotHolding,
+									Action:      ActionStopLoss,
+								},
 							},
 						},
-						CategoryOrganicTrend: {
-							Observation: &Observation{
-								ObservationType: ObservationHasContinued,
-								Branch: &map[ObservationType]*Tree{
-									ObservationHolding: {
-										Action: &Action{
-											ActionType: ActionTakeProfit,
-											Condition:  ConditionIsGreaterThanOrEqual,
-											Unit:       UnitPercentage,
-											Value:      150,
-										},
+					},
+				}),
+				aboveFloorBranch(CategoryCoiledCompression,
+					Branch{
+						UnlessConfirmed: CategoryVerticalIgnition,
+						Action:          ActionEnter,
+						Branches:        []Branch{
+							{
+								Observation: ObservationHasContinued,
+								Branches: []Branch{
+									{
+										Observation: ObservationHolding,
+										Action:      ActionStopLoss,
 									},
-									ObservationNotHolding: {
-										Action: &Action{
-											ActionType: ActionStopLoss,
-											Value:      0.0,
-										},
+									{
+										Observation: ObservationNotHolding,
+										Action:      ActionStopLoss,
 									},
 								},
 							},
 						},
 					},
-				},
+				),
+				aboveFloorBranch(CategorySpoofTrap,
+					Branch{
+						Action:   ActionEnter,
+						Branches: spoofInPosition(),
+					},
+				),
 			},
 		},
 	}
+}
+
+func (pump *PumpPerspective) Walk(measurements []Measurement) Perspective {
+	if pump.Tree.Walk(measurements, nil) == nil {
+		return nil
+	}
+
+	return pump
+}
+
+func (pump *PumpPerspective) Regime() Regime {
+	return RegimeTrending
+}
+
+func (pump *PumpPerspective) Confidence() float64 {
+	return 0.0
 }

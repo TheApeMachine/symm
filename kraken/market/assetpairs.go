@@ -9,6 +9,10 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+/*
+Pair is one tradable market's REST metadata from GET /public/AssetPairs.
+See https://docs.kraken.com/api/docs/rest-api/get-tradable-asset-pairs
+*/
 type Pair struct {
 	Altname            string      `json:"altname"`
 	Wsname             string      `json:"wsname"`
@@ -39,6 +43,13 @@ type Pair struct {
 
 /*
 AssetPairs is the /public/AssetPairs result keyed by Kraken internal pair name.
+
+Each entry is the full trading contract for one market: naming and base/quote
+assets, the volume-tiered maker and taker fee schedule, price/lot/cost decimals
+with minimum order size and tick size, margin terms, and trading status. This is
+the definitive source of what a pair actually costs and how it must be traded --
+real fee tiers rather than assumptions, and the exact rounding and minimums every
+order has to respect.
 See https://docs.kraken.com/api/docs/rest-api/get-tradable-asset-pairs
 */
 type AssetPairs map[string]*Pair

@@ -5,15 +5,20 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+/*
+InstrumentParams is the Kraken WebSocket v2 subscribe payload for the instrument channel.
+*/
 type InstrumentParams struct {
 	Channel  string `json:"channel"`
 	Snapshot bool   `json:"snapshot"`
 }
 
+/*
+InstrumentAsset is one tradable asset's precision and margin metadata from the instrument feed.
+*/
 type InstrumentAsset struct {
 	ID               string  `json:"id"`
 	Status           string  `json:"status"`
@@ -24,6 +29,9 @@ type InstrumentAsset struct {
 	MarginRate       float64 `json:"margin_rate"`
 }
 
+/*
+InstrumentPair is one market's sizing, status, and increment rules from the instrument feed.
+*/
 type InstrumentPair struct {
 	Symbol             string  `json:"symbol"`
 	Base               string  `json:"base"`
@@ -43,11 +51,24 @@ type InstrumentPair struct {
 	QtyMin             float64 `json:"qty_min"`
 }
 
+/*
+InstrumentUpdate is the instrument channel snapshot: the tradable asset and pair catalog.
+
+The exchange's complete tradable catalog pushed live: every asset's precision and
+margin terms, and every pair's status, sizing increments, minimums, and limits.
+It is the authoritative, self-updating definition of what is currently tradable
+and the exact rules for sizing and rounding an order, reflecting halts and
+precision changes the moment they happen.
+*/
 type InstrumentUpdate struct {
 	Assets []InstrumentAsset `json:"assets"`
 	Pairs  []InstrumentPair  `json:"pairs"`
 }
 
+/*
+NewInstrumentSubscription opens the instrument channel and forwards snapshots to recv.
+It blocks until ctx is canceled or the socket closes.
+*/
 func NewInstrumentSubscription(
 	ctx context.Context,
 	recv chan *InstrumentUpdate,
@@ -59,7 +80,7 @@ func NewInstrumentSubscription(
 	}).Value()
 
 	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(core.ChannelInstrument)
+		return ws.Generate(public.InstrumentsChannel)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()

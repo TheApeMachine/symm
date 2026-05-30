@@ -5,10 +5,12 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+/*
+TickerParams is the Kraken WebSocket v2 subscribe payload for the ticker channel.
+*/
 type TickerParams struct {
 	Channel      string   `json:"channel"`
 	Symbol       []string `json:"symbol"`
@@ -16,6 +18,14 @@ type TickerParams struct {
 	EventTrigger string   `json:"event_trigger,omitempty"`
 }
 
+/*
+TickerUpdate is one top-of-book and 24h summary row from the public ticker feed.
+
+A live rolling 24-hour summary per symbol, pushed on change: best bid and ask with
+their sizes, last price, session high and low, volume, VWAP, and the absolute and
+percent change. It is the lowest-latency at-a-glance state of a market, already
+reduced to the day's move and activity without computing it from the tape.
+*/
 type TickerUpdate struct {
 	Symbol    string  `json:"symbol"`
 	Ask       float64 `json:"ask"`
@@ -32,6 +42,10 @@ type TickerUpdate struct {
 	Timestamp string  `json:"timestamp"`
 }
 
+/*
+NewTickerSubscription opens the ticker channel and forwards unmarshaled rows to recv.
+It blocks until ctx is canceled or the socket closes.
+*/
 func NewTickerSubscription(
 	ctx context.Context,
 	recv chan *TickerUpdate,
@@ -44,7 +58,7 @@ func NewTickerSubscription(
 	}).Value()
 
 	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(core.ChannelTicker)
+		return ws.Generate(public.TickerChannel)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()

@@ -2,8 +2,6 @@ package sentiment
 
 import (
 	"math"
-
-	"github.com/theapemachine/symm/engine"
 )
 
 func (sentiment *Sentiment) marketBreadth() (float64, float64, bool) {
@@ -72,33 +70,6 @@ func (sentiment *Sentiment) breadthAndLeaders() (float64, map[string]float64, fl
 	}
 
 	return breadth, leaders, topChange, true
-}
-
-func (sentiment *Sentiment) sentimentConfidence(
-	breadth float64,
-	change float64,
-	topChange float64,
-	peakScore float64,
-) float64 {
-	confidence := 0.0
-
-	if topChange > 0 {
-		confidence = engine.AlignConfidence(breadth, change/topChange)
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(peakScore)
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(breadth * math.Abs(change))
-	}
-
-	if confidence <= 0 {
-		confidence = engine.ConfidenceFromScore(breadth)
-	}
-
-	return confidence
 }
 
 func leaderPeers(leaders map[string]float64, skip string) []float64 {

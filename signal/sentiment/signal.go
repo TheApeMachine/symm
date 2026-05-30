@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -91,7 +90,7 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				pairs, pairsOK := value.Value.(map[string]*asset.Pair)
+				pairs, pairsOK := value.Value.(map[string]*market.Pair)
 				if !pairsOK {
 					errnie.Error(fmt.Errorf("sentiment: invalid symbols payload: %T", value.Value))
 					continue

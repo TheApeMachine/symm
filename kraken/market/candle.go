@@ -5,10 +5,12 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/core"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+/*
+CandleParams is the Kraken WebSocket v2 subscribe payload for the ohlc channel.
+*/
 type CandleParams struct {
 	Channel  string   `json:"channel"`
 	Symbol   []string `json:"symbol"`
@@ -16,6 +18,14 @@ type CandleParams struct {
 	Snapshot bool     `json:"snapshot"`
 }
 
+/*
+CandleUpdate is one forming or closed OHLC bar from the public ohlc feed.
+
+A forming or closed OHLC bar streamed as it updates: open, high, low, close,
+VWAP, volume, and trade count for the interval. It is price action already
+aggregated to a chosen horizon and kept current live -- VWAP gives the interval's
+fair transacted price and the trade count its participation.
+*/
 type CandleUpdate struct {
 	Symbol        string  `json:"symbol"`
 	Open          float64 `json:"open"`
@@ -29,6 +39,10 @@ type CandleUpdate struct {
 	Interval      int     `json:"interval"`
 }
 
+/*
+NewCandleSubscription opens the ohlc channel at intervalMinutes and forwards rows to recv.
+It blocks until ctx is canceled or the socket closes.
+*/
 func NewCandleSubscription(
 	ctx context.Context,
 	recv chan *CandleUpdate,
@@ -46,7 +60,7 @@ func NewCandleSubscription(
 	}).Value()
 
 	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate(core.ChannelOHLC)
+		return ws.Generate(public.CandlesChannel)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()

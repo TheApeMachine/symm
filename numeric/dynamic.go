@@ -70,9 +70,15 @@ func (derived *Derived) Next(out float64, values ...float64) (float64, error) {
 
 func (derived *Derived) run(seed float64, values ...float64) (float64, error) {
 	out := seed
+	work := values
 
 	for _, dynamic := range derived.dynamics {
-		result, err := dynamic.Next(out, values...)
+		if project, ok := dynamic.(*Project); ok {
+			work = project.project(out, work) // remap the vector for the next stage
+			continue
+		}
+
+		result, err := dynamic.Next(out, work...)
 		if err != nil {
 			return 0, errnie.Error(err)
 		}

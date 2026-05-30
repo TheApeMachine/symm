@@ -8,6 +8,18 @@ const (
 	UnitPips
 	UnitPoints
 	UnitTicks
+	UnitTimeYears
+	UnitTimeMonths
+	UnitTimeWeeks
+	UnitTimeDays
+	UnitTimeHours
+	UnitTimeMinutes
+	UnitTimeSeconds
+	UnitTimeMilliseconds
+	UnitTimeMicroseconds
+	UnitTimeNanoseconds
+	UnitConfidence
+	UnitSNR
 )
 
 type ConditionType uint8
@@ -28,13 +40,8 @@ type ActionType uint8
 
 const (
 	ActionNone ActionType = iota
+	ActionEnter
 	ActionStopLoss
 	ActionTakeProfit
+	ActionShort // flip an open long to a short
 )
-
-type Action struct {
-	ActionType ActionType
-	Condition  ConditionType
-	Unit       UnitType
-	Value      float64
-}

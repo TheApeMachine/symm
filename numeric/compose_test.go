@@ -52,7 +52,7 @@ func TestDerivedPushAsDynamic(t *testing.T) {
 }
 
 func mustClassifier() *adaptive.Classifier {
-	classifier, _ := adaptive.NewClassifier(
+	classifier := adaptive.NewClassifier(
 		[]float64{-0.001, 0.001},
 		[]float64{0, 1, 2},
 		[]string{"dump", "precursor", "actual_pump"},

@@ -7,6 +7,7 @@ const (
 	ObservationHasStarted
 	ObservationHasContinued
 	ObservationHasEnded
+	ObservationHasDoneBefore
 	ObservationHolding
 	ObservationNotHolding
 )

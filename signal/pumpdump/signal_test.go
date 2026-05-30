@@ -6,31 +6,14 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/engine"
-	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 )
 
-func storePumpSymbol(pumpdump *PumpDump, symbol string, state *PumpSymbol) {
-	pumpdump.symbols.Store(symbol, state)
-}
-
-func loadPumpSymbol(pumpdump *PumpDump, symbol string) *PumpSymbol {
-	raw, ok := pumpdump.symbols.Load(symbol)
-
-	if !ok {
-		return nil
-	}
-
-	return raw.(*PumpSymbol)
-}
-
-func markPumpRequested(pumpdump *PumpDump, symbol string) {
-	pumpdump.requested.Store(symbol, struct{}{})
-}
-
-func startPumpDumpTick(t *testing.T, pumpdump *PumpDump) {
+func startPumpSignalTick(t *testing.T, signal *Signal) {
 	t.Helper()
 
 	done := make(chan struct{})
@@ -38,13 +21,13 @@ func startPumpDumpTick(t *testing.T, pumpdump *PumpDump) {
 	go func() {
 		defer close(done)
 
-		if err := pumpdump.Tick(); err != nil && !errors.Is(err, context.Canceled) {
+		if err := signal.Tick(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("pumpdump tick: %v", err)
 		}
 	}()
 
 	t.Cleanup(func() {
-		_ = pumpdump.Close()
+		_ = signal.Close()
 
 		select {
 		case <-done:
@@ -54,140 +37,160 @@ func startPumpDumpTick(t *testing.T, pumpdump *PumpDump) {
 	})
 }
 
-func testPumpDump(t *testing.T) (*PumpDump, *PumpSymbol, *qpool.Q) {
-	t.Helper()
+func loadPumpClassed(signal *Signal, symbol string) *numeric.Classed {
+	raw, ok := signal.symbols.Load(symbol)
 
-	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
-	t.Cleanup(func() { pool.Close() })
-
-	signal := NewPumpDump(ctx, pool)
-	t.Cleanup(func() { _ = signal.Close() })
-
-	storePumpSymbol(signal, "PUMP/EUR", NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"}))
-	markPumpRequested(signal, "PUMP/EUR")
-
-	symbolState := loadPumpSymbol(signal, "PUMP/EUR")
-
-	if symbolState == nil {
-		t.Fatal("expected pump symbol state")
+	if !ok {
+		return nil
 	}
 
-	return signal, symbolState, pool
+	return raw.(*numeric.Classed)
 }
 
-func seedPumpSymbol(symbolState *PumpSymbol) {
-	symbolState.lastPrice = 1.003
-	symbolState.dailyQuoteVol = 50
-	symbolState.imbalance = 0.8
-	symbolState.buyPressure = 0.6
-	symbolState.spreadBPS = 10
-
-	for range 12 {
-		_, _ = symbolState.mediumVolumeBaseline.Next(0, 10)
+func pumpCategorySet() map[perspectives.CategoryType]struct{} {
+	return map[perspectives.CategoryType]struct{}{
+		perspectives.CategoryVerticalIgnition:  {},
+		perspectives.CategoryCoiledCompression: {},
+		perspectives.CategoryOrganicTrend:      {},
+		perspectives.CategoryFadedExhaustion:   {},
 	}
-
-	for range 12 {
-		_, _ = symbolState.fastVolumeBaseline.Next(0, 10)
-	}
-
-	for range 8 {
-		_, _ = symbolState.score.Push(1, 0.8, 0.6, 20, 1, 1, 1)
-	}
-
-	_, _ = symbolState.spreadCompression.Next(15, 10)
-
-	now := time.Unix(1_700_000_000, 0)
-	_, _ = symbolState.mediumVolumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
-	_, _ = symbolState.fastVolumeWindow.Next(0, float64(now.UnixNano()), 100, 1)
 }
 
-func TestPumpdumpPublishPulseAfterBook(t *testing.T) {
-	signal, state, pool := testPumpDump(t)
-	seedPumpSymbol(state)
+func tradeBatch(
+	symbol string,
+	base time.Time,
+	price float64,
+	qty float64,
+	count int,
+) []market.TradeUpdate {
+	trades := make([]market.TradeUpdate, count)
 
-	measurements := signal.broadcasts["measurements"].Subscribe("test:pumpdump", 8)
+	for index := range count {
+		trades[index] = market.TradeUpdate{
+			Symbol:    symbol,
+			Side:      "buy",
+			Price:     price + float64(index)*0.01,
+			Qty:       qty,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		}
+	}
 
-	startPumpDumpTick(t, signal)
+	return trades
+}
 
-	pool.CreateBroadcastGroup("book", 10*time.Millisecond).Send(&qpool.QValue[any]{
-		Value: market.BookLevelsDelta{
-			Symbol: "PUMP/EUR",
-			Bids:   []market.BookLevel{{Price: 1, Volume: 80}},
-			Asks:   []market.BookLevel{{Price: 1.01, Volume: 20}},
-		},
+func TestNewSignal(t *testing.T) {
+	Convey("Given a qpool", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		Convey("It should wire pumpdump categories", func() {
+			So(signal.categories["vertical_ignition"], ShouldEqual, perspectives.CategoryVerticalIgnition)
+			So(signal.categories["coiled_compression"], ShouldEqual, perspectives.CategoryCoiledCompression)
+			So(signal.categories["organic_trend"], ShouldEqual, perspectives.CategoryOrganicTrend)
+			So(signal.categories["faded_exhaustion"], ShouldEqual, perspectives.CategoryFadedExhaustion)
+		})
+
+		Convey("It should expose a measurements broadcast", func() {
+			So(signal.broadcasts["measurements"], ShouldNotBeNil)
+			So(signal.subscribers["trades"], ShouldNotBeNil)
+		})
 	})
-
-	select {
-	case value := <-measurements.Incoming:
-		measurement, ok := value.Value.(engine.Measurement)
-
-		if !ok || measurement.Source != pumpdumpSource {
-			t.Fatalf("expected pumpdump measurement, got %v", value.Value)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for pumpdump measurement after book tick")
-	}
 }
 
-func TestPumpDumpMeasure(t *testing.T) {
-	signal, symbolState, _ := testPumpDump(t)
-	seedPumpSymbol(symbolState)
+func TestSignalTick(t *testing.T) {
+	Convey("Given a running pumpdump signal", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
 
-	found := false
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
 
-	for measurement := range signal.Measure() {
-		found = true
+		measurements := signal.broadcasts["measurements"].Subscribe("test:pumpdump", 8)
+		startPumpSignalTick(t, signal)
 
-		if measurement.Source != pumpdumpSource || measurement.Confidence <= 0 {
-			t.Fatalf("unexpected measurement: %+v", measurement)
-		}
-	}
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-	if !found {
-		t.Fatal("expected at least one measurement")
-	}
-}
+		Convey("When a trade batch arrives", func() {
+			pool.CreateBroadcastGroup("trades", 0).Send(&qpool.QValue[any]{
+				Value: tradeBatch("ALT/EUR", base, 10, 1.5, 12),
+			})
 
-func TestPumpDumpFeedbackLowersConfidence(t *testing.T) {
-	signal, symbolState, _ := testPumpDump(t)
-	seedPumpSymbol(symbolState)
+			var measurement perspectives.Measurement
 
-	before := symbolState.forecast.Scale()
+			select {
+			case value := <-measurements.Incoming:
+				var ok bool
 
-	signal.Feedback(engine.PredictionFeedback{
-		Source:          pumpdumpSource,
-		Symbol:          "PUMP/EUR",
-		PredictedReturn: 0.01,
-		ActualReturn:    -0.01,
+				measurement, ok = value.Value.(perspectives.Measurement)
+
+				So(ok, ShouldBeTrue)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for pumpdump measurement")
+			}
+
+			Convey("It should publish a pumpdump measurement", func() {
+				So(measurement.Source, ShouldEqual, perspectives.SourcePumpDump)
+				_, ok := pumpCategorySet()[measurement.Category]
+				So(ok, ShouldBeTrue)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
+				So(measurement.SNR, ShouldBeGreaterThan, 0)
+			})
+
+			Convey("It should create per-symbol pipeline state", func() {
+				So(loadPumpClassed(signal, "ALT/EUR"), ShouldNotBeNil)
+			})
+		})
+
+		Convey("When the payload is not a trade batch", func() {
+			pool.CreateBroadcastGroup("trades", 0).Send(&qpool.QValue[any]{
+				Value: "not-trades",
+			})
+
+			select {
+			case value := <-measurements.Incoming:
+				t.Fatalf("expected no measurement, got %v", value.Value)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
 	})
-
-	if symbolState.forecast.Scale() >= before {
-		t.Fatalf("expected scale to drop after loss, before=%v after=%v", before, symbolState.forecast.Scale())
-	}
-
-	for measurement := range signal.Measure() {
-		if measurement.Confidence <= 0 {
-			t.Fatalf("expected positive confidence after feedback scale, got %+v", measurement)
-		}
-	}
 }
 
-func BenchmarkPumpDumpMeasure(b *testing.B) {
+func BenchmarkSignalTick(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
-	signal := NewPumpDump(ctx, pool)
-	storePumpSymbol(signal, "PUMP/EUR", NewPumpSymbol(asset.Pair{Wsname: "PUMP/EUR"}))
-	markPumpRequested(signal, "PUMP/EUR")
+	signal := NewSignal(ctx, pool)
+	done := make(chan struct{})
 
-	seedPumpSymbol(loadPumpSymbol(signal, "PUMP/EUR"))
+	go func() {
+		defer close(done)
+		_ = signal.Tick()
+	}()
+
+	defer func() {
+		_ = signal.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			b.Fatal("timed out waiting for pumpdump tick to close")
+		}
+	}()
+
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	payload := &qpool.QValue[any]{
+		Value: tradeBatch("ALT/EUR", base, 10, 1.5, 16),
+	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		for range signal.Measure() {
-		}
+		signal.subscribers["trades"].Incoming <- payload
 	}
 }

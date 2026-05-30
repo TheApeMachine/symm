@@ -16,4 +16,11 @@ const (
 	WebSocketURL            EndpointType = "wss://ws.kraken.com/v2"
 	WebSocketAuthURL        EndpointType = "wss://ws-auth.kraken.com/v2"
 	WebSocketL3URL          EndpointType = "wss://ws-l3.kraken.com/v2"
+	TickerChannel                        = "ticker"
+	BookChannel                          = "book"
+	OrdersChannel                        = "orders"
+	CandlesChannel                       = "candles"
+	TradesChannel                        = "trades"
+	InstrumentsChannel                   = "instruments"
+	Level3Channel                        = "level3"
 )

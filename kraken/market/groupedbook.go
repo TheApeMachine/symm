@@ -18,7 +18,12 @@ type GroupedBookLevel struct {
 }
 
 /*
-GroupedBook is the /public/GroupedBook result.
+GroupedBook is the /public/GroupedBook result for one pair at a tick group size.
+
+The order book aggregated into coarser price buckets at a chosen tick grouping.
+It surfaces the large liquidity bands -- the walls that tend to act as support and
+resistance -- by collapsing the per-level noise of the full book into the levels
+where size actually concentrates.
 */
 type GroupedBook struct {
 	Pair     string             `json:"pair"`

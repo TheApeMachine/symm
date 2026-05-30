@@ -34,7 +34,12 @@ type Trade struct {
 }
 
 /*
-PostTrade is the post-trade transparency payload for one symbol.
+PostTrade is regulator-grade post-trade transparency for one symbol: each
+executed trade with full instrument identification (DTI codes), venue, and
+separate trade vs publication timestamps. It is an authoritative, auditable
+record of executions with richer identification and timing than the market tape
+-- the difference between when a trade happened and when it was published is
+itself disclosed -- suitable for compliance-grade reconstruction.
 */
 type PostTrade struct {
 	LastTs time.Time `json:"last_ts"`

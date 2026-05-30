@@ -10,13 +10,11 @@ func TestClassifierNext(t *testing.T) {
 	t.Parallel()
 
 	Convey("Given a ternary move classifier", t, func() {
-		classifier, err := NewClassifier(
+		classifier := NewClassifier(
 			[]float64{-0.001, 0.001},
 			[]float64{0, 1, 2},
 			[]string{"dump", "precursor", "actual_pump"},
 		)
-
-		So(err, ShouldBeNil)
 
 		Convey("It should map observations into classes", func() {
 			dump, err := classifier.Next(0, -0.01)

@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
@@ -9,21 +10,29 @@ import (
 )
 
 /*
-SpreadRow is one spread sample from GET /public/Spread.
-Wire: [time, bid, ask].
+Spread is one best bid/ask sample from GET /public/Spread.
+Wire row: [time, bid, ask].
 See https://docs.kraken.com/api/docs/rest-api/get-recent-spreads
 */
-type SpreadRow []any
+type Spread struct {
+	Time time.Time
+	Bid  float64
+	Ask  float64
+}
 
 /*
-SpreadHistory is spread rows for one internal pair key in the /public/Spread result.
-*/
-type SpreadHistory []SpreadRow
+SpreadHistory is the /public/Spread result: spread samples keyed by Kraken pair
+name plus the pagination cursor (Last is an integer second-since-epoch).
 
-/*
-SpreadResult is the /public/Spread result object (pair keys and "last").
+The best bid and ask sampled at every change to the top of book. It is the
+exchange's authoritative record of the bid-ask spread through time -- the true,
+instantaneous cost of immediacy and a direct measure of how tight or thin
+liquidity is, captured without replaying the full book.
 */
-type SpreadResult map[string]any
+type SpreadHistory struct {
+	Last    int64
+	Spreads map[string][]Spread
+}
 
 /*
 NewSpread fetches recent spreads for pair. Pass since 0 to omit since.
@@ -33,13 +42,13 @@ func NewSpread(
 	client *public.Rest,
 	pair string,
 	since int64,
-) (SpreadResult, error) {
-	result := SpreadResult{}
+) (*SpreadHistory, error) {
+	history := &SpreadHistory{}
 	params := fiber.Map{"pair": pair}
 
 	if since > 0 {
 		params["since"] = since
 	}
 
-	return result, errnie.Error(client.Get(ctx, params, &result))
+	return history, errnie.Error(client.Get(ctx, params, history))
 }

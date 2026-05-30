@@ -2,6 +2,8 @@ package adaptive
 
 import (
 	"fmt"
+
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -17,16 +19,16 @@ type Classifier struct {
 NewClassifier builds a classifier with len(upper) classes. codes and labels must
 match len(upper). The last class applies above the final upper bound.
 */
-func NewClassifier(upper, codes []float64, labels []string) (*Classifier, error) {
+func NewClassifier(upper, codes []float64, labels []string) *Classifier {
 	if len(upper) == 0 || len(codes) != len(upper)+1 || len(labels) != len(upper)+1 {
-		return nil, fmt.Errorf("adaptive: Classifier needs upper bounds and one more code/label each")
+		errnie.Error(fmt.Errorf("adaptive: Classifier needs upper bounds and one more code/label each"))
 	}
 
 	return &Classifier{
 		upper:  append([]float64(nil), upper...),
 		codes:  append([]float64(nil), codes...),
 		labels: append([]string(nil), labels...),
-	}, nil
+	}
 }
 
 /*

@@ -9,12 +9,24 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+/*
+TradeParams is the Kraken WebSocket v2 subscribe payload for the trade channel.
+*/
 type TradeParams struct {
 	Channel  string   `json:"channel"`
 	Symbol   []string `json:"symbol"`
 	Snapshot bool     `json:"snapshot"`
 }
 
+/*
+TradeUpdate is one executed trade from the public trade WebSocket feed.
+
+One executed trade from the public tape: price, size, aggressor side, order type,
+ID, and time. It is the ground truth of what actually transacted rather than what
+was merely quoted -- the aggressor side reveals which side lifted or hit, and the
+stream is the finest-grained record of realized volume and price discovery as it
+happens.
+*/
 type TradeUpdate struct {
 	Symbol    string    `json:"symbol"`
 	Side      string    `json:"side"`
@@ -25,6 +37,10 @@ type TradeUpdate struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+/*
+NewTradeSubscription opens the trade channel and forwards unmarshaled rows to recv.
+It blocks until ctx is canceled or the socket closes.
+*/
 func NewTradeSubscription(
 	ctx context.Context,
 	recv chan *TradeUpdate,
@@ -37,7 +53,7 @@ func NewTradeSubscription(
 	}).Value()
 
 	messages := errnie.Does(func() (chan *public.SocketMessage, error) {
-		return ws.Generate("trade")
+		return ws.Generate(public.TradesChannel)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()
