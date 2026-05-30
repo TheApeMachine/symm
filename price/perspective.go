@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 // PerspectiveRecord is the result of recording one perspective-level forecast.
@@ -30,7 +31,7 @@ type PerspectiveRecord struct {
 
 func (prediction *Prediction) RecordPerspective(
 	symbol string,
-	perspective engine.Perspective,
+	perspective perspectives.Perspective,
 	now time.Time,
 ) PerspectiveRecord {
 	prediction.stateMu.Lock()

@@ -1,7 +1,5 @@
 package perspectives
 
-const aboveNoiseFloor = 1.0
-
 type PumpPerspective struct {
 	Tree *Tree
 }
@@ -27,74 +25,17 @@ The Pump Perspective break down to the following decisions:
  3. We dedicate a high-priority process to monitor the asset pair
  4. The moment we see the signal spike we predict the best moment to switch our long to a short positoin
 */
-
-func pumpInPosition() []Branch {
-	return 
-}
-
-func aboveFloorBranch(category CategoryType, children ...Branch) Branch {
-	return Branch{
-		Category:  category,
-		Unit:      UnitSNR,
-		Condition: ConditionIsGreaterThan,
-		Value:     aboveNoiseFloor,
-		Branches:  children,
-	}
-}
-
 func NewPumpPerspective() *PumpPerspective {
 	return &PumpPerspective{
 		Tree: &Tree{
 			Branches: []Branch{
-				aboveFloorBranch(CategoryCoiledCompression, Branch{
-					Category:  CategoryVerticalIgnition,
+				{
+					Category:  CategoryCoiledCompression,
 					Unit:      UnitSNR,
 					Condition: ConditionIsGreaterThan,
-					Value:     aboveNoiseFloor,
-					Action:    ActionEnter,
-					Branches:  []Branch{
-						{
-							Observation: ObservationHasContinued,
-							Branches: []Branch{
-								{
-									Observation: ObservationHolding,
-									Action:      ActionStopLoss,
-								},
-								{
-									Observation: ObservationNotHolding,
-									Action:      ActionStopLoss,
-								},
-							},
-						},
-					},
-				}),
-				aboveFloorBranch(CategoryCoiledCompression,
-					Branch{
-						UnlessConfirmed: CategoryVerticalIgnition,
-						Action:          ActionEnter,
-						Branches:        []Branch{
-							{
-								Observation: ObservationHasContinued,
-								Branches: []Branch{
-									{
-										Observation: ObservationHolding,
-										Action:      ActionStopLoss,
-									},
-									{
-										Observation: ObservationNotHolding,
-										Action:      ActionStopLoss,
-									},
-								},
-							},
-						},
-					},
-				),
-				aboveFloorBranch(CategorySpoofTrap,
-					Branch{
-						Action:   ActionEnter,
-						Branches: spoofInPosition(),
-					},
-				),
+					Value:     1.0,
+					Branches:  coiledCompression,
+				},
 			},
 		},
 	}
@@ -114,4 +55,72 @@ func (pump *PumpPerspective) Regime() Regime {
 
 func (pump *PumpPerspective) Confidence() float64 {
 	return 0.0
+}
+
+var coiledCompression = []Branch{
+	{
+		Category:  CategoryVerticalIgnition,
+		Unit:      UnitSNR,
+		Condition: ConditionIsGreaterThan,
+		Value:     1.0,
+		Action:    ActionEnter,
+		Branches: []Branch{
+			{
+				Observation: ObservationHasContinued,
+				Branches: []Branch{
+					{
+						Observation: ObservationHolding,
+						Action:      ActionStopLoss,
+					},
+					{
+						Observation: ObservationNotHolding,
+						Action:      ActionStopLoss,
+					},
+				},
+			},
+			{
+				Category:  CategoryVerticalIgnition,
+				Unit:      UnitSNR,
+				Condition: ConditionIsGreaterThan,
+				Value:     1.0,
+				Action:    ActionEnter,
+				Branches: []Branch{
+					{
+						Observation: ObservationHasContinued,
+						Branches: []Branch{
+							{
+								Observation: ObservationHolding,
+								Action:      ActionStopLoss,
+							},
+							{
+								Observation: ObservationNotHolding,
+								Action:      ActionStopLoss,
+							},
+						},
+					},
+				},
+			},
+			{
+				Action: ActionEnter,
+				Branches: []Branch{
+					{
+						Observation: ObservationHasContinued,
+						Branches: []Branch{
+							{
+								Observation: ObservationHolding,
+								Action:      ActionStopLoss,
+								Branches: []Branch{
+									{Category: CategoryVerticalIgnition, Action: ActionShort},
+								},
+							},
+							{
+								Observation: ObservationNotHolding,
+								Action:      ActionStopLoss,
+							},
+						},
+					},
+				},
+			},
+		},
+	},
 }

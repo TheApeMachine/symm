@@ -10,8 +10,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -62,9 +62,6 @@ func NewSentiment(ctx context.Context, pool *qpool.Q) *Sentiment {
 
 	return sentiment
 }
-
-func (sentiment *Sentiment) Start() error        { return nil }
-func (sentiment *Sentiment) State() engine.State { return engine.READY }
 
 func (sentiment *Sentiment) Tick() error {
 	errnie.Info("starting sentiment tick")
@@ -130,7 +127,7 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				row, rowOK := value.Value.(market.TickerRow)
+				row, rowOK := value.Value.(market.TradeUpdate)
 				if !rowOK {
 					errnie.Error(fmt.Errorf("sentiment: invalid ticker payload: %T", value.Value))
 					continue
@@ -138,7 +135,7 @@ func (sentiment *Sentiment) Tick() error {
 
 				raw, ok := sentiment.symbols.Load(row.Symbol)
 
-				if ok && row.ChangePct != 0 {
+				if ok && row.Price > 0 {
 					state := raw.(*symbolState)
 					state.observeTicker(row)
 
@@ -160,7 +157,7 @@ func (sentiment *Sentiment) Tick() error {
 					return
 				}
 
-				fb, fbOK := value.Value.(engine.PredictionFeedback)
+				fb, fbOK := value.Value.(perspectives.Feedback)
 				if !fbOK {
 					errnie.Error(fmt.Errorf("sentiment: invalid feedback payload: %T", value.Value))
 					continue
@@ -313,33 +310,16 @@ func (sentiment *Sentiment) publishMeasurements() {
 		waiters = append(
 			waiters,
 			sentiment.pool.ScheduleFast(sentiment.ctx, func(ctx context.Context) (any, error) {
-				peakScore, err := sentiment.peakNext(
-					change*breadth, leaderPeers(leaderSet, symbol)...,
-				)
-
-				if err != nil {
-					return nil, err
-				}
-
-				confidence := state.calibratedConfidence(
-					sentiment.sentimentConfidence(breadth, change, topChange, peakScore),
-				)
-
-				if confidence <= 0 {
-					return nil, nil
-				}
-
-				return engine.Measurement{
-					Type:       engine.Sentiment,
-					Source:     sentimentSource,
-					Regime:     "sentiment",
-					Reason:     "breadth_leader",
-					Category:   sentimentCategory(breadth, change, topChange),
-					Pairs:      []asset.Pair{snapshot.pair},
-					Confidence: confidence,
-					Last:       snapshot.last,
-					Bid:        snapshot.bid,
-					Ask:        snapshot.ask,
+				return perspectives.Measurement{
+					Type:     perspectives.SourceSentiment,
+					Source:   sentimentSource,
+					Regime:   "sentiment",
+					Reason:   "breadth_leader",
+					Category: sentimentCategory(breadth, change, topChange),
+					Pairs:    []string{snapshot.pair.Wsname},
+					Last:     snapshot.last,
+					Bid:      snapshot.bid,
+					Ask:      snapshot.ask,
 				}, nil
 			}),
 		)
@@ -378,8 +358,8 @@ func (sentiment *Sentiment) Close() error {
 
 func (sentiment *Sentiment) Source() string { return sentimentSource }
 
-func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
-	return func(yield func(engine.Measurement) bool) {
+func (sentiment *Sentiment) Measure() iter.Seq[perspectives.Measurement] {
+	return func(yield func(perspectives.Measurement) bool) {
 		breadth, leaders, topChange, ok := sentiment.breadthAndLeaders()
 
 		if !ok {
@@ -402,34 +382,16 @@ func (sentiment *Sentiment) Measure() iter.Seq[engine.Measurement] {
 				leaderSet = map[string]float64{symbol: change}
 			}
 
-			peakScore, err := sentiment.peakNext(
-				change*breadth, leaderPeers(leaderSet, symbol)...,
-			)
-
-			if err != nil {
-				errnie.Error(err)
-				return true
-			}
-
-			confidence := state.calibratedConfidence(
-				sentiment.sentimentConfidence(breadth, change, topChange, peakScore),
-			)
-
-			if confidence <= 0 {
-				return true
-			}
-
-			if !yield(engine.Measurement{
-				Type:       engine.Sentiment,
-				Source:     sentimentSource,
-				Regime:     "sentiment",
-				Reason:     "breadth_leader",
-				Category:   sentimentCategory(breadth, change, topChange),
-				Pairs:      []asset.Pair{snapshot.pair},
-				Confidence: confidence,
-				Last:       snapshot.last,
-				Bid:        snapshot.bid,
-				Ask:        snapshot.ask,
+			if !yield(perspectives.Measurement{
+				Type:     engine.Sentiment,
+				Source:   sentimentSource,
+				Regime:   "sentiment",
+				Reason:   "breadth_leader",
+				Category: sentimentCategory(breadth, change, topChange),
+				Pairs:    []string{snapshot.pair.Wsname},
+				Last:     snapshot.last,
+				Bid:      snapshot.bid,
+				Ask:      snapshot.ask,
 			}) {
 				return false
 			}
@@ -446,7 +408,7 @@ func (sentiment *Sentiment) peakNext(score float64, peers ...float64) (float64, 
 	return sentiment.peak.Next(score, peers...)
 }
 
-func (sentiment *Sentiment) Feedback(feedback engine.PredictionFeedback) {
+func (sentiment *Sentiment) Feedback(feedback perspectives.Feedback) {
 	if !engine.FeedbackIncludesSource(feedback, sentimentSource) || feedback.Symbol == "" || feedback.PredictedReturn <= 0 {
 		return
 	}

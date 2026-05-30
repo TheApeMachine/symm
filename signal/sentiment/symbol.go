@@ -3,14 +3,13 @@ package sentiment
 import (
 	"sync"
 
-	"github.com/theapemachine/symm/kraken/asset"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/learned"
 )
 
 type symbolState struct {
 	mu        sync.RWMutex
-	pair      asset.Pair
+	pair      market.Pair
 	changePct float64
 	last      float64
 	bid       float64
@@ -18,7 +17,7 @@ type symbolState struct {
 	forecast  *learned.Forecast
 }
 
-func newSymbolState(pair asset.Pair) *symbolState {
+func newSymbolState(pair market.Pair) *symbolState {
 	return &symbolState{
 		pair:     pair,
 		forecast: learned.NewForecast(0.35),
@@ -26,30 +25,21 @@ func newSymbolState(pair asset.Pair) *symbolState {
 }
 
 type symbolSnapshot struct {
-	pair      asset.Pair
+	pair      market.Pair
 	changePct float64
 	last      float64
 	bid       float64
 	ask       float64
 }
 
-func (state *symbolState) observeTicker(row market.TickerRow) {
+func (state *symbolState) observeTicker(row market.TradeUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.changePct = row.ChangePct
-
-	if row.Last > 0 {
-		state.last = row.Last
-	}
-
-	if row.Bid > 0 {
-		state.bid = row.Bid
-	}
-
-	if row.Ask > 0 {
-		state.ask = row.Ask
-	}
+	state.changePct = row.Price - state.last
+	state.last = row.Price
+	state.bid = row.Bid
+	state.ask = row.Ask
 }
 
 func (state *symbolState) snapshot() symbolSnapshot {

@@ -55,14 +55,6 @@ func (branch *Branch) matches(
 	measurements []Measurement,
 	observations []ObservationType,
 ) bool {
-	if branch.UnlessConfirmed != CategoryTypeNone {
-		if measurement, ok := findMeasurement(measurements, branch.UnlessConfirmed); ok {
-			if matchesCondition(ConditionIsGreaterThan, measurement.SNR, 1.0) {
-				return false
-			}
-		}
-	}
-
 	if branch.Observation != ObservationNone {
 		return slices.Contains(observations, branch.Observation)
 	}

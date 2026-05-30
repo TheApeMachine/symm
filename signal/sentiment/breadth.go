@@ -1,9 +1,5 @@
 package sentiment
 
-import (
-	"math"
-)
-
 func (sentiment *Sentiment) marketBreadth() (float64, float64, bool) {
 	positive := 0
 	total := 0

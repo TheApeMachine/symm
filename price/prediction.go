@@ -11,12 +11,13 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 )
 
 type openPrediction struct {
-	perspective     engine.Perspective
-	measurement     engine.Measurement
+	perspective     perspectives.Perspective
+	measurement     perspectives.Measurement
 	source          string
 	sources         []string
 	contributions   map[string]float64
@@ -143,7 +144,7 @@ func (prediction *Prediction) Tick() error {
 					return
 				}
 
-				row, ok := value.Value.(market.TickerRow)
+				row, ok := value.Value.(market.TradeUpdate)
 
 				if !ok {
 					errnie.Error(fmt.Errorf("invalid ticker row: %v", value.Value))
@@ -200,7 +201,7 @@ func (prediction *Prediction) settleDueAt(now time.Time) {
 			continue
 		}
 
-		row := market.TickerRow{Symbol: symbol, Last: price}
+		row := market.TradeUpdate{Symbol: symbol, Price: price}
 		prediction.settleDue(row, now)
 	}
 }
@@ -210,7 +211,7 @@ settleDue is the per-tick settlement path. Callers in test code that want
 to settle all open predictions at a single wall-clock moment should call
 settleDueAt instead.
 */
-func (prediction *Prediction) settleDue(row market.TickerRow, eventTime time.Time) {
+func (prediction *Prediction) settleDue(row market.TradeUpdate, eventTime time.Time) {
 	settlePrice := row.Last
 	settledAt := eventTime
 

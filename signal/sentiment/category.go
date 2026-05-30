@@ -3,15 +3,15 @@ package sentiment
 import (
 	"math"
 
-	"github.com/theapemachine/symm/engine"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 /*
 sentimentCategory maps breadth and leadership onto the bullish-breadth perspective.
 */
-func sentimentCategory(breadth, change, topChange float64) engine.Category {
+func sentimentCategory(breadth, change, topChange float64) perspectives.CategoryType {
 	if breadth >= minBreadth {
-		return engine.CatRiskOnSurge
+		return perspectives.CategoryRiskOnSurge
 	}
 
 	leaderShare := 0.0
@@ -21,8 +21,8 @@ func sentimentCategory(breadth, change, topChange float64) engine.Category {
 	}
 
 	if leaderShare >= 0.5 && change != 0 {
-		return engine.CatDivergentMove
+		return perspectives.CategoryDivergentMove
 	}
 
-	return engine.CatSystemicSlump
+	return perspectives.CategorySystemicSlump
 }

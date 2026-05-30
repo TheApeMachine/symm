@@ -110,9 +110,9 @@ func newCVDState() *cvdState {
 	}
 }
 
-// selfScale reads a value relative to its own running norm — the dimensionless,
+// scale reads a value relative to its own running norm — the dimensionless,
 // constant-free pivot (1.0 means "exactly normal").
-func selfScale(value float64, base *adaptive.EMA) float64 {
+func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 	norm := base.Value()
 	_, _ = base.Next(0, value)
 
@@ -175,9 +175,9 @@ func (signal *Signal) Tick() error {
 						continue
 					}
 
-					conviction := selfScale(math.Abs(state.signed.Sum()/gross), state.convBase)
-					activity := selfScale(state.count.Sum(), state.actBase)
-					drift := selfScale(math.Abs((state.last-anchor)/anchor), state.driftBase)
+					conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
+					activity := state.scale(state.count.Sum(), state.actBase)
+					drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 
 					code, err := state.pipe.Push(activity, conviction, drift)
 

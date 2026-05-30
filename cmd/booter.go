@@ -9,15 +9,19 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/ui"
 )
+
+type System interface {
+	Tick() error
+	Close() error
+}
 
 type Booter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pool        *qpool.Q
-	systems     []engine.System
+	systems     []System
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 }
@@ -29,21 +33,14 @@ func NewBooter(ctx context.Context, pool *qpool.Q) (*Booter, error) {
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    pool,
-		systems: make([]engine.System, 0),
+		systems: make([]System, 0),
 	}
 
 	return booter, nil
 }
 
-func (booter *Booter) AddSystems(systems ...engine.System) error {
+func (booter *Booter) AddSystems(systems ...System) error {
 	booter.systems = append(booter.systems, systems...)
-
-	for _, system := range systems {
-		if err := system.Start(); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
 	return nil
 }
 

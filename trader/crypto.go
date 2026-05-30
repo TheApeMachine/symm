@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/engine"
 	"github.com/theapemachine/symm/price"
 	"github.com/theapemachine/symm/wallet"
 )
