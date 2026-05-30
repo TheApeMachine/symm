@@ -51,7 +51,6 @@ type Config struct {
 	MinQuoteCoverage            float64
 	PriceHistory                int
 	MinCostEUR                  float64
-	MaxSlotPct                  float64
 	MinHoldBeforeRotate         time.Duration
 	ScalpHoldBeforeExit         time.Duration
 	FlowHoldBeforeExit          time.Duration
@@ -89,7 +88,6 @@ type Config struct {
 	MakerFeePct                 float64
 	ForecastSpreadMultiple      float64
 	ExitUrgencyThreshold        float64
-	MaxActivePerspectives       int
 	SnapshotFreshnessTTL        time.Duration
 	MinCalibrationSamples       int
 	MinConfidenceHistory        int
@@ -218,7 +216,6 @@ func NewConfig() *Config {
 		MinQuoteCoverage:            0.95,
 		PriceHistory:                128,
 		MinCostEUR:                  0.45,
-		MaxSlotPct:                  5,
 		MinHoldBeforeRotate:         time.Minute,
 		ScalpHoldBeforeExit:         90 * time.Second,
 		FlowHoldBeforeExit:          30 * time.Second,
@@ -254,7 +251,6 @@ func NewConfig() *Config {
 		MakerFeePct:                 0.25, // fallback maker fee: real bottom-tier (0-volume) rate
 		ForecastSpreadMultiple:      4,
 		ExitUrgencyThreshold:        0.65,
-		MaxActivePerspectives:       2,
 		SnapshotFreshnessTTL:        200 * time.Millisecond,
 		MinCalibrationSamples:       12,
 		MinConfidenceHistory:        4,

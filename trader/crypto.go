@@ -27,9 +27,9 @@ verdict, and turn that verdict into a paper order sized by the wallet's own poli
 
 Entry and exit are the same thesis re-evaluated, not two strategies: a flat symbol is
 offered to the playbooks for an entry verdict, a held one is offered the identical
-playbooks with ObservationHolding for an exit verdict. Every number the desk uses —
-slot size, the minimum tradeable cost, the prediction horizon — comes from
-config.System, the single home for policy; the desk invents none of its own.
+playbooks with ObservationHolding for an exit verdict. Entry permission and sizing
+are calibrated against the currently observed cross-section; static config remains
+only for venue/risk boundaries such as minimum cost and prediction maturity.
 */
 type Crypto struct {
 	ctx          context.Context
@@ -40,7 +40,7 @@ type Crypto struct {
 	wallet       *wallet.Wallet
 	tracker      *focus.Set
 	mu           sync.RWMutex
-	readings     map[string]map[perspectives.CategoryType]perspectives.Measurement
+	readings     map[string]map[perspectives.SourceType]timedMeasurement
 	open         atomic.Int64
 	auditSeq     atomic.Uint64
 }
@@ -59,7 +59,7 @@ func NewCrypto(
 		pool:     pool,
 		wallet:   tradingWallet,
 		tracker:  tracker,
-		readings: make(map[string]map[perspectives.CategoryType]perspectives.Measurement),
+		readings: make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 
 	group := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
@@ -121,11 +121,11 @@ func (crypto *Crypto) record(measurement perspectives.Measurement) {
 	set := crypto.readings[measurement.Symbol]
 
 	if set == nil {
-		set = make(map[perspectives.CategoryType]perspectives.Measurement)
+		set = make(map[perspectives.SourceType]timedMeasurement)
 		crypto.readings[measurement.Symbol] = set
 	}
 
-	set[measurement.Category] = measurement
+	set[measurement.Source] = newTimedMeasurement(measurement, set[measurement.Source])
 }
 
 // evaluate routes a symbol to the entry or the exit view of its perspective: a held
@@ -147,26 +147,25 @@ func (crypto *Crypto) snapshot(symbol string) []perspectives.Measurement {
 	crypto.mu.RLock()
 	defer crypto.mu.RUnlock()
 
-	set := crypto.readings[symbol]
-	measurements := make([]perspectives.Measurement, 0, len(set))
-
-	for _, measurement := range set {
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements
+	return snapshotTimedMeasurements(crypto.readings[symbol], time.Now())
 }
 
 // consider asks the playbooks for an entry verdict on a flat symbol and enters when
 // one authorizes it.
 func (crypto *Crypto) consider(symbol string, last float64, measurements []perspectives.Measurement) {
-	action, _ := decision.Decide(measurements, nil)
+	opportunity, ok := crypto.entryOpportunity(symbol, measurements)
 
-	if action == nil || *action != perspectives.ActionEnter {
+	if !ok {
 		return
 	}
 
-	crypto.enter(symbol, last, strongest(measurements))
+	opportunity, ok = crypto.calibrateOpportunity(opportunity)
+
+	if !ok {
+		return
+	}
+
+	crypto.enter(symbol, last, opportunity)
 }
 
 // manage asks the same playbooks for the exit verdict on a held symbol, walking them
@@ -185,16 +184,15 @@ func (crypto *Crypto) manage(symbol string, last float64, measurements []perspec
 	}
 }
 
-// enter opens a paper position sized from live free balance and the configured
-// per-slot cap. As positions open the free balance falls and the next slot shrinks,
-// so concurrent exposure is governed by capital and config.MinCostEUR — never an
-// arbitrary count the desk picks.
-func (crypto *Crypto) enter(symbol string, last float64, trigger perspectives.Measurement) {
+// enter opens a paper position sized by the candidate's live cross-section edge.
+// Capital is split across currently qualified opportunities instead of a fixed
+// position count, while config.MinCostEUR remains the exchange-cost floor.
+func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity) {
 	if last <= 0 {
 		return
 	}
 
-	notional := crypto.slot()
+	notional := crypto.slot(opportunity)
 
 	if notional < config.System.MinCostEUR {
 		return
@@ -223,10 +221,12 @@ func (crypto *Crypto) enter(symbol string, last float64, trigger perspectives.Me
 	crypto.open.Add(1)
 	crypto.tracker.Add(symbol)
 
-	crypto.publishAudit("entry", symbol, "perspective entry on "+triggerLabel(trigger), map[string]any{
-		"why":        triggerLabel(trigger),
-		"conviction": trigger.SNR,
-		"slot_eur":   notional,
+	crypto.publishAudit("entry", symbol, "perspective entry on "+triggerLabel(opportunity.Trigger), map[string]any{
+		"why":          triggerLabel(opportunity.Trigger),
+		"conviction":   opportunity.Score,
+		"edge":         opportunity.Edge,
+		"perspectives": opportunity.Names,
+		"slot_eur":     notional,
 	})
 	crypto.publishFill(fill)
 	crypto.publishWallet()
@@ -273,15 +273,21 @@ func (crypto *Crypto) exit(symbol string, last float64, action perspectives.Acti
 	crypto.publishWallet()
 }
 
-// slot sizes one entry as the configured fraction of live free balance.
-func (crypto *Crypto) slot() float64 {
+// slot sizes one entry as its share of the current positive opportunity edge.
+func (crypto *Crypto) slot(opportunity opportunity) float64 {
 	free := crypto.wallet.BalanceCopy()
 
-	if free <= 0 {
+	if free <= 0 || opportunity.Score <= 0 {
 		return 0
 	}
 
-	return free * config.System.MaxSlotPct / 100
+	share := crypto.opportunityShare(opportunity)
+
+	if share <= 0 {
+		return 0
+	}
+
+	return free * share
 }
 
 // strongest returns the highest-SNR reading in the set: the measurement that most

@@ -1,16 +1,11 @@
 package perspectives
 
-// driveEntrySNR is the noise-floor multiple a drive reading must clear to enter:
-// the SNR is now a real z-score, so 1.5 means one-and-a-half of the signal's own
-// noise sigma above its baseline.
-const driveEntrySNR = 1.5
-
 /*
 DrivePerspective is the simplest tradable playbook: enter when executed order flow
-shows a strong, one-sided drive (CVD's AggressiveDrive) or hidden accumulation
-(HiddenAbsorption) clearing the noise floor. It only authorizes entries; the trade
-desk owns the exit via its protective stop and take-profit, so this perspective
-needs no observation-gated branches (which Decide cannot supply anyway).
+shows a one-sided drive (CVD's AggressiveDrive) or hidden accumulation
+(HiddenAbsorption) clearing that signal's own noise floor. It only authorizes
+entries; the trade desk owns the exit via the same global perspective pass with
+ObservationHolding.
 */
 type DrivePerspective struct {
 	Tree *Tree
@@ -21,24 +16,10 @@ NewDrivePerspective builds the drive entry playbook.
 */
 func NewDrivePerspective() *DrivePerspective {
 	return &DrivePerspective{
-		Tree: &Tree{
-			Branches: []Branch{
-				{
-					Category:  CategoryAggressiveDrive,
-					Unit:      UnitSNR,
-					Condition: ConditionIsGreaterThan,
-					Value:     driveEntrySNR,
-					Action:    ActionEnter,
-				},
-				{
-					Category:  CategoryHiddenAbsorption,
-					Unit:      UnitSNR,
-					Condition: ConditionIsGreaterThan,
-					Value:     driveEntrySNR,
-					Action:    ActionEnter,
-				},
-			},
-		},
+		Tree: &Tree{Branches: []Branch{
+			snrBranch(CategoryAggressiveDrive, ActionEnter),
+			snrBranch(CategoryHiddenAbsorption, ActionEnter),
+		}},
 	}
 }
 
@@ -56,7 +37,8 @@ drive playbook has no observation-gated leaves, so observations do not change it
 verdict; the parameter exists to satisfy the unified entry/exit Perspective contract.
 */
 func (drive *DrivePerspective) Decide(
-	measurements []Measurement, observations []ObservationType,
+	measurements []Measurement,
+	observations []ObservationType,
 ) *ActionType {
 	return drive.Tree.Walk(measurements, observations)
 }

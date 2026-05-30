@@ -11,7 +11,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-frontend bench run replay dump profile profile-stack profile-report
+.PHONY: build test test-go test-race test-frontend bench run replay dump profile profile-stack profile-report strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -81,3 +81,6 @@ replay: build
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)
+
+strip-trailing-newlines:
+	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py
