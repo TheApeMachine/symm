@@ -14,8 +14,9 @@ func TestGaugesFrame(t *testing.T) {
 
 		Convey("It should build a source/confidence frame from a known source", func() {
 			frame, ok := gauges.frame(perspectives.Measurement{
-				Source: perspectives.SourceFluid,
-				SNR:    1.5,
+				Source:   perspectives.SourceFluid,
+				Strength: 1.5,
+				SNR:      0,
 			})
 
 			So(ok, ShouldBeTrue)

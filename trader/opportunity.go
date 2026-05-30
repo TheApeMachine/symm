@@ -43,9 +43,15 @@ func (crypto *Crypto) entryOpportunity(
 		return opportunity{}, false
 	}
 
-	feePct := crypto.wallet.FeePct
+	feePct := crypto.takerFeePct(symbol)
 
-	if !entryClearsFriction(score, feePct) {
+	if !entryClearsFriction(score, feePct, crypto.quotes.spreadBPS(symbol)) {
+		return opportunity{}, false
+	}
+
+	playbook := primaryPlaybook(names)
+
+	if !crypto.economics.AllowsEntry(playbook) {
 		return opportunity{}, false
 	}
 
@@ -219,6 +225,8 @@ func categoriesForPlaybook(name string) []perspectives.CategoryType {
 			perspectives.CategoryLaminar,
 			perspectives.CategoryInertial,
 			perspectives.CategoryAggressiveDrive,
+			perspectives.CategoryHardSupport,
+			perspectives.CategoryLoadedImbalance,
 		}
 	case perspectives.PlaybookDrive:
 		return []perspectives.CategoryType{

@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -132,7 +133,11 @@ func (signal *Signal) publish() {
 
 		if ok {
 			measurement.Symbol = key.(string)
-			measurement.SNR = state.floor.Score(measurement.SNR)
+			measurement = perspectives.FinalizeSNR(
+				measurement,
+				measurement.SNR,
+				state.floor.Score,
+			)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 

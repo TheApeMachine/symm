@@ -263,13 +263,12 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
 
-	return perspectives.Measurement{
+	return perspectives.FinalizeSNR(perspectives.Measurement{
 		Symbol:   state.symbol,
 		Source:   perspectives.SourceFluid,
 		Category: fluidCategory(divergence, turbulence, viscosity, re),
-		SNR:      state.floor.Score(re),
 		Last:     state.last,
-	}, true
+	}, re, state.floor.Score), true
 }
 
 /*

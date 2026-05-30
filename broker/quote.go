@@ -32,7 +32,7 @@ func (quote *Quote) FillPrice(side string, quoteNotional float64) (float64, erro
 		return 0, err
 	}
 
-	fillPrice := config.System.SlippageFill(
+	fillPrice := market.SlippageFill(
 		last, bid, ask, side, config.System.SlippageBPS, quoteNotional, quote.BidDepth, quote.AskDepth,
 	)
 

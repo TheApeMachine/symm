@@ -173,15 +173,13 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 
 	fused := activity * conviction * (1 + drift) // same strength the classifier bands
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-		Value: perspectives.Measurement{
-			Symbol:   trade.Symbol,
-			Source:   perspectives.SourceCVD,
-			Category: signal.categories[state.pipe.Label(code)],
-			SNR:      state.floor.Score(fused),
-			Last:     trade.Price,
-		},
-	})
+	measurement := perspectives.FinalizeSNR(perspectives.Measurement{
+		Symbol:   trade.Symbol,
+		Source:   perspectives.SourceCVD,
+		Category: signal.categories[state.pipe.Label(code)],
+		Last:     trade.Price,
+	}, fused, state.floor.Score)
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 
 func (signal *Signal) Close() error {

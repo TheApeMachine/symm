@@ -168,7 +168,8 @@ type Measurement struct {
     Symbol     string
     Source     SourceType   // fluid, hawkes, pumpdump, cvd, toxicity, …
     Category   CategoryType // semantic row from DECISION.md
-    SNR        float64      // strength vs the signal's own noise floor (sole score)
+    Strength   float64      // raw fused strength (dashboard gauges)
+    SNR        float64      // playbook score after the signal noise floor
     Last       float64      // last trade price at emit time (for sizing/fill)
 }
 ```
@@ -276,9 +277,10 @@ On each `measurements` message:
 1. `market.Decisions(measurements, nil)` — collect every playbook authorizing `ActionEnter` (deny/wait omitted)
 2. **Thesis score** — RMS of playbook-relevant SNRs, scaled by √confirmations when multiple playbooks agree
 3. **Friction gate** — require `thesisScore ≥ EntryEdgeMultiple × round_trip_friction` (fees + slippage)
-4. **Cross-section calibration** — compare the symbol's score to the robust median + MAD of all observed symbols; require positive edge
-5. **Size** — allocate cash proportional to edge share of total market score mass
-6. **Fill** — `broker.Buy.FillPaper` at `Last`; reject below `MinCostEUR`; bind `Playbook` + `PerspectiveTTL`
+4. **Playbook economics gate** — `trader/economics` ledger: cold playbooks gather samples; warm playbooks require post-fee net forward/exit returns above `ForwardReturnSignificanceZ` (pump uses `PumpForwardReturnMinSamples`)
+5. **Cross-section calibration** — compare the symbol's score to the robust median + MAD of all observed symbols; require positive edge
+6. **Size** — allocate cash proportional to edge share of total market score mass
+7. **Fill** — `broker.Buy.FillPaper` on stressed quote when `ExecutionStressEnabled`; label spread, quote age, depth coverage, slippage; track `ExecutionForwardWindow` forward returns; reject below `MinCostEUR`; bind `Playbook` + `PerspectiveTTL`
 
 ### Exit path
 
@@ -286,7 +288,15 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL`, then `market.Exi
 
 ### Paper vs live
 
-The current desk path calls `FillPaper` only. The `broker` package also implements `SubmitLive` for Kraken WebSocket v2 market orders (with optional OTO stop-loss-limit on entry); wiring live submission into `Crypto` is not yet in the boot path.
+Paper fills use the same `broker.Quote` path as live: the trader caches Kraken ticker bid/ask and L2 depth per symbol, then `market.SlippageFill` / `SlippagePrice` price the order (VWAP through the book when depth is available, otherwise half-spread on last). `broker.Buy` / `broker.Sell` apply `PreflightGates` (quote freshness, max spread, projected slippage) before reserving cash.
+
+Per-pair taker fees come from Kraken `AssetPairs` at boot (`market.LoadPairCatalog`), tiered by `Fee30DVolume`, and are stored on `PositionBinding.TakerFeePct` for the exit leg. When REST metadata is unavailable, `TakerFeePct` / `WalletEUR` defaults apply.
+
+Gauges display `Measurement.Strength` (raw signal energy). Playbook trees still gate on `SNR` after each signal's adaptive noise floor warms up (~12 samples per symbol).
+
+Live submission (`broker.SubmitLive`) is implemented but not wired into `Crypto.Tick` yet; paper and live share quote construction and fee math once live is enabled.
+
+**Execution economics** (`trader/economics/`): every entry/exit/forward label records post-fee net returns per playbook. Enable pessimistic paper with `ExecutionStressEnabled` (stale quote age, shallow depth, Bernoulli rejects, toxicity-scaled adverse selection on the ask). Audit frames include `quote_age_ms`, `depth_coverage`, `playbook_econ_mean`, and `forward` events when the forward window matures.
 
 ### Focus set
 
@@ -476,7 +486,7 @@ Full environment wiring is in `config/config.go`.
 
 </details>
 
-Active desk fields include `EntryEdgeMultiple`, `MinExhaustHold`, `PerspectiveTTL`, and pump trail/stop percents. `config/config.go` still carries exploration/Kelly/forward-return learning knobs for future calibration wiring; they do not change the current perspective desk path.
+Active desk fields include `EntryEdgeMultiple`, `MinExhaustHold`, `PerspectiveTTL`, and pump trail/stop percents. `ForwardReturnMinSamples`, `ForwardReturnSignificanceZ`, and `ExecutionForwardWindow` are wired into the desk economics gate and forward labels. Exploration/Kelly sizing knobs remain unused for slot allocation.
 
 ---
 

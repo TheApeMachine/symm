@@ -165,15 +165,13 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 
 	ignition := math.Max(0, (rvol-1)*(1+precursor)) // positive strength the floor scores
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-		Value: perspectives.Measurement{
-			Symbol:   trade.Symbol,
-			Source:   perspectives.SourcePumpDump,
-			Category: signal.categories[state.pipe.Label(code)],
-			SNR:      state.floor.Score(ignition),
-			Last:     trade.Price,
-		},
-	})
+	measurement := perspectives.FinalizeSNR(perspectives.Measurement{
+		Symbol:   trade.Symbol,
+		Source:   perspectives.SourcePumpDump,
+		Category: signal.categories[state.pipe.Label(code)],
+		Last:     trade.Price,
+	}, ignition, state.floor.Score)
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 
 func (signal *Signal) Close() error {

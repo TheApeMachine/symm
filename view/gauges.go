@@ -102,7 +102,7 @@ func (gauges *Gauges) frame(measurement perspectives.Measurement) (map[string]an
 
 	return map[string]any{
 		"source":     source,
-		"confidence": measurement.SNR,
+		"confidence": perspectives.GaugeValue(measurement),
 	}, true
 }
 

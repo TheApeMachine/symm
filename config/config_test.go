@@ -78,12 +78,3 @@ func TestLogStdoutEnvOverride(t *testing.T) {
 		t.Fatal("expected SYMM_LOG_STDOUT=1 to enable console logging")
 	}
 }
-
-func TestSlippagePriceUsesHalfSpread(t *testing.T) {
-	cfg := NewConfig()
-	fill := cfg.SlippagePrice(100, 99, 101, "buy", 0)
-
-	if fill != 101 {
-		t.Fatalf("expected buy fill 101, got %v", fill)
-	}
-}

@@ -15,17 +15,22 @@ func roundTripFrictionPct(feePct, slippageBps float64) float64 {
 
 /*
 entryClearsFriction requires the thesis score to clear EntryEdgeMultiple times
-the friction floor expressed in SNR units (score is RMS of playbook SNRs).
+the round-trip friction (fees plus half-spread when spreadBPS is known).
 */
-func entryClearsFriction(score float64, feePct float64) bool {
-	friction := roundTripFrictionPct(feePct, config.System.SlippageBPS)
+func entryClearsFriction(score float64, feePct float64, spreadBPS float64) bool {
+	slippageBPS := config.System.SlippageBPS
+
+	if spreadBPS > 0 {
+		slippageBPS = spreadBPS
+	}
+
+	friction := roundTripFrictionPct(feePct, slippageBPS)
 	required := config.System.EntryEdgeMultiple * friction
 
 	if required <= 0 {
 		return score > 0
 	}
 
-	// Map friction pct into the same scale as typical playbook scores (~1–4 SNR).
 	requiredSNR := required * 100
 
 	return score >= requiredSNR

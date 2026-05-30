@@ -200,19 +200,23 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				}
 
 				if raw > 0 {
-					return perspectives.Measurement{
+					return perspectives.FinalizeSNR(perspectives.Measurement{
 						Source:   perspectives.SourceDepthFlow,
 						Category: depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK),
-						SNR:      state.floors.Score("imbalance", raw),
-					}, true
+					}, raw, func(value float64) float64 {
+						return state.floors.Score("imbalance", value)
+					}), true
 				}
 			}
 
-			return perspectives.Measurement{
+			raw := math.Abs(level1)
+
+			return perspectives.FinalizeSNR(perspectives.Measurement{
 				Source:   perspectives.SourceDepthFlow,
 				Category: depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK),
-				SNR:      state.floors.Score("level1", math.Abs(level1)),
-			}, true
+			}, raw, func(value float64) float64 {
+				return state.floors.Score("level1", value)
+			}), true
 		}
 	}
 
@@ -226,11 +230,12 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 		return perspectives.Measurement{}, false
 	}
 
-	return perspectives.Measurement{
+	return perspectives.FinalizeSNR(perspectives.Measurement{
 		Source:   perspectives.SourceDepthFlow,
 		Category: depthflowCategory("trade_pressure", 0, 0, false),
-		SNR:      state.floors.Score("flow", flow),
-	}, true
+	}, flow, func(value float64) float64 {
+		return state.floors.Score("flow", value)
+	}), true
 }
 
 // toMarketLevels converts maintained-book levels back to the market.BookLevel shape

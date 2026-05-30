@@ -95,6 +95,12 @@ type Config struct {
 	PumpForwardReturnMinSamples int
 	ForwardReturnSignificanceZ  float64
 	ForwardReturnSlopeAlpha     float64
+	ExecutionEconomicsEnabled   bool          // label fills and gate entries on post-cost forward returns
+	ExecutionStressEnabled      bool          // perturb quotes before paper fill (latency, depth, rejects)
+	ExecutionStressLatency      time.Duration // additional quote age applied under stress
+	ExecutionStressDepthFraction float64      // multiply visible depth qty (0–1]
+	ExecutionStressRejectRate   float64       // Bernoulli reject before stressed fill
+	ExecutionForwardWindow      time.Duration // horizon for forward-return labels after entry
 	RegimeShockWindow           int
 	RegimeShockMinSamples       int
 	RegimeShockZScore           float64
@@ -258,6 +264,12 @@ func NewConfig() *Config {
 		PumpForwardReturnMinSamples: 8,
 		ForwardReturnSignificanceZ:  1.96,
 		ForwardReturnSlopeAlpha:     0.05,
+		ExecutionEconomicsEnabled:   true,
+		ExecutionStressEnabled:      false,
+		ExecutionStressLatency:      75 * time.Millisecond,
+		ExecutionStressDepthFraction: 0.35,
+		ExecutionStressRejectRate:   0.05,
+		ExecutionForwardWindow:      30 * time.Second,
 		RegimeShockWindow:           128,
 		RegimeShockMinSamples:       64,
 		RegimeShockZScore:           6,

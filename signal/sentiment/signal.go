@@ -58,7 +58,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 func (signal *Signal) Tick() error {
 	for row := range market.NewTickerSubscription(signal.ctx, config.System.Symbols...) {
-		if row == nil || row.Last <= 0 || row.ChangePct == 0 {
+		if row == nil || row.Last <= 0 {
 			continue
 		}
 
@@ -72,7 +72,11 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = row.Symbol
 		measurement.Last = row.Last
-		measurement.SNR = signal.floor.Score(row.Symbol, measurement.SNR)
+		measurement = perspectives.FinalizeSNR(
+			measurement,
+			measurement.SNR,
+			func(raw float64) float64 { return signal.floor.Score(row.Symbol, raw) },
+		)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

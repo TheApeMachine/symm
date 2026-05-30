@@ -1,21 +1,17 @@
-package config
-
-import (
-	"github.com/theapemachine/symm/kraken/market"
-)
+package market
 
 /*
 SlippageFill returns a depth-weighted VWAP fill when book levels are available.
 Falls back to half-spread on last when depth cannot cover the order.
 */
-func (cfg Config) SlippageFill(
+func SlippageFill(
 	last, bid, ask float64,
 	side string,
 	extraBPS float64,
 	quoteNotional float64,
-	bidLevels, askLevels []market.BookLevel,
+	bidLevels, askLevels []BookLevel,
 ) float64 {
-	var levels []market.BookLevel
+	var levels []BookLevel
 
 	switch side {
 	case "buy":
@@ -23,11 +19,11 @@ func (cfg Config) SlippageFill(
 	case "sell":
 		levels = bidLevels
 	default:
-		return cfg.SlippagePrice(last, bid, ask, side, extraBPS)
+		return SlippagePrice(last, bid, ask, side, extraBPS)
 	}
 
 	if quoteNotional > 0 && len(levels) > 0 {
-		fill := market.DepthFillVWAPSide(levels, quoteNotional, side)
+		fill := DepthFillVWAPSide(levels, quoteNotional, side)
 
 		if fill > 0 {
 			extra := fill * extraBPS / 10000
@@ -41,13 +37,13 @@ func (cfg Config) SlippageFill(
 		}
 	}
 
-	return cfg.SlippagePrice(last, bid, ask, side, extraBPS)
+	return SlippagePrice(last, bid, ask, side, extraBPS)
 }
 
 /*
 SlippagePrice applies half-spread plus extra bps on exit (worse fill).
 */
-func (cfg Config) SlippagePrice(
+func SlippagePrice(
 	last, bid, ask float64,
 	side string,
 	extraBPS float64,

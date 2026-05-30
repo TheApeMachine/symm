@@ -47,6 +47,7 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measu
 	return perspectives.Measurement{
 		Source:   perspectives.SourceToxicity,
 		Category: category,
+		Strength: snr,
 		SNR:      snr,
 	}, true
 }

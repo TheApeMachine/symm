@@ -117,7 +117,11 @@ func (signal *Signal) publish() {
 		if ok {
 			measurement.Symbol = key.(string)
 			measurement.Last = follower.lastPrice()
-			measurement.SNR = follower.floor.Score(measurement.SNR)
+			measurement = perspectives.FinalizeSNR(
+				measurement,
+				measurement.SNR,
+				follower.floor.Score,
+			)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 

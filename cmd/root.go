@@ -49,6 +49,16 @@ var rootCmd = &cobra.Command{
 			config.System.Symbols = universe
 		}
 
+		market.ConfigureCatalogFees(
+			config.System.Fee30DVolume,
+			config.System.TakerFeePct,
+		)
+		market.BootPairCatalog(
+			cmd.Context(),
+			config.System.Fee30DVolume,
+			config.System.TakerFeePct,
+		)
+
 		tracker := focus.NewSet()
 
 		booter := errnie.Does(func() (*Booter, error) {

@@ -9,6 +9,7 @@ func NewTrendPerspective() *strategy {
 		snrGate(CategoryFrenzy, entryLeaf(CategoryAggressiveDrive)),
 		snrGate(CategoryLaminar, entryLeaf(CategoryAggressiveDrive)),
 		snrGate(CategoryInertial, entryLeaf(CategoryAggressiveDrive)),
+		snrGate(CategoryHardSupport, entryLeaf(CategoryLoadedImbalance)),
 	}
 
 	entry := []Branch{

@@ -252,7 +252,7 @@ func (signal *Signal) marketMode(active []live) uint64 {
 // emitActive scores each coin's agreement with the market mode and publishes it.
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 	for _, coin := range active {
-		agree := hashBits - bits.OnesCount64(coin.sig^mode)                     // 0..64
+		agree := hashBits - bits.OnesCount64(coin.sig^mode)                      // 0..64
 		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2) // -1..1
 		energy := coin.state.energy.Value()
 
@@ -263,15 +263,16 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 			continue
 		}
 
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{
-			Value: perspectives.Measurement{
-				Symbol:   coin.symbol,
-				Source:   perspectives.SourceCorrelation,
-				Category: signal.categories[coin.state.pipe.Label(code)],
-				SNR:      signal.floor.Score(coin.symbol, energy*(1+2*corr)/baseline),
-				Last:     coin.price,
-			},
+		raw := energy * (1 + 2*corr) / baseline
+		measurement := perspectives.FinalizeSNR(perspectives.Measurement{
+			Symbol:   coin.symbol,
+			Source:   perspectives.SourceCorrelation,
+			Category: signal.categories[coin.state.pipe.Label(code)],
+			Last:     coin.price,
+		}, raw, func(value float64) float64 {
+			return signal.floor.Score(coin.symbol, value)
 		})
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }
 

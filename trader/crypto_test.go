@@ -5,9 +5,10 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/focus"
+	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/trader/economics"
 	"github.com/theapemachine/symm/wallet"
 )
 
@@ -17,6 +18,8 @@ func newTestCrypto() *Crypto {
 		tracker:   focus.NewSet(),
 		story:     decision.NewStory(),
 		positions: newPositionBook(),
+		quotes:    newQuoteCache(),
+		economics: economics.NewDesk(),
 		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 }
