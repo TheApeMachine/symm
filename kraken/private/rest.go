@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3/client"
+	"github.com/theapemachine/symm/replay"
 )
 
 const baseURL = "https://api.kraken.com"
@@ -119,7 +120,10 @@ func (rest *Rest) post(ctx context.Context, path string, form url.Values, model 
 
 	defer response.Close()
 
-	if err := json.Unmarshal(response.Body(), model); err != nil {
+	responseBody := response.Body()
+	_ = replay.WriteREST(strings.TrimPrefix(path, "/0/private/"), responseBody)
+
+	if err := json.Unmarshal(responseBody, model); err != nil {
 		return fmt.Errorf("kraken private decode %s: %w", path, err)
 	}
 

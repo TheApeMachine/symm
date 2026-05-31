@@ -76,8 +76,17 @@ REPLAY_FILE ?=
 REPLAY_PACE ?= 50ms
 
 replay: build
-	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make replay REPLAY_FILE=replay/fixtures/sample.jsonl" && exit 1)
+	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make replay REPLAY_FILE=runs/capture.jsonl" && exit 1)
 	SYMM_REPLAY_FILE=$(REPLAY_FILE) SYMM_REPLAY_PACE=$(REPLAY_PACE) ./$(SYMM_BIN)
+
+RECORD_FILE ?= runs/capture.jsonl
+
+record: build
+	SYMM_RECORD_FILE=$(RECORD_FILE) ./$(SYMM_BIN)
+
+tune: build
+	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make tune REPLAY_FILE=runs/capture.jsonl" && exit 1)
+	./$(SYMM_BIN) tune --replay $(REPLAY_FILE) --iterations $(or $(ITERATIONS),32) --workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

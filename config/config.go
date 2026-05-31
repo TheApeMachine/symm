@@ -174,12 +174,28 @@ type Config struct {
 	OHLCEWarmPulseCredit         int
 	ReplayFile                   string
 	ReplayLoop                   bool
+	ReplayPace                   time.Duration
+	RecordFile                   string
+	ConfigFile                   string
+	Headless                     bool
 }
 
 var System *Config
 
+const defaultTunedFile = "runs/tuned.json"
+
 func init() {
 	System = NewConfig()
+
+	if path := strings.TrimSpace(System.ConfigFile); path != "" {
+		_ = LoadTunablesFile(path, System)
+
+		return
+	}
+
+	if _, err := os.Stat(defaultTunedFile); err == nil {
+		_ = LoadTunablesFile(defaultTunedFile, System)
+	}
 }
 
 /*
@@ -344,6 +360,12 @@ func NewConfig() *Config {
 		cfg.MaxPortfolioDrawdownPct = cfg.MaxDailyLossEUR / cfg.WalletEUR
 	}
 
+	applyEnvironment(cfg)
+
+	return cfg
+}
+
+func applyEnvironment(cfg *Config) {
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {
 		cfg.ReplayFile = replayFile
 	}
@@ -351,6 +373,25 @@ func NewConfig() *Config {
 	if replayLoop := strings.TrimSpace(os.Getenv("SYMM_REPLAY_LOOP")); replayLoop == "1" ||
 		strings.EqualFold(replayLoop, "true") {
 		cfg.ReplayLoop = true
+	}
+
+	if pace := strings.TrimSpace(os.Getenv("SYMM_REPLAY_PACE")); pace != "" {
+		if parsed, err := time.ParseDuration(pace); err == nil {
+			cfg.ReplayPace = parsed
+		}
+	}
+
+	if recordFile := strings.TrimSpace(os.Getenv("SYMM_RECORD_FILE")); recordFile != "" {
+		cfg.RecordFile = recordFile
+	}
+
+	if configFile := strings.TrimSpace(os.Getenv("SYMM_CONFIG_FILE")); configFile != "" {
+		cfg.ConfigFile = configFile
+	}
+
+	if headless := strings.TrimSpace(os.Getenv("SYMM_HEADLESS")); headless == "1" ||
+		strings.EqualFold(headless, "true") {
+		cfg.Headless = true
 	}
 
 	cfg.KrakenAPIKey = strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
@@ -365,6 +406,4 @@ func NewConfig() *Config {
 		strings.EqualFold(stdout, "true") {
 		cfg.LogStdoutActive = true
 	}
-
-	return cfg
 }

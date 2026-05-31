@@ -44,7 +44,18 @@ func (booter *Booter) AddSystems(systems ...System) error {
 	return nil
 }
 
+func (booter *Booter) Cancel() {
+	booter.cancel()
+}
+
+func (booter *Booter) Context() context.Context {
+	return booter.ctx
+}
+
 func (booter *Booter) Boot() error {
+	if config.System.Headless {
+		return booter.bootSystems()
+	}
 	hub := errnie.Does(func() (*ui.Hub, error) {
 		return ui.NewHub(booter.ctx, booter.pool)
 	}).Or(func(err error) {
@@ -58,6 +69,16 @@ func (booter *Booter) Boot() error {
 
 	go hub.Serve(config.System.UIAddr)
 
+	for _, system := range booter.systems {
+		if walletPublisher, ok := system.(interface{ ResendWallet() }); ok {
+			walletPublisher.ResendWallet()
+		}
+	}
+
+	return booter.bootSystems()
+}
+
+func (booter *Booter) bootSystems() error {
 	for _, system := range booter.systems {
 		if walletPublisher, ok := system.(interface{ ResendWallet() }); ok {
 			walletPublisher.ResendWallet()

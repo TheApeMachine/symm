@@ -50,7 +50,7 @@ func NewTickerSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TickerUpdate {
 	return tickerFeed.subscribe(ctx, func() <-chan *TickerUpdate {
-		return dialTicker(context.Background(), symbols)
+		return tickerUpstream(context.Background(), symbols)
 	})
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/replay"
 )
 
 type WebSocket struct {
@@ -56,7 +57,23 @@ func (ws *WebSocket) Send(channel string, message any) error {
 		return fmt.Errorf("channel %s not found", channel)
 	}
 
-	return errnie.Error(conn.WriteJSON(message))
+	if err := conn.WriteJSON(message); err != nil {
+		return errnie.Error(err)
+	}
+
+	recordWSOutbound(channel, message)
+
+	return nil
+}
+
+func recordWSOutbound(channel string, message any) {
+	payload, err := sonic.Marshal(message)
+
+	if err != nil {
+		return
+	}
+
+	_ = replay.WriteWS(channel, replay.DirectionOut, payload)
 }
 
 /*
@@ -182,6 +199,8 @@ func (ws *WebSocket) read(
 	if err != nil {
 		return nil, false
 	}
+
+	_ = replay.WriteWS(channel, replay.DirectionIn, payload)
 
 	var message SocketMessage
 

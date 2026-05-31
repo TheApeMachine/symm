@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/replay"
 )
 
 /*
@@ -62,8 +63,11 @@ func (rest *Rest) Get(
 
 	defer response.Value().Close()
 
+	body := response.Value().Body()
+	_ = replay.WriteREST(string(rest.endpoint), body)
+
 	return errnie.Error(json.Unmarshal(
-		response.Value().Body(), &Response{Result: model},
+		body, &Response{Result: model},
 	))
 }
 

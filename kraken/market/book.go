@@ -143,7 +143,7 @@ func NewBookSubscription(
 	ctx context.Context, depth int, symbols ...string,
 ) <-chan *BookUpdate {
 	return bookFeed.subscribe(ctx, func() <-chan *BookUpdate {
-		return dialBook(context.Background(), depth, symbols)
+		return bookUpstream(context.Background(), depth, symbols)
 	})
 }
 

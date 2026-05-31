@@ -2,11 +2,14 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/replay"
 )
 
 /*
@@ -42,8 +45,17 @@ func Catalog() *PairCatalog {
 
 /*
 LoadPairCatalog fetches tradable pair metadata from Kraken REST AssetPairs.
+During replay it uses the recorded REST payload when available.
 */
 func LoadPairCatalog(ctx context.Context) (*PairCatalog, error) {
+	if path := strings.TrimSpace(config.System.ReplayFile); path != "" {
+		if catalog, ok := loadPairCatalogFromReplay(path); ok {
+			return catalog, nil
+		}
+
+		return &PairCatalog{bySymbol: make(map[string]*Pair)}, nil
+	}
+
 	client := public.NewRest(ctx, public.EndpointTypeAssetPairs)
 	pairs, err := NewAssetPairs(ctx, client)
 
@@ -68,6 +80,46 @@ func LoadPairCatalog(ctx context.Context) (*PairCatalog, error) {
 	}
 
 	return catalog, nil
+}
+
+func loadPairCatalogFromReplay(path string) (*PairCatalog, bool) {
+	hub, err := replay.Open(path)
+
+	if err != nil {
+		return nil, false
+	}
+
+	body, ok := hub.RESTBody(string(public.EndpointTypeAssetPairs))
+
+	if !ok {
+		return nil, false
+	}
+
+	var response struct {
+		Result AssetPairs `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, false
+	}
+
+	catalog := &PairCatalog{bySymbol: make(map[string]*Pair, len(response.Result))}
+
+	for _, pair := range response.Result {
+		if pair == nil {
+			continue
+		}
+
+		if pair.Wsname != "" {
+			catalog.bySymbol[pair.Wsname] = pair
+		}
+
+		if pair.Altname != "" {
+			catalog.bySymbol[normalizePairSymbol(pair.Altname)] = pair
+		}
+	}
+
+	return catalog, len(catalog.bySymbol) > 0
 }
 
 /*

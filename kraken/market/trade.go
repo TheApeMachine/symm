@@ -46,7 +46,7 @@ func NewTradeSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TradeUpdate {
 	return tradeFeed.subscribe(ctx, func() <-chan *TradeUpdate {
-		return dialTrades(context.Background(), symbols)
+		return tradeUpstream(context.Background(), symbols)
 	})
 }
 

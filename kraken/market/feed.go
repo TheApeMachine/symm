@@ -2,8 +2,11 @@ package market
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/config"
 )
 
 // feedReconnectDelay is how long a shared feed waits before reopening its
@@ -80,8 +83,16 @@ func (sharedFeed *feed[T]) run() {
 			sharedFeed.fanout(value)
 		}
 
+		if replayActive() && !config.System.ReplayLoop {
+			return
+		}
+
 		time.Sleep(feedReconnectDelay)
 	}
+}
+
+func replayActive() bool {
+	return strings.TrimSpace(config.System.ReplayFile) != ""
 }
 
 // fanout copies one upstream value to every attached subscriber, dropping for
