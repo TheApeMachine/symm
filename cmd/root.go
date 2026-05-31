@@ -41,6 +41,7 @@ S.Y.M.M. - Shake Your Money Maker
 Kraken book and trade observers feed microstructure signals into the trader.
 Set SYMM_REPLAY_FILE to a captured JSONL fixture for offline dry-run.
 Set SYMM_RECORD_FILE to capture exact Kraken WebSocket and REST payloads.
+Set SYMM_AUDIT_FILE (or make audit) to log desk audits to JSONL without flooding the UI.
 Set SYMM_CONFIG_FILE or runs/tuned.json to load optimizer settings at startup.
 Run "symm tune --replay runs/capture.jsonl" to search tunables concurrently.
 Set SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET for live spot orders over WebSocket v2.

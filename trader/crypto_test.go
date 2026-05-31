@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/focus"
 	decision "github.com/theapemachine/symm/market"
@@ -159,6 +161,77 @@ func TestCryptoOpportunityShare(t *testing.T) {
 
 		convey.Convey("It should give the stronger candidate the larger wallet share", func() {
 			convey.So(crypto.opportunityShare(fast), convey.ShouldBeGreaterThan, crypto.opportunityShare(slow))
+		})
+	})
+}
+
+func TestPublishAudit(t *testing.T) {
+	convey.Convey("Given a crypto desk wired to the ui bus", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		crypto := newTestCrypto()
+		crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		subscription := crypto.ui.Subscribe("test:audit", 16)
+
+		crypto.publishAudit("gate_reject", "BTC/EUR", "systemic_slump_wait", nil)
+		crypto.publishAudit("entry_submit", "BTC/EUR", "submitting", nil)
+		crypto.publishAudit("entry", "BTC/EUR", "filled", nil)
+		crypto.publishAudit("forward", "BTC/EUR", "matured", nil)
+		crypto.publishAudit("exit", "ETH/EUR", "closed", nil)
+
+		events := make([]string, 0, 2)
+		deadline := time.After(200 * time.Millisecond)
+
+		for len(events) < 2 {
+			select {
+			case value := <-subscription.Incoming:
+				frame, ok := value.Value.(map[string]any)
+
+				if !ok {
+					continue
+				}
+
+				event, ok := frame["audit_event"].(string)
+
+				if ok {
+					events = append(events, event)
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for audit frames, got %v", events)
+			}
+		}
+
+		convey.Convey("It should publish only entry and exit lifecycle audits", func() {
+			convey.So(events, convey.ShouldResemble, []string{"entry", "exit"})
+		})
+	})
+
+	convey.Convey("Given a crypto desk with disk audit logging enabled", t, func() {
+		path := t.TempDir() + "/audit.jsonl"
+		auditLog, err := OpenAuditLog(path, 1<<20, 3, time.Second)
+		convey.So(err, convey.ShouldBeNil)
+		defer auditLog.Close()
+
+		crypto := newTestCrypto()
+		crypto.auditLog = auditLog
+
+		crypto.publishAudit("gate_reject", "BTC/EUR", "systemic_slump_wait", map[string]any{
+			"playbook": "trend",
+		})
+		crypto.publishAudit("gate_reject", "BTC/EUR", "systemic_slump_wait", map[string]any{
+			"playbook": "trend",
+		})
+		crypto.publishAudit("entry", "BTC/EUR", "filled", nil)
+
+		lines, readErr := readAuditLines(path)
+
+		convey.Convey("It should log gate rejects with dedupe and lifecycle events", func() {
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(lines, convey.ShouldHaveLength, 2)
+			convey.So(lines[0]["audit_event"], convey.ShouldEqual, "gate_reject")
+			convey.So(lines[1]["audit_event"], convey.ShouldEqual, "entry")
 		})
 	})
 }

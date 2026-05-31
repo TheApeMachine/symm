@@ -22,7 +22,8 @@ type decisionTraceRow struct {
 }
 
 /*
-recordEntryVerdicts stores playbook outcomes and publishes gate rejects for denies.
+recordEntryVerdicts stores playbook outcomes for the batched decision_trace feed.
+Gate denies are written to the optional disk audit log when enabled, not the UI.
 */
 func (crypto *Crypto) recordEntryVerdicts(
 	symbol string,
@@ -34,7 +35,7 @@ func (crypto *Crypto) recordEntryVerdicts(
 	inPlay := score > snapshot.Baseline
 
 	for _, verdict := range verdicts {
-		row := decisionTraceRow{
+		crypto.appendDecisionTrace(decisionTraceRow{
 			Symbol:     symbol,
 			Regime:     string(verdict.Regime),
 			Reason:     verdict.Name,
@@ -43,11 +44,9 @@ func (crypto *Crypto) recordEntryVerdicts(
 			Why:        traceWhy(verdict),
 			Confidence: traceConfidence(verdict),
 			InPlay:     inPlay,
-		}
+		})
 
-		crypto.appendDecisionTrace(row)
-
-		if perspectives.IsEntryBlocked(verdict.Action) {
+		if perspectives.IsEntryBlocked(verdict.Action) && crypto.auditLog != nil {
 			crypto.publishGateReject(symbol, verdict)
 		}
 	}

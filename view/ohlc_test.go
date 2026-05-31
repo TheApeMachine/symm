@@ -50,3 +50,17 @@ func TestBarSeconds(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkOHLCFrame(b *testing.B) {
+	ohlc := &OHLC{}
+	bar := &market.CandleUpdate{
+		Open: 100, High: 110, Low: 95, Close: 105, Volume: 12.5,
+		IntervalBegin: "2026-05-30T00:00:00Z",
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ohlc.frame("BTC/EUR", bar)
+	}
+}

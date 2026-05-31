@@ -79,6 +79,26 @@ func TestLogStdoutEnvOverride(t *testing.T) {
 	}
 }
 
+func TestAuditFileEnvOverride(t *testing.T) {
+	t.Setenv("SYMM_AUDIT_FILE", "runs/audit.jsonl")
+	t.Setenv("SYMM_AUDIT_GATE_COOLDOWN", "30s")
+	t.Setenv("SYMM_AUDIT_MAX_MB", "16")
+
+	cfg := NewConfig()
+
+	if cfg.AuditFile != "runs/audit.jsonl" {
+		t.Fatalf("expected audit file override, got %q", cfg.AuditFile)
+	}
+
+	if cfg.AuditGateRejectCooldown != 30*time.Second {
+		t.Fatalf("expected 30s gate cooldown, got %v", cfg.AuditGateRejectCooldown)
+	}
+
+	if cfg.AuditMaxFileBytes != 16<<20 {
+		t.Fatalf("expected 16MB max file, got %d", cfg.AuditMaxFileBytes)
+	}
+}
+
 func TestExecutionStressEnvOverride(t *testing.T) {
 	t.Setenv("SYMM_EXECUTION_STRESS", "1")
 

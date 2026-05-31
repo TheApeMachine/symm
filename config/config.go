@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -176,6 +177,10 @@ type Config struct {
 	ReplayLoop                   bool
 	ReplayPace                   time.Duration
 	RecordFile                   string
+	AuditFile                    string
+	AuditMaxFileBytes            int64
+	AuditMaxFiles                int
+	AuditGateRejectCooldown      time.Duration
 	ConfigFile                   string
 	Headless                     bool
 }
@@ -357,6 +362,9 @@ func NewConfig() *Config {
 		OHLCIntervalMinutes:          5,
 		OHLCMaxSymbols:               64,
 		OHLCEWarmPulseCredit:         30,
+		AuditMaxFileBytes:            32 << 20,
+		AuditMaxFiles:                3,
+		AuditGateRejectCooldown:      60 * time.Second,
 	}
 
 	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {
@@ -386,6 +394,24 @@ func applyEnvironment(cfg *Config) {
 
 	if recordFile := strings.TrimSpace(os.Getenv("SYMM_RECORD_FILE")); recordFile != "" {
 		cfg.RecordFile = recordFile
+	}
+
+	if auditFile := strings.TrimSpace(os.Getenv("SYMM_AUDIT_FILE")); auditFile != "" {
+		cfg.AuditFile = auditFile
+	}
+
+	if auditCooldown := strings.TrimSpace(os.Getenv("SYMM_AUDIT_GATE_COOLDOWN")); auditCooldown != "" {
+		if parsed, err := time.ParseDuration(auditCooldown); err == nil {
+			cfg.AuditGateRejectCooldown = parsed
+		}
+	}
+
+	if auditMaxMB := strings.TrimSpace(os.Getenv("SYMM_AUDIT_MAX_MB")); auditMaxMB != "" {
+		var megabytes int64
+
+		if _, err := fmt.Sscan(auditMaxMB, &megabytes); err == nil && megabytes > 0 {
+			cfg.AuditMaxFileBytes = megabytes << 20
+		}
 	}
 
 	if configFile := strings.TrimSpace(os.Getenv("SYMM_CONFIG_FILE")); configFile != "" {

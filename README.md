@@ -478,17 +478,23 @@ Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap —
 
 ## Build and run
 
-SYMM links against `qpool`, which requires a linkname flag. **Always use the Makefile:**
+SYMM links against `qpool`, which uses `go:linkname` runtime hooks. Go 1.26+ rejects those unless `-checklinkname=0` is set at link time. **Use the Makefile** (it exports `GOFLAGS` for all targets):
 
 ```bash
 make build          # → bin/symm
 make run            # build + run (paper defaults)
-make test-go        # full test suite with correct ldflags
+make audit          # like run, plus JSONL desk audit log (off by default)
+make test-go        # full test suite
+make test-cover     # coverage report → runs/coverage.out
 make bench          # package benchmarks
 ```
 
 > [!WARNING]
-> Using bare `go test ./...` without `-ldflags=-checklinkname=0` will fail. Use `make test-go`.
+> Bare `go test ./...` without the linkname flag fails at link time. Either use `make test-go`, or run once per shell:
+>
+> ```bash
+> export GOFLAGS=-ldflags=-checklinkname=0
+> ```
 
 **Replay captured traffic:**
 
@@ -512,6 +518,15 @@ make tune REPLAY_FILE=runs/capture.jsonl ITERATIONS=64 WORKERS=8
 
 Results are written to `runs/tuned.json` and loaded automatically on the next run.
 
+**Desk audit log (debugging gate rejects without flooding the UI):**
+
+```bash
+make audit                                    # → runs/audit-<timestamp>.jsonl
+make audit AUDIT_FILE=runs/my-audit.jsonl
+```
+
+Gate rejects are deduplicated (default 60s per symbol/playbook/reason). Files rotate at 32MB with three backups. The dashboard audit panel still shows entry/exit fills only.
+
 **Frontend (separate terminal):**
 
 ```bash
@@ -525,6 +540,9 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_REPLAY_FILE`       | JSONL replay instead of live WebSocket                  |
 | `SYMM_REPLAY_PACE`       | Delay between replay lines (e.g., `50ms`)               |
 | `SYMM_RECORD_FILE`       | Path to write a live-capture JSONL recording            |
+| `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
+| `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
+| `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
 | `SYMM_KRAKEN_API_KEY`    | Kraken API key for authenticated WebSocket v2           |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |

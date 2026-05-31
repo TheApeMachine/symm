@@ -1,8 +1,10 @@
 # qpool uses go:linkname runtime hooks; Go 1.26+ needs this when linking symm.
-# Always use make test-go / make build — bare `go test ./...` fails at link time.
-# No inner quotes: a single shell layer can pass the flag through unambiguously,
-# but quoted forms break in nested shells (cgo, subprocesses).
-LDFLAGS := -ldflags=-checklinkname=0
+# export GOFLAGS so make targets and nested go/cgo subprocesses inherit the flag.
+# Outside Make, run: export GOFLAGS=-ldflags=-checklinkname=0
+# No inner quotes: a single shell layer passes the flag through unambiguously.
+export GOFLAGS := -ldflags=-checklinkname=0
+
+LDFLAGS := $(GOFLAGS)
 
 SYMM_BIN := bin/symm
 LOG_DIR ?= runs
@@ -11,39 +13,44 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-frontend bench run replay dump profile profile-stack profile-report strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay dump profile profile-stack profile-report strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
-	go build $(LDFLAGS) -o $(SYMM_BIN) .
+	go build -o $(SYMM_BIN) .
 
 test: test-go test-race test-frontend
 
 test-go:
-	go test $(LDFLAGS) -race ./...
+	go test -race ./...
 
 test-race:
 ifeq ($(shell uname -s),Darwin)
-	go test $(LDFLAGS) -race $(RACE_PACKAGES)
+	go test -race $(RACE_PACKAGES)
 else
-	go test $(LDFLAGS) -race ./...
+	go test -race ./...
 endif
+
+test-cover:
+	@mkdir -p runs
+	go test -coverprofile=runs/coverage.out ./...
+	go tool cover -func=runs/coverage.out | tail -1
 
 test-frontend:
 	cd frontend && pnpm test
 
 bench:
-	go test $(LDFLAGS) -bench=. -benchmem ./...
+	go test -bench=. -benchmem ./...
 
 PROFILE_DIR ?= runs/profiles
 
 profile:
 	@mkdir -p $(PROFILE_DIR)
-	go test $(LDFLAGS) -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
+	go test -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
 
 profile-stack:
 	@mkdir -p $(PROFILE_DIR)
-	go test $(LDFLAGS) \
+	go test \
 		-cpuprofile=$(PROFILE_DIR)/stack-cpu.prof \
 		-memprofile=$(PROFILE_DIR)/stack-mem.prof \
 		-bench=BenchmarkProfileStack \
@@ -66,6 +73,15 @@ run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
 	./$(SYMM_BIN)
+
+AUDIT_FILE ?= $(LOG_DIR)/audit-$(shell date -u +%Y%m%dT%H%M%SZ).jsonl
+
+audit: build
+	@mkdir -p $(LOG_DIR)
+	@echo "symm running with desk audit log at $(AUDIT_FILE)"
+	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
+	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
 
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"

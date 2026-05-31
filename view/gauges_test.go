@@ -30,3 +30,18 @@ func TestGaugesFrame(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkGaugesFrame(b *testing.B) {
+	gauges := &Gauges{}
+	reading := perspectives.Measurement{
+		Source:   perspectives.SourceFluid,
+		Strength: 1.5,
+		SNR:      2,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = gauges.frame(reading)
+	}
+}

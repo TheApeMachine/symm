@@ -52,6 +52,7 @@ type Crypto struct {
 	runtime                 *config.ScopedRuntime
 	decisionTraceMu         sync.Mutex
 	decisionTraceRows       []decisionTraceRow
+	auditLog                *AuditLog
 }
 
 func NewCrypto(
@@ -97,6 +98,21 @@ func NewCrypto(
 		}
 	}
 
+	if auditPath := strings.TrimSpace(config.System.AuditFile); auditPath != "" {
+		auditLog, auditErr := OpenAuditLog(
+			auditPath,
+			config.System.AuditMaxFileBytes,
+			config.System.AuditMaxFiles,
+			config.System.AuditGateRejectCooldown,
+		)
+
+		if auditErr != nil {
+			errnie.Error(auditErr)
+		} else {
+			crypto.auditLog = auditLog
+		}
+	}
+
 	return crypto
 }
 
@@ -111,6 +127,12 @@ func (crypto *Crypto) Close() error {
 
 	if crypto.live != nil {
 		if err := crypto.live.Close(); err != nil {
+			return err
+		}
+	}
+
+	if crypto.auditLog != nil {
+		if err := crypto.auditLog.Close(); err != nil {
 			return err
 		}
 	}
@@ -365,7 +387,7 @@ func realizedReturn(entry, exit float64) float64 {
 }
 
 func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map[string]any) {
-	if crypto.ui == nil {
+	if crypto.ui == nil && crypto.auditLog == nil {
 		return
 	}
 
@@ -382,6 +404,20 @@ func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map
 
 	for key, value := range fields {
 		frame[key] = value
+	}
+
+	if crypto.auditLog != nil {
+		if err := crypto.auditLog.Append(auditEvent, frame); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	if crypto.ui == nil {
+		return
+	}
+
+	if auditEvent != "entry" && auditEvent != "exit" {
+		return
 	}
 
 	crypto.ui.Send(&qpool.QValue[any]{Value: frame})
