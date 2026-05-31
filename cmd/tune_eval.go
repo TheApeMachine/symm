@@ -6,12 +6,19 @@ import (
 	"os"
 
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 type evalTrialOptions struct {
-	replayFile string
-	tunables   config.Tunables
-	stress     bool
+	replayFile   string
+	tunables     config.Tunables
+	perspectives *perspectives.Document
+	stress       bool
+}
+
+type tuneCandidate struct {
+	tunables     config.Tunables
+	perspectives *perspectives.Document
 }
 
 type trialScores struct {
@@ -102,12 +109,13 @@ func scoreTrial(
 	holdoutReplays []string,
 	stressHoldout bool,
 	maxTrainHoldoutGap float64,
-	candidate config.Tunables,
+	candidate tuneCandidate,
 ) (trialScores, error) {
 	trainResult, err := runEvalTrial(evalTrialOptions{
-		replayFile: trainReplay,
-		tunables:   candidate,
-		stress:     false,
+		replayFile:   trainReplay,
+		tunables:     candidate.tunables,
+		perspectives: candidate.perspectives,
+		stress:       false,
 	})
 
 	if err != nil {
@@ -118,9 +126,10 @@ func scoreTrial(
 
 	for _, holdoutReplay := range holdoutReplays {
 		holdoutResult, holdoutErr := runEvalTrial(evalTrialOptions{
-			replayFile: holdoutReplay,
-			tunables:   candidate,
-			stress:     stressHoldout,
+			replayFile:   holdoutReplay,
+			tunables:     candidate.tunables,
+			perspectives: candidate.perspectives,
+			stress:       stressHoldout,
 		})
 
 		if holdoutErr != nil {
@@ -151,12 +160,29 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 	tempPath := tempFile.Name()
 	_ = tempFile.Close()
 	defer os.Remove(tempPath)
+	perspectivePath := ""
 
 	trialConfig := config.NewConfig()
 	options.tunables.Apply(trialConfig)
 
 	if err := config.SaveTunablesFile(tempPath, trialConfig); err != nil {
 		return evalTrialResult{}, err
+	}
+
+	if options.perspectives != nil {
+		perspectiveFile, fileErr := os.CreateTemp("", "symm-perspectives-*.yaml")
+
+		if fileErr != nil {
+			return evalTrialResult{}, fileErr
+		}
+
+		perspectivePath = perspectiveFile.Name()
+		_ = perspectiveFile.Close()
+		defer os.Remove(perspectivePath)
+
+		if err := perspectives.SaveDocumentFile(perspectivePath, *options.perspectives); err != nil {
+			return evalTrialResult{}, err
+		}
 	}
 
 	executable, err := os.Executable()
@@ -170,6 +196,10 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 		"SYMM_REPLAY_FILE": options.replayFile,
 		"SYMM_CONFIG_FILE": tempPath,
 		"SYMM_LOG_STDOUT":  "0",
+	}
+
+	if perspectivePath != "" {
+		env["SYMM_PERSPECTIVES_FILE"] = perspectivePath
 	}
 
 	if options.stress {

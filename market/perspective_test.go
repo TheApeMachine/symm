@@ -58,10 +58,59 @@ func TestExitDecisions(t *testing.T) {
 	})
 }
 
+func TestEntryCategoriesForPlaybook(t *testing.T) {
+	convey.Convey("Given a generated playbook registry", t, func() {
+		document := perspectives.Document{Version: 1, Playbooks: []perspectives.PlaybookSpec{{
+			Name:   "drive",
+			Regime: "trending",
+			Policy: "drive",
+			Deny: []perspectives.BranchSpec{{
+				Category: "toxic_bluff",
+				Action:   "deny",
+			}},
+			Entry: []perspectives.BranchSpec{{
+				Metric:    perspectives.MetricScoreCostRatio,
+				Condition: ">=",
+				Value:     float64Ptr(1),
+				Branches: []perspectives.BranchSpec{{
+					Category: "vertical_ignition",
+					Action:   "enter",
+				}},
+			}},
+			Exit: []perspectives.BranchSpec{{
+				Category: "active_reversal",
+				Action:   "stop_loss",
+			}},
+		}}}
+		strategies, err := perspectives.BuildStrategies(document)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(SetPerspectiveRegistry(strategies), convey.ShouldBeNil)
+		defer SetPerspectiveRegistry([]perspectives.Perspective{
+			perspectives.NewTrendPerspective(),
+			perspectives.NewDrivePerspective(),
+			perspectives.NewLeadLagPerspective(),
+			perspectives.NewScarcityPerspective(),
+			perspectives.NewPumpPerspective(),
+		})
+
+		categories := EntryCategoriesForPlaybook("drive")
+
+		convey.Convey("It should report the active tree categories instead of the legacy playbook map", func() {
+			convey.So(categories, convey.ShouldResemble, []perspectives.CategoryType{
+				perspectives.CategoryVerticalIgnition,
+			})
+		})
+	})
+}
+
 func BenchmarkDecisions(b *testing.B) {
 	measurements := trendMeasurements()
 
 	for b.Loop() {
 		_ = Decisions(measurements, nil)
 	}
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
 }

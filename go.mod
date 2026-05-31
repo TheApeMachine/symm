@@ -5,10 +5,9 @@ go 1.26.1
 require (
 	github.com/bytedance/sonic v1.15.1
 	github.com/phuslu/log v1.0.124
-	github.com/qntfy/jsonparser v1.0.2
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
-	github.com/valyala/fasthttp v1.71.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -37,6 +36,7 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/valyala/fasthttp v1.71.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect
@@ -65,6 +65,3 @@ replace (
 	github.com/theapemachine/errnie => ../errnie
 	github.com/theapemachine/qpool => ../qpool
 )
-
-
-

@@ -128,7 +128,10 @@ func (crypto *Crypto) refreshCrossSection() {
 					}
 				}
 
-				names := entryNames(decision.Decisions(measurements, nil))
+				context := func(playbook string) perspectives.DecisionContext {
+					return crypto.entryDecisionContext(row.symbol, measurements, playbook, 0)
+				}
+				names := entryNames(decision.DecisionsWithContext(measurements, nil, context))
 				score := thesisScore(measurements, names)
 				local.scores[index-job.start] = score
 

@@ -20,11 +20,19 @@ func (tree *Tree) Walk(
 	measurements []Measurement,
 	observations []ObservationType,
 ) *ActionType {
+	return tree.WalkWithContext(measurements, observations, DecisionContext{})
+}
+
+func (tree *Tree) WalkWithContext(
+	measurements []Measurement,
+	observations []ObservationType,
+	context DecisionContext,
+) *ActionType {
 	if tree == nil {
 		return nil
 	}
 
-	action, _ := deepest(tree.Branches, measurements, observations, nil)
+	action, _, _ := deepest(tree.Branches, measurements, observations, context)
 
 	return action
 }
@@ -37,11 +45,26 @@ func (tree *Tree) WalkWithTrace(
 	observations []ObservationType,
 	trace *DecisionTrace,
 ) *ActionType {
+	return tree.WalkWithTraceContext(measurements, observations, trace, DecisionContext{})
+}
+
+func (tree *Tree) WalkWithTraceContext(
+	measurements []Measurement,
+	observations []ObservationType,
+	trace *DecisionTrace,
+	context DecisionContext,
+) *ActionType {
 	if tree == nil {
 		return nil
 	}
 
-	action, _ := deepest(tree.Branches, measurements, observations, trace)
+	action, _, steps := deepest(tree.Branches, measurements, observations, context)
+
+	if trace != nil {
+		for _, step := range steps {
+			trace.RecordTraceStep(step)
+		}
+	}
 
 	return action
 }
@@ -56,21 +79,23 @@ func deepest(
 	branches []Branch,
 	measurements []Measurement,
 	observations []ObservationType,
-	trace *DecisionTrace,
-) (*ActionType, int) {
+	context DecisionContext,
+) (*ActionType, int, []TraceStep) {
 	var best *ActionType
 	bestDepth := -1
+	var bestSteps []TraceStep
 
 	for index := range branches {
-		action, depth := branches[index].walk(measurements, observations, trace)
+		action, depth, steps := branches[index].walk(measurements, observations, context)
 
 		if action != nil && depth > bestDepth {
 			best = action
 			bestDepth = depth
+			bestSteps = steps
 		}
 	}
 
-	return best, bestDepth
+	return best, bestDepth, bestSteps
 }
 
 /*
@@ -83,59 +108,67 @@ on depth.
 func (branch *Branch) walk(
 	measurements []Measurement,
 	observations []ObservationType,
-	trace *DecisionTrace,
-) (*ActionType, int) {
-	matched, snr, threshold := branch.matchDetail(measurements, observations)
+	context DecisionContext,
+) (*ActionType, int, []TraceStep) {
+	matched, snr, threshold := branch.matchDetail(measurements, observations, context)
 
 	if !matched {
-		return nil, -1
+		return nil, -1, nil
 	}
 
-	if action, depth := deepest(branch.Branches, measurements, observations, trace); action != nil {
-		branch.recordTrace(trace, *action, snr, threshold, depth+1, true)
+	if action, depth, steps := deepest(branch.Branches, measurements, observations, context); action != nil {
+		path := make([]TraceStep, 0, len(steps)+1)
+		path = append(path, branch.traceStep(*action, snr, threshold, depth+1, true))
+		path = append(path, steps...)
 
-		return action, depth + 1
+		return action, depth + 1, path
 	}
 
 	if branch.Action == ActionNone {
-		return nil, -1
+		return nil, -1, nil
 	}
 
 	action := branch.Action
-	branch.recordTrace(trace, action, snr, threshold, 0, true)
 
-	return &action, 0
+	return &action, 0, []TraceStep{branch.traceStep(action, snr, threshold, 0, true)}
 }
 
-func (branch *Branch) recordTrace(
-	trace *DecisionTrace,
+func (branch *Branch) traceStep(
 	action ActionType,
 	snr float64,
 	threshold float64,
 	depth int,
 	matched bool,
-) {
-	if trace == nil {
-		return
+) TraceStep {
+	return TraceStep{
+		Category:  branch.Category,
+		Metric:    branch.Metric,
+		Action:    action,
+		SNR:       snr,
+		Threshold: threshold,
+		Condition: branch.Condition,
+		Depth:     depth,
+		Matched:   matched,
 	}
-
-	trace.RecordStep(
-		branch.Category,
-		action,
-		snr,
-		threshold,
-		branch.Condition,
-		depth,
-		matched,
-	)
 }
 
 func (branch *Branch) matchDetail(
 	measurements []Measurement,
 	observations []ObservationType,
+	context DecisionContext,
 ) (matched bool, snr float64, threshold float64) {
 	if branch.Observation != ObservationNone {
 		return slices.Contains(observations, branch.Observation), 0, 0
+	}
+
+	if branch.Metric != "" {
+		value, ok := context.Metric(branch.Metric)
+
+		if !ok {
+			return false, 0, branch.Value
+		}
+
+		return matchesCondition(branch.Condition, value, branch.Value), value, branch.Value
 	}
 
 	if branch.Category == CategoryTypeNone {
@@ -150,7 +183,15 @@ func (branch *Branch) matchDetail(
 
 	switch branch.Unit {
 	case UnitSNR, UnitConfidence:
-		threshold := snrThreshold()
+		threshold := 0.0
+
+		if branch.ValueSet {
+			threshold = branch.Value
+		}
+
+		if !branch.ValueSet || threshold <= 0 {
+			threshold = snrThreshold()
+		}
 
 		return matchesCondition(branch.Condition, measurement.SNR, threshold), measurement.SNR, threshold
 	default:

@@ -47,6 +47,63 @@ func TestWalkWithTraceRecordsLeaf(t *testing.T) {
 	})
 }
 
+func TestWalkWithTraceRecordsWinningPathOnly(t *testing.T) {
+	convey.Convey("Given sibling deny and wait branches that both match", t, func() {
+		tree := &Tree{Branches: []Branch{
+			snrBranch(CategoryMechanicalCollapse, ActionDeny),
+			snrBranch(CategorySystemicSlump, ActionWait),
+		}}
+		trace := AcquireTrace(PlaybookTrend)
+		defer ReleaseTrace(trace)
+
+		action := tree.WalkWithTrace([]Measurement{
+			measurement(CategoryMechanicalCollapse, 2),
+			measurement(CategorySystemicSlump, 2),
+		}, nil, trace)
+
+		convey.Convey("It should record only the branch that won the tie", func() {
+			convey.So(action, convey.ShouldNotBeNil)
+			convey.So(*action, convey.ShouldEqual, ActionDeny)
+
+			steps := trace.StepsSlice()
+			convey.So(len(steps), convey.ShouldEqual, 1)
+			convey.So(steps[0].Category, convey.ShouldEqual, CategoryMechanicalCollapse)
+			convey.So(steps[0].Action, convey.ShouldEqual, ActionDeny)
+		})
+	})
+}
+
+func TestWalkWithTraceRecordsMetricBranch(t *testing.T) {
+	convey.Convey("Given a metric deny branch", t, func() {
+		tree := &Tree{Branches: []Branch{{
+			Metric:    MetricScoreCostRatio,
+			Condition: ConditionIsLessThan,
+			Value:     1,
+			ValueSet:  true,
+			Action:    ActionDeny,
+		}}}
+		trace := AcquireTrace(PlaybookDrive)
+		defer ReleaseTrace(trace)
+
+		action := tree.WalkWithTraceContext(
+			nil,
+			nil,
+			trace,
+			DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: 0.4}},
+		)
+
+		convey.Convey("It should preserve the metric name in the trace", func() {
+			convey.So(action, convey.ShouldNotBeNil)
+			convey.So(*action, convey.ShouldEqual, ActionDeny)
+
+			steps := trace.StepsSlice()
+			convey.So(steps, convey.ShouldHaveLength, 1)
+			convey.So(steps[0].Metric, convey.ShouldEqual, MetricScoreCostRatio)
+			convey.So(steps[0].SNR, convey.ShouldEqual, 0.4)
+		})
+	})
+}
+
 func BenchmarkAcquireTraceRelease(b *testing.B) {
 	measurements := trendEntryMeasurements()
 	perspective := NewTrendPerspective()

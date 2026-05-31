@@ -189,19 +189,20 @@ func (crypto *Crypto) consider(symbol string, last float64, measurements []persp
 		return
 	}
 
-	verdicts := decision.EntryVerdicts(measurements, nil)
+	context := crypto.entryContextProvider(symbol, measurements)
+	verdicts := decision.EntryVerdictsWithContext(measurements, nil, context)
 	defer decision.ReleaseEntryVerdicts(verdicts)
 
 	crypto.story.RecordEntryVerdicts(symbol, verdicts)
 	crypto.recordEntryVerdicts(symbol, measurements, verdicts)
 
-	entryDecisions := decision.Decisions(measurements, nil)
+	entryDecisions := decision.DecisionsWithContext(measurements, nil, context)
 	crypto.story.RecordEntry(symbol, entryDecisions)
 
-	opportunity, ok := crypto.entryOpportunity(symbol, measurements)
+	opportunity, ok := crypto.entryOpportunity(symbol, measurements, context)
 
 	if !ok {
-		if reason, fields := crypto.entryRejectReason(symbol, measurements); reason != "" {
+		if reason, fields := crypto.entryRejectReason(symbol, measurements, context); reason != "" {
 			crypto.publishEntryReject(symbol, reason, fields)
 		}
 

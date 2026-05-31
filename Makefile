@@ -92,6 +92,7 @@ REPLAY_PACE ?= 50ms
 RECORD_FILE ?= runs/capture.jsonl
 REPLAY_FILE ?= $(RECORD_FILE)
 TUNE_ITERATIONS ?= 64
+PERSPECTIVES_OUTPUT ?= config/perspectives.yaml
 
 replay: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE)" && exit 1)
@@ -106,7 +107,11 @@ record: build
 tune: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
 	@echo "Tuning $(REPLAY_FILE) — fitness = score_eur − missed gate regret ($(TUNE_ITERATIONS) trials)"
-	./$(SYMM_BIN) tune --replay "$(REPLAY_FILE)" --iterations $(or $(ITERATIONS),$(TUNE_ITERATIONS)) --workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
+	./$(SYMM_BIN) tune \
+		--replay "$(REPLAY_FILE)" \
+		--iterations $(or $(ITERATIONS),$(TUNE_ITERATIONS)) \
+		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc)) \
+		--perspectives-output "$(PERSPECTIVES_OUTPUT)"
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

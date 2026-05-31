@@ -29,8 +29,15 @@ symbol as a candidate only when at least one playbook authorizes an entry.
 func (crypto *Crypto) entryOpportunity(
 	symbol string,
 	measurements []perspectives.Measurement,
+	contextProviders ...func(string) perspectives.DecisionContext,
 ) (opportunity, bool) {
-	decisions := decision.Decisions(measurements, nil)
+	context := crypto.entryContextProvider(symbol, measurements)
+
+	if len(contextProviders) > 0 && contextProviders[0] != nil {
+		context = contextProviders[0]
+	}
+
+	decisions := decision.DecisionsWithContext(measurements, nil, context)
 	names := entryNames(decisions)
 
 	if len(names) == 0 {
@@ -137,8 +144,9 @@ Returns an empty reason when no playbook authorized entry.
 func (crypto *Crypto) entryRejectReason(
 	symbol string,
 	measurements []perspectives.Measurement,
+	context func(string) perspectives.DecisionContext,
 ) (string, map[string]any) {
-	decisions := decision.Decisions(measurements, nil)
+	decisions := decision.DecisionsWithContext(measurements, nil, context)
 	names := entryNames(decisions)
 
 	if len(names) == 0 {
@@ -174,6 +182,61 @@ func (crypto *Crypto) entryRejectReason(
 	}
 
 	return "", nil
+}
+
+func (crypto *Crypto) entryContextProvider(
+	symbol string,
+	measurements []perspectives.Measurement,
+) func(string) perspectives.DecisionContext {
+	snapshot := crypto.ensureCrossSection()
+	cache := make(map[string]perspectives.DecisionContext)
+
+	return func(playbook string) perspectives.DecisionContext {
+		if context, ok := cache[playbook]; ok {
+			return context
+		}
+
+		context := crypto.entryDecisionContext(symbol, measurements, playbook, snapshot.Baseline)
+		cache[playbook] = context
+
+		return context
+	}
+}
+
+func (crypto *Crypto) entryDecisionContext(
+	symbol string,
+	measurements []perspectives.Measurement,
+	playbook string,
+	baseline float64,
+) perspectives.DecisionContext {
+	score := thesisScore(measurements, []string{playbook})
+	feePct := crypto.takerFeePct(symbol)
+	spreadBPS := crypto.quotes.spreadBPS(symbol)
+	roundTripCostPct := roundTripFrictionPct(feePct, spreadBPS)
+	requiredScore := crypto.scopedRuntime().Risk.EntryEdgeMultiple * roundTripCostPct * 100
+	scoreCostRatio := 0.0
+
+	if requiredScore > 0 {
+		scoreCostRatio = score / requiredScore
+	}
+
+	inPlay := 0.0
+
+	if score > baseline {
+		inPlay = 1
+	}
+
+	return perspectives.DecisionContext{
+		Metrics: map[string]float64{
+			perspectives.MetricThesisScore:      score,
+			perspectives.MetricSpreadBPS:        spreadBPS,
+			perspectives.MetricFeePct:           feePct,
+			perspectives.MetricRoundTripCostBPS: roundTripCostPct * 10000,
+			perspectives.MetricRequiredScore:    requiredScore,
+			perspectives.MetricScoreCostRatio:   scoreCostRatio,
+			perspectives.MetricInPlay:           inPlay,
+		},
+	}
 }
 
 func (crypto *Crypto) calibrateRejectFields(candidate opportunity) map[string]any {
@@ -257,6 +320,10 @@ func playbookCategories(playbookNames []string) map[perspectives.CategoryType]bo
 }
 
 func categoriesForPlaybook(name string) []perspectives.CategoryType {
+	if categories := decision.EntryCategoriesForPlaybook(name); len(categories) > 0 {
+		return categories
+	}
+
 	switch perspectives.PlaybookName(name) {
 	case perspectives.PlaybookTrend:
 		return []perspectives.CategoryType{

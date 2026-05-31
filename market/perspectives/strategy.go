@@ -67,7 +67,7 @@ func (strat *strategy) Decide(
 		return strat.decideExit(measurements, observations)
 	}
 
-	return strat.decideEntryWithTrace(measurements, observations, nil)
+	return strat.decideEntryWithTrace(measurements, observations, nil, DecisionContext{})
 }
 
 /*
@@ -78,29 +78,82 @@ func (strat *strategy) DecideWithTrace(
 	observations []ObservationType,
 	trace *DecisionTrace,
 ) *ActionType {
+	return strat.DecideWithTraceContext(measurements, observations, trace, DecisionContext{})
+}
+
+func (strat *strategy) DecideWithContext(
+	measurements []Measurement,
+	observations []ObservationType,
+	context DecisionContext,
+) *ActionType {
 	if holding(observations) {
 		return strat.decideExit(measurements, observations)
 	}
 
-	return strat.decideEntryWithTrace(measurements, observations, trace)
+	return strat.decideEntryWithTrace(measurements, observations, nil, context)
+}
+
+func (strat *strategy) DecideWithTraceContext(
+	measurements []Measurement,
+	observations []ObservationType,
+	trace *DecisionTrace,
+	context DecisionContext,
+) *ActionType {
+	if holding(observations) {
+		return strat.decideExit(measurements, observations)
+	}
+
+	return strat.decideEntryWithTrace(measurements, observations, trace, context)
 }
 
 func (strat *strategy) Regime() Regime {
 	return strat.regime
 }
 
+func (strat *strategy) EntryCategories() []CategoryType {
+	return treeCategories(strat.entry)
+}
+
+func treeCategories(tree *Tree) []CategoryType {
+	if tree == nil {
+		return nil
+	}
+
+	seen := make(map[CategoryType]bool)
+	categories := make([]CategoryType, 0)
+	collectBranchCategories(tree.Branches, seen, &categories)
+
+	return categories
+}
+
+func collectBranchCategories(
+	branches []Branch,
+	seen map[CategoryType]bool,
+	categories *[]CategoryType,
+) {
+	for _, branch := range branches {
+		if branch.Category != CategoryTypeNone && !seen[branch.Category] {
+			seen[branch.Category] = true
+			*categories = append(*categories, branch.Category)
+		}
+
+		collectBranchCategories(branch.Branches, seen, categories)
+	}
+}
+
 func (strat *strategy) decideEntryWithTrace(
 	measurements []Measurement,
 	observations []ObservationType,
 	trace *DecisionTrace,
+	context DecisionContext,
 ) *ActionType {
-	if action := strat.deny.WalkWithTrace(measurements, observations, trace); action != nil {
+	if action := strat.deny.WalkWithTraceContext(measurements, observations, trace, context); action != nil {
 		if IsEntryBlocked(*action) {
 			return action
 		}
 	}
 
-	action := strat.entry.WalkWithTrace(measurements, observations, trace)
+	action := strat.entry.WalkWithTraceContext(measurements, observations, trace, context)
 
 	if action == nil || *action == ActionNone {
 		return nil
@@ -148,7 +201,6 @@ func snrBranch(category CategoryType, action ActionType) Branch {
 		Category:  category,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     snrThreshold(),
 		Action:    action,
 	}
 }
@@ -161,7 +213,6 @@ func snrGate(category CategoryType, children ...Branch) Branch {
 		Category:  category,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     snrThreshold(),
 		Branches:  children,
 	}
 }
@@ -174,7 +225,6 @@ func entryLeaf(trigger CategoryType) Branch {
 		Category:  trigger,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     snrThreshold(),
 		Action:    ActionEnter,
 	}
 }

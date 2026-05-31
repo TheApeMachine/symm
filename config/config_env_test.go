@@ -36,6 +36,18 @@ func TestApplyEnvironmentParsesValidDuration(t *testing.T) {
 	})
 }
 
+func TestApplyEnvironmentParsesPerspectiveFile(t *testing.T) {
+	Convey("Given a perspective YAML override", t, func() {
+		t.Setenv("SYMM_PERSPECTIVES_FILE", "runs/candidate-perspectives.yaml")
+		cfg := &config.Config{}
+
+		Convey("It should apply the override", func() {
+			So(config.ApplyEnvironment(cfg), ShouldBeNil)
+			So(cfg.PerspectiveFile, ShouldEqual, "runs/candidate-perspectives.yaml")
+		})
+	})
+}
+
 func TestLoadTunablesFileRejectsInvalidJSON(t *testing.T) {
 	Convey("Given an invalid tunables file", t, func() {
 		path := filepath.Join(t.TempDir(), "bad.json")

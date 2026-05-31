@@ -1,6 +1,8 @@
 package market
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -32,6 +34,45 @@ var perspectiveRegistry = []registeredPerspective{
 	{name: string(perspectives.PlaybookPump), perspective: perspectives.NewPumpPerspective()},
 }
 
+func LoadPerspectiveRegistry(path string) error {
+	document, err := perspectives.LoadDocumentFile(path)
+
+	if err != nil {
+		return err
+	}
+
+	strategies, err := perspectives.BuildStrategies(document)
+
+	if err != nil {
+		return err
+	}
+
+	return SetPerspectiveRegistry(strategies)
+}
+
+func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
+	if len(strategies) == 0 {
+		return fmt.Errorf("perspective registry requires at least one strategy")
+	}
+
+	registry := make([]registeredPerspective, 0, len(strategies))
+
+	for _, strategy := range strategies {
+		if strategy == nil {
+			return fmt.Errorf("nil perspective strategy")
+		}
+
+		registry = append(registry, registeredPerspective{
+			name:        string(strategy.Name()),
+			perspective: strategy,
+		})
+	}
+
+	perspectiveRegistry = registry
+
+	return nil
+}
+
 /*
 NewPerspective returns the highest-priority traversable entry playbook, or nil.
 */
@@ -53,10 +94,18 @@ func Decisions(
 	measurements []perspectives.Measurement,
 	observations []perspectives.ObservationType,
 ) []Decision {
+	return DecisionsWithContext(measurements, observations, nil)
+}
+
+func DecisionsWithContext(
+	measurements []perspectives.Measurement,
+	observations []perspectives.ObservationType,
+	context func(string) perspectives.DecisionContext,
+) []Decision {
 	decisions := make([]Decision, 0, len(perspectiveRegistry))
 
 	for _, entry := range perspectiveRegistry {
-		action := entry.perspective.Decide(measurements, observations)
+		action := decideWithContext(entry.perspective, measurements, observations, contextFor(context, entry.name))
 
 		if action == nil || *action != perspectives.ActionEnter {
 			continue
@@ -70,6 +119,60 @@ func Decisions(
 	}
 
 	return decisions
+}
+
+type contextDecider interface {
+	DecideWithContext(
+		measurements []perspectives.Measurement,
+		observations []perspectives.ObservationType,
+		context perspectives.DecisionContext,
+	) *perspectives.ActionType
+}
+
+func decideWithContext(
+	perspective perspectives.Perspective,
+	measurements []perspectives.Measurement,
+	observations []perspectives.ObservationType,
+	context perspectives.DecisionContext,
+) *perspectives.ActionType {
+	if decider, ok := perspective.(contextDecider); ok {
+		return decider.DecideWithContext(measurements, observations, context)
+	}
+
+	return perspective.Decide(measurements, observations)
+}
+
+func contextFor(
+	provider func(string) perspectives.DecisionContext,
+	name string,
+) perspectives.DecisionContext {
+	if provider == nil {
+		return perspectives.DecisionContext{}
+	}
+
+	return provider(name)
+}
+
+type entryCategoryProvider interface {
+	EntryCategories() []perspectives.CategoryType
+}
+
+func EntryCategoriesForPlaybook(name string) []perspectives.CategoryType {
+	for _, entry := range perspectiveRegistry {
+		if entry.name != name {
+			continue
+		}
+
+		provider, ok := entry.perspective.(entryCategoryProvider)
+
+		if !ok {
+			return nil
+		}
+
+		return provider.EntryCategories()
+	}
+
+	return nil
 }
 
 /*

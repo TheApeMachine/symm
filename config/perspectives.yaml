@@ -1,0 +1,191 @@
+version: 1
+playbooks:
+  - name: trend
+    regime: bullish
+    policy: standard
+    entry:
+      - metric: score_cost_ratio
+        condition: "<"
+        value: 1
+        action: deny
+      - metric: score_cost_ratio
+        condition: ">="
+        value: 1
+        branches:
+          - any:
+              - category: risk_on_surge
+                branches:
+                  - category: endogenous_alpha
+                    branches:
+                      - category: frenzy
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: laminar
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: inertial
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: hard_support
+                        branches:
+                          - category: loaded_imbalance
+                            action: enter
+              - category: divergent_move
+                branches:
+                  - category: endogenous_alpha
+                    branches:
+                      - category: frenzy
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: laminar
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: inertial
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: hard_support
+                        branches:
+                          - category: loaded_imbalance
+                            action: enter
+              - category: decoupled_alpha
+                branches:
+                  - category: endogenous_alpha
+                    branches:
+                      - category: frenzy
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: laminar
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: inertial
+                        branches:
+                          - category: aggressive_drive
+                            action: enter
+                      - category: hard_support
+                        branches:
+                          - category: loaded_imbalance
+                            action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+      - category: thermal_exhaustion
+        action: take_profit
+      - category: faded_exhaustion
+        action: take_profit
+
+  - name: drive
+    regime: trending
+    policy: drive
+    entry:
+      - metric: score_cost_ratio
+        condition: "<"
+        value: 1
+        action: deny
+      - metric: score_cost_ratio
+        condition: ">="
+        value: 1
+        branches:
+          - category: aggressive_drive
+            action: enter
+          - category: hidden_absorption
+            action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+      - category: thermal_exhaustion
+        action: take_profit
+      - category: mechanical_collapse
+        action: take_profit
+
+  - name: leadlag
+    regime: trending
+    policy: standard
+    entry:
+      - metric: score_cost_ratio
+        condition: "<"
+        value: 1
+        action: deny
+      - metric: score_cost_ratio
+        condition: ">="
+        value: 1
+        branches:
+          - any:
+              - category: risk_on_surge
+                branches:
+                  - category: inefficient_lag
+                    action: enter
+              - category: divergent_move
+                branches:
+                  - category: inefficient_lag
+                    action: enter
+              - category: decoupled_alpha
+                branches:
+                  - category: inefficient_lag
+                    action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+      - category: anchor_stall
+        action: take_profit
+      - category: synchronized_drift
+        action: take_profit
+
+  - name: scarcity
+    regime: choppy
+    policy: standard
+    entry:
+      - metric: score_cost_ratio
+        condition: "<"
+        value: 1
+        action: deny
+      - metric: score_cost_ratio
+        condition: ">="
+        value: 1
+        branches:
+          - category: extreme_scarcity
+            branches:
+              - category: vertical_ignition
+                action: enter
+              - category: coiled_compression
+                action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+      - category: faded_exhaustion
+        action: take_profit
+      - category: mechanical_collapse
+        action: take_profit
+
+  - name: pump
+    regime: trending
+    policy: pump
+    entry:
+      - metric: score_cost_ratio
+        condition: "<"
+        value: 1
+        action: deny
+      - metric: score_cost_ratio
+        condition: ">="
+        value: 1
+        branches:
+          - category: coiled_compression
+            action: enter
+          - category: spoof_trap
+            action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+      - category: vertical_ignition
+        action: short
+      - category: faded_exhaustion
+        action: take_profit
+      - category: vertical_ignition
+        action: stop_loss

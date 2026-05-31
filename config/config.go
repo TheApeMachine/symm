@@ -183,12 +183,14 @@ type Config struct {
 	AuditMaxFiles                int
 	AuditGateRejectCooldown      time.Duration
 	ConfigFile                   string
+	PerspectiveFile              string
 	Headless                     bool
 }
 
 var System *Config
 
 const defaultTunedFile = "runs/tuned.json"
+const defaultPerspectiveFile = "config/perspectives.yaml"
 
 func init() {
 	if err := Bootstrap(); err != nil {
@@ -386,6 +388,7 @@ func NewConfig() *Config {
 		AuditMaxFileBytes:            32 << 20,
 		AuditMaxFiles:                3,
 		AuditGateRejectCooldown:      60 * time.Second,
+		PerspectiveFile:              defaultPerspectiveFile,
 	}
 
 	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {
@@ -453,6 +456,10 @@ func ApplyEnvironment(cfg *Config) error {
 
 	if configFile := strings.TrimSpace(os.Getenv("SYMM_CONFIG_FILE")); configFile != "" {
 		cfg.ConfigFile = configFile
+	}
+
+	if perspectiveFile := strings.TrimSpace(os.Getenv("SYMM_PERSPECTIVES_FILE")); perspectiveFile != "" {
+		cfg.PerspectiveFile = perspectiveFile
 	}
 
 	if headless := strings.TrimSpace(os.Getenv("SYMM_HEADLESS")); headless == "1" ||

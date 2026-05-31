@@ -23,11 +23,27 @@ func EntryVerdicts(
 	measurements []perspectives.Measurement,
 	observations []perspectives.ObservationType,
 ) []EntryVerdict {
+	return EntryVerdictsWithContext(measurements, observations, nil)
+}
+
+func EntryVerdictsWithContext(
+	measurements []perspectives.Measurement,
+	observations []perspectives.ObservationType,
+	context func(string) perspectives.DecisionContext,
+) []EntryVerdict {
 	verdicts := make([]EntryVerdict, 0, len(perspectiveRegistry))
 
 	for _, entry := range perspectiveRegistry {
 		trace := perspectives.AcquireTrace(entry.perspective.Name())
-		action := decideWithTrace(entry.perspective, measurements, observations, trace)
+		decisionContext := perspectives.DecisionContext{}
+
+		if context != nil {
+			decisionContext = context(entry.name)
+		}
+
+		action := decideWithTrace(
+			entry.perspective, measurements, observations, trace, decisionContext,
+		)
 
 		if action == nil {
 			perspectives.ReleaseTrace(trace)
@@ -69,10 +85,24 @@ func decideWithTrace(
 	measurements []perspectives.Measurement,
 	observations []perspectives.ObservationType,
 	trace *perspectives.DecisionTrace,
+	context perspectives.DecisionContext,
 ) *perspectives.ActionType {
+	if decider, ok := perspective.(contextTraceDecider); ok {
+		return decider.DecideWithTraceContext(measurements, observations, trace, context)
+	}
+
 	if decider, ok := perspective.(traceDecider); ok {
 		return decider.DecideWithTrace(measurements, observations, trace)
 	}
 
 	return perspective.Decide(measurements, observations)
+}
+
+type contextTraceDecider interface {
+	DecideWithTraceContext(
+		measurements []perspectives.Measurement,
+		observations []perspectives.ObservationType,
+		trace *perspectives.DecisionTrace,
+		context perspectives.DecisionContext,
+	) *perspectives.ActionType
 }

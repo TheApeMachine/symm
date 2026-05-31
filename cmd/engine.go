@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/replay"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -42,6 +43,10 @@ type engineResult struct {
 }
 
 func bootEngine(ctx context.Context) (*engineResult, error) {
+	if err := configurePerspectives(config.System.PerspectiveFile); err != nil {
+		return nil, err
+	}
+
 	if path := strings.TrimSpace(config.System.RecordFile); path != "" {
 		if _, err := replay.OpenRecorder(path); err != nil {
 			return nil, err
@@ -300,6 +305,26 @@ var tuneCmd = &cobra.Command{
 			output = config.DefaultTunedPath()
 		}
 
+		perspectiveOutput, err := cmd.Flags().GetString("perspectives-output")
+
+		if err != nil || strings.TrimSpace(perspectiveOutput) == "" {
+			perspectiveOutput = config.System.PerspectiveFile
+		}
+
+		profile, err := profileReplayPrimitives(cmd.Context(), replayFile)
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
+		search, err := perspectives.NewDocumentSearch(profile, nil)
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
 		maxGapFlag, err := cmd.Flags().GetFloat64("max-train-holdout-gap")
 
 		if err != nil {
@@ -313,15 +338,20 @@ var tuneCmd = &cobra.Command{
 		bestTrainScore := -1e18
 		bestHoldoutScores := []float64(nil)
 		bestGap := 0.0
-		bestConfig := config.ExtractTunables(config.System)
+		var bestConfig tuneCandidate
 		var rejectedOverfit atomic.Int64
 		var bestMu sync.Mutex
-		jobs := make(chan config.Tunables, workers*2)
+		jobs := make(chan int, workers*2)
 		var waitGroup sync.WaitGroup
 
 		for worker := 0; worker < workers; worker++ {
 			waitGroup.Go(func() {
-				for candidate := range jobs {
+				for range jobs {
+					document := search.Next()
+					candidate := tuneCandidate{
+						tunables:     config.MutateTunables(config.System, nil),
+						perspectives: &document,
+					}
 					scores, scoreErr := scoreTrial(
 						replayFile, holdoutFiles, stressHoldout, maxTrainHoldoutGap, candidate,
 					)
@@ -335,6 +365,8 @@ var tuneCmd = &cobra.Command{
 						rejectedOverfit.Add(1)
 						continue
 					}
+
+					search.Observe(document, scores.selection)
 
 					bestMu.Lock()
 
@@ -352,18 +384,30 @@ var tuneCmd = &cobra.Command{
 		}
 
 		for trial := 0; trial < iterations; trial++ {
-			jobs <- config.MutateTunables(config.System, nil)
+			jobs <- trial
 		}
 
 		close(jobs)
 		waitGroup.Wait()
 
-		overlay := bestConfig
+		if bestSelection == -1e18 {
+			errnie.Error(fmt.Errorf("no eligible perspective candidates"))
+			os.Exit(1)
+		}
+
+		overlay := bestConfig.tunables
 		overlay.Apply(config.System)
 
 		if err := config.SaveTunablesFile(output, config.System); err != nil {
 			errnie.Error(err)
 			os.Exit(1)
+		}
+
+		if bestConfig.perspectives != nil {
+			if err := perspectives.SaveDocumentFile(perspectiveOutput, *bestConfig.perspectives); err != nil {
+				errnie.Error(err)
+				os.Exit(1)
+			}
 		}
 
 		payload, _ := json.Marshal(map[string]any{
@@ -377,6 +421,8 @@ var tuneCmd = &cobra.Command{
 			"holdout_replays":          holdoutFiles,
 			"stress_holdout":           stressHoldout,
 			"output":                   output,
+			"perspectives_output":      perspectiveOutput,
+			"perspective_categories":   len(profile.Categories),
 			"iterations":               iterations,
 			"workers":                  workers,
 		})
@@ -394,5 +440,6 @@ func init() {
 	tuneCmd.Flags().Int("iterations", 64, "Number of random trials")
 	tuneCmd.Flags().Int("workers", runtime.NumCPU(), "Concurrent eval workers")
 	tuneCmd.Flags().String("output", config.DefaultTunedPath(), "Path to write best tunables")
+	tuneCmd.Flags().String("perspectives-output", "config/perspectives.yaml", "Path to write best perspective tree YAML")
 	rootCmd.AddCommand(tuneCmd)
 }

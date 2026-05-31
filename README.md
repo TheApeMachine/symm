@@ -2,7 +2,7 @@
 
 # S.Y.M.M. — Shake Your Money Maker
 
-A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic **category** and scoring it against its own adaptive noise floor as an **SNR** value. The trader holds the latest reading per source per symbol, consults perspective playbooks encoded as decision trees, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
+A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic **category** and scoring it against its own adaptive noise floor as an **SNR** value. The trader holds the latest reading per source per symbol, consults YAML-loaded perspective playbooks encoded as decision trees, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
 
 Category semantics and the design rationale behind each signal row live in [`DECISION.md`](DECISION.md).
 
@@ -193,7 +193,9 @@ type Decision struct {
 
 ## Perspectives and playbooks
 
-Playbooks live in `market/perspectives/` and are registered in priority order. Order is conviction-first: playbooks that require more confirming categories before entry sit earlier, so the best-supported thesis wins when several apply simultaneously.
+The active playbooks are loaded from `config/perspectives.yaml` at boot (`SYMM_PERSPECTIVES_FILE` overrides it). The Go constructors in `market/perspectives/` remain the built-in fallback and test oracle, but `make run` uses the YAML registry when the file is present.
+
+Order is conviction-first: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite the tree shapes inside those named slots.
 
 | Priority | Playbook   | Thesis                                                                                                                  |
 |----------|------------|-------------------------------------------------------------------------------------------------------------------------|
@@ -203,7 +205,16 @@ Playbooks live in `market/perspectives/` and are registered in priority order. O
 | 4        | `scarcity` | `ExtremeScarcity` + ignition cue; exits on reversal, fade, or mechanical collapse.                                      |
 | 5        | `pump`     | `CoiledCompression` or `SpoofTrap` entry; category exits combined with peak trail ratchet.                              |
 
-**Tree walking:** each branch checks whether the measurement set contains the required category with `SNR > NoiseFloorSNR` (default 1.0, tunable). The deepest reachable leaf wins — more confirming categories produce a more specific verdict. Branches that gate without attaching an action are deny/wait guards; the first leaf that assigns an action terminates the walk.
+**Tree walking:** each branch can gate on a category, observation, or metric. Category branches compare observed `Measurement.SNR` against either the global `NoiseFloorSNR` or an explicit YAML threshold. Metric branches read trader context such as `thesis_score`, `spread_bps`, `fee_pct`, `round_trip_cost_bps`, `required_score`, `score_cost_ratio`, and `in_play`. The deepest reachable leaf wins, and traces record only the winning path.
+
+`score_cost_ratio >= 1` means the playbook's current thesis score clears the configured edge requirement after fees and spread:
+
+```
+score_cost_ratio = thesis_score / required_score
+required_score   = EntryEdgeMultiple × round_trip_friction_pct × 100
+```
+
+The desk still keeps friction and economics checks as a final defense, but the default YAML now gates entries before the desk sees them.
 
 **Universal deny branches** — evaluated by every playbook before entry gates:
 
@@ -360,9 +371,16 @@ A symbol must be a genuine outlier against the rest of the market to receive cap
 
 Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 optional fields. At boot, `config.Bootstrap` auto-loads `runs/tuned.json` when present; invalid tunables or malformed `SYMM_*` env overrides abort startup instead of silently keeping defaults.
 
-### Parameter search
+### Parameter and tree search
 
-`symm tune` runs a **parallel random search** over `TunableSpecs()` — 23 search dimensions, each with an explicit min/max/step. One scalar drives selection:
+`symm tune` runs a replay-backed search over two spaces:
+
+- numeric tunables from `TunableSpecs()`
+- generated perspective-tree YAML built from the measurements observed in the replay
+
+Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then generated from those primitives: entry routes, deny/wait gates, exit leaves, category thresholds, and metric gates such as `score_cost_ratio` and `in_play`. The generated YAML is evaluated by `symm eval`; the best eligible tree set is written to `--perspectives-output`.
+
+One scalar drives selection:
 
 ```
 fitness_eur = score_eur − gate_reject_regret.missed_forward_eur
@@ -396,7 +414,7 @@ Wallet PnL plus a penalty for profitable entries the gates blocked.
 | `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `causal_condition_switch`       | 100 – 5000           |
 
-Each trial is a `MutateTunables()` candidate evaluated by spawning `symm eval` as a headless subprocess against one or more replay fixtures. With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by minimum holdout fitness is written to `--output` (default `runs/tuned.json`).
+Each trial is a `MutateTunables()` candidate plus a generated or best-tree-mutated perspective document, evaluated by spawning `symm eval` as a headless subprocess against one or more replay fixtures. With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by minimum holdout fitness is written to `--output` (default `runs/tuned.json`) and `--perspectives-output` (default `config/perspectives.yaml`).
 
 `symm eval` prints JSON including `fitness_eur`, `score_eur`, and `gate_reject_regret`.
 
@@ -408,6 +426,7 @@ symm tune
   --iterations  64               random candidates to evaluate
   --workers     <numCPU>         concurrent eval workers
   --output      runs/tuned.json  persisted best config
+  --perspectives-output config/perspectives.yaml  persisted best tree YAML
   --max-train-holdout-gap  0     EUR ceiling on gap (0 = 3% wallet, <0 = disabled)
   --stress-holdout              apply execution stress to holdout evals (default true)
 ```
@@ -519,18 +538,19 @@ make bench          # package benchmarks
 
 ```bash
 make record    # live capture → runs/capture.jsonl + audit log (Ctrl+C when done)
-make tune      # searches all 23 tunables; writes runs/tuned.json
+make tune      # searches tunables + learned tree YAML; writes runs/tuned.json + config/perspectives.yaml
 ```
 
 That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
 
-`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` automatically.
+`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `config/perspectives.yaml` automatically.
 
 Optional overrides:
 
 ```bash
 make record RECORD_FILE=runs/my-session.jsonl
 make tune REPLAY_FILE=runs/my-session.jsonl ITERATIONS=128
+make tune REPLAY_FILE=runs/my-session.jsonl PERSPECTIVES_OUTPUT=runs/learned-perspectives.yaml
 ```
 
 **Replay a fixture without recording:**
@@ -564,6 +584,7 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
 | `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
 | `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
+| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry loaded at boot (default `config/perspectives.yaml`) |
 | `SYMM_KRAKEN_API_KEY`    | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
@@ -674,7 +695,7 @@ Full environment wiring is in `config/config.go`.
 | `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
 | `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
 
-Hyperparameter search: `--iterations` (default 32), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best result is auto-loaded from `runs/tuned.json` at next boot.
+Hyperparameter and tree search: `--iterations` (default 64), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `config/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `config/perspectives.yaml` at next boot.
 
 </details>
 
@@ -699,7 +720,7 @@ Hyperparameter search: `--iterations` (default 32), `--workers` (default NumCPU)
 |------------------------|----------------------------------------------------------------------------|
 | `cmd/`                 | Cobra entry point, booter, system registration; `tune` and `eval` commands |
 | `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`             |
-| `market/perspectives/` | Category types, decision tree engine, individual playbooks                 |
+| `market/perspectives/` | Category types, YAML tree loader, replay-profiled tree generator, built-in playbooks |
 | `signal/`              | All microstructure signal systems                                          |
 | `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper              |
 | `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics            |
@@ -729,7 +750,7 @@ Hyperparameter search: `--iterations` (default 32), `--workers` (default NumCPU)
 | `snapshot/`            | Lock-free copy-on-write per-symbol state container (atomic CAS)            |
 | `runstats/`            | Dependency-inverted run-level counter interface (avoids import cycles)     |
 | `replay/`              | JSONL recorder and replayer; fixture playback                              |
-| `config/`              | Runtime parameters, environment wiring, tunables and search specs          |
+| `config/`              | Runtime parameters, environment wiring, tunables, search specs, `perspectives.yaml` |
 | `analysis/`            | Python post-run attribution and performance scripts                        |
 | `DECISION.md`          | Category semantics and signal design rationale                             |
 | `AGENTS.md`            | Agent contract: tests, benchmarks, style                                   |

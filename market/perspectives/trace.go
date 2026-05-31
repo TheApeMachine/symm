@@ -9,6 +9,7 @@ TraceStep is one branch evaluation along a playbook decision path.
 */
 type TraceStep struct {
 	Category  CategoryType
+	Metric    string
 	Action    ActionType
 	SNR       float64
 	Threshold float64
@@ -79,11 +80,7 @@ func (trace *DecisionTrace) RecordStep(
 	depth int,
 	matched bool,
 ) {
-	if trace == nil || trace.stepCount >= maxTraceSteps {
-		return
-	}
-
-	trace.Steps[trace.stepCount] = TraceStep{
+	trace.RecordTraceStep(TraceStep{
 		Category:  category,
 		Action:    action,
 		SNR:       snr,
@@ -91,7 +88,15 @@ func (trace *DecisionTrace) RecordStep(
 		Condition: condition,
 		Depth:     depth,
 		Matched:   matched,
+	})
+}
+
+func (trace *DecisionTrace) RecordTraceStep(step TraceStep) {
+	if trace == nil || trace.stepCount >= maxTraceSteps {
+		return
 	}
+
+	trace.Steps[trace.stepCount] = step
 	trace.stepCount++
 }
 
