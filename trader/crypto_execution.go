@@ -28,6 +28,10 @@ func (crypto *Crypto) prepareEntryQuote(
 }
 
 func (crypto *Crypto) hasPendingEntry(symbol string) bool {
+	if crypto.makers != nil && crypto.makers.HasPending(symbol) {
+		return true
+	}
+
 	if crypto.live != nil && crypto.live.HasPendingEntry(symbol) {
 		return true
 	}
@@ -213,6 +217,7 @@ func entryIntent(
 ) orderIntent {
 	return orderIntent{
 		kind:           "entry",
+		entryType:      "taker",
 		symbol:         buy.Symbol,
 		playbook:       playbook,
 		notional:       buy.Notional,
@@ -267,6 +272,10 @@ func (crypto *Crypto) intentSession(clOrdID string) (*orderSession, orderIntent,
 
 func (crypto *Crypto) handleOrderAck(ack order.Ack) {
 	if ack.Success {
+		if ack.Method == order.MethodAddOrder && ack.Result.ClOrdID != "" && ack.Result.OrderID != "" {
+			crypto.makers.bindOrderID(ack.Result.ClOrdID, ack.Result.OrderID)
+		}
+
 		return
 	}
 
@@ -276,6 +285,7 @@ func (crypto *Crypto) handleOrderAck(ack order.Ack) {
 		return
 	}
 
+	crypto.makers.drop(ack.Result.ClOrdID, intent.symbol)
 	handleRejectAck(session, crypto.wallet, ack)
 	crypto.publishAudit("order_reject", intent.symbol, ack.Error, map[string]any{
 		"method":    ack.Method,
@@ -293,6 +303,7 @@ func (crypto *Crypto) handleOrderFill(fill order.Fill) {
 
 	switch intent.kind {
 	case "entry":
+		crypto.makers.drop(fill.ClOrdID, intent.symbol)
 		crypto.handleEntryFill(fill, intent, session)
 
 		if order.OrderFillTerminal(fill) {
@@ -401,7 +412,11 @@ func (crypto *Crypto) completeEntry(
 	now time.Time,
 	intent orderIntent,
 ) {
-	feePct := crypto.takerFeePct(symbol)
+	feePct := intent.feePct
+
+	if feePct <= 0 {
+		feePct = crypto.takerFeePct(symbol)
+	}
 
 	crypto.economics.RecordEntry(entryLabel)
 	crypto.wallet.BindPosition(baseOf(symbol), wallet.PositionBinding{
@@ -431,6 +446,7 @@ func (crypto *Crypto) completeEntry(
 		"perspectives":           opportunity.Names,
 		"playbook":               playbook,
 		"fill_price":             fillPrice,
+		"entry_type":             intent.entryType,
 		"live":                   crypto.live != nil,
 		"quote_age_ms":           entryLabel.QuoteAgeMS,
 		"spread_bps":             entryLabel.SpreadBPS,

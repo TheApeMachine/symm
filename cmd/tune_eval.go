@@ -18,6 +18,8 @@ type trialScores struct {
 	trainScore    float64
 	holdoutScores []float64
 	selection     float64
+	gap           float64
+	eligible      bool
 }
 
 /*
@@ -41,10 +43,59 @@ func trialSelectionScore(trainScore float64, holdoutScores []float64) float64 {
 	return selection
 }
 
+/*
+trialTrainHoldoutGap is train minus minimum holdout score. Large gaps indicate
+memorization on the training replay rather than generalization.
+*/
+func trialTrainHoldoutGap(trainScore float64, holdoutScores []float64) float64 {
+	if len(holdoutScores) == 0 {
+		return 0
+	}
+
+	return trainScore - trialSelectionScore(trainScore, holdoutScores)
+}
+
+/*
+trialEligible rejects candidates whose holdout score lags train by more than
+maxGap EUR when holdouts exist.
+*/
+func trialEligible(trainScore float64, holdoutScores []float64, maxGap float64) bool {
+	if len(holdoutScores) == 0 {
+		return true
+	}
+
+	if maxGap < 0 {
+		return true
+	}
+
+	return trialTrainHoldoutGap(trainScore, holdoutScores) <= maxGap
+}
+
+/*
+resolveMaxTrainHoldoutGap maps CLI input to an EUR gap ceiling. Zero uses 3% of
+WalletEUR; negative disables overfit rejection.
+*/
+func resolveMaxTrainHoldoutGap(requested float64, walletEUR float64) float64 {
+	if requested < 0 {
+		return -1
+	}
+
+	if requested > 0 {
+		return requested
+	}
+
+	if walletEUR <= 0 {
+		return 0
+	}
+
+	return walletEUR * 0.03
+}
+
 func scoreTrial(
 	trainReplay string,
 	holdoutReplays []string,
 	stressHoldout bool,
+	maxTrainHoldoutGap float64,
 	candidate config.Tunables,
 ) (trialScores, error) {
 	trainScore, err := runEvalTrial(evalTrialOptions{
@@ -73,10 +124,14 @@ func scoreTrial(
 		holdoutScores = append(holdoutScores, holdoutScore)
 	}
 
+	gap := trialTrainHoldoutGap(trainScore, holdoutScores)
+
 	return trialScores{
 		trainScore:    trainScore,
 		holdoutScores: holdoutScores,
 		selection:     trialSelectionScore(trainScore, holdoutScores),
+		gap:           gap,
+		eligible:      trialEligible(trainScore, holdoutScores, maxTrainHoldoutGap),
 	}, nil
 }
 

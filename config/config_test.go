@@ -24,8 +24,8 @@ func TestNewConfigDefaults(t *testing.T) {
 		t.Fatalf("expected console logging disabled by default")
 	}
 
-	if cfg.UseMakerEntries {
-		t.Fatal("expected paper defaults to use taker entry friction")
+	if !cfg.UseMakerEntries {
+		t.Fatal("expected maker entries enabled by default")
 	}
 
 	if cfg.ScalpHoldBeforeExit != 90*time.Second {

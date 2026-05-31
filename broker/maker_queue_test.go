@@ -28,10 +28,8 @@ func TestQueueAheadBaseQty(t *testing.T) {
 func TestMakerFillReady(t *testing.T) {
 	Convey("Given insufficient sell-aggressor volume", t, func() {
 		queue := MakerQueueContext{
-			Bids: []market.BookLevel{
-				{Price: 50000, Qty: 1},
-			},
-			BidTradeVolume: 0.5,
+			InitialQueueAheadBaseQty: 1,
+			BidTradeVolume:           0.5,
 		}
 
 		ready := MakerFillReady(queue, 50000, 0.1)
@@ -43,10 +41,8 @@ func TestMakerFillReady(t *testing.T) {
 
 	Convey("Given sell-aggressor volume through the queue", t, func() {
 		queue := MakerQueueContext{
-			Bids: []market.BookLevel{
-				{Price: 50000, Qty: 1},
-			},
-			BidTradeVolume: 1.15,
+			InitialQueueAheadBaseQty: 1,
+			BidTradeVolume:           1.15,
 		}
 
 		ready := MakerFillReady(queue, 50000, 0.1)
@@ -59,46 +55,28 @@ func TestMakerFillReady(t *testing.T) {
 
 func TestMakerFillPaperRequiresQueue(t *testing.T) {
 	Convey("Given a maker bid with insufficient queue turnover", t, func() {
-		tradingWallet := walletForMakerTest(t, 10)
+		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
 
-		fill, err := (&Maker{
+		_, err := (&Maker{
 			Symbol:     "BTC/EUR",
 			LimitPrice: 50000,
 			Notional:   10,
 		}).FillPaper(tradingWallet, MakerQueueContext{
-			Bids: []market.BookLevel{
-				{Price: 50000, Qty: 2},
-			},
-			BidTradeVolume: 0.1,
+			InitialQueueAheadBaseQty: 2,
+			BidTradeVolume:           0.1,
 		})
 
 		Convey("It should reject without settling", func() {
 			So(err, ShouldEqual, ErrMakerQueueNotReady)
-			So(fill.Qty, ShouldEqual, 0)
-			So(tradingWallet.ReservedEUR, ShouldEqual, 10)
+			So(tradingWallet.ReservedEUR, ShouldEqual, 0)
 		})
 	})
 }
 
-func walletForMakerTest(t *testing.T, notional float64) *wallet.Wallet {
-	t.Helper()
-
-	tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
-
-	if err := tradingWallet.ReserveEntry(notional); err != nil {
-		t.Fatalf("reserve: %v", err)
-	}
-
-	return tradingWallet
-}
-
 func BenchmarkMakerFillReady(b *testing.B) {
 	queue := MakerQueueContext{
-		Bids: []market.BookLevel{
-			{Price: 50000, Qty: 1.5},
-			{Price: 49950, Qty: 2},
-		},
-		BidTradeVolume: 2,
+		InitialQueueAheadBaseQty: 1.5,
+		BidTradeVolume:           2,
 	}
 
 	b.ReportAllocs()

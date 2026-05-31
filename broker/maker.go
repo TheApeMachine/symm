@@ -24,18 +24,53 @@ type Maker struct {
 }
 
 /*
-FillPaper settles one maker entry at its limit price when sell-aggressor volume
-has consumed the visible queue ahead of the bid. Cost basis recorded on the
-wallet is the full notional (which absorbs the maker fee), not the limit
-price, so realized PnL accounts for fees on both sides of every round trip.
+SubmitPaper reserves cash for one resting maker bid without filling.
 */
-func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet, queue MakerQueueContext) (order.Fill, error) {
+func (maker *Maker) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 	if err := maker.validate(tradingWallet); err != nil {
-		return order.Fill{}, err
+		return "", err
 	}
 
 	if tradingWallet.Type != wallet.PaperWallet {
-		return order.Fill{}, fmt.Errorf("maker fill is paper-only")
+		return "", fmt.Errorf("paper maker requires paper wallet")
+	}
+
+	if err := tradingWallet.ReserveEntry(maker.Notional); err != nil {
+		return "", err
+	}
+
+	if maker.ClOrdID == "" {
+		clOrdID, err := order.NextClOrdID()
+
+		if err != nil {
+			tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+			return "", fmt.Errorf("generate cl_ord_id: %w", err)
+		}
+
+		maker.ClOrdID = clOrdID
+	}
+
+	if err := ShouldRejectPaperOrder(); err != nil {
+		tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+		return maker.ClOrdID, err
+	}
+
+	return maker.ClOrdID, nil
+}
+
+/*
+BuildPaperFill prices one maker fill once sell-aggressor volume clears the queue.
+The desk settles through handleOrderFill like taker paper orders.
+*/
+func (maker *Maker) BuildPaperFill(queue MakerQueueContext) (order.Fill, error) {
+	if maker == nil || maker.Symbol == "" || maker.Notional <= 0 || maker.LimitPrice <= 0 {
+		return order.Fill{}, fmt.Errorf("invalid maker")
+	}
+
+	if maker.ClOrdID == "" {
+		return order.Fill{}, fmt.Errorf("maker cl_ord_id is required")
 	}
 
 	feePct := maker.FeePct
@@ -44,46 +79,65 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet, queue MakerQueueCont
 		feePct = config.System.MakerFeePct
 	}
 
-	if feePct <= 0 {
-		feePct = tradingWallet.FeePct
-	}
-
-	fee := maker.Notional * feePct / 100
-
-	if err := ShouldRejectPaperOrder(); err != nil {
-		tradingWallet.ReleaseEntryReservation(maker.Notional)
-
-		return order.Fill{}, err
-	}
-
 	effectivePrice := maker.LimitPrice * (1 + float64(config.System.AdverseSelectionBPS)/10000)
+	fee := maker.Notional * feePct / 100
 	orderBaseQty := (maker.Notional - fee) / effectivePrice
 
 	if !MakerFillReady(queue, maker.LimitPrice, orderBaseQty) {
 		return order.Fill{}, ErrMakerQueueNotReady
 	}
 
-	if err := tradingWallet.SettleEntryReservation(maker.Notional, maker.Notional); err != nil {
-		return order.Fill{}, err
-	}
-
-	orderSymbol := Symbol(maker.Symbol)
-	base := orderSymbol.BaseAsset()
-	qty := orderBaseQty
-
-	if qty <= 0 {
+	if orderBaseQty <= 0 {
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)
 	}
 
-	tradingWallet.AddInventoryWithCost(base, qty, maker.Notional)
+	orderSymbol := Symbol(maker.Symbol)
 
 	return order.Fill{
 		OrderID: orderSymbol.PaperOrderID("maker"),
+		ClOrdID: maker.ClOrdID,
 		Symbol:  maker.Symbol,
 		Side:    "buy",
-		Qty:     qty,
+		Qty:     orderBaseQty,
 		Price:   effectivePrice,
+		Fee:     fee,
+		FeeCcy:  config.System.QuoteCurrency,
+		ExecKey: "paper-" + maker.ClOrdID,
 	}, nil
+}
+
+/*
+FillPaper runs SubmitPaper and BuildPaperFill, then settles immediately for tests.
+*/
+func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet, queue MakerQueueContext) (order.Fill, error) {
+	return maker.fillPaperSettled(tradingWallet, queue)
+}
+
+func (maker *Maker) fillPaperSettled(tradingWallet *wallet.Wallet, queue MakerQueueContext) (order.Fill, error) {
+	clOrdID, err := maker.SubmitPaper(tradingWallet)
+
+	if err != nil {
+		return order.Fill{}, err
+	}
+
+	fill, buildErr := maker.BuildPaperFill(queue)
+
+	if buildErr != nil {
+		tradingWallet.ReleaseEntryReservation(maker.Notional)
+
+		return order.Fill{}, buildErr
+	}
+
+	if settleErr := tradingWallet.SettleEntryReservation(maker.Notional, maker.Notional); settleErr != nil {
+		return order.Fill{}, settleErr
+	}
+
+	base := Symbol(maker.Symbol).BaseAsset()
+	tradingWallet.AddInventoryWithCost(base, fill.Qty, maker.Notional)
+
+	fill.ClOrdID = clOrdID
+
+	return fill, nil
 }
 
 /*

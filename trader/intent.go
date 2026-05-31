@@ -13,6 +13,7 @@ exchange reports a trade fill.
 */
 type orderIntent struct {
 	kind           string
+	entryType      string
 	symbol         string
 	playbook       string
 	notional       float64

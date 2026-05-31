@@ -25,6 +25,7 @@ func newTestCrypto() *Crypto {
 		quotes:    newQuoteCache(),
 		economics: economics.NewDesk(),
 		paper:     NewPaperSession(ctx),
+		makers:    newMakerDesk(),
 		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
 	}
 }

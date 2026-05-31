@@ -31,13 +31,14 @@ func NewLiveSession(ctx context.Context, apiKey, apiSecret string) (*liveSession
 
 	session := &liveSession{client: client}
 	session.router = broker.NewRouter(func(value any) error {
-		request, ok := value.(order.Request)
-
-		if !ok {
-			return fmt.Errorf("live order router: expected order.Request, got %T", value)
+		switch frame := value.(type) {
+		case order.Request:
+			return client.Publish(frame)
+		case order.CancelRequest:
+			return client.PublishCancel(frame)
+		default:
+			return fmt.Errorf("live order router: unsupported frame type %T", value)
 		}
-
-		return client.Publish(request)
 	})
 
 	if err := client.Start(); err != nil {

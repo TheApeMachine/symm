@@ -10,13 +10,13 @@ import (
 var ErrMakerQueueNotReady = errors.New("maker queue not ready")
 
 /*
-MakerQueueContext carries bid-side book depth and sell-aggressor volume since
-the resting bid was posted. BidTradeVolume is base quantity traded at or through
-the limit price (sellers hitting the bid).
+MakerQueueContext carries the queue-ahead quantity frozen at post time and
+sell-aggressor volume accumulated since. BidTradeVolume is base quantity traded
+at or through the limit price (sellers hitting the bid).
 */
 type MakerQueueContext struct {
-	Bids           []market.BookLevel
-	BidTradeVolume float64
+	InitialQueueAheadBaseQty float64
+	BidTradeVolume           float64
 }
 
 /*
@@ -51,16 +51,14 @@ func QueueAheadBaseQty(bids []market.BookLevel, limitPrice float64) float64 {
 
 /*
 MakerFillReady reports whether sell-aggressor volume has consumed the queue
-ahead of our resting bid and reached our order size.
+ahead frozen at post time and reached our order size.
 */
 func MakerFillReady(queue MakerQueueContext, limitPrice, orderBaseQty float64) bool {
 	if limitPrice <= 0 || orderBaseQty <= 0 {
 		return false
 	}
 
-	ahead := QueueAheadBaseQty(queue.Bids, limitPrice)
-
-	return queue.BidTradeVolume >= ahead+orderBaseQty
+	return queue.BidTradeVolume >= queue.InitialQueueAheadBaseQty+orderBaseQty
 }
 
 func priceLevelEpsilon(limitPrice float64) float64 {

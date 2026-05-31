@@ -270,7 +270,7 @@ func NewConfig() *Config {
 		AllowPaperShorts:             false,
 		AllowLiveShorts:              false,
 		KellyFraction:                0.5,
-		UseMakerEntries:              false,
+		UseMakerEntries:              true,
 		MakerFeePct:                  0.25, // fallback maker fee: real bottom-tier (0-volume) rate
 		ForecastSpreadMultiple:       4,
 		ExitUrgencyThreshold:         0.65,

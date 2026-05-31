@@ -41,6 +41,8 @@ type Crypto struct {
 	economics               *economics.Desk
 	paper                   *paperSession
 	live                    *liveSession
+	makers                  *makerDesk
+	makerFillMu             sync.Mutex
 	open                    atomic.Int64
 	auditSeq                atomic.Uint64
 	pulseSeq                atomic.Uint64
@@ -74,6 +76,7 @@ func NewCrypto(
 	crypto.measurements = group.Subscribe("trader:measurements", 128)
 	crypto.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	crypto.paper = NewPaperSession(ctx)
+	crypto.makers = newMakerDesk()
 
 	if liveEnabled(tradingWallet) {
 		session, sessionErr := NewLiveSession(ctx, config.System.KrakenAPIKey, config.System.KrakenAPISecret)
@@ -86,84 +89,6 @@ func NewCrypto(
 	}
 
 	return crypto
-}
-
-func (crypto *Crypto) Tick() error {
-	heartbeat := time.NewTicker(config.System.UIHeartbeatInterval)
-	defer heartbeat.Stop()
-
-	tickers := market.NewTickerSubscription(crypto.ctx, config.System.Symbols...)
-	books := market.NewBookSubscription(
-		crypto.ctx, config.System.BookDepthLevels, config.System.Symbols...,
-	)
-
-	fills := crypto.paper.Fills()
-	acks := crypto.paper.Acks()
-
-	if crypto.live != nil {
-		fills = crypto.live.Fills()
-		acks = crypto.live.Acks()
-	}
-
-	for {
-		select {
-		case <-crypto.ctx.Done():
-			return crypto.ctx.Err()
-		case <-heartbeat.C:
-			crypto.refreshCrossSection()
-			crypto.publishEnginePulse()
-			crypto.publishWallet()
-		case row, ok := <-tickers:
-			if !ok {
-				tickers = nil
-
-				continue
-			}
-
-			if row != nil {
-				crypto.quotes.ingestTicker(*row)
-			}
-		case update, ok := <-books:
-			if !ok {
-				books = nil
-
-				continue
-			}
-
-			if update != nil {
-				crypto.quotes.ingestBook(*update)
-			}
-		case value, ok := <-crypto.measurements.Incoming:
-			if !ok || value.Value == nil {
-				continue
-			}
-
-			measurement, measurementOK := value.Value.(perspectives.Measurement)
-
-			if !measurementOK || measurement.Symbol == "" {
-				continue
-			}
-
-			crypto.record(measurement)
-			crypto.evaluate(measurement.Symbol, measurement.Last)
-		case fill, ok := <-fills:
-			if !ok {
-				fills = nil
-
-				continue
-			}
-
-			crypto.handleOrderFill(fill)
-		case ack, ok := <-acks:
-			if !ok {
-				acks = nil
-
-				continue
-			}
-
-			crypto.handleOrderAck(ack)
-		}
-	}
 }
 
 func (crypto *Crypto) Close() error {
@@ -300,6 +225,16 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	measurements := crypto.snapshot(symbol)
 	quote := crypto.prepareEntryQuote(symbol, last, measurements)
 	playbook := primaryPlaybook(opportunity.Names)
+
+	if config.System.UseMakerEntries {
+		if err := crypto.submitMakerEntry(
+			symbol, notional, quote, opportunity, playbook, spreadBPS, crypto.makerFeePct(symbol),
+		); err != nil {
+			errnie.Error(err)
+		}
+
+		return
+	}
 
 	buy := broker.Buy{
 		Symbol:   symbol,

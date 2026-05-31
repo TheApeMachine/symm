@@ -91,6 +91,27 @@ func (client *Client) Publish(request Request) error {
 	return client.writeJSON(request)
 }
 
+/*
+PublishCancel sends one cancel_order frame with a fresh token when needed.
+*/
+func (client *Client) PublishCancel(request CancelRequest) error {
+	if err := client.refreshToken(); err != nil {
+		return err
+	}
+
+	client.mu.Lock()
+	token := client.token
+	client.mu.Unlock()
+
+	request.Params.Token = token
+
+	if request.ReqID == 0 {
+		request.ReqID = int(client.reqID.Add(1))
+	}
+
+	return client.writeJSON(request)
+}
+
 func (client *Client) Fills() <-chan Fill {
 	return client.fills
 }

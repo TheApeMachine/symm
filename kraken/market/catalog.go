@@ -172,6 +172,20 @@ func (catalog *PairCatalog) TakerFeePercent(symbol string) float64 {
 	return pair.TakerFeePercent(settings.feeVolume30d, settings.fallbackTaker)
 }
 
+/*
+MakerFeePercent resolves the maker fee for symbol at the configured 30d volume tier.
+*/
+func (catalog *PairCatalog) MakerFeePercent(symbol string) float64 {
+	pair := catalog.Lookup(symbol)
+	settings := catalogFees()
+
+	if pair == nil {
+		return config.System.MakerFeePct
+	}
+
+	return pair.MakerFeePercent(settings.feeVolume30d, config.System.MakerFeePct)
+}
+
 func normalizePairSymbol(symbol string) string {
 	if strings.Contains(symbol, "/") {
 		return symbol
