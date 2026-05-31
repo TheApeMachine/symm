@@ -366,7 +366,8 @@ func exitReason(action perspectives.ActionType) string {
 }
 
 func (crypto *Crypto) resolveEconomics(symbol string, last float64) {
-	forwardLabels := crypto.economics.ResolveForward(symbol, last, time.Now())
+	now := time.Now()
+	forwardLabels := crypto.economics.ResolveForward(symbol, last, now)
 
 	for _, label := range forwardLabels {
 		crypto.publishAudit("forward", symbol, "forward return matured", map[string]any{
@@ -376,6 +377,8 @@ func (crypto *Crypto) resolveEconomics(symbol string, last float64) {
 			"round_trip_cost": label.RoundTripCostPct,
 		})
 	}
+
+	crypto.economics.ResolveGateReject(symbol, last, now)
 }
 
 func realizedReturn(entry, exit float64) float64 {

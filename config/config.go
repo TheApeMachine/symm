@@ -108,6 +108,7 @@ type Config struct {
 	RegimeShockRecoverySamples   int
 	RegimeShockTrustFloor        float64
 	PerspectiveTTL               time.Duration
+	NoiseFloorSNR                float64
 	MaxPerspectiveMeasurements   int
 	CalibrationHalfLifeFloor     time.Duration
 	CalibrationHalfLifeCeiling   time.Duration
@@ -195,6 +196,7 @@ func init() {
 	if path := strings.TrimSpace(System.ConfigFile); path != "" {
 		_ = LoadTunablesFile(path, System)
 		Runtime = NewRuntime(System)
+		syncPerspectives(System)
 
 		return
 	}
@@ -204,6 +206,7 @@ func init() {
 	}
 
 	Runtime = NewRuntime(System)
+	syncPerspectives(System)
 }
 
 /*
@@ -301,6 +304,7 @@ func NewConfig() *Config {
 		RegimeShockRecoverySamples:   64,
 		RegimeShockTrustFloor:        0.02,
 		PerspectiveTTL:               30 * time.Second,
+		NoiseFloorSNR:                1.0,
 		MaxPerspectiveMeasurements:   256,
 		CalibrationHalfLifeFloor:     2 * time.Second,
 		CalibrationHalfLifeCeiling:   15 * time.Minute,

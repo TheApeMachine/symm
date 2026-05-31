@@ -95,7 +95,7 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Las
 
 2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
 
-3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to a unitless threshold (1 = one sigma above the signal's own baseline churn). Thresholds are self-scaling, not hand-tuned prices.
+3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to a unitless threshold (`NoiseFloorSNR`, default 1.0 = one sigma above the signal's own baseline churn). Thresholds are self-scaling, not hand-tuned prices.
 
 ## Everything is a `System`
 
@@ -203,7 +203,7 @@ Playbooks live in `market/perspectives/` and are registered in priority order. O
 | 4        | `scarcity` | `ExtremeScarcity` + ignition cue; exits on reversal, fade, or mechanical collapse.                                      |
 | 5        | `pump`     | `CoiledCompression` or `SpoofTrap` entry; category exits combined with peak trail ratchet.                              |
 
-**Tree walking:** each branch checks whether the measurement set contains the required category with `SNR > 1`. The deepest reachable leaf wins — more confirming categories produce a more specific verdict. Branches that gate without attaching an action are deny/wait guards; the first leaf that assigns an action terminates the walk.
+**Tree walking:** each branch checks whether the measurement set contains the required category with `SNR > NoiseFloorSNR` (default 1.0, tunable). The deepest reachable leaf wins — more confirming categories produce a more specific verdict. Branches that gate without attaching an action are deny/wait guards; the first leaf that assigns an action terminates the walk.
 
 **Universal deny branches** — evaluated by every playbook before entry gates:
 
@@ -357,7 +357,13 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 
 ### Parameter search
 
-`symm tune` runs a **parallel random search** over `TunableSpecs()` — 19 search dimensions, each with an explicit min/max/step:
+`symm tune` runs a **parallel random search** over `TunableSpecs()` — 23 search dimensions, each with an explicit min/max/step. One scalar drives selection:
+
+```
+fitness_eur = score_eur − gate_reject_regret.missed_forward_eur
+```
+
+Wallet PnL plus a penalty for profitable entries the gates blocked.
 
 | Dimension                       | Range                |
 |---------------------------------|----------------------|
@@ -371,23 +377,30 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 | `pump_slow_trail_pct`           | 0.1 – 0.35           |
 | `pump_hard_stop_pct`            | 0.05 – 0.25          |
 | `pump_size_fraction`            | 0.2 – 1.0            |
-| `max_entry_slippage_bps`        | 5 – 60               |
+| `max_entry_slippage_bps`        | 20 – 120             |
 | `max_spread_bps`                | 10 – 100             |
-| `min_exhaust_hold`              | 1 s – 30 s           |
-| `perspective_ttl`               | 10 s – 120 s         |
-| `min_cost_eur`                  | 0.25 – 2.0           |
-| `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `forward_return_min_samples`    | 10 – 80              |
 | `forward_return_significance_z` | 1.0 – 3.0            |
+| `noise_floor_snr`               | 0.7 – 1.5, step 0.05 |
+| `perspective_ttl`               | 10 s – 120 s         |
+| `min_cost_eur`                  | 0.25 – 2.0           |
+| `min_exhaust_hold`              | 1 s – 30 s           |
+| `book_depth_levels`             | 5 – 25               |
+| `causal_contagion_break`        | 0.5 – 0.99           |
+| `fluid_height_ema_alpha`        | 0.10 – 0.60          |
+| `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `causal_condition_switch`       | 100 – 5000           |
 
-Each trial is a `MutateTunables()` candidate evaluated by spawning `symm eval` as a headless subprocess against one or more replay fixtures. The overfitting guard rejects candidates whose train/holdout gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by minimum holdout score is written to `--output` (default `runs/tuned.json`).
+Each trial is a `MutateTunables()` candidate evaluated by spawning `symm eval` as a headless subprocess against one or more replay fixtures. With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by minimum holdout fitness is written to `--output` (default `runs/tuned.json`).
+
+`symm eval` prints JSON including `fitness_eur`, `score_eur`, and `gate_reject_regret`.
 
 ```
 symm tune
-  --replay   <training.jsonl>     required
-  --holdout  <holdout.jsonl>      optional, repeatable
-  --iterations  32               random candidates to evaluate
+  --replay   runs/capture.jsonl   default when omitted
+  --auto-holdout                  reserve last 20% as holdout (default true)
+  --holdout  <holdout.jsonl>      optional, repeatable; disables auto-holdout split
+  --iterations  64               random candidates to evaluate
   --workers     <numCPU>         concurrent eval workers
   --output      runs/tuned.json  persisted best config
   --max-train-holdout-gap  0     EUR ceiling on gap (0 = 3% wallet, <0 = disabled)
@@ -496,27 +509,29 @@ make bench          # package benchmarks
 > export GOFLAGS=-ldflags=-checklinkname=0
 > ```
 
-**Replay captured traffic:**
+**Record a live session, then tune against it:**
+
+```bash
+make record    # live capture → runs/capture.jsonl + audit log (Ctrl+C when done)
+make tune      # searches all 23 tunables; writes runs/tuned.json
+```
+
+That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
+
+`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` automatically.
+
+Optional overrides:
+
+```bash
+make record RECORD_FILE=runs/my-session.jsonl
+make tune REPLAY_FILE=runs/my-session.jsonl ITERATIONS=128
+```
+
+**Replay a fixture without recording:**
 
 ```bash
 make replay REPLAY_FILE=replay/fixtures/sample.jsonl REPLAY_PACE=50ms
 ```
-
-**Record a live session to a replay fixture:**
-
-```bash
-make record                                   # captures to runs/capture.jsonl
-make record RECORD_FILE=runs/my-session.jsonl
-```
-
-**Tune hyperparameters against a replay fixture:**
-
-```bash
-make tune REPLAY_FILE=runs/capture.jsonl
-make tune REPLAY_FILE=runs/capture.jsonl ITERATIONS=64 WORKERS=8
-```
-
-Results are written to `runs/tuned.json` and loaded automatically on the next run.
 
 **Desk audit log (debugging gate rejects without flooding the UI):**
 

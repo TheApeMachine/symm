@@ -31,12 +31,14 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/toxicity"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/trader/economics"
 	"github.com/theapemachine/symm/view"
 	"github.com/theapemachine/symm/wallet"
 )
 
 type engineResult struct {
 	Wallet *wallet.Wallet
+	Regret economics.RegretSummary
 }
 
 func bootEngine(ctx context.Context) (*engineResult, error) {
@@ -85,6 +87,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 	}
 
 	runCtx := booter.Context()
+	tradingCrypto := trader.NewCrypto(runCtx, pool, tradingWallet, tracker, config.Runtime)
 
 	if err := booter.AddSystems(
 		pumpdump.NewSignal(runCtx, pool),
@@ -99,7 +102,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		cvd.NewSignal(runCtx, pool),
 		toxicity.NewToxicity(runCtx, pool),
 		exhaust.NewSignal(runCtx, pool),
-		trader.NewCrypto(runCtx, pool, tradingWallet, tracker, config.Runtime),
+		tradingCrypto,
 		view.NewOHLC(runCtx, pool, tracker),
 		view.NewGauges(runCtx, pool),
 	); err != nil {
@@ -121,7 +124,12 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		_ = recorder.Close()
 	}
 
-	return &engineResult{Wallet: tradingWallet}, nil
+	tradingCrypto.FlushGateRejectRegret()
+
+	return &engineResult{
+		Wallet: tradingWallet,
+		Regret: tradingCrypto.GateRegretSummary(),
+	}, nil
 }
 
 func applyReplayMeta(replayPath string) {
@@ -184,13 +192,17 @@ var evalCmd = &cobra.Command{
 
 		score := walletScore(result.Wallet)
 		start := config.System.WalletEUR
+		scoreEUR := score - start
+		fitnessEUR := TuneFitness(scoreEUR, result.Regret.MissedForwardEUR)
 
 		payload, err := json.Marshal(map[string]any{
-			"score_eur":   score - start,
-			"equity_eur":  score,
-			"wallet_eur":  start,
-			"balance_eur": result.Wallet.BalanceCopy(),
-			"open_bases":  len(result.Wallet.Snapshot().Inventory),
+			"score_eur":          scoreEUR,
+			"fitness_eur":        fitnessEUR,
+			"equity_eur":         score,
+			"wallet_eur":         start,
+			"balance_eur":        result.Wallet.BalanceCopy(),
+			"open_bases":         len(result.Wallet.Snapshot().Inventory),
+			"gate_reject_regret": result.Regret,
 		})
 
 		if err != nil {
@@ -204,12 +216,24 @@ var evalCmd = &cobra.Command{
 
 var tuneCmd = &cobra.Command{
 	Use:   "tune",
-	Short: "Search tunable config against a replay fixture to maximize wallet equity",
+	Short: "Search tunable config against a replay fixture to maximize fitness",
 	Run: func(cmd *cobra.Command, args []string) {
-		replayFile, err := cmd.Flags().GetString("replay")
+		replayFlag, flagErr := cmd.Flags().GetString("replay")
 
-		if err != nil || strings.TrimSpace(replayFile) == "" {
-			errnie.Error(fmt.Errorf("tune requires --replay"))
+		if flagErr != nil {
+			errnie.Error(flagErr)
+			os.Exit(1)
+		}
+
+		replayFile, err := requireReplayFile(replayFlag)
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
+		if _, statErr := os.Stat(replayFile); statErr != nil {
+			errnie.Error(tuneReplayMissingMessage(replayFile))
 			os.Exit(1)
 		}
 
@@ -219,6 +243,27 @@ var tuneCmd = &cobra.Command{
 			errnie.Error(err)
 			os.Exit(1)
 		}
+
+		autoHoldout, err := cmd.Flags().GetBool("auto-holdout")
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
+		replayPaths, err := resolveTuneReplayPaths(replayFile, holdoutFiles, autoHoldout)
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
+		if replayPaths.cleanup != nil {
+			defer replayPaths.cleanup()
+		}
+
+		holdoutFiles = replayPaths.holdoutPaths
+		replayFile = replayPaths.trainPath
 
 		stressHoldout, err := cmd.Flags().GetBool("stress-holdout")
 
@@ -230,7 +275,7 @@ var tuneCmd = &cobra.Command{
 		iterations, err := cmd.Flags().GetInt("iterations")
 
 		if err != nil || iterations <= 0 {
-			iterations = 32
+			iterations = 64
 		}
 
 		workers, err := cmd.Flags().GetInt("workers")
@@ -312,17 +357,18 @@ var tuneCmd = &cobra.Command{
 		}
 
 		payload, _ := json.Marshal(map[string]any{
-			"best_score_eur":         bestSelection,
-			"best_train_eur":         bestTrainScore,
-			"best_holdout_eur":       bestHoldoutScores,
-			"best_train_holdout_gap": bestGap,
-			"max_train_holdout_gap":  maxTrainHoldoutGap,
-			"rejected_overfit":       rejectedOverfit.Load(),
-			"holdout_replays":        holdoutFiles,
-			"stress_holdout":         stressHoldout,
-			"output":                 output,
-			"iterations":             iterations,
-			"workers":                workers,
+			"best_fitness_eur":         bestSelection,
+			"best_train_fitness_eur":   bestTrainScore,
+			"best_holdout_fitness_eur": bestHoldoutScores,
+			"best_train_holdout_gap":   bestGap,
+			"max_train_holdout_gap":    maxTrainHoldoutGap,
+			"rejected_overfit":         rejectedOverfit.Load(),
+			"train_replay":             replayFile,
+			"holdout_replays":          holdoutFiles,
+			"stress_holdout":           stressHoldout,
+			"output":                   output,
+			"iterations":               iterations,
+			"workers":                  workers,
 		})
 		fmt.Println(string(payload))
 	},
@@ -330,11 +376,12 @@ var tuneCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(evalCmd)
-	tuneCmd.Flags().String("replay", "", "Replay JSONL fixture path")
-	tuneCmd.Flags().StringArray("holdout", nil, "Holdout replay JSONL paths; best config is chosen by minimum holdout score")
+	tuneCmd.Flags().String("replay", defaultReplayFile, "Replay JSONL fixture path")
+	tuneCmd.Flags().StringArray("holdout", nil, "Holdout replay JSONL paths; best config is chosen by minimum holdout fitness")
+	tuneCmd.Flags().Bool("auto-holdout", true, "Reserve the last 20% of --replay as holdout when --holdout is unset")
 	tuneCmd.Flags().Bool("stress-holdout", true, "Run holdout evals with execution stress enabled")
 	tuneCmd.Flags().Float64("max-train-holdout-gap", 0, "Reject candidates when train minus min holdout exceeds this EUR (0 = 3% of wallet; -1 = disable)")
-	tuneCmd.Flags().Int("iterations", 32, "Number of random trials")
+	tuneCmd.Flags().Int("iterations", 64, "Number of random trials")
 	tuneCmd.Flags().Int("workers", runtime.NumCPU(), "Concurrent eval workers")
 	tuneCmd.Flags().String("output", config.DefaultTunedPath(), "Path to write best tunables")
 	rootCmd.AddCommand(tuneCmd)

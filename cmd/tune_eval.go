@@ -22,9 +22,14 @@ type trialScores struct {
 	eligible      bool
 }
 
+type evalTrialResult struct {
+	ScoreEUR   float64
+	FitnessEUR float64
+}
+
 /*
-trialSelectionScore ranks candidates by minimum holdout score when holdouts exist,
-otherwise by train score. This avoids picking configs that only fit the training
+trialSelectionScore ranks candidates by minimum holdout fitness when holdouts exist,
+otherwise by train fitness. This avoids picking configs that only fit the training
 replay.
 */
 func trialSelectionScore(trainScore float64, holdoutScores []float64) float64 {
@@ -99,7 +104,7 @@ func scoreTrial(
 	maxTrainHoldoutGap float64,
 	candidate config.Tunables,
 ) (trialScores, error) {
-	trainScore, err := runEvalTrial(evalTrialOptions{
+	trainResult, err := runEvalTrial(evalTrialOptions{
 		replayFile: trainReplay,
 		tunables:   candidate,
 		stress:     false,
@@ -112,7 +117,7 @@ func scoreTrial(
 	holdoutScores := make([]float64, 0, len(holdoutReplays))
 
 	for _, holdoutReplay := range holdoutReplays {
-		holdoutScore, holdoutErr := runEvalTrial(evalTrialOptions{
+		holdoutResult, holdoutErr := runEvalTrial(evalTrialOptions{
 			replayFile: holdoutReplay,
 			tunables:   candidate,
 			stress:     stressHoldout,
@@ -122,25 +127,25 @@ func scoreTrial(
 			return trialScores{}, holdoutErr
 		}
 
-		holdoutScores = append(holdoutScores, holdoutScore)
+		holdoutScores = append(holdoutScores, holdoutResult.FitnessEUR)
 	}
 
-	gap := trialTrainHoldoutGap(trainScore, holdoutScores)
+	gap := trialTrainHoldoutGap(trainResult.FitnessEUR, holdoutScores)
 
 	return trialScores{
-		trainScore:    trainScore,
+		trainScore:    trainResult.FitnessEUR,
 		holdoutScores: holdoutScores,
-		selection:     trialSelectionScore(trainScore, holdoutScores),
+		selection:     trialSelectionScore(trainResult.FitnessEUR, holdoutScores),
 		gap:           gap,
-		eligible:      trialEligible(trainScore, holdoutScores, maxTrainHoldoutGap),
+		eligible:      trialEligible(trainResult.FitnessEUR, holdoutScores, maxTrainHoldoutGap),
 	}, nil
 }
 
-func runEvalTrial(options evalTrialOptions) (float64, error) {
+func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 	tempFile, err := os.CreateTemp("", "symm-tune-*.json")
 
 	if err != nil {
-		return 0, err
+		return evalTrialResult{}, err
 	}
 
 	tempPath := tempFile.Name()
@@ -151,13 +156,13 @@ func runEvalTrial(options evalTrialOptions) (float64, error) {
 	options.tunables.Apply(trialConfig)
 
 	if err := config.SaveTunablesFile(tempPath, trialConfig); err != nil {
-		return 0, err
+		return evalTrialResult{}, err
 	}
 
 	executable, err := os.Executable()
 
 	if err != nil {
-		return 0, err
+		return evalTrialResult{}, err
 	}
 
 	env := map[string]string{
@@ -174,16 +179,25 @@ func runEvalTrial(options evalTrialOptions) (float64, error) {
 	output, err := execEval(executable, env)
 
 	if err != nil {
-		return 0, err
+		return evalTrialResult{}, err
 	}
 
 	var result struct {
-		ScoreEUR float64 `json:"score_eur"`
+		ScoreEUR   float64 `json:"score_eur"`
+		FitnessEUR float64 `json:"fitness_eur"`
+		Regret     struct {
+			MissedForwardEUR float64 `json:"missed_forward_eur"`
+		} `json:"gate_reject_regret"`
 	}
 
 	if err := json.Unmarshal(output, &result); err != nil {
-		return 0, fmt.Errorf("decode eval score: %w", err)
+		return evalTrialResult{}, fmt.Errorf("decode eval score: %w", err)
 	}
 
-	return result.ScoreEUR, nil
+	fitnessEUR := TuneFitness(result.ScoreEUR, result.Regret.MissedForwardEUR)
+
+	return evalTrialResult{
+		ScoreEUR:   result.ScoreEUR,
+		FitnessEUR: fitnessEUR,
+	}, nil
 }

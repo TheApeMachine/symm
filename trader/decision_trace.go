@@ -49,6 +49,10 @@ func (crypto *Crypto) recordEntryVerdicts(
 		if perspectives.IsEntryBlocked(verdict.Action) && crypto.auditLog != nil {
 			crypto.publishGateReject(symbol, verdict)
 		}
+
+		if perspectives.IsEntryBlocked(verdict.Action) {
+			crypto.trackGateRejectRegret(symbol, verdict)
+		}
 	}
 }
 

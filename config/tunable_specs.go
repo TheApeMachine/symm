@@ -31,10 +31,14 @@ func TunableSpecs() []Spec {
 		{Name: "kelly_fraction", Min: 0.10, Max: 1.0, Step: 0.05},
 		{Name: "max_deploy_pct", Min: 0.10, Max: 1.0, Step: 0.05},
 		{Name: "max_entry_slippage_bps", Min: 20, Max: 120, Step: 10},
+		{Name: "max_spread_bps", Min: 10, Max: 100, Step: 5},
+		{Name: "forward_return_min_samples", Min: 10, Max: 80, Step: 5},
 		{Name: "forward_return_significance_z", Min: 0.5, Max: 3.0, Step: 0.25},
+		{Name: "noise_floor_snr", Min: 0.7, Max: 1.5, Step: 0.05},
 		{Name: "perspective_ttl_sec", Min: 10, Max: 120, Step: 5},
 		{Name: "book_depth_levels", Min: 5, Max: 25, Step: 5},
 		{Name: "min_cost_eur", Min: 0.30, Max: 2.0, Step: 0.15},
+		{Name: "min_exhaust_hold_sec", Min: 1, Max: 30, Step: 1},
 		{Name: "causal_condition_switch", Min: 100, Max: 5000, Step: 100},
 		{Name: "causal_contagion_break", Min: 0.5, Max: 0.99, Step: 0.05},
 		{Name: "fluid_height_ema_alpha", Min: 0.10, Max: 0.60, Step: 0.05},
@@ -87,8 +91,15 @@ func MutateTunables(source *Config, random *rand.Rand) Tunables {
 			overlay.MaxDeployPct = &value
 		case "max_entry_slippage_bps":
 			overlay.MaxEntrySlippageBPS = &value
+		case "max_spread_bps":
+			overlay.MaxSpreadBPS = &value
+		case "forward_return_min_samples":
+			samples := int(value)
+			overlay.ForwardReturnMinSamples = &samples
 		case "forward_return_significance_z":
 			overlay.ForwardReturnSignificanceZ = &value
+		case "noise_floor_snr":
+			overlay.NoiseFloorSNR = &value
 		case "perspective_ttl_sec":
 			duration := time.Duration(value) * time.Second
 			overlay.PerspectiveTTL = &duration
@@ -97,6 +108,9 @@ func MutateTunables(source *Config, random *rand.Rand) Tunables {
 			overlay.BookDepthLevels = &depth
 		case "min_cost_eur":
 			overlay.MinCostEUR = &value
+		case "min_exhaust_hold_sec":
+			duration := time.Duration(value) * time.Second
+			overlay.MinExhaustHold = &duration
 		case "causal_condition_switch":
 			overlay.CausalConditionSwitch = &value
 		case "causal_contagion_break":

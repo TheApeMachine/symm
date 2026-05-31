@@ -27,6 +27,7 @@ type Tunables struct {
 	ForwardReturnMinSamples    *int           `json:"forward_return_min_samples,omitempty"`
 	ForwardReturnSignificanceZ *float64       `json:"forward_return_significance_z,omitempty"`
 	PerspectiveTTL             *time.Duration `json:"perspective_ttl,omitempty"`
+	NoiseFloorSNR              *float64       `json:"noise_floor_snr,omitempty"`
 	BookDepthLevels            *int           `json:"book_depth_levels,omitempty"`
 	MinCostEUR                 *float64       `json:"min_cost_eur,omitempty"`
 	CausalConditionSwitch      *float64       `json:"causal_condition_switch,omitempty"`
@@ -107,6 +108,10 @@ func (tunables *Tunables) Apply(cfg *Config) {
 		cfg.PerspectiveTTL = *tunables.PerspectiveTTL
 	}
 
+	if tunables.NoiseFloorSNR != nil {
+		cfg.NoiseFloorSNR = *tunables.NoiseFloorSNR
+	}
+
 	if tunables.BookDepthLevels != nil {
 		cfg.BookDepthLevels = *tunables.BookDepthLevels
 	}
@@ -152,6 +157,7 @@ func ExtractTunables(cfg *Config) Tunables {
 	forwardMin := cfg.ForwardReturnMinSamples
 	forwardZ := cfg.ForwardReturnSignificanceZ
 	perspectiveTTL := cfg.PerspectiveTTL
+	noiseFloorSNR := cfg.NoiseFloorSNR
 	bookDepth := cfg.BookDepthLevels
 	minCost := cfg.MinCostEUR
 	causalSwitch := cfg.CausalConditionSwitch
@@ -176,6 +182,7 @@ func ExtractTunables(cfg *Config) Tunables {
 		ForwardReturnMinSamples:    &forwardMin,
 		ForwardReturnSignificanceZ: &forwardZ,
 		PerspectiveTTL:             &perspectiveTTL,
+		NoiseFloorSNR:              &noiseFloorSNR,
 		BookDepthLevels:            &bookDepth,
 		MinCostEUR:                 &minCost,
 		CausalConditionSwitch:      &causalSwitch,

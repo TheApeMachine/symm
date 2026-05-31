@@ -61,9 +61,11 @@ SyncRuntime rebuilds Runtime after System changes.
 func SyncRuntime() {
 	if Runtime == nil {
 		Runtime = NewRuntime(System)
+		syncPerspectives(System)
 
 		return
 	}
 
 	Runtime.Refresh(System)
+	syncPerspectives(System)
 }

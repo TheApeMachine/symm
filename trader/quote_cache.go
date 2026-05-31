@@ -106,6 +106,21 @@ func (cache *quoteCache) readyCount() int {
 	return ready
 }
 
+func (cache *quoteCache) lastPrices() map[string]float64 {
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+
+	out := make(map[string]float64, len(cache.quotes))
+
+	for symbol, quote := range cache.quotes {
+		if quote.Last > 0 {
+			out[symbol] = quote.Last
+		}
+	}
+
+	return out
+}
+
 func (cache *quoteCache) spreadBPS(symbol string) float64 {
 	quote := cache.snapshot(symbol, 0)
 

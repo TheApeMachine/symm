@@ -3,6 +3,8 @@ package economics
 import (
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/config"
 )
 
 /*
@@ -11,6 +13,7 @@ Desk coordinates labeling, forward-return resolution, and playbook gating.
 type Desk struct {
 	ledger  *Ledger
 	pending *Pending
+	regret  *RejectRegret
 	mu      sync.Mutex
 	labels  []Label
 }
@@ -19,10 +22,17 @@ type Desk struct {
 NewDesk instantiates execution economics for the trader desk.
 */
 func NewDesk() *Desk {
-	return &Desk{
+	desk := &Desk{
 		ledger:  NewLedger(),
 		pending: NewPending(),
+		regret:  NewRejectRegret(),
 	}
+
+	if cooldown := config.System.AuditGateRejectCooldown; cooldown > 0 {
+		desk.regret.SetDedupeWindow(cooldown)
+	}
+
+	return desk
 }
 
 /*
@@ -63,6 +73,38 @@ func (desk *Desk) ResolveForward(symbol string, lastPrice float64, now time.Time
 	}
 
 	return forwardLabels
+}
+
+/*
+TrackGateReject registers a blocked entry for counterfactual forward labeling.
+*/
+func (desk *Desk) TrackGateReject(
+	symbol, playbook, reason string,
+	price, roundTripCost, notionalEUR float64,
+	at time.Time,
+) {
+	desk.regret.Track(symbol, playbook, reason, price, roundTripCost, notionalEUR, at)
+}
+
+/*
+ResolveGateReject matures pending gate rejects for one symbol.
+*/
+func (desk *Desk) ResolveGateReject(symbol string, lastPrice float64, now time.Time) {
+	desk.regret.ResolveForward(symbol, lastPrice, now)
+}
+
+/*
+FlushGateReject resolves all pending gate rejects at replay end.
+*/
+func (desk *Desk) FlushGateReject(lastPrices map[string]float64) {
+	desk.regret.Flush(lastPrices)
+}
+
+/*
+GateRegretSummary returns aggregated counterfactual gate-reject outcomes.
+*/
+func (desk *Desk) GateRegretSummary() RegretSummary {
+	return desk.regret.Summary()
 }
 
 /*

@@ -13,7 +13,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay dump profile profile-stack profile-report strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay record tune dump profile profile-stack profile-report strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -88,21 +88,25 @@ run-profile: build
 	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
 	SYMM_PPROF=1 ./$(SYMM_BIN)
 
-REPLAY_FILE ?=
 REPLAY_PACE ?= 50ms
+RECORD_FILE ?= runs/capture.jsonl
+REPLAY_FILE ?= $(RECORD_FILE)
+TUNE_ITERATIONS ?= 64
 
 replay: build
-	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make replay REPLAY_FILE=runs/capture.jsonl" && exit 1)
+	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE)" && exit 1)
 	SYMM_REPLAY_FILE=$(REPLAY_FILE) SYMM_REPLAY_PACE=$(REPLAY_PACE) ./$(SYMM_BIN)
 
-RECORD_FILE ?= runs/capture.jsonl
-
 record: build
-	SYMM_RECORD_FILE=$(RECORD_FILE) ./$(SYMM_BIN)
+	@mkdir -p $(dir $(RECORD_FILE)) $(LOG_DIR)
+	@echo "Recording live capture to $(RECORD_FILE) (Ctrl+C to stop, then: make tune)"
+	@echo "Desk audit log: $(AUDIT_FILE) (for inspection; tune recomputes regret from replay)"
+	SYMM_RECORD_FILE=$(RECORD_FILE) SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
 
 tune: build
-	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required, e.g. make tune REPLAY_FILE=runs/capture.jsonl" && exit 1)
-	./$(SYMM_BIN) tune --replay $(REPLAY_FILE) --iterations $(or $(ITERATIONS),32) --workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
+	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
+	@echo "Tuning $(REPLAY_FILE) — fitness = score_eur − missed gate regret ($(TUNE_ITERATIONS) trials)"
+	./$(SYMM_BIN) tune --replay "$(REPLAY_FILE)" --iterations $(or $(ITERATIONS),$(TUNE_ITERATIONS)) --workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

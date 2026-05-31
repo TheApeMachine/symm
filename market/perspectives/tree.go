@@ -150,7 +150,9 @@ func (branch *Branch) matchDetail(
 
 	switch branch.Unit {
 	case UnitSNR, UnitConfidence:
-		return matchesCondition(branch.Condition, measurement.SNR, branch.Value), measurement.SNR, branch.Value
+		threshold := snrThreshold()
+
+		return matchesCondition(branch.Condition, measurement.SNR, threshold), measurement.SNR, threshold
 	default:
 		return true, measurement.SNR, branch.Value
 	}
@@ -176,7 +178,7 @@ func (branch *Branch) matches(
 
 	switch branch.Unit {
 	case UnitSNR, UnitConfidence:
-		return matchesCondition(branch.Condition, measurement.SNR, branch.Value)
+		return matchesCondition(branch.Condition, measurement.SNR, snrThreshold())
 	default:
 		return true
 	}

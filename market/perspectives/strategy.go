@@ -1,13 +1,6 @@
 package perspectives
 
 /*
-noiseFloorSNR is the boundary a category reading must clear to count as present
-rather than noise. SNR is a z-score each signal computes live against its own
-running noise floor, so 1.0 means "one sigma above this signal's own noise".
-*/
-const noiseFloorSNR = 1.0
-
-/*
 strategy is the shared decision-tree body every named playbook uses. Entry and
 exit are separate trees so a decayed entry gate does not strand an open position.
 */
@@ -155,7 +148,7 @@ func snrBranch(category CategoryType, action ActionType) Branch {
 		Category:  category,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     noiseFloorSNR,
+		Value:     snrThreshold(),
 		Action:    action,
 	}
 }
@@ -168,7 +161,7 @@ func snrGate(category CategoryType, children ...Branch) Branch {
 		Category:  category,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     noiseFloorSNR,
+		Value:     snrThreshold(),
 		Branches:  children,
 	}
 }
@@ -181,7 +174,7 @@ func entryLeaf(trigger CategoryType) Branch {
 		Category:  trigger,
 		Unit:      UnitSNR,
 		Condition: ConditionIsGreaterThan,
-		Value:     noiseFloorSNR,
+		Value:     snrThreshold(),
 		Action:    ActionEnter,
 	}
 }
