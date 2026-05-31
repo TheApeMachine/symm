@@ -15,10 +15,14 @@ PaperOrderRejectRate always, and the higher of that and regime-scaled
 ExecutionStressRejectRate when execution stress is enabled.
 */
 func ShouldRejectPaperOrder(scope config.ExecutionScope, regime StressRegime) error {
-	rate := effectivePaperRejectRate(scope, regime)
+	configured := configuredRejectRate(scope)
 
-	if rate <= 0 {
+	if configured <= 0 {
 		return nil
+	}
+
+	if scope.ExecutionStressEnabled {
+		return GlobalStressMachine().RejectOutcome(configured, regime)
 	}
 
 	draw, err := cryptoFloat64()
@@ -27,14 +31,14 @@ func ShouldRejectPaperOrder(scope config.ExecutionScope, regime StressRegime) er
 		return fmt.Errorf("paper reject entropy: %w", err)
 	}
 
-	if draw < rate {
-		return fmt.Errorf("paper order reject (rate=%.4f)", rate)
+	if draw < configured {
+		return fmt.Errorf("paper order reject (rate=%.4f)", configured)
 	}
 
 	return nil
 }
 
-func effectivePaperRejectRate(scope config.ExecutionScope, regime StressRegime) float64 {
+func configuredRejectRate(scope config.ExecutionScope) float64 {
 	if scope.QuoteCurrency == "" {
 		scope = config.ExecutionScopeFrom(config.System)
 	}
@@ -42,8 +46,7 @@ func effectivePaperRejectRate(scope config.ExecutionScope, regime StressRegime) 
 	rate := scope.PaperOrderRejectRate
 
 	if scope.ExecutionStressEnabled {
-		stressRate := EffectiveRejectRate(scope.ExecutionStressRejectRate, regime)
-		rate = math.Max(rate, stressRate)
+		rate = math.Max(rate, scope.ExecutionStressRejectRate)
 	}
 
 	return rate

@@ -39,6 +39,7 @@ func (crypto *Crypto) runHeartbeatLoop() {
 			return
 		case <-heartbeat.C:
 			crypto.refreshCrossSection()
+			crypto.advanceStressMachine()
 			crypto.publishEnginePulse()
 			crypto.publishDecisionTrace()
 			crypto.publishWallet()

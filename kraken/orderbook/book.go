@@ -1,6 +1,7 @@
 package orderbook
 
 import (
+	"fmt"
 	"hash/crc32"
 	"slices"
 	"strings"
@@ -143,21 +144,31 @@ const (
 	descending = true
 )
 
+func levelPriceKey(level Level) string {
+	if level.PriceRaw != "" {
+		return level.PriceRaw
+	}
+
+	return fmt.Sprintf("%g", level.Price)
+}
+
 func mergeSide(current, updates []Level, order bool) []Level {
-	byPrice := make(map[float64]Level, len(current)+len(updates))
+	byPrice := make(map[string]Level, len(current)+len(updates))
 
 	for _, level := range current {
-		byPrice[level.Price] = level
+		byPrice[levelPriceKey(level)] = level
 	}
 
 	for _, update := range updates {
+		key := levelPriceKey(update)
+
 		if update.Qty == 0 {
-			delete(byPrice, update.Price)
+			delete(byPrice, key)
 
 			continue
 		}
 
-		byPrice[update.Price] = update
+		byPrice[key] = update
 	}
 
 	merged := make([]Level, 0, len(byPrice))

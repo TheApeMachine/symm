@@ -71,6 +71,7 @@ profile-replay: build
 
 run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
 	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
 	./$(SYMM_BIN)
 
@@ -91,8 +92,15 @@ run-profile: build
 REPLAY_PACE ?= 50ms
 RECORD_FILE ?= runs/capture.jsonl
 REPLAY_FILE ?= $(RECORD_FILE)
+TUNED_OUTPUT ?= runs/tuned.json
 # Set ITERATIONS=N to cap trials; omit for unlimited until Ctrl+C
 PERSPECTIVES_OUTPUT ?= runs/perspectives.yaml
+# Robust paper + tuning defaults (override on the make command line)
+EXECUTION_STRESS ?= 1
+AUTO_HOLDOUT ?= true
+WALK_FORWARD_FOLDS ?= 3
+REPLAY_PERTURB ?= true
+STRESS_HOLDOUT ?= true
 
 replay: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE)" && exit 1)
@@ -101,17 +109,25 @@ replay: build
 record: build
 	@mkdir -p $(dir $(RECORD_FILE)) $(LOG_DIR)
 	@echo "Recording live capture to $(RECORD_FILE) (Ctrl+C to stop, then: make tune)"
+	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
+	@echo "Paper execution stress: on (Markov outage model — override: make record EXECUTION_STRESS=0)"
 	@echo "Desk audit log: $(AUDIT_FILE) (for inspection; tune recomputes regret from replay)"
-	SYMM_RECORD_FILE=$(RECORD_FILE) SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
+	SYMM_EXECUTION_STRESS=$(EXECUTION_STRESS) SYMM_RECORD_FILE=$(RECORD_FILE) SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
 
 tune: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
 	@echo "Tuning $(REPLAY_FILE) — holdout wallet fitness = score_eur − gate regret (Ctrl+C saves best; progress on stderr)"
+	@echo "Holdout: auto tail + $(WALK_FORWARD_FOLDS) walk-forward folds | train perturb: $(REPLAY_PERTURB) | holdout stress: $(STRESS_HOLDOUT)"
 	./$(SYMM_BIN) tune \
 		--replay "$(REPLAY_FILE)" \
+		--auto-holdout=$(AUTO_HOLDOUT) \
+		--walk-forward-folds $(WALK_FORWARD_FOLDS) \
+		--replay-perturb=$(REPLAY_PERTURB) \
+		--stress-holdout=$(STRESS_HOLDOUT) \
+		--output "$(TUNED_OUTPUT)" \
+		--perspectives-output "$(PERSPECTIVES_OUTPUT)" \
 		$(if $(ITERATIONS),--iterations $(ITERATIONS),) \
-		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc)) \
-		--perspectives-output "$(PERSPECTIVES_OUTPUT)"
+		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

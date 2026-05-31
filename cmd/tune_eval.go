@@ -14,6 +14,8 @@ type evalTrialOptions struct {
 	tunables     config.Tunables
 	perspectives *perspectives.Document
 	stress       bool
+	perturb      bool
+	perturbSeed  int64
 }
 
 type tuneCandidate struct {
@@ -132,6 +134,8 @@ func scoreTrial(
 	trainReplay string,
 	holdoutReplays []string,
 	stressHoldout bool,
+	perturbTrain bool,
+	perturbSeed int64,
 	maxTrainHoldoutGap float64,
 	candidate tuneCandidate,
 ) (trialScores, error) {
@@ -140,6 +144,8 @@ func scoreTrial(
 		tunables:     candidate.tunables,
 		perspectives: candidate.perspectives,
 		stress:       false,
+		perturb:      perturbTrain,
+		perturbSeed:  perturbSeed,
 	})
 
 	if err != nil {
@@ -228,6 +234,14 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 
 	if options.stress {
 		env["SYMM_EXECUTION_STRESS"] = "1"
+	}
+
+	if options.perturb {
+		env["SYMM_REPLAY_PERTURB"] = "1"
+
+		if options.perturbSeed != 0 {
+			env["SYMM_REPLAY_PERTURB_SEED"] = fmt.Sprintf("%d", options.perturbSeed)
+		}
 	}
 
 	output, err := execEval(executable, env)

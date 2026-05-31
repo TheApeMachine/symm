@@ -226,6 +226,29 @@ func denyEntryOverlaps(document Document) []string {
 	return overlaps
 }
 
+func TestCloneDocument(t *testing.T) {
+	Convey("Given a playbook document", t, func() {
+		source := Document{
+			Version: 1,
+			Playbooks: []PlaybookSpec{{
+				Name:   "pump",
+				Regime: "trending",
+				Entry: []BranchSpec{{
+					Category: "spoof_trap",
+					Action:   "enter",
+				}},
+			}},
+		}
+
+		clone := CloneDocument(source)
+
+		Convey("It should not alias nested branches", func() {
+			source.Playbooks[0].Entry[0].Category = "mutated"
+			So(clone.Playbooks[0].Entry[0].Category, ShouldEqual, "spoof_trap")
+		})
+	})
+}
+
 func BenchmarkBuildStrategies(b *testing.B) {
 	document := BuiltinDocument()
 

@@ -75,7 +75,7 @@ func (reporter *TuneReporter) TrialResult(event tuneTrialEvent) {
 	reporter.println(line)
 
 	if event.newBest && event.eligible {
-		reporter.println("  ★ updated leader (this config will be saved if still #1 at the end)")
+		reporter.println("  ★ updated leader — saved to runs/ and config/ (tuned.json + perspectives.yaml)")
 	}
 
 	if hasCurrentBest {
@@ -85,7 +85,7 @@ func (reporter *TuneReporter) TrialResult(event tuneTrialEvent) {
 
 func formatCurrentBestLine(holdoutFitness float64, trainFitness float64) string {
 	return fmt.Sprintf(
-		"  ► CURRENT BEST → holdout €%.2f | train €%.2f (highest holdout wins; this is what gets written to runs/)",
+		"  ► CURRENT BEST → holdout €%.2f | train €%.2f (highest holdout wins; written to runs/ and config/ on each update)",
 		holdoutFitness,
 		trainFitness,
 	)

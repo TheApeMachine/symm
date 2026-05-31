@@ -193,10 +193,17 @@ func ExtractTunables(cfg *Config) Tunables {
 }
 
 /*
-DefaultTunedPath is where successful tune runs persist settings for startup load.
+DefaultTunedPath is where tune runs persist session tunables before copying to config/.
 */
 func DefaultTunedPath() string {
-	return defaultTunedFile
+	return defaultTunedRunFile
+}
+
+/*
+DefaultTunedInstallPath is the active tunables file copied from tune output and loaded at boot.
+*/
+func DefaultTunedInstallPath() string {
+	return defaultTunedInstallFile
 }
 
 func LoadTunablesFile(path string, cfg *Config) error {

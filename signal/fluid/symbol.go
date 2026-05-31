@@ -1,7 +1,6 @@
 package fluid
 
 import (
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -27,24 +26,22 @@ is folded in, not between consecutive raw deltas, so it reflects genuine book ch
 rather than the size of whatever slice the feed happened to send.
 */
 type FluidSymbol struct {
-	mu           sync.RWMutex
-	symbol       string
-	book         *orderbook.Book
-	bookSequence market.BookSequence
-	diverged     bool
-	buyPressure  float64
-	changePct    float64
-	volume       float64
-	last         float64
-	bid          float64
-	ask          float64
-	pressure     *adaptive.EMA
-	spreadBPS    float64
-	flux         *fluxAccumulator
-	priceFD      *adaptive.FracDiff
-	fracScale    adaptive.AlphaEMA
-	fracReturn   float64
-	floor        *adaptive.SNR
+	mu          sync.RWMutex
+	symbol      string
+	bookFeed    *market.BookFeedState
+	buyPressure float64
+	changePct   float64
+	volume      float64
+	last        float64
+	bid         float64
+	ask         float64
+	pressure    *adaptive.EMA
+	spreadBPS   float64
+	flux        *fluxAccumulator
+	priceFD     *adaptive.FracDiff
+	fracScale   adaptive.AlphaEMA
+	fracReturn  float64
+	floor       *adaptive.SNR
 }
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
@@ -53,8 +50,12 @@ const fracScaleAlpha = 0.05
 
 func NewFluidSymbol(symbol string) *FluidSymbol {
 	return &FluidSymbol{
-		symbol:   symbol,
-		book:     orderbook.NewBook(orderbook.MaintainDepth(config.System.BookDepthLevels)),
+		symbol: symbol,
+		bookFeed: market.NewBookFeedState(
+			symbol,
+			"fluid",
+			config.System.BookDepthLevels,
+		),
 		pressure: adaptive.NewEMA(0),
 		flux:     newFluxAccumulator(config.System.BookFluxWindow),
 		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
@@ -110,26 +111,19 @@ func (state *FluidSymbol) FeedBook(update market.BookUpdate) {
 }
 
 func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
-	if !state.bookSequence.CanAccept(update) {
+	beforeBids := state.bookFeed.Book().Bids()
+	beforeAsks := state.bookFeed.Book().Asks()
+
+	if !state.bookFeed.Apply(update) {
 		return
 	}
 
-	if update.IsSnapshot() {
-		state.bookSequence.AdmitSnapshot()
-	}
-
-	beforeBids := state.book.Bids()
-	beforeAsks := state.book.Asks()
-
-	state.applyFrameLocked(update)
-	state.verifyLocked(uint32(update.Checksum))
-
-	if state.diverged {
+	if state.bookFeed.Diverged() || !state.bookFeed.Ready() {
 		return
 	}
 
-	afterBids := state.book.Bids()
-	afterAsks := state.book.Asks()
+	afterBids := state.bookFeed.Book().Bids()
+	afterAsks := state.bookFeed.Book().Asks()
 
 	flux := sideChangeFlux(beforeBids, afterBids) + sideChangeFlux(beforeAsks, afterAsks)
 
@@ -140,33 +134,6 @@ func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
 	}
 
 	state.flux.addBook(time.Now(), flux)
-}
-
-func (state *FluidSymbol) applyFrameLocked(update market.BookUpdate) {
-	if update.IsSnapshot() {
-		state.book.ApplySnapshot(update.BidLevels(), update.AskLevels())
-
-		return
-	}
-
-	state.book.ApplyDelta(update.BidLevels(), update.AskLevels())
-}
-
-// verifyLocked compares the maintained book against the exchange checksum, reporting
-// a divergence only on the transition into the diverged state so a persistent
-// mismatch does not spam the hot path. The book corrects itself on the next snapshot.
-func (state *FluidSymbol) verifyLocked(checksum uint32) {
-	if checksum == 0 || !state.book.Ready() {
-		return
-	}
-
-	matches := state.book.Verify(checksum)
-
-	if !matches && !state.diverged {
-		errnie.Error(fmt.Errorf("fluid: book checksum diverged for %s", state.symbol))
-	}
-
-	state.diverged = !matches
 }
 
 func (state *FluidSymbol) updateTouchLocked(bids, asks []orderbook.Level) {
@@ -241,7 +208,7 @@ func (state *FluidSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return state.book.Ready()
+	return state.bookFeed.Ready()
 }
 
 /*
@@ -253,7 +220,7 @@ func (state *FluidSymbol) Row() map[string]any {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	if state.diverged {
+	if state.bookFeed.Diverged() {
 		return nil
 	}
 
@@ -264,7 +231,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.diverged {
+	if state.bookFeed.Diverged() {
 		return perspectives.Measurement{}, false
 	}
 
@@ -314,8 +281,8 @@ func fluidCategory(divergence, turbulence, viscosity, reynolds float64) perspect
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {
-	bids := state.book.Bids()
-	asks := state.book.Asks()
+	bids := state.bookFeed.Book().Bids()
+	asks := state.bookFeed.Book().Asks()
 	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)

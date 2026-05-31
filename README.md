@@ -327,7 +327,7 @@ On each `measurements` message:
 4. **Economics gate** — `trader/economics` ledger: cold playbooks gather samples; warm playbooks require post-fee net forward return above `ForwardReturnSignificanceZ`
 5. **Cross-section calibration** — compare the symbol's score to the robust median + MAD across all observed symbols; require positive edge above the field
 6. **Size** — allocate cash proportional to edge share (see [Sizing](#sizing))
-7. **Fill** — `submitEntry`: paper simulates live (submit → optional latency → fill or reject ack); binds `Playbook` and `PerspectiveTTL` to the position
+7. **Fill** — `submitEntry`: paper simulates live (submit → optional latency → fill or reject ack); the ack/fill path owns reservation release and binds `Playbook` and `PerspectiveTTL` to the position
 
 ### Exit path
 
@@ -339,7 +339,11 @@ Paper fills use the same `broker.Quote` path as live orders: the desk caches Kra
 
 Per-pair taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPairCatalog`), tiered by `Fee30DVolume`, and stored on `PositionBinding.TakerFeePct` for the exit leg.
 
+Paper reject simulation keeps the entry reservation in place until `trader/paper.go` emits the reject ack, matching the live order lifecycle and preventing one rejected order from releasing another pending entry's cash.
+
 `ExecutionStressEnabled` applies the same stale-quote, shallow-depth, and adverse-ask stress to both paper and live fills. Any new live execution behavior must be mirrored in `trader/paper.go` / `broker.SubmitPaper`.
+
+Book checksum health is tracked per signal and symbol. A `fluid` snapshot recovery does not clear a `depthflow` divergence for the same pair; each maintained book must realign before the blind-state clears.
 
 > [!NOTE]
 > Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk routes entries and exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), recording the same economics labels on exchange fills as paper does on `FillPaper`. If the live session fails to start while `SYMM_LIVE=1`, the engine aborts boot instead of falling back to paper.

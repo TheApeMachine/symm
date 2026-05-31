@@ -48,6 +48,14 @@ func cloneDocument(source Document) Document {
 	return document
 }
 
+/*
+CloneDocument returns a deep copy for storing the tuning incumbent without aliasing
+search mutations.
+*/
+func CloneDocument(source Document) Document {
+	return cloneDocument(source)
+}
+
 func cloneBranchList(branches []BranchSpec) []BranchSpec {
 	if branches == nil {
 		return nil

@@ -107,7 +107,18 @@ class ConfidenceDataProviderImpl {
 		}
 
 		for (const [source, confidence] of Object.entries(raw)) {
-			this.ingest({ source, confidence });
+			if (typeof confidence !== "number") {
+				continue;
+			}
+
+			const normalized = normalizeSource(source);
+			const previous = this.latest.get(normalized);
+
+			this.ingest({
+				source,
+				confidence,
+				factors: previous?.factors,
+			});
 		}
 	}
 

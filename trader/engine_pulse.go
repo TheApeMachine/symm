@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -34,6 +35,7 @@ func (crypto *Crypto) publishEnginePulse() {
 		"ticker_ready":            crypto.quotes.readyCount(),
 		"symbols_total":           len(crypto.scopedRuntime().Signal.Symbols),
 		"fluid_sampled":           crypto.fluidSampleCount(),
+		"book_diverged_symbols":   market.BookIntegritySummary().DivergedSymbols,
 		"avg_prediction":          snapshot.AvgPrediction,
 		"avg_prediction_multiple": snapshot.AvgPredictionMult,
 		"avg_required_return":     snapshot.AvgRequiredReturn,

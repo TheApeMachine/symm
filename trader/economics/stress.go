@@ -1,9 +1,6 @@
 package economics
 
 import (
-	"crypto/rand"
-	"encoding/binary"
-	"fmt"
 	"math"
 
 	"github.com/theapemachine/symm/broker"
@@ -40,7 +37,7 @@ func StressQuote(quote broker.Quote, adverseSelectionBPS float64, regime broker.
 	}
 
 	stressed := quote
-	latency := broker.EffectiveStressLatency(config.System.ExecutionStressLatency, regime)
+	latency := broker.GlobalStressMachine().LatencyPenalty(config.System.ExecutionStressLatency, regime)
 
 	if latency > 0 && !stressed.At.IsZero() {
 		stressed.At = stressed.At.Add(-latency)
@@ -76,17 +73,7 @@ func ShouldReject(regime broker.StressRegime) error {
 		return nil
 	}
 
-	draw, err := cryptoFloat64()
-
-	if err != nil {
-		return fmt.Errorf("stress reject entropy: %w", err)
-	}
-
-	if draw < rate {
-		return fmt.Errorf("execution stress reject (rate=%.4f)", rate)
-	}
-
-	return nil
+	return broker.GlobalStressMachine().RejectOutcome(rate, regime)
 }
 
 func scaleDepth(levels []market.BookLevel, fraction float64) []market.BookLevel {
@@ -104,16 +91,4 @@ func scaleDepth(levels []market.BookLevel, fraction float64) []market.BookLevel 
 	}
 
 	return scaled
-}
-
-func cryptoFloat64() (float64, error) {
-	var bytes [8]byte
-
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return 0, err
-	}
-
-	bits := binary.LittleEndian.Uint64(bytes[:])
-
-	return float64(bits) / (1 << 64), nil
 }

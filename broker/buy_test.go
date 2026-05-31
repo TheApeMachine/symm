@@ -82,6 +82,61 @@ func TestBuySubmitLiveUsesExistingClOrdID(t *testing.T) {
 	})
 }
 
+func TestBuySubmitPaperRejectKeepsReservationForAck(t *testing.T) {
+	Convey("Given a paper buy rejected after client order id assignment", t, func() {
+		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+		buy := &Buy{
+			Symbol:   "BTC/EUR",
+			Notional: 10,
+			Quote: Quote{
+				Last: 50000,
+				Bid:  49999,
+				Ask:  50001,
+			},
+			Execution: config.ExecutionScope{
+				QuoteCurrency:        "EUR",
+				PaperOrderRejectRate: 1,
+			},
+		}
+
+		clOrdID, err := buy.SubmitPaper(tradingWallet)
+
+		Convey("It should leave the reservation for the simulated reject ack", func() {
+			So(err, ShouldNotBeNil)
+			So(clOrdID, ShouldNotEqual, "")
+			So(tradingWallet.BalanceCopy(), ShouldEqual, 190)
+			So(tradingWallet.ReservedCopy(), ShouldEqual, 10)
+		})
+	})
+}
+
+func TestPreflightGatesRejectsWideSpread(t *testing.T) {
+	Convey("Given a buy with a dust bid and wide ask", t, func() {
+		buy := Buy{
+			Symbol: "APT/EUR",
+			Quote: Quote{
+				Last: 5,
+				Bid:  0.0001,
+				Ask:  5,
+			},
+			Execution: config.ExecutionScope{
+				QuoteCurrency: "EUR",
+				MaxSpreadBPS:  40,
+			},
+		}
+
+		Convey("PreflightGates should name the symbol and quote sides", func() {
+			err := buy.PreflightGates()
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "APT/EUR")
+			So(err.Error(), ShouldContainSubstring, "bid=0.0001")
+			So(err.Error(), ShouldContainSubstring, "ask=5")
+			So(err.Error(), ShouldContainSubstring, "MaxSpreadBPS 40.00")
+		})
+	})
+}
+
 func BenchmarkBuyFillPaper(b *testing.B) {
 	buy := &Buy{
 		Symbol:   "BTC/EUR",

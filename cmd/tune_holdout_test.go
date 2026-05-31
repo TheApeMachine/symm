@@ -20,7 +20,7 @@ func TestResolveTuneReplayPaths(t *testing.T) {
 
 		So(os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644), ShouldBeNil)
 
-		paths, err := resolveTuneReplayPaths(path, nil, true)
+		paths, err := resolveTuneReplayPaths(path, nil, true, 0)
 		So(err, ShouldBeNil)
 
 		if paths.cleanup != nil {
@@ -34,7 +34,7 @@ func TestResolveTuneReplayPaths(t *testing.T) {
 	})
 
 	Convey("Given explicit holdout paths", t, func() {
-		paths, err := resolveTuneReplayPaths("runs/capture.jsonl", []string{"runs/holdout.jsonl"}, true)
+		paths, err := resolveTuneReplayPaths("runs/capture.jsonl", []string{"runs/holdout.jsonl"}, true, 0)
 
 		Convey("It should not auto-split", func() {
 			So(err, ShouldBeNil)

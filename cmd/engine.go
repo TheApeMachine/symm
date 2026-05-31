@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
@@ -40,6 +41,9 @@ type engineResult struct {
 }
 
 func bootEngine(ctx context.Context) (*engineResult, error) {
+	market.ResetBookHealth()
+	broker.ResetStressMachine()
+
 	if err := configurePerspectives(config.PerspectiveLoadPath()); err != nil {
 		return nil, err
 	}
@@ -102,7 +106,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		return nil, err
 	}
 
-	if err := booter.AddSystems(
+	systems := []System{
 		pumpdump.NewSignal(runCtx, pool),
 		correlation.NewSignal(runCtx, pool),
 		depthflow.NewSignal(runCtx, pool),
@@ -116,9 +120,16 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		toxicity.NewToxicity(runCtx, pool),
 		exhaust.NewSignal(runCtx, pool),
 		tradingCrypto,
-		view.NewOHLC(runCtx, pool, tracker),
-		view.NewGauges(runCtx, pool),
-	); err != nil {
+	}
+
+	if !config.System.Headless {
+		systems = append(systems,
+			view.NewOHLC(runCtx, pool, tracker),
+			view.NewGauges(runCtx, pool),
+		)
+	}
+
+	if err := booter.AddSystems(systems...); err != nil {
 		return nil, err
 	}
 
@@ -207,20 +218,39 @@ var evalCmd = &cobra.Command{
 		start := config.System.WalletEUR
 		scoreEUR := score - start
 		fitnessEUR := TuneFitness(scoreEUR, result.Regret.MissedForwardEUR)
+		bookHealth := market.BookIntegritySummary()
 
 		payload, err := json.Marshal(map[string]any{
-			"score_eur":          scoreEUR,
-			"fitness_eur":        fitnessEUR,
-			"equity_eur":         score,
-			"wallet_eur":         start,
-			"balance_eur":        result.Wallet.BalanceCopy(),
-			"open_bases":         len(result.Wallet.Snapshot().Inventory),
-			"gate_reject_regret": result.Regret,
+			"score_eur":              scoreEUR,
+			"fitness_eur":            fitnessEUR,
+			"equity_eur":             score,
+			"wallet_eur":             start,
+			"balance_eur":            result.Wallet.BalanceCopy(),
+			"open_bases":             len(result.Wallet.Snapshot().Inventory),
+			"gate_reject_regret":     result.Regret,
+			"book_diverged_symbols":  bookHealth.DivergedSymbols,
+			"book_divergence_events": bookHealth.DivergenceEvents,
+			"book_diverged":          bookHealth.Diverged,
 		})
 
 		if err != nil {
 			errnie.Error(err)
 			os.Exit(1)
+		}
+
+		if bookHealth.DivergedSymbols > 0 {
+			sample := bookHealth.Diverged
+
+			if len(sample) > 5 {
+				sample = sample[:5]
+			}
+
+			fmt.Fprintf(
+				os.Stderr,
+				"symm eval: %d symbols lost book checksum sync (e.g. %s) — fluid/depthflow blind for those symbols\n",
+				bookHealth.DivergedSymbols,
+				strings.Join(sample, ", "),
+			)
 		}
 
 		fmt.Println(string(payload))
@@ -247,6 +277,8 @@ func init() {
 	tuneCmd.Flags().String("replay", defaultReplayFile, "Replay JSONL fixture path")
 	tuneCmd.Flags().StringArray("holdout", nil, "Holdout replay JSONL paths; best config is chosen by minimum holdout fitness")
 	tuneCmd.Flags().Bool("auto-holdout", true, "Reserve the last 20% of --replay as holdout when --holdout is unset")
+	tuneCmd.Flags().Int("walk-forward-folds", replay.DefaultWalkForwardFolds(), "Walk-forward holdout folds (1 = single tail holdout)")
+	tuneCmd.Flags().Bool("replay-perturb", true, "Apply quantity/timestamp jitter on train replay evals")
 	tuneCmd.Flags().Bool("stress-holdout", true, "Run holdout evals with execution stress enabled")
 	tuneCmd.Flags().Float64("max-train-holdout-gap", 0, "Reject candidates when train minus min holdout exceeds this EUR (0 = 3% of wallet; -1 = disable)")
 	tuneCmd.Flags().Int("iterations", 0, "Max search trials (0 = run until Ctrl+C; saves best on interrupt)")

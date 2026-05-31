@@ -30,11 +30,12 @@ func (crypto *Crypto) recordEntryVerdicts(
 	measurements []perspectives.Measurement,
 	verdicts []decision.EntryVerdict,
 ) {
-	score := thesisScore(measurements, entryNamesFromVerdicts(verdicts))
 	snapshot := crypto.ensureCrossSection()
-	inPlay := score > snapshot.Baseline
 
 	for _, verdict := range verdicts {
+		score := thesisScore(measurements, []string{verdict.Name})
+		inPlay := score > snapshot.Baseline
+
 		crypto.appendDecisionTrace(decisionTraceRow{
 			Symbol:     symbol,
 			Regime:     string(verdict.Regime),
@@ -208,20 +209,6 @@ func traceStepsWire(trace *perspectives.DecisionTrace) []map[string]any {
 	}
 
 	return wire
-}
-
-func entryNamesFromVerdicts(verdicts []decision.EntryVerdict) []string {
-	names := make([]string, 0, len(verdicts))
-
-	for _, verdict := range verdicts {
-		if verdict.Action != perspectives.ActionEnter {
-			continue
-		}
-
-		names = append(names, verdict.Name)
-	}
-
-	return names
 }
 
 func traceWhy(verdict decision.EntryVerdict) string {

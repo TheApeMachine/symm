@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/symm/config"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -20,6 +21,8 @@ type tuneRunOptions struct {
 	replayFile         string
 	holdoutFiles       []string
 	autoHoldout        bool
+	walkForwardFolds   int
+	perturbTrain       bool
 	stressHoldout      bool
 	maxTrials          int
 	workers            int
@@ -40,7 +43,12 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		return tuneRunResult{}, err
 	}
 
-	replayPaths, err := resolveTuneReplayPaths(options.replayFile, options.holdoutFiles, options.autoHoldout)
+	replayPaths, err := resolveTuneReplayPaths(
+		options.replayFile,
+		options.holdoutFiles,
+		options.autoHoldout,
+		options.walkForwardFolds,
+	)
 
 	if err != nil {
 		return tuneRunResult{}, err
@@ -51,6 +59,18 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 	}
 
 	reporter := NewTuneReporter(options.quiet)
+
+	if divergences, verifyErr := krakenmarket.CountCaptureBookDivergences(
+		parent,
+		options.replayFile,
+	); verifyErr == nil && divergences > 0 {
+		reporter.Phase(fmt.Sprintf(
+			"WARNING: %s has %d book checksum divergences — fluid/depthflow go blind for those symbols; tuning scores are unreliable",
+			options.replayFile,
+			divergences,
+		))
+	}
+
 	reporter.Phase(fmt.Sprintf(
 		"Tuning replay %s — maximizing holdout wallet fitness (score − gate regret)",
 		replayPaths.trainPath,
@@ -96,9 +116,11 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 
 	if err := seedTuneSearchBaseline(
 		reporter,
+		options,
 		replayPaths.trainPath,
 		replayPaths.holdoutPaths,
 		options.stressHoldout,
+		options.perturbTrain,
 		options.maxTrainHoldoutGap,
 		documentSearch,
 		tunablesSearch,
@@ -149,6 +171,8 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 					replayPaths.trainPath,
 					replayPaths.holdoutPaths,
 					options.stressHoldout,
+					options.perturbTrain,
+					int64(trialsCompleted.Load()+1),
 					options.maxTrainHoldoutGap,
 					candidate,
 				)
@@ -166,7 +190,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 
 					bestMu.Lock()
 
-					if betterTuneCandidate(
+					if !hasBest || betterTuneCandidate(
 						scores.selection,
 						scores.trainScore,
 						bestSelection,
@@ -177,11 +201,17 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 						bestTrainScore = scores.trainScore
 						bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
 						bestGap = scores.gap
-						bestConfig = candidate
+						bestConfig = snapshotTuneCandidate(document, candidate.tunables)
 						newBest = true
 					}
 
 					bestMu.Unlock()
+
+					if newBest {
+						if saveErr := saveTuneLeader(reporter, options, bestConfig); saveErr != nil {
+							reporter.println(fmt.Sprintf("  save leader failed: %v", saveErr))
+						}
+					}
 				} else {
 					rejectedOverfit.Add(1)
 				}
@@ -331,6 +361,18 @@ func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
 		return tuneRunOptions{}, err
 	}
 
+	walkForwardFolds, err := cmd.Flags().GetInt("walk-forward-folds")
+
+	if err != nil {
+		return tuneRunOptions{}, err
+	}
+
+	perturbTrain, err := cmd.Flags().GetBool("replay-perturb")
+
+	if err != nil {
+		return tuneRunOptions{}, err
+	}
+
 	stressHoldout, err := cmd.Flags().GetBool("stress-holdout")
 
 	if err != nil {
@@ -381,6 +423,8 @@ func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
 		replayFile:         replayFile,
 		holdoutFiles:       holdoutFiles,
 		autoHoldout:        autoHoldout,
+		walkForwardFolds:   walkForwardFolds,
+		perturbTrain:       perturbTrain,
 		stressHoldout:      stressHoldout,
 		maxTrials:          maxTrials,
 		workers:            workers,
@@ -393,9 +437,11 @@ func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
 
 func seedTuneSearchBaseline(
 	reporter *TuneReporter,
+	options tuneRunOptions,
 	trainReplay string,
 	holdoutReplays []string,
 	stressHoldout bool,
+	perturbTrain bool,
 	maxTrainHoldoutGap float64,
 	documentSearch *perspectives.DocumentSearch,
 	tunablesSearch *config.TunablesSearch,
@@ -418,7 +464,15 @@ func seedTuneSearchBaseline(
 		tunables:     config.ExtractTunables(config.System),
 		perspectives: &document,
 	}
-	scores, err := scoreTrial(trainReplay, holdoutReplays, stressHoldout, maxTrainHoldoutGap, candidate)
+	scores, err := scoreTrial(
+		trainReplay,
+		holdoutReplays,
+		stressHoldout,
+		perturbTrain,
+		1,
+		maxTrainHoldoutGap,
+		candidate,
+	)
 
 	if err != nil {
 		return err
@@ -444,8 +498,12 @@ func seedTuneSearchBaseline(
 	*bestTrainScore = scores.trainScore
 	*bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
 	*bestGap = scores.gap
-	*bestConfig = candidate
+	*bestConfig = snapshotTuneCandidate(document, candidate.tunables)
 	bestMu.Unlock()
+
+	if saveErr := saveTuneLeader(reporter, options, *bestConfig); saveErr != nil {
+		return saveErr
+	}
 
 	reporter.Summary(fmt.Sprintf(
 		"Baseline from %s — search will try to beat holdout €%.2f (train €%.2f)",

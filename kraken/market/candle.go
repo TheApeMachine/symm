@@ -45,6 +45,10 @@ It blocks until ctx is canceled or the socket closes.
 func NewCandleSubscription(
 	ctx context.Context, intervalMinutes int, symbols ...string,
 ) <-chan *CandleUpdate {
+	if replayActive() {
+		return closed[CandleUpdate]()
+	}
+
 	if intervalMinutes <= 0 {
 		intervalMinutes = 1
 	}

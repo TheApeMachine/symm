@@ -8,6 +8,36 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func waitSharedFeedStopped[T any](test *testing.T, sharedFeed *sharedFeed[T]) {
+	test.Helper()
+
+	for attempt := 0; attempt < 50; attempt++ {
+		sharedFeed.mu.Lock()
+		stopped := !sharedFeed.running
+		sharedFeed.mu.Unlock()
+
+		if stopped {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	test.Fatal("timed out waiting for shared feed to stop")
+}
+
+func forceReplayActive(active bool) func() {
+	if active {
+		replayActiveOverride.Store(replayActiveForced)
+	} else {
+		replayActiveOverride.Store(replayActiveBlocked)
+	}
+
+	return func() {
+		replayActiveOverride.Store(replayActiveDefault)
+	}
+}
+
 func TestMergeSubscriptionSpecs(t *testing.T) {
 	Convey("Given overlapping subscriber specs", t, func() {
 		merged := mergeSubscriptionSpecs([]subscriptionSpec{
@@ -37,6 +67,7 @@ func TestSharedFeedFanoutReliable(t *testing.T) {
 		})
 
 		ctx, cancel := context.WithCancel(context.Background())
+		defer waitSharedFeedStopped(t, sharedFeed)
 		defer cancel()
 
 		sub := sharedFeed.subscribe(ctx, subscriptionSpec{symbols: []string{"BTC/EUR"}})
@@ -70,6 +101,7 @@ func TestSharedFeedFanoutReliableOrdering(t *testing.T) {
 		})
 
 		ctx, cancel := context.WithCancel(context.Background())
+		defer waitSharedFeedStopped(t, sharedFeed)
 		defer cancel()
 
 		subOne := sharedFeed.subscribe(ctx, subscriptionSpec{symbols: []string{"BTC/EUR"}})
@@ -107,6 +139,7 @@ func TestSharedFeedDetachDuringReliableFanout(t *testing.T) {
 		})
 
 		ctx, cancel := context.WithCancel(context.Background())
+		defer waitSharedFeedStopped(t, sharedFeed)
 		_ = sharedFeed.subscribe(ctx, subscriptionSpec{symbols: []string{"BTC/EUR"}})
 
 		cancel()
@@ -134,6 +167,7 @@ func TestSharedFeedSubscribe(t *testing.T) {
 		})
 
 		ctxOne, cancelOne := context.WithCancel(context.Background())
+		defer waitSharedFeedStopped(t, sharedFeed)
 		defer cancelOne()
 		ctxTwo, cancelTwo := context.WithCancel(context.Background())
 		defer cancelTwo()

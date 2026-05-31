@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/config"
@@ -16,6 +17,14 @@ const feedReconnectDelay = time.Second
 // feedBuffer is the per-subscriber buffer; a subscriber that falls behind drops
 // frames rather than stalling the whole fan-out.
 const feedBuffer = 256
+
+const (
+	replayActiveDefault int32 = 0
+	replayActiveForced  int32 = 1
+	replayActiveBlocked int32 = -1
+)
+
+var replayActiveOverride atomic.Int32
 
 /*
 sharedFeed multiplexes one upstream Kraken stream to many in-process subscribers.
@@ -239,6 +248,13 @@ func (sharedFeed *sharedFeed[T]) currentSpec() subscriptionSpec {
 }
 
 func replayActive() bool {
+	switch replayActiveOverride.Load() {
+	case replayActiveForced:
+		return true
+	case replayActiveBlocked:
+		return false
+	}
+
 	return strings.TrimSpace(config.System.ReplayFile) != ""
 }
 

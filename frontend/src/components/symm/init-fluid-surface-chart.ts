@@ -1,9 +1,10 @@
 import {
 	CameraController,
 	EDrawMeshAs,
+	EMeshPaletteMode,
+	EMeshResolution,
 	GradientColorPalette,
 	MouseWheelZoomModifier3D,
-	NumberRange,
 	NumericAxis3D,
 	OrbitModifier3D,
 	ResetCamera3DModifier,
@@ -20,6 +21,7 @@ import {
 	type FluidGrid,
 	gridFromPayload,
 	gridFromSnapshot,
+	projectFluidGridToHeightmap,
 } from "#/lib/symm/fluid-grid";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 
@@ -34,46 +36,17 @@ export type FluidSurfaceControls = {
 };
 
 const applyLiveGrid = (grid: FluidGrid, heightmapArray: number[][]) => {
-	const srcSize = grid.heights.length;
-	const span = grid.max - grid.min;
-	const useSpan = Number.isFinite(span) && span > 1e-6;
-	const scaleMax = useSpan
-		? span
-		: Math.max(grid.outliers.displayMax, grid.max, 0.05);
-	const base = useSpan ? grid.min : 0;
-	const ySpan = Y_MAX - Y_MIN;
+	const projected = projectFluidGridToHeightmap(
+		grid,
+		GRID_Z,
+		GRID_X,
+		Y_MIN,
+		Y_MAX,
+	);
 
 	for (let zIndex = 0; zIndex < GRID_Z; zIndex++) {
 		for (let xIndex = 0; xIndex < GRID_X; xIndex++) {
-			heightmapArray[zIndex][xIndex] = 0;
-		}
-	}
-
-	if (srcSize === 0) {
-		return;
-	}
-
-	for (let zIndex = 0; zIndex < GRID_Z; zIndex++) {
-		const srcZ = Math.min(srcSize - 1, Math.floor((zIndex * srcSize) / GRID_Z));
-		const row = grid.heights[srcZ];
-
-		if (!row) {
-			continue;
-		}
-
-		const rowLen = row.length;
-
-		for (let xIndex = 0; xIndex < GRID_X; xIndex++) {
-			const srcX = Math.min(rowLen - 1, Math.floor((xIndex * rowLen) / GRID_X));
-			const raw = row[srcX];
-
-			if (!Number.isFinite(raw) || raw <= 0) {
-				continue;
-			}
-
-			const normalized = useSpan ? (raw - base) / scaleMax : raw / scaleMax;
-
-			heightmapArray[zIndex][xIndex] = Y_MIN + normalized * ySpan;
+			heightmapArray[zIndex][xIndex] = projected.display[zIndex][xIndex];
 		}
 	}
 };
@@ -89,10 +62,10 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	);
 
 	sciChart3DSurface.camera = new CameraController(wasmContext, {
-		position: new Vector3(-150, 200, 150),
-		target: new Vector3(0, 50, 0),
+		position: new Vector3(-130, 160, 130),
+		target: new Vector3(0, 0, 0),
 	});
-	sciChart3DSurface.worldDimensions = new Vector3(200, 100, 200);
+	sciChart3DSurface.worldDimensions = new Vector3(200, 80, 200);
 
 	sciChart3DSurface.xAxis = new NumericAxis3D(wasmContext, {
 		labelStyle: {
@@ -135,19 +108,21 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		dataSeries,
 		minimum: Y_MIN,
 		maximum: Y_MAX,
-		opacity: 0.9,
-		cellHardnessFactor: 0.5,
-		shininess: 0.5,
-		lightingFactor: 0.0,
+		opacity: 0.99,
+		cellHardnessFactor: 1.0,
+		shininess: 1.0,
+		lightingFactor: 0.15,
 		highlight: 1.0,
 		stroke: appTheme.VividBlue,
 		strokeThickness: 2.0,
 		contourStroke: appTheme.VividBlue,
-		contourInterval: 1,
+		contourInterval: 2.0,
 		contourOffset: 0,
-		contourStrokeThickness: 4,
+		contourStrokeThickness: 0.1,
 		drawSkirt: false,
 		drawMeshAs: EDrawMeshAs.SOLID_WITH_CONTOURS,
+		meshPaletteMode: EMeshPaletteMode.HEIGHT_MAP_INTERPOLATED,
+		meshResolution: EMeshResolution.MESH_RESOLUTION_X4,
 		meshColorPalette: colorMap,
 		isVisible: true,
 	});
@@ -157,6 +132,50 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 	sciChart3DSurface.chartModifiers.add(new MouseWheelZoomModifier3D());
 	sciChart3DSurface.chartModifiers.add(new OrbitModifier3D());
 	sciChart3DSurface.chartModifiers.add(new ResetCamera3DModifier());
+
+	const fitCamera = () => {
+		const host =
+			typeof rootElement === "string"
+				? document.getElementById(rootElement)
+				: rootElement;
+
+		if (host === null) {
+			return;
+		}
+
+		const width = host.clientWidth;
+		const height = host.clientHeight;
+
+		if (width <= 0 || height <= 0) {
+			return;
+		}
+
+		const span = Math.max(width, height);
+		const distance = span * 0.9;
+		const lift = Math.min(height, width) * 0.55;
+
+		sciChart3DSurface.camera.position = new Vector3(
+			-distance * 0.75,
+			lift,
+			distance * 0.75,
+		);
+		sciChart3DSurface.camera.target = new Vector3(0, 0, 0);
+		sciChart3DSurface.invalidateElement();
+	};
+
+	let resizeObserver: ResizeObserver | undefined;
+
+	if (
+		typeof ResizeObserver !== "undefined" &&
+		typeof rootElement !== "string"
+	) {
+		resizeObserver = new ResizeObserver(() => {
+			fitCamera();
+		});
+		resizeObserver.observe(rootElement);
+	}
+
+	fitCamera();
 
 	const controls: FluidSurfaceControls = {
 		update: (snapshot: FieldSnapshotEvent) => {
@@ -168,7 +187,9 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 			dataSeries.setYValues(heightmapArray);
 			sciChart3DSurface.invalidateElement();
 		},
-		dispose: () => {},
+		dispose: () => {
+			resizeObserver?.disconnect();
+		},
 	};
 
 	return {

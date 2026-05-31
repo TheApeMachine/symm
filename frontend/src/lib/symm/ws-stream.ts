@@ -13,6 +13,9 @@ import {
 	isTickEvent,
 	isWalletPayload,
 } from "#/lib/symm/events";
+import { isLayoutDocument } from "#/lib/symm/layout-schema";
+import { LayoutStore } from "#/lib/symm/layout-store";
+import { StreamDataProvider } from "#/lib/symm/stream-data-provider";
 import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 import type { SymmTelemetryStores } from "#/lib/symm/telemetry-stores";
 import { TickStore } from "#/lib/symm/tick-store";
@@ -48,6 +51,11 @@ const parseWirePayload = (raw: unknown): unknown | null => {
 export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
+		return;
+	}
+
+	if (isLayoutDocument(payload)) {
+		LayoutStore.ingest(payload);
 		return;
 	}
 
@@ -101,14 +109,17 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 				case "prediction":
 				case "prediction_settled":
 					stores.predictions.ingest(payload);
+					StreamDataProvider.ingest(row.event, payload);
 					return;
 				case "field_row":
 				case "field_snapshot":
 				case "field_grid":
 					stores.fluid.ingest(payload);
+					StreamDataProvider.ingest("field_snapshot", payload);
 					return;
 				case "candle_bar":
 					stores.ohlc.ingest(payload);
+					StreamDataProvider.ingest("candle_bar", payload);
 					if (typeof row.symbol === "string" && typeof row.close === "number") {
 						stores.trades.setMark(row.symbol, row.close);
 					}

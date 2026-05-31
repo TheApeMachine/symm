@@ -10,7 +10,14 @@ import (
 	"github.com/theapemachine/symm/config"
 )
 
-const maxChannelBuffer = 16384
+func perturbConfigFromSystem() PerturbConfig {
+	return PerturbConfigFrom(
+		config.System.ReplayPerturbEnabled,
+		config.System.ReplayPerturbSeed,
+		config.System.ReplayQtyJitterSigma,
+		config.System.ReplayTimestampJitter,
+	)
+}
 
 /*
 Hub replays one JSONL capture in file order.
@@ -190,6 +197,8 @@ func (hub *Hub) playOnce() {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 	pace := config.System.ReplayPace
+	perturbConfig := perturbConfigFromSystem()
+	perturbRandom := NewPerturbRandom(perturbConfig.Seed)
 	var previous time.Time
 
 	for scanner.Scan() {
@@ -198,6 +207,14 @@ func (hub *Hub) playOnce() {
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
 			continue
 		}
+
+		perturbed, perturbErr := PerturbLine(line, perturbConfig, perturbRandom)
+
+		if perturbErr != nil {
+			continue
+		}
+
+		line = perturbed
 
 		if line.Transport != TransportWS {
 			continue
@@ -238,9 +255,7 @@ func (hub *Hub) dispatch(channel string, payload []byte) {
 	}
 
 	if len(state.subs) == 0 {
-		if len(state.buffer) < maxChannelBuffer {
-			state.buffer = append(state.buffer, payload)
-		}
+		state.buffer = append(state.buffer, payload)
 
 		return
 	}

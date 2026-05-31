@@ -7,24 +7,30 @@ import {
 	formatConfidenceFactor,
 } from "#/components/symm/confidence-data-provider";
 import { drawSignalGauge } from "#/components/symm/draw-signal-gauge";
+import { formatSignalConfidence } from "#/lib/symm/signal-confidence";
 import {
-	SIGNAL_LABELS,
-	SIGNAL_SOURCES,
-	type SignalSource,
-} from "#/lib/symm/signal-confidence";
+	defaultLayoutDocument,
+	gaugeLabelFor,
+	type LayoutPanel,
+} from "#/lib/symm/layout-schema";
 import "#/lib/symm/scichart-setup";
 
 type SignalGaugeProps = {
-	source: SignalSource;
+	source: string;
 };
 
-const GaugeFactorTooltip = ({ factors }: { factors: ConfidenceFactor[] }) => {
-	if (factors.length === 0) {
-		return null;
-	}
-
+const GaugeFactorTooltip = ({
+	confidence,
+	factors,
+}: {
+	confidence: number;
+	factors: ConfidenceFactor[];
+}) => {
 	return (
-		<div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 rounded border border-(--dash-border) bg-(--dash-panel)/95 px-1 py-0.5 text-[8px] leading-tight text-(--dash-muted) shadow-sm">
+		<div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 rounded border border-(--dash-border) bg-(--dash-panel)/95 px-1 py-0.5 text-[8px] leading-tight text-(--dash-muted) opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+			<div className="truncate font-mono">
+				snr={formatSignalConfidence(confidence)}
+			</div>
 			{factors.map((factor) => (
 				<div key={factor.name} className="truncate font-mono">
 					{formatConfidenceFactor(factor)}
@@ -35,9 +41,8 @@ const GaugeFactorTooltip = ({ factors }: { factors: ConfidenceFactor[] }) => {
 };
 
 const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
+	const [confidence, setConfidence] = useState(0);
 	const [factors, setFactors] = useState<ConfidenceFactor[]>([]);
-	const [showFactors, setShowFactors] = useState(false);
-
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
 		if (typeof rootElement === "string") {
 			throw new Error("drawSignalGauge requires an HTMLDivElement root");
@@ -52,6 +57,7 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 
 			if (latest !== undefined) {
 				result.controls.update(latest.confidence);
+				setConfidence(latest.confidence);
 				setFactors(latest.factors ?? []);
 			}
 
@@ -59,6 +65,7 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 				source,
 				(row) => {
 					result.controls.update(row.confidence);
+					setConfidence(row.confidence);
 					setFactors(row.factors ?? []);
 				},
 			);
@@ -72,33 +79,35 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 	);
 
 	return (
-		<div
-			className="relative min-h-0 flex-1"
-			onMouseEnter={() => setShowFactors(true)}
-			onMouseLeave={() => setShowFactors(false)}
-		>
+		<div className="group relative min-h-0 flex-1">
 			<SciChartReact
 				initChart={initChart}
 				onInit={onInit}
 				className="h-full w-full min-h-0"
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>
-			{showFactors ? <GaugeFactorTooltip factors={factors} /> : null}
+			<GaugeFactorTooltip confidence={confidence} factors={factors} />
 		</div>
 	);
 });
 
-export const Gauges = () => {
+export const Gauges = ({ panel }: { panel?: LayoutPanel }) => {
+	const gaugePanel =
+		panel ??
+		defaultLayoutDocument().panels.find((entry) => entry.type === "gauge_grid");
+
+	const sources = gaugePanel?.sources ?? [];
+
 	return (
 		<div className="flex h-full min-h-0 flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel) p-1">
 			<div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-2 gap-1">
-				{SIGNAL_SOURCES.map((source: SignalSource) => (
+				{sources.map((source) => (
 					<div
 						key={source}
 						className="flex min-h-0 min-w-0 flex-col overflow-hidden"
 					>
 						<small className="truncate px-0.5 text-center text-[9px] text-(--dash-muted)">
-							{SIGNAL_LABELS[source]}
+							{gaugeLabelFor(gaugePanel ?? { type: "gauge_grid" }, source)}
 						</small>
 						<SignalGauge source={source} />
 					</div>

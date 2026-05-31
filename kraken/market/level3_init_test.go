@@ -36,4 +36,17 @@ func TestConfigureLevel3(t *testing.T) {
 			So(Level3Available(), ShouldBeTrue)
 		})
 	})
+
+	Convey("Given replay is active", t, func() {
+		defer SetLevel3TokenSource(nil)
+		restoreReplay := forceReplayActive(true)
+		defer restoreReplay()
+
+		err := ConfigureLevel3("key", "secret")
+
+		Convey("It should disable L3 without dialing Kraken", func() {
+			So(err, ShouldBeNil)
+			So(Level3Available(), ShouldBeFalse)
+		})
+	})
 }

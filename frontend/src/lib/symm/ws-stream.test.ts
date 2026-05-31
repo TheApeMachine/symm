@@ -5,6 +5,7 @@ import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provid
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
+import { LayoutStore } from "#/lib/symm/layout-store";
 import { defaultSymmTelemetryStores } from "#/lib/symm/telemetry-stores";
 import { routePayload } from "#/lib/symm/ws-stream";
 import { TickStore } from "#/lib/symm/tick-store";
@@ -155,5 +156,23 @@ describe("routePayload", () => {
 			0.33,
 		);
 		ConfidenceDataProvider.reset();
+	});
+
+	it("routes layout frames into the layout store", () => {
+		LayoutStore.reset();
+
+		routePayload(defaultSymmTelemetryStores, {
+			event: "layout",
+			ts: "2026-05-28T01:10:10Z",
+			panels: [
+				{
+					type: "gauge_grid",
+					sources: ["hawkes"],
+				},
+			],
+		});
+
+		expect(LayoutStore.snapshot().panels).toHaveLength(1);
+		LayoutStore.reset();
 	});
 });

@@ -1,9 +1,6 @@
 package market
 
 import (
-	"fmt"
-
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/orderbook"
 )
 
@@ -84,11 +81,15 @@ func (state *BookFeedState) verify(checksum uint32) {
 	matches := state.book.Verify(checksum)
 
 	if !matches && !state.diverged {
-		errnie.Error(fmt.Errorf("%s: book checksum diverged for %s", state.signal, state.symbol))
+		RecordBookDivergence(state.signal, state.symbol)
 		state.needsSnapshot = true
 	}
 
 	if matches {
+		if state.diverged {
+			RecordBookRecovery(state.signal, state.symbol)
+		}
+
 		state.diverged = false
 		state.needsSnapshot = false
 

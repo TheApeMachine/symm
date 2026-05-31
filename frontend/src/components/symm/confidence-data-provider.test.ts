@@ -118,6 +118,30 @@ describe("ConfidenceDataProvider.ingest", () => {
 		unregister();
 	});
 
+	it("preserves factors when wallet snapshot updates confidence only", () => {
+		ConfidenceDataProvider.ingest({
+			source: "hawkes",
+			confidence: 1.2,
+			factors: [
+				{ name: "mu", value: 0.4 },
+				{ name: "intensity", value: 1.1 },
+			],
+		});
+
+		ConfidenceDataProvider.ingestSnapshot({
+			hawkes: 1.5,
+		});
+
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toEqual({
+			source: "hawkes",
+			confidence: 1.5,
+			factors: [
+				{ name: "mu", value: 0.4 },
+				{ name: "intensity", value: 1.1 },
+			],
+		});
+	});
+
 	it("preserves gauge sub-metrics for tooltip rendering", () => {
 		const received: string[] = [];
 		const unregister = ConfidenceDataProvider.registerSource("fluid", (row) => {

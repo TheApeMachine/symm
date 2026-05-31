@@ -138,10 +138,12 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	go client.runWriter()
 
-	hub.broadcasts["ui"].Send(&qpool.QValue[any]{Value: map[string]any{
+	now := time.Now().UTC()
+	client.enqueue(map[string]any{
 		"event": "hello",
-		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-	}})
+		"ts":    now.Format(time.RFC3339Nano),
+	})
+	client.enqueue(DefaultDashboardLayout(now).Wire())
 
 	hub.replayAudits(client)
 }

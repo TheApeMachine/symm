@@ -201,6 +201,207 @@ export function resetFluidHeightSmoothing() {
 	smoothedHeights = null;
 }
 
+/** Fractional bilinear sample on a square height grid. */
+export function bilinearSampleGrid(
+	grid: number[][],
+	zIndex: number,
+	xIndex: number,
+): number {
+	const zSize = grid.length;
+
+	if (zSize === 0) {
+		return 0;
+	}
+
+	const xSize = grid[0]?.length ?? 0;
+
+	if (xSize === 0) {
+		return 0;
+	}
+
+	const zClamped = Math.min(Math.max(zIndex, 0), zSize - 1);
+	const xClamped = Math.min(Math.max(xIndex, 0), xSize - 1);
+	const zFloor = Math.floor(zClamped);
+	const xFloor = Math.floor(xClamped);
+	const zFrac = zClamped - zFloor;
+	const xFrac = xClamped - xFloor;
+	const zCeil = Math.min(zFloor + 1, zSize - 1);
+	const xCeil = Math.min(xFloor + 1, xSize - 1);
+
+	const topLeft = grid[zFloor]?.[xFloor] ?? 0;
+	const topRight = grid[zFloor]?.[xCeil] ?? 0;
+	const bottomLeft = grid[zCeil]?.[xFloor] ?? 0;
+	const bottomRight = grid[zCeil]?.[xCeil] ?? 0;
+	const top = topLeft + (topRight - topLeft) * xFrac;
+	const bottom = bottomLeft + (bottomRight - bottomLeft) * xFrac;
+
+	return top + (bottom - top) * zFrac;
+}
+
+function gaussianKernel(radius: number): number[][] {
+	const sigma = Math.max(radius / 2, 0.5);
+	const size = radius * 2 + 1;
+	const kernel: number[][] = [];
+	let weightSum = 0;
+
+	for (let rowIndex = 0; rowIndex < size; rowIndex++) {
+		const row: number[] = [];
+		const deltaZ = rowIndex - radius;
+
+		for (let colIndex = 0; colIndex < size; colIndex++) {
+			const deltaX = colIndex - radius;
+			const weight = Math.exp(
+				-(deltaX * deltaX + deltaZ * deltaZ) / (2 * sigma * sigma),
+			);
+
+			row.push(weight);
+			weightSum += weight;
+		}
+
+		kernel.push(row);
+	}
+
+	for (let rowIndex = 0; rowIndex < size; rowIndex++) {
+		for (let colIndex = 0; colIndex < size; colIndex++) {
+			kernel[rowIndex][colIndex] /= weightSum;
+		}
+	}
+
+	return kernel;
+}
+
+/** Spatial Gaussian smooth; radius scales with grid dimensions when omitted. */
+export function smoothHeightmapSpatial(
+	heightmap: number[][],
+	radius = spatialSmoothRadius(heightmap.length, heightmap[0]?.length ?? 0),
+): number[][] {
+	const zSize = heightmap.length;
+	const xSize = heightmap[0]?.length ?? 0;
+
+	if (zSize === 0 || xSize === 0 || radius <= 0) {
+		return heightmap.map((row) => [...row]);
+	}
+
+	const kernel = gaussianKernel(radius);
+	const smoothed = Array.from({ length: zSize }, () =>
+		Array.from({ length: xSize }, () => 0),
+	);
+
+	for (let zIndex = 0; zIndex < zSize; zIndex++) {
+		for (let xIndex = 0; xIndex < xSize; xIndex++) {
+			let value = 0;
+			let weightSum = 0;
+
+			for (let kernelZ = 0; kernelZ < kernel.length; kernelZ++) {
+				for (let kernelX = 0; kernelX < kernel[kernelZ].length; kernelX++) {
+					const sampleZ = Math.min(
+						Math.max(zIndex + kernelZ - radius, 0),
+						zSize - 1,
+					);
+					const sampleX = Math.min(
+						Math.max(xIndex + kernelX - radius, 0),
+						xSize - 1,
+					);
+					const weight = kernel[kernelZ][kernelX];
+
+					value += heightmap[sampleZ][sampleX] * weight;
+					weightSum += weight;
+				}
+			}
+
+			smoothed[zIndex][xIndex] = weightSum > 0 ? value / weightSum : 0;
+		}
+	}
+
+	return smoothed;
+}
+
+export function spatialSmoothRadius(gridZ: number, gridX: number): number {
+	return Math.max(1, Math.round(Math.min(gridZ, gridX) / 16));
+}
+
+/** Blend smoothed geometry toward raw peaks so hotspots stay visible in color. */
+export function blendHeightmapTowardPeaks(
+	smoothed: number[][],
+	raw: number[][],
+	peakBlend: number,
+): number[][] {
+	const zSize = smoothed.length;
+	const xSize = smoothed[0]?.length ?? 0;
+	const blend = Math.min(Math.max(peakBlend, 0), 1);
+	const blended = Array.from({ length: zSize }, () =>
+		Array.from({ length: xSize }, () => 0),
+	);
+
+	for (let zIndex = 0; zIndex < zSize; zIndex++) {
+		for (let xIndex = 0; xIndex < xSize; xIndex++) {
+			const smoothValue = smoothed[zIndex][xIndex];
+			const rawValue = raw[zIndex]?.[xIndex] ?? smoothValue;
+			const peakDelta = Math.max(0, rawValue - smoothValue);
+
+			blended[zIndex][xIndex] = smoothValue + peakDelta * blend;
+		}
+	}
+
+	return blended;
+}
+
+export function projectFluidGridToHeightmap(
+	grid: FluidGrid,
+	targetZ: number,
+	targetX: number,
+	yMin: number,
+	yMax: number,
+): { raw: number[][]; display: number[][] } {
+	const raw = Array.from({ length: targetZ }, () =>
+		Array.from({ length: targetX }, () => yMin),
+	);
+	const srcSize = grid.heights.length;
+	const span = grid.max - grid.min;
+	const useSpan = Number.isFinite(span) && span > 1e-6;
+	const scaleMax = useSpan
+		? span
+		: Math.max(grid.outliers.displayMax, grid.max, 0.05);
+	const base = useSpan ? grid.min : 0;
+	const ySpan = yMax - yMin;
+
+	if (srcSize === 0) {
+		return { raw, display: raw };
+	}
+
+	for (let zIndex = 0; zIndex < targetZ; zIndex++) {
+		const srcZ = (zIndex * (srcSize - 1)) / Math.max(targetZ - 1, 1);
+
+		for (let xIndex = 0; xIndex < targetX; xIndex++) {
+			const rowLen = grid.heights[Math.round(srcZ)]?.length ?? 0;
+
+			if (rowLen === 0) {
+				continue;
+			}
+
+			const srcX = (xIndex * (rowLen - 1)) / Math.max(targetX - 1, 1);
+			const sample = bilinearSampleGrid(grid.heights, srcZ, srcX);
+
+			if (!Number.isFinite(sample) || sample <= 0) {
+				continue;
+			}
+
+			const normalized = useSpan
+				? (sample - base) / scaleMax
+				: sample / scaleMax;
+
+			raw[zIndex][xIndex] = yMin + normalized * ySpan;
+		}
+	}
+
+	const radius = spatialSmoothRadius(targetZ, targetX);
+	const smoothed = smoothHeightmapSpatial(raw, radius);
+	const peakBlend = Math.min(0.5, 0.2 + radius / Math.max(targetZ, targetX, 1));
+	const display = blendHeightmapTowardPeaks(smoothed, raw, peakBlend);
+
+	return { raw, display };
+}
+
 function displayHeight(row: FluidSymbolRow, clippedAt: number): number {
 	return displayActivity(fieldActivity(row), clippedAt);
 }

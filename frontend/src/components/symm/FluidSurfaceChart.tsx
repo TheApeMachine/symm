@@ -9,8 +9,16 @@ import "#/lib/symm/scichart-setup";
 /** Live 3D surface over change% × vol bins. */
 export const FluidSurfaceChart = memo(function FluidSurfaceChart() {
 	const onInit = useCallback(
-		(initResult: TResolvedReturnType<typeof drawExample>) =>
-			FluidDataProvider.registerSink(initResult.controls.update),
+		(initResult: TResolvedReturnType<typeof drawExample>) => {
+			const unregister = FluidDataProvider.registerSink(
+				initResult.controls.update,
+			);
+
+			return () => {
+				unregister();
+				initResult.controls.dispose();
+			};
+		},
 		[],
 	);
 

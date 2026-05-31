@@ -74,6 +74,30 @@ func TestMakerFillPaperRejectsConfiguredOrders(t *testing.T) {
 	})
 }
 
+func TestMakerSubmitPaperRejectKeepsReservationForAck(t *testing.T) {
+	Convey("Given a paper maker rejected after client order id assignment", t, func() {
+		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+		maker := &Maker{
+			Symbol:     "BTC/EUR",
+			LimitPrice: 50000,
+			Notional:   10,
+			Execution: config.ExecutionScope{
+				QuoteCurrency:        "EUR",
+				PaperOrderRejectRate: 1,
+			},
+		}
+
+		clOrdID, err := maker.SubmitPaper(tradingWallet)
+
+		Convey("It should leave the reservation for the simulated reject ack", func() {
+			So(err, ShouldNotBeNil)
+			So(clOrdID, ShouldNotEqual, "")
+			So(tradingWallet.BalanceCopy(), ShouldEqual, 190)
+			So(tradingWallet.ReservedCopy(), ShouldEqual, 10)
+		})
+	})
+}
+
 func TestMakerSubmitLiveRoundsLimitPrice(t *testing.T) {
 	Convey("Given a live maker bid with price precision", t, func() {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)

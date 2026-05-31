@@ -26,7 +26,8 @@ type Maker struct {
 }
 
 /*
-SubmitPaper reserves cash for one resting maker bid without filling.
+SubmitPaper reserves cash for one resting maker bid without filling. Rejected
+paper submissions keep their reservation so the simulated reject ack owns release.
 */
 func (maker *Maker) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 	if err := maker.validate(tradingWallet); err != nil {
@@ -54,8 +55,6 @@ func (maker *Maker) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 	}
 
 	if err := ShouldRejectPaperOrder(maker.executionScope(), maker.StressRegime); err != nil {
-		tradingWallet.ReleaseEntryReservation(maker.Notional)
-
 		return maker.ClOrdID, err
 	}
 
@@ -120,6 +119,10 @@ func (maker *Maker) fillPaperSettled(tradingWallet *wallet.Wallet, queue MakerQu
 	clOrdID, err := maker.SubmitPaper(tradingWallet)
 
 	if err != nil {
+		if clOrdID != "" {
+			tradingWallet.ReleaseEntryReservation(maker.Notional)
+		}
+
 		return order.Fill{}, err
 	}
 

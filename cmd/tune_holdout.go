@@ -19,6 +19,7 @@ func resolveTuneReplayPaths(
 	replayFile string,
 	holdoutPaths []string,
 	autoHoldout bool,
+	walkForwardFolds int,
 ) (tuneReplayPaths, error) {
 	replayFile = strings.TrimSpace(replayFile)
 
@@ -36,6 +37,10 @@ func resolveTuneReplayPaths(
 
 	if !autoHoldout {
 		return paths, nil
+	}
+
+	if walkForwardFolds > 1 {
+		return resolveWalkForwardReplayPaths(replayFile, walkForwardFolds)
 	}
 
 	trainPath, holdoutPath, ok, err := replay.SplitHoldout(
@@ -59,6 +64,71 @@ func resolveTuneReplayPaths(
 	}
 
 	return paths, nil
+}
+
+func resolveWalkForwardReplayPaths(replayFile string, folds int) (tuneReplayPaths, error) {
+	trainPath, _, ok, err := replay.SplitHoldout(
+		replayFile,
+		replay.DefaultHoldoutFraction(),
+		0,
+	)
+
+	if err != nil {
+		return tuneReplayPaths{}, err
+	}
+
+	if !ok {
+		return tuneReplayPaths{trainPath: replayFile}, nil
+	}
+
+	holdoutPaths, holdoutCleanup, err := replay.WalkForwardHoldouts(
+		replayFile,
+		folds,
+		replay.DefaultHoldoutFraction(),
+	)
+
+	if err != nil {
+		replay.RemoveSplitFiles(trainPath)
+
+		return tuneReplayPaths{}, err
+	}
+
+	if len(holdoutPaths) == 0 {
+		_, holdoutPath, ok, splitErr := replay.SplitHoldout(
+			replayFile,
+			replay.DefaultHoldoutFraction(),
+			0,
+		)
+
+		if splitErr != nil {
+			replay.RemoveSplitFiles(trainPath)
+
+			return tuneReplayPaths{}, splitErr
+		}
+
+		if !ok {
+			return tuneReplayPaths{trainPath: trainPath, cleanup: func() {
+				replay.RemoveSplitFiles(trainPath)
+			}}, nil
+		}
+
+		return tuneReplayPaths{
+			trainPath:    trainPath,
+			holdoutPaths: []string{holdoutPath},
+			cleanup: func() {
+				replay.RemoveSplitFiles(trainPath, holdoutPath)
+			},
+		}, nil
+	}
+
+	return tuneReplayPaths{
+		trainPath:    trainPath,
+		holdoutPaths: holdoutPaths,
+		cleanup: func() {
+			replay.RemoveSplitFiles(trainPath)
+			holdoutCleanup()
+		},
+	}, nil
 }
 
 func requireReplayFile(replayFile string) (string, error) {

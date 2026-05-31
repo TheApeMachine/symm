@@ -7,6 +7,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/wallet"
@@ -72,6 +74,47 @@ func TestApplySellFillRejectsPaperOversell(t *testing.T) {
 			convey.So(err, convey.ShouldNotBeNil)
 			convey.So(tradingWallet.InventoryQty("BTC"), convey.ShouldEqual, 1)
 			convey.So(tradingWallet.BalanceCopy(), convey.ShouldEqual, 200)
+		})
+	})
+}
+
+func TestSubmitEntryPaperRejectReleasesOnlyRejectedReservation(t *testing.T) {
+	convey.Convey("Given another paper entry already has cash reserved", t, func() {
+		crypto := newTestCrypto()
+		err := crypto.wallet.ReserveEntry(25)
+		convey.So(err, convey.ShouldBeNil)
+
+		buy := broker.Buy{
+			Symbol:   "BTC/EUR",
+			Notional: 10,
+			Quote: broker.Quote{
+				Last: 100,
+				Bid:  99,
+				Ask:  101,
+			},
+			Execution: config.ExecutionScope{
+				QuoteCurrency:        "EUR",
+				PaperOrderRejectRate: 1,
+			},
+		}
+
+		err = crypto.submitEntryPaper(
+			buy,
+			opportunity{
+				Symbol: "BTC/EUR",
+				Score:  2,
+				Names:  []string{string(perspectives.PlaybookDrive)},
+			},
+			string(perspectives.PlaybookDrive),
+			200,
+		)
+		drainOrderEvents(crypto)
+
+		convey.Convey("It should release only the rejected order reservation", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(crypto.paper.HasPendingEntry("BTC/EUR"), convey.ShouldBeFalse)
+			convey.So(crypto.wallet.ReservedCopy(), convey.ShouldEqual, 25)
+			convey.So(crypto.wallet.BalanceCopy(), convey.ShouldEqual, 175)
 		})
 	})
 }

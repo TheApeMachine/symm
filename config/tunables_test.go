@@ -57,6 +57,12 @@ func TestDefaultTunedPath(t *testing.T) {
 	})
 }
 
+func TestDefaultTunedInstallPath(t *testing.T) {
+	convey.Convey("DefaultTunedInstallPath", t, func() {
+		convey.So(config.DefaultTunedInstallPath(), convey.ShouldEqual, "config/tuned.json")
+	})
+}
+
 func TestInitLoadsTunedFileWhenPresent(t *testing.T) {
 	convey.Convey("Given runs/tuned.json exists", t, func() {
 		path := filepath.Join(t.TempDir(), "tuned.json")

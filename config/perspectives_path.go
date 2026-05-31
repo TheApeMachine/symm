@@ -2,15 +2,22 @@ package config
 
 import "strings"
 
-const defaultPerspectiveBuiltinFile = "config/perspectives.yaml"
+const defaultPerspectiveInstallFile = "config/perspectives.yaml"
 
 const defaultPerspectiveRunFile = "runs/perspectives.yaml"
 
 /*
-DefaultPerspectivePath is where tune runs persist learned playbook YAML.
+DefaultPerspectivePath is where tune runs persist learned playbook YAML for this session.
 */
 func DefaultPerspectivePath() string {
 	return defaultPerspectiveRunFile
+}
+
+/*
+DefaultPerspectiveInstallPath is the active registry copied from tune output and loaded at boot.
+*/
+func DefaultPerspectiveInstallPath() string {
+	return defaultPerspectiveInstallFile
 }
 
 /*
@@ -19,7 +26,7 @@ missing, configurePerspectives keeps the Go builtin playbooks in market/.
 */
 func PerspectiveLoadPath() string {
 	if System == nil {
-		return DefaultPerspectivePath()
+		return DefaultPerspectiveInstallPath()
 	}
 
 	return PerspectiveLoadPathFor(System.PerspectiveFile)
@@ -29,7 +36,7 @@ func PerspectiveLoadPathFor(preferred string) string {
 	path := strings.TrimSpace(preferred)
 
 	if path == "" {
-		return DefaultPerspectivePath()
+		return DefaultPerspectiveInstallPath()
 	}
 
 	return path

@@ -86,6 +86,50 @@ func TestRecordEntryVerdictsAudit(t *testing.T) {
 	})
 }
 
+func TestRecordEntryVerdictsScoresRejectedPlaybook(t *testing.T) {
+	Convey("Given a rejected playbook and stronger unrelated measurements", t, func() {
+		decision.RestoreDefaultPerspectiveRegistry()
+		path := t.TempDir() + "/audit.jsonl"
+		auditLog, err := OpenAuditLog(path, 1<<20, 3, 0)
+		So(err, ShouldBeNil)
+		defer auditLog.Close()
+
+		crypto := newTestCrypto()
+		crypto.auditLog = auditLog
+		measurements := []perspectives.Measurement{
+			{Category: perspectives.CategoryFrenzy, SNR: 9},
+			{Category: perspectives.CategoryAggressiveDrive, SNR: 2},
+		}
+		trace := perspectives.AcquireTrace(perspectives.PlaybookDrive)
+		trace.RecordStep(
+			perspectives.CategoryVolumeStarvation,
+			perspectives.ActionDeny,
+			1.2,
+			1.0,
+			perspectives.ConditionIsGreaterThan,
+			0,
+			true,
+		)
+		defer perspectives.ReleaseTrace(trace)
+
+		crypto.recordEntryVerdicts("BTC/EUR", measurements, []decision.EntryVerdict{{
+			Name:   string(perspectives.PlaybookDrive),
+			Regime: perspectives.RegimeTrending,
+			Action: perspectives.ActionDeny,
+			Trace:  trace,
+		}})
+
+		lines, readErr := readAuditLines(path)
+
+		Convey("It should audit the rejected playbook's own thesis score", func() {
+			So(readErr, ShouldBeNil)
+			So(lines, ShouldHaveLength, 1)
+			So(lines[0]["audit_event"], ShouldEqual, "gate_reject")
+			So(lines[0]["thesis_score"], ShouldAlmostEqual, 2.0, 1e-9)
+		})
+	})
+}
+
 func TestPublishEntryReject(t *testing.T) {
 	Convey("Given a desk with disk audit logging", t, func() {
 		path := t.TempDir() + "/audit.jsonl"

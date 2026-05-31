@@ -28,7 +28,8 @@ type Buy struct {
 
 /*
 SubmitPaper mirrors SubmitLive through reserve + preflight, without filling.
-Returns the client order id used to reconcile the simulated execution.
+Returns the client order id used to reconcile the simulated execution. Rejected
+paper submissions keep their reservation so the simulated reject ack owns release.
 */
 func (buy *Buy) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 	if err := buy.validate(tradingWallet); err != nil {
@@ -56,8 +57,6 @@ func (buy *Buy) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 	}
 
 	if err := ShouldRejectPaperOrder(buy.Execution, buy.StressRegime); err != nil {
-		tradingWallet.ReleaseEntryReservation(buy.Notional)
-
 		return buy.ClOrdID, err
 	}
 
@@ -110,7 +109,13 @@ FillPaper runs SubmitPaper and BuildPaperFill, then settles inventory immediatel
 for unit tests and legacy callers.
 */
 func (buy *Buy) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
-	if _, err := buy.SubmitPaper(tradingWallet); err != nil {
+	clOrdID, err := buy.SubmitPaper(tradingWallet)
+
+	if err != nil {
+		if clOrdID != "" {
+			tradingWallet.ReleaseEntryReservation(buy.Notional)
+		}
+
 		return order.Fill{}, err
 	}
 
@@ -198,12 +203,18 @@ func (buy *Buy) PreflightGates() error {
 
 	if scope.SnapshotFreshnessTTL > 0 && !buy.Quote.At.IsZero() {
 		if age := time.Since(buy.Quote.At); age > scope.SnapshotFreshnessTTL {
-			return fmt.Errorf("quote stale: %s > %s", age, scope.SnapshotFreshnessTTL)
+			return fmt.Errorf(
+				"%s quote stale: %s > %s (bid=%g ask=%g)",
+				buy.Symbol, age, scope.SnapshotFreshnessTTL, buy.Quote.Bid, buy.Quote.Ask,
+			)
 		}
 	}
 
 	if !buy.Quote.HasTopOfBook() {
-		return fmt.Errorf("incomplete quote: missing bid/ask")
+		return fmt.Errorf(
+			"%s incomplete quote: missing bid/ask (bid=%g ask=%g last=%g)",
+			buy.Symbol, buy.Quote.Bid, buy.Quote.Ask, buy.Quote.Last,
+		)
 	}
 
 	if scope.MaxSpreadBPS > 0 {
@@ -213,7 +224,10 @@ func (buy *Buy) PreflightGates() error {
 			spreadBPS := (buy.Quote.Ask - buy.Quote.Bid) / mid * 10000
 
 			if spreadBPS > scope.MaxSpreadBPS {
-				return fmt.Errorf("spread %.2f bps > MaxSpreadBPS %.2f", spreadBPS, scope.MaxSpreadBPS)
+				return fmt.Errorf(
+					"%s spread %.2f bps > MaxSpreadBPS %.2f (bid=%g ask=%g mid=%g)",
+					buy.Symbol, spreadBPS, scope.MaxSpreadBPS, buy.Quote.Bid, buy.Quote.Ask, mid,
+				)
 			}
 		}
 	}

@@ -116,6 +116,8 @@ func NewCrypto(
 		}
 	}
 
+	market.SetBookHealthSink(&bookHealthSink{crypto: crypto})
+
 	return crypto, nil
 }
 
@@ -446,7 +448,10 @@ func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map
 		return
 	}
 
-	if auditEvent != "entry" && auditEvent != "exit" {
+	if auditEvent != "entry" &&
+		auditEvent != "exit" &&
+		auditEvent != "book_diverged" &&
+		auditEvent != "book_recovered" {
 		return
 	}
 

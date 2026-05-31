@@ -177,6 +177,10 @@ type Config struct {
 	ReplayFile                   string
 	ReplayLoop                   bool
 	ReplayPace                   time.Duration
+	ReplayPerturbEnabled         bool
+	ReplayPerturbSeed            int64
+	ReplayQtyJitterSigma         float64
+	ReplayTimestampJitter        time.Duration
 	RecordFile                   string
 	AuditFile                    string
 	AuditMaxFileBytes            int64
@@ -189,7 +193,9 @@ type Config struct {
 
 var System *Config
 
-const defaultTunedFile = "runs/tuned.json"
+const defaultTunedRunFile = "runs/tuned.json"
+
+const defaultTunedInstallFile = "config/tuned.json"
 
 func init() {
 	if err := Bootstrap(); err != nil {
@@ -215,9 +221,9 @@ func Bootstrap() error {
 		return nil
 	}
 
-	if _, err := os.Stat(defaultTunedFile); err == nil {
-		if err := LoadTunablesFile(defaultTunedFile, System); err != nil {
-			return fmt.Errorf("load tuned config %q: %w", defaultTunedFile, err)
+	if _, err := os.Stat(defaultTunedInstallFile); err == nil {
+		if err := LoadTunablesFile(defaultTunedInstallFile, System); err != nil {
+			return fmt.Errorf("load tuned config %q: %w", defaultTunedInstallFile, err)
 		}
 	}
 
@@ -384,10 +390,12 @@ func NewConfig() *Config {
 		OHLCIntervalMinutes:          5,
 		OHLCMaxSymbols:               64,
 		OHLCEWarmPulseCredit:         30,
+		ReplayQtyJitterSigma:         0.05,
+		ReplayTimestampJitter:        50 * time.Millisecond,
 		AuditMaxFileBytes:            32 << 20,
 		AuditMaxFiles:                3,
 		AuditGateRejectCooldown:      60 * time.Second,
-		PerspectiveFile:              DefaultPerspectivePath(),
+		PerspectiveFile:              DefaultPerspectiveInstallPath(),
 	}
 
 	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {
@@ -419,6 +427,49 @@ func ApplyEnvironment(cfg *Config) error {
 		}
 
 		cfg.ReplayPace = parsed
+	}
+
+	if perturb := strings.TrimSpace(os.Getenv("SYMM_REPLAY_PERTURB")); perturb == "1" ||
+		strings.EqualFold(perturb, "true") {
+		cfg.ReplayPerturbEnabled = true
+	}
+
+	if seedText := strings.TrimSpace(os.Getenv("SYMM_REPLAY_PERTURB_SEED")); seedText != "" {
+		var seed int64
+
+		if _, err := fmt.Sscan(seedText, &seed); err != nil {
+			return fmt.Errorf("SYMM_REPLAY_PERTURB_SEED: %w", err)
+		}
+
+		cfg.ReplayPerturbSeed = seed
+	}
+
+	if sigmaText := strings.TrimSpace(os.Getenv("SYMM_REPLAY_QTY_JITTER_SIGMA")); sigmaText != "" {
+		var sigma float64
+
+		if _, err := fmt.Sscan(sigmaText, &sigma); err != nil {
+			return fmt.Errorf("SYMM_REPLAY_QTY_JITTER_SIGMA: %w", err)
+		}
+
+		if sigma < 0 {
+			return fmt.Errorf("SYMM_REPLAY_QTY_JITTER_SIGMA: must be >= 0")
+		}
+
+		cfg.ReplayQtyJitterSigma = sigma
+	}
+
+	if jitterText := strings.TrimSpace(os.Getenv("SYMM_REPLAY_TS_JITTER")); jitterText != "" {
+		parsed, err := time.ParseDuration(jitterText)
+
+		if err != nil {
+			return fmt.Errorf("SYMM_REPLAY_TS_JITTER: %w", err)
+		}
+
+		if parsed < 0 {
+			return fmt.Errorf("SYMM_REPLAY_TS_JITTER: must be >= 0")
+		}
+
+		cfg.ReplayTimestampJitter = parsed
 	}
 
 	if recordFile := strings.TrimSpace(os.Getenv("SYMM_RECORD_FILE")); recordFile != "" {
