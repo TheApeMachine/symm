@@ -5,7 +5,15 @@ RoundTripCostPct estimates round-trip friction (fees + slippage) as a fraction
 of notional.
 */
 func RoundTripCostPct(feePct, slippageBPS float64) float64 {
-	return 2*feePct/100 + slippageBPS/10000
+	return RoundTripCostPctForFees(feePct, feePct, slippageBPS)
+}
+
+/*
+RoundTripCostPctForFees estimates round-trip friction when entry and exit use
+different fee schedules, such as maker entry and taker exit.
+*/
+func RoundTripCostPctForFees(entryFeePct, exitFeePct, slippageBPS float64) float64 {
+	return (entryFeePct+exitFeePct)/100 + slippageBPS/10000
 }
 
 /*

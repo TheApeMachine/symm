@@ -26,3 +26,20 @@ func TestDocumentSearchNext(t *testing.T) {
 		})
 	})
 }
+
+func TestDocumentSearchObserve(t *testing.T) {
+	Convey("Given an untracked baseline document", t, func() {
+		random := rand.New(rand.NewSource(17))
+		profile := testSearchProfile()
+		search, err := NewDocumentSearch(profile, random)
+		So(err, ShouldBeNil)
+		baseline := GenerateDocument(profile, random)
+
+		search.Observe(baseline, 0, 0)
+
+		Convey("It should seed the root before random generation", func() {
+			So(search.root, ShouldNotBeNil)
+			So(documentSearchKey(search.root.document), ShouldEqual, documentSearchKey(baseline))
+		})
+	})
+}

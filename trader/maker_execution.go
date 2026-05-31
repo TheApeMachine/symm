@@ -18,7 +18,8 @@ func (crypto *Crypto) submitMakerEntry(
 	opportunity opportunity,
 	playbook string,
 	spreadBPS float64,
-	feePct float64,
+	entryFeePct float64,
+	exitFeePct float64,
 	stressRegime broker.StressRegime,
 ) error {
 	limitPrice := makerLimitPrice(quote)
@@ -43,7 +44,7 @@ func (crypto *Crypto) submitMakerEntry(
 		Symbol:           symbol,
 		LimitPrice:       limitPrice,
 		Notional:         notional,
-		FeePct:           feePct,
+		FeePct:           entryFeePct,
 		PriceDecimals:    priceDecimalsValue,
 		HasPriceDecimals: hasPriceDecimals,
 		Execution:        crypto.scopedRuntime().Execution,
@@ -51,10 +52,14 @@ func (crypto *Crypto) submitMakerEntry(
 	}
 
 	if crypto.live != nil {
-		return crypto.submitMakerEntryLive(makerOrder, quote, opportunity, playbook, spreadBPS)
+		return crypto.submitMakerEntryLive(
+			makerOrder, quote, opportunity, playbook, spreadBPS, exitFeePct,
+		)
 	}
 
-	return crypto.submitMakerEntryPaper(makerOrder, quote, opportunity, playbook, spreadBPS)
+	return crypto.submitMakerEntryPaper(
+		makerOrder, quote, opportunity, playbook, spreadBPS, exitFeePct,
+	)
 }
 
 func (crypto *Crypto) submitMakerEntryPaper(
@@ -63,12 +68,13 @@ func (crypto *Crypto) submitMakerEntryPaper(
 	opportunity opportunity,
 	playbook string,
 	spreadBPS float64,
+	exitFeePct float64,
 ) error {
 	clOrdID, err := makerOrder.SubmitPaper(crypto.wallet)
 
 	if err != nil {
 		if clOrdID != "" {
-			intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS)
+			intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS, exitFeePct)
 			crypto.paper.trackEntry(clOrdID, makerOrder.Symbol, intent)
 			crypto.paper.EnqueueReject(clOrdID, err.Error())
 			crypto.publishMakerSubmit(makerOrder.Symbol, opportunity, playbook, clOrdID, makerOrder.Notional, spreadBPS, false)
@@ -82,7 +88,7 @@ func (crypto *Crypto) submitMakerEntryPaper(
 	}
 
 	postedAt := time.Now()
-	intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS)
+	intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS, exitFeePct)
 	crypto.paper.trackEntry(clOrdID, makerOrder.Symbol, intent)
 	crypto.publishMakerSubmit(makerOrder.Symbol, opportunity, playbook, clOrdID, makerOrder.Notional, spreadBPS, false)
 
@@ -108,6 +114,7 @@ func (crypto *Crypto) submitMakerEntryLive(
 	opportunity opportunity,
 	playbook string,
 	spreadBPS float64,
+	exitFeePct float64,
 ) error {
 	clOrdID, err := order.NextClOrdID()
 
@@ -116,7 +123,7 @@ func (crypto *Crypto) submitMakerEntryLive(
 	}
 
 	makerOrder.ClOrdID = clOrdID
-	intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS)
+	intent := makerEntryIntent(makerOrder, quote, opportunity, playbook, spreadBPS, exitFeePct)
 	crypto.live.trackEntry(clOrdID, makerOrder.Symbol, intent)
 
 	if err := makerOrder.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
@@ -226,6 +233,23 @@ func (crypto *Crypto) fallbackMakerToTaker(entry *restingMakerEntry) {
 		Execution: crypto.scopedRuntime().Execution,
 	}
 
+	if !entryClearsFriction(
+		entry.opportunity.Score,
+		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
+		buy.FeePct,
+		crypto.exitFeePct(entry.symbol),
+		entry.spreadBPS,
+	) {
+		crypto.publishAudit("maker_fallback_cancel", entry.symbol, "taker fallback below edge", map[string]any{
+			"cl_ord_id":   entry.clOrdID,
+			"limit_price": entry.maker.LimitPrice,
+			"wait_ticks":  entry.waitTicks,
+			"live":        crypto.live != nil,
+		})
+
+		return
+	}
+
 	crypto.publishAudit("maker_fallback", entry.symbol, "maker queue timeout", map[string]any{
 		"cl_ord_id":   entry.clOrdID,
 		"limit_price": entry.maker.LimitPrice,
@@ -244,6 +268,7 @@ func makerEntryIntent(
 	opportunity opportunity,
 	playbook string,
 	spreadBPS float64,
+	exitFeePct float64,
 ) orderIntent {
 	return orderIntent{
 		kind:           "entry",
@@ -253,6 +278,8 @@ func makerEntryIntent(
 		notional:       makerOrder.Notional,
 		quote:          quote,
 		feePct:         makerOrder.FeePct,
+		entryFeePct:    makerOrder.FeePct,
+		exitFeePct:     exitFeePct,
 		spreadBPS:      spreadBPS,
 		score:          opportunity.Score,
 		names:          opportunity.Names,
@@ -287,7 +314,7 @@ func (crypto *Crypto) publishMakerSubmit(
 		"why":          trigger,
 		"playbook":     playbook,
 		"perspectives": opportunity.Names,
-		"conviction": opportunity.Score,
+		"conviction":   opportunity.Score,
 		"edge":         opportunity.Edge,
 		"cl_ord_id":    clOrdID,
 		"slot_eur":     notional,

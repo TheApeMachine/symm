@@ -29,6 +29,7 @@ type trialScores struct {
 	trainScore    float64
 	holdoutScores []float64
 	selection     float64
+	searchReward  float64
 	gap           float64
 	eligible      bool
 	rejectReason  string
@@ -165,6 +166,22 @@ func trialEligible(
 	return true, ""
 }
 
+func trialSearchReward(
+	selection float64,
+	rejectReason string,
+	selectionPerformance economics.PerformanceSummary,
+) float64 {
+	if rejectReason != tuneRejectNoProfit {
+		return selection
+	}
+
+	if selectionPerformance.ClosedTrades == 0 {
+		return selection - 10
+	}
+
+	return selection
+}
+
 /*
 resolveMaxTrainHoldoutGap maps CLI input to an EUR gap ceiling. Zero uses 3% of
 WalletEUR when walletEUR > 0; zero wallet disables overfit rejection. Negative
@@ -232,6 +249,7 @@ func scoreTrial(
 
 	gap := trialTrainHoldoutGap(trainResult.FitnessEUR, holdoutScores)
 	selectionPerformance := trialSelectionPerformance(trainResult, holdoutResults, holdoutScores)
+	selection := trialSelectionScore(trainResult.FitnessEUR, holdoutScores)
 	eligible, rejectReason := trialEligible(
 		trainResult.FitnessEUR,
 		holdoutScores,
@@ -242,7 +260,8 @@ func scoreTrial(
 	return trialScores{
 		trainScore:    trainResult.FitnessEUR,
 		holdoutScores: holdoutScores,
-		selection:     trialSelectionScore(trainResult.FitnessEUR, holdoutScores),
+		selection:     selection,
+		searchReward:  trialSearchReward(selection, rejectReason, selectionPerformance),
 		gap:           gap,
 		eligible:      eligible,
 		rejectReason:  rejectReason,

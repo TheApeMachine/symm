@@ -150,11 +150,13 @@ func (crypto *Crypto) refreshCrossSection() {
 
 				local.candidates++
 
-				feePct := crypto.takerFeePct(row.symbol)
+				entryFeePct := crypto.entryFeePct(row.symbol)
+				exitFeePct := crypto.exitFeePct(row.symbol)
 				spreadBPS := crypto.quotes.spreadBPS(row.symbol)
-				requiredSNR := perspectives.RequiredThesisScore(
+				requiredSNR := perspectives.RequiredThesisScoreForFees(
 					crypto.scopedRuntime().Risk.EntryEdgeMultiple,
-					feePct,
+					entryFeePct,
+					exitFeePct,
 					spreadBPS,
 				)
 

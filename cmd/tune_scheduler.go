@@ -182,6 +182,8 @@ func handleTuneTrialResult(
 			result.pendingID,
 		)
 	} else {
+		documentSearch.Observe(result.document, result.scores.searchReward, result.pendingID)
+		tunablesSearch.Observe(result.tunables, result.scores.searchReward)
 		countRejectedTuneTrial(result.scores.rejectReason, rejectedOverfit, rejectedNoProfit)
 	}
 

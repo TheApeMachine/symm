@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -41,6 +43,42 @@ func TestRobustCenter(t *testing.T) {
 		convey.Convey("It should keep the center anchored to the current crowd", func() {
 			convey.So(median, convey.ShouldEqual, 0.2)
 			convey.So(spread, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestEntryDecisionContext(t *testing.T) {
+	convey.Convey("Given maker entries are enabled", t, func() {
+		originalUseMaker := config.System.UseMakerEntries
+		originalMakerFee := config.System.MakerFeePct
+		originalTakerFee := config.System.TakerFeePct
+		originalEdge := config.System.EntryEdgeMultiple
+		config.System.UseMakerEntries = true
+		config.System.MakerFeePct = 0.25
+		config.System.TakerFeePct = 0.40
+		config.System.EntryEdgeMultiple = 3
+		previousCatalog := market.Catalog()
+		market.SetCatalog(nil)
+		t.Cleanup(func() {
+			config.System.UseMakerEntries = originalUseMaker
+			config.System.MakerFeePct = originalMakerFee
+			config.System.TakerFeePct = originalTakerFee
+			config.System.EntryEdgeMultiple = originalEdge
+			market.SetCatalog(previousCatalog)
+			config.SyncRuntime()
+		})
+		config.SyncRuntime()
+
+		crypto := newTestCrypto()
+		crypto.runtime = config.Runtime
+		context := crypto.entryDecisionContext("BTC/EUR", nil, "drive", 0)
+
+		convey.Convey("It should score maker entry and taker exit friction", func() {
+			takerTaker := perspectives.RequiredThesisScoreForFees(3, 0.40, 0.40, 0)
+
+			convey.So(context.Metrics[perspectives.MetricFeePct], convey.ShouldEqual, 0.25)
+			convey.So(context.Metrics[perspectives.MetricRequiredScore], convey.ShouldAlmostEqual, 1.53)
+			convey.So(context.Metrics[perspectives.MetricRequiredScore], convey.ShouldBeLessThan, takerTaker)
 		})
 	})
 }

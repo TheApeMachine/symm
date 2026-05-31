@@ -60,7 +60,9 @@ type PositionBinding struct {
 	DueAt          time.Time
 	HasLotDecimals bool
 	LotDecimals    int
-	TakerFeePct    float64 // real per-pair taker fee at entry; billed again on the exit sell
+	EntryFeePct    float64 // real per-pair fee charged on the entry fill
+	ExitFeePct     float64 // real per-pair fee expected on the exit sell
+	TakerFeePct    float64 // legacy exit-fee field for existing bindings
 	Exploratory    bool    // opened by exploration (cold bucket), not the disciplined edge gate
 }
 

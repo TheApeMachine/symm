@@ -269,7 +269,8 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 		return
 	}
 
-	feePct := crypto.takerFeePct(symbol)
+	entryFeePct := crypto.entryFeePct(symbol)
+	exitFeePct := crypto.exitFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
 	measurements := crypto.snapshot(symbol)
 	stressRegime := broker.StressRegimeFrom(measurements)
@@ -278,7 +279,15 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 
 	if crypto.scopedRuntime().Execution.UseMakerEntries {
 		if err := crypto.submitMakerEntry(
-			symbol, notional, quote, opportunity, playbook, spreadBPS, crypto.makerFeePct(symbol), stressRegime,
+			symbol,
+			notional,
+			quote,
+			opportunity,
+			playbook,
+			spreadBPS,
+			entryFeePct,
+			exitFeePct,
+			stressRegime,
 		); err != nil {
 			errnie.Error(err)
 		}
@@ -290,7 +299,7 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 		Symbol:       symbol,
 		Notional:     notional,
 		Quote:        quote,
-		FeePct:       feePct,
+		FeePct:       entryFeePct,
 		Execution:    crypto.scopedRuntime().Execution,
 		StressRegime: stressRegime,
 	}
@@ -327,11 +336,20 @@ func (crypto *Crypto) exit(
 
 	entry := crypto.wallet.AvgEntryFor(base)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
+	exitFeePct := binding.ExitFeePct
+
+	if exitFeePct <= 0 {
+		exitFeePct = binding.TakerFeePct
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = crypto.exitFeePct(symbol)
+	}
 
 	sell := broker.Sell{
 		Symbol:       symbol,
 		Quote:        crypto.quotes.snapshot(symbol, last),
-		FeePct:       binding.TakerFeePct,
+		FeePct:       exitFeePct,
 		Execution:    crypto.scopedRuntime().Execution,
 		StressRegime: broker.StressRegimeFrom(crypto.snapshot(symbol)),
 	}
@@ -499,6 +517,18 @@ func (crypto *Crypto) takerFeePct(symbol string) float64 {
 	}
 
 	return crypto.wallet.FeePct
+}
+
+func (crypto *Crypto) entryFeePct(symbol string) float64 {
+	if crypto.scopedRuntime().Execution.UseMakerEntries {
+		return crypto.makerFeePct(symbol)
+	}
+
+	return crypto.takerFeePct(symbol)
+}
+
+func (crypto *Crypto) exitFeePct(symbol string) float64 {
+	return crypto.takerFeePct(symbol)
 }
 
 func lotDecimalsKnown(symbol string) bool {

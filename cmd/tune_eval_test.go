@@ -121,6 +121,34 @@ func TestTrialEligible(t *testing.T) {
 	})
 }
 
+func TestTrialSearchReward(t *testing.T) {
+	Convey("Given a no-trade no-profit rejection", t, func() {
+		reward := trialSearchReward(0, tuneRejectNoProfit, economics.PerformanceSummary{})
+
+		Convey("It should make flat no-trade worse than small losing exploration", func() {
+			So(reward, ShouldEqual, -10)
+		})
+	})
+
+	Convey("Given a closed losing trade without profit", t, func() {
+		reward := trialSearchReward(-0.5, tuneRejectNoProfit, economics.PerformanceSummary{
+			ClosedTrades: 1,
+		})
+
+		Convey("It should preserve the observed economic score", func() {
+			So(reward, ShouldEqual, -0.5)
+		})
+	})
+
+	Convey("Given an overfit rejection", t, func() {
+		reward := trialSearchReward(5, tuneRejectOverfit, economics.PerformanceSummary{})
+
+		Convey("It should preserve the selected holdout score", func() {
+			So(reward, ShouldEqual, 5)
+		})
+	})
+}
+
 func TestBetterTuneCandidate(t *testing.T) {
 	Convey("Given equal holdout fitness", t, func() {
 		Convey("It should prefer less negative train fitness on ties", func() {

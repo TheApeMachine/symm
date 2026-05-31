@@ -14,6 +14,7 @@ func TestEntryClearsFriction(t *testing.T) {
 				0.5,
 				config.System.EntryEdgeMultiple,
 				config.System.TakerFeePct,
+				config.System.TakerFeePct,
 				0,
 			), convey.ShouldBeFalse)
 		})
@@ -23,8 +24,19 @@ func TestEntryClearsFriction(t *testing.T) {
 				4.0,
 				config.System.EntryEdgeMultiple,
 				config.System.TakerFeePct,
+				config.System.TakerFeePct,
 				12,
 			), convey.ShouldBeTrue)
+		})
+	})
+
+	convey.Convey("Given maker entry and taker exit fees", t, func() {
+		convey.Convey("It should clear at a lower score than taker taker friction", func() {
+			makerTaker := entryClearsFriction(2.1, 3, 0.25, 0.40, 0)
+			takerTaker := entryClearsFriction(2.1, 3, 0.40, 0.40, 0)
+
+			convey.So(makerTaker, convey.ShouldBeTrue)
+			convey.So(takerTaker, convey.ShouldBeFalse)
 		})
 	})
 }

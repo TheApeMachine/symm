@@ -23,8 +23,11 @@ func (crypto *Crypto) trackGateRejectRegret(symbol string, verdict decision.Entr
 	}
 
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
-	feePct := crypto.takerFeePct(symbol)
-	roundTrip := economics.RoundTripCostPct(feePct, spreadBPS)
+	roundTrip := economics.RoundTripCostPctForFees(
+		crypto.entryFeePct(symbol),
+		crypto.exitFeePct(symbol),
+		spreadBPS,
+	)
 	notional := crypto.scopedRuntime().Risk.MinCostEUR
 
 	if notional <= 0 {
@@ -47,6 +50,76 @@ FlushGateRejectRegret resolves pending gate rejects at replay end.
 */
 func (crypto *Crypto) FlushGateRejectRegret() {
 	crypto.economics.FlushGateReject(crypto.quotes.lastPrices())
+}
+
+/*
+FlushOpenPositionPerformance records replay-end marks as exit labels for
+headless evaluation. Wallet equity already marks open inventory to these prices;
+this keeps tune eligibility on the same economic surface without touching live
+positions.
+*/
+func (crypto *Crypto) FlushOpenPositionPerformance() {
+	if crypto == nil || crypto.wallet == nil {
+		return
+	}
+
+	snapshot := crypto.wallet.Snapshot()
+
+	if snapshot == nil {
+		return
+	}
+
+	lastPrices := crypto.quotes.lastPrices()
+	now := time.Now()
+
+	for base, qty := range snapshot.Inventory {
+		if qty <= 0 {
+			continue
+		}
+
+		symbol := base + "/" + snapshot.Currency
+		lastPrice := lastPrices[symbol]
+
+		if lastPrice <= 0 {
+			continue
+		}
+
+		binding, ok := snapshot.Positions[base]
+
+		if !ok {
+			continue
+		}
+
+		entryPrice := snapshot.AvgEntry[base]
+
+		if entryPrice <= 0 {
+			continue
+		}
+
+		entryFeePct := binding.EntryFeePct
+		exitFeePct := binding.ExitFeePct
+
+		if entryFeePct <= 0 {
+			entryFeePct = binding.TakerFeePct
+		}
+
+		if exitFeePct <= 0 {
+			exitFeePct = binding.TakerFeePct
+		}
+
+		label := economics.ExitLabelWithFees(
+			symbol,
+			binding.Playbook,
+			entryPrice,
+			lastPrice,
+			entryFeePct,
+			exitFeePct,
+			crypto.quotes.spreadBPS(symbol),
+			binding.PredictedAt,
+			now,
+		)
+		crypto.economics.RecordExit(label)
+	}
 }
 
 /*

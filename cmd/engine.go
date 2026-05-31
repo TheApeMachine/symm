@@ -157,6 +157,10 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 
 	tradingCrypto.FlushGateRejectRegret()
 
+	if config.System.Headless {
+		tradingCrypto.FlushOpenPositionPerformance()
+	}
+
 	return &engineResult{
 		Wallet:      tradingWallet,
 		Regret:      tradingCrypto.GateRegretSummary(),

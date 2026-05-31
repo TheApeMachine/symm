@@ -380,12 +380,12 @@ func seedTuneSearchBaseline(
 		rejectReason: scores.rejectReason,
 	})
 
+	documentSearch.Observe(document, scores.selection, 0)
+	tunablesSearch.Observe(candidate.tunables, scores.selection)
+
 	if !scores.eligible {
 		return fmt.Errorf("baseline not eligible: %s", scores.rejectReason)
 	}
-
-	documentSearch.Observe(document, scores.selection, 0)
-	tunablesSearch.Observe(candidate.tunables, scores.selection)
 
 	bestConfig := bestState.SetBaseline(candidate, scores)
 

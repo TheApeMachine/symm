@@ -19,6 +19,8 @@ type orderIntent struct {
 	notional       float64
 	quote          broker.Quote
 	feePct         float64
+	entryFeePct    float64
+	exitFeePct     float64
 	spreadBPS      float64
 	score          float64
 	names          []string

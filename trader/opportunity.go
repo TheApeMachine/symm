@@ -55,12 +55,14 @@ func (crypto *Crypto) entryOpportunity(
 		return opportunity{}, false
 	}
 
-	feePct := crypto.takerFeePct(symbol)
+	entryFeePct := crypto.entryFeePct(symbol)
+	exitFeePct := crypto.exitFeePct(symbol)
 
 	if !entryClearsFriction(
 		score,
 		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
-		feePct,
+		entryFeePct,
+		exitFeePct,
 		crypto.quotes.spreadBPS(symbol),
 	) {
 		return opportunity{}, false
@@ -173,15 +175,19 @@ func (crypto *Crypto) entryRejectReason(
 		return "thesis_score_zero", fields
 	}
 
-	feePct := crypto.takerFeePct(symbol)
+	entryFeePct := crypto.entryFeePct(symbol)
+	exitFeePct := crypto.exitFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
 	fields["spread_bps"] = spreadBPS
-	fields["fee_pct"] = feePct
+	fields["fee_pct"] = entryFeePct
+	fields["entry_fee_pct"] = entryFeePct
+	fields["exit_fee_pct"] = exitFeePct
 
 	if !entryClearsFriction(
 		score,
 		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
-		feePct,
+		entryFeePct,
+		exitFeePct,
 		spreadBPS,
 	) {
 		fields["required_multiple"] = crypto.scopedRuntime().Risk.EntryEdgeMultiple
@@ -225,12 +231,18 @@ func (crypto *Crypto) entryDecisionContext(
 	baseline float64,
 ) perspectives.DecisionContext {
 	score := thesisScore(measurements, []string{playbook})
-	feePct := crypto.takerFeePct(symbol)
+	entryFeePct := crypto.entryFeePct(symbol)
+	exitFeePct := crypto.exitFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
-	roundTripCostPct := perspectives.RoundTripFrictionPct(feePct, spreadBPS)
-	requiredSNR := perspectives.RequiredThesisScore(
+	roundTripCostPct := perspectives.RoundTripFrictionPctForFees(
+		entryFeePct,
+		exitFeePct,
+		spreadBPS,
+	)
+	requiredSNR := perspectives.RequiredThesisScoreForFees(
 		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
-		feePct,
+		entryFeePct,
+		exitFeePct,
 		spreadBPS,
 	)
 	scoreCostRatio := 0.0
@@ -249,7 +261,7 @@ func (crypto *Crypto) entryDecisionContext(
 		Metrics: map[string]float64{
 			perspectives.MetricThesisScore:      score,
 			perspectives.MetricSpreadBPS:        spreadBPS,
-			perspectives.MetricFeePct:           feePct,
+			perspectives.MetricFeePct:           entryFeePct,
 			perspectives.MetricRoundTripCostBPS: roundTripCostPct * 10000,
 			perspectives.MetricRequiredScore:    requiredSNR,
 			perspectives.MetricScoreCostRatio:   scoreCostRatio,

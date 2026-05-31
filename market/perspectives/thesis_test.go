@@ -31,4 +31,15 @@ func TestRequiredThesisScore(t *testing.T) {
 			So(required, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given separate entry and exit fees", t, func() {
+		makerTaker := RequiredThesisScoreForFees(3, 0.25, 0.40, 0)
+		takerTaker := RequiredThesisScoreForFees(3, 0.40, 0.40, 0)
+
+		Convey("It should price the actual round trip", func() {
+			So(makerTaker, ShouldAlmostEqual, 1.95)
+			So(takerTaker, ShouldAlmostEqual, 2.4)
+			So(makerTaker, ShouldBeLessThan, takerTaker)
+		})
+	})
 }

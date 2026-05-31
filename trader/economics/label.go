@@ -18,6 +18,8 @@ type Label struct {
 	FillPrice            float64
 	DecisionPrice        float64
 	FeePct               float64
+	EntryFeePct          float64
+	ExitFeePct           float64
 	RoundTripCostPct     float64
 	SpreadBPS            float64
 	QuoteAgeMS           int64
@@ -38,6 +40,20 @@ func EntryLabel(
 	notional, fillPrice, feePct, spreadBPS float64,
 	decisionAt time.Time,
 ) Label {
+	return EntryLabelWithFees(
+		symbol, playbook, side, quote, notional, fillPrice, feePct, feePct, spreadBPS, decisionAt,
+	)
+}
+
+/*
+EntryLabelWithFees builds an entry label with explicit entry and exit fee rates.
+*/
+func EntryLabelWithFees(
+	symbol, playbook, side string,
+	quote broker.Quote,
+	notional, fillPrice, entryFeePct, exitFeePct, spreadBPS float64,
+	decisionAt time.Time,
+) Label {
 	decisionPrice := quote.Last
 	depthLevels := quote.AskDepth
 
@@ -45,7 +61,7 @@ func EntryLabel(
 		depthLevels = quote.BidDepth
 	}
 
-	roundTrip := RoundTripCostPct(feePct, spreadBPS)
+	roundTrip := RoundTripCostPctForFees(entryFeePct, exitFeePct, spreadBPS)
 	quoteAgeMS := int64(0)
 
 	if !quote.At.IsZero() {
@@ -69,7 +85,9 @@ func EntryLabel(
 		Side:                 side,
 		FillPrice:            fillPrice,
 		DecisionPrice:        decisionPrice,
-		FeePct:               feePct,
+		FeePct:               entryFeePct,
+		EntryFeePct:          entryFeePct,
+		ExitFeePct:           exitFeePct,
 		RoundTripCostPct:     roundTrip,
 		SpreadBPS:            spreadBPS,
 		QuoteAgeMS:           quoteAgeMS,
@@ -116,7 +134,21 @@ func ExitLabel(
 	openedAt time.Time,
 	closedAt time.Time,
 ) Label {
-	roundTrip := RoundTripCostPct(feePct, spreadBPS)
+	return ExitLabelWithFees(
+		symbol, playbook, entryPrice, exitPrice, feePct, feePct, spreadBPS, openedAt, closedAt,
+	)
+}
+
+/*
+ExitLabelWithFees labels a closed round-trip with explicit entry and exit fee rates.
+*/
+func ExitLabelWithFees(
+	symbol, playbook string,
+	entryPrice, exitPrice, entryFeePct, exitFeePct, spreadBPS float64,
+	openedAt time.Time,
+	closedAt time.Time,
+) Label {
+	roundTrip := RoundTripCostPctForFees(entryFeePct, exitFeePct, spreadBPS)
 	forward := 0.0
 	heldMS := int64(0)
 
@@ -135,7 +167,9 @@ func ExitLabel(
 		Side:             "sell",
 		DecisionPrice:    entryPrice,
 		FillPrice:        exitPrice,
-		FeePct:           feePct,
+		FeePct:           exitFeePct,
+		EntryFeePct:      entryFeePct,
+		ExitFeePct:       exitFeePct,
 		RoundTripCostPct: roundTrip,
 		SpreadBPS:        spreadBPS,
 		ForwardReturn:    forward,

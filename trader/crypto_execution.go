@@ -243,6 +243,8 @@ func entryIntent(
 		notional:       buy.Notional,
 		quote:          buy.Quote,
 		feePct:         buy.FeePct,
+		entryFeePct:    buy.FeePct,
+		exitFeePct:     buy.FeePct,
 		spreadBPS:      spreadBPS,
 		score:          opportunity.Score,
 		names:          opportunity.Names,
@@ -259,12 +261,29 @@ func exitIntent(
 	spreadBPS float64,
 	reason string,
 ) orderIntent {
+	entryFeePct := binding.EntryFeePct
+	exitFeePct := binding.ExitFeePct
+
+	if entryFeePct <= 0 {
+		entryFeePct = binding.TakerFeePct
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = binding.TakerFeePct
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = sell.FeePct
+	}
+
 	return orderIntent{
 		kind:        "exit",
 		symbol:      sell.Symbol,
 		playbook:    binding.Playbook,
 		quote:       sell.Quote,
-		feePct:      binding.TakerFeePct,
+		feePct:      exitFeePct,
+		entryFeePct: entryFeePct,
+		exitFeePct:  exitFeePct,
 		spreadBPS:   spreadBPS,
 		entryPrice:  entry,
 		exitReason:  reason,
@@ -362,9 +381,20 @@ func (crypto *Crypto) handleEntryFill(
 		Trigger: intent.trigger,
 	}
 	now := time.Now()
-	entryLabel := economics.EntryLabel(
+	entryFeePct := intent.entryFeePct
+	exitFeePct := intent.exitFeePct
+
+	if entryFeePct <= 0 {
+		entryFeePct = intent.feePct
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = intent.feePct
+	}
+
+	entryLabel := economics.EntryLabelWithFees(
 		intent.symbol, intent.playbook, "buy", intent.quote, intent.notional,
-		fill.Price, intent.feePct, intent.spreadBPS, now,
+		fill.Price, entryFeePct, exitFeePct, intent.spreadBPS, now,
 	)
 	crypto.completeEntry(
 		intent.symbol, fill.Price, fill.Price, opportunity, intent.playbook, entryLabel, now, intent,
@@ -379,9 +409,20 @@ func (crypto *Crypto) handleExitFill(fill order.Fill, intent orderIntent) {
 		return
 	}
 
-	exitLabel := economics.ExitLabel(
+	entryFeePct := intent.entryFeePct
+	exitFeePct := intent.exitFeePct
+
+	if entryFeePct <= 0 {
+		entryFeePct = intent.feePct
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = intent.feePct
+	}
+
+	exitLabel := economics.ExitLabelWithFees(
 		intent.symbol, intent.playbook, intent.entryPrice, fill.Price,
-		intent.feePct, intent.spreadBPS, intent.predictedAt, time.Now(),
+		entryFeePct, exitFeePct, intent.spreadBPS, intent.predictedAt, time.Now(),
 	)
 	crypto.completeExit(
 		intent.symbol, intent.exitReason, exitLabel, fill,
@@ -436,10 +477,19 @@ func (crypto *Crypto) completeEntry(
 	now time.Time,
 	intent orderIntent,
 ) {
-	feePct := intent.feePct
+	entryFeePct := intent.entryFeePct
+	exitFeePct := intent.exitFeePct
 
-	if feePct <= 0 {
-		feePct = crypto.takerFeePct(symbol)
+	if entryFeePct <= 0 {
+		entryFeePct = intent.feePct
+	}
+
+	if entryFeePct <= 0 {
+		entryFeePct = crypto.entryFeePct(symbol)
+	}
+
+	if exitFeePct <= 0 {
+		exitFeePct = crypto.exitFeePct(symbol)
 	}
 
 	crypto.economics.RecordEntry(entryLabel)
@@ -449,7 +499,9 @@ func (crypto *Crypto) completeEntry(
 		EntryScore:     opportunity.Score,
 		PredictedAt:    now,
 		DueAt:          now.Add(config.System.PerspectiveTTL),
-		TakerFeePct:    feePct,
+		EntryFeePct:    entryFeePct,
+		ExitFeePct:     exitFeePct,
+		TakerFeePct:    exitFeePct,
 		HasLotDecimals: intent.hasLotDecimals,
 		LotDecimals:    intent.lotDecimals,
 	})

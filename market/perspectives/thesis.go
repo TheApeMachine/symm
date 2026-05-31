@@ -40,7 +40,20 @@ round-trip friction scaled by EntryEdgeMultiple. Used for required_score and
 score_cost_ratio in playbooks and desk gates.
 */
 func RequiredThesisScore(entryEdgeMultiple, feePct, spreadBPS float64) float64 {
-	friction := RoundTripFrictionPct(feePct, spreadBPS)
+	return RequiredThesisScoreForFees(entryEdgeMultiple, feePct, feePct, spreadBPS)
+}
+
+/*
+RequiredThesisScoreForFees is RequiredThesisScore with separate entry and exit
+fees so maker-entry/taker-exit execution does not get scored as taker/taker.
+*/
+func RequiredThesisScoreForFees(
+	entryEdgeMultiple float64,
+	entryFeePct float64,
+	exitFeePct float64,
+	spreadBPS float64,
+) float64 {
+	friction := RoundTripFrictionPctForFees(entryFeePct, exitFeePct, spreadBPS)
 
 	if entryEdgeMultiple <= 0 || friction <= 0 {
 		return 0
@@ -54,5 +67,13 @@ RoundTripFrictionPct is the estimated round-trip cost (fees + full spread for
 entry and exit) as a fraction of notional.
 */
 func RoundTripFrictionPct(feePct, spreadBPS float64) float64 {
-	return 2*feePct/100 + spreadBPS/10000
+	return RoundTripFrictionPctForFees(feePct, feePct, spreadBPS)
+}
+
+/*
+RoundTripFrictionPctForFees is the estimated round-trip cost with explicit
+entry and exit fee rates as a fraction of notional.
+*/
+func RoundTripFrictionPctForFees(entryFeePct, exitFeePct, spreadBPS float64) float64 {
+	return (entryFeePct+exitFeePct)/100 + spreadBPS/10000
 }

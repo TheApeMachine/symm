@@ -49,7 +49,7 @@ func TestCryptoMakerPaperWaitsForQueue(t *testing.T) {
 			LimitPrice: 100,
 			Notional:   10,
 			FeePct:     0.25,
-		}, crypto.quotes.snapshot("BTC/EUR", 100), opportunity, string(perspectives.PlaybookDrive), 10)
+		}, crypto.quotes.snapshot("BTC/EUR", 100), opportunity, string(perspectives.PlaybookDrive), 10, 0.40)
 
 		convey.Convey("It should keep cash reserved before sell-aggressor turnover", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -85,8 +85,10 @@ func TestCryptoMakerPaperWaitsForQueue(t *testing.T) {
 
 		convey.Convey("It should fill once sell-aggressor volume clears the queue", func() {
 			convey.So(crypto.wallet.ReservedEUR, convey.ShouldEqual, 0)
-			_, held := crypto.wallet.PositionBindingFor("BTC")
+			binding, held := crypto.wallet.PositionBindingFor("BTC")
 			convey.So(held, convey.ShouldBeTrue)
+			convey.So(binding.EntryFeePct, convey.ShouldEqual, 0.25)
+			convey.So(binding.ExitFeePct, convey.ShouldEqual, 0.40)
 			convey.So(crypto.makers.HasPending("BTC/EUR"), convey.ShouldBeFalse)
 		})
 	})
@@ -127,7 +129,7 @@ func TestCryptoMakerPaperFallbackToTaker(t *testing.T) {
 
 		opportunity := opportunity{
 			Symbol: "ETH/EUR",
-			Score:  2,
+			Score:  4,
 			Names:  []string{string(perspectives.PlaybookDrive)},
 		}
 
@@ -136,7 +138,7 @@ func TestCryptoMakerPaperFallbackToTaker(t *testing.T) {
 			LimitPrice: 50,
 			Notional:   10,
 			FeePct:     0.25,
-		}, crypto.quotes.snapshot("ETH/EUR", 50), opportunity, string(perspectives.PlaybookDrive), 8)
+		}, crypto.quotes.snapshot("ETH/EUR", 50), opportunity, string(perspectives.PlaybookDrive), 8, 0.40)
 
 		convey.So(err, convey.ShouldBeNil)
 

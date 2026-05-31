@@ -323,7 +323,7 @@ On each `measurements` message:
 
 1. `market.Decisions(measurements, nil)` — collect every playbook authorizing `ActionEnter`
 2. **Thesis score** — RMS of playbook-relevant SNRs, scaled by √confirmations when multiple playbooks agree
-3. **Friction gate** — require `thesisScore ≥ EntryEdgeMultiple × round_trip_friction` (fees + projected slippage)
+3. **Friction gate** — require `thesisScore ≥ EntryEdgeMultiple × round_trip_friction` (entry fee + exit fee + projected slippage)
 4. **Economics gate** — `trader/economics` ledger: cold playbooks gather samples; warm playbooks require post-fee net forward return above `ForwardReturnSignificanceZ`
 5. **Cross-section calibration** — compare the symbol's score to the robust median + MAD across all observed symbols; require positive edge above the field
 6. **Size** — allocate cash proportional to edge share (see [Sizing](#sizing))
@@ -337,7 +337,7 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run 
 
 Paper fills use the same `broker.Quote` path as live orders: the desk caches Kraken ticker bid/ask and L2 depth per symbol, then `market.SlippageFill` prices the order through the book (VWAP through available depth, otherwise half-spread on last). `broker.Buy` and `broker.Sell` run `PreflightGates` — quote freshness, max spread, projected slippage — before reserving cash, for both paper and live.
 
-Per-pair taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPairCatalog`), tiered by `Fee30DVolume`, and stored on `PositionBinding.TakerFeePct` for the exit leg.
+Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPairCatalog`), tiered by `Fee30DVolume`, and stored on `PositionBinding` as entry and exit fee rates. Maker-entry mode scores maker entry plus taker exit; taker fallback only fires when the taker-entry round trip still clears the edge gate.
 
 Paper reject simulation keeps the entry reservation in place until `trader/paper.go` emits the reject ack, matching the live order lifecycle and preventing one rejected order from releasing another pending entry's cash.
 
@@ -356,6 +356,8 @@ Entries require a complete top-of-book quote (bid and ask) before `PreflightGate
 ### Execution economics
 
 `trader/economics/` records post-fee net returns per playbook on every entry and exit. Forward labels are appended when the `ExecutionForwardWindow` matures. Audit frames include `quote_age_ms`, `depth_coverage`, and `playbook_econ_mean` so the decision log contains the live quote quality at the moment of each fill.
+
+Headless replay eval records any still-open position at the final replay mark as an exit performance label. Wallet fitness already marks open inventory to market; the final label keeps tune eligibility and reported trade performance on the same replay-end economic surface without changing live execution.
 
 ## Sizing
 
