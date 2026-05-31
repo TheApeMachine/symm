@@ -126,7 +126,7 @@ func TestTrialSearchReward(t *testing.T) {
 		reward := trialSearchReward(0, tuneRejectNoProfit, economics.PerformanceSummary{})
 
 		Convey("It should make flat no-trade worse than small losing exploration", func() {
-			So(reward, ShouldEqual, -10)
+			So(reward, ShouldEqual, -noTradePenalty)
 		})
 	})
 

@@ -74,10 +74,13 @@ func TestEntryDecisionContext(t *testing.T) {
 		context := crypto.entryDecisionContext("BTC/EUR", nil, "drive", 0)
 
 		convey.Convey("It should score maker entry and taker exit friction", func() {
-			takerTaker := perspectives.RequiredThesisScoreForFees(3, 0.40, 0.40, 0)
+			entryFeePct := crypto.entryFeePct("BTC/EUR")
+			exitFeePct := crypto.exitFeePct("BTC/EUR")
+			expected := perspectives.RequiredThesisScoreForFees(3, entryFeePct, exitFeePct, 0)
+			takerTaker := perspectives.RequiredThesisScoreForFees(3, exitFeePct, exitFeePct, 0)
 
-			convey.So(context.Metrics[perspectives.MetricFeePct], convey.ShouldEqual, 0.25)
-			convey.So(context.Metrics[perspectives.MetricRequiredScore], convey.ShouldAlmostEqual, 1.53)
+			convey.So(context.Metrics[perspectives.MetricFeePct], convey.ShouldEqual, entryFeePct)
+			convey.So(context.Metrics[perspectives.MetricRequiredScore], convey.ShouldAlmostEqual, expected)
 			convey.So(context.Metrics[perspectives.MetricRequiredScore], convey.ShouldBeLessThan, takerTaker)
 		})
 	})

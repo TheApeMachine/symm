@@ -389,7 +389,7 @@ func (crypto *Crypto) handleEntryFill(
 	}
 
 	if exitFeePct <= 0 {
-		exitFeePct = intent.feePct
+		exitFeePct = crypto.exitFeePct(intent.symbol)
 	}
 
 	entryLabel := economics.EntryLabelWithFees(
@@ -417,7 +417,7 @@ func (crypto *Crypto) handleExitFill(fill order.Fill, intent orderIntent) {
 	}
 
 	if exitFeePct <= 0 {
-		exitFeePct = intent.feePct
+		exitFeePct = crypto.exitFeePct(intent.symbol)
 	}
 
 	exitLabel := economics.ExitLabelWithFees(

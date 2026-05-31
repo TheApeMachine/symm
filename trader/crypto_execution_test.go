@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/trader/economics"
 	"github.com/theapemachine/symm/wallet"
 )
 
@@ -115,6 +116,96 @@ func TestSubmitEntryPaperRejectReleasesOnlyRejectedReservation(t *testing.T) {
 			convey.So(crypto.paper.HasPendingEntry("BTC/EUR"), convey.ShouldBeFalse)
 			convey.So(crypto.wallet.ReservedCopy(), convey.ShouldEqual, 25)
 			convey.So(crypto.wallet.BalanceCopy(), convey.ShouldEqual, 175)
+		})
+	})
+}
+
+func TestHandleEntryFillUsesExitFeeFallback(t *testing.T) {
+	convey.Convey("Given a maker entry fill without an explicit exit fee", t, func() {
+		crypto := newTestCrypto()
+		crypto.wallet.FeePct = 0.40
+
+		intent := orderIntent{
+			kind:        "entry",
+			entryType:   "maker",
+			symbol:      "BTC/EUR",
+			playbook:    string(perspectives.PlaybookDrive),
+			notional:    100,
+			quote:       broker.Quote{Last: 100, Bid: 99.95, Ask: 100.05},
+			feePct:      0.25,
+			entryFeePct: 0.25,
+			score:       3,
+			names:       []string{string(perspectives.PlaybookDrive)},
+		}
+		fill := order.Fill{
+			ClOrdID: "entry-fee-fallback",
+			Symbol:  "BTC/EUR",
+			Side:    "buy",
+			Qty:     1,
+			Price:   100,
+			Fee:     0.25,
+			FeeCcy:  "EUR",
+			ExecKey: "entry-fee-fallback-fill",
+		}
+		session := &orderSession{}
+
+		err := crypto.wallet.ReserveEntry(intent.notional)
+		convey.So(err, convey.ShouldBeNil)
+		session.trackEntry(fill.ClOrdID, intent.symbol, intent)
+		crypto.handleEntryFill(fill, intent, session)
+
+		binding, held := crypto.wallet.PositionBindingFor("BTC")
+
+		convey.Convey("It should keep the maker entry fee and bind the taker exit fee", func() {
+			convey.So(held, convey.ShouldBeTrue)
+			convey.So(binding.EntryFeePct, convey.ShouldEqual, 0.25)
+			convey.So(binding.ExitFeePct, convey.ShouldEqual, 0.40)
+			convey.So(binding.TakerFeePct, convey.ShouldEqual, 0.40)
+		})
+	})
+}
+
+func TestHandleExitFillUsesExitFeeFallback(t *testing.T) {
+	convey.Convey("Given an exit fill without an explicit exit fee", t, func() {
+		crypto := newTestCrypto()
+		crypto.wallet.FeePct = 0.40
+		predictedAt := time.Now().Add(-time.Minute)
+		crypto.wallet.AddInventoryWithCost("BTC", 1, 100)
+		crypto.open.Store(1)
+		crypto.positions.Open("BTC/EUR", positionState{
+			Playbook: string(perspectives.PlaybookDrive),
+			Peak:     100,
+			EntryAt:  predictedAt,
+		})
+
+		crypto.handleExitFill(order.Fill{
+			ClOrdID: "exit-fee-fallback",
+			Symbol:  "BTC/EUR",
+			Side:    "sell",
+			Qty:     1,
+			Price:   101,
+			Fee:     0.40,
+			FeeCcy:  "EUR",
+			ExecKey: "exit-fee-fallback-fill",
+		}, orderIntent{
+			kind:        "exit",
+			symbol:      "BTC/EUR",
+			playbook:    string(perspectives.PlaybookDrive),
+			feePct:      0.25,
+			entryFeePct: 0.25,
+			entryPrice:  100,
+			exitReason:  "test exit",
+			predictedAt: predictedAt,
+		})
+
+		summary := crypto.PerformanceSummary()
+		roundTrip := economics.RoundTripCostPctForFees(0.25, 0.40, 0)
+		expected := economics.NetExitReturn(100, 101, roundTrip)
+
+		convey.Convey("It should score the exit with the taker fee fallback", func() {
+			convey.So(summary.ClosedTrades, convey.ShouldEqual, 1)
+			convey.So(summary.ProfitableTrades, convey.ShouldEqual, 1)
+			convey.So(summary.PositiveNetReturn, convey.ShouldAlmostEqual, expected)
 		})
 	})
 }

@@ -139,6 +139,7 @@ func betterTuneCandidate(
 const (
 	tuneRejectNoProfit = "rejected (no realized profitable trade on selection split)"
 	tuneRejectOverfit  = "rejected (train >> holdout, overfit)"
+	noTradePenalty     = 10.0
 )
 
 func trialEligible(
@@ -176,7 +177,7 @@ func trialSearchReward(
 	}
 
 	if selectionPerformance.ClosedTrades == 0 {
-		return selection - 10
+		return selection - noTradePenalty
 	}
 
 	return selection

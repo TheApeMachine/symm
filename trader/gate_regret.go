@@ -59,7 +59,7 @@ this keeps tune eligibility on the same economic surface without touching live
 positions.
 */
 func (crypto *Crypto) FlushOpenPositionPerformance() {
-	if crypto == nil || crypto.wallet == nil {
+	if crypto == nil || crypto.wallet == nil || crypto.quotes == nil || crypto.economics == nil {
 		return
 	}
 

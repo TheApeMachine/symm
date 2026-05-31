@@ -6,6 +6,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/trader/economics"
 	"github.com/theapemachine/symm/wallet"
 )
 
@@ -35,6 +36,37 @@ func TestFlushOpenPositionPerformance(t *testing.T) {
 		convey.Convey("It should count the final mark as a profitable closed sample", func() {
 			convey.So(summary.ClosedTrades, convey.ShouldEqual, 1)
 			convey.So(summary.ProfitableTrades, convey.ShouldEqual, 1)
+		})
+	})
+
+	convey.Convey("Given an open replay position with legacy taker fee binding", t, func() {
+		crypto := newTestCrypto()
+		openedAt := time.Now().Add(-time.Second)
+		crypto.wallet.AddInventoryWithCost("ETH", 1, 100)
+		crypto.wallet.BindPosition("ETH", wallet.PositionBinding{
+			Source:      "perspective",
+			Playbook:    "drive",
+			TakerFeePct: 0.40,
+			PredictedAt: openedAt,
+			DueAt:       openedAt.Add(time.Minute),
+		})
+		crypto.quotes.ingestTicker(market.TickerUpdate{
+			Symbol: "ETH/EUR",
+			Last:   101,
+			Bid:    100.95,
+			Ask:    101.05,
+		})
+
+		crypto.FlushOpenPositionPerformance()
+		summary := crypto.PerformanceSummary()
+		spreadBPS := crypto.quotes.spreadBPS("ETH/EUR")
+		roundTrip := economics.RoundTripCostPctForFees(0.40, 0.40, spreadBPS)
+		expected := economics.NetExitReturn(100, 101, roundTrip)
+
+		convey.Convey("It should fall back to taker fees for the final mark label", func() {
+			convey.So(summary.ClosedTrades, convey.ShouldEqual, 1)
+			convey.So(summary.ProfitableTrades, convey.ShouldEqual, 1)
+			convey.So(summary.PositiveNetReturn, convey.ShouldAlmostEqual, expected)
 		})
 	})
 }

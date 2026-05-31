@@ -179,7 +179,6 @@ func (crypto *Crypto) entryRejectReason(
 	exitFeePct := crypto.exitFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
 	fields["spread_bps"] = spreadBPS
-	fields["fee_pct"] = entryFeePct
 	fields["entry_fee_pct"] = entryFeePct
 	fields["exit_fee_pct"] = exitFeePct
 
