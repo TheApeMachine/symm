@@ -38,7 +38,7 @@ func TestBuySubmitLive(t *testing.T) {
 	Convey("Given a live buy", t, func() {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Buy{
 			Symbol:   "BTC/EUR",
@@ -58,7 +58,7 @@ func TestBuySubmitLiveUsesExistingClOrdID(t *testing.T) {
 	Convey("Given a live buy with a client order id", t, func() {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Buy{
 			Symbol:   "BTC/EUR",

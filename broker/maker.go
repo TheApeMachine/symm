@@ -24,11 +24,12 @@ type Maker struct {
 }
 
 /*
-FillPaper settles one maker entry at its limit price. Cost basis recorded on
-the wallet is the full notional (which absorbs the maker fee), not the limit
+FillPaper settles one maker entry at its limit price when sell-aggressor volume
+has consumed the visible queue ahead of the bid. Cost basis recorded on the
+wallet is the full notional (which absorbs the maker fee), not the limit
 price, so realized PnL accounts for fees on both sides of every round trip.
 */
-func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) {
+func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet, queue MakerQueueContext) (order.Fill, error) {
 	if err := maker.validate(tradingWallet); err != nil {
 		return order.Fill{}, err
 	}
@@ -55,14 +56,20 @@ func (maker *Maker) FillPaper(tradingWallet *wallet.Wallet) (order.Fill, error) 
 		return order.Fill{}, err
 	}
 
+	effectivePrice := maker.LimitPrice * (1 + float64(config.System.AdverseSelectionBPS)/10000)
+	orderBaseQty := (maker.Notional - fee) / effectivePrice
+
+	if !MakerFillReady(queue, maker.LimitPrice, orderBaseQty) {
+		return order.Fill{}, ErrMakerQueueNotReady
+	}
+
 	if err := tradingWallet.SettleEntryReservation(maker.Notional, maker.Notional); err != nil {
 		return order.Fill{}, err
 	}
 
 	orderSymbol := Symbol(maker.Symbol)
 	base := orderSymbol.BaseAsset()
-	effectivePrice := maker.LimitPrice * (1 + float64(config.System.AdverseSelectionBPS)/10000)
-	qty := (maker.Notional - fee) / effectivePrice
+	qty := orderBaseQty
 
 	if qty <= 0 {
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)

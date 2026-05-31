@@ -66,6 +66,11 @@ func (crypto *Crypto) submitEntryLive(
 	if err := buy.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
 		crypto.live.dropIntent(clOrdID, buy.Symbol)
 		releaseEntryReservation(crypto.wallet, buy.Notional)
+		crypto.publishAudit("order_reject", buy.Symbol, err.Error(), map[string]any{
+			"cl_ord_id": clOrdID,
+			"phase":     "publish",
+			"live":      true,
+		})
 
 		return err
 	}
@@ -146,6 +151,11 @@ func (crypto *Crypto) submitExitLive(
 
 	if err := sell.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
 		crypto.live.dropIntent(clOrdID, sell.Symbol)
+		crypto.publishAudit("order_reject", sell.Symbol, err.Error(), map[string]any{
+			"cl_ord_id": clOrdID,
+			"phase":     "publish",
+			"live":      true,
+		})
 
 		return err
 	}

@@ -78,3 +78,13 @@ func TestLogStdoutEnvOverride(t *testing.T) {
 		t.Fatal("expected SYMM_LOG_STDOUT=1 to enable console logging")
 	}
 }
+
+func TestExecutionStressEnvOverride(t *testing.T) {
+	t.Setenv("SYMM_EXECUTION_STRESS", "1")
+
+	cfg := NewConfig()
+
+	if !cfg.ExecutionStressEnabled {
+		t.Fatal("expected SYMM_EXECUTION_STRESS=1 to enable execution stress")
+	}
+}

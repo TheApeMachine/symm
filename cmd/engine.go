@@ -209,6 +209,20 @@ var tuneCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		holdoutFiles, err := cmd.Flags().GetStringArray("holdout")
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
+		stressHoldout, err := cmd.Flags().GetBool("stress-holdout")
+
+		if err != nil {
+			errnie.Error(err)
+			os.Exit(1)
+		}
+
 		iterations, err := cmd.Flags().GetInt("iterations")
 
 		if err != nil || iterations <= 0 {
@@ -227,7 +241,9 @@ var tuneCmd = &cobra.Command{
 			output = config.DefaultTunedPath()
 		}
 
-		bestScore := -1e18
+		bestSelection := -1e18
+		bestTrainScore := -1e18
+		bestHoldoutScores := []float64(nil)
 		bestConfig := config.ExtractTunables(config.System)
 		var bestMu sync.Mutex
 		jobs := make(chan config.Tunables, workers*2)
@@ -236,17 +252,19 @@ var tuneCmd = &cobra.Command{
 		for worker := 0; worker < workers; worker++ {
 			waitGroup.Go(func() {
 				for candidate := range jobs {
-					score, err := runEvalTrial(replayFile, candidate)
+					scores, scoreErr := scoreTrial(replayFile, holdoutFiles, stressHoldout, candidate)
 
-					if err != nil {
-						errnie.Error(err)
+					if scoreErr != nil {
+						errnie.Error(scoreErr)
 						continue
 					}
 
 					bestMu.Lock()
 
-					if score > bestScore {
-						bestScore = score
+					if scores.selection > bestSelection {
+						bestSelection = scores.selection
+						bestTrainScore = scores.trainScore
+						bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
 						bestConfig = candidate
 					}
 
@@ -271,64 +289,24 @@ var tuneCmd = &cobra.Command{
 		}
 
 		payload, _ := json.Marshal(map[string]any{
-			"best_score_eur": bestScore,
-			"output":         output,
-			"iterations":     iterations,
-			"workers":        workers,
+			"best_score_eur":   bestSelection,
+			"best_train_eur":   bestTrainScore,
+			"best_holdout_eur": bestHoldoutScores,
+			"holdout_replays":  holdoutFiles,
+			"stress_holdout":   stressHoldout,
+			"output":           output,
+			"iterations":       iterations,
+			"workers":          workers,
 		})
 		fmt.Println(string(payload))
 	},
 }
 
-func runEvalTrial(replayFile string, tunables config.Tunables) (float64, error) {
-	tempFile, err := os.CreateTemp("", "symm-tune-*.json")
-
-	if err != nil {
-		return 0, err
-	}
-
-	tempPath := tempFile.Name()
-	_ = tempFile.Close()
-	defer os.Remove(tempPath)
-
-	trialConfig := config.NewConfig()
-	tunables.Apply(trialConfig)
-
-	if err := config.SaveTunablesFile(tempPath, trialConfig); err != nil {
-		return 0, err
-	}
-
-	executable, err := os.Executable()
-
-	if err != nil {
-		return 0, err
-	}
-
-	output, err := execEval(executable, map[string]string{
-		"SYMM_HEADLESS":    "1",
-		"SYMM_REPLAY_FILE": replayFile,
-		"SYMM_CONFIG_FILE": tempPath,
-		"SYMM_LOG_STDOUT":  "0",
-	})
-
-	if err != nil {
-		return 0, err
-	}
-
-	var result struct {
-		ScoreEUR float64 `json:"score_eur"`
-	}
-
-	if err := json.Unmarshal(output, &result); err != nil {
-		return 0, err
-	}
-
-	return result.ScoreEUR, nil
-}
-
 func init() {
 	rootCmd.AddCommand(evalCmd)
 	tuneCmd.Flags().String("replay", "", "Replay JSONL fixture path")
+	tuneCmd.Flags().StringArray("holdout", nil, "Holdout replay JSONL paths; best config is chosen by minimum holdout score")
+	tuneCmd.Flags().Bool("stress-holdout", true, "Run holdout evals with execution stress enabled")
 	tuneCmd.Flags().Int("iterations", 32, "Number of random trials")
 	tuneCmd.Flags().Int("workers", runtime.NumCPU(), "Concurrent eval workers")
 	tuneCmd.Flags().String("output", config.DefaultTunedPath(), "Path to write best tunables")

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
@@ -29,14 +30,14 @@ func NewLiveSession(ctx context.Context, apiKey, apiSecret string) (*liveSession
 	}
 
 	session := &liveSession{client: client}
-	session.router = broker.NewRouter(func(value any) {
+	session.router = broker.NewRouter(func(value any) error {
 		request, ok := value.(order.Request)
 
 		if !ok {
-			return
+			return fmt.Errorf("live order router: expected order.Request, got %T", value)
 		}
 
-		_ = client.Publish(request)
+		return client.Publish(request)
 	})
 
 	if err := client.Start(); err != nil {

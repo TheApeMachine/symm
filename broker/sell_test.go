@@ -37,7 +37,7 @@ func TestSellSubmitLiveRoundsBaseQuantity(t *testing.T) {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 180, 0.26)
 		tradingWallet.Inventory["BTC"] = 0.010204081632
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Sell{
 			Symbol:         "BTC/EUR",
@@ -58,7 +58,7 @@ func TestSellSubmitLiveRequiresLotDecimals(t *testing.T) {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 180, 0.26)
 		tradingWallet.Inventory["BTC"] = 0.010204081632
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Sell{Symbol: "BTC/EUR"}).SubmitLive(router, tradingWallet)
 

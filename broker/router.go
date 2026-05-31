@@ -6,13 +6,13 @@ import "fmt"
 Router publishes live exchange requests.
 */
 type Router struct {
-	publish func(any)
+	publish func(any) error
 }
 
 /*
 NewRouter wires one order publisher.
 */
-func NewRouter(publish func(any)) *Router {
+func NewRouter(publish func(any) error) *Router {
 	return &Router{publish: publish}
 }
 
@@ -24,7 +24,5 @@ func (router *Router) Publish(value any) error {
 		return fmt.Errorf("order router is required")
 	}
 
-	router.publish(value)
-
-	return nil
+	return router.publish(value)
 }

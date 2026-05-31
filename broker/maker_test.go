@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/wallet"
 
@@ -26,7 +27,10 @@ func TestMakerFillPaper(t *testing.T) {
 			Symbol:     "BTC/EUR",
 			LimitPrice: 50000,
 			Notional:   10,
-		}).FillPaper(tradingWallet)
+		}).FillPaper(tradingWallet, MakerQueueContext{
+			Bids:           []market.BookLevel{{Price: 50000, Qty: 0.01}},
+			BidTradeVolume: 1,
+		})
 
 		Convey("It should fill at the adverse-selection-adjusted limit", func() {
 			So(err, ShouldBeNil)
@@ -53,7 +57,10 @@ func TestMakerFillPaperRejectsConfiguredOrders(t *testing.T) {
 			Symbol:     "BTC/EUR",
 			LimitPrice: 50000,
 			Notional:   10,
-		}).FillPaper(tradingWallet)
+		}).FillPaper(tradingWallet, MakerQueueContext{
+			Bids:           []market.BookLevel{{Price: 50000, Qty: 0.01}},
+			BidTradeVolume: 1,
+		})
 
 		Convey("It should release the reservation without filling", func() {
 			So(err, ShouldNotBeNil)
@@ -68,7 +75,7 @@ func TestMakerSubmitLiveRoundsLimitPrice(t *testing.T) {
 	Convey("Given a live maker bid with price precision", t, func() {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 200, 0.26)
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Maker{
 			Symbol:           "BTC/EUR",
@@ -90,7 +97,7 @@ func TestMakerSubmitLiveRequiresPriceDecimals(t *testing.T) {
 	Convey("Given a live maker bid without price precision", t, func() {
 		tradingWallet := wallet.NewWallet(wallet.CryptoWallet, "EUR", 5, 0.26)
 		orders := make([]any, 0, 1)
-		router := NewRouter(func(value any) { orders = append(orders, value) })
+		router := NewRouter(func(value any) error { orders = append(orders, value); return nil })
 
 		err := (&Maker{
 			Symbol:     "BTC/EUR",
@@ -109,7 +116,7 @@ func TestMakerSubmitLiveRequiresPriceDecimals(t *testing.T) {
 }
 
 func BenchmarkMakerSubmitLiveRounded(b *testing.B) {
-	router := NewRouter(func(value any) {})
+	router := NewRouter(func(value any) error { return nil })
 	maker := &Maker{
 		Symbol:           "BTC/EUR",
 		LimitPrice:       50000.129,

@@ -406,4 +406,9 @@ func applyEnvironment(cfg *Config) {
 		strings.EqualFold(stdout, "true") {
 		cfg.LogStdoutActive = true
 	}
+
+	if stress := strings.TrimSpace(os.Getenv("SYMM_EXECUTION_STRESS")); stress == "1" ||
+		strings.EqualFold(stress, "true") {
+		cfg.ExecutionStressEnabled = true
+	}
 }
