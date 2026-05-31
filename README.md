@@ -17,6 +17,7 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 - [Signal systems](#signal-systems)
 - [Trader mechanics](#trader-mechanics)
 - [Sizing](#sizing)
+- [Tuning](#tuning)
 - [UI and telemetry](#ui-and-telemetry)
 - [Numeric layer](#numeric-layer)
 - [Build and run](#build-and-run)
@@ -350,6 +351,53 @@ notional(s)    = free_cash × share(s)
 
 A symbol must be a genuine outlier against the rest of the market to receive capital. When multiple symbols each clear the edge bar, they share the wallet proportionally. A single broad signal that lifts all scores simultaneously dilutes its own edge. `MinCostEUR` remains the exchange-cost floor.
 
+## Tuning
+
+Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 optional fields. At boot, `config.Init` auto-loads `runs/tuned.json` when present, so the last optimized config is always active without any extra flags.
+
+### Parameter search
+
+`symm tune` runs a **parallel random search** over `TunableSpecs()` — 19 search dimensions, each with an explicit min/max/step:
+
+| Dimension                       | Range                |
+|---------------------------------|----------------------|
+| `entry_edge_multiple`           | 1.0 – 4.0, step 0.25 |
+| `take_profit_r`                 | 1.0 – 4.0            |
+| `take_profit_capture`           | 0.5 – 0.95           |
+| `stop_vol_multiple`             | 3.0 – 20.0           |
+| `kelly_fraction`                | 0.1 – 1.0            |
+| `max_deploy_pct`                | 0.3 – 1.0            |
+| `pump_trail_pct`                | 0.02 – 0.15          |
+| `pump_slow_trail_pct`           | 0.1 – 0.35           |
+| `pump_hard_stop_pct`            | 0.05 – 0.25          |
+| `pump_size_fraction`            | 0.2 – 1.0            |
+| `max_entry_slippage_bps`        | 5 – 60               |
+| `max_spread_bps`                | 10 – 100             |
+| `min_exhaust_hold`              | 1 s – 30 s           |
+| `perspective_ttl`               | 10 s – 120 s         |
+| `min_cost_eur`                  | 0.25 – 2.0           |
+| `hawkes_fit_cooldown`           | 1 s – 15 s           |
+| `forward_return_min_samples`    | 10 – 80              |
+| `forward_return_significance_z` | 1.0 – 3.0            |
+| `causal_condition_switch`       | 100 – 5000           |
+
+Each trial is a `MutateTunables()` candidate evaluated by spawning `symm eval` as a headless subprocess against one or more replay fixtures. The overfitting guard rejects candidates whose train/holdout gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by minimum holdout score is written to `--output` (default `runs/tuned.json`).
+
+```
+symm tune
+  --replay   <training.jsonl>     required
+  --holdout  <holdout.jsonl>      optional, repeatable
+  --iterations  32               random candidates to evaluate
+  --workers     <numCPU>         concurrent eval workers
+  --output      runs/tuned.json  persisted best config
+  --max-train-holdout-gap  0     EUR ceiling on gap (0 = 3% wallet, <0 = disabled)
+  --stress-holdout              apply execution stress to holdout evals (default true)
+```
+
+### Hawkes internal optimizer
+
+`signal/hawkes` has a second-tier optimizer that fits the bivariate Hawkes process (7 log-space parameters: `muBuy`, `muSell`, `beta`, and four cross-excitation `alpha` terms) using LBFGS-B constrained minimization from `gonum/optimize`. `FitContext` derives adaptive bounds from live trade-arrival statistics; multi-start initialization seeds from the prior fit, a base scale, and random perturbations to avoid shallow local minima.
+
 ## UI and telemetry
 
 `ui.Hub` subscribes to the `ui` broadcast and fans out to WebSocket clients at `ws://127.0.0.1:8765/ws`.
@@ -407,6 +455,19 @@ Each stage calls `Next(out, ...values)` and feeds into the next. Stages nest fre
 | `FracDiff`   | `adaptive/fracdiff.go`   | Fractional differentiation (order 0.4, width 16); preserves long-range memory while reducing AR(1) structure                                                   |
 | `Kalman`     | `adaptive/kalman.go`     | Scalar Kalman with asymmetric gain: fast downside response, slow upside recovery                                                                               |
 
+### Numeric sub-packages
+
+Beyond `adaptive/`, the `numeric/` tree contains several supporting packages:
+
+| Package               | Contents                                                                                          |
+|-----------------------|---------------------------------------------------------------------------------------------------|
+| `numeric/decay`       | `ExpNeg`, `LogPositive`, and time-weighted decay helpers; used by Hawkes arrival-stream math      |
+| `numeric/timeline`    | `Timeline` — a sorted, immutable sequence of event timestamps; supports Hayashi-Yoshida overlap   |
+| `numeric/geometry`    | PGA `Multivector` (Cl(3,0,1) even subalgebra), Clifford rotors, Procrustes alignment, signal scan |
+| `numeric/learned`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic` for pipeline composition |
+| `numeric/logic`       | Generic conditional helpers (`Or`)                                                                |
+| `numeric/probability` | Ranked distributions, temperature-scaled sampling, descending-sort utilities                      |
+
 ### Hayashi-Yoshida covariance
 
 Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap — handles asynchronous, irregularly-sampled tick data without interpolation or equal-time-grid assumptions.
@@ -435,6 +496,22 @@ make bench          # package benchmarks
 make replay REPLAY_FILE=replay/fixtures/sample.jsonl REPLAY_PACE=50ms
 ```
 
+**Record a live session to a replay fixture:**
+
+```bash
+make record                                   # captures to runs/capture.jsonl
+make record RECORD_FILE=runs/my-session.jsonl
+```
+
+**Tune hyperparameters against a replay fixture:**
+
+```bash
+make tune REPLAY_FILE=runs/capture.jsonl
+make tune REPLAY_FILE=runs/capture.jsonl ITERATIONS=64 WORKERS=8
+```
+
+Results are written to `runs/tuned.json` and loaded automatically on the next run.
+
 **Frontend (separate terminal):**
 
 ```bash
@@ -447,6 +524,7 @@ cd frontend && pnpm install && pnpm dev
 |--------------------------|---------------------------------------------------------|
 | `SYMM_REPLAY_FILE`       | JSONL replay instead of live WebSocket                  |
 | `SYMM_REPLAY_PACE`       | Delay between replay lines (e.g., `50ms`)               |
+| `SYMM_RECORD_FILE`       | Path to write a live-capture JSONL recording            |
 | `SYMM_KRAKEN_API_KEY`    | Kraken API key for authenticated WebSocket v2           |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
@@ -546,6 +624,21 @@ Full environment wiring is in `config/config.go`.
 </details>
 
 <details>
+<summary>📋 Tuning</summary>
+
+| Field                 | Default | Description                                                |
+|-----------------------|---------|------------------------------------------------------------|
+| `KellyFraction`       | `0.25`  | Fraction of Kelly-optimal position applied per entry       |
+| `MaxDeployPct`        | `0.80`  | Maximum fraction of free cash deployable in a single entry |
+| `MaxEntrySlippageBPS` | `20`    | Maximum acceptable entry slippage (basis points)           |
+| `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
+| `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
+
+Hyperparameter search: `--iterations` (default 32), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best result is auto-loaded from `runs/tuned.json` at next boot.
+
+</details>
+
+<details>
 <summary>📋 UI and infrastructure</summary>
 
 | Field                 | Default | Description                            |
@@ -562,25 +655,43 @@ Full environment wiring is in `config/config.go`.
 
 ## Repository map
 
-| Path                   | Contents                                                                 |
-|------------------------|--------------------------------------------------------------------------|
-| `cmd/`                 | Cobra entry point, booter, system registration                           |
-| `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`           |
-| `market/perspectives/` | Category types, decision tree engine, individual playbooks               |
-| `signal/`              | All microstructure signal systems                                        |
-| `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper            |
-| `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics          |
-| `kraken/`              | Shared feed channels, market types, order client                         |
-| `broker/`              | Paper and live order execution (`Buy`, `Sell`, `Quote`, preflight gates) |
-| `wallet/`              | Balance, inventory, position bindings                                    |
-| `focus/`               | Lock-free open-position symbol set (copy-on-write)                       |
-| `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                 |
-| `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                        |
-| `frontend/`            | React dashboard                                                          |
-| `numeric/`             | Derived pipelines, adaptive filters, robust statistics                   |
-| `numeric/adaptive/`    | EMA, SNR, SigmaClamp, Classifier, FracDiff, Kalman                       |
-| `config/`              | Runtime parameters and environment wiring                                |
-| `DECISION.md`          | Category semantics and signal design rationale                           |
-| `AGENTS.md`            | Agent contract: tests, benchmarks, style                                 |
+| Path                   | Contents                                                                   |
+|------------------------|----------------------------------------------------------------------------|
+| `cmd/`                 | Cobra entry point, booter, system registration; `tune` and `eval` commands |
+| `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`             |
+| `market/perspectives/` | Category types, decision tree engine, individual playbooks                 |
+| `signal/`              | All microstructure signal systems                                          |
+| `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper              |
+| `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics            |
+| `trader/economics/`    | Post-fee return ledger; forward-label accounting per playbook              |
+| `kraken/`              | Shared feed channels and market types                                      |
+| `kraken/market/`       | Auto-reconnecting WebSocket v2 feed multiplexer; symbol discovery          |
+| `kraken/order/`        | Authenticated order client (WebSocket v2 executions channel)               |
+| `kraken/orderbook/`    | Level-2 order book state with CRC32 checksum validation                    |
+| `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                     |
+| `kraken/private/`      | Authenticated REST client                                                  |
+| `kraken/public/`       | Public REST + WebSocket channels                                           |
+| `broker/`              | Paper and live order execution (`Buy`, `Sell`, `Quote`, preflight gates)   |
+| `wallet/`              | Balance, inventory, position bindings                                      |
+| `focus/`               | Lock-free open-position symbol set (copy-on-write)                         |
+| `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                   |
+| `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                          |
+| `frontend/`            | React dashboard                                                            |
+| `numeric/`             | Derived pipelines, adaptive filters, robust statistics                     |
+| `numeric/adaptive/`    | EMA, SNR, SigmaClamp, Classifier, FracDiff, Kalman                         |
+| `numeric/decay/`       | Exponential decay and time-weighted helpers (used by Hawkes)               |
+| `numeric/timeline/`    | Sorted event-timestamp sequence; supports Hayashi-Yoshida interval overlap |
+| `numeric/geometry/`    | PGA Cl(3,0,1) multivectors, Clifford rotors, Procrustes, signal scan       |
+| `numeric/learned/`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic`   |
+| `numeric/logic/`       | Generic conditional helpers                                                |
+| `numeric/probability/` | Ranked distributions, temperature-scaled sampling                          |
+| `ring/`                | `FloatRing` — fixed-capacity circular buffer for float64 rolling windows   |
+| `snapshot/`            | Lock-free copy-on-write per-symbol state container (atomic CAS)            |
+| `runstats/`            | Dependency-inverted run-level counter interface (avoids import cycles)     |
+| `replay/`              | JSONL recorder and replayer; fixture playback                              |
+| `config/`              | Runtime parameters, environment wiring, tunables and search specs          |
+| `analysis/`            | Python post-run attribution and performance scripts                        |
+| `DECISION.md`          | Category semantics and signal design rationale                             |
+| `AGENTS.md`            | Agent contract: tests, benchmarks, style                                   |
 
 **Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.
