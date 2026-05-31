@@ -65,12 +65,15 @@ func GenerateDocument(profile SearchProfile, random *rand.Rand) Document {
 	playbooks := make([]PlaybookSpec, 0, len(searchPlaybookTemplates))
 
 	for _, template := range searchPlaybookTemplates {
+		entryCategories, denyCategories := splitSearchCategories(categories, random)
+		entry := generateEntrySpecs(entryCategories, random)
+
 		playbooks = append(playbooks, PlaybookSpec{
 			Name:   template.Name,
 			Regime: template.Regime,
 			Policy: template.Policy,
-			Deny:   generateDenySpecs(categories, random),
-			Entry:  generateEntrySpecs(categories, random),
+			Deny:   generateDenySpecs(denyCategories, random),
+			Entry:  entry,
 			Exit:   generateExitSpecs(categories, random),
 		})
 	}
@@ -110,6 +113,24 @@ func (profile SearchProfile) searchCategories() []CategoryStat {
 	return append([]CategoryStat(nil), profile.Categories...)
 }
 
+func splitSearchCategories(
+	categories []CategoryStat,
+	random *rand.Rand,
+) ([]CategoryStat, []CategoryStat) {
+	shuffled := append([]CategoryStat(nil), categories...)
+	random.Shuffle(len(shuffled), func(leftIndex int, rightIndex int) {
+		shuffled[leftIndex], shuffled[rightIndex] = shuffled[rightIndex], shuffled[leftIndex]
+	})
+
+	if len(shuffled) < 2 {
+		return shuffled, nil
+	}
+
+	denyCount := 1 + random.Intn(min(4, len(shuffled)-1))
+
+	return shuffled[denyCount:], shuffled[:denyCount]
+}
+
 func generateEntrySpecs(categories []CategoryStat, random *rand.Rand) []BranchSpec {
 	routeCount := 1 + random.Intn(4)
 	routes := make([]BranchSpec, 0, routeCount)
@@ -145,7 +166,11 @@ func generateEntrySpecs(categories []CategoryStat, random *rand.Rand) []BranchSp
 }
 
 func generateDenySpecs(categories []CategoryStat, random *rand.Rand) []BranchSpec {
-	branchCount := 1 + random.Intn(5)
+	if len(categories) == 0 {
+		return nil
+	}
+
+	branchCount := 1 + random.Intn(min(5, len(categories)))
 	branches := make([]BranchSpec, 0, branchCount)
 
 	for branchIndex := 0; branchIndex < branchCount; branchIndex++ {

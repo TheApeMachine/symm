@@ -39,6 +39,14 @@ func (crypto *Crypto) hasPendingEntry(symbol string) bool {
 	return crypto.paper != nil && crypto.paper.HasPendingEntry(symbol)
 }
 
+func (crypto *Crypto) hasPendingExit(symbol string) bool {
+	if crypto.live != nil && crypto.live.HasPendingExit(symbol) {
+		return true
+	}
+
+	return crypto.paper != nil && crypto.paper.HasPendingExit(symbol)
+}
+
 func (crypto *Crypto) submitEntry(
 	buy broker.Buy,
 	opportunity opportunity,
@@ -123,19 +131,21 @@ func (crypto *Crypto) submitExit(
 	sell broker.Sell,
 	binding wallet.PositionBinding,
 	entry float64,
+	spreadBPS float64,
 	reason string,
 ) error {
 	if crypto.live != nil {
-		return crypto.submitExitLive(sell, binding, entry, reason)
+		return crypto.submitExitLive(sell, binding, entry, spreadBPS, reason)
 	}
 
-	return crypto.submitExitPaper(sell, binding, entry, reason)
+	return crypto.submitExitPaper(sell, binding, entry, spreadBPS, reason)
 }
 
 func (crypto *Crypto) submitExitLive(
 	sell broker.Sell,
 	binding wallet.PositionBinding,
 	entry float64,
+	spreadBPS float64,
 	reason string,
 ) error {
 	lotDecimalsValue := binding.LotDecimals
@@ -151,7 +161,10 @@ func (crypto *Crypto) submitExitLive(
 	}
 
 	sell.ClOrdID = clOrdID
-	crypto.live.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
+
+	if !crypto.live.trackExit(clOrdID, sell.Symbol, exitIntent(sell, binding, entry, spreadBPS, reason)) {
+		return nil
+	}
 
 	if err := sell.SubmitLive(crypto.live.Router(), crypto.wallet); err != nil {
 		crypto.live.dropIntent(clOrdID, sell.Symbol)
@@ -164,7 +177,7 @@ func (crypto *Crypto) submitExitLive(
 		return err
 	}
 
-	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, true)
+	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, spreadBPS, true)
 
 	return nil
 }
@@ -173,22 +186,29 @@ func (crypto *Crypto) submitExitPaper(
 	sell broker.Sell,
 	binding wallet.PositionBinding,
 	entry float64,
+	spreadBPS float64,
 	reason string,
 ) error {
 	clOrdID, err := sell.SubmitPaper(crypto.wallet)
 
 	if err != nil {
 		if clOrdID != "" {
-			crypto.paper.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
+			if !crypto.paper.trackExit(clOrdID, sell.Symbol, exitIntent(sell, binding, entry, spreadBPS, reason)) {
+				return nil
+			}
+
 			crypto.paper.EnqueueReject(clOrdID, err.Error())
-			crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, false)
+			crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, spreadBPS, false)
 		}
 
 		return nil
 	}
 
-	crypto.paper.trackExit(clOrdID, exitIntent(sell, binding, entry, reason))
-	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, false)
+	if !crypto.paper.trackExit(clOrdID, sell.Symbol, exitIntent(sell, binding, entry, spreadBPS, reason)) {
+		return nil
+	}
+
+	crypto.publishExitSubmit(sell.Symbol, binding.Playbook, clOrdID, reason, spreadBPS, false)
 
 	fill, buildErr := sell.BuildPaperFill(crypto.wallet)
 
@@ -236,6 +256,7 @@ func exitIntent(
 	sell broker.Sell,
 	binding wallet.PositionBinding,
 	entry float64,
+	spreadBPS float64,
 	reason string,
 ) orderIntent {
 	return orderIntent{
@@ -244,6 +265,7 @@ func exitIntent(
 		playbook:    binding.Playbook,
 		quote:       sell.Quote,
 		feePct:      binding.TakerFeePct,
+		spreadBPS:   spreadBPS,
 		entryPrice:  entry,
 		exitReason:  reason,
 		predictedAt: binding.PredictedAt,
@@ -392,13 +414,15 @@ func (crypto *Crypto) publishEntrySubmit(
 
 func (crypto *Crypto) publishExitSubmit(
 	symbol, playbook, clOrdID, reason string,
+	spreadBPS float64,
 	live bool,
 ) {
 	crypto.publishAudit("exit_submit", symbol, reason, map[string]any{
-		"why":       reason,
-		"playbook":  playbook,
-		"cl_ord_id": clOrdID,
-		"live":      live,
+		"why":        reason,
+		"playbook":   playbook,
+		"cl_ord_id":  clOrdID,
+		"spread_bps": spreadBPS,
+		"live":       live,
 	})
 }
 
@@ -488,6 +512,5 @@ func (crypto *Crypto) completeExit(
 		"playbook":      playbook,
 		"live":          crypto.live != nil,
 	})
-	crypto.publishFill(fill)
 	crypto.publishWallet()
 }

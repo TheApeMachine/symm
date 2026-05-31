@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/order"
 	"github.com/theapemachine/symm/wallet"
 )
@@ -28,7 +29,23 @@ func applyBuyFill(
 }
 
 func applySellFill(tradingWallet *wallet.Wallet, fill order.Fill) error {
+	if tradingWallet == nil {
+		return fmt.Errorf("wallet is required")
+	}
+
 	base := baseOf(fill.Symbol)
+
+	if tradingWallet.Type == wallet.PaperWallet {
+		held := tradingWallet.InventoryQty(base)
+
+		if fill.Qty > held+config.System.LiveInventoryEpsilon {
+			return fmt.Errorf(
+				"paper sell fill %.10f exceeds inventory %.10f for %s",
+				fill.Qty, held, base,
+			)
+		}
+	}
+
 	cashDelta := broker.CashDeltaSell(fill, tradingWallet.Currency)
 
 	if !tradingWallet.ApplyFill(fill.ExecKey, "sell", base, fill.Qty, fill.Price, cashDelta) {

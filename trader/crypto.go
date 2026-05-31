@@ -309,8 +309,22 @@ func (crypto *Crypto) exit(
 	}
 
 	base := baseOf(symbol)
-	binding, _ := crypto.wallet.PositionBindingFor(base)
+	binding, held := crypto.wallet.PositionBindingFor(base)
+
+	if !held {
+		return
+	}
+
+	if crypto.hasPendingExit(symbol) {
+		return
+	}
+
+	if crypto.wallet.InventoryQty(base) <= crypto.scopedRuntime().Execution.LiveInventoryEpsilon {
+		return
+	}
+
 	entry := crypto.wallet.AvgEntryFor(base)
+	spreadBPS := crypto.quotes.spreadBPS(symbol)
 
 	sell := broker.Sell{
 		Symbol:       symbol,
@@ -320,7 +334,7 @@ func (crypto *Crypto) exit(
 		StressRegime: broker.StressRegimeFrom(crypto.snapshot(symbol)),
 	}
 
-	if err := crypto.submitExit(sell, binding, entry, reason); err != nil {
+	if err := crypto.submitExit(sell, binding, entry, spreadBPS, reason); err != nil {
 		errnie.Error(err)
 	}
 }

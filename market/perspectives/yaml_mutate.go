@@ -21,6 +21,7 @@ func MutateDocument(source Document, random *rand.Rand) Document {
 		playbook.Entry = mutateBranchList(playbook.Entry, random)
 		playbook.Deny = mutateBranchList(playbook.Deny, random)
 		playbook.Exit = mutateBranchList(playbook.Exit, random)
+		playbook.Deny = pruneEntryShadowingDenies(playbook.Deny, playbook.Entry)
 	}
 
 	return document
@@ -69,6 +70,76 @@ func cloneBranch(branch BranchSpec) BranchSpec {
 	if branch.Value != nil {
 		value := *branch.Value
 		out.Value = &value
+	}
+
+	return out
+}
+
+func pruneEntryShadowingDenies(
+	deny []BranchSpec,
+	entry []BranchSpec,
+) []BranchSpec {
+	if len(deny) == 0 {
+		return deny
+	}
+
+	entryCategories := branchCategorySet(entry)
+
+	if len(entryCategories) == 0 {
+		return deny
+	}
+
+	return pruneDenyCategories(deny, entryCategories)
+}
+
+func branchCategorySet(branches []BranchSpec) map[string]struct{} {
+	categories := make(map[string]struct{})
+
+	for _, branch := range branches {
+		collectBranchSpecCategories(branch, categories)
+	}
+
+	return categories
+}
+
+func collectBranchSpecCategories(
+	branch BranchSpec,
+	categories map[string]struct{},
+) {
+	if branch.Category != "" {
+		categories[cleanName(branch.Category)] = struct{}{}
+	}
+
+	for _, child := range branch.Any {
+		collectBranchSpecCategories(child, categories)
+	}
+
+	for _, child := range branch.All {
+		collectBranchSpecCategories(child, categories)
+	}
+
+	for _, child := range branch.Branches {
+		collectBranchSpecCategories(child, categories)
+	}
+}
+
+func pruneDenyCategories(
+	branches []BranchSpec,
+	entryCategories map[string]struct{},
+) []BranchSpec {
+	out := make([]BranchSpec, 0, len(branches))
+
+	for _, branch := range branches {
+		if branch.Category != "" {
+			if _, blocksEntry := entryCategories[cleanName(branch.Category)]; blocksEntry {
+				continue
+			}
+		}
+
+		branch.Any = pruneDenyCategories(branch.Any, entryCategories)
+		branch.All = pruneDenyCategories(branch.All, entryCategories)
+		branch.Branches = pruneDenyCategories(branch.Branches, entryCategories)
+		out = append(out, branch)
 	}
 
 	return out

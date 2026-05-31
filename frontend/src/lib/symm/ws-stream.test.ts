@@ -151,7 +151,9 @@ describe("routePayload", () => {
 			},
 		});
 
-		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toBe(0.33);
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")?.confidence).toBe(
+			0.33,
+		);
 		ConfidenceDataProvider.reset();
 	});
 });

@@ -125,7 +125,44 @@ func TestGenerateDocumentBuildsFromProfile(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(len(strategies), ShouldEqual, len(searchPlaybookTemplates))
 			So(document.Playbooks[0].Entry[0].Metric, ShouldEqual, MetricScoreCostRatio)
-			So(document.Playbooks[0].Deny, ShouldNotBeEmpty)
+			So(denyEntryOverlaps(document), ShouldBeEmpty)
+		})
+	})
+}
+
+func TestMutateDocumentPrunesEntryShadowingDenies(t *testing.T) {
+	Convey("Given a document whose deny branch shadows its only entry path", t, func() {
+		value := 1.0
+		document := Document{
+			Version: 1,
+			Playbooks: []PlaybookSpec{{
+				Name:   string(PlaybookPump),
+				Regime: "trending",
+				Policy: "pump",
+				Deny: []BranchSpec{{
+					Category:  CategorySpoofTrap.String(),
+					Condition: ">",
+					Value:     &value,
+					Action:    ActionLabel(ActionDeny),
+				}},
+				Entry: []BranchSpec{{
+					Category:  CategorySpoofTrap.String(),
+					Condition: ">",
+					Value:     &value,
+					Action:    ActionLabel(ActionEnter),
+				}},
+				Exit: []BranchSpec{{
+					Category: CategoryActiveReversal.String(),
+					Action:   ActionLabel(ActionStopLoss),
+				}},
+			}},
+		}
+
+		mutated := MutateDocument(document, rand.New(rand.NewSource(3)))
+
+		Convey("It should remove the self-blocking deny primitive", func() {
+			So(mutated.Playbooks[0].Deny, ShouldBeEmpty)
+			So(denyEntryOverlaps(mutated), ShouldBeEmpty)
 		})
 	})
 }
@@ -176,28 +213,128 @@ func TestDefaultDocumentMovesFrictionIntoTree(t *testing.T) {
 
 		So(pump, ShouldNotBeNil)
 
-		Convey("It should return a tree deny for a spoof setup that cannot clear cost", func() {
+		threshold, path, found := entryCostGateAndPath(pumpSpec(document))
+		So(found, ShouldBeTrue)
+
+		Convey("It should return a tree deny when the cost ratio cannot clear", func() {
 			action := pump.DecideWithContext(
-				[]Measurement{measurement(CategorySpoofTrap, 4)},
+				measurementsForPath(path),
 				nil,
-				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: 0.5}},
+				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: threshold * 0.5}},
 			)
 
 			So(action, ShouldNotBeNil)
 			So(*action, ShouldEqual, ActionDeny)
 		})
 
-		Convey("It should authorize the same spoof setup once cost clears", func() {
+		Convey("It should authorize a reachable entry path once cost clears", func() {
 			action := pump.DecideWithContext(
-				[]Measurement{measurement(CategorySpoofTrap, 4)},
+				measurementsForPath(path),
 				nil,
-				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: 1.2}},
+				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: threshold + 0.1}},
 			)
 
 			So(action, ShouldNotBeNil)
 			So(*action, ShouldEqual, ActionEnter)
 		})
 	})
+}
+
+func pumpSpec(document Document) PlaybookSpec {
+	for _, playbook := range document.Playbooks {
+		if cleanName(playbook.Name) == string(PlaybookPump) {
+			return playbook
+		}
+	}
+
+	return PlaybookSpec{}
+}
+
+func entryCostGateAndPath(playbook PlaybookSpec) (float64, []BranchSpec, bool) {
+	for _, branch := range playbook.Entry {
+		if branch.Metric != MetricScoreCostRatio || branch.Condition != ">=" {
+			continue
+		}
+
+		path, found := findEnterPath(branch.Branches, nil)
+
+		if found && branch.Value != nil {
+			return *branch.Value, path, true
+		}
+	}
+
+	return 0, nil, false
+}
+
+func findEnterPath(branches []BranchSpec, path []BranchSpec) ([]BranchSpec, bool) {
+	for _, branch := range branches {
+		nextPath := append(append([]BranchSpec(nil), path...), branch)
+
+		if branch.Action == ActionLabel(ActionEnter) {
+			return nextPath, true
+		}
+
+		if foundPath, found := findEnterPath(branch.Branches, nextPath); found {
+			return foundPath, true
+		}
+	}
+
+	return nil, false
+}
+
+func measurementsForPath(path []BranchSpec) []Measurement {
+	byCategory := make(map[CategoryType]float64)
+
+	for _, branch := range path {
+		if branch.Category == "" {
+			continue
+		}
+
+		category, err := parseCategory(branch.Category)
+
+		if err != nil {
+			continue
+		}
+
+		byCategory[category] = satisfyingSNR(branch)
+	}
+
+	measurements := make([]Measurement, 0, len(byCategory))
+
+	for category, snr := range byCategory {
+		measurements = append(measurements, measurement(category, snr))
+	}
+
+	return measurements
+}
+
+func satisfyingSNR(branch BranchSpec) float64 {
+	if branch.Value == nil {
+		return 2
+	}
+
+	switch branch.Condition {
+	case "<", "<=":
+		return *branch.Value * 0.5
+	default:
+		return *branch.Value + 0.1
+	}
+}
+
+func denyEntryOverlaps(document Document) []string {
+	overlaps := make([]string, 0)
+
+	for _, playbook := range document.Playbooks {
+		entryCategories := branchCategorySet(playbook.Entry)
+
+		for category := range branchCategorySet(playbook.Deny) {
+			if _, found := entryCategories[category]; found {
+				overlaps = append(overlaps, cleanName(playbook.Name)+":"+category)
+			}
+		}
+	}
+
+	return overlaps
 }
 
 func BenchmarkBuildStrategies(b *testing.B) {
