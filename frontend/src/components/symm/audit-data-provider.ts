@@ -95,6 +95,8 @@ const eventLabel = (event: string): string => {
 			return "Forward matured";
 		case "order_reject":
 			return "Order rejected";
+		case "gate_reject":
+			return "Gate rejected";
 		default:
 			return event.replaceAll("_", " ");
 	}
@@ -149,11 +151,21 @@ class AuditDataProviderImpl {
 	}
 }
 
-const shared = new AuditDataProviderImpl();
+const shared = createAuditDataProviderImpl();
 
-export const AuditDataProvider = {
-	subscribe: (listener: Listener) => shared.subscribe(listener),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-	reset: () => shared.reset(),
-};
+export const createAuditDataProvider = () => createAuditDataProviderImpl();
+
+function createAuditDataProviderImpl() {
+	const impl = new AuditDataProviderImpl();
+
+	return {
+		subscribe: (listener: Listener) => impl.subscribe(listener),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+		reset: () => impl.reset(),
+	};
+}
+
+export type AuditStore = ReturnType<typeof createAuditDataProvider>;
+
+export const AuditDataProvider = shared;

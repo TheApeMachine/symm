@@ -256,8 +256,6 @@ class OhlcDataProviderImpl {
 	}
 }
 
-const shared = new OhlcDataProviderImpl();
-
 type OhlcDataProviderApi = {
 	getRandomOHLCVData: (
 		count: number,
@@ -273,17 +271,30 @@ type OhlcDataProviderApi = {
 	};
 };
 
-export const OhlcDataProvider: OhlcDataProviderApi = {
-	getRandomOHLCVData: (
-		count: number,
-		startPrice: number,
-		startDate: Date,
-		interval: number,
-		...rest: unknown[]
-	) =>
-		shared.getRandomOHLCVData(count, startPrice, startDate, interval, ...rest),
-	registerSymbol: (symbol: string, sink: SymbolSink) =>
-		shared.registerSymbol(symbol, sink),
-	ingest: ((raw: unknown) =>
-		shared.ingest(raw)) as OhlcDataProviderApi["ingest"],
-};
+const shared = createOhlcDataProviderImpl();
+
+export const createOhlcDataProvider = (): OhlcDataProviderApi =>
+	createOhlcDataProviderImpl();
+
+function createOhlcDataProviderImpl(): OhlcDataProviderApi {
+	const impl = new OhlcDataProviderImpl();
+
+	return {
+		getRandomOHLCVData: (
+			count: number,
+			startPrice: number,
+			startDate: Date,
+			interval: number,
+			...rest: unknown[]
+		) =>
+			impl.getRandomOHLCVData(count, startPrice, startDate, interval, ...rest),
+		registerSymbol: (symbol: string, sink: SymbolSink) =>
+			impl.registerSymbol(symbol, sink),
+		ingest: ((raw: unknown) =>
+			impl.ingest(raw)) as OhlcDataProviderApi["ingest"],
+	};
+}
+
+export type OhlcStore = ReturnType<typeof createOhlcDataProvider>;
+
+export const OhlcDataProvider: OhlcDataProviderApi = shared;

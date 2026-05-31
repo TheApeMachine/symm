@@ -70,17 +70,26 @@ func (client *Client) Start() error {
 	return nil
 }
 
+func (client *Client) prepareToken() (string, error) {
+	if err := client.refreshToken(); err != nil {
+		return "", err
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	return client.token, nil
+}
+
 /*
 Publish sends one trading request frame with a fresh token when needed.
 */
 func (client *Client) Publish(request Request) error {
-	if err := client.refreshToken(); err != nil {
+	token, err := client.prepareToken()
+
+	if err != nil {
 		return err
 	}
-
-	client.mu.Lock()
-	token := client.token
-	client.mu.Unlock()
 
 	request.Params.Token = token
 
@@ -95,13 +104,11 @@ func (client *Client) Publish(request Request) error {
 PublishCancel sends one cancel_order frame with a fresh token when needed.
 */
 func (client *Client) PublishCancel(request CancelRequest) error {
-	if err := client.refreshToken(); err != nil {
+	token, err := client.prepareToken()
+
+	if err != nil {
 		return err
 	}
-
-	client.mu.Lock()
-	token := client.token
-	client.mu.Unlock()
 
 	request.Params.Token = token
 

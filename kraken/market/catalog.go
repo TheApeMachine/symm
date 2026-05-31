@@ -24,6 +24,7 @@ var catalogStore atomic.Pointer[PairCatalog]
 type catalogSettings struct {
 	feeVolume30d  float64
 	fallbackTaker float64
+	fallbackMaker float64
 }
 
 var catalogConfig atomic.Value // catalogSettings
@@ -138,13 +139,14 @@ func (catalog *PairCatalog) Lookup(symbol string) *Pair {
 }
 
 /*
-ConfigureCatalogFees sets the 30d volume tier and fallback taker fee used by
-TakerFeePercent. Call from cmd after config is loaded.
+ConfigureCatalogFees sets the 30d volume tier and fallback taker/maker fees used
+by TakerFeePercent and MakerFeePercent. Call from cmd after config is loaded.
 */
-func ConfigureCatalogFees(feeVolume30d, fallbackTakerPct float64) {
+func ConfigureCatalogFees(feeVolume30d, fallbackTakerPct, fallbackMakerPct float64) {
 	catalogConfig.Store(catalogSettings{
 		feeVolume30d:  feeVolume30d,
 		fallbackTaker: fallbackTakerPct,
+		fallbackMaker: fallbackMakerPct,
 	})
 }
 
@@ -152,7 +154,7 @@ func catalogFees() catalogSettings {
 	settings, ok := catalogConfig.Load().(catalogSettings)
 
 	if !ok {
-		return catalogSettings{fallbackTaker: defaultTakerFeePct}
+		return catalogSettings{fallbackTaker: defaultTakerFeePct, fallbackMaker: defaultMakerFeePct}
 	}
 
 	return settings
@@ -180,10 +182,10 @@ func (catalog *PairCatalog) MakerFeePercent(symbol string) float64 {
 	settings := catalogFees()
 
 	if pair == nil {
-		return config.System.MakerFeePct
+		return settings.fallbackMaker
 	}
 
-	return pair.MakerFeePercent(settings.feeVolume30d, config.System.MakerFeePct)
+	return pair.MakerFeePercent(settings.feeVolume30d, settings.fallbackMaker)
 }
 
 func normalizePairSymbol(symbol string) string {
@@ -201,8 +203,8 @@ func normalizePairSymbol(symbol string) string {
 /*
 BootPairCatalog loads the catalog and logs failures without aborting startup.
 */
-func BootPairCatalog(ctx context.Context, feeVolume30d, fallbackTakerPct float64) {
-	ConfigureCatalogFees(feeVolume30d, fallbackTakerPct)
+func BootPairCatalog(ctx context.Context, feeVolume30d, fallbackTakerPct, fallbackMakerPct float64) {
+	ConfigureCatalogFees(feeVolume30d, fallbackTakerPct, fallbackMakerPct)
 
 	catalog, err := LoadPairCatalog(ctx)
 

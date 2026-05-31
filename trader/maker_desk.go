@@ -44,6 +44,10 @@ func (desk *makerDesk) track(entry *restingMakerEntry) {
 	desk.mu.Lock()
 	defer desk.mu.Unlock()
 
+	if previous, ok := desk.bySymbol[entry.symbol]; ok && previous != nil && previous.clOrdID != entry.clOrdID {
+		delete(desk.byClOrdID, previous.clOrdID)
+	}
+
 	desk.bySymbol[entry.symbol] = entry
 	desk.byClOrdID[entry.clOrdID] = entry
 }
@@ -61,7 +65,9 @@ func (desk *makerDesk) drop(clOrdID, symbol string) {
 	}
 
 	if symbol != "" {
-		delete(desk.bySymbol, symbol)
+		if current, ok := desk.bySymbol[symbol]; ok && current != nil && current.clOrdID == clOrdID {
+			delete(desk.bySymbol, symbol)
+		}
 	}
 }
 

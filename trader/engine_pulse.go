@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -33,7 +32,7 @@ func (crypto *Crypto) publishEnginePulse() {
 		"candidates":              snapshot.Candidates,
 		"open":                    crypto.open.Load(),
 		"ticker_ready":            crypto.quotes.readyCount(),
-		"symbols_total":           len(config.System.Symbols),
+		"symbols_total":           len(crypto.scopedRuntime().Signal.Symbols),
 		"fluid_sampled":           crypto.fluidSampleCount(),
 		"avg_prediction":          snapshot.AvgPrediction,
 		"avg_prediction_multiple": snapshot.AvgPredictionMult,

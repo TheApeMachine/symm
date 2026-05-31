@@ -73,7 +73,8 @@ func trialEligible(trainScore float64, holdoutScores []float64, maxGap float64) 
 
 /*
 resolveMaxTrainHoldoutGap maps CLI input to an EUR gap ceiling. Zero uses 3% of
-WalletEUR; negative disables overfit rejection.
+WalletEUR when walletEUR > 0; zero wallet disables overfit rejection. Negative
+requested values disable overfit rejection.
 */
 func resolveMaxTrainHoldoutGap(requested float64, walletEUR float64) float64 {
 	if requested < 0 {
@@ -85,7 +86,7 @@ func resolveMaxTrainHoldoutGap(requested float64, walletEUR float64) float64 {
 	}
 
 	if walletEUR <= 0 {
-		return 0
+		return -1
 	}
 
 	return walletEUR * 0.03

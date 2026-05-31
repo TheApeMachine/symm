@@ -76,10 +76,20 @@ class WalletDataProviderImpl {
 	}
 }
 
-const shared = new WalletDataProviderImpl();
+const shared = createWalletDataProviderImpl();
 
-export const WalletDataProvider = {
-	subscribe: (listener: Listener) => shared.subscribe(listener),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-};
+export const createWalletDataProvider = () => createWalletDataProviderImpl();
+
+function createWalletDataProviderImpl() {
+	const impl = new WalletDataProviderImpl();
+
+	return {
+		subscribe: (listener: Listener) => impl.subscribe(listener),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+	};
+}
+
+export type WalletStore = ReturnType<typeof createWalletDataProvider>;
+
+export const WalletDataProvider = shared;

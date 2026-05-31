@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/focus"
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -27,6 +28,7 @@ func newTestCrypto() *Crypto {
 		paper:     NewPaperSession(ctx),
 		makers:    newMakerDesk(),
 		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
+		runtime:   config.Runtime,
 	}
 }
 

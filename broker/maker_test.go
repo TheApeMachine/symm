@@ -14,14 +14,20 @@ func TestMakerFillPaper(t *testing.T) {
 	Convey("Given a reserved maker entry", t, func() {
 		originalPenalty := config.System.AdverseSelectionBPS
 		config.System.AdverseSelectionBPS = 5
-		t.Cleanup(func() { config.System.AdverseSelectionBPS = originalPenalty })
+		t.Cleanup(func() {
+			config.System.AdverseSelectionBPS = originalPenalty
+			config.SyncRuntime()
+		})
+		config.SyncRuntime()
 
 		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+		scope := config.ExecutionScopeFrom(config.System)
 
 		fill, err := (&Maker{
 			Symbol:     "BTC/EUR",
 			LimitPrice: 50000,
 			Notional:   10,
+			Execution:  scope,
 		}).FillPaper(tradingWallet, MakerQueueContext{
 			InitialQueueAheadBaseQty: 0.01,
 			BidTradeVolume:           1,
@@ -40,14 +46,20 @@ func TestMakerFillPaperRejectsConfiguredOrders(t *testing.T) {
 	Convey("Given a paper maker reject rate of one", t, func() {
 		originalRejectRate := config.System.PaperOrderRejectRate
 		config.System.PaperOrderRejectRate = 1
-		t.Cleanup(func() { config.System.PaperOrderRejectRate = originalRejectRate })
+		t.Cleanup(func() {
+			config.System.PaperOrderRejectRate = originalRejectRate
+			config.SyncRuntime()
+		})
+		config.SyncRuntime()
 
 		tradingWallet := wallet.NewWallet(wallet.PaperWallet, "EUR", 200, 0.26)
+		scope := config.ExecutionScopeFrom(config.System)
 
 		fill, err := (&Maker{
 			Symbol:     "BTC/EUR",
 			LimitPrice: 50000,
 			Notional:   10,
+			Execution:  scope,
 		}).FillPaper(tradingWallet, MakerQueueContext{
 			InitialQueueAheadBaseQty: 0.01,
 			BidTradeVolume:           1,

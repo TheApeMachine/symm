@@ -187,13 +187,23 @@ class TradesDataProviderImpl {
 	}
 }
 
-const shared = new TradesDataProviderImpl();
+const shared = createTradesDataProviderImpl();
 
-export const TradesDataProvider = {
-	subscribe: (listener: Listener) => shared.subscribe(listener),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-	setMark: (symbol: string, markPrice: number) =>
-		shared.setMark(symbol, markPrice),
-	reset: () => shared.reset(),
-};
+export const createTradesDataProvider = () => createTradesDataProviderImpl();
+
+function createTradesDataProviderImpl() {
+	const impl = new TradesDataProviderImpl();
+
+	return {
+		subscribe: (listener: Listener) => impl.subscribe(listener),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+		setMark: (symbol: string, markPrice: number) =>
+			impl.setMark(symbol, markPrice),
+		reset: () => impl.reset(),
+	};
+}
+
+export type TradesStore = ReturnType<typeof createTradesDataProvider>;
+
+export const TradesDataProvider = shared;

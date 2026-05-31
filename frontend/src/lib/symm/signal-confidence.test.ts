@@ -14,16 +14,16 @@ describe("isSignalSource", () => {
 });
 
 describe("confidenceToGaugePercent", () => {
-	it("maps unit confidence to gauge needle range", () => {
+	it("maps SNR confidence to gauge needle range", () => {
 		expect(confidenceToGaugePercent(0)).toBe(0);
-		expect(confidenceToGaugePercent(0.42)).toBe(42);
-		expect(confidenceToGaugePercent(0.87)).toBe(87);
+		expect(confidenceToGaugePercent(0.42)).toBe(10.5);
+		expect(confidenceToGaugePercent(4)).toBe(100);
 	});
 });
 
 describe("formatSignalConfidence", () => {
-	it("formats normalized unit scores as gauge percent labels", () => {
-		expect(formatSignalConfidence(0.421)).toBe("42.1");
-		expect(formatSignalConfidence(0.873)).toBe("87.3");
+	it("formats SNR scores as gauge percent labels", () => {
+		expect(formatSignalConfidence(0.421)).toBe("10.5");
+		expect(formatSignalConfidence(3.492)).toBe("87.3");
 	});
 });

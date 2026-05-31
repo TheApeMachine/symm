@@ -32,6 +32,14 @@ func TestTrialTrainHoldoutGap(t *testing.T) {
 			So(gap, ShouldEqual, 15)
 		})
 	})
+
+	Convey("Given no holdout scores", t, func() {
+		gap := trialTrainHoldoutGap(25, nil)
+
+		Convey("It should return zero gap", func() {
+			So(gap, ShouldEqual, 0)
+		})
+	})
 }
 
 func TestTrialEligible(t *testing.T) {
@@ -50,6 +58,22 @@ func TestTrialEligible(t *testing.T) {
 			So(eligible, ShouldBeTrue)
 		})
 	})
+
+	Convey("Given no holdout scores", t, func() {
+		eligible := trialEligible(30, nil, 10)
+
+		Convey("It should accept the candidate", func() {
+			So(eligible, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a disabled max gap", t, func() {
+		eligible := trialEligible(30, []float64{5}, -1)
+
+		Convey("It should accept the candidate", func() {
+			So(eligible, ShouldBeTrue)
+		})
+	})
 }
 
 func TestResolveMaxTrainHoldoutGap(t *testing.T) {
@@ -57,12 +81,28 @@ func TestResolveMaxTrainHoldoutGap(t *testing.T) {
 		gap := resolveMaxTrainHoldoutGap(0, 200)
 
 		Convey("It should default to 3% of wallet EUR", func() {
-			So(gap, ShouldEqual, 6)
+			So(gap, ShouldAlmostEqual, 6, 0.0001)
 		})
 	})
 
 	Convey("Given negative requested gap", t, func() {
 		gap := resolveMaxTrainHoldoutGap(-1, 200)
+
+		Convey("It should disable overfit rejection", func() {
+			So(gap, ShouldEqual, -1)
+		})
+	})
+
+	Convey("Given a positive requested gap", t, func() {
+		gap := resolveMaxTrainHoldoutGap(12.5, 200)
+
+		Convey("It should pass the requested value through", func() {
+			So(gap, ShouldEqual, 12.5)
+		})
+	})
+
+	Convey("Given zero wallet EUR with default requested gap", t, func() {
+		gap := resolveMaxTrainHoldoutGap(0, 0)
 
 		Convey("It should disable overfit rejection", func() {
 			So(gap, ShouldEqual, -1)

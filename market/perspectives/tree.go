@@ -24,7 +24,24 @@ func (tree *Tree) Walk(
 		return nil
 	}
 
-	action, _ := deepest(tree.Branches, measurements, observations)
+	action, _ := deepest(tree.Branches, measurements, observations, nil)
+
+	return action
+}
+
+/*
+WalkWithTrace traverses the tree and records branch evaluations into trace.
+*/
+func (tree *Tree) WalkWithTrace(
+	measurements []Measurement,
+	observations []ObservationType,
+	trace *DecisionTrace,
+) *ActionType {
+	if tree == nil {
+		return nil
+	}
+
+	action, _ := deepest(tree.Branches, measurements, observations, trace)
 
 	return action
 }
@@ -39,12 +56,13 @@ func deepest(
 	branches []Branch,
 	measurements []Measurement,
 	observations []ObservationType,
+	trace *DecisionTrace,
 ) (*ActionType, int) {
 	var best *ActionType
 	bestDepth := -1
 
 	for index := range branches {
-		action, depth := branches[index].walk(measurements, observations)
+		action, depth := branches[index].walk(measurements, observations, trace)
 
 		if action != nil && depth > bestDepth {
 			best = action
@@ -65,12 +83,17 @@ on depth.
 func (branch *Branch) walk(
 	measurements []Measurement,
 	observations []ObservationType,
+	trace *DecisionTrace,
 ) (*ActionType, int) {
-	if !branch.matches(measurements, observations) {
+	matched, snr, threshold := branch.matchDetail(measurements, observations)
+
+	if !matched {
 		return nil, -1
 	}
 
-	if action, depth := deepest(branch.Branches, measurements, observations); action != nil {
+	if action, depth := deepest(branch.Branches, measurements, observations, trace); action != nil {
+		branch.recordTrace(trace, *action, snr, threshold, depth+1, true)
+
 		return action, depth + 1
 	}
 
@@ -79,8 +102,58 @@ func (branch *Branch) walk(
 	}
 
 	action := branch.Action
+	branch.recordTrace(trace, action, snr, threshold, 0, true)
 
 	return &action, 0
+}
+
+func (branch *Branch) recordTrace(
+	trace *DecisionTrace,
+	action ActionType,
+	snr float64,
+	threshold float64,
+	depth int,
+	matched bool,
+) {
+	if trace == nil {
+		return
+	}
+
+	trace.RecordStep(
+		branch.Category,
+		action,
+		snr,
+		threshold,
+		branch.Condition,
+		depth,
+		matched,
+	)
+}
+
+func (branch *Branch) matchDetail(
+	measurements []Measurement,
+	observations []ObservationType,
+) (matched bool, snr float64, threshold float64) {
+	if branch.Observation != ObservationNone {
+		return slices.Contains(observations, branch.Observation), 0, 0
+	}
+
+	if branch.Category == CategoryTypeNone {
+		return true, 0, 0
+	}
+
+	measurement, ok := findMeasurement(measurements, branch.Category)
+
+	if !ok {
+		return false, 0, branch.Value
+	}
+
+	switch branch.Unit {
+	case UnitSNR, UnitConfidence:
+		return matchesCondition(branch.Condition, measurement.SNR, branch.Value), measurement.SNR, branch.Value
+	default:
+		return true, measurement.SNR, branch.Value
+	}
 }
 
 func (branch *Branch) matches(

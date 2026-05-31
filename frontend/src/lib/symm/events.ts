@@ -114,6 +114,7 @@ export type DecisionRow = {
 	allow: boolean;
 	why: string;
 	confidence: number;
+	in_play?: boolean;
 };
 
 export type EvaluationRow = {
@@ -128,6 +129,18 @@ export type DecisionTraceEvent = SymmEvent & {
 	event: "decision_trace";
 	decisions: DecisionRow[];
 	evaluations?: EvaluationRow[];
+};
+
+export const isDecisionTraceEvent = (
+	raw: unknown,
+): raw is DecisionTraceEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
+	}
+
+	const row = raw as Record<string, unknown>;
+
+	return row.event === "decision_trace" && Array.isArray(row.decisions);
 };
 
 export const whyLabel = (code: string): string => code.replaceAll("_", " ");

@@ -49,6 +49,24 @@ func newTimedMeasurement(
 }
 
 /*
+copyReadingSet clones one symbol's source map so cross-section workers can read
+without racing record() updates on the live desk map.
+*/
+func copyReadingSet(set map[perspectives.SourceType]timedMeasurement) map[perspectives.SourceType]timedMeasurement {
+	if len(set) == 0 {
+		return nil
+	}
+
+	copySet := make(map[perspectives.SourceType]timedMeasurement, len(set))
+
+	for source, slot := range set {
+		copySet[source] = slot
+	}
+
+	return copySet
+}
+
+/*
 snapshotTimedMeasurements returns the non-stale latest verdicts for a symbol.
 */
 func snapshotTimedMeasurements(

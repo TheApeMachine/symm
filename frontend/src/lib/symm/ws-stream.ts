@@ -1,19 +1,11 @@
 import { useCallback } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
-import { AuditDataProvider } from "#/components/symm/audit-data-provider";
-import {
-	ConfidenceDataProvider,
-	isConfidenceRow,
-} from "#/components/symm/confidence-data-provider";
-import { FluidDataProvider } from "#/components/symm/fluid-data-provider";
-import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
-import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
-import { TradesDataProvider } from "#/components/symm/trades-data-provider";
-import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
+import { isConfidenceRow } from "#/components/symm/confidence-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
 import {
 	isAuditEvent,
+	isDecisionTraceEvent,
 	isEnginePulseEvent,
 	isHeartbeatEvent,
 	isHelloEvent,
@@ -21,6 +13,8 @@ import {
 	isTickEvent,
 	isWalletPayload,
 } from "#/lib/symm/events";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
+import type { SymmTelemetryStores } from "#/lib/symm/telemetry-stores";
 import { TickStore } from "#/lib/symm/tick-store";
 
 const resolveSocketUrl = () => {
@@ -51,7 +45,7 @@ const parseWirePayload = (raw: unknown): unknown | null => {
 	return JSON.parse(trimmed) as unknown;
 };
 
-export const routePayload = (payload: unknown) => {
+export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 	if (isHelloEvent(payload)) {
 		ConnectionStore.set(true);
 		return;
@@ -68,29 +62,34 @@ export const routePayload = (payload: unknown) => {
 	}
 
 	if (isAuditEvent(payload)) {
-		AuditDataProvider.ingest(payload);
+		stores.audit.ingest(payload);
+		return;
+	}
+
+	if (isDecisionTraceEvent(payload)) {
+		stores.decisions.ingest(payload);
 		return;
 	}
 
 	if (isPredictionFeedback(payload)) {
-		PredictionsDataProvider.ingest(payload);
+		stores.predictions.ingest(payload);
 		return;
 	}
 
 	if (isConfidenceRow(payload)) {
-		ConfidenceDataProvider.ingest(payload);
+		stores.confidence.ingest(payload);
 		return;
 	}
 
 	if (isWalletPayload(payload)) {
-		WalletDataProvider.ingest(payload);
-		TradesDataProvider.ingest(payload);
-		ConfidenceDataProvider.ingestSnapshot(payload.gauge_confidence);
+		stores.wallet.ingest(payload);
+		stores.trades.ingest(payload);
+		stores.confidence.ingestSnapshot(payload.gauge_confidence);
 		return;
 	}
 
 	if (isEnginePulseEvent(payload)) {
-		PredictionsDataProvider.ingest(payload);
+		stores.predictions.ingest(payload);
 		return;
 	}
 
@@ -101,28 +100,28 @@ export const routePayload = (payload: unknown) => {
 			switch (row.event) {
 				case "prediction":
 				case "prediction_settled":
-					PredictionsDataProvider.ingest(payload);
+					stores.predictions.ingest(payload);
 					return;
 				case "field_row":
 				case "field_snapshot":
 				case "field_grid":
-					FluidDataProvider.ingest(payload);
+					stores.fluid.ingest(payload);
 					return;
 				case "candle_bar":
-					OhlcDataProvider.ingest(payload);
+					stores.ohlc.ingest(payload);
 					if (typeof row.symbol === "string" && typeof row.close === "number") {
-						TradesDataProvider.setMark(row.symbol, row.close);
+						stores.trades.setMark(row.symbol, row.close);
 					}
 					return;
 				case "mark":
 					if (typeof row.symbol === "string" && typeof row.price === "number") {
-						TradesDataProvider.setMark(row.symbol, row.price);
+						stores.trades.setMark(row.symbol, row.price);
 					}
 					return;
 				case "wallet":
-					WalletDataProvider.ingest(payload);
-					TradesDataProvider.ingest(payload);
-					ConfidenceDataProvider.ingestSnapshot(row.gauge_confidence);
+					stores.wallet.ingest(payload);
+					stores.trades.ingest(payload);
+					stores.confidence.ingestSnapshot(row.gauge_confidence);
 					return;
 				default:
 					break;
@@ -130,27 +129,32 @@ export const routePayload = (payload: unknown) => {
 		}
 	}
 
-	TradesDataProvider.ingest(payload);
-	OhlcDataProvider.ingest(payload);
+	stores.trades.ingest(payload);
+	stores.ohlc.ingest(payload);
 };
 
 export const useSymmStream = () => {
-	const onMessage = useCallback((event: MessageEvent<string>) => {
-		let payload: unknown | null;
+	const stores = useSymmTelemetryStores();
 
-		try {
-			payload = parseWirePayload(event.data);
-		} catch {
-			ConnectionStore.set(false);
-			return;
-		}
+	const onMessage = useCallback(
+		(event: MessageEvent<string>) => {
+			let payload: unknown | null;
 
-		if (payload === null) {
-			return;
-		}
+			try {
+				payload = parseWirePayload(event.data);
+			} catch {
+				ConnectionStore.set(false);
+				return;
+			}
 
-		routePayload(payload);
-	}, []);
+			if (payload === null) {
+				return;
+			}
+
+			routePayload(stores, payload);
+		},
+		[stores],
+	);
 
 	useWebSocket(resolveSocketUrl(), {
 		shouldReconnect: () => true,

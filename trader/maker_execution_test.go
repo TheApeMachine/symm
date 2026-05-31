@@ -20,9 +20,12 @@ func TestCryptoMakerPaperWaitsForQueue(t *testing.T) {
 		t.Cleanup(func() {
 			config.System.UseMakerEntries = originalUseMaker
 			config.System.ExecutionMakerFallbackTicks = originalFallback
+			config.SyncRuntime()
 		})
+		config.SyncRuntime()
 
 		crypto := newTestCrypto()
+		crypto.runtime = config.Runtime
 		crypto.quotes.ingestTicker(market.TickerUpdate{
 			Symbol: "BTC/EUR",
 			Last:   100,
@@ -104,9 +107,12 @@ func TestCryptoMakerPaperFallbackToTaker(t *testing.T) {
 			config.System.ExecutionMakerFallbackTicks = originalFallback
 			config.System.PaperOrderLatency = originalLatency
 			config.System.MaxEntrySlippageBPS = originalSlippage
+			config.SyncRuntime()
 		})
+		config.SyncRuntime()
 
 		crypto := newTestCrypto()
+		crypto.runtime = config.Runtime
 		crypto.quotes.ingestTicker(market.TickerUpdate{
 			Symbol: "ETH/EUR",
 			Last:   50,

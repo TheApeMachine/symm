@@ -1,6 +1,7 @@
 package market
 
 const defaultTakerFeePct = 0.40
+const defaultMakerFeePct = 0.25
 
 /*
 TakerFeePercent returns the taker fee percent for quoteVolume30d on this pair's
@@ -39,7 +40,7 @@ func (pair *Pair) MakerFeePercent(quoteVolume30d, fallbackPct float64) float64 {
 			return fallbackPct
 		}
 
-		return defaultTakerFeePct
+		return defaultMakerFeePct
 	}
 
 	feePct := pair.FeesMaker[0][1]

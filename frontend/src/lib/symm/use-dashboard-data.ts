@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-import { AuditDataProvider } from "#/components/symm/audit-data-provider";
-import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
-import { TradesDataProvider } from "#/components/symm/trades-data-provider";
-import { WalletDataProvider } from "#/components/symm/wallet-data-provider";
 import { ConnectionStore } from "#/lib/symm/connection-store";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 import { TickStore } from "#/lib/symm/tick-store";
 
 export const useSymmConnected = () =>
@@ -24,30 +21,52 @@ export const useSymmTelemetryStatus = () =>
 		TickStore.statusSnapshot,
 	);
 
-export const useSymmEnginePulse = () =>
-	useSyncExternalStore(
-		PredictionsDataProvider.subscribe,
-		PredictionsDataProvider.snapshot,
+export const useSymmEnginePulse = () => {
+	const stores = useSymmTelemetryStores();
+
+	return useSyncExternalStore(
+		stores.predictions.subscribe,
+		stores.predictions.snapshot,
 		() => undefined,
 	);
+};
 
-export const useSymmWallet = () =>
-	useSyncExternalStore(
-		WalletDataProvider.subscribe,
-		WalletDataProvider.snapshot,
-		() => WalletDataProvider.snapshot(),
-	);
+export const useSymmWallet = () => {
+	const stores = useSymmTelemetryStores();
 
-export const useSymmTradePanelRows = () =>
-	useSyncExternalStore(
-		TradesDataProvider.subscribe,
-		TradesDataProvider.snapshot,
-		() => TradesDataProvider.snapshot(),
+	return useSyncExternalStore(
+		stores.wallet.subscribe,
+		stores.wallet.snapshot,
+		() => stores.wallet.snapshot(),
 	);
+};
 
-export const useSymmAuditRows = () =>
-	useSyncExternalStore(
-		AuditDataProvider.subscribe,
-		AuditDataProvider.snapshot,
-		() => AuditDataProvider.snapshot(),
+export const useSymmTradePanelRows = () => {
+	const stores = useSymmTelemetryStores();
+
+	return useSyncExternalStore(
+		stores.trades.subscribe,
+		stores.trades.snapshot,
+		() => stores.trades.snapshot(),
 	);
+};
+
+export const useSymmAuditRows = () => {
+	const stores = useSymmTelemetryStores();
+
+	return useSyncExternalStore(
+		stores.audit.subscribe,
+		stores.audit.snapshot,
+		() => stores.audit.snapshot(),
+	);
+};
+
+export const useSymmDecisionTrace = () => {
+	const stores = useSymmTelemetryStores();
+
+	return useSyncExternalStore(
+		stores.decisions.subscribe,
+		stores.decisions.snapshot,
+		() => undefined,
+	);
+};

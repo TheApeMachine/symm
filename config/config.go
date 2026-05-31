@@ -189,6 +189,7 @@ func init() {
 
 	if path := strings.TrimSpace(System.ConfigFile); path != "" {
 		_ = LoadTunablesFile(path, System)
+		Runtime = NewRuntime(System)
 
 		return
 	}
@@ -196,6 +197,8 @@ func init() {
 	if _, err := os.Stat(defaultTunedFile); err == nil {
 		_ = LoadTunablesFile(defaultTunedFile, System)
 	}
+
+	Runtime = NewRuntime(System)
 }
 
 /*

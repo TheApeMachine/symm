@@ -79,13 +79,24 @@ class ConfidenceDataProviderImpl {
 	}
 }
 
-const shared = new ConfidenceDataProviderImpl();
+const shared = createConfidenceDataProviderImpl();
 
-export const ConfidenceDataProvider = {
-	registerSource: (source: string, sink: SourceSink) =>
-		shared.registerSource(source, sink),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-	ingestSnapshot: (raw: unknown) => shared.ingestSnapshot(raw),
-	reset: () => shared.reset(),
-};
+export const createConfidenceDataProvider = () =>
+	createConfidenceDataProviderImpl();
+
+function createConfidenceDataProviderImpl() {
+	const impl = new ConfidenceDataProviderImpl();
+
+	return {
+		registerSource: (source: string, sink: SourceSink) =>
+			impl.registerSource(source, sink),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+		ingestSnapshot: (raw: unknown) => impl.ingestSnapshot(raw),
+		reset: () => impl.reset(),
+	};
+}
+
+export type ConfidenceStore = ReturnType<typeof createConfidenceDataProvider>;
+
+export const ConfidenceDataProvider = shared;

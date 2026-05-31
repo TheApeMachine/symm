@@ -49,6 +49,9 @@ type Crypto struct {
 	crossSection            atomic.Pointer[crossSectionSnapshot]
 	priorPulseMultiple      float64
 	priorPulseMultipleValid bool
+	runtime                 *config.ScopedRuntime
+	decisionTraceMu         sync.Mutex
+	decisionTraceRows       []decisionTraceRow
 }
 
 func NewCrypto(
@@ -56,8 +59,13 @@ func NewCrypto(
 	pool *qpool.Q,
 	tradingWallet *wallet.Wallet,
 	tracker *focus.Set,
+	runtime *config.ScopedRuntime,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
+
+	if runtime == nil {
+		runtime = config.Runtime
+	}
 
 	crypto := &Crypto{
 		ctx:       ctx,
@@ -70,6 +78,7 @@ func NewCrypto(
 		quotes:    newQuoteCache(),
 		economics: economics.NewDesk(),
 		readings:  make(map[string]map[perspectives.SourceType]timedMeasurement),
+		runtime:   runtime,
 	}
 
 	group := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
@@ -155,6 +164,12 @@ func (crypto *Crypto) consider(symbol string, last float64, measurements []persp
 		return
 	}
 
+	verdicts := decision.EntryVerdicts(measurements, nil)
+	defer decision.ReleaseEntryVerdicts(verdicts)
+
+	crypto.story.RecordEntryVerdicts(symbol, verdicts)
+	crypto.recordEntryVerdicts(symbol, measurements, verdicts)
+
 	entryDecisions := decision.Decisions(measurements, nil)
 	crypto.story.RecordEntry(symbol, entryDecisions)
 
@@ -194,7 +209,7 @@ func (crypto *Crypto) manage(symbol string, last float64, measurements []perspec
 	}
 
 	observations := []perspectives.ObservationType{perspectives.ObservationHolding}
-	softAllowed := time.Since(binding.PredictedAt) >= config.System.MinExhaustHold
+	softAllowed := time.Since(binding.PredictedAt) >= crypto.scopedRuntime().Risk.MinExhaustHold
 	exitDecisions := decision.ExitDecisions(
 		measurements, observations, binding.Playbook, softAllowed,
 	)
@@ -216,7 +231,7 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 
 	notional := crypto.slot(opportunity)
 
-	if notional < config.System.MinCostEUR {
+	if notional < crypto.scopedRuntime().Risk.MinCostEUR {
 		return
 	}
 
@@ -226,7 +241,7 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	quote := crypto.prepareEntryQuote(symbol, last, measurements)
 	playbook := primaryPlaybook(opportunity.Names)
 
-	if config.System.UseMakerEntries {
+	if crypto.scopedRuntime().Execution.UseMakerEntries {
 		if err := crypto.submitMakerEntry(
 			symbol, notional, quote, opportunity, playbook, spreadBPS, crypto.makerFeePct(symbol),
 		); err != nil {
@@ -237,10 +252,11 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	}
 
 	buy := broker.Buy{
-		Symbol:   symbol,
-		Notional: notional,
-		Quote:    quote,
-		FeePct:   feePct,
+		Symbol:    symbol,
+		Notional:  notional,
+		Quote:     quote,
+		FeePct:    feePct,
+		Execution: crypto.scopedRuntime().Execution,
 	}
 
 	if err := crypto.submitEntry(buy, opportunity, playbook, spreadBPS); err != nil {
@@ -263,9 +279,10 @@ func (crypto *Crypto) exit(
 	entry := crypto.wallet.AvgEntryFor(base)
 
 	sell := broker.Sell{
-		Symbol: symbol,
-		Quote:  crypto.quotes.snapshot(symbol, last),
-		FeePct: binding.TakerFeePct,
+		Symbol:    symbol,
+		Quote:     crypto.quotes.snapshot(symbol, last),
+		FeePct:    binding.TakerFeePct,
+		Execution: crypto.scopedRuntime().Execution,
 	}
 
 	if err := crypto.submitExit(sell, binding, entry, reason); err != nil {
@@ -295,6 +312,18 @@ func primaryPlaybook(names []string) string {
 	}
 
 	return names[0]
+}
+
+func (crypto *Crypto) scopedRuntime() *config.ScopedRuntime {
+	if crypto.runtime != nil {
+		return crypto.runtime
+	}
+
+	if config.Runtime != nil {
+		return config.Runtime
+	}
+
+	return config.NewRuntime(config.System)
 }
 
 func triggerLabel(trigger perspectives.Measurement) string {

@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/config"
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -60,7 +59,7 @@ func (crypto *Crypto) refreshCrossSection() {
 	rows := make([]symbolReading, 0, len(crypto.readings))
 
 	for symbol, set := range crypto.readings {
-		rows = append(rows, symbolReading{symbol: symbol, set: set})
+		rows = append(rows, symbolReading{symbol: symbol, set: copyReadingSet(set)})
 	}
 
 	crypto.mu.RUnlock()
@@ -141,7 +140,7 @@ func (crypto *Crypto) refreshCrossSection() {
 
 				feePct := crypto.takerFeePct(row.symbol)
 				spreadBPS := crypto.quotes.spreadBPS(row.symbol)
-				required := config.System.EntryEdgeMultiple * roundTripFrictionPct(feePct, spreadBPS)
+				required := crypto.scopedRuntime().Risk.EntryEdgeMultiple * roundTripFrictionPct(feePct, spreadBPS)
 
 				if required <= 0 {
 					continue

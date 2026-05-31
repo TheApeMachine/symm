@@ -108,10 +108,20 @@ class FluidDataProviderImpl {
 	}
 }
 
-const shared = new FluidDataProviderImpl();
+const shared = createFluidDataProviderImpl();
 
-export const FluidDataProvider = {
-	registerSink: (sink: FluidSink) => shared.registerSink(sink),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-};
+export const createFluidDataProvider = () => createFluidDataProviderImpl();
+
+function createFluidDataProviderImpl() {
+	const impl = new FluidDataProviderImpl();
+
+	return {
+		registerSink: (sink: FluidSink) => impl.registerSink(sink),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+	};
+}
+
+export type FluidStore = ReturnType<typeof createFluidDataProvider>;
+
+export const FluidDataProvider = shared;

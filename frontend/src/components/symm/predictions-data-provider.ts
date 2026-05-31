@@ -178,12 +178,23 @@ class PredictionsDataProviderImpl {
 	}
 }
 
-const shared = new PredictionsDataProviderImpl();
+const shared = createPredictionsDataProviderImpl();
 
-export const PredictionsDataProvider = {
-	registerSink: (sink: ReadingSink) => shared.registerSink(sink),
-	subscribe: (listener: () => void) => shared.subscribe(listener),
-	snapshot: () => shared.snapshot(),
-	ingest: (raw: unknown) => shared.ingest(raw),
-	reset: () => shared.reset(),
-};
+export const createPredictionsDataProvider = () =>
+	createPredictionsDataProviderImpl();
+
+function createPredictionsDataProviderImpl() {
+	const impl = new PredictionsDataProviderImpl();
+
+	return {
+		registerSink: (sink: ReadingSink) => impl.registerSink(sink),
+		subscribe: (listener: () => void) => impl.subscribe(listener),
+		snapshot: () => impl.snapshot(),
+		ingest: (raw: unknown) => impl.ingest(raw),
+		reset: () => impl.reset(),
+	};
+}
+
+export type PredictionsStore = ReturnType<typeof createPredictionsDataProvider>;
+
+export const PredictionsDataProvider = shared;

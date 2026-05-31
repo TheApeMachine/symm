@@ -74,24 +74,40 @@ func (strat *strategy) Decide(
 		return strat.decideExit(measurements, observations)
 	}
 
-	return strat.decideEntry(measurements, observations)
+	return strat.decideEntryWithTrace(measurements, observations, nil)
+}
+
+/*
+DecideWithTrace returns an entry verdict and records the decision path in trace.
+*/
+func (strat *strategy) DecideWithTrace(
+	measurements []Measurement,
+	observations []ObservationType,
+	trace *DecisionTrace,
+) *ActionType {
+	if holding(observations) {
+		return strat.decideExit(measurements, observations)
+	}
+
+	return strat.decideEntryWithTrace(measurements, observations, trace)
 }
 
 func (strat *strategy) Regime() Regime {
 	return strat.regime
 }
 
-func (strat *strategy) decideEntry(
+func (strat *strategy) decideEntryWithTrace(
 	measurements []Measurement,
 	observations []ObservationType,
+	trace *DecisionTrace,
 ) *ActionType {
-	if action := strat.deny.Walk(measurements, observations); action != nil {
+	if action := strat.deny.WalkWithTrace(measurements, observations, trace); action != nil {
 		if IsEntryBlocked(*action) {
 			return action
 		}
 	}
 
-	action := strat.entry.Walk(measurements, observations)
+	action := strat.entry.WalkWithTrace(measurements, observations, trace)
 
 	if action == nil || *action == ActionNone {
 		return nil

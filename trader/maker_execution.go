@@ -26,7 +26,12 @@ func (crypto *Crypto) submitMakerEntry(
 		return fmt.Errorf("maker limit price unavailable for %s", symbol)
 	}
 
-	preflight := broker.Buy{Symbol: symbol, Notional: notional, Quote: quote}
+	preflight := broker.Buy{
+		Symbol:    symbol,
+		Notional:  notional,
+		Quote:     quote,
+		Execution: crypto.scopedRuntime().Execution,
+	}
 
 	if err := preflight.PreflightGates(); err != nil {
 		return err
@@ -40,6 +45,7 @@ func (crypto *Crypto) submitMakerEntry(
 		FeePct:           feePct,
 		PriceDecimals:    priceDecimalsValue,
 		HasPriceDecimals: hasPriceDecimals,
+		Execution:        crypto.scopedRuntime().Execution,
 	}
 
 	if crypto.live != nil {
@@ -66,7 +72,11 @@ func (crypto *Crypto) submitMakerEntryPaper(
 			crypto.publishMakerSubmit(makerOrder.Symbol, opportunity, playbook, clOrdID, makerOrder.Notional, spreadBPS, false)
 		}
 
-		return nil
+		if clOrdID == "" {
+			errnie.Error(fmt.Errorf("maker submit paper for %s: %w", makerOrder.Symbol, err))
+		}
+
+		return err
 	}
 
 	postedAt := time.Now()
@@ -167,6 +177,9 @@ func (crypto *Crypto) advanceMakerFallback() {
 		return
 	}
 
+	crypto.makerFillMu.Lock()
+	defer crypto.makerFillMu.Unlock()
+
 	for _, entry := range crypto.makers.advanceWaitTicks(crypto.live != nil) {
 		crypto.fallbackMakerToTaker(entry)
 	}
@@ -197,11 +210,18 @@ func (crypto *Crypto) fallbackMakerToTaker(entry *restingMakerEntry) {
 
 	releaseEntryReservation(crypto.wallet, entry.maker.Notional)
 
+	fallbackLast := entry.intent.quote.Last
+
+	if fallbackLast <= 0 {
+		fallbackLast = entry.maker.LimitPrice
+	}
+
 	buy := broker.Buy{
-		Symbol:   entry.symbol,
-		Notional: entry.maker.Notional,
-		Quote:    entry.intent.quote,
-		FeePct:   crypto.takerFeePct(entry.symbol),
+		Symbol:    entry.symbol,
+		Notional:  entry.maker.Notional,
+		Quote:     crypto.quotes.snapshot(entry.symbol, fallbackLast),
+		FeePct:    crypto.takerFeePct(entry.symbol),
+		Execution: crypto.scopedRuntime().Execution,
 	}
 
 	crypto.publishAudit("maker_fallback", entry.symbol, "maker queue timeout", map[string]any{
@@ -249,7 +269,7 @@ func makerLimitPrice(quote broker.Quote) float64 {
 		return quote.Last
 	}
 
-	return quote.Ask
+	return 0
 }
 
 func (crypto *Crypto) publishMakerSubmit(

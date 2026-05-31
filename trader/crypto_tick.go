@@ -40,6 +40,7 @@ func (crypto *Crypto) runHeartbeatLoop() {
 		case <-heartbeat.C:
 			crypto.refreshCrossSection()
 			crypto.publishEnginePulse()
+			crypto.publishDecisionTrace()
 			crypto.publishWallet()
 			crypto.advanceMakerFallback()
 		}
@@ -86,19 +87,28 @@ func (crypto *Crypto) runMeasurementLoop() {
 		return
 	}
 
-	for value := range crypto.measurements.Incoming {
-		if value.Value == nil {
-			continue
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		case value, ok := <-crypto.measurements.Incoming:
+			if !ok {
+				return
+			}
+
+			if value.Value == nil {
+				continue
+			}
+
+			measurement, measurementOK := value.Value.(perspectives.Measurement)
+
+			if !measurementOK || measurement.Symbol == "" {
+				continue
+			}
+
+			crypto.record(measurement)
+			crypto.evaluate(measurement.Symbol, measurement.Last)
 		}
-
-		measurement, measurementOK := value.Value.(perspectives.Measurement)
-
-		if !measurementOK || measurement.Symbol == "" {
-			continue
-		}
-
-		crypto.record(measurement)
-		crypto.evaluate(measurement.Symbol, measurement.Last)
 	}
 }
 

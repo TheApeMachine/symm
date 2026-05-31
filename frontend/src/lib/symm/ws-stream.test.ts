@@ -5,6 +5,7 @@ import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provid
 import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
+import { defaultSymmTelemetryStores } from "#/lib/symm/telemetry-stores";
 import { routePayload } from "#/lib/symm/ws-stream";
 import { TickStore } from "#/lib/symm/tick-store";
 
@@ -12,11 +13,11 @@ describe("routePayload", () => {
 	it("increments tick count from crypto tick events", () => {
 		TickStore.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "tick",
 			ts: "2026-05-28T01:10:10Z",
 		});
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "tick",
 			ts: "2026-05-28T01:10:11Z",
 		});
@@ -28,11 +29,11 @@ describe("routePayload", () => {
 	it("does not reset tick count on hello frames", () => {
 		TickStore.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "tick",
 			ts: "2026-05-28T01:10:10Z",
 		});
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "hello",
 			ts: "2026-05-28T01:10:11Z",
 		});
@@ -44,7 +45,7 @@ describe("routePayload", () => {
 	it("updates tick count from heartbeat proof of life events", () => {
 		TickStore.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "heartbeat",
 			ts: "2026-05-28T01:10:10Z",
 			seq: 42,
@@ -66,7 +67,7 @@ describe("routePayload", () => {
 	it("routes audit events into the audit panel provider", () => {
 		AuditDataProvider.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "audit",
 			audit_event: "trade_entry_fill",
 			seq: 8,
@@ -78,7 +79,7 @@ describe("routePayload", () => {
 
 		expect(AuditDataProvider.snapshot()[0]).toMatchObject({
 			seq: 8,
-			event: "trade_entry_fill",
+			event: "trade entry fill",
 			symbol: "BTC/EUR",
 		});
 		AuditDataProvider.reset();
@@ -91,7 +92,7 @@ describe("routePayload", () => {
 			bars.push(bar.sec);
 		});
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			Type: "paper",
 			Currency: "EUR",
 			Balance: 198.9,
@@ -100,7 +101,7 @@ describe("routePayload", () => {
 			Marks: { "ROUTE/EUR": 0.4 },
 		});
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "mark",
 			ts: "2026-05-28T01:10:10Z",
 			symbol: "ROUTE/EUR",
@@ -116,7 +117,7 @@ describe("routePayload", () => {
 	it("routes engine pulse events to the prediction provider", () => {
 		PredictionsDataProvider.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "engine_pulse",
 			seq: 7,
 			phase: "scan",
@@ -138,7 +139,7 @@ describe("routePayload", () => {
 	it("hydrates confidence gauges from wallet frames", () => {
 		ConfidenceDataProvider.reset();
 
-		routePayload({
+		routePayload(defaultSymmTelemetryStores, {
 			event: "wallet",
 			Currency: "EUR",
 			Balance: 198.9,

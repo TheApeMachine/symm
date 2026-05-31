@@ -53,6 +53,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		applyReplayMeta(replayPath)
 	} else if universe := market.DiscoverSymbols(ctx, config.System.QuoteCurrency); len(universe) > 0 {
 		config.System.Symbols = universe
+		config.SyncRuntime()
 
 		if recorder := replay.ActiveRecorder(); recorder != nil {
 			_ = replay.WriteMeta("symbols", map[string]any{
@@ -65,11 +66,13 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 	market.ConfigureCatalogFees(
 		config.System.Fee30DVolume,
 		config.System.TakerFeePct,
+		config.System.MakerFeePct,
 	)
 	market.BootPairCatalog(
 		ctx,
 		config.System.Fee30DVolume,
 		config.System.TakerFeePct,
+		config.System.MakerFeePct,
 	)
 
 	tracker := focus.NewSet()
@@ -96,7 +99,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		cvd.NewSignal(runCtx, pool),
 		toxicity.NewToxicity(runCtx, pool),
 		exhaust.NewSignal(runCtx, pool),
-		trader.NewCrypto(runCtx, pool, tradingWallet, tracker),
+		trader.NewCrypto(runCtx, pool, tradingWallet, tracker, config.Runtime),
 		view.NewOHLC(runCtx, pool, tracker),
 		view.NewGauges(runCtx, pool),
 	); err != nil {

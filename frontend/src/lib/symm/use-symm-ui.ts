@@ -1,11 +1,11 @@
 export {
 	useSymmConnected,
+	useSymmDecisionTrace,
 	useSymmEnginePulse,
+	useSymmAuditRows,
 	useSymmTradePanelRows,
 	useSymmWallet,
 } from "#/lib/symm/use-dashboard-data";
-
-export const useSymmDecisionTrace = () => undefined;
 
 export const useSymmEntryLine = () => undefined;
 

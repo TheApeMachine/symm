@@ -22,6 +22,7 @@ type Buy struct {
 	LimitBelowStop float64
 	ClOrdID        string
 	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
+	Execution      config.ExecutionScope
 }
 
 /*
@@ -53,7 +54,7 @@ func (buy *Buy) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		buy.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(); err != nil {
+	if err := ShouldRejectPaperOrder(buy.Execution); err != nil {
 		tradingWallet.ReleaseEntryReservation(buy.Notional)
 
 		return buy.ClOrdID, err
@@ -192,22 +193,22 @@ func (buy *Buy) PreflightGates() error {
 		return fmt.Errorf("nil buy")
 	}
 
-	cfg := config.System
+	scope := buy.executionScope()
 
-	if cfg.SnapshotFreshnessTTL > 0 && !buy.Quote.At.IsZero() {
-		if age := time.Since(buy.Quote.At); age > cfg.SnapshotFreshnessTTL {
-			return fmt.Errorf("quote stale: %s > %s", age, cfg.SnapshotFreshnessTTL)
+	if scope.SnapshotFreshnessTTL > 0 && !buy.Quote.At.IsZero() {
+		if age := time.Since(buy.Quote.At); age > scope.SnapshotFreshnessTTL {
+			return fmt.Errorf("quote stale: %s > %s", age, scope.SnapshotFreshnessTTL)
 		}
 	}
 
-	if cfg.MaxSpreadBPS > 0 && buy.Quote.Bid > 0 && buy.Quote.Ask > 0 {
+	if scope.MaxSpreadBPS > 0 && buy.Quote.Bid > 0 && buy.Quote.Ask > 0 {
 		mid := (buy.Quote.Bid + buy.Quote.Ask) / 2
 
 		if mid > 0 {
 			spreadBPS := (buy.Quote.Ask - buy.Quote.Bid) / mid * 10000
 
-			if spreadBPS > cfg.MaxSpreadBPS {
-				return fmt.Errorf("spread %.2f bps > MaxSpreadBPS %.2f", spreadBPS, cfg.MaxSpreadBPS)
+			if spreadBPS > scope.MaxSpreadBPS {
+				return fmt.Errorf("spread %.2f bps > MaxSpreadBPS %.2f", spreadBPS, scope.MaxSpreadBPS)
 			}
 		}
 	}
@@ -216,9 +217,9 @@ func (buy *Buy) PreflightGates() error {
 }
 
 func (buy *Buy) preflightFill(fillPrice float64) error {
-	cfg := config.System
+	scope := buy.executionScope()
 
-	if cfg.MaxEntrySlippageBPS <= 0 {
+	if scope.MaxEntrySlippageBPS <= 0 {
 		return nil
 	}
 
@@ -230,14 +231,26 @@ func (buy *Buy) preflightFill(fillPrice float64) error {
 
 	slipBPS := math.Abs(fillPrice-last) / last * 10000
 
-	if slipBPS > cfg.MaxEntrySlippageBPS {
+	if slipBPS > scope.MaxEntrySlippageBPS {
 		return fmt.Errorf(
 			"projected slippage %.2f bps > MaxEntrySlippageBPS %.2f",
-			slipBPS, cfg.MaxEntrySlippageBPS,
+			slipBPS, scope.MaxEntrySlippageBPS,
 		)
 	}
 
 	return nil
+}
+
+func (buy *Buy) executionScope() config.ExecutionScope {
+	if buy != nil && buy.Execution.QuoteCurrency != "" {
+		return buy.Execution
+	}
+
+	if config.Runtime != nil {
+		return config.Runtime.Execution
+	}
+
+	return config.ExecutionScopeFrom(config.System)
 }
 
 /*

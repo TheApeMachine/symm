@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
@@ -12,6 +13,7 @@ limit after the simulated post time. Queue ahead is snapshotted once at post
 time and never reduced by later bid cancellations.
 */
 type MakerQueueTracker struct {
+	mu                       sync.Mutex
 	Symbol                   string
 	LimitPrice               float64
 	PostedAt                 time.Time
@@ -58,7 +60,9 @@ func (tracker *MakerQueueTracker) ObserveTrade(trade market.TradeUpdate) {
 		return
 	}
 
+	tracker.mu.Lock()
 	tracker.BidTradeVolume += trade.Qty
+	tracker.mu.Unlock()
 }
 
 /*
@@ -68,6 +72,9 @@ func (tracker *MakerQueueTracker) Context() MakerQueueContext {
 	if tracker == nil {
 		return MakerQueueContext{}
 	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
 
 	return MakerQueueContext{
 		InitialQueueAheadBaseQty: tracker.InitialQueueAheadBaseQty,

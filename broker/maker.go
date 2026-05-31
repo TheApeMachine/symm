@@ -21,6 +21,7 @@ type Maker struct {
 	PriceDecimals    int
 	HasPriceDecimals bool
 	FeePct           float64 // real per-pair maker fee; falls back to config/wallet when <= 0
+	Execution        config.ExecutionScope
 }
 
 /*
@@ -51,7 +52,7 @@ func (maker *Maker) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		maker.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(); err != nil {
+	if err := ShouldRejectPaperOrder(maker.executionScope()); err != nil {
 		tradingWallet.ReleaseEntryReservation(maker.Notional)
 
 		return maker.ClOrdID, err
@@ -74,21 +75,22 @@ func (maker *Maker) BuildPaperFill(queue MakerQueueContext) (order.Fill, error) 
 	}
 
 	feePct := maker.FeePct
+	scope := maker.executionScope()
 
 	if feePct <= 0 {
-		feePct = config.System.MakerFeePct
+		feePct = scope.MakerFeePct
 	}
 
-	effectivePrice := maker.LimitPrice * (1 + float64(config.System.AdverseSelectionBPS)/10000)
+	effectivePrice := maker.LimitPrice * (1 + float64(scope.AdverseSelectionBPS)/10000)
 	fee := maker.Notional * feePct / 100
 	orderBaseQty := (maker.Notional - fee) / effectivePrice
 
-	if !MakerFillReady(queue, maker.LimitPrice, orderBaseQty) {
-		return order.Fill{}, ErrMakerQueueNotReady
-	}
-
 	if orderBaseQty <= 0 {
 		return order.Fill{}, fmt.Errorf("invalid maker quantity for %s", maker.Symbol)
+	}
+
+	if !MakerFillReady(queue, maker.LimitPrice, orderBaseQty) {
+		return order.Fill{}, ErrMakerQueueNotReady
 	}
 
 	orderSymbol := Symbol(maker.Symbol)
@@ -101,7 +103,7 @@ func (maker *Maker) BuildPaperFill(queue MakerQueueContext) (order.Fill, error) 
 		Qty:     orderBaseQty,
 		Price:   effectivePrice,
 		Fee:     fee,
-		FeeCcy:  config.System.QuoteCurrency,
+		FeeCcy:  scope.QuoteCurrency,
 		ExecKey: "paper-" + maker.ClOrdID,
 	}, nil
 }
@@ -210,4 +212,16 @@ func (maker *Maker) validate(tradingWallet *wallet.Wallet) error {
 	}
 
 	return nil
+}
+
+func (maker *Maker) executionScope() config.ExecutionScope {
+	if maker != nil && maker.Execution.QuoteCurrency != "" {
+		return maker.Execution
+	}
+
+	if config.Runtime != nil {
+		return config.Runtime.Execution
+	}
+
+	return config.ExecutionScopeFrom(config.System)
 }

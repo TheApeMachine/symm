@@ -19,6 +19,7 @@ type Sell struct {
 	HasLotDecimals bool
 	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
 	ClOrdID        string
+	Execution      config.ExecutionScope
 }
 
 /*
@@ -43,7 +44,7 @@ func (sell *Sell) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		sell.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(); err != nil {
+	if err := ShouldRejectPaperOrder(sell.executionScope()); err != nil {
 		return sell.ClOrdID, err
 	}
 
@@ -66,7 +67,7 @@ func (sell *Sell) BuildPaperFill(tradingWallet *wallet.Wallet) (order.Fill, erro
 	base := orderSymbol.BaseAsset()
 	qty := tradingWallet.InventoryQty(base)
 
-	if qty <= config.System.LiveInventoryEpsilon {
+	if qty <= sell.executionScope().LiveInventoryEpsilon {
 		return order.Fill{}, nil
 	}
 
@@ -150,7 +151,7 @@ func (sell *Sell) SubmitLive(router *Router, tradingWallet *wallet.Wallet) error
 	base := orderSymbol.BaseAsset()
 	qty := tradingWallet.InventoryQty(base)
 
-	if qty <= config.System.LiveInventoryEpsilon {
+	if qty <= sell.executionScope().LiveInventoryEpsilon {
 		return nil
 	}
 
@@ -206,6 +207,18 @@ func roundBaseQuantity(qty float64, decimals int) (float64, error) {
 
 func roundQuotePrice(price float64, decimals int) (float64, error) {
 	return roundDownPositive(price, decimals, "price")
+}
+
+func (sell *Sell) executionScope() config.ExecutionScope {
+	if sell != nil && sell.Execution.QuoteCurrency != "" {
+		return sell.Execution
+	}
+
+	if config.Runtime != nil {
+		return config.Runtime.Execution
+	}
+
+	return config.ExecutionScopeFrom(config.System)
 }
 
 func roundDownPositive(value float64, decimals int, label string) (float64, error) {
