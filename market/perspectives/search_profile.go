@@ -2,6 +2,7 @@ package perspectives
 
 import (
 	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
 )
@@ -123,8 +124,11 @@ func (accumulator *categoryAccumulator) record(measurement Measurement) {
 		return
 	}
 
-	sampleIndex := (accumulator.count - 1) % len(accumulator.samples)
-	accumulator.samples[sampleIndex] = measurement.SNR
+	sampleIndex := rand.Intn(accumulator.count)
+
+	if sampleIndex < profileSampleLimit {
+		accumulator.samples[sampleIndex] = measurement.SNR
+	}
 }
 
 func (accumulator *categoryAccumulator) stat(category CategoryType) CategoryStat {
@@ -148,12 +152,16 @@ func (accumulator *categoryAccumulator) primarySource() SourceType {
 	bestCount := 0
 
 	for source, count := range accumulator.sourceCount {
-		if count <= bestCount {
+		if count > bestCount {
+			bestSource = source
+			bestCount = count
+
 			continue
 		}
 
-		bestSource = source
-		bestCount = count
+		if count == bestCount && count > 0 && source.String() < bestSource.String() {
+			bestSource = source
+		}
 	}
 
 	return bestSource

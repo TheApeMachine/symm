@@ -149,10 +149,10 @@ func (signal *Signal) emit(symbol string) {
 	}
 
 	measurement.Symbol = symbol
-	measurement = perspectives.FinalizeSNR(
+	measurement = perspectives.FinalizeMeasurement(
 		measurement,
-		measurement.SNR,
-		func(raw float64) float64 { return signal.floor.Score(symbol, raw) },
+		measurement.Strength,
+		"urgency",
 	)
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }

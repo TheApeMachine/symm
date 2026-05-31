@@ -8,8 +8,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-const noiseFloorSNR = 1.0
-
 /*
 bookQualitySnapshot is the per-symbol cancel/fill asymmetry the tracker maintains.
 */
@@ -23,8 +21,8 @@ type bookQualitySnapshot struct {
 }
 
 /*
-Measure classifies book-quality into toxicity perspective categories. SNR scales
-the dominant asymmetry against MinFillToCancelRatio.
+Measure classifies book-quality into toxicity perspective categories. Strength
+holds the raw asymmetry; SNR is playbook sigma units via FinalizeMeasurement.
 */
 func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measurement, bool) {
 	snapshot, ok := tracker.snapshot(symbol, at)
@@ -39,18 +37,13 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measu
 		return perspectives.Measurement{}, false
 	}
 
-	snr := raw
-
-	if snr < noiseFloorSNR {
-		return perspectives.Measurement{}, false
-	}
-
-	return perspectives.Measurement{
+	measurement := perspectives.Measurement{
+		Symbol:   symbol,
 		Source:   perspectives.SourceToxicity,
 		Category: category,
-		Strength: snr,
-		SNR:      snr,
-	}, true
+	}
+
+	return perspectives.FinalizeMeasurement(measurement, raw, "book_quality"), true
 }
 
 func (tracker *Tracker) snapshot(symbol string, at time.Time) (bookQualitySnapshot, bool) {

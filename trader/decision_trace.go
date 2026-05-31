@@ -172,7 +172,7 @@ func verdictAuditFields(verdict decision.EntryVerdict, thesisScore float64) map[
 
 		if step.Metric != "" {
 			fields["metric"] = step.Metric
-			fields["metric_value"] = step.SNR
+			fields["metric_value"] = step.MetricValue
 		}
 
 		fields["threshold"] = step.Threshold
@@ -196,13 +196,14 @@ func traceStepsWire(trace *perspectives.DecisionTrace) []map[string]any {
 
 	for index, step := range steps {
 		wire[index] = map[string]any{
-			"category":  step.Category.String(),
-			"metric":    step.Metric,
-			"action":    perspectives.ActionLabel(step.Action),
-			"snr":       step.SNR,
-			"threshold": step.Threshold,
-			"depth":     step.Depth,
-			"matched":   step.Matched,
+			"category":     step.Category.String(),
+			"metric":       step.Metric,
+			"action":       perspectives.ActionLabel(step.Action),
+			"snr":          step.SNR,
+			"metric_value": step.MetricValue,
+			"threshold":    step.Threshold,
+			"depth":        step.Depth,
+			"matched":      step.Matched,
 		}
 	}
 

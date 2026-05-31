@@ -27,10 +27,11 @@ is folded in, not between consecutive raw deltas, so it reflects genuine book ch
 rather than the size of whatever slice the feed happened to send.
 */
 type FluidSymbol struct {
-	mu          sync.RWMutex
-	symbol      string
-	book        *orderbook.Book
-	diverged    bool
+	mu           sync.RWMutex
+	symbol       string
+	book         *orderbook.Book
+	bookSequence market.BookSequence
+	diverged     bool
 	buyPressure float64
 	changePct   float64
 	volume      float64
@@ -109,6 +110,10 @@ func (state *FluidSymbol) FeedBook(update market.BookUpdate) {
 }
 
 func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
+	if !state.bookSequence.Accepts(update) {
+		return
+	}
+
 	beforeBids := state.book.Bids()
 	beforeAsks := state.book.Asks()
 
@@ -275,12 +280,12 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
 
-	return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
+	return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(perspectives.Measurement{
 		Symbol:   state.symbol,
 		Source:   perspectives.SourceFluid,
 		Category: fluidCategory(divergence, turbulence, viscosity, re),
 		Last:     state.last,
-	}, re, state.floor.Score), perspectives.GaugeFactorsFrom(row,
+	}, re, "reynolds"), perspectives.GaugeFactorsFrom(row,
 		"div", "vort", "turb_fd", "re", "visc",
 	)), true
 }

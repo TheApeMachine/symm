@@ -246,10 +246,7 @@ func (hub *Hub) dispatch(channel string, payload []byte) {
 	}
 
 	for _, target := range state.subs {
-		select {
-		case target <- payload:
-		default:
-		}
+		target <- payload
 	}
 }
 

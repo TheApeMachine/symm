@@ -47,15 +47,16 @@ func (source SourceType) String() string {
 /*
 Measurement is one classified signal reading in the market layer.
 
-SNR is signal strength relative to the signal's own noise floor (numeric/adaptive).
-Perspective branches compare Measurement.SNR to the unitless playbook floor.
+Strength is the raw fused signal (gauges only). SNR is always playbook sigma
+units from FinalizeMeasurement — comparable across sources and categories.
+Perspective branches gate on SNR; economic metrics (thesis_score, etc.) aggregate SNR.
 */
 type Measurement struct {
 	Symbol   string
 	Source   SourceType
 	Category CategoryType
-	Strength float64 // raw fused strength for gauges (pre noise-floor warmup)
-	SNR      float64 // playbook score after the signal's adaptive noise floor
+	Strength float64 // raw fused strength for dashboards only
+	SNR      float64 // adaptive sigma vs this series' history; 0 while warming up
 	Last     float64 // last traded price, carried for the trader's sizing/fill
 	Factors  []GaugeFactor
 }

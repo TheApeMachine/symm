@@ -96,14 +96,12 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
 
-	return perspectives.FinalizeSNR(perspectives.Measurement{
+	return perspectives.FinalizeMeasurement(perspectives.Measurement{
 		Symbol:   row.Symbol,
 		Source:   perspectives.SourceLiquidity,
 		Category: signal.category(quoteVol, peers),
 		Last:     row.Last,
-	}, raw, func(value float64) float64 {
-		return signal.floor.Score(row.Symbol, value)
-	}), true
+	}, raw, "scarcity"), true
 }
 
 /*

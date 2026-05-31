@@ -8,14 +8,15 @@ const maxTraceSteps = 16
 TraceStep is one branch evaluation along a playbook decision path.
 */
 type TraceStep struct {
-	Category  CategoryType
-	Metric    string
-	Action    ActionType
-	SNR       float64
-	Threshold float64
-	Condition ConditionType
-	Depth     int
-	Matched   bool
+	Category    CategoryType
+	Metric      string
+	Action      ActionType
+	SNR         float64 // category gate reading in playbook sigma units
+	MetricValue float64 // trader metric gate (e.g. score_cost_ratio)
+	Threshold   float64
+	Condition   ConditionType
+	Depth       int
+	Matched     bool
 }
 
 /*

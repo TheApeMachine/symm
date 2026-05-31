@@ -1,7 +1,6 @@
 package depthflow
 
 import (
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -37,29 +36,30 @@ is what makes the imbalance and spoof reads correct. Reading the delta as if it 
 a whole book — the prior bug — discarded every level the delta did not mention.
 */
 type DepthSymbol struct {
-	mu          sync.RWMutex
-	symbol      string
-	book        *orderbook.Book
-	diverged    bool
+	mu       sync.RWMutex
+	symbol   string
+	bookFeed *market.BookFeedState
 	last        float64
 	bid         float64
 	ask         float64
 	buyPressure float64
-	pressure    *adaptive.EMA
-	score       *numeric.Derived
-	floors      *adaptive.SNRField
+	pressure *adaptive.EMA
+	score    *numeric.Derived
 }
 
 func NewDepthSymbol(symbol string) *DepthSymbol {
 	return &DepthSymbol{
-		symbol:   symbol,
-		book:     orderbook.NewBook(orderbook.MaintainDepth(config.System.BookDepthLevels)),
+		symbol: symbol,
+		bookFeed: market.NewBookFeedState(
+			symbol,
+			"depthflow",
+			config.System.BookDepthLevels,
+		),
 		pressure: adaptive.NewEMA(0),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
 		)),
-		floors: adaptive.NewSNRField(),
 	}
 }
 
@@ -73,36 +73,7 @@ func (state *DepthSymbol) ApplyBook(update market.BookUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.applyFrameLocked(update)
-	state.verifyLocked(uint32(update.Checksum))
-}
-
-func (state *DepthSymbol) applyFrameLocked(update market.BookUpdate) {
-	if update.IsSnapshot() {
-		state.book.ApplySnapshot(update.BidLevels(), update.AskLevels())
-
-		return
-	}
-
-	state.book.ApplyDelta(update.BidLevels(), update.AskLevels())
-}
-
-// verifyLocked compares the maintained book against the exchange checksum, reporting
-// a divergence only on the transition into the diverged state so a persistent
-// mismatch does not spam the hot path. A divergence means a delta was missed or
-// misapplied; the book corrects itself on the next snapshot the feed sends.
-func (state *DepthSymbol) verifyLocked(checksum uint32) {
-	if checksum == 0 || !state.book.Ready() {
-		return
-	}
-
-	matches := state.book.Verify(checksum)
-
-	if !matches && !state.diverged {
-		errnie.Error(fmt.Errorf("depthflow: book checksum diverged for %s", state.symbol))
-	}
-
-	state.diverged = !matches
+	state.bookFeed.Apply(update)
 }
 
 func (state *DepthSymbol) PushTradePressure(sign float64) (float64, error) {
@@ -124,7 +95,7 @@ func (state *DepthSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return state.book.Ready()
+	return state.bookFeed.Ready()
 }
 
 func (state *DepthSymbol) FeedTicker(row market.TickerUpdate) {
@@ -148,12 +119,12 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.diverged {
+	if state.bookFeed.Diverged() {
 		return state.measureTradePressureLocked()
 	}
 
-	bids := toMarketLevels(state.book.Bids())
-	asks := toMarketLevels(state.book.Asks())
+	bids := toMarketLevels(state.bookFeed.Book().Bids())
+	asks := toMarketLevels(state.bookFeed.Book().Asks())
 	mid := state.last
 
 	if len(bids) > 0 && len(asks) > 0 {
@@ -204,12 +175,15 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				}
 
 				if raw > 0 {
-					return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
+					measurement := perspectives.Measurement{
+						Symbol:   state.symbol,
 						Source:   perspectives.SourceDepthFlow,
 						Category: depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK),
-					}, raw, func(value float64) float64 {
-						return state.floors.Score("imbalance", value)
-					}), []perspectives.GaugeFactor{
+					}
+
+					return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(
+						measurement, raw, "imbalance",
+					), []perspectives.GaugeFactor{
 						{Name: "imbalance", Value: imbalance},
 						{Name: "level1", Value: level1},
 					}), true
@@ -218,12 +192,15 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 
 			raw := math.Abs(level1)
 
-			return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
+			measurement := perspectives.Measurement{
+				Symbol:   state.symbol,
 				Source:   perspectives.SourceDepthFlow,
 				Category: depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK),
-			}, raw, func(value float64) float64 {
-				return state.floors.Score("level1", value)
-			}), []perspectives.GaugeFactor{
+			}
+
+			return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(
+				measurement, raw, "level1",
+			), []perspectives.GaugeFactor{
 				{Name: "imbalance", Value: imbalance},
 				{Name: "level1", Value: level1},
 			}), true
@@ -244,12 +221,11 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 		return perspectives.Measurement{}, false
 	}
 
-	return perspectives.FinalizeSNR(perspectives.Measurement{
+	return perspectives.FinalizeMeasurement(perspectives.Measurement{
+		Symbol:   state.symbol,
 		Source:   perspectives.SourceDepthFlow,
 		Category: depthflowCategory("trade_pressure", 0, 0, false),
-	}, flow, func(value float64) float64 {
-		return state.floors.Score("flow", value)
-	}), true
+	}, flow, "flow"), true
 }
 
 // toMarketLevels converts maintained-book levels back to the market.BookLevel shape

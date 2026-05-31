@@ -1,6 +1,7 @@
 package perspectives
 
 import (
+	"math"
 	"math/rand"
 	"time"
 )
@@ -192,7 +193,7 @@ func quantized(random *rand.Rand, min float64, max float64, step float64) float6
 		return value
 	}
 
-	return float64(int(value/step+0.5)) * step
+	return math.Round(value/step) * step
 }
 
 func floatPtr(value float64) *float64 {

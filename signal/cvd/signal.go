@@ -191,12 +191,12 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 
 	fused := activity * conviction * (1 + drift)
 
-	measurement := perspectives.FinalizeSNR(perspectives.Measurement{
+	measurement := perspectives.FinalizeMeasurement(perspectives.Measurement{
 		Symbol:   trade.Symbol,
 		Source:   perspectives.SourceCVD,
 		Category: state.classifyFused(fused),
 		Last:     trade.Price,
-	}, fused, state.floor.Score)
+	}, fused, "fused")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

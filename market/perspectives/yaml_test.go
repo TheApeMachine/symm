@@ -124,6 +124,8 @@ func TestGenerateDocumentBuildsFromProfile(t *testing.T) {
 		Convey("It should synthesize valid playbook trees without a predefined shape", func() {
 			So(err, ShouldBeNil)
 			So(len(strategies), ShouldEqual, len(searchPlaybookTemplates))
+			So(document.Playbooks, ShouldNotBeEmpty)
+			So(document.Playbooks[0].Entry, ShouldNotBeEmpty)
 			So(document.Playbooks[0].Entry[0].Metric, ShouldEqual, MetricScoreCostRatio)
 			So(denyEntryOverlaps(document), ShouldBeEmpty)
 		})
@@ -167,8 +169,8 @@ func TestMutateDocumentPrunesEntryShadowingDenies(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchObservesBestCandidate(t *testing.T) {
-	Convey("Given a document search over observed primitives", t, func() {
+func TestDocumentSearchKeepsBuildableAfterObserve(t *testing.T) {
+	Convey("Given a document search that received reward feedback", t, func() {
 		profile := SearchProfile{Categories: []CategoryStat{{
 			Name:    CategoryAggressiveDrive.String(),
 			Source:  SourceCVD.String(),
@@ -187,7 +189,7 @@ func TestDocumentSearchObservesBestCandidate(t *testing.T) {
 		next := search.Next()
 		_, err = BuildStrategies(next)
 
-		Convey("It should keep producing valid candidates after reward feedback", func() {
+		Convey("It should keep producing buildable candidates after Observe", func() {
 			So(err, ShouldBeNil)
 		})
 	})
@@ -231,7 +233,10 @@ func TestDefaultDocumentMovesFrictionIntoTree(t *testing.T) {
 			action := pump.DecideWithContext(
 				measurementsForPath(path),
 				nil,
-				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: threshold + 0.1}},
+				DecisionContext{Metrics: map[string]float64{
+					MetricScoreCostRatio: threshold + 0.1,
+					MetricInPlay:         1,
+				}},
 			)
 
 			So(action, ShouldNotBeNil)

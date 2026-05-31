@@ -22,10 +22,10 @@ func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 
 		measurement, ok := tracker.Measure(symbol, now)
 
-		convey.Convey("It should scale toxic bluff SNR by churn ratio", func() {
+		convey.Convey("It should retain churn ratio as strength before SNR warmup", func() {
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryToxicBluff)
-			convey.So(measurement.SNR, convey.ShouldEqual, 4.5)
+			convey.So(measurement.Strength, convey.ShouldEqual, 4.5)
 		})
 	})
 }
@@ -42,10 +42,10 @@ func TestTrackerMeasureToxicBluff(t *testing.T) {
 
 		measurement, ok := tracker.Measure(symbol, now)
 
-		convey.Convey("It should publish toxic bluff with SNR", func() {
+		convey.Convey("It should publish toxic bluff with measurable strength", func() {
 			convey.So(ok, convey.ShouldBeTrue)
 			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryToxicBluff)
-			convey.So(measurement.SNR, convey.ShouldBeGreaterThan, 0)
+			convey.So(measurement.Strength, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }

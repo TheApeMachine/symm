@@ -264,14 +264,12 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 		}
 
 		raw := energy * (1 + 2*corr) / baseline
-		measurement := perspectives.FinalizeSNR(perspectives.Measurement{
+		measurement := perspectives.FinalizeMeasurement(perspectives.Measurement{
 			Symbol:   coin.symbol,
 			Source:   perspectives.SourceCorrelation,
 			Category: signal.categories[coin.state.pipe.Label(code)],
 			Last:     coin.price,
-		}, raw, func(value float64) float64 {
-			return signal.floor.Score(coin.symbol, value)
-		})
+		}, raw, "energy")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }

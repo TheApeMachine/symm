@@ -287,7 +287,7 @@ func (crypto *Crypto) publishMakerSubmit(
 		"why":          trigger,
 		"playbook":     playbook,
 		"perspectives": opportunity.Names,
-		"conviction":   opportunity.Score,
+		"conviction": opportunity.Score,
 		"edge":         opportunity.Edge,
 		"cl_ord_id":    clOrdID,
 		"slot_eur":     notional,

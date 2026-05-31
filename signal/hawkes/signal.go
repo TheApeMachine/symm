@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const tickCapacity = 4096
@@ -36,11 +35,10 @@ type symbolState struct {
 	mu     sync.Mutex
 	hawkes *HawkesSymbol
 	ticks  []market.TradeUpdate
-	floor  *adaptive.SNR
 }
 
 func newSymbolState() *symbolState {
-	return &symbolState{hawkes: NewHawkesSymbol(), floor: adaptive.NewSNR()}
+	return &symbolState{hawkes: NewHawkesSymbol()}
 }
 
 func (state *symbolState) append(trade market.TradeUpdate) {
@@ -98,10 +96,10 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = trade.Symbol
 		measurement.Last = trade.Price
-		measurement = perspectives.FinalizeSNR(
+		measurement = perspectives.FinalizeMeasurement(
 			measurement,
-			measurement.SNR,
-			state.floor.Score,
+			measurement.Strength,
+			"intensity",
 		)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}

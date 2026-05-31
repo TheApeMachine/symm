@@ -16,13 +16,14 @@ func TestGaugeValue(t *testing.T) {
 	})
 }
 
-func TestFinalizeSNR(t *testing.T) {
-	convey.Convey("Given a scorer that is still warming up", t, func() {
-		measurement := FinalizeSNR(Measurement{}, 1.8, func(float64) float64 { return 0 })
+func TestFinalizeMeasurementWarmup(t *testing.T) {
+	convey.Convey("Given a cold score series", t, func() {
+		ResetPlaybookScoreFloors()
+		measurement := FinalizeMeasurement(Measurement{}, 1.8, "")
 
-		convey.Convey("It should keep Strength while SNR stays at raw fallback", func() {
+		convey.Convey("It should keep Strength while SNR stays zero until warmup", func() {
 			convey.So(measurement.Strength, convey.ShouldEqual, 1.8)
-			convey.So(measurement.SNR, convey.ShouldEqual, 1.8)
+			convey.So(measurement.SNR, convey.ShouldEqual, 0)
 		})
 	})
 }

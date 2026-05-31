@@ -1,7 +1,8 @@
 package perspectives
 
 const (
-	MetricThesisScore      = "thesis_score"
+	// MetricThesisScore is aggregated playbook SNR (sigma units), same scale as Measurement.SNR.
+	MetricThesisScore = "thesis_score"
 	MetricSpreadBPS        = "spread_bps"
 	MetricFeePct           = "fee_pct"
 	MetricRoundTripCostBPS = "round_trip_cost_bps"

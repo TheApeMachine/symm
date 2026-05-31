@@ -14,6 +14,7 @@ type DocumentSearch struct {
 	best       *Document
 	bestReward float64
 	hasBest    bool
+	attempts   int
 }
 
 func NewDocumentSearch(profile SearchProfile, random *rand.Rand) (*DocumentSearch, error) {
@@ -35,7 +36,15 @@ func (search *DocumentSearch) Next() Document {
 	search.mu.Lock()
 	defer search.mu.Unlock()
 
-	if search.best != nil && search.random.Float64() < 0.40 {
+	search.attempts++
+
+	if search.best == nil {
+		return GenerateDocument(search.profile, search.random)
+	}
+
+	exploitRate := 0.50 + 0.30*math.Min(1, float64(search.attempts)/32)
+
+	if search.random.Float64() < exploitRate {
 		return MutateDocument(*search.best, search.random)
 	}
 
@@ -54,6 +63,13 @@ func (search *DocumentSearch) Observe(document Document, reward float64) {
 	search.best = &clone
 	search.bestReward = reward
 	search.hasBest = true
+}
+
+func (search *DocumentSearch) BestReward() float64 {
+	search.mu.Lock()
+	defer search.mu.Unlock()
+
+	return search.bestReward
 }
 
 func GenerateDocument(profile SearchProfile, random *rand.Rand) Document {
@@ -216,7 +232,7 @@ func generateCategoryChain(
 	selected := sampleDistinctCategories(categories, random, depth)
 
 	if len(selected) == 0 {
-		return BranchSpec{}
+		return BranchSpec{Action: ActionLabel(action)}
 	}
 
 	var child *BranchSpec

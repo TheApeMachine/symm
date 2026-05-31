@@ -23,9 +23,15 @@ The upstream opens when the first subscriber attaches, uses the union of every
 active subscriber's symbols (and the max book depth), and stops when the last
 subscriber detaches.
 */
+type subscriptionEntry struct {
+	spec subscriptionSpec
+	stop chan struct{}
+}
+
 type sharedFeed[T any] struct {
 	mu             sync.Mutex
-	subs           map[chan *T]subscriptionSpec
+	fanoutMu       sync.Mutex
+	subs           map[chan *T]subscriptionEntry
 	feedCtx        context.Context
 	feedCancel     context.CancelFunc
 	upstreamCancel context.CancelFunc
@@ -39,7 +45,7 @@ func newSharedFeed[T any](
 	dial func(ctx context.Context, spec subscriptionSpec) <-chan *T,
 ) *sharedFeed[T] {
 	return &sharedFeed[T]{
-		subs: make(map[chan *T]subscriptionSpec),
+		subs: make(map[chan *T]subscriptionEntry),
 		dial: dial,
 	}
 }
@@ -76,8 +82,10 @@ func (sharedFeed *sharedFeed[T]) subscribe(
 		}()
 	}
 
+	stop := make(chan struct{})
+
 	sharedFeed.mu.Lock()
-	sharedFeed.subs[bridge] = spec
+	sharedFeed.subs[bridge] = subscriptionEntry{spec: spec, stop: stop}
 	merged := sharedFeed.mergedSpecLocked()
 	sharedFeed.ensureRunningLocked(merged)
 	sharedFeed.mu.Unlock()
@@ -90,8 +98,8 @@ func (sharedFeed *sharedFeed[T]) subscribe(
 func (sharedFeed *sharedFeed[T]) mergedSpecLocked() subscriptionSpec {
 	specs := make([]subscriptionSpec, 0, len(sharedFeed.subs))
 
-	for _, spec := range sharedFeed.subs {
-		specs = append(specs, spec)
+	for _, entry := range sharedFeed.subs {
+		specs = append(specs, entry.spec)
 	}
 
 	return mergeSubscriptionSpecs(specs)
@@ -124,12 +132,19 @@ func (sharedFeed *sharedFeed[T]) restartUpstreamLocked() {
 func (sharedFeed *sharedFeed[T]) detach(ctx context.Context, bridge, out chan *T) {
 	<-ctx.Done()
 
+	reliable := sharedFeed.reliable
+
 	sharedFeed.mu.Lock()
-	delete(sharedFeed.subs, bridge)
+	entry, subscribed := sharedFeed.subs[bridge]
+
+	if subscribed {
+		delete(sharedFeed.subs, bridge)
+		close(entry.stop)
+	}
 
 	if len(sharedFeed.subs) == 0 {
 		sharedFeed.stopLocked()
-	} else {
+	} else if subscribed {
 		merged := sharedFeed.mergedSpecLocked()
 
 		if !subscriptionSpecEqual(sharedFeed.activeSpec, merged) {
@@ -139,6 +154,14 @@ func (sharedFeed *sharedFeed[T]) detach(ctx context.Context, bridge, out chan *T
 	}
 
 	sharedFeed.mu.Unlock()
+
+	if reliable {
+		sharedFeed.fanoutMu.Lock()
+		close(bridge)
+		sharedFeed.fanoutMu.Unlock()
+
+		return
+	}
 
 	close(bridge)
 
@@ -242,6 +265,9 @@ func (sharedFeed *sharedFeed[T]) fanoutDrop(value *T) {
 }
 
 func (sharedFeed *sharedFeed[T]) fanoutReliable(value *T) {
+	sharedFeed.fanoutMu.Lock()
+	defer sharedFeed.fanoutMu.Unlock()
+
 	sharedFeed.mu.Lock()
 	bridges := make([]chan *T, 0, len(sharedFeed.subs))
 
@@ -252,7 +278,42 @@ func (sharedFeed *sharedFeed[T]) fanoutReliable(value *T) {
 	sharedFeed.mu.Unlock()
 
 	for _, bridge := range bridges {
-		bridge <- value
+		sharedFeed.deliverReliable(bridge, value)
+	}
+}
+
+func (sharedFeed *sharedFeed[T]) deliverReliable(bridge chan *T, value *T) {
+	sharedFeed.mu.Lock()
+	entry, subscribed := sharedFeed.subs[bridge]
+	feedCtx := sharedFeed.feedCtx
+	sharedFeed.mu.Unlock()
+
+	if !subscribed {
+		return
+	}
+
+	stop := entry.stop
+
+	for {
+		if feedCtx == nil {
+			select {
+			case bridge <- value:
+				return
+			case <-stop:
+				return
+			}
+
+			continue
+		}
+
+		select {
+		case bridge <- value:
+			return
+		case <-stop:
+			return
+		case <-feedCtx.Done():
+			return
+		}
 	}
 }
 

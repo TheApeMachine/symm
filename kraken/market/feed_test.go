@@ -89,6 +89,33 @@ func TestSharedFeedFanoutReliableOrdering(t *testing.T) {
 	})
 }
 
+func TestSharedFeedDetachDuringReliableFanout(t *testing.T) {
+	Convey("Given a reliable feed fanning out while a subscriber detaches", t, func() {
+		sharedFeed := newReliableSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *int {
+			upstream := make(chan *int, 8)
+
+			go func() {
+				<-ctx.Done()
+				close(upstream)
+			}()
+
+			return upstream
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		_ = sharedFeed.subscribe(ctx, subscriptionSpec{symbols: []string{"BTC/EUR"}})
+
+		cancel()
+
+		Convey("It should not panic when fanout races with bridge teardown", func() {
+			for index := 0; index < 64; index++ {
+				value := index
+				sharedFeed.fanout(&value)
+			}
+		})
+	})
+}
+
 func TestSharedFeedSubscribe(t *testing.T) {
 	Convey("Given a shared feed with one upstream", t, func() {
 		sharedFeed := newSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *int {

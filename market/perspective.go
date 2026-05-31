@@ -2,6 +2,7 @@ package market
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -26,12 +27,26 @@ var universalExitTree = &perspectives.Tree{Branches: perspectives.UniversalExitB
 /*
 perspectiveRegistry is conviction-first: more confirming categories rank earlier.
 */
-var perspectiveRegistry = []registeredPerspective{
-	{name: string(perspectives.PlaybookTrend), perspective: perspectives.NewTrendPerspective()},
-	{name: string(perspectives.PlaybookDrive), perspective: perspectives.NewDrivePerspective()},
-	{name: string(perspectives.PlaybookLeadLag), perspective: perspectives.NewLeadLagPerspective()},
-	{name: string(perspectives.PlaybookScarcity), perspective: perspectives.NewScarcityPerspective()},
-	{name: string(perspectives.PlaybookPump), perspective: perspectives.NewPumpPerspective()},
+var (
+	perspectiveRegistryLock sync.RWMutex
+	perspectiveRegistry     = defaultPerspectiveRegistry()
+)
+
+func defaultPerspectiveRegistry() []registeredPerspective {
+	return []registeredPerspective{
+		{name: string(perspectives.PlaybookTrend), perspective: perspectives.NewTrendPerspective()},
+		{name: string(perspectives.PlaybookDrive), perspective: perspectives.NewDrivePerspective()},
+		{name: string(perspectives.PlaybookLeadLag), perspective: perspectives.NewLeadLagPerspective()},
+		{name: string(perspectives.PlaybookScarcity), perspective: perspectives.NewScarcityPerspective()},
+		{name: string(perspectives.PlaybookPump), perspective: perspectives.NewPumpPerspective()},
+	}
+}
+
+func snapshotPerspectiveRegistry() []registeredPerspective {
+	perspectiveRegistryLock.RLock()
+	defer perspectiveRegistryLock.RUnlock()
+
+	return perspectiveRegistry
 }
 
 func LoadPerspectiveRegistry(path string) error {
@@ -68,7 +83,9 @@ func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
 		})
 	}
 
+	perspectiveRegistryLock.Lock()
 	perspectiveRegistry = registry
+	perspectiveRegistryLock.Unlock()
 
 	return nil
 }
@@ -77,7 +94,7 @@ func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
 NewPerspective returns the highest-priority traversable entry playbook, or nil.
 */
 func NewPerspective(measurements []perspectives.Measurement) perspectives.Perspective {
-	for _, entry := range perspectiveRegistry {
+	for _, entry := range snapshotPerspectiveRegistry() {
 		if found := entry.perspective.Walk(measurements); found != nil {
 			return found
 		}
@@ -102,9 +119,10 @@ func DecisionsWithContext(
 	observations []perspectives.ObservationType,
 	context func(string) perspectives.DecisionContext,
 ) []Decision {
-	decisions := make([]Decision, 0, len(perspectiveRegistry))
+	registry := snapshotPerspectiveRegistry()
+	decisions := make([]Decision, 0, len(registry))
 
-	for _, entry := range perspectiveRegistry {
+	for _, entry := range registry {
 		action := decideWithContext(entry.perspective, measurements, observations, contextFor(context, entry.name))
 
 		if action == nil || *action != perspectives.ActionEnter {
@@ -158,7 +176,7 @@ type entryCategoryProvider interface {
 }
 
 func EntryCategoriesForPlaybook(name string) []perspectives.CategoryType {
-	for _, entry := range perspectiveRegistry {
+	for _, entry := range snapshotPerspectiveRegistry() {
 		if entry.name != name {
 			continue
 		}
@@ -202,7 +220,8 @@ func ExitDecisions(
 	openerPlaybook string,
 	softExitsAllowed bool,
 ) []Decision {
-	decisions := make([]Decision, 0, len(perspectiveRegistry)+1)
+	registry := snapshotPerspectiveRegistry()
+	decisions := make([]Decision, 0, len(registry)+1)
 
 	if action := universalExitTree.Walk(measurements, observations); action != nil {
 		if perspectives.IsExitAction(*action) && exitAllowed(*action, softExitsAllowed) {
@@ -213,7 +232,7 @@ func ExitDecisions(
 		}
 	}
 
-	for _, entry := range perspectiveRegistry {
+	for _, entry := range registry {
 		if openerPlaybook != "" && entry.name != openerPlaybook {
 			continue
 		}

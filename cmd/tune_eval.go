@@ -71,6 +71,30 @@ func trialTrainHoldoutGap(trainScore float64, holdoutScores []float64) float64 {
 trialEligible rejects candidates whose holdout score lags train by more than
 maxGap EUR when holdouts exist.
 */
+const tuneScoreEpsilon = 1e-6
+
+/*
+betterTuneCandidate reports whether trial should replace the incumbent best.
+Holdout fitness (selection) is primary; train fitness breaks ties so flat holdout
+runs do not celebrate worse train losses as "new best".
+*/
+func betterTuneCandidate(
+	selection float64,
+	trainScore float64,
+	bestSelection float64,
+	bestTrainScore float64,
+) bool {
+	if selection > bestSelection+tuneScoreEpsilon {
+		return true
+	}
+
+	if selection < bestSelection-tuneScoreEpsilon {
+		return false
+	}
+
+	return trainScore > bestTrainScore+tuneScoreEpsilon
+}
+
 func trialEligible(trainScore float64, holdoutScores []float64, maxGap float64) bool {
 	if len(holdoutScores) == 0 {
 		return true

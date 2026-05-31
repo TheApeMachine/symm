@@ -135,21 +135,28 @@ func (branch *Branch) walk(
 
 func (branch *Branch) traceStep(
 	action ActionType,
-	snr float64,
+	reading float64,
 	threshold float64,
 	depth int,
 	matched bool,
 ) TraceStep {
-	return TraceStep{
+	step := TraceStep{
 		Category:  branch.Category,
 		Metric:    branch.Metric,
 		Action:    action,
-		SNR:       snr,
 		Threshold: threshold,
 		Condition: branch.Condition,
 		Depth:     depth,
 		Matched:   matched,
 	}
+
+	if branch.Metric != "" {
+		step.MetricValue = reading
+	} else {
+		step.SNR = reading
+	}
+
+	return step
 }
 
 func (branch *Branch) matchDetail(

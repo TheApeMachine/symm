@@ -45,7 +45,7 @@ func TestMeasure(t *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(measurement.Source, ShouldEqual, perspectives.SourceSentiment)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryRiskOnSurge)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 1)
+				So(measurement.Strength, ShouldBeGreaterThanOrEqualTo, 1)
 			})
 		})
 	})

@@ -42,6 +42,28 @@ func snapshotWithChecksum(
 	return update
 }
 
+func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
+	Convey("Given a depthflow symbol fed a delta before any snapshot", t, func() {
+		symbol := "ETH/EUR"
+		state := NewDepthSymbol(symbol)
+
+		delta := snapshotWithChecksum(symbol, 99, 8, 101, 4)
+		delta.SetEnvelopeType("update")
+		state.ApplyBook(delta)
+
+		Convey("It should not treat the book as ready", func() {
+			So(state.HasBook(), ShouldBeFalse)
+		})
+
+		Convey("It should not emit a book-derived measurement", func() {
+			state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+			_, ok := state.Measure()
+
+			So(ok, ShouldBeFalse)
+		})
+	})
+}
+
 func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	Convey("Given a depthflow symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"

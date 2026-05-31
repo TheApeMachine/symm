@@ -45,7 +45,8 @@ func TestMutateTunables(t *testing.T) {
 
 		convey.Convey("It should populate bounded fields", func() {
 			convey.So(overlay.EntryEdgeMultiple, convey.ShouldNotBeNil)
-			convey.So(*overlay.EntryEdgeMultiple, convey.ShouldBeBetween, 1.0, 4.0)
+			convey.So(*overlay.EntryEdgeMultiple, convey.ShouldBeGreaterThanOrEqualTo, 1.0)
+			convey.So(*overlay.EntryEdgeMultiple, convey.ShouldBeLessThanOrEqualTo, 4.0)
 		})
 	})
 }

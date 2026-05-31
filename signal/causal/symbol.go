@@ -35,9 +35,8 @@ type CausalSymbol struct {
 	spreadBPS      float64
 	imbalance      float64
 	buyPressure    float64
-	volumeWindow   *adaptive.Window
-	pressure       *adaptive.EMA
-	floor          *adaptive.SNR
+	volumeWindow *adaptive.Window
+	pressure     *adaptive.EMA
 }
 
 func NewCausalSymbol() *CausalSymbol {
@@ -45,9 +44,8 @@ func NewCausalSymbol() *CausalSymbol {
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		noise:        make(map[string]*adaptive.EMA),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure:     adaptive.NewEMA(0),
-		hy:           newHYReturns(contagionWindow()),
-		floor:        adaptive.NewSNR(),
+		pressure: adaptive.NewEMA(0),
+		hy:       newHYReturns(contagionWindow()),
 	}
 }
 
@@ -152,19 +150,17 @@ func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Ti
 		state.enqueuePendingLocked(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
 		currentSample := newCausalSample(macroMomentum, liquidity, localFlow, 0)
-		snr, reason := state.evaluate(currentSample, contagion)
+		raw, reason := state.evaluate(currentSample, contagion)
 
-		if snr > 0 {
+		if raw > 0 {
 			return perspectives.Measurement{
 				Source:   perspectives.SourceCausal,
 				Category: causalCategory(reason),
-				SNR:      snr,
+				Strength: raw,
 			}, true
 		}
 	}
 
-	// Fallback: no statistically grounded local driver. Emit the passenger /
-	// noise read at the baseline floor so it informs but does not fire actions.
 	reason := "macro_association"
 
 	if state.buyPressure != 0 && state.changePct == 0 {
@@ -175,10 +171,12 @@ func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Ti
 		return perspectives.Measurement{}, false
 	}
 
+	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
+
 	return perspectives.Measurement{
 		Source:   perspectives.SourceCausal,
 		Category: causalCategory(reason),
-		SNR:      1,
+		Strength: fallbackRaw,
 	}, true
 }
 
@@ -221,28 +219,6 @@ func (state *CausalSymbol) HYSnapshot() *hyReturns {
 	return state.hy.clone()
 }
 
-/*
-snrFor scores one causal effect against its own per-regime running noise floor,
-then folds the reading into the floor. The first reading is neutral (1).
-*/
-func (state *CausalSymbol) snrFor(label string, effect float64) float64 {
-	floorEMA := state.noise[label]
-
-	if floorEMA == nil {
-		floorEMA = adaptive.NewEMA(0)
-		state.noise[label] = floorEMA
-	}
-
-	floor := floorEMA.Value()
-	_, _ = floorEMA.Next(0, effect)
-
-	if floor <= 0 {
-		return 1
-	}
-
-	return effect / floor
-}
-
 func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (float64, string) {
 	if len(state.samples) < minCausalHistory {
 		return 0, ""
@@ -263,19 +239,17 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (fl
 		return 0, ""
 	}
 
-	snr := state.snrFor(roles.label, intervention)
-
 	model, fitOK := fitNonLinearStructuralFor(samples, roles)
 
 	if !fitOK {
-		return snr, "intervention" + suffix
+		return intervention, "intervention" + suffix
 	}
 
 	interventionFlow := flowInterventionLevelFor(samples, roles)
 	uplift := nonLinearCounterfactualUpliftFor(current, model, interventionFlow, roles)
 
 	if uplift <= 0 {
-		return snr, "intervention" + suffix
+		return intervention, "intervention" + suffix
 	}
 
 	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
@@ -285,5 +259,5 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (fl
 		reason = "counterfactual_like" + suffix
 	}
 
-	return snr, reason
+	return intervention, reason
 }

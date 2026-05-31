@@ -42,6 +42,22 @@ func snapshotWithChecksum(
 	return update
 }
 
+func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
+	Convey("Given a fluid symbol fed a delta before any snapshot", t, func() {
+		symbol := "ETH/EUR"
+		state := NewFluidSymbol(symbol)
+
+		delta := snapshotWithChecksum(symbol, 99, 10, 101, 6)
+		delta.SetEnvelopeType("update")
+		state.FeedBook(delta)
+
+		Convey("It should not treat the book as ready", func() {
+			So(state.HasBook(), ShouldBeFalse)
+		})
+
+	})
+}
+
 func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	Convey("Given a fluid symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"

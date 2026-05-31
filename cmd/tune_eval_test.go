@@ -76,6 +76,21 @@ func TestTrialEligible(t *testing.T) {
 	})
 }
 
+func TestBetterTuneCandidate(t *testing.T) {
+	Convey("Given equal holdout fitness", t, func() {
+		Convey("It should prefer less negative train fitness on ties", func() {
+			So(betterTuneCandidate(0, -2, 0, -5), ShouldBeTrue)
+			So(betterTuneCandidate(0, -6, 0, -2), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given higher holdout fitness", t, func() {
+		Convey("It should replace the incumbent even when train is worse", func() {
+			So(betterTuneCandidate(3, -10, 1, 5), ShouldBeTrue)
+		})
+	})
+}
+
 func TestResolveMaxTrainHoldoutGap(t *testing.T) {
 	Convey("Given zero requested gap", t, func() {
 		gap := resolveMaxTrainHoldoutGap(0, 200)

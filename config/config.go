@@ -190,7 +190,6 @@ type Config struct {
 var System *Config
 
 const defaultTunedFile = "runs/tuned.json"
-const defaultPerspectiveFile = "config/perspectives.yaml"
 
 func init() {
 	if err := Bootstrap(); err != nil {
@@ -388,7 +387,7 @@ func NewConfig() *Config {
 		AuditMaxFileBytes:            32 << 20,
 		AuditMaxFiles:                3,
 		AuditGateRejectCooldown:      60 * time.Second,
-		PerspectiveFile:              defaultPerspectiveFile,
+		PerspectiveFile:              DefaultPerspectivePath(),
 	}
 
 	if cfg.MaxPortfolioDrawdownPct <= 0 && cfg.WalletEUR > 0 {

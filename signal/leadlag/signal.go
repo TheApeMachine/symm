@@ -124,10 +124,10 @@ func (signal *Signal) publish() {
 		if ok {
 			measurement.Symbol = key.(string)
 			measurement.Last = follower.lastPrice()
-			measurement = perspectives.FinalizeSNR(
+			measurement = perspectives.FinalizeMeasurement(
 				measurement,
-				measurement.SNR,
-				follower.floor.Score,
+				measurement.Strength,
+				"correlation",
 			)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
@@ -161,7 +161,7 @@ func (signal *Signal) measure(
 		return perspectives.Measurement{
 			Source:   perspectives.SourceLeadLag,
 			Category: perspectives.CategoryAnchorStall,
-			SNR:      0,
+			Strength: 0,
 		}, true
 	}
 
@@ -175,7 +175,7 @@ func (signal *Signal) measure(
 		return perspectives.Measurement{
 			Source:   perspectives.SourceLeadLag,
 			Category: category,
-			SNR:      corr / leadlagMinimumLagCorrelation,
+			Strength: corr / leadlagMinimumLagCorrelation,
 		}, true
 	}
 
@@ -194,7 +194,7 @@ func (signal *Signal) measure(
 	return perspectives.Measurement{
 		Source:   perspectives.SourceLeadLag,
 		Category: category,
-		SNR:      corr / leadlagMinimumLagCorrelation,
+		Strength: corr / leadlagMinimumLagCorrelation,
 	}, true
 }
 

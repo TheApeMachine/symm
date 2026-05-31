@@ -64,10 +64,10 @@ func TestPublishMeasurement(t *testing.T) {
 				}
 			}
 
-			Convey("It should publish toxic bluff with SNR", func() {
+			Convey("It should publish toxic bluff with measurable strength", func() {
 				So(measurement.Category, ShouldEqual, perspectives.CategoryToxicBluff)
 				So(measurement.Symbol, ShouldEqual, symbol)
-				So(measurement.SNR, ShouldBeGreaterThan, 0)
+				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})
 	})

@@ -85,7 +85,7 @@ func TestObserveBook(t *testing.T) {
 			Convey("It publishes an exhaustion reading", func() {
 				So(measurement.Source, ShouldEqual, perspectives.SourceExhaustion)
 				So(measurement.Symbol, ShouldEqual, symbol)
-				So(measurement.SNR, ShouldBeGreaterThan, 0)
+				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})
 	})

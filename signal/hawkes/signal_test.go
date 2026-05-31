@@ -61,7 +61,7 @@ func TestMeasure(t *testing.T) {
 			Convey("It should publish a thermal perspective reading", func() {
 				So(ok, ShouldBeTrue)
 				So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
-				So(measurement.SNR, ShouldBeGreaterThan, 0)
+				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})
 	})

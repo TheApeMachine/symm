@@ -88,7 +88,8 @@ func profileReplayPrimitives(
 	defer cancel()
 
 	pool := qpool.NewQ(profileCtx, 1, runtime.NumCPU()*4, qpool.NewConfig())
-	qpool.SuppressLogging()
+	restoreLogging := qpool.SuppressLogging()
+	defer restoreLogging()
 	applyReplayMeta(replayFile)
 	config.SyncRuntime()
 	krakenmarket.ConfigureCatalogFees(

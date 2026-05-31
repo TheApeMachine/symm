@@ -1,8 +1,6 @@
 package trader
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/config"
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -11,6 +9,10 @@ import (
 
 /*
 opportunity is the trader's cross-section-calibrated entry candidate.
+
+Score is thesis_score (aggregated playbook SNR, sigma units). Edge is Score minus
+cross-section baseline and spread in the same units. conviction in execution
+audit is this same Score.
 */
 type opportunity struct {
 	Symbol   string
@@ -31,10 +33,14 @@ func (crypto *Crypto) entryOpportunity(
 	measurements []perspectives.Measurement,
 	contextProviders ...func(string) perspectives.DecisionContext,
 ) (opportunity, bool) {
-	context := crypto.entryContextProvider(symbol, measurements)
+	var context func(string) perspectives.DecisionContext
 
 	if len(contextProviders) > 0 && contextProviders[0] != nil {
 		context = contextProviders[0]
+	}
+
+	if context == nil {
+		context = crypto.entryContextProvider(symbol, measurements)
 	}
 
 	decisions := decision.DecisionsWithContext(measurements, nil, context)
@@ -212,12 +218,16 @@ func (crypto *Crypto) entryDecisionContext(
 	score := thesisScore(measurements, []string{playbook})
 	feePct := crypto.takerFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
-	roundTripCostPct := roundTripFrictionPct(feePct, spreadBPS)
-	requiredScore := crypto.scopedRuntime().Risk.EntryEdgeMultiple * roundTripCostPct * 100
+	roundTripCostPct := perspectives.RoundTripFrictionPct(feePct, spreadBPS)
+	requiredSNR := perspectives.RequiredThesisScore(
+		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
+		feePct,
+		spreadBPS,
+	)
 	scoreCostRatio := 0.0
 
-	if requiredScore > 0 {
-		scoreCostRatio = score / requiredScore
+	if requiredSNR > 0 {
+		scoreCostRatio = score / requiredSNR
 	}
 
 	inPlay := 0.0
@@ -232,7 +242,7 @@ func (crypto *Crypto) entryDecisionContext(
 			perspectives.MetricSpreadBPS:        spreadBPS,
 			perspectives.MetricFeePct:           feePct,
 			perspectives.MetricRoundTripCostBPS: roundTripCostPct * 10000,
-			perspectives.MetricRequiredScore:    requiredScore,
+			perspectives.MetricRequiredScore:    requiredSNR,
 			perspectives.MetricScoreCostRatio:   scoreCostRatio,
 			perspectives.MetricInPlay:           inPlay,
 		},
@@ -263,44 +273,14 @@ func entryNames(decisions []decision.Decision) []string {
 	return names
 }
 
-/*
-thesisScore aggregates SNR only from measurements relevant to the authorizing
-playbooks (categories those trees can read).
-*/
 func thesisScore(
 	measurements []perspectives.Measurement,
 	playbookNames []string,
 ) float64 {
-	relevant := playbookCategories(playbookNames)
-	energy := 0.0
-	observations := 0
-
-	for _, measurement := range measurements {
-		if len(relevant) > 0 && !relevant[measurement.Category] {
-			continue
-		}
-
-		strength := measurement.SNR
-
-		if strength <= 0 {
-			continue
-		}
-
-		energy += strength * strength
-		observations++
-	}
-
-	if observations == 0 {
-		return 0
-	}
-
-	score := math.Sqrt(energy / float64(observations))
-
-	if len(playbookNames) <= 1 {
-		return score
-	}
-
-	return score * math.Sqrt(float64(len(playbookNames)))
+	return perspectives.AggregateThesisScore(
+		measurements,
+		playbookCategories(playbookNames),
+	)
 }
 
 func playbookCategories(playbookNames []string) map[perspectives.CategoryType]bool {

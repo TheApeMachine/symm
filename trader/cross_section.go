@@ -133,6 +133,15 @@ func (crypto *Crypto) refreshCrossSection() {
 				}
 				names := entryNames(decision.DecisionsWithContext(measurements, nil, context))
 				score := thesisScore(measurements, names)
+
+				if score > 0 {
+					baseline := score
+					context = func(playbook string) perspectives.DecisionContext {
+						return crypto.entryDecisionContext(row.symbol, measurements, playbook, baseline)
+					}
+					names = entryNames(decision.DecisionsWithContext(measurements, nil, context))
+					score = thesisScore(measurements, names)
+				}
 				local.scores[index-job.start] = score
 
 				if len(names) == 0 || score <= 0 {
@@ -143,15 +152,19 @@ func (crypto *Crypto) refreshCrossSection() {
 
 				feePct := crypto.takerFeePct(row.symbol)
 				spreadBPS := crypto.quotes.spreadBPS(row.symbol)
-				required := crypto.scopedRuntime().Risk.EntryEdgeMultiple * roundTripFrictionPct(feePct, spreadBPS)
+				requiredSNR := perspectives.RequiredThesisScore(
+					crypto.scopedRuntime().Risk.EntryEdgeMultiple,
+					feePct,
+					spreadBPS,
+				)
 
-				if required <= 0 {
+				if requiredSNR <= 0 {
 					continue
 				}
 
 				local.forecastCount++
-				local.predictionSum += score / 100
-				local.requiredSum += required
+				local.predictionSum += score / requiredSNR
+				local.requiredSum += requiredSNR
 			}
 
 			results[jobIndex] = local

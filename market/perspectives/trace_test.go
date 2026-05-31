@@ -99,7 +99,8 @@ func TestWalkWithTraceRecordsMetricBranch(t *testing.T) {
 			steps := trace.StepsSlice()
 			convey.So(steps, convey.ShouldHaveLength, 1)
 			convey.So(steps[0].Metric, convey.ShouldEqual, MetricScoreCostRatio)
-			convey.So(steps[0].SNR, convey.ShouldEqual, 0.4)
+			convey.So(steps[0].MetricValue, convey.ShouldEqual, 0.4)
+			convey.So(steps[0].SNR, convey.ShouldEqual, 0)
 		})
 	})
 }

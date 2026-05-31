@@ -32,6 +32,6 @@ func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) 
 	return perspectives.Measurement{
 		Source:   perspectives.SourceExhaustion,
 		Category: exhaustCategory(reason),
-		SNR:      urgency / (1 - urgency),
+		Strength: urgency / (1 - urgency),
 	}, true
 }

@@ -128,7 +128,7 @@ func buildStrategy(spec PlaybookSpec) (*strategy, error) {
 		return nil, fmt.Errorf("exit: %w", err)
 	}
 
-	strategy := newStrategy(name, regime, policy, entry, exit)
+	strat := newStrategy(name, regime, policy, entry, exit)
 
 	if spec.Deny != nil {
 		deny, denyErr := buildBranches(spec.Deny)
@@ -137,10 +137,10 @@ func buildStrategy(spec PlaybookSpec) (*strategy, error) {
 			return nil, fmt.Errorf("deny: %w", denyErr)
 		}
 
-		strategy.deny = &Tree{Branches: deny}
+		strat.deny = &Tree{Branches: deny}
 	}
 
-	return strategy, nil
+	return strat, nil
 }
 
 func buildExit(specs []BranchSpec) (Branch, error) {

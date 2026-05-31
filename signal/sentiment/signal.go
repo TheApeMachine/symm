@@ -78,10 +78,10 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = row.Symbol
 		measurement.Last = row.Last
-		measurement = perspectives.FinalizeSNR(
+		measurement = perspectives.FinalizeMeasurement(
 			measurement,
-			measurement.SNR,
-			func(raw float64) float64 { return signal.floor.Score(row.Symbol, raw) },
+			measurement.Strength,
+			"breadth",
 		)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
@@ -100,7 +100,7 @@ func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
 	return perspectives.Measurement{
 		Source:   perspectives.SourceSentiment,
 		Category: signal.category(breadth, change, 0, universe),
-		SNR:      signal.snr(breadth),
+		Strength: signal.snr(breadth),
 	}, true
 }
 

@@ -133,10 +133,16 @@ func (signal *Signal) publish() {
 
 		if ok {
 			measurement.Symbol = key.(string)
-			measurement = perspectives.FinalizeSNR(
+			stream := "macro"
+
+			if measurement.Strength > 0 {
+				stream = "intervention"
+			}
+
+			measurement = perspectives.FinalizeMeasurement(
 				measurement,
-				measurement.SNR,
-				state.floor.Score,
+				measurement.Strength,
+				stream,
 			)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}

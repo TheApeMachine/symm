@@ -2,20 +2,12 @@ package trader
 
 import (
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 /*
-roundTripFrictionPct is the estimated round-trip cost (fees + slippage) as a
-fraction of notional. At SNR 1 the playbook assumes one sigma of edge equals this
-friction; EntryEdgeMultiple scales the required thesis score.
-*/
-func roundTripFrictionPct(feePct, slippageBps float64) float64 {
-	return 2*feePct/100 + slippageBps/10000
-}
-
-/*
-entryClearsFriction requires the thesis score to clear EntryEdgeMultiple times
-the round-trip friction (fees plus half-spread when spreadBPS is known).
+entryClearsFriction requires thesis_score to clear RequiredThesisScore for this
+symbol's fees and spread (all in playbook sigma units).
 */
 func entryClearsFriction(score float64, feePct float64, spreadBPS float64) bool {
 	slippageBPS := config.System.SlippageBPS
@@ -24,14 +16,15 @@ func entryClearsFriction(score float64, feePct float64, spreadBPS float64) bool 
 		slippageBPS = spreadBPS
 	}
 
-	friction := roundTripFrictionPct(feePct, slippageBPS)
-	required := config.System.EntryEdgeMultiple * friction
+	requiredSNR := perspectives.RequiredThesisScore(
+		config.System.EntryEdgeMultiple,
+		feePct,
+		slippageBPS,
+	)
 
-	if required <= 0 {
+	if requiredSNR <= 0 {
 		return score > 0
 	}
-
-	requiredSNR := required * 100
 
 	return score >= requiredSNR
 }

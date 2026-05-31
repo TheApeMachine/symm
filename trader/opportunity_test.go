@@ -21,7 +21,11 @@ func TestThesisScore(t *testing.T) {
 			convey.So(score, convey.ShouldBeLessThan, 3.2)
 		})
 
-		convey.Convey("It should reward independent perspective confirmations", func() {
+		convey.Convey("It should rise when more relevant categories contribute SNR", func() {
+			measurements = append(measurements, perspectives.Measurement{
+				Category: perspectives.CategoryFrenzy,
+				SNR:      5.0,
+			})
 			plain := thesisScore(measurements, []string{"drive"})
 			confirmed := thesisScore(measurements, []string{"drive", "trend"})
 
