@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/trader/economics"
 )
 
 type evalTrialOptions struct {
@@ -16,6 +17,7 @@ type evalTrialOptions struct {
 	stress       bool
 	perturb      bool
 	perturbSeed  int64
+	evalWorkers  int
 }
 
 type tuneCandidate struct {
@@ -29,11 +31,13 @@ type trialScores struct {
 	selection     float64
 	gap           float64
 	eligible      bool
+	rejectReason  string
 }
 
 type evalTrialResult struct {
-	ScoreEUR   float64
-	FitnessEUR float64
+	ScoreEUR    float64
+	FitnessEUR  float64
+	Performance economics.PerformanceSummary
 }
 
 /*
@@ -55,6 +59,40 @@ func trialSelectionScore(trainScore float64, holdoutScores []float64) float64 {
 	}
 
 	return selection
+}
+
+func trialSelectionIndex(holdoutScores []float64) int {
+	if len(holdoutScores) == 0 {
+		return -1
+	}
+
+	selection := 0
+
+	for index, score := range holdoutScores[1:] {
+		if score < holdoutScores[selection] {
+			selection = index + 1
+		}
+	}
+
+	return selection
+}
+
+func trialSelectionPerformance(
+	trainResult evalTrialResult,
+	holdoutResults []evalTrialResult,
+	holdoutScores []float64,
+) economics.PerformanceSummary {
+	selection := trialSelectionIndex(holdoutScores)
+
+	if selection < 0 {
+		return trainResult.Performance
+	}
+
+	if selection >= len(holdoutResults) {
+		return economics.PerformanceSummary{}
+	}
+
+	return holdoutResults[selection].Performance
 }
 
 /*
@@ -97,16 +135,34 @@ func betterTuneCandidate(
 	return trainScore > bestTrainScore+tuneScoreEpsilon
 }
 
-func trialEligible(trainScore float64, holdoutScores []float64, maxGap float64) bool {
+const (
+	tuneRejectNoProfit = "rejected (no realized profitable trade on selection split)"
+	tuneRejectOverfit  = "rejected (train >> holdout, overfit)"
+)
+
+func trialEligible(
+	trainScore float64,
+	holdoutScores []float64,
+	maxGap float64,
+	selectionPerformance economics.PerformanceSummary,
+) (bool, string) {
+	if selectionPerformance.ProfitableTrades == 0 {
+		return false, tuneRejectNoProfit
+	}
+
 	if len(holdoutScores) == 0 {
-		return true
+		return true, ""
 	}
 
 	if maxGap < 0 {
-		return true
+		return true, ""
 	}
 
-	return trialTrainHoldoutGap(trainScore, holdoutScores) <= maxGap
+	if trialTrainHoldoutGap(trainScore, holdoutScores) > maxGap {
+		return false, tuneRejectOverfit
+	}
+
+	return true, ""
 }
 
 /*
@@ -136,6 +192,7 @@ func scoreTrial(
 	stressHoldout bool,
 	perturbTrain bool,
 	perturbSeed int64,
+	evalWorkers int,
 	maxTrainHoldoutGap float64,
 	candidate tuneCandidate,
 ) (trialScores, error) {
@@ -146,12 +203,14 @@ func scoreTrial(
 		stress:       false,
 		perturb:      perturbTrain,
 		perturbSeed:  perturbSeed,
+		evalWorkers:  evalWorkers,
 	})
 
 	if err != nil {
 		return trialScores{}, err
 	}
 
+	holdoutResults := make([]evalTrialResult, 0, len(holdoutReplays))
 	holdoutScores := make([]float64, 0, len(holdoutReplays))
 
 	for _, holdoutReplay := range holdoutReplays {
@@ -160,23 +219,33 @@ func scoreTrial(
 			tunables:     candidate.tunables,
 			perspectives: candidate.perspectives,
 			stress:       stressHoldout,
+			evalWorkers:  evalWorkers,
 		})
 
 		if holdoutErr != nil {
 			return trialScores{}, holdoutErr
 		}
 
+		holdoutResults = append(holdoutResults, holdoutResult)
 		holdoutScores = append(holdoutScores, holdoutResult.FitnessEUR)
 	}
 
 	gap := trialTrainHoldoutGap(trainResult.FitnessEUR, holdoutScores)
+	selectionPerformance := trialSelectionPerformance(trainResult, holdoutResults, holdoutScores)
+	eligible, rejectReason := trialEligible(
+		trainResult.FitnessEUR,
+		holdoutScores,
+		maxTrainHoldoutGap,
+		selectionPerformance,
+	)
 
 	return trialScores{
 		trainScore:    trainResult.FitnessEUR,
 		holdoutScores: holdoutScores,
 		selection:     trialSelectionScore(trainResult.FitnessEUR, holdoutScores),
 		gap:           gap,
-		eligible:      trialEligible(trainResult.FitnessEUR, holdoutScores, maxTrainHoldoutGap),
+		eligible:      eligible,
+		rejectReason:  rejectReason,
 	}, nil
 }
 
@@ -226,6 +295,12 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 		"SYMM_REPLAY_FILE": options.replayFile,
 		"SYMM_CONFIG_FILE": tempPath,
 		"SYMM_LOG_STDOUT":  "0",
+		"SYMM_LOG_FILE":    "0",
+	}
+
+	if options.evalWorkers > 0 {
+		env["GOMAXPROCS"] = fmt.Sprintf("%d", options.evalWorkers)
+		env[engineWorkersEnv] = fmt.Sprintf("%d", resolveTuneEngineWorkers(options.evalWorkers))
 	}
 
 	if perspectivePath != "" {
@@ -256,16 +331,18 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 		Regret     struct {
 			MissedForwardEUR float64 `json:"missed_forward_eur"`
 		} `json:"gate_reject_regret"`
+		Performance economics.PerformanceSummary `json:"trade_performance"`
 	}
 
 	if err := json.Unmarshal(output, &result); err != nil {
 		return evalTrialResult{}, fmt.Errorf("decode eval score: %w", err)
 	}
 
-	fitnessEUR := TuneFitness(result.ScoreEUR, result.Regret.MissedForwardEUR)
+	fitnessEUR := TuneFitness(result.ScoreEUR, result.Regret.MissedForwardEUR, result.Performance)
 
 	return evalTrialResult{
-		ScoreEUR:   result.ScoreEUR,
-		FitnessEUR: fitnessEUR,
+		ScoreEUR:    result.ScoreEUR,
+		FitnessEUR:  fitnessEUR,
+		Performance: result.Performance,
 	}, nil
 }

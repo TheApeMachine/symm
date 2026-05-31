@@ -22,7 +22,7 @@ type Decision struct {
 	Perspective perspectives.Perspective
 }
 
-var universalExitTree = &perspectives.Tree{Branches: perspectives.UniversalExitBranches()}
+var universalExitTree = defaultUniversalExitTree()
 
 /*
 perspectiveRegistry is conviction-first: more confirming categories rank earlier.
@@ -42,11 +42,26 @@ func defaultPerspectiveRegistry() []registeredPerspective {
 	}
 }
 
+func defaultUniversalExitTree() *perspectives.Tree {
+	return &perspectives.Tree{Branches: perspectives.UniversalExitBranches()}
+}
+
+func emptyUniversalExitTree() *perspectives.Tree {
+	return &perspectives.Tree{}
+}
+
 func snapshotPerspectiveRegistry() []registeredPerspective {
 	perspectiveRegistryLock.RLock()
 	defer perspectiveRegistryLock.RUnlock()
 
 	return perspectiveRegistry
+}
+
+func snapshotUniversalExitTree() *perspectives.Tree {
+	perspectiveRegistryLock.RLock()
+	defer perspectiveRegistryLock.RUnlock()
+
+	return universalExitTree
 }
 
 /*
@@ -56,6 +71,7 @@ playbooks. Tests and tooling use this after loading YAML overrides.
 func RestoreDefaultPerspectiveRegistry() {
 	perspectiveRegistryLock.Lock()
 	perspectiveRegistry = defaultPerspectiveRegistry()
+	universalExitTree = defaultUniversalExitTree()
 	perspectiveRegistryLock.Unlock()
 }
 
@@ -72,10 +88,17 @@ func LoadPerspectiveRegistry(path string) error {
 		return err
 	}
 
-	return SetPerspectiveRegistry(strategies)
+	return setPerspectiveRegistry(strategies, emptyUniversalExitTree())
 }
 
 func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
+	return setPerspectiveRegistry(strategies, defaultUniversalExitTree())
+}
+
+func setPerspectiveRegistry(
+	strategies []perspectives.Perspective,
+	universal *perspectives.Tree,
+) error {
 	if len(strategies) == 0 {
 		return fmt.Errorf("perspective registry requires at least one strategy")
 	}
@@ -96,6 +119,7 @@ func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
 	perspectiveRegistryLock.Lock()
 	defer perspectiveRegistryLock.Unlock()
 	perspectiveRegistry = registry
+	universalExitTree = universal
 
 	return nil
 }
@@ -231,9 +255,10 @@ func ExitDecisions(
 	softExitsAllowed bool,
 ) []Decision {
 	registry := snapshotPerspectiveRegistry()
+	universal := snapshotUniversalExitTree()
 	decisions := make([]Decision, 0, len(registry)+1)
 
-	if action := universalExitTree.Walk(measurements, observations); action != nil {
+	if action := universal.Walk(measurements, observations); action != nil {
 		if perspectives.IsExitAction(*action) && exitAllowed(*action, softExitsAllowed) {
 			decisions = append(decisions, Decision{
 				Name:   string(perspectives.PlaybookUniversal),

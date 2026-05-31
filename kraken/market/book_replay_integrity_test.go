@@ -15,26 +15,25 @@ import (
 func captureFixturePath(t *testing.T) string {
 	t.Helper()
 
-	candidates := []string{
-		"runs/capture.jsonl",
-		filepath.Join("..", "..", "runs", "capture.jsonl"),
+	candidate := os.Getenv("SYMM_CAPTURE_FIXTURE")
+
+	if candidate == "" {
+		t.Skip("capture integrity tests require SYMM_CAPTURE_FIXTURE=/path/to/capture.jsonl")
+
+		return ""
 	}
 
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			absolute, err := filepath.Abs(candidate)
-
-			if err != nil {
-				t.Fatalf("capture fixture abs: %v", err)
-			}
-
-			return absolute
-		}
+	if _, err := os.Stat(candidate); err != nil {
+		t.Fatalf("capture fixture %q: %v", candidate, err)
 	}
 
-	t.Skip("runs/capture.jsonl not present; record with make record")
+	absolute, err := filepath.Abs(candidate)
 
-	return ""
+	if err != nil {
+		t.Fatalf("capture fixture abs: %v", err)
+	}
+
+	return absolute
 }
 
 func TestCaptureReplayMaintainsBookChecksums(t *testing.T) {

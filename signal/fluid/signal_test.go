@@ -8,6 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -35,7 +36,7 @@ func TestNewSignal(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		signal := NewSignal(ctx, pool)
+		signal := NewSignal(ctx, pool, nil)
 		defer signal.Close()
 
 		Convey("It should wire measurements and ui broadcasts", func() {
@@ -51,7 +52,7 @@ func TestEmit(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		signal := NewSignal(ctx, pool)
+		signal := NewSignal(ctx, pool, nil)
 		defer signal.Close()
 
 		measurements := signal.broadcasts["measurements"].Subscribe("test:fluid", 64)
@@ -91,12 +92,57 @@ func TestEmit(t *testing.T) {
 	})
 }
 
+func TestPublishField(t *testing.T) {
+	Convey("Given a fluid signal bound to the focus set", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		tracker := focus.NewSet()
+		tracker.Add("ALGO/EUR")
+
+		signal := NewSignal(ctx, pool, tracker)
+		defer signal.Close()
+
+		uiFrames := signal.ui.Subscribe("test:fluid-ui", 8)
+
+		unfocused := signal.state("ETH/EUR")
+		unfocused.FeedTicker(market.TickerUpdate{
+			Symbol: "ETH/EUR", Last: 100, Bid: 99, Ask: 101, Volume: 1000,
+		})
+		unfocused.FeedBook(bookSnapshot("ETH/EUR", 99, 10, 101, 6))
+
+		anchor := signal.state(focus.AnchorSymbol)
+		anchor.FeedTicker(market.TickerUpdate{
+			Symbol: focus.AnchorSymbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
+		})
+		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol, 99, 10, 101, 6))
+
+		signal.publishField(focus.AnchorSymbol, anchor)
+
+		select {
+		case value := <-uiFrames.Incoming:
+			frame, ok := value.Value.(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(frame["event"], ShouldEqual, "field_snapshot")
+
+			symbols, ok := frame["symbols"].([]map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(len(symbols), ShouldBeGreaterThanOrEqualTo, 2)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for field snapshot")
+		}
+	})
+}
+
 func BenchmarkEmit(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
-	signal := NewSignal(ctx, pool)
+	signal := NewSignal(ctx, pool, nil)
 	defer signal.Close()
 
 	signal.broadcasts["measurements"].Subscribe("bench:fluid", 1024)

@@ -21,7 +21,7 @@ type PlaybookSpec struct {
 	Name   string       `yaml:"name"`
 	Regime string       `yaml:"regime"`
 	Policy string       `yaml:"policy"`
-	Deny   []BranchSpec `yaml:"deny,omitempty"`
+	Deny   []BranchSpec `yaml:"deny"`
 	Entry  []BranchSpec `yaml:"entry"`
 	Exit   []BranchSpec `yaml:"exit"`
 }
@@ -130,15 +130,13 @@ func buildStrategy(spec PlaybookSpec) (*strategy, error) {
 
 	strat := newStrategy(name, regime, policy, entry, exit)
 
-	if spec.Deny != nil {
-		deny, denyErr := buildBranches(spec.Deny)
+	deny, denyErr := buildBranches(spec.Deny)
 
-		if denyErr != nil {
-			return nil, fmt.Errorf("deny: %w", denyErr)
-		}
-
-		strat.deny = &Tree{Branches: deny}
+	if denyErr != nil {
+		return nil, fmt.Errorf("deny: %w", denyErr)
 	}
+
+	strat.deny = &Tree{Branches: deny}
 
 	return strat, nil
 }

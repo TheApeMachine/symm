@@ -56,6 +56,22 @@ func TestSetRemove(t *testing.T) {
 	})
 }
 
+func TestSetStreams(t *testing.T) {
+	Convey("Given a focus set with one open position", t, func() {
+		set := NewSet()
+		set.Add("ALGO/EUR")
+
+		Convey("It should always stream the anchor symbol", func() {
+			So(set.Streams(AnchorSymbol), ShouldBeTrue)
+		})
+
+		Convey("It should stream only the anchor and open positions", func() {
+			So(set.Streams("ALGO/EUR"), ShouldBeTrue)
+			So(set.Streams("ETH/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
 func TestSetSnapshot(t *testing.T) {
 	Convey("Given a focus set", t, func() {
 		set := NewSet()

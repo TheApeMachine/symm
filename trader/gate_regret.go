@@ -55,3 +55,7 @@ GateRegretSummary returns aggregated counterfactual gate-reject outcomes.
 func (crypto *Crypto) GateRegretSummary() economics.RegretSummary {
 	return crypto.economics.GateRegretSummary()
 }
+
+func (crypto *Crypto) PerformanceSummary() economics.PerformanceSummary {
+	return crypto.economics.PerformanceSummary()
+}

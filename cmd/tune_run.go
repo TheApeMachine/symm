@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -26,6 +25,7 @@ type tuneRunOptions struct {
 	stressHoldout      bool
 	maxTrials          int
 	workers            int
+	evalWorkers        int
 	output             string
 	perspectiveOutput  string
 	maxTrainHoldoutGap float64
@@ -104,6 +104,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 
 	tunablesSearch := config.NewTunablesSearch(config.System, nil)
 	rejectedOverfit := atomic.Int64{}
+	rejectedNoProfit := atomic.Int64{}
 	hasBest := false
 	bestSelection := 0.0
 	bestTrainScore := 0.0
@@ -121,6 +122,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		replayPaths.holdoutPaths,
 		options.stressHoldout,
 		options.perturbTrain,
+		options.evalWorkers,
 		options.maxTrainHoldoutGap,
 		documentSearch,
 		tunablesSearch,
@@ -148,103 +150,36 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		))
 	}
 
-	reporter.SetTotal(options.maxTrials)
-
-	jobs := make(chan int, options.workers*2)
-	var waitGroup sync.WaitGroup
-	var trialsCompleted atomic.Int64
-
-	go dispatchTuneTrials(parent, options.maxTrials, jobs)
-
-	for worker := 0; worker < options.workers; worker++ {
-		waitGroup.Go(func() {
-			for range jobs {
-				if parent.Err() != nil {
-					return
-				}
-				document := documentSearch.Next()
-				candidate := tuneCandidate{
-					tunables:     tunablesSearch.Next(),
-					perspectives: &document,
-				}
-				scores, scoreErr := scoreTrial(
-					replayPaths.trainPath,
-					replayPaths.holdoutPaths,
-					options.stressHoldout,
-					options.perturbTrain,
-					int64(trialsCompleted.Load()+1),
-					options.maxTrainHoldoutGap,
-					candidate,
-				)
-
-				if scoreErr != nil {
-					reporter.println(fmt.Sprintf("  trial error: %v", scoreErr))
-					continue
-				}
-
-				newBest := false
-
-				if scores.eligible {
-					documentSearch.Observe(document, scores.selection)
-					tunablesSearch.Observe(candidate.tunables, scores.selection)
-
-					bestMu.Lock()
-
-					if !hasBest || betterTuneCandidate(
-						scores.selection,
-						scores.trainScore,
-						bestSelection,
-						bestTrainScore,
-					) {
-						hasBest = true
-						bestSelection = scores.selection
-						bestTrainScore = scores.trainScore
-						bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
-						bestGap = scores.gap
-						bestConfig = snapshotTuneCandidate(document, candidate.tunables)
-						newBest = true
-					}
-
-					bestMu.Unlock()
-
-					if newBest {
-						if saveErr := saveTuneLeader(reporter, options, bestConfig); saveErr != nil {
-							reporter.println(fmt.Sprintf("  save leader failed: %v", saveErr))
-						}
-					}
-				} else {
-					rejectedOverfit.Add(1)
-				}
-
-				bestMu.Lock()
-				currentBestHoldout := bestSelection
-				currentBestTrain := bestTrainScore
-				bestMu.Unlock()
-
-				reporter.TrialResult(tuneTrialEvent{
-					selection:          scores.selection,
-					trainScore:         scores.trainScore,
-					gap:                scores.gap,
-					eligible:           scores.eligible,
-					newBest:            newBest,
-					currentBestHoldout: currentBestHoldout,
-					currentBestTrain:   currentBestTrain,
-				})
-				trialsCompleted.Add(1)
-			}
-		})
-	}
-
-	waitGroup.Wait()
-
-	interrupted := errors.Is(parent.Err(), context.Canceled)
+	trialsCompleted, interrupted := runTuneTrialSearch(
+		parent,
+		reporter,
+		options,
+		replayPaths,
+		documentSearch,
+		tunablesSearch,
+		&rejectedOverfit,
+		&rejectedNoProfit,
+		tuneSearchState{
+			hasBest:           &hasBest,
+			bestSelection:     &bestSelection,
+			bestTrainScore:    &bestTrainScore,
+			bestHoldoutScores: &bestHoldoutScores,
+			bestGap:           &bestGap,
+			bestConfig:        &bestConfig,
+			bestMu:            &bestMu,
+		},
+	)
 
 	if interrupted {
 		reporter.Phase("Ctrl+C received — finishing in-flight trials and saving the current best…")
 	}
 
 	if !hasBest {
-		return tuneRunResult{}, fmt.Errorf("no eligible candidates — widen --max-train-holdout-gap or add holdout data")
+		message := "no eligible candidates — selected splits need realized profitable trades; " +
+			"widen --max-train-holdout-gap only if the rejects are overfit-gap rejects"
+		reporter.Phase(message)
+
+		return tuneRunResult{}, fmt.Errorf("%s", message)
 	}
 
 	overlay := bestConfig.tunables
@@ -271,16 +206,18 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		"best_train_holdout_gap":   bestGap,
 		"max_train_holdout_gap":    options.maxTrainHoldoutGap,
 		"rejected_overfit":         rejectedOverfit.Load(),
+		"rejected_no_profit":       rejectedNoProfit.Load(),
 		"train_replay":             replayPaths.trainPath,
 		"holdout_replays":          replayPaths.holdoutPaths,
 		"stress_holdout":           options.stressHoldout,
 		"output":                   options.output,
 		"perspectives_output":      options.perspectiveOutput,
 		"perspective_categories":   len(profile.Categories),
-		"trials_completed":         trialsCompleted.Load(),
+		"trials_completed":         trialsCompleted,
 		"max_trials":               options.maxTrials,
 		"stopped_by_user":          interrupted,
 		"workers":                  options.workers,
+		"eval_workers":             options.evalWorkers,
 	})
 
 	if err != nil {
@@ -298,38 +235,16 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 	}
 
 	reporter.Summary(fmt.Sprintf(
-		"Done (%s) — best holdout wallet fitness €%.2f (train €%.2f, %d trials, %d overfit rejects)",
+		"Done (%s) — best holdout wallet fitness €%.2f (train €%.2f, %d trials, %d overfit rejects, %d no-profit rejects)",
 		stopReason,
 		bestSelection,
 		bestTrainScore,
-		trialsCompleted.Load(),
+		trialsCompleted,
 		rejectedOverfit.Load(),
+		rejectedNoProfit.Load(),
 	))
 
 	return tuneRunResult{payload: payload}, nil
-}
-
-func dispatchTuneTrials(parent context.Context, maxTrials int, jobs chan<- int) {
-	defer close(jobs)
-
-	trialIndex := 0
-
-	for {
-		if parent.Err() != nil {
-			return
-		}
-
-		if maxTrials > 0 && trialIndex >= maxTrials {
-			return
-		}
-
-		select {
-		case <-parent.Done():
-			return
-		case jobs <- trialIndex:
-			trialIndex++
-		}
-	}
 }
 
 func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
@@ -428,6 +343,7 @@ func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
 		stressHoldout:      stressHoldout,
 		maxTrials:          maxTrials,
 		workers:            workers,
+		evalWorkers:        resolveTuneEvalWorkers(workers),
 		output:             output,
 		perspectiveOutput:  perspectiveOutput,
 		maxTrainHoldoutGap: resolveMaxTrainHoldoutGap(maxGapFlag, config.System.WalletEUR),
@@ -442,6 +358,7 @@ func seedTuneSearchBaseline(
 	holdoutReplays []string,
 	stressHoldout bool,
 	perturbTrain bool,
+	evalWorkers int,
 	maxTrainHoldoutGap float64,
 	documentSearch *perspectives.DocumentSearch,
 	tunablesSearch *config.TunablesSearch,
@@ -470,6 +387,7 @@ func seedTuneSearchBaseline(
 		stressHoldout,
 		perturbTrain,
 		1,
+		evalWorkers,
 		maxTrainHoldoutGap,
 		candidate,
 	)
@@ -479,14 +397,15 @@ func seedTuneSearchBaseline(
 	}
 
 	reporter.BaselineScore(tuneTrialEvent{
-		selection:  scores.selection,
-		trainScore: scores.trainScore,
-		gap:        scores.gap,
-		eligible:   scores.eligible,
+		selection:    scores.selection,
+		trainScore:   scores.trainScore,
+		gap:          scores.gap,
+		eligible:     scores.eligible,
+		rejectReason: scores.rejectReason,
 	})
 
 	if !scores.eligible {
-		return fmt.Errorf("baseline not eligible (train−holdout gap €%.2f)", scores.gap)
+		return fmt.Errorf("baseline not eligible: %s", scores.rejectReason)
 	}
 
 	documentSearch.Observe(document, scores.selection)

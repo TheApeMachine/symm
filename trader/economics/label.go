@@ -25,6 +25,7 @@ type Label struct {
 	DepthCoverage        float64
 	ForwardReturn        float64
 	NetReturn            float64
+	HeldMS               int64
 	At                   time.Time
 }
 
@@ -112,13 +113,19 @@ ExitLabel labels a closed round-trip.
 func ExitLabel(
 	symbol, playbook string,
 	entryPrice, exitPrice, feePct, spreadBPS float64,
+	openedAt time.Time,
 	closedAt time.Time,
 ) Label {
 	roundTrip := RoundTripCostPct(feePct, spreadBPS)
 	forward := 0.0
+	heldMS := int64(0)
 
 	if entryPrice > 0 {
 		forward = (exitPrice - entryPrice) / entryPrice
+	}
+
+	if !openedAt.IsZero() {
+		heldMS = closedAt.Sub(openedAt).Milliseconds()
 	}
 
 	return Label{
@@ -133,6 +140,7 @@ func ExitLabel(
 		SpreadBPS:        spreadBPS,
 		ForwardReturn:    forward,
 		NetReturn:        NetExitReturn(entryPrice, exitPrice, roundTrip),
+		HeldMS:           heldMS,
 		At:               closedAt,
 	}
 }

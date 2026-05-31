@@ -79,6 +79,16 @@ func TestLogStdoutEnvOverride(t *testing.T) {
 	}
 }
 
+func TestLogFileEnvOverride(t *testing.T) {
+	t.Setenv("SYMM_LOG_FILE", "0")
+
+	cfg := NewConfig()
+
+	if cfg.LogFileActive {
+		t.Fatal("expected SYMM_LOG_FILE=0 to disable file logging")
+	}
+}
+
 func TestAuditFileEnvOverride(t *testing.T) {
 	t.Setenv("SYMM_AUDIT_FILE", "runs/audit.jsonl")
 	t.Setenv("SYMM_AUDIT_GATE_COOLDOWN", "30s")

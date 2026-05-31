@@ -58,6 +58,41 @@ func TestExitDecisions(t *testing.T) {
 	})
 }
 
+func TestLoadPerspectiveRegistryDoesNotKeepUniversalExitOverlay(t *testing.T) {
+	convey.Convey("Given a YAML registry without the builtin universal exit", t, func() {
+		defer RestoreDefaultPerspectiveRegistry()
+
+		document := perspectives.Document{Version: 1, Playbooks: []perspectives.PlaybookSpec{{
+			Name:   "pump",
+			Regime: "trending",
+			Policy: "pump",
+			Deny:   []perspectives.BranchSpec{},
+			Entry: []perspectives.BranchSpec{{
+				Category: "vertical_ignition",
+				Action:   "enter",
+			}},
+			Exit: []perspectives.BranchSpec{{
+				Category: "faded_exhaustion",
+				Action:   "take_profit",
+			}},
+		}}}
+		path := t.TempDir() + "/perspectives.yaml"
+		convey.So(perspectives.SaveDocumentFile(path, document), convey.ShouldBeNil)
+		convey.So(LoadPerspectiveRegistry(path), convey.ShouldBeNil)
+
+		exits := ExitDecisions(
+			[]perspectives.Measurement{testMeasurement(perspectives.CategoryActiveReversal, 1.5)},
+			[]perspectives.ObservationType{perspectives.ObservationHolding},
+			"pump",
+			true,
+		)
+
+		convey.Convey("It should use only the YAML exit tree", func() {
+			convey.So(exits, convey.ShouldBeEmpty)
+		})
+	})
+}
+
 func TestEntryCategoriesForPlaybook(t *testing.T) {
 	convey.Convey("Given a generated playbook registry", t, func() {
 		document := perspectives.Document{Version: 1, Playbooks: []perspectives.PlaybookSpec{{

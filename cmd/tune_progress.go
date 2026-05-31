@@ -68,7 +68,11 @@ func (reporter *TuneReporter) TrialResult(event tuneTrialEvent) {
 	status := "eligible (ranked by holdout)"
 
 	if !event.eligible {
-		status = "rejected (train >> holdout, overfit)"
+		status = event.rejectReason
+	}
+
+	if status == "" {
+		status = "rejected"
 	}
 
 	line := formatTrialLine(finished, total, event.selection, event.trainScore, event.gap, status)
@@ -95,6 +99,10 @@ func (reporter *TuneReporter) BaselineScore(event tuneTrialEvent) {
 	status := "eligible baseline"
 
 	if !event.eligible {
+		status = event.rejectReason
+	}
+
+	if status == "" {
 		status = "ineligible baseline (skipped as incumbent)"
 	}
 
@@ -163,6 +171,7 @@ type tuneTrialEvent struct {
 	trainScore         float64
 	gap                float64
 	eligible           bool
+	rejectReason       string
 	newBest            bool
 	currentBestHoldout float64
 	currentBestTrain   float64

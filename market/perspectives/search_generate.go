@@ -3,112 +3,221 @@ package perspectives
 import (
 	"math"
 	"math/rand"
-	"sync"
 	"time"
 )
 
-type DocumentSearch struct {
-	mu         sync.Mutex
-	random     *rand.Rand
-	profile    SearchProfile
-	best       *Document
-	bestReward float64
-	hasBest    bool
-	attempts   int
+const maxGeneratedPlaybooks = 5
+
+type branchSection uint8
+
+const (
+	branchSectionEntry branchSection = iota
+	branchSectionDeny
+	branchSectionExit
+)
+
+var searchPlaybookNames = []string{
+	string(PlaybookTrend),
+	string(PlaybookDrive),
+	string(PlaybookLeadLag),
+	string(PlaybookScarcity),
+	string(PlaybookPump),
 }
 
-func NewDocumentSearch(profile SearchProfile, random *rand.Rand) (*DocumentSearch, error) {
-	if err := profile.Validate(); err != nil {
-		return nil, err
-	}
+var searchRegimes = []string{"none", "dead", "choppy", "trending", "bullish", "bearish"}
 
-	if random == nil {
-		random = rand.New(rand.NewSource(time.Now().UnixNano()))
-	}
+var searchPolicies = []string{"standard", "drive", "pump"}
 
-	return &DocumentSearch{
-		random:  random,
-		profile: profile,
-	}, nil
-}
+var searchCategoryConditions = []string{">", ">=", "<", "<="}
 
-func (search *DocumentSearch) Next() Document {
-	search.mu.Lock()
-	defer search.mu.Unlock()
-
-	search.attempts++
-
-	if search.best == nil {
-		return GenerateDocument(search.profile, search.random)
-	}
-
-	exploitRate := 0.50 + 0.30*math.Min(1, float64(search.attempts)/32)
-
-	if search.random.Float64() < exploitRate {
-		return MutateDocument(*search.best, search.random)
-	}
-
-	return GenerateDocument(search.profile, search.random)
-}
-
-func (search *DocumentSearch) Observe(document Document, reward float64) {
-	search.mu.Lock()
-	defer search.mu.Unlock()
-
-	if search.hasBest && reward <= search.bestReward {
-		return
-	}
-
-	clone := cloneDocument(document)
-	search.best = &clone
-	search.bestReward = reward
-	search.hasBest = true
-}
-
-func (search *DocumentSearch) BestReward() float64 {
-	search.mu.Lock()
-	defer search.mu.Unlock()
-
-	return search.bestReward
-}
-
+/*
+GenerateDocument builds a valid candidate document from replay-observed
+primitives without using playbook templates or a fixed tree shape.
+*/
 func GenerateDocument(profile SearchProfile, random *rand.Rand) Document {
 	if random == nil {
 		random = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 
-	categories := profile.searchCategories()
-	playbooks := make([]PlaybookSpec, 0, len(searchPlaybookTemplates))
+	playbookCount := 1 + random.Intn(maxGeneratedPlaybooks)
+	names := append([]string(nil), searchPlaybookNames...)
+	random.Shuffle(len(names), func(leftIndex int, rightIndex int) {
+		names[leftIndex], names[rightIndex] = names[rightIndex], names[leftIndex]
+	})
 
-	for _, template := range searchPlaybookTemplates {
-		entryCategories, denyCategories := splitSearchCategories(categories, random)
-		entry := generateEntrySpecs(entryCategories, random)
-
-		playbooks = append(playbooks, PlaybookSpec{
-			Name:   template.Name,
-			Regime: template.Regime,
-			Policy: template.Policy,
-			Deny:   generateDenySpecs(denyCategories, random),
-			Entry:  entry,
-			Exit:   generateExitSpecs(categories, random),
-		})
+	document := Document{
+		Version:   1,
+		Playbooks: make([]PlaybookSpec, 0, playbookCount),
 	}
 
-	return Document{Version: 1, Playbooks: playbooks}
+	for index := range playbookCount {
+		document.Playbooks = append(
+			document.Playbooks,
+			randomPlaybookSpec(names[index], profile, random),
+		)
+	}
+
+	return normalizeSearchDocument(document, profile, random)
 }
 
-type playbookTemplate struct {
-	Name   string
-	Regime string
-	Policy string
+func randomPlaybookSpec(
+	name string,
+	profile SearchProfile,
+	random *rand.Rand,
+) PlaybookSpec {
+	return PlaybookSpec{
+		Name:   name,
+		Regime: searchRegimes[random.Intn(len(searchRegimes))],
+		Policy: searchPolicies[random.Intn(len(searchPolicies))],
+		Deny:   randomBranchList(branchSectionDeny, profile, random),
+		Entry:  randomBranchList(branchSectionEntry, profile, random),
+		Exit:   randomBranchList(branchSectionExit, profile, random),
+	}
 }
 
-var searchPlaybookTemplates = []playbookTemplate{
-	{Name: string(PlaybookTrend), Regime: "bullish", Policy: "standard"},
-	{Name: string(PlaybookDrive), Regime: "trending", Policy: "drive"},
-	{Name: string(PlaybookLeadLag), Regime: "trending", Policy: "standard"},
-	{Name: string(PlaybookScarcity), Regime: "choppy", Policy: "standard"},
-	{Name: string(PlaybookPump), Regime: "trending", Policy: "pump"},
+func randomBranchList(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) []BranchSpec {
+	branchCount := 1 + random.Intn(4)
+
+	if section == branchSectionDeny {
+		branchCount = random.Intn(4)
+	}
+
+	branches := make([]BranchSpec, 0, branchCount)
+
+	for range branchCount {
+		branches = append(branches, randomRoute(section, profile, random))
+	}
+
+	return branches
+}
+
+func randomRoute(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) BranchSpec {
+	if random.Float64() < 0.18 {
+		return randomAnyRoute(section, profile, random)
+	}
+
+	if random.Float64() < 0.28 {
+		return randomAllRoute(section, profile, random)
+	}
+
+	return randomBranchChain(section, profile, random)
+}
+
+func randomAnyRoute(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) BranchSpec {
+	branchCount := 2 + random.Intn(3)
+	branches := make([]BranchSpec, 0, branchCount)
+
+	for range branchCount {
+		branches = append(branches, randomBranchChain(section, profile, random))
+	}
+
+	return BranchSpec{Any: branches}
+}
+
+func randomAllRoute(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) BranchSpec {
+	depth := 2 + random.Intn(3)
+	branches := make([]BranchSpec, 0, depth)
+
+	for index := range depth {
+		branch := randomPrimitiveBranch(section, profile, random)
+
+		if index == depth-1 {
+			branch.Action = randomAction(section, random)
+		}
+
+		branches = append(branches, branch)
+	}
+
+	return BranchSpec{All: branches}
+}
+
+func randomBranchChain(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) BranchSpec {
+	depth := 1 + random.Intn(4)
+	root := randomPrimitiveBranch(section, profile, random)
+	current := &root
+
+	for level := 1; level < depth; level++ {
+		child := randomPrimitiveBranch(section, profile, random)
+		current.Branches = []BranchSpec{child}
+		current = &current.Branches[0]
+	}
+
+	current.Action = randomAction(section, random)
+
+	return root
+}
+
+func randomPrimitiveBranch(
+	section branchSection,
+	profile SearchProfile,
+	random *rand.Rand,
+) BranchSpec {
+	if section == branchSectionEntry && random.Float64() < 0.12 {
+		return BranchSpec{
+			Metric:    MetricInPlay,
+			Condition: ">=",
+			Value:     floatPtr(1),
+		}
+	}
+
+	category := sampleCategory(profile.searchCategories(), random)
+
+	return categorySpec(category, randomCategoryCondition(random), random)
+}
+
+func randomCategoryCondition(random *rand.Rand) string {
+	return searchCategoryConditions[random.Intn(len(searchCategoryConditions))]
+}
+
+func randomAction(section branchSection, random *rand.Rand) string {
+	switch section {
+	case branchSectionDeny:
+		if random.Float64() < 0.25 {
+			return ActionLabel(ActionWait)
+		}
+
+		return ActionLabel(ActionDeny)
+	case branchSectionExit:
+		if random.Float64() < 0.50 {
+			return ActionLabel(ActionTakeProfit)
+		}
+
+		if random.Float64() < 0.10 {
+			return ActionLabel(ActionShort)
+		}
+
+		return ActionLabel(ActionStopLoss)
+	default:
+		if random.Float64() < 0.08 {
+			return ActionLabel(ActionWait)
+		}
+
+		if random.Float64() < 0.08 {
+			return ActionLabel(ActionDeny)
+		}
+
+		return ActionLabel(ActionEnter)
+	}
 }
 
 func (profile SearchProfile) searchCategories() []CategoryStat {
@@ -127,153 +236,6 @@ func (profile SearchProfile) searchCategories() []CategoryStat {
 	}
 
 	return append([]CategoryStat(nil), profile.Categories...)
-}
-
-func splitSearchCategories(
-	categories []CategoryStat,
-	random *rand.Rand,
-) ([]CategoryStat, []CategoryStat) {
-	shuffled := append([]CategoryStat(nil), categories...)
-	random.Shuffle(len(shuffled), func(leftIndex int, rightIndex int) {
-		shuffled[leftIndex], shuffled[rightIndex] = shuffled[rightIndex], shuffled[leftIndex]
-	})
-
-	if len(shuffled) < 2 {
-		return shuffled, nil
-	}
-
-	denyCount := 1 + random.Intn(min(4, len(shuffled)-1))
-
-	return shuffled[denyCount:], shuffled[:denyCount]
-}
-
-func generateEntrySpecs(categories []CategoryStat, random *rand.Rand) []BranchSpec {
-	routeCount := 1 + random.Intn(4)
-	routes := make([]BranchSpec, 0, routeCount)
-	gateThreshold := quantized(random, 0.70, 2.50, 0.10)
-
-	for routeIndex := 0; routeIndex < routeCount; routeIndex++ {
-		routes = append(routes, generateCategoryChain(categories, random, ActionEnter))
-	}
-
-	if random.Float64() < 0.25 {
-		routes = []BranchSpec{{
-			Metric:    MetricInPlay,
-			Condition: ">=",
-			Value:     floatPtr(1),
-			Branches:  routes,
-		}}
-	}
-
-	return []BranchSpec{
-		{
-			Metric:    MetricScoreCostRatio,
-			Condition: "<",
-			Value:     floatPtr(gateThreshold),
-			Action:    ActionLabel(ActionDeny),
-		},
-		{
-			Metric:    MetricScoreCostRatio,
-			Condition: ">=",
-			Value:     floatPtr(gateThreshold),
-			Branches:  routes,
-		},
-	}
-}
-
-func generateDenySpecs(categories []CategoryStat, random *rand.Rand) []BranchSpec {
-	if len(categories) == 0 {
-		return nil
-	}
-
-	branchCount := 1 + random.Intn(min(5, len(categories)))
-	branches := make([]BranchSpec, 0, branchCount)
-
-	for branchIndex := 0; branchIndex < branchCount; branchIndex++ {
-		action := ActionDeny
-
-		if random.Float64() < 0.15 {
-			action = ActionWait
-		}
-
-		branches = append(branches, categorySpec(sampleCategory(categories, random), action, random))
-	}
-
-	return branches
-}
-
-func generateExitSpecs(categories []CategoryStat, random *rand.Rand) []BranchSpec {
-	branchCount := 2 + random.Intn(5)
-	branches := make([]BranchSpec, 0, branchCount)
-
-	for branchIndex := 0; branchIndex < branchCount; branchIndex++ {
-		action := ActionTakeProfit
-
-		if random.Float64() < 0.45 {
-			action = ActionStopLoss
-		}
-
-		if random.Float64() < 0.05 {
-			action = ActionShort
-		}
-
-		branches = append(branches, categorySpec(sampleCategory(categories, random), action, random))
-	}
-
-	return branches
-}
-
-func generateCategoryChain(
-	categories []CategoryStat,
-	random *rand.Rand,
-	action ActionType,
-) BranchSpec {
-	depth := 1 + random.Intn(4)
-	selected := sampleDistinctCategories(categories, random, depth)
-
-	if len(selected) == 0 {
-		return BranchSpec{Action: ActionLabel(action)}
-	}
-
-	var child *BranchSpec
-
-	for categoryIndex := len(selected) - 1; categoryIndex >= 0; categoryIndex-- {
-		branch := categorySpec(selected[categoryIndex], ActionNone, random)
-
-		if child == nil {
-			branch.Action = ActionLabel(action)
-		} else {
-			branch.Branches = []BranchSpec{*child}
-		}
-
-		child = &branch
-	}
-
-	return *child
-}
-
-func sampleDistinctCategories(
-	categories []CategoryStat,
-	random *rand.Rand,
-	count int,
-) []CategoryStat {
-	selected := make([]CategoryStat, 0, count)
-	seen := make(map[string]bool, count)
-	attempts := 0
-
-	for len(selected) < count && attempts < count*8 {
-		attempts++
-		category := sampleCategory(categories, random)
-
-		if category.Name == "" || seen[category.Name] {
-			continue
-		}
-
-		seen[category.Name] = true
-		selected = append(selected, category)
-	}
-
-	return selected
 }
 
 func sampleCategory(categories []CategoryStat, random *rand.Rand) CategoryStat {
@@ -300,18 +262,16 @@ func sampleCategory(categories []CategoryStat, random *rand.Rand) CategoryStat {
 	return categories[len(categories)-1]
 }
 
-func categorySpec(category CategoryStat, action ActionType, random *rand.Rand) BranchSpec {
-	spec := BranchSpec{
+func categorySpec(
+	category CategoryStat,
+	condition string,
+	random *rand.Rand,
+) BranchSpec {
+	return BranchSpec{
 		Category:  category.Name,
-		Condition: ">",
+		Condition: condition,
 		Value:     floatPtr(category.threshold(random)),
 	}
-
-	if action != ActionNone {
-		spec.Action = ActionLabel(action)
-	}
-
-	return spec
 }
 
 func (category CategoryStat) searchWeight() float64 {

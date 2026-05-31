@@ -18,6 +18,15 @@ type Desk struct {
 	labels  []Label
 }
 
+type PerformanceSummary struct {
+	ClosedTrades      int     `json:"closed_trades"`
+	ProfitableTrades  int     `json:"profitable_trades"`
+	LosingTrades      int     `json:"losing_trades"`
+	PositiveNetReturn float64 `json:"positive_net_return"`
+	NegativeNetReturn float64 `json:"negative_net_return"`
+	MeanProfitHoldMS  float64 `json:"mean_profit_hold_ms"`
+}
+
 /*
 NewDesk instantiates execution economics for the trader desk.
 */
@@ -118,6 +127,41 @@ func (desk *Desk) RecentLabels() []Label {
 	copy(out, desk.labels)
 
 	return out
+}
+
+func (desk *Desk) PerformanceSummary() PerformanceSummary {
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	summary := PerformanceSummary{}
+	profitHoldMS := int64(0)
+
+	for _, label := range desk.labels {
+		if label.Event != "exit" {
+			continue
+		}
+
+		summary.ClosedTrades++
+
+		if label.NetReturn > 0 {
+			summary.ProfitableTrades++
+			summary.PositiveNetReturn += label.NetReturn
+			profitHoldMS += label.HeldMS
+
+			continue
+		}
+
+		if label.NetReturn < 0 {
+			summary.LosingTrades++
+			summary.NegativeNetReturn += label.NetReturn
+		}
+	}
+
+	if summary.ProfitableTrades > 0 {
+		summary.MeanProfitHoldMS = float64(profitHoldMS) / float64(summary.ProfitableTrades)
+	}
+
+	return summary
 }
 
 /*

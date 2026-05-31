@@ -148,10 +148,24 @@ func pruneDenyCategories(
 		branch.Any = pruneDenyCategories(branch.Any, entryCategories)
 		branch.All = pruneDenyCategories(branch.All, entryCategories)
 		branch.Branches = pruneDenyCategories(branch.Branches, entryCategories)
+
+		if emptyBranchSpec(branch) {
+			continue
+		}
+
 		out = append(out, branch)
 	}
 
 	return out
+}
+
+func emptyBranchSpec(branch BranchSpec) bool {
+	return len(branch.Any) == 0 &&
+		len(branch.All) == 0 &&
+		len(branch.Branches) == 0 &&
+		branch.Category == "" &&
+		branch.Observation == "" &&
+		branch.Metric == ""
 }
 
 func mutateBranchList(branches []BranchSpec, random *rand.Rand) []BranchSpec {

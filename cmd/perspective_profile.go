@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"runtime"
 	"time"
 
 	"github.com/theapemachine/qpool"
@@ -87,7 +86,13 @@ func profileReplayPrimitives(
 	profileCtx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	pool := qpool.NewQ(profileCtx, 1, runtime.NumCPU()*4, qpool.NewConfig())
+	workerCount, err := engineWorkerCount()
+
+	if err != nil {
+		return perspectives.SearchProfile{}, err
+	}
+
+	pool := qpool.NewQ(profileCtx, 1, workerCount, qpool.NewConfig())
 	restoreLogging := qpool.SuppressLogging()
 	defer restoreLogging()
 	applyReplayMeta(replayFile)
@@ -129,7 +134,7 @@ func profileReplayPrimitives(
 		leadlag.NewSignal(runCtx, pool),
 		liquidity.NewSignal(runCtx, pool),
 		sentiment.NewSignal(runCtx, pool),
-		fluid.NewSignal(runCtx, pool),
+		fluid.NewSignal(runCtx, pool, nil),
 		causal.NewSignal(runCtx, pool),
 		cvd.NewSignal(runCtx, pool),
 		toxicity.NewToxicity(runCtx, pool),

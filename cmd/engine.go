@@ -36,8 +36,9 @@ import (
 )
 
 type engineResult struct {
-	Wallet *wallet.Wallet
-	Regret economics.RegretSummary
+	Wallet      *wallet.Wallet
+	Regret      economics.RegretSummary
+	Performance economics.PerformanceSummary
 }
 
 func bootEngine(ctx context.Context) (*engineResult, error) {
@@ -54,7 +55,13 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		}
 	}
 
-	pool := qpool.NewQ(ctx, 1, runtime.NumCPU()*4, qpool.NewConfig())
+	workerCount, err := engineWorkerCount()
+
+	if err != nil {
+		return nil, err
+	}
+
+	pool := qpool.NewQ(ctx, 1, workerCount, qpool.NewConfig())
 	restoreLogging := qpool.SuppressLogging()
 	defer restoreLogging()
 
@@ -114,7 +121,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		leadlag.NewSignal(runCtx, pool),
 		liquidity.NewSignal(runCtx, pool),
 		sentiment.NewSignal(runCtx, pool),
-		fluid.NewSignal(runCtx, pool),
+		fluid.NewSignal(runCtx, pool, tracker),
 		causal.NewSignal(runCtx, pool),
 		cvd.NewSignal(runCtx, pool),
 		toxicity.NewToxicity(runCtx, pool),
@@ -151,8 +158,9 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 	tradingCrypto.FlushGateRejectRegret()
 
 	return &engineResult{
-		Wallet: tradingWallet,
-		Regret: tradingCrypto.GateRegretSummary(),
+		Wallet:      tradingWallet,
+		Regret:      tradingCrypto.GateRegretSummary(),
+		Performance: tradingCrypto.PerformanceSummary(),
 	}, nil
 }
 
@@ -217,7 +225,7 @@ var evalCmd = &cobra.Command{
 		score := walletScore(result.Wallet)
 		start := config.System.WalletEUR
 		scoreEUR := score - start
-		fitnessEUR := TuneFitness(scoreEUR, result.Regret.MissedForwardEUR)
+		fitnessEUR := TuneFitness(scoreEUR, result.Regret.MissedForwardEUR, result.Performance)
 		bookHealth := market.BookIntegritySummary()
 
 		payload, err := json.Marshal(map[string]any{
@@ -228,6 +236,7 @@ var evalCmd = &cobra.Command{
 			"balance_eur":            result.Wallet.BalanceCopy(),
 			"open_bases":             len(result.Wallet.Snapshot().Inventory),
 			"gate_reject_regret":     result.Regret,
+			"trade_performance":      result.Performance,
 			"book_diverged_symbols":  bookHealth.DivergedSymbols,
 			"book_divergence_events": bookHealth.DivergenceEvents,
 			"book_diverged":          bookHealth.Diverged,

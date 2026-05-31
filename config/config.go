@@ -530,6 +530,17 @@ func ApplyEnvironment(cfg *Config) error {
 		cfg.LogStdoutActive = true
 	}
 
+	if logFile := strings.TrimSpace(os.Getenv("SYMM_LOG_FILE")); logFile != "" {
+		switch {
+		case logFile == "1" || strings.EqualFold(logFile, "true"):
+			cfg.LogFileActive = true
+		case logFile == "0" || strings.EqualFold(logFile, "false"):
+			cfg.LogFileActive = false
+		default:
+			return fmt.Errorf("SYMM_LOG_FILE: must be 0/1 or true/false")
+		}
+	}
+
 	if stress := strings.TrimSpace(os.Getenv("SYMM_EXECUTION_STRESS")); stress == "1" ||
 		strings.EqualFold(stress, "true") {
 		cfg.ExecutionStressEnabled = true

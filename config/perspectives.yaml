@@ -1,0 +1,348 @@
+version: 1
+playbooks:
+    - name: trend
+      regime: bullish
+      policy: standard
+      deny:
+        - any:
+            - category: toxic_bluff
+              condition: '>'
+              action: deny
+            - category: saturation
+              condition: '>'
+              action: deny
+            - category: turbulent
+              condition: '>'
+              action: deny
+            - category: liquidity_shock
+              condition: '>'
+              action: deny
+            - category: mechanical_collapse
+              condition: '>'
+              action: deny
+            - category: systemic_beta
+              condition: '>'
+              action: deny
+            - category: systemic_herd
+              condition: '>'
+              action: deny
+            - category: spoof_trap
+              condition: '>'
+              action: deny
+            - category: systemic_slump
+              condition: '>'
+              action: wait
+      entry:
+        - branches:
+            - any:
+                - branches:
+                    - branches:
+                        - any:
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: frenzy
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: laminar
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: inertial
+                              condition: '>'
+                            - branches:
+                                - category: loaded_imbalance
+                                  condition: '>'
+                                  action: enter
+                              category: hard_support
+                              condition: '>'
+                      category: endogenous_alpha
+                      condition: '>'
+                  category: risk_on_surge
+                  condition: '>'
+                - branches:
+                    - branches:
+                        - any:
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: frenzy
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: laminar
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: inertial
+                              condition: '>'
+                            - branches:
+                                - category: loaded_imbalance
+                                  condition: '>'
+                                  action: enter
+                              category: hard_support
+                              condition: '>'
+                      category: endogenous_alpha
+                      condition: '>'
+                  category: divergent_move
+                  condition: '>'
+                - branches:
+                    - branches:
+                        - any:
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: frenzy
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: laminar
+                              condition: '>'
+                            - branches:
+                                - category: aggressive_drive
+                                  condition: '>'
+                                  action: enter
+                              category: inertial
+                              condition: '>'
+                            - branches:
+                                - category: loaded_imbalance
+                                  condition: '>'
+                                  action: enter
+                              category: hard_support
+                              condition: '>'
+                      category: endogenous_alpha
+                      condition: '>'
+                  category: decoupled_alpha
+                  condition: '>'
+          condition: '>'
+      exit:
+        - any:
+            - category: active_reversal
+              condition: '>'
+              action: stop_loss
+            - category: thermal_exhaustion
+              condition: '>'
+              action: take_profit
+            - category: faded_exhaustion
+              condition: '>'
+              action: take_profit
+    - name: drive
+      regime: trending
+      policy: drive
+      deny:
+        - any:
+            - category: toxic_bluff
+              condition: '>'
+              action: deny
+            - category: saturation
+              condition: '>'
+              action: deny
+            - category: turbulent
+              condition: '>'
+              action: deny
+            - category: liquidity_shock
+              condition: '>'
+              action: deny
+            - category: mechanical_collapse
+              condition: '>'
+              action: deny
+            - category: systemic_beta
+              condition: '>'
+              action: deny
+            - category: spoof_trap
+              condition: '>'
+              action: deny
+      entry:
+        - any:
+            - category: aggressive_drive
+              condition: '>'
+              action: enter
+            - category: hidden_absorption
+              condition: '>'
+              action: enter
+      exit:
+        - any:
+            - category: active_reversal
+              condition: '>'
+              action: stop_loss
+            - category: thermal_exhaustion
+              condition: '>'
+              action: take_profit
+            - category: mechanical_collapse
+              condition: '>'
+              action: take_profit
+    - name: leadlag
+      regime: trending
+      policy: standard
+      deny:
+        - any:
+            - category: toxic_bluff
+              condition: '>'
+              action: deny
+            - category: saturation
+              condition: '>'
+              action: deny
+            - category: turbulent
+              condition: '>'
+              action: deny
+            - category: liquidity_shock
+              condition: '>'
+              action: deny
+            - category: mechanical_collapse
+              condition: '>'
+              action: deny
+            - category: systemic_beta
+              condition: '>'
+              action: deny
+            - category: systemic_herd
+              condition: '>'
+              action: deny
+            - category: spoof_trap
+              condition: '>'
+              action: deny
+            - category: systemic_slump
+              condition: '>'
+              action: wait
+      entry:
+        - branches:
+            - any:
+                - branches:
+                    - category: inefficient_lag
+                      condition: '>'
+                      action: enter
+                  category: risk_on_surge
+                  condition: '>'
+                - branches:
+                    - category: inefficient_lag
+                      condition: '>'
+                      action: enter
+                  category: divergent_move
+                  condition: '>'
+                - branches:
+                    - category: inefficient_lag
+                      condition: '>'
+                      action: enter
+                  category: decoupled_alpha
+                  condition: '>'
+          condition: '>'
+      exit:
+        - any:
+            - category: active_reversal
+              condition: '>'
+              action: stop_loss
+            - category: anchor_stall
+              condition: '>'
+              action: take_profit
+            - category: synchronized_drift
+              condition: '>'
+              action: take_profit
+    - name: scarcity
+      regime: choppy
+      policy: standard
+      deny:
+        - any:
+            - category: toxic_bluff
+              condition: '>'
+              action: deny
+            - category: saturation
+              condition: '>'
+              action: deny
+            - category: turbulent
+              condition: '>'
+              action: deny
+            - category: liquidity_shock
+              condition: '>'
+              action: deny
+            - category: mechanical_collapse
+              condition: '>'
+              action: deny
+            - category: systemic_beta
+              condition: '>'
+              action: deny
+            - category: systemic_herd
+              condition: '>'
+              action: deny
+            - category: spoof_trap
+              condition: '>'
+              action: deny
+            - category: systemic_slump
+              condition: '>'
+              action: wait
+      entry:
+        - branches:
+            - any:
+                - category: vertical_ignition
+                  condition: '>'
+                  action: enter
+                - category: coiled_compression
+                  condition: '>'
+                  action: enter
+          category: extreme_scarcity
+          condition: '>'
+      exit:
+        - any:
+            - category: active_reversal
+              condition: '>'
+              action: stop_loss
+            - category: faded_exhaustion
+              condition: '>'
+              action: take_profit
+            - category: mechanical_collapse
+              condition: '>'
+              action: take_profit
+    - name: pump
+      regime: trending
+      policy: pump
+      deny:
+        - any:
+            - category: toxic_bluff
+              condition: '>'
+              action: deny
+            - category: saturation
+              condition: '>'
+              action: deny
+            - category: turbulent
+              condition: '>'
+              action: deny
+            - category: liquidity_shock
+              condition: '>'
+              action: deny
+            - category: mechanical_collapse
+              condition: '>'
+              action: deny
+      entry:
+        - any:
+            - category: coiled_compression
+              condition: '>'
+              action: enter
+            - category: spoof_trap
+              condition: '>'
+              action: enter
+      exit:
+        - any:
+            - category: active_reversal
+              condition: '>'
+              action: stop_loss
+            - category: vertical_ignition
+              condition: '>'
+              action: short
+            - category: faded_exhaustion
+              condition: '>'
+              action: take_profit
+            - category: vertical_ignition
+              condition: '>'
+              action: stop_loss

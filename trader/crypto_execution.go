@@ -381,7 +381,7 @@ func (crypto *Crypto) handleExitFill(fill order.Fill, intent orderIntent) {
 
 	exitLabel := economics.ExitLabel(
 		intent.symbol, intent.playbook, intent.entryPrice, fill.Price,
-		intent.feePct, intent.spreadBPS, time.Now(),
+		intent.feePct, intent.spreadBPS, intent.predictedAt, time.Now(),
 	)
 	crypto.completeExit(
 		intent.symbol, intent.exitReason, exitLabel, fill,

@@ -455,6 +455,11 @@ func (crypto *Crypto) publishAudit(auditEvent, symbol, reason string, fields map
 		return
 	}
 
+	if (auditEvent == "book_diverged" || auditEvent == "book_recovered") &&
+		symbol != "" && !crypto.tracker.Streams(symbol) {
+		return
+	}
+
 	crypto.ui.Send(&qpool.QValue[any]{Value: frame})
 }
 

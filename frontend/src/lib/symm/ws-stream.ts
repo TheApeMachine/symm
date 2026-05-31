@@ -115,7 +115,6 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 				case "field_snapshot":
 				case "field_grid":
 					stores.fluid.ingest(payload);
-					StreamDataProvider.ingest("field_snapshot", payload);
 					return;
 				case "candle_bar":
 					stores.ohlc.ingest(payload);

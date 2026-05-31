@@ -117,16 +117,64 @@ func TestGenerateDocumentBuildsFromProfile(t *testing.T) {
 		})
 
 		profile := builder.Profile()
-		document := GenerateDocument(profile, rand.New(rand.NewSource(2)))
-		strategies, err := BuildStrategies(document)
+		random := rand.New(rand.NewSource(2))
+		var document Document
+		foundVariablePlaybookSet := false
+		foundFreeEntryRoot := false
 
-		Convey("It should synthesize valid playbook trees without a predefined shape", func() {
+		for range 32 {
+			document = GenerateDocument(profile, random)
+			strategies, err := BuildStrategies(document)
 			So(err, ShouldBeNil)
-			So(len(strategies), ShouldEqual, len(searchPlaybookTemplates))
+			So(strategies, ShouldNotBeEmpty)
+
+			if len(document.Playbooks) != len(searchPlaybookNames) {
+				foundVariablePlaybookSet = true
+			}
+
+			if documentHasFreeEntryRoot(document) {
+				foundFreeEntryRoot = true
+			}
+		}
+
+		Convey("It should synthesize valid playbook trees without a predefined template", func() {
+			So(foundVariablePlaybookSet, ShouldBeTrue)
+			So(foundFreeEntryRoot, ShouldBeTrue)
 			So(document.Playbooks, ShouldNotBeEmpty)
-			So(document.Playbooks[0].Entry, ShouldNotBeEmpty)
-			So(document.Playbooks[0].Entry[0].Metric, ShouldEqual, MetricScoreCostRatio)
 			So(denyEntryOverlaps(document), ShouldBeEmpty)
+		})
+	})
+}
+
+func TestBuildStrategiesDoesNotInjectImplicitDenyTree(t *testing.T) {
+	Convey("Given YAML without a deny section", t, func() {
+		payload := []byte(`
+version: 1
+playbooks:
+  - name: pump
+    regime: trending
+    policy: pump
+    entry:
+      - category: vertical_ignition
+        action: enter
+    exit:
+      - category: active_reversal
+        action: stop_loss
+`)
+
+		document, err := DecodeDocument(payload)
+		So(err, ShouldBeNil)
+
+		strategies, err := BuildStrategies(document)
+		So(err, ShouldBeNil)
+
+		action := strategies[0].Decide(
+			[]Measurement{measurement(CategoryToxicBluff, 2)},
+			nil,
+		)
+
+		Convey("It should treat the YAML tree as literal", func() {
+			So(action, ShouldBeNil)
 		})
 	})
 }
@@ -226,6 +274,18 @@ func denyEntryOverlaps(document Document) []string {
 	return overlaps
 }
 
+func documentHasFreeEntryRoot(document Document) bool {
+	for _, playbook := range document.Playbooks {
+		for _, branch := range playbook.Entry {
+			if branch.Category != "" || len(branch.Any) > 0 || len(branch.All) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func TestCloneDocument(t *testing.T) {
 	Convey("Given a playbook document", t, func() {
 		source := Document{
@@ -270,5 +330,33 @@ func BenchmarkMutateDocument(b *testing.B) {
 		if _, err := BuildStrategies(mutated); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkDocumentSearchNextObserve(b *testing.B) {
+	profile := SearchProfile{Categories: []CategoryStat{{
+		Name:    CategoryAggressiveDrive.String(),
+		Source:  SourceCVD.String(),
+		Count:   10,
+		MeanSNR: 1.4,
+		MaxSNR:  2.0,
+		P50SNR:  1.2,
+		P75SNR:  1.5,
+		P90SNR:  1.8,
+	}}}
+	search, err := NewDocumentSearch(profile, rand.New(rand.NewSource(8)))
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for b.Loop() {
+		document := search.Next()
+
+		if _, err := BuildStrategies(document); err != nil {
+			b.Fatal(err)
+		}
+
+		search.Observe(document, rand.Float64())
 	}
 }

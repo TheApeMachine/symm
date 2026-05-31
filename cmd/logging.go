@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,11 +25,12 @@ func configureLogging() {
 
 	errnie.Apply(cfg)
 
-	if config.System.LogStdoutActive {
+	switch logWriterTargetFor(config.System, path) {
+	case logWriterTargetStdout:
 		return
-	}
+	case logWriterTargetDiscard:
+		log.DefaultLogger.Writer = log.IOWriter{Writer: io.Discard}
 
-	if !config.System.LogFileActive || strings.TrimSpace(path) == "" {
 		return
 	}
 
@@ -38,6 +40,26 @@ func configureLogging() {
 	}
 
 	fmt.Fprintf(os.Stderr, "symm: logging to %s (SYMM_LOG_STDOUT=1 for console)\n", path)
+}
+
+type logWriterTarget int
+
+const (
+	logWriterTargetStdout logWriterTarget = iota
+	logWriterTargetFile
+	logWriterTargetDiscard
+)
+
+func logWriterTargetFor(cfg *config.Config, path string) logWriterTarget {
+	if cfg.LogStdoutActive {
+		return logWriterTargetStdout
+	}
+
+	if cfg.LogFileActive && strings.TrimSpace(path) != "" {
+		return logWriterTargetFile
+	}
+
+	return logWriterTargetDiscard
 }
 
 func init() {

@@ -117,7 +117,7 @@ Registration lives in `cmd/root.go`. Systems communicate only through named broa
 ```
 cmd.Execute()
   └─ rootCmd.Run
-       ├─ create qpool (1 producer, NumCPU×4 workers)
+       ├─ create qpool (1 producer, NumCPU×4 workers; `SYMM_ENGINE_WORKERS` override)
        ├─ market.DiscoverSymbols(QuoteCurrency) → config.System.Symbols
        ├─ focus.NewSet()  (shared open-position symbol set)
        ├─ instantiate all systems (ordered)
@@ -187,7 +187,7 @@ type Decision struct {
 }
 ```
 
-`market.Decisions(measurements, observations)` returns every playbook that authorizes action for the current measurement set. `market.Decide` returns the first actionable verdict in fixed priority order. `market.ExitDecisions` merges the opening playbook's exit tree with the universal exhaust overlay.
+`market.Decisions(measurements, observations)` returns every playbook that authorizes action for the current measurement set. `market.Decide` returns the first actionable verdict in registry order. For the Go builtin registry, `market.ExitDecisions` merges the opening playbook's exit tree with the universal exhaust overlay; YAML-loaded registries use only the loaded YAML exits.
 
 **Actions:** `ActionEnter`, `ActionDeny`, `ActionWait`, `ActionStopLoss`, `ActionTakeProfit`, `ActionShort`.
 
@@ -195,7 +195,7 @@ type Decision struct {
 
 Boot uses the Go constructors in `market/perspectives/` (`NewTrendPerspective`, etc.) unless a YAML registry file exists and loads successfully. By default that path is `runs/perspectives.yaml` (written by `make tune`); set `SYMM_PERSPECTIVES_FILE` to override. `config/perspectives.yaml` is a version-controlled export of the same builtin trees (`BuiltinDocument()`), not auto-loaded at boot.
 
-Order is conviction-first: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite the tree shapes inside those named slots.
+Order is conviction-first for the Go builtin registry: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite tree shape, registry order, playbook count, regimes, policies, and entry/deny/exit branch structure inside the valid YAML schema.
 
 | Priority | Playbook   | Thesis                                                                                                                  |
 |----------|------------|-------------------------------------------------------------------------------------------------------------------------|
@@ -218,7 +218,7 @@ required_score   = EntryEdgeMultiple × round_trip_friction_pct × 100
 
 The desk still keeps friction and economics checks as a final defense, but the default YAML now gates entries before the desk sees them.
 
-**Universal deny branches** — evaluated by every playbook before entry gates:
+**Builtin deny branches** — explicit in the builtin YAML export before entry gates:
 
 | Deny branch      | Trigger category                             |
 |------------------|----------------------------------------------|
@@ -331,7 +331,7 @@ On each `measurements` message:
 
 ### Exit path
 
-For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run `market.ExitDecisions` with `ObservationHolding` (opening playbook + universal exhaust overlay). `MostUrgentExit` chooses stop before take-profit. Soft take-profits respect `MinExhaustHold` post-entry.
+For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run `market.ExitDecisions` with `ObservationHolding`. Builtins include the opening playbook plus universal exhaust overlay; YAML registries use only their loaded exit trees. `MostUrgentExit` chooses stop before take-profit. Soft take-profits respect `MinExhaustHold` post-entry.
 
 ### Paper / live parity
 
@@ -382,17 +382,17 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 `symm tune` runs a replay-backed search over two spaces:
 
 - numeric tunables from `TunableSpecs()`
-- generated perspective-tree YAML built from the measurements observed in the replay
+- MCTS-searched perspective-tree YAML built from measurements observed in the replay
 
-Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then generated from those primitives: entry routes, deny/wait gates, exit leaves, category thresholds, and metric gates such as `score_cost_ratio` and `in_play`. The generated YAML is evaluated by `symm eval`; the best eligible tree set is written to `--perspectives-output`.
+Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then searched with a Monte Carlo tree search over the YAML document itself: add/remove playbooks, change registry order, change regime/policy labels, add/remove/replace/grow entry/deny/exit branches, and vary category conditions and thresholds from replay-observed SNR quantiles. There is no fixed playbook template in the search path. The generated YAML is evaluated by `symm eval`; the best eligible tree set is written to `--perspectives-output`.
 
 One scalar drives selection:
 
 ```
-fitness_eur = score_eur − gate_reject_regret.missed_forward_eur
+fitness_eur = velocity_adjusted_score_eur − gate_reject_regret.missed_forward_eur
 ```
 
-Wallet PnL plus a penalty for profitable entries the gates blocked.
+Wallet PnL is discounted when profitable exits take longer to realize, using the observed profitable hold time relative to `perspective_ttl`; losses stay fully counted. A penalty is also applied for profitable entries the gates blocked.
 
 | Dimension                       | Range                |
 |---------------------------------|----------------------|
@@ -420,17 +420,19 @@ Wallet PnL plus a penalty for profitable entries the gates blocked.
 | `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `causal_condition_switch`       | 100 – 5000           |
 
-Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a playbook-tree draw (`DocumentSearch` mutates the best holdout tree ~50–80% of the time after warm-up). Tune scores your current desk config first, then searches for a better holdout wallet fitness. Progress prints to **stderr** in plain language (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial); the final summary JSON stays on **stdout**. By default tune **runs until you press Ctrl+C**, then writes the current best to `runs/tuned.json` and `runs/perspectives.yaml`. Set `--iterations N` (or `make tune ITERATIONS=N`) to cap trials. Pass `--quiet` to suppress stderr.
+Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a Monte Carlo tree-search draw (`DocumentSearch`) from the YAML tree space. Tune scores your current desk config first, then searches for a better holdout wallet fitness. Loaded YAML is treated literally: tune-loaded registries do not inherit hidden default deny branches or the builtin universal exit overlay. Trial jobs are dispatched through qpool `ScheduleFast`; `--workers` controls concurrent eval subprocesses, each child gets a bounded `GOMAXPROCS` share and `SYMM_ENGINE_WORKERS` budget, and eval file/stdout logs are disabled. Replay perturbation stays on by default for train evals, with deterministic per-trial seeds. Progress prints to **stderr** in plain language (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial); the final summary JSON stays on **stdout**. By default tune **runs until you press Ctrl+C**, then writes the current best to `runs/tuned.json` and `runs/perspectives.yaml`. Set `--iterations N` (or `make tune ITERATIONS=N`) to cap trials. Pass `--quiet` to suppress stderr.
 
-With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet). The best eligible candidate by **maximum** holdout fitness is written to `--output` (default `runs/tuned.json`) and `--perspectives-output` (default `runs/perspectives.yaml`), with absolute paths echoed on stderr.
+With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet), and the selected split must include at least one realized profitable trade so no-trade trees cannot win with a flat €0 score. The best eligible candidate by **maximum** holdout fitness is written to `--output` (default `runs/tuned.json`) and `--perspectives-output` (default `runs/perspectives.yaml`), with absolute paths echoed on stderr.
 
-`symm eval` prints JSON including `fitness_eur`, `score_eur`, and `gate_reject_regret`.
+`symm eval` prints JSON including `fitness_eur`, `score_eur`, `trade_performance`, and `gate_reject_regret`.
 
 ```
 symm tune
   --replay   runs/capture.jsonl   default when omitted
   --auto-holdout                  reserve last 20% as holdout (default true)
   --holdout  <holdout.jsonl>      optional, repeatable; disables auto-holdout split
+  --walk-forward-folds 3          expanding holdout folds from the replay tail
+  --replay-perturb true           jitter train replay qty/timestamps per trial
   --iterations  0                max trials (0 = until Ctrl+C)
   --workers     <numCPU>         concurrent eval workers
   --output      runs/tuned.json  persisted best config
@@ -552,7 +554,7 @@ make tune      # searches tunables + learned tree YAML; writes runs/tuned.json +
 
 That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
 
-`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
+`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, adds the default walk-forward folds, perturbs train replay evals, and maximizes velocity-adjusted wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
 
 Optional overrides:
 
@@ -704,7 +706,7 @@ Full environment wiring is in `config/config.go`.
 | `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
 | `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
 
-Hyperparameter and tree search: `--iterations` (default 0 = until Ctrl+C), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `runs/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `runs/perspectives.yaml` at next boot when those files exist; otherwise Go builtin playbooks apply.
+Hyperparameter and tree search: `--iterations` (default 0 = until Ctrl+C), `--workers` (default NumCPU), `--walk-forward-folds` (default 3), `--replay-perturb` (default true), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `runs/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `runs/perspectives.yaml` at next boot when those files exist; otherwise Go builtin playbooks apply.
 
 </details>
 

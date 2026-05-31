@@ -17,10 +17,6 @@ const reconcileInterval = time.Second
 // candleIntervalMinutes is the OHLC bar size streamed to the chart.
 const candleIntervalMinutes = 1
 
-// anchorSymbol always streams regardless of open positions so the dashboard's
-// reference price chart is never blank.
-const anchorSymbol = "BTC/EUR"
-
 /*
 OHLC streams candle bars to the dashboard for symbols with an open position only.
 The trade desk owns the focus set; this feed reconciles against it, opening a
@@ -75,7 +71,7 @@ func (ohlc *OHLC) Tick() error {
 // reconcile starts a candle stream for every newly opened position and stops the
 // stream for any symbol whose position has closed.
 func (ohlc *OHLC) reconcile() {
-	wanted := map[string]struct{}{anchorSymbol: {}}
+	wanted := map[string]struct{}{focus.AnchorSymbol: {}}
 
 	for _, symbol := range ohlc.tracker.Snapshot() {
 		wanted[symbol] = struct{}{}

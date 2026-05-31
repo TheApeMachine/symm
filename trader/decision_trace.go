@@ -90,9 +90,21 @@ func (crypto *Crypto) publishDecisionTrace() {
 		return
 	}
 
-	payload := make([]map[string]any, len(rows))
+	filtered := make([]decisionTraceRow, 0, len(rows))
 
-	for index, row := range rows {
+	for _, row := range rows {
+		if crypto.tracker.Streams(row.Symbol) {
+			filtered = append(filtered, row)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	payload := make([]map[string]any, len(filtered))
+
+	for index, row := range filtered {
 		payload[index] = map[string]any{
 			"symbol":     row.Symbol,
 			"regime":     row.Regime,

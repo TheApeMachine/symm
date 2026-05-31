@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	blendHeightmapTowardPeaks,
 	bilinearSampleGrid,
+	buildFluidGrid,
 	projectFluidGridToHeightmap,
 	smoothHeightmapSpatial,
 	spatialSmoothRadius,
@@ -77,6 +78,29 @@ describe("projectFluidGridToHeightmap", () => {
 
 		expect(projected.display[5][5]).toBeLessThan(projected.raw[5][5]);
 		expect(projected.display[5][5]).toBeGreaterThan(projected.display[4][5]);
+	});
+});
+
+describe("buildFluidGrid", () => {
+	it("keeps a visible hotspot when only one symbol is present", () => {
+		const grid = buildFluidGrid([
+			{
+				symbol: "BTC/EUR",
+				change_pct: 1.2,
+				vol: 400,
+				div: 0.1,
+				vort: 0.2,
+				turb: 0.3,
+				visc: 0.05,
+				re: 1200,
+			},
+		]);
+		const projected = projectFluidGridToHeightmap(grid, 50, 50, -0.3, 0.3);
+		const values = projected.display.flat();
+		const min = Math.min(...values);
+		const max = Math.max(...values);
+
+		expect(max - min).toBeGreaterThan(0.05);
 	});
 });
 

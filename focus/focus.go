@@ -7,6 +7,11 @@ import (
 )
 
 /*
+AnchorSymbol always streams on the UI bus alongside symbols with open positions.
+*/
+const AnchorSymbol = "BTC/EUR"
+
+/*
 Set is the shared set of symbols with an open position. The trader is its only
 writer (on entry and exit); producers read it to decide whether to publish a
 per-symbol UI frame, so the dashboard bus only carries data for symbols we are
@@ -58,7 +63,19 @@ Has reports whether symbol currently has an open position.
 */
 func (set *Set) Has(symbol string) bool {
 	_, ok := (*set.symbols.Load())[symbol]
+
 	return ok
+}
+
+/*
+Streams reports whether symbol should publish per-pair UI telemetry.
+*/
+func (set *Set) Streams(symbol string) bool {
+	if symbol == AnchorSymbol {
+		return true
+	}
+
+	return set.Has(symbol)
 }
 
 /*

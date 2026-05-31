@@ -3,10 +3,12 @@ package fluid
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
@@ -15,24 +17,25 @@ Signal applies order-book fluid dynamics per symbol and maps the field onto the
 mechanical perspective (Laminar / Turbulent / Inertial / Viscous). It consumes
 book, trades, and ticks; the field model lives in FluidSymbol.
 */
-// fieldInterval rate-limits each symbol's field row to the surface. The frontend
-// rebuilds the whole 32x32 grid on every row, so streaming one per book delta
-// (across the full universe) burns CPU on both ends for updates the eye cannot
-// resolve; a few per second per symbol keeps the surface live and cheap.
-const fieldInterval = 200 * time.Millisecond
+// fieldSnapshotInterval rate-limits the aggregated universe field snapshot. The
+// surface needs every symbol to build change% × vol topology; one snapshot per
+// interval keeps the UI channel lean without collapsing the field to a flat
+// anchor-only plane when per-pair streams are focus-gated elsewhere.
+const fieldSnapshotInterval = 200 * time.Millisecond
 
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map
-	ui          *qpool.BroadcastGroup
-	fieldEmit   sync.Map
+	ctx               context.Context
+	cancel            context.CancelFunc
+	pool              *qpool.Q
+	broadcasts        map[string]*qpool.BroadcastGroup
+	subscribers       map[string]*qpool.Subscriber
+	symbols           sync.Map
+	tracker           *focus.Set
+	ui                *qpool.BroadcastGroup
+	lastFieldSnapshot atomic.Int64
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -41,6 +44,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		tracker:     tracker,
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -116,31 +120,46 @@ func (signal *Signal) emit(symbol string) {
 	signal.publishField(symbol, state)
 }
 
-// publishField ships the symbol's fluid-field row to the dashboard surface, rate
-// limited per symbol so the universe-wide field does not flood the bus or the
-// frontend grid rebuild.
+// publishField ships an aggregated universe field snapshot to the dashboard
+// surface. Per-pair UI streams stay focus-gated; the fluid surface is not a
+// single-pair chart and needs the full symbol set to render meaningful topology.
 func (signal *Signal) publishField(symbol string, state *FluidSymbol) {
-	now := time.Now()
+	_ = symbol
 
-	if last, seen := signal.fieldEmit.Load(symbol); seen {
-		if now.Sub(last.(time.Time)) < fieldInterval {
-			return
-		}
-	}
-
-	row := state.Row()
-
-	if row == nil {
+	if state.Row() == nil {
 		return
 	}
 
-	signal.fieldEmit.Store(symbol, now)
+	now := time.Now()
+	lastNano := signal.lastFieldSnapshot.Load()
+
+	if lastNano > 0 && now.Sub(time.Unix(0, lastNano)) < fieldSnapshotInterval {
+		return
+	}
+
+	rows := make([]map[string]any, 0, len(config.System.Symbols))
+
+	signal.symbols.Range(func(_, value any) bool {
+		row := value.(*FluidSymbol).Row()
+
+		if row != nil {
+			rows = append(rows, row)
+		}
+
+		return true
+	})
+
+	if len(rows) == 0 {
+		return
+	}
+
+	signal.lastFieldSnapshot.Store(now.UnixNano())
 
 	signal.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":  "field_row",
-		"ts":     now.UTC().Format(time.RFC3339Nano),
-		"symbol": symbol,
-		"row":    row,
+		"event":        "field_snapshot",
+		"ts":           now.UTC().Format(time.RFC3339Nano),
+		"symbol_count": len(rows),
+		"symbols":      rows,
 	}})
 }
 
