@@ -56,6 +56,9 @@ func (crypto *Crypto) GateRegretSummary() economics.RegretSummary {
 	return crypto.economics.GateRegretSummary()
 }
 
+/*
+PerformanceSummary returns closed-trade economics for this Crypto desk instance.
+*/
 func (crypto *Crypto) PerformanceSummary() economics.PerformanceSummary {
 	return crypto.economics.PerformanceSummary()
 }

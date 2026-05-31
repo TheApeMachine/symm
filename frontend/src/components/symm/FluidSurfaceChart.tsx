@@ -23,6 +23,8 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart() {
 	const [editMode, setEditMode] = useState(false);
 	const [visualParams, setVisualParams] = useState(loadFluidVisualParams);
 	const controlsRef = useRef<FluidSurfaceControls | null>(null);
+	const visualParamsRef = useRef(visualParams);
+	visualParamsRef.current = visualParams;
 
 	const initChart = useMemo(
 		() => createDrawExample(loadFluidVisualParams()),
@@ -37,13 +39,10 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart() {
 
 	const handleParamChange = useCallback(
 		(key: FluidVisualParamKey, value: number) => {
-			setVisualParams((previous) => {
-				const next = { ...previous, [key]: value };
-				saveFluidVisualParams(next);
-				controlsRef.current?.applyVisualParams(next);
-
-				return next;
-			});
+			const next = { ...visualParamsRef.current, [key]: value };
+			setVisualParams(next);
+			saveFluidVisualParams(next);
+			controlsRef.current?.applyVisualParams(next);
 		},
 		[],
 	);

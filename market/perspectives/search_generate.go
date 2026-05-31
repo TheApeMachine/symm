@@ -231,11 +231,7 @@ func (profile SearchProfile) searchCategories() []CategoryStat {
 		categories = append(categories, category)
 	}
 
-	if len(categories) > 0 {
-		return categories
-	}
-
-	return append([]CategoryStat(nil), profile.Categories...)
+	return categories
 }
 
 func sampleCategory(categories []CategoryStat, random *rand.Rand) CategoryStat {

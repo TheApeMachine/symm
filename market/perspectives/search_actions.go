@@ -29,27 +29,6 @@ type documentAction struct {
 	policy        string
 }
 
-func searchActions(
-	document Document,
-	profile SearchProfile,
-	random *rand.Rand,
-) []documentAction {
-	document = normalizeSearchDocument(document, profile, random)
-	actions := make([]documentAction, 0, searchActionSampleCount)
-
-	for len(actions) < searchActionSampleCount {
-		action, ok := randomDocumentAction(document, profile, random)
-
-		if !ok {
-			break
-		}
-
-		actions = append(actions, action)
-	}
-
-	return actions
-}
-
 func randomDocumentAction(
 	document Document,
 	profile SearchProfile,

@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/spf13/cobra"
@@ -17,15 +16,16 @@ import (
 )
 
 type tuneRunOptions struct {
-	replayFile         string
-	holdoutFiles       []string
-	autoHoldout        bool
-	walkForwardFolds   int
-	perturbTrain       bool
-	stressHoldout      bool
-	maxTrials          int
-	workers            int
-	evalWorkers        int
+	replayFile       string
+	holdoutFiles     []string
+	autoHoldout      bool
+	walkForwardFolds int
+	perturbTrain     bool
+	stressHoldout    bool
+	maxTrials        int
+	workers          int
+	// evalCPUBudget is the per-subprocess GOMAXPROCS share, not concurrent worker count.
+	evalCPUBudget      int
 	output             string
 	perspectiveOutput  string
 	maxTrainHoldoutGap float64
@@ -105,13 +105,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 	tunablesSearch := config.NewTunablesSearch(config.System, nil)
 	rejectedOverfit := atomic.Int64{}
 	rejectedNoProfit := atomic.Int64{}
-	hasBest := false
-	bestSelection := 0.0
-	bestTrainScore := 0.0
-	bestHoldoutScores := []float64(nil)
-	bestGap := 0.0
-	var bestConfig tuneCandidate
-	var bestMu sync.Mutex
+	bestState := newTuneBestState()
 
 	reporter.Phase("Step 2/3: scoring current desk config as search starting point…")
 
@@ -122,17 +116,11 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		replayPaths.holdoutPaths,
 		options.stressHoldout,
 		options.perturbTrain,
-		options.evalWorkers,
+		options.evalCPUBudget,
 		options.maxTrainHoldoutGap,
 		documentSearch,
 		tunablesSearch,
-		&hasBest,
-		&bestSelection,
-		&bestTrainScore,
-		&bestHoldoutScores,
-		&bestGap,
-		&bestConfig,
-		&bestMu,
+		bestState,
 	); err != nil {
 		reporter.Phase(fmt.Sprintf("Baseline skipped: %v", err))
 	}
@@ -159,22 +147,16 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		tunablesSearch,
 		&rejectedOverfit,
 		&rejectedNoProfit,
-		tuneSearchState{
-			hasBest:           &hasBest,
-			bestSelection:     &bestSelection,
-			bestTrainScore:    &bestTrainScore,
-			bestHoldoutScores: &bestHoldoutScores,
-			bestGap:           &bestGap,
-			bestConfig:        &bestConfig,
-			bestMu:            &bestMu,
-		},
+		bestState,
 	)
 
 	if interrupted {
 		reporter.Phase("Ctrl+C received — finishing in-flight trials and saving the current best…")
 	}
 
-	if !hasBest {
+	bestSnapshot := bestState.Snapshot()
+
+	if !bestSnapshot.hasBest {
 		message := "no eligible candidates — selected splits need realized profitable trades; " +
 			"widen --max-train-holdout-gap only if the rejects are overfit-gap rejects"
 		reporter.Phase(message)
@@ -182,7 +164,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		return tuneRunResult{}, fmt.Errorf("%s", message)
 	}
 
-	overlay := bestConfig.tunables
+	overlay := bestSnapshot.config.tunables
 	overlay.Apply(config.System)
 
 	reporter.Phase("Writing best configuration to run artifacts…")
@@ -192,7 +174,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		options.output,
 		options.perspectiveOutput,
 		config.System,
-		bestConfig.perspectives,
+		bestSnapshot.config.perspectives,
 	)
 
 	if err != nil {
@@ -200,10 +182,10 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"best_fitness_eur":         bestSelection,
-		"best_train_fitness_eur":   bestTrainScore,
-		"best_holdout_fitness_eur": bestHoldoutScores,
-		"best_train_holdout_gap":   bestGap,
+		"best_fitness_eur":         bestSnapshot.selection,
+		"best_train_fitness_eur":   bestSnapshot.trainScore,
+		"best_holdout_fitness_eur": bestSnapshot.holdoutScores,
+		"best_train_holdout_gap":   bestSnapshot.gap,
 		"max_train_holdout_gap":    options.maxTrainHoldoutGap,
 		"rejected_overfit":         rejectedOverfit.Load(),
 		"rejected_no_profit":       rejectedNoProfit.Load(),
@@ -217,7 +199,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		"max_trials":               options.maxTrials,
 		"stopped_by_user":          interrupted,
 		"workers":                  options.workers,
-		"eval_workers":             options.evalWorkers,
+		"eval_cpu_budget":          options.evalCPUBudget,
 	})
 
 	if err != nil {
@@ -237,8 +219,8 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 	reporter.Summary(fmt.Sprintf(
 		"Done (%s) — best holdout wallet fitness €%.2f (train €%.2f, %d trials, %d overfit rejects, %d no-profit rejects)",
 		stopReason,
-		bestSelection,
-		bestTrainScore,
+		bestSnapshot.selection,
+		bestSnapshot.trainScore,
 		trialsCompleted,
 		rejectedOverfit.Load(),
 		rejectedNoProfit.Load(),
@@ -343,7 +325,7 @@ func tuneOptionsFromCommand(cmd *cobra.Command) (tuneRunOptions, error) {
 		stressHoldout:      stressHoldout,
 		maxTrials:          maxTrials,
 		workers:            workers,
-		evalWorkers:        resolveTuneEvalWorkers(workers),
+		evalCPUBudget:      resolveTuneEvalWorkers(workers),
 		output:             output,
 		perspectiveOutput:  perspectiveOutput,
 		maxTrainHoldoutGap: resolveMaxTrainHoldoutGap(maxGapFlag, config.System.WalletEUR),
@@ -358,17 +340,11 @@ func seedTuneSearchBaseline(
 	holdoutReplays []string,
 	stressHoldout bool,
 	perturbTrain bool,
-	evalWorkers int,
+	evalCPUBudget int,
 	maxTrainHoldoutGap float64,
 	documentSearch *perspectives.DocumentSearch,
 	tunablesSearch *config.TunablesSearch,
-	hasBest *bool,
-	bestSelection *float64,
-	bestTrainScore *float64,
-	bestHoldoutScores *[]float64,
-	bestGap *float64,
-	bestConfig *tuneCandidate,
-	bestMu *sync.Mutex,
+	bestState *tuneBestState,
 ) error {
 	perspectivePath := config.PerspectiveLoadPath()
 	document, err := loadBaselineDocument(perspectivePath)
@@ -387,7 +363,7 @@ func seedTuneSearchBaseline(
 		stressHoldout,
 		perturbTrain,
 		1,
-		evalWorkers,
+		evalCPUBudget,
 		maxTrainHoldoutGap,
 		candidate,
 	)
@@ -408,19 +384,12 @@ func seedTuneSearchBaseline(
 		return fmt.Errorf("baseline not eligible: %s", scores.rejectReason)
 	}
 
-	documentSearch.Observe(document, scores.selection)
+	documentSearch.Observe(document, scores.selection, 0)
 	tunablesSearch.Observe(candidate.tunables, scores.selection)
 
-	bestMu.Lock()
-	*hasBest = true
-	*bestSelection = scores.selection
-	*bestTrainScore = scores.trainScore
-	*bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
-	*bestGap = scores.gap
-	*bestConfig = snapshotTuneCandidate(document, candidate.tunables)
-	bestMu.Unlock()
+	bestConfig := bestState.SetBaseline(candidate, scores)
 
-	if saveErr := saveTuneLeader(reporter, options, *bestConfig); saveErr != nil {
+	if saveErr := saveTuneLeader(reporter, options, bestConfig); saveErr != nil {
 		return saveErr
 	}
 

@@ -12,12 +12,12 @@ func TestDocumentSearchNext(t *testing.T) {
 		search, err := NewDocumentSearch(testSearchProfile(), rand.New(rand.NewSource(13)))
 		So(err, ShouldBeNil)
 
-		document := search.Next()
+		document, pendingID := search.Next()
 		_, err = BuildStrategies(document)
 		So(err, ShouldBeNil)
 
-		search.Observe(document, 4.2)
-		next := search.Next()
+		search.Observe(document, 4.2, pendingID)
+		next, _ := search.Next()
 		_, err = BuildStrategies(next)
 
 		Convey("It should backpropagate rewards and keep searching valid trees", func() {

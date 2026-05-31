@@ -11,13 +11,13 @@ import (
 )
 
 type evalTrialOptions struct {
-	replayFile   string
-	tunables     config.Tunables
-	perspectives *perspectives.Document
-	stress       bool
-	perturb      bool
-	perturbSeed  int64
-	evalWorkers  int
+	replayFile    string
+	tunables      config.Tunables
+	perspectives  *perspectives.Document
+	stress        bool
+	perturb       bool
+	perturbSeed   int64
+	evalCPUBudget int
 }
 
 type tuneCandidate struct {
@@ -192,18 +192,18 @@ func scoreTrial(
 	stressHoldout bool,
 	perturbTrain bool,
 	perturbSeed int64,
-	evalWorkers int,
+	evalCPUBudget int,
 	maxTrainHoldoutGap float64,
 	candidate tuneCandidate,
 ) (trialScores, error) {
 	trainResult, err := runEvalTrial(evalTrialOptions{
-		replayFile:   trainReplay,
-		tunables:     candidate.tunables,
-		perspectives: candidate.perspectives,
-		stress:       false,
-		perturb:      perturbTrain,
-		perturbSeed:  perturbSeed,
-		evalWorkers:  evalWorkers,
+		replayFile:    trainReplay,
+		tunables:      candidate.tunables,
+		perspectives:  candidate.perspectives,
+		stress:        false,
+		perturb:       perturbTrain,
+		perturbSeed:   perturbSeed,
+		evalCPUBudget: evalCPUBudget,
 	})
 
 	if err != nil {
@@ -215,11 +215,11 @@ func scoreTrial(
 
 	for _, holdoutReplay := range holdoutReplays {
 		holdoutResult, holdoutErr := runEvalTrial(evalTrialOptions{
-			replayFile:   holdoutReplay,
-			tunables:     candidate.tunables,
-			perspectives: candidate.perspectives,
-			stress:       stressHoldout,
-			evalWorkers:  evalWorkers,
+			replayFile:    holdoutReplay,
+			tunables:      candidate.tunables,
+			perspectives:  candidate.perspectives,
+			stress:        stressHoldout,
+			evalCPUBudget: evalCPUBudget,
 		})
 
 		if holdoutErr != nil {
@@ -298,9 +298,9 @@ func runEvalTrial(options evalTrialOptions) (evalTrialResult, error) {
 		"SYMM_LOG_FILE":    "0",
 	}
 
-	if options.evalWorkers > 0 {
-		env["GOMAXPROCS"] = fmt.Sprintf("%d", options.evalWorkers)
-		env[engineWorkersEnv] = fmt.Sprintf("%d", resolveTuneEngineWorkers(options.evalWorkers))
+	if options.evalCPUBudget > 0 {
+		env["GOMAXPROCS"] = fmt.Sprintf("%d", options.evalCPUBudget)
+		env[engineWorkersEnv] = fmt.Sprintf("%d", resolveTuneEngineWorkers(options.evalCPUBudget))
 	}
 
 	if perspectivePath != "" {

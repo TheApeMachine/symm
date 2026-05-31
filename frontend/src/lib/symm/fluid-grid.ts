@@ -507,8 +507,11 @@ export function buildFluidGrid(
 	if (finiteRows.length === 1) {
 		const row = finiteRows[0];
 		const peak = displayHeight(row, outliers.clippedAt);
-		const zOrigin = binIndex(percentileRank(row.change_pct, changes), size);
-		const xOrigin = binIndex(percentileRank(row.vol, vols), size);
+		const zRank =
+			changes.length === 1 ? 0.5 : percentileRank(row.change_pct, changes);
+		const xRank = vols.length === 1 ? 0.5 : percentileRank(row.vol, vols);
+		const zOrigin = binIndex(zRank, size);
+		const xOrigin = binIndex(xRank, size);
 		const sigma = Math.max(size / 6, 2);
 		const sigmaSq = 2 * sigma * sigma;
 

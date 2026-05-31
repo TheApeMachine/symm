@@ -18,6 +18,12 @@ type Desk struct {
 	labels  []Label
 }
 
+/*
+PerformanceSummary aggregates closed trade economics for desk reporting.
+ClosedTrades counts realized exits; ProfitableTrades and LosingTrades partition
+those by sign of NetReturn; PositiveNetReturn and NegativeNetReturn sum the
+winning and losing legs; MeanProfitHoldMS averages hold time on winners only.
+*/
 type PerformanceSummary struct {
 	ClosedTrades      int     `json:"closed_trades"`
 	ProfitableTrades  int     `json:"profitable_trades"`
@@ -129,6 +135,9 @@ func (desk *Desk) RecentLabels() []Label {
 	return out
 }
 
+/*
+PerformanceSummary returns closed-trade economics aggregated from desk labels.
+*/
 func (desk *Desk) PerformanceSummary() PerformanceSummary {
 	desk.mu.Lock()
 	defer desk.mu.Unlock()

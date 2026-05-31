@@ -19,8 +19,6 @@ func captureFixturePath(t *testing.T) string {
 
 	if candidate == "" {
 		t.Skip("capture integrity tests require SYMM_CAPTURE_FIXTURE=/path/to/capture.jsonl")
-
-		return ""
 	}
 
 	if _, err := os.Stat(candidate); err != nil {

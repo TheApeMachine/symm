@@ -24,10 +24,11 @@ func resolveTuneEvalWorkersFor(workers int, cpus int) int {
 	return budget
 }
 
-func resolveTuneEngineWorkers(evalWorkers int) int {
-	if evalWorkers <= 0 {
+// resolveTuneEngineWorkers maps per-subprocess CPU budget to SYMM_ENGINE_WORKERS.
+func resolveTuneEngineWorkers(evalCPUBudget int) int {
+	if evalCPUBudget <= 0 {
 		return 1
 	}
 
-	return evalWorkers * 4
+	return evalCPUBudget * 4
 }

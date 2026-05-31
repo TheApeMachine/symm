@@ -231,9 +231,9 @@ func TestDocumentSearchKeepsBuildableAfterObserve(t *testing.T) {
 		search, err := NewDocumentSearch(profile, rand.New(rand.NewSource(4)))
 		So(err, ShouldBeNil)
 
-		document := search.Next()
-		search.Observe(document, 12)
-		next := search.Next()
+		document, pendingID := search.Next()
+		search.Observe(document, 12, pendingID)
+		next, _ := search.Next()
 		_, err = BuildStrategies(next)
 
 		Convey("It should keep producing buildable candidates after Observe", func() {
@@ -277,7 +277,7 @@ func denyEntryOverlaps(document Document) []string {
 func documentHasFreeEntryRoot(document Document) bool {
 	for _, playbook := range document.Playbooks {
 		for _, branch := range playbook.Entry {
-			if branch.Category != "" || len(branch.Any) > 0 || len(branch.All) > 0 {
+			if branch.Category == "" && len(branch.Any) == 0 && len(branch.All) == 0 {
 				return true
 			}
 		}
@@ -351,12 +351,12 @@ func BenchmarkDocumentSearchNextObserve(b *testing.B) {
 	}
 
 	for b.Loop() {
-		document := search.Next()
+		document, pendingID := search.Next()
 
 		if _, err := BuildStrategies(document); err != nil {
 			b.Fatal(err)
 		}
 
-		search.Observe(document, rand.Float64())
+		search.Observe(document, rand.Float64(), pendingID)
 	}
 }

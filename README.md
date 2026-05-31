@@ -405,11 +405,11 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 | `pump_trail_pct`                | 0.02 – 0.15          |
 | `pump_slow_trail_pct`           | 0.1 – 0.35           |
 | `pump_hard_stop_pct`            | 0.05 – 0.25          |
-| `pump_size_fraction`            | 0.2 – 1.0            |
+| `pump_size_fraction`            | 0.10 – 0.50          |
 | `max_entry_slippage_bps`        | 20 – 120             |
 | `max_spread_bps`                | 10 – 100             |
 | `forward_return_min_samples`    | 10 – 80              |
-| `forward_return_significance_z` | 1.0 – 3.0            |
+| `forward_return_significance_z` | 0.5 – 3.0            |
 | `noise_floor_snr`               | 0.7 – 1.5, step 0.05 |
 | `perspective_ttl`               | 10 s – 120 s         |
 | `min_cost_eur`                  | 0.25 – 2.0           |
@@ -420,7 +420,20 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 | `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `causal_condition_switch`       | 100 – 5000           |
 
-Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a Monte Carlo tree-search draw (`DocumentSearch`) from the YAML tree space. Tune scores your current desk config first, then searches for a better holdout wallet fitness. Loaded YAML is treated literally: tune-loaded registries do not inherit hidden default deny branches or the builtin universal exit overlay. Trial jobs are dispatched through qpool `ScheduleFast`; `--workers` controls concurrent eval subprocesses, each child gets a bounded `GOMAXPROCS` share and `SYMM_ENGINE_WORKERS` budget, and eval file/stdout logs are disabled. Replay perturbation stays on by default for train evals, with deterministic per-trial seeds. Progress prints to **stderr** in plain language (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial); the final summary JSON stays on **stdout**. By default tune **runs until you press Ctrl+C**, then writes the current best to `runs/tuned.json` and `runs/perspectives.yaml`. Set `--iterations N` (or `make tune ITERATIONS=N`) to cap trials. Pass `--quiet` to suppress stderr.
+Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a Monte Carlo tree-search draw (`DocumentSearch`) from the YAML tree space. Tune scores your current desk config first, then searches for a better holdout wallet fitness. Loaded YAML is treated literally: tune-loaded registries do not inherit hidden default deny branches or the builtin universal exit overlay.
+
+**Trial execution details**
+
+- Trial jobs dispatch via qpool `ScheduleFast`.
+- `--workers` controls concurrent eval subprocesses.
+- Each child receives a bounded `GOMAXPROCS` share and `SYMM_ENGINE_WORKERS` budget.
+- Eval file/stdout logs are disabled.
+- Replay perturbation stays on by default for train evals, with deterministic per-trial seeds.
+- Progress prints to **stderr** (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial).
+- The final summary JSON stays on **stdout**.
+- By default tune **runs until you press Ctrl+C**, then writes the current best to `runs/tuned.json` and `runs/perspectives.yaml`.
+- Set `--iterations N` (or `make tune ITERATIONS=N`) to cap trials.
+- Pass `--quiet` to suppress stderr.
 
 With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet), and the selected split must include at least one realized profitable trade so no-trade trees cannot win with a flat €0 score. The best eligible candidate by **maximum** holdout fitness is written to `--output` (default `runs/tuned.json`) and `--perspectives-output` (default `runs/perspectives.yaml`), with absolute paths echoed on stderr.
 
@@ -554,7 +567,12 @@ make tune      # searches tunables + learned tree YAML; writes runs/tuned.json +
 
 That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
 
-`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, adds the default walk-forward folds, perturbs train replay evals, and maximizes velocity-adjusted wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
+- **`make tune`** defaults to `runs/capture.jsonl`.
+- **`make tune`** auto-reserves the last 20% as holdout when the capture is long enough.
+- **`make tune`** adds the default walk-forward folds.
+- **`make tune`** perturbs train replay evals.
+- **`make tune`** maximizes velocity-adjusted wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`).
+- **`make run`** loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
 
 Optional overrides:
 

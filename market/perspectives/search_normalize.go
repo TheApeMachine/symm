@@ -80,7 +80,10 @@ func normalizePlaybookName(
 		return candidate
 	}
 
-	return searchPlaybookNames[random.Intn(len(searchPlaybookNames))]
+	fallback := names[len(seen)%len(names)]
+	seen[fallback] = struct{}{}
+
+	return fallback
 }
 
 func normalizeRegime(regime string, random *rand.Rand) string {

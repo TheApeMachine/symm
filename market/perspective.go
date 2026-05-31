@@ -57,11 +57,11 @@ func snapshotPerspectiveRegistry() []registeredPerspective {
 	return perspectiveRegistry
 }
 
-func snapshotUniversalExitTree() *perspectives.Tree {
+func snapshotRegistryAndUniversal() ([]registeredPerspective, *perspectives.Tree) {
 	perspectiveRegistryLock.RLock()
 	defer perspectiveRegistryLock.RUnlock()
 
-	return universalExitTree
+	return perspectiveRegistry, universalExitTree
 }
 
 /*
@@ -254,8 +254,7 @@ func ExitDecisions(
 	openerPlaybook string,
 	softExitsAllowed bool,
 ) []Decision {
-	registry := snapshotPerspectiveRegistry()
-	universal := snapshotUniversalExitTree()
+	registry, universal := snapshotRegistryAndUniversal()
 	decisions := make([]Decision, 0, len(registry)+1)
 
 	if action := universal.Walk(measurements, observations); action != nil {

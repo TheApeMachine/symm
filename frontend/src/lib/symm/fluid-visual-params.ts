@@ -141,5 +141,12 @@ export const saveFluidVisualParams = (params: FluidVisualParams): void => {
 		return;
 	}
 
-	window.localStorage.setItem(FLUID_VISUAL_STORAGE_KEY, JSON.stringify(params));
+	try {
+		window.localStorage.setItem(
+			FLUID_VISUAL_STORAGE_KEY,
+			JSON.stringify(params),
+		);
+	} catch (error) {
+		console.warn("failed to persist fluid visual params", error);
+	}
 };

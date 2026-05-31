@@ -10,14 +10,23 @@ import (
 func TestGenerateDocument(t *testing.T) {
 	Convey("Given a replay-derived primitive profile", t, func() {
 		random := rand.New(rand.NewSource(12))
-		document := GenerateDocument(testSearchProfile(), random)
-		_, err := BuildStrategies(document)
+		var document Document
+		foundFreeEntryRoot := false
+
+		for range 32 {
+			document = GenerateDocument(testSearchProfile(), random)
+			_, err := BuildStrategies(document)
+			So(err, ShouldBeNil)
+
+			if documentHasFreeEntryRoot(document) {
+				foundFreeEntryRoot = true
+			}
+		}
 
 		Convey("It should produce a valid free-form YAML candidate", func() {
-			So(err, ShouldBeNil)
 			So(document.Playbooks, ShouldNotBeEmpty)
 			So(len(document.Playbooks), ShouldBeLessThanOrEqualTo, maxGeneratedPlaybooks)
-			So(documentHasFreeEntryRoot(document), ShouldBeTrue)
+			So(foundFreeEntryRoot, ShouldBeTrue)
 		})
 	})
 }

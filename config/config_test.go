@@ -80,12 +80,47 @@ func TestLogStdoutEnvOverride(t *testing.T) {
 }
 
 func TestLogFileEnvOverride(t *testing.T) {
-	t.Setenv("SYMM_LOG_FILE", "0")
+	cases := []struct {
+		name       string
+		value      string
+		wantActive bool
+		wantPanic  bool
+	}{
+		{name: "disabled zero", value: "0", wantActive: false},
+		{name: "disabled false", value: "false", wantActive: false},
+		{name: "enabled one", value: "1", wantActive: true},
+		{name: "enabled true", value: "true", wantActive: true},
+		{name: "invalid yes", value: "yes", wantPanic: true},
+		{name: "invalid foo", value: "foo", wantPanic: true},
+	}
 
-	cfg := NewConfig()
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("SYMM_LOG_FILE", testCase.value)
 
-	if cfg.LogFileActive {
-		t.Fatal("expected SYMM_LOG_FILE=0 to disable file logging")
+			if testCase.wantPanic {
+				defer func() {
+					if recover() == nil {
+						t.Fatal("expected NewConfig to panic on invalid SYMM_LOG_FILE")
+					}
+				}()
+			}
+
+			cfg := NewConfig()
+
+			if testCase.wantPanic {
+				t.Fatal("expected panic before returning config")
+			}
+
+			if cfg.LogFileActive != testCase.wantActive {
+				t.Fatalf(
+					"SYMM_LOG_FILE=%q: LogFileActive=%v, want %v",
+					testCase.value,
+					cfg.LogFileActive,
+					testCase.wantActive,
+				)
+			}
+		})
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/theapemachine/qpool"
@@ -12,21 +11,12 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-type tuneSearchState struct {
-	hasBest           *bool
-	bestSelection     *float64
-	bestTrainScore    *float64
-	bestHoldoutScores *[]float64
-	bestGap           *float64
-	bestConfig        *tuneCandidate
-	bestMu            *sync.Mutex
-}
-
 type tuneScoredTrial struct {
-	document perspectives.Document
-	tunables config.Tunables
-	scores   trialScores
-	err      error
+	document  perspectives.Document
+	tunables  config.Tunables
+	pendingID uint64
+	scores    trialScores
+	err       error
 }
 
 func runTuneTrialSearch(
@@ -38,7 +28,7 @@ func runTuneTrialSearch(
 	tunablesSearch *config.TunablesSearch,
 	rejectedOverfit *atomic.Int64,
 	rejectedNoProfit *atomic.Int64,
-	state tuneSearchState,
+	bestState *tuneBestState,
 ) (int64, bool) {
 	reporter.SetTotal(options.maxTrials)
 
@@ -88,7 +78,7 @@ func runTuneTrialSearch(
 				tunablesSearch,
 				rejectedOverfit,
 				rejectedNoProfit,
-				state,
+				bestState,
 				result,
 			) {
 				trialsCompleted++
@@ -115,7 +105,7 @@ func submitTuneTrial(
 	tunablesSearch *config.TunablesSearch,
 	trialIndex int,
 ) {
-	document := documentSearch.Next()
+	document, pendingID := documentSearch.Next()
 	tunables := tunablesSearch.Next()
 	candidate := tuneCandidate{
 		tunables:     tunables,
@@ -128,7 +118,7 @@ func submitTuneTrial(
 			options.stressHoldout,
 			options.perturbTrain,
 			tuneTrialPerturbSeed(trialIndex),
-			options.evalWorkers,
+			options.evalCPUBudget,
 			options.maxTrainHoldoutGap,
 			candidate,
 		)
@@ -137,8 +127,9 @@ func submitTuneTrial(
 	go func() {
 		qvalue := <-resultChannel
 		result := tuneScoredTrial{
-			document: document,
-			tunables: tunables,
+			document:  document,
+			tunables:  tunables,
+			pendingID: pendingID,
 		}
 
 		if qvalue != nil {
@@ -164,7 +155,7 @@ func handleTuneTrialResult(
 	tunablesSearch *config.TunablesSearch,
 	rejectedOverfit *atomic.Int64,
 	rejectedNoProfit *atomic.Int64,
-	state tuneSearchState,
+	bestState *tuneBestState,
 	result tuneScoredTrial,
 ) bool {
 	if result.err != nil {
@@ -185,18 +176,16 @@ func handleTuneTrialResult(
 			options,
 			documentSearch,
 			tunablesSearch,
-			state,
+			bestState,
 			candidate,
 			result.scores,
+			result.pendingID,
 		)
 	} else {
 		countRejectedTuneTrial(result.scores.rejectReason, rejectedOverfit, rejectedNoProfit)
 	}
 
-	state.bestMu.Lock()
-	currentBestHoldout := *state.bestSelection
-	currentBestTrain := *state.bestTrainScore
-	state.bestMu.Unlock()
+	snapshot := bestState.Snapshot()
 
 	reporter.TrialResult(tuneTrialEvent{
 		selection:          result.scores.selection,
@@ -205,8 +194,8 @@ func handleTuneTrialResult(
 		eligible:           result.scores.eligible,
 		rejectReason:       result.scores.rejectReason,
 		newBest:            newBest,
-		currentBestHoldout: currentBestHoldout,
-		currentBestTrain:   currentBestTrain,
+		currentBestHoldout: snapshot.selection,
+		currentBestTrain:   snapshot.trainScore,
 	})
 
 	return true
@@ -230,33 +219,18 @@ func observeEligibleTuneTrial(
 	options tuneRunOptions,
 	documentSearch *perspectives.DocumentSearch,
 	tunablesSearch *config.TunablesSearch,
-	state tuneSearchState,
+	bestState *tuneBestState,
 	candidate tuneCandidate,
 	scores trialScores,
+	pendingID uint64,
 ) bool {
-	documentSearch.Observe(*candidate.perspectives, scores.selection)
+	documentSearch.Observe(*candidate.perspectives, scores.selection, pendingID)
 	tunablesSearch.Observe(candidate.tunables, scores.selection)
-	state.bestMu.Lock()
+	newBest, bestConfig := bestState.UpdateIfBetter(candidate, scores)
 
-	if *state.hasBest && !betterTuneCandidate(
-		scores.selection,
-		scores.trainScore,
-		*state.bestSelection,
-		*state.bestTrainScore,
-	) {
-		state.bestMu.Unlock()
-
+	if !newBest {
 		return false
 	}
-
-	*state.hasBest = true
-	*state.bestSelection = scores.selection
-	*state.bestTrainScore = scores.trainScore
-	*state.bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
-	*state.bestGap = scores.gap
-	*state.bestConfig = snapshotTuneCandidate(*candidate.perspectives, candidate.tunables)
-	bestConfig := *state.bestConfig
-	state.bestMu.Unlock()
 
 	if saveErr := saveTuneLeader(reporter, options, bestConfig); saveErr != nil {
 		reporter.println(fmt.Sprintf("  save leader failed: %v", saveErr))

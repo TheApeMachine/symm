@@ -9,14 +9,19 @@ import (
 	"time"
 )
 
-const maxSearchRolloutSteps = 4
+const (
+	maxSearchRolloutSteps = 4
+	maxNodeExpansions     = searchActionSampleCount
+	maxPendingEntries     = 256
+)
 
 type DocumentSearch struct {
 	mu         sync.Mutex
 	random     *rand.Rand
 	profile    SearchProfile
 	root       *documentSearchNode
-	pending    map[string][][]*documentSearchNode
+	pending    map[uint64]pendingEntry
+	pendingSeq uint64
 	best       *Document
 	bestReward float64
 	minReward  float64
@@ -24,12 +29,16 @@ type DocumentSearch struct {
 	hasBest    bool
 }
 
+type pendingEntry struct {
+	path []*documentSearchNode
+}
+
 type documentSearchNode struct {
-	document Document
-	children []*documentSearchNode
-	untried  []documentAction
-	visits   int
-	reward   float64
+	document       Document
+	children       []*documentSearchNode
+	expansionsLeft int
+	visits         int
+	reward         float64
 }
 
 func NewDocumentSearch(profile SearchProfile, random *rand.Rand) (*DocumentSearch, error) {
@@ -44,36 +53,36 @@ func NewDocumentSearch(profile SearchProfile, random *rand.Rand) (*DocumentSearc
 	return &DocumentSearch{
 		random:  random,
 		profile: profile,
-		pending: make(map[string][][]*documentSearchNode),
+		pending: make(map[uint64]pendingEntry),
 	}, nil
 }
 
-func (search *DocumentSearch) Next() Document {
+func (search *DocumentSearch) Next() (Document, uint64) {
 	search.mu.Lock()
 	defer search.mu.Unlock()
 
 	if search.root == nil {
 		document := GenerateDocument(search.profile, search.random)
 		search.root = newDocumentSearchNode(document, search.profile, search.random)
-		search.rememberPending(document, []*documentSearchNode{search.root})
+		pendingID := search.rememberPending([]*documentSearchNode{search.root})
 
-		return document
+		return document, pendingID
 	}
 
 	node, path := search.selectExpansionPath()
 	document := search.rollout(node.document)
-	search.rememberPending(document, path)
+	pendingID := search.rememberPending(path)
 
-	return document
+	return document, pendingID
 }
 
-func (search *DocumentSearch) Observe(document Document, reward float64) {
+func (search *DocumentSearch) Observe(document Document, reward float64, pendingID uint64) {
 	search.mu.Lock()
 	defer search.mu.Unlock()
 
 	search.observeRewardBounds(reward)
 	search.observeBest(document, reward)
-	path := search.takePending(document)
+	path := search.takePending(pendingID)
 
 	if len(path) == 0 {
 		search.observeUntracked(document, reward)
@@ -101,19 +110,22 @@ func (search *DocumentSearch) selectExpansionPath() (
 	node := search.root
 	path := []*documentSearchNode{node}
 
-	for len(node.untried) == 0 && len(node.children) > 0 {
+	for node.expansionsLeft == 0 && len(node.children) > 0 {
 		node = search.selectChild(node)
 		path = append(path, node)
 	}
 
-	if len(node.untried) == 0 {
+	if node.expansionsLeft == 0 {
 		return node, path
 	}
 
-	actionIndex := search.random.Intn(len(node.untried))
-	action := node.untried[actionIndex]
-	node.untried = append(node.untried[:actionIndex], node.untried[actionIndex+1:]...)
+	action, ok := randomDocumentAction(node.document, search.profile, search.random)
 
+	if !ok {
+		return node, path
+	}
+
+	node.expansionsLeft--
 	childDocument := action.Apply(node.document, search.profile, search.random)
 	child := newDocumentSearchNode(childDocument, search.profile, search.random)
 	node.children = append(node.children, child)
@@ -168,46 +180,55 @@ func (search *DocumentSearch) rollout(document Document) Document {
 	rolled := cloneDocument(document)
 
 	for range steps {
-		actions := searchActions(rolled, search.profile, search.random)
+		action, ok := randomDocumentAction(rolled, search.profile, search.random)
 
-		if len(actions) == 0 {
+		if !ok {
 			return normalizeSearchDocument(rolled, search.profile, search.random)
 		}
 
-		action := actions[search.random.Intn(len(actions))]
 		rolled = action.Apply(rolled, search.profile, search.random)
 	}
 
 	return normalizeSearchDocument(rolled, search.profile, search.random)
 }
 
-func (search *DocumentSearch) rememberPending(
-	document Document,
-	path []*documentSearchNode,
-) {
-	key := documentSearchKey(document)
-	search.pending[key] = append(search.pending[key], path)
+func (search *DocumentSearch) rememberPending(path []*documentSearchNode) uint64 {
+	search.pendingSeq++
+	pendingID := search.pendingSeq
+	search.pending[pendingID] = pendingEntry{path: path}
+	search.trimPending()
+
+	return pendingID
 }
 
-func (search *DocumentSearch) takePending(document Document) []*documentSearchNode {
-	key := documentSearchKey(document)
-	paths := search.pending[key]
-
-	if len(paths) == 0 {
+func (search *DocumentSearch) takePending(pendingID uint64) []*documentSearchNode {
+	if pendingID == 0 {
 		return nil
 	}
 
-	path := paths[len(paths)-1]
+	entry, ok := search.pending[pendingID]
 
-	if len(paths) == 1 {
-		delete(search.pending, key)
-
-		return path
+	if !ok {
+		return nil
 	}
 
-	search.pending[key] = paths[:len(paths)-1]
+	delete(search.pending, pendingID)
 
-	return path
+	return entry.path
+}
+
+func (search *DocumentSearch) trimPending() {
+	if len(search.pending) <= maxPendingEntries {
+		return
+	}
+
+	oldest := search.pendingSeq - uint64(maxPendingEntries)
+
+	for pendingID := range search.pending {
+		if pendingID <= oldest {
+			delete(search.pending, pendingID)
+		}
+	}
 }
 
 func (search *DocumentSearch) observeRewardBounds(reward float64) {
@@ -256,8 +277,8 @@ func newDocumentSearchNode(
 	document = normalizeSearchDocument(document, profile, random)
 
 	return &documentSearchNode{
-		document: document,
-		untried:  searchActions(document, profile, random),
+		document:       document,
+		expansionsLeft: maxNodeExpansions,
 	}
 }
 

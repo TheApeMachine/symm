@@ -117,15 +117,13 @@ func (signal *Signal) emit(symbol string) {
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 
-	signal.publishField(symbol, state)
+	signal.publishField(state)
 }
 
 // publishField ships an aggregated universe field snapshot to the dashboard
 // surface. Per-pair UI streams stay focus-gated; the fluid surface is not a
 // single-pair chart and needs the full symbol set to render meaningful topology.
-func (signal *Signal) publishField(symbol string, state *FluidSymbol) {
-	_ = symbol
-
+func (signal *Signal) publishField(state *FluidSymbol) {
 	if state.Row() == nil {
 		return
 	}

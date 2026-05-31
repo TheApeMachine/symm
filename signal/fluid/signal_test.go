@@ -118,7 +118,7 @@ func TestPublishField(t *testing.T) {
 		})
 		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol, 99, 10, 101, 6))
 
-		signal.publishField(focus.AnchorSymbol, anchor)
+		signal.publishField(anchor)
 
 		select {
 		case value := <-uiFrames.Incoming:

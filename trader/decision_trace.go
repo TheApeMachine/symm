@@ -81,6 +81,10 @@ func (crypto *Crypto) publishDecisionTrace() {
 		return
 	}
 
+	if crypto.tracker == nil {
+		return
+	}
+
 	crypto.decisionTraceMu.Lock()
 	rows := crypto.decisionTraceRows
 	crypto.decisionTraceRows = nil

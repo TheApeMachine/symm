@@ -1,4 +1,3 @@
-
 import {
 	AnnotationHoverModifier,
 	DiscontinuousDateAxis,
@@ -132,10 +131,10 @@ export const createFinancialChart = async (
 
 	const xAxis = new DiscontinuousDateAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Bottom,
-		autoRange: EAutoRange.Never,
+		autoRange: EAutoRange.Always,
 		cursorLabelFormat: ENumericFormat.Date_HHMM,
-		drawMajorBands: false,
-		drawMinorGridLines: false,
+		drawMajorBands: true,
+		drawMinorGridLines: true,
 		majorGridLineStyle: { color: "#FFFFFF05" },
 	});
 
@@ -146,8 +145,8 @@ export const createFinancialChart = async (
 		labelPrecision: 1,
 		labelPrefix: "$",
 		autoRange: EAutoRange.Always,
-		drawMajorBands: false,
-		drawMinorGridLines: false,
+		drawMajorBands: true,
+		drawMinorGridLines: true,
 		majorGridLineStyle: { color: "#FFFFFF05" },
 	});
 
@@ -289,7 +288,7 @@ export const initTradeChart = async (
 	let userControlsViewport = false;
 
 	const setXVisibleRange = (range: NumberRange) => {
-		suppressViewportTracking = true;
+		suppressViewportTracking = false;
 		xAxis.visibleRange = range;
 		suppressViewportTracking = false;
 	};
@@ -299,7 +298,7 @@ export const initTradeChart = async (
 			return;
 		}
 
-		userControlsViewport = true;
+		userControlsViewport = false;
 	};
 
 	xAxis.visibleRangeChanged.subscribe(onVisibleRangeChanged);
