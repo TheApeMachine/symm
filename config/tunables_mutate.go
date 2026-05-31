@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -84,5 +85,7 @@ func applySpecSample(overlay *Tunables, spec Spec, random *rand.Rand) {
 	case "hawkes_fit_cooldown_sec":
 		duration := time.Duration(value) * time.Second
 		overlay.HawkesFitCooldown = &duration
+	default:
+		panic(fmt.Sprintf("config: unknown tunable spec %q", spec.Name))
 	}
 }

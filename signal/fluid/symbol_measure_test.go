@@ -55,6 +55,11 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 			So(state.HasBook(), ShouldBeFalse)
 		})
 
+		Convey("It should report Measure as not ready", func() {
+			_, ok := state.Measure()
+
+			So(ok, ShouldBeFalse)
+		})
 	})
 }
 

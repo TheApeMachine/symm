@@ -84,8 +84,9 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 
 	tunablesSearch := config.NewTunablesSearch(config.System, nil)
 	rejectedOverfit := atomic.Int64{}
-	bestSelection := -1e18
-	bestTrainScore := -1e18
+	hasBest := false
+	bestSelection := 0.0
+	bestTrainScore := 0.0
 	bestHoldoutScores := []float64(nil)
 	bestGap := 0.0
 	var bestConfig tuneCandidate
@@ -101,6 +102,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		options.maxTrainHoldoutGap,
 		documentSearch,
 		tunablesSearch,
+		&hasBest,
 		&bestSelection,
 		&bestTrainScore,
 		&bestHoldoutScores,
@@ -170,6 +172,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 						bestSelection,
 						bestTrainScore,
 					) {
+						hasBest = true
 						bestSelection = scores.selection
 						bestTrainScore = scores.trainScore
 						bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)
@@ -210,7 +213,7 @@ func runTune(parent context.Context, cmd *cobra.Command) (tuneRunResult, error) 
 		reporter.Phase("Ctrl+C received — finishing in-flight trials and saving the current best…")
 	}
 
-	if bestSelection == -1e18 {
+	if !hasBest {
 		return tuneRunResult{}, fmt.Errorf("no eligible candidates — widen --max-train-holdout-gap or add holdout data")
 	}
 
@@ -396,6 +399,7 @@ func seedTuneSearchBaseline(
 	maxTrainHoldoutGap float64,
 	documentSearch *perspectives.DocumentSearch,
 	tunablesSearch *config.TunablesSearch,
+	hasBest *bool,
 	bestSelection *float64,
 	bestTrainScore *float64,
 	bestHoldoutScores *[]float64,
@@ -435,6 +439,7 @@ func seedTuneSearchBaseline(
 	tunablesSearch.Observe(candidate.tunables, scores.selection)
 
 	bestMu.Lock()
+	*hasBest = true
 	*bestSelection = scores.selection
 	*bestTrainScore = scores.trainScore
 	*bestHoldoutScores = append([]float64(nil), scores.holdoutScores...)

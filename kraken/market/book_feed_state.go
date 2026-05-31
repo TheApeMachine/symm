@@ -13,11 +13,12 @@ signals. It centralizes snapshot ordering and divergence handling so replay and
 live feeds behave the same way.
 */
 type BookFeedState struct {
-	book     *orderbook.Book
-	sequence BookSequence
-	diverged bool
-	symbol   string
-	signal   string
+	book          *orderbook.Book
+	sequence      BookSequence
+	diverged      bool
+	needsSnapshot bool
+	symbol        string
+	signal        string
 }
 
 func NewBookFeedState(symbol string, signal string, depth int) *BookFeedState {
@@ -40,24 +41,39 @@ func (state *BookFeedState) Diverged() bool {
 	return state.diverged
 }
 
-func (state *BookFeedState) Accepts(update BookUpdate) bool {
-	return state.sequence.Accepts(update)
+func (state *BookFeedState) RequestSnapshot() bool {
+	return state.needsSnapshot
 }
 
-func (state *BookFeedState) Apply(update BookUpdate) {
-	if !state.sequence.Accepts(update) {
-		return
+func (state *BookFeedState) Accepts(update BookUpdate) bool {
+	if state.diverged && !update.IsSnapshot() {
+		return false
+	}
+
+	return state.sequence.CanAccept(update)
+}
+
+func (state *BookFeedState) Apply(update BookUpdate) bool {
+	if state.diverged && !update.IsSnapshot() {
+		return false
+	}
+
+	if !state.sequence.CanAccept(update) {
+		return false
 	}
 
 	if update.IsSnapshot() {
+		state.sequence.AdmitSnapshot()
 		state.book.ApplySnapshot(update.BidLevels(), update.AskLevels())
 		state.verify(uint32(update.Checksum))
 
-		return
+		return true
 	}
 
 	state.book.ApplyDelta(update.BidLevels(), update.AskLevels())
 	state.verify(uint32(update.Checksum))
+
+	return true
 }
 
 func (state *BookFeedState) verify(checksum uint32) {
@@ -69,7 +85,15 @@ func (state *BookFeedState) verify(checksum uint32) {
 
 	if !matches && !state.diverged {
 		errnie.Error(fmt.Errorf("%s: book checksum diverged for %s", state.signal, state.symbol))
+		state.needsSnapshot = true
 	}
 
-	state.diverged = !matches
+	if matches {
+		state.diverged = false
+		state.needsSnapshot = false
+
+		return
+	}
+
+	state.diverged = true
 }

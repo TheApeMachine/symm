@@ -90,6 +90,10 @@ func TestSharedFeedFanoutReliableOrdering(t *testing.T) {
 }
 
 func TestSharedFeedDetachDuringReliableFanout(t *testing.T) {
+	if !raceDetectorActive() {
+		t.Fatal("requires go test -race")
+	}
+
 	Convey("Given a reliable feed fanning out while a subscriber detaches", t, func() {
 		sharedFeed := newReliableSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *int {
 			upstream := make(chan *int, 8)

@@ -21,12 +21,12 @@ func persistTuneOutputs(
 	cfg *config.Config,
 	document *perspectives.Document,
 ) (tunePersistedOutputs, error) {
-	if err := config.SaveTunablesFile(tunablesPath, cfg); err != nil {
-		return tunePersistedOutputs{}, fmt.Errorf("save tunables %q: %w", tunablesPath, err)
-	}
-
 	if document == nil {
 		return tunePersistedOutputs{}, fmt.Errorf("best candidate has no perspective document")
+	}
+
+	if err := config.SaveTunablesFile(tunablesPath, cfg); err != nil {
+		return tunePersistedOutputs{}, fmt.Errorf("save tunables %q: %w", tunablesPath, err)
 	}
 
 	if err := perspectives.SaveDocumentFile(perspectivesPath, *document); err != nil {
@@ -47,7 +47,7 @@ func persistTuneOutputs(
 
 	reporter.Summary(fmt.Sprintf("Saved desk tunables → %s", tunablesAbs))
 	reporter.Summary(fmt.Sprintf("Saved playbook trees → %s", perspectivesAbs))
-	reporter.Summary("Next boot loads runs/tuned.json and runs/perspectives.yaml (falls back to config/perspectives.yaml if missing)")
+	reporter.Summary("Next boot loads runs/tuned.json and runs/perspectives.yaml when present (otherwise Go builtin playbooks)")
 
 	return tunePersistedOutputs{
 		tunablesPath:     tunablesAbs,

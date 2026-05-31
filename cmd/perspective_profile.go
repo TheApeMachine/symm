@@ -42,7 +42,7 @@ func newPerspectiveProfileSystem(
 		ctx:          ctx,
 		cancel:       cancel,
 		measurements: group.Subscribe("perspective-profile:measurements", 4096),
-		builder:      perspectives.NewProfileBuilder(),
+		builder:      perspectives.NewProfileBuilder(nil),
 	}
 }
 

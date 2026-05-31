@@ -20,17 +20,24 @@ func ScoreSeriesKey(
 	stream string,
 	symbol string,
 ) string {
-	parts := []string{source.String(), category.String()}
+	streamLabel := strings.TrimSpace(stream)
 
-	if stream = strings.TrimSpace(stream); stream != "" {
-		parts = append(parts, stream)
+	if streamLabel == "" {
+		streamLabel = "-"
 	}
 
-	if symbol = strings.TrimSpace(symbol); symbol != "" {
-		parts = append(parts, symbol)
+	symbolLabel := strings.TrimSpace(symbol)
+
+	if symbolLabel == "" {
+		symbolLabel = "-"
 	}
 
-	return strings.Join(parts, ":")
+	return strings.Join([]string{
+		source.String(),
+		category.String(),
+		"stream:" + streamLabel,
+		"symbol:" + symbolLabel,
+	}, ":")
 }
 
 /*

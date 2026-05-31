@@ -36,15 +36,15 @@ is what makes the imbalance and spoof reads correct. Reading the delta as if it 
 a whole book — the prior bug — discarded every level the delta did not mention.
 */
 type DepthSymbol struct {
-	mu       sync.RWMutex
-	symbol   string
-	bookFeed *market.BookFeedState
+	mu          sync.RWMutex
+	symbol      string
+	bookFeed    *market.BookFeedState
 	last        float64
 	bid         float64
 	ask         float64
 	buyPressure float64
-	pressure *adaptive.EMA
-	score    *numeric.Derived
+	pressure    *adaptive.EMA
+	score       *numeric.Derived
 }
 
 func NewDepthSymbol(symbol string) *DepthSymbol {
@@ -119,7 +119,7 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.bookFeed.Diverged() {
+	if state.bookFeed.Diverged() || !state.bookFeed.Ready() {
 		return state.measureTradePressureLocked()
 	}
 

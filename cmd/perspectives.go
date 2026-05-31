@@ -16,6 +16,10 @@ func configurePerspectives(path string) error {
 	}
 
 	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
 		return fmt.Errorf("perspectives file %q: %w", path, err)
 	}
 

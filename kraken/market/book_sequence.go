@@ -9,12 +9,19 @@ type BookSequence struct {
 	hasSnapshot bool
 }
 
-func (sequence *BookSequence) Accepts(update BookUpdate) bool {
+func (sequence *BookSequence) CanAccept(update BookUpdate) bool {
 	if update.IsSnapshot() {
-		sequence.hasSnapshot = true
-
 		return true
 	}
 
 	return sequence.hasSnapshot
+}
+
+func (sequence *BookSequence) AdmitSnapshot() {
+	sequence.hasSnapshot = true
+}
+
+// Accepts is kept for callers that only need a non-mutating predicate.
+func (sequence *BookSequence) Accepts(update BookUpdate) bool {
+	return sequence.CanAccept(update)
 }

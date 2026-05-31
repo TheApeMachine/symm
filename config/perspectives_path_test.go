@@ -27,13 +27,13 @@ func TestPerspectiveLoadPathFor(t *testing.T) {
 			_ = os.Chdir(previous)
 		}()
 
-		Convey("It should fall back from the default run path to the builtin file", func() {
-			So(PerspectiveLoadPathFor(DefaultPerspectivePath()), ShouldEqual, defaultPerspectiveBuiltinFile)
+		Convey("It should keep the default run path without auto-loading config", func() {
+			So(PerspectiveLoadPathFor(DefaultPerspectivePath()), ShouldEqual, DefaultPerspectivePath())
 		})
 	})
 
 	Convey("Given an explicit override path that is missing", t, func() {
-		Convey("It should not fall back to the builtin file", func() {
+		Convey("It should return the configured path unchanged", func() {
 			So(PerspectiveLoadPathFor("runs/custom.yaml"), ShouldEqual, "runs/custom.yaml")
 		})
 	})

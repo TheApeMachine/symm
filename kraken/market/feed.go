@@ -294,26 +294,19 @@ func (sharedFeed *sharedFeed[T]) deliverReliable(bridge chan *T, value *T) {
 
 	stop := entry.stop
 
-	for {
-		if feedCtx == nil {
-			select {
-			case bridge <- value:
-				return
-			case <-stop:
-				return
-			}
-
-			continue
-		}
-
+	if feedCtx == nil {
 		select {
 		case bridge <- value:
-			return
 		case <-stop:
-			return
-		case <-feedCtx.Done():
-			return
 		}
+
+		return
+	}
+
+	select {
+	case bridge <- value:
+	case <-stop:
+	case <-feedCtx.Done():
 	}
 }
 

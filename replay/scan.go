@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -70,6 +73,10 @@ func ScanWSRows[T any](
 				case outbound <- &row:
 				}
 			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			errnie.Error(fmt.Errorf("replay scan %s channel=%s: %w", path, channel, err))
 		}
 	}()
 

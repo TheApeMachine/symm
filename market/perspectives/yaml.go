@@ -10,7 +10,7 @@ import (
 )
 
 /*
-Document is the persisted playbook set loaded from config/perspectives.yaml.
+Document is the persisted playbook set (tune output or config/perspectives.yaml reference).
 */
 type Document struct {
 	Version   int            `yaml:"version"`

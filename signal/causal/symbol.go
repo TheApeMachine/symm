@@ -35,8 +35,8 @@ type CausalSymbol struct {
 	spreadBPS      float64
 	imbalance      float64
 	buyPressure    float64
-	volumeWindow *adaptive.Window
-	pressure     *adaptive.EMA
+	volumeWindow   *adaptive.Window
+	pressure       *adaptive.EMA
 }
 
 func NewCausalSymbol() *CausalSymbol {
@@ -44,8 +44,8 @@ func NewCausalSymbol() *CausalSymbol {
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		noise:        make(map[string]*adaptive.EMA),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure: adaptive.NewEMA(0),
-		hy:       newHYReturns(contagionWindow()),
+		pressure:     adaptive.NewEMA(0),
+		hy:           newHYReturns(contagionWindow()),
 	}
 }
 
@@ -187,6 +187,15 @@ roles mean liquidity itself is driving price (a shock); a macro-only read is
 systemic beta (the asset is a passenger); a bare flow-pressure fallback is
 causal noise (no statistically grounded driver).
 */
+func causalScoreStream(category perspectives.CategoryType) string {
+	switch category {
+	case perspectives.CategoryEndogenousAlpha, perspectives.CategoryLiquidityShock:
+		return "intervention"
+	default:
+		return "macro"
+	}
+}
+
 func causalCategory(reason string) perspectives.CategoryType {
 	switch reason {
 	case "intervention", "counterfactual_like":

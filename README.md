@@ -193,7 +193,7 @@ type Decision struct {
 
 ## Perspectives and playbooks
 
-The active playbooks are loaded from `runs/perspectives.yaml` at boot when that file exists; otherwise `config/perspectives.yaml` is used (`SYMM_PERSPECTIVES_FILE` overrides both). The Go constructors in `market/perspectives/` remain the built-in fallback and test oracle, but `make run` uses the YAML registry when a file is present.
+Boot uses the Go constructors in `market/perspectives/` (`NewTrendPerspective`, etc.) unless a YAML registry file exists and loads successfully. By default that path is `runs/perspectives.yaml` (written by `make tune`); set `SYMM_PERSPECTIVES_FILE` to override. `config/perspectives.yaml` is a version-controlled export of the same builtin trees (`BuiltinDocument()`), not auto-loaded at boot.
 
 Order is conviction-first: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite the tree shapes inside those named slots.
 
@@ -548,7 +548,7 @@ make tune      # searches tunables + learned tree YAML; writes runs/tuned.json +
 
 That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
 
-`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `runs/perspectives.yaml` when present (otherwise `config/perspectives.yaml`).
+`make tune` defaults to `runs/capture.jsonl`, auto-reserves the last 20% as holdout when the capture is long enough, and maximizes **fitness** = wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`). The next `make run` loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
 
 Optional overrides:
 
@@ -589,7 +589,7 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
 | `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
 | `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
-| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry loaded at boot (default `runs/perspectives.yaml`, fallback `config/perspectives.yaml`) |
+| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry at boot when the file exists (default path `runs/perspectives.yaml`; missing file → Go builtins) |
 | `SYMM_KRAKEN_API_KEY`    | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
@@ -700,7 +700,7 @@ Full environment wiring is in `config/config.go`.
 | `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
 | `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
 
-Hyperparameter and tree search: `--iterations` (default 0 = until Ctrl+C), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `runs/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `runs/perspectives.yaml` at next boot (with `config/perspectives.yaml` as fallback when the run file is absent).
+Hyperparameter and tree search: `--iterations` (default 0 = until Ctrl+C), `--workers` (default NumCPU), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `runs/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `runs/perspectives.yaml` at next boot when those files exist; otherwise Go builtin playbooks apply.
 
 </details>
 

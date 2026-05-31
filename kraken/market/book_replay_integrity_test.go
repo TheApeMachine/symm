@@ -71,14 +71,15 @@ func TestCaptureReplayMaintainsBookChecksums(t *testing.T) {
 				books[update.Symbol] = state
 			}
 
-			if !state.Accepts(*update) {
-				skippedPreSnapshot++
+			wasDiverged := state.Diverged()
+
+			if !state.Apply(*update) {
+				if !update.IsSnapshot() {
+					skippedPreSnapshot++
+				}
 
 				continue
 			}
-
-			wasDiverged := state.Diverged()
-			state.Apply(*update)
 
 			if state.Diverged() && !wasDiverged {
 				divergences++

@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"github.com/theapemachine/symm/config"
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -58,7 +57,12 @@ func (crypto *Crypto) entryOpportunity(
 
 	feePct := crypto.takerFeePct(symbol)
 
-	if !entryClearsFriction(score, feePct, crypto.quotes.spreadBPS(symbol)) {
+	if !entryClearsFriction(
+		score,
+		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
+		feePct,
+		crypto.quotes.spreadBPS(symbol),
+	) {
 		return opportunity{}, false
 	}
 
@@ -174,8 +178,13 @@ func (crypto *Crypto) entryRejectReason(
 	fields["spread_bps"] = spreadBPS
 	fields["fee_pct"] = feePct
 
-	if !entryClearsFriction(score, feePct, spreadBPS) {
-		fields["required_multiple"] = config.System.EntryEdgeMultiple
+	if !entryClearsFriction(
+		score,
+		crypto.scopedRuntime().Risk.EntryEdgeMultiple,
+		feePct,
+		spreadBPS,
+	) {
+		fields["required_multiple"] = crypto.scopedRuntime().Risk.EntryEdgeMultiple
 
 		return "friction_gate", fields
 	}

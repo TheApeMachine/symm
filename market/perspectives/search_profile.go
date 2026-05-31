@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+	"time"
 )
 
 const profileSampleLimit = 256
@@ -25,8 +26,9 @@ type SearchProfile struct {
 }
 
 type ProfileBuilder struct {
-	mu    sync.Mutex
-	stats map[CategoryType]*categoryAccumulator
+	mu     sync.Mutex
+	random *rand.Rand
+	stats  map[CategoryType]*categoryAccumulator
 }
 
 type categoryAccumulator struct {
@@ -37,9 +39,14 @@ type categoryAccumulator struct {
 	sourceCount map[SourceType]int
 }
 
-func NewProfileBuilder() *ProfileBuilder {
+func NewProfileBuilder(random *rand.Rand) *ProfileBuilder {
+	if random == nil {
+		random = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
 	return &ProfileBuilder{
-		stats: make(map[CategoryType]*categoryAccumulator),
+		random: random,
+		stats:  make(map[CategoryType]*categoryAccumulator),
 	}
 }
 
@@ -58,7 +65,7 @@ func (builder *ProfileBuilder) Record(measurement Measurement) {
 		builder.stats[measurement.Category] = accumulator
 	}
 
-	accumulator.record(measurement)
+	accumulator.record(measurement, builder.random)
 }
 
 func (builder *ProfileBuilder) Profile() SearchProfile {
@@ -103,7 +110,10 @@ func (profile SearchProfile) Validate() error {
 	return nil
 }
 
-func (accumulator *categoryAccumulator) record(measurement Measurement) {
+func (accumulator *categoryAccumulator) record(
+	measurement Measurement,
+	random *rand.Rand,
+) {
 	accumulator.count++
 	accumulator.sourceCount[measurement.Source]++
 
@@ -124,7 +134,7 @@ func (accumulator *categoryAccumulator) record(measurement Measurement) {
 		return
 	}
 
-	sampleIndex := rand.Intn(accumulator.count)
+	sampleIndex := random.Intn(accumulator.count)
 
 	if sampleIndex < profileSampleLimit {
 		accumulator.samples[sampleIndex] = measurement.SNR

@@ -133,11 +133,7 @@ func (signal *Signal) publish() {
 
 		if ok {
 			measurement.Symbol = key.(string)
-			stream := "macro"
-
-			if measurement.Strength > 0 {
-				stream = "intervention"
-			}
+			stream := causalScoreStream(measurement.Category)
 
 			measurement = perspectives.FinalizeMeasurement(
 				measurement,

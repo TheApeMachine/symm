@@ -40,7 +40,7 @@ round-trip friction scaled by EntryEdgeMultiple. Used for required_score and
 score_cost_ratio in playbooks and desk gates.
 */
 func RequiredThesisScore(entryEdgeMultiple, feePct, spreadBPS float64) float64 {
-	friction := roundTripFrictionPct(feePct, spreadBPS)
+	friction := RoundTripFrictionPct(feePct, spreadBPS)
 
 	if entryEdgeMultiple <= 0 || friction <= 0 {
 		return 0
@@ -50,13 +50,9 @@ func RequiredThesisScore(entryEdgeMultiple, feePct, spreadBPS float64) float64 {
 }
 
 /*
-RoundTripFrictionPct is the estimated round-trip cost (fees + half-spread) as a
-fraction of notional.
+RoundTripFrictionPct is the estimated round-trip cost (fees + full spread for
+entry and exit) as a fraction of notional.
 */
 func RoundTripFrictionPct(feePct, spreadBPS float64) float64 {
 	return 2*feePct/100 + spreadBPS/10000
-}
-
-func roundTripFrictionPct(feePct, spreadBPS float64) float64 {
-	return RoundTripFrictionPct(feePct, spreadBPS)
 }

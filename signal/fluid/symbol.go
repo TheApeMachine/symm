@@ -32,19 +32,19 @@ type FluidSymbol struct {
 	book         *orderbook.Book
 	bookSequence market.BookSequence
 	diverged     bool
-	buyPressure float64
-	changePct   float64
-	volume      float64
-	last        float64
-	bid         float64
-	ask         float64
-	pressure    *adaptive.EMA
-	spreadBPS   float64
-	flux        *fluxAccumulator
-	priceFD     *adaptive.FracDiff
-	fracScale   adaptive.AlphaEMA
-	fracReturn  float64
-	floor       *adaptive.SNR
+	buyPressure  float64
+	changePct    float64
+	volume       float64
+	last         float64
+	bid          float64
+	ask          float64
+	pressure     *adaptive.EMA
+	spreadBPS    float64
+	flux         *fluxAccumulator
+	priceFD      *adaptive.FracDiff
+	fracScale    adaptive.AlphaEMA
+	fracReturn   float64
+	floor        *adaptive.SNR
 }
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
@@ -110,8 +110,12 @@ func (state *FluidSymbol) FeedBook(update market.BookUpdate) {
 }
 
 func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
-	if !state.bookSequence.Accepts(update) {
+	if !state.bookSequence.CanAccept(update) {
 		return
+	}
+
+	if update.IsSnapshot() {
+		state.bookSequence.AdmitSnapshot()
 	}
 
 	beforeBids := state.book.Bids()

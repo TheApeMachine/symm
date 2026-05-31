@@ -122,10 +122,6 @@ func (reporter *TuneReporter) Summary(message string) {
 }
 
 func (reporter *TuneReporter) println(message string) {
-	if reporter.quiet {
-		return
-	}
-
 	reporter.mu.Lock()
 	defer reporter.mu.Unlock()
 

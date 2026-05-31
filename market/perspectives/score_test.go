@@ -42,8 +42,15 @@ func TestScoreSeriesKey(t *testing.T) {
 	Convey("Given source category stream and symbol", t, func() {
 		key := ScoreSeriesKey(SourceFluid, CategoryTurbulent, "re", "BTC/EUR")
 
-		Convey("It should encode every segment", func() {
-			So(key, ShouldEqual, "fluid:turbulent:re:BTC/EUR")
+		Convey("It should encode every segment with positional labels", func() {
+			So(key, ShouldEqual, "fluid:turbulent:stream:re:symbol:BTC/EUR")
+		})
+
+		Convey("It should distinguish empty stream from empty symbol", func() {
+			withSymbol := ScoreSeriesKey(SourceFluid, CategoryTurbulent, "", "BTC/EUR")
+			withStream := ScoreSeriesKey(SourceFluid, CategoryTurbulent, "BTC", "")
+
+			So(withSymbol, ShouldNotEqual, withStream)
 		})
 	})
 }

@@ -13,7 +13,7 @@ func TestBookFeedStateRejectsDeltaBeforeSnapshot(t *testing.T) {
 		delta := BookUpdate{Symbol: "BTC/EUR", Checksum: 1}
 		delta.Bids = []BookLevel{{Price: 1, Qty: 1, PriceRaw: "1", QtyRaw: "1"}}
 
-		state.Apply(delta)
+		So(state.Apply(delta), ShouldBeFalse)
 
 		Convey("It should not mark the book ready or diverged", func() {
 			So(state.Ready(), ShouldBeFalse)
@@ -45,11 +45,49 @@ func TestBookFeedStateAcceptsSnapshotThenDelta(t *testing.T) {
 		}
 		snapshot.SetEnvelopeType(BookSnapshot)
 
-		state.Apply(snapshot)
+		So(state.Apply(snapshot), ShouldBeTrue)
+
+		delta := snapshot
+		delta.SetEnvelopeType("update")
+
+		So(state.Apply(delta), ShouldBeTrue)
 
 		Convey("It should be ready without divergence", func() {
 			So(state.Ready(), ShouldBeTrue)
 			So(state.Diverged(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestBookFeedStateStopsDeltasAfterDivergence(t *testing.T) {
+	Convey("Given a ready book that diverges on a bad checksum", t, func() {
+		symbol := "BTC/EUR"
+		state := NewBookFeedState(symbol, "test", 10)
+
+		snapshot := BookUpdate{
+			Symbol:   symbol,
+			Checksum: 0,
+			Bids:     []BookLevel{{Price: 99, Qty: 1, PriceRaw: "99", QtyRaw: "1"}},
+			Asks:     []BookLevel{{Price: 101, Qty: 1, PriceRaw: "101", QtyRaw: "1"}},
+		}
+		snapshot.SetEnvelopeType(BookSnapshot)
+
+		So(state.Apply(snapshot), ShouldBeTrue)
+
+		badDelta := snapshot
+		badDelta.SetEnvelopeType("update")
+		badDelta.Checksum = 1
+		badDelta.Bids = []BookLevel{{Price: 50, Qty: 1, PriceRaw: "50", QtyRaw: "1"}}
+
+		So(state.Apply(badDelta), ShouldBeTrue)
+		So(state.Diverged(), ShouldBeTrue)
+		So(state.RequestSnapshot(), ShouldBeTrue)
+
+		Convey("It should reject further deltas until a snapshot heals", func() {
+			anotherDelta := badDelta
+			anotherDelta.Bids = []BookLevel{{Price: 60, Qty: 1, PriceRaw: "60", QtyRaw: "1"}}
+
+			So(state.Apply(anotherDelta), ShouldBeFalse)
 		})
 	})
 }

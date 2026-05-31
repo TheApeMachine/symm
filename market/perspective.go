@@ -49,6 +49,16 @@ func snapshotPerspectiveRegistry() []registeredPerspective {
 	return perspectiveRegistry
 }
 
+/*
+RestoreDefaultPerspectiveRegistry resets the active registry to the Go builtin
+playbooks. Tests and tooling use this after loading YAML overrides.
+*/
+func RestoreDefaultPerspectiveRegistry() {
+	perspectiveRegistryLock.Lock()
+	perspectiveRegistry = defaultPerspectiveRegistry()
+	perspectiveRegistryLock.Unlock()
+}
+
 func LoadPerspectiveRegistry(path string) error {
 	document, err := perspectives.LoadDocumentFile(path)
 
@@ -84,8 +94,8 @@ func SetPerspectiveRegistry(strategies []perspectives.Perspective) error {
 	}
 
 	perspectiveRegistryLock.Lock()
+	defer perspectiveRegistryLock.Unlock()
 	perspectiveRegistry = registry
-	perspectiveRegistryLock.Unlock()
 
 	return nil
 }

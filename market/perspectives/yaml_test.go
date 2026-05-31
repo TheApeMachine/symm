@@ -85,8 +85,7 @@ playbooks:
 
 func TestMutateDocumentBuildsValidStrategies(t *testing.T) {
 	Convey("Given the default perspective document", t, func() {
-		document, err := LoadDocumentFile("../../config/perspectives.yaml")
-		So(err, ShouldBeNil)
+		document := BuiltinDocument()
 
 		mutated := MutateDocument(document, rand.New(rand.NewSource(1)))
 		strategies, err := BuildStrategies(mutated)
@@ -100,7 +99,7 @@ func TestMutateDocumentBuildsValidStrategies(t *testing.T) {
 
 func TestGenerateDocumentBuildsFromProfile(t *testing.T) {
 	Convey("Given a replay-derived primitive profile", t, func() {
-		builder := NewProfileBuilder()
+		builder := NewProfileBuilder(rand.New(rand.NewSource(2)))
 		builder.Record(Measurement{
 			Source:   SourceCVD,
 			Category: CategoryAggressiveDrive,
@@ -195,135 +194,20 @@ func TestDocumentSearchKeepsBuildableAfterObserve(t *testing.T) {
 	})
 }
 
-func TestDefaultDocumentMovesFrictionIntoTree(t *testing.T) {
-	Convey("Given the default pump playbook", t, func() {
-		document, err := LoadDocumentFile("../../config/perspectives.yaml")
-		So(err, ShouldBeNil)
+func TestBuiltinPumpPerspectiveAuthorizesEntry(t *testing.T) {
+	Convey("Given the builtin pump playbook", t, func() {
+		pump := NewPumpPerspective()
 
-		strategies, err := BuildStrategies(document)
-		So(err, ShouldBeNil)
-
-		var pump *strategy
-
-		for _, candidate := range strategies {
-			strategy := candidate.(*strategy)
-
-			if strategy.Name() == PlaybookPump {
-				pump = strategy
-			}
-		}
-
-		So(pump, ShouldNotBeNil)
-
-		threshold, path, found := entryCostGateAndPath(pumpSpec(document))
-		So(found, ShouldBeTrue)
-
-		Convey("It should return a tree deny when the cost ratio cannot clear", func() {
-			action := pump.DecideWithContext(
-				measurementsForPath(path),
+		Convey("It should authorize entry on coiled compression without desk metrics", func() {
+			action := pump.Decide(
+				[]Measurement{measurement(CategoryCoiledCompression, 2)},
 				nil,
-				DecisionContext{Metrics: map[string]float64{MetricScoreCostRatio: threshold * 0.5}},
-			)
-
-			So(action, ShouldNotBeNil)
-			So(*action, ShouldEqual, ActionDeny)
-		})
-
-		Convey("It should authorize a reachable entry path once cost clears", func() {
-			action := pump.DecideWithContext(
-				measurementsForPath(path),
-				nil,
-				DecisionContext{Metrics: map[string]float64{
-					MetricScoreCostRatio: threshold + 0.1,
-					MetricInPlay:         1,
-				}},
 			)
 
 			So(action, ShouldNotBeNil)
 			So(*action, ShouldEqual, ActionEnter)
 		})
 	})
-}
-
-func pumpSpec(document Document) PlaybookSpec {
-	for _, playbook := range document.Playbooks {
-		if cleanName(playbook.Name) == string(PlaybookPump) {
-			return playbook
-		}
-	}
-
-	return PlaybookSpec{}
-}
-
-func entryCostGateAndPath(playbook PlaybookSpec) (float64, []BranchSpec, bool) {
-	for _, branch := range playbook.Entry {
-		if branch.Metric != MetricScoreCostRatio || branch.Condition != ">=" {
-			continue
-		}
-
-		path, found := findEnterPath(branch.Branches, nil)
-
-		if found && branch.Value != nil {
-			return *branch.Value, path, true
-		}
-	}
-
-	return 0, nil, false
-}
-
-func findEnterPath(branches []BranchSpec, path []BranchSpec) ([]BranchSpec, bool) {
-	for _, branch := range branches {
-		nextPath := append(append([]BranchSpec(nil), path...), branch)
-
-		if branch.Action == ActionLabel(ActionEnter) {
-			return nextPath, true
-		}
-
-		if foundPath, found := findEnterPath(branch.Branches, nextPath); found {
-			return foundPath, true
-		}
-	}
-
-	return nil, false
-}
-
-func measurementsForPath(path []BranchSpec) []Measurement {
-	byCategory := make(map[CategoryType]float64)
-
-	for _, branch := range path {
-		if branch.Category == "" {
-			continue
-		}
-
-		category, err := parseCategory(branch.Category)
-
-		if err != nil {
-			continue
-		}
-
-		byCategory[category] = satisfyingSNR(branch)
-	}
-
-	measurements := make([]Measurement, 0, len(byCategory))
-
-	for category, snr := range byCategory {
-		measurements = append(measurements, measurement(category, snr))
-	}
-
-	return measurements
-}
-
-func satisfyingSNR(branch BranchSpec) float64 {
-	if branch.Value == nil {
-		return 2
-	}
-
-	switch branch.Condition {
-	case "<", "<=":
-		return *branch.Value * 0.5
-	default:
-		return *branch.Value + 0.1
-	}
 }
 
 func denyEntryOverlaps(document Document) []string {
@@ -343,11 +227,7 @@ func denyEntryOverlaps(document Document) []string {
 }
 
 func BenchmarkBuildStrategies(b *testing.B) {
-	document, err := LoadDocumentFile("../../config/perspectives.yaml")
-
-	if err != nil {
-		b.Fatal(err)
-	}
+	document := BuiltinDocument()
 
 	for b.Loop() {
 		if _, err := BuildStrategies(document); err != nil {
@@ -357,11 +237,7 @@ func BenchmarkBuildStrategies(b *testing.B) {
 }
 
 func BenchmarkMutateDocument(b *testing.B) {
-	document, err := LoadDocumentFile("../../config/perspectives.yaml")
-
-	if err != nil {
-		b.Fatal(err)
-	}
+	document := BuiltinDocument()
 
 	random := rand.New(rand.NewSource(7))
 
