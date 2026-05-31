@@ -29,7 +29,7 @@ func TestStressQuoteShallowsDepth(t *testing.T) {
 			At:       time.Now(),
 			AskDepth: []market.BookLevel{{Price: 101, Qty: 10}},
 		}
-		stressed := StressQuote(quote, 0)
+		stressed := StressQuote(quote, 0, broker.StressRegime{})
 
 		convey.Convey("It should scale visible depth", func() {
 			convey.So(stressed.AskDepth[0].Qty, convey.ShouldEqual, 5)

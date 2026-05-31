@@ -18,72 +18,189 @@ const feedReconnectDelay = time.Second
 const feedBuffer = 256
 
 /*
-feed multiplexes one upstream Kraken stream to many in-process subscribers. Every
-signal that watches the same universe shares a single connection instead of each
-dialing its own, which is what keeps the connection count flat (one per channel)
-no matter how many signals run. The upstream opens once on the first subscriber,
-runs for the life of the process, and auto-reconnects if it drops.
+sharedFeed multiplexes one upstream Kraken stream to many in-process subscribers.
+The upstream opens when the first subscriber attaches, uses the union of every
+active subscriber's symbols (and the max book depth), and stops when the last
+subscriber detaches.
 */
-type feed[T any] struct {
-	mu   sync.Mutex
-	subs map[chan *T]struct{}
-	dial func() <-chan *T
+type sharedFeed[T any] struct {
+	mu             sync.Mutex
+	subs           map[chan *T]subscriptionSpec
+	feedCtx        context.Context
+	feedCancel     context.CancelFunc
+	upstreamCancel context.CancelFunc
+	activeSpec     subscriptionSpec
+	running        bool
+	reliable       bool
+	dial           func(ctx context.Context, spec subscriptionSpec) <-chan *T
 }
 
-func newFeed[T any]() *feed[T] {
-	return &feed[T]{subs: make(map[chan *T]struct{})}
+func newSharedFeed[T any](
+	dial func(ctx context.Context, spec subscriptionSpec) <-chan *T,
+) *sharedFeed[T] {
+	return &sharedFeed[T]{
+		subs: make(map[chan *T]subscriptionSpec),
+		dial: dial,
+	}
+}
+
+func newReliableSharedFeed[T any](
+	dial func(ctx context.Context, spec subscriptionSpec) <-chan *T,
+) *sharedFeed[T] {
+	feed := newSharedFeed(dial)
+	feed.reliable = true
+
+	return feed
 }
 
 /*
-subscribe attaches a consumer and returns its channel. The first caller's dial
-closure defines how the shared upstream is (re)opened; later callers reuse the
-already-running upstream. The consumer is detached when ctx is canceled.
+subscribe attaches a consumer and returns its channel. The shared upstream uses
+the union of every active subscriber's symbols. The consumer is detached when ctx
+is canceled; the upstream stops when the last consumer detaches.
 */
-func (sharedFeed *feed[T]) subscribe(
-	ctx context.Context, dial func() <-chan *T,
+func (sharedFeed *sharedFeed[T]) subscribe(
+	ctx context.Context, spec subscriptionSpec,
 ) <-chan *T {
 	out := make(chan *T, feedBuffer)
+	bridge := out
+
+	if sharedFeed.reliable {
+		bridge = make(chan *T, feedBuffer)
+
+		go func() {
+			defer close(out)
+
+			for value := range bridge {
+				out <- value
+			}
+		}()
+	}
 
 	sharedFeed.mu.Lock()
-	first := sharedFeed.dial == nil
-
-	if first {
-		sharedFeed.dial = dial
-	}
-
-	sharedFeed.subs[out] = struct{}{}
+	sharedFeed.subs[bridge] = spec
+	merged := sharedFeed.mergedSpecLocked()
+	sharedFeed.ensureRunningLocked(merged)
 	sharedFeed.mu.Unlock()
 
-	if first {
-		go sharedFeed.run()
-	}
-
-	go sharedFeed.detach(ctx, out)
+	go sharedFeed.detach(ctx, bridge, out)
 
 	return out
 }
 
-// detach removes a consumer once its context is canceled and closes its channel
-// so its range loop ends. The shared upstream keeps running for the others.
-func (sharedFeed *feed[T]) detach(ctx context.Context, out chan *T) {
+func (sharedFeed *sharedFeed[T]) mergedSpecLocked() subscriptionSpec {
+	specs := make([]subscriptionSpec, 0, len(sharedFeed.subs))
+
+	for _, spec := range sharedFeed.subs {
+		specs = append(specs, spec)
+	}
+
+	return mergeSubscriptionSpecs(specs)
+}
+
+func (sharedFeed *sharedFeed[T]) ensureRunningLocked(merged subscriptionSpec) {
+	if !sharedFeed.running {
+		sharedFeed.feedCtx, sharedFeed.feedCancel = context.WithCancel(context.Background())
+		sharedFeed.running = true
+		sharedFeed.activeSpec = merged
+
+		go sharedFeed.run()
+
+		return
+	}
+
+	if !subscriptionSpecEqual(sharedFeed.activeSpec, merged) {
+		sharedFeed.activeSpec = merged
+		sharedFeed.restartUpstreamLocked()
+	}
+}
+
+func (sharedFeed *sharedFeed[T]) restartUpstreamLocked() {
+	if sharedFeed.upstreamCancel != nil {
+		sharedFeed.upstreamCancel()
+		sharedFeed.upstreamCancel = nil
+	}
+}
+
+func (sharedFeed *sharedFeed[T]) detach(ctx context.Context, bridge, out chan *T) {
 	<-ctx.Done()
 
 	sharedFeed.mu.Lock()
-	delete(sharedFeed.subs, out)
+	delete(sharedFeed.subs, bridge)
+
+	if len(sharedFeed.subs) == 0 {
+		sharedFeed.stopLocked()
+	} else {
+		merged := sharedFeed.mergedSpecLocked()
+
+		if !subscriptionSpecEqual(sharedFeed.activeSpec, merged) {
+			sharedFeed.activeSpec = merged
+			sharedFeed.restartUpstreamLocked()
+		}
+	}
+
 	sharedFeed.mu.Unlock()
 
-	close(out)
+	close(bridge)
+
+	if bridge == out {
+		return
+	}
 }
 
-// run owns the upstream: it reads until the connection drops, then waits and
-// reopens. It lives for the life of the process.
-func (sharedFeed *feed[T]) run() {
+func (sharedFeed *sharedFeed[T]) stopLocked() {
+	sharedFeed.restartUpstreamLocked()
+
+	if sharedFeed.feedCancel != nil {
+		sharedFeed.feedCancel()
+		sharedFeed.feedCancel = nil
+	}
+
+	sharedFeed.running = false
+}
+
+func (sharedFeed *sharedFeed[T]) run() {
 	for {
-		for value := range sharedFeed.dial() {
+		sharedFeed.mu.Lock()
+		feedCtx := sharedFeed.feedCtx
+		sharedFeed.mu.Unlock()
+
+		if feedCtx == nil {
+			return
+		}
+
+		select {
+		case <-feedCtx.Done():
+			return
+		default:
+		}
+
+		spec := sharedFeed.currentSpec()
+		upstreamCtx, cancel := context.WithCancel(feedCtx)
+
+		sharedFeed.mu.Lock()
+		sharedFeed.upstreamCancel = cancel
+		sharedFeed.mu.Unlock()
+
+		for value := range sharedFeed.dial(upstreamCtx, spec) {
 			sharedFeed.fanout(value)
 		}
 
+		cancel()
+
+		sharedFeed.mu.Lock()
+		feedCtx = sharedFeed.feedCtx
+		empty := len(sharedFeed.subs) == 0
+		sharedFeed.mu.Unlock()
+
+		if feedCtx == nil || feedCtx.Err() != nil {
+			return
+		}
+
 		if replayActive() && !config.System.ReplayLoop {
+			return
+		}
+
+		if empty {
 			return
 		}
 
@@ -91,13 +208,28 @@ func (sharedFeed *feed[T]) run() {
 	}
 }
 
+func (sharedFeed *sharedFeed[T]) currentSpec() subscriptionSpec {
+	sharedFeed.mu.Lock()
+	defer sharedFeed.mu.Unlock()
+
+	return sharedFeed.activeSpec
+}
+
 func replayActive() bool {
 	return strings.TrimSpace(config.System.ReplayFile) != ""
 }
 
-// fanout copies one upstream value to every attached subscriber, dropping for
-// any subscriber whose buffer is full so one slow signal cannot stall the rest.
-func (sharedFeed *feed[T]) fanout(value *T) {
+func (sharedFeed *sharedFeed[T]) fanout(value *T) {
+	if sharedFeed.reliable {
+		sharedFeed.fanoutReliable(value)
+
+		return
+	}
+
+	sharedFeed.fanoutDrop(value)
+}
+
+func (sharedFeed *sharedFeed[T]) fanoutDrop(value *T) {
 	sharedFeed.mu.Lock()
 	defer sharedFeed.mu.Unlock()
 
@@ -109,11 +241,29 @@ func (sharedFeed *feed[T]) fanout(value *T) {
 	}
 }
 
-// The shared feeds for the high-fan-out public channels. The trade/ticker/book
-// streams are consumed by many signals over the same universe, so they are
-// multiplexed; OHLC is per-symbol (anchor plus open positions) and dials directly.
+func (sharedFeed *sharedFeed[T]) fanoutReliable(value *T) {
+	sharedFeed.mu.Lock()
+	bridges := make([]chan *T, 0, len(sharedFeed.subs))
+
+	for bridge := range sharedFeed.subs {
+		bridges = append(bridges, bridge)
+	}
+
+	sharedFeed.mu.Unlock()
+
+	for _, bridge := range bridges {
+		bridge <- value
+	}
+}
+
 var (
-	tradeFeed  = newFeed[TradeUpdate]()
-	tickerFeed = newFeed[TickerUpdate]()
-	bookFeed   = newFeed[BookUpdate]()
+	tradeFeed = newSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *TradeUpdate {
+		return tradeUpstream(ctx, spec.symbols)
+	})
+	tickerFeed = newSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *TickerUpdate {
+		return tickerUpstream(ctx, spec.symbols)
+	})
+	bookFeed = newReliableSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *BookUpdate {
+		return bookUpstream(ctx, spec.depth, spec.symbols)
+	})
 )

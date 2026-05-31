@@ -329,7 +329,12 @@ Per-pair taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPai
 `ExecutionStressEnabled` applies the same stale-quote, shallow-depth, and adverse-ask stress to both paper and live fills. Any new live execution behavior must be mirrored in `trader/paper.go` / `broker.SubmitPaper`.
 
 > [!NOTE]
-> Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk routes entries and exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), recording the same economics labels on exchange fills as paper does on `FillPaper`.
+> Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk routes entries and exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), recording the same economics labels on exchange fills as paper does on `FillPaper`. If the live session fails to start while `SYMM_LIVE=1`, the engine aborts boot instead of falling back to paper.
+
+> [!NOTE]
+> L3 toxicity: `SYMM_KRAKEN_API_KEY` and `SYMM_KRAKEN_API_SECRET` alone enable the authenticated Kraken `level3` feed at boot (`market.ConfigureLevel3`). Per-order cancel velocity replaces the L2 book fallback in `toxicity.Toxicity` for flash-spoof detection. This is market-data only — without `SYMM_LIVE=1` the desk stays in paper mode.
+
+Entries require a complete top-of-book quote (bid and ask) before `PreflightGates` runs spread and slippage checks. Missing ticker/book data rejects the order rather than synthesizing a zero-spread quote from last alone.
 
 ### Execution economics
 
@@ -353,7 +358,7 @@ A symbol must be a genuine outlier against the rest of the market to receive cap
 
 ## Tuning
 
-Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 optional fields. At boot, `config.Init` auto-loads `runs/tuned.json` when present, so the last optimized config is always active without any extra flags.
+Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 optional fields. At boot, `config.Bootstrap` auto-loads `runs/tuned.json` when present; invalid tunables or malformed `SYMM_*` env overrides abort startup instead of silently keeping defaults.
 
 ### Parameter search
 
@@ -498,6 +503,7 @@ make build          # → bin/symm
 make run            # build + run (paper defaults)
 make audit          # like run, plus JSONL desk audit log (off by default)
 make test-go        # full test suite
+make test-frontend  # TypeScript check (src/lib/symm) + Vitest
 make test-cover     # coverage report → runs/coverage.out
 make bench          # package benchmarks
 ```
@@ -558,7 +564,7 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
 | `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
 | `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
-| `SYMM_KRAKEN_API_KEY`    | Kraken API key for authenticated WebSocket v2           |
+| `SYMM_KRAKEN_API_KEY`    | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
 | `SYMM_UI_ADDR`           | WebSocket listen address (default `:8765`)              |
@@ -624,7 +630,8 @@ Full environment wiring is in `config/config.go`.
 | Field             | Default | Description                                       |
 |-------------------|---------|---------------------------------------------------|
 | `QuoteCurrency`   | `EUR`   | Universe filter applied at symbol discovery       |
-| `BookDepthLevels` | `5`     | Order book snapshot depth                         |
+| `MaxScanSymbols`  | `64`    | Cap on discovered symbols scanned per boot        |
+| `BookDepthLevels` | `5`     | Signal book depth; maintained locally at ≥10 for Kraken checksum |
 | `SubscribeBatch`  | `50`    | Symbol subscribe batch size per WebSocket message |
 | `Fee30DVolume`    | `0`     | 30-day volume for Kraken fee tier lookup          |
 

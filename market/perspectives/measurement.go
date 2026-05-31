@@ -57,4 +57,5 @@ type Measurement struct {
 	Strength float64 // raw fused strength for gauges (pre noise-floor warmup)
 	SNR      float64 // playbook score after the signal's adaptive noise floor
 	Last     float64 // last traded price, carried for the trader's sizing/fill
+	Factors  []GaugeFactor
 }

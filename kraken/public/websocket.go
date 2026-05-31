@@ -124,6 +124,8 @@ func Stream[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 				var rows []T
 
 				if err := sonic.Unmarshal(message.Data, &rows); err != nil {
+					errnie.Error(fmt.Errorf("kraken ws decode %s: %w", channel, err))
+
 					continue
 				}
 
@@ -175,6 +177,8 @@ func StreamSnapshot[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 				var row T
 
 				if err := sonic.Unmarshal(message.Data, &row); err != nil {
+					errnie.Error(fmt.Errorf("kraken ws decode %s: %w", channel, err))
+
 					continue
 				}
 
@@ -205,6 +209,8 @@ func (ws *WebSocket) read(
 	var message SocketMessage
 
 	if err := sonic.Unmarshal(payload, &message); err != nil {
+		errnie.Error(fmt.Errorf("kraken ws envelope decode %s: %w", channel, err))
+
 		return nil, true
 	}
 

@@ -191,22 +191,39 @@ var System *Config
 const defaultTunedFile = "runs/tuned.json"
 
 func init() {
+	if err := Bootstrap(); err != nil {
+		panic(err)
+	}
+}
+
+/*
+Bootstrap loads defaults, optional tunables, and builds Runtime. Invalid config
+or tunables files fail closed instead of silently continuing with defaults.
+*/
+func Bootstrap() error {
 	System = NewConfig()
 
 	if path := strings.TrimSpace(System.ConfigFile); path != "" {
-		_ = LoadTunablesFile(path, System)
+		if err := LoadTunablesFile(path, System); err != nil {
+			return fmt.Errorf("load config file %q: %w", path, err)
+		}
+
 		Runtime = NewRuntime(System)
 		syncPerspectives(System)
 
-		return
+		return nil
 	}
 
 	if _, err := os.Stat(defaultTunedFile); err == nil {
-		_ = LoadTunablesFile(defaultTunedFile, System)
+		if err := LoadTunablesFile(defaultTunedFile, System); err != nil {
+			return fmt.Errorf("load tuned config %q: %w", defaultTunedFile, err)
+		}
 	}
 
 	Runtime = NewRuntime(System)
 	syncPerspectives(System)
+
+	return nil
 }
 
 /*
@@ -375,12 +392,14 @@ func NewConfig() *Config {
 		cfg.MaxPortfolioDrawdownPct = cfg.MaxDailyLossEUR / cfg.WalletEUR
 	}
 
-	applyEnvironment(cfg)
+	if err := ApplyEnvironment(cfg); err != nil {
+		panic(err)
+	}
 
 	return cfg
 }
 
-func applyEnvironment(cfg *Config) {
+func ApplyEnvironment(cfg *Config) error {
 	if replayFile := strings.TrimSpace(os.Getenv("SYMM_REPLAY_FILE")); replayFile != "" {
 		cfg.ReplayFile = replayFile
 	}
@@ -391,9 +410,13 @@ func applyEnvironment(cfg *Config) {
 	}
 
 	if pace := strings.TrimSpace(os.Getenv("SYMM_REPLAY_PACE")); pace != "" {
-		if parsed, err := time.ParseDuration(pace); err == nil {
-			cfg.ReplayPace = parsed
+		parsed, err := time.ParseDuration(pace)
+
+		if err != nil {
+			return fmt.Errorf("SYMM_REPLAY_PACE: %w", err)
 		}
+
+		cfg.ReplayPace = parsed
 	}
 
 	if recordFile := strings.TrimSpace(os.Getenv("SYMM_RECORD_FILE")); recordFile != "" {
@@ -405,17 +428,27 @@ func applyEnvironment(cfg *Config) {
 	}
 
 	if auditCooldown := strings.TrimSpace(os.Getenv("SYMM_AUDIT_GATE_COOLDOWN")); auditCooldown != "" {
-		if parsed, err := time.ParseDuration(auditCooldown); err == nil {
-			cfg.AuditGateRejectCooldown = parsed
+		parsed, err := time.ParseDuration(auditCooldown)
+
+		if err != nil {
+			return fmt.Errorf("SYMM_AUDIT_GATE_COOLDOWN: %w", err)
 		}
+
+		cfg.AuditGateRejectCooldown = parsed
 	}
 
 	if auditMaxMB := strings.TrimSpace(os.Getenv("SYMM_AUDIT_MAX_MB")); auditMaxMB != "" {
 		var megabytes int64
 
-		if _, err := fmt.Sscan(auditMaxMB, &megabytes); err == nil && megabytes > 0 {
-			cfg.AuditMaxFileBytes = megabytes << 20
+		if _, err := fmt.Sscan(auditMaxMB, &megabytes); err != nil {
+			return fmt.Errorf("SYMM_AUDIT_MAX_MB: %w", err)
 		}
+
+		if megabytes <= 0 {
+			return fmt.Errorf("SYMM_AUDIT_MAX_MB: must be positive")
+		}
+
+		cfg.AuditMaxFileBytes = megabytes << 20
 	}
 
 	if configFile := strings.TrimSpace(os.Getenv("SYMM_CONFIG_FILE")); configFile != "" {
@@ -444,4 +477,6 @@ func applyEnvironment(cfg *Config) {
 		strings.EqualFold(stress, "true") {
 		cfg.ExecutionStressEnabled = true
 	}
+
+	return nil
 }

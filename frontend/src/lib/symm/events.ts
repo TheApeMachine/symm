@@ -12,7 +12,8 @@ export type SymmEventName =
 	| "candle_bar"
 	| "mark"
 	| "prediction"
-	| "prediction_settled";
+	| "prediction_settled"
+	| "decision_trace";
 
 export type SymmEvent = {
 	event: SymmEventName;

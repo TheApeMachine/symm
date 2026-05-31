@@ -52,21 +52,20 @@ func (quote *Quote) complete() (float64, float64, float64, error) {
 		return 0, 0, 0, fmt.Errorf("missing quote")
 	}
 
+	if bid <= 0 || ask <= 0 || ask < bid {
+		return 0, 0, 0, fmt.Errorf("incomplete top of book")
+	}
+
 	if last <= 0 {
-		last = bid
-
-		if ask > 0 {
-			last = ask
-		}
-	}
-
-	if bid <= 0 {
-		bid = last
-	}
-
-	if ask <= 0 {
-		ask = last
+		last = (bid + ask) / 2
 	}
 
 	return last, bid, ask, nil
+}
+
+/*
+HasTopOfBook reports whether bid and ask are present for spread and slippage gates.
+*/
+func (quote *Quote) HasTopOfBook() bool {
+	return quote.Bid > 0 && quote.Ask > 0 && quote.Ask >= quote.Bid
 }

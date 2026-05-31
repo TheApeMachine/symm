@@ -49,9 +49,7 @@ from the shared feed; the upstream keeps running for the others.
 func NewTickerSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TickerUpdate {
-	return tickerFeed.subscribe(ctx, func() <-chan *TickerUpdate {
-		return tickerUpstream(context.Background(), symbols)
-	})
+	return tickerFeed.subscribe(ctx, subscriptionSpec{symbols: symbols})
 }
 
 // dialTicker opens one upstream connection to the public ticker channel.
@@ -70,16 +68,18 @@ func dialTicker(
 		return closed[TickerUpdate]()
 	}
 
-	if err := ws.Send(public.TickerChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: TickerParams{
-			Channel:  public.TickerChannel,
-			Symbol:   symbols,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		return closed[TickerUpdate]()
+	for _, batch := range symbolBatches(symbols) {
+		if err := ws.Send(public.TickerChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: TickerParams{
+				Channel:  public.TickerChannel,
+				Symbol:   batch,
+				Snapshot: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+			return closed[TickerUpdate]()
+		}
 	}
 
 	stream, err := public.Stream[TickerUpdate](ws, public.TickerChannel)

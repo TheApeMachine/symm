@@ -1,10 +1,16 @@
+export type ConfidenceFactor = {
+	name: string;
+	value: number;
+};
+
 export type ConfidenceRow = {
 	source: string;
 	confidence: number;
 	count?: number;
+	factors?: ConfidenceFactor[];
 };
 
-type SourceSink = (confidence: number) => void;
+type SourceSink = (row: ConfidenceRow) => void;
 
 const sourceAliases: Record<string, string> = {
 	basis: "liquidity",
@@ -15,6 +21,30 @@ const sourceAliases: Record<string, string> = {
 
 const normalizeSource = (source: string): string =>
 	sourceAliases[source] ?? source;
+
+const normalizeFactors = (raw: unknown): ConfidenceFactor[] | undefined => {
+	if (!Array.isArray(raw)) {
+		return undefined;
+	}
+
+	const factors: ConfidenceFactor[] = [];
+
+	for (const entry of raw) {
+		if (typeof entry !== "object" || entry === null) {
+			continue;
+		}
+
+		const factor = entry as Record<string, unknown>;
+
+		if (typeof factor.name !== "string" || typeof factor.value !== "number") {
+			continue;
+		}
+
+		factors.push({ name: factor.name, value: factor.value });
+	}
+
+	return factors.length > 0 ? factors : undefined;
+};
 
 export const isConfidenceRow = (raw: unknown): raw is ConfidenceRow => {
 	if (typeof raw !== "object" || raw === null) {
@@ -31,14 +61,14 @@ ConfidenceDataProvider routes hub mean-confidence readings to registered gauge s
 */
 class ConfidenceDataProviderImpl {
 	private sinks = new Map<string, SourceSink>();
-	private latest = new Map<string, number>();
+	private latest = new Map<string, ConfidenceRow>();
 
 	registerSource(source: string, sink: SourceSink) {
 		const normalized = normalizeSource(source);
-		const confidence = this.latest.get(normalized);
+		const row = this.latest.get(normalized);
 
-		if (confidence !== undefined) {
-			sink(confidence);
+		if (row !== undefined) {
+			sink(row);
 		}
 
 		this.sinks.set(normalized, sink);
@@ -48,7 +78,7 @@ class ConfidenceDataProviderImpl {
 		};
 	}
 
-	snapshot(): ReadonlyMap<string, number> {
+	snapshot(): ReadonlyMap<string, ConfidenceRow> {
 		return this.latest;
 	}
 
@@ -58,9 +88,17 @@ class ConfidenceDataProviderImpl {
 		}
 
 		const source = normalizeSource(raw.source);
+		const row: ConfidenceRow = {
+			source,
+			confidence: raw.confidence,
+			count: raw.count,
+			factors:
+				raw.factors ??
+				normalizeFactors((raw as Record<string, unknown>).factors),
+		};
 
-		this.latest.set(source, raw.confidence);
-		this.sinks.get(source)?.(raw.confidence);
+		this.latest.set(source, row);
+		this.sinks.get(source)?.(row);
 	}
 
 	ingestSnapshot(raw: unknown) {
@@ -100,3 +138,6 @@ function createConfidenceDataProviderImpl() {
 export type ConfidenceStore = ReturnType<typeof createConfidenceDataProvider>;
 
 export const ConfidenceDataProvider = shared;
+
+export const formatConfidenceFactor = (factor: ConfidenceFactor): string =>
+	`${factor.name}=${factor.value.toFixed(4)}`;

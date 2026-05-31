@@ -11,11 +11,11 @@ import (
 
 /*
 ShouldRejectPaperOrder simulates an exchange reject on the paper path. Uses
-PaperOrderRejectRate always, and the higher of that and ExecutionStressRejectRate
-when execution stress is enabled (same knobs live would face under stress testing).
+PaperOrderRejectRate always, and the higher of that and regime-scaled
+ExecutionStressRejectRate when execution stress is enabled.
 */
-func ShouldRejectPaperOrder(scope config.ExecutionScope) error {
-	rate := effectivePaperRejectRate(scope)
+func ShouldRejectPaperOrder(scope config.ExecutionScope, regime StressRegime) error {
+	rate := effectivePaperRejectRate(scope, regime)
 
 	if rate <= 0 {
 		return nil
@@ -34,7 +34,7 @@ func ShouldRejectPaperOrder(scope config.ExecutionScope) error {
 	return nil
 }
 
-func effectivePaperRejectRate(scope config.ExecutionScope) float64 {
+func effectivePaperRejectRate(scope config.ExecutionScope, regime StressRegime) float64 {
 	if scope.QuoteCurrency == "" {
 		scope = config.ExecutionScopeFrom(config.System)
 	}
@@ -42,7 +42,8 @@ func effectivePaperRejectRate(scope config.ExecutionScope) float64 {
 	rate := scope.PaperOrderRejectRate
 
 	if scope.ExecutionStressEnabled {
-		rate = math.Max(rate, scope.ExecutionStressRejectRate)
+		stressRate := EffectiveRejectRate(scope.ExecutionStressRejectRate, regime)
+		rate = math.Max(rate, stressRate)
 	}
 
 	return rate

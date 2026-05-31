@@ -22,6 +22,7 @@ type Maker struct {
 	HasPriceDecimals bool
 	FeePct           float64 // real per-pair maker fee; falls back to config/wallet when <= 0
 	Execution        config.ExecutionScope
+	StressRegime     StressRegime
 }
 
 /*
@@ -52,7 +53,7 @@ func (maker *Maker) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		maker.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(maker.executionScope()); err != nil {
+	if err := ShouldRejectPaperOrder(maker.executionScope(), maker.StressRegime); err != nil {
 		tradingWallet.ReleaseEntryReservation(maker.Notional)
 
 		return maker.ClOrdID, err

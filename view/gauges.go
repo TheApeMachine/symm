@@ -103,7 +103,25 @@ func (gauges *Gauges) frame(measurement perspectives.Measurement) (map[string]an
 	return map[string]any{
 		"source":     source,
 		"confidence": perspectives.GaugeValue(measurement),
+		"factors":    gaugeFactorsWire(measurement.Factors),
 	}, true
+}
+
+func gaugeFactorsWire(factors []perspectives.GaugeFactor) []map[string]any {
+	if len(factors) == 0 {
+		return nil
+	}
+
+	wire := make([]map[string]any, len(factors))
+
+	for index, factor := range factors {
+		wire[index] = map[string]any{
+			"name":  factor.Name,
+			"value": factor.Value,
+		}
+	}
+
+	return wire
 }
 
 func (gauges *Gauges) Close() error {

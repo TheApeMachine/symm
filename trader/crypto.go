@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,7 +62,7 @@ func NewCrypto(
 	tradingWallet *wallet.Wallet,
 	tracker *focus.Set,
 	runtime *config.ScopedRuntime,
-) *Crypto {
+) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	if runtime == nil {
@@ -92,10 +93,12 @@ func NewCrypto(
 		session, sessionErr := NewLiveSession(ctx, config.System.KrakenAPIKey, config.System.KrakenAPISecret)
 
 		if sessionErr != nil {
-			errnie.Error(sessionErr)
-		} else {
-			crypto.live = session
+			crypto.cancel()
+
+			return nil, fmt.Errorf("live session: %w", sessionErr)
 		}
+
+		crypto.live = session
 	}
 
 	if auditPath := strings.TrimSpace(config.System.AuditFile); auditPath != "" {
@@ -113,7 +116,7 @@ func NewCrypto(
 		}
 	}
 
-	return crypto
+	return crypto, nil
 }
 
 func (crypto *Crypto) Close() error {
@@ -198,12 +201,18 @@ func (crypto *Crypto) consider(symbol string, last float64, measurements []persp
 	opportunity, ok := crypto.entryOpportunity(symbol, measurements)
 
 	if !ok {
+		if reason, fields := crypto.entryRejectReason(symbol, measurements); reason != "" {
+			crypto.publishEntryReject(symbol, reason, fields)
+		}
+
 		return
 	}
 
 	opportunity, ok = crypto.calibrateOpportunity(opportunity)
 
 	if !ok {
+		crypto.publishEntryReject(symbol, "edge_below_baseline", crypto.calibrateRejectFields(opportunity))
+
 		return
 	}
 
@@ -260,12 +269,13 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	feePct := crypto.takerFeePct(symbol)
 	spreadBPS := crypto.quotes.spreadBPS(symbol)
 	measurements := crypto.snapshot(symbol)
+	stressRegime := broker.StressRegimeFrom(measurements)
 	quote := crypto.prepareEntryQuote(symbol, last, measurements)
 	playbook := primaryPlaybook(opportunity.Names)
 
 	if crypto.scopedRuntime().Execution.UseMakerEntries {
 		if err := crypto.submitMakerEntry(
-			symbol, notional, quote, opportunity, playbook, spreadBPS, crypto.makerFeePct(symbol),
+			symbol, notional, quote, opportunity, playbook, spreadBPS, crypto.makerFeePct(symbol), stressRegime,
 		); err != nil {
 			errnie.Error(err)
 		}
@@ -274,11 +284,12 @@ func (crypto *Crypto) enter(symbol string, last float64, opportunity opportunity
 	}
 
 	buy := broker.Buy{
-		Symbol:    symbol,
-		Notional:  notional,
-		Quote:     quote,
-		FeePct:    feePct,
-		Execution: crypto.scopedRuntime().Execution,
+		Symbol:       symbol,
+		Notional:     notional,
+		Quote:        quote,
+		FeePct:       feePct,
+		Execution:    crypto.scopedRuntime().Execution,
+		StressRegime: stressRegime,
 	}
 
 	if err := crypto.submitEntry(buy, opportunity, playbook, spreadBPS); err != nil {
@@ -301,10 +312,11 @@ func (crypto *Crypto) exit(
 	entry := crypto.wallet.AvgEntryFor(base)
 
 	sell := broker.Sell{
-		Symbol:    symbol,
-		Quote:     crypto.quotes.snapshot(symbol, last),
-		FeePct:    binding.TakerFeePct,
-		Execution: crypto.scopedRuntime().Execution,
+		Symbol:       symbol,
+		Quote:        crypto.quotes.snapshot(symbol, last),
+		FeePct:       binding.TakerFeePct,
+		Execution:    crypto.scopedRuntime().Execution,
+		StressRegime: broker.StressRegimeFrom(crypto.snapshot(symbol)),
 	}
 
 	if err := crypto.submitExit(sell, binding, entry, reason); err != nil {

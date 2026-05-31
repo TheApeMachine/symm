@@ -53,7 +53,7 @@ type DepthSymbol struct {
 func NewDepthSymbol(symbol string) *DepthSymbol {
 	return &DepthSymbol{
 		symbol:   symbol,
-		book:     orderbook.NewBook(config.System.BookDepthLevels),
+		book:     orderbook.NewBook(orderbook.MaintainDepth(config.System.BookDepthLevels)),
 		pressure: adaptive.NewEMA(0),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
@@ -148,6 +148,10 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
+	if state.diverged {
+		return state.measureTradePressureLocked()
+	}
+
 	bids := toMarketLevels(state.book.Bids())
 	asks := toMarketLevels(state.book.Asks())
 	mid := state.last
@@ -200,26 +204,36 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				}
 
 				if raw > 0 {
-					return perspectives.FinalizeSNR(perspectives.Measurement{
+					return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
 						Source:   perspectives.SourceDepthFlow,
 						Category: depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK),
 					}, raw, func(value float64) float64 {
 						return state.floors.Score("imbalance", value)
+					}), []perspectives.GaugeFactor{
+						{Name: "imbalance", Value: imbalance},
+						{Name: "level1", Value: level1},
 					}), true
 				}
 			}
 
 			raw := math.Abs(level1)
 
-			return perspectives.FinalizeSNR(perspectives.Measurement{
+			return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
 				Source:   perspectives.SourceDepthFlow,
 				Category: depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK),
 			}, raw, func(value float64) float64 {
 				return state.floors.Score("level1", value)
+			}), []perspectives.GaugeFactor{
+				{Name: "imbalance", Value: imbalance},
+				{Name: "level1", Value: level1},
 			}), true
 		}
 	}
 
+	return state.measureTradePressureLocked()
+}
+
+func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement, bool) {
 	flow := math.Abs(state.buyPressure)
 
 	if flow <= 0 {

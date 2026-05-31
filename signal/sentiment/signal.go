@@ -10,10 +10,14 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/ring"
 )
 
-const minBreadth = 0.55
+const (
+	sentimentBreadthHistory = 64
+)
 
 /*
 Signal measures cross-section bullish breadth from ticker change percentages and
@@ -35,6 +39,7 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (change percent)
 	floor       *adaptive.SNRField
+	breadthHist ring.FloatRing
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -47,6 +52,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
+		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -85,7 +91,7 @@ func (signal *Signal) Tick() error {
 
 // measure classifies one symbol against the live cross-section breadth.
 func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
-	breadth, topChange, ok := signal.breadth()
+	breadth, _, universe, ok := signal.breadth()
 
 	if !ok {
 		return perspectives.Measurement{}, false
@@ -93,14 +99,14 @@ func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
 
 	return perspectives.Measurement{
 		Source:   perspectives.SourceSentiment,
-		Category: signal.category(breadth, change, topChange),
+		Category: signal.category(breadth, change, 0, universe),
 		SNR:      signal.snr(breadth),
 	}, true
 }
 
 // breadth returns the fraction of the universe that is rising and the strongest
 // positive change observed.
-func (signal *Signal) breadth() (fraction, topChange float64, ok bool) {
+func (signal *Signal) breadth() (fraction, topChange float64, universe int, ok bool) {
 	positive := 0
 	total := 0
 
@@ -125,29 +131,61 @@ func (signal *Signal) breadth() (fraction, topChange float64, ok bool) {
 	})
 
 	if total == 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 
-	return float64(positive) / float64(total), topChange, true
+	return float64(positive) / float64(total), topChange, total, true
 }
 
 // category maps breadth and this symbol's leadership onto the sentiment perspective.
-func (signal *Signal) category(breadth, change, topChange float64) perspectives.CategoryType {
-	if breadth >= minBreadth {
+func (signal *Signal) category(breadth, change, topChange float64, universe int) perspectives.CategoryType {
+	signal.breadthHist.Push(breadth)
+
+	if breadth >= signal.surgeThreshold(universe) {
 		return perspectives.CategoryRiskOnSurge
 	}
 
-	leaderShare := 0.0
-
-	if topChange > 0 {
-		leaderShare = math.Abs(change) / topChange
-	}
-
-	if leaderShare >= 0.5 && change != 0 {
+	if signal.isLeader(change) {
 		return perspectives.CategoryDivergentMove
 	}
 
 	return perspectives.CategorySystemicSlump
+}
+
+func (signal *Signal) surgeThreshold(universe int) float64 {
+	samples := signal.breadthHist.Ordered()
+
+	if len(samples) >= 8 {
+		return numeric.PercentileSorted(numeric.CopySorted(samples), 0.75)
+	}
+
+	if universe <= 0 {
+		return 0.5
+	}
+
+	return 0.5 + 0.5/float64(universe)
+}
+
+func (signal *Signal) isLeader(change float64) bool {
+	if change == 0 {
+		return false
+	}
+
+	magnitudes := make([]float64, 0, 16)
+
+	signal.symbols.Range(func(_, value any) bool {
+		magnitudes = append(magnitudes, math.Abs(value.(float64)))
+
+		return true
+	})
+
+	if len(magnitudes) < 2 {
+		return math.Abs(change) > 0
+	}
+
+	threshold := numeric.PercentileSorted(numeric.CopySorted(magnitudes), 0.90)
+
+	return math.Abs(change) >= threshold
 }
 
 // snr is the decisiveness of the breadth split — its odds away from 50/50.

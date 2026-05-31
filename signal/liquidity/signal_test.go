@@ -75,10 +75,12 @@ func TestCategory(t *testing.T) {
 	Convey("Given a liquidity signal", t, func() {
 		signal := &Signal{}
 
-		Convey("It should map ratio bands onto scarcity categories", func() {
-			So(signal.category(1.30), ShouldEqual, perspectives.CategoryRobustLiquidity)
-			So(signal.category(1.00), ShouldEqual, perspectives.CategoryMedianDepth)
-			So(signal.category(0.50), ShouldEqual, perspectives.CategoryExtremeScarcity)
+		Convey("It should map peer quartiles onto scarcity categories", func() {
+			peers := []float64{800, 900, 1000, 1100}
+
+			So(signal.category(1200, peers), ShouldEqual, perspectives.CategoryRobustLiquidity)
+			So(signal.category(950, peers), ShouldEqual, perspectives.CategoryMedianDepth)
+			So(signal.category(500, peers), ShouldEqual, perspectives.CategoryExtremeScarcity)
 		})
 	})
 }

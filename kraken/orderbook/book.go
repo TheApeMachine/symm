@@ -13,6 +13,20 @@ import (
 const checksumLevels = 10
 
 /*
+MaintainDepth returns the book depth required to reproduce Kraken's book checksum.
+Signal tunables may request fewer levels for display or decay weighting, but the
+maintained book must keep at least checksumLevels per side or every checksum verify
+fails against the exchange's top-ten CRC.
+*/
+func MaintainDepth(signalDepth int) int {
+	if signalDepth < checksumLevels {
+		return checksumLevels
+	}
+
+	return signalDepth
+}
+
+/*
 Level is one price level in a maintained book: the resting quantity at a price plus
 the exact text the exchange sent for each. The raw text is kept because Kraken's
 book checksum is computed over the values as transmitted, at the symbol's own

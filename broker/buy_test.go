@@ -43,7 +43,11 @@ func TestBuySubmitLive(t *testing.T) {
 		err := (&Buy{
 			Symbol:   "BTC/EUR",
 			Notional: 10,
-			Quote:    Quote{Last: 50000},
+			Quote: Quote{
+				Last: 50000,
+				Bid:  49999,
+				Ask:  50001,
+			},
 		}).SubmitLive(router, tradingWallet)
 
 		Convey("It should route a market buy", func() {
@@ -63,8 +67,12 @@ func TestBuySubmitLiveUsesExistingClOrdID(t *testing.T) {
 		err := (&Buy{
 			Symbol:   "BTC/EUR",
 			Notional: 10,
-			Quote:    Quote{Last: 50000},
-			ClOrdID:  "CLIENT-1",
+			Quote: Quote{
+				Last: 50000,
+				Bid:  49999,
+				Ask:  50001,
+			},
+			ClOrdID: "CLIENT-1",
 		}).SubmitLive(router, tradingWallet)
 
 		Convey("It should route the supplied cl_ord_id", func() {

@@ -12,11 +12,18 @@ import (
 )
 
 const (
-	anchorSymbol    = "BTC/EUR"
 	minAnchorMove   = 0.05
 	minLagFraction  = 0.35
 	publishInterval = 200 * time.Millisecond
 )
+
+func anchorSymbol() string {
+	if len(config.System.Symbols) > 0 {
+		return config.System.Symbols[0]
+	}
+
+	return config.DefaultSymbols()[0]
+}
 
 /*
 Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
@@ -97,7 +104,7 @@ func (signal *Signal) publish() {
 		return
 	}
 
-	anchorRaw, ok := signal.symbols.Load(anchorSymbol)
+	anchorRaw, ok := signal.symbols.Load(anchorSymbol())
 
 	if !ok {
 		return
@@ -107,7 +114,7 @@ func (signal *Signal) publish() {
 	anchorMoved := anchor.change() >= minAnchorMove
 
 	signal.symbols.Range(func(key, value any) bool {
-		if key.(string) == anchorSymbol {
+		if key.(string) == anchorSymbol() {
 			return true
 		}
 

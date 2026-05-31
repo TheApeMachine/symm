@@ -25,6 +25,7 @@ func TestCryptoManageTTL(t *testing.T) {
 		})
 		crypto.wallet.AddInventory(base, 0.01, 100)
 		crypto.positions.Open(symbol, positionState{Playbook: string(perspectives.PlaybookDrive), Peak: 100})
+		seedExitQuote(crypto, symbol, 100)
 
 		convey.Convey("It should exit on manage even without exit categories", func() {
 			crypto.manage(symbol, 100, nil)
@@ -52,6 +53,7 @@ func TestCryptoPumpTrail(t *testing.T) {
 			Playbook: string(perspectives.PlaybookPump),
 			Peak:     100,
 		})
+		seedExitQuote(crypto, symbol, 100)
 
 		convey.Convey("It should exit before asking the tree", func() {
 			last := 100 * (1 - config.System.PumpTrailPct - 0.01)

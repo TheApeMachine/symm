@@ -21,13 +21,10 @@ func TestQuoteFillPrice(t *testing.T) {
 
 func TestQuoteComplete(t *testing.T) {
 	Convey("Given only a last price", t, func() {
-		last, bid, ask, err := (&Quote{Last: 100}).complete()
+		_, _, _, err := (&Quote{Last: 100}).complete()
 
-		Convey("It should derive bid and ask", func() {
-			So(err, ShouldBeNil)
-			So(last, ShouldEqual, 100)
-			So(bid, ShouldEqual, 100)
-			So(ask, ShouldEqual, 100)
+		Convey("It should reject incomplete top of book", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

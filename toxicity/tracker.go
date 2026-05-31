@@ -9,16 +9,18 @@ import (
 )
 
 const (
-	tradeMatchWindow  = 2 * time.Second
-	priceMatchTol     = 0.0002 // tight: L3 gives exact prices
-	fillCoverage      = 0.5    // matched trade vol >= this x removed qty => fill
-	toxicMaxAge       = 10 * time.Second
-	toxicProximityPct = 0.005 // 0.5 % of mid
-	largeBlockFrac    = 0.10  // >= 10 % of that side's visible depth = "large"
-	toxicCooldown     = 30 * time.Second
-	flowAlpha         = 0.05
-	tradeRingCap      = 512
-	epsilon           = 1e-12
+	tradeMatchWindow         = 2 * time.Second
+	priceMatchTol            = 0.0002 // tight: L3 gives exact prices
+	fillCoverage             = 0.5    // matched trade vol >= this x removed qty => fill
+	toxicMaxAge              = 10 * time.Second
+	toxicProximityPct        = 0.005 // 0.5 % of mid
+	largeBlockFrac           = 0.10  // >= 10 % of that side's visible depth = "large"
+	toxicCooldown            = 30 * time.Second
+	flowAlpha                = 0.05
+	tradeRingCap             = 512
+	epsilon                  = 1e-12
+	flashChurnWindow         = 50 * time.Millisecond
+	flashChurnRatioThreshold = 0.85
 )
 
 // SideBid and SideAsk are the byte side codes the tracker keys book levels by.
@@ -52,19 +54,27 @@ type l2Key struct {
 	price float64
 }
 
+type levelChurnWindow struct {
+	addVol    float64
+	deleteVol float64
+	started   time.Time
+}
+
 type symbolState struct {
-	pair      market.Pair
-	orders    map[string]*orderState // order_id -> resting order (L3)
-	levels    map[l2Key]*l2Level     // (side, price) -> aggregate (L2 fallback)
-	bidTotal  float64                // summed visible bid qty
-	askTotal  float64
-	toxic     map[float64]time.Time // price -> expiry
-	trades    []tradePrint
-	mid       float64
-	cancelBid float64
-	fillBid   float64
-	cancelAsk float64
-	fillAsk   float64
+	pair       market.Pair
+	orders     map[string]*orderState // order_id -> resting order (L3)
+	levels     map[l2Key]*l2Level     // (side, price) -> aggregate (L2 fallback)
+	churn      map[l2Key]*levelChurnWindow
+	bidTotal   float64 // summed visible bid qty
+	askTotal   float64
+	toxic      map[float64]time.Time // price -> expiry
+	toxicChurn map[float64]float64   // price -> cancel/add ratio at flag time
+	trades     []tradePrint
+	mid        float64
+	cancelBid  float64
+	fillBid    float64
+	cancelAsk  float64
+	fillAsk    float64
 }
 
 // Tracker classifies book-liquidity removals into fill vs cancel by joining the
@@ -86,10 +96,12 @@ func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolStat
 
 	if state == nil {
 		state = &symbolState{
-			pair:   pair,
-			orders: make(map[string]*orderState),
-			levels: make(map[l2Key]*l2Level),
-			toxic:  make(map[float64]time.Time),
+			pair:       pair,
+			orders:     make(map[string]*orderState),
+			levels:     make(map[l2Key]*l2Level),
+			churn:      make(map[l2Key]*levelChurnWindow),
+			toxic:      make(map[float64]time.Time),
+			toxicChurn: make(map[float64]float64),
 		}
 		tracker.symbols[symbol] = state
 	}
@@ -147,6 +159,7 @@ func (tracker *Tracker) ApplyOrder(
 
 		state.orders[orderID] = &orderState{side: side, price: price, qty: qty, addTs: ts}
 		state.addDepth(side, qty)
+		tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
 
 	case "delete":
 		order := state.orders[orderID]
@@ -155,6 +168,7 @@ func (tracker *Tracker) ApplyOrder(
 		}
 
 		state.addDepth(order.side, -order.qty)
+		tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
 		tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
 		delete(state.orders, orderID)
 
@@ -172,14 +186,17 @@ func (tracker *Tracker) ApplyOrder(
 		// partial removal of the delta, joined to trades like any removal.
 		if price != order.price {
 			state.addDepth(order.side, -order.qty)
+			tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
 			tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
 			order.side, order.price, order.qty, order.addTs = side, price, qty, ts
 			state.addDepth(side, qty)
+			tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
 
 			return
 		}
 
 		if delta := qty - order.qty; delta < 0 {
+			tracker.observeLevelChurnLocked(state, order.side, order.price, 0, -delta, now)
 			tracker.classifyRemovalLocked(state, order.side, order.price, -delta, order.addTs, now)
 		}
 
@@ -227,6 +244,7 @@ func (tracker *Tracker) ApplyBookLevel(
 	case qty > prevQty:
 		// Level grew (a fresh add or refill).
 		state.addDepth(side, qty-prevQty)
+		tracker.observeLevelChurnLocked(state, side, price, qty-prevQty, 0, now)
 
 		if level == nil {
 			state.levels[key] = &l2Level{qty: qty, firstSeen: now}
@@ -239,6 +257,7 @@ func (tracker *Tracker) ApplyBookLevel(
 	case qty < prevQty:
 		// Level shrank: classify the removed delta.
 		state.addDepth(side, qty-prevQty)
+		tracker.observeLevelChurnLocked(state, side, price, 0, prevQty-qty, now)
 		tracker.classifyRemovalLocked(state, side, price, prevQty-qty, firstSeen, now)
 		level.qty = qty
 	}
@@ -290,8 +309,57 @@ func (tracker *Tracker) classifyRemovalLocked(
 	young := now.Sub(addTs) <= toxicMaxAge
 
 	if large && near && young {
-		state.toxic[price] = now.Add(toxicCooldown)
+		tracker.flagToxicLocked(state, price, 0, now)
 	}
+}
+
+/*
+observeLevelChurnLocked tracks near-touch add/delete velocity per price level.
+High cancel ratios within flashChurnWindow flag flash spoofing at the touch.
+*/
+func (tracker *Tracker) observeLevelChurnLocked(
+	state *symbolState, side byte, price, addVol, deleteVol float64, now time.Time,
+) {
+	if price <= 0 || (addVol <= 0 && deleteVol <= 0) {
+		return
+	}
+
+	key := l2Key{side: side, price: price}
+	window := state.churn[key]
+
+	if window == nil || now.Sub(window.started) > flashChurnWindow {
+		window = &levelChurnWindow{started: now}
+		state.churn[key] = window
+	}
+
+	window.addVol += addVol
+	window.deleteVol += deleteVol
+
+	if window.addVol <= 0 {
+		return
+	}
+
+	ratio := window.deleteVol / window.addVol
+
+	if ratio < flashChurnRatioThreshold {
+		return
+	}
+
+	if state.mid <= 0 || math.Abs(price-state.mid)/state.mid > toxicProximityPct {
+		return
+	}
+
+	sideDepth := state.askTotal
+
+	if side == 'b' {
+		sideDepth = state.bidTotal
+	}
+
+	if sideDepth <= 0 || window.addVol < largeBlockFrac*sideDepth {
+		return
+	}
+
+	tracker.flagToxicLocked(state, price, ratio, now)
 }
 
 func (tracker *Tracker) addFlowLocked(state *symbolState, side byte, fill, cancel float64) {
@@ -322,10 +390,10 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 
 	if at.After(expiry) {
 		delete(state.toxic, price)
+		delete(state.toxicChurn, price)
 
 		return false
 	}
 
 	return true
 }
-

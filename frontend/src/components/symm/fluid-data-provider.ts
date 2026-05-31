@@ -5,7 +5,7 @@ import {
 	isFieldSnapshotEvent,
 	type FluidSymbolRow,
 } from "#/lib/symm/events";
-import { buildFluidGrid, gridFromPayload } from "#/lib/symm/fluid-grid";
+import { buildFluidGrid } from "#/lib/symm/fluid-grid";
 
 type FluidSink = (snapshot: FieldSnapshotEvent) => void;
 
@@ -93,7 +93,6 @@ class FluidDataProviderImpl {
 			return;
 		}
 
-		const grid = gridFromPayload(raw.grid);
 		const symbols = [...this.rows.values()];
 		const snapshot: FieldSnapshotEvent = {
 			event: "field_snapshot",

@@ -2,10 +2,18 @@ package market
 
 import (
 	"context"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
+
+/*
+Level3TokenSource supplies short-lived authenticated WebSocket tokens.
+*/
+type Level3TokenSource interface {
+	Token(context.Context) (string, error)
+}
 
 /*
 Level3Params is the Kraken WebSocket v2 subscribe payload for the level3 channel.
@@ -31,12 +39,6 @@ type Level3OrderEvent struct {
 
 /*
 Level3Update is one per-order book delta from the authenticated level3 WebSocket feed.
-
-The order-by-order book: individual add, modify, and delete events for each
-resting order with its ID, price, size, and time, as a snapshot plus
-checksum-verified deltas. It is the most granular view the exchange offers --
-preserving each order exposes queue position and the full life cycle of orders
-that aggregated L2 levels collapse away.
 */
 type Level3Update struct {
 	Symbol    string             `json:"symbol"`
@@ -46,15 +48,65 @@ type Level3Update struct {
 	Timestamp string             `json:"timestamp"`
 }
 
+var (
+	level3TokenSource Level3TokenSource
+	level3Feed        *sharedFeed[Level3Update]
+)
+
 /*
-NewLevel3Subscription opens the level3 channel with token at depth and forwards rows to recv.
-It blocks until ctx is canceled or the socket closes.
+SetLevel3TokenSource enables the shared authenticated L3 feed. Pass nil to disable.
+*/
+func SetLevel3TokenSource(source Level3TokenSource) {
+	level3TokenSource = source
+
+	if source == nil {
+		level3Feed = nil
+
+		return
+	}
+
+	level3Feed = newReliableSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *Level3Update {
+		return dialLevel3(ctx, spec.depth, spec.symbols)
+	})
+}
+
+/*
+Level3Available reports whether authenticated L3 market data is configured.
+*/
+func Level3Available() bool {
+	return level3TokenSource != nil && level3Feed != nil
+}
+
+/*
+NewLevel3Subscription returns per-order book events when credentials are configured.
 */
 func NewLevel3Subscription(
-	ctx context.Context, token string, depth int, symbols ...string,
+	ctx context.Context, depth int, symbols ...string,
 ) <-chan *Level3Update {
+	if level3Feed == nil {
+		return closed[Level3Update]()
+	}
+
+	return level3Feed.subscribe(ctx, subscriptionSpec{
+		symbols: symbols,
+		depth:   depth,
+	})
+}
+
+func dialLevel3(ctx context.Context, depth int, symbols []string) <-chan *Level3Update {
+	if level3TokenSource == nil {
+		return closed[Level3Update]()
+	}
+
 	if depth <= 0 {
 		depth = 10
+	}
+
+	token, err := level3TokenSource.Token(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+		return closed[Level3Update]()
 	}
 
 	ws, err := public.NewWebSocket(ctx)
@@ -69,18 +121,20 @@ func NewLevel3Subscription(
 		return closed[Level3Update]()
 	}
 
-	if err := ws.Send(public.Level3Channel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: Level3Params{
-			Channel:  public.Level3Channel,
-			Symbol:   symbols,
-			Depth:    depth,
-			Snapshot: true,
-			Token:    token,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		return closed[Level3Update]()
+	for _, batch := range symbolBatches(symbols) {
+		if err := ws.Send(public.Level3Channel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: Level3Params{
+				Channel:  public.Level3Channel,
+				Symbol:   batch,
+				Depth:    depth,
+				Snapshot: true,
+				Token:    token,
+			},
+		}); err != nil {
+			errnie.Error(err)
+			return closed[Level3Update]()
+		}
 	}
 
 	stream, err := public.Stream[Level3Update](ws, public.Level3Channel)
@@ -91,4 +145,23 @@ func NewLevel3Subscription(
 	}
 
 	return stream
+}
+
+/*
+Level3EventTime parses an L3 event timestamp, falling back to now when absent.
+*/
+func Level3EventTime(raw string, fallback time.Time) time.Time {
+	if raw == "" {
+		return fallback
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		parsed, err := time.Parse(layout, raw)
+
+		if err == nil {
+			return parsed
+		}
+	}
+
+	return fallback
 }

@@ -38,8 +38,8 @@ describe("ConfidenceDataProvider.ingest", () => {
 		const received: number[] = [];
 		const unregister = ConfidenceDataProvider.registerSource(
 			"hawkes",
-			(confidence) => {
-				received.push(confidence);
+			(row) => {
+				received.push(row.confidence);
 			},
 		);
 
@@ -50,7 +50,9 @@ describe("ConfidenceDataProvider.ingest", () => {
 		});
 
 		expect(received).toEqual([0.35]);
-		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toBe(0.35);
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")?.confidence).toBe(
+			0.35,
+		);
 		unregister();
 	});
 
@@ -64,8 +66,8 @@ describe("ConfidenceDataProvider.ingest", () => {
 		const received: number[] = [];
 		const unregister = ConfidenceDataProvider.registerSource(
 			"causal",
-			(confidence) => {
-				received.push(confidence);
+			(row) => {
+				received.push(row.confidence);
 			},
 		);
 
@@ -77,8 +79,8 @@ describe("ConfidenceDataProvider.ingest", () => {
 		const received: number[] = [];
 		const unregister = ConfidenceDataProvider.registerSource(
 			"liquidity",
-			(confidence) => {
-				received.push(confidence);
+			(row) => {
+				received.push(row.confidence);
 			},
 		);
 
@@ -88,7 +90,9 @@ describe("ConfidenceDataProvider.ingest", () => {
 		});
 
 		expect(received).toEqual([0.64]);
-		expect(ConfidenceDataProvider.snapshot().get("liquidity")).toBe(0.64);
+		expect(ConfidenceDataProvider.snapshot().get("liquidity")?.confidence).toBe(
+			0.64,
+		);
 		unregister();
 	});
 
@@ -96,8 +100,8 @@ describe("ConfidenceDataProvider.ingest", () => {
 		const received: number[] = [];
 		const unregister = ConfidenceDataProvider.registerSource(
 			"hawkes",
-			(confidence) => {
-				received.push(confidence);
+			(row) => {
+				received.push(row.confidence);
 			},
 		);
 
@@ -107,8 +111,33 @@ describe("ConfidenceDataProvider.ingest", () => {
 		});
 
 		expect(received).toEqual([0.51]);
-		expect(ConfidenceDataProvider.snapshot().get("hawkes")).toBe(0.51);
+		expect(ConfidenceDataProvider.snapshot().get("hawkes")?.confidence).toBe(
+			0.51,
+		);
 		expect(ConfidenceDataProvider.snapshot().has("causal")).toBe(false);
+		unregister();
+	});
+
+	it("preserves gauge sub-metrics for tooltip rendering", () => {
+		const received: string[] = [];
+		const unregister = ConfidenceDataProvider.registerSource("fluid", (row) => {
+			received.push(row.factors?.map((factor) => factor.name).join(",") ?? "");
+		});
+
+		ConfidenceDataProvider.ingest({
+			source: "fluid",
+			confidence: 1.8,
+			factors: [
+				{ name: "div", value: 0.2 },
+				{ name: "re", value: 1.1 },
+			],
+		});
+
+		expect(received).toEqual(["div,re"]);
+		expect(ConfidenceDataProvider.snapshot().get("fluid")?.factors).toEqual([
+			{ name: "div", value: 0.2 },
+			{ name: "re", value: 1.1 },
+		]);
 		unregister();
 	});
 });

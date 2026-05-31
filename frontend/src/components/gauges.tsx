@@ -1,7 +1,11 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
-import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
+import {
+	ConfidenceDataProvider,
+	type ConfidenceFactor,
+	formatConfidenceFactor,
+} from "#/components/symm/confidence-data-provider";
 import { drawSignalGauge } from "#/components/symm/draw-signal-gauge";
 import {
 	SIGNAL_LABELS,
@@ -14,7 +18,26 @@ type SignalGaugeProps = {
 	source: SignalSource;
 };
 
+const GaugeFactorTooltip = ({ factors }: { factors: ConfidenceFactor[] }) => {
+	if (factors.length === 0) {
+		return null;
+	}
+
+	return (
+		<div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 rounded border border-(--dash-border) bg-(--dash-panel)/95 px-1 py-0.5 text-[8px] leading-tight text-(--dash-muted) shadow-sm">
+			{factors.map((factor) => (
+				<div key={factor.name} className="truncate font-mono">
+					{formatConfidenceFactor(factor)}
+				</div>
+			))}
+		</div>
+	);
+};
+
 const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
+	const [factors, setFactors] = useState<ConfidenceFactor[]>([]);
+	const [showFactors, setShowFactors] = useState(false);
+
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
 		if (typeof rootElement === "string") {
 			throw new Error("drawSignalGauge requires an HTMLDivElement root");
@@ -28,13 +51,15 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 			const latest = ConfidenceDataProvider.snapshot().get(source);
 
 			if (latest !== undefined) {
-				result.controls.update(latest);
+				result.controls.update(latest.confidence);
+				setFactors(latest.factors ?? []);
 			}
 
 			const unregister = ConfidenceDataProvider.registerSource(
 				source,
-				(confidence) => {
-					result.controls.update(confidence);
+				(row) => {
+					result.controls.update(row.confidence);
+					setFactors(row.factors ?? []);
 				},
 			);
 
@@ -47,12 +72,19 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 	);
 
 	return (
-		<SciChartReact
-			initChart={initChart}
-			onInit={onInit}
-			className="min-h-0 w-full flex-1"
-			innerContainerProps={{ className: "h-full w-full" }}
-		/>
+		<div
+			className="relative min-h-0 flex-1"
+			onMouseEnter={() => setShowFactors(true)}
+			onMouseLeave={() => setShowFactors(false)}
+		>
+			<SciChartReact
+				initChart={initChart}
+				onInit={onInit}
+				className="h-full w-full min-h-0"
+				innerContainerProps={{ className: "h-full w-full" }}
+			/>
+			{showFactors ? <GaugeFactorTooltip factors={factors} /> : null}
+		</div>
 	);
 });
 

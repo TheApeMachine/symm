@@ -45,9 +45,7 @@ from the shared feed; the upstream keeps running for the others.
 func NewTradeSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TradeUpdate {
-	return tradeFeed.subscribe(ctx, func() <-chan *TradeUpdate {
-		return tradeUpstream(context.Background(), symbols)
-	})
+	return tradeFeed.subscribe(ctx, subscriptionSpec{symbols: symbols})
 }
 
 // dialTrades opens one upstream connection to the public trade channel for
@@ -67,16 +65,18 @@ func dialTrades(
 		return closed[TradeUpdate]()
 	}
 
-	if err := ws.Send(public.TradesChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: TradeParams{
-			Channel:  public.TradesChannel,
-			Symbol:   symbols,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		return closed[TradeUpdate]()
+	for _, batch := range symbolBatches(symbols) {
+		if err := ws.Send(public.TradesChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: TradeParams{
+				Channel:  public.TradesChannel,
+				Symbol:   batch,
+				Snapshot: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+			return closed[TradeUpdate]()
+		}
 	}
 
 	stream, err := public.Stream[TradeUpdate](ws, public.TradesChannel)

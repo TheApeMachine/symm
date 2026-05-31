@@ -48,6 +48,7 @@ type ExecutionEvent struct {
 	CumQty    float64
 	OrderQty  float64
 	Fee       float64
+	FeeUSD    float64
 	FeeCcy    string
 }
 
@@ -84,6 +85,18 @@ func ParseExecutionFills(payload []byte) ([]Fill, error) {
 			continue
 		}
 
+		execKey, err := execKeyFor(event)
+
+		if err != nil {
+			continue
+		}
+
+		fee := event.Fee
+
+		if fee <= 0 && event.FeeUSD > 0 {
+			fee = event.FeeUSD
+		}
+
 		fills = append(fills, Fill{
 			OrderID:  event.OrderID,
 			ClOrdID:  event.ClOrdID,
@@ -93,8 +106,8 @@ func ParseExecutionFills(payload []byte) ([]Fill, error) {
 			Price:    event.LastPrice,
 			CumQty:   event.CumQty,
 			OrderQty: event.OrderQty,
-			ExecKey:  execKeyFor(event),
-			Fee:      event.Fee,
+			ExecKey:  execKey,
+			Fee:      fee,
 			FeeCcy:   event.FeeCcy,
 		})
 	}
@@ -102,20 +115,20 @@ func ParseExecutionFills(payload []byte) ([]Fill, error) {
 	return fills, nil
 }
 
-func execKeyFor(event ExecutionEvent) string {
+func execKeyFor(event ExecutionEvent) (string, error) {
 	if event.ExecID != "" {
-		return event.ExecID
+		return event.ExecID, nil
 	}
 
 	if event.TradeID > 0 {
-		return event.OrderID + ":" + strconv.FormatInt(event.TradeID, 10)
+		return event.OrderID + ":" + strconv.FormatInt(event.TradeID, 10), nil
 	}
 
 	if event.Timestamp != "" {
-		return event.OrderID + ":" + event.Timestamp
+		return event.OrderID + ":" + event.Timestamp, nil
 	}
 
-	return ""
+	return "", fmt.Errorf("execution missing dedupe key")
 }
 
 /*
@@ -139,7 +152,8 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 			LastPrice float64 `json:"last_price"`
 			CumQty    float64 `json:"cum_qty"`
 			OrderQty  float64 `json:"order_qty"`
-			Fee       float64 `json:"fee_usd_equiv"`
+			Fee       float64 `json:"fee"`
+			FeeUSD    float64 `json:"fee_usd_equiv"`
 			FeeCcy    string  `json:"fee_ccy"`
 		} `json:"data"`
 	}
@@ -171,6 +185,7 @@ func ParseExecutionEvents(payload []byte) ([]ExecutionEvent, error) {
 			CumQty:    row.CumQty,
 			OrderQty:  row.OrderQty,
 			Fee:       row.Fee,
+			FeeUSD:    row.FeeUSD,
 			FeeCcy:    row.FeeCcy,
 		})
 	}

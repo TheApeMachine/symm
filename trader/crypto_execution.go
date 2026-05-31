@@ -24,7 +24,7 @@ func (crypto *Crypto) prepareEntryQuote(
 		return quote
 	}
 
-	return economics.StressQuote(quote, economics.AdverseSelectionBPS(measurements))
+	return economics.StressQuote(quote, economics.AdverseSelectionBPS(measurements), broker.StressRegimeFrom(measurements))
 }
 
 func (crypto *Crypto) hasPendingEntry(symbol string) bool {

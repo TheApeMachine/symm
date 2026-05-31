@@ -19,16 +19,18 @@ type Toxicity struct {
 	pool         *qpool.Q
 	tracker      *Tracker
 	measurements *qpool.BroadcastGroup
+	l3Active     bool
 }
 
 func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tox := &Toxicity{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		tracker: Default(),
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		tracker:  Default(),
+		l3Active: market.Level3Available(),
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
@@ -36,13 +38,20 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 }
 
 /*
-Tick joins the live trade tape, ticker, and L2 book onto the shared Tracker.
+Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tracker.
+When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
 	symbols := config.System.Symbols
 	trades := market.NewTradeSubscription(tox.ctx, symbols...)
 	ticks := market.NewTickerSubscription(tox.ctx, symbols...)
 	books := market.NewBookSubscription(tox.ctx, config.System.BookDepthLevels, symbols...)
+
+	var level3 <-chan *market.Level3Update
+
+	if tox.l3Active {
+		level3 = market.NewLevel3Subscription(tox.ctx, config.System.BookDepthLevels, symbols...)
+	}
 
 	for {
 		select {
@@ -76,9 +85,19 @@ func (tox *Toxicity) Tick() error {
 				continue
 			}
 
-			if update != nil {
+			if update != nil && !tox.l3Active {
 				tox.observeBook(*update)
 				tox.publishMeasurement(update.Symbol, 0)
+			}
+		case update, ok := <-level3:
+			if !ok {
+				level3 = nil
+
+				continue
+			}
+
+			if update != nil {
+				tox.observeLevel3(update)
 			}
 		}
 	}

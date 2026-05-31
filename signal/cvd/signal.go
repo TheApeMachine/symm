@@ -6,16 +6,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/ring"
 )
 
-const cvdWindow = 15 * time.Minute // executed-flow horizon
+const (
+	cvdWindow           = 15 * time.Minute // executed-flow horizon
+	minCVDFusedSamples  = 12
+	cvdFusedHistorySize = 128
+)
 
 /*
 Signal measuring executed-flow absorption (cumulative volume delta).
@@ -46,7 +50,8 @@ type cvdState struct {
 	convBase  *adaptive.EMA    // self-scaling baseline for conviction
 	actBase   *adaptive.EMA    // self-scaling baseline for activity
 	driftBase *adaptive.EMA    // self-scaling baseline for drift
-	pipe      *numeric.Classed
+	sigma     *adaptive.SigmaClamp
+	fusedHist ring.FloatRing
 	floor     *adaptive.SNR // noise floor for the fused absorption strength
 	last      float64
 }
@@ -93,20 +98,40 @@ func newCVDState() *cvdState {
 		convBase:  adaptive.NewEMA(0),
 		actBase:   adaptive.NewEMA(0),
 		driftBase: adaptive.NewEMA(0),
-		pipe: numeric.NewClassed(
-			adaptive.NewClassifier(
-				[]float64{0.60, 1.50, 3.50}, // starvation | balance | absorption | drive
-				[]float64{0, 1, 2, 3},
-				[]string{"volume_starvation", "stochastic_balance", "hidden_absorption", "aggressive_drive"},
-			),
+		sigma:     adaptive.NewSigmaClamp(3, 8, 0.0625),
+		fusedHist: ring.NewFloatRing(cvdFusedHistorySize),
+		floor:     adaptive.NewSNR(),
+	}
+}
 
-			numeric.NewProject(func(_ float64, v []float64) []float64 {
-				return []float64{v[0] * v[1] * (1 + v[2])} // activity · conviction · (1 + drift)
-			}),
-			adaptive.NewEMA(0),
-			adaptive.NewSigmaClamp(3, 8, 0.0625),
-		),
-		floor: adaptive.NewSNR(),
+func (state *cvdState) classifyFused(fused float64) perspectives.CategoryType {
+	clamped, err := state.sigma.Next(0, fused)
+
+	if err != nil {
+		clamped = fused
+	}
+
+	state.fusedHist.Push(clamped)
+	samples := state.fusedHist.Ordered()
+
+	if len(samples) < minCVDFusedSamples {
+		return perspectives.CategoryStochasticBalance
+	}
+
+	sorted := numeric.CopySorted(samples)
+	q1 := numeric.PercentileSorted(sorted, 0.25)
+	q2 := numeric.PercentileSorted(sorted, 0.50)
+	q3 := numeric.PercentileSorted(sorted, 0.75)
+
+	switch {
+	case clamped <= q1:
+		return perspectives.CategoryVolumeStarvation
+	case clamped <= q2:
+		return perspectives.CategoryStochasticBalance
+	case clamped <= q3:
+		return perspectives.CategoryHiddenAbsorption
+	default:
+		return perspectives.CategoryAggressiveDrive
 	}
 }
 
@@ -164,19 +189,12 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	activity := state.scale(state.count.Sum(), state.actBase)
 	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 
-	code, err := state.pipe.Push(activity, conviction, drift)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	fused := activity * conviction * (1 + drift) // same strength the classifier bands
+	fused := activity * conviction * (1 + drift)
 
 	measurement := perspectives.FinalizeSNR(perspectives.Measurement{
 		Symbol:   trade.Symbol,
 		Source:   perspectives.SourceCVD,
-		Category: signal.categories[state.pipe.Label(code)],
+		Category: state.classifyFused(fused),
 		Last:     trade.Price,
 	}, fused, state.floor.Score)
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})

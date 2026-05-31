@@ -107,6 +107,40 @@ func TestNormalizeChecksumToken(t *testing.T) {
 	})
 }
 
+func TestMaintainDepth(t *testing.T) {
+	convey.Convey("Given signal book depth below the Kraken checksum window", t, func() {
+		convey.Convey("MaintainDepth keeps at least ten levels per side", func() {
+			convey.So(MaintainDepth(0), convey.ShouldEqual, 10)
+			convey.So(MaintainDepth(5), convey.ShouldEqual, 10)
+			convey.So(MaintainDepth(10), convey.ShouldEqual, 10)
+			convey.So(MaintainDepth(25), convey.ShouldEqual, 25)
+		})
+	})
+}
+
+func TestBookChecksumAtMaintainDepth(t *testing.T) {
+	convey.Convey("Given a depth-10 snapshot and a signal depth of five", t, func() {
+		bids := make([]Level, 10)
+		asks := make([]Level, 10)
+
+		for index := range 10 {
+			price := float64(index)
+			bids[index] = level(100-price, price+1, "100.0", "1.0")
+			asks[index] = level(101+price, price+1, "101.0", "1.0")
+		}
+
+		full := NewBook(10)
+		full.ApplySnapshot(bids, asks)
+
+		maintained := NewBook(MaintainDepth(5))
+		maintained.ApplySnapshot(bids, asks)
+
+		convey.Convey("The maintained book reproduces the full-book checksum", func() {
+			convey.So(maintained.Checksum(), convey.ShouldEqual, full.Checksum())
+		})
+	})
+}
+
 func TestBookChecksum(t *testing.T) {
 	convey.Convey("Given a book built from raw exchange tokens", t, func() {
 		book := NewBook(0)

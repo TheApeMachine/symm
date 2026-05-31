@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/ring"
 )
 
 func TestNewSignal(t *testing.T) {
@@ -50,7 +51,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a weak cross-section with a local leader", t, func() {
-		signal := &Signal{}
+		signal := &Signal{breadthHist: ring.NewFloatRing(sentimentBreadthHistory)}
 		signal.symbols.Store("LEAD/EUR", 4.0)
 		signal.symbols.Store("LAG/EUR", -2.0)
 		signal.symbols.Store("FLAT/EUR", -1.0)
@@ -68,12 +69,21 @@ func TestMeasure(t *testing.T) {
 
 func TestCategory(t *testing.T) {
 	Convey("Given a sentiment signal", t, func() {
-		signal := &Signal{}
+		signal := &Signal{breadthHist: ring.NewFloatRing(sentimentBreadthHistory)}
+
+		for range 8 {
+			signal.breadthHist.Push(0.50)
+		}
+
+		signal.symbols.Store("A/EUR", 2.0)
+		signal.symbols.Store("B/EUR", 1.0)
+		signal.symbols.Store("LEAD/EUR", 4.0)
+		signal.symbols.Store("LAG/EUR", -2.0)
 
 		Convey("It should map breadth and leadership onto sentiment categories", func() {
-			So(signal.category(0.60, 1.0, 2.0), ShouldEqual, perspectives.CategoryRiskOnSurge)
-			So(signal.category(0.40, 2.0, 4.0), ShouldEqual, perspectives.CategoryDivergentMove)
-			So(signal.category(0.40, -0.5, 2.0), ShouldEqual, perspectives.CategorySystemicSlump)
+			So(signal.category(0.60, 1.0, 0, 3), ShouldEqual, perspectives.CategoryRiskOnSurge)
+			So(signal.category(0.40, 4.0, 0, 2), ShouldEqual, perspectives.CategoryDivergentMove)
+			So(signal.category(0.40, -0.5, 0, 3), ShouldEqual, perspectives.CategorySystemicSlump)
 		})
 	})
 }

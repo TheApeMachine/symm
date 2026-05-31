@@ -112,11 +112,16 @@ func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (per
 		snr = intensity / mu
 	}
 
-	return perspectives.Measurement{
+	return perspectives.WithGaugeFactors(perspectives.Measurement{
 		Source:   perspectives.SourceHawkes,
 		Category: hawkesCategory(fit, asymmetry, sellSide),
 		SNR:      snr,
-	}, true
+		Strength: snr,
+	}, []perspectives.GaugeFactor{
+		{Name: "mu", Value: mu},
+		{Name: "intensity", Value: intensity},
+		{Name: "asymmetry", Value: asymmetry},
+	}), true
 }
 
 /*

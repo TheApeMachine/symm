@@ -99,7 +99,7 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 	return perspectives.FinalizeSNR(perspectives.Measurement{
 		Symbol:   row.Symbol,
 		Source:   perspectives.SourceLiquidity,
-		Category: signal.category(ratio),
+		Category: signal.category(quoteVol, peers),
 		Last:     row.Last,
 	}, raw, func(value float64) float64 {
 		return signal.floor.Score(row.Symbol, value)
@@ -107,13 +107,18 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 }
 
 /*
-category maps quote volume relative to the peer median onto the scarcity perspective.
+category maps quote volume relative to the live peer cross-section onto the
+scarcity perspective using quartiles of peer quote volume.
 */
-func (signal *Signal) category(ratio float64) perspectives.CategoryType {
+func (signal *Signal) category(quoteVol float64, peers []float64) perspectives.CategoryType {
+	sorted := numeric.CopySorted(peers)
+	q1 := numeric.PercentileSorted(sorted, 0.25)
+	q3 := numeric.PercentileSorted(sorted, 0.75)
+
 	switch {
-	case ratio >= 1.25:
+	case quoteVol >= q3:
 		return perspectives.CategoryRobustLiquidity
-	case ratio >= 0.75:
+	case quoteVol >= q1:
 		return perspectives.CategoryMedianDepth
 	default:
 		return perspectives.CategoryExtremeScarcity

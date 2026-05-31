@@ -3,6 +3,7 @@ package trader
 import (
 	"math"
 
+	"github.com/theapemachine/symm/config"
 	decision "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -127,6 +128,62 @@ func (crypto *Crypto) marketScoreMass() float64 {
 
 func (crypto *Crypto) marketScores() []float64 {
 	return crypto.ensureCrossSection().Scores
+}
+
+/*
+entryRejectReason reports why a symbol with playbook allows still failed desk gates.
+Returns an empty reason when no playbook authorized entry.
+*/
+func (crypto *Crypto) entryRejectReason(
+	symbol string,
+	measurements []perspectives.Measurement,
+) (string, map[string]any) {
+	decisions := decision.Decisions(measurements, nil)
+	names := entryNames(decisions)
+
+	if len(names) == 0 {
+		return "", nil
+	}
+
+	score := thesisScore(measurements, names)
+	fields := map[string]any{
+		"playbooks": names,
+		"score":     score,
+	}
+
+	if score <= 0 {
+		return "thesis_score_zero", fields
+	}
+
+	feePct := crypto.takerFeePct(symbol)
+	spreadBPS := crypto.quotes.spreadBPS(symbol)
+	fields["spread_bps"] = spreadBPS
+	fields["fee_pct"] = feePct
+
+	if !entryClearsFriction(score, feePct, spreadBPS) {
+		fields["required_multiple"] = config.System.EntryEdgeMultiple
+
+		return "friction_gate", fields
+	}
+
+	playbook := primaryPlaybook(names)
+	fields["playbook"] = playbook
+
+	if !crypto.economics.AllowsEntry(playbook) {
+		return "economics_cold", fields
+	}
+
+	return "", nil
+}
+
+func (crypto *Crypto) calibrateRejectFields(candidate opportunity) map[string]any {
+	return map[string]any{
+		"playbooks": candidate.Names,
+		"score":     candidate.Score,
+		"baseline":  candidate.Baseline,
+		"spread":    candidate.Spread,
+		"edge":      candidate.Edge,
+	}
 }
 
 func entryNames(decisions []decision.Decision) []string {

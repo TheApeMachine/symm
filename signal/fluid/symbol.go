@@ -53,7 +53,7 @@ const fracScaleAlpha = 0.05
 func NewFluidSymbol(symbol string) *FluidSymbol {
 	return &FluidSymbol{
 		symbol:   symbol,
-		book:     orderbook.NewBook(config.System.BookDepthLevels),
+		book:     orderbook.NewBook(orderbook.MaintainDepth(config.System.BookDepthLevels)),
 		pressure: adaptive.NewEMA(0),
 		flux:     newFluxAccumulator(config.System.BookFluxWindow),
 		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
@@ -114,6 +114,10 @@ func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
 
 	state.applyFrameLocked(update)
 	state.verifyLocked(uint32(update.Checksum))
+
+	if state.diverged {
+		return
+	}
 
 	afterBids := state.book.Bids()
 	afterAsks := state.book.Asks()
@@ -240,12 +244,20 @@ func (state *FluidSymbol) Row() map[string]any {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
+	if state.diverged {
+		return nil
+	}
+
 	return state.wireRowLocked()
 }
 
 func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+
+	if state.diverged {
+		return perspectives.Measurement{}, false
+	}
 
 	row := state.wireRowLocked()
 
@@ -263,12 +275,14 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
 
-	return perspectives.FinalizeSNR(perspectives.Measurement{
+	return perspectives.WithGaugeFactors(perspectives.FinalizeSNR(perspectives.Measurement{
 		Symbol:   state.symbol,
 		Source:   perspectives.SourceFluid,
 		Category: fluidCategory(divergence, turbulence, viscosity, re),
 		Last:     state.last,
-	}, re, state.floor.Score), true
+	}, re, state.floor.Score), perspectives.GaugeFactorsFrom(row,
+		"div", "vort", "turb_fd", "re", "visc",
+	)), true
 }
 
 /*

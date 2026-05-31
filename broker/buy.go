@@ -23,6 +23,7 @@ type Buy struct {
 	ClOrdID        string
 	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
 	Execution      config.ExecutionScope
+	StressRegime   StressRegime
 }
 
 /*
@@ -54,7 +55,7 @@ func (buy *Buy) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		buy.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(buy.Execution); err != nil {
+	if err := ShouldRejectPaperOrder(buy.Execution, buy.StressRegime); err != nil {
 		tradingWallet.ReleaseEntryReservation(buy.Notional)
 
 		return buy.ClOrdID, err
@@ -201,7 +202,11 @@ func (buy *Buy) PreflightGates() error {
 		}
 	}
 
-	if scope.MaxSpreadBPS > 0 && buy.Quote.Bid > 0 && buy.Quote.Ask > 0 {
+	if !buy.Quote.HasTopOfBook() {
+		return fmt.Errorf("incomplete quote: missing bid/ask")
+	}
+
+	if scope.MaxSpreadBPS > 0 {
 		mid := (buy.Quote.Bid + buy.Quote.Ask) / 2
 
 		if mid > 0 {

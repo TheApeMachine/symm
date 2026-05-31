@@ -23,7 +23,7 @@ type decisionTraceRow struct {
 
 /*
 recordEntryVerdicts stores playbook outcomes for the batched decision_trace feed.
-Gate denies are written to the optional disk audit log when enabled, not the UI.
+Gate denies, waits, and allows are written to the optional disk audit log when enabled.
 */
 func (crypto *Crypto) recordEntryVerdicts(
 	symbol string,
@@ -46,12 +46,20 @@ func (crypto *Crypto) recordEntryVerdicts(
 			InPlay:     inPlay,
 		})
 
-		if perspectives.IsEntryBlocked(verdict.Action) && crypto.auditLog != nil {
-			crypto.publishGateReject(symbol, verdict)
+		if crypto.auditLog == nil {
+			continue
 		}
 
-		if perspectives.IsEntryBlocked(verdict.Action) {
-			crypto.trackGateRejectRegret(symbol, verdict)
+		switch verdict.Action {
+		case perspectives.ActionEnter:
+			crypto.publishPerspectiveAllow(symbol, verdict, score, inPlay)
+		case perspectives.ActionWait:
+			crypto.publishGateWait(symbol, verdict, score)
+		default:
+			if perspectives.IsEntryBlocked(verdict.Action) {
+				crypto.publishGateReject(symbol, verdict, score)
+				crypto.trackGateRejectRegret(symbol, verdict)
+			}
 		}
 	}
 }
@@ -103,10 +111,57 @@ func (crypto *Crypto) publishDecisionTrace() {
 	}})
 }
 
-func (crypto *Crypto) publishGateReject(symbol string, verdict decision.EntryVerdict) {
+func (crypto *Crypto) publishGateReject(
+	symbol string,
+	verdict decision.EntryVerdict,
+	thesisScore float64,
+) {
+	fields := verdictAuditFields(verdict, thesisScore)
+	crypto.publishAudit("gate_reject", symbol, traceWhy(verdict), fields)
+}
+
+func (crypto *Crypto) publishGateWait(
+	symbol string,
+	verdict decision.EntryVerdict,
+	thesisScore float64,
+) {
+	fields := verdictAuditFields(verdict, thesisScore)
+	crypto.publishAudit("gate_wait", symbol, traceWhy(verdict), fields)
+}
+
+func (crypto *Crypto) publishPerspectiveAllow(
+	symbol string,
+	verdict decision.EntryVerdict,
+	thesisScore float64,
+	inPlay bool,
+) {
+	fields := verdictAuditFields(verdict, thesisScore)
+	fields["in_play"] = inPlay
+	crypto.publishAudit("perspective_allow", symbol, traceWhy(verdict), fields)
+}
+
+func (crypto *Crypto) publishEntryReject(
+	symbol string,
+	reason string,
+	fields map[string]any,
+) {
+	if crypto.auditLog == nil {
+		return
+	}
+
+	if fields == nil {
+		fields = map[string]any{}
+	}
+
+	crypto.publishAudit("entry_reject", symbol, reason, fields)
+}
+
+func verdictAuditFields(verdict decision.EntryVerdict, thesisScore float64) map[string]any {
 	fields := map[string]any{
-		"playbook": verdict.Name,
-		"action":   perspectives.ActionLabel(verdict.Action),
+		"playbook":     verdict.Name,
+		"action":       perspectives.ActionLabel(verdict.Action),
+		"thesis_score": thesisScore,
+		"trace":        traceStepsWire(verdict.Trace),
 	}
 
 	if step, ok := verdict.Trace.LastStep(); ok {
@@ -115,7 +170,34 @@ func (crypto *Crypto) publishGateReject(symbol string, verdict decision.EntryVer
 		fields["threshold"] = step.Threshold
 	}
 
-	crypto.publishAudit("gate_reject", symbol, traceWhy(verdict), fields)
+	return fields
+}
+
+func traceStepsWire(trace *perspectives.DecisionTrace) []map[string]any {
+	if trace == nil {
+		return nil
+	}
+
+	steps := trace.StepsSlice()
+
+	if len(steps) == 0 {
+		return nil
+	}
+
+	wire := make([]map[string]any, len(steps))
+
+	for index, step := range steps {
+		wire[index] = map[string]any{
+			"category":  step.Category.String(),
+			"action":    perspectives.ActionLabel(step.Action),
+			"snr":       step.SNR,
+			"threshold": step.Threshold,
+			"depth":     step.Depth,
+			"matched":   step.Matched,
+		}
+	}
+
+	return wire
 }
 
 func entryNamesFromVerdicts(verdicts []decision.EntryVerdict) []string {

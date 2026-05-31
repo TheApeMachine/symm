@@ -247,20 +247,18 @@ func (wallet *Wallet) ApplyFill(
 	execKey, side, base string,
 	qty, fillPrice, cashDelta float64,
 ) bool {
-	if wallet == nil || base == "" || qty <= 0 {
+	if wallet == nil || base == "" || qty <= 0 || execKey == "" {
 		return false
 	}
 
 	wallet.mu.Lock()
 	defer wallet.mu.Unlock()
 
-	if execKey != "" {
-		if _, seen := wallet.seenFills[execKey]; seen {
-			return false
-		}
-
-		wallet.markFillLocked(execKey)
+	if _, seen := wallet.seenFills[execKey]; seen {
+		return false
 	}
+
+	wallet.markFillLocked(execKey)
 
 	switch side {
 	case "buy":

@@ -32,14 +32,15 @@ func AdverseSelectionBPS(measurements []perspectives.Measurement) float64 {
 
 /*
 StressQuote perturbs a quote for pessimistic paper execution simulation.
+Latency scales with the current micro-regime when regime is non-zero.
 */
-func StressQuote(quote broker.Quote, adverseSelectionBPS float64) broker.Quote {
+func StressQuote(quote broker.Quote, adverseSelectionBPS float64, regime broker.StressRegime) broker.Quote {
 	if !config.System.ExecutionStressEnabled {
 		return quote
 	}
 
 	stressed := quote
-	latency := config.System.ExecutionStressLatency
+	latency := broker.EffectiveStressLatency(config.System.ExecutionStressLatency, regime)
 
 	if latency > 0 && !stressed.At.IsZero() {
 		stressed.At = stressed.At.Add(-latency)
@@ -64,12 +65,12 @@ func StressQuote(quote broker.Quote, adverseSelectionBPS float64) broker.Quote {
 /*
 ShouldReject returns an error when stress-mode simulates an exchange reject.
 */
-func ShouldReject() error {
+func ShouldReject(regime broker.StressRegime) error {
 	if !config.System.ExecutionStressEnabled {
 		return nil
 	}
 
-	rate := config.System.ExecutionStressRejectRate
+	rate := broker.EffectiveRejectRate(config.System.ExecutionStressRejectRate, regime)
 
 	if rate <= 0 {
 		return nil

@@ -42,15 +42,7 @@ func (cache *quoteCache) ingestTicker(row market.TickerUpdate) {
 		quote.Ask = row.Last
 	}
 
-	if row.Timestamp != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil {
-			quote.At = parsed
-		}
-	}
-
-	if quote.At.IsZero() {
-		quote.At = time.Now()
-	}
+	stampIngested(&quote)
 
 	cache.quotes[row.Symbol] = quote
 }
@@ -67,11 +59,26 @@ func (cache *quoteCache) ingestBook(update market.BookUpdate) {
 	quote.BidDepth = copyLevels(update.Bids, quote.BidDepth)
 	quote.AskDepth = copyLevels(update.Asks, quote.AskDepth)
 
-	if quote.At.IsZero() {
-		quote.At = time.Now()
+	if update.IsSnapshot() {
+		if len(update.Bids) > 0 {
+			quote.Bid = update.Bids[0].Price
+		}
+
+		if len(update.Asks) > 0 {
+			quote.Ask = update.Asks[0].Price
+		}
 	}
 
+	stampIngested(&quote)
+
 	cache.quotes[update.Symbol] = quote
+}
+
+// stampIngested records local receive time for PreflightGates freshness. Exchange
+// wire timestamps lag delivery and can be minutes old on illiquid symbols while
+// the cached top-of-book is still the venue's current state.
+func stampIngested(quote *broker.Quote) {
+	quote.At = time.Now()
 }
 
 func (cache *quoteCache) snapshot(symbol string, fallbackLast float64) broker.Quote {
@@ -81,7 +88,7 @@ func (cache *quoteCache) snapshot(symbol string, fallbackLast float64) broker.Qu
 	quote, ok := cache.quotes[symbol]
 
 	if !ok {
-		return broker.Quote{Last: fallbackLast, At: time.Now()}
+		return broker.Quote{}
 	}
 
 	if quote.Last <= 0 {

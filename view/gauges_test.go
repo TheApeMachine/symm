@@ -17,11 +17,16 @@ func TestGaugesFrame(t *testing.T) {
 				Source:   perspectives.SourceFluid,
 				Strength: 1.5,
 				SNR:      0,
+				Factors: []perspectives.GaugeFactor{
+					{Name: "div", Value: 0.2},
+					{Name: "re", Value: 1.1},
+				},
 			})
 
 			So(ok, ShouldBeTrue)
 			So(frame["source"], ShouldEqual, "fluid")
 			So(frame["confidence"], ShouldEqual, 1.5)
+			So(frame["factors"], ShouldNotBeNil)
 		})
 
 		Convey("It should skip a source with no dashboard name", func() {

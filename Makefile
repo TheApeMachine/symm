@@ -37,7 +37,7 @@ test-cover:
 	go tool cover -func=runs/coverage.out | tail -1
 
 test-frontend:
-	cd frontend && pnpm test
+	cd frontend && pnpm exec tsc --noEmit -p tsconfig.lib.json && pnpm test --run
 
 bench:
 	go test -bench=. -benchmem ./...

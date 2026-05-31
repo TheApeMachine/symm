@@ -14,11 +14,12 @@ const noiseFloorSNR = 1.0
 bookQualitySnapshot is the per-symbol cancel/fill asymmetry the tracker maintains.
 */
 type bookQualitySnapshot struct {
-	cancelBid float64
-	fillBid   float64
-	cancelAsk float64
-	fillAsk   float64
-	toxicNear bool
+	cancelBid          float64
+	fillBid            float64
+	cancelAsk          float64
+	fillAsk            float64
+	toxicNear          bool
+	toxicBluffStrength float64
 }
 
 /*
@@ -71,22 +72,41 @@ func (tracker *Tracker) snapshot(symbol string, at time.Time) (bookQualitySnapsh
 
 	for price, expiry := range state.toxic {
 		if at.After(expiry) {
+			delete(state.toxicChurn, price)
+
 			continue
 		}
 
 		if state.mid > 0 && math.Abs(price-state.mid)/state.mid <= toxicProximityPct {
 			snapshot.toxicNear = true
-
-			break
+			snapshot.toxicBluffStrength = math.Max(snapshot.toxicBluffStrength, state.toxicChurn[price])
 		}
+	}
+
+	if snapshot.toxicNear && snapshot.toxicBluffStrength <= 0 {
+		snapshot.toxicBluffStrength = 1
 	}
 
 	return snapshot, true
 }
 
+func (tracker *Tracker) flagToxicLocked(state *symbolState, price float64, churnRatio float64, now time.Time) {
+	state.toxic[price] = now.Add(toxicCooldown)
+
+	if churnRatio > 0 {
+		state.toxicChurn[price] = churnRatio
+	}
+}
+
 func classifyBookQuality(snapshot bookQualitySnapshot) (perspectives.CategoryType, float64) {
 	if snapshot.toxicNear {
-		return perspectives.CategoryToxicBluff, 2.0
+		strength := snapshot.toxicBluffStrength
+
+		if strength < 1 {
+			strength = 1
+		}
+
+		return perspectives.CategoryToxicBluff, strength
 	}
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)

@@ -54,6 +54,7 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 	if replayPath := strings.TrimSpace(config.System.ReplayFile); replayPath != "" {
 		applyReplayMeta(replayPath)
 	} else if universe := market.DiscoverSymbols(ctx, config.System.QuoteCurrency); len(universe) > 0 {
+		universe = market.LimitSymbols(universe, config.System.MaxScanSymbols)
 		config.System.Symbols = universe
 		config.SyncRuntime()
 
@@ -70,6 +71,11 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 		config.System.TakerFeePct,
 		config.System.MakerFeePct,
 	)
+
+	if err := market.ConfigureLevel3(config.System.KrakenAPIKey, config.System.KrakenAPISecret); err != nil {
+		return nil, fmt.Errorf("level3: %w", err)
+	}
+
 	market.BootPairCatalog(
 		ctx,
 		config.System.Fee30DVolume,
@@ -87,7 +93,11 @@ func bootEngine(ctx context.Context) (*engineResult, error) {
 	}
 
 	runCtx := booter.Context()
-	tradingCrypto := trader.NewCrypto(runCtx, pool, tradingWallet, tracker, config.Runtime)
+	tradingCrypto, err := trader.NewCrypto(runCtx, pool, tradingWallet, tracker, config.Runtime)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if err := booter.AddSystems(
 		pumpdump.NewSignal(runCtx, pool),

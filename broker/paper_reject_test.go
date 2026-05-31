@@ -20,7 +20,7 @@ func TestShouldRejectPaperOrderAtCertainRate(t *testing.T) {
 		scope := config.ExecutionScopeFrom(config.System)
 
 		convey.Convey("It should always reject", func() {
-			convey.So(ShouldRejectPaperOrder(scope), convey.ShouldNotBeNil)
+			convey.So(ShouldRejectPaperOrder(scope, StressRegime{}), convey.ShouldNotBeNil)
 		})
 	})
 }

@@ -142,8 +142,9 @@ caller's ctx detaches it from the shared feed; the upstream keeps running.
 func NewBookSubscription(
 	ctx context.Context, depth int, symbols ...string,
 ) <-chan *BookUpdate {
-	return bookFeed.subscribe(ctx, func() <-chan *BookUpdate {
-		return bookUpstream(context.Background(), depth, symbols)
+	return bookFeed.subscribe(ctx, subscriptionSpec{
+		symbols: symbols,
+		depth:   depth,
 	})
 }
 
@@ -165,17 +166,19 @@ func dialBook(
 		return closed[BookUpdate]()
 	}
 
-	if err := ws.Send(public.BookChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: BookParams{
-			Channel:  public.BookChannel,
-			Symbol:   symbols,
-			Depth:    depth,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		return closed[BookUpdate]()
+	for _, batch := range symbolBatches(symbols) {
+		if err := ws.Send(public.BookChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: BookParams{
+				Channel:  public.BookChannel,
+				Symbol:   batch,
+				Depth:    depth,
+				Snapshot: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+			return closed[BookUpdate]()
+		}
 	}
 
 	stream, err := public.Stream[BookUpdate](ws, public.BookChannel)

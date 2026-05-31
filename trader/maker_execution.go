@@ -19,6 +19,7 @@ func (crypto *Crypto) submitMakerEntry(
 	playbook string,
 	spreadBPS float64,
 	feePct float64,
+	stressRegime broker.StressRegime,
 ) error {
 	limitPrice := makerLimitPrice(quote)
 
@@ -46,6 +47,7 @@ func (crypto *Crypto) submitMakerEntry(
 		PriceDecimals:    priceDecimalsValue,
 		HasPriceDecimals: hasPriceDecimals,
 		Execution:        crypto.scopedRuntime().Execution,
+		StressRegime:     stressRegime,
 	}
 
 	if crypto.live != nil {

@@ -66,9 +66,31 @@ func (rest *Rest) Get(
 	body := response.Value().Body()
 	_ = replay.WriteREST(string(rest.endpoint), body)
 
-	return errnie.Error(json.Unmarshal(
-		body, &Response{Result: model},
-	))
+	var envelope Response
+
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return errnie.Error(fmt.Errorf("kraken rest decode: %w", err))
+	}
+
+	if len(envelope.Error) > 0 {
+		return errnie.Error(fmt.Errorf("kraken rest: %s", strings.Join(envelope.Error, ", ")))
+	}
+
+	if envelope.Result == nil {
+		return errnie.Error(fmt.Errorf("kraken rest: missing result"))
+	}
+
+	resultPayload, err := json.Marshal(envelope.Result)
+
+	if err != nil {
+		return errnie.Error(fmt.Errorf("kraken rest result: %w", err))
+	}
+
+	if err := json.Unmarshal(resultPayload, model); err != nil {
+		return errnie.Error(fmt.Errorf("kraken rest result decode: %w", err))
+	}
+
+	return nil
 }
 
 func (rest *Rest) Error() error {

@@ -20,6 +20,7 @@ type Sell struct {
 	FeePct         float64 // real per-pair taker fee; falls back to wallet.FeePct when <= 0
 	ClOrdID        string
 	Execution      config.ExecutionScope
+	StressRegime   StressRegime
 }
 
 /*
@@ -44,7 +45,7 @@ func (sell *Sell) SubmitPaper(tradingWallet *wallet.Wallet) (string, error) {
 		sell.ClOrdID = clOrdID
 	}
 
-	if err := ShouldRejectPaperOrder(sell.executionScope()); err != nil {
+	if err := ShouldRejectPaperOrder(sell.executionScope(), sell.StressRegime); err != nil {
 		return sell.ClOrdID, err
 	}
 
