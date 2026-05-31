@@ -6,8 +6,6 @@ A Kraken spot microstructure engine. Live market data flows through eleven measu
 
 Category semantics and the design rationale behind each signal row live in [`DECISION.md`](DECISION.md).
 
----
-
 ## Contents
 
 - [Architecture](#architecture)
@@ -24,8 +22,6 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 - [Build and run](#build-and-run)
 - [Configuration reference](#configuration-reference)
 - [Repository map](#repository-map)
-
----
 
 ## Architecture
 
@@ -68,8 +64,6 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 
 SYMM is not a single model. It is a **fleet of classifiers** — each signal is a standalone system with its own adaptive machinery — plus a **market layer** that encodes trade theses as decision trees, and a **trader** that turns those theses into wallet events.
 
----
-
 ## The data pipeline
 
 This is the loop to understand. Everything else supports it.
@@ -102,8 +96,6 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Las
 
 3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to a unitless threshold (1 = one sigma above the signal's own baseline churn). Thresholds are self-scaling, not hand-tuned prices.
 
----
-
 ## Everything is a `System`
 
 Every runnable unit implements:
@@ -118,8 +110,6 @@ type System interface {
 `Tick` is the long-running event loop. Signals typically `range` over a shared feed channel; the trader and view systems `select` on broadcast subscribers and heartbeats. There is no timer polling.
 
 Registration lives in `cmd/root.go`. Systems communicate only through named broadcast groups on a shared `qpool.Q`. The booter starts `ui.Hub` first, then launches each system's `Tick` in its own goroutine; any fatal `Tick` error cancels the context and triggers `Close` on all peers.
-
----
 
 ## Boot sequence
 
@@ -159,8 +149,6 @@ cmd.Execute()
 There is no separate public-client system. Kraken connectivity lives in `kraken/market` as shared, auto-reconnecting feed channels multiplexed across every subscriber.
 
 `market.DiscoverSymbols` replaces the symbol list with every online pair in the configured quote currency at boot, so signals watch the full tradable universe rather than a fixed watch list.
-
----
 
 ## Core types
 
@@ -202,8 +190,6 @@ type Decision struct {
 
 **Actions:** `ActionEnter`, `ActionDeny`, `ActionWait`, `ActionStopLoss`, `ActionTakeProfit`, `ActionShort`.
 
----
-
 ## Perspectives and playbooks
 
 Playbooks live in `market/perspectives/` and are registered in priority order. Order is conviction-first: playbooks that require more confirming categories before entry sit earlier, so the best-supported thesis wins when several apply simultaneously.
@@ -234,8 +220,6 @@ Playbooks live in `market/perspectives/` and are registered in priority order. O
 
 Full category names and per-signal mappings are in `market/perspectives/category.go` and [`DECISION.md`](DECISION.md).
 
----
-
 ## Signal systems
 
 Each signal:
@@ -261,79 +245,53 @@ Signals classify into four-category families (details in DECISION.md):
 | **Toxicity**    | `toxicity`           | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade, ticker |
 | **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade, ticker |
 
----
-
 ### 💥 PumpDump
 
 Hunts verticality: volume-relative-to-baseline (RVOL) and price precursor across rolling windows, self-scaled against per-symbol EMA baselines, fused and banded into ignition categories. Three detection windows run independently: 10 s fast, 5 m medium, and hourly against a 14-day median. OHLC warmup via REST seeds the slow baseline before the WebSocket stream is live.
-
----
 
 ### 📚 DepthFlow
 
 Distance-decayed book imbalance with anti-spoof filtering. Bid and ask volumes are weighted by exponential decay from the touch (`BookDepthDecayLambda`), so deep walls weigh less than Level-1. Fake near-touch walls are identified via the shared `toxicity.Tracker` and excluded before imbalance is computed.
 
----
-
 ### ⚡ Hawkes
 
 Bivariate self-exciting point process fitted on the trade stream. Buy arrivals excite future buy arrivals; the fitted intensity parameters separate calm from clustering regimes. MLE refit is throttled by `HawkesFitCooldown` (5 s) per symbol to avoid churning on thin markets.
-
----
 
 ### 📡 LeadLag
 
 Uses BTC/EUR as the anchor asset. Measures the Pearson cross-correlation between the anchor's returns and each altcoin's returns over a 256-bar per-symbol ring, then quantifies the unfinished lag fraction. When BTC has moved and an altcoin has not responded, `InefficientLag` fires. Publish rate is throttled to 200 ms to cap O(ring × maxLag × symbols) cost.
 
----
-
 ### 💧 Liquidity
 
 Ranks symbols by daily quote volume against the running cross-section median. Illiquid outliers classify as `ExtremeScarcity`; the scarcity playbook uses this category as its primary entry condition.
-
----
 
 ### 🌡️ Sentiment
 
 Breadth of positive returns across the full symbol universe. Fires `RiskOnSurge` when a significant fraction of symbols are simultaneously up. Acts as a macro overlay rather than a per-symbol trigger.
 
----
-
 ### 🔗 Correlation
 
 Computes Pearson cross-symbol return correlation over `CorrelationBarSeconds × MinCorrelationSamples` bars. `SystemicHerd` (high positive correlation) is a deny in trend/leadlag playbooks; `DecoupledAlpha` (low correlation despite a broad move) is an entry condition.
-
----
 
 ### 🌊 Fluid
 
 Partitions order-book depth into a `FluidGridSize × FluidGridSize` (32×32) grid and tracks field dynamics: Reynolds number, divergence, vorticity, and turbulence intensity. `Laminar` flow is an entry confirmation in the trend playbook; `Turbulent` is a universal deny. Also publishes `field_row` frames directly to the UI broadcast for spatial book visualization.
 
----
-
 ### 🧪 Causal
 
 Implements Pearl's causal ladder (association → intervention → counterfactual) on a microstructure DAG: `MacroMomentum → PriceVelocity ← LocalFlow`, with `Liquidity` as a backdoor control. Hayashi-Yoshida covariance handles asynchronous tick timing without interpolation. Regime switching is gated by a Kalman-based contagion detector (`CausalConditionSwitch`, `CausalContagionBreak`). `EndogenousAlpha` — price movement driven by internal order flow rather than systemic spillover — is a required condition in the trend playbook.
-
----
 
 ### 📊 CVD
 
 Cumulative volume delta: running buy volume minus sell volume from the trade tape. Simpler than DepthFlow (no book-level decay), purely executed-flow based. `AggressiveDrive` (sustained buy-side delta) is the primary entry condition in the drive playbook; `HiddenAbsorption` (large buy volume absorbed without price advance) signals stealth accumulation.
 
----
-
 ### ☠️ Toxicity
 
 Splits L2 liquidity removals into fills vs cancels by joining the book and trade tape. The fill-to-cancel asymmetry produces three categories: `ToxicBluff` (cancel-heavy, wall is fake), `LiquidityVacuum` (both sides thin), `HardSupport` (fills dominate). Toxicity publishes on the `measurements` broadcast *and* provides `IsToxic` to DepthFlow and Fluid for wall exclusion. `ToxicBluff` is a universal deny across all playbooks.
 
----
-
 ### 🚪 Exhaust
 
 Classifies microstructure decay modes rather than emitting a binary exit signal. Exit timing is decided by perspective tree leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel. `MechanicalCollapse` and `ThermalExhaustion` trigger `ActionStopLoss`; `ActiveReversal` and `FragileExpansion` trigger `ActionTakeProfit`. All soft exits respect `MinExhaustHold` after entry.
-
----
 
 ## Trader mechanics
 
@@ -376,8 +334,6 @@ Per-pair taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPai
 
 `trader/economics/` records post-fee net returns per playbook on every entry and exit. Forward labels are appended when the `ExecutionForwardWindow` matures. Audit frames include `quote_age_ms`, `depth_coverage`, and `playbook_econ_mean` so the decision log contains the live quote quality at the moment of each fill.
 
----
-
 ## Sizing
 
 There is no fixed slot count. Capital allocation is **edge-proportional across the live cross-section**:
@@ -393,8 +349,6 @@ notional(s)    = free_cash × share(s)
 ```
 
 A symbol must be a genuine outlier against the rest of the market to receive capital. When multiple symbols each clear the edge bar, they share the wallet proportionally. A single broad signal that lifts all scores simultaneously dilutes its own edge. `MinCostEUR` remains the exchange-cost floor.
-
----
 
 ## UI and telemetry
 
@@ -428,8 +382,6 @@ A symbol must be a genuine outlier against the rest of the market to receive cap
 
 `view.OHLC` reconciles candle subscriptions against `focus.Set` so chart data is only published for the anchor symbol (BTC/EUR) and symbols currently held. `view.Gauges` publishes `Measurement.Strength` (raw signal energy) as the gauge value; perspective trees still gate on `SNR` after the adaptive noise floor has warmed up (~12 samples per symbol).
 
----
-
 ## Numeric layer
 
 Signal internals lean on `numeric/` and `numeric/adaptive/` rather than hand-written constants.
@@ -462,8 +414,6 @@ Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap —
 ### Robust statistics
 
 `numeric/` provides `Median`, `Mean`, `PercentileSorted`, `Quartiles`, and `MedianAbsoluteDeviation` — used by cross-section calibration and throughout signal pipelines where outlier resistance matters.
-
----
 
 ## Build and run
 
@@ -505,8 +455,6 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_QUOTE_CURRENCY`    | Quote currency for symbol discovery (default `EUR`)     |
 
 Full environment wiring is in `config/config.go`.
-
----
 
 ## Configuration reference
 
@@ -611,8 +559,6 @@ Full environment wiring is in `config/config.go`.
 | `LogStdoutActive`     | `false` | Mirror logs to stdout                  |
 
 </details>
-
----
 
 ## Repository map
 
