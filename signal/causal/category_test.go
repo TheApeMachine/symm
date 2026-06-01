@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -34,7 +34,7 @@ func TestCausalEvidence(t *testing.T) {
 				raw:          1.0,
 				intervention: 1.0,
 				association:  0.2,
-				contagion:    config.System.CausalContagionBreak - 0.01,
+				contagion:    viper.GetViper().GetFloat64("signals.causal.contagion_break") - 0.01,
 				inverted:     false,
 			}
 
@@ -51,7 +51,7 @@ func TestCausalEvidence(t *testing.T) {
 				raw:          1.0,
 				intervention: 1.0,
 				association:  0.2,
-				contagion:    config.System.CausalContagionBreak + 0.05,
+				contagion:    viper.GetViper().GetFloat64("signals.causal.contagion_break") + 0.05,
 				inverted:     true,
 			}
 
@@ -89,7 +89,7 @@ func TestInversionMarginAboveConditionBreak(t *testing.T) {
 	Convey("Given a liquidity shock above the condition switch", t, func() {
 		outcome := causalOutcome{
 			intervention: 1,
-			condition:    config.System.CausalConditionSwitch + 500,
+			condition:    viper.GetViper().GetFloat64("signals.causal.condition_switch") + 500,
 		}
 
 		margin := inversionMarginAbove(outcome)

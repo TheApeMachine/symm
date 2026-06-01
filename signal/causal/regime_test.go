@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 )
 
 func TestSelectRoles(t *testing.T) {
@@ -23,7 +23,7 @@ func TestSelectRoles(t *testing.T) {
 	Convey("Given contagion above the configured break", t, func() {
 		samples := ladderTrainingSamples(minCausalHistory + 4)
 
-		roles, inverted := selectRoles(samples, config.System.CausalContagionBreak+0.05)
+		roles, inverted := selectRoles(samples, viper.GetViper().GetFloat64("signals.causal.contagion_break")+0.05)
 
 		Convey("It should invert to liquidity treatment", func() {
 			So(inverted, ShouldBeTrue)

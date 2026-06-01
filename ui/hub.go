@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 )
 
 const (
@@ -89,7 +89,7 @@ func NewHub(
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
 		subscriptions: make(map[string]*qpool.Subscriber),
 		clients:       &sync.Map{},
-		telemetry:     NewTelemetryBuffer(config.System.UITelemetryBuffer),
+		telemetry:     NewTelemetryBuffer(viper.GetViper().GetInt("ui.telemetry_buffer")),
 	}
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
@@ -207,7 +207,7 @@ func (hub *Hub) deliverTelemetry(payload any) {
 }
 
 func (hub *Hub) runHeartbeat() {
-	interval := config.System.UIHeartbeatInterval
+	interval := viper.GetViper().GetDuration("ui.heartbeat_interval")
 
 	if interval <= 0 {
 		return

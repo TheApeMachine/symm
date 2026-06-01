@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 )
 
 func TestDAGLinearModel(t *testing.T) {
@@ -65,7 +65,7 @@ func TestDAGPairConditionNumber(t *testing.T) {
 
 		Convey("It should diverge as the axes collapse", func() {
 			So(err, ShouldBeNil)
-			So(condition, ShouldBeGreaterThan, config.System.CausalConditionSwitch)
+			So(condition, ShouldBeGreaterThan, viper.GetViper().GetFloat64("signals.causal.condition_switch"))
 		})
 	})
 }

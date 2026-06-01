@@ -33,6 +33,8 @@ const (
 	TradesChannel                        = "trade"
 	InstrumentsChannel                   = "instrument"
 	Level3Channel                        = "level3"
+	ExecutionsChannel                    = "executions"
+	BalancesChannel                      = "balances"
 )
 
 /*

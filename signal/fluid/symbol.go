@@ -5,10 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -21,28 +20,31 @@ the mechanical perspective. Confidence is classification clarity — margin to t
 nearest category boundary; SNR is how surprising that clarity is versus the
 symbol's own recent baseline, not the Reynolds number itself.
 
-The book is a maintained orderbook.Book. Liquidity flux — the field's vorticity
-input — is measured as the change between the local book before and after each frame
-is folded in, not between consecutive raw deltas, so it reflects genuine book churn
-rather than the size of whatever slice the feed happened to send.
+The book is a maintained market.Book. Liquidity flux — the field's vorticity input —
+is measured as the change between the local book before and after each frame is folded
+in, not between consecutive raw deltas, so it reflects genuine book churn rather than
+the size of whatever slice the feed happened to send.
 */
 type FluidSymbol struct {
-	mu          sync.RWMutex
-	symbol      string
-	bookFeed    *market.BookFeedState
-	buyPressure float64
-	changePct   float64
-	volume      float64
-	last        float64
-	bid         float64
-	ask         float64
-	pressure    *adaptive.EMA
-	spreadBPS   float64
-	flux        *fluxAccumulator
-	priceFD     *adaptive.FracDiff
-	fracScale   adaptive.AlphaEMA
-	fracReturn  float64
-	tracked     *perspectives.Category
+	mu           sync.RWMutex
+	symbol       string
+	book         market.Book
+	bookReady    bool
+	bookDiverged bool
+	bookDepth    int
+	buyPressure  float64
+	changePct    float64
+	volume       float64
+	last         float64
+	bid          float64
+	ask          float64
+	pressure     *adaptive.EMA
+	spreadBPS    float64
+	flux         *fluxAccumulator
+	priceFD      *adaptive.FracDiff
+	fracScale    adaptive.AlphaEMA
+	fracReturn   float64
+	tracked      *perspectives.Category
 }
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
@@ -50,17 +52,22 @@ type FluidSymbol struct {
 const fracScaleAlpha = 0.05
 
 func NewFluidSymbol(symbol string) *FluidSymbol {
+	depth := viper.GetViper().GetInt("market.book_depth_levels")
+
+	if depth <= 0 {
+		depth = 10
+	}
+
 	return &FluidSymbol{
-		symbol: symbol,
-		bookFeed: market.NewBookFeedState(
-			symbol,
-			"fluid",
-			config.System.BookDepthLevels,
+		symbol:    symbol,
+		bookDepth: depth,
+		pressure:  adaptive.NewEMA(0),
+		flux:      newFluxAccumulator(viper.GetViper().GetDuration("signals.book_flux_window")),
+		priceFD: adaptive.NewFracDiff(
+			viper.GetViper().GetFloat64("signals.fractional_diff_order"),
+			viper.GetViper().GetInt("signals.fractional_diff_width"),
 		),
-		pressure: adaptive.NewEMA(0),
-		flux:     newFluxAccumulator(config.System.BookFluxWindow),
-		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
-		tracked:  perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -71,8 +78,8 @@ func (state *FluidSymbol) FeedTicker(row market.TickerUpdate) {
 	state.changePct = row.ChangePct
 	state.volume = row.Volume
 
-	if row.Volume > 0 && config.System.VolumeClockBarsPerDay > 0 {
-		state.flux.setTarget(row.Volume / config.System.VolumeClockBarsPerDay)
+	if row.Volume > 0 && viper.GetViper().GetFloat64("signals.volume_clock_bars_per_day") > 0 {
+		state.flux.setTarget(row.Volume / viper.GetViper().GetFloat64("signals.volume_clock_bars_per_day"))
 	}
 
 	if row.Last > 0 {
@@ -104,31 +111,30 @@ func (state *FluidSymbol) observePriceLocked(price float64) {
 	_ = state.fracScale.Update(math.Abs(value), fracScaleAlpha)
 }
 
-func (state *FluidSymbol) FeedBook(update market.BookUpdate) {
+func (state *FluidSymbol) FeedBook(update market.Book) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	state.feedBookLocked(update)
 }
 
-func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
-	beforeBids := state.bookFeed.Book().Bids()
-	beforeAsks := state.bookFeed.Book().Asks()
-
-	if !state.bookFeed.Apply(update) {
+func (state *FluidSymbol) feedBookLocked(update market.Book) {
+	if update.IsSnapshot() {
+		state.bookReady = true
+		state.bookDiverged = false
+	} else if !state.bookReady {
 		return
 	}
 
-	if state.bookFeed.Diverged() || !state.bookFeed.Ready() {
-		return
-	}
+	beforeBids := state.cloneBookLevels(state.book.Bids)
+	beforeAsks := state.cloneBookLevels(state.book.Asks)
 
-	afterBids := state.bookFeed.Book().Bids()
-	afterAsks := state.bookFeed.Book().Asks()
+	state.book.Fold(update, state.bookDepth)
+	state.verifyBookChecksumLocked(update.Checksum)
 
-	flux := sideChangeFlux(beforeBids, afterBids) + sideChangeFlux(beforeAsks, afterAsks)
+	flux := state.sideChangeFlux(beforeBids, state.book.Bids) + state.sideChangeFlux(beforeAsks, state.book.Asks)
 
-	state.updateTouchLocked(afterBids, afterAsks)
+	state.updateTouchLocked(state.book.Bids, state.book.Asks)
 
 	if flux <= 0 {
 		return
@@ -137,7 +143,28 @@ func (state *FluidSymbol) feedBookLocked(update market.BookUpdate) {
 	state.flux.addBook(time.Now(), flux)
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []orderbook.Level) {
+func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
+	if expected == 0 {
+		return
+	}
+
+	if state.book.ComputedChecksum() != expected {
+		state.bookDiverged = true
+	}
+}
+
+func (state *FluidSymbol) cloneBookLevels(levels []market.BookLevel) []market.BookLevel {
+	if len(levels) == 0 {
+		return nil
+	}
+
+	out := make([]market.BookLevel, len(levels))
+	copy(out, levels)
+
+	return out
+}
+
+func (state *FluidSymbol) updateTouchLocked(bids, asks []market.BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}
@@ -158,7 +185,7 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []orderbook.Level) {
 	}
 }
 
-func sideChangeFlux(previous, updated []orderbook.Level) float64 {
+func (state *FluidSymbol) sideChangeFlux(previous, updated []market.BookLevel) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))
 
 	for _, level := range previous {
@@ -209,7 +236,7 @@ func (state *FluidSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return state.bookFeed.Ready()
+	return state.bookReady
 }
 
 /*
@@ -221,7 +248,7 @@ func (state *FluidSymbol) Row() map[string]any {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	if state.bookFeed.Diverged() {
+	if state.bookDiverged {
 		return nil
 	}
 
@@ -232,7 +259,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.bookFeed.Diverged() {
+	if state.bookDiverged {
 		return perspectives.Measurement{}, false
 	}
 
@@ -272,8 +299,8 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {
-	bids := state.bookFeed.Book().Bids()
-	asks := state.bookFeed.Book().Asks()
+	bids := state.book.Bids
+	asks := state.book.Asks
 	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)
@@ -301,6 +328,12 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		return nil
 	}
 
+	vort := state.buyPressure
+
+	if tradeVol := state.flux.tradeFlux(); tradeVol > 0 {
+		vort = state.buyPressure * (1 + state.flux.bookFlux()/tradeVol)
+	}
+
 	turbulence := 0.0
 	fracScale := state.fracScale.Value()
 
@@ -309,7 +342,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	}
 
 	re := math.Max(
-		math.Max(math.Abs(imbalance), math.Abs(pressure)),
+		math.Max(math.Abs(imbalance), math.Abs(vort)),
 		turbulence,
 	)
 
@@ -318,7 +351,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"change_pct": state.changePct,
 		"vol":        state.volume,
 		"div":        imbalance,
-		"vort":       state.buyPressure,
+		"vort":       vort,
 		"turb":       pressure * state.spreadBPS / 100,
 		"turb_fd":    turbulence,
 		"fd_ret":     state.fracReturn,

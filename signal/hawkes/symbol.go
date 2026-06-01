@@ -3,7 +3,7 @@ package hawkes
 import (
 	"time"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -31,7 +31,7 @@ type HawkesSymbol struct {
 func NewHawkesSymbol() *HawkesSymbol {
 	return &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
-		fitCooldown:  config.System.HawkesFitCooldown,
+		fitCooldown:  viper.GetViper().GetDuration("signals.hawkes_fit_cooldown"),
 		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }

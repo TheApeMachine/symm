@@ -35,3 +35,33 @@ func TestStream(t *testing.T) {
 		})
 	})
 }
+
+func TestEmitDataRows(t *testing.T) {
+	convey.Convey("Given one book envelope with two rows", t, func() {
+		message := &SocketMessage{
+			Channel: "book",
+			Type:    "snapshot",
+			Data: []byte(`[
+				{"symbol":"BTC/EUR","bids":[{"price":100,"qty":1}],"asks":[{"price":101,"qty":2}]},
+				{"symbol":"ETH/EUR","bids":[{"price":99,"qty":3}],"asks":[{"price":101,"qty":4}]}
+			]`),
+		}
+		out := make(chan *SocketMessage, 4)
+
+		err := emitDataRows(message, out)
+
+		close(out)
+
+		convey.Convey("It should preserve the envelope type on each row", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			first := <-out
+			second := <-out
+
+			convey.So(first.Type, convey.ShouldEqual, "snapshot")
+			convey.So(second.Type, convey.ShouldEqual, "snapshot")
+			convey.So(first.Channel, convey.ShouldEqual, "book")
+			convey.So(len(first.Data), convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}

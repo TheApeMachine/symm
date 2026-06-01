@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -106,7 +106,7 @@ func classifyBookQuality(snapshot bookQualitySnapshot) (perspectives.CategoryTyp
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
 	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
-	threshold := config.System.MinFillToCancelRatio
+	threshold := viper.GetViper().GetFloat64("signals.min_fill_to_cancel_ratio")
 
 	if bidRatio >= threshold || askRatio >= threshold {
 		strength := math.Max(bidRatio, askRatio) / threshold

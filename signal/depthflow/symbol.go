@@ -5,24 +5,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/toxicity"
 )
-
-// toxicLevelFilter excludes book levels the toxicity tracker has flagged — large,
-// young, near-touch blocks cancelled rather than filled — from the weighted
-// imbalance, so a spoofed wall does not skew the read.
-func toxicLevelFilter(symbol string) func(price float64) bool {
-	return func(price float64) bool {
-		return toxicity.IsToxic(symbol, price, time.Now())
-	}
-}
 
 /*
 DepthSymbol owns the per-symbol book/flow state for one DepthFlow consumer and
@@ -30,33 +20,36 @@ classifies book shape onto the weight-of-the-book perspective. Confidence is
 classification clarity — margin to the nearest category boundary; SNR is how
 surprising that clarity is versus the symbol's own recent baseline.
 
-The order book is a maintained orderbook.Book, not the raw last delta: Kraken sends
-a snapshot then checksum-verified deltas, and folding each delta into the local book
-is what makes the imbalance and spoof reads correct. Reading the delta as if it were
-a whole book — the prior bug — discarded every level the delta did not mention.
+Kraken sends a snapshot then checksum-verified deltas; the maintained market.Book
+is folded locally so imbalance reads reflect the full book, not the last delta slice.
 */
 type DepthSymbol struct {
-	mu          sync.RWMutex
-	symbol      string
-	bookFeed    *market.BookFeedState
-	last        float64
-	bid         float64
-	ask         float64
-	buyPressure float64
-	pressure    *adaptive.EMA
-	score       *numeric.Derived
-	tracked     *perspectives.Category
+	mu           sync.RWMutex
+	symbol       string
+	book         market.Book
+	bookReady    bool
+	bookDiverged bool
+	bookDepth    int
+	last         float64
+	bid          float64
+	ask          float64
+	buyPressure  float64
+	pressure     *adaptive.EMA
+	score        *numeric.Derived
+	tracked      *perspectives.Category
 }
 
 func NewDepthSymbol(symbol string) *DepthSymbol {
+	depth := viper.GetViper().GetInt("market.book_depth_levels")
+
+	if depth <= 0 {
+		depth = 10
+	}
+
 	return &DepthSymbol{
-		symbol: symbol,
-		bookFeed: market.NewBookFeedState(
-			symbol,
-			"depthflow",
-			config.System.BookDepthLevels,
-		),
-		pressure: adaptive.NewEMA(0),
+		symbol:    symbol,
+		bookDepth: depth,
+		pressure:  adaptive.NewEMA(0),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
@@ -66,16 +59,43 @@ func NewDepthSymbol(symbol string) *DepthSymbol {
 }
 
 /*
-ApplyBook folds one book frame into the maintained local book — a snapshot replaces
-it, a delta is merged in with zero-qty levels removed — then verifies the exchange
-checksum against the result so a divergence is reported rather than fed silently into
-the imbalance read.
+ApplyBook folds one Kraken book frame into the maintained local book and verifies
+the exchange checksum.
 */
-func (state *DepthSymbol) ApplyBook(update market.BookUpdate) {
+func (state *DepthSymbol) ApplyBook(update market.Book) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.bookFeed.Apply(update)
+	state.applyBookLocked(update)
+}
+
+func (state *DepthSymbol) applyBookLocked(update market.Book) {
+	if update.IsSnapshot() {
+		state.bookReady = true
+		state.bookDiverged = false
+		state.book.Fold(update, state.bookDepth)
+
+		state.verifyBookChecksumLocked(update.Checksum)
+
+		return
+	}
+
+	if !state.bookReady {
+		return
+	}
+
+	state.book.Fold(update, state.bookDepth)
+	state.verifyBookChecksumLocked(update.Checksum)
+}
+
+func (state *DepthSymbol) verifyBookChecksumLocked(expected int64) {
+	if expected == 0 {
+		return
+	}
+
+	if state.book.ComputedChecksum() != expected {
+		state.bookDiverged = true
+	}
 }
 
 func (state *DepthSymbol) PushTradePressure(sign float64) (float64, error) {
@@ -97,7 +117,7 @@ func (state *DepthSymbol) HasBook() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return state.bookFeed.Ready()
+	return state.bookReady
 }
 
 func (state *DepthSymbol) FeedTicker(row market.TickerUpdate) {
@@ -121,12 +141,12 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.bookFeed.Diverged() || !state.bookFeed.Ready() {
+	if state.bookDiverged || !state.bookReady {
 		return state.measureTradePressureLocked()
 	}
 
-	bids := toMarketLevels(state.bookFeed.Book().Bids())
-	asks := toMarketLevels(state.bookFeed.Book().Asks())
+	bids := state.book.Bids
+	asks := state.book.Asks
 	mid := state.last
 
 	if len(bids) > 0 && len(asks) > 0 {
@@ -141,67 +161,44 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 		return perspectives.Measurement{}, false
 	}
 
-	if len(bids) > 0 && len(asks) > 0 {
-		imbalance, ok := market.WeightedDepthImbalanceFiltered(
-			bids, asks, mid, config.System.BookDepthDecayLambda, toxicLevelFilter(state.symbol),
-		)
-		level1, levelOK := market.Level1Imbalance(bids, asks)
+	if len(bids) == 0 || len(asks) == 0 {
+		return state.measureTradePressureLocked()
+	}
 
-		if ok && imbalance != 0 && levelOK {
-			flatImbalance, flatOK := market.FlatDepthImbalance(bids, asks)
-			spoofed := market.IsSpoofSkew(
-				imbalance, level1, config.System.SpoofWeightedThreshold, config.System.SpoofLevel1Reject,
-			)
+	imbalance, ok := state.weightedImbalanceLocked(bids, asks, mid)
+	level1, levelOK := state.level1ImbalanceLocked(bids, asks)
 
-			if flatOK {
-				spoofed = spoofed || market.IsSpoofSkew(
-					flatImbalance, level1, config.System.SpoofWeightedThreshold, config.System.SpoofLevel1Reject,
-				)
-			}
+	if !ok || imbalance == 0 || !levelOK {
+		return state.measureTradePressureLocked()
+	}
 
-			if !spoofed {
-				pressure := 1.0
+	flatImbalance, flatOK := state.flatImbalanceLocked(bids, asks)
+	spoofed := state.isSpoofSkewLocked(imbalance, level1)
 
-				if state.buyPressure > 0 && imbalance > 0 {
-					pressure = (state.buyPressure + 1) / 2
-				}
+	if flatOK {
+		spoofed = spoofed || state.isSpoofSkewLocked(flatImbalance, level1)
+	}
 
-				if state.buyPressure < 0 && imbalance < 0 {
-					pressure = (1 - state.buyPressure) / 2
-				}
+	if !spoofed {
+		pressure := 1.0
 
-				raw, err := state.score.Push(math.Abs(imbalance), pressure)
+		if state.buyPressure > 0 && imbalance > 0 {
+			pressure = (state.buyPressure + 1) / 2
+		}
 
-				if err != nil {
-					errnie.Error(err)
-				}
+		if state.buyPressure < 0 && imbalance < 0 {
+			pressure = (1 - state.buyPressure) / 2
+		}
 
-				if raw > 0 {
-					category, evidence := depthflowReading(
-						reasonDepthImbalance, imbalance, flatImbalance, flatOK, 0,
-					)
+		raw, err := state.score.Push(math.Abs(imbalance), pressure)
 
-					confidence, err := state.tracked.Observe(category, evidence)
+		if err != nil {
+			errnie.Error(err)
+		}
 
-					if err != nil {
-						errnie.Error(err)
-
-						return perspectives.Measurement{}, false
-					}
-
-					return perspectives.Measurement{
-						Symbol:     state.symbol,
-						Source:     perspectives.SourceDepthFlow,
-						Category:   category,
-						Strength:   raw,
-						Confidence: confidence,
-					}, true
-				}
-			}
-
-			raw := math.Abs(level1)
+		if raw > 0 {
 			category, evidence := depthflowReading(
-				reasonDepthSkeptic, imbalance, flatImbalance, flatOK, 0,
+				reasonDepthImbalance, imbalance, flatImbalance, flatOK, 0,
 			)
 
 			confidence, err := state.tracked.Observe(category, evidence)
@@ -222,7 +219,26 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 		}
 	}
 
-	return state.measureTradePressureLocked()
+	raw := math.Abs(level1)
+	category, evidence := depthflowReading(
+		reasonDepthSkeptic, imbalance, flatImbalance, flatOK, 0,
+	)
+
+	confidence, err := state.tracked.Observe(category, evidence)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return perspectives.Measurement{}, false
+	}
+
+	return perspectives.Measurement{
+		Symbol:     state.symbol,
+		Source:     perspectives.SourceDepthFlow,
+		Category:   category,
+		Strength:   raw,
+		Confidence: confidence,
+	}, true
 }
 
 func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement, bool) {
@@ -255,14 +271,98 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 	}, true
 }
 
-// toMarketLevels converts maintained-book levels back to the market.BookLevel shape
-// the imbalance helpers consume.
-func toMarketLevels(levels []orderbook.Level) []market.BookLevel {
-	out := make([]market.BookLevel, len(levels))
-
-	for index, level := range levels {
-		out[index] = market.BookLevel{Price: level.Price, Qty: level.Qty}
+func (state *DepthSymbol) level1ImbalanceLocked(bids, asks []market.BookLevel) (float64, bool) {
+	if len(bids) == 0 || len(asks) == 0 {
+		return 0, false
 	}
 
-	return out
+	total := bids[0].Qty + asks[0].Qty
+
+	if total <= 0 {
+		return 0, false
+	}
+
+	return (bids[0].Qty - asks[0].Qty) / total, true
+}
+
+func (state *DepthSymbol) flatImbalanceLocked(bids, asks []market.BookLevel) (float64, bool) {
+	bidVolume := 0.0
+	askVolume := 0.0
+
+	for _, level := range bids {
+		bidVolume += level.Qty
+	}
+
+	for _, level := range asks {
+		askVolume += level.Qty
+	}
+
+	total := bidVolume + askVolume
+
+	if total <= 0 {
+		return 0, false
+	}
+
+	return (bidVolume - askVolume) / total, true
+}
+
+func (state *DepthSymbol) weightedImbalanceLocked(
+	bids, asks []market.BookLevel, mid float64,
+) (float64, bool) {
+	if mid <= 0 {
+		return 0, false
+	}
+
+	lambda := viper.GetViper().GetFloat64("signals.book_depth_decay_lambda")
+	weightedBid := 0.0
+	weightedAsk := 0.0
+
+	for _, level := range bids {
+		if state.isToxicLevelLocked(level.Price) {
+			continue
+		}
+
+		weight := math.Exp(-lambda * math.Abs(level.Price-mid) / mid)
+		weightedBid += level.Qty * weight
+	}
+
+	for _, level := range asks {
+		if state.isToxicLevelLocked(level.Price) {
+			continue
+		}
+
+		weight := math.Exp(-lambda * math.Abs(level.Price-mid) / mid)
+		weightedAsk += level.Qty * weight
+	}
+
+	total := weightedBid + weightedAsk
+
+	if total <= 0 {
+		return 0, false
+	}
+
+	return (weightedBid - weightedAsk) / total, true
+}
+
+func (state *DepthSymbol) isToxicLevelLocked(price float64) bool {
+	return toxicity.IsToxic(state.symbol, price, time.Now())
+}
+
+func (state *DepthSymbol) isSpoofSkewLocked(weighted, level1 float64) bool {
+	weightedThreshold := viper.GetViper().GetFloat64("signals.spoof_weighted_threshold")
+	level1Reject := viper.GetViper().GetFloat64("signals.spoof_level1_reject")
+
+	if math.Abs(weighted) < weightedThreshold {
+		return false
+	}
+
+	if weighted > 0 && level1 < level1Reject {
+		return true
+	}
+
+	if weighted < 0 && level1 > -level1Reject {
+		return true
+	}
+
+	return false
 }

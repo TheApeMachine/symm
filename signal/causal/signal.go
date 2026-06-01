@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -86,10 +86,10 @@ func (signal *Signal) state(symbol string) *CausalSymbol {
 }
 
 func (signal *Signal) Tick() error {
-	symbols := config.System.Symbols
+	symbols := viper.GetViper().GetStringSlice("market.symbols")
 	trades := market.NewTradeSubscription(signal.ctx, symbols...)
 	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
-	books := market.NewBookSubscription(signal.ctx, config.System.BookDepthLevels, symbols...)
+	books := market.NewBookSubscription(signal.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
 
 	for {
 		select {

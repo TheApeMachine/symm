@@ -66,7 +66,6 @@ func NewTickerSubscription(
 		},
 	}); err != nil {
 		errnie.Error(err)
-		return closed[TickerUpdate]()
 	}
 
 	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {

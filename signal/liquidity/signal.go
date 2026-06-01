@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -60,7 +60,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	for row := range market.NewTickerSubscription(signal.ctx, config.System.Symbols...) {
+	for row := range market.NewTickerSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
 		if row == nil || row.Last <= 0 {
 			continue
 		}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
@@ -42,15 +42,15 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	symbols := config.System.Symbols
+	symbols := viper.GetViper().GetStringSlice("market.symbols")
 	trades := market.NewTradeSubscription(tox.ctx, symbols...)
 	ticks := market.NewTickerSubscription(tox.ctx, symbols...)
-	books := market.NewBookSubscription(tox.ctx, config.System.BookDepthLevels, symbols...)
+	books := market.NewBookSubscription(tox.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
 
 	var level3 <-chan *market.Level3Update
 
 	if tox.l3Active {
-		level3 = market.NewLevel3Subscription(tox.ctx, config.System.BookDepthLevels, symbols...)
+		level3 = market.NewLevel3Subscription(tox.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
 	}
 
 	for {
@@ -107,7 +107,7 @@ func (tox *Toxicity) observeTrade(trade market.TradeUpdate) {
 	tox.tracker.ObserveTrade(trade.Symbol, market.Pair{}, trade.Price, trade.Qty, trade.Timestamp)
 }
 
-func (tox *Toxicity) observeBook(update market.BookUpdate) {
+func (tox *Toxicity) observeBook(update market.Book) {
 	now := time.Now()
 
 	for _, level := range update.Bids {

@@ -22,7 +22,7 @@ type Crypto struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	desk        *broker.Desk
-	balance     *user.Balance
+	balance     <-chan *user.Balance
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
@@ -39,8 +39,9 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 		}).Or(func(err error) {
 			errnie.Error(err)
 		}).Value(),
-		balance: errnie.Does(func() (*user.Balance, error) {
-			return user.NewBalance(ctx)
+		balance: errnie.Does(func() (<-chan *user.Balance, error) {
+			balances := user.NewBalanceSubscription(ctx)
+			return balances, nil
 		}).Or(func(err error) {
 			errnie.Error(err)
 		}).Value(),

@@ -3,7 +3,7 @@ package causal
 import (
 	"math"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -80,19 +80,23 @@ func selectRolesFromTable(
 ) (causalRoles, bool, float64) {
 	normal := normalRoles()
 
-	contagionBreak := config.System.CausalContagionBreak > 0 &&
-		contagion >= config.System.CausalContagionBreak
+	v := viper.GetViper()
+	contagionBreakThreshold := v.GetFloat64("signals.causal.contagion_break")
+	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
+
+	contagionBreak := contagionBreakThreshold > 0 &&
+		contagion >= contagionBreakThreshold
 
 	condition := 0.0
 	conditionBreak := false
 
-	if config.System.CausalConditionSwitch > 0 {
+	if conditionSwitch > 0 {
 		pairCondition, condErr := nodeTable.PairConditionNumber(liquidityNode, localFlowNode)
 
 		if condErr == nil {
 			condition = pairCondition
 			conditionBreak = math.IsInf(pairCondition, 1) ||
-				pairCondition >= config.System.CausalConditionSwitch
+				pairCondition >= conditionSwitch
 		}
 	}
 

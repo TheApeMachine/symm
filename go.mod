@@ -4,10 +4,8 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.1
-	github.com/phuslu/log v1.0.124
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -34,6 +32,7 @@ require (
 	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/phuslu/log v1.0.124 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect

@@ -71,7 +71,7 @@ func PerturbLine(line Line, config PerturbConfig, random *rand.Rand) (Line, erro
 		return line, nil
 	}
 
-	payload, err := perturbBookPayload(line.Payload, random, config.QtyJitterSigma)
+	payload, err := perturbBookPayload(line.Payload, random, clampSigma(config.QtyJitterSigma))
 
 	if err != nil {
 		return line, fmt.Errorf("perturb book payload: %w", err)

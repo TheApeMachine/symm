@@ -2,7 +2,6 @@ package causal
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -12,17 +11,11 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.BookUpdate {
-	update := market.BookUpdate{
+func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
+	update := market.Book{
 		Symbol: symbol,
-		Bids: []market.BookLevel{{
-			Price: bidPrice, Qty: bidQty,
-			PriceRaw: fmt.Sprintf("%g", bidPrice), QtyRaw: fmt.Sprintf("%g", bidQty),
-		}},
-		Asks: []market.BookLevel{{
-			Price: askPrice, Qty: askQty,
-			PriceRaw: fmt.Sprintf("%g", askPrice), QtyRaw: fmt.Sprintf("%g", askQty),
-		}},
+		Bids:   []market.BookLevel{{Price: bidPrice, Qty: bidQty}},
+		Asks:   []market.BookLevel{{Price: askPrice, Qty: askQty}},
 	}
 	update.SetEnvelopeType(market.BookSnapshot)
 

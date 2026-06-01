@@ -3,6 +3,7 @@ package causal
 import (
 	"math"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -117,22 +118,25 @@ func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 }
 
 func inversionMarginBelow(outcome causalOutcome) float64 {
+	v := viper.GetViper()
+	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
+	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
 	margin := math.MaxFloat64
 
-	if config.System.CausalContagionBreak > 0 {
-		headroom := config.System.CausalContagionBreak - outcome.contagion
+	if contagionBreak > 0 {
+		headroom := contagionBreak - outcome.contagion
 
 		if headroom < margin {
-			margin = headroom / config.System.CausalContagionBreak
+			margin = headroom / contagionBreak
 		}
 	}
 
-	if config.System.CausalConditionSwitch > 0 && outcome.condition > 0 &&
+	if conditionSwitch > 0 && outcome.condition > 0 &&
 		!math.IsInf(outcome.condition, 1) {
-		headroom := config.System.CausalConditionSwitch - outcome.condition
+		headroom := conditionSwitch - outcome.condition
 
 		if headroom < margin {
-			margin = headroom / config.System.CausalConditionSwitch
+			margin = headroom / conditionSwitch
 		}
 	}
 
@@ -148,26 +152,29 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 }
 
 func inversionMarginAbove(outcome causalOutcome) float64 {
+	v := viper.GetViper()
+	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
+	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
 	margin := -1.0
 
-	if config.System.CausalContagionBreak > 0 &&
-		outcome.contagion >= config.System.CausalContagionBreak {
-		excess := outcome.contagion - config.System.CausalContagionBreak
-		span := 1 - config.System.CausalContagionBreak
+	if contagionBreak > 0 &&
+		outcome.contagion >= contagionBreak {
+		excess := outcome.contagion - contagionBreak
+		span := 1 - contagionBreak
 
 		if span > 0 {
 			margin = math.Max(margin, excess/span)
 		}
 	}
 
-	if config.System.CausalConditionSwitch > 0 &&
+	if conditionSwitch > 0 &&
 		(math.IsInf(outcome.condition, 1) ||
-			outcome.condition >= config.System.CausalConditionSwitch) {
+			outcome.condition >= conditionSwitch) {
 		if math.IsInf(outcome.condition, 1) {
 			margin = math.Max(margin, 1)
 		} else {
-			excess := outcome.condition - config.System.CausalConditionSwitch
-			margin = math.Max(margin, excess/config.System.CausalConditionSwitch)
+			excess := outcome.condition - conditionSwitch
+			margin = math.Max(margin, excess/conditionSwitch)
 		}
 	}
 

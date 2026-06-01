@@ -61,7 +61,6 @@ func NewTradeSubscription(
 		},
 	}); err != nil {
 		errnie.Error(err)
-		return closed[TradeUpdate]()
 	}
 
 	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {

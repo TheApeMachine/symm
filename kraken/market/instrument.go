@@ -87,7 +87,7 @@ func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
 		},
 	}); err != nil {
 		errnie.Error(err)
-		return closed[InstrumentUpdate]()
+		return nil
 	}
 
 	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {

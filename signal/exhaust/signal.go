@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -47,10 +47,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	symbols := config.System.Symbols
+	symbols := viper.GetViper().GetStringSlice("market.symbols")
 	trades := market.NewTradeSubscription(signal.ctx, symbols...)
 	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
-	books := market.NewBookSubscription(signal.ctx, config.System.BookDepthLevels, symbols...)
+	books := market.NewBookSubscription(signal.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
 
 	for {
 		select {
@@ -97,7 +97,7 @@ func (signal *Signal) Tick() error {
 }
 
 // observeBook folds one book delta's depth, spread, and imbalance into history.
-func (signal *Signal) observeBook(delta market.BookUpdate) {
+func (signal *Signal) observeBook(delta market.Book) {
 	bidDepth := 0.0
 	askDepth := 0.0
 

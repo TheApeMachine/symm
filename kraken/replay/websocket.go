@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
 	symmreplay "github.com/theapemachine/symm/replay"
 )
@@ -16,7 +16,7 @@ import (
 var _ public.WebSocketClient = (*WebSocket)(nil)
 
 /*
-WebSocket replays recorded Kraken WebSocket v2 frames from config.System.ReplayFile.
+WebSocket replays recorded Kraken WebSocket v2 frames from trading.replay.file.
 */
 type WebSocket struct {
 	ctx     context.Context
@@ -50,7 +50,7 @@ func (ws *WebSocket) Send(channel string, message any) error {
 }
 
 func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
-	path := strings.TrimSpace(config.System.ReplayFile)
+	path := strings.TrimSpace(viper.GetViper().GetString("trading.replay.file"))
 
 	if path == "" {
 		return nil, fmt.Errorf("kraken replay websocket: replay file is not configured")

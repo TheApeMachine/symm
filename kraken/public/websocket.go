@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -90,14 +91,25 @@ func recordWSOutbound(channel string, message any) {
 }
 
 /*
-envelopeTyped is implemented by row types that need the channel envelope's "type"
-tag — for the book channel, "snapshot" versus "update". Stream hands the tag to any
-row that opts in; rows that do not implement it are decoded exactly as before. This
-is how the snapshot/delta distinction survives the generic decode instead of being
-discarded with the envelope.
+emitDataRows splits one envelope's data array into per-row SocketMessages, keeping
+the outer channel and type on each row so snapshot vs update survives decoding.
 */
-type envelopeTyped interface {
-	SetEnvelopeType(string)
+func emitDataRows(message *SocketMessage, out chan<- *SocketMessage) error {
+	var rows []json.RawMessage
+
+	if err := sonic.Unmarshal(message.Data, &rows); err != nil {
+		return fmt.Errorf("kraken ws decode %s: %w", message.Channel, err)
+	}
+
+	for index := range rows {
+		out <- &SocketMessage{
+			Channel: message.Channel,
+			Type:    message.Type,
+			Data:    rows[index],
+		}
+	}
+
+	return nil
 }
 
 /*
@@ -130,16 +142,8 @@ func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 					continue
 				}
 
-				var rows []SocketMessage
-
-				if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-					errnie.Error(fmt.Errorf("kraken ws decode %s: %w", channel, err))
-
-					continue
-				}
-
-				for index := range rows {
-					out <- &rows[index]
+				if err := emitDataRows(message, out); err != nil {
+					errnie.Error(err)
 				}
 			}
 		}

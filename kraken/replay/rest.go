@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 	symmreplay "github.com/theapemachine/symm/replay"
 )
 
@@ -48,7 +48,7 @@ func (rest *Rest) serve(request fiber.Map, model any) error {
 		return nil
 	}
 
-	path := strings.TrimSpace(config.System.ReplayFile)
+	path := strings.TrimSpace(viper.GetViper().GetString("trading.replay.file"))
 
 	if path == "" {
 		return nil

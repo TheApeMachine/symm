@@ -2,7 +2,6 @@ package exhaust
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -12,17 +11,11 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func thinningBook(symbol string, bidDepth float64, askPrice float64) market.BookUpdate {
-	update := market.BookUpdate{
+func thinningBook(symbol string, bidDepth float64, askPrice float64) market.Book {
+	update := market.Book{
 		Symbol: symbol,
-		Bids: []market.BookLevel{{
-			Price: 100, Qty: bidDepth,
-			PriceRaw: "100", QtyRaw: fmt.Sprintf("%g", bidDepth),
-		}},
-		Asks: []market.BookLevel{{
-			Price: askPrice, Qty: bidDepth * 0.5,
-			PriceRaw: fmt.Sprintf("%g", askPrice), QtyRaw: fmt.Sprintf("%g", bidDepth*0.5),
-		}},
+		Bids:   []market.BookLevel{{Price: 100, Qty: bidDepth}},
+		Asks:   []market.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
 	}
 	update.SetEnvelopeType(market.BookSnapshot)
 

@@ -7,15 +7,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 )
 
 func perturbConfigFromSystem() PerturbConfig {
+	v := viper.GetViper()
+
 	return PerturbConfigFrom(
-		config.System.ReplayPerturbEnabled,
-		config.System.ReplayPerturbSeed,
-		config.System.ReplayQtyJitterSigma,
-		config.System.ReplayTimestampJitter,
+		v.GetBool("trading.replay.perturb.enabled"),
+		v.GetInt64("trading.replay.perturb.seed"),
+		v.GetFloat64("trading.replay.perturb.qty_jitter_sigma"),
+		v.GetDuration("trading.replay.perturb.timestamp_jitter"),
 	)
 }
 
@@ -164,7 +166,7 @@ func (hub *Hub) runPlayback() {
 	for {
 		hub.playOnce()
 
-		if !config.System.ReplayLoop {
+		if !viper.GetViper().GetBool("trading.replay.loop") {
 			hub.doneOnce.Do(func() { close(hub.done) })
 
 			return
@@ -196,7 +198,7 @@ func (hub *Hub) playOnce() {
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-	pace := config.System.ReplayPace
+	pace := viper.GetViper().GetDuration("trading.replay.pace")
 	perturbConfig := perturbConfigFromSystem()
 	perturbRandom := NewPerturbRandom(perturbConfig.Seed)
 	var previous time.Time

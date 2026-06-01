@@ -3,7 +3,7 @@ package causal
 import (
 	"math"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -12,16 +12,20 @@ import (
 const contagionSymbolCap = 16
 
 func contagionWindow() int {
-	if config.System.CausalContagionWindow > 0 {
-		return config.System.CausalContagionWindow
+	window := viper.GetViper().GetInt("signals.causal.contagion_window")
+
+	if window > 0 {
+		return window
 	}
 
 	return 128
 }
 
 func contagionMinSamples() int {
-	if config.System.CausalContagionMinSamples > 0 {
-		return config.System.CausalContagionMinSamples
+	minSamples := viper.GetViper().GetInt("signals.causal.contagion_min_samples")
+
+	if minSamples > 0 {
+		return minSamples
 	}
 
 	return 16

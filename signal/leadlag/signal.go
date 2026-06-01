@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -19,11 +19,20 @@ const (
 )
 
 func anchorSymbol() string {
-	if len(config.System.Symbols) > 0 {
-		return config.System.Symbols[0]
+	v := viper.GetViper()
+	symbols := v.GetStringSlice("market.symbols")
+
+	if len(symbols) > 0 {
+		return symbols[0]
 	}
 
-	return config.DefaultSymbols()[0]
+	defaults := v.GetStringSlice("market.default_symbols")
+
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+
+	return "BTC/EUR"
 }
 
 /*
@@ -77,7 +86,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	for row := range market.NewTickerSubscription(signal.ctx, config.System.Symbols...) {
+	for row := range market.NewTickerSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
 		if row == nil || row.Last <= 0 {
 			continue
 		}

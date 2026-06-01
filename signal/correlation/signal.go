@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
@@ -191,7 +192,7 @@ batch tick. Per-trade processing would restamp fingerprints on every print;
 correlationBatchInterval batches enough cross-section activity to be stable.
 */
 func (signal *Signal) Tick() error {
-	trades := market.NewTradeSubscription(signal.ctx, config.System.Symbols...)
+	trades := market.NewTradeSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...)
 	batch := time.NewTicker(correlationBatchInterval)
 	defer batch.Stop()
 

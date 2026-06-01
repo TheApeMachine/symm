@@ -100,7 +100,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) {
 	state.buyPressure = pressure
 }
 
-func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
+func (state *CausalSymbol) FeedBook(delta market.Book) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 

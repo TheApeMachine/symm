@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -170,7 +171,7 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	for trade := range market.NewTradeSubscription(signal.ctx, config.System.Symbols...) {
+	for trade := range market.NewTradeSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
 		signal.observe(*trade)
 	}
 

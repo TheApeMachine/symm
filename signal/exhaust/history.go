@@ -83,19 +83,6 @@ func (store *historyStore) observe(
 	}
 }
 
-func (store *historyStore) snapshot(symbol string) (symbolHistory, bool) {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
-	history, ok := store.bySymbol[symbol]
-
-	if !ok || history == nil {
-		return symbolHistory{}, false
-	}
-
-	return history.snapshot(), true
-}
-
 func (store *historyStore) measure(symbol string) (perspectives.Measurement, bool) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -107,19 +94,6 @@ func (store *historyStore) measure(symbol string) (perspectives.Measurement, boo
 	}
 
 	return exhaustMeasurement(history.snapshot(), history.tracked)
-}
-
-func (store *historyStore) symbols() []string {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
-	symbols := make([]string, 0, len(store.bySymbol))
-
-	for symbol := range store.bySymbol {
-		symbols = append(symbols, symbol)
-	}
-
-	return symbols
 }
 
 func (store *historyStore) ensureLocked(symbol string) *symbolHistory {

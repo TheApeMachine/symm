@@ -346,11 +346,3 @@ func (tune arrivalTune) localScaleRange(gapCV float64) (minScale, maxScale float
 
 	return minScale, maxScale
 }
-
-func confidenceHistoryCap(minFitEvents int) int {
-	if minFitEvents <= 0 {
-		return bivariateParamCount * 4
-	}
-
-	return minFitEvents * 4
-}

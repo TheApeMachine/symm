@@ -24,13 +24,8 @@ type nonLinearModel struct {
 }
 
 /*
-fitNonLinearStructural estimates a non-linear SCM for price velocity in the normal regime.
-fitNonLinearStructuralFor fits the predictor set of any regime.
+fitNonLinearStructuralFor estimates a non-linear SCM for price velocity for a regime.
 */
-func fitNonLinearStructural(samples []causalSample) (nonLinearModel, bool) {
-	return fitNonLinearStructuralFor(samples, normalRoles())
-}
-
 func fitNonLinearStructuralFor(samples []causalSample, roles causalRoles) (nonLinearModel, bool) {
 	nodeTable, err := causalTable(samples)
 
@@ -90,13 +85,8 @@ func numericMean(values []float64) float64 {
 }
 
 /*
-kernelBackdoorFlowEffect estimates rung-2 uplift with Nadaraya-Watson kernel regression in the
-normal regime. kernelBackdoorEffectFor scores the treatment of any regime under its controls.
+kernelBackdoorEffectFor estimates rung-2 uplift with Nadaraya-Watson kernel regression for a regime.
 */
-func kernelBackdoorFlowEffect(samples []causalSample) float64 {
-	return kernelBackdoorEffectFor(samples, normalRoles())
-}
-
 func kernelBackdoorEffectFor(samples []causalSample, roles causalRoles) float64 {
 	nodeTable, err := causalTable(samples)
 
@@ -119,14 +109,6 @@ func kernelBackdoorEffectFromTable(nodeTable dagNodeTable, roles causalRoles) fl
 	}
 
 	return effect
-}
-
-func nonLinearCounterfactualUplift(
-	current causalSample,
-	model nonLinearModel,
-	interventionFlow float64,
-) float64 {
-	return nonLinearCounterfactualUpliftFor(current, model, interventionFlow, normalRoles())
 }
 
 func nonLinearCounterfactualUpliftFor(

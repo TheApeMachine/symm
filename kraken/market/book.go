@@ -2,19 +2,21 @@ package market
 
 import (
 	"context"
-	"encoding/json"
+	"hash/crc32"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-// BookSnapshot is the envelope "type" tag Kraken sends with a full book frame —
-// the first frame after each (re)subscribe. Every other frame is an incremental
-// delta and carries no snapshot tag.
+// BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
 const BookSnapshot = "snapshot"
+
+const bookChecksumLevels = 10
 
 /*
 BookParams is the Kraken WebSocket v2 subscribe payload for the book channel.
@@ -27,123 +29,172 @@ type BookParams struct {
 }
 
 /*
-BookLevel is one price/qty level in an L2 book snapshot or delta. It keeps the exact
-numeric text the exchange sent alongside the parsed float64s because Kraken's book
-checksum is computed over that text at the symbol's own precision.
+BookLevel is one price level in an L2 book snapshot or update.
 */
 type BookLevel struct {
-	Price    float64
-	Qty      float64
-	PriceRaw string
-	QtyRaw   string
+	Price float64 `json:"price"`
+	Qty   float64 `json:"qty"`
 }
 
 /*
-UnmarshalJSON decodes a book level while preserving the raw numeric text. The float64
-values feed the signals; the raw text feeds the checksum, which a reformatted float64
-would not reproduce (trailing zeros encode precision and would be lost).
+Book is one L2 order book snapshot or update from the public book WebSocket feed.
+
+Kraken delivers an initial snapshot then incremental updates; each frame carries
+bids and asks with aggregated quantity per price, a CRC32 checksum over the top
+ten levels per side, and an RFC3339 timestamp. Type records the envelope tag
+(snapshot vs update) from the channel message, not the data payload.
 */
-func (level *BookLevel) UnmarshalJSON(data []byte) error {
-	var wire struct {
-		Price json.Number `json:"price"`
-		Qty   json.Number `json:"qty"`
-	}
-
-	if err := sonic.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-
-	price, err := wire.Price.Float64()
-
-	if err != nil {
-		return err
-	}
-
-	qty, err := wire.Qty.Float64()
-
-	if err != nil {
-		return err
-	}
-
-	level.Price = price
-	level.Qty = qty
-	level.PriceRaw = wire.Price.String()
-	level.QtyRaw = wire.Qty.String()
-
-	return nil
-}
-
-/*
-BookUpdate is one L2 order book snapshot or delta from the public book feed.
-
-The live aggregated L2 order book: total resting size at each price level on both
-sides, delivered as an initial snapshot then checksum-verified deltas. It shows
-where liquidity is stacked and how it shifts in real time, and the checksum proves
-the locally maintained book still matches the exchange exactly. Kind carries the
-envelope tag ("snapshot" vs delta) so a consumer maintaining a local book knows
-whether to replace it or fold the frame in.
-*/
-type BookUpdate struct {
+type Book struct {
 	Symbol    string      `json:"symbol"`
 	Bids      []BookLevel `json:"bids"`
 	Asks      []BookLevel `json:"asks"`
 	Checksum  int64       `json:"checksum"`
 	Timestamp string      `json:"timestamp"`
-	Kind      string      `json:"-"`
+	Type      string      `json:"-"`
 }
 
 /*
-SetEnvelopeType records the channel envelope tag so the consumer can tell a fresh
-book from a delta. Populated by the public Stream, not the data payload.
+SetEnvelopeType records the channel envelope tag (snapshot or update).
 */
-func (update *BookUpdate) SetEnvelopeType(kind string) {
-	update.Kind = kind
+func (book *Book) SetEnvelopeType(kind string) {
+	book.Type = kind
 }
 
 /*
-IsSnapshot reports whether this frame is a full book snapshot — the first frame and
-every frame after a resubscribe — rather than an incremental delta.
+IsSnapshot reports whether this frame is a full book snapshot.
 */
-func (update *BookUpdate) IsSnapshot() bool {
-	return update.Kind == BookSnapshot
+func (book *Book) IsSnapshot() bool {
+	return book.Type == BookSnapshot
 }
 
 /*
-BidLevels and AskLevels convert the wire levels to maintained-book levels, carrying
-the raw text through for checksum verification.
+Fold merges one Kraken book frame into the receiver per the v2 book channel guide.
+
+Snapshots replace bids and asks; updates merge changed levels and remove entries
+with qty zero, then truncate to depth.
 */
-func (update *BookUpdate) BidLevels() []orderbook.Level {
-	return toBookLevels(update.Bids)
-}
-
-func (update *BookUpdate) AskLevels() []orderbook.Level {
-	return toBookLevels(update.Asks)
-}
-
-func toBookLevels(levels []BookLevel) []orderbook.Level {
-	out := make([]orderbook.Level, len(levels))
-
-	for index, level := range levels {
-		out[index] = orderbook.Level{
-			Price:    level.Price,
-			Qty:      level.Qty,
-			PriceRaw: level.PriceRaw,
-			QtyRaw:   level.QtyRaw,
-		}
+func (book *Book) Fold(update Book, depth int) {
+	if depth <= 0 {
+		depth = bookChecksumLevels
 	}
+
+	if update.IsSnapshot() {
+		book.Symbol = update.Symbol
+		book.Bids = book.cloneLevels(update.Bids)
+		book.Asks = book.cloneLevels(update.Asks)
+		book.truncate(depth)
+
+		return
+	}
+
+	book.Bids = book.mergeBookSide(book.Bids, update.Bids, false)
+	book.Asks = book.mergeBookSide(book.Asks, update.Asks, true)
+	book.truncate(depth)
+}
+
+/*
+ComputedChecksum returns the Kraken WebSocket v2 CRC32 for this frame's levels.
+*/
+func (book Book) ComputedChecksum() int64 {
+	var builder strings.Builder
+
+	for index := range min(bookChecksumLevels, len(book.Asks)) {
+		builder.WriteString(book.checksumField(book.Asks[index].Price))
+		builder.WriteString(book.checksumField(book.Asks[index].Qty))
+	}
+
+	for index := range min(bookChecksumLevels, len(book.Bids)) {
+		builder.WriteString(book.checksumField(book.Bids[index].Price))
+		builder.WriteString(book.checksumField(book.Bids[index].Qty))
+	}
+
+	return int64(crc32.ChecksumIEEE([]byte(builder.String())))
+}
+
+func (book Book) checksumField(value float64) string {
+	raw := strings.ReplaceAll(strconv.FormatFloat(value, 'f', -1, 64), ".", "")
+	raw = strings.TrimLeft(raw, "0")
+
+	if raw == "" {
+		return "0"
+	}
+
+	return raw
+}
+
+func (book *Book) truncate(depth int) {
+	if len(book.Bids) > depth {
+		book.Bids = book.Bids[:depth]
+	}
+
+	if len(book.Asks) > depth {
+		book.Asks = book.Asks[:depth]
+	}
+}
+
+func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
+	if len(levels) == 0 {
+		return nil
+	}
+
+	out := make([]BookLevel, len(levels))
+	copy(out, levels)
 
 	return out
 }
 
+func (book *Book) mergeBookSide(existing, delta []BookLevel, askSide bool) []BookLevel {
+	byPrice := make(map[float64]float64, len(existing)+len(delta))
+
+	for _, level := range existing {
+		if level.Qty > 0 {
+			byPrice[level.Price] = level.Qty
+		}
+	}
+
+	for _, level := range delta {
+		if level.Qty <= 0 {
+			delete(byPrice, level.Price)
+
+			continue
+		}
+
+		byPrice[level.Price] = level.Qty
+	}
+
+	return book.levelsFromMap(byPrice, askSide)
+}
+
+func (book *Book) levelsFromMap(byPrice map[float64]float64, askSide bool) []BookLevel {
+	levels := make([]BookLevel, 0, len(byPrice))
+
+	for price, qty := range byPrice {
+		levels = append(levels, BookLevel{Price: price, Qty: qty})
+	}
+
+	sort.Slice(levels, func(left, right int) bool {
+		if askSide {
+			return levels[left].Price < levels[right].Price
+		}
+
+		return levels[left].Price > levels[right].Price
+	})
+
+	return levels
+}
+
 /*
-NewBookSubscription returns a channel of L2 book snapshots and deltas for symbols
+NewBookSubscription returns a channel of L2 book snapshots and updates for symbols
 at depth.
 */
 func NewBookSubscription(
 	ctx context.Context, depth int, symbols ...string,
-) <-chan *BookUpdate {
-	depth = validBookDepth(depth)
-	out := make(chan *BookUpdate, 128)
+) <-chan *Book {
+	if depth <= 0 {
+		depth = 10
+	}
+
+	out := make(chan *Book, 128)
 
 	client := errnie.Does(func() (*kraken.Client, error) {
 		return kraken.NewClient(ctx)
@@ -151,19 +202,16 @@ func NewBookSubscription(
 		errnie.Error(err)
 	}).Value()
 
-	for _, batch := range symbolBatches(symbols) {
-		if err := client.Send(public.BookChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: BookParams{
-				Channel:  public.BookChannel,
-				Symbol:   batch,
-				Depth:    depth,
-				Snapshot: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-			return closed[BookUpdate]()
-		}
+	if err := client.Send(public.BookChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: BookParams{
+			Channel:  public.BookChannel,
+			Symbol:   symbols,
+			Depth:    depth,
+			Snapshot: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
 	}
 
 	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
@@ -181,13 +229,14 @@ func NewBookSubscription(
 			continue
 		}
 
-		var book BookUpdate
+		var book Book
 
 		if err := sonic.Unmarshal(msg.Data, &book); err != nil {
 			errnie.Error(err)
 			continue
 		}
 
+		book.SetEnvelopeType(msg.Type)
 		out <- &book
 	}
 

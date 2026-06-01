@@ -3,33 +3,158 @@ package user
 import (
 	"context"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
-type Execution struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	conn   *kraken.Client
+const executionSnapshot = "snapshot"
+
+/*
+ExecutionTokenSource supplies short-lived authenticated WebSocket tokens.
+*/
+type ExecutionTokenSource interface {
+	Token(context.Context) (string, error)
 }
 
-func NewExecution(ctx context.Context) (*Execution, error) {
-	ctx, cancel := context.WithCancel(ctx)
+/*
+ExecutionParams is the Kraken WebSocket v2 subscribe payload for the executions channel.
+*/
+type ExecutionParams struct {
+	Channel     string `json:"channel"`
+	Token       string `json:"token"`
+	SnapOrders  bool   `json:"snap_orders"`
+	SnapTrades  bool   `json:"snap_trades"`
+	OrderStatus bool   `json:"order_status"`
+	RateCounter bool   `json:"ratecounter,omitempty"`
+	Rebased     bool   `json:"rebased,omitempty"`
+	Users       string `json:"users,omitempty"`
+}
 
-	execution := &Execution{
-		ctx:    ctx,
-		cancel: cancel,
-		conn: errnie.Does(func() (*kraken.Client, error) {
-			return kraken.NewClient(ctx)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value(),
+/*
+ExecutionFee is one fee line on a trade execution event.
+*/
+type ExecutionFee struct {
+	Asset string  `json:"asset"`
+	Qty   float64 `json:"qty"`
+}
+
+/*
+Execution is one order status or fill report from the executions channel.
+
+Fields present depend on exec_type (pending_new, new, trade, filled, canceled, etc.).
+EnvelopeType records snapshot vs update from the channel message.
+*/
+type Execution struct {
+	OrderID       string         `json:"order_id,omitempty"`
+	OrderUserref  int            `json:"order_userref,omitempty"`
+	ClOrdID       string         `json:"cl_ord_id,omitempty"`
+	Symbol        string         `json:"symbol,omitempty"`
+	Side          string         `json:"side,omitempty"`
+	OrderType     string         `json:"order_type,omitempty"`
+	OrderQty      float64        `json:"order_qty,omitempty"`
+	LimitPrice    float64        `json:"limit_price,omitempty"`
+	OrderStatus   string         `json:"order_status,omitempty"`
+	ExecType      string         `json:"exec_type,omitempty"`
+	ExecID        string         `json:"exec_id,omitempty"`
+	TradeID       int64          `json:"trade_id,omitempty"`
+	LastQty       float64        `json:"last_qty,omitempty"`
+	LastPrice     float64        `json:"last_price,omitempty"`
+	AvgPrice      float64        `json:"avg_price,omitempty"`
+	CumQty        float64        `json:"cum_qty,omitempty"`
+	CumCost       float64        `json:"cum_cost,omitempty"`
+	Cost          float64        `json:"cost,omitempty"`
+	LiquidityInd  string         `json:"liquidity_ind,omitempty"`
+	TimeInForce   string         `json:"time_in_force,omitempty"`
+	FeeUsdEquiv   float64        `json:"fee_usd_equiv,omitempty"`
+	FeeCcyPref    string         `json:"fee_ccy_pref,omitempty"`
+	Fees          []ExecutionFee `json:"fees,omitempty"`
+	Timestamp     string         `json:"timestamp,omitempty"`
+	EnvelopeType  string         `json:"-"`
+}
+
+func (execution *Execution) SetEnvelopeType(kind string) {
+	execution.EnvelopeType = kind
+}
+
+func (execution *Execution) IsSnapshot() bool {
+	return execution.EnvelopeType == executionSnapshot
+}
+
+var executionTokenSource ExecutionTokenSource
+
+func SetExecutionTokenSource(source ExecutionTokenSource) {
+	executionTokenSource = source
+}
+
+func ExecutionAvailable() bool {
+	return executionTokenSource != nil
+}
+
+func NewExecutionSubscription(ctx context.Context) <-chan *Execution {
+	if executionTokenSource == nil {
+		return nil
 	}
 
-	return execution, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    execution.ctx,
-		"cancel": execution.cancel,
-		"conn":   execution.conn,
-	}))
+	token, err := executionTokenSource.Token(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return nil
+	}
+
+	out := make(chan *Execution, 128)
+
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
+
+	if err := client.Send(public.ExecutionsChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: ExecutionParams{
+			Channel:     public.ExecutionsChannel,
+			Token:       token,
+			SnapOrders:  true,
+			SnapTrades:  true,
+			OrderStatus: true,
+		},
+	}); err != nil {
+		errnie.Error(err)
+
+		return nil
+	}
+
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.ExecutionsChannel)
+
+		if err != nil {
+			return nil, err
+		}
+
+		return stream, nil
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var rows []Execution
+
+		if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		for index := range rows {
+			rows[index].SetEnvelopeType(msg.Type)
+			out <- &rows[index]
+		}
+	}
+
+	return out
 }
