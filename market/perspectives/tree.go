@@ -18,7 +18,7 @@ type Tree struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
-	branches      []Branch
+	branches      BranchList
 	Measurements  []Measurement
 	currentAction *ActionType
 }
@@ -42,7 +42,7 @@ func NewTree(
 	tree := &Tree{
 		ctx:          ctx,
 		cancel:       cancel,
-		branches:     v.Get("branches").([]Branch),
+		branches:     v.Get("branches").(BranchList),
 		Measurements: measurements,
 	}
 
@@ -54,12 +54,46 @@ func NewTree(
 	})))
 }
 
+/*
+NewTreeFromBranches builds a tree from an in-memory branch registry.
+*/
+func NewTreeFromBranches(
+	ctx context.Context, branches BranchList,
+) (*Tree, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	tree := &Tree{
+		ctx:          ctx,
+		cancel:       cancel,
+		branches:     branches.Clone(),
+		Measurements: make([]Measurement, 0),
+	}
+
+	return tree, errnie.Error(errnie.Require(map[string]any{
+		"ctx":      tree.ctx,
+		"cancel":   tree.cancel,
+		"branches": tree.branches,
+	}))
+}
+
 func (tree *Tree) Action() *ActionType {
 	return tree.currentAction
 }
 
+func (tree *Tree) Branches() BranchList {
+	return tree.branches
+}
+
+func (tree *Tree) SetBranches(branches BranchList) {
+	tree.branches = branches.Clone()
+}
+
 func (tree *Tree) AddMeasurement(measurement Measurement) {
 	tree.Measurements = append(tree.Measurements, measurement)
+}
+
+func (tree *Tree) ResetWalk() {
+	tree.currentAction = nil
 }
 
 /*
@@ -83,13 +117,7 @@ func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionTy
 		if index >= 0 {
 			measurement := measurements[index]
 
-			if branch.Condition != ConditionNone {
-				if branch.Unit != UnitNone {
-					tree.handleUnit(measurement, branch)
-				}
-			}
-
-			if branch.Action.Type != ActionNone {
+			if tree.passes(measurement, branch) && branch.Action.Type != ActionNone {
 				tree.currentAction = &branch.Action.Type
 			}
 		}
@@ -102,24 +130,24 @@ func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionTy
 	return tree.currentAction
 }
 
-func (tree *Tree) handleUnit(
-	measurement Measurement, branch Branch,
-) {
+func (tree *Tree) passes(measurement Measurement, branch Branch) bool {
+	if branch.Condition == ConditionNone || branch.Unit == UnitNone {
+		return true
+	}
+
 	switch branch.Unit {
 	case UnitSNR:
-		tree.handleCondition(
-			measurement.SNR, branch.Value, branch.Condition,
-		)
+		return tree.compare(measurement.SNR, branch.Value, branch.Condition)
 	case UnitConfidence:
-		tree.handleCondition(
-			measurement.Confidence, branch.Value, branch.Condition,
-		)
+		return tree.compare(measurement.Confidence, branch.Value, branch.Condition)
 	default:
 		errnie.Error(errors.New("unknown unit"), branch.Unit)
 	}
+
+	return false
 }
 
-func (tree *Tree) handleCondition(
+func (tree *Tree) compare(
 	left, right float64, condition ConditionType,
 ) bool {
 	switch condition {

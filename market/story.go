@@ -19,8 +19,10 @@ type Story struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
+	ui          *qpool.BroadcastGroup
 	buffer      *ring.Ring
 	trees       []*perspectives.Tree
+	lastGauge   map[string]time.Time
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q) *Story {
@@ -34,7 +36,10 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		trees:       make([]*perspectives.Tree, 0),
+		lastGauge:   make(map[string]time.Time),
 	}
+
+	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	for _, channel := range []string{"measurements"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
@@ -64,6 +69,7 @@ func (story *Story) Tick() error {
 			continue
 		}
 
+		story.publishGauge(measurement)
 		story.buffer.Value = measurement
 		story.buffer.Next()
 	}
@@ -93,6 +99,29 @@ func (story *Story) Tick() error {
 	}
 
 	return story.ctx.Err()
+}
+
+const gaugeInterval = 200 * time.Millisecond
+
+func (story *Story) publishGauge(measurement perspectives.Measurement) {
+	source := measurement.Source.String()
+
+	if source == "" {
+		return
+	}
+
+	now := time.Now()
+
+	if last, seen := story.lastGauge[source]; seen && now.Sub(last) < gaugeInterval {
+		return
+	}
+
+	story.lastGauge[source] = now
+
+	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"source":     source,
+		"confidence": measurement.Strength,
+	}})
 }
 
 /*

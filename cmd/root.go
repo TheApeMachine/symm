@@ -152,6 +152,14 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
+
+	if len(viper.GetStringSlice("market.symbols")) == 0 {
+		defaults := viper.GetStringSlice("market.default_symbols")
+
+		if len(defaults) > 0 {
+			viper.Set("market.symbols", defaults)
+		}
+	}
 }
 
 const rootLong = `

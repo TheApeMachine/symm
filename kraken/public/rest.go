@@ -81,14 +81,35 @@ func (rest *Rest) Get(
 		rest.err = errnie.Error(err)
 	})
 
-	defer response.Value().Close()
+	if rest.err != nil {
+		return rest.err
+	}
 
-	return errnie.Error(
-		sonic.Unmarshal(response.Value().Body(), &Response{
-			Error:  []string{rest.err.Error()},
-			Result: model,
-		}),
-	)
+	resp := response.Value()
+
+	if resp == nil {
+		rest.err = fmt.Errorf("kraken public rest: empty response")
+
+		return rest.err
+	}
+
+	defer resp.Close()
+
+	envelope := Response{Result: model}
+
+	if err := sonic.Unmarshal(resp.Body(), &envelope); err != nil {
+		rest.err = errnie.Error(err)
+
+		return rest.err
+	}
+
+	if len(envelope.Error) > 0 && envelope.Error[0] != "" {
+		rest.err = fmt.Errorf("%s", strings.Join(envelope.Error, ", "))
+
+		return rest.err
+	}
+
+	return nil
 }
 
 func (rest *Rest) Post(
@@ -121,14 +142,35 @@ func (rest *Rest) Post(
 		rest.err = errnie.Error(err)
 	})
 
-	defer response.Value().Close()
+	if rest.err != nil {
+		return rest.err
+	}
 
-	return errnie.Error(
-		sonic.Unmarshal(response.Value().Body(), &Response{
-			Error:  []string{rest.err.Error()},
-			Result: model,
-		}),
-	)
+	resp := response.Value()
+
+	if resp == nil {
+		rest.err = fmt.Errorf("kraken public rest: empty response")
+
+		return rest.err
+	}
+
+	defer resp.Close()
+
+	envelope := Response{Result: model}
+
+	if err := sonic.Unmarshal(resp.Body(), &envelope); err != nil {
+		rest.err = errnie.Error(err)
+
+		return rest.err
+	}
+
+	if len(envelope.Error) > 0 && envelope.Error[0] != "" {
+		rest.err = fmt.Errorf("%s", strings.Join(envelope.Error, ", "))
+
+		return rest.err
+	}
+
+	return nil
 }
 
 func (rest *Rest) Error() error {

@@ -11,7 +11,8 @@ import (
 )
 
 /*
-Trader routes optimizer actions through the broker desk.
+Trader is the tune-time stand-in for trader.Crypto: it routes live actions and
+replays candidate trees to score configurations.
 */
 type Trader struct {
 	ctx         context.Context
@@ -69,6 +70,15 @@ func (trader *Trader) Tick() error {
 			errnie.Error(trader.desk.AddOrder(action))
 		}
 	}
+}
+
+/*
+Evaluate replays measurements through one branch registry and returns PnL.
+*/
+func (trader *Trader) Evaluate(
+	branches perspectives.BranchList, rows []perspectives.Measurement,
+) float64 {
+	return NewReplaySimulation(trader.ctx, branches, rows).Score()
 }
 
 func (trader *Trader) Close() error {

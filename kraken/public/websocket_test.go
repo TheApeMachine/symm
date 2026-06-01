@@ -30,8 +30,31 @@ func TestStream(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should reject Stream for unknown channels", func() {
-			_, err := socket.Stream("ticker")
+			_, err := socket.Stream(TradesChannel)
 			convey.So(err, convey.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestConnectSharesEndpoint(t *testing.T) {
+	convey.Convey("Given one public websocket client", t, func() {
+		ctx := context.Background()
+		socket, err := NewWebSocket(ctx)
+
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("It should reuse one hub per endpoint", func() {
+			err := socket.Connect(WebSocketURL, TradesChannel)
+			convey.So(err, convey.ShouldBeNil)
+
+			firstHub := socket.endpoints[WebSocketURL]
+
+			err = socket.Connect(WebSocketURL, BookChannel)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(socket.endpoints[WebSocketURL], convey.ShouldEqual, firstHub)
+			convey.So(socket.channels[TradesChannel], convey.ShouldEqual, WebSocketURL)
+			convey.So(socket.channels[BookChannel], convey.ShouldEqual, WebSocketURL)
 		})
 	})
 }

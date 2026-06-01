@@ -58,6 +58,8 @@ var tuneCmd = &cobra.Command{
 		}).Value()
 
 		tuner := optimizer.NewTuner(sessionCtx, pool)
+		trader := optimizer.NewTrader(sessionCtx, pool)
+		tuner.BindTrader(trader)
 
 		engine.AddSystems(
 			causal.NewSignal(sessionCtx, pool),
@@ -73,7 +75,7 @@ var tuneCmd = &cobra.Command{
 			sentiment.NewSignal(sessionCtx, pool),
 			toxicity.NewToxicity(sessionCtx, pool),
 			tuner,
-			optimizer.NewTrader(sessionCtx, pool),
+			trader,
 		)
 
 		runErr := engine.Start()

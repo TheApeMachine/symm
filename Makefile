@@ -7,13 +7,14 @@ export GOFLAGS := -ldflags=-checklinkname=0
 LDFLAGS := $(GOFLAGS)
 
 SYMM_BIN := bin/symm
+CONFIG ?= cmd/cfg/config.yml
 LOG_DIR ?= runs
 
 RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay record tune dump profile profile-stack profile-report profile-tune profile-replay strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-frontend bench run audit tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -61,69 +62,32 @@ profile-report:
 	@chmod +x scripts/profile-report.sh
 	PROFILE_DIR=$(PROFILE_DIR) ./scripts/profile-report.sh
 
-profile-replay: build
-	@mkdir -p $(PROFILE_DIR)
-	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required" && exit 1)
-	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
-	@echo "Capture 30s CPU while replay runs:"
-	@echo "  curl -o $(PROFILE_DIR)/replay-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
-	@echo "Flame graph:"
-	@echo "  go tool pprof -http=:0 $(PROFILE_DIR)/replay-cpu.prof"
-	SYMM_PPROF=1 ./$(SYMM_BIN) --config cmd/cfg/profile-replay.yml
-
 profile-tune: build
 	@mkdir -p $(PROFILE_DIR)
-	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
+	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
 	@echo "=== profile tune ==="
 	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
-	SYMM_PPROF=1 ./$(SYMM_BIN) tune --config cmd/cfg/tune.yml
+	SYMM_PPROF=1 ./$(SYMM_BIN) tune --config $(CONFIG)
 
 run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
-	@echo "Replay: make replay REPLAY_FILE=runs/capture.jsonl"
-	./$(SYMM_BIN) --config cmd/cfg/config.yml
+	./$(SYMM_BIN) --config $(CONFIG)
 
 audit: build
 	@mkdir -p $(LOG_DIR)
-	@echo "symm running with desk audit log (see cmd/cfg/record.yml audit.file)"
+	@echo "symm running with desk audit log (trading.audit.file in $(CONFIG))"
 	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) --config cmd/cfg/record.yml
+	./$(SYMM_BIN) --config $(CONFIG)
 
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	@echo "Replay: make replay REPLAY_FILE=runs/capture.jsonl"
-	SYMM_PPROF=1 ./$(SYMM_BIN) --config cmd/cfg/config.yml
-
-REPLAY_PACE ?= 50ms
-RECORD_FILE ?= runs/capture.jsonl
-REPLAY_FILE ?= $(RECORD_FILE)
-TUNED_OUTPUT ?= runs/tuned.json
-# Set ITERATIONS=N to cap trials; omit for unlimited until Ctrl+C
-PERSPECTIVES_OUTPUT ?= runs/perspectives.yaml
-# Robust paper + tuning defaults (override on the make command line)
-EXECUTION_STRESS ?= 1
-AUTO_HOLDOUT ?= true
-WALK_FORWARD_FOLDS ?= 3
-REPLAY_PERTURB ?= true
-STRESS_HOLDOUT ?= true
-
-replay: build
-	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE)" && exit 1)
-	./$(SYMM_BIN) --config cmd/cfg/replay.yml
-
-record: build
-	@mkdir -p $(dir $(RECORD_FILE)) $(LOG_DIR)
-	@echo "Recording live capture (Ctrl+C to stop, then: make tune)"
-	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
-	@echo "Config: cmd/cfg/record.yml (paper + execution stress + audit log)"
-	./$(SYMM_BIN) --config cmd/cfg/record.yml
+	SYMM_PPROF=1 ./$(SYMM_BIN) --config $(CONFIG)
 
 tune: build
-	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
-	@echo "Tuning $(REPLAY_FILE) (Ctrl+C to stop)"
-	./$(SYMM_BIN) tune --config cmd/cfg/tune.yml
+	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
+	@echo "Tuning runs/capture.jsonl (trading.replay.file in $(CONFIG))"
+	./$(SYMM_BIN) tune --config $(CONFIG)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/ui"
 )
 
 type System interface {
@@ -42,6 +44,14 @@ func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
 
 func (engine *Engine) Start() error {
 	var wg sync.WaitGroup
+
+	hub := errnie.Does(func() (*ui.Hub, error) {
+		return ui.NewHub(engine.ctx, engine.pool)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
+
+	go hub.Serve(viper.GetViper().GetString("ui.addr"))
 
 	for _, system := range engine.systems {
 		wg.Go(func() {

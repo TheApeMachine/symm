@@ -3,6 +3,7 @@ package kraken
 import (
 	"context"
 	"os"
+	"sync"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
@@ -18,68 +19,118 @@ type Client struct {
 	cancel context.CancelFunc
 	err    error
 	rest   public.RestClient
-	ws     public.WebSocketClient
+	market public.WebSocketClient
+	desk   public.WebSocketClient
+	authMu sync.Mutex
+	auth   public.WebSocketClient
 }
 
 func NewClient(ctx context.Context) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	rest := errnie.Does(func() (public.RestClient, error) {
-		switch viper.GetViper().Get("trading.model") {
-		case "live":
-			return private.NewRest(
-				ctx,
-				os.Getenv("SYMM_KRAKEN_API_KEY"),
-				os.Getenv("SYMM_KRAKEN_API_SECRET"),
-				public.EndpointAddOrder,
-			)
-		case "replay":
-			return replay.NewRest(ctx)
-		default:
-			return paper.NewRest(ctx)
-		}
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	rest, market, desk, err := newClientBackends(ctx)
 
-	ws := errnie.Does(func() (public.WebSocketClient, error) {
-		switch viper.GetViper().Get("trading.model") {
-		case "live":
-			return private.NewWebSocket(
-				ctx,
-				os.Getenv("SYMM_KRAKEN_API_KEY"),
-				os.Getenv("SYMM_KRAKEN_API_SECRET"),
-			)
-		case "replay":
-			return replay.NewWebSocket(ctx)
-		default:
-			return paper.NewWebSocket(ctx)
-		}
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	if err != nil {
+		cancel()
+
+		return nil, errnie.Error(err)
+	}
 
 	client := &Client{
 		ctx:    ctx,
 		cancel: cancel,
 		rest:   rest,
-		ws:     ws,
+		market: market,
+		desk:   desk,
 	}
 
 	return client, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    client.ctx,
 		"cancel": client.cancel,
 		"rest":   client.rest,
-		"ws":     client.ws,
+		"market": client.market,
+		"desk":   client.desk,
 	}))
 }
 
+func newClientBackends(
+	ctx context.Context,
+) (public.RestClient, public.WebSocketClient, public.WebSocketClient, error) {
+	switch viper.GetViper().Get("trading.model") {
+	case "live":
+		rest, err := private.NewRest(
+			ctx,
+			os.Getenv("SYMM_KRAKEN_API_KEY"),
+			os.Getenv("SYMM_KRAKEN_API_SECRET"),
+			public.EndpointAddOrder,
+		)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		desk, err := private.NewWebSocket(
+			ctx,
+			os.Getenv("SYMM_KRAKEN_API_KEY"),
+			os.Getenv("SYMM_KRAKEN_API_SECRET"),
+		)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return rest, desk, desk, nil
+	case "replay":
+		rest, err := replay.NewRest(ctx)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		socket, err := replay.NewWebSocket(ctx)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return rest, socket, socket, nil
+	default:
+		rest, err := paper.NewRest(ctx)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		market, err := public.NewWebSocket(ctx)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		desk, err := paper.NewWebSocket(ctx)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return rest, market, desk, nil
+	}
+}
+
 func (client *Client) Stream(channel string) (<-chan *public.SocketMessage, error) {
-	return client.ws.Stream(channel)
+	if err := client.ensureConnected(channel); err != nil {
+		return nil, err
+	}
+
+	return client.socketFor(channel).Stream(channel)
 }
 
 func (client *Client) Send(channel string, message any) error {
-	return errnie.Error(client.ws.Send(channel, message))
+	if err := client.ensureConnected(channel); err != nil {
+		return err
+	}
+
+	return errnie.Error(client.socketFor(channel).Send(channel, message))
 }
 
 func (client *Client) Request(message fiber.Map, model any) error {
@@ -88,5 +139,67 @@ func (client *Client) Request(message fiber.Map, model any) error {
 
 func (client *Client) Close() error {
 	client.cancel()
+
 	return errnie.Error(client.ctx.Err())
+}
+
+func (client *Client) socketFor(channel string) public.WebSocketClient {
+	if channel == public.BalancesChannel {
+		if auth := client.authSocket(); auth != nil {
+			return auth
+		}
+	}
+
+	if deskChannel(channel) {
+		return client.desk
+	}
+
+	return client.market
+}
+
+func (client *Client) authSocket() public.WebSocketClient {
+	apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
+	apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
+
+	if apiKey == "" || apiSecret == "" {
+		return nil
+	}
+
+	client.authMu.Lock()
+	defer client.authMu.Unlock()
+
+	if client.auth != nil {
+		return client.auth
+	}
+
+	auth, err := private.NewWebSocket(client.ctx, apiKey, apiSecret)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return nil
+	}
+
+	client.auth = auth
+
+	return client.auth
+}
+
+func (client *Client) ensureConnected(channel string) error {
+	endpoint := public.WebSocketURL
+
+	if deskChannel(channel) {
+		endpoint = public.WebSocketAuthURL
+	}
+
+	return client.socketFor(channel).Connect(endpoint, channel)
+}
+
+func deskChannel(channel string) bool {
+	switch channel {
+	case public.OrdersChannel, public.ExecutionsChannel, public.BalancesChannel:
+		return true
+	default:
+		return false
+	}
 }
