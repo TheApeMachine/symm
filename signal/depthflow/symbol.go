@@ -26,9 +26,9 @@ func toxicLevelFilter(symbol string) func(price float64) bool {
 
 /*
 DepthSymbol owns the per-symbol book/flow state for one DepthFlow consumer and
-classifies book shape onto the weight-of-the-book perspective. SNR is
-classification confidence — margin to the nearest category boundary — not raw
-strength in noise-sigma units.
+classifies book shape onto the weight-of-the-book perspective. Confidence is
+classification clarity — margin to the nearest category boundary; SNR is how
+surprising that clarity is versus the symbol's own recent baseline.
 
 The order book is a maintained orderbook.Book, not the raw last delta: Kraken sends
 a snapshot then checksum-verified deltas, and folding each delta into the local book
@@ -182,7 +182,7 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 						Source:   perspectives.SourceDepthFlow,
 						Category: category,
 						Strength: raw,
-						SNR: categoryConfidence(
+						Confidence: categoryConfidence(
 							category,
 							imbalance,
 							flatImbalance,
@@ -201,7 +201,7 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				Source:   perspectives.SourceDepthFlow,
 				Category: category,
 				Strength: raw,
-				SNR: categoryConfidence(
+				Confidence: categoryConfidence(
 					category,
 					imbalance,
 					flatImbalance,
@@ -233,7 +233,7 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 		Source:   perspectives.SourceDepthFlow,
 		Category: category,
 		Strength: flow,
-		SNR: categoryConfidence(
+		Confidence: categoryConfidence(
 			category,
 			0,
 			0,

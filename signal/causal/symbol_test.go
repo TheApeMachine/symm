@@ -75,7 +75,7 @@ func TestCausalSymbolMeasure(t *testing.T) {
 			So(measurement.Source, ShouldEqual, perspectives.SourceCausal)
 			So(measurement.Category, ShouldEqual, perspectives.CategoryEndogenousAlpha)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.SNR, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -89,7 +89,7 @@ func TestCausalSymbolMeasure(t *testing.T) {
 		Convey("It should classify systemic beta from macro association", func() {
 			So(ok, ShouldBeTrue)
 			So(measurement.Category, ShouldEqual, perspectives.CategorySystemicBeta)
-			So(measurement.SNR, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -114,7 +114,7 @@ func TestCausalSymbolMeasure(t *testing.T) {
 		Convey("It should classify causal noise from flow pressure", func() {
 			So(ok, ShouldBeTrue)
 			So(measurement.Category, ShouldEqual, perspectives.CategoryCausalNoise)
-			So(measurement.SNR, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 }

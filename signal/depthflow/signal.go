@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
@@ -24,6 +25,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -35,6 +37,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -118,6 +121,7 @@ func (signal *Signal) emit(symbol string) {
 
 	if ok {
 		measurement.Symbol = symbol
+		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }

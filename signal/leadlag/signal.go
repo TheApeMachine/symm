@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const (
@@ -30,8 +31,9 @@ Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
 lead-lag structure onto the anchor perspective. It is cross-asset: each
 follower's verdict is its lagged Hayashi-Yoshida correlation against the anchor.
 
-SNR is classification confidence — margin to the lag-fraction or correlation
-boundary — not the lag correlation strength relative to a noise floor.
+Confidence is classification clarity — margin to the lag-fraction or correlation
+boundary; SNR is how surprising that clarity is versus the follower's own recent
+baseline, not the lag correlation strength.
 
 | Category           | Lag structure                              |
 |:-------------------|:-------------------------------------------|
@@ -52,6 +54,7 @@ type Signal struct {
 	symbols       sync.Map
 	lastPublishMu sync.Mutex
 	lastPublish   time.Time
+	floor         *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -63,6 +66,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -124,6 +128,7 @@ func (signal *Signal) publish() {
 		if ok {
 			measurement.Symbol = key.(string)
 			measurement.Last = follower.lastPrice()
+			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 
@@ -157,7 +162,7 @@ func (signal *Signal) measure(
 			Source:   perspectives.SourceLeadLag,
 			Category: perspectives.CategoryAnchorStall,
 			Strength: 0,
-			SNR:      categoryConfidence(perspectives.CategoryAnchorStall, anchor.change(), 0, 0),
+			Confidence: categoryConfidence(perspectives.CategoryAnchorStall, anchor.change(), 0, 0),
 		}, true
 	}
 
@@ -172,7 +177,7 @@ func (signal *Signal) measure(
 			Source:   perspectives.SourceLeadLag,
 			Category: category,
 			Strength: corr / leadlagMinimumLagCorrelation,
-			SNR: categoryConfidence(
+			Confidence: categoryConfidence(
 				category,
 				anchor.change(),
 				corr,
@@ -197,7 +202,7 @@ func (signal *Signal) measure(
 		Source:   perspectives.SourceLeadLag,
 		Category: category,
 		Strength: corr / leadlagMinimumLagCorrelation,
-		SNR: categoryConfidence(
+		Confidence: categoryConfidence(
 			category,
 			anchor.change(),
 			corr,

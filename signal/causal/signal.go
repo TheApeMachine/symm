@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
@@ -41,6 +42,7 @@ type Signal struct {
 	symbols        sync.Map
 	lastPublish    time.Time
 	publishScratch []publishEntry
+	floor          *adaptive.SNRField
 }
 
 type publishEntry struct {
@@ -58,6 +60,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -152,6 +155,7 @@ func (signal *Signal) publish() {
 
 		if ok {
 			measurement.Symbol = entry.symbol
+			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 	}

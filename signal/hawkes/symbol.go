@@ -14,8 +14,9 @@ buy/sell trade arrivals and classifies the excitation state onto the thermal
 perspective. The fit is cooldown-throttled and refreshed in place between
 refits — a full MLE per tick would saturate a core.
 
-SNR is classification confidence — margin to the saturation, exhaustion, or
-frenzy boundary — not intensity-over-μ relative to a noise floor.
+Confidence is classification clarity — margin to the saturation, exhaustion, or
+frenzy boundary; SNR is how surprising that clarity is versus the symbol's own
+recent baseline, not intensity-over-μ.
 */
 type HawkesSymbol struct {
 	fit             BivariateFit
@@ -81,8 +82,8 @@ func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (
 }
 
 /*
-Measure fits the arrival stream and emits the thermal reading. SNR is category
-confidence — how decisively the fitted state lands in its assigned category.
+Measure fits the arrival stream and emits the thermal reading. Confidence is
+category clarity — how decisively the fitted state lands in its assigned category.
 */
 func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (perspectives.Measurement, bool) {
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
@@ -117,8 +118,8 @@ func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (per
 	return perspectives.Measurement{
 		Source:   perspectives.SourceHawkes,
 		Category: category,
-		Strength: raw,
-		SNR:      categoryConfidence(category, fit, asymmetry, sellSide),
+		Strength:   raw,
+		Confidence: categoryConfidence(category, fit, asymmetry, sellSide),
 	}, true
 }
 

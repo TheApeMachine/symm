@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const minLiquidityPeers = 2
@@ -35,7 +36,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
-	floor       *perspectives.SurpriseFloor
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -47,7 +48,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       perspectives.NewSurpriseFloor(),
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -69,7 +70,7 @@ func (signal *Signal) Tick() error {
 			continue
 		}
 
-		signal.floor.Score(&measurement)
+		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

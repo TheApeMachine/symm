@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
 )
 
@@ -39,7 +40,7 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (change percent)
 	breadthHist ring.FloatRing
-	floor       *perspectives.SurpriseFloor
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -52,7 +53,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
-		floor:       perspectives.NewSurpriseFloor(),
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -78,7 +79,7 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = row.Symbol
 		measurement.Last = row.Last
-		signal.floor.Score(&measurement)
+		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

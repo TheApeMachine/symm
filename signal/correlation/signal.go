@@ -79,6 +79,7 @@ type Signal struct {
 	marketEnergy  *adaptive.EMA
 	categories    map[string]perspectives.CategoryType
 	activeScratch []live
+	floor         *adaptive.SNRField
 }
 
 /*
@@ -102,6 +103,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  perspectives.CategoryDecoupledAlpha,
 			"systemic_herd":    perspectives.CategorySystemicHerd,
 		},
+		floor: adaptive.NewSNRField(),
 	}
 
 	// Fixed seed: one shared projection for the whole universe.
@@ -333,8 +335,9 @@ func (signal *Signal) marketMode(active []live) uint64 {
 emitActive scores each coin's agreement with market mode and publishes one
 measurement. Agreement is Hamming similarity mapped to [-1, 1]; raw strength
 is energy-weighted correlation normalised by the slow market-energy baseline.
-SNR is classification confidence — how clearly the fused score sits inside
-its assigned category band, not how large the strength is.
+Confidence is classification clarity — how clearly the fused score sits inside
+its assigned category band; SNR is how surprising that clarity is versus the
+coin's own recent baseline, not how large the strength is.
 */
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 	for _, coin := range active {
@@ -351,16 +354,16 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 
 		raw := energy * (1 + 2*corr) / baseline
 
-		signal.broadcasts["measurements"].Send(
-			&qpool.QValue[any]{Value: perspectives.Measurement{
-				Symbol:   coin.symbol,
-				Source:   perspectives.SourceCorrelation,
-				Category: signal.categories[coin.state.pipe.Label(code)],
-				Last:     coin.price,
-				Strength: raw,
-				SNR:      coin.state.pipe.Confidence(),
-			}},
-		)
+		measurement := perspectives.Measurement{
+			Symbol:     coin.symbol,
+			Source:     perspectives.SourceCorrelation,
+			Category:   signal.categories[coin.state.pipe.Label(code)],
+			Last:       coin.price,
+			Strength:   raw,
+			Confidence: coin.state.pipe.Confidence(),
+		}
+		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }
 

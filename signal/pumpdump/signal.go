@@ -47,6 +47,7 @@ type Signal struct {
 	broadcasts map[string]*qpool.BroadcastGroup
 	symbols    sync.Map
 	categories map[string]perspectives.CategoryType
+	floor      *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -63,6 +64,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"coiled_compression": perspectives.CategoryCoiledCompression,
 			"vertical_ignition":  perspectives.CategoryVerticalIgnition,
 		},
+		floor: adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -164,13 +166,14 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	ignition := math.Max(0, (rvol-1)*(1+precursor))
 
 	measurement := perspectives.Measurement{
-		Symbol:   trade.Symbol,
-		Source:   perspectives.SourcePumpDump,
-		Category: signal.categories[state.pipe.Label(code)],
-		Last:     trade.Price,
-		Strength: ignition,
-		SNR:      state.pipe.Confidence(),
+		Symbol:     trade.Symbol,
+		Source:     perspectives.SourcePumpDump,
+		Category:   signal.categories[state.pipe.Label(code)],
+		Last:       trade.Price,
+		Strength:   ignition,
+		Confidence: state.pipe.Confidence(),
 	}
+	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

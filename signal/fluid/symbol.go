@@ -17,8 +17,9 @@ import (
 FluidSymbol models one symbol's order book as a fluid field — divergence
 (imbalance), vorticity (flow), turbulence (stationary price velocity excess),
 viscosity (spread), and a Reynolds number combining them — and maps that onto
-the mechanical perspective. SNR is classification confidence — margin to the
-nearest category boundary — not the Reynolds number relative to a noise floor.
+the mechanical perspective. Confidence is classification clarity — margin to the
+nearest category boundary; SNR is how surprising that clarity is versus the
+symbol's own recent baseline, not the Reynolds number itself.
 
 The book is a maintained orderbook.Book. Liquidity flux — the field's vorticity
 input — is measured as the change between the local book before and after each frame
@@ -256,7 +257,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 		Category: category,
 		Last:     state.last,
 		Strength: re,
-		SNR: categoryConfidence(
+		Confidence: categoryConfidence(
 			category,
 			divergence,
 			turbulence,

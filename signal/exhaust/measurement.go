@@ -11,7 +11,8 @@ const (
 
 /*
 exhaustMeasurement maps rolling exit features onto the exhaustion perspective.
-SNR is category confidence — how decisively one exit mode beat the runner-up.
+Confidence is category clarity — how decisively one exit mode beat the runner-up;
+SNR is how surprising that clarity is versus the symbol's own recent baseline.
 */
 func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) {
 	urgency, reason, confidence := exitScoreLong(history)
@@ -31,7 +32,7 @@ func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) 
 	return perspectives.Measurement{
 		Source:   perspectives.SourceExhaustion,
 		Category: exhaustCategory(reason),
-		Strength: urgency / (1 - urgency),
-		SNR:      confidence,
+		Strength:   urgency / (1 - urgency),
+		Confidence: confidence,
 	}, true
 }

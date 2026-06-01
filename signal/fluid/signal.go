@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
@@ -33,6 +34,7 @@ type Signal struct {
 	tracker           *focus.Set
 	ui                *qpool.BroadcastGroup
 	lastFieldSnapshot atomic.Int64
+	floor             *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
@@ -45,6 +47,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		tracker:     tracker,
+		floor:       adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -114,6 +117,7 @@ func (signal *Signal) emit(symbol string) {
 	measurement, ok := state.Measure()
 
 	if ok {
+		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

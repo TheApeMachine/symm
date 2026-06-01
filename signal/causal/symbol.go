@@ -17,8 +17,9 @@ const tradeWindow = 5 * time.Minute
 CausalSymbol holds per-symbol Pearl-ladder history and microstructure state.
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, Liquidity backdoors macro/flow.
 
-SNR is category confidence: how decisively the returned category wins over its
-neighbors on the ladder or fallback path — not how large the strength is.
+Confidence is category clarity: how decisively the returned category wins over its
+neighbors on the ladder or fallback path; SNR is how surprising that clarity is
+versus the symbol's own recent baseline, not how large the strength is.
 */
 type CausalSymbol struct {
 	mu             sync.RWMutex
@@ -158,7 +159,7 @@ func (state *CausalSymbol) Measure(
 				Source:   perspectives.SourceCausal,
 				Category: category,
 				Strength: outcome.raw,
-				SNR: categoryConfidence(
+				Confidence: categoryConfidence(
 					category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 				),
 				Last: state.lastPrice,
@@ -183,7 +184,7 @@ func (state *CausalSymbol) Measure(
 		Source:   perspectives.SourceCausal,
 		Category: category,
 		Strength: fallbackRaw,
-		SNR: categoryConfidence(
+		Confidence: categoryConfidence(
 			category,
 			causalOutcome{},
 			macroMomentum,

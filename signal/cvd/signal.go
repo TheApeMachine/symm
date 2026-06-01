@@ -65,7 +65,7 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
 	categories  map[string]perspectives.CategoryType
-	floor       *perspectives.SurpriseFloor
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -83,7 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"hidden_absorption":  perspectives.CategoryHiddenAbsorption,
 			"aggressive_drive":   perspectives.CategoryAggressiveDrive,
 		},
-		floor: perspectives.NewSurpriseFloor(),
+		floor: adaptive.NewSNRField(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -222,7 +222,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		Strength:   fused,
 		Confidence: confidence,
 	}
-	signal.floor.Score(&measurement)
+	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

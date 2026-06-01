@@ -50,12 +50,29 @@ func NewTuner(ctx context.Context, pool *qpool.Q) (*Tuner, error) {
 Tick searches for the best tunables and tree YAML.
 */
 func (tuner *Tuner) Tick() error {
+	var (
+		measurement perspectives.Measurement
+		ok          bool
+	)
+
 	for row := range tuner.subscribers["measurements"].Incoming {
 		if row == nil {
 			continue
 		}
 
-		measurement := row.Value.(perspectives.Measurement)
+		if measurement, ok = row.Value.(perspectives.Measurement); !ok {
+			continue
+		}
+
+		tree := errnie.Does(func() (*perspectives.Tree, error) {
+			return perspectives.NewTree(
+				tuner.ctx, []perspectives.Measurement{measurement},
+			)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
+
+		tuner.Project(tree)
 	}
 
 	return tuner.ctx.Err()

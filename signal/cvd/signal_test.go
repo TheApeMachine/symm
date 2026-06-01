@@ -36,21 +36,21 @@ func TestMeasureFusedConfidence(t *testing.T) {
 			cvdBandLabels,
 		)
 
-		Convey("It should read high SNR deep inside a band", func() {
+		Convey("It should read high confidence deep inside a band", func() {
 			So(classifier.Confidence(6), ShouldBeGreaterThan, 0.1)
 		})
 
-		Convey("It should read zero SNR on a quartile boundary", func() {
+		Convey("It should read zero confidence on a quartile boundary", func() {
 			So(classifier.Confidence(5.5), ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a cold fused history", t, func() {
-		Convey("It should return zero SNR before warm-up completes", func() {
+		Convey("It should return zero confidence before warm-up completes", func() {
 			cold := newCVDState()
-			_, snr := cold.measureFused(1)
+			_, confidence := cold.measureFused(1)
 
-			So(snr, ShouldEqual, 0)
+			So(confidence, ShouldEqual, 0)
 		})
 	})
 }
