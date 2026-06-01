@@ -1,11 +1,7 @@
 package market
 
 import (
-	"context"
 	"time"
-
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
@@ -34,17 +30,4 @@ type TradeUpdate struct {
 	OrdType   string    `json:"ord_type"`
 	TradeID   int64     `json:"trade_id"`
 	Timestamp time.Time `json:"timestamp"`
-}
-
-/*
-NewTradeSubscription subscribes to the trade channel for symbols.
-*/
-func NewTradeSubscription(
-	ctx context.Context, pool *qpool.Q, symbols ...string,
-) Feed {
-	return OpenFeed(ctx, pool, public.TradesChannel, TradeParams{
-		Channel:  public.TradesChannel,
-		Symbol:   symbols,
-		Snapshot: true,
-	})
 }

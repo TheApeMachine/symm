@@ -83,4 +83,24 @@ describe("TradesDataProvider", () => {
 		expect(open?.unrealizedEur).toBeCloseTo(26.29 * 0.005, 8);
 		expect(open?.unrealizedPct).toBeCloseTo((0.005 / 0.24) * 100, 8);
 	});
+
+	it("returns a stable snapshot reference until data changes", () => {
+		TradesDataProvider.ingest({
+			Type: "paper",
+			Currency: "EUR",
+			Balance: 193.69,
+			Inventory: { H: 26.29 },
+			AvgEntry: { H: 0.24 },
+			Marks: { "H/EUR": 0.24 },
+		});
+
+		const first = TradesDataProvider.snapshot();
+		const second = TradesDataProvider.snapshot();
+
+		expect(second).toBe(first);
+
+		TradesDataProvider.setMark("H/EUR", 0.245);
+
+		expect(TradesDataProvider.snapshot()).not.toBe(first);
+	});
 });

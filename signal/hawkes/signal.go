@@ -75,7 +75,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"trade"} {
+	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
@@ -86,52 +86,52 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	for message := range signal.subscribers["trade"].Incoming {
-		if message == nil || message.Value == nil {
-			continue
-		}
-
-		envelope, ok := message.Value.(public.SocketMessage)
-
-		if !ok {
-			continue
-		}
-
-		rows, err := envelope.SplitDataRows()
-
-		if err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-
-		for _, row := range rows {
-			trade, err := market.DecodeTrade(row)
-
-			if err != nil {
-				errnie.Error(err)
-
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case message := <-signal.subscribers["raw"].Incoming:
+			if message == nil || message.Value == nil {
 				continue
 			}
 
-			stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
-			state := stored.(*symbolState)
-			state.append(trade)
-
-			measurement, ok := state.measure(time.Now())
+			envelope, ok := message.Value.(public.SocketMessage)
 
 			if !ok {
 				continue
 			}
 
-			measurement.Symbol = trade.Symbol
-			measurement.Last = trade.Price
-			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "trade":
+					trade := errnie.Does(func() (market.TradeUpdate, error) {
+						return market.DecodeTrade(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
+
+					stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
+					state := stored.(*symbolState)
+					state.append(trade)
+
+					measurement, ok := state.measure(time.Now())
+
+					if !ok {
+						continue
+					}
+
+					measurement.Symbol = trade.Symbol
+					measurement.Last = trade.Price
+					measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+				}
+			}
 		}
 	}
-
-	return signal.ctx.Err()
 }
 
 func (signal *Signal) Close() error {

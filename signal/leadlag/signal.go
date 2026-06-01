@@ -83,7 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"ticker"} {
+	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
@@ -94,46 +94,46 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	for message := range signal.subscribers["ticker"].Incoming {
-		if message == nil || message.Value == nil {
-			continue
-		}
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case message := <-signal.subscribers["raw"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
 
-		envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(public.SocketMessage)
 
-		if !ok {
-			continue
-		}
+			if !ok {
+				continue
+			}
 
-		rows, err := envelope.SplitDataRows()
-
-		if err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-
-		for _, row := range rows {
-			ticker, err := market.DecodeTicker(row)
-
-			if err != nil {
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
 				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "ticker":
+					ticker := errnie.Does(func() (market.TickerUpdate, error) {
+						return market.DecodeTicker(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-				continue
+					if ticker.Last <= 0 {
+						continue
+					}
+
+					stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
+					stored.(*symbolState).observeTicker(ticker.ChangePct, ticker.Last, signal.timestamp(ticker))
+
+					signal.publish()
+				}
 			}
-
-			if ticker.Last <= 0 {
-				continue
-			}
-
-			stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
-			stored.(*symbolState).observeTicker(ticker.ChangePct, ticker.Last, signal.timestamp(ticker))
-
-			signal.publish()
 		}
 	}
-
-	return signal.ctx.Err()
 }
 
 // timestamp parses the ticker's wire timestamp, falling back to now.

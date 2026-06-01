@@ -29,9 +29,8 @@ func TestNewStory(t *testing.T) {
 
 		sentiment.NewSignal(ctx, pool)
 
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		convey.So(err, convey.ShouldBeNil)
 		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
 		convey.So(story.subscribers["measurements"].ID, convey.ShouldEqual, storyMeasurementsSubscriberID)
 
@@ -59,20 +58,4 @@ func TestNewStory(t *testing.T) {
 			convey.So(string(raw), convey.ShouldContainSubstring, "BTC/EUR")
 		})
 	})
-}
-
-func waitForFile(path string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		info, err := os.Stat(path)
-
-		if err == nil && info.Size() > 0 {
-			return true
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	return false
 }

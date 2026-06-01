@@ -3,6 +3,7 @@ package cmd
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
 	kraken "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
@@ -44,7 +46,7 @@ var (
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",
-		Short: "Symm is a crypto trading engine.",
+		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pool := errnie.Does(func() (*qpool.Q, error) {
@@ -59,15 +61,15 @@ var (
 				errnie.Error(err)
 			}).Value()
 
-			hub, err := ui.NewHub(cmd.Context(), pool)
-
-			if err != nil {
-				return err
-			}
-
-			systems := []System{
-				hub,
+			engine.AddSystems(
+				ui.NewHub(cmd.Context(), pool),
 				public.NewWebSocket(cmd.Context(), pool),
+				private.NewWebSocket(
+					cmd.Context(),
+					pool,
+					os.Getenv("KRAKEN_API_KEY"),
+					os.Getenv("KRAKEN_API_SECRET"),
+				),
 				kraken.NewInstrument(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),
 				correlation.NewSignal(cmd.Context(), pool),
@@ -81,17 +83,10 @@ var (
 				pumpdump.NewSignal(cmd.Context(), pool),
 				sentiment.NewSignal(cmd.Context(), pool),
 				toxicity.NewToxicity(cmd.Context(), pool),
-			}
+				market.NewStory(cmd.Context(), pool),
+				trader.NewCrypto(cmd.Context(), pool),
+			)
 
-			story, err := market.NewStory(cmd.Context(), pool)
-
-			if err != nil {
-				return err
-			}
-
-			systems = append(systems, story, trader.NewCrypto(cmd.Context(), pool))
-
-			engine.AddSystems(systems...)
 			return errnie.Error(engine.Start())
 		},
 	}
@@ -131,7 +126,6 @@ func initConfig() {
 			loaded = true
 		} else {
 			fmt.Fprintf(os.Stderr, "symm: config file %q: %v\n", cfgFile, err)
-
 			os.Exit(1)
 		}
 	}
@@ -155,12 +149,11 @@ func initConfig() {
 	}
 
 	if !loaded {
-		cfgReader, openErr := embedded.Open("cfg/config.yml")
-
-		if openErr != nil {
-			fmt.Printf("embedded config file not found: %v\n", openErr)
-			return
-		}
+		cfgReader := errnie.Does(func() (fs.File, error) {
+			return embedded.Open("cfg/config.yml")
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
 
 		defer cfgReader.Close()
 
@@ -182,5 +175,17 @@ func initConfig() {
 }
 
 const rootLong = `
-Symm is a crypto trading engine.
+Shake your money maker like somebody's 'bout to pay ya
+I see you on my radar, don't you act like you're afraid of shit
+You know I got it, If you wanna come get it
+Stand next to this money like - ey ey ey
+Shake your money maker like somebody's 'bout to pay ya
+Don't worry about them haters, keep your nose up in the air
+You know I got it, If you wanna come get it
+Stand next to this money like - ey ey ey
+
+Shake, shake, shake your money maker
+Like you were shaking it for some paper
+
+...
 `

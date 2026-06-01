@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -24,17 +26,27 @@ type WebSocket struct {
 	tokenUntil  time.Time
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q, apiKey, apiSecret string) (*WebSocket, error) {
-	rest, err := NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+func NewWebSocket(
+	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
+) public.WebSocketClient {
+	if viper.GetViper().GetString("trading.model") == "paper" {
+		return paper.NewWebSocket(ctx, pool)
+	}
+
+	rest, err := NewRest(
+		ctx, apiKey, apiSecret, public.EndpointWebSocketsToken,
+	)
 
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	return NewWebSocketFromRest(ctx, pool, rest)
 }
 
-func NewWebSocketFromRest(ctx context.Context, pool *qpool.Q, rest *Rest) (*WebSocket, error) {
+func NewWebSocketFromRest(
+	ctx context.Context, pool *qpool.Q, rest *Rest,
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
@@ -51,11 +63,7 @@ func NewWebSocketFromRest(ctx context.Context, pool *qpool.Q, rest *Rest) (*WebS
 		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 128)
 	}
 
-	return ws, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    ws.ctx,
-		"cancel": ws.cancel,
-		"rest":   ws.rest,
-	}))
+	return ws
 }
 
 func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {

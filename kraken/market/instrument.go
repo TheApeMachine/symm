@@ -72,53 +72,15 @@ type InstrumentUpdate struct {
 	Pairs  []InstrumentPair  `json:"pairs"`
 }
 
-/*
-NewInstrumentSubscription opens the instrument channel and forwards snapshots to recv.
-It blocks until ctx is canceled or the socket closes.
-*/
-func NewInstrumentSubscription(ctx context.Context, pool *qpool.Q) <-chan *InstrumentUpdate {
-	feed := OpenFeed(ctx, pool, public.InstrumentsChannel, InstrumentParams{
-		Channel:  public.InstrumentsChannel,
-		Snapshot: true,
-	})
-
-	out := make(chan *InstrumentUpdate, 128)
-
-	go func() {
-		defer close(out)
-
-		for msg := range feed.Stream {
-			if msg == nil {
-				continue
-			}
-
-			var instrument InstrumentUpdate
-
-			if err := sonic.Unmarshal(msg.Data, &instrument); err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case out <- &instrument:
-			}
-		}
-	}()
-
-	return out
-}
-
 type Instrument struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	subscribersMu  sync.RWMutex
-	Pairs          []string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	subscribersMu sync.RWMutex
+	Pairs         []string
 }
 
 func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {

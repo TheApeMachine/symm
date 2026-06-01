@@ -30,12 +30,7 @@ type WebSocket struct {
 func NewWebSocket(ctx context.Context, pool *qpool.Q, file io.Reader) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	paperSocket, err := paper.NewWebSocket(ctx, pool)
-
-	if err != nil {
-		cancel()
-		return nil, err
-	}
+	paperSocket := paper.NewWebSocket(ctx, pool)
 
 	ws := &WebSocket{
 		ctx:         ctx,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
@@ -38,10 +37,8 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 
-	for _, channel := range []string{"trade", "ticker", "book"} {
-		broadcast := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		tox.subscribers[channel] = broadcast.Subscribe(channel, 128)
-	}
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	tox.subscribers["raw"] = raw.Subscribe("raw", 128)
 
 	return tox
 }
@@ -51,24 +48,11 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	var level3 <-chan *market.Level3Update
-
-	if tox.l3Active {
-		symbols := viper.GetStringSlice("market.symbols")
-		depthLevels := viper.GetInt("market.book_depth_levels")
-
-		if depthLevels <= 0 {
-			depthLevels = 10
-		}
-
-		level3 = market.NewLevel3Subscription(tox.ctx, tox.pool, depthLevels, symbols...)
-	}
-
 	for {
 		select {
 		case <-tox.ctx.Done():
 			return tox.ctx.Err()
-		case message := <-tox.subscribers["trade"].Incoming:
+		case message := <-tox.subscribers["raw"].Incoming:
 			if message == nil || message.Value == nil {
 				continue
 			}
@@ -79,26 +63,44 @@ func (tox *Toxicity) Tick() error {
 				continue
 			}
 
-			rows, err := envelope.SplitDataRows()
-
-			if err != nil {
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
 				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "trade":
+					trade := errnie.Does(func() (market.TradeUpdate, error) {
+						return market.DecodeTrade(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-				continue
-			}
+					tox.observeTrade(trade)
+				case "ticker":
+					ticker := errnie.Does(func() (market.TickerUpdate, error) {
+						return market.DecodeTicker(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-			for _, row := range rows {
-				trade, err := market.DecodeTrade(row)
+					tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
+					tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
+					tox.publishMeasurement(ticker.Symbol)
+				case "book":
+					update := errnie.Does(func() (market.Book, error) {
+						return market.DecodeBook(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-				if err != nil {
-					errnie.Error(err)
-
-					continue
+					if !tox.l3Active {
+						tox.observeBook(update)
+						tox.publishMeasurement(update.Symbol)
+					}
 				}
-
-				tox.observeTrade(trade)
 			}
-		case message := <-tox.subscribers["ticker"].Incoming:
+		case message := <-tox.subscribers["level3"].Incoming:
 			if message == nil || message.Value == nil {
 				continue
 			}
@@ -109,69 +111,22 @@ func (tox *Toxicity) Tick() error {
 				continue
 			}
 
-			rows, err := envelope.SplitDataRows()
-
-			if err != nil {
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
 				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "level3":
+					update := errnie.Does(func() (market.Level3Update, error) {
+						// return market.DecodeLevel3(row)
+						return market.Level3Update{}, nil
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-				continue
-			}
-
-			for _, row := range rows {
-				ticker, err := market.DecodeTicker(row)
-
-				if err != nil {
-					errnie.Error(err)
-
-					continue
+					tox.observeLevel3(&update)
 				}
-
-				tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
-				tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
-				tox.publishMeasurement(ticker.Symbol)
-			}
-		case message := <-tox.subscribers["book"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
-
-			envelope, ok := message.Value.(public.SocketMessage)
-
-			if !ok {
-				continue
-			}
-
-			rows, err := envelope.SplitDataRows()
-
-			if err != nil {
-				errnie.Error(err)
-
-				continue
-			}
-
-			for _, row := range rows {
-				update, err := market.DecodeBook(row)
-
-				if err != nil {
-					errnie.Error(err)
-
-					continue
-				}
-
-				if !tox.l3Active {
-					tox.observeBook(update)
-					tox.publishMeasurement(update.Symbol)
-				}
-			}
-		case update, ok := <-level3:
-			if !ok {
-				level3 = nil
-
-				continue
-			}
-
-			if update != nil {
-				tox.observeLevel3(update)
 			}
 		}
 	}

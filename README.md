@@ -632,21 +632,21 @@ cd frontend && pnpm install && pnpm dev
 
 ### Environment variables
 
-| Variable                 | Effect                                                  |
-|--------------------------|---------------------------------------------------------|
-| `SYMM_REPLAY_FILE`       | JSONL replay instead of live WebSocket                  |
-| `SYMM_REPLAY_PACE`       | Delay between replay lines (e.g., `50ms`)               |
-| `SYMM_RECORD_FILE`       | Path to write a live-capture JSONL recording            |
-| `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
-| `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
-| `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
-| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry at boot when the file exists (default path `market/perspectives/cfg/perspectives.yaml`; missing file → Go builtins) |
-| `SYMM_KRAKEN_API_KEY`    | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone |
-| `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
-| `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
-| `SYMM_UI_ADDR`           | WebSocket listen address (default `:8765`)              |
-| `SYMM_WALLET_EUR`        | Starting paper wallet capital (default `200.0`)         |
-| `SYMM_QUOTE_CURRENCY`    | Quote currency for symbol discovery (default `EUR`)     |
+| Variable                   | Effect                                                                                                                                        |
+|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| `SYMM_REPLAY_FILE`         | JSONL replay instead of live WebSocket                                                                                                        |
+| `SYMM_REPLAY_PACE`         | Delay between replay lines (e.g., `50ms`)                                                                                                     |
+| `SYMM_RECORD_FILE`         | Path to write a live-capture JSONL recording                                                                                                  |
+| `SYMM_AUDIT_FILE`          | Path to write desk audit JSONL (gate rejects deduped)                                                                                         |
+| `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`)                                                                              |
+| `SYMM_AUDIT_MAX_MB`        | Rotate audit log after this many megabytes (default `32`)                                                                                     |
+| `SYMM_PERSPECTIVES_FILE`   | YAML perspective registry at boot when the file exists (default path `market/perspectives/cfg/perspectives.yaml`; missing file → Go builtins) |
+| `SYMM_KRAKEN_API_KEY`      | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone                                                      |
+| `SYMM_KRAKEN_API_SECRET`   | Base64-encoded API secret                                                                                                                     |
+| `SYMM_LIVE`                | `1` or `true` to enable the live desk and crypto wallet                                                                                       |
+| `SYMM_UI_ADDR`             | WebSocket listen address (default `:8765`)                                                                                                    |
+| `SYMM_WALLET_EUR`          | Starting paper wallet capital (default `200.0`)                                                                                               |
+| `SYMM_QUOTE_CURRENCY`      | Quote currency for symbol discovery (default `EUR`)                                                                                           |
 
 Full environment wiring is in `config/config.go`.
 
@@ -704,13 +704,13 @@ Full environment wiring is in `config/config.go`.
 <details>
 <summary>📋 Market data and connectivity</summary>
 
-| Field             | Default | Description                                       |
-|-------------------|---------|---------------------------------------------------|
-| `QuoteCurrency`   | `EUR`   | Universe filter applied at symbol discovery       |
-| `MaxScanSymbols`  | `64`    | Cap on discovered symbols scanned per boot        |
+| Field             | Default | Description                                                      |
+|-------------------|---------|------------------------------------------------------------------|
+| `QuoteCurrency`   | `EUR`   | Universe filter applied at symbol discovery                      |
+| `MaxScanSymbols`  | `64`    | Cap on discovered symbols scanned per boot                       |
 | `BookDepthLevels` | `5`     | Signal book depth; maintained locally at ≥10 for Kraken checksum |
-| `SubscribeBatch`  | `50`    | Symbol subscribe batch size per WebSocket message |
-| `Fee30DVolume`    | `0`     | 30-day volume for Kraken fee tier lookup          |
+| `SubscribeBatch`  | `50`    | Symbol subscribe batch size per WebSocket message                |
+| `Fee30DVolume`    | `0`     | 30-day volume for Kraken fee tier lookup                         |
 
 </details>
 
@@ -772,43 +772,43 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 
 ## Repository map
 
-| Path                   | Contents                                                                   |
-|------------------------|----------------------------------------------------------------------------|
-| `cmd/`                 | Cobra entry point, booter, system registration; `tune` and `eval` commands |
-| `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`             |
+| Path                   | Contents                                                                             |
+|------------------------|--------------------------------------------------------------------------------------|
+| `cmd/`                 | Cobra entry point, booter, system registration; `tune` and `eval` commands           |
+| `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`                       |
 | `market/perspectives/` | Category types, YAML tree loader, replay-profiled tree generator, built-in playbooks |
-| `signal/`              | All microstructure signal systems                                          |
-| `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper              |
-| `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics            |
-| `trader/economics/`    | Post-fee return ledger; forward-label accounting per playbook              |
-| `kraken/`              | Shared feed channels and market types                                      |
-| `kraken/market/`       | Auto-reconnecting WebSocket v2 feed multiplexer; symbol discovery          |
-| `kraken/order/`        | Authenticated order client (WebSocket v2 executions channel)               |
-| `kraken/orderbook/`    | Level-2 order book state with CRC32 checksum validation                    |
-| `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                     |
-| `kraken/private/`      | Authenticated REST client                                                  |
-| `kraken/public/`       | Public REST + WebSocket channels                                           |
-| `broker/`              | Paper and live order execution (`Buy`, `Sell`, `Quote`, preflight gates)   |
-| `wallet/`              | Balance, inventory, position bindings                                      |
-| `focus/`               | Lock-free open-position symbol set (copy-on-write)                         |
-| `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                   |
-| `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                          |
-| `frontend/`            | React dashboard                                                            |
-| `numeric/`             | Derived pipelines, adaptive filters, robust statistics                     |
-| `numeric/adaptive/`    | EMA, SNR, SigmaClamp, Classifier, FracDiff, Kalman                         |
-| `numeric/decay/`       | Exponential decay and time-weighted helpers (used by Hawkes)               |
-| `numeric/timeline/`    | Sorted event-timestamp sequence; supports Hayashi-Yoshida interval overlap |
-| `numeric/geometry/`    | PGA Cl(3,0,1) multivectors, Clifford rotors, Procrustes, signal scan       |
-| `numeric/learned/`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic`   |
-| `numeric/logic/`       | Generic conditional helpers                                                |
-| `numeric/probability/` | Ranked distributions, temperature-scaled sampling                          |
-| `ring/`                | `FloatRing` — fixed-capacity circular buffer for float64 rolling windows   |
-| `snapshot/`            | Lock-free copy-on-write per-symbol state container (atomic CAS)            |
-| `runstats/`            | Dependency-inverted run-level counter interface (avoids import cycles)     |
-| `replay/`              | JSONL recorder and replayer; hub playback blocks (no silent frame drops)   |
-| `config/`              | Runtime parameters, environment wiring, tunables, search specs, `perspectives.yaml` |
-| `analysis/`            | Python post-run attribution and performance scripts                        |
-| `DECISION.md`          | Category semantics and signal design rationale                             |
-| `AGENTS.md`            | Agent contract: tests, benchmarks, style                                   |
+| `signal/`              | All microstructure signal systems                                                    |
+| `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper                        |
+| `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics                      |
+| `trader/economics/`    | Post-fee return ledger; forward-label accounting per playbook                        |
+| `kraken/`              | Shared feed channels and market types                                                |
+| `kraken/market/`       | Auto-reconnecting WebSocket v2 feed multiplexer; symbol discovery                    |
+| `kraken/order/`        | Authenticated order client (WebSocket v2 executions channel)                         |
+| `kraken/orderbook/`    | Level-2 order book state with CRC32 checksum validation                              |
+| `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                               |
+| `kraken/private/`      | Authenticated REST client                                                            |
+| `kraken/public/`       | Public REST + WebSocket channels                                                     |
+| `broker/`              | Paper and live order execution (`Buy`, `Sell`, `Quote`, preflight gates)             |
+| `wallet/`              | Balance, inventory, position bindings                                                |
+| `focus/`               | Lock-free open-position symbol set (copy-on-write)                                   |
+| `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                             |
+| `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                                    |
+| `frontend/`            | React dashboard                                                                      |
+| `numeric/`             | Derived pipelines, adaptive filters, robust statistics                               |
+| `numeric/adaptive/`    | EMA, SNR, SigmaClamp, Classifier, FracDiff, Kalman                                   |
+| `numeric/decay/`       | Exponential decay and time-weighted helpers (used by Hawkes)                         |
+| `numeric/timeline/`    | Sorted event-timestamp sequence; supports Hayashi-Yoshida interval overlap           |
+| `numeric/geometry/`    | PGA Cl(3,0,1) multivectors, Clifford rotors, Procrustes, signal scan                 |
+| `numeric/learned/`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic`             |
+| `numeric/logic/`       | Generic conditional helpers                                                          |
+| `numeric/probability/` | Ranked distributions, temperature-scaled sampling                                    |
+| `ring/`                | `FloatRing` — fixed-capacity circular buffer for float64 rolling windows             |
+| `snapshot/`            | Lock-free copy-on-write per-symbol state container (atomic CAS)                      |
+| `runstats/`            | Dependency-inverted run-level counter interface (avoids import cycles)               |
+| `replay/`              | JSONL recorder and replayer; hub playback blocks (no silent frame drops)             |
+| `config/`              | Runtime parameters, environment wiring, tunables, search specs, `perspectives.yaml`  |
+| `analysis/`            | Python post-run attribution and performance scripts                                  |
+| `DECISION.md`          | Category semantics and signal design rationale                                       |
+| `AGENTS.md`            | Agent contract: tests, benchmarks, style                                             |
 
 **Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.

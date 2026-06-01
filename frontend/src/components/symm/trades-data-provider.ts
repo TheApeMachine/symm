@@ -17,7 +17,8 @@ export type TradePanelRow = {
 
 type Listener = () => void;
 
-const MAX_ROWS = 24;
+const MAX_OPEN = 12;
+const MAX_FILLS = 12;
 
 const positionEconomics = (
 	symbol: string,
@@ -49,10 +50,13 @@ const positionEconomics = (
 };
 
 /*
-TradesDataProvider lists open inventory for the aside panel.
+TradesDataProvider tracks open positions and recent fill history for the sidebar panel.
+Open positions are driven by wallet snapshots; fills come from execution events.
 */
 class TradesDataProviderImpl {
-	private rows: TradePanelRow[] = [];
+	private openRows: TradePanelRow[] = [];
+	private fillRows: TradePanelRow[] = [];
+	private panelRows: readonly TradePanelRow[] = [];
 	private listeners = new Set<Listener>();
 	private markFallback = new Map<string, number>();
 
@@ -65,7 +69,11 @@ class TradesDataProviderImpl {
 	}
 
 	snapshot(): readonly TradePanelRow[] {
-		return this.rows;
+		return this.panelRows;
+	}
+
+	private rebuildPanelRows() {
+		this.panelRows = [...this.openRows, ...this.fillRows];
 	}
 
 	setMark(symbol: string, markPrice: number) {
@@ -86,7 +94,7 @@ class TradesDataProviderImpl {
 	private refreshOpenMarks() {
 		let changed = false;
 
-		this.rows = this.rows.map((row) => {
+		this.openRows = this.openRows.map((row) => {
 			if (row.kind !== "open" || row.qty === undefined) {
 				return row;
 			}
@@ -119,14 +127,17 @@ class TradesDataProviderImpl {
 			};
 		});
 
-		if (changed) {
-			this.notify();
+		if (!changed) {
+			return;
 		}
+
+		this.rebuildPanelRows();
+		this.notify();
 	}
 
 	private syncInventory(payload: WalletPayload) {
 		const inventory = payload.Inventory ?? {};
-		const openRows: TradePanelRow[] = [];
+		const next: TradePanelRow[] = [];
 
 		for (const [base, qty] of Object.entries(inventory)) {
 			if (qty <= 0) {
@@ -147,7 +158,7 @@ class TradesDataProviderImpl {
 					((markPrice - economics.entryPrice) / economics.entryPrice) * 100;
 			}
 
-			openRows.push({
+			next.push({
 				key: `open:${base}`,
 				kind: "open",
 				symbol,
@@ -159,12 +170,28 @@ class TradesDataProviderImpl {
 			});
 		}
 
-		this.rows = openRows.slice(0, MAX_ROWS);
+		this.openRows = next.slice(0, MAX_OPEN);
+		this.rebuildPanelRows();
 		this.notify();
 	}
 
-	ingestFill(_fill: ExecutionFill) {
-		return;
+	ingestFill(fill: ExecutionFill) {
+		const kind: "enter" | "exit" = fill.Side === "buy" ? "enter" : "exit";
+
+		const row: TradePanelRow = {
+			key: `fill:${fill.OrderID}`,
+			kind,
+			symbol: fill.Symbol,
+			side: fill.Side,
+			qty: fill.Qty,
+			price: fill.Price,
+			notionalEur: fill.Qty * fill.Price,
+		};
+
+		// Prepend newest fill; drop oldest beyond cap.
+		this.fillRows = [row, ...this.fillRows].slice(0, MAX_FILLS);
+		this.rebuildPanelRows();
+		this.notify();
 	}
 
 	ingest(raw: unknown) {
@@ -181,7 +208,9 @@ class TradesDataProviderImpl {
 	}
 
 	reset() {
-		this.rows = [];
+		this.openRows = [];
+		this.fillRows = [];
+		this.panelRows = [];
 		this.markFallback.clear();
 		this.notify();
 	}

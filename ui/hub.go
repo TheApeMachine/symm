@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,15 +15,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-)
-
-const (
-	writeDeadline = 2 * time.Second
-	// perClientBuffer absorbs measurement bursts. The signal layer can
-	// emit dozens of frames in a single tick (one per gauge, plus mark,
-	// plus prediction). 4096 gives ~10 ticks of headroom before drop
-	// kicks in, which is well above the worst-case burst we've measured.
-	perClientBuffer = 4096
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -57,14 +47,14 @@ open position at the source, so the hub does no filtering — it only buffers
 per client; the frontend never sends frames.
 */
 type Hub struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscriptions map[string]*qpool.Subscriber
-	clients       *sync.Map
-	server        *http.Server
-	nextConnID    uint64
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	clients     *sync.Map
+	server      *http.Server
+	nextConnID  uint64
 }
 
 /*
@@ -73,32 +63,32 @@ NewHub subscribes to all broadcast groups on pool.
 func NewHub(
 	ctx context.Context,
 	pool *qpool.Q,
-) (*Hub, error) {
+) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:           ctx,
-		cancel:        cancel,
-		pool:          pool,
-		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscriptions: make(map[string]*qpool.Subscriber),
-		clients:       &sync.Map{},
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		clients:     &sync.Map{},
 	}
 
-	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	hub.subscriptions["ui"] = hub.broadcasts["ui"].Subscribe("ui", 128)
+	for _, channel := range []string{"ui"} {
+		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 500*time.Millisecond)
+		hub.subscribers[channel] = hub.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	addr := viper.GetViper().GetString("ui.addr")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)
 
-	listener, err := net.Listen("tcp", addr)
-
-	if err != nil {
-		cancel()
-
-		return nil, fmt.Errorf("ui hub: listen %s: %w", addr, err)
-	}
+	listener := errnie.Does(func() (net.Listener, error) {
+		return net.Listen("tcp", addr)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
 	hub.server = &http.Server{
 		Handler: mux,
@@ -112,7 +102,7 @@ func NewHub(
 		}
 	}()
 
-	return hub, nil
+	return hub
 }
 
 func (hub *Hub) Close() error {
@@ -152,6 +142,17 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	hello := map[string]any{
+		"event": "hello",
+		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	if err := conn.WriteJSON(hello); err != nil {
+		errnie.Error(err)
+		errnie.Error(conn.Close())
+		return
+	}
+
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, conn)
 }
@@ -165,7 +166,7 @@ func (hub *Hub) Tick() error {
 		select {
 		case <-hub.ctx.Done():
 			return hub.ctx.Err()
-		case value, ok := <-hub.subscriptions["ui"].Incoming:
+		case value, ok := <-hub.subscribers["ui"].Incoming:
 			if !ok {
 				return hub.ctx.Err()
 			}
@@ -194,7 +195,7 @@ func (hub *Hub) Tick() error {
 
 				if err := conn.WriteJSON(out); err != nil {
 					errnie.Error(err)
-					_ = conn.Close()
+					errnie.Error(conn.Close())
 					hub.clients.Delete(key)
 				}
 

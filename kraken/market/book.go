@@ -1,15 +1,9 @@
 package market
 
 import (
-	"context"
-	"encoding/json"
 	"hash/crc32"
 	"sort"
 	"strings"
-
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 // BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
@@ -38,39 +32,6 @@ type BookLevel struct {
 	Qty      float64 `json:"qty"`
 	PriceRaw string  `json:"-"`
 	QtyRaw   string  `json:"-"`
-}
-
-/*
-UnmarshalJSON retains the wire decimal strings for Kraken v2 CRC32 checksums.
-*/
-func (level *BookLevel) UnmarshalJSON(data []byte) error {
-	var wire struct {
-		Price json.Number `json:"price"`
-		Qty   json.Number `json:"qty"`
-	}
-
-	if err := sonic.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-
-	price, err := wire.Price.Float64()
-
-	if err != nil {
-		return err
-	}
-
-	qty, err := wire.Qty.Float64()
-
-	if err != nil {
-		return err
-	}
-
-	level.Price = price
-	level.Qty = qty
-	level.PriceRaw = wire.Price.String()
-	level.QtyRaw = wire.Qty.String()
-
-	return nil
 }
 
 /*
@@ -218,22 +179,4 @@ func (book *Book) levelsFromMap(byPrice map[float64]BookLevel, askSide bool) []B
 	})
 
 	return levels
-}
-
-/*
-NewBookSubscription subscribes to the book channel for symbols at depth.
-*/
-func NewBookSubscription(
-	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
-) Feed {
-	if depth <= 0 {
-		depth = 10
-	}
-
-	return OpenFeed(ctx, pool, public.BookChannel, BookParams{
-		Channel:  public.BookChannel,
-		Symbol:   symbols,
-		Depth:    depth,
-		Snapshot: true,
-	})
 }

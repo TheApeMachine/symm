@@ -115,7 +115,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		}
 	}
 
-	for _, channel := range []string{"trade"} {
+	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
@@ -204,7 +204,7 @@ func (signal *Signal) Tick() error {
 		select {
 		case <-signal.ctx.Done():
 			return signal.ctx.Err()
-		case message := <-signal.subscribers["trade"].Incoming:
+		case message := <-signal.subscribers["raw"].Incoming:
 			if message == nil || message.Value == nil {
 				continue
 			}
@@ -215,25 +215,22 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			rows, err := envelope.SplitDataRows()
-
-			if err != nil {
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
 				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "trade":
+					trade := errnie.Does(func() (market.TradeUpdate, error) {
+						return market.DecodeTrade(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
 
-				continue
-			}
-
-			for _, row := range rows {
-				trade, err := market.DecodeTrade(row)
-
-				if err != nil {
-					errnie.Error(err)
-
-					continue
-				}
-
-				if trade.Price > 0 {
-					latest[trade.Symbol] = trade.Price
+					if trade.Price > 0 {
+						latest[trade.Symbol] = trade.Price
+					}
 				}
 			}
 		case <-batch.C:

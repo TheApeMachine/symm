@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
@@ -70,7 +69,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"trade"} {
+	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
@@ -129,22 +128,39 @@ func (state *pumpState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	for message := range signal.subscribers["trade"].Incoming {
-		if message == nil || message.Value == nil {
-			continue
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case message := <-signal.subscribers["raw"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "trade":
+					trade := errnie.Does(func() (market.TradeUpdate, error) {
+						return market.DecodeTrade(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
+
+					signal.observe(trade)
+				}
+			}
 		}
-
-		var trade market.TradeUpdate
-
-		if err := sonic.Unmarshal(message.Value.(public.SocketMessage).Data, &trade); err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		signal.observe(trade)
 	}
-
-	return signal.ctx.Err()
 }
 
 // observe folds one executed trade into its symbol's window state and emits the

@@ -1,12 +1,5 @@
 package market
 
-import (
-	"context"
-
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
-)
-
 /*
 TickerParams is the Kraken WebSocket v2 subscribe payload for the ticker channel.
 */
@@ -39,17 +32,4 @@ type TickerUpdate struct {
 	Volume    float64 `json:"volume"`
 	VWAP      float64 `json:"vwap"`
 	Timestamp string  `json:"timestamp"`
-}
-
-/*
-NewTickerSubscription subscribes to the ticker channel for symbols.
-*/
-func NewTickerSubscription(
-	ctx context.Context, pool *qpool.Q, symbols ...string,
-) Feed {
-	return OpenFeed(ctx, pool, public.TickerChannel, TickerParams{
-		Channel:  public.TickerChannel,
-		Symbol:   symbols,
-		Snapshot: true,
-	})
 }

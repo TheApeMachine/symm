@@ -4,11 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 // OrderSnapshot is the envelope type tag for a full L3 book frame after subscribe.
@@ -102,66 +97,6 @@ func OrderAvailable() bool {
 }
 
 /*
-NewOrderSubscription returns a channel of L3 book snapshots and updates for symbols
-at depth when a token source is configured.
-*/
-func NewOrderSubscription(
-	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
-) <-chan *Order {
-	orderTokenSourceMu.RLock()
-	source := orderTokenSource
-	orderTokenSourceMu.RUnlock()
-
-	if source == nil {
-		return nil
-	}
-
-	if depth <= 0 {
-		depth = 10
-	}
-
-	token, err := source.Token(ctx)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return nil
-	}
-
-	feed := OpenFeed(ctx, pool, public.Level3Channel, OrderParams{
-		Channel:  public.Level3Channel,
-		Symbol:   symbols,
-		Depth:    depth,
-		Snapshot: true,
-		Token:    token,
-	})
-
-	out := make(chan *Order, 128)
-
-	go func() {
-		defer close(out)
-
-		for msg := range feed.Stream {
-			if msg == nil {
-				continue
-			}
-
-			var order Order
-
-			if err := sonic.Unmarshal(msg.Data, &order); err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			order.SetEnvelopeType(msg.Type)
-			out <- &order
-		}
-	}()
-
-	return out
-}
-
-/*
 OrderEventTime parses an L3 event timestamp, falling back to now when absent.
 */
 func OrderEventTime(raw string, fallback time.Time) time.Time {
@@ -195,12 +130,6 @@ func SetLevel3TokenSource(source Level3TokenSource) {
 
 func Level3Available() bool {
 	return OrderAvailable()
-}
-
-func NewLevel3Subscription(
-	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
-) <-chan *Level3Update {
-	return NewOrderSubscription(ctx, pool, depth, symbols...)
 }
 
 func Level3EventTime(raw string, fallback time.Time) time.Time {

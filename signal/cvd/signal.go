@@ -87,8 +87,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	signal.broadcasts["trade"] = pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
-	signal.subscribers["trade"] = signal.broadcasts["trade"].Subscribe("trade", 128)
+	for _, channel := range []string{"raw"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
@@ -173,39 +175,39 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	for message := range signal.subscribers["trade"].Incoming {
-		if message == nil || message.Value == nil {
-			continue
-		}
-
-		envelope, ok := message.Value.(public.SocketMessage)
-
-		if !ok {
-			continue
-		}
-
-		rows, err := envelope.SplitDataRows()
-
-		if err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-
-		for _, row := range rows {
-			trade, err := market.DecodeTrade(row)
-
-			if err != nil {
-				errnie.Error(err)
-
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return signal.ctx.Err()
+		case message := <-signal.subscribers["raw"].Incoming:
+			if message == nil || message.Value == nil {
 				continue
 			}
 
-			signal.observe(trade)
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+				return envelope.SplitDataRows()
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value() {
+				switch row.Channel {
+				case "trade":
+					trade := errnie.Does(func() (market.TradeUpdate, error) {
+						return market.DecodeTrade(row)
+					}).Or(func(err error) {
+						errnie.Error(err)
+					}).Value()
+
+					signal.observe(trade)
+				}
+			}
 		}
 	}
-
-	return signal.ctx.Err()
 }
 
 // observe folds one executed trade into its symbol's window state and emits the

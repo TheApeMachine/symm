@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"container/ring"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"time"
@@ -16,7 +15,10 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-const storyMeasurementsSubscriberID = "market:story"
+const (
+	storyMeasurementsSubscriberID = "market:story"
+	storyUIInterval               = 100 * time.Millisecond
+)
 
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
@@ -35,7 +37,7 @@ type Story struct {
 	recorder    *bufio.Writer
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
+func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -51,19 +53,16 @@ func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	if viper.GetViper().GetString("trading.model") == "record" {
-		recordPath := viper.GetViper().GetString("trading.record.file")
+	recordPath := viper.GetViper().GetString("trading.record.file")
 
-		fh, err := os.Create(recordPath)
+	fh, err := os.Create(recordPath)
 
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("market story: create record file %q: %w", recordPath, err)
-		}
-
-		story.recordFile = fh
-		story.recorder = bufio.NewWriter(fh)
+	if err != nil {
+		errnie.Error(err)
 	}
+
+	story.recordFile = fh
+	story.recorder = bufio.NewWriter(fh)
 
 	for _, channel := range []string{"measurements", "actions"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
@@ -73,28 +72,61 @@ func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
 		storyMeasurementsSubscriberID, 128,
 	)
 
-	return story, nil
+	return story
 }
 
 /*
 Tick joins the latest measurements from the perspective signals and publishes them to the story.
+
+UI events are rate-limited to storyUIInterval. Measurements flood the channel at high frequency
+and selecting one "publish" case per measurement would starve the timer and flood the WebSocket.
+Instead, we accumulate the latest value per source/symbol in local maps and flush them to the
+"ui" broadcast on the timer tick — a single batch per interval regardless of measurement rate.
 */
 func (story *Story) Tick() error {
-	var (
-		measurement perspectives.Measurement
-		ok          bool
-	)
-
 	if story.recorder != nil {
 		defer story.recorder.Flush()
 	}
 
 	incoming := story.subscribers["measurements"].Incoming
+	uiFlush := time.NewTicker(storyUIInterval)
+
+	defer uiFlush.Stop()
+
+	// Latest values accumulated between timer ticks. Written by the measurement
+	// case, read and published by the timer case. Both run on the same goroutine
+	// so no mutex needed.
+	latestConf := make(map[string]float64) // source name → confidence
+	latestMark := make(map[string]float64) // symbol → last price
 
 	for {
 		select {
 		case <-story.ctx.Done():
 			return story.ctx.Err()
+
+		case <-uiFlush.C:
+			// Publish one confidence row per source — at most one WebSocket
+			// frame per source per interval, regardless of measurement rate.
+			for source, conf := range latestConf {
+				story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+					"source":     source,
+					"confidence": conf,
+				}})
+			}
+
+			if len(latestMark) > 0 {
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+
+				for symbol, price := range latestMark {
+					story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+						"event":  "mark",
+						"ts":     now,
+						"symbol": symbol,
+						"price":  price,
+					}})
+				}
+			}
+
 		case row, ok := <-incoming:
 			if !ok {
 				return io.EOF
@@ -107,7 +139,9 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			if measurement, ok = row.Value.(perspectives.Measurement); !ok {
+			measurement, ok := row.Value.(perspectives.Measurement)
+
+			if !ok {
 				errnie.Warn("invalid measurement")
 				continue
 			}
@@ -129,6 +163,16 @@ func (story *Story) Tick() error {
 
 			story.buffer.Value = measurement
 			story.buffer.Next()
+
+			// Accumulate — do NOT publish here. The timer case above handles it.
+			// SNR is in noise-sigma units; the gauge maps 0..4σ onto 0..100%.
+			if source := measurement.Source.String(); source != "" {
+				latestConf[source] = measurement.SNR
+			}
+
+			if measurement.Last > 0 && measurement.Symbol != "" {
+				latestMark[measurement.Symbol] = measurement.Last
+			}
 
 			actions := make([]*perspectives.ActionType, 0)
 

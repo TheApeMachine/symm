@@ -5,9 +5,6 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -81,6 +78,21 @@ func (execution *Execution) IsSnapshot() bool {
 	return execution.EnvelopeType == executionSnapshot
 }
 
+/*
+DecodeExecution decodes one executions data row after SplitDataRows.
+*/
+func DecodeExecution(row *public.SocketMessage) (Execution, error) {
+	var execution Execution
+
+	if err := sonic.Unmarshal(row.Data, &execution); err != nil {
+		return Execution{}, err
+	}
+
+	execution.SetEnvelopeType(row.Type)
+
+	return execution, nil
+}
+
 var (
 	executionTokenSourceMu sync.RWMutex
 	executionTokenSource   ExecutionTokenSource
@@ -98,56 +110,4 @@ func ExecutionAvailable() bool {
 	defer executionTokenSourceMu.RUnlock()
 
 	return executionTokenSource != nil
-}
-
-func NewExecutionSubscription(ctx context.Context, pool *qpool.Q) <-chan *Execution {
-	executionTokenSourceMu.RLock()
-	source := executionTokenSource
-	executionTokenSourceMu.RUnlock()
-
-	if source == nil {
-		return nil
-	}
-
-	token, err := source.Token(ctx)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return nil
-	}
-
-	feed := market.OpenFeed(ctx, pool, public.ExecutionsChannel, ExecutionParams{
-		Channel:     public.ExecutionsChannel,
-		Token:       token,
-		SnapOrders:  true,
-		SnapTrades:  true,
-		OrderStatus: true,
-	})
-
-	out := make(chan *Execution, 128)
-
-	go func() {
-		defer close(out)
-
-		for msg := range feed.Stream {
-			if msg == nil {
-				continue
-			}
-
-			var rows []Execution
-
-			if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			for index := range rows {
-				rows[index].SetEnvelopeType(msg.Type)
-				out <- &rows[index]
-			}
-		}
-	}()
-
-	return out
 }

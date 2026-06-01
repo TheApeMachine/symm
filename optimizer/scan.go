@@ -138,10 +138,7 @@ func (search *ScanSearch) score(
 	var workers sync.WaitGroup
 
 	for range search.options.Workers {
-		workers.Add(1)
-
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 
 			for candidate := range candidates {
 				results <- scanResult{
@@ -149,7 +146,7 @@ func (search *ScanSearch) score(
 					score:     search.evaluate(candidate.branches),
 				}
 			}
-		}()
+		})
 	}
 
 	go func() {

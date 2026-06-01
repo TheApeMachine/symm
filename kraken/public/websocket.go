@@ -59,7 +59,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	})
 
 	for _, channel := range []string{
-		"ticker", "book", "trade", "ohlc", "instrument", "level3",
+		"raw", "level3",
 	} {
 		socket.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 128)
@@ -147,9 +147,11 @@ func (ws *WebSocket) Tick() error {
 			return errnie.Error(err)
 		}
 
-		if ch := ws.broadcasts[message.Channel]; ch != nil {
-			errnie.Debug("kraken.public.websocket.Tick", "broadcasting", message.Channel, message.Data)
-			ch.Send(&qpool.QValue[any]{Value: message})
+		if ch := ws.broadcasts["raw"]; ch != nil {
+			ch.Send(&qpool.QValue[any]{
+				Type:  message.Channel,
+				Value: message,
+			})
 		}
 	}
 }

@@ -53,13 +53,7 @@ func NewClient(ctx context.Context, pool *qpool.Q) (*Client, error) {
 			return nil, fmt.Errorf("kraken client: websocket: %w", err)
 		}
 	default:
-		ws, err = paper.NewWebSocket(ctx, pool)
-
-		if err != nil {
-			cancel()
-
-			return nil, fmt.Errorf("kraken client: websocket: %w", err)
-		}
+		ws = paper.NewWebSocket(ctx, pool)
 	}
 
 	client := &Client{
