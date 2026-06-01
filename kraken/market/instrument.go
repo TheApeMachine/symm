@@ -3,7 +3,9 @@ package market
 import (
 	"context"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -69,19 +71,15 @@ NewInstrumentSubscription opens the instrument channel and forwards snapshots to
 It blocks until ctx is canceled or the socket closes.
 */
 func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
-	ws, err := public.NewWebSocket(ctx)
+	out := make(chan *InstrumentUpdate, 128)
 
-	if err != nil {
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[InstrumentUpdate]()
-	}
+	}).Value()
 
-	if err := ws.Connect(public.WebSocketURL, public.InstrumentsChannel); err != nil {
-		errnie.Error(err)
-		return closed[InstrumentUpdate]()
-	}
-
-	if err := ws.Send(public.InstrumentsChannel, public.Subscription{
+	if err := client.Send(public.InstrumentsChannel, public.Subscription{
 		Method: public.MethodSubscribe,
 		Params: InstrumentParams{
 			Channel:  public.InstrumentsChannel,
@@ -92,12 +90,30 @@ func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
 		return closed[InstrumentUpdate]()
 	}
 
-	stream, err := public.StreamSnapshot[InstrumentUpdate](ws, public.InstrumentsChannel)
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.InstrumentsChannel)
 
-	if err != nil {
+		if err != nil {
+			return nil, err
+		}
+
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[InstrumentUpdate]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var instrument InstrumentUpdate
+
+		if err := sonic.Unmarshal(msg.Data, &instrument); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &instrument
 	}
 
-	return stream
+	return out
 }

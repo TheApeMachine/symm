@@ -4,9 +4,6 @@ import (
 	"github.com/theapemachine/symm/config"
 )
 
-/*
-symbolBatches splits symbols into subscribe batches sized by config.System.SubscribeBatch.
-*/
 func symbolBatches(symbols []string) [][]string {
 	batchSize := config.System.SubscribeBatch
 
@@ -31,18 +28,4 @@ func symbolBatches(symbols []string) [][]string {
 	}
 
 	return batches
-}
-
-/*
-LimitSymbols caps a discovered universe to max when max > 0.
-*/
-func LimitSymbols(symbols []string, max int) []string {
-	if max <= 0 || len(symbols) <= max {
-		return symbols
-	}
-
-	capped := make([]string, max)
-	copy(capped, symbols[:max])
-
-	return capped
 }

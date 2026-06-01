@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -48,33 +50,20 @@ type Level3Update struct {
 	Timestamp string             `json:"timestamp"`
 }
 
-var (
-	level3TokenSource Level3TokenSource
-	level3Feed        *sharedFeed[Level3Update]
-)
+var level3TokenSource Level3TokenSource
 
 /*
-SetLevel3TokenSource enables the shared authenticated L3 feed. Pass nil to disable.
+SetLevel3TokenSource enables authenticated L3 market data. Pass nil to disable.
 */
 func SetLevel3TokenSource(source Level3TokenSource) {
 	level3TokenSource = source
-
-	if source == nil {
-		level3Feed = nil
-
-		return
-	}
-
-	level3Feed = newReliableSharedFeed(func(ctx context.Context, spec subscriptionSpec) <-chan *Level3Update {
-		return dialLevel3(ctx, spec.depth, spec.symbols)
-	})
 }
 
 /*
 Level3Available reports whether authenticated L3 market data is configured.
 */
 func Level3Available() bool {
-	return level3TokenSource != nil && level3Feed != nil
+	return level3TokenSource != nil
 }
 
 /*
@@ -83,17 +72,6 @@ NewLevel3Subscription returns per-order book events when credentials are configu
 func NewLevel3Subscription(
 	ctx context.Context, depth int, symbols ...string,
 ) <-chan *Level3Update {
-	if level3Feed == nil {
-		return closed[Level3Update]()
-	}
-
-	return level3Feed.subscribe(ctx, subscriptionSpec{
-		symbols: symbols,
-		depth:   depth,
-	})
-}
-
-func dialLevel3(ctx context.Context, depth int, symbols []string) <-chan *Level3Update {
 	if level3TokenSource == nil {
 		return closed[Level3Update]()
 	}
@@ -109,20 +87,16 @@ func dialLevel3(ctx context.Context, depth int, symbols []string) <-chan *Level3
 		return closed[Level3Update]()
 	}
 
-	ws, err := public.NewWebSocket(ctx)
+	out := make(chan *Level3Update, 128)
 
-	if err != nil {
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[Level3Update]()
-	}
-
-	if err := ws.Connect(public.WebSocketL3URL, public.Level3Channel); err != nil {
-		errnie.Error(err)
-		return closed[Level3Update]()
-	}
+	}).Value()
 
 	for _, batch := range symbolBatches(symbols) {
-		if err := ws.Send(public.Level3Channel, public.Subscription{
+		if err := client.Send(public.Level3Channel, public.Subscription{
 			Method: public.MethodSubscribe,
 			Params: Level3Params{
 				Channel:  public.Level3Channel,
@@ -137,14 +111,32 @@ func dialLevel3(ctx context.Context, depth int, symbols []string) <-chan *Level3
 		}
 	}
 
-	stream, err := public.Stream[Level3Update](ws, public.Level3Channel)
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.Level3Channel)
 
-	if err != nil {
+		if err != nil {
+			return nil, err
+		}
+
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[Level3Update]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var level3 Level3Update
+
+		if err := sonic.Unmarshal(msg.Data, &level3); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &level3
 	}
 
-	return stream
+	return out
 }
 
 /*

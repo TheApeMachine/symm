@@ -3,7 +3,9 @@ package market
 import (
 	"context"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -45,27 +47,19 @@ It blocks until ctx is canceled or the socket closes.
 func NewCandleSubscription(
 	ctx context.Context, intervalMinutes int, symbols ...string,
 ) <-chan *CandleUpdate {
-	if replayActive() {
-		return closed[CandleUpdate]()
-	}
-
 	if intervalMinutes <= 0 {
 		intervalMinutes = 1
 	}
 
-	ws, err := public.NewWebSocket(ctx)
+	out := make(chan *CandleUpdate, 128)
 
-	if err != nil {
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[CandleUpdate]()
-	}
+	}).Value()
 
-	if err := ws.Connect(public.WebSocketURL, public.CandlesChannel); err != nil {
-		errnie.Error(err)
-		return closed[CandleUpdate]()
-	}
-
-	if err := ws.Send(public.CandlesChannel, public.Subscription{
+	if err := client.Send(public.CandlesChannel, public.Subscription{
 		Method: public.MethodSubscribe,
 		Params: CandleParams{
 			Channel:  public.CandlesChannel,
@@ -78,12 +72,30 @@ func NewCandleSubscription(
 		return closed[CandleUpdate]()
 	}
 
-	stream, err := public.Stream[CandleUpdate](ws, public.CandlesChannel)
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.CandlesChannel)
 
-	if err != nil {
+		if err != nil {
+			return nil, err
+		}
+
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[CandleUpdate]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var candle CandleUpdate
+
+		if err := sonic.Unmarshal(msg.Data, &candle); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &candle
 	}
 
-	return stream
+	return out
 }

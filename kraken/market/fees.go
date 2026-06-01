@@ -1,19 +1,18 @@
 package market
 
-const defaultTakerFeePct = 0.40
-const defaultMakerFeePct = 0.25
+import "fmt"
 
 /*
 TakerFeePercent returns the taker fee percent for quoteVolume30d on this pair's
-Kraken tier schedule. When the schedule is missing, fallbackPct applies.
+Kraken tier schedule from GET /public/AssetPairs.
 */
-func (pair *Pair) TakerFeePercent(quoteVolume30d, fallbackPct float64) float64 {
-	if pair == nil || len(pair.Fees) == 0 {
-		if fallbackPct > 0 {
-			return fallbackPct
-		}
+func (pair *Pair) TakerFeePercent(quoteVolume30d float64) (float64, error) {
+	if pair == nil {
+		return 0, fmt.Errorf("kraken pair: nil receiver")
+	}
 
-		return defaultTakerFeePct
+	if len(pair.Fees) == 0 {
+		return 0, fmt.Errorf("kraken pair %q: fees schedule missing", pair.Wsname)
 	}
 
 	feePct := pair.Fees[0][1]
@@ -28,19 +27,20 @@ func (pair *Pair) TakerFeePercent(quoteVolume30d, fallbackPct float64) float64 {
 		}
 	}
 
-	return feePct
+	return feePct, nil
 }
 
 /*
-MakerFeePercent returns the maker fee percent for quoteVolume30d.
+MakerFeePercent returns the maker fee percent for quoteVolume30d on this pair's
+Kraken tier schedule from GET /public/AssetPairs.
 */
-func (pair *Pair) MakerFeePercent(quoteVolume30d, fallbackPct float64) float64 {
-	if pair == nil || len(pair.FeesMaker) == 0 {
-		if fallbackPct > 0 {
-			return fallbackPct
-		}
+func (pair *Pair) MakerFeePercent(quoteVolume30d float64) (float64, error) {
+	if pair == nil {
+		return 0, fmt.Errorf("kraken pair: nil receiver")
+	}
 
-		return defaultMakerFeePct
+	if len(pair.FeesMaker) == 0 {
+		return 0, fmt.Errorf("kraken pair %q: fees_maker schedule missing", pair.Wsname)
 	}
 
 	feePct := pair.FeesMaker[0][1]
@@ -55,5 +55,5 @@ func (pair *Pair) MakerFeePercent(quoteVolume30d, fallbackPct float64) float64 {
 		}
 	}
 
-	return feePct
+	return feePct, nil
 }

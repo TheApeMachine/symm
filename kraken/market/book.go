@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/orderbook"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -136,38 +137,22 @@ func toBookLevels(levels []BookLevel) []orderbook.Level {
 
 /*
 NewBookSubscription returns a channel of L2 book snapshots and deltas for symbols
-at depth. All callers share one upstream connection via the book feed. The
-caller's ctx detaches it from the shared feed; the upstream keeps running.
+at depth.
 */
 func NewBookSubscription(
 	ctx context.Context, depth int, symbols ...string,
 ) <-chan *BookUpdate {
-	return bookFeed.subscribe(ctx, subscriptionSpec{
-		symbols: symbols,
-		depth:   depth,
-	})
-}
-
-// dialBook opens one upstream connection to the public L2 book channel.
-func dialBook(
-	ctx context.Context, depth int, symbols []string,
-) <-chan *BookUpdate {
 	depth = validBookDepth(depth)
+	out := make(chan *BookUpdate, 128)
 
-	ws, err := public.NewWebSocket(ctx)
-
-	if err != nil {
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[BookUpdate]()
-	}
-
-	if err := ws.Connect(public.WebSocketURL, public.BookChannel); err != nil {
-		errnie.Error(err)
-		return closed[BookUpdate]()
-	}
+	}).Value()
 
 	for _, batch := range symbolBatches(symbols) {
-		if err := ws.Send(public.BookChannel, public.Subscription{
+		if err := client.Send(public.BookChannel, public.Subscription{
 			Method: public.MethodSubscribe,
 			Params: BookParams{
 				Channel:  public.BookChannel,
@@ -181,12 +166,30 @@ func dialBook(
 		}
 	}
 
-	stream, err := public.Stream[BookUpdate](ws, public.BookChannel)
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.BookChannel)
 
-	if err != nil {
+		if err != nil {
+			return nil, err
+		}
+
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[BookUpdate]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var book BookUpdate
+
+		if err := sonic.Unmarshal(msg.Data, &book); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &book
 	}
 
-	return stream
+	return out
 }

@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/private"
 )
 
@@ -12,7 +13,7 @@ L3 is market-data only and does not enable live trading. Replay-backed evals use
 recorded L2 book instead; live L3 would dial Kraken on every tune worker.
 */
 func ConfigureLevel3(apiKey, apiSecret string) error {
-	if replayActive() {
+	if viper.GetViper().GetString("trading.model") == "replay" {
 		SetLevel3TokenSource(nil)
 
 		return nil

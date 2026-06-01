@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -71,4 +72,21 @@ func NewAssetPairs(
 	}
 
 	return pairs, errnie.Error(client.Get(ctx, params, &pairs))
+}
+
+/*
+PairByWsname returns the pair whose wsname matches the WebSocket v2 symbol (e.g. BTC/USD).
+*/
+func (pairs AssetPairs) PairByWsname(wsname string) (*Pair, error) {
+	for _, pair := range pairs {
+		if pair == nil {
+			continue
+		}
+
+		if pair.Wsname == wsname {
+			return pair, nil
+		}
+	}
+
+	return nil, fmt.Errorf("kraken asset pairs: wsname %q not found", wsname)
 }

@@ -3,7 +3,9 @@ package market
 import (
 	"context"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -42,52 +44,55 @@ type TickerUpdate struct {
 }
 
 /*
-NewTickerSubscription returns a channel of ticker rows for symbols. All callers
-share one upstream connection via the ticker feed. The caller's ctx detaches it
-from the shared feed; the upstream keeps running for the others.
+NewTickerSubscription returns a channel of ticker rows for symbols.
 */
 func NewTickerSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TickerUpdate {
-	return tickerFeed.subscribe(ctx, subscriptionSpec{symbols: symbols})
-}
+	out := make(chan *TickerUpdate, 128)
 
-// dialTicker opens one upstream connection to the public ticker channel.
-func dialTicker(
-	ctx context.Context, symbols []string,
-) <-chan *TickerUpdate {
-	ws, err := public.NewWebSocket(ctx)
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-	if err != nil {
+	if err := client.Send(public.TickerChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: TickerParams{
+			Channel:  public.TickerChannel,
+			Symbol:   symbols,
+			Snapshot: true,
+		},
+	}); err != nil {
 		errnie.Error(err)
 		return closed[TickerUpdate]()
 	}
 
-	if err := ws.Connect(public.WebSocketURL, public.TickerChannel); err != nil {
-		errnie.Error(err)
-		return closed[TickerUpdate]()
-	}
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.TickerChannel)
 
-	for _, batch := range symbolBatches(symbols) {
-		if err := ws.Send(public.TickerChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: TickerParams{
-				Channel:  public.TickerChannel,
-				Symbol:   batch,
-				Snapshot: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-			return closed[TickerUpdate]()
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	stream, err := public.Stream[TickerUpdate](ws, public.TickerChannel)
-
-	if err != nil {
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[TickerUpdate]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var ticker TickerUpdate
+
+		if err := sonic.Unmarshal(msg.Data, &ticker); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &ticker
 	}
 
-	return stream
+	return out
 }

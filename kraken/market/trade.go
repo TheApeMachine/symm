@@ -39,10 +39,7 @@ type TradeUpdate struct {
 }
 
 /*
-NewTradeSubscription returns a channel of executed trades for symbols. All
-callers share one upstream connection via the trade feed, so the connection count
-stays flat no matter how many signals subscribe. The caller's ctx detaches it
-from the shared feed; the upstream keeps running for the others.
+NewTradeSubscription returns a channel of executed trades for symbols.
 */
 func NewTradeSubscription(
 	ctx context.Context, symbols ...string,

@@ -3,7 +3,6 @@ package causal
 import (
 	"math"
 
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
