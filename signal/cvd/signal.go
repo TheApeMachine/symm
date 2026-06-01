@@ -6,9 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -86,9 +87,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", 10*time.Millisecond,
-	)
+	for _, channel := range []string{"trade", "measurements"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	return signal
 }
@@ -171,8 +173,36 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	for trade := range market.NewTradeSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
-		signal.observe(*trade)
+	for message := range signal.subscribers["trade"].Incoming {
+		if message == nil || message.Value == nil {
+			continue
+		}
+
+		envelope, ok := message.Value.(public.SocketMessage)
+
+		if !ok {
+			continue
+		}
+
+		rows, err := envelope.SplitDataRows()
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		for _, row := range rows {
+			trade, err := market.DecodeTrade(row)
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			signal.observe(trade)
+		}
 	}
 
 	return signal.ctx.Err()

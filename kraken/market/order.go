@@ -133,13 +133,11 @@ func NewOrderSubscription(
 	go func() {
 		defer close(out)
 
-		client, err := kraken.NewClient(ctx)
-
-		if err != nil {
+		client := errnie.Does(func() (*kraken.Client, error) {
+			return kraken.NewClient(ctx)
+		}).Or(func(err error) {
 			errnie.Error(err)
-
-			return
-		}
+		}).Value()
 
 		if err := client.Send(public.Level3Channel, public.Subscription{
 			Method: public.MethodSubscribe,
@@ -156,15 +154,17 @@ func NewOrderSubscription(
 			return
 		}
 
-		stream, err := client.Stream(public.Level3Channel)
+		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			stream, err := client.Stream(public.Level3Channel)
 
-		if err != nil {
+			if err != nil {
+				return nil, err
+			}
+
+			return stream, nil
+		}).Or(func(err error) {
 			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range stream {
+		}).Value() {
 			if msg == nil {
 				continue
 			}

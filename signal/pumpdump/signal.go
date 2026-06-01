@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
@@ -41,23 +41,25 @@ available on the trade tape this signal consumes, so it is left to the book-driv
 signals; here ignition is read from executed volume and price alone.
 */
 type Signal struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	pool       *qpool.Q
-	broadcasts map[string]*qpool.BroadcastGroup
-	symbols    sync.Map
-	categories map[string]perspectives.CategoryType
-	floor      *adaptive.SNRField
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	symbols     sync.Map
+	categories  map[string]perspectives.CategoryType
+	floor       *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		pool:       pool,
-		broadcasts: make(map[string]*qpool.BroadcastGroup),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
 		categories: map[string]perspectives.CategoryType{
 			"faded_exhaustion":   perspectives.CategoryFadedExhaustion,
 			"organic_trend":      perspectives.CategoryOrganicTrend,
@@ -67,9 +69,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", 10*time.Millisecond,
-	)
+	for _, channel := range []string{"trade", "measurements"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	return signal
 }
@@ -123,10 +126,19 @@ func (state *pumpState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	for trade := range market.NewTradeSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
-		if trade != nil {
-			signal.observe(*trade)
+	for message := range signal.subscribers["trade"].Incoming {
+		if message == nil || message.Value == nil {
+			continue
 		}
+
+		var trade market.TradeUpdate
+
+		if err := sonic.Unmarshal(message.Value.([]byte), &trade); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		signal.observe(trade)
 	}
 
 	return signal.ctx.Err()

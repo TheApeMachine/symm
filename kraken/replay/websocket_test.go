@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 	krakenreplay "github.com/theapemachine/symm/kraken/replay"
 )
@@ -36,15 +38,16 @@ func TestSocketMessageSplitDataRows(t *testing.T) {
 func TestWebSocketSendOrdersThroughPaper(t *testing.T) {
 	convey.Convey("Given a replay websocket", t, func() {
 		ctx := context.Background()
-		ws, err := krakenreplay.NewWebSocket(ctx)
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		ws, err := krakenreplay.NewWebSocket(ctx, pool, strings.NewReader(""))
 
 		convey.So(err, convey.ShouldBeNil)
 
 		err = ws.Connect(public.WebSocketAuthURL, public.ExecutionsChannel)
 		convey.So(err, convey.ShouldBeNil)
 
-		stream, err := ws.Stream(public.ExecutionsChannel)
-		convey.So(err, convey.ShouldBeNil)
+		subscriber := pool.CreateBroadcastGroup(public.ExecutionsChannel, 10*time.Millisecond).
+			Subscribe("test", 128)
 
 		err = ws.Send(public.OrdersChannel, map[string]any{
 			"method": "add_order",
@@ -61,38 +64,49 @@ func TestWebSocketSendOrdersThroughPaper(t *testing.T) {
 		convey.Convey("It should route add_order through paper execution", func() {
 			convey.So(err, convey.ShouldBeNil)
 
-			message, ok := <-stream
+			message, ok := <-subscriber.Incoming
 			convey.So(ok, convey.ShouldBeTrue)
-			convey.So(message.Channel, convey.ShouldEqual, public.ExecutionsChannel)
+			convey.So(message, convey.ShouldNotBeNil)
+
+			envelope, ok := message.Value.(public.SocketMessage)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(envelope.Channel, convey.ShouldEqual, public.ExecutionsChannel)
 		})
 	})
 }
 
-func TestWebSocketStreamReplayCapture(t *testing.T) {
+func TestWebSocketTickReplayCapture(t *testing.T) {
 	convey.Convey("Given a replay capture", t, func() {
 		path := filepath.Join(t.TempDir(), "capture.jsonl")
 		line := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/EUR","side":"buy","price":1,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"2026-05-31T00:00:00Z"}]}` + "\n")
 		err := os.WriteFile(path, line, 0o644)
 		convey.So(err, convey.ShouldBeNil)
 
-		krakenreplay.ActiveCapture().Reset()
-
-		viper.Set("trading.replay.file", path)
-		viper.Set("trading.replay.loop", false)
-		viper.Set("trading.replay.pace", 0)
+		file, err := os.Open(path)
+		convey.So(err, convey.ShouldBeNil)
 
 		ctx := context.Background()
-		ws, err := krakenreplay.NewWebSocket(ctx)
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		ws, err := krakenreplay.NewWebSocket(ctx, pool, file)
 		convey.So(err, convey.ShouldBeNil)
 
-		stream, err := ws.Stream(public.TradesChannel)
-		convey.So(err, convey.ShouldBeNil)
+		subscriber := pool.CreateBroadcastGroup(public.TradesChannel, 10*time.Millisecond).
+			Subscribe("test", 128)
 
-		message, ok := <-stream
-		convey.Convey("It should emit typed trade rows", func() {
+		go func() {
+			_ = ws.Tick()
+		}()
+
+		message, ok := <-subscriber.Incoming
+
+		convey.Convey("It should broadcast trade frames", func() {
 			convey.So(ok, convey.ShouldBeTrue)
-			convey.So(message.Type, convey.ShouldEqual, "update")
-			convey.So(string(message.Data), convey.ShouldContainSubstring, `"symbol":"BTC/EUR"`)
+			convey.So(message, convey.ShouldNotBeNil)
+
+			envelope, ok := message.Value.(public.SocketMessage)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(envelope.Type, convey.ShouldEqual, "update")
+			convey.So(string(envelope.Data), convey.ShouldContainSubstring, `"symbol":"BTC/EUR"`)
 		})
 	})
 }

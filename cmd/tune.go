@@ -37,12 +37,15 @@ var tuneCmd = &cobra.Command{
 			return err
 		}
 
-		sessionCtx, sessionCancel, err := startTuneSession(cmd.Context())
+		path, err := tuneReplayPath()
 
 		if err != nil {
 			return err
 		}
 
+		applyReplaySymbols()
+
+		sessionCtx, sessionCancel := context.WithCancel(cmd.Context())
 		defer sessionCancel()
 
 		pool := errnie.Does(func() (*qpool.Q, error) {
@@ -57,11 +60,26 @@ var tuneCmd = &cobra.Command{
 			errnie.Error(err)
 		}).Value()
 
+		file, err := os.Open(path)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		defer file.Close()
+
+		replaySocket, err := krakenreplay.NewWebSocket(sessionCtx, pool, file)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
 		tuner := optimizer.NewTuner(sessionCtx, pool)
 		trader := optimizer.NewTrader(sessionCtx, pool)
 		tuner.BindTrader(trader)
 
 		engine.AddSystems(
+			replaySocket,
 			causal.NewSignal(sessionCtx, pool),
 			correlation.NewSignal(sessionCtx, pool),
 			cvd.NewSignal(sessionCtx, pool),
@@ -110,30 +128,14 @@ func applyTuneOverrides() error {
 	return nil
 }
 
-func startTuneSession(
-	parent context.Context,
-) (context.Context, context.CancelFunc, error) {
-	krakenreplay.ActiveCapture().Reset()
-
+func tuneReplayPath() (string, error) {
 	path := strings.TrimSpace(viper.GetString("trading.replay.file"))
 
 	if path == "" {
-		return nil, nil, fmt.Errorf("tune: trading.replay.file is required")
+		return "", fmt.Errorf("tune: trading.replay.file is required")
 	}
 
-	applyReplaySymbols()
-
-	sessionCtx, sessionCancel := context.WithCancel(parent)
-
-	go func() {
-		select {
-		case <-krakenreplay.ActiveCapture().Done():
-			sessionCancel()
-		case <-sessionCtx.Done():
-		}
-	}()
-
-	return sessionCtx, sessionCancel, nil
+	return path, nil
 }
 
 func applyReplaySymbols() {

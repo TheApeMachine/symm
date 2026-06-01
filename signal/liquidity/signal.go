@@ -5,9 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -52,43 +53,56 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", 10*time.Millisecond,
-	)
+	for _, channel := range []string{"ticker", "measurements"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	return signal
 }
 
-func resolvedLiquiditySymbols() []string {
-	symbols := viper.GetStringSlice("market.symbols")
-
-	if len(symbols) > 0 {
-		return symbols
-	}
-
-	defaults := viper.GetStringSlice("market.default_symbols")
-
-	if len(defaults) > 0 {
-		return defaults
-	}
-
-	return []string{"BTC/EUR"}
-}
-
 func (signal *Signal) Tick() error {
-	for row := range market.NewTickerSubscription(signal.ctx, resolvedLiquiditySymbols()...) {
-		if row == nil || row.Last <= 0 {
+	for message := range signal.subscribers["ticker"].Incoming {
+		if message == nil || message.Value == nil {
 			continue
 		}
 
-		measurement, ok := signal.measure(*row)
+		envelope, ok := message.Value.(public.SocketMessage)
 
 		if !ok {
 			continue
 		}
 
-		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		rows, err := envelope.SplitDataRows()
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		for _, row := range rows {
+			ticker, err := market.DecodeTicker(row)
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			if ticker.Last <= 0 {
+				continue
+			}
+
+			measurement, ok := signal.measure(ticker)
+
+			if !ok {
+				continue
+			}
+
+			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
 	}
 
 	return signal.ctx.Err()

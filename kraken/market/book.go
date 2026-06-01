@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -222,61 +220,19 @@ func (book *Book) levelsFromMap(byPrice map[float64]BookLevel, askSide bool) []B
 }
 
 /*
-NewBookSubscription returns a channel of L2 book snapshots and updates for symbols
-at depth.
+NewBookSubscription subscribes to the book channel for symbols at depth.
 */
 func NewBookSubscription(
 	ctx context.Context, depth int, symbols ...string,
-) <-chan *Book {
+) Feed {
 	if depth <= 0 {
 		depth = 10
 	}
 
-	out := make(chan *Book, 128)
-
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	if err := client.Send(public.BookChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: BookParams{
-			Channel:  public.BookChannel,
-			Symbol:   symbols,
-			Depth:    depth,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-	}
-
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-		stream, err := client.Stream(public.BookChannel)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var book Book
-
-		if err := sonic.Unmarshal(msg.Data, &book); err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		book.SetEnvelopeType(msg.Type)
-		out <- &book
-	}
-
-	return out
+	return OpenFeed(ctx, public.BookChannel, BookParams{
+		Channel:  public.BookChannel,
+		Symbol:   symbols,
+		Depth:    depth,
+		Snapshot: true,
+	})
 }

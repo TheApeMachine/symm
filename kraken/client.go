@@ -2,6 +2,7 @@ package kraken
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 
@@ -87,21 +88,15 @@ func newClientBackends(
 			return nil, nil, nil, err
 		}
 
-		socket, err := replay.NewWebSocket(ctx)
+		desk, err := paper.NewWebSocket(ctx)
 
 		if err != nil {
 			return nil, nil, nil, err
 		}
 
-		return rest, socket, socket, nil
+		return rest, nil, desk, nil
 	default:
 		rest, err := paper.NewRest(ctx)
-
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		market, err := public.NewWebSocket(ctx)
 
 		if err != nil {
 			return nil, nil, nil, err
@@ -113,34 +108,8 @@ func newClientBackends(
 			return nil, nil, nil, err
 		}
 
-		return rest, market, desk, nil
+		return rest, nil, desk, nil
 	}
-}
-
-func (client *Client) Stream(channel string) (<-chan *public.SocketMessage, error) {
-	if err := client.ensureConnected(channel); err != nil {
-		return nil, err
-	}
-
-	return client.socketFor(channel).Stream(channel)
-}
-
-func (client *Client) Send(channel string, message any) error {
-	if err := client.ensureConnected(channel); err != nil {
-		return err
-	}
-
-	return errnie.Error(client.socketFor(channel).Send(channel, message))
-}
-
-func (client *Client) Request(message fiber.Map, model any) error {
-	return errnie.Error(client.rest.Post(client.ctx, message, model))
-}
-
-func (client *Client) Close() error {
-	client.cancel()
-
-	return errnie.Error(client.ctx.Err())
 }
 
 func (client *Client) socketFor(channel string) public.WebSocketClient {
@@ -155,6 +124,44 @@ func (client *Client) socketFor(channel string) public.WebSocketClient {
 	}
 
 	return client.market
+}
+
+func (client *Client) Stream(channel string) (<-chan *public.SocketMessage, error) {
+	socket := client.socketFor(channel)
+
+	if socket == nil {
+		return nil, fmt.Errorf("channel %s not available", channel)
+	}
+
+	if err := client.ensureConnected(channel); err != nil {
+		return nil, err
+	}
+
+	return socket.Stream(channel)
+}
+
+func (client *Client) Send(channel string, message any) error {
+	socket := client.socketFor(channel)
+
+	if socket == nil {
+		return fmt.Errorf("channel %s not available", channel)
+	}
+
+	if err := client.ensureConnected(channel); err != nil {
+		return err
+	}
+
+	return errnie.Error(socket.Send(channel, message))
+}
+
+func (client *Client) Request(message fiber.Map, model any) error {
+	return errnie.Error(client.rest.Post(client.ctx, message, model))
+}
+
+func (client *Client) Close() error {
+	client.cancel()
+
+	return errnie.Error(client.ctx.Err())
 }
 
 func (client *Client) authSocket() public.WebSocketClient {
@@ -186,13 +193,19 @@ func (client *Client) authSocket() public.WebSocketClient {
 }
 
 func (client *Client) ensureConnected(channel string) error {
+	socket := client.socketFor(channel)
+
+	if socket == nil {
+		return fmt.Errorf("channel %s not available", channel)
+	}
+
 	endpoint := public.WebSocketURL
 
 	if deskChannel(channel) {
 		endpoint = public.WebSocketAuthURL
 	}
 
-	return client.socketFor(channel).Connect(endpoint, channel)
+	return socket.Connect(endpoint, channel)
 }
 
 func deskChannel(channel string) bool {

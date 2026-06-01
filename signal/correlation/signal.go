@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -115,9 +115,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		}
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", 10*time.Millisecond,
-	)
+	for _, channel := range []string{"trade", "measurements"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	return signal
 }
@@ -192,7 +193,6 @@ batch tick. Per-trade processing would restamp fingerprints on every print;
 correlationBatchInterval batches enough cross-section activity to be stable.
 */
 func (signal *Signal) Tick() error {
-	trades := market.NewTradeSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...)
 	batch := time.NewTicker(correlationBatchInterval)
 	defer batch.Stop()
 
@@ -202,14 +202,37 @@ func (signal *Signal) Tick() error {
 		select {
 		case <-signal.ctx.Done():
 			return signal.ctx.Err()
-		case trade, ok := <-trades:
-			if !ok {
-				trades = nil
+		case message := <-signal.subscribers["trade"].Incoming:
+			if message == nil || message.Value == nil {
 				continue
 			}
 
-			if trade != nil && trade.Price > 0 {
-				latest[trade.Symbol] = trade.Price
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			for _, row := range rows {
+				trade, err := market.DecodeTrade(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				if trade.Price > 0 {
+					latest[trade.Symbol] = trade.Price
+				}
 			}
 		case <-batch.C:
 			if len(latest) == 0 {

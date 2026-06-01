@@ -4,9 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -39,30 +40,47 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", 10*time.Millisecond,
-	)
+	for _, channel := range []string{"trade", "ticker", "book", "measurements"} {
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+	}
 
 	return signal
 }
 
 func (signal *Signal) Tick() error {
-	symbols := viper.GetViper().GetStringSlice("market.symbols")
-	trades := market.NewTradeSubscription(signal.ctx, symbols...)
-	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
-	books := market.NewBookSubscription(signal.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
-
 	for {
 		select {
 		case <-signal.ctx.Done():
 			return signal.ctx.Err()
-		case trade, ok := <-trades:
-			if !ok {
-				trades = nil
+		case message := <-signal.subscribers["trade"].Incoming:
+			if message == nil || message.Value == nil {
 				continue
 			}
 
-			if trade != nil {
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			for _, row := range rows {
+				trade, err := market.DecodeTrade(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
 				sign := -1.0
 
 				if trade.Side == "buy" {
@@ -72,24 +90,66 @@ func (signal *Signal) Tick() error {
 				signal.history.observe(trade.Symbol, 0, 0, 0, 0, sign, 0, trade.Price)
 				signal.emit(trade.Symbol)
 			}
-		case row, ok := <-ticks:
-			if !ok {
-				ticks = nil
+		case message := <-signal.subscribers["ticker"].Incoming:
+			if message == nil || message.Value == nil {
 				continue
 			}
 
-			if row != nil {
-				signal.history.observe(row.Symbol, 0, 0, 0, 0, 0, 0, row.Last)
-				signal.emit(row.Symbol)
-			}
-		case delta, ok := <-books:
+			envelope, ok := message.Value.(public.SocketMessage)
+
 			if !ok {
-				books = nil
 				continue
 			}
 
-			if delta != nil {
-				signal.observeBook(*delta)
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			for _, row := range rows {
+				ticker, err := market.DecodeTicker(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				signal.history.observe(ticker.Symbol, 0, 0, 0, 0, 0, 0, ticker.Last)
+				signal.emit(ticker.Symbol)
+			}
+		case message := <-signal.subscribers["book"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			for _, row := range rows {
+				delta, err := market.DecodeBook(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				signal.observeBook(delta)
 				signal.emit(delta.Symbol)
 			}
 		}

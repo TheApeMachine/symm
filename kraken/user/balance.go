@@ -2,20 +2,18 @@ package user
 
 import (
 	"context"
-	"sync"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 const balanceSnapshot = "snapshot"
 
 /*
-BalanceTokenSource supplies short-lived authenticated WebSocket tokens.
+TokenSource supplies short-lived authenticated WebSocket tokens for balances.
 */
-type BalanceTokenSource interface {
+type TokenSource interface {
 	Token(context.Context) (string, error)
 }
 
@@ -73,32 +71,12 @@ func (balance *Balance) IsSnapshot() bool {
 	return balance.EnvelopeType == balanceSnapshot
 }
 
-var (
-	balanceTokenSourceMu sync.RWMutex
-	balanceTokenSource   BalanceTokenSource
-)
-
-func SetBalanceTokenSource(source BalanceTokenSource) {
-	balanceTokenSourceMu.Lock()
-	defer balanceTokenSourceMu.Unlock()
-
-	balanceTokenSource = source
-}
-
-func BalanceAvailable() bool {
-	balanceTokenSourceMu.RLock()
-	defer balanceTokenSourceMu.RUnlock()
-
-	return balanceTokenSource != nil
-}
-
-func NewBalanceSubscription(ctx context.Context) <-chan *Balance {
-	balanceTokenSourceMu.RLock()
-	source := balanceTokenSource
-	balanceTokenSourceMu.RUnlock()
-
+/*
+NewBalanceSubscription subscribes to the balances channel using source for auth.
+*/
+func NewBalanceSubscription(ctx context.Context, source TokenSource) market.Feed {
 	if source == nil {
-		return nil
+		return market.Feed{}
 	}
 
 	token, err := source.Token(ctx)
@@ -106,61 +84,12 @@ func NewBalanceSubscription(ctx context.Context) <-chan *Balance {
 	if err != nil {
 		errnie.Error(err)
 
-		return nil
+		return market.Feed{}
 	}
 
-	out := make(chan *Balance, 128)
-
-	go func() {
-		defer close(out)
-
-		client, err := kraken.NewClient(ctx)
-
-		if err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		if err := client.Send(public.BalancesChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: BalanceParams{
-				Channel:  public.BalancesChannel,
-				Snapshot: true,
-				Token:    token,
-			},
-		}); err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		stream, err := client.Stream(public.BalancesChannel)
-
-		if err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range stream {
-			if msg == nil {
-				continue
-			}
-
-			var rows []Balance
-
-			if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			for index := range rows {
-				rows[index].SetEnvelopeType(msg.Type)
-				out <- &rows[index]
-			}
-		}
-	}()
-
-	return out
+	return market.OpenFeed(ctx, public.BalancesChannel, BalanceParams{
+		Channel:  public.BalancesChannel,
+		Snapshot: true,
+		Token:    token,
+	})
 }

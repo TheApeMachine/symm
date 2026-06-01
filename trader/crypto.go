@@ -5,10 +5,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -24,18 +26,28 @@ type Crypto struct {
 	ui          *qpool.BroadcastGroup
 	actions     *qpool.Subscriber
 	desk        *broker.Desk
-	balance     <-chan *user.Balance
+	balance     market.Feed
 	paperWallet float64
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
-	var balance <-chan *user.Balance
+	balance := market.Feed{}
 
 	if viper.GetString("trading.model") == "live" {
-		bindBalanceToken(ctx)
-		balance = user.NewBalanceSubscription(ctx)
+		apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
+		apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
+
+		if apiKey != "" && apiSecret != "" {
+			provider := errnie.Does(func() (*private.TokenProvider, error) {
+				return private.NewTokenProvider(ctx, apiKey, apiSecret)
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value()
+
+			balance = user.NewBalanceSubscription(ctx, provider)
+		}
 	}
 
 	crypto := &Crypto{
@@ -57,30 +69,11 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 	return crypto
 }
 
-func bindBalanceToken(ctx context.Context) {
-	apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
-	apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
-
-	if apiKey == "" || apiSecret == "" {
-		return
-	}
-
-	provider, err := private.NewTokenProvider(ctx, apiKey, apiSecret)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return
-	}
-
-	user.SetBalanceTokenSource(provider)
-}
+const paperWalletInterval = time.Second
 
 func (crypto *Crypto) Tick() error {
-	if crypto.balance == nil {
-		crypto.sendWallet(crypto.paperWallet, map[string]float64{})
-
-		return crypto.tickActions()
+	if crypto.balance.Stream == nil {
+		return crypto.tickPaper()
 	}
 
 	cash := 0.0
@@ -107,21 +100,32 @@ func (crypto *Crypto) Tick() error {
 			}
 
 			errnie.Error(crypto.desk.AddOrder(action))
-		case balanceRow, ok := <-crypto.balance:
+		case message, ok := <-crypto.balance.Stream:
 			if !ok {
-				crypto.balance = nil
+				crypto.balance.Stream = nil
 
 				continue
 			}
 
-			if balanceRow == nil {
+			if message == nil {
 				continue
 			}
 
-			if isQuoteAsset(balanceRow.Asset, quote) {
-				cash = balanceRow.Holdings
-			} else {
-				inventory[balanceRow.Asset] = balanceRow.Holdings
+			var rows []user.Balance
+
+			if err := sonic.Unmarshal(message.Data, &rows); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			for index := range rows {
+				rows[index].SetEnvelopeType(message.Type)
+
+				if isQuoteAsset(rows[index].Asset, quote) {
+					cash = rows[index].Holdings
+				} else {
+					inventory[rows[index].Asset] = rows[index].Holdings
+				}
 			}
 
 			crypto.sendWallet(cash, inventory)
@@ -129,22 +133,36 @@ func (crypto *Crypto) Tick() error {
 	}
 }
 
-func (crypto *Crypto) tickActions() error {
-	for row := range crypto.actions.Incoming {
-		if row == nil {
-			continue
+func (crypto *Crypto) tickPaper() error {
+	ticker := time.NewTicker(paperWalletInterval)
+	defer ticker.Stop()
+
+	crypto.sendWallet(crypto.paperWallet, map[string]float64{})
+
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			return crypto.ctx.Err()
+		case <-ticker.C:
+			crypto.sendWallet(crypto.paperWallet, map[string]float64{})
+		case row, ok := <-crypto.actions.Incoming:
+			if !ok {
+				return nil
+			}
+
+			if row == nil {
+				continue
+			}
+
+			action, actionOK := row.Value.(perspectives.Action)
+
+			if !actionOK {
+				continue
+			}
+
+			errnie.Error(crypto.desk.AddOrder(action))
 		}
-
-		action, actionOK := row.Value.(perspectives.Action)
-
-		if !actionOK {
-			continue
-		}
-
-		errnie.Error(crypto.desk.AddOrder(action))
 	}
-
-	return nil
 }
 
 func (crypto *Crypto) sendWallet(cash float64, inventory map[string]float64) {

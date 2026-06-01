@@ -4,9 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -39,53 +36,14 @@ type TradeUpdate struct {
 }
 
 /*
-NewTradeSubscription returns a channel of executed trades for symbols.
+NewTradeSubscription subscribes to the trade channel for symbols.
 */
 func NewTradeSubscription(
 	ctx context.Context, symbols ...string,
-) <-chan *TradeUpdate {
-	out := make(chan *TradeUpdate, 128)
-
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	if err := client.Send(public.TradesChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: TradeParams{
-			Channel:  public.TradesChannel,
-			Symbol:   symbols,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-	}
-
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-		stream, err := client.Stream(public.TradesChannel)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var trade TradeUpdate
-		if err := sonic.Unmarshal(msg.Data, &trade); err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		out <- &trade
-	}
-
-	return out
+) Feed {
+	return OpenFeed(ctx, public.TradesChannel, TradeParams{
+		Channel:  public.TradesChannel,
+		Symbol:   symbols,
+		Snapshot: true,
+	})
 }

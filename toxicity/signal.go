@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
@@ -17,6 +19,7 @@ type Toxicity struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	pool         *qpool.Q
+	subscribers  map[string]*qpool.Subscriber
 	tracker      *Tracker
 	measurements *qpool.BroadcastGroup
 	l3Active     bool
@@ -33,6 +36,12 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 		l3Active: market.Level3Available(),
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	tox.subscribers = make(map[string]*qpool.Subscriber)
+
+	for _, channel := range []string{"trade", "ticker", "book"} {
+		broadcast := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		tox.subscribers[channel] = broadcast.Subscribe(channel, 128)
+	}
 
 	return tox
 }
@@ -42,20 +51,16 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	symbols := viper.GetStringSlice("market.symbols")
-	depthLevels := viper.GetInt("market.book_depth_levels")
-
-	if depthLevels <= 0 {
-		depthLevels = 10
-	}
-
-	trades := market.NewTradeSubscription(tox.ctx, symbols...)
-	ticks := market.NewTickerSubscription(tox.ctx, symbols...)
-	books := market.NewBookSubscription(tox.ctx, depthLevels, symbols...)
-
 	var level3 <-chan *market.Level3Update
 
 	if tox.l3Active {
+		symbols := viper.GetStringSlice("market.symbols")
+		depthLevels := viper.GetInt("market.book_depth_levels")
+
+		if depthLevels <= 0 {
+			depthLevels = 10
+		}
+
 		level3 = market.NewLevel3Subscription(tox.ctx, depthLevels, symbols...)
 	}
 
@@ -63,37 +68,99 @@ func (tox *Toxicity) Tick() error {
 		select {
 		case <-tox.ctx.Done():
 			return tox.ctx.Err()
-		case trade, ok := <-trades:
+		case message := <-tox.subscribers["trade"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
 			if !ok {
-				trades = nil
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
 
 				continue
 			}
 
-			if trade != nil {
-				tox.observeTrade(*trade)
+			for _, row := range rows {
+				trade, err := market.DecodeTrade(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				tox.observeTrade(trade)
 			}
-		case row, ok := <-ticks:
+		case message := <-tox.subscribers["ticker"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
 			if !ok {
-				ticks = nil
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
 
 				continue
 			}
 
-			if row != nil {
-				tox.tracker.ObserveMid(row.Symbol, market.Pair{}, midOf(*row))
-				tox.publishMeasurement(row.Symbol, row.Last)
+			for _, row := range rows {
+				ticker, err := market.DecodeTicker(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
+				tox.publishMeasurement(ticker.Symbol, ticker.Last)
 			}
-		case update, ok := <-books:
+		case message := <-tox.subscribers["book"].Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
 			if !ok {
-				books = nil
+				continue
+			}
+
+			rows, err := envelope.SplitDataRows()
+
+			if err != nil {
+				errnie.Error(err)
 
 				continue
 			}
 
-			if update != nil && !tox.l3Active {
-				tox.observeBook(*update)
-				tox.publishMeasurement(update.Symbol, 0)
+			for _, row := range rows {
+				update, err := market.DecodeBook(row)
+
+				if err != nil {
+					errnie.Error(err)
+
+					continue
+				}
+
+				if !tox.l3Active {
+					tox.observeBook(update)
+					tox.publishMeasurement(update.Symbol, 0)
+				}
 			}
 		case update, ok := <-level3:
 			if !ok {

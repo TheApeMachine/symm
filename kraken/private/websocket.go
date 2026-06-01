@@ -7,22 +7,26 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
-WebSocket is the authenticated Kraken WebSocket v2 client. It delegates dial,
-read, and write to public.WebSocket and injects a session token on every frame.
+WebSocket is the authenticated Kraken WebSocket v2 client.
 */
 type WebSocket struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	rest       *Rest
-	socket     *public.WebSocket
-	mu         sync.Mutex
-	token      string
-	tokenUntil time.Time
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	rest        *Rest
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	mu          sync.Mutex
+	conns       map[string]*websocket.Conn
+	token       string
+	tokenUntil  time.Time
 }
 
 func NewWebSocket(ctx context.Context, apiKey, apiSecret string) (*WebSocket, error) {
@@ -42,24 +46,18 @@ func NewWebSocketFromRest(ctx context.Context, rest *Rest) (*WebSocket, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	socket := errnie.Does(func() (*public.WebSocket, error) {
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
 	ws := &WebSocket{
 		ctx:    ctx,
 		cancel: cancel,
 		rest:   rest,
-		socket: socket,
+		conns:  make(map[string]*websocket.Conn),
 	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    ws.ctx,
 		"cancel": ws.cancel,
 		"rest":   ws.rest,
-		"socket": ws.socket,
+		"conns":  ws.conns,
 	}))
 }
 
@@ -68,7 +66,22 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 		endpoint = public.WebSocketAuthURL
 	}
 
-	return ws.socket.Connect(endpoint, channel)
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	if _, ok := ws.conns[channel]; ok {
+		return nil
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	ws.conns[channel] = conn
+
+	return nil
 }
 
 func (ws *WebSocket) Send(channel string, message any) error {
@@ -98,15 +111,46 @@ func (ws *WebSocket) Send(channel string, message any) error {
 
 	params["token"] = token
 
-	return ws.socket.Send(channel, frame)
+	ws.mu.Lock()
+	conn := ws.conns[channel]
+	ws.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("channel %s not found", channel)
+	}
+
+	return errnie.Error(conn.WriteJSON(frame))
 }
 
-func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
-	return ws.socket.Stream(channel)
+func (ws *WebSocket) Tick() error {
+	for {
+		select {
+		case <-ws.ctx.Done():
+			return ws.ctx.Err()
+		case message := <-ws.subscribers[public.TradesChannel].Incoming:
+			if message == nil {
+				continue
+			}
+
+			ws.broadcasts[message.Channel].Send(&qpool.QValue[any]{Value: message})
+		}
+	}
 }
 
 func (ws *WebSocket) Close(channel string) error {
-	return ws.socket.Close(channel)
+	ws.mu.Lock()
+	conn, ok := ws.conns[channel]
+
+	if !ok {
+		ws.mu.Unlock()
+
+		return fmt.Errorf("channel %s not found", channel)
+	}
+
+	delete(ws.conns, channel)
+	ws.mu.Unlock()
+
+	return errnie.Error(conn.Close())
 }
 
 func (ws *WebSocket) Token(ctx context.Context) (string, error) {

@@ -41,8 +41,7 @@ type CandleUpdate struct {
 }
 
 /*
-NewCandleSubscription opens the ohlc channel at intervalMinutes and forwards rows to recv.
-It blocks until ctx is canceled or the socket closes.
+NewCandleSubscription opens the ohlc channel at intervalMinutes and forwards rows.
 */
 func NewCandleSubscription(
 	ctx context.Context, intervalMinutes int, symbols ...string,
@@ -53,51 +52,58 @@ func NewCandleSubscription(
 
 	out := make(chan *CandleUpdate, 128)
 
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	go func() {
+		defer close(out)
 
-	if err := client.Send(public.CandlesChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: CandleParams{
-			Channel:  public.CandlesChannel,
-			Symbol:   symbols,
-			Interval: intervalMinutes,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		close(out)
-
-		return out
-	}
-
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-		stream, err := client.Stream(public.CandlesChannel)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var candle CandleUpdate
-
-		if err := sonic.Unmarshal(msg.Data, &candle); err != nil {
+		client := errnie.Does(func() (*kraken.Client, error) {
+			return kraken.NewClient(ctx)
+		}).Or(func(err error) {
 			errnie.Error(err)
-			continue
+		}).Value()
+
+		if err := client.Send(public.CandlesChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: CandleParams{
+				Channel:  public.CandlesChannel,
+				Symbol:   symbols,
+				Interval: intervalMinutes,
+				Snapshot: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+
+			return
 		}
 
-		out <- &candle
-	}
+		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			stream, err := client.Stream(public.CandlesChannel)
+
+			if err != nil {
+				return nil, err
+			}
+
+			return stream, nil
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value() {
+			if msg == nil {
+				continue
+			}
+
+			var candle CandleUpdate
+
+			if err := sonic.Unmarshal(msg.Data, &candle); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case out <- &candle:
+			}
+		}
+	}()
 
 	return out
 }

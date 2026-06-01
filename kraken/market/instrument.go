@@ -73,47 +73,56 @@ It blocks until ctx is canceled or the socket closes.
 func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
 	out := make(chan *InstrumentUpdate, 128)
 
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	go func() {
+		defer close(out)
 
-	if err := client.Send(public.InstrumentsChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: InstrumentParams{
-			Channel:  public.InstrumentsChannel,
-			Snapshot: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-		stream, err := client.Stream(public.InstrumentsChannel)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var instrument InstrumentUpdate
-
-		if err := sonic.Unmarshal(msg.Data, &instrument); err != nil {
+		client := errnie.Does(func() (*kraken.Client, error) {
+			return kraken.NewClient(ctx)
+		}).Or(func(err error) {
 			errnie.Error(err)
-			continue
+		}).Value()
+
+		if err := client.Send(public.InstrumentsChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: InstrumentParams{
+				Channel:  public.InstrumentsChannel,
+				Snapshot: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+
+			return
 		}
 
-		out <- &instrument
-	}
+		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			stream, err := client.Stream(public.InstrumentsChannel)
+
+			if err != nil {
+				return nil, err
+			}
+
+			return stream, nil
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value() {
+			if msg == nil {
+				continue
+			}
+
+			var instrument InstrumentUpdate
+
+			if err := sonic.Unmarshal(msg.Data, &instrument); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case out <- &instrument:
+			}
+		}
+	}()
 
 	return out
 }
