@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -17,6 +18,12 @@ import (
 
 var socket *WebSocket
 var socketOnce sync.Once
+
+type WebSocketClient interface {
+	Connect(endpoint EndpointType, channel string) error
+	Tick() error
+	Close() error
+}
 
 type SocketMessage struct {
 	Channel string          `json:"channel"`
@@ -33,9 +40,10 @@ type WebSocket struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	recorder    io.Writer
+	pairs       []string
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q) (*WebSocket, error) {
+func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
@@ -59,21 +67,29 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) (*WebSocket, error) {
 		recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
 
 		if err != nil {
-			return nil, err
+			errnie.Error(err)
 		}
 
 		socket.recorder = bufio.NewWriter(recorder)
 	}
 
-	return socket, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    socket.ctx,
-		"cancel": socket.cancel,
-		"pool":   socket.pool,
-	}))
+	errnie.Error(socket.Connect(WebSocketURL, "kraken:public"))
+
+	fmt.Println("kraken.public.websocket.NewWebSocket", "subscribing to", "instrument")
+
+	socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "instrument",
+			"snapshot": true,
+		},
+	}})
+
+	return socket
 }
 
 func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
-	errnie.Debug("kraken.public.websocket.Connect", endpoint, channel)
+	fmt.Println("kraken.public.websocket.Connect", endpoint, channel)
 
 	if endpoint == "" {
 		endpoint = WebSocketURL
@@ -116,7 +132,9 @@ func (ws *WebSocket) Tick() error {
 			ws.recorder.Write(append(message.Data, []byte("\n")...))
 		}
 
-		ws.broadcasts[message.Channel].Send(&qpool.QValue[any]{Value: message})
+		if ch := ws.broadcasts[message.Channel]; ch != nil {
+			ch.Send(&qpool.QValue[any]{Value: message})
+		}
 	}
 }
 

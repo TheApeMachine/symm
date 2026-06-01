@@ -2,62 +2,59 @@ package private
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-/*
-WebSocket is the authenticated Kraken WebSocket v2 client.
-*/
 type WebSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pool        *qpool.Q
-	rest        *Rest
+	conn        *websocket.Conn
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	mu          sync.Mutex
-	conns       map[string]*websocket.Conn
+	rest        *Rest
 	token       string
 	tokenUntil  time.Time
 }
 
-func NewWebSocket(ctx context.Context, apiKey, apiSecret string) (*WebSocket, error) {
+func NewWebSocket(ctx context.Context, pool *qpool.Q, apiKey, apiSecret string) (*WebSocket, error) {
 	rest, err := NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return NewWebSocketFromRest(ctx, rest)
+	return NewWebSocketFromRest(ctx, pool, rest)
 }
 
-func NewWebSocketFromRest(ctx context.Context, rest *Rest) (*WebSocket, error) {
-	if rest == nil {
-		return nil, fmt.Errorf("private rest client is required")
-	}
-
+func NewWebSocketFromRest(ctx context.Context, pool *qpool.Q, rest *Rest) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:    ctx,
-		cancel: cancel,
-		rest:   rest,
-		conns:  make(map[string]*websocket.Conn),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		rest:        rest,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+	}
+
+	for _, channel := range []string{"executions", "balances", "orders"} {
+		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 128)
 	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    ws.ctx,
 		"cancel": ws.cancel,
 		"rest":   ws.rest,
-		"conns":  ws.conns,
 	}))
 }
 
@@ -69,7 +66,7 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
-	if _, ok := ws.conns[channel]; ok {
+	if ws.conn != nil {
 		return nil
 	}
 
@@ -79,47 +76,9 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 		return errnie.Error(err)
 	}
 
-	ws.conns[channel] = conn
+	ws.conn = conn
 
 	return nil
-}
-
-func (ws *WebSocket) Send(channel string, message any) error {
-	token, err := ws.Token(ws.ctx)
-
-	if err != nil {
-		return err
-	}
-
-	payload, err := sonic.Marshal(message)
-
-	if err != nil {
-		return fmt.Errorf("private websocket encode: %w", err)
-	}
-
-	var frame map[string]any
-
-	if err := sonic.Unmarshal(payload, &frame); err != nil {
-		return fmt.Errorf("private websocket decode: %w", err)
-	}
-
-	params, ok := frame["params"].(map[string]any)
-
-	if !ok {
-		return fmt.Errorf("private websocket: missing params")
-	}
-
-	params["token"] = token
-
-	ws.mu.Lock()
-	conn := ws.conns[channel]
-	ws.mu.Unlock()
-
-	if conn == nil {
-		return fmt.Errorf("channel %s not found", channel)
-	}
-
-	return errnie.Error(conn.WriteJSON(frame))
 }
 
 func (ws *WebSocket) Tick() error {
@@ -127,28 +86,55 @@ func (ws *WebSocket) Tick() error {
 		select {
 		case <-ws.ctx.Done():
 			return ws.ctx.Err()
-		case message := <-ws.subscribers[public.TradesChannel].Incoming:
+		case message, ok := <-ws.subscribers["orders"].Incoming:
+			if !ok {
+				return nil
+			}
+
 			if message == nil {
 				continue
 			}
 
-			ws.broadcasts[message.Channel].Send(&qpool.QValue[any]{Value: message})
+			ws.mu.Lock()
+			conn := ws.conn
+			ws.mu.Unlock()
+
+			if conn != nil {
+				conn.WriteJSON(message.Value)
+			}
+		default:
+		}
+
+		ws.mu.Lock()
+		conn := ws.conn
+		ws.mu.Unlock()
+
+		if conn == nil {
+			continue
+		}
+
+		var message public.SocketMessage
+
+		if err := conn.ReadJSON(&message); err != nil {
+			return err
+		}
+
+		if ch := ws.broadcasts[message.Channel]; ch != nil {
+			ch.Send(&qpool.QValue[any]{Value: message})
 		}
 	}
 }
 
-func (ws *WebSocket) Close(channel string) error {
+func (ws *WebSocket) Close() error {
+	ws.cancel()
+
 	ws.mu.Lock()
-	conn, ok := ws.conns[channel]
-
-	if !ok {
-		ws.mu.Unlock()
-
-		return fmt.Errorf("channel %s not found", channel)
-	}
-
-	delete(ws.conns, channel)
+	conn := ws.conn
 	ws.mu.Unlock()
+
+	if conn == nil {
+		return nil
+	}
 
 	return errnie.Error(conn.Close())
 }
@@ -173,10 +159,6 @@ func (ws *WebSocket) Token(ctx context.Context) (string, error) {
 
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-
-	if ws.token != "" && time.Now().Before(ws.tokenUntil.Add(-tokenRefreshLead)) {
-		return ws.token, nil
-	}
 
 	ws.token = token
 	ws.tokenUntil = time.Now().Add(expires)

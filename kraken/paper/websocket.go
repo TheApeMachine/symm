@@ -5,130 +5,100 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 const methodAddOrder = "add_order"
 
-var _ public.WebSocketClient = (*WebSocket)(nil)
-
-/*
-WebSocket simulates the authenticated Kraken WebSocket v2 trading socket.
-*/
 type WebSocket struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	handler func(payload []byte)
-	mu      sync.Mutex
-	streams map[string]chan *public.SocketMessage
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
 }
 
-func NewWebSocket(ctx context.Context) (*WebSocket, error) {
+func NewWebSocket(ctx context.Context, pool *qpool.Q) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:     ctx,
-		cancel:  cancel,
-		streams: make(map[string]chan *public.SocketMessage),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+	}
+
+	for _, channel := range []string{"executions", "orders"} {
+		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 128)
 	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
+		"ctx":    ws.ctx,
+		"cancel": ws.cancel,
 	}))
 }
 
 func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	if _, ok := ws.streams[channel]; ok {
-		return nil
-	}
-
-	ws.streams[channel] = make(chan *public.SocketMessage, 256)
-
 	return nil
 }
 
-func (ws *WebSocket) Send(channel string, message any) error {
-	if channel != public.OrdersChannel {
-		return nil
+func (ws *WebSocket) Tick() error {
+	for message := range ws.subscribers["orders"].Incoming {
+		select {
+		case <-ws.ctx.Done():
+			return ws.ctx.Err()
+		default:
+		}
+
+		if message == nil || message.Value == nil {
+			continue
+		}
+
+		payload, err := sonic.Marshal(message.Value)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		var frame struct {
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+
+		if err := sonic.Unmarshal(payload, &frame); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if frame.Method != methodAddOrder {
+			continue
+		}
+
+		ws.simulateAddOrder(frame.Params)
 	}
 
-	payload, err := sonic.Marshal(message)
-
-	if err != nil {
-		return fmt.Errorf("paper websocket encode: %w", err)
-	}
-
-	var frame struct {
-		Method string         `json:"method"`
-		Params map[string]any `json:"params"`
-	}
-
-	if err := sonic.Unmarshal(payload, &frame); err != nil {
-		return fmt.Errorf("paper websocket decode: %w", err)
-	}
-
-	if frame.Method != methodAddOrder {
-		return fmt.Errorf("paper websocket: unsupported method %q", frame.Method)
-	}
-
-	return ws.simulateAddOrder(frame.Params)
+	return ws.ctx.Err()
 }
 
-func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	stream, ok := ws.streams[channel]
-
-	if !ok {
-		return nil, fmt.Errorf("channel %s not found", channel)
-	}
-
-	return stream, nil
-}
-
-func (ws *WebSocket) Close(channel string) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	stream, ok := ws.streams[channel]
-
-	if !ok {
-		return fmt.Errorf("channel %s not found", channel)
-	}
-
-	close(stream)
-	delete(ws.streams, channel)
-
+func (ws *WebSocket) Close() error {
+	ws.cancel()
 	return nil
 }
 
-func (ws *WebSocket) OnMessage(handler func(payload []byte)) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	ws.handler = handler
-}
-
-func (ws *WebSocket) simulateAddOrder(params map[string]any) error {
+func (ws *WebSocket) simulateAddOrder(params map[string]any) {
 	symbol, _ := params["symbol"].(string)
 	orderQty, _ := params["order_qty"].(float64)
 
-	if symbol == "" {
-		return fmt.Errorf("paper order symbol is required")
-	}
-
-	if orderQty <= 0 {
-		return fmt.Errorf("paper order quantity must be positive")
+	if symbol == "" || orderQty <= 0 {
+		return
 	}
 
 	clOrdID, _ := params["cl_ord_id"].(string)
@@ -147,20 +117,7 @@ func (ws *WebSocket) simulateAddOrder(params map[string]any) error {
 	}
 
 	if fillPrice <= 0 {
-		return fmt.Errorf("paper fill price is required")
-	}
-
-	ackPayload, err := sonic.Marshal(map[string]any{
-		"method":  methodAddOrder,
-		"success": true,
-		"result": map[string]any{
-			"order_id":  orderID,
-			"cl_ord_id": clOrdID,
-		},
-	})
-
-	if err != nil {
-		return err
+		return
 	}
 
 	execPayload, err := sonic.Marshal(map[string]any{
@@ -184,48 +141,18 @@ func (ws *WebSocket) simulateAddOrder(params map[string]any) error {
 	})
 
 	if err != nil {
-		return err
-	}
-
-	ws.deliver(ackPayload)
-	ws.deliver(execPayload)
-
-	return nil
-}
-
-func (ws *WebSocket) deliver(payload []byte) {
-	ws.mu.Lock()
-	handler := ws.handler
-	ws.mu.Unlock()
-
-	if handler != nil {
-		handler(payload)
-	}
-
-	var message public.SocketMessage
-
-	if err := sonic.Unmarshal(payload, &message); err != nil {
+		errnie.Error(err)
 		return
 	}
 
-	if message.Channel == "" {
+	var msg public.SocketMessage
+
+	if err := sonic.Unmarshal(execPayload, &msg); err != nil {
+		errnie.Error(err)
 		return
 	}
 
-	ws.mu.Lock()
-	stream, ok := ws.streams[message.Channel]
-	ws.mu.Unlock()
-
-	if !ok {
-		return
-	}
-
-	row := message
-
-	select {
-	case stream <- &row:
-	case <-ws.ctx.Done():
-	}
+	ws.broadcasts["executions"].Send(&qpool.QValue[any]{Value: msg})
 }
 
 func nextPaperOrderID() string {

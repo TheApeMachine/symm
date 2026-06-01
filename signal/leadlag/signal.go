@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -92,6 +93,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.leadlag.Signal.Tick")
+
 	for message := range signal.subscribers["ticker"].Incoming {
 		if message == nil || message.Value == nil {
 			continue

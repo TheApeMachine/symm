@@ -2,10 +2,13 @@ package market
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -70,41 +73,18 @@ type InstrumentUpdate struct {
 NewInstrumentSubscription opens the instrument channel and forwards snapshots to recv.
 It blocks until ctx is canceled or the socket closes.
 */
-func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
+func NewInstrumentSubscription(ctx context.Context, pool *qpool.Q) <-chan *InstrumentUpdate {
+	feed := OpenFeed(ctx, pool, public.InstrumentsChannel, InstrumentParams{
+		Channel:  public.InstrumentsChannel,
+		Snapshot: true,
+	})
+
 	out := make(chan *InstrumentUpdate, 128)
 
 	go func() {
 		defer close(out)
 
-		client := errnie.Does(func() (*kraken.Client, error) {
-			return kraken.NewClient(ctx)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		if err := client.Send(public.InstrumentsChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: InstrumentParams{
-				Channel:  public.InstrumentsChannel,
-				Snapshot: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-			stream, err := client.Stream(public.InstrumentsChannel)
-
-			if err != nil {
-				return nil, err
-			}
-
-			return stream, nil
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value() {
+		for msg := range feed.Stream {
 			if msg == nil {
 				continue
 			}
@@ -125,4 +105,111 @@ func NewInstrumentSubscription(ctx context.Context) <-chan *InstrumentUpdate {
 	}()
 
 	return out
+}
+
+type Instrument struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	Pairs       []string
+}
+
+func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
+	ctx, cancel := context.WithCancel(ctx)
+
+	instrument := &Instrument{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		Pairs:       make([]string, 0),
+	}
+
+	for _, channel := range []string{"kraken:public", "instrument"} {
+		instrument.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		instrument.subscribers[channel] = instrument.broadcasts[channel].Subscribe(channel, 128)
+	}
+
+	return instrument
+}
+
+func (instrument *Instrument) Tick() error {
+	for message := range instrument.subscribers["instrument"].Incoming {
+		if message == nil {
+			continue
+		}
+
+		envelope, ok := message.Value.(public.SocketMessage)
+
+		if !ok {
+			continue
+		}
+
+		var update InstrumentUpdate
+
+		if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		for _, pair := range update.Pairs {
+			if slices.Contains(instrument.Pairs, pair.Symbol) {
+				continue
+			}
+
+			instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+		}
+
+		for _, pair := range update.Pairs {
+			fmt.Println("kraken.market.instrument.Tick", "subscribing to", pair.Symbol)
+
+			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				"method": "subscribe",
+				"params": map[string]any{
+					"channel":  "ticker",
+					"symbol":   []string{pair.Symbol},
+					"snapshot": true,
+				},
+			}})
+
+			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				"method": "subscribe",
+				"params": map[string]any{
+					"channel":  "book",
+					"depth":    1000,
+					"symbol":   []string{pair.Symbol},
+					"snapshot": true,
+				},
+			}})
+
+			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				"method": "subscribe",
+				"params": map[string]any{
+					"channel":  "ohlc",
+					"interval": 1,
+					"symbol":   []string{pair.Symbol},
+					"snapshot": true,
+				},
+			}})
+
+			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				"method": "subscribe",
+				"params": map[string]any{
+					"channel":  "trade",
+					"symbol":   []string{pair.Symbol},
+					"snapshot": true,
+				},
+			}})
+		}
+	}
+
+	return nil
+}
+
+func (instrument *Instrument) Close() error {
+	return nil
 }

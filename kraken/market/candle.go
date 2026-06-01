@@ -5,7 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -21,11 +21,6 @@ type CandleParams struct {
 
 /*
 CandleUpdate is one forming or closed OHLC bar from the public ohlc feed.
-
-A forming or closed OHLC bar streamed as it updates: open, high, low, close,
-VWAP, volume, and trade count for the interval. It is price action already
-aggregated to a chosen horizon and kept current live -- VWAP gives the interval's
-fair transacted price and the trade count its participation.
 */
 type CandleUpdate struct {
 	Symbol        string  `json:"symbol"`
@@ -44,48 +39,25 @@ type CandleUpdate struct {
 NewCandleSubscription opens the ohlc channel at intervalMinutes and forwards rows.
 */
 func NewCandleSubscription(
-	ctx context.Context, intervalMinutes int, symbols ...string,
+	ctx context.Context, pool *qpool.Q, intervalMinutes int, symbols ...string,
 ) <-chan *CandleUpdate {
 	if intervalMinutes <= 0 {
 		intervalMinutes = 1
 	}
+
+	feed := OpenFeed(ctx, pool, public.CandlesChannel, CandleParams{
+		Channel:  public.CandlesChannel,
+		Symbol:   symbols,
+		Interval: intervalMinutes,
+		Snapshot: true,
+	})
 
 	out := make(chan *CandleUpdate, 128)
 
 	go func() {
 		defer close(out)
 
-		client := errnie.Does(func() (*kraken.Client, error) {
-			return kraken.NewClient(ctx)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		if err := client.Send(public.CandlesChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: CandleParams{
-				Channel:  public.CandlesChannel,
-				Symbol:   symbols,
-				Interval: intervalMinutes,
-				Snapshot: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-			stream, err := client.Stream(public.CandlesChannel)
-
-			if err != nil {
-				return nil, err
-			}
-
-			return stream, nil
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value() {
+		for msg := range feed.Stream {
 			if msg == nil {
 				continue
 			}

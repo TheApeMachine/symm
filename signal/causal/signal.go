@@ -2,6 +2,7 @@ package causal
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -88,6 +89,8 @@ func (signal *Signal) state(symbol string) *CausalSymbol {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.causal.Signal.Tick")
+
 	for {
 		select {
 		case <-signal.ctx.Done():

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -223,13 +224,13 @@ func (book *Book) levelsFromMap(byPrice map[float64]BookLevel, askSide bool) []B
 NewBookSubscription subscribes to the book channel for symbols at depth.
 */
 func NewBookSubscription(
-	ctx context.Context, depth int, symbols ...string,
+	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
 ) Feed {
 	if depth <= 0 {
 		depth = 10
 	}
 
-	return OpenFeed(ctx, public.BookChannel, BookParams{
+	return OpenFeed(ctx, pool, public.BookChannel, BookParams{
 		Channel:  public.BookChannel,
 		Symbol:   symbols,
 		Depth:    depth,

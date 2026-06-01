@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 /*
@@ -59,7 +61,7 @@ func ActiveRecorder() *Recorder {
 WriteMeta records session metadata such as the symbol universe.
 */
 func WriteMeta(channel string, payload any) error {
-	raw, err := json.Marshal(payload)
+	raw, err := sonic.Marshal(payload)
 
 	if err != nil {
 		return err

@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ func (signal *Signal) state(symbol string) *DepthSymbol {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.depthflow.Signal.Tick")
+
 	for {
 		select {
 		case <-signal.ctx.Done():

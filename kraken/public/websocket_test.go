@@ -16,11 +16,15 @@ func TestNewWebSocket(t *testing.T) {
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 
 		convey.Convey("It should derive a websocket client", func() {
-			socket, err := NewWebSocket(ctx, pool)
+			socket := NewWebSocket(ctx, pool)
 
-			convey.So(err, convey.ShouldBeNil)
 			convey.So(socket, convey.ShouldNotBeNil)
 			convey.So(socket.ctx, convey.ShouldNotBeNil)
+			convey.So(socket.cancel, convey.ShouldNotBeNil)
+			convey.So(socket.pool, convey.ShouldNotBeNil)
+			convey.So(socket.broadcasts, convey.ShouldNotBeNil)
+			convey.So(socket.subscribers, convey.ShouldNotBeNil)
+			convey.So(socket.recorder, convey.ShouldNotBeNil)
 		})
 	})
 }

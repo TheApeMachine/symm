@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,6 +69,8 @@ func (signal *Signal) state(symbol string) *FluidSymbol {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.fluid.Signal.Tick")
+
 	for {
 		select {
 		case <-signal.ctx.Done():

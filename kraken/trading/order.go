@@ -2,10 +2,11 @@ package trading
 
 import (
 	"context"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -80,105 +81,93 @@ type Ack struct {
 }
 
 /*
-Client sends add_order frames through kraken.Client.
-Paper and live selection lives in kraken/client.go.
+Client sends order frames to the orders pool channel.
+private.WebSocket picks them up and forwards to Kraken.
 */
 type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	conn   *kraken.Client
+	orders *qpool.BroadcastGroup
 }
 
-func NewOrder(ctx context.Context) (*Client, error) {
+func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
-
-	conn := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
 
 	orderClient := &Client{
 		ctx:    ctx,
 		cancel: cancel,
-		conn:   conn,
+		orders: pool.CreateBroadcastGroup(public.OrdersChannel, 10*time.Millisecond),
 	}
 
 	return orderClient, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    orderClient.ctx,
 		"cancel": orderClient.cancel,
-		"conn":   orderClient.conn,
+		"orders": orderClient.orders,
 	}))
 }
 
+func (client *Client) send(payload fiber.Map) error {
+	client.orders.Send(&qpool.QValue[any]{Value: payload})
+	return nil
+}
+
 func (client *Client) AddOrder(params AddParams) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodAddOrder,
 		"params": params,
 	}))
 }
 
 func (client *Client) AmendOrder(orderID string) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodAmendOrder,
-		"params": fiber.Map{
-			"order_id": orderID,
-		},
+		"params": fiber.Map{"order_id": orderID},
 	}))
 }
 
 func (client *Client) CancelOrder(orderID string) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodCancelOrder,
-		"params": fiber.Map{
-			"order_id": orderID,
-		},
+		"params": fiber.Map{"order_id": orderID},
 	}))
 }
 
 func (client *Client) CancelAll() error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodCancelOrders,
-		"params": fiber.Map{
-			"cancel_all": true,
-		},
+		"params": fiber.Map{"cancel_all": true},
 	}))
 }
 
 func (client *Client) CancelOnDisconnect() error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodCancelOrders,
-		"params": fiber.Map{
-			"cancel_on_disconnect": true,
-		},
+		"params": fiber.Map{"cancel_on_disconnect": true},
 	}))
 }
 
 func (client *Client) BatchAdd(params []AddParams) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodBatchAdd,
 		"params": params,
 	}))
 }
 
 func (client *Client) BatchCancel(orderIDs []string) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodBatchCancel,
 		"params": orderIDs,
 	}))
 }
 
 func (client *Client) EditOrder(orderID string, params AddParams) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+	return errnie.Error(client.send(fiber.Map{
 		"method": MethodEditOrder,
-		"params": fiber.Map{
-			"order_id": orderID,
-		},
+		"params": fiber.Map{"order_id": orderID},
 	}))
 }
 
 func (client *Client) Close() error {
 	client.cancel()
-
-	return errnie.Error(client.conn.Close())
+	return nil
 }

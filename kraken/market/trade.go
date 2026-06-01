@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -39,9 +40,9 @@ type TradeUpdate struct {
 NewTradeSubscription subscribes to the trade channel for symbols.
 */
 func NewTradeSubscription(
-	ctx context.Context, symbols ...string,
+	ctx context.Context, pool *qpool.Q, symbols ...string,
 ) Feed {
-	return OpenFeed(ctx, public.TradesChannel, TradeParams{
+	return OpenFeed(ctx, pool, public.TradesChannel, TradeParams{
 		Channel:  public.TradesChannel,
 		Symbol:   symbols,
 		Snapshot: true,

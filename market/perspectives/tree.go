@@ -4,15 +4,19 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"io"
 	"io/fs"
-	"slices"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"go.yaml.in/yaml/v3"
 )
 
 //go:embed cfg/perspectives.yaml
 var embedded embed.FS
+
+type treeDocument struct {
+	Branches BranchList `yaml:"branches"`
+}
 
 type Tree struct {
 	ctx           context.Context
@@ -36,13 +40,27 @@ func NewTree(
 
 	defer cfgReader.Close()
 
-	v := viper.New()
-	errnie.Error(v.ReadConfig(cfgReader))
+	raw, err := io.ReadAll(cfgReader)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	document := treeDocument{}
+
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if document.Branches == nil {
+		errnie.Warn("perspectives: cfg/perspectives.yaml has no branches")
+		document.Branches = BranchList{}
+	}
 
 	tree := &Tree{
 		ctx:          ctx,
 		cancel:       cancel,
-		branches:     v.Get("branches").(BranchList),
+		branches:     document.Branches.Clone(),
 		Measurements: measurements,
 	}
 
@@ -110,21 +128,37 @@ clarity). Both are supplied by the signal.
 */
 func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionType {
 	for _, branch := range branches {
-		index := slices.IndexFunc(measurements, func(measurement Measurement) bool {
-			return measurement.Category == branch.Category
-		})
+		measurement := Measurement{}
+		matched := branch.Category == CategoryTypeNone
 
-		if index >= 0 {
-			measurement := measurements[index]
-
-			if tree.passes(measurement, branch) && branch.Action.Type != ActionNone {
-				tree.currentAction = &branch.Action.Type
+		for _, candidate := range measurements {
+			if candidate.Category != branch.Category {
+				continue
 			}
+
+			measurement = candidate
+			matched = true
+
+			break
 		}
 
-		if len(branch.Branches) > 0 {
-			tree.Walk(measurements, branch.Branches...)
+		if !matched {
+			return nil
 		}
+
+		if !tree.passes(measurement, branch) {
+			return nil
+		}
+
+		if len(branch.Branches) == 0 {
+			return nil
+		}
+
+		if branch.Action.Type != ActionNone {
+			tree.currentAction = &branch.Action.Type
+		}
+
+		return tree.Walk(measurements, branch.Branches...)
 	}
 
 	return tree.currentAction

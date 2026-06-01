@@ -6,16 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	kraken "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	krakenreplay "github.com/theapemachine/symm/kraken/replay"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -61,6 +59,8 @@ var (
 			}).Value()
 
 			systems := []System{
+				public.NewWebSocket(cmd.Context(), pool),
+				kraken.NewInstrument(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),
 				correlation.NewSignal(cmd.Context(), pool),
 				cvd.NewSignal(cmd.Context(), pool),
@@ -77,80 +77,7 @@ var (
 				trader.NewCrypto(cmd.Context(), pool),
 			}
 
-			switch viper.GetString("trading.model") {
-			case "replay":
-				path := strings.TrimSpace(viper.GetString("trading.replay.file"))
-
-				file, err := os.Open(path)
-
-				if err != nil {
-					return errnie.Error(err)
-				}
-
-				socket, err := krakenreplay.NewWebSocket(cmd.Context(), pool, file)
-
-				if err != nil {
-					return errnie.Error(err)
-				}
-
-				systems = append([]System{socket}, systems...)
-			default:
-				socket := errnie.Does(func() (*public.WebSocket, error) {
-					return public.NewWebSocket(cmd.Context(), pool)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value()
-
-				if err := socket.Connect(public.WebSocketURL, ""); err != nil {
-					return errnie.Error(err)
-				}
-
-				symbols := viper.GetStringSlice("market.symbols")
-
-				if len(symbols) > 0 {
-					outbound := pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
-					depth := viper.GetInt("market.book_depth_levels")
-
-					if depth <= 0 {
-						depth = 10
-					}
-
-					for _, frame := range []public.Subscription{
-						{
-							Method: public.MethodSubscribe,
-							Params: krakenmarket.TradeParams{
-								Channel:  public.TradesChannel,
-								Symbol:   symbols,
-								Snapshot: true,
-							},
-						},
-						{
-							Method: public.MethodSubscribe,
-							Params: krakenmarket.TickerParams{
-								Channel:  public.TickerChannel,
-								Symbol:   symbols,
-								Snapshot: true,
-							},
-						},
-						{
-							Method: public.MethodSubscribe,
-							Params: krakenmarket.BookParams{
-								Channel:  public.BookChannel,
-								Symbol:   symbols,
-								Depth:    depth,
-								Snapshot: true,
-							},
-						},
-					} {
-						outbound.Send(&qpool.QValue[any]{Value: frame})
-					}
-				}
-
-				systems = append([]System{socket}, systems...)
-			}
-
 			engine.AddSystems(systems...)
-
 			return errnie.Error(engine.Start())
 		},
 	}

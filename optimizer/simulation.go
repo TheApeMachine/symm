@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"context"
+	"sort"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -35,20 +36,17 @@ func (simulation *ReplaySimulation) Score() float64 {
 		return 0
 	}
 
-	tree, err := perspectives.NewTreeFromBranches(simulation.ctx, simulation.branches)
-
-	if err != nil {
-		return 0
-	}
-
-	history := make([]perspectives.Measurement, 0, len(simulation.rows))
+	measurements := newReplayMeasurements()
 	ledger := newReplayLedger()
 
 	for _, row := range simulation.rows {
-		history = append(history, row)
-		tree.ResetWalk()
+		measurements.Add(row)
 
-		actionType := tree.Walk(history, tree.Branches()...)
+		if row.Symbol == "" {
+			continue
+		}
+
+		actionType := simulation.action(measurements.Snapshot(row.Symbol))
 
 		if actionType == nil {
 			continue
@@ -60,16 +58,203 @@ func (simulation *ReplaySimulation) Score() float64 {
 	return ledger.totalReturn(simulation.lastPrices())
 }
 
+type replayDecision struct {
+	actionType perspectives.ActionType
+	depth      int
+	found      bool
+}
+
+func (simulation *ReplaySimulation) action(
+	measurements []perspectives.Measurement,
+) *perspectives.ActionType {
+	decision := simulation.walk(
+		measurements,
+		simulation.branches,
+		0,
+	)
+
+	if !decision.found {
+		return nil
+	}
+
+	return &decision.actionType
+}
+
+func (simulation *ReplaySimulation) walk(
+	measurements []perspectives.Measurement,
+	branches perspectives.BranchList,
+	depth int,
+) replayDecision {
+	best := replayDecision{}
+
+	for _, branch := range branches {
+		measurement, ok := simulation.measurement(measurements, branch)
+
+		if !ok {
+			continue
+		}
+
+		if !simulation.passes(measurement, branch) {
+			continue
+		}
+
+		if branch.Action.Type != perspectives.ActionNone && depth >= best.depth {
+			best = replayDecision{
+				actionType: branch.Action.Type,
+				depth:      depth,
+				found:      true,
+			}
+		}
+
+		child := simulation.walk(
+			measurements,
+			perspectives.BranchList(branch.Branches),
+			depth+1,
+		)
+
+		if child.found && child.depth > best.depth {
+			best = child
+		}
+	}
+
+	return best
+}
+
+func (simulation *ReplaySimulation) measurement(
+	measurements []perspectives.Measurement,
+	branch perspectives.Branch,
+) (perspectives.Measurement, bool) {
+	if branch.Category == perspectives.CategoryTypeNone {
+		return perspectives.Measurement{}, true
+	}
+
+	for _, measurement := range measurements {
+		if measurement.Category == branch.Category {
+			return measurement, true
+		}
+	}
+
+	return perspectives.Measurement{}, false
+}
+
+func (simulation *ReplaySimulation) passes(
+	measurement perspectives.Measurement,
+	branch perspectives.Branch,
+) bool {
+	if branch.Condition == perspectives.ConditionNone || branch.Unit == perspectives.UnitNone {
+		return true
+	}
+
+	switch branch.Unit {
+	case perspectives.UnitSNR:
+		return simulation.compare(measurement.SNR, branch.Value, branch.Condition)
+	case perspectives.UnitConfidence:
+		return simulation.compare(measurement.Confidence, branch.Value, branch.Condition)
+	default:
+		return false
+	}
+}
+
+func (simulation *ReplaySimulation) compare(
+	left, right float64,
+	condition perspectives.ConditionType,
+) bool {
+	switch condition {
+	case perspectives.ConditionIsGreaterThan:
+		return left > right
+	case perspectives.ConditionIsLessThan:
+		return left < right
+	case perspectives.ConditionIsEqual:
+		return left == right
+	case perspectives.ConditionIsNotEqual:
+		return left != right
+	case perspectives.ConditionIsGreaterThanOrEqual:
+		return left >= right
+	case perspectives.ConditionIsLessThanOrEqual:
+		return left <= right
+	default:
+		return false
+	}
+}
+
 func (simulation *ReplaySimulation) lastPrices() map[string]float64 {
 	lastPrices := make(map[string]float64)
 
 	for _, row := range simulation.rows {
-		if row.Last > 0 {
-			lastPrices[row.Symbol] = row.Last
+		if row.Symbol == "" || row.Last <= 0 {
+			continue
 		}
+
+		lastPrices[row.Symbol] = row.Last
 	}
 
 	return lastPrices
+}
+
+type replayMeasurements struct {
+	global  map[perspectives.SourceType]perspectives.Measurement
+	symbols map[string]map[perspectives.SourceType]perspectives.Measurement
+}
+
+func newReplayMeasurements() *replayMeasurements {
+	return &replayMeasurements{
+		global:  make(map[perspectives.SourceType]perspectives.Measurement),
+		symbols: make(map[string]map[perspectives.SourceType]perspectives.Measurement),
+	}
+}
+
+func (measurements *replayMeasurements) Add(
+	measurement perspectives.Measurement,
+) {
+	if measurement.Symbol == "" {
+		measurements.global[measurement.Source] = measurement
+
+		return
+	}
+
+	symbolRows, ok := measurements.symbols[measurement.Symbol]
+
+	if !ok {
+		symbolRows = make(map[perspectives.SourceType]perspectives.Measurement)
+		measurements.symbols[measurement.Symbol] = symbolRows
+	}
+
+	symbolRows[measurement.Source] = measurement
+}
+
+func (measurements *replayMeasurements) Snapshot(
+	symbol string,
+) []perspectives.Measurement {
+	rows := make(
+		[]perspectives.Measurement, 0,
+		len(measurements.global)+len(measurements.symbols[symbol]),
+	)
+
+	rows = appendMeasurementsBySource(rows, measurements.global)
+	rows = appendMeasurementsBySource(rows, measurements.symbols[symbol])
+
+	return rows
+}
+
+func appendMeasurementsBySource(
+	rows []perspectives.Measurement,
+	bySource map[perspectives.SourceType]perspectives.Measurement,
+) []perspectives.Measurement {
+	sources := make([]perspectives.SourceType, 0, len(bySource))
+
+	for source := range bySource {
+		sources = append(sources, source)
+	}
+
+	sort.Slice(sources, func(leftIndex, rightIndex int) bool {
+		return sources[leftIndex] < sources[rightIndex]
+	})
+
+	for _, source := range sources {
+		rows = append(rows, bySource[source])
+	}
+
+	return rows
 }
 
 type replayPosition struct {

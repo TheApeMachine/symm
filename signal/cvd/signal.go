@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -173,6 +174,8 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.cvd.Signal.Tick")
+
 	for message := range signal.subscribers["trade"].Incoming {
 		if message == nil || message.Value == nil {
 			continue

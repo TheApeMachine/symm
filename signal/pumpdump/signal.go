@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -126,14 +128,18 @@ func (state *pumpState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.pumpdump.Signal.Tick")
+
 	for message := range signal.subscribers["trade"].Incoming {
+		fmt.Println("signal.pumpdump.Signal.Tick", "trade", message.Value)
+
 		if message == nil || message.Value == nil {
 			continue
 		}
 
 		var trade market.TradeUpdate
 
-		if err := sonic.Unmarshal(message.Value.([]byte), &trade); err != nil {
+		if err := sonic.Unmarshal(message.Value.(public.SocketMessage).Data, &trade); err != nil {
 			errnie.Error(err)
 			continue
 		}

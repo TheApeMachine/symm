@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -74,7 +75,7 @@ func (balance *Balance) IsSnapshot() bool {
 /*
 NewBalanceSubscription subscribes to the balances channel using source for auth.
 */
-func NewBalanceSubscription(ctx context.Context, source TokenSource) market.Feed {
+func NewBalanceSubscription(ctx context.Context, pool *qpool.Q, source TokenSource) market.Feed {
 	if source == nil {
 		return market.Feed{}
 	}
@@ -87,7 +88,7 @@ func NewBalanceSubscription(ctx context.Context, source TokenSource) market.Feed
 		return market.Feed{}
 	}
 
-	return market.OpenFeed(ctx, public.BalancesChannel, BalanceParams{
+	return market.OpenFeed(ctx, pool, public.BalancesChannel, BalanceParams{
 		Channel:  public.BalancesChannel,
 		Snapshot: true,
 		Token:    token,

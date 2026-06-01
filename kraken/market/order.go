@@ -7,7 +7,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -106,7 +106,7 @@ NewOrderSubscription returns a channel of L3 book snapshots and updates for symb
 at depth when a token source is configured.
 */
 func NewOrderSubscription(
-	ctx context.Context, depth int, symbols ...string,
+	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
 ) <-chan *Order {
 	orderTokenSourceMu.RLock()
 	source := orderTokenSource
@@ -128,43 +128,20 @@ func NewOrderSubscription(
 		return nil
 	}
 
+	feed := OpenFeed(ctx, pool, public.Level3Channel, OrderParams{
+		Channel:  public.Level3Channel,
+		Symbol:   symbols,
+		Depth:    depth,
+		Snapshot: true,
+		Token:    token,
+	})
+
 	out := make(chan *Order, 128)
 
 	go func() {
 		defer close(out)
 
-		client := errnie.Does(func() (*kraken.Client, error) {
-			return kraken.NewClient(ctx)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		if err := client.Send(public.Level3Channel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: OrderParams{
-				Channel:  public.Level3Channel,
-				Symbol:   symbols,
-				Depth:    depth,
-				Snapshot: true,
-				Token:    token,
-			},
-		}); err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
-			stream, err := client.Stream(public.Level3Channel)
-
-			if err != nil {
-				return nil, err
-			}
-
-			return stream, nil
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value() {
+		for msg := range feed.Stream {
 			if msg == nil {
 				continue
 			}
@@ -221,9 +198,9 @@ func Level3Available() bool {
 }
 
 func NewLevel3Subscription(
-	ctx context.Context, depth int, symbols ...string,
+	ctx context.Context, pool *qpool.Q, depth int, symbols ...string,
 ) <-chan *Level3Update {
-	return NewOrderSubscription(ctx, depth, symbols...)
+	return NewOrderSubscription(ctx, pool, depth, symbols...)
 }
 
 func Level3EventTime(raw string, fallback time.Time) time.Time {

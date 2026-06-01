@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -49,6 +50,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.exhaust.Signal.Tick")
+
 	for {
 		select {
 		case <-signal.ctx.Done():

@@ -2,6 +2,7 @@ package sentiment
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -67,6 +68,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.sentiment.Signal.Tick")
+
 	for message := range signal.subscribers["ticker"].Incoming {
 		if message == nil || message.Value == nil {
 			continue

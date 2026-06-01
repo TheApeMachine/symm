@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
@@ -51,6 +52,8 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
+	fmt.Println("toxicity.Toxicity.Tick")
+
 	var level3 <-chan *market.Level3Update
 
 	if tox.l3Active {
@@ -61,7 +64,7 @@ func (tox *Toxicity) Tick() error {
 			depthLevels = 10
 		}
 
-		level3 = market.NewLevel3Subscription(tox.ctx, depthLevels, symbols...)
+		level3 = market.NewLevel3Subscription(tox.ctx, tox.pool, depthLevels, symbols...)
 	}
 
 	for {

@@ -1,6 +1,6 @@
 module github.com/theapemachine/symm
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/bytedance/sonic v1.15.1

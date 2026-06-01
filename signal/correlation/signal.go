@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"fmt"
 	"math/bits"
 	"math/rand"
 	"sync"
@@ -193,6 +194,8 @@ batch tick. Per-trade processing would restamp fingerprints on every print;
 correlationBatchInterval batches enough cross-section activity to be stable.
 */
 func (signal *Signal) Tick() error {
+	fmt.Println("signal.correlation.Signal.Tick")
+
 	batch := time.NewTicker(correlationBatchInterval)
 	defer batch.Stop()
 

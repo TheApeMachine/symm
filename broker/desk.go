@@ -23,7 +23,7 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	orders := errnie.Does(func() (*trading.Client, error) {
-		return trading.NewOrder(ctx)
+		return trading.NewOrder(ctx, pool)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()

@@ -13,12 +13,16 @@ func TestReplaySimulationScore(t *testing.T) {
 		ctx := context.Background()
 		rows := []perspectives.Measurement{
 			{
-				Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-				SNR: 2.0, Last: 100,
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2.0,
+				Last:     100,
 			},
 			{
-				Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-				SNR: 2.5, Last: 110,
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2.5,
+				Last:     110,
 			},
 		}
 
@@ -44,12 +48,16 @@ func TestTraderEvaluate(t *testing.T) {
 		trader := &Trader{ctx: ctx}
 		rows := []perspectives.Measurement{
 			{
-				Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-				SNR: 2.0, Last: 100,
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2.0,
+				Last:     100,
 			},
 			{
-				Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-				SNR: 2.5, Last: 110,
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2.5,
+				Last:     110,
 			},
 		}
 		branches := perspectives.BranchList{{
@@ -74,12 +82,16 @@ func TestTreeSearchRun(t *testing.T) {
 		ctx := context.Background()
 		profile := Profile{ctx: ctx}
 		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-			SNR: 2.0, Last: 100,
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.0,
+			Last:     100,
 		})
 		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-			SNR: 2.5, Last: 110,
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.5,
+			Last:     110,
 		})
 
 		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
@@ -89,6 +101,34 @@ func TestTreeSearchRun(t *testing.T) {
 
 		convey.Convey("It should return a branch registry", func() {
 			convey.So(len(branches), convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestTreeSearchRunKeepsEmptyTreeWhenTradingLoses(t *testing.T) {
+	convey.Convey("Given replay measurements with falling prices", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		profile.Add(perspectives.Measurement{
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.0,
+			Last:     100,
+		})
+		profile.Add(perspectives.Measurement{
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.5,
+			Last:     90,
+		})
+
+		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
+		search := tuner.newTreeSearch()
+		search.iterations = 32
+		branches := search.Run()
+
+		convey.Convey("It should not choose a losing trade over no trade", func() {
+			convey.So(len(branches), convey.ShouldEqual, 0)
 		})
 	})
 }
@@ -105,12 +145,16 @@ func TestTunerFinish(t *testing.T) {
 		}
 
 		tuner.ingest(perspectives.Measurement{
-			Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-			SNR: 2.0, Last: 100,
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.0,
+			Last:     100,
 		})
 		tuner.ingest(perspectives.Measurement{
-			Symbol: "BTC/EUR", Category: perspectives.CategoryLaminar,
-			SNR: 2.5, Last: 110,
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2.5,
+			Last:     110,
 		})
 		tuner.Finish()
 
@@ -131,6 +175,7 @@ func BenchmarkTreeSearchRun(b *testing.B) {
 	for index := range 64 {
 		profile.Add(perspectives.Measurement{
 			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
 			Category: perspectives.CategoryLaminar,
 			SNR:      float64(index % 8),
 			Last:     100 + float64(index),
@@ -155,6 +200,7 @@ func BenchmarkReplaySimulationScore(b *testing.B) {
 	for index := range rows {
 		rows[index] = perspectives.Measurement{
 			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
 			Category: perspectives.CategoryLaminar,
 			SNR:      float64(index % 8),
 			Last:     100 + float64(index),

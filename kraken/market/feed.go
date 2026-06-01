@@ -2,9 +2,9 @@ package market
 
 import (
 	"context"
+	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -13,36 +13,57 @@ Feed is a subscribed Kraken WebSocket channel. Callers range Stream and decode
 rows from each SocketMessage.
 */
 type Feed struct {
-	Client *kraken.Client
 	Stream <-chan *public.SocketMessage
 }
 
 /*
-OpenFeed subscribes to one Kraken WebSocket channel and returns the client plus
-its message stream for the caller to range.
+OpenFeed broadcasts a subscribe request on kraken:public and subscribes to the
+data channel. No client needed — pool handles everything.
 */
-func OpenFeed(ctx context.Context, channel string, params any) Feed {
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+func OpenFeed(ctx context.Context, pool *qpool.Q, channel string, params any) Feed {
+	outbound := pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
+	outbound.Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": params,
+	}})
 
-	if err := client.Send(channel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: params,
-	}); err != nil {
-		errnie.Error(err)
-	}
+	group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+	sub := group.Subscribe(channel, 128)
 
-	stream := errnie.Does(func() (<-chan *public.SocketMessage, error) {
-		return client.Stream(channel)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	out := make(chan *public.SocketMessage, 128)
 
-	return Feed{
-		Client: client,
-		Stream: stream,
-	}
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-sub.Incoming:
+				if !ok {
+					return
+				}
+
+				if msg == nil {
+					continue
+				}
+
+				sm, ok := msg.Value.(public.SocketMessage)
+
+				if !ok {
+					continue
+				}
+
+				row := sm
+
+				select {
+				case out <- &row:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return Feed{Stream: out}
 }

@@ -1,10 +1,15 @@
 package market
 
 import (
+	"bufio"
 	"container/ring"
 	"context"
+	"fmt"
+	"os"
 	"time"
 
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -23,6 +28,7 @@ type Story struct {
 	buffer      *ring.Ring
 	trees       []*perspectives.Tree
 	lastGauge   map[string]time.Time
+	recorder    *bufio.Writer
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q) *Story {
@@ -41,6 +47,14 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
+	fh, err := os.Create(viper.GetViper().GetString("trading.record.file"))
+
+	if err != nil {
+		errnie.Error(err)
+	}
+
+	story.recorder = bufio.NewWriter(fh)
+
 	for _, channel := range []string{"measurements"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		story.subscribers[channel] = story.broadcasts[channel].Subscribe("measurements", 128)
@@ -58,6 +72,8 @@ func (story *Story) Tick() error {
 		ok          bool
 	)
 
+	defer story.recorder.Flush()
+
 	for row := range story.subscribers["measurements"].Incoming {
 		if row == nil {
 			errnie.Warn("nil measurement")
@@ -69,59 +85,54 @@ func (story *Story) Tick() error {
 			continue
 		}
 
-		story.publishGauge(measurement)
+		raw, err := sonic.Marshal(measurement)
+
+		if err != nil {
+			errnie.Error(err)
+		}
+
+		fmt.Println(string(raw))
+		_, err = story.recorder.Write(append(raw, '\n'))
+
+		if err != nil {
+			errnie.Error(err)
+		}
+
+		story.recorder.Flush()
+
 		story.buffer.Value = measurement
 		story.buffer.Next()
-	}
 
-	actions := make([]*perspectives.ActionType, 0)
+		actions := make([]*perspectives.ActionType, 0)
 
-	for _, tree := range story.trees {
-		tree.AddMeasurement(story.buffer.Value.(perspectives.Measurement))
+		for _, tree := range story.trees {
+			tree.AddMeasurement(story.buffer.Value.(perspectives.Measurement))
 
-		if action := tree.Action(); action != nil {
-			actions = append(actions, action)
+			if action := tree.Action(); action != nil {
+				actions = append(actions, action)
+			}
+		}
+
+		if len(story.trees) == 0 || len(actions) == 0 {
+			measurements := make([]perspectives.Measurement, 0)
+
+			story.buffer.Do(func(value any) {
+				measurements = append(measurements, value.(perspectives.Measurement))
+			})
+
+			story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
+				return perspectives.NewTree(story.ctx, measurements)
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value())
+		}
+
+		for _, action := range actions {
+			story.broadcasts["actions"].Send(&qpool.QValue[any]{Value: action})
 		}
 	}
 
-	if len(story.trees) == 0 || len(actions) == 0 {
-		measurements := make([]perspectives.Measurement, 0)
-
-		story.buffer.Do(func(value any) {
-			measurements = append(measurements, value.(perspectives.Measurement))
-		})
-
-		story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
-			return perspectives.NewTree(story.ctx, measurements)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value())
-	}
-
 	return story.ctx.Err()
-}
-
-const gaugeInterval = 200 * time.Millisecond
-
-func (story *Story) publishGauge(measurement perspectives.Measurement) {
-	source := measurement.Source.String()
-
-	if source == "" {
-		return
-	}
-
-	now := time.Now()
-
-	if last, seen := story.lastGauge[source]; seen && now.Sub(last) < gaugeInterval {
-		return
-	}
-
-	story.lastGauge[source] = now
-
-	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"source":     source,
-		"confidence": measurement.Strength,
-	}})
 }
 
 /*

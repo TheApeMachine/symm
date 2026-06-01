@@ -46,7 +46,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 				errnie.Error(err)
 			}).Value()
 
-			balance = user.NewBalanceSubscription(ctx, provider)
+			balance = user.NewBalanceSubscription(ctx, pool, provider)
 		}
 	}
 

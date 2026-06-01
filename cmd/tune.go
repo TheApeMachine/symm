@@ -1,109 +1,60 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/focus"
-	krakenreplay "github.com/theapemachine/symm/kraken/replay"
 	"github.com/theapemachine/symm/optimizer"
-	"github.com/theapemachine/symm/signal/causal"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/toxicity"
 )
 
 var tuneCmd = &cobra.Command{
 	Use:   "tune",
-	Short: "Run the optimizer against a replay capture",
+	Short: "Run the optimizer against recorded measurements",
 	Long:  tuneLong,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := applyTuneOverrides(); err != nil {
-			return err
-		}
-
-		path, err := tuneReplayPath()
+		path, err := tuneMeasurementPath()
 
 		if err != nil {
 			return err
 		}
 
-		applyReplaySymbols()
-
-		sessionCtx, sessionCancel := context.WithCancel(cmd.Context())
-		defer sessionCancel()
-
-		pool := errnie.Does(func() (*qpool.Q, error) {
-			return qpool.NewQ(sessionCtx, 1, 4, nil), nil
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		engine := errnie.Does(func() (*Engine, error) {
-			return NewEngine(sessionCtx, pool)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		file, err := os.Open(path)
+		rows, err := optimizer.LoadMeasurements(path)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
-		defer file.Close()
-
-		replaySocket, err := krakenreplay.NewWebSocket(sessionCtx, pool, file)
-
-		if err != nil {
-			return errnie.Error(err)
+		if len(rows) == 0 {
+			return fmt.Errorf("tune: no measurements in %s", path)
 		}
 
-		tuner := optimizer.NewTuner(sessionCtx, pool)
-		trader := optimizer.NewTrader(sessionCtx, pool)
-		tuner.BindTrader(trader)
-
-		engine.AddSystems(
-			replaySocket,
-			causal.NewSignal(sessionCtx, pool),
-			correlation.NewSignal(sessionCtx, pool),
-			cvd.NewSignal(sessionCtx, pool),
-			depthflow.NewSignal(sessionCtx, pool),
-			exhaust.NewSignal(sessionCtx, pool),
-			fluid.NewSignal(sessionCtx, pool, focus.NewSet()),
-			hawkes.NewSignal(sessionCtx, pool),
-			leadlag.NewSignal(sessionCtx, pool),
-			liquidity.NewSignal(sessionCtx, pool),
-			pumpdump.NewSignal(sessionCtx, pool),
-			sentiment.NewSignal(sessionCtx, pool),
-			toxicity.NewToxicity(sessionCtx, pool),
-			tuner,
-			trader,
+		outputPath := tunePerspectivesPath()
+		summary, err := optimizer.TuneMeasurements(
+			cmd.Context(),
+			rows,
+			optimizer.TuneOptions{
+				OutputPath: outputPath,
+				OnBest: func(best optimizer.BestTree) {
+					fmt.Fprintf(
+						os.Stderr,
+						"symm tune: best iteration=%d branches=%d score=%.6f -> %s\n",
+						best.Iteration,
+						len(best.Branches),
+						best.Score,
+						outputPath,
+					)
+				},
+			},
 		)
 
-		runErr := engine.Start()
-		summary := tuner.Summary()
+		if err != nil {
+			return err
+		}
 
 		fmt.Fprintf(os.Stderr, "symm tune: %s\n", summary)
-
-		if runErr != nil && runErr != context.Canceled {
-			return errnie.Error(runErr)
-		}
 
 		return nil
 	},
@@ -114,38 +65,36 @@ func init() {
 }
 
 const tuneLong = `
-Run the optimizer against a replay capture.
+Run the optimizer against a recorded measurement capture.
 
-Use the default config (cmd/cfg/config.yml). Measurements go to optimizer.Tuner;
-actions go to optimizer.Trader.
+Use the default config (cmd/cfg/config.yml). Measurements are read directly from
+trading.record.file and each improved tree is written to market/perspectives/cfg/perspectives.yaml.
 `
 
-func applyTuneOverrides() error {
-	viper.Set("trading.model", "replay")
-	viper.Set("trading.replay.pace", time.Duration(0))
-	viper.Set("trading.replay.loop", false)
+const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"
 
-	return nil
-}
+func tuneMeasurementPath() (string, error) {
+	path := strings.TrimSpace(viper.GetString("trading.record.file"))
 
-func tuneReplayPath() (string, error) {
-	path := strings.TrimSpace(viper.GetString("trading.replay.file"))
+	if path != "" {
+		return path, nil
+	}
+
+	path = strings.TrimSpace(viper.GetString("trading.replay.file"))
 
 	if path == "" {
-		return "", fmt.Errorf("tune: trading.replay.file is required")
+		return "", fmt.Errorf("tune: trading.record.file is required")
 	}
 
 	return path, nil
 }
 
-func applyReplaySymbols() {
-	if len(viper.GetStringSlice("market.symbols")) > 0 {
-		return
+func tunePerspectivesPath() string {
+	path := strings.TrimSpace(os.Getenv("SYMM_PERSPECTIVES_FILE"))
+
+	if path != "" {
+		return path
 	}
 
-	defaults := viper.GetStringSlice("market.default_symbols")
-
-	if len(defaults) > 0 {
-		viper.Set("market.symbols", defaults)
-	}
+	return defaultPerspectivesOutputPath
 }

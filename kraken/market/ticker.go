@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -44,9 +45,9 @@ type TickerUpdate struct {
 NewTickerSubscription subscribes to the ticker channel for symbols.
 */
 func NewTickerSubscription(
-	ctx context.Context, symbols ...string,
+	ctx context.Context, pool *qpool.Q, symbols ...string,
 ) Feed {
-	return OpenFeed(ctx, public.TickerChannel, TickerParams{
+	return OpenFeed(ctx, pool, public.TickerChannel, TickerParams{
 		Channel:  public.TickerChannel,
 		Symbol:   symbols,
 		Snapshot: true,

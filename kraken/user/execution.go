@@ -6,7 +6,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -43,36 +44,33 @@ type ExecutionFee struct {
 
 /*
 Execution is one order status or fill report from the executions channel.
-
-Fields present depend on exec_type (pending_new, new, trade, filled, canceled, etc.).
-EnvelopeType records snapshot vs update from the channel message.
 */
 type Execution struct {
-	OrderID       string         `json:"order_id,omitempty"`
-	OrderUserref  int            `json:"order_userref,omitempty"`
-	ClOrdID       string         `json:"cl_ord_id,omitempty"`
-	Symbol        string         `json:"symbol,omitempty"`
-	Side          string         `json:"side,omitempty"`
-	OrderType     string         `json:"order_type,omitempty"`
-	OrderQty      float64        `json:"order_qty,omitempty"`
-	LimitPrice    float64        `json:"limit_price,omitempty"`
-	OrderStatus   string         `json:"order_status,omitempty"`
-	ExecType      string         `json:"exec_type,omitempty"`
-	ExecID        string         `json:"exec_id,omitempty"`
-	TradeID       int64          `json:"trade_id,omitempty"`
-	LastQty       float64        `json:"last_qty,omitempty"`
-	LastPrice     float64        `json:"last_price,omitempty"`
-	AvgPrice      float64        `json:"avg_price,omitempty"`
-	CumQty        float64        `json:"cum_qty,omitempty"`
-	CumCost       float64        `json:"cum_cost,omitempty"`
-	Cost          float64        `json:"cost,omitempty"`
-	LiquidityInd  string         `json:"liquidity_ind,omitempty"`
-	TimeInForce   string         `json:"time_in_force,omitempty"`
-	FeeUsdEquiv   float64        `json:"fee_usd_equiv,omitempty"`
-	FeeCcyPref    string         `json:"fee_ccy_pref,omitempty"`
-	Fees          []ExecutionFee `json:"fees,omitempty"`
-	Timestamp     string         `json:"timestamp,omitempty"`
-	EnvelopeType  string         `json:"-"`
+	OrderID      string         `json:"order_id,omitempty"`
+	OrderUserref int            `json:"order_userref,omitempty"`
+	ClOrdID      string         `json:"cl_ord_id,omitempty"`
+	Symbol       string         `json:"symbol,omitempty"`
+	Side         string         `json:"side,omitempty"`
+	OrderType    string         `json:"order_type,omitempty"`
+	OrderQty     float64        `json:"order_qty,omitempty"`
+	LimitPrice   float64        `json:"limit_price,omitempty"`
+	OrderStatus  string         `json:"order_status,omitempty"`
+	ExecType     string         `json:"exec_type,omitempty"`
+	ExecID       string         `json:"exec_id,omitempty"`
+	TradeID      int64          `json:"trade_id,omitempty"`
+	LastQty      float64        `json:"last_qty,omitempty"`
+	LastPrice    float64        `json:"last_price,omitempty"`
+	AvgPrice     float64        `json:"avg_price,omitempty"`
+	CumQty       float64        `json:"cum_qty,omitempty"`
+	CumCost      float64        `json:"cum_cost,omitempty"`
+	Cost         float64        `json:"cost,omitempty"`
+	LiquidityInd string         `json:"liquidity_ind,omitempty"`
+	TimeInForce  string         `json:"time_in_force,omitempty"`
+	FeeUsdEquiv  float64        `json:"fee_usd_equiv,omitempty"`
+	FeeCcyPref   string         `json:"fee_ccy_pref,omitempty"`
+	Fees         []ExecutionFee `json:"fees,omitempty"`
+	Timestamp    string         `json:"timestamp,omitempty"`
+	EnvelopeType string         `json:"-"`
 }
 
 func (execution *Execution) SetEnvelopeType(kind string) {
@@ -102,7 +100,7 @@ func ExecutionAvailable() bool {
 	return executionTokenSource != nil
 }
 
-func NewExecutionSubscription(ctx context.Context) <-chan *Execution {
+func NewExecutionSubscription(ctx context.Context, pool *qpool.Q) <-chan *Execution {
 	executionTokenSourceMu.RLock()
 	source := executionTokenSource
 	executionTokenSourceMu.RUnlock()
@@ -119,43 +117,20 @@ func NewExecutionSubscription(ctx context.Context) <-chan *Execution {
 		return nil
 	}
 
+	feed := market.OpenFeed(ctx, pool, public.ExecutionsChannel, ExecutionParams{
+		Channel:     public.ExecutionsChannel,
+		Token:       token,
+		SnapOrders:  true,
+		SnapTrades:  true,
+		OrderStatus: true,
+	})
+
 	out := make(chan *Execution, 128)
 
 	go func() {
 		defer close(out)
 
-		client, err := kraken.NewClient(ctx)
-
-		if err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		if err := client.Send(public.ExecutionsChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: ExecutionParams{
-				Channel:     public.ExecutionsChannel,
-				Token:       token,
-				SnapOrders:  true,
-				SnapTrades:  true,
-				OrderStatus: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		stream, err := client.Stream(public.ExecutionsChannel)
-
-		if err != nil {
-			errnie.Error(err)
-
-			return
-		}
-
-		for msg := range stream {
+		for msg := range feed.Stream {
 			if msg == nil {
 				continue
 			}

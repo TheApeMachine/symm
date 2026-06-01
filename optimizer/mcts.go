@@ -35,6 +35,7 @@ type TreeSearch struct {
 	best       *Node
 	bestScore  float64
 	iterations int
+	onBest     func(BestTree)
 }
 
 func (tuner *Tuner) newTreeSearch() *TreeSearch {
@@ -57,15 +58,17 @@ func (tuner *Tuner) newTreeSearch() *TreeSearch {
 Run finds the most profitable branch registry for the replay profile.
 */
 func (search *TreeSearch) Run() perspectives.BranchList {
+	search.bestScore = search.evaluate(search.root.branches)
+	search.best = &Node{
+		branches: search.root.branches.Clone(),
+		value:    search.bestScore,
+	}
+
 	for iteration := 0; iteration < search.iterations; iteration++ {
 		node := search.selectNode()
 		child := search.expand(node)
-		reward := search.rollout(child)
+		reward := search.rollout(iteration, child)
 		search.backpropagate(child, reward)
-	}
-
-	if search.best == nil {
-		return search.root.branches.Clone()
 	}
 
 	return search.best.branches.Clone()
@@ -132,11 +135,11 @@ func (search *TreeSearch) expand(node *Node) *Node {
 	return child
 }
 
-func (search *TreeSearch) rollout(node *Node) float64 {
+func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
 	targetDepth := len(search.profile.Categories()) * maxBranchDepth
 
-	for len(branches) < targetDepth {
+	for search.branchCount(branches) < targetDepth {
 		moves := search.moves(branches)
 
 		if len(moves) == 0 {
@@ -149,12 +152,39 @@ func (search *TreeSearch) rollout(node *Node) float64 {
 
 	score := search.evaluate(branches)
 
-	if len(branches) > 0 && (search.best == nil || score > search.bestScore) {
+	if len(branches) > 0 && score > search.bestScore {
 		search.bestScore = score
 		search.best = &Node{branches: branches.Clone(), value: score}
+		search.emitBest(iteration, branches, score)
 	}
 
 	return score
+}
+
+func (search *TreeSearch) emitBest(
+	iteration int, branches perspectives.BranchList, score float64,
+) {
+	if search.onBest == nil {
+		return
+	}
+
+	search.onBest(BestTree{
+		Iteration: iteration + 1,
+		Score:     score,
+		Branches:  branches.Clone(),
+	})
+}
+
+func (search *TreeSearch) branchCount(
+	branches perspectives.BranchList,
+) int {
+	count := len(branches)
+
+	for _, branch := range branches {
+		count += search.branchCount(perspectives.BranchList(branch.Branches))
+	}
+
+	return count
 }
 
 func (search *TreeSearch) backpropagate(node *Node, reward float64) {

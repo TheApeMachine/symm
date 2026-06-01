@@ -23,31 +23,31 @@ build:
 test: test-go test-race test-frontend
 
 test-go:
-	go test -race ./...
+	go test $(LDFLAGS) -race ./...
 
 test-race:
 ifeq ($(shell uname -s),Darwin)
-	go test -race $(RACE_PACKAGES)
+	go test $(LDFLAGS) -race $(RACE_PACKAGES)
 else
-	go test -race ./...
+	go test $(LDFLAGS) -race ./...
 endif
 
 test-cover:
 	@mkdir -p runs
-	go test -coverprofile=runs/coverage.out ./...
+	go test $(LDFLAGS) -coverprofile=runs/coverage.out ./...
 	go tool cover -func=runs/coverage.out | tail -1
 
 test-frontend:
 	cd frontend && pnpm exec tsc --noEmit -p tsconfig.lib.json && pnpm test --run
 
 bench:
-	go test -bench=. -benchmem ./...
+	go test $(LDFLAGS) -bench=. -benchmem ./...
 
 PROFILE_DIR ?= runs/profiles
 
 profile:
 	@mkdir -p $(PROFILE_DIR)
-	go test -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
+	go test $(LDFLAGS) -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
 
 profile-stack:
 	@mkdir -p $(PROFILE_DIR)
@@ -86,7 +86,7 @@ run-profile: build
 
 tune: build
 	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
-	@echo "Tuning runs/capture.jsonl (trading.replay.file in $(CONFIG))"
+	@echo "Tuning measurements from runs/capture.jsonl (trading.record.file in $(CONFIG))"
 	./$(SYMM_BIN) tune --config $(CONFIG)
 
 dump:
