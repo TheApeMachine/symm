@@ -2,17 +2,12 @@ package replay
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/spf13/viper"
-	symmreplay "github.com/theapemachine/symm/replay"
 )
 
 /*
-Rest serves recorded Kraken REST payloads from a replay capture instead of dialing
-the exchange.
+Rest is a no-op during replay; market data comes from the capture file.
 */
 type Rest struct {
 	ctx    context.Context
@@ -31,7 +26,7 @@ func (rest *Rest) Get(
 	model any,
 	headers ...map[string]string,
 ) error {
-	return rest.serve(request, model)
+	return nil
 }
 
 func (rest *Rest) Post(
@@ -40,55 +35,7 @@ func (rest *Rest) Post(
 	model any,
 	headers ...map[string]string,
 ) error {
-	return rest.serve(request, model)
-}
-
-func (rest *Rest) serve(request fiber.Map, model any) error {
-	if model == nil {
-		return nil
-	}
-
-	path := strings.TrimSpace(viper.GetViper().GetString("trading.replay.file"))
-
-	if path == "" {
-		return nil
-	}
-
-	hub, err := symmreplay.Open(path)
-
-	if err != nil {
-		return err
-	}
-
-	channel, ok := requestChannel(request)
-
-	if !ok {
-		return nil
-	}
-
-	body, ok := hub.RESTBody(channel)
-
-	if !ok {
-		return nil
-	}
-
-	return json.Unmarshal(body, model)
-}
-
-func requestChannel(request fiber.Map) (string, bool) {
-	if request == nil {
-		return "", false
-	}
-
-	if channel, ok := request["channel"].(string); ok && channel != "" {
-		return channel, true
-	}
-
-	if method, ok := request["method"].(string); ok && method != "" {
-		return method, true
-	}
-
-	return "", false
+	return nil
 }
 
 func (rest *Rest) Close() error {

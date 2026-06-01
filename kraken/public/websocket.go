@@ -2,14 +2,15 @@ package public
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/replay"
 )
 
 var socket *WebSocket
@@ -23,10 +24,11 @@ type WebSocketClient interface {
 }
 
 type WebSocket struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	conns  map[string]*websocket.Conn
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	conns    map[string]*websocket.Conn
+	recorder io.Writer
 }
 
 func NewWebSocket(ctx context.Context) (*WebSocket, error) {
@@ -38,6 +40,7 @@ func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 			cancel: cancel,
 			conns:  make(map[string]*websocket.Conn),
 		}
+		socket.bindRecorder()
 	})
 
 	return socket, errnie.Error(errnie.Require(map[string]any{
@@ -45,6 +48,22 @@ func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 		"cancel": socket.cancel,
 		"conns":  socket.conns,
 	}))
+}
+
+func (ws *WebSocket) bindRecorder() {
+	if viper.GetViper().Get("trading.model") != "record" {
+		return
+	}
+
+	recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	ws.recorder = recorder
 }
 
 func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
@@ -61,6 +80,7 @@ func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
 	}
 
 	ws.conns[channel] = conn
+
 	return nil
 }
 
@@ -75,56 +95,9 @@ func (ws *WebSocket) Send(channel string, message any) error {
 		return errnie.Error(err)
 	}
 
-	recordWSOutbound(channel, message)
-
 	return nil
 }
 
-func recordWSOutbound(channel string, message any) {
-	payload, err := sonic.Marshal(message)
-
-	if err != nil {
-		return
-	}
-
-	_ = replay.WriteWS(channel, replay.DirectionOut, payload)
-}
-
-/*
-emitDataRows splits one envelope's data array into per-row SocketMessages, keeping
-the outer channel and type on each row so snapshot vs update survives decoding.
-*/
-func emitDataRows(
-	ctx context.Context, message *SocketMessage, out chan<- *SocketMessage,
-) error {
-	var rows []json.RawMessage
-
-	if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-		return fmt.Errorf("kraken ws decode %s: %w", message.Channel, err)
-	}
-
-	for index := range rows {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- &SocketMessage{
-			Channel: message.Channel,
-			Type:    message.Type,
-			Data:    rows[index],
-		}:
-		}
-	}
-
-	return nil
-}
-
-/*
-Stream owns the single reader goroutine for a connected channel: it reads each
-frame, decodes the envelope, and unmarshals the data array into []T, emitting one
-*T per row on the returned channel. The connection's read loop and the typed
-decode live in the same goroutine, so a consumer ranges the result directly with
-no intermediate pump. The channel closes when ctx is canceled or the socket ends.
-*/
 func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 	conn, ok := ws.conns[channel]
 
@@ -148,7 +121,9 @@ func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 					continue
 				}
 
-				if err := emitDataRows(ws.ctx, message, out); err != nil {
+				ws.record(message)
+
+				if err := message.EmitRows(ws.ctx, out); err != nil {
 					errnie.Error(err)
 				}
 			}
@@ -158,18 +133,14 @@ func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 	return out, nil
 }
 
-/*
-StreamSnapshot is Stream for channels whose data is a single object rather than an
-array (e.g. instruments). It emits one *T per frame.
-*/
-func StreamSnapshot[T any](ws *WebSocket, channel string) (<-chan *T, error) {
+func (ws *WebSocket) StreamSnapshot(channel string) (<-chan *SocketMessage, error) {
 	conn, ok := ws.conns[channel]
 
 	if !ok {
 		return nil, fmt.Errorf("channel %s not found", channel)
 	}
 
-	out := make(chan *T, 256)
+	out := make(chan *SocketMessage, 256)
 
 	go func() {
 		defer close(out)
@@ -189,15 +160,11 @@ func StreamSnapshot[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 					continue
 				}
 
-				var row T
-
-				if err := sonic.Unmarshal(message.Data, &row); err != nil {
-					errnie.Error(fmt.Errorf("kraken ws decode %s: %w", channel, err))
-
-					continue
+				select {
+				case <-ws.ctx.Done():
+					return
+				case out <- message:
 				}
-
-				out <- &row
 			}
 		}
 	}()
@@ -205,11 +172,6 @@ func StreamSnapshot[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 	return out, nil
 }
 
-/*
-read pulls one frame off the socket and decodes its envelope. It returns ok=false
-when the socket is dead (caller should stop), and a nil message for frames that
-are control acks or belong to another channel (caller should skip).
-*/
 func (ws *WebSocket) read(
 	conn *websocket.Conn, channel string,
 ) (*SocketMessage, bool) {
@@ -217,10 +179,6 @@ func (ws *WebSocket) read(
 
 	if err != nil {
 		return nil, false
-	}
-
-	if err := replay.WriteWS(channel, replay.DirectionIn, payload); err != nil {
-		errnie.Error(err)
 	}
 
 	var message SocketMessage
@@ -236,6 +194,14 @@ func (ws *WebSocket) read(
 	}
 
 	return &message, true
+}
+
+func (ws *WebSocket) record(message *SocketMessage) {
+	if ws.recorder == nil {
+		return
+	}
+
+	ws.recorder.Write(message.Data)
 }
 
 func (ws *WebSocket) Close(channel string) error {

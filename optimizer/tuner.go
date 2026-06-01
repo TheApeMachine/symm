@@ -2,24 +2,24 @@ package optimizer
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
 /*
-Tuner searches for the best tunables and tree YAML.
+Tuner consumes replay measurements and stops when the parent context is canceled.
 */
 type Tuner struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	trees       []*perspectives.Tree
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.Subscriber
+	measurementCount atomic.Uint64
 }
 
 /*
@@ -38,42 +38,43 @@ func NewTuner(ctx context.Context, pool *qpool.Q) *Tuner {
 
 	for _, channel := range []string{"measurements"} {
 		tuner.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		tuner.subscribers[channel] = tuner.broadcasts[channel].Subscribe("measurements", 128)
+		tuner.subscribers[channel] = tuner.broadcasts[channel].Subscribe("optimizer:tuner", 128)
 	}
 
 	return tuner
 }
 
 /*
-Tick searches for the best tunables and tree YAML.
+Tick drains measurements until the replay session ends.
 */
 func (tuner *Tuner) Tick() error {
-	var (
-		measurement perspectives.Measurement
-		ok          bool
-	)
+	for {
+		select {
+		case <-tuner.ctx.Done():
+			return tuner.ctx.Err()
+		case row, ok := <-tuner.subscribers["measurements"].Incoming:
+			if !ok {
+				return nil
+			}
 
-	for row := range tuner.subscribers["measurements"].Incoming {
-		if row == nil {
-			continue
+			if row == nil {
+				continue
+			}
+
+			if _, ok := row.Value.(perspectives.Measurement); !ok {
+				continue
+			}
+
+			tuner.measurementCount.Add(1)
 		}
-
-		if measurement, ok = row.Value.(perspectives.Measurement); !ok {
-			continue
-		}
-
-		tree := errnie.Does(func() (*perspectives.Tree, error) {
-			return perspectives.NewTree(
-				tuner.ctx, []perspectives.Measurement{measurement},
-			)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
-
-		tuner.Project(tree)
 	}
+}
 
-	return tuner.ctx.Err()
+/*
+MeasurementCount returns how many measurements were observed in the current session.
+*/
+func (tuner *Tuner) MeasurementCount() uint64 {
+	return tuner.measurementCount.Load()
 }
 
 /*
@@ -81,12 +82,29 @@ Close shuts down the tuner.
 */
 func (tuner *Tuner) Close() error {
 	tuner.cancel()
+
 	return nil
 }
 
 /*
-Project the current trees forwards in time to discover its profitability.
+SessionSummary is the optimizer output for one replay pass.
 */
-func (tuner *Tuner) Project(tree *perspectives.Tree) float64 {
-	return 0
+type SessionSummary struct {
+	MeasurementCount uint64 `json:"measurement_count"`
+}
+
+/*
+Summary reports the current session counters.
+*/
+func (tuner *Tuner) Summary() SessionSummary {
+	return SessionSummary{
+		MeasurementCount: tuner.MeasurementCount(),
+	}
+}
+
+/*
+String formats the session summary for stderr.
+*/
+func (summary SessionSummary) String() string {
+	return fmt.Sprintf("measurements=%d", summary.MeasurementCount)
 }

@@ -2,156 +2,97 @@ package replay
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"sync"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
-	symmreplay "github.com/theapemachine/symm/replay"
 )
 
 var _ public.WebSocketClient = (*WebSocket)(nil)
 
 /*
-WebSocket replays recorded Kraken WebSocket v2 frames from trading.replay.file.
+WebSocket replays lines from trading.replay.file. Orders go through paper.
 */
 type WebSocket struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	mu      sync.Mutex
-	streams map[string]chan struct{}
+	paper   *paper.WebSocket
+	capture *Capture
 }
 
 func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
+	paperSocket, err := paper.NewWebSocket(ctx)
+
+	if err != nil {
+		cancel()
+
+		return nil, err
+	}
+
 	ws := &WebSocket{
 		ctx:     ctx,
 		cancel:  cancel,
-		streams: make(map[string]chan struct{}),
+		paper:   paperSocket,
+		capture: ActiveCapture(),
 	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{
 		"ctx":     ws.ctx,
 		"cancel":  ws.cancel,
-		"streams": ws.streams,
+		"paper":   ws.paper,
+		"capture": ws.capture,
 	}))
 }
 
 func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
+	if ws.paperChannel(channel) {
+		return ws.paper.Connect(endpoint, channel)
+	}
+
 	return nil
 }
 
 func (ws *WebSocket) Send(channel string, message any) error {
+	if ws.paperChannel(channel) {
+		return ws.paper.Send(channel, message)
+	}
+
 	return nil
 }
 
 func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
+	if ws.paperChannel(channel) {
+		return ws.paper.Stream(channel)
+	}
+
 	path := strings.TrimSpace(viper.GetViper().GetString("trading.replay.file"))
 
 	if path == "" {
-		return nil, fmt.Errorf("kraken replay websocket: replay file is not configured")
+		return nil, errnie.Error(errnie.Require(map[string]any{"trading.replay.file": path}))
 	}
 
-	hub, err := symmreplay.Open(path)
+	ws.capture.start(ws.ctx, path)
 
-	if err != nil {
-		return nil, err
-	}
-
-	out := make(chan *public.SocketMessage, 256)
-	stop := make(chan struct{})
-
-	ws.mu.Lock()
-	ws.streams[channel] = stop
-	ws.mu.Unlock()
-
-	inbound := hub.SubscribeWS(channel)
-
-	go func() {
-		defer close(out)
-
-		ws.mu.Lock()
-		delete(ws.streams, channel)
-		ws.mu.Unlock()
-
-		for {
-			select {
-			case <-ws.ctx.Done():
-				return
-			case <-stop:
-				return
-			case payload, ok := <-inbound:
-				if !ok {
-					return
-				}
-
-				messages, err := decodeSocketMessages(payload, channel)
-
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				for index := range messages {
-					select {
-					case <-ws.ctx.Done():
-						return
-					case <-stop:
-						return
-					case out <- messages[index]:
-					}
-				}
-			}
-		}
-	}()
-
-	return out, nil
+	return ws.capture.subscribe(channel), nil
 }
 
 func (ws *WebSocket) Close(channel string) error {
-	ws.mu.Lock()
-	stop, ok := ws.streams[channel]
-
-	if ok {
-		close(stop)
-		delete(ws.streams, channel)
+	if ws.paperChannel(channel) {
+		return ws.paper.Close(channel)
 	}
-
-	ws.mu.Unlock()
 
 	return nil
 }
 
-func decodeSocketMessages(payload []byte, channel string) ([]*public.SocketMessage, error) {
-	var envelope public.SocketMessage
-
-	if err := sonic.Unmarshal(payload, &envelope); err != nil {
-		return nil, fmt.Errorf("kraken replay websocket decode %s: %w", channel, err)
+func (ws *WebSocket) paperChannel(channel string) bool {
+	switch channel {
+	case public.OrdersChannel, public.ExecutionsChannel:
+		return true
+	default:
+		return false
 	}
-
-	if envelope.Channel != channel || len(envelope.Data) == 0 {
-		return nil, nil
-	}
-
-	var rows []public.SocketMessage
-
-	if err := sonic.Unmarshal(envelope.Data, &rows); err != nil {
-		row := envelope
-
-		return []*public.SocketMessage{&row}, nil
-	}
-
-	messages := make([]*public.SocketMessage, len(rows))
-
-	for index := range rows {
-		rows[index].Channel = channel
-		rows[index].Type = envelope.Type
-		messages[index] = &rows[index]
-	}
-
-	return messages, nil
 }

@@ -4,16 +4,22 @@ import (
 	"context"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
+/*
+Trader routes optimizer actions through the broker desk.
+*/
 type Trader struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	err         error
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
+	desk        *broker.Desk
 }
 
 func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
@@ -25,27 +31,48 @@ func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		desk: errnie.Does(func() (*broker.Desk, error) {
+			return broker.NewDesk(ctx, pool)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value(),
 	}
 
 	for _, channel := range []string{"actions"} {
 		trader.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("actions", 128)
+		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("optimizer:trader", 128)
 	}
 
 	return trader
 }
 
 func (trader *Trader) Tick() error {
-	for row := range trader.subscribers["actions"].Incoming {
-		if row == nil {
-			continue
+	for {
+		select {
+		case <-trader.ctx.Done():
+			return trader.ctx.Err()
+		case row, ok := <-trader.subscribers["actions"].Incoming:
+			if !ok {
+				return nil
+			}
+
+			if row == nil {
+				continue
+			}
+
+			action, ok := row.Value.(perspectives.Action)
+
+			if !ok {
+				continue
+			}
+
+			errnie.Error(trader.desk.AddOrder(action))
 		}
 	}
-
-	return trader.ctx.Err()
 }
 
 func (trader *Trader) Close() error {
 	trader.cancel()
+
 	return nil
 }

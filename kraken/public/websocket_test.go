@@ -36,7 +36,7 @@ func TestStream(t *testing.T) {
 	})
 }
 
-func TestEmitDataRows(t *testing.T) {
+func TestSocketMessageEmitRows(t *testing.T) {
 	convey.Convey("Given one book envelope with two rows", t, func() {
 		message := &SocketMessage{
 			Channel: "book",
@@ -48,7 +48,7 @@ func TestEmitDataRows(t *testing.T) {
 		}
 		out := make(chan *SocketMessage, 4)
 
-		err := emitDataRows(context.Background(), message, out)
+		err := message.EmitRows(context.Background(), out)
 
 		close(out)
 
