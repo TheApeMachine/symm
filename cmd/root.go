@@ -28,6 +28,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/toxicity"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -59,6 +60,7 @@ var (
 			}).Value()
 
 			systems := []System{
+				ui.NewHub(cmd.Context(), pool),
 				public.NewWebSocket(cmd.Context(), pool),
 				kraken.NewInstrument(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),
@@ -73,9 +75,15 @@ var (
 				pumpdump.NewSignal(cmd.Context(), pool),
 				sentiment.NewSignal(cmd.Context(), pool),
 				toxicity.NewToxicity(cmd.Context(), pool),
-				market.NewStory(cmd.Context(), pool),
-				trader.NewCrypto(cmd.Context(), pool),
 			}
+
+			story, err := market.NewStory(cmd.Context(), pool)
+
+			if err != nil {
+				return err
+			}
+
+			systems = append(systems, story, trader.NewCrypto(cmd.Context(), pool))
 
 			engine.AddSystems(systems...)
 			return errnie.Error(engine.Start())

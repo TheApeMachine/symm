@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -88,10 +87,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"trade", "measurements"} {
+	for _, channel := range []string{"trade"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
+
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	return signal
 }
@@ -174,8 +175,6 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 }
 
 func (signal *Signal) Tick() error {
-	fmt.Println("signal.cvd.Signal.Tick")
-
 	for message := range signal.subscribers["trade"].Incoming {
 		if message == nil || message.Value == nil {
 			continue

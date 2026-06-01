@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	defaultMCTSIterations = 256
+	DefaultMCTSIterations = 256
 	explorationWeight     = 1.41
+	maxBranchCountDepth   = 256
 )
 
 /*
@@ -43,7 +44,7 @@ func (tuner *Tuner) newTreeSearch() *TreeSearch {
 		profile:    &tuner.profile,
 		evaluate:   tuner.evaluator(),
 		rng:        rand.New(rand.NewSource(tuner.seed)),
-		iterations: defaultMCTSIterations,
+		iterations: DefaultMCTSIterations,
 	}
 
 	search.root = &Node{
@@ -178,10 +179,32 @@ func (search *TreeSearch) emitBest(
 func (search *TreeSearch) branchCount(
 	branches perspectives.BranchList,
 ) int {
-	count := len(branches)
+	type stackFrame struct {
+		branches perspectives.BranchList
+		depth    int
+	}
 
-	for _, branch := range branches {
-		count += search.branchCount(perspectives.BranchList(branch.Branches))
+	count := 0
+	stack := []stackFrame{{branches: branches, depth: 0}}
+
+	for len(stack) > 0 {
+		frame := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if frame.depth > maxBranchCountDepth {
+			continue
+		}
+
+		for _, branch := range frame.branches {
+			count++
+
+			if len(branch.Branches) > 0 {
+				stack = append(stack, stackFrame{
+					branches: perspectives.BranchList(branch.Branches),
+					depth:    frame.depth + 1,
+				})
+			}
+		}
 	}
 
 	return count

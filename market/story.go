@@ -15,6 +15,8 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+const storyMeasurementsSubscriberID = "market:story"
+
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
@@ -28,10 +30,11 @@ type Story struct {
 	buffer      *ring.Ring
 	trees       []*perspectives.Tree
 	lastGauge   map[string]time.Time
+	recordFile  *os.File
 	recorder    *bufio.Writer
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -47,20 +50,27 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	fh, err := os.Create(viper.GetViper().GetString("trading.record.file"))
+	recordPath := viper.GetViper().GetString("trading.record.file")
+
+	fh, err := os.Create(recordPath)
 
 	if err != nil {
-		errnie.Error(err)
+		cancel()
+		return nil, fmt.Errorf("market story: create record file %q: %w", recordPath, err)
 	}
 
+	story.recordFile = fh
 	story.recorder = bufio.NewWriter(fh)
 
-	for _, channel := range []string{"measurements"} {
+	for _, channel := range []string{"measurements", "actions"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		story.subscribers[channel] = story.broadcasts[channel].Subscribe("measurements", 128)
 	}
 
-	return story
+	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
+		storyMeasurementsSubscriberID, 128,
+	)
+
+	return story, nil
 }
 
 /*
@@ -75,6 +85,8 @@ func (story *Story) Tick() error {
 	defer story.recorder.Flush()
 
 	for row := range story.subscribers["measurements"].Incoming {
+		fmt.Println("story.Tick", "measurement", row)
+
 		if row == nil {
 			errnie.Warn("nil measurement")
 			continue
@@ -98,7 +110,7 @@ func (story *Story) Tick() error {
 			errnie.Error(err)
 		}
 
-		story.recorder.Flush()
+		errnie.Error(story.recorder.Flush())
 
 		story.buffer.Value = measurement
 		story.buffer.Next()
@@ -106,7 +118,9 @@ func (story *Story) Tick() error {
 		actions := make([]*perspectives.ActionType, 0)
 
 		for _, tree := range story.trees {
-			tree.AddMeasurement(story.buffer.Value.(perspectives.Measurement))
+			if buffered, bufferedOK := story.buffer.Value.(perspectives.Measurement); bufferedOK {
+				tree.AddMeasurement(buffered)
+			}
 
 			if action := tree.Action(); action != nil {
 				actions = append(actions, action)
@@ -117,7 +131,17 @@ func (story *Story) Tick() error {
 			measurements := make([]perspectives.Measurement, 0)
 
 			story.buffer.Do(func(value any) {
-				measurements = append(measurements, value.(perspectives.Measurement))
+				if value == nil {
+					return
+				}
+
+				buffered, bufferedOK := value.(perspectives.Measurement)
+
+				if !bufferedOK {
+					return
+				}
+
+				measurements = append(measurements, buffered)
 			})
 
 			story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
@@ -140,5 +164,22 @@ Close shuts down the story.
 */
 func (story *Story) Close() error {
 	story.cancel()
+
+	if subscriber := story.subscribers["measurements"]; subscriber != nil {
+		if broadcast := story.broadcasts["measurements"]; broadcast != nil {
+			broadcast.Unsubscribe(subscriber.ID)
+		}
+	}
+
+	if story.recorder != nil {
+		errnie.Error(story.recorder.Flush())
+		story.recorder = nil
+	}
+
+	if story.recordFile != nil {
+		errnie.Error(story.recordFile.Close())
+		story.recordFile = nil
+	}
+
 	return nil
 }

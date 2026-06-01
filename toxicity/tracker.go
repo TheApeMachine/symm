@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -20,7 +21,6 @@ const (
 	toxicCooldown            = 30 * time.Second
 	flowAlpha                = 0.05
 	tradeRingCap             = 512
-	epsilon                  = 1e-12
 	flashChurnWindow         = 50 * time.Millisecond
 	flashChurnRatioThreshold = 0.85
 )
@@ -73,6 +73,8 @@ type symbolState struct {
 	toxicChurn map[float64]float64   // price -> cancel/add ratio at flag time
 	trades     []tradePrint
 	mid        float64
+	lastPrice  float64
+	tracked    *perspectives.Category
 	cancelBid  float64
 	fillBid    float64
 	cancelAsk  float64
@@ -93,10 +95,30 @@ type Tracker struct {
 
 func NewTracker() *Tracker {
 	return &Tracker{
-		symbols:              make(map[string]*symbolState),
-		floor:                adaptive.NewSNRField(),
-		minFillToCancelRatio: viper.GetFloat64("signals.min_fill_to_cancel_ratio"),
+		symbols: make(map[string]*symbolState),
+		floor:   adaptive.NewSNRField(),
 	}
+}
+
+/*
+fillToCancelThreshold returns the configured cancel/fill asymmetry gate. The value
+is read lazily because the process-wide defaultTracker is constructed at package
+init, before viper loads cmd/cfg/config.yml.
+*/
+func (tracker *Tracker) fillToCancelThreshold() float64 {
+	if tracker.minFillToCancelRatio > 0 {
+		return tracker.minFillToCancelRatio
+	}
+
+	ratio := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
+
+	if ratio <= 0 {
+		return 0
+	}
+
+	tracker.minFillToCancelRatio = ratio
+
+	return ratio
 }
 
 func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolState {
@@ -110,6 +132,7 @@ func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolStat
 			churn:      make(map[l2Key]*levelChurnWindow),
 			toxic:      make(map[float64]time.Time),
 			toxicChurn: make(map[float64]float64),
+			tracked:    perspectives.NewCategory(perspectives.CategoryTypeNone),
 		}
 		tracker.symbols[symbol] = state
 	}
@@ -126,6 +149,7 @@ func (tracker *Tracker) ObserveTrade(symbol string, pair market.Pair, price, vol
 	defer tracker.mu.Unlock()
 
 	state := tracker.stateLocked(symbol, pair)
+	state.lastPrice = price
 	state.trades = append(state.trades, tradePrint{at: at, price: price, volume: volume})
 
 	if len(state.trades) > tradeRingCap {
@@ -142,6 +166,17 @@ func (tracker *Tracker) ObserveMid(symbol string, pair market.Pair, mid float64)
 	defer tracker.mu.Unlock()
 
 	tracker.stateLocked(symbol, pair).mid = mid
+}
+
+func (tracker *Tracker) ObserveLast(symbol string, pair market.Pair, last float64) {
+	if last <= 0 {
+		return
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	tracker.stateLocked(symbol, pair).lastPrice = last
 }
 
 // ApplyOrder ingests one L3 event. event is "add", "delete", or "amend"; ts is

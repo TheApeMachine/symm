@@ -3,6 +3,7 @@ package optimizer
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -145,7 +146,7 @@ func (tuner *Tuner) publish(
 }
 
 /*
-Finish runs MCTS once replay measurements are collected.
+Finish runs the bounded scan once replay measurements are collected.
 */
 func (tuner *Tuner) Finish() {
 	tuner.mu.Lock()
@@ -156,7 +157,14 @@ func (tuner *Tuner) Finish() {
 	}
 
 	tuner.finished = true
-	tuner.branches = tuner.newTreeSearch().Run()
+	rows := tuner.profile.Rows()
+	search := NewScanSearch(tuner.ctx, &tuner.profile, rows, ScanOptions{
+		Workers:        runtime.NumCPU(),
+		MaxThresholds:  DefaultScanMaxThresholds,
+		BeamWidth:      DefaultScanBeamWidth,
+		CandidateLimit: DefaultScanCandidateLimit,
+	})
+	tuner.branches, _ = search.Run()
 
 	tree, err := perspectives.NewTreeFromBranches(tuner.ctx, tuner.branches)
 
@@ -193,6 +201,8 @@ SessionSummary is the optimizer output for one replay pass.
 type SessionSummary struct {
 	MeasurementCount int     `json:"measurement_count"`
 	BranchCount      int     `json:"branch_count"`
+	Candidates       int     `json:"candidates"`
+	Workers          int     `json:"workers"`
 	BestScore        float64 `json:"best_score"`
 }
 
@@ -219,6 +229,17 @@ func (tuner *Tuner) Summary() SessionSummary {
 String formats the session summary for stderr.
 */
 func (summary SessionSummary) String() string {
+	if summary.Candidates > 0 {
+		return fmt.Sprintf(
+			"measurements=%d branches=%d candidates=%d workers=%d score=%.6f",
+			summary.MeasurementCount,
+			summary.BranchCount,
+			summary.Candidates,
+			summary.Workers,
+			summary.BestScore,
+		)
+	}
+
 	return fmt.Sprintf(
 		"measurements=%d branches=%d score=%.6f",
 		summary.MeasurementCount,

@@ -40,11 +40,12 @@ func TestPublishMeasurement(t *testing.T) {
 		now := time.Now()
 
 		tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
+		tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tox.tracker.stateLocked(symbol, market.Pair{})
 		state.toxic[100] = now.Add(time.Minute)
 
 		Convey("When a toxic near-touch level is measured", func() {
-			tox.publishMeasurement(symbol, 100)
+			tox.publishMeasurement(symbol)
 
 			var measurement perspectives.Measurement
 			received := false
@@ -68,6 +69,9 @@ func TestPublishMeasurement(t *testing.T) {
 				So(measurement.Category, ShouldEqual, perspectives.CategoryToxicBluff)
 				So(measurement.Symbol, ShouldEqual, symbol)
 				So(measurement.Strength, ShouldBeGreaterThan, 0)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
+				So(measurement.SNR, ShouldBeGreaterThan, 0)
+				So(measurement.Last, ShouldEqual, 100)
 			})
 		})
 	})
@@ -98,12 +102,13 @@ func BenchmarkPublishMeasurement(b *testing.B) {
 	symbol := "ETH/EUR"
 	now := time.Now()
 	tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
+	tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
 	state := tox.tracker.stateLocked(symbol, market.Pair{})
 	state.toxic[100] = now.Add(time.Minute)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		tox.publishMeasurement(symbol, 100)
+		tox.publishMeasurement(symbol)
 	}
 }

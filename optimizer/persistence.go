@@ -3,6 +3,7 @@ package optimizer
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	"go.yaml.in/yaml/v3"
 )
@@ -27,10 +29,23 @@ type BestTree struct {
 TuneOptions controls a measurement-backed optimizer run.
 */
 type TuneOptions struct {
-	OutputPath string
-	Seed       int64
-	Iterations int
-	OnBest     func(BestTree)
+	OutputPath          string
+	CandidateReportPath string
+	Seed                int64
+	Workers             int
+	MaxThresholds       int
+	BeamWidth           int
+	CandidateLimit      int
+	OnBest              func(BestTree)
+}
+
+/*
+CandidateScore is one scored candidate tree emitted by the scanner.
+*/
+type CandidateScore struct {
+	Candidate int
+	Score     float64
+	Branches  perspectives.BranchList
 }
 
 /*
@@ -96,15 +111,14 @@ func TuneMeasurements(
 		tuner.profile.Add(row)
 	}
 
-	search := tuner.newTreeSearch()
+	reporter, err := newCandidateReporter(options.CandidateReportPath)
 
-	if options.Iterations > 0 {
-		search.iterations = options.Iterations
+	if err != nil {
+		return SessionSummary{}, err
 	}
 
 	var writeErr error
-
-	search.onBest = func(best BestTree) {
+	onBest := func(best BestTree) {
 		if options.OutputPath != "" {
 			if err := WriteBranches(options.OutputPath, best.Branches); err != nil {
 				writeErr = err
@@ -117,14 +131,48 @@ func TuneMeasurements(
 			options.OnBest(best)
 		}
 	}
+	onCandidate := func(candidate CandidateScore) {
+		if reporter == nil || writeErr != nil {
+			return
+		}
 
-	tuner.branches = search.Run()
+		if err := reporter.Write(candidate); err != nil {
+			writeErr = err
+		}
+	}
+
+	search := NewScanSearch(
+		ctx,
+		&tuner.profile,
+		rows,
+		ScanOptions{
+			Workers:        options.Workers,
+			MaxThresholds:  options.MaxThresholds,
+			BeamWidth:      options.BeamWidth,
+			CandidateLimit: options.CandidateLimit,
+		},
+	)
+	search.onBest = onBest
+	search.onCandidate = onCandidate
+
+	var stats ScanStats
+	tuner.branches, stats = search.Run()
+
+	if reporter != nil {
+		if err := reporter.Close(); err != nil && writeErr == nil {
+			writeErr = err
+		}
+	}
 
 	if writeErr != nil {
 		return SessionSummary{}, writeErr
 	}
 
-	return tuner.Summary(), nil
+	summary := tuner.Summary()
+	summary.Candidates = stats.Candidates
+	summary.Workers = stats.Workers
+
+	return summary, nil
 }
 
 /*
@@ -182,17 +230,24 @@ type branchDocument struct {
 }
 
 type branchYAML struct {
-	Branches  []branchYAML               `yaml:"branches,omitempty"`
-	Category  perspectives.CategoryType  `yaml:"category,omitempty"`
-	Condition perspectives.ConditionType `yaml:"condition,omitempty"`
-	Unit      perspectives.UnitType      `yaml:"unit,omitempty"`
-	Value     *float64                   `yaml:"value,omitempty"`
-	ValueSet  bool                       `yaml:"value_set,omitempty"`
-	Action    *actionYAML                `yaml:"action,omitempty"`
+	Branches    []branchYAML                 `yaml:"branches,omitempty" json:"branches,omitempty"`
+	Category    perspectives.CategoryType    `yaml:"category,omitempty" json:"category,omitempty"`
+	Observation perspectives.ObservationType `yaml:"observation,omitempty" json:"observation,omitempty"`
+	Metric      string                       `yaml:"metric,omitempty" json:"metric,omitempty"`
+	Regime      perspectives.Regime          `yaml:"regime,omitempty" json:"regime,omitempty"`
+	Condition   perspectives.ConditionType   `yaml:"condition,omitempty" json:"condition,omitempty"`
+	Unit        perspectives.UnitType        `yaml:"unit,omitempty" json:"unit,omitempty"`
+	Value       *float64                     `yaml:"value,omitempty" json:"value,omitempty"`
+	ValueSet    bool                         `yaml:"value_set,omitempty" json:"value_set,omitempty"`
+	Action      *actionYAML                  `yaml:"action,omitempty" json:"action,omitempty"`
 }
 
 type actionYAML struct {
-	Type perspectives.ActionType `yaml:"type"`
+	Type     perspectives.ActionType `yaml:"type" json:"type"`
+	Side     trading.Side            `yaml:"side,omitempty" json:"side,omitempty"`
+	Symbol   string                  `yaml:"symbol,omitempty" json:"symbol,omitempty"`
+	Price    float64                 `yaml:"price,omitempty" json:"price,omitempty"`
+	Quantity float64                 `yaml:"quantity,omitempty" json:"quantity,omitempty"`
 }
 
 func branchDocumentsFromBranches(
@@ -209,10 +264,13 @@ func branchDocumentsFromBranches(
 
 func branchDocumentFromBranch(branch perspectives.Branch) branchYAML {
 	document := branchYAML{
-		Category:  branch.Category,
-		Condition: branch.Condition,
-		Unit:      branch.Unit,
-		ValueSet:  branch.ValueSet,
+		Category:    branch.Category,
+		Observation: branch.Observation,
+		Metric:      branch.Metric,
+		Regime:      branch.Regime,
+		Condition:   branch.Condition,
+		Unit:        branch.Unit,
+		ValueSet:    branch.ValueSet,
 	}
 
 	if branch.ValueSet {
@@ -220,8 +278,8 @@ func branchDocumentFromBranch(branch perspectives.Branch) branchYAML {
 		document.Value = &value
 	}
 
-	if branch.Action.Type != perspectives.ActionNone {
-		document.Action = &actionYAML{Type: branch.Action.Type}
+	if hasAction(branch.Action) {
+		document.Action = actionDocumentFromAction(branch.Action)
 	}
 
 	if len(branch.Branches) > 0 {
@@ -231,4 +289,114 @@ func branchDocumentFromBranch(branch perspectives.Branch) branchYAML {
 	}
 
 	return document
+}
+
+func actionDocumentFromAction(action perspectives.Action) *actionYAML {
+	return &actionYAML{
+		Type:     action.Type,
+		Side:     action.Side,
+		Symbol:   action.Symbol,
+		Price:    action.Price,
+		Quantity: action.Quantity,
+	}
+}
+
+func hasAction(action perspectives.Action) bool {
+	return action.Type != perspectives.ActionNone ||
+		action.Side != "" ||
+		action.Symbol != "" ||
+		action.Price != 0 ||
+		action.Quantity != 0
+}
+
+type candidateReport struct {
+	Candidate   int          `json:"candidate"`
+	Score       float64      `json:"score"`
+	ProfitLoss  float64      `json:"profit_loss"`
+	ReturnPct   float64      `json:"return_pct"`
+	BranchCount int          `json:"branch_count"`
+	Branches    []branchYAML `json:"branches"`
+}
+
+type candidateReporter struct {
+	file    *os.File
+	writer  *bufio.Writer
+	encoder *json.Encoder
+}
+
+func newCandidateReporter(path string) (*candidateReporter, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+
+	if strings.TrimSpace(path) == "-" {
+		writer := bufio.NewWriter(os.Stdout)
+		encoder := json.NewEncoder(writer)
+		encoder.SetEscapeHTML(false)
+
+		return &candidateReporter{
+			writer:  writer,
+			encoder: encoder,
+		}, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+
+	file, err := os.Create(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	writer := bufio.NewWriter(file)
+	encoder := json.NewEncoder(writer)
+	encoder.SetEscapeHTML(false)
+
+	return &candidateReporter{
+		file:    file,
+		writer:  writer,
+		encoder: encoder,
+	}, nil
+}
+
+func (reporter *candidateReporter) Write(candidate CandidateScore) error {
+	return reporter.encoder.Encode(candidateReport{
+		Candidate:   candidate.Candidate,
+		Score:       candidate.Score,
+		ProfitLoss:  candidate.Score,
+		ReturnPct:   candidate.Score * 100,
+		BranchCount: countBranches(candidate.Branches),
+		Branches: branchDocumentsFromBranches(
+			candidate.Branches,
+		),
+	})
+}
+
+func (reporter *candidateReporter) Close() error {
+	flushErr := reporter.writer.Flush()
+
+	if reporter.file == nil {
+		return flushErr
+	}
+
+	closeErr := reporter.file.Close()
+
+	if flushErr != nil {
+		return flushErr
+	}
+
+	return closeErr
+}
+
+func countBranches(branches perspectives.BranchList) int {
+	count := 0
+
+	for _, branch := range branches {
+		count++
+		count += countBranches(perspectives.BranchList(branch.Branches))
+	}
+
+	return count
 }

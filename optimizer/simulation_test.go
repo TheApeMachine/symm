@@ -22,24 +22,31 @@ func TestReplaySimulationExit(t *testing.T) {
 				Category: perspectives.CategoryExhaustion,
 				SNR:      2.0, Last: 110,
 			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2.0, Last: 90,
+			},
 		}
 
 		branches := perspectives.BranchList{
 			{
-				Category:  perspectives.CategoryLaminar,
-				Condition: perspectives.ConditionIsGreaterThanOrEqual,
-				Unit:      perspectives.UnitSNR,
-				Value:     1.0,
-				ValueSet:  true,
-				Action:    perspectives.Action{Type: perspectives.ActionLimit},
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
 			},
 			{
-				Category:  perspectives.CategoryExhaustion,
-				Condition: perspectives.ConditionIsGreaterThanOrEqual,
-				Unit:      perspectives.UnitSNR,
-				Value:     1.0,
-				ValueSet:  true,
-				Action:    perspectives.Action{Type: perspectives.ActionSettlePosition},
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
 			},
 		}
 
@@ -75,12 +82,13 @@ func TestReplaySimulationScoreUsesLatestMeasurements(t *testing.T) {
 		}
 
 		branches := perspectives.BranchList{{
-			Category:  perspectives.CategoryAggressiveDrive,
-			Condition: perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:      perspectives.UnitSNR,
-			Value:     1.0,
-			ValueSet:  true,
-			Action:    perspectives.Action{Type: perspectives.ActionLimit},
+			Category:    perspectives.CategoryAggressiveDrive,
+			Observation: perspectives.ObservationNotHolding,
+			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:        perspectives.UnitSNR,
+			Value:       1.0,
+			ValueSet:    true,
+			Action:      perspectives.Action{Type: perspectives.ActionLimit},
 		}}
 
 		score := NewReplaySimulation(ctx, branches, rows).Score()
@@ -122,11 +130,12 @@ func TestReplaySimulationScoreUsesGlobalMeasurements(t *testing.T) {
 			ValueSet:  true,
 			Branches: []perspectives.Branch{
 				{
-					Category:  perspectives.CategoryAggressiveDrive,
-					Condition: perspectives.ConditionIsGreaterThanOrEqual,
-					Unit:      perspectives.UnitSNR,
-					Value:     1.0,
-					ValueSet:  true,
+					Category:    perspectives.CategoryAggressiveDrive,
+					Observation: perspectives.ObservationNotHolding,
+					Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+					Unit:        perspectives.UnitSNR,
+					Value:       1.0,
+					ValueSet:    true,
 					Action: perspectives.Action{
 						Type: perspectives.ActionLimit,
 					},

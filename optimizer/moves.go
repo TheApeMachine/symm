@@ -7,6 +7,16 @@ import (
 const maxBranchDepth = 2
 
 var (
+	searchObservations = []perspectives.ObservationType{
+		perspectives.ObservationNone,
+		perspectives.ObservationHolding,
+		perspectives.ObservationNotHolding,
+	}
+
+	searchRegimes = []perspectives.Regime{
+		perspectives.RegimeNone,
+	}
+
 	searchUnits = []perspectives.UnitType{
 		perspectives.UnitSNR,
 		perspectives.UnitConfidence,
@@ -21,12 +31,25 @@ var (
 
 	searchQuantiles = []float64{0.25, 0.5, 0.75}
 
-	searchActions = []perspectives.ActionType{
+	searchBranchActions = []perspectives.ActionType{
+		perspectives.ActionNone,
+	}
+
+	searchEntryActions = []perspectives.ActionType{
 		perspectives.ActionNone,
 		perspectives.ActionLimit,
 		perspectives.ActionMarket,
+		perspectives.ActionIceberg,
+	}
+
+	searchExitActions = []perspectives.ActionType{
+		perspectives.ActionNone,
 		perspectives.ActionStopLoss,
+		perspectives.ActionStopLossLimit,
 		perspectives.ActionTakeProfit,
+		perspectives.ActionTakeProfitLimit,
+		perspectives.ActionTrailingStop,
+		perspectives.ActionTrailingStopLimit,
 		perspectives.ActionSettlePosition,
 	}
 )
@@ -35,19 +58,29 @@ var (
 Move is one MCTS expansion that appends a gated branch.
 */
 type Move struct {
-	depth     int
-	category  perspectives.CategoryType
-	condition perspectives.ConditionType
-	unit      perspectives.UnitType
-	quantile  float64
-	action    perspectives.ActionType
+	depth       int
+	category    perspectives.CategoryType
+	observation perspectives.ObservationType
+	metric      string
+	regime      perspectives.Regime
+	condition   perspectives.ConditionType
+	unit        perspectives.UnitType
+	quantile    float64
+	action      perspectives.ActionType
 }
 
 func (search *TreeSearch) moves(
 	branches perspectives.BranchList,
 ) []Move {
 	categories := search.profile.Categories()
-	moves := make([]Move, 0, len(categories)*len(searchUnits)*len(searchConditions)*len(searchQuantiles)*len(searchActions))
+	moveCount := len(categories) *
+		len(searchObservations) *
+		len(searchRegimes) *
+		len(searchUnits) *
+		len(searchConditions) *
+		len(searchQuantiles) *
+		len(searchExitActions)
+	moves := make([]Move, 0, moveCount)
 
 	for depth := 0; depth < maxBranchDepth; depth++ {
 		if depth > 0 && len(branches) == 0 {
@@ -55,18 +88,26 @@ func (search *TreeSearch) moves(
 		}
 
 		for _, category := range categories {
-			for _, unit := range searchUnits {
-				for _, condition := range searchConditions {
-					for _, quantile := range searchQuantiles {
-						for _, action := range searchActions {
-							moves = append(moves, Move{
-								depth:     depth,
-								category:  category,
-								condition: condition,
-								unit:      unit,
-								quantile:  quantile,
-								action:    action,
-							})
+			for _, observation := range searchObservations {
+				actions := search.actions(observation)
+
+				for _, regime := range searchRegimes {
+					for _, unit := range searchUnits {
+						for _, condition := range searchConditions {
+							for _, quantile := range searchQuantiles {
+								for _, action := range actions {
+									moves = append(moves, Move{
+										depth:       depth,
+										category:    category,
+										observation: observation,
+										regime:      regime,
+										condition:   condition,
+										unit:        unit,
+										quantile:    quantile,
+										action:      action,
+									})
+								}
+							}
 						}
 					}
 				}
@@ -77,15 +118,31 @@ func (search *TreeSearch) moves(
 	return moves
 }
 
+func (search *TreeSearch) actions(
+	observation perspectives.ObservationType,
+) []perspectives.ActionType {
+	switch observation {
+	case perspectives.ObservationNotHolding:
+		return searchEntryActions
+	case perspectives.ObservationHolding:
+		return searchExitActions
+	default:
+		return searchBranchActions
+	}
+}
+
 func (search *TreeSearch) applyMove(
 	branches perspectives.BranchList, move Move,
 ) perspectives.BranchList {
 	branch := perspectives.Branch{
-		Category:  move.category,
-		Condition: move.condition,
-		Unit:      move.unit,
-		Value:     search.profile.Quantile(move.category, move.unit, move.quantile),
-		ValueSet:  true,
+		Category:    move.category,
+		Observation: move.observation,
+		Metric:      move.metric,
+		Regime:      move.regime,
+		Condition:   move.condition,
+		Unit:        move.unit,
+		Value:       search.profile.Quantile(move.category, move.unit, move.quantile),
+		ValueSet:    true,
 		Action: perspectives.Action{
 			Type: move.action,
 		},

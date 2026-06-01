@@ -3,7 +3,6 @@ package perspectives
 import (
 	"context"
 	"embed"
-	"errors"
 	"io"
 	"io/fs"
 
@@ -43,17 +42,18 @@ func NewTree(
 	raw, err := io.ReadAll(cfgReader)
 
 	if err != nil {
+		cancel()
 		return nil, errnie.Error(err)
 	}
 
 	document := treeDocument{}
 
 	if err := yaml.Unmarshal(raw, &document); err != nil {
+		cancel()
 		return nil, errnie.Error(err)
 	}
 
 	if document.Branches == nil {
-		errnie.Warn("perspectives: cfg/perspectives.yaml has no branches")
 		document.Branches = BranchList{}
 	}
 
@@ -115,91 +115,25 @@ func (tree *Tree) ResetWalk() {
 }
 
 /*
-Walk traverses the tree and returns the Action at the deepest reachable leaf the
-measurements and observations support. It does not stop at the first branch that
-yields an action: every branch is explored as far as the data allows, and the most
-specific verdict — the one gated behind the most confirmations — wins. Depth is the
-proxy for specificity because each extra level is another category or observation
-the measurements had to satisfy to get there. Ties in depth resolve to the earlier
-branch, so branch order still expresses priority among equally specific paths.
-Branch thresholds on UnitSNR compare against Measurement.SNR (temporal surprise);
-UnitConfidence thresholds compare against Measurement.Confidence (instantaneous
-clarity). Both are supplied by the signal.
+Walk traverses the tree and returns the Action at the deepest reachable branch.
 */
 func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionType {
-	for _, branch := range branches {
-		measurement := Measurement{}
-		matched := branch.Category == CategoryTypeNone
+	return tree.WalkContext(BranchContext{Measurements: measurements}, branches...)
+}
 
-		for _, candidate := range measurements {
-			if candidate.Category != branch.Category {
-				continue
-			}
+/*
+WalkContext traverses the tree using the complete branch evaluation context.
+*/
+func (tree *Tree) WalkContext(
+	branchContext BranchContext, branches ...Branch,
+) *ActionType {
+	evaluator := NewBranchEvaluator(branchContext)
+	tree.currentAction = evaluator.Action(BranchList(branches))
+	tree.err = evaluator.Err()
 
-			measurement = candidate
-			matched = true
-
-			break
-		}
-
-		if !matched {
-			return nil
-		}
-
-		if !tree.passes(measurement, branch) {
-			return nil
-		}
-
-		if len(branch.Branches) == 0 {
-			return nil
-		}
-
-		if branch.Action.Type != ActionNone {
-			tree.currentAction = &branch.Action.Type
-		}
-
-		return tree.Walk(measurements, branch.Branches...)
+	if tree.err != nil {
+		errnie.Error(tree.err)
 	}
 
 	return tree.currentAction
-}
-
-func (tree *Tree) passes(measurement Measurement, branch Branch) bool {
-	if branch.Condition == ConditionNone || branch.Unit == UnitNone {
-		return true
-	}
-
-	switch branch.Unit {
-	case UnitSNR:
-		return tree.compare(measurement.SNR, branch.Value, branch.Condition)
-	case UnitConfidence:
-		return tree.compare(measurement.Confidence, branch.Value, branch.Condition)
-	default:
-		errnie.Error(errors.New("unknown unit"), branch.Unit)
-	}
-
-	return false
-}
-
-func (tree *Tree) compare(
-	left, right float64, condition ConditionType,
-) bool {
-	switch condition {
-	case ConditionIsGreaterThan:
-		return left > right
-	case ConditionIsLessThan:
-		return left < right
-	case ConditionIsEqual:
-		return left == right
-	case ConditionIsNotEqual:
-		return left != right
-	case ConditionIsGreaterThanOrEqual:
-		return left >= right
-	case ConditionIsLessThanOrEqual:
-		return left <= right
-	default:
-		errnie.Error(errors.New("unknown condition"), condition)
-	}
-
-	return false
 }

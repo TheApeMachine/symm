@@ -27,11 +27,12 @@ func TestReplaySimulationScore(t *testing.T) {
 		}
 
 		branches := perspectives.BranchList{{
-			Category:  perspectives.CategoryLaminar,
-			Condition: perspectives.ConditionIsGreaterThan,
-			Unit:      perspectives.UnitSNR,
-			Value:     1.0,
-			Action:    perspectives.Action{Type: perspectives.ActionLimit},
+			Category:    perspectives.CategoryLaminar,
+			Observation: perspectives.ObservationNotHolding,
+			Condition:   perspectives.ConditionIsGreaterThan,
+			Unit:        perspectives.UnitSNR,
+			Value:       1.0,
+			Action:      perspectives.Action{Type: perspectives.ActionLimit},
 		}}
 
 		score := NewReplaySimulation(ctx, branches, rows).Score()
@@ -61,12 +62,13 @@ func TestTraderEvaluate(t *testing.T) {
 			},
 		}
 		branches := perspectives.BranchList{{
-			Category:  perspectives.CategoryLaminar,
-			Condition: perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:      perspectives.UnitSNR,
-			Value:     2.0,
-			ValueSet:  true,
-			Action:    perspectives.Action{Type: perspectives.ActionLimit},
+			Category:    perspectives.CategoryLaminar,
+			Observation: perspectives.ObservationNotHolding,
+			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:        perspectives.UnitSNR,
+			Value:       2.0,
+			ValueSet:    true,
+			Action:      perspectives.Action{Type: perspectives.ActionLimit},
 		}}
 
 		score := trader.Evaluate(branches, rows)
@@ -133,6 +135,76 @@ func TestTreeSearchRunKeepsEmptyTreeWhenTradingLoses(t *testing.T) {
 	})
 }
 
+func TestTreeSearchMoves(t *testing.T) {
+	convey.Convey("Given generated optimizer moves", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		profile.Add(perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2,
+			Last:     100,
+		})
+
+		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
+		search := tuner.newTreeSearch()
+		moves := search.moves(perspectives.BranchList{})
+
+		convey.Convey("It should only attach state-coherent actions", func() {
+			for _, move := range moves {
+				convey.So(move.validActionForObservation(), convey.ShouldBeTrue)
+			}
+		})
+	})
+}
+
+func TestScanSearchRun(t *testing.T) {
+	convey.Convey("Given replay measurements with entry and exit opportunities", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2,
+				Last:     100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2,
+				Last:     110,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2,
+				Last:     90,
+			},
+		}
+
+		for _, row := range rows {
+			profile.Add(row)
+		}
+
+		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
+			Workers:        2,
+			MaxThresholds:  2,
+			BeamWidth:      8,
+			CandidateLimit: 512,
+		})
+		branches, stats := search.Run()
+		score := NewReplaySimulation(ctx, branches, rows).Score()
+
+		convey.Convey("It should score a positive bounded scan candidate", func() {
+			convey.So(stats.Candidates, convey.ShouldBeGreaterThan, 0)
+			convey.So(len(branches), convey.ShouldBeGreaterThan, 0)
+			convey.So(score, convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestTunerFinish(t *testing.T) {
 	convey.Convey("Given ingested replay measurements", t, func() {
 		ctx := context.Background()
@@ -168,6 +240,47 @@ func TestTunerFinish(t *testing.T) {
 	})
 }
 
+func TestSessionSummaryString(t *testing.T) {
+	convey.Convey("Given a tune summary with scanned candidates", t, func() {
+		summary := SessionSummary{
+			MeasurementCount: 10,
+			BranchCount:      2,
+			Candidates:       1000,
+			Workers:          4,
+			BestScore:        0.25,
+		}
+
+		convey.Convey("It should report the candidate count", func() {
+			convey.So(summary.String(), convey.ShouldContainSubstring, "candidates=1000")
+			convey.So(summary.String(), convey.ShouldContainSubstring, "workers=4")
+		})
+	})
+
+}
+
+func (move Move) validActionForObservation() bool {
+	switch move.observation {
+	case perspectives.ObservationNone:
+		return move.action == perspectives.ActionNone
+	case perspectives.ObservationNotHolding:
+		return move.action == perspectives.ActionNone ||
+			move.action == perspectives.ActionLimit ||
+			move.action == perspectives.ActionMarket ||
+			move.action == perspectives.ActionIceberg
+	case perspectives.ObservationHolding:
+		return move.action == perspectives.ActionNone ||
+			move.action == perspectives.ActionStopLoss ||
+			move.action == perspectives.ActionStopLossLimit ||
+			move.action == perspectives.ActionTakeProfit ||
+			move.action == perspectives.ActionTakeProfitLimit ||
+			move.action == perspectives.ActionTrailingStop ||
+			move.action == perspectives.ActionTrailingStopLimit ||
+			move.action == perspectives.ActionSettlePosition
+	default:
+		return false
+	}
+}
+
 func BenchmarkTreeSearchRun(b *testing.B) {
 	ctx := context.Background()
 	profile := Profile{ctx: ctx}
@@ -193,6 +306,41 @@ func BenchmarkTreeSearchRun(b *testing.B) {
 	}
 }
 
+func BenchmarkScanSearchRun(b *testing.B) {
+	ctx := context.Background()
+	profile := Profile{ctx: ctx}
+	rows := make([]perspectives.Measurement, 64)
+
+	for index := range rows {
+		category := perspectives.CategoryLaminar
+
+		if index%2 == 1 {
+			category = perspectives.CategoryExhaustion
+		}
+
+		rows[index] = perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
+			Category: category,
+			SNR:      float64(index % 8),
+			Last:     100 + float64(index%16),
+		}
+		profile.Add(rows[index])
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
+			Workers:        2,
+			MaxThresholds:  4,
+			BeamWidth:      8,
+			CandidateLimit: 512,
+		})
+		_, _ = search.Run()
+	}
+}
+
 func BenchmarkReplaySimulationScore(b *testing.B) {
 	ctx := context.Background()
 	rows := make([]perspectives.Measurement, 64)
@@ -208,12 +356,13 @@ func BenchmarkReplaySimulationScore(b *testing.B) {
 	}
 
 	branches := perspectives.BranchList{{
-		Category:  perspectives.CategoryLaminar,
-		Condition: perspectives.ConditionIsGreaterThanOrEqual,
-		Unit:      perspectives.UnitSNR,
-		Value:     1.0,
-		ValueSet:  true,
-		Action:    perspectives.Action{Type: perspectives.ActionLimit},
+		Category:    perspectives.CategoryLaminar,
+		Observation: perspectives.ObservationNotHolding,
+		Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+		Unit:        perspectives.UnitSNR,
+		Value:       1.0,
+		ValueSet:    true,
+		Action:      perspectives.Action{Type: perspectives.ActionLimit},
 	}}
 
 	b.ReportAllocs()

@@ -82,13 +82,26 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 }
 
 func (ws *WebSocket) Tick() error {
+	incoming := make(chan public.SocketMessage, 64)
+	readerErr := make(chan error, 1)
+
+	go ws.readLoop(incoming, readerErr)
+
+	ordersIncoming := ws.subscribers["orders"].Incoming
+
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.ctx.Err()
-		case message, ok := <-ws.subscribers["orders"].Incoming:
+		case err := <-readerErr:
+			if err != nil {
+				return err
+			}
+
+			return ws.ctx.Err()
+		case message, ok := <-ordersIncoming:
 			if !ok {
-				return nil
+				return ws.ctx.Err()
 			}
 
 			if message == nil {
@@ -99,9 +112,32 @@ func (ws *WebSocket) Tick() error {
 			conn := ws.conn
 			ws.mu.Unlock()
 
-			if conn != nil {
-				conn.WriteJSON(message.Value)
+			if conn == nil {
+				continue
 			}
+
+			if err := conn.WriteJSON(message.Value); err != nil {
+				errnie.Error(err)
+			}
+		case socketMessage := <-incoming:
+			if ch := ws.broadcasts[socketMessage.Channel]; ch != nil {
+				ch.Send(&qpool.QValue[any]{Value: socketMessage})
+			}
+		}
+	}
+}
+
+func (ws *WebSocket) readLoop(
+	out chan<- public.SocketMessage,
+	errOut chan<- error,
+) {
+	defer close(out)
+
+	for {
+		select {
+		case <-ws.ctx.Done():
+			errOut <- ws.ctx.Err()
+			return
 		default:
 		}
 
@@ -116,11 +152,15 @@ func (ws *WebSocket) Tick() error {
 		var message public.SocketMessage
 
 		if err := conn.ReadJSON(&message); err != nil {
-			return err
+			errOut <- err
+			return
 		}
 
-		if ch := ws.broadcasts[message.Channel]; ch != nil {
-			ch.Send(&qpool.QValue[any]{Value: message})
+		select {
+		case out <- message:
+		case <-ws.ctx.Done():
+			errOut <- ws.ctx.Err()
+			return
 		}
 	}
 }

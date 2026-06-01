@@ -1,0 +1,76 @@
+package market
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/signal/sentiment"
+)
+
+func TestNewStory(t *testing.T) {
+	convey.Convey("Given signals already registered on measurements", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		recordPath := filepath.Join(t.TempDir(), "capture.jsonl")
+
+		viper.Set("trading.record.file", recordPath)
+		defer viper.Set("trading.record.file", "")
+
+		sentiment.NewSignal(ctx, pool)
+
+		story, err := NewStory(ctx, pool)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
+		convey.So(story.subscribers["measurements"].ID, convey.ShouldEqual, storyMeasurementsSubscriberID)
+
+		convey.Convey("It should receive published measurements", func() {
+			done := make(chan struct{})
+
+			go func() {
+				_ = story.Tick()
+				close(done)
+			}()
+
+			measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+			measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+				Symbol: "BTC/EUR",
+			}})
+
+			convey.So(waitForFile(recordPath, time.Second), convey.ShouldBeTrue)
+
+			cancel()
+			<-done
+			convey.So(story.Close(), convey.ShouldBeNil)
+
+			raw, readErr := os.ReadFile(recordPath)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldContainSubstring, "BTC/EUR")
+		})
+	})
+}
+
+func waitForFile(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(path)
+
+		if err == nil && info.Size() > 0 {
+			return true
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return false
+}

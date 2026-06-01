@@ -48,9 +48,18 @@ func OpenFeed(ctx context.Context, pool *qpool.Q, channel string, params any) Fe
 					continue
 				}
 
-				sm, ok := msg.Value.(public.SocketMessage)
+				var sm public.SocketMessage
 
-				if !ok {
+				switch value := msg.Value.(type) {
+				case public.SocketMessage:
+					sm = value
+				case *public.SocketMessage:
+					if value == nil {
+						continue
+					}
+
+					sm = *value
+				default:
 					continue
 				}
 

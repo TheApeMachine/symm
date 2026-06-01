@@ -161,9 +161,23 @@ func (client *Client) BatchCancel(orderIDs []string) error {
 }
 
 func (client *Client) EditOrder(orderID string, params AddParams) error {
+	editParams := fiber.Map{"order_id": orderID}
+
+	if params.OrderQty > 0 {
+		editParams["order_qty"] = params.OrderQty
+	}
+
+	if params.LimitPrice > 0 {
+		editParams["limit_price"] = params.LimitPrice
+	}
+
+	if params.Triggers != nil {
+		editParams["triggers"] = params.Triggers
+	}
+
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodEditOrder,
-		"params": fiber.Map{"order_id": orderID},
+		"params": editParams,
 	}))
 }
 

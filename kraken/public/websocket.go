@@ -19,6 +19,8 @@ import (
 var socket *WebSocket
 var socketOnce sync.Once
 
+const publicOutboundSubscriberID = "kraken:public:websocket"
+
 type WebSocketClient interface {
 	Connect(endpoint EndpointType, channel string) error
 	Tick() error
@@ -57,11 +59,16 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	})
 
 	for _, channel := range []string{
-		"kraken:public", "ticker", "book", "trade", "ohlc", "instrument", "level3",
+		"ticker", "book", "trade", "ohlc", "instrument", "level3",
 	} {
 		socket.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 128)
 	}
+
+	socket.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
+	socket.subscribers["kraken:public"] = socket.broadcasts["kraken:public"].Subscribe(
+		publicOutboundSubscriberID, 128,
+	)
 
 	if viper.GetViper().Get("trading.model") == "record" {
 		recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
@@ -73,9 +80,11 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		socket.recorder = bufio.NewWriter(recorder)
 	}
 
-	errnie.Error(socket.Connect(WebSocketURL, "kraken:public"))
+	if err := socket.Connect(WebSocketURL, "kraken:public"); err != nil {
+		errnie.Error(err)
+	}
 
-	fmt.Println("kraken.public.websocket.NewWebSocket", "subscribing to", "instrument")
+	errnie.Debug("kraken.public.websocket.NewWebSocket", "subscribing to", "instrument")
 
 	socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
 		"method": "subscribe",
@@ -89,7 +98,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 }
 
 func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
-	fmt.Println("kraken.public.websocket.Connect", endpoint, channel)
+	errnie.Debug("kraken.public.websocket.Connect", endpoint, channel)
 
 	if endpoint == "" {
 		endpoint = WebSocketURL
@@ -111,28 +120,35 @@ func (ws *WebSocket) Tick() error {
 			return ws.err
 		case message, ok := <-ws.subscribers["kraken:public"].Incoming:
 			if !ok {
+				errnie.Debug("kraken.public.websocket.Tick", "no ok")
 				return nil
 			}
 
 			if message == nil {
+				errnie.Debug("kraken.public.websocket.Tick", "nil message")
 				continue
 			}
 
-			ws.conn.WriteJSON(message.Value)
+			if ws.conn == nil {
+				return fmt.Errorf("kraken public websocket: not connected")
+			}
+
+			errnie.Error(ws.conn.WriteJSON(message.Value))
 		default:
+		}
+
+		if ws.conn == nil {
+			return fmt.Errorf("kraken public websocket: not connected")
 		}
 
 		var message SocketMessage
 
 		if err := ws.conn.ReadJSON(&message); err != nil {
-			return err
-		}
-
-		if ws.recorder != nil {
-			ws.recorder.Write(append(message.Data, []byte("\n")...))
+			return errnie.Error(err)
 		}
 
 		if ch := ws.broadcasts[message.Channel]; ch != nil {
+			errnie.Debug("kraken.public.websocket.Tick", "broadcasting", message.Channel, message.Data)
 			ch.Send(&qpool.QValue[any]{Value: message})
 		}
 	}

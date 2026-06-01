@@ -50,42 +50,45 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 }
 
 func (ws *WebSocket) Tick() error {
-	for message := range ws.subscribers["orders"].Incoming {
+	incoming := ws.subscribers["orders"].Incoming
+
+	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.ctx.Err()
-		default:
+		case message, ok := <-incoming:
+			if !ok {
+				return ws.ctx.Err()
+			}
+
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			payload, err := sonic.Marshal(message.Value)
+
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			var frame struct {
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+
+			if err := sonic.Unmarshal(payload, &frame); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			if frame.Method != methodAddOrder {
+				continue
+			}
+
+			ws.simulateAddOrder(frame.Params)
 		}
-
-		if message == nil || message.Value == nil {
-			continue
-		}
-
-		payload, err := sonic.Marshal(message.Value)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		var frame struct {
-			Method string         `json:"method"`
-			Params map[string]any `json:"params"`
-		}
-
-		if err := sonic.Unmarshal(payload, &frame); err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		if frame.Method != methodAddOrder {
-			continue
-		}
-
-		ws.simulateAddOrder(frame.Params)
 	}
-
-	return ws.ctx.Err()
 }
 
 func (ws *WebSocket) Close() error {

@@ -9,6 +9,11 @@ LDFLAGS := $(GOFLAGS)
 SYMM_BIN := bin/symm
 CONFIG ?= cmd/cfg/config.yml
 LOG_DIR ?= runs
+TUNE_WORKERS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)
+TUNE_MAX_THRESHOLDS ?= 128
+TUNE_BEAM_WIDTH ?= 256
+TUNE_CANDIDATE_LIMIT ?= 100000
+TUNE_CANDIDATE_REPORT ?= runs/candidates.jsonl
 
 RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
@@ -23,13 +28,13 @@ build:
 test: test-go test-race test-frontend
 
 test-go:
-	go test $(LDFLAGS) -race ./...
+	go test ./...
 
 test-race:
 ifeq ($(shell uname -s),Darwin)
-	go test $(LDFLAGS) -race $(RACE_PACKAGES)
+	go test -race $(RACE_PACKAGES)
 else
-	go test $(LDFLAGS) -race ./...
+	go test -race ./...
 endif
 
 test-cover:
@@ -86,8 +91,14 @@ run-profile: build
 
 tune: build
 	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
-	@echo "Tuning measurements from runs/capture.jsonl (trading.record.file in $(CONFIG))"
-	./$(SYMM_BIN) tune --config $(CONFIG)
+	@echo "Tuning measurements from runs/capture.jsonl (trading.record.file in $(CONFIG), workers=$(TUNE_WORKERS), max_thresholds=$(TUNE_MAX_THRESHOLDS), beam=$(TUNE_BEAM_WIDTH), candidates=$(TUNE_CANDIDATE_LIMIT), report=$(TUNE_CANDIDATE_REPORT))"
+	./$(SYMM_BIN) tune \
+		--config $(CONFIG) \
+		--workers $(TUNE_WORKERS) \
+		--max-thresholds $(TUNE_MAX_THRESHOLDS) \
+		--beam-width $(TUNE_BEAM_WIDTH) \
+		--candidate-limit $(TUNE_CANDIDATE_LIMIT) \
+		--candidate-report "$(TUNE_CANDIDATE_REPORT)"
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

@@ -2,6 +2,7 @@ package kraken
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/spf13/viper"
@@ -23,36 +24,34 @@ type Client struct {
 func NewClient(ctx context.Context, pool *qpool.Q) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	var rest public.RestClient
-	var ws public.WebSocketClient
+	rest := public.NewRest(ctx, public.PublicBaseURL)
 
-	rest = errnie.Does(func() (public.RestClient, error) {
-		return public.NewRest(ctx, public.PublicBaseURL), nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	var (
+		ws  public.WebSocketClient
+		err error
+	)
 
 	switch viper.GetViper().GetString("trading.model") {
 	case "record":
 		ws = public.NewWebSocket(ctx, pool)
 	case "replay":
-		file := errnie.Does(func() (*os.File, error) {
-			return os.Open(viper.GetViper().GetString("trading.replay.file"))
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		var file *os.File
 
-		ws = errnie.Does(func() (public.WebSocketClient, error) {
-			return replay.NewWebSocket(ctx, pool, file)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		file, err = os.Open(viper.GetViper().GetString("trading.replay.file"))
+
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("kraken client: open replay file: %w", err)
+		}
+
+		ws, err = replay.NewWebSocket(ctx, pool, file)
 	default:
-		ws = errnie.Does(func() (public.WebSocketClient, error) {
-			return paper.NewWebSocket(ctx, pool)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		ws, err = paper.NewWebSocket(ctx, pool)
+	}
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("kraken client: websocket: %w", err)
 	}
 
 	client := &Client{
@@ -71,14 +70,27 @@ func NewClient(ctx context.Context, pool *qpool.Q) (*Client, error) {
 }
 
 func (c *Client) Connect(endpoint public.EndpointType, channel string) error {
+	if c.ws == nil {
+		return fmt.Errorf("kraken client: websocket is nil")
+	}
+
 	return c.ws.Connect(endpoint, channel)
 }
 
 func (c *Client) Tick() error {
+	if c.ws == nil {
+		return fmt.Errorf("kraken client: websocket is nil")
+	}
+
 	return c.ws.Tick()
 }
 
 func (c *Client) Close() error {
 	c.cancel()
+
+	if c.ws == nil {
+		return fmt.Errorf("kraken client: websocket is nil")
+	}
+
 	return c.ws.Close()
 }

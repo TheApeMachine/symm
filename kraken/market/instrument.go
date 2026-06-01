@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -11,6 +10,8 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
+
+const instrumentSubscriberID = "market:instrument"
 
 /*
 InstrumentParams is the Kraken WebSocket v2 subscribe payload for the instrument channel.
@@ -129,87 +130,113 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 		Pairs:       make([]string, 0),
 	}
 
-	for _, channel := range []string{"kraken:public", "instrument"} {
-		instrument.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		instrument.subscribers[channel] = instrument.broadcasts[channel].Subscribe(channel, 128)
-	}
+	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
+	instrument.broadcasts["instrument"] = pool.CreateBroadcastGroup("instrument", 10*time.Millisecond)
+	instrument.subscribers["instrument"] = instrument.broadcasts["instrument"].Subscribe(
+		instrumentSubscriberID, 128,
+	)
 
 	return instrument
 }
 
 func (instrument *Instrument) Tick() error {
-	for message := range instrument.subscribers["instrument"].Incoming {
-		if message == nil {
-			continue
-		}
+	incoming := instrument.subscribers["instrument"].Incoming
 
-		envelope, ok := message.Value.(public.SocketMessage)
+	for {
+		select {
+		case <-instrument.ctx.Done():
+			return instrument.ctx.Err()
+		case message, ok := <-incoming:
+			if !ok {
+				return instrument.ctx.Err()
+			}
 
-		if !ok {
-			continue
-		}
-
-		var update InstrumentUpdate
-
-		if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		for _, pair := range update.Pairs {
-			if slices.Contains(instrument.Pairs, pair.Symbol) {
+			if message == nil {
 				continue
 			}
 
-			instrument.Pairs = append(instrument.Pairs, pair.Symbol)
-		}
+			envelope, envelopeOK := message.Value.(public.SocketMessage)
 
-		for _, pair := range update.Pairs {
-			fmt.Println("kraken.market.instrument.Tick", "subscribing to", pair.Symbol)
+			if !envelopeOK {
+				continue
+			}
 
-			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
-				"method": "subscribe",
-				"params": map[string]any{
-					"channel":  "ticker",
-					"symbol":   []string{pair.Symbol},
-					"snapshot": true,
-				},
-			}})
+			var update InstrumentUpdate
 
-			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
-				"method": "subscribe",
-				"params": map[string]any{
-					"channel":  "book",
-					"depth":    1000,
-					"symbol":   []string{pair.Symbol},
-					"snapshot": true,
-				},
-			}})
+			if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
+				errnie.Error(err)
+				continue
+			}
 
-			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
-				"method": "subscribe",
-				"params": map[string]any{
-					"channel":  "ohlc",
-					"interval": 1,
-					"symbol":   []string{pair.Symbol},
-					"snapshot": true,
-				},
-			}})
+			for _, pair := range update.Pairs {
+				if slices.Contains(instrument.Pairs, pair.Symbol) {
+					continue
+				}
 
-			instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
-				"method": "subscribe",
-				"params": map[string]any{
-					"channel":  "trade",
-					"symbol":   []string{pair.Symbol},
-					"snapshot": true,
-				},
-			}})
+				instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+
+				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "ticker",
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "book",
+						"depth":    1000,
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "ohlc",
+						"interval": 1,
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "trade",
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+			}
 		}
 	}
-
-	return nil
 }
 
 func (instrument *Instrument) Close() error {
+	if instrument.cancel == nil {
+		return nil
+	}
+
+	instrument.cancel()
+	instrument.cancel = nil
+
+	for channel, subscriber := range instrument.subscribers {
+		if subscriber == nil {
+			continue
+		}
+
+		if broadcast, ok := instrument.broadcasts[channel]; ok && broadcast != nil {
+			broadcast.Unsubscribe(subscriber.ID)
+		}
+	}
+
+	instrument.subscribers = nil
+	instrument.broadcasts = nil
+
 	return nil
 }

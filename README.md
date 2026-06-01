@@ -423,41 +423,25 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 | `hawkes_fit_cooldown`           | 1 s – 15 s           |
 | `causal_condition_switch`       | 100 – 5000           |
 
-Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a Monte Carlo tree-search draw (`DocumentSearch`) from the YAML tree space. Tune scores your current desk config first, then searches for a better holdout wallet fitness. Loaded YAML is treated literally: tune-loaded registries do not inherit hidden default deny branches or the builtin universal exit overlay.
+`symm tune` loads the recorded measurement tape from `trading.record.file` and runs a bounded parallel scan over perspective branch trees. The scan enumerates category/unit/condition/value predicates from the observed measurement distributions, tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths. Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.
 
 **Trial execution details**
 
-- Trial jobs dispatch via qpool `ScheduleFast` in-process — no subprocess spawns per trial.
-- Each `ScheduleFast` job runs train + walk-forward holdouts sequentially via `runEvalBatchEngine`, resetting replay state between splits.
-- `--workers` controls concurrent qpool trial workers (default `NumCPU`).
-- Eval takes a process-wide isolation lock while swapping tunables and perspective registry, then boots the engine at machine speed (`ReplayPace=0`).
-- Eval file/stdout logs are disabled during tune.
-- Eval file/stdout logs are disabled.
-- Replay perturbation stays on by default for train evals, with deterministic per-trial seeds.
-- Progress prints to **stderr** (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial).
-- The final summary JSON stays on **stdout**.
-- By default tune **runs until you press Ctrl+C**, then writes the current best to `runs/tuned.json` and `runs/perspectives.yaml`.
-- Set `--iterations N` (or `make tune ITERATIONS=N`) to cap trials.
-- Pass `--quiet` to suppress stderr.
-
-With no `--holdout`, the last 20% of `--replay` is reserved automatically when the capture has at least 200 lines. The overfitting guard rejects candidates whose train/holdout fitness gap exceeds `--max-train-holdout-gap` (default: 3 % of starting wallet), and the selected split must include at least one realized profitable trade so no-trade trees cannot win with a flat €0 score. The best eligible candidate by **maximum** holdout fitness is written to `--output` (default `runs/tuned.json`) and `--perspectives-output` (default `runs/perspectives.yaml`), with absolute paths echoed on stderr.
-
-`symm eval` prints JSON including `fitness_eur`, `score_eur`, `trade_performance`, and `gate_reject_regret`.
+- `--workers` controls parallel candidate scoring workers (default `NumCPU`).
+- `--max-thresholds` bounds unique threshold values per category/unit; `0` scans all unique observed values.
+- `--beam-width` bounds how many primitive entry and exit candidates are combined as sibling trees.
+- `--candidate-limit` caps scored candidate trees; `0` scans the generated bounded space.
+- `--candidate-report` writes every scored candidate as JSONL with `score`, `profit_loss`, `return_pct`, and the candidate branches. `make tune` writes this to `runs/candidates.jsonl` by default.
+- Each improved best tree is written immediately to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the path.
+- Progress and the final summary print to **stderr**.
 
 ```
 symm tune
-  --replay   runs/capture.jsonl   default when omitted
-  --auto-holdout                  reserve last 20% as holdout (default true)
-  --holdout  <holdout.jsonl>      optional, repeatable; disables auto-holdout split
-  --walk-forward-folds 3          expanding holdout folds from the replay tail
-  --replay-perturb true           jitter train replay qty/timestamps per trial
-  --iterations  0                max trials (0 = until Ctrl+C)
-  --workers     <numCPU>         concurrent eval workers
-  --output      runs/tuned.json  persisted best config
-  --perspectives-output runs/perspectives.yaml  persisted best tree YAML
-  --max-train-holdout-gap  0     EUR ceiling on gap (0 = 3% wallet, <0 = disabled)
-  --stress-holdout              apply execution stress to holdout evals (default true)
-  --quiet                       JSON only (no stderr progress)
+  --workers           <numCPU>  parallel scan workers
+  --max-thresholds    128       threshold values per category/unit; 0 = all
+  --beam-width        256       primitive entry/exit candidates to combine
+  --candidate-limit   100000    scored candidate cap; 0 = generated bounded space
+  --candidate-report  runs/candidates.jsonl
 ```
 
 ### Hawkes internal optimizer
@@ -763,7 +747,7 @@ Full environment wiring is in `config/config.go`.
 | `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
 | `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
 
-Hyperparameter and tree search: `--iterations` (default 0 = until Ctrl+C), `--workers` (default NumCPU), `--walk-forward-folds` (default 3), `--replay-perturb` (default true), `--output` (default `runs/tuned.json`), `--perspectives-output` (default `runs/perspectives.yaml`), `--max-train-holdout-gap` (default 0 = 3 % wallet), `--stress-holdout` (default true). Best results are auto-loaded from `runs/tuned.json` and `runs/perspectives.yaml` at next boot when those files exist; otherwise Go builtin playbooks apply.
+Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (default 128), `--beam-width` (default 256), `--candidate-limit` (default 100000), and `--candidate-report` (empty by default in direct CLI use). `make tune` exposes the same knobs as `TUNE_WORKERS`, `TUNE_MAX_THRESHOLDS`, `TUNE_BEAM_WIDTH`, `TUNE_CANDIDATE_LIMIT`, and `TUNE_CANDIDATE_REPORT`.
 
 </details>
 

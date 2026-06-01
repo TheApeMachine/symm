@@ -91,3 +91,77 @@ func (profile *Profile) Quantile(
 
 	return values[index]
 }
+
+func (profile *Profile) Values(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+	limit int,
+) []float64 {
+	seen := make(map[float64]struct{})
+	values := make([]float64, 0)
+
+	for _, row := range profile.rows {
+		if row.Category != category {
+			continue
+		}
+
+		value, ok := profile.value(row, unit)
+
+		if !ok {
+			continue
+		}
+
+		if _, ok := seen[value]; ok {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+
+	sort.Float64s(values)
+
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+
+	return sampleValues(values, limit)
+}
+
+func (profile *Profile) value(
+	row perspectives.Measurement,
+	unit perspectives.UnitType,
+) (float64, bool) {
+	switch unit {
+	case perspectives.UnitSNR:
+		return row.SNR, true
+	case perspectives.UnitConfidence:
+		return row.Confidence, true
+	default:
+		return 0, false
+	}
+}
+
+func sampleValues(values []float64, limit int) []float64 {
+	if limit <= 1 {
+		return []float64{values[0]}
+	}
+
+	sampled := make([]float64, 0, limit)
+	lastIndex := len(values) - 1
+
+	for sampleIndex := range limit {
+		index := int(math.Round(
+			float64(sampleIndex) * float64(lastIndex) / float64(limit-1),
+		))
+		value := values[index]
+
+		if len(sampled) > 0 && sampled[len(sampled)-1] == value {
+			continue
+		}
+
+		sampled = append(sampled, value)
+	}
+
+	return sampled
+}

@@ -2,7 +2,6 @@ package exhaust
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -41,17 +40,17 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"trade", "ticker", "book", "measurements"} {
+	for _, channel := range []string{"trade", "ticker", "book"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
+
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	return signal
 }
 
 func (signal *Signal) Tick() error {
-	fmt.Println("signal.exhaust.Signal.Tick")
-
 	for {
 		select {
 		case <-signal.ctx.Done():

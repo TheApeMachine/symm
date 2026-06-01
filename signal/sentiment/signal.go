@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -59,17 +58,17 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"ticker", "measurements"} {
+	for _, channel := range []string{"ticker"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
+
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	return signal
 }
 
 func (signal *Signal) Tick() error {
-	fmt.Println("signal.sentiment.Signal.Tick")
-
 	for message := range signal.subscribers["ticker"].Incoming {
 		if message == nil || message.Value == nil {
 			continue

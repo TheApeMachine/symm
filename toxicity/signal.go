@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
@@ -52,8 +51,6 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	fmt.Println("toxicity.Toxicity.Tick")
-
 	var level3 <-chan *market.Level3Update
 
 	if tox.l3Active {
@@ -130,7 +127,8 @@ func (tox *Toxicity) Tick() error {
 				}
 
 				tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
-				tox.publishMeasurement(ticker.Symbol, ticker.Last)
+				tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
+				tox.publishMeasurement(ticker.Symbol)
 			}
 		case message := <-tox.subscribers["book"].Incoming:
 			if message == nil || message.Value == nil {
@@ -162,7 +160,7 @@ func (tox *Toxicity) Tick() error {
 
 				if !tox.l3Active {
 					tox.observeBook(update)
-					tox.publishMeasurement(update.Symbol, 0)
+					tox.publishMeasurement(update.Symbol)
 				}
 			}
 		case update, ok := <-level3:
@@ -195,7 +193,7 @@ func (tox *Toxicity) observeBook(update market.Book) {
 	}
 }
 
-func (tox *Toxicity) publishMeasurement(symbol string, last float64) {
+func (tox *Toxicity) publishMeasurement(symbol string) {
 	now := time.Now()
 	measurement, ok := tox.tracker.Measure(symbol, now)
 
@@ -204,7 +202,6 @@ func (tox *Toxicity) publishMeasurement(symbol string, last float64) {
 	}
 
 	measurement.Symbol = symbol
-	measurement.Last = last
 
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 }

@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"fmt"
 	"math/bits"
 	"math/rand"
 	"sync"
@@ -116,10 +115,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		}
 	}
 
-	for _, channel := range []string{"trade", "measurements"} {
+	for _, channel := range []string{"trade"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
 	}
+
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	return signal
 }
@@ -194,8 +195,6 @@ batch tick. Per-trade processing would restamp fingerprints on every print;
 correlationBatchInterval batches enough cross-section activity to be stable.
 */
 func (signal *Signal) Tick() error {
-	fmt.Println("signal.correlation.Signal.Tick")
-
 	batch := time.NewTicker(correlationBatchInterval)
 	defer batch.Stop()
 
