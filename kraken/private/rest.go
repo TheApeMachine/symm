@@ -11,32 +11,30 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
-Rest is the Kraken private REST API client for authenticated endpoints.
+Rest adds Kraken private API signing on top of public.Rest.
 */
 type Rest struct {
 	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	client   *public.Rest
-	endpoint EndpointType
+	client   public.RestClient
+	endpoint public.EndpointType
 	apiKey   string
 	secret   []byte
 	nonce    atomic.Uint64
 }
 
 /*
-NewRest builds a private REST client bound to one endpoint.
+NewRest builds a signed client for one private endpoint.
 */
 func NewRest(
 	ctx context.Context,
 	apiKey, apiSecret string,
-	endpoint EndpointType,
+	endpoint public.EndpointType,
 ) (*Rest, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf("kraken api key and secret are required")
@@ -48,12 +46,9 @@ func NewRest(
 		return nil, fmt.Errorf("decode kraken api secret: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-
 	return &Rest{
 		ctx:      ctx,
-		cancel:   cancel,
-		client:   public.NewRest(ctx, public.EndpointType(endpoint)),
+		client:   public.NewRest(ctx, endpoint),
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		secret:   secret,
@@ -61,13 +56,58 @@ func NewRest(
 }
 
 /*
-Post sends one signed private REST request with a JSON body.
+ForEndpoint returns a client with the same credentials on another endpoint.
 */
-func (rest *Rest) Post(ctx context.Context, request fiber.Map, model any) error {
-	return errnie.Error(rest.client.Post(ctx, request, model, map[string]string{
-		"X-API-Key":    rest.apiKey,
-		"X-API-Secret": base64.StdEncoding.EncodeToString(rest.secret),
-	}))
+func (rest *Rest) ForEndpoint(endpoint public.EndpointType) *Rest {
+	return &Rest{
+		ctx:      rest.ctx,
+		client:   public.NewRest(rest.ctx, endpoint),
+		endpoint: endpoint,
+		apiKey:   rest.apiKey,
+		secret:   rest.secret,
+	}
+}
+
+/*
+Get is not supported on private REST endpoints.
+*/
+func (rest *Rest) Get(
+	ctx context.Context,
+	request fiber.Map,
+	model any,
+	headers ...map[string]string,
+) error {
+	return fmt.Errorf("kraken private rest: GET not supported")
+}
+
+/*
+Post sends one signed private REST request through the public client.
+*/
+func (rest *Rest) Post(
+	ctx context.Context,
+	request fiber.Map,
+	model any,
+	headers ...map[string]string,
+) error {
+	nonce := rest.nextNonce()
+	request["nonce"] = nonce
+
+	body, err := sonic.Marshal(request)
+
+	if err != nil {
+		return fmt.Errorf("kraken private encode: %w", err)
+	}
+
+	signature, err := rest.sign(rest.endpoint.SignPath(), nonce, string(body))
+
+	if err != nil {
+		return err
+	}
+
+	return rest.client.Post(ctx, request, model, map[string]string{
+		"API-Key":  rest.apiKey,
+		"API-Sign": signature,
+	})
 }
 
 /*
@@ -81,8 +121,8 @@ func (rest *Rest) WebSocketToken(ctx context.Context) (token string, expires tim
 
 	tokenRest := rest
 
-	if rest.endpoint != EndpointWebSocketsToken {
-		tokenRest = rest.ForEndpoint(EndpointWebSocketsToken)
+	if rest.endpoint != public.EndpointWebSocketsToken {
+		tokenRest = rest.ForEndpoint(public.EndpointWebSocketsToken)
 	}
 
 	if err := tokenRest.Post(ctx, fiber.Map{}, &result); err != nil {
@@ -103,13 +143,11 @@ func (rest *Rest) WebSocketToken(ctx context.Context) (token string, expires tim
 }
 
 func (rest *Rest) Error() error {
-	return errnie.Error(rest.err)
+	return rest.client.Error()
 }
 
 func (rest *Rest) Close() error {
-	rest.cancel()
-
-	return errnie.Error(rest.ctx.Err())
+	return rest.client.Close()
 }
 
 func (rest *Rest) nextNonce() string {

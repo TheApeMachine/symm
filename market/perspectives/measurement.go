@@ -47,15 +47,25 @@ func (source SourceType) String() string {
 /*
 Measurement is one classified signal reading in the market layer.
 
-Strength is the raw fused signal (gauges only). SNR is always playbook sigma
-units from FinalizeMeasurement — comparable across sources and categories.
-Perspective branches gate on SNR; economic metrics (thesis_score, etc.) aggregate SNR.
+Strength is the raw fused signal (gauges only).
+
+Confidence is cross-sectional clarity: how decisively the reading sits inside its
+assigned category band right now — margin to the nearest boundary, 0 on a boundary.
+It says nothing about which category won; a clear StochasticNoise reads high.
+
+SNR is temporal surprise: how many of its own recent standard deviations the
+current Confidence stands above this symbol's running clarity baseline. A signal
+that is always equally clear reads ~0; a sudden jump in clarity spikes. It answers
+"how clear is this selection versus its own recent history," which is the noise-floor
+sense of signal-to-noise. Perspective branches gate on SNR (UnitSNR); UnitConfidence
+gates on the instantaneous clarity instead.
 */
 type Measurement struct {
-	Symbol   string
-	Source   SourceType
-	Category CategoryType
-	Strength float64 // raw fused strength for dashboards only
-	SNR      float64 // adaptive sigma vs this series' history; 0 while warming up
-	Last     float64 // last traded price, carried for the trader's sizing/fill
+	Symbol     string
+	Source     SourceType
+	Category   CategoryType
+	Strength   float64 // raw fused strength for dashboards only
+	Confidence float64 // cross-sectional band margin; 0 on a boundary
+	SNR        float64 // temporal surprise: sigma above this symbol's own recent clarity floor
+	Last       float64 // last traded price, carried for the trader's sizing/fill
 }

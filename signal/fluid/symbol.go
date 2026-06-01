@@ -17,8 +17,8 @@ import (
 FluidSymbol models one symbol's order book as a fluid field — divergence
 (imbalance), vorticity (flow), turbulence (stationary price velocity excess),
 viscosity (spread), and a Reynolds number combining them — and maps that onto
-the mechanical perspective. SNR is the Reynolds number: a high-energy field
-clears the noise floor, a calm laminar one does not.
+the mechanical perspective. SNR is classification confidence — margin to the
+nearest category boundary — not the Reynolds number relative to a noise floor.
 
 The book is a maintained orderbook.Book. Liquidity flux — the field's vorticity
 input — is measured as the change between the local book before and after each frame
@@ -41,7 +41,6 @@ type FluidSymbol struct {
 	priceFD     *adaptive.FracDiff
 	fracScale   adaptive.AlphaEMA
 	fracReturn  float64
-	floor       *adaptive.SNR
 }
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
@@ -59,7 +58,6 @@ func NewFluidSymbol(symbol string) *FluidSymbol {
 		pressure: adaptive.NewEMA(0),
 		flux:     newFluxAccumulator(config.System.BookFluxWindow),
 		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
-		floor:    adaptive.NewSNR(),
 	}
 }
 
@@ -250,15 +248,22 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	divergence, _ := row["div"].(float64)
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
+	category := fluidCategory(divergence, turbulence, viscosity, re)
 
-	return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(perspectives.Measurement{
+	return perspectives.Measurement{
 		Symbol:   state.symbol,
 		Source:   perspectives.SourceFluid,
-		Category: fluidCategory(divergence, turbulence, viscosity, re),
+		Category: category,
 		Last:     state.last,
-	}, re, "reynolds"), perspectives.GaugeFactorsFrom(row,
-		"div", "vort", "turb_fd", "re", "visc",
-	)), true
+		Strength: re,
+		SNR: categoryConfidence(
+			category,
+			divergence,
+			turbulence,
+			viscosity,
+			re,
+		),
+	}, true
 }
 
 /*

@@ -1,5 +1,7 @@
 package perspectives
 
+import "github.com/theapemachine/symm/kraken/trading"
+
 type UnitType uint8
 
 const (
@@ -41,9 +43,16 @@ type ActionType uint8
 const (
 	ActionNone ActionType = iota
 	ActionEnter
-	ActionDeny // hard block (manipulation, overheating, passenger move)
-	ActionWait // soft block (systemic slump — retry when breadth returns)
+	ActionExit
 	ActionStopLoss
 	ActionTakeProfit
-	ActionShort // flip an open long to a short
+	ActionShort
 )
+
+type Action struct {
+	Type     ActionType
+	Side     trading.Side
+	Symbol   string
+	Price    float64
+	Quantity float64
+}

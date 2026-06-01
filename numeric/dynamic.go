@@ -32,6 +32,7 @@ type Derived struct {
 	mu        sync.RWMutex
 	dynamics  []Dynamic
 	lastValue float64
+	scratch   [8]float64
 }
 
 type DerivedOption func(*Derived)
@@ -74,7 +75,13 @@ func (derived *Derived) run(seed float64, values ...float64) (float64, error) {
 
 	for _, dynamic := range derived.dynamics {
 		if project, ok := dynamic.(*Project); ok {
-			work = project.project(out, work) // remap the vector for the next stage
+			if project.scalar != nil {
+				derived.scratch[0] = project.scalar(out, work)
+				work = derived.scratch[:1]
+				continue
+			}
+
+			work = project.vector(out, work)
 			continue
 		}
 

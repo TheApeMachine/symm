@@ -30,6 +30,10 @@ func associationEffectFor(samples []causalSample, roles causalRoles) float64 {
 		return 0
 	}
 
+	return associationEffectFromTable(nodeTable, roles)
+}
+
+func associationEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {
 	association, err := nodeTable.Association(roles.treatment)
 
 	if err != nil {
@@ -129,6 +133,10 @@ func flowInterventionLevelFor(samples []causalSample, roles causalRoles) float64
 		return 0
 	}
 
+	return flowInterventionLevelFromTable(nodeTable, roles)
+}
+
+func flowInterventionLevelFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {
 	value, err := nodeTable.Percentile(roles.treatment, 0.75)
 
 	if err != nil {

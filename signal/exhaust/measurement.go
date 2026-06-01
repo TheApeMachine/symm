@@ -11,14 +11,13 @@ const (
 
 /*
 exhaustMeasurement maps rolling exit features onto the exhaustion perspective.
-SNR is the urgency expressed as odds — a decisively exhausting book clears the
-noise floor, a marginal one does not.
+SNR is category confidence — how decisively one exit mode beat the runner-up.
 */
 func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) {
-	urgency, reason := exitScoreLong(history)
+	urgency, reason, confidence := exitScoreLong(history)
 
 	if urgency <= 0 {
-		urgency, reason = exitScoreShort(history)
+		urgency, reason, confidence = exitScoreShort(history)
 	}
 
 	if urgency <= 0 || reason == "" {
@@ -33,5 +32,6 @@ func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) 
 		Source:   perspectives.SourceExhaustion,
 		Category: exhaustCategory(reason),
 		Strength: urgency / (1 - urgency),
+		SNR:      confidence,
 	}, true
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const (
@@ -30,13 +29,11 @@ type symbolState struct {
 	changePct float64
 	last      float64
 	prices    numeric.PriceSampleRing
-	floor     *adaptive.SNR
 }
 
 func newSymbolState() *symbolState {
 	return &symbolState{
 		prices: numeric.NewPriceSampleRing(priceHistoryCap),
-		floor:  adaptive.NewSNR(),
 	}
 }
 

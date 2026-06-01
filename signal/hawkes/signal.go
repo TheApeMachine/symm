@@ -96,11 +96,6 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = trade.Symbol
 		measurement.Last = trade.Price
-		measurement = perspectives.FinalizeMeasurement(
-			measurement,
-			measurement.Strength,
-			"intensity",
-		)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

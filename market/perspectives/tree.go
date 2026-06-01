@@ -58,21 +58,27 @@ specific verdict — the one gated behind the most confirmations — wins. Depth
 proxy for specificity because each extra level is another category or observation
 the measurements had to satisfy to get there. Ties in depth resolve to the earlier
 branch, so branch order still expresses priority among equally specific paths.
-Branch thresholds on UnitSNR compare against Measurement.SNR supplied by the signal.
+Branch thresholds on UnitSNR compare against Measurement.SNR (temporal surprise);
+UnitConfidence thresholds compare against Measurement.Confidence (instantaneous
+clarity). Both are supplied by the signal.
 */
 func (tree *Tree) Walk(measurements []Measurement, branches []Branch) *ActionType {
 	for _, branch := range branches {
-		if slices.ContainsFunc(measurements, func(measurement Measurement) bool {
+		index := slices.IndexFunc(measurements, func(measurement Measurement) bool {
 			return measurement.Category == branch.Category
-		}) {
+		})
+
+		if index >= 0 {
+			measurement := measurements[index]
+
 			if branch.Condition != ConditionNone {
 				if branch.Unit != UnitNone {
 					tree.handleUnit(measurement, branch)
 				}
 			}
 
-			if branch.Action != ActionNone {
-				tree.currentAction = &branch.Action
+			if branch.Action.Type != ActionNone {
+				tree.currentAction = &branch.Action.Type
 			}
 		}
 
@@ -91,6 +97,10 @@ func (tree *Tree) handleUnit(
 	case UnitSNR:
 		tree.handleCondition(
 			measurement.SNR, branch.Value, branch.Condition,
+		)
+	case UnitConfidence:
+		tree.handleCondition(
+			measurement.Confidence, branch.Value, branch.Condition,
 		)
 	default:
 		errnie.Error(errors.New("unknown unit"), branch.Unit)

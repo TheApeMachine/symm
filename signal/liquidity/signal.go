@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const minLiquidityPeers = 2
@@ -19,7 +18,9 @@ const minLiquidityPeers = 2
 Signal ranks a symbol's quote volume against the live cross-section of its peers
 and maps the standing onto the scarcity perspective. It is a cross-asset signal:
 the verdict for one symbol depends on where its quote volume sits in the peer
-median, so SNR is the dimensionless distance from that median (either side).
+median. Confidence is classification clarity — margin to the nearest peer
+quartile; SNR is how surprising that clarity is versus the symbol's own recent
+baseline.
 
 | Category          | Quote Volume vs peer median | Market "Feel"     |
 |:------------------|:----------------------------|:------------------|
@@ -34,7 +35,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
-	floor       *adaptive.SNRField
+	floor       *perspectives.SurpriseFloor
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -46,7 +47,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
+		floor:       perspectives.NewSurpriseFloor(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -68,6 +69,7 @@ func (signal *Signal) Tick() error {
 			continue
 		}
 
+		signal.floor.Score(&measurement)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 
@@ -95,37 +97,21 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
+	category, confidence := classifyLiquidity(quoteVol, peers)
 
-	return perspectives.FinalizeMeasurement(perspectives.Measurement{
-		Symbol:   row.Symbol,
-		Source:   perspectives.SourceLiquidity,
-		Category: signal.category(quoteVol, peers),
-		Last:     row.Last,
-	}, raw, "scarcity"), true
-}
-
-/*
-category maps quote volume relative to the live peer cross-section onto the
-scarcity perspective using quartiles of peer quote volume.
-*/
-func (signal *Signal) category(quoteVol float64, peers []float64) perspectives.CategoryType {
-	sorted := numeric.CopySorted(peers)
-	q1 := numeric.PercentileSorted(sorted, 0.25)
-	q3 := numeric.PercentileSorted(sorted, 0.75)
-
-	switch {
-	case quoteVol >= q3:
-		return perspectives.CategoryRobustLiquidity
-	case quoteVol >= q1:
-		return perspectives.CategoryMedianDepth
-	default:
-		return perspectives.CategoryExtremeScarcity
-	}
+	return perspectives.Measurement{
+		Symbol:     row.Symbol,
+		Source:     perspectives.SourceLiquidity,
+		Category:   category,
+		Last:       row.Last,
+		Strength:   raw,
+		Confidence: confidence,
+	}, true
 }
 
 /*
 strength is the raw distance of quote volume from the peer median, in either
-direction; it is scored against the symbol's own noise floor to form the SNR.
+direction, for dashboard gauges only.
 */
 func (signal *Signal) strength(ratio float64) float64 {
 	if ratio < 1 {

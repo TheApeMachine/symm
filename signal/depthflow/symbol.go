@@ -26,9 +26,9 @@ func toxicLevelFilter(symbol string) func(price float64) bool {
 
 /*
 DepthSymbol owns the per-symbol book/flow state for one DepthFlow consumer and
-classifies book shape onto the weight-of-the-book perspective. SNR is each
-strength metric scored against its own running noise floor (adaptive.SNRField),
-so the reading is in noise-sigma units and comparable to every other signal.
+classifies book shape onto the weight-of-the-book perspective. SNR is
+classification confidence — margin to the nearest category boundary — not raw
+strength in noise-sigma units.
 
 The order book is a maintained orderbook.Book, not the raw last delta: Kraken sends
 a snapshot then checksum-verified deltas, and folding each delta into the local book
@@ -175,35 +175,40 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				}
 
 				if raw > 0 {
-					measurement := perspectives.Measurement{
+					category := depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK)
+
+					return perspectives.Measurement{
 						Symbol:   state.symbol,
 						Source:   perspectives.SourceDepthFlow,
-						Category: depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK),
-					}
-
-					return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(
-						measurement, raw, "imbalance",
-					), []perspectives.GaugeFactor{
-						{Name: "imbalance", Value: imbalance},
-						{Name: "level1", Value: level1},
-					}), true
+						Category: category,
+						Strength: raw,
+						SNR: categoryConfidence(
+							category,
+							imbalance,
+							flatImbalance,
+							flatOK,
+							0,
+						),
+					}, true
 				}
 			}
 
 			raw := math.Abs(level1)
+			category := depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK)
 
-			measurement := perspectives.Measurement{
+			return perspectives.Measurement{
 				Symbol:   state.symbol,
 				Source:   perspectives.SourceDepthFlow,
-				Category: depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK),
-			}
-
-			return perspectives.WithGaugeFactors(perspectives.FinalizeMeasurement(
-				measurement, raw, "level1",
-			), []perspectives.GaugeFactor{
-				{Name: "imbalance", Value: imbalance},
-				{Name: "level1", Value: level1},
-			}), true
+				Category: category,
+				Strength: raw,
+				SNR: categoryConfidence(
+					category,
+					imbalance,
+					flatImbalance,
+					flatOK,
+					0,
+				),
+			}, true
 		}
 	}
 
@@ -221,11 +226,21 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 		return perspectives.Measurement{}, false
 	}
 
-	return perspectives.FinalizeMeasurement(perspectives.Measurement{
+	category := depthflowCategory("trade_pressure", 0, 0, false)
+
+	return perspectives.Measurement{
 		Symbol:   state.symbol,
 		Source:   perspectives.SourceDepthFlow,
-		Category: depthflowCategory("trade_pressure", 0, 0, false),
-	}, flow, "flow"), true
+		Category: category,
+		Strength: flow,
+		SNR: categoryConfidence(
+			category,
+			0,
+			0,
+			false,
+			flow,
+		),
+	}, true
 }
 
 // toMarketLevels converts maintained-book levels back to the market.BookLevel shape

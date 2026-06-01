@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
 const (
@@ -17,7 +18,7 @@ const (
 func TestRestSignKrakenDocVector(t *testing.T) {
 	convey.Convey("Given Kraken's AddOrder JSON body", t, func() {
 		ctx := context.Background()
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, EndpointAddOrder)
+		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder)
 
 		convey.So(err, convey.ShouldBeNil)
 
@@ -36,7 +37,7 @@ func TestRestSignKrakenDocVector(t *testing.T) {
 
 func TestNewRestRequiresCredentials(t *testing.T) {
 	convey.Convey("Given empty credentials", t, func() {
-		_, err := NewRest(context.Background(), "", "", EndpointAddOrder)
+		_, err := NewRest(context.Background(), "", "", public.EndpointAddOrder)
 
 		convey.Convey("It should reject construction", func() {
 			convey.So(err, convey.ShouldNotBeNil)
@@ -47,15 +48,15 @@ func TestNewRestRequiresCredentials(t *testing.T) {
 func TestRestForEndpoint(t *testing.T) {
 	convey.Convey("Given one private REST client", t, func() {
 		ctx := context.Background()
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, EndpointAddOrder)
+		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder)
 
 		convey.So(err, convey.ShouldBeNil)
 
-		cancelRest := rest.ForEndpoint(EndpointCancelOrder)
+		cancelRest := rest.ForEndpoint(public.EndpointCancelOrder)
 
 		convey.Convey("It should share credentials on another endpoint", func() {
 			convey.So(cancelRest.apiKey, convey.ShouldEqual, rest.apiKey)
-			convey.So(cancelRest.endpoint, convey.ShouldEqual, EndpointCancelOrder)
+			convey.So(cancelRest.endpoint, convey.ShouldEqual, public.EndpointCancelOrder)
 		})
 	})
 }

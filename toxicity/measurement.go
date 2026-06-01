@@ -22,7 +22,7 @@ type bookQualitySnapshot struct {
 
 /*
 Measure classifies book-quality into toxicity perspective categories. Strength
-holds the raw asymmetry; SNR is playbook sigma units via FinalizeMeasurement.
+holds the raw asymmetry; SNR is adaptive sigma against the symbol's own history.
 */
 func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measurement, bool) {
 	snapshot, ok := tracker.snapshot(symbol, at)
@@ -41,9 +41,11 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measu
 		Symbol:   symbol,
 		Source:   perspectives.SourceToxicity,
 		Category: category,
+		Strength: raw,
+		SNR:      tracker.floor.Score(symbol, raw),
 	}
 
-	return perspectives.FinalizeMeasurement(measurement, raw, "book_quality"), true
+	return measurement, true
 }
 
 func (tracker *Tracker) snapshot(symbol string, at time.Time) (bookQualitySnapshot, bool) {

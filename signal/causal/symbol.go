@@ -17,15 +17,13 @@ const tradeWindow = 5 * time.Minute
 CausalSymbol holds per-symbol Pearl-ladder history and microstructure state.
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, Liquidity backdoors macro/flow.
 
-SNR is the backdoor-adjusted intervention effect relative to its own per-regime
-noise floor — a do(flow) effect standing above the symbol's typical clears the
-floor; a confounded, macro-driven move does not.
+SNR is category confidence: how decisively the returned category wins over its
+neighbors on the ladder or fallback path — not how large the strength is.
 */
 type CausalSymbol struct {
 	mu             sync.RWMutex
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
-	noise          map[string]*adaptive.EMA
 	hy             *hyReturns
 	lastPrice      float64
 	bid            float64
@@ -42,7 +40,6 @@ type CausalSymbol struct {
 func NewCausalSymbol() *CausalSymbol {
 	return &CausalSymbol{
 		samples:      make([]causalSample, 0, causalHistoryCap),
-		noise:        make(map[string]*adaptive.EMA),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
 		pressure:     adaptive.NewEMA(0),
 		hy:           newHYReturns(contagionWindow()),
@@ -73,16 +70,12 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	errnie.Does(func() (float64, error) {
-		return state.volumeWindow.Next(
-			0,
-			float64(tick.Timestamp.UnixNano()),
-			tick.Qty,
-			state.lastPrice,
-		)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	})
+	_, _ = state.volumeWindow.Next(
+		0,
+		float64(tick.Timestamp.UnixNano()),
+		tick.Qty,
+		state.lastPrice,
+	)
 
 	if tick.Price > 0 {
 		state.hy.Observe(tick.Timestamp.UnixNano(), tick.Price)
@@ -94,11 +87,14 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) {
 		sign = 1.0
 	}
 
-	state.buyPressure = errnie.Does(func() (float64, error) {
-		return state.pressure.Next(0, sign)
-	}).Or(func(err error) {
+	pressure, err := state.pressure.Next(0, sign)
+
+	if err != nil {
 		errnie.Error(err)
-	}).Value()
+		return
+	}
+
+	state.buyPressure = pressure
 }
 
 func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
@@ -131,7 +127,10 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
 	}
 }
 
-func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Time) (perspectives.Measurement, bool) {
+func (state *CausalSymbol) Measure(
+	macroMomentum, contagion float64,
+	now time.Time,
+) (perspectives.Measurement, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -150,13 +149,19 @@ func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Ti
 		state.enqueuePendingLocked(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
 		currentSample := newCausalSample(macroMomentum, liquidity, localFlow, 0)
-		raw, reason := state.evaluate(currentSample, contagion)
+		outcome := state.evaluate(currentSample, contagion)
 
-		if raw > 0 {
+		if outcome.raw > 0 {
+			category := causalCategory(outcome.reason)
+
 			return perspectives.Measurement{
 				Source:   perspectives.SourceCausal,
-				Category: causalCategory(reason),
-				Strength: raw,
+				Category: category,
+				Strength: outcome.raw,
+				SNR: categoryConfidence(
+					category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
+				),
+				Last: state.lastPrice,
 			}, true
 		}
 	}
@@ -172,11 +177,21 @@ func (state *CausalSymbol) Measure(macroMomentum, contagion float64, now time.Ti
 	}
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
+	category := causalCategory(reason)
 
 	return perspectives.Measurement{
 		Source:   perspectives.SourceCausal,
-		Category: causalCategory(reason),
+		Category: category,
 		Strength: fallbackRaw,
+		SNR: categoryConfidence(
+			category,
+			causalOutcome{},
+			macroMomentum,
+			state.changePct,
+			state.buyPressure,
+			false,
+		),
+		Last: state.lastPrice,
 	}, true
 }
 
@@ -187,15 +202,6 @@ roles mean liquidity itself is driving price (a shock); a macro-only read is
 systemic beta (the asset is a passenger); a bare flow-pressure fallback is
 causal noise (no statistically grounded driver).
 */
-func causalScoreStream(category perspectives.CategoryType) string {
-	switch category {
-	case perspectives.CategoryEndogenousAlpha, perspectives.CategoryLiquidityShock:
-		return "intervention"
-	default:
-		return "macro"
-	}
-}
-
 func causalCategory(reason string) perspectives.CategoryType {
 	switch reason {
 	case "intervention", "counterfactual_like":
@@ -228,45 +234,87 @@ func (state *CausalSymbol) HYSnapshot() *hyReturns {
 	return state.hy.clone()
 }
 
-func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (float64, string) {
+func (state *CausalSymbol) evaluate(current causalSample, contagion float64) causalOutcome {
 	if len(state.samples) < minCausalHistory {
-		return 0, ""
+		return causalOutcome{}
 	}
 
-	samples := state.samples
-	roles, inverted := selectRoles(samples, contagion)
+	nodeTable, err := causalTable(state.samples)
+
+	if err != nil {
+		return causalOutcome{}
+	}
+
+	roles, inverted, condition := selectRolesFromTable(nodeTable, contagion)
 	suffix := ""
 
 	if inverted {
 		suffix = "_regime_inversion"
 	}
 
-	association := associationEffectFor(samples, roles)
-	intervention := kernelBackdoorEffectFor(samples, roles)
+	association := associationEffectFromTable(nodeTable, roles)
+	intervention := kernelBackdoorEffectFromTable(nodeTable, roles)
+
+	outcome := causalOutcome{
+		intervention: intervention,
+		association:  association,
+		inverted:     inverted,
+		contagion:    contagion,
+		condition:    condition,
+	}
 
 	if intervention <= 0 {
-		return 0, ""
+		return outcome
 	}
 
-	model, fitOK := fitNonLinearStructuralFor(samples, roles)
+	model, fitOK := fitNonLinearTable(nodeTable, roles.predictors())
 
 	if !fitOK {
-		return intervention, "intervention" + suffix
+		outcome.raw = intervention
+		outcome.reason = "intervention" + suffix
+
+		return outcome
 	}
 
-	interventionFlow := flowInterventionLevelFor(samples, roles)
+	interventionFlow := flowInterventionLevelFromTable(nodeTable, roles)
 	uplift := nonLinearCounterfactualUpliftFor(current, model, interventionFlow, roles)
+	outcome.uplift = uplift
 
 	if uplift <= 0 {
-		return intervention, "intervention" + suffix
+		outcome.raw = intervention
+		outcome.reason = "intervention" + suffix
+
+		return outcome
 	}
 
-	confounded := math.Abs(intervention-association) > math.Abs(association)*0.25
-	reason := "intervention" + suffix
+	confounded := math.Abs(intervention-association) > math.Abs(association)*confoundFraction
+	outcome.reason = "intervention" + suffix
 
 	if confounded {
-		reason = "counterfactual_like" + suffix
+		outcome.reason = "counterfactual_like" + suffix
 	}
 
-	return intervention, reason
+	outcome.raw = intervention
+
+	return outcome
+}
+
+func pairConditionNumber(samples []causalSample) float64 {
+	nodeTable, err := causalTable(samples)
+
+	if err != nil {
+		return 0
+	}
+
+	condition, err := nodeTable.PairConditionNumber(liquidityNode, localFlowNode)
+
+	if err != nil {
+		return 0
+	}
+
+	if math.IsInf(condition, -1) {
+		return 0
+	}
+
+	return condition
 }

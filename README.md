@@ -95,7 +95,7 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Las
 
 2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
 
-3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to an explicit per-branch threshold in YAML (`value:`). Documents without `value` on category or metric gates fail at load time.
+3. **SNR is computed in the signal, not the trader.** Classifier-based signals score how decisively the fused observation sits inside its assigned category band (`adaptive.Classifier.Confidence` via `numeric.Classed`). Perspective tree branches compare `Measurement.SNR` to an explicit per-branch threshold in YAML (`value:`). Documents without `value` on category or metric gates fail at load time.
 
 ## Everything is a `System`
 
@@ -163,13 +163,13 @@ type Measurement struct {
     Source   SourceType    // fluid, hawkes, pumpdump, cvd, …
     Category CategoryType  // semantic row from DECISION.md
     Strength float64       // raw fused strength (dashboard gauges)
-    SNR      float64       // strength ÷ adaptive noise floor (playbook gating)
+    SNR      float64       // classification confidence (playbook gating)
     Last     float64       // last traded price at emit time
 }
 ```
 
 > [!IMPORTANT]
-> `SNR` is not a historical win rate. It is a per-symbol z-score: how many standard deviations the current observation sits above this signal's own baseline churn on this specific symbol. The adaptive baseline (`numeric/adaptive.SNR`) warms up over ~12 samples before returning non-zero values. Perspective tree branches gate on `SNR > 1` — a unitless floor, not a price or percentage.
+> `SNR` is not a historical win rate. It is category-band confidence: how far the fused score sits from the nearest classifier boundary, normalised by the local band width. A clear StochasticNoise can read high SNR; a borderline Herd/Alpha reads low. Perspective tree branches gate on `SNR > 1` — a unitless floor, not a price or percentage.
 
 Each signal emits exactly one category at a time. Requiring a specific category in a perspective tree implicitly excludes that source's contradicting siblings — a CVD tree demanding `AggressiveDrive` will not see `StochasticBalance` from the same source simultaneously.
 

@@ -76,14 +76,13 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 pumpState is one symbol's ignition state. The volume window carries the recent
 executed size and the window's opening price (its anchor); the two EMAs are the
 self-scaling baselines lift and precursor are read against; pipe fuses and bands the
-two axes into a category; floor scores the ignition strength against its own noise.
+two axes into a category.
 */
 type pumpState struct {
-	volume   *adaptive.Window // recent volume, anchored at the window's opening price
-	volBase  *adaptive.EMA    // self-scaling baseline for volume lift (RVOL)
-	moveBase *adaptive.EMA    // self-scaling baseline for the precursor move
+	volume   *adaptive.Window
+	volBase  *adaptive.EMA
+	moveBase *adaptive.EMA
 	pipe     *numeric.Classed
-	floor    *adaptive.SNR
 	last     float64
 }
 
@@ -99,13 +98,12 @@ func newPumpState() *pumpState {
 				[]string{"faded_exhaustion", "organic_trend", "coiled_compression", "vertical_ignition"},
 			),
 
-			numeric.NewProject(func(_ float64, values []float64) []float64 {
-				return []float64{(values[0] - 1) * (1 + values[1])} // (RVOL − 1) amplified by precursor
+			numeric.NewProjectScalar(func(_ float64, values []float64) float64 {
+				return (values[0] - 1) * (1 + values[1])
 			}),
 			adaptive.NewEMA(0),
 			adaptive.NewSigmaClamp(3, 8, 0.0625),
 		),
-		floor: adaptive.NewSNR(),
 	}
 }
 
@@ -163,14 +161,16 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		return
 	}
 
-	ignition := math.Max(0, (rvol-1)*(1+precursor)) // positive strength the floor scores
+	ignition := math.Max(0, (rvol-1)*(1+precursor))
 
-	measurement := perspectives.FinalizeMeasurement(perspectives.Measurement{
+	measurement := perspectives.Measurement{
 		Symbol:   trade.Symbol,
 		Source:   perspectives.SourcePumpDump,
 		Category: signal.categories[state.pipe.Label(code)],
 		Last:     trade.Price,
-	}, ignition, "ignition")
+		Strength: ignition,
+		SNR:      state.pipe.Confidence(),
+	}
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

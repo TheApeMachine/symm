@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
 )
 
@@ -22,8 +21,9 @@ const (
 /*
 Signal measures cross-section bullish breadth from ticker change percentages and
 maps it onto the sentiment perspective. It is cross-asset: the verdict for one
-symbol depends on how much of the universe is green, so SNR is the decisiveness
-of that breadth (its odds away from a 50/50 split).
+symbol depends on how much of the universe is green. Confidence is classification
+clarity — margin to the surge threshold or leadership boundary; SNR is how
+surprising that clarity is versus the symbol's own recent baseline.
 
 | Category        | Cross-section                                  |
 |:----------------|:-----------------------------------------------|
@@ -38,8 +38,8 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (change percent)
-	floor       *adaptive.SNRField
 	breadthHist ring.FloatRing
+	floor       *perspectives.SurpriseFloor
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -51,8 +51,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
 		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
+		floor:       perspectives.NewSurpriseFloor(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -78,11 +78,7 @@ func (signal *Signal) Tick() error {
 
 		measurement.Symbol = row.Symbol
 		measurement.Last = row.Last
-		measurement = perspectives.FinalizeMeasurement(
-			measurement,
-			measurement.Strength,
-			"breadth",
-		)
+		signal.floor.Score(&measurement)
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 
@@ -97,10 +93,20 @@ func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
 		return perspectives.Measurement{}, false
 	}
 
+	surgeThreshold := signal.surgeThreshold(universe)
+	category := signal.category(breadth, change, 0, universe)
+
 	return perspectives.Measurement{
 		Source:   perspectives.SourceSentiment,
-		Category: signal.category(breadth, change, 0, universe),
-		Strength: signal.snr(breadth),
+		Category: category,
+		Strength: signal.breadthOdds(breadth),
+		Confidence: categoryConfidence(
+			category,
+			breadth,
+			change,
+			surgeThreshold,
+			signal.isLeader(change),
+		),
 	}, true
 }
 
@@ -188,8 +194,8 @@ func (signal *Signal) isLeader(change float64) bool {
 	return math.Abs(change) >= threshold
 }
 
-// snr is the decisiveness of the breadth split — its odds away from 50/50.
-func (signal *Signal) snr(breadth float64) float64 {
+// breadthOdds is the decisiveness of the breadth split — its odds away from 50/50.
+func (signal *Signal) breadthOdds(breadth float64) float64 {
 	if breadth <= 0 || breadth >= 1 {
 		return 1
 	}

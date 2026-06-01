@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/paper"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -60,8 +59,7 @@ type Client struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
-	rest          public.RestClient
-	ws            public.WebSocketClient
+	conn          *kraken.Client
 	orderRequests map[string]*OrderRequest
 	orderMessages map[string]*OrderMessage
 }
@@ -71,31 +69,14 @@ func NewOrder(
 ) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	rest := errnie.Does(func() (public.RestClient, error) {
-		if viper.GetViper().Get("trading.model") == "paper" {
-			return paper.NewRest(ctx)
-		}
-
-		return public.NewRest(ctx, public.EndpointAddOrder), nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
-	ws := errnie.Does(func() (public.WebSocketClient, error) {
-		if viper.GetViper().Get("trading.model") == "paper" {
-			return paper.NewWebSocket(ctx)
-		}
-
-		return public.NewWebSocket(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
-
 	client := &Client{
-		ctx:           ctx,
-		cancel:        cancel,
-		rest:          rest,
-		ws:            ws,
+		ctx:    ctx,
+		cancel: cancel,
+		conn: errnie.Does(func() (*kraken.Client, error) {
+			return kraken.NewClient(ctx)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value(),
 		orderRequests: make(map[string]*OrderRequest),
 		orderMessages: make(map[string]*OrderMessage),
 	}
@@ -103,39 +84,39 @@ func NewOrder(
 	return client, errnie.Error(errnie.Require(map[string]any{
 		"ctx":           client.ctx,
 		"cancel":        client.cancel,
-		"rest":          client.rest,
-		"ws":            client.ws,
+		"conn":          client.conn,
 		"orderMessages": client.orderMessages,
 	}))
 }
 
-func (order *OrderRequest) Add() error {
+func (client *Client) Add(order *OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
 }
 
-func (order *OrderRequest) Amend() error {
-	return nil
+func (client *Client) Amend(order *OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
 }
 
-func (order *OrderRequest) Cancel() error {
-	return nil
+func (client *Client) Cancel(order *OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
 }
 
-func (order *OrderRequest) CancelAll() error {
-	return nil
+func (client *Client) CancelAll() error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, "cancel_all"))
 }
 
-func (order *OrderRequest) CancelOnDisconnect() error {
-	return nil
+func (client *Client) CancelOnDisconnect() error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, "cancel_on_disconnect"))
 }
 
-func (order *OrderRequest) BatchAdd() error {
-	return nil
+func (client *Client) BatchAdd(orders []*OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, orders))
 }
 
-func (order *OrderRequest) BatchCancel() error {
-	return nil
+func (client *Client) BatchCancel(orders []*OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, orders))
 }
 
-func (order *OrderRequest) Edit() error {
-	return nil
+func (client *Client) Edit(order *OrderRequest) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
 }

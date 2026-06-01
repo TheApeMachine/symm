@@ -13,5 +13,5 @@ type Branch struct {
 	Unit        UnitType
 	Value       float64
 	ValueSet    bool
-	Action      ActionType
+	Action      Action
 }

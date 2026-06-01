@@ -34,7 +34,9 @@ is self-scaling: each axis is read as value / EMA(value), so "high", "low" and
   - Drift:      |price move| from the window's open, versus its own norm.
 
 fused = activity · conviction · (1 + drift), self-scaling, then SigmaClamp,
-then banded into the four absorption categories:
+then banded into the four absorption categories. Confidence is classification
+clarity — margin to the nearest quartile boundary; SNR is how surprising that
+clarity is versus the symbol's own recent baseline, not raw strength.
 
 | Category           | Net Volume | Price Drift | Market "Feel"           |
 |:-------------------|:-----------|:------------|:------------------------|
@@ -52,7 +54,6 @@ type cvdState struct {
 	driftBase *adaptive.EMA    // self-scaling baseline for drift
 	sigma     *adaptive.SigmaClamp
 	fusedHist ring.FloatRing
-	floor     *adaptive.SNR // noise floor for the fused absorption strength
 	last      float64
 }
 
@@ -64,6 +65,7 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
 	categories  map[string]perspectives.CategoryType
+	floor       *perspectives.SurpriseFloor
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -81,6 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"hidden_absorption":  perspectives.CategoryHiddenAbsorption,
 			"aggressive_drive":   perspectives.CategoryAggressiveDrive,
 		},
+		floor: perspectives.NewSurpriseFloor(),
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
@@ -100,11 +103,24 @@ func newCVDState() *cvdState {
 		driftBase: adaptive.NewEMA(0),
 		sigma:     adaptive.NewSigmaClamp(3, 8, 0.0625),
 		fusedHist: ring.NewFloatRing(cvdFusedHistorySize),
-		floor:     adaptive.NewSNR(),
 	}
 }
 
-func (state *cvdState) classifyFused(fused float64) perspectives.CategoryType {
+var cvdBandCodes = []float64{0, 1, 2, 3}
+
+var cvdBandLabels = []string{
+	"volume_starvation",
+	"stochastic_balance",
+	"hidden_absorption",
+	"aggressive_drive",
+}
+
+/*
+measureFused sigma-clamps fused absorption strength, bands it against the
+symbol's own fused history quartiles, and returns the category plus clarity
+(classification confidence from the quartile boundaries).
+*/
+func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, float64) {
 	clamped, err := state.sigma.Next(0, fused)
 
 	if err != nil {
@@ -115,23 +131,29 @@ func (state *cvdState) classifyFused(fused float64) perspectives.CategoryType {
 	samples := state.fusedHist.Ordered()
 
 	if len(samples) < minCVDFusedSamples {
-		return perspectives.CategoryStochasticBalance
+		return perspectives.CategoryStochasticBalance, 0
 	}
 
 	sorted := numeric.CopySorted(samples)
 	q1 := numeric.PercentileSorted(sorted, 0.25)
 	q2 := numeric.PercentileSorted(sorted, 0.50)
 	q3 := numeric.PercentileSorted(sorted, 0.75)
+	classifier := adaptive.NewClassifier(
+		[]float64{q1, q2, q3},
+		cvdBandCodes,
+		cvdBandLabels,
+	)
+	confidence := classifier.Confidence(clamped)
 
 	switch {
 	case clamped <= q1:
-		return perspectives.CategoryVolumeStarvation
+		return perspectives.CategoryVolumeStarvation, confidence
 	case clamped <= q2:
-		return perspectives.CategoryStochasticBalance
+		return perspectives.CategoryStochasticBalance, confidence
 	case clamped <= q3:
-		return perspectives.CategoryHiddenAbsorption
+		return perspectives.CategoryHiddenAbsorption, confidence
 	default:
-		return perspectives.CategoryAggressiveDrive
+		return perspectives.CategoryAggressiveDrive, confidence
 	}
 }
 
@@ -190,13 +212,17 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 
 	fused := activity * conviction * (1 + drift)
+	category, confidence := state.measureFused(fused)
 
-	measurement := perspectives.FinalizeMeasurement(perspectives.Measurement{
-		Symbol:   trade.Symbol,
-		Source:   perspectives.SourceCVD,
-		Category: state.classifyFused(fused),
-		Last:     trade.Price,
-	}, fused, "fused")
+	measurement := perspectives.Measurement{
+		Symbol:     trade.Symbol,
+		Source:     perspectives.SourceCVD,
+		Category:   category,
+		Last:       trade.Price,
+		Strength:   fused,
+		Confidence: confidence,
+	}
+	signal.floor.Score(&measurement)
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const (
@@ -85,10 +86,14 @@ type symbolState struct {
 type Tracker struct {
 	mu      sync.Mutex
 	symbols map[string]*symbolState
+	floor   *adaptive.SNRField
 }
 
 func NewTracker() *Tracker {
-	return &Tracker{symbols: make(map[string]*symbolState)}
+	return &Tracker{
+		symbols: make(map[string]*symbolState),
+		floor:   adaptive.NewSNRField(),
+	}
 }
 
 func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolState {

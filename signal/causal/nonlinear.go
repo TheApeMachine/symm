@@ -52,13 +52,14 @@ func fitNonLinearTable(
 	}
 
 	residuals := append([]float64(nil), targets...)
+	thresholds := featureThresholds(nodeTable, features)
 	model := nonLinearModel{
 		intercept: numericMean(targets),
 		stumps:    make([]stumpSplit, 0, nonLinearStumps),
 	}
 
 	for stumpIndex := 0; stumpIndex < nonLinearStumps; stumpIndex++ {
-		split, gain := bestStump(nodeTable, residuals, features)
+		split, gain := bestStump(nodeTable, residuals, features, thresholds)
 
 		if gain <= 0 {
 			break
@@ -103,6 +104,10 @@ func kernelBackdoorEffectFor(samples []causalSample, roles causalRoles) float64 
 		return 0
 	}
 
+	return kernelBackdoorEffectFromTable(nodeTable, roles)
+}
+
+func kernelBackdoorEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {
 	effect, err := nodeTable.KernelBackdoorEffect(
 		roles.treatment,
 		kernelBandwidth,
@@ -147,13 +152,13 @@ func bestStump(
 	nodeTable dagNodeTable,
 	residuals []float64,
 	features []int,
+	thresholds map[int][]float64,
 ) (stumpSplit, float64) {
 	best := stumpSplit{}
 	bestGain := 0.0
 
 	for _, featureIndex := range features {
-		for _, row := range nodeTable.rows {
-			threshold := featureValue(row, featureIndex)
+		for _, threshold := range thresholds[featureIndex] {
 			leftSum, leftCount, rightSum, rightCount := partitionResiduals(
 				nodeTable.rows,
 				residuals,
@@ -165,8 +170,8 @@ func bestStump(
 				continue
 			}
 
-			leftMean := leftSum / float64(leftCount)
-			rightMean := rightSum / float64(rightCount)
+			leftMean := leftSum / leftCount
+			rightMean := rightSum / rightCount
 			gain := splitGain(
 				residuals,
 				leftMean,
@@ -191,6 +196,29 @@ func bestStump(
 	}
 
 	return best, bestGain
+}
+
+func featureThresholds(nodeTable dagNodeTable, features []int) map[int][]float64 {
+	thresholds := make(map[int][]float64, len(features))
+
+	for _, featureIndex := range features {
+		seen := make(map[float64]struct{}, len(nodeTable.rows))
+
+		for _, row := range nodeTable.rows {
+			value := featureValue(row, featureIndex)
+			seen[value] = struct{}{}
+		}
+
+		values := make([]float64, 0, len(seen))
+
+		for value := range seen {
+			values = append(values, value)
+		}
+
+		thresholds[featureIndex] = values
+	}
+
+	return thresholds
 }
 
 func partitionResiduals(

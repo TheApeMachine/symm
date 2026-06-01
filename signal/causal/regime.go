@@ -63,27 +63,42 @@ empty in the normal regime and names the inversion otherwise, so the measurement
 itself downstream.
 */
 func selectRoles(samples []causalSample, contagion float64) (causalRoles, bool) {
+	nodeTable, err := causalTable(samples)
+
+	if err != nil {
+		return normalRoles(), false
+	}
+
+	roles, inverted, _ := selectRolesFromTable(nodeTable, contagion)
+
+	return roles, inverted
+}
+
+func selectRolesFromTable(
+	nodeTable dagNodeTable,
+	contagion float64,
+) (causalRoles, bool, float64) {
 	normal := normalRoles()
 
 	contagionBreak := config.System.CausalContagionBreak > 0 &&
 		contagion >= config.System.CausalContagionBreak
 
+	condition := 0.0
 	conditionBreak := false
 
 	if config.System.CausalConditionSwitch > 0 {
-		if nodeTable, err := causalTable(samples); err == nil {
-			condition, condErr := nodeTable.PairConditionNumber(liquidityNode, localFlowNode)
+		pairCondition, condErr := nodeTable.PairConditionNumber(liquidityNode, localFlowNode)
 
-			if condErr == nil {
-				conditionBreak = math.IsInf(condition, 1) ||
-					condition >= config.System.CausalConditionSwitch
-			}
+		if condErr == nil {
+			condition = pairCondition
+			conditionBreak = math.IsInf(pairCondition, 1) ||
+				pairCondition >= config.System.CausalConditionSwitch
 		}
 	}
 
 	if conditionBreak || contagionBreak {
-		return panicRoles(), true
+		return panicRoles(), true, condition
 	}
 
-	return normal, false
+	return normal, false, condition
 }

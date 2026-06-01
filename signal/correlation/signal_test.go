@@ -26,6 +26,55 @@ func TestNewSignal(t *testing.T) {
 	})
 }
 
+func TestFingerprintColdHist(t *testing.T) {
+	Convey("Given an all-zero return ring", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		state := &symbolState{}
+
+		Convey("It should degenerate to all-ones under the >= 0 tie-break", func() {
+			So(signal.fingerprint(state), ShouldEqual, ^uint64(0))
+		})
+	})
+}
+
+func TestProcessColdStart(t *testing.T) {
+	Convey("Given a correlation signal before the ring is full", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		measurements := signal.broadcasts["measurements"].Subscribe("test:cold", 64)
+
+		signal.process(map[string]float64{
+			"BTC/EUR": 100,
+			"ETH/EUR": 50,
+			"SOL/EUR": 25,
+		})
+		signal.process(map[string]float64{
+			"BTC/EUR": 101,
+			"ETH/EUR": 50.5,
+			"SOL/EUR": 25.25,
+		})
+
+		Convey("It should not publish false herd readings", func() {
+			select {
+			case value := <-measurements.Incoming:
+				t.Fatalf("unexpected measurement during warm-up: %+v", value.Value)
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+	})
+}
+
 func TestProcess(t *testing.T) {
 	Convey("Given a correlation signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
@@ -37,17 +86,21 @@ func TestProcess(t *testing.T) {
 
 		measurements := signal.broadcasts["measurements"].Subscribe("test:correlation", 64)
 
-		Convey("When the cross-section moves together across two windows", func() {
-			signal.process(map[string]float64{
-				"BTC/EUR": 100,
-				"ETH/EUR": 50,
-				"SOL/EUR": 25,
-			})
-			signal.process(map[string]float64{
-				"BTC/EUR": 101,
-				"ETH/EUR": 50.5,
-				"SOL/EUR": 25.25,
-			})
+		prices := map[string]float64{
+			"BTC/EUR": 100,
+			"ETH/EUR": 50,
+			"SOL/EUR": 25,
+		}
+
+		Convey("When the cross-section moves together after warm-up", func() {
+			for range gridBars + 1 {
+				signal.process(prices)
+				prices = map[string]float64{
+					"BTC/EUR": prices["BTC/EUR"] * 1.01,
+					"ETH/EUR": prices["ETH/EUR"] * 1.01,
+					"SOL/EUR": prices["SOL/EUR"] * 1.01,
+				}
+			}
 
 			var measurement perspectives.Measurement
 			received := false
@@ -71,6 +124,7 @@ func TestProcess(t *testing.T) {
 				So(measurement.Source, ShouldEqual, perspectives.SourceCorrelation)
 				So(measurement.Symbol, ShouldNotBeEmpty)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
+				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})
 	})
@@ -103,14 +157,23 @@ func BenchmarkProcess(b *testing.B) {
 
 	signal.broadcasts["measurements"].Subscribe("bench:correlation", 1024)
 
-	seed := map[string]float64{"BTC/EUR": 100, "ETH/EUR": 50, "SOL/EUR": 25}
-	tick := map[string]float64{"BTC/EUR": 101, "ETH/EUR": 50.5, "SOL/EUR": 25.25}
+	prices := map[string]float64{"BTC/EUR": 100, "ETH/EUR": 50, "SOL/EUR": 25}
 
-	signal.process(seed)
+	for range gridBars + 1 {
+		signal.process(prices)
+		prices = map[string]float64{
+			"BTC/EUR": prices["BTC/EUR"] * 1.01,
+			"ETH/EUR": prices["ETH/EUR"] * 1.01,
+			"SOL/EUR": prices["SOL/EUR"] * 1.01,
+		}
+	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal.process(tick)
+		signal.process(prices)
+		prices["BTC/EUR"] *= 1.01
+		prices["ETH/EUR"] *= 1.01
+		prices["SOL/EUR"] *= 1.01
 	}
 }

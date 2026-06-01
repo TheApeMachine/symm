@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
 const tokenRefreshLead = 30 * time.Second
@@ -36,7 +37,7 @@ func NewTokenProvider(ctx context.Context, apiKey, apiSecret string) (*TokenProv
 	}
 
 	provider.rest = errnie.Does(func() (*Rest, error) {
-		return NewRest(ctx, apiKey, apiSecret, EndpointWebSocketsToken)
+		return NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
 	}).Or(func(err error) {
 		provider.err = errnie.Error(err)
 	}).Value()

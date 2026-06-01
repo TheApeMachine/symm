@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 func TestNewSignal(t *testing.T) {
@@ -23,6 +24,33 @@ func TestNewSignal(t *testing.T) {
 		Convey("It should wire absorption categories", func() {
 			So(signal.categories["hidden_absorption"], ShouldEqual, perspectives.CategoryHiddenAbsorption)
 			So(signal.categories["aggressive_drive"], ShouldEqual, perspectives.CategoryAggressiveDrive)
+		})
+	})
+}
+
+func TestMeasureFusedConfidence(t *testing.T) {
+	Convey("Given quartile band boundaries", t, func() {
+		classifier := adaptive.NewClassifier(
+			[]float64{2.75, 5.5, 8.25},
+			cvdBandCodes,
+			cvdBandLabels,
+		)
+
+		Convey("It should read high SNR deep inside a band", func() {
+			So(classifier.Confidence(6), ShouldBeGreaterThan, 0.1)
+		})
+
+		Convey("It should read zero SNR on a quartile boundary", func() {
+			So(classifier.Confidence(5.5), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a cold fused history", t, func() {
+		Convey("It should return zero SNR before warm-up completes", func() {
+			cold := newCVDState()
+			_, snr := cold.measureFused(1)
+
+			So(snr, ShouldEqual, 0)
 		})
 	})
 }

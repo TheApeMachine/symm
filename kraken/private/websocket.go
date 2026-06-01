@@ -42,7 +42,7 @@ type WebSocket struct {
 NewWebSocket wires private REST credentials for token refresh and frame routing.
 */
 func NewWebSocket(ctx context.Context, apiKey, apiSecret string) (*WebSocket, error) {
-	rest, err := NewRest(ctx, apiKey, apiSecret, EndpointWebSocketsToken)
+	rest, err := NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
 
 	if err != nil {
 		return nil, err

@@ -30,8 +30,8 @@ Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
 lead-lag structure onto the anchor perspective. It is cross-asset: each
 follower's verdict is its lagged Hayashi-Yoshida correlation against the anchor.
 
-SNR is the lag correlation relative to the minimum that counts as a lead, so a
-strong, exploitable lag clears the noise floor and incidental co-movement does not.
+SNR is classification confidence — margin to the lag-fraction or correlation
+boundary — not the lag correlation strength relative to a noise floor.
 
 | Category           | Lag structure                              |
 |:-------------------|:-------------------------------------------|
@@ -124,11 +124,6 @@ func (signal *Signal) publish() {
 		if ok {
 			measurement.Symbol = key.(string)
 			measurement.Last = follower.lastPrice()
-			measurement = perspectives.FinalizeMeasurement(
-				measurement,
-				measurement.Strength,
-				"correlation",
-			)
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 
@@ -162,6 +157,7 @@ func (signal *Signal) measure(
 			Source:   perspectives.SourceLeadLag,
 			Category: perspectives.CategoryAnchorStall,
 			Strength: 0,
+			SNR:      categoryConfidence(perspectives.CategoryAnchorStall, anchor.change(), 0, 0),
 		}, true
 	}
 
@@ -176,6 +172,12 @@ func (signal *Signal) measure(
 			Source:   perspectives.SourceLeadLag,
 			Category: category,
 			Strength: corr / leadlagMinimumLagCorrelation,
+			SNR: categoryConfidence(
+				category,
+				anchor.change(),
+				corr,
+				bars,
+			),
 		}, true
 	}
 
@@ -195,6 +197,12 @@ func (signal *Signal) measure(
 		Source:   perspectives.SourceLeadLag,
 		Category: category,
 		Strength: corr / leadlagMinimumLagCorrelation,
+		SNR: categoryConfidence(
+			category,
+			anchor.change(),
+			corr,
+			0,
+		),
 	}, true
 }
 

@@ -17,13 +17,34 @@ import (
 )
 
 const (
-	gridBars = 32 // length of each coin's movement fingerprint
-	hashBits = 64 // fingerprint width: one uint64
-	// correlationBatchInterval is the cross-section window: trades accumulate
-	// per symbol and the SimHash herd pass runs once per interval, since the
-	// correlation structure is meaningful across the cross-section, not per trade.
+	// gridBars is how many recent bar returns feed each SimHash hyperplane dot product.
+	gridBars = 32
+	// hashBits is the fingerprint width: one uint64 signature per coin per batch.
+	hashBits = 64
+	// correlationBatchInterval is the cross-section window. Trades accumulate per
+	// symbol and the herd pass runs once per interval — correlation is a property
+	// of the cross-section, not of a single print.
 	correlationBatchInterval = 250 * time.Millisecond
+	// energyFloor excludes coins whose variance is below this fraction of the slow
+	// market-energy baseline — dead-flat and illiquid coins cannot vote as herd.
+	energyFloor = 0.0625
 )
+
+/*
+symbolState holds one coin's rolling return ring, its slow energy estimate, and
+the classification pipeline that maps (correlation, energy) into a perspective
+category. filled counts ring writes toward gridBars — until the window is full,
+the coin is excluded from the herd vote because an all-zero hist makes every
+hyperplane dot tie at zero and fingerprint as all-ones (false perfect herd).
+*/
+type symbolState struct {
+	prev   float64
+	hist   [gridBars]float64
+	cursor int
+	filled int
+	energy *adaptive.EMA
+	pipe   *numeric.Classed
+}
 
 /*
 Signal measuring cross-asset "herd behavior" via the dominant eigenmode of the
@@ -47,27 +68,24 @@ no pairwise correlation matrix.
 | Stochastic Noise | Low         | Low      | Quiet           |
 | Divergent Stress | Negative    | High     | Contrarian Move |
 */
-type symbolState struct {
-	prev   float64
-	hist   [gridBars]float64
-	cursor int
-	energy *adaptive.EMA
-	pipe   *numeric.Classed
-}
-
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	broadcasts   map[string]*qpool.BroadcastGroup
-	subscribers  map[string]*qpool.Subscriber
-	symbols      sync.Map
-	planes       [hashBits][gridBars]float64 // random hyperplanes: the fingerprint stamp
-	marketEnergy *adaptive.EMA               // slow activity baseline (the Noise gate)
-	categories   map[string]perspectives.CategoryType
-	floor        *adaptive.SNRField
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	planes        [hashBits][gridBars]float64
+	marketEnergy  *adaptive.EMA
+	categories    map[string]perspectives.CategoryType
+	activeScratch []live
 }
 
+/*
+NewSignal wires the measurements broadcast and installs one fixed random
+hyperplane set. The seed is fixed so every coin is stamped with the same
+projection — otherwise bit agreement would be meaningless.
+*/
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -84,15 +102,14 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  perspectives.CategoryDecoupledAlpha,
 			"systemic_herd":    perspectives.CategorySystemicHerd,
 		},
-		floor: adaptive.NewSNRField(),
 	}
 
-	// One fixed random stamp, shared by every coin so fingerprints are comparable.
+	// Fixed seed: one shared projection for the whole universe.
 	rng := rand.New(rand.NewSource(1))
 
-	for k := range signal.planes {
-		for j := range signal.planes[k] {
-			signal.planes[k][j] = float64(rng.Intn(2)*2 - 1) // -1 or +1
+	for planeIndex := range signal.planes {
+		for barIndex := range signal.planes[planeIndex] {
+			signal.planes[planeIndex][barIndex] = float64(rng.Intn(2)*2 - 1)
 		}
 	}
 
@@ -103,47 +120,75 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	return signal
 }
 
-// newClassed is one coin's classification pipeline:
-// fused = clamp(EMA( energy · (1 + 2·corr) / slow market energy )), then banded.
-// The normalization by the slow market-energy baseline happens in the projection
-// (baseline is guaranteed > 0 by the caller), so the chain is a single reshape
-// into EMA then clamp — the market energy moves slowly enough that smoothing the
-// ratio is equivalent to smoothing the numerator and dividing.
-func newClassed() *numeric.Classed {
-	return numeric.NewClassed(
-		adaptive.NewClassifier(
-			[]float64{-0.30, 0.40, 2.00}, // divergent | noise | alpha | herd
-			[]float64{0, 1, 2, 3},
-			[]string{"divergent_stress", "stochastic_noise", "decoupled_alpha", "systemic_herd"},
-		),
-
-		numeric.NewProject(func(_ float64, v []float64) []float64 {
-			return []float64{v[1] * (1 + 2*v[0]) / v[2]} // (energy · (1 + 2·corr)) / market energy
-		}),
-		adaptive.NewEMA(0),
-		adaptive.NewSigmaClamp(3, 8, 0.0625),
-	)
+func correlationFuse(_ float64, values []float64) float64 {
+	return values[1] * (1 + 2*values[0]) / values[2]
 }
 
-// fingerprint stamps a coin's recent movement into one 64-bit signature.
+func newSymbolState() *symbolState {
+	return &symbolState{
+		energy: adaptive.NewEMA(0),
+		pipe: numeric.NewClassed(
+			adaptive.NewClassifier(
+				[]float64{-0.30, 0.40, 2.00},
+				[]float64{0, 1, 2, 3},
+				[]string{
+					"divergent_stress",
+					"stochastic_noise",
+					"decoupled_alpha",
+					"systemic_herd",
+				},
+			),
+			numeric.NewProjectScalar(correlationFuse),
+			adaptive.NewEMA(0),
+			adaptive.NewSigmaClamp(3, 8, 0.0625),
+		),
+	}
+}
+
+func (signal *Signal) state(symbol string) *symbolState {
+	if stored, ok := signal.symbols.Load(symbol); ok {
+		return stored.(*symbolState)
+	}
+
+	created := newSymbolState()
+	stored, loaded := signal.symbols.LoadOrStore(symbol, created)
+
+	if loaded {
+		return stored.(*symbolState)
+	}
+
+	return created
+}
+
+/*
+fingerprint stamps one coin's recent return ring into a 64-bit SimHash: for each
+hyperplane, dot(return_window, plane) >= 0 sets the corresponding bit. An
+all-zero window ties every dot at zero and yields all-ones — callers must gate
+on filled and energy before voting or scoring.
+*/
 func (signal *Signal) fingerprint(state *symbolState) uint64 {
 	var sig uint64
 
-	for k := range signal.planes {
+	for planeIndex := range signal.planes {
 		dot := 0.0
 
-		for j := 0; j < gridBars; j++ {
-			dot += signal.planes[k][j] * state.hist[j]
+		for barIndex := range gridBars {
+			dot += signal.planes[planeIndex][barIndex] * state.hist[barIndex]
 		}
 
 		if dot >= 0 {
-			sig |= 1 << uint(k)
+			sig |= 1 << uint(planeIndex)
 		}
 	}
 
 	return sig
 }
 
+/*
+Tick accumulates the latest trade price per symbol and runs one herd pass per
+batch tick. Per-trade processing would restamp fingerprints on every print;
+correlationBatchInterval batches enough cross-section activity to be stable.
+*/
 func (signal *Signal) Tick() error {
 	trades := market.NewTradeSubscription(signal.ctx, config.System.Symbols...)
 	batch := time.NewTicker(correlationBatchInterval)
@@ -170,12 +215,15 @@ func (signal *Signal) Tick() error {
 			}
 
 			signal.process(latest)
-			latest = make(map[string]float64)
+			clear(latest)
 		}
 	}
 }
 
-// live is one coin's per-batch fingerprint and the data needed to emit for it.
+/*
+live is one coin's stamped fingerprint and the handles needed to emit for it
+after the batch herd pass.
+*/
 type live struct {
 	symbol string
 	price  float64
@@ -183,19 +231,20 @@ type live struct {
 	sig    uint64
 }
 
-// process runs one SimHash herd pass over the symbols that traded this window:
-// stamp each coin's fingerprint, vote the market's dominant mode, then score each
-// coin's agreement with it. O(symbols) per window, not per trade.
+/*
+process runs one SimHash herd pass for every symbol that traded this window:
+update return rings, stamp fingerprints, vote market mode, emit per coin.
+O(symbols) per batch, not per trade.
+*/
 func (signal *Signal) process(latest map[string]float64) {
-	active := make([]live, 0, len(latest))
+	active := signal.activeScratch[:0]
 	meanEnergy := 0.0
 
+	// Slow market-energy from prior batches; 0 on cold start.
+	base := signal.marketEnergy.Value()
+
 	for symbol, price := range latest {
-		stored, _ := signal.symbols.LoadOrStore(symbol, &symbolState{
-			energy: adaptive.NewEMA(0),
-			pipe:   newClassed(),
-		})
-		state := stored.(*symbolState)
+		state := signal.state(symbol)
 
 		if state.prev <= 0 {
 			state.prev = price
@@ -207,10 +256,32 @@ func (signal *Signal) process(latest map[string]float64) {
 		state.hist[state.cursor] = ret
 		state.cursor = (state.cursor + 1) % gridBars
 
-		energy, _ := state.energy.Next(0, ret*ret)
-		active = append(active, live{symbol: symbol, price: price, state: state, sig: signal.fingerprint(state)})
+		if state.filled < gridBars {
+			state.filled++
+		}
+
+		energy, err := state.energy.Next(0, ret*ret)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if state.filled < gridBars || energy <= base*energyFloor {
+			continue
+		}
+
+		active = append(active, live{
+			symbol: symbol,
+			price:  price,
+			state:  state,
+			sig:    signal.fingerprint(state),
+		})
+
 		meanEnergy += energy
 	}
+
+	signal.activeScratch = active
 
 	if len(active) == 0 {
 		return
@@ -220,40 +291,55 @@ func (signal *Signal) process(latest map[string]float64) {
 
 	baseline, err := signal.marketEnergy.Next(0, meanEnergy)
 
-	if err != nil || baseline <= 0 {
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if baseline <= 0 {
 		return
 	}
 
 	signal.emitActive(active, signal.marketMode(active), baseline)
 }
 
-// marketMode is the bit-by-bit majority vote across fingerprints — the dominant
-// shared direction of the cross-section.
+/*
+marketMode is the cross-section consensus fingerprint: for each of the 64 bits,
+count how many active coins have that bit set; if strictly more than half do,
+the mode gets a 1 at that position. The result is the dominant shared direction
+— "what the market looks like" this batch — against which each coin is scored.
+*/
 func (signal *Signal) marketMode(active []live) uint64 {
 	var ones [hashBits]int
 
 	for _, coin := range active {
-		for bit := 0; bit < hashBits; bit++ {
-			ones[bit] += int(coin.sig >> uint(bit) & 1)
+		for bitIndex := range hashBits {
+			ones[bitIndex] += int(coin.sig >> uint(bitIndex) & 1)
 		}
 	}
 
 	var mode uint64
 
-	for bit := 0; bit < hashBits; bit++ {
-		if ones[bit]*2 > len(active) {
-			mode |= 1 << uint(bit)
+	for bitIndex := range hashBits {
+		if ones[bitIndex]*2 > len(active) {
+			mode |= 1 << uint(bitIndex)
 		}
 	}
 
 	return mode
 }
 
-// emitActive scores each coin's agreement with the market mode and publishes it.
+/*
+emitActive scores each coin's agreement with market mode and publishes one
+measurement. Agreement is Hamming similarity mapped to [-1, 1]; raw strength
+is energy-weighted correlation normalised by the slow market-energy baseline.
+SNR is classification confidence — how clearly the fused score sits inside
+its assigned category band, not how large the strength is.
+*/
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 	for _, coin := range active {
-		agree := hashBits - bits.OnesCount64(coin.sig^mode)                      // 0..64
-		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2) // -1..1
+		agree := hashBits - bits.OnesCount64(coin.sig^mode)
+		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
 		energy := coin.state.energy.Value()
 
 		code, err := coin.state.pipe.Push(corr, energy, baseline)
@@ -264,13 +350,17 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 		}
 
 		raw := energy * (1 + 2*corr) / baseline
-		measurement := perspectives.FinalizeMeasurement(perspectives.Measurement{
-			Symbol:   coin.symbol,
-			Source:   perspectives.SourceCorrelation,
-			Category: signal.categories[coin.state.pipe.Label(code)],
-			Last:     coin.price,
-		}, raw, "energy")
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+		signal.broadcasts["measurements"].Send(
+			&qpool.QValue[any]{Value: perspectives.Measurement{
+				Symbol:   coin.symbol,
+				Source:   perspectives.SourceCorrelation,
+				Category: signal.categories[coin.state.pipe.Label(code)],
+				Last:     coin.price,
+				Strength: raw,
+				SNR:      coin.state.pipe.Confidence(),
+			}},
+		)
 	}
 }
 

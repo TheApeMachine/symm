@@ -1,22 +1,28 @@
 package public
 
+import "strings"
+
 type EndpointType string
 
 const (
-	BaseURL EndpointType = "https://api.kraken.com/0/public"
+	PublicBaseURL  EndpointType = "https://api.kraken.com/0/public"
+	PrivateBaseURL EndpointType = "https://api.kraken.com/0/private"
 
-	EndpointTypeAssetPairs  EndpointType = BaseURL + "/AssetPairs"
-	EndpointTypeTicker      EndpointType = BaseURL + "/Ticker"
-	EndpointTypeOHLC        EndpointType = BaseURL + "/OHLC"
-	EndpointTypeDepth       EndpointType = BaseURL + "/Depth"
-	EndpointTypeGroupedBook EndpointType = BaseURL + "/GroupedBook"
-	EndpointTypeTrades      EndpointType = BaseURL + "/Trades"
-	EndpointTypeSpread      EndpointType = BaseURL + "/Spread"
-	EndpointTypePostTrade   EndpointType = BaseURL + "/PostTrade"
-	EndpointAddOrder        EndpointType = BaseURL + "/AddOrder"
-	EndpointAmendOrder      EndpointType = BaseURL + "/AmendOrder"
-	EndpointCancelOrder     EndpointType = BaseURL + "/CancelOrder"
-	EndpointWebSocketsToken EndpointType = BaseURL + "/GetWebSocketsToken"
+	BaseURL = PublicBaseURL
+
+	EndpointTypeAssetPairs  EndpointType = PublicBaseURL + "/AssetPairs"
+	EndpointTypeTicker      EndpointType = PublicBaseURL + "/Ticker"
+	EndpointTypeOHLC        EndpointType = PublicBaseURL + "/OHLC"
+	EndpointTypeDepth       EndpointType = PublicBaseURL + "/Depth"
+	EndpointTypeGroupedBook EndpointType = PublicBaseURL + "/GroupedBook"
+	EndpointTypeTrades      EndpointType = PublicBaseURL + "/Trades"
+	EndpointTypeSpread      EndpointType = PublicBaseURL + "/Spread"
+	EndpointTypePostTrade   EndpointType = PublicBaseURL + "/PostTrade"
+
+	EndpointAddOrder        EndpointType = PrivateBaseURL + "/AddOrder"
+	EndpointAmendOrder      EndpointType = PrivateBaseURL + "/AmendOrder"
+	EndpointCancelOrder     EndpointType = PrivateBaseURL + "/CancelOrder"
+	EndpointWebSocketsToken EndpointType = PrivateBaseURL + "/GetWebSocketsToken"
 	WebSocketURL            EndpointType = "wss://ws.kraken.com/v2"
 	WebSocketAuthURL        EndpointType = "wss://ws-auth.kraken.com/v2"
 	WebSocketL3URL          EndpointType = "wss://ws-l3.kraken.com/v2"
@@ -28,3 +34,10 @@ const (
 	InstrumentsChannel                   = "instrument"
 	Level3Channel                        = "level3"
 )
+
+/*
+SignPath returns the URI path Kraken uses when computing API-Sign.
+*/
+func (endpoint EndpointType) SignPath() string {
+	return strings.TrimPrefix(string(endpoint), "https://api.kraken.com")
+}
