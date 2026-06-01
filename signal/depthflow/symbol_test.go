@@ -1,6 +1,7 @@
 package depthflow
 
 import (
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,8 +15,18 @@ type symbolBookFixture struct {
 func (fixture symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
 ) market.Book {
-	bids := []market.BookLevel{{Price: bidPrice, Qty: bidQty}}
-	asks := []market.BookLevel{{Price: askPrice, Qty: askQty}}
+	bids := []market.BookLevel{{
+		Price:    bidPrice,
+		Qty:      bidQty,
+		PriceRaw: strconv.FormatFloat(bidPrice, 'f', -1, 64),
+		QtyRaw:   strconv.FormatFloat(bidQty, 'f', -1, 64),
+	}}
+	asks := []market.BookLevel{{
+		Price:    askPrice,
+		Qty:      askQty,
+		PriceRaw: strconv.FormatFloat(askPrice, 'f', -1, 64),
+		QtyRaw:   strconv.FormatFloat(askQty, 'f', -1, 64),
+	}}
 
 	update := market.Book{
 		Symbol: fixture.symbol,
@@ -35,7 +46,7 @@ func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		fixture := symbolBookFixture{symbol: symbol}
 
 		delta := fixture.snapshot(99, 8, 101, 4)
-		delta.SetEnvelopeType("update")
+		delta.SetEnvelopeType(market.BookUpdate)
 		state.ApplyBook(delta)
 
 		Convey("It should not treat the book as ready", func() {

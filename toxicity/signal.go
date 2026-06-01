@@ -42,15 +42,21 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	symbols := viper.GetViper().GetStringSlice("market.symbols")
+	symbols := viper.GetStringSlice("market.symbols")
+	depthLevels := viper.GetInt("market.book_depth_levels")
+
+	if depthLevels <= 0 {
+		depthLevels = 10
+	}
+
 	trades := market.NewTradeSubscription(tox.ctx, symbols...)
 	ticks := market.NewTickerSubscription(tox.ctx, symbols...)
-	books := market.NewBookSubscription(tox.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
+	books := market.NewBookSubscription(tox.ctx, depthLevels, symbols...)
 
 	var level3 <-chan *market.Level3Update
 
 	if tox.l3Active {
-		level3 = market.NewLevel3Subscription(tox.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
+		level3 = market.NewLevel3Subscription(tox.ctx, depthLevels, symbols...)
 	}
 
 	for {

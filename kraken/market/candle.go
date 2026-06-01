@@ -69,7 +69,9 @@ func NewCandleSubscription(
 		},
 	}); err != nil {
 		errnie.Error(err)
-		return nil
+		close(out)
+
+		return out
 	}
 
 	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {

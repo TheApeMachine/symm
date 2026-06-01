@@ -18,21 +18,24 @@ const (
 	publishInterval = 200 * time.Millisecond
 )
 
-func anchorSymbol() string {
-	v := viper.GetViper()
-	symbols := v.GetStringSlice("market.symbols")
+func resolvedSymbols() []string {
+	symbols := viper.GetStringSlice("market.symbols")
 
 	if len(symbols) > 0 {
-		return symbols[0]
+		return symbols
 	}
 
-	defaults := v.GetStringSlice("market.default_symbols")
+	defaults := viper.GetStringSlice("market.default_symbols")
 
 	if len(defaults) > 0 {
-		return defaults[0]
+		return defaults
 	}
 
-	return "BTC/EUR"
+	return []string{"BTC/EUR"}
+}
+
+func anchorSymbol() string {
+	return resolvedSymbols()[0]
 }
 
 /*
@@ -86,7 +89,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 }
 
 func (signal *Signal) Tick() error {
-	for row := range market.NewTickerSubscription(signal.ctx, viper.GetViper().GetStringSlice("market.symbols")...) {
+	for row := range market.NewTickerSubscription(signal.ctx, resolvedSymbols()...) {
 		if row == nil || row.Last <= 0 {
 			continue
 		}

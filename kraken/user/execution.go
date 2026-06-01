@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -82,22 +83,35 @@ func (execution *Execution) IsSnapshot() bool {
 	return execution.EnvelopeType == executionSnapshot
 }
 
-var executionTokenSource ExecutionTokenSource
+var (
+	executionTokenSourceMu sync.RWMutex
+	executionTokenSource   ExecutionTokenSource
+)
 
 func SetExecutionTokenSource(source ExecutionTokenSource) {
+	executionTokenSourceMu.Lock()
+	defer executionTokenSourceMu.Unlock()
+
 	executionTokenSource = source
 }
 
 func ExecutionAvailable() bool {
+	executionTokenSourceMu.RLock()
+	defer executionTokenSourceMu.RUnlock()
+
 	return executionTokenSource != nil
 }
 
 func NewExecutionSubscription(ctx context.Context) <-chan *Execution {
-	if executionTokenSource == nil {
+	executionTokenSourceMu.RLock()
+	source := executionTokenSource
+	executionTokenSourceMu.RUnlock()
+
+	if source == nil {
 		return nil
 	}
 
-	token, err := executionTokenSource.Token(ctx)
+	token, err := source.Token(ctx)
 
 	if err != nil {
 		errnie.Error(err)
@@ -107,54 +121,58 @@ func NewExecutionSubscription(ctx context.Context) <-chan *Execution {
 
 	out := make(chan *Execution, 128)
 
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	go func() {
+		defer close(out)
 
-	if err := client.Send(public.ExecutionsChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: ExecutionParams{
-			Channel:     public.ExecutionsChannel,
-			Token:       token,
-			SnapOrders:  true,
-			SnapTrades:  true,
-			OrderStatus: true,
-		},
-	}); err != nil {
-		errnie.Error(err)
+		client, err := kraken.NewClient(ctx)
 
-		return nil
-	}
+		if err != nil {
+			errnie.Error(err)
 
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			return
+		}
+
+		if err := client.Send(public.ExecutionsChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: ExecutionParams{
+				Channel:     public.ExecutionsChannel,
+				Token:       token,
+				SnapOrders:  true,
+				SnapTrades:  true,
+				OrderStatus: true,
+			},
+		}); err != nil {
+			errnie.Error(err)
+
+			return
+		}
+
 		stream, err := client.Stream(public.ExecutionsChannel)
 
 		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var rows []Execution
-
-		if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
 			errnie.Error(err)
-			continue
+
+			return
 		}
 
-		for index := range rows {
-			rows[index].SetEnvelopeType(msg.Type)
-			out <- &rows[index]
+		for msg := range stream {
+			if msg == nil {
+				continue
+			}
+
+			var rows []Execution
+
+			if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			for index := range rows {
+				rows[index].SetEnvelopeType(msg.Type)
+				out <- &rows[index]
+			}
 		}
-	}
+	}()
 
 	return out
 }

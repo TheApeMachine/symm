@@ -94,7 +94,9 @@ func recordWSOutbound(channel string, message any) {
 emitDataRows splits one envelope's data array into per-row SocketMessages, keeping
 the outer channel and type on each row so snapshot vs update survives decoding.
 */
-func emitDataRows(message *SocketMessage, out chan<- *SocketMessage) error {
+func emitDataRows(
+	ctx context.Context, message *SocketMessage, out chan<- *SocketMessage,
+) error {
 	var rows []json.RawMessage
 
 	if err := sonic.Unmarshal(message.Data, &rows); err != nil {
@@ -102,10 +104,14 @@ func emitDataRows(message *SocketMessage, out chan<- *SocketMessage) error {
 	}
 
 	for index := range rows {
-		out <- &SocketMessage{
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- &SocketMessage{
 			Channel: message.Channel,
 			Type:    message.Type,
 			Data:    rows[index],
+		}:
 		}
 	}
 
@@ -142,7 +148,7 @@ func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 					continue
 				}
 
-				if err := emitDataRows(message, out); err != nil {
+				if err := emitDataRows(ws.ctx, message, out); err != nil {
 					errnie.Error(err)
 				}
 			}

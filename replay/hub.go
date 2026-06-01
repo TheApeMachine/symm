@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func perturbConfigFromSystem() PerturbConfig {
+func perturbConfigFromViper() PerturbConfig {
 	v := viper.GetViper()
 
 	return PerturbConfigFrom(
@@ -199,7 +199,7 @@ func (hub *Hub) playOnce() {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 	pace := viper.GetViper().GetDuration("trading.replay.pace")
-	perturbConfig := perturbConfigFromSystem()
+	perturbConfig := perturbConfigFromViper()
 	perturbRandom := NewPerturbRandom(perturbConfig.Seed)
 	var previous time.Time
 

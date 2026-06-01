@@ -2,9 +2,9 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"hash/crc32"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -15,6 +15,9 @@ import (
 
 // BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
 const BookSnapshot = "snapshot"
+
+// BookUpdate is the envelope type tag for an incremental L2 book frame.
+const BookUpdate = "update"
 
 const bookChecksumLevels = 10
 
@@ -32,8 +35,43 @@ type BookParams struct {
 BookLevel is one price level in an L2 book snapshot or update.
 */
 type BookLevel struct {
-	Price float64 `json:"price"`
-	Qty   float64 `json:"qty"`
+	Price    float64 `json:"price"`
+	Qty      float64 `json:"qty"`
+	PriceRaw string  `json:"-"`
+	QtyRaw   string  `json:"-"`
+}
+
+/*
+UnmarshalJSON retains the wire decimal strings for Kraken v2 CRC32 checksums.
+*/
+func (level *BookLevel) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Price json.Number `json:"price"`
+		Qty   json.Number `json:"qty"`
+	}
+
+	if err := sonic.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	price, err := wire.Price.Float64()
+
+	if err != nil {
+		return err
+	}
+
+	qty, err := wire.Qty.Float64()
+
+	if err != nil {
+		return err
+	}
+
+	level.Price = price
+	level.Qty = qty
+	level.PriceRaw = wire.Price.String()
+	level.QtyRaw = wire.Qty.String()
+
+	return nil
 }
 
 /*
@@ -99,20 +137,20 @@ func (book Book) ComputedChecksum() int64 {
 	var builder strings.Builder
 
 	for index := range min(bookChecksumLevels, len(book.Asks)) {
-		builder.WriteString(book.checksumField(book.Asks[index].Price))
-		builder.WriteString(book.checksumField(book.Asks[index].Qty))
+		builder.WriteString(checksumField(book.Asks[index].PriceRaw))
+		builder.WriteString(checksumField(book.Asks[index].QtyRaw))
 	}
 
 	for index := range min(bookChecksumLevels, len(book.Bids)) {
-		builder.WriteString(book.checksumField(book.Bids[index].Price))
-		builder.WriteString(book.checksumField(book.Bids[index].Qty))
+		builder.WriteString(checksumField(book.Bids[index].PriceRaw))
+		builder.WriteString(checksumField(book.Bids[index].QtyRaw))
 	}
 
 	return int64(crc32.ChecksumIEEE([]byte(builder.String())))
 }
 
-func (book Book) checksumField(value float64) string {
-	raw := strings.ReplaceAll(strconv.FormatFloat(value, 'f', -1, 64), ".", "")
+func checksumField(raw string) string {
+	raw = strings.ReplaceAll(raw, ".", "")
 	raw = strings.TrimLeft(raw, "0")
 
 	if raw == "" {
@@ -144,11 +182,11 @@ func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
 }
 
 func (book *Book) mergeBookSide(existing, delta []BookLevel, askSide bool) []BookLevel {
-	byPrice := make(map[float64]float64, len(existing)+len(delta))
+	byPrice := make(map[float64]BookLevel, len(existing)+len(delta))
 
 	for _, level := range existing {
 		if level.Qty > 0 {
-			byPrice[level.Price] = level.Qty
+			byPrice[level.Price] = level
 		}
 	}
 
@@ -159,17 +197,17 @@ func (book *Book) mergeBookSide(existing, delta []BookLevel, askSide bool) []Boo
 			continue
 		}
 
-		byPrice[level.Price] = level.Qty
+		byPrice[level.Price] = level
 	}
 
 	return book.levelsFromMap(byPrice, askSide)
 }
 
-func (book *Book) levelsFromMap(byPrice map[float64]float64, askSide bool) []BookLevel {
+func (book *Book) levelsFromMap(byPrice map[float64]BookLevel, askSide bool) []BookLevel {
 	levels := make([]BookLevel, 0, len(byPrice))
 
-	for price, qty := range byPrice {
-		levels = append(levels, BookLevel{Price: price, Qty: qty})
+	for _, level := range byPrice {
+		levels = append(levels, level)
 	}
 
 	sort.Slice(levels, func(left, right int) bool {

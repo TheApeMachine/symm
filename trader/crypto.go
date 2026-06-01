@@ -39,12 +39,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 		}).Or(func(err error) {
 			errnie.Error(err)
 		}).Value(),
-		balance: errnie.Does(func() (<-chan *user.Balance, error) {
-			balances := user.NewBalanceSubscription(ctx)
-			return balances, nil
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value(),
+		balance: user.NewBalanceSubscription(ctx),
 	}
 
 	for _, channel := range []string{"actions"} {

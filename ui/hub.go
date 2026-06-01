@@ -73,6 +73,16 @@ type Hub struct {
 // auditHistory bounds the replayed audit ring.
 const auditHistory = 50
 
+func telemetryBufferSize() int {
+	size := viper.GetInt("ui.telemetry_buffer")
+
+	if size <= 0 {
+		return perClientBuffer
+	}
+
+	return size
+}
+
 /*
 NewHub subscribes to all broadcast groups on pool.
 */
@@ -89,7 +99,7 @@ func NewHub(
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
 		subscriptions: make(map[string]*qpool.Subscriber),
 		clients:       &sync.Map{},
-		telemetry:     NewTelemetryBuffer(viper.GetViper().GetInt("ui.telemetry_buffer")),
+		telemetry:     NewTelemetryBuffer(telemetryBufferSize()),
 	}
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)

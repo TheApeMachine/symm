@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -31,7 +30,7 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measu
 		return perspectives.Measurement{}, false
 	}
 
-	category, raw := classifyBookQuality(snapshot)
+	category, raw := classifyBookQuality(tracker, snapshot)
 
 	if category == perspectives.CategoryTypeNone || raw <= 0 {
 		return perspectives.Measurement{}, false
@@ -93,7 +92,9 @@ func (tracker *Tracker) flagToxicLocked(state *symbolState, price float64, churn
 	}
 }
 
-func classifyBookQuality(snapshot bookQualitySnapshot) (perspectives.CategoryType, float64) {
+func classifyBookQuality(
+	tracker *Tracker, snapshot bookQualitySnapshot,
+) (perspectives.CategoryType, float64) {
 	if snapshot.toxicNear {
 		strength := snapshot.toxicBluffStrength
 
@@ -106,7 +107,7 @@ func classifyBookQuality(snapshot bookQualitySnapshot) (perspectives.CategoryTyp
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
 	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
-	threshold := viper.GetViper().GetFloat64("signals.min_fill_to_cancel_ratio")
+	threshold := tracker.minFillToCancelRatio
 
 	if bidRatio >= threshold || askRatio >= threshold {
 		strength := math.Max(bidRatio, askRatio) / threshold

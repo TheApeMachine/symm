@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -84,15 +85,17 @@ type symbolState struct {
 // the authenticated L3 client (ApplyOrder) or per-level by the public L2 book
 // fallback (ApplyBookLevel); both share the same classification core.
 type Tracker struct {
-	mu      sync.Mutex
-	symbols map[string]*symbolState
-	floor   *adaptive.SNRField
+	mu                   sync.Mutex
+	symbols              map[string]*symbolState
+	floor                *adaptive.SNRField
+	minFillToCancelRatio float64
 }
 
 func NewTracker() *Tracker {
 	return &Tracker{
-		symbols: make(map[string]*symbolState),
-		floor:   adaptive.NewSNRField(),
+		symbols:              make(map[string]*symbolState),
+		floor:                adaptive.NewSNRField(),
+		minFillToCancelRatio: viper.GetFloat64("signals.min_fill_to_cancel_ratio"),
 	}
 }
 

@@ -64,10 +64,10 @@ func (signal *Signal) state(symbol string) *FluidSymbol {
 }
 
 func (signal *Signal) Tick() error {
-	symbols := viper.GetViper().GetStringSlice("market.symbols")
+	symbols := viper.GetStringSlice("market.symbols")
 	trades := market.NewTradeSubscription(signal.ctx, symbols...)
 	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
-	books := market.NewBookSubscription(signal.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
+	books := market.NewBookSubscription(signal.ctx, viper.GetInt("market.book_depth_levels"), symbols...)
 
 	for {
 		select {
@@ -139,7 +139,8 @@ func (signal *Signal) publishField(state *FluidSymbol) {
 		return
 	}
 
-	rows := make([]map[string]any, 0, len(viper.GetViper().GetStringSlice("market.symbols")))
+	symbols := viper.GetStringSlice("market.symbols")
+	rows := make([]map[string]any, 0, len(symbols))
 
 	signal.symbols.Range(func(_, value any) bool {
 		row := value.(*FluidSymbol).Row()

@@ -78,8 +78,10 @@ func (state *FluidSymbol) FeedTicker(row market.TickerUpdate) {
 	state.changePct = row.ChangePct
 	state.volume = row.Volume
 
-	if row.Volume > 0 && viper.GetViper().GetFloat64("signals.volume_clock_bars_per_day") > 0 {
-		state.flux.setTarget(row.Volume / viper.GetViper().GetFloat64("signals.volume_clock_bars_per_day"))
+	barsPerDay := viper.GetFloat64("signals.volume_clock_bars_per_day")
+
+	if row.Volume > 0 && barsPerDay > 0 {
+		state.flux.setTarget(row.Volume / barsPerDay)
 	}
 
 	if row.Last > 0 {

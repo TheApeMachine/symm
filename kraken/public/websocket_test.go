@@ -48,7 +48,7 @@ func TestEmitDataRows(t *testing.T) {
 		}
 		out := make(chan *SocketMessage, 4)
 
-		err := emitDataRows(message, out)
+		err := emitDataRows(context.Background(), message, out)
 
 		close(out)
 

@@ -86,10 +86,10 @@ func (signal *Signal) state(symbol string) *CausalSymbol {
 }
 
 func (signal *Signal) Tick() error {
-	symbols := viper.GetViper().GetStringSlice("market.symbols")
+	symbols := viper.GetStringSlice("market.symbols")
 	trades := market.NewTradeSubscription(signal.ctx, symbols...)
 	ticks := market.NewTickerSubscription(signal.ctx, symbols...)
-	books := market.NewBookSubscription(signal.ctx, viper.GetViper().GetInt("market.book_depth_levels"), symbols...)
+	books := market.NewBookSubscription(signal.ctx, viper.GetInt("market.book_depth_levels"), symbols...)
 
 	for {
 		select {

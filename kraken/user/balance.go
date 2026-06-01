@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -72,22 +73,35 @@ func (balance *Balance) IsSnapshot() bool {
 	return balance.EnvelopeType == balanceSnapshot
 }
 
-var balanceTokenSource BalanceTokenSource
+var (
+	balanceTokenSourceMu sync.RWMutex
+	balanceTokenSource   BalanceTokenSource
+)
 
 func SetBalanceTokenSource(source BalanceTokenSource) {
+	balanceTokenSourceMu.Lock()
+	defer balanceTokenSourceMu.Unlock()
+
 	balanceTokenSource = source
 }
 
 func BalanceAvailable() bool {
+	balanceTokenSourceMu.RLock()
+	defer balanceTokenSourceMu.RUnlock()
+
 	return balanceTokenSource != nil
 }
 
 func NewBalanceSubscription(ctx context.Context) <-chan *Balance {
-	if balanceTokenSource == nil {
+	balanceTokenSourceMu.RLock()
+	source := balanceTokenSource
+	balanceTokenSourceMu.RUnlock()
+
+	if source == nil {
 		return nil
 	}
 
-	token, err := balanceTokenSource.Token(ctx)
+	token, err := source.Token(ctx)
 
 	if err != nil {
 		errnie.Error(err)
@@ -97,52 +111,56 @@ func NewBalanceSubscription(ctx context.Context) <-chan *Balance {
 
 	out := make(chan *Balance, 128)
 
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	go func() {
+		defer close(out)
 
-	if err := client.Send(public.BalancesChannel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: BalanceParams{
-			Channel:  public.BalancesChannel,
-			Snapshot: true,
-			Token:    token,
-		},
-	}); err != nil {
-		errnie.Error(err)
+		client, err := kraken.NewClient(ctx)
 
-		return nil
-	}
+		if err != nil {
+			errnie.Error(err)
 
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			return
+		}
+
+		if err := client.Send(public.BalancesChannel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: BalanceParams{
+				Channel:  public.BalancesChannel,
+				Snapshot: true,
+				Token:    token,
+			},
+		}); err != nil {
+			errnie.Error(err)
+
+			return
+		}
+
 		stream, err := client.Stream(public.BalancesChannel)
 
 		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var rows []Balance
-
-		if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
 			errnie.Error(err)
-			continue
+
+			return
 		}
 
-		for index := range rows {
-			rows[index].SetEnvelopeType(msg.Type)
-			out <- &rows[index]
+		for msg := range stream {
+			if msg == nil {
+				continue
+			}
+
+			var rows []Balance
+
+			if err := sonic.Unmarshal(msg.Data, &rows); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			for index := range rows {
+				rows[index].SetEnvelopeType(msg.Type)
+				out <- &rows[index]
+			}
 		}
-	}
+	}()
 
 	return out
 }

@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -75,12 +76,18 @@ func (order *Order) IsSnapshot() bool {
 	return order.Type == OrderSnapshot
 }
 
-var orderTokenSource OrderTokenSource
+var (
+	orderTokenSourceMu sync.RWMutex
+	orderTokenSource   OrderTokenSource
+)
 
 /*
 SetOrderTokenSource enables authenticated L3 market data. Pass nil to disable.
 */
 func SetOrderTokenSource(source OrderTokenSource) {
+	orderTokenSourceMu.Lock()
+	defer orderTokenSourceMu.Unlock()
+
 	orderTokenSource = source
 }
 
@@ -88,6 +95,9 @@ func SetOrderTokenSource(source OrderTokenSource) {
 OrderAvailable reports whether authenticated L3 market data is configured.
 */
 func OrderAvailable() bool {
+	orderTokenSourceMu.RLock()
+	defer orderTokenSourceMu.RUnlock()
+
 	return orderTokenSource != nil
 }
 
@@ -98,7 +108,11 @@ at depth when a token source is configured.
 func NewOrderSubscription(
 	ctx context.Context, depth int, symbols ...string,
 ) <-chan *Order {
-	if orderTokenSource == nil {
+	orderTokenSourceMu.RLock()
+	source := orderTokenSource
+	orderTokenSourceMu.RUnlock()
+
+	if source == nil {
 		return nil
 	}
 
@@ -106,7 +120,7 @@ func NewOrderSubscription(
 		depth = 10
 	}
 
-	token, err := orderTokenSource.Token(ctx)
+	token, err := source.Token(ctx)
 
 	if err != nil {
 		errnie.Error(err)
@@ -116,52 +130,56 @@ func NewOrderSubscription(
 
 	out := make(chan *Order, 128)
 
-	client := errnie.Does(func() (*kraken.Client, error) {
-		return kraken.NewClient(ctx)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	go func() {
+		defer close(out)
 
-	if err := client.Send(public.Level3Channel, public.Subscription{
-		Method: public.MethodSubscribe,
-		Params: OrderParams{
-			Channel:  public.Level3Channel,
-			Symbol:   symbols,
-			Depth:    depth,
-			Snapshot: true,
-			Token:    token,
-		},
-	}); err != nil {
-		errnie.Error(err)
+		client, err := kraken.NewClient(ctx)
 
-		return nil
-	}
+		if err != nil {
+			errnie.Error(err)
 
-	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+			return
+		}
+
+		if err := client.Send(public.Level3Channel, public.Subscription{
+			Method: public.MethodSubscribe,
+			Params: OrderParams{
+				Channel:  public.Level3Channel,
+				Symbol:   symbols,
+				Depth:    depth,
+				Snapshot: true,
+				Token:    token,
+			},
+		}); err != nil {
+			errnie.Error(err)
+
+			return
+		}
+
 		stream, err := client.Stream(public.Level3Channel)
 
 		if err != nil {
-			return nil, err
-		}
-
-		return stream, nil
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value() {
-		if msg == nil {
-			continue
-		}
-
-		var order Order
-
-		if err := sonic.Unmarshal(msg.Data, &order); err != nil {
 			errnie.Error(err)
-			continue
+
+			return
 		}
 
-		order.SetEnvelopeType(msg.Type)
-		out <- &order
-	}
+		for msg := range stream {
+			if msg == nil {
+				continue
+			}
+
+			var order Order
+
+			if err := sonic.Unmarshal(msg.Data, &order); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			order.SetEnvelopeType(msg.Type)
+			out <- &order
+		}
+	}()
 
 	return out
 }

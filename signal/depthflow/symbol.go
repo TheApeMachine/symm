@@ -24,13 +24,16 @@ Kraken sends a snapshot then checksum-verified deltas; the maintained market.Boo
 is folded locally so imbalance reads reflect the full book, not the last delta slice.
 */
 type DepthSymbol struct {
-	mu           sync.RWMutex
-	symbol       string
-	book         market.Book
-	bookReady    bool
-	bookDiverged bool
-	bookDepth    int
-	last         float64
+	mu                    sync.RWMutex
+	symbol                string
+	book                  market.Book
+	bookReady             bool
+	bookDiverged          bool
+	bookDepth             int
+	decayLambda           float64
+	spoofWeightedThreshold float64
+	spoofLevel1Reject     float64
+	last                  float64
 	bid          float64
 	ask          float64
 	buyPressure  float64
@@ -47,9 +50,12 @@ func NewDepthSymbol(symbol string) *DepthSymbol {
 	}
 
 	return &DepthSymbol{
-		symbol:    symbol,
-		bookDepth: depth,
-		pressure:  adaptive.NewEMA(0),
+		symbol:                 symbol,
+		bookDepth:              depth,
+		decayLambda:            viper.GetFloat64("signals.book_depth_decay_lambda"),
+		spoofWeightedThreshold: viper.GetFloat64("signals.spoof_weighted_threshold"),
+		spoofLevel1Reject:      viper.GetFloat64("signals.spoof_level1_reject"),
+		pressure:               adaptive.NewEMA(0),
 		score: numeric.NewDerived(numeric.WithDynamics(
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
@@ -313,7 +319,7 @@ func (state *DepthSymbol) weightedImbalanceLocked(
 		return 0, false
 	}
 
-	lambda := viper.GetViper().GetFloat64("signals.book_depth_decay_lambda")
+	lambda := state.decayLambda
 	weightedBid := 0.0
 	weightedAsk := 0.0
 
@@ -349,8 +355,8 @@ func (state *DepthSymbol) isToxicLevelLocked(price float64) bool {
 }
 
 func (state *DepthSymbol) isSpoofSkewLocked(weighted, level1 float64) bool {
-	weightedThreshold := viper.GetViper().GetFloat64("signals.spoof_weighted_threshold")
-	level1Reject := viper.GetViper().GetFloat64("signals.spoof_level1_reject")
+	weightedThreshold := state.spoofWeightedThreshold
+	level1Reject := state.spoofLevel1Reject
 
 	if math.Abs(weighted) < weightedThreshold {
 		return false

@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	viper.SetConfigType("yml")
+	configLoaded := false
 
 	for _, configPath := range []string{
 		"cmd/cfg/config.yml",
@@ -18,8 +19,14 @@ func TestMain(m *testing.M) {
 		viper.SetConfigFile(configPath)
 
 		if viper.ReadInConfig() == nil {
+			configLoaded = true
+
 			break
 		}
+	}
+
+	if !configLoaded {
+		log.Fatalf("causal tests require config.yml (tried cmd/cfg/config.yml and ../../cmd/cfg/config.yml)")
 	}
 
 	os.Exit(m.Run())
