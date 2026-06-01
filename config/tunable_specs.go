@@ -34,7 +34,6 @@ func TunableSpecs() []Spec {
 		{Name: "max_spread_bps", Min: 10, Max: 100, Step: 5},
 		{Name: "forward_return_min_samples", Min: 10, Max: 80, Step: 5},
 		{Name: "forward_return_significance_z", Min: 0.5, Max: 3.0, Step: 0.25},
-		{Name: "noise_floor_snr", Min: 0.7, Max: 1.5, Step: 0.05},
 		{Name: "perspective_ttl_sec", Min: 10, Max: 120, Step: 5},
 		{Name: "book_depth_levels", Min: 5, Max: 25, Step: 5},
 		{Name: "min_cost_eur", Min: 0.30, Max: 2.0, Step: 0.15},
@@ -98,8 +97,6 @@ func MutateTunables(source *Config, random *rand.Rand) Tunables {
 			overlay.ForwardReturnMinSamples = &samples
 		case "forward_return_significance_z":
 			overlay.ForwardReturnSignificanceZ = &value
-		case "noise_floor_snr":
-			overlay.NoiseFloorSNR = &value
 		case "perspective_ttl_sec":
 			duration := time.Duration(value) * time.Second
 			overlay.PerspectiveTTL = &duration

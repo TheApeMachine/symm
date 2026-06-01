@@ -10,6 +10,12 @@ import (
 	"github.com/theapemachine/symm/replay"
 )
 
+type WebSocketClient interface {
+	Connect(endpoint EndpointType, channel string) error
+	Send(channel string, message any) error
+	Close(channel string) error
+}
+
 type WebSocket struct {
 	ctx    context.Context
 	cancel context.CancelFunc

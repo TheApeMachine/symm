@@ -6,34 +6,38 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/gofiber/fiber/v3/client"
-	"github.com/theapemachine/symm/replay"
+	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/public"
 )
-
-const baseURL = "https://api.kraken.com"
 
 /*
 Rest is the Kraken private REST API client for authenticated endpoints.
 */
 type Rest struct {
-	apiKey     string
-	secret     []byte
-	httpClient *client.Client
-	nonce      atomic.Uint64
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	client   *public.Rest
+	endpoint EndpointType
+	apiKey   string
+	secret   []byte
+	nonce    atomic.Uint64
 }
 
 /*
-NewRest builds a private REST client from API key and base64-encoded secret.
+NewRest builds a private REST client bound to one endpoint.
 */
-func NewRest(apiKey, apiSecret string) (*Rest, error) {
+func NewRest(
+	ctx context.Context,
+	apiKey, apiSecret string,
+	endpoint EndpointType,
+) (*Rest, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf("kraken api key and secret are required")
 	}
@@ -44,96 +48,74 @@ func NewRest(apiKey, apiSecret string) (*Rest, error) {
 		return nil, fmt.Errorf("decode kraken api secret: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &Rest{
-		apiKey:     apiKey,
-		secret:     secret,
-		httpClient: client.New(),
+		ctx:      ctx,
+		cancel:   cancel,
+		client:   public.NewRest(ctx, public.EndpointType(endpoint)),
+		endpoint: endpoint,
+		apiKey:   apiKey,
+		secret:   secret,
 	}, nil
+}
+
+/*
+Post sends one signed private REST request with a JSON body.
+*/
+func (rest *Rest) Post(ctx context.Context, request fiber.Map, model any) error {
+	return errnie.Error(rest.client.Post(ctx, request, model, map[string]string{
+		"X-API-Key":    rest.apiKey,
+		"X-API-Secret": base64.StdEncoding.EncodeToString(rest.secret),
+	}))
 }
 
 /*
 WebSocketToken returns a short-lived token for the authenticated WebSocket v2 API.
 */
 func (rest *Rest) WebSocketToken(ctx context.Context) (token string, expires time.Duration, err error) {
-	var response struct {
-		Error  []string `json:"error"`
-		Result struct {
-			Token   string `json:"token"`
-			Expires int    `json:"expires"`
-		} `json:"result"`
+	var result struct {
+		Token   string `json:"token"`
+		Expires int    `json:"expires"`
 	}
 
-	const path = "/0/private/GetWebSocketsToken"
+	tokenRest := rest
 
-	if err := rest.post(ctx, path, url.Values{}, &response); err != nil {
+	if rest.endpoint != EndpointWebSocketsToken {
+		tokenRest = rest.ForEndpoint(EndpointWebSocketsToken)
+	}
+
+	if err := tokenRest.Post(ctx, fiber.Map{}, &result); err != nil {
 		return "", 0, err
 	}
 
-	if len(response.Error) > 0 {
-		return "", 0, fmt.Errorf("kraken: %s", strings.Join(response.Error, ", "))
-	}
-
-	if response.Result.Token == "" {
+	if result.Token == "" {
 		return "", 0, fmt.Errorf("kraken: empty websockets token")
 	}
 
-	expires = time.Duration(response.Result.Expires) * time.Second
+	expires = time.Duration(result.Expires) * time.Second
 
 	if expires <= 0 {
 		expires = 15 * time.Minute
 	}
 
-	return response.Result.Token, expires, nil
+	return result.Token, expires, nil
 }
 
-func (rest *Rest) post(ctx context.Context, path string, form url.Values, model any) error {
-	if form == nil {
-		form = url.Values{}
-	}
+func (rest *Rest) Error() error {
+	return errnie.Error(rest.err)
+}
 
-	nonce := rest.nextNonce()
-	form.Set("nonce", nonce)
-	body := form.Encode()
-	signature, err := rest.sign(path, nonce, body)
+func (rest *Rest) Close() error {
+	rest.cancel()
 
-	if err != nil {
-		return err
-	}
-
-	response, err := rest.httpClient.Post(
-		baseURL+path,
-		client.Config{
-			Ctx:     ctx,
-			Timeout: 10 * time.Second,
-			Header: map[string]string{
-				"API-Key":      rest.apiKey,
-				"API-Sign":     signature,
-				"Content-Type": "application/x-www-form-urlencoded",
-			},
-			Body: []byte(body),
-		},
-	)
-
-	if err != nil {
-		return fmt.Errorf("kraken private post %s: %w", path, err)
-	}
-
-	defer response.Close()
-
-	responseBody := response.Body()
-	_ = replay.WriteREST(strings.TrimPrefix(path, "/0/private/"), responseBody)
-
-	if err := json.Unmarshal(responseBody, model); err != nil {
-		return fmt.Errorf("kraken private decode %s: %w", path, err)
-	}
-
-	return nil
+	return errnie.Error(rest.ctx.Err())
 }
 
 func (rest *Rest) nextNonce() string {
 	sequence := rest.nonce.Add(1)
 
-	return strconv.FormatInt(time.Now().UnixNano()+int64(sequence), 10)
+	return fmt.Sprintf("%d", time.Now().UnixNano()+int64(sequence))
 }
 
 func (rest *Rest) sign(path, nonce, body string) (string, error) {

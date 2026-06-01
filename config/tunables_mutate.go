@@ -63,8 +63,6 @@ func applySpecSample(overlay *Tunables, spec Spec, random *rand.Rand) {
 		overlay.ForwardReturnMinSamples = &samples
 	case "forward_return_significance_z":
 		overlay.ForwardReturnSignificanceZ = &value
-	case "noise_floor_snr":
-		overlay.NoiseFloorSNR = &value
 	case "perspective_ttl_sec":
 		duration := time.Duration(value) * time.Second
 		overlay.PerspectiveTTL = &duration

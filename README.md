@@ -95,7 +95,7 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Las
 
 2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
 
-3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to a unitless threshold (`NoiseFloorSNR`, default 1.0 = one sigma above the signal's own baseline churn). Thresholds are self-scaling, not hand-tuned prices.
+3. **SNR is computed in the signal, not the trader.** Each signal scores its own fused strength against a per-symbol adaptive noise floor (`numeric/adaptive.SNR`). Perspective tree branches compare `Measurement.SNR` to an explicit per-branch threshold in YAML (`value:`). Documents without `value` on category or metric gates fail at load time.
 
 ## Everything is a `System`
 
@@ -207,7 +207,7 @@ Order is conviction-first for the Go builtin registry: earlier playbooks win whe
 
 **Scoring contract (one scale, original field names):** `Strength` is raw (gauges only). `SNR`, `thesis_score`, `required_score`, `conviction`, and `edge` are all playbook **sigma units** — comparable and composable (`thesis_score` = RMS of relevant `SNR`s; `score_cost_ratio` = `thesis_score` / `required_score`; `conviction` = `thesis_score` at fill; `edge` = thesis excess over cross-section baseline). Signals normalize through `FinalizeMeasurement` (shared adaptive floor per source/category/stream/symbol).
 
-**Tree walking:** each branch can gate on a category, observation, or metric. Category branches compare `Measurement.SNR` against either the global `NoiseFloorSNR` or an explicit YAML threshold. Metric branches read trader context such as `thesis_score`, `spread_bps`, `fee_pct`, `round_trip_cost_bps`, `required_score`, `score_cost_ratio`, and `in_play`. The deepest reachable leaf wins, and traces record only the winning path.
+**Tree walking:** each branch can gate on a category, observation, or metric. Category branches compare `Measurement.SNR` against the branch's explicit `value` threshold. Metric branches read trader context such as `thesis_score`, `spread_bps`, `fee_pct`, `round_trip_cost_bps`, `required_score`, `score_cost_ratio`, and `in_play`. The deepest reachable leaf wins, and traces record only the winning path.
 
 `score_cost_ratio >= 1` means the playbook's current thesis score clears the configured edge requirement after fees and spread:
 
@@ -386,7 +386,9 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 - numeric tunables from `TunableSpecs()`
 - MCTS-searched perspective-tree YAML built from measurements observed in the replay
 
-Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then searched with a Monte Carlo tree search over the YAML document itself: add/remove playbooks, change registry order, change regime/policy labels, add/remove/replace/grow entry/deny/exit branches, and vary category conditions and thresholds from replay-observed SNR quantiles. There is no fixed playbook template in the search path. The generated YAML is evaluated by `symm eval`; the best eligible tree set is written to `--perspectives-output`.
+Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then searched with a Monte Carlo tree search over the YAML document itself: add/remove playbooks, change registry order, change regime/policy labels, add/remove/replace/grow entry/deny/exit branches, set category conditions and thresholds on existing gates, set exit observations, and vary thresholds from replay-observed SNR quantiles. There is no fixed playbook template in the search path. Each trial is scored in-process (train + walk-forward holdouts, no subprocess); the best eligible tree set is written to `--perspectives-output`.
+
+Headless replay (`symm eval`, `symm tune`, `SYMM_HEADLESS=1`) always runs at machine speed: `ReplayPace` is forced to zero so captures are not slept through in real time.
 
 One scalar drives selection:
 
@@ -412,7 +414,6 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 | `max_spread_bps`                | 10 – 100             |
 | `forward_return_min_samples`    | 10 – 80              |
 | `forward_return_significance_z` | 0.5 – 3.0            |
-| `noise_floor_snr`               | 0.7 – 1.5, step 0.05 |
 | `perspective_ttl`               | 10 s – 120 s         |
 | `min_cost_eur`                  | 0.25 – 2.0           |
 | `min_exhaust_hold`              | 1 s – 30 s           |
@@ -426,9 +427,11 @@ Each trial pairs a hill-climbing tunables draw (`TunablesSearch`) with a Monte C
 
 **Trial execution details**
 
-- Trial jobs dispatch via qpool `ScheduleFast`.
-- `--workers` controls concurrent eval subprocesses.
-- Each child receives a bounded `GOMAXPROCS` share and `SYMM_ENGINE_WORKERS` budget.
+- Trial jobs dispatch via qpool `ScheduleFast` in-process — no subprocess spawns per trial.
+- Each `ScheduleFast` job runs train + walk-forward holdouts sequentially via `runEvalBatchEngine`, resetting replay state between splits.
+- `--workers` controls concurrent qpool trial workers (default `NumCPU`).
+- Eval takes a process-wide isolation lock while swapping tunables and perspective registry, then boots the engine at machine speed (`ReplayPace=0`).
+- Eval file/stdout logs are disabled during tune.
 - Eval file/stdout logs are disabled.
 - Replay perturbation stays on by default for train evals, with deterministic per-trial seeds.
 - Progress prints to **stderr** (trials, holdout/train EUR, overfit rejects, **CURRENT BEST** after each trial).
@@ -551,6 +554,40 @@ make test-go        # full test suite
 make test-frontend  # TypeScript check (src/lib/symm) + Vitest
 make test-cover     # coverage report → runs/coverage.out
 make bench          # package benchmarks
+make profile-tune   # tune with pprof on :6060 (see Profiling below)
+```
+
+### Profiling tune and replay
+
+Start symm with pprof enabled, then open the index page in a browser while work runs:
+
+```bash
+make profile-tune REPLAY_FILE=runs/capture.jsonl
+# → http://127.0.0.1:6060/debug/pprof/
+```
+
+Or any command:
+
+```bash
+SYMM_PPROF=1 ./bin/symm tune --pprof 1 --replay runs/capture.jsonl --iterations 32
+```
+
+**Live index:** [http://127.0.0.1:6060/debug/pprof/](http://127.0.0.1:6060/debug/pprof/) — click **profile**, enter seconds (e.g. 30), submit. The browser renders the CPU profile (graph / flame / top).
+
+**Capture to disk + flame graph:**
+
+```bash
+mkdir -p runs/profiles
+curl -o runs/profiles/tune-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'
+go tool pprof -http=:0 runs/profiles/tune-cpu.prof
+```
+
+Tune eval splits are labeled in profiles as `symm.eval=train-perturb:…` and `symm.eval=holdout-stress:…` so you can filter by label in the pprof UI (**View → Label filter**).
+
+Replay-only profiling (no search):
+
+```bash
+make profile-replay REPLAY_FILE=runs/capture.jsonl
 ```
 
 > [!WARNING]

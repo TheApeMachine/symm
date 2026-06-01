@@ -13,7 +13,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay record tune dump profile profile-stack profile-report strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-frontend bench run audit replay record tune dump profile profile-stack profile-report profile-tune profile-replay strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -64,10 +64,37 @@ profile-report:
 profile-replay: build
 	@mkdir -p $(PROFILE_DIR)
 	@test -n "$(REPLAY_FILE)" || (echo "REPLAY_FILE is required" && exit 1)
-	@echo "Starting replay with pprof on :6060 — capture with:"
+	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
+	@echo "Capture 30s CPU while replay runs:"
 	@echo "  curl -o $(PROFILE_DIR)/replay-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
+	@echo "Flame graph:"
+	@echo "  go tool pprof -http=:0 $(PROFILE_DIR)/replay-cpu.prof"
 	SYMM_PPROF=1 SYMM_REPLAY_LOOP=1 SYMM_LOG_STDOUT=1 \
 		SYMM_REPLAY_FILE=$(REPLAY_FILE) ./$(SYMM_BIN)
+
+PROFILE_TUNE_ITERATIONS ?= 32
+profile-tune: build
+	@mkdir -p $(PROFILE_DIR)
+	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
+	@echo "=== profile tune ==="
+	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
+	@echo "While trials run, open that URL — click profile, enter seconds (e.g. 30)."
+	@echo "Or capture to disk:"
+	@echo "  curl -o $(PROFILE_DIR)/tune-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
+	@echo "Flame graph:"
+	@echo "  go tool pprof -http=:0 $(PROFILE_DIR)/tune-cpu.prof"
+	@echo "Label filter in pprof UI: symm.eval / symm.tune"
+	SYMM_PPROF=1 ./$(SYMM_BIN) tune \
+		--pprof 1 \
+		--replay "$(REPLAY_FILE)" \
+		--auto-holdout=$(AUTO_HOLDOUT) \
+		--walk-forward-folds $(WALK_FORWARD_FOLDS) \
+		--replay-perturb=$(REPLAY_PERTURB) \
+		--stress-holdout=$(STRESS_HOLDOUT) \
+		--output "$(TUNED_OUTPUT)" \
+		--perspectives-output "$(PERSPECTIVES_OUTPUT)" \
+		--iterations $(PROFILE_TUNE_ITERATIONS) \
+		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
 
 run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"

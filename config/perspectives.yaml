@@ -7,30 +7,39 @@ playbooks:
         - any:
             - category: toxic_bluff
               condition: '>'
+              value: 1
               action: deny
             - category: saturation
               condition: '>'
+              value: 1
               action: deny
             - category: turbulent
               condition: '>'
+              value: 1
               action: deny
             - category: liquidity_shock
               condition: '>'
+              value: 1
               action: deny
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_beta
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_herd
               condition: '>'
+              value: 1
               action: deny
             - category: spoof_trap
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_slump
               condition: '>'
+              value: 1
               action: wait
       entry:
         - branches:
@@ -41,104 +50,137 @@ playbooks:
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: frenzy
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: laminar
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: inertial
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: loaded_imbalance
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: hard_support
                               condition: '>'
+                              value: 1
                       category: endogenous_alpha
                       condition: '>'
+                      value: 1
                   category: risk_on_surge
                   condition: '>'
+                  value: 1
                 - branches:
                     - branches:
                         - any:
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: frenzy
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: laminar
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: inertial
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: loaded_imbalance
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: hard_support
                               condition: '>'
+                              value: 1
                       category: endogenous_alpha
                       condition: '>'
+                      value: 1
                   category: divergent_move
                   condition: '>'
+                  value: 1
                 - branches:
                     - branches:
                         - any:
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: frenzy
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: laminar
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: aggressive_drive
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: inertial
                               condition: '>'
+                              value: 1
                             - branches:
                                 - category: loaded_imbalance
                                   condition: '>'
+                                  value: 1
                                   action: enter
                               category: hard_support
                               condition: '>'
+                              value: 1
                       category: endogenous_alpha
                       condition: '>'
+                      value: 1
                   category: decoupled_alpha
                   condition: '>'
+                  value: 1
           condition: '>'
       exit:
         - any:
             - category: active_reversal
               condition: '>'
+              value: 1
               action: stop_loss
             - category: thermal_exhaustion
               condition: '>'
+              value: 1
               action: take_profit
             - category: faded_exhaustion
               condition: '>'
+              value: 1
               action: take_profit
     - name: drive
       regime: trending
@@ -147,43 +189,55 @@ playbooks:
         - any:
             - category: toxic_bluff
               condition: '>'
+              value: 1
               action: deny
             - category: saturation
               condition: '>'
+              value: 1
               action: deny
             - category: turbulent
               condition: '>'
+              value: 1
               action: deny
             - category: liquidity_shock
               condition: '>'
+              value: 1
               action: deny
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_beta
               condition: '>'
+              value: 1
               action: deny
             - category: spoof_trap
               condition: '>'
+              value: 1
               action: deny
       entry:
         - any:
             - category: aggressive_drive
               condition: '>'
+              value: 1
               action: enter
             - category: hidden_absorption
               condition: '>'
+              value: 1
               action: enter
       exit:
         - any:
             - category: active_reversal
               condition: '>'
+              value: 1
               action: stop_loss
             - category: thermal_exhaustion
               condition: '>'
+              value: 1
               action: take_profit
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: take_profit
     - name: leadlag
       regime: trending
@@ -192,30 +246,39 @@ playbooks:
         - any:
             - category: toxic_bluff
               condition: '>'
+              value: 1
               action: deny
             - category: saturation
               condition: '>'
+              value: 1
               action: deny
             - category: turbulent
               condition: '>'
+              value: 1
               action: deny
             - category: liquidity_shock
               condition: '>'
+              value: 1
               action: deny
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_beta
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_herd
               condition: '>'
+              value: 1
               action: deny
             - category: spoof_trap
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_slump
               condition: '>'
+              value: 1
               action: wait
       entry:
         - branches:
@@ -223,32 +286,41 @@ playbooks:
                 - branches:
                     - category: inefficient_lag
                       condition: '>'
+                      value: 1
                       action: enter
                   category: risk_on_surge
                   condition: '>'
+                  value: 1
                 - branches:
                     - category: inefficient_lag
                       condition: '>'
+                      value: 1
                       action: enter
                   category: divergent_move
                   condition: '>'
+                  value: 1
                 - branches:
                     - category: inefficient_lag
                       condition: '>'
+                      value: 1
                       action: enter
                   category: decoupled_alpha
                   condition: '>'
+                  value: 1
           condition: '>'
       exit:
         - any:
             - category: active_reversal
               condition: '>'
+              value: 1
               action: stop_loss
             - category: anchor_stall
               condition: '>'
+              value: 1
               action: take_profit
             - category: synchronized_drift
               condition: '>'
+              value: 1
               action: take_profit
     - name: scarcity
       regime: choppy
@@ -257,52 +329,67 @@ playbooks:
         - any:
             - category: toxic_bluff
               condition: '>'
+              value: 1
               action: deny
             - category: saturation
               condition: '>'
+              value: 1
               action: deny
             - category: turbulent
               condition: '>'
+              value: 1
               action: deny
             - category: liquidity_shock
               condition: '>'
+              value: 1
               action: deny
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_beta
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_herd
               condition: '>'
+              value: 1
               action: deny
             - category: spoof_trap
               condition: '>'
+              value: 1
               action: deny
             - category: systemic_slump
               condition: '>'
+              value: 1
               action: wait
       entry:
         - branches:
             - any:
                 - category: vertical_ignition
                   condition: '>'
+                  value: 1
                   action: enter
                 - category: coiled_compression
                   condition: '>'
+                  value: 1
                   action: enter
           category: extreme_scarcity
           condition: '>'
+          value: 1
       exit:
         - any:
             - category: active_reversal
               condition: '>'
+              value: 1
               action: stop_loss
             - category: faded_exhaustion
               condition: '>'
+              value: 1
               action: take_profit
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: take_profit
     - name: pump
       regime: trending
@@ -311,38 +398,49 @@ playbooks:
         - any:
             - category: toxic_bluff
               condition: '>'
+              value: 1
               action: deny
             - category: saturation
               condition: '>'
+              value: 1
               action: deny
             - category: turbulent
               condition: '>'
+              value: 1
               action: deny
             - category: liquidity_shock
               condition: '>'
+              value: 1
               action: deny
             - category: mechanical_collapse
               condition: '>'
+              value: 1
               action: deny
       entry:
         - any:
             - category: coiled_compression
               condition: '>'
+              value: 1
               action: enter
             - category: spoof_trap
               condition: '>'
+              value: 1
               action: enter
       exit:
         - any:
             - category: active_reversal
               condition: '>'
+              value: 1
               action: stop_loss
             - category: vertical_ignition
               condition: '>'
+              value: 1
               action: short
             - category: faded_exhaustion
               condition: '>'
+              value: 1
               action: take_profit
             - category: vertical_ignition
               condition: '>'
+              value: 1
               action: stop_loss

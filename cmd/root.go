@@ -1,48 +1,113 @@
 package cmd
 
 import (
+	"embed"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "symm",
-	Short: "Shake Your Money Maker",
-	Long:  rootLong,
-	Run: func(cmd *cobra.Command, args []string) {
-		if _, err := bootEngine(cmd.Context()); err != nil && cmd.Context().Err() == nil {
-			errnie.Error(err)
-			os.Exit(1)
-		}
-	},
-}
-
 /*
-Execute runs the root command with graceful shutdown on SIGINT/SIGTERM. The
-signal handler cancels the root context so every system started by Boot
-observes ctx.Done() and runs its Close.
+Embed a mini filesystem into the binary to hold the default config file.
+This will be written to the home directory of the user running the service,
+which allows a developer to easily override the config file.
 */
+//go:embed cfg/config.yml
+var embedded embed.FS
+
+var (
+	cfgFile string
+
+	rootCmd = &cobra.Command{
+		Use:   "symm",
+		Short: "Symm is a crypto trading engine.",
+		Long:  rootLong,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+)
+
 func Execute() {
-	startProfileServer()
+	err := rootCmd.Execute()
 
-	ctx, cancel := signalNotifyContext()
-	defer cancel()
-
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
+	if err != nil {
 		os.Exit(1)
 	}
 }
 
-const rootLong = `
-S.Y.M.M. - Shake Your Money Maker
+func init() {
+	cobra.OnInitialize(initConfig)
 
-Kraken book and trade observers feed microstructure signals into the trader.
-Set SYMM_REPLAY_FILE to a captured JSONL fixture for offline dry-run.
-Set SYMM_RECORD_FILE to capture exact Kraken WebSocket and REST payloads.
-Set SYMM_AUDIT_FILE (or make audit) to log desk audits to JSONL without flooding the UI.
-Set SYMM_CONFIG_FILE or config/tuned.json to load optimizer settings at startup.
-Run "make record" then "make tune" to optimize against a live capture (default runs/capture.jsonl).
-Set SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET for live spot orders over WebSocket v2.
+	rootCmd.PersistentFlags().StringVar(
+		&cfgFile,
+		"config",
+		"",
+		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
+	)
+}
+
+func initConfig() {
+	viper.SetConfigType("yml")
+
+	tryRead := func(path string) error {
+		viper.SetConfigFile(path)
+		return viper.ReadInConfig()
+	}
+
+	loaded := false
+
+	if rootCmd.PersistentFlags().Changed("config") && strings.TrimSpace(cfgFile) != "" {
+		if err := tryRead(cfgFile); err == nil {
+			loaded = true
+		} else {
+			fmt.Fprintf(os.Stderr, "symm: config file %q: %v\n", cfgFile, err)
+
+			os.Exit(1)
+		}
+	}
+
+	if !loaded {
+		paths := []string{
+			"cmd/cfg/config.yml",
+			"config.yml",
+		}
+
+		if home, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(home, ".symm", "config.yml"))
+		}
+
+		for _, p := range paths {
+			if err := tryRead(p); err == nil {
+				loaded = true
+				break
+			}
+		}
+	}
+
+	if !loaded {
+		cfgReader, openErr := embedded.Open("cfg/config.yml")
+
+		if openErr != nil {
+			fmt.Printf("embedded config file not found: %v\n", openErr)
+			return
+		}
+
+		defer cfgReader.Close()
+
+		if readErr := viper.ReadConfig(cfgReader); readErr != nil {
+			fmt.Printf("embedded config file not readable: %v\n", readErr)
+			return
+		}
+	}
+
+	viper.WatchConfig()
+}
+
+const rootLong = `
+Symm is a crypto trading engine.
 `

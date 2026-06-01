@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -19,6 +20,24 @@ func TestNewRest(t *testing.T) {
 			So(rest, ShouldNotBeNil)
 			So(rest.client, ShouldNotBeNil)
 			So(rest.endpoint, ShouldEqual, EndpointTypeTicker)
+		})
+	})
+}
+
+func TestRestGet(t *testing.T) {
+	Convey("Given a REST client", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		rest := NewRest(ctx, EndpointTypeTicker)
+		defer rest.Close()
+
+		Convey("It should get a response", func() {
+			var response Response
+			err := rest.Get(ctx, fiber.Map{"pair": "BTC/USD"}, &response)
+
+			So(err, ShouldBeNil)
+			So(response.Result, ShouldNotBeNil)
 		})
 	})
 }

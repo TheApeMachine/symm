@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
@@ -42,26 +40,14 @@ type engineResult struct {
 }
 
 func bootEngine(ctx context.Context) (*engineResult, error) {
+	if config.System.Headless {
+		config.System.ReplayPace = 0
+	}
+
 	market.ResetBookHealth()
 	broker.ResetStressMachine()
 
-	if err := configurePerspectives(config.PerspectiveLoadPath()); err != nil {
-		return nil, err
-	}
-
-	if path := strings.TrimSpace(config.System.RecordFile); path != "" {
-		if _, err := replay.OpenRecorder(path); err != nil {
-			return nil, err
-		}
-	}
-
-	workerCount, err := engineWorkerCount()
-
-	if err != nil {
-		return nil, err
-	}
-
-	pool := qpool.NewQ(ctx, 1, workerCount, qpool.NewConfig())
+	pool := qpool.NewQ(ctx, 1, runtime.NumCPU()*4, qpool.NewConfig())
 	restoreLogging := qpool.SuppressLogging()
 	defer restoreLogging()
 
@@ -211,93 +197,4 @@ func walletScore(tradingWallet *wallet.Wallet) float64 {
 	}
 
 	return tradingWallet.MarkEquity(marks)
-}
-
-var evalCmd = &cobra.Command{
-	Use:   "eval",
-	Short: "Run one replay-backed evaluation and print wallet score JSON",
-	Run: func(cmd *cobra.Command, args []string) {
-		config.System.Headless = true
-
-		result, err := bootEngine(cmd.Context())
-
-		if err != nil {
-			errnie.Error(err)
-			os.Exit(1)
-		}
-
-		score := walletScore(result.Wallet)
-		start := config.System.WalletEUR
-		scoreEUR := score - start
-		fitnessEUR := TuneFitness(scoreEUR, result.Regret.MissedForwardEUR, result.Performance)
-		bookHealth := market.BookIntegritySummary()
-
-		payload, err := json.Marshal(map[string]any{
-			"score_eur":              scoreEUR,
-			"fitness_eur":            fitnessEUR,
-			"equity_eur":             score,
-			"wallet_eur":             start,
-			"balance_eur":            result.Wallet.BalanceCopy(),
-			"open_bases":             len(result.Wallet.Snapshot().Inventory),
-			"gate_reject_regret":     result.Regret,
-			"trade_performance":      result.Performance,
-			"book_diverged_symbols":  bookHealth.DivergedSymbols,
-			"book_divergence_events": bookHealth.DivergenceEvents,
-			"book_diverged":          bookHealth.Diverged,
-		})
-
-		if err != nil {
-			errnie.Error(err)
-			os.Exit(1)
-		}
-
-		if bookHealth.DivergedSymbols > 0 {
-			sample := bookHealth.Diverged
-
-			if len(sample) > 5 {
-				sample = sample[:5]
-			}
-
-			fmt.Fprintf(
-				os.Stderr,
-				"symm eval: %d symbols lost book checksum sync (e.g. %s) — fluid/depthflow blind for those symbols\n",
-				bookHealth.DivergedSymbols,
-				strings.Join(sample, ", "),
-			)
-		}
-
-		fmt.Println(string(payload))
-	},
-}
-
-var tuneCmd = &cobra.Command{
-	Use:   "tune",
-	Short: "Search tunable config against a replay fixture to maximize fitness",
-	Run: func(cmd *cobra.Command, args []string) {
-		result, err := runTune(cmd.Context(), cmd)
-
-		if err != nil {
-			errnie.Error(err)
-			os.Exit(1)
-		}
-
-		fmt.Println(string(result.payload))
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(evalCmd)
-	tuneCmd.Flags().String("replay", defaultReplayFile, "Replay JSONL fixture path")
-	tuneCmd.Flags().StringArray("holdout", nil, "Holdout replay JSONL paths; best config is chosen by minimum holdout fitness")
-	tuneCmd.Flags().Bool("auto-holdout", true, "Reserve the last 20% of --replay as holdout when --holdout is unset")
-	tuneCmd.Flags().Int("walk-forward-folds", replay.DefaultWalkForwardFolds(), "Walk-forward holdout folds (1 = single tail holdout)")
-	tuneCmd.Flags().Bool("replay-perturb", true, "Apply quantity/timestamp jitter on train replay evals")
-	tuneCmd.Flags().Bool("stress-holdout", true, "Run holdout evals with execution stress enabled")
-	tuneCmd.Flags().Float64("max-train-holdout-gap", 0, "Reject candidates when train minus min holdout exceeds this EUR (0 = 3% of wallet; -1 = disable)")
-	tuneCmd.Flags().Int("iterations", 0, "Max search trials (0 = run until Ctrl+C; saves best on interrupt)")
-	tuneCmd.Flags().Int("workers", runtime.NumCPU(), "Concurrent eval workers")
-	tuneCmd.Flags().String("output", config.DefaultTunedPath(), "Path to write best tunables")
-	tuneCmd.Flags().String("perspectives-output", config.DefaultPerspectivePath(), "Path to write best perspective tree YAML")
-	tuneCmd.Flags().Bool("quiet", false, "Suppress human-readable progress on stderr (JSON on stdout only)")
-	rootCmd.AddCommand(tuneCmd)
 }

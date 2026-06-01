@@ -22,7 +22,6 @@ type tunablesWire struct {
 	ForwardReturnMinSamples    *int     `json:"forward_return_min_samples,omitempty"`
 	ForwardReturnSignificanceZ *float64 `json:"forward_return_significance_z,omitempty"`
 	PerspectiveTTL             *string  `json:"perspective_ttl,omitempty"`
-	NoiseFloorSNR              *float64 `json:"noise_floor_snr,omitempty"`
 	BookDepthLevels            *int     `json:"book_depth_levels,omitempty"`
 	MinCostEUR                 *float64 `json:"min_cost_eur,omitempty"`
 	CausalConditionSwitch      *float64 `json:"causal_condition_switch,omitempty"`
@@ -47,7 +46,6 @@ func tunablesToWire(tunables Tunables) tunablesWire {
 		MaxSpreadBPS:               tunables.MaxSpreadBPS,
 		ForwardReturnMinSamples:    tunables.ForwardReturnMinSamples,
 		ForwardReturnSignificanceZ: tunables.ForwardReturnSignificanceZ,
-		NoiseFloorSNR:              tunables.NoiseFloorSNR,
 		BookDepthLevels:            tunables.BookDepthLevels,
 		MinCostEUR:                 tunables.MinCostEUR,
 		CausalConditionSwitch:      tunables.CausalConditionSwitch,
@@ -89,7 +87,6 @@ func wireToTunables(wire tunablesWire) (Tunables, error) {
 		MaxSpreadBPS:               wire.MaxSpreadBPS,
 		ForwardReturnMinSamples:    wire.ForwardReturnMinSamples,
 		ForwardReturnSignificanceZ: wire.ForwardReturnSignificanceZ,
-		NoiseFloorSNR:              wire.NoiseFloorSNR,
 		BookDepthLevels:            wire.BookDepthLevels,
 		MinCostEUR:                 wire.MinCostEUR,
 		CausalConditionSwitch:      wire.CausalConditionSwitch,

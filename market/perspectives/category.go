@@ -1,109 +1,52 @@
 package perspectives
 
-type CategoryType uint8
+type CategoryType string
 
 const (
-	CategoryTypeNone CategoryType = iota
-	CategoryLaminar
-	CategoryTurbulent
-	CategoryInertial
-	CategoryViscous
-	CategoryFrenzy
-	CategorySaturation
-	CategoryOrganic
-	CategoryExhaustion
-	CategoryHiddenAbsorption
-	CategoryAggressiveDrive
-	CategoryStochasticBalance
-	CategoryVolumeStarvation
-	CategoryLoadedImbalance
-	CategorySpoofTrap
-	CategoryBookThinning
-	CategoryDenseNeutrality
-	CategoryInefficientLag
-	CategorySynchronizedDrift
-	CategoryDecoupledMove
-	CategoryAnchorStall
-	CategoryVerticalIgnition
-	CategoryCoiledCompression
-	CategoryOrganicTrend
-	CategoryFadedExhaustion
-	CategoryExtremeScarcity
-	CategoryMedianDepth
-	CategoryRobustLiquidity
-	CategoryRiskOnSurge
-	CategoryDivergentMove
-	CategorySystemicSlump
-	CategoryLiquidityVacuum
-	CategoryToxicBluff
-	CategoryHardSupport
-	CategorySystemicHerd
-	CategoryDecoupledAlpha
-	CategoryStochasticNoise
-	CategoryDivergentStress
-	CategoryEndogenousAlpha
-	CategorySystemicBeta
-	CategoryLiquidityShock
-	CategoryCausalNoise
-	CategoryMechanicalCollapse
-	CategoryThermalExhaustion
-	CategoryFragileExpansion
-	CategoryActiveReversal
+	CategoryTypeNone           CategoryType = ""
+	CategoryLaminar            CategoryType = "laminar"
+	CategoryTurbulent          CategoryType = "turbulent"
+	CategoryInertial           CategoryType = "inertial"
+	CategoryViscous            CategoryType = "viscous"
+	CategoryFrenzy             CategoryType = "frenzy"
+	CategorySaturation         CategoryType = "saturation"
+	CategoryOrganic            CategoryType = "organic"
+	CategoryExhaustion         CategoryType = "exhaustion"
+	CategoryHiddenAbsorption   CategoryType = "hidden_absorption"
+	CategoryAggressiveDrive    CategoryType = "aggressive_drive"
+	CategoryStochasticBalance  CategoryType = "stochastic_balance"
+	CategoryVolumeStarvation   CategoryType = "volume_starvation"
+	CategoryLoadedImbalance    CategoryType = "loaded_imbalance"
+	CategorySpoofTrap          CategoryType = "spoof_trap"
+	CategoryBookThinning       CategoryType = "book_thinning"
+	CategoryDenseNeutrality    CategoryType = "dense_neutrality"
+	CategoryInefficientLag     CategoryType = "inefficient_lag"
+	CategorySynchronizedDrift  CategoryType = "synchronized_drift"
+	CategoryDecoupledMove      CategoryType = "decoupled_move"
+	CategoryAnchorStall        CategoryType = "anchor_stall"
+	CategoryVerticalIgnition   CategoryType = "vertical_ignition"
+	CategoryCoiledCompression  CategoryType = "coiled_compression"
+	CategoryOrganicTrend       CategoryType = "organic_trend"
+	CategoryFadedExhaustion    CategoryType = "faded_exhaustion"
+	CategoryExtremeScarcity    CategoryType = "extreme_scarcity"
+	CategoryMedianDepth        CategoryType = "median_depth"
+	CategoryRobustLiquidity    CategoryType = "robust_liquidity"
+	CategoryRiskOnSurge        CategoryType = "risk_on_surge"
+	CategoryDivergentMove      CategoryType = "divergent_move"
+	CategorySystemicSlump      CategoryType = "systemic_slump"
+	CategoryLiquidityVacuum    CategoryType = "liquidity_vacuum"
+	CategoryToxicBluff         CategoryType = "toxic_bluff"
+	CategoryHardSupport        CategoryType = "hard_support"
+	CategorySystemicHerd       CategoryType = "systemic_herd"
+	CategoryDecoupledAlpha     CategoryType = "decoupled_alpha"
+	CategoryStochasticNoise    CategoryType = "stochastic_noise"
+	CategoryDivergentStress    CategoryType = "divergent_stress"
+	CategoryEndogenousAlpha    CategoryType = "endogenous_alpha"
+	CategorySystemicBeta       CategoryType = "systemic_beta"
+	CategoryLiquidityShock     CategoryType = "liquidity_shock"
+	CategoryCausalNoise        CategoryType = "causal_noise"
+	CategoryMechanicalCollapse CategoryType = "mechanical_collapse"
+	CategoryThermalExhaustion  CategoryType = "thermal_exhaustion"
+	CategoryFragileExpansion   CategoryType = "fragile_expansion"
+	CategoryActiveReversal     CategoryType = "active_reversal"
 )
-
-// categoryNames is the human-readable label for each category, used in audit
-// trails and the dashboard.
-var categoryNames = map[CategoryType]string{
-	CategoryLaminar:            "laminar",
-	CategoryTurbulent:          "turbulent",
-	CategoryInertial:           "inertial",
-	CategoryViscous:            "viscous",
-	CategoryFrenzy:             "frenzy",
-	CategorySaturation:         "saturation",
-	CategoryOrganic:            "organic",
-	CategoryExhaustion:         "exhaustion",
-	CategoryHiddenAbsorption:   "hidden_absorption",
-	CategoryAggressiveDrive:    "aggressive_drive",
-	CategoryStochasticBalance:  "stochastic_balance",
-	CategoryVolumeStarvation:   "volume_starvation",
-	CategoryLoadedImbalance:    "loaded_imbalance",
-	CategorySpoofTrap:          "spoof_trap",
-	CategoryBookThinning:       "book_thinning",
-	CategoryDenseNeutrality:    "dense_neutrality",
-	CategoryInefficientLag:     "inefficient_lag",
-	CategorySynchronizedDrift:  "synchronized_drift",
-	CategoryDecoupledMove:      "decoupled_move",
-	CategoryAnchorStall:        "anchor_stall",
-	CategoryVerticalIgnition:   "vertical_ignition",
-	CategoryCoiledCompression:  "coiled_compression",
-	CategoryOrganicTrend:       "organic_trend",
-	CategoryFadedExhaustion:    "faded_exhaustion",
-	CategoryExtremeScarcity:    "extreme_scarcity",
-	CategoryMedianDepth:        "median_depth",
-	CategoryRobustLiquidity:    "robust_liquidity",
-	CategoryRiskOnSurge:        "risk_on_surge",
-	CategoryDivergentMove:      "divergent_move",
-	CategorySystemicSlump:      "systemic_slump",
-	CategoryLiquidityVacuum:    "liquidity_vacuum",
-	CategoryToxicBluff:         "toxic_bluff",
-	CategoryHardSupport:        "hard_support",
-	CategorySystemicHerd:       "systemic_herd",
-	CategoryDecoupledAlpha:     "decoupled_alpha",
-	CategoryStochasticNoise:    "stochastic_noise",
-	CategoryDivergentStress:    "divergent_stress",
-	CategoryEndogenousAlpha:    "endogenous_alpha",
-	CategorySystemicBeta:       "systemic_beta",
-	CategoryLiquidityShock:     "liquidity_shock",
-	CategoryCausalNoise:        "causal_noise",
-	CategoryMechanicalCollapse: "mechanical_collapse",
-	CategoryThermalExhaustion:  "thermal_exhaustion",
-	CategoryFragileExpansion:   "fragile_expansion",
-	CategoryActiveReversal:     "active_reversal",
-}
-
-/*
-String returns the category's dashboard label (empty for CategoryTypeNone).
-*/
-func (category CategoryType) String() string {
-	return categoryNames[category]
-}

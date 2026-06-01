@@ -1,6 +1,8 @@
 package market
 
 import (
+	"context"
+
 	"github.com/theapemachine/symm/kraken/private"
 )
 
@@ -22,7 +24,7 @@ func ConfigureLevel3(apiKey, apiSecret string) error {
 		return nil
 	}
 
-	provider, err := private.NewTokenProvider(apiKey, apiSecret)
+	provider, err := private.NewTokenProvider(context.Background(), apiKey, apiSecret)
 
 	if err != nil {
 		return err

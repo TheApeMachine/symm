@@ -1,134 +1,84 @@
 package market
 
 import (
-	"sync"
+	"container/ring"
+	"context"
+	"time"
 
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
-
-/*
-EntryVerdictRecord stores one playbook flat-entry outcome for dashboards.
-*/
-type EntryVerdictRecord struct {
-	Name   string
-	Action perspectives.ActionType
-	Regime perspectives.Regime
-	Why    string
-}
 
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	mu            sync.RWMutex
-	entries       map[string][]Decision
-	entryVerdicts map[string][]EntryVerdictRecord
-	exits         map[string][]Decision
-	activeNames   map[string][]string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	buffer      *ring.Ring
 }
 
-func NewStory() *Story {
-	return &Story{
-		entries:       make(map[string][]Decision),
-		entryVerdicts: make(map[string][]EntryVerdictRecord),
-		exits:         make(map[string][]Decision),
-		activeNames:   make(map[string][]string),
+func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	story := &Story{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		buffer:      ring.New(128),
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
 	}
+
+	for _, channel := range []string{"measurements"} {
+		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		story.subscribers[channel] = story.broadcasts[channel].Subscribe("measurements", 128)
+	}
+
+	return story, errnie.Error(errnie.Require((map[string]any{
+		"ctx":    ctx,
+		"cancel": cancel,
+		"pool":   pool,
+	})))
 }
 
 /*
-RecordEntry stores the latest flat-entry verdicts for one symbol.
+Tick joins the latest measurements from the perspective signals and publishes them to the story.
 */
-func (story *Story) RecordEntry(symbol string, decisions []Decision) {
-	story.mu.Lock()
-	defer story.mu.Unlock()
+func (story *Story) Tick() error {
+	var (
+		measurement perspectives.Measurement
+		ok          bool
+	)
 
-	story.entries[symbol] = decisions
+	for row := range story.subscribers["measurements"].Incoming {
+		if row == nil {
+			errnie.Warn("nil measurement")
+			continue
+		}
 
-	names := make([]string, 0, len(decisions))
+		if measurement, ok = row.Value.(perspectives.Measurement); !ok {
+			errnie.Warn("invalid measurement")
+			continue
+		}
 
-	for _, verdict := range decisions {
-		names = append(names, verdict.Name)
+		story.buffer.Value = measurement
+		story.buffer.Next()
+
+		
 	}
 
-	story.activeNames[symbol] = names
+	return story.ctx.Err()
 }
 
 /*
-RecordEntryVerdicts stores every flat-entry playbook outcome, including denies.
+Close shuts down the story.
 */
-func (story *Story) RecordEntryVerdicts(symbol string, verdicts []EntryVerdict) {
-	story.mu.Lock()
-	defer story.mu.Unlock()
-
-	records := make([]EntryVerdictRecord, 0, len(verdicts))
-
-	for _, verdict := range verdicts {
-		records = append(records, EntryVerdictRecord{
-			Name:   verdict.Name,
-			Action: verdict.Action,
-			Regime: verdict.Regime,
-			Why:    entryVerdictWhy(verdict),
-		})
-	}
-
-	story.entryVerdicts[symbol] = records
-}
-
-func entryVerdictWhy(verdict EntryVerdict) string {
-	if verdict.Trace == nil {
-		return perspectives.ActionLabel(verdict.Action)
-	}
-
-	step, ok := verdict.Trace.LastStep()
-
-	if !ok {
-		return perspectives.ActionLabel(verdict.Action)
-	}
-
-	if step.Category != perspectives.CategoryTypeNone {
-		return step.Category.String() + "_" + perspectives.ActionLabel(step.Action)
-	}
-
-	return perspectives.ActionLabel(verdict.Action)
-}
-
-/*
-LatestEntryVerdicts returns the last recorded playbook outcomes for a symbol.
-*/
-func (story *Story) LatestEntryVerdicts(symbol string) []EntryVerdictRecord {
-	story.mu.RLock()
-	defer story.mu.RUnlock()
-
-	return story.entryVerdicts[symbol]
-}
-
-/*
-RecordExit stores the latest exit verdicts considered for one symbol.
-*/
-func (story *Story) RecordExit(symbol string, decisions []Decision) {
-	story.mu.Lock()
-	defer story.mu.Unlock()
-
-	story.exits[symbol] = decisions
-}
-
-/*
-ActivePlaybooks returns the names of playbooks that last authorized entry.
-*/
-func (story *Story) ActivePlaybooks(symbol string) []string {
-	story.mu.RLock()
-	defer story.mu.RUnlock()
-
-	return story.activeNames[symbol]
-}
-
-/*
-LatestEntries returns the last recorded entry decisions for a symbol.
-*/
-func (story *Story) LatestEntries(symbol string) []Decision {
-	story.mu.RLock()
-	defer story.mu.RUnlock()
-
-	return story.entries[symbol]
+func (story *Story) Close() error {
+	story.cancel()
+	return nil
 }

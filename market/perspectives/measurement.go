@@ -58,5 +58,4 @@ type Measurement struct {
 	Strength float64 // raw fused strength for dashboards only
 	SNR      float64 // adaptive sigma vs this series' history; 0 while warming up
 	Last     float64 // last traded price, carried for the trader's sizing/fill
-	Factors  []GaugeFactor
 }
