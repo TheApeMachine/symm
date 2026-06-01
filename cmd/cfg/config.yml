@@ -1,2 +1,19 @@
 trading:
   model: paper
+
+  paper:
+    wallet_eur: 200.0
+    stress_enabled: true
+    
+  replay:
+    file: runs/capture.jsonl
+    loop: true
+    pace: 50ms
+    log:
+      stdout: true
+
+  record:
+    file: runs/capture.jsonl
+
+  audit:
+    file: runs/audit.jsonl

@@ -1,9 +1,0 @@
-trading:
-  model: replay
-
-replay:
-  file: runs/capture.jsonl
-  loop: true
-
-log:
-  stdout: true
