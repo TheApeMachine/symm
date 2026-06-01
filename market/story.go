@@ -22,7 +22,7 @@ type Story struct {
 	buffer      *ring.Ring
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
+func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -39,11 +39,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
 		story.subscribers[channel] = story.broadcasts[channel].Subscribe("measurements", 128)
 	}
 
-	return story, errnie.Error(errnie.Require((map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"pool":   pool,
-	})))
+	return story
 }
 
 /*
@@ -69,7 +65,6 @@ func (story *Story) Tick() error {
 		story.buffer.Value = measurement
 		story.buffer.Next()
 
-		
 	}
 
 	return story.ctx.Err()

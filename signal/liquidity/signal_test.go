@@ -76,13 +76,16 @@ func TestCategory(t *testing.T) {
 		peers := []float64{800, 900, 1000, 1100}
 
 		Convey("It should map peer quartiles onto scarcity categories", func() {
-			category, _ := classifyLiquidity(1200, peers)
+			category, _, err := liquidityReading(1200, peers)
+			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryRobustLiquidity)
 
-			category, _ = classifyLiquidity(950, peers)
+			category, _, err = liquidityReading(950, peers)
+			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryMedianDepth)
 
-			category, _ = classifyLiquidity(500, peers)
+			category, _, err = liquidityReading(500, peers)
+			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryExtremeScarcity)
 		})
 	})

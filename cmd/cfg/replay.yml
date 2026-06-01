@@ -1,0 +1,6 @@
+trading:
+  model: replay
+
+replay:
+  file: runs/capture.jsonl
+  pace: 50ms

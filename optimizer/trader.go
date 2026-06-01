@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
@@ -17,13 +16,15 @@ type Trader struct {
 	subscribers map[string]*qpool.Subscriber
 }
 
-func NewTrader(ctx context.Context, pool *qpool.Q) (*Trader, error) {
+func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
 	ctx, cancel := context.WithCancel(ctx)
 
 	trader := &Trader{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
 	}
 
 	for _, channel := range []string{"actions"} {
@@ -31,11 +32,7 @@ func NewTrader(ctx context.Context, pool *qpool.Q) (*Trader, error) {
 		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("actions", 128)
 	}
 
-	return trader, errnie.Error(errnie.Require((map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"pool":   pool,
-	})))
+	return trader
 }
 
 func (trader *Trader) Tick() error {
@@ -46,4 +43,9 @@ func (trader *Trader) Tick() error {
 	}
 
 	return trader.ctx.Err()
+}
+
+func (trader *Trader) Close() error {
+	trader.cancel()
+	return nil
 }

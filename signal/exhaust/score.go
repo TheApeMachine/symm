@@ -1,9 +1,11 @@
 package exhaust
 
+import "github.com/theapemachine/symm/market/perspectives"
+
 /*
 exitScoreLong estimates how urgently a long should be closed from book history.
 */
-func exitScoreLong(history symbolHistory) (urgency float64, reason string, confidence float64) {
+func exitScoreLong(history symbolHistory) (urgency float64, category perspectives.CategoryType, evidence float64) {
 	thinning := depthTrend(history.bidDepths)
 	widen := spreadWiden(history.spreads)
 	fade := pressureFade(history.pressures, 1)
@@ -17,19 +19,18 @@ func exitScoreLong(history symbolHistory) (urgency float64, reason string, confi
 		0.15*clamp01(collapse)
 
 	if urgency <= 0 {
-		return 0, "", 0
+		return 0, perspectives.CategoryTypeNone, 0
 	}
 
-	reason = dominantExitReason(thinning, widen, fade, flip)
-	confidence = exitReasonConfidence(thinning, widen, fade, flip, reason)
+	category, evidence = exhaustReading(thinning, widen, fade, flip)
 
-	return clamp01(urgency), reason, confidence
+	return clamp01(urgency), category, evidence
 }
 
 /*
 exitScoreShort estimates how urgently a short should be closed from book history.
 */
-func exitScoreShort(history symbolHistory) (urgency float64, reason string, confidence float64) {
+func exitScoreShort(history symbolHistory) (urgency float64, category perspectives.CategoryType, evidence float64) {
 	thinning := depthTrend(history.askDepths)
 	widen := spreadWiden(history.spreads)
 	fade := pressureFade(history.pressures, -1)
@@ -43,34 +44,12 @@ func exitScoreShort(history symbolHistory) (urgency float64, reason string, conf
 		0.15*clamp01(collapse)
 
 	if urgency <= 0 {
-		return 0, "", 0
+		return 0, perspectives.CategoryTypeNone, 0
 	}
 
-	reason = dominantExitReason(thinning, widen, fade, flip)
-	confidence = exitReasonConfidence(thinning, widen, fade, flip, reason)
+	category, evidence = exhaustReading(thinning, widen, fade, flip)
 
-	return clamp01(urgency), reason, confidence
-}
-
-func dominantExitReason(thinning, widen, fade, flip float64) string {
-	best := thinning
-	reason := reasonBookThinning
-
-	if widen > best {
-		best = widen
-		reason = reasonSpreadWiden
-	}
-
-	if fade > best {
-		best = fade
-		reason = reasonPressureFade
-	}
-
-	if flip > best {
-		reason = reasonImbalanceFlip
-	}
-
-	return reason
+	return clamp01(urgency), category, evidence
 }
 
 func clamp01(value float64) float64 {

@@ -9,6 +9,23 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/causal"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/fluid"
+	"github.com/theapemachine/symm/signal/hawkes"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/toxicity"
+	"github.com/theapemachine/symm/trader"
 )
 
 /*
@@ -27,7 +44,36 @@ var (
 		Short: "Symm is a crypto trading engine.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return nil
+			pool := errnie.Does(func() (*qpool.Q, error) {
+				return qpool.NewQ(cmd.Context(), 1, 4, nil), nil
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value()
+
+			engine := errnie.Does(func() (*Engine, error) {
+				return NewEngine(cmd.Context(), pool)
+			}).Or(func(err error) {
+				errnie.Error(err)
+			}).Value()
+
+			engine.AddSystems(
+				causal.NewSignal(cmd.Context(), pool),
+				correlation.NewSignal(cmd.Context(), pool),
+				cvd.NewSignal(cmd.Context(), pool),
+				depthflow.NewSignal(cmd.Context(), pool),
+				exhaust.NewSignal(cmd.Context(), pool),
+				fluid.NewSignal(cmd.Context(), pool, focus.NewSet()),
+				hawkes.NewSignal(cmd.Context(), pool),
+				leadlag.NewSignal(cmd.Context(), pool),
+				liquidity.NewSignal(cmd.Context(), pool),
+				pumpdump.NewSignal(cmd.Context(), pool),
+				sentiment.NewSignal(cmd.Context(), pool),
+				toxicity.NewToxicity(cmd.Context(), pool),
+				market.NewStory(cmd.Context(), pool),
+				trader.NewCrypto(cmd.Context(), pool),
+			)
+
+			return errnie.Error(engine.Start())
 		},
 	}
 )

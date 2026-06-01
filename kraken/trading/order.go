@@ -2,26 +2,27 @@ package trading
 
 import (
 	"context"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+const MethodAddOrder = "add_order"
+
+/*
+Side and OrderType mirror Kraken WebSocket v2 add_order params.
+See https://docs.kraken.com/api/docs/websocket-v2/add_order/
+*/
 type OrderType string
 
 const (
-	Limit             OrderType = "limit"
-	Market            OrderType = "market"
-	Iceberg           OrderType = "iceberg"
-	StopLoss          OrderType = "stop-loss"
-	StopLossLimit     OrderType = "stop-loss-limit"
-	TakeProfit        OrderType = "take-profit"
-	TakeProfitLimit   OrderType = "take-profit-limit"
-	TrailingStop      OrderType = "trailing-stop"
-	TrailingStopLimit OrderType = "trailing-stop-limit"
-	SettlePosition    OrderType = "settle-position"
+	Limit           OrderType = "limit"
+	Market          OrderType = "market"
+	StopLoss        OrderType = "stop-loss"
+	StopLossLimit   OrderType = "stop-loss-limit"
+	TakeProfit      OrderType = "take-profit"
+	TakeProfitLimit OrderType = "take-profit-limit"
 )
 
 type Side string
@@ -31,92 +32,94 @@ const (
 	Sell Side = "sell"
 )
 
-type Order struct {
-	ID        string    `json:"id"`
-	Symbol    string    `json:"symbol"`
-	Side      Side      `json:"side"`
-	Price     float64   `json:"price"`
-	Quantity  float64   `json:"quantity"`
-	Timestamp time.Time `json:"timestamp"`
+/*
+Triggers holds stop/take-profit trigger params for triggered order types.
+*/
+type Triggers struct {
+	Reference string  `json:"reference,omitempty"`
+	Price     float64 `json:"price"`
+	PriceType string  `json:"price_type,omitempty"`
 }
 
-type OrderRequest struct {
-	Nonce     int    `json:"nonce"`
-	Ordertype string `json:"ordertype"`
-	Type      string `json:"type"`
-	Volume    string `json:"volume"`
-	Pair      string `json:"pair"`
-	Price     string `json:"price"`
-	ClOrdID   string `json:"cl_ord_id"`
+/*
+AddParams is the params object on an add_order frame.
+The authenticated socket injects token before send.
+*/
+type AddParams struct {
+	OrderType  OrderType `json:"order_type"`
+	Side       Side      `json:"side"`
+	Symbol     string    `json:"symbol"`
+	OrderQty   float64   `json:"order_qty,omitempty"`
+	LimitPrice float64   `json:"limit_price,omitempty"`
+	ClOrdID    string    `json:"cl_ord_id,omitempty"`
+	Triggers   *Triggers `json:"triggers,omitempty"`
+	Token      string    `json:"token,omitempty"`
 }
 
-type OrderMessage struct {
-	Method    string `json:"method"`
-	OrderType string `json:"ordertype"`
+/*
+AddRequest is one Kraken WebSocket v2 add_order frame.
+*/
+type AddRequest struct {
+	Method string    `json:"method"`
+	Params AddParams `json:"params"`
+	ReqID  int       `json:"req_id,omitempty"`
 }
 
+/*
+Ack is the add_order method response envelope.
+*/
+type Ack struct {
+	Method  string `json:"method"`
+	Success bool   `json:"success"`
+	Error   string `json:"error"`
+	ReqID   int    `json:"req_id"`
+	Result  struct {
+		OrderID string `json:"order_id"`
+		ClOrdID string `json:"cl_ord_id"`
+	} `json:"result"`
+}
+
+/*
+Client sends add_order frames through kraken.Client.
+Paper and live selection lives in kraken/client.go.
+*/
 type Client struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	conn          *kraken.Client
-	orderRequests map[string]*OrderRequest
-	orderMessages map[string]*OrderMessage
+	ctx    context.Context
+	cancel context.CancelFunc
+	conn   *kraken.Client
 }
 
-func NewOrder(
-	ctx context.Context,
-) (*Client, error) {
+func NewOrder(ctx context.Context) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	client := &Client{
+	conn := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
+
+	orderClient := &Client{
 		ctx:    ctx,
 		cancel: cancel,
-		conn: errnie.Does(func() (*kraken.Client, error) {
-			return kraken.NewClient(ctx)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value(),
-		orderRequests: make(map[string]*OrderRequest),
-		orderMessages: make(map[string]*OrderMessage),
+		conn:   conn,
 	}
 
-	return client, errnie.Error(errnie.Require(map[string]any{
-		"ctx":           client.ctx,
-		"cancel":        client.cancel,
-		"conn":          client.conn,
-		"orderMessages": client.orderMessages,
+	return orderClient, errnie.Error(errnie.Require(map[string]any{
+		"ctx":    orderClient.ctx,
+		"cancel": orderClient.cancel,
+		"conn":   orderClient.conn,
 	}))
 }
 
-func (client *Client) Add(order *OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
+func (client *Client) AddOrder(params AddParams) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, AddRequest{
+		Method: MethodAddOrder,
+		Params: params,
+	}))
 }
 
-func (client *Client) Amend(order *OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
-}
+func (client *Client) Close() error {
+	client.cancel()
 
-func (client *Client) Cancel(order *OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
-}
-
-func (client *Client) CancelAll() error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, "cancel_all"))
-}
-
-func (client *Client) CancelOnDisconnect() error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, "cancel_on_disconnect"))
-}
-
-func (client *Client) BatchAdd(orders []*OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, orders))
-}
-
-func (client *Client) BatchCancel(orders []*OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, orders))
-}
-
-func (client *Client) Edit(order *OrderRequest) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, order))
+	return errnie.Error(client.conn.Close())
 }

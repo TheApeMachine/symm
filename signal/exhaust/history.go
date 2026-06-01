@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/ring"
 )
@@ -22,6 +23,7 @@ type symbolHistory struct {
 	imbalances ring.FloatRing
 	lastPrice  float64
 	hasLast    bool
+	tracked    *perspectives.Category
 }
 
 /*
@@ -94,6 +96,19 @@ func (store *historyStore) snapshot(symbol string) (symbolHistory, bool) {
 	return history.snapshot(), true
 }
 
+func (store *historyStore) measure(symbol string) (perspectives.Measurement, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	history, ok := store.bySymbol[symbol]
+
+	if !ok || history == nil {
+		return perspectives.Measurement{}, false
+	}
+
+	return exhaustMeasurement(history.snapshot(), history.tracked)
+}
+
 func (store *historyStore) symbols() []string {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
@@ -121,6 +136,7 @@ func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 		spreads:    ring.NewFloatRing(exitHistoryCap),
 		pressures:  ring.NewFloatRing(exitHistoryCap),
 		imbalances: ring.NewFloatRing(exitHistoryCap),
+		tracked:    perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 	store.bySymbol[symbol] = history
 

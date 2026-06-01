@@ -25,13 +25,15 @@ type Tuner struct {
 /*
 NewTuner creates a new Tuner.
 */
-func NewTuner(ctx context.Context, pool *qpool.Q) (*Tuner, error) {
+func NewTuner(ctx context.Context, pool *qpool.Q) *Tuner {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tuner := &Tuner{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
 	}
 
 	for _, channel := range []string{"measurements"} {
@@ -39,11 +41,7 @@ func NewTuner(ctx context.Context, pool *qpool.Q) (*Tuner, error) {
 		tuner.subscribers[channel] = tuner.broadcasts[channel].Subscribe("measurements", 128)
 	}
 
-	return tuner, errnie.Error(errnie.Require((map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"pool":   pool,
-	})))
+	return tuner
 }
 
 /*
@@ -76,6 +74,14 @@ func (tuner *Tuner) Tick() error {
 	}
 
 	return tuner.ctx.Err()
+}
+
+/*
+Close shuts down the tuner.
+*/
+func (tuner *Tuner) Close() error {
+	tuner.cancel()
+	return nil
 }
 
 /*

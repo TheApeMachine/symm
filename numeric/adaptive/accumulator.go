@@ -54,6 +54,10 @@ func (accumulator *Accumulator) Next(
 	return accumulator.value, nil
 }
 
+func (accumulator *Accumulator) Value() float64 {
+	return accumulator.value
+}
+
 /*
 Reset clears the Accumulator back to zero and
 resets the internal smoother.

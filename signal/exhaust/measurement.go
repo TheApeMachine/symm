@@ -2,26 +2,21 @@ package exhaust
 
 import "github.com/theapemachine/symm/market/perspectives"
 
-const (
-	reasonBookThinning  = "book_thinning"
-	reasonSpreadWiden   = "spread_widen"
-	reasonPressureFade  = "pressure_fade"
-	reasonImbalanceFlip = "imbalance_flip"
-)
-
 /*
 exhaustMeasurement maps rolling exit features onto the exhaustion perspective.
-Confidence is category clarity — how decisively one exit mode beat the runner-up;
-SNR is how surprising that clarity is versus the symbol's own recent baseline.
+Confidence accumulates when the category shifts.
 */
-func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) {
-	urgency, reason, confidence := exitScoreLong(history)
+func exhaustMeasurement(
+	history symbolHistory,
+	tracked *perspectives.Category,
+) (perspectives.Measurement, bool) {
+	urgency, category, evidence := exitScoreLong(history)
 
 	if urgency <= 0 {
-		urgency, reason, confidence = exitScoreShort(history)
+		urgency, category, evidence = exitScoreShort(history)
 	}
 
-	if urgency <= 0 || reason == "" {
+	if urgency <= 0 || category == perspectives.CategoryTypeNone {
 		return perspectives.Measurement{}, false
 	}
 
@@ -29,9 +24,15 @@ func exhaustMeasurement(history symbolHistory) (perspectives.Measurement, bool) 
 		urgency = 0.999
 	}
 
+	confidence, err := tracked.Observe(category, evidence)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
+	}
+
 	return perspectives.Measurement{
-		Source:   perspectives.SourceExhaustion,
-		Category: exhaustCategory(reason),
+		Source:     perspectives.SourceExhaustion,
+		Category:   category,
 		Strength:   urgency / (1 - urgency),
 		Confidence: confidence,
 	}, true

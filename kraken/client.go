@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/replay"
 )
 
 type Client struct {
@@ -24,26 +25,36 @@ func NewClient(ctx context.Context) (*Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	rest := errnie.Does(func() (public.RestClient, error) {
-		if viper.GetViper().Get("trading.model") == "paper" {
+		switch viper.GetViper().Get("trading.model") {
+		case "live":
+			return private.NewRest(
+				ctx,
+				config.System.KrakenAPIKey,
+				config.System.KrakenAPISecret,
+				public.EndpointAddOrder,
+			)
+		case "replay":
+			return replay.NewRest(ctx)
+		default:
 			return paper.NewRest(ctx)
 		}
-
-		return private.NewRest(
-			ctx,
-			config.System.KrakenAPIKey,
-			config.System.KrakenAPISecret,
-			public.EndpointAddOrder,
-		)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()
 
 	ws := errnie.Does(func() (public.WebSocketClient, error) {
-		if viper.GetViper().Get("trading.model") == "paper" {
+		switch viper.GetViper().Get("trading.model") {
+		case "live":
+			return private.NewWebSocket(
+				ctx,
+				config.System.KrakenAPIKey,
+				config.System.KrakenAPISecret,
+			)
+		case "replay":
+			return replay.NewWebSocket(ctx)
+		default:
 			return paper.NewWebSocket(ctx)
 		}
-
-		return public.NewWebSocket(ctx)
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()

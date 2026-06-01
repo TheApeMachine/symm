@@ -39,6 +39,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (change percent)
+	tracked     sync.Map // symbol -> *perspectives.Category
 	breadthHist ring.FloatRing
 	floor       *adaptive.SNRField
 }
@@ -71,7 +72,7 @@ func (signal *Signal) Tick() error {
 
 		signal.symbols.Store(row.Symbol, row.ChangePct)
 
-		measurement, ok := signal.measure(row.ChangePct)
+		measurement, ok := signal.measure(row.Symbol, row.ChangePct)
 
 		if !ok {
 			continue
@@ -87,7 +88,7 @@ func (signal *Signal) Tick() error {
 }
 
 // measure classifies one symbol against the live cross-section breadth.
-func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
+func (signal *Signal) measure(symbol string, change float64) (perspectives.Measurement, bool) {
 	breadth, _, universe, ok := signal.breadth()
 
 	if !ok {
@@ -95,19 +96,28 @@ func (signal *Signal) measure(change float64) (perspectives.Measurement, bool) {
 	}
 
 	surgeThreshold := signal.surgeThreshold(universe)
-	category := signal.category(breadth, change, 0, universe)
+	signal.breadthHist.Push(breadth)
+	category, evidence := sentimentReading(
+		breadth, change, surgeThreshold, signal.isLeader(change),
+	)
+
+	trackedRaw, _ := signal.tracked.LoadOrStore(
+		symbol,
+		perspectives.NewCategory(perspectives.CategoryTypeNone),
+	)
+	tracked := trackedRaw.(*perspectives.Category)
+
+	confidence, err := tracked.Observe(category, evidence)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
-		Source:   perspectives.SourceSentiment,
-		Category: category,
-		Strength: signal.breadthOdds(breadth),
-		Confidence: categoryConfidence(
-			category,
-			breadth,
-			change,
-			surgeThreshold,
-			signal.isLeader(change),
-		),
+		Source:     perspectives.SourceSentiment,
+		Category:   category,
+		Strength:   signal.breadthOdds(breadth),
+		Confidence: confidence,
 	}, true
 }
 
@@ -145,18 +155,13 @@ func (signal *Signal) breadth() (fraction, topChange float64, universe int, ok b
 }
 
 // category maps breadth and this symbol's leadership onto the sentiment perspective.
-func (signal *Signal) category(breadth, change, topChange float64, universe int) perspectives.CategoryType {
+func (signal *Signal) category(breadth, change float64, universe int) perspectives.CategoryType {
 	signal.breadthHist.Push(breadth)
+	category, _ := sentimentReading(
+		breadth, change, signal.surgeThreshold(universe), signal.isLeader(change),
+	)
 
-	if breadth >= signal.surgeThreshold(universe) {
-		return perspectives.CategoryRiskOnSurge
-	}
-
-	if signal.isLeader(change) {
-		return perspectives.CategoryDivergentMove
-	}
-
-	return perspectives.CategorySystemicSlump
+	return category
 }
 
 func (signal *Signal) surgeThreshold(universe int) float64 {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -16,6 +16,7 @@ const (
 	leadlagDominanceMarginAbs    = 0.1
 	leadlagDominanceMarginRel    = 0.15
 	leadlagMinimumLagCorrelation = 0.1
+	barInterval                  = 5 * time.Minute
 )
 
 /*
@@ -29,11 +30,13 @@ type symbolState struct {
 	changePct float64
 	last      float64
 	prices    numeric.PriceSampleRing
+	tracked   *perspectives.Category
 }
 
 func newSymbolState() *symbolState {
 	return &symbolState{
-		prices: numeric.NewPriceSampleRing(priceHistoryCap),
+		prices:  numeric.NewPriceSampleRing(priceHistoryCap),
+		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -81,7 +84,7 @@ func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
 		return 0, 0, false
 	}
 
-	interval := config.BarInterval()
+	interval := barInterval
 	baseline := 0.0
 
 	if corr, ok := numeric.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok {

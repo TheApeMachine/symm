@@ -135,13 +135,7 @@ func (signal *Signal) observeBook(delta market.BookUpdate) {
 // Each symbol's reading is independent, so there is no need to re-measure the
 // whole cross-section on every event.
 func (signal *Signal) emit(symbol string) {
-	snapshot, ok := signal.history.snapshot(symbol)
-
-	if !ok {
-		return
-	}
-
-	measurement, ok := exhaustMeasurement(snapshot)
+	measurement, ok := signal.history.measure(symbol)
 
 	if !ok {
 		return

@@ -24,27 +24,38 @@ type causalOutcome struct {
 }
 
 /*
-categoryConfidence returns how decisively the assigned category wins over its
-neighbors — not how large the strength is. A clear CausalNoise read can score
-high; a borderline Alpha/Shock flip reads low.
+causalCategory maps the causal reason onto the structural-origin perspective.
 */
-func categoryConfidence(
+func causalCategory(reason string) perspectives.CategoryType {
+	switch reason {
+	case "intervention", "counterfactual_like":
+		return perspectives.CategoryEndogenousAlpha
+	case "intervention_regime_inversion", "counterfactual_like_regime_inversion":
+		return perspectives.CategoryLiquidityShock
+	case "macro_association":
+		return perspectives.CategorySystemicBeta
+	default:
+		return perspectives.CategoryCausalNoise
+	}
+}
+
+/*
+causalEvidence returns shift evidence for the assigned category.
+*/
+func causalEvidence(
 	category perspectives.CategoryType,
 	outcome causalOutcome,
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
 ) float64 {
 	if onLadder {
-		return ladderCategoryConfidence(category, outcome)
+		return ladderEvidence(category, outcome)
 	}
 
-	return fallbackCategoryConfidence(category, macroMomentum, changePct, buyPressure)
+	return associationEvidence(category, macroMomentum, changePct, buyPressure)
 }
 
-func ladderCategoryConfidence(
-	category perspectives.CategoryType,
-	outcome causalOutcome,
-) float64 {
+func ladderEvidence(category perspectives.CategoryType, outcome causalOutcome) float64 {
 	scale := math.Max(
 		math.Abs(outcome.intervention),
 		math.Max(math.Abs(outcome.association), 1e-12),
@@ -66,21 +77,21 @@ func ladderCategoryConfidence(
 	}
 }
 
-func fallbackCategoryConfidence(
+func associationEvidence(
 	category perspectives.CategoryType,
 	macroMomentum, changePct, buyPressure float64,
 ) float64 {
 	switch category {
 	case perspectives.CategorySystemicBeta:
-		return fallbackBetaConfidence(macroMomentum, changePct, buyPressure)
+		return betaEvidence(macroMomentum, changePct, buyPressure)
 	case perspectives.CategoryCausalNoise:
-		return fallbackNoiseConfidence(macroMomentum, changePct, buyPressure)
+		return noiseEvidence(macroMomentum, changePct, buyPressure)
 	default:
 		return 0
 	}
 }
 
-func fallbackBetaConfidence(macroMomentum, changePct, buyPressure float64) float64 {
+func betaEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 	if buyPressure != 0 && changePct == 0 {
 		return 0
 	}
@@ -93,7 +104,7 @@ func fallbackBetaConfidence(macroMomentum, changePct, buyPressure float64) float
 	return math.Max(math.Abs(macroMomentum), math.Abs(changePct)) / scale
 }
 
-func fallbackNoiseConfidence(macroMomentum, changePct, buyPressure float64) float64 {
+func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 	if buyPressure == 0 || changePct != 0 {
 		return 0
 	}

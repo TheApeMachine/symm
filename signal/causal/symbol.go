@@ -36,6 +36,7 @@ type CausalSymbol struct {
 	buyPressure    float64
 	volumeWindow   *adaptive.Window
 	pressure       *adaptive.EMA
+	tracked        *perspectives.Category
 }
 
 func NewCausalSymbol() *CausalSymbol {
@@ -44,6 +45,7 @@ func NewCausalSymbol() *CausalSymbol {
 		volumeWindow: adaptive.NewWindow(tradeWindow),
 		pressure:     adaptive.NewEMA(0),
 		hy:           newHYReturns(contagionWindow()),
+		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -154,15 +156,24 @@ func (state *CausalSymbol) Measure(
 
 		if outcome.raw > 0 {
 			category := causalCategory(outcome.reason)
+			evidence := causalEvidence(
+				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
+			)
+
+			confidence, err := state.tracked.Observe(category, evidence)
+
+			if err != nil {
+				errnie.Error(err)
+
+				return perspectives.Measurement{}, false
+			}
 
 			return perspectives.Measurement{
-				Source:   perspectives.SourceCausal,
-				Category: category,
-				Strength: outcome.raw,
-				Confidence: categoryConfidence(
-					category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
-				),
-				Last: state.lastPrice,
+				Source:     perspectives.SourceCausal,
+				Category:   category,
+				Strength:   outcome.raw,
+				Confidence: confidence,
+				Last:       state.lastPrice,
 			}, true
 		}
 	}
@@ -179,41 +190,25 @@ func (state *CausalSymbol) Measure(
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
+	evidence := causalEvidence(
+		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
+	)
+
+	confidence, err := state.tracked.Observe(category, evidence)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
-		Source:   perspectives.SourceCausal,
-		Category: category,
-		Strength: fallbackRaw,
-		Confidence: categoryConfidence(
-			category,
-			causalOutcome{},
-			macroMomentum,
-			state.changePct,
-			state.buyPressure,
-			false,
-		),
-		Last: state.lastPrice,
+		Source:     perspectives.SourceCausal,
+		Category:   category,
+		Strength:   fallbackRaw,
+		Confidence: confidence,
+		Last:       state.lastPrice,
 	}, true
-}
-
-/*
-causalCategory maps the causal reason onto the structural-origin perspective:
-a validated local-flow driver is endogenous alpha; the panic (regime-inverted)
-roles mean liquidity itself is driving price (a shock); a macro-only read is
-systemic beta (the asset is a passenger); a bare flow-pressure fallback is
-causal noise (no statistically grounded driver).
-*/
-func causalCategory(reason string) perspectives.CategoryType {
-	switch reason {
-	case "intervention", "counterfactual_like":
-		return perspectives.CategoryEndogenousAlpha
-	case "intervention_regime_inversion", "counterfactual_like_regime_inversion":
-		return perspectives.CategoryLiquidityShock
-	case "macro_association":
-		return perspectives.CategorySystemicBeta
-	default:
-		return perspectives.CategoryCausalNoise
-	}
 }
 
 func (state *CausalSymbol) ChangePct() float64 {

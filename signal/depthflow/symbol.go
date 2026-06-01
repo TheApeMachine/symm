@@ -45,6 +45,7 @@ type DepthSymbol struct {
 	buyPressure float64
 	pressure    *adaptive.EMA
 	score       *numeric.Derived
+	tracked     *perspectives.Category
 }
 
 func NewDepthSymbol(symbol string) *DepthSymbol {
@@ -60,6 +61,7 @@ func NewDepthSymbol(symbol string) *DepthSymbol {
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
 		)),
+		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -175,39 +177,47 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				}
 
 				if raw > 0 {
-					category := depthflowCategory(reasonDepthImbalance, imbalance, flatImbalance, flatOK)
+					category, evidence := depthflowReading(
+						reasonDepthImbalance, imbalance, flatImbalance, flatOK, 0,
+					)
+
+					confidence, err := state.tracked.Observe(category, evidence)
+
+					if err != nil {
+						errnie.Error(err)
+
+						return perspectives.Measurement{}, false
+					}
 
 					return perspectives.Measurement{
-						Symbol:   state.symbol,
-						Source:   perspectives.SourceDepthFlow,
-						Category: category,
-						Strength: raw,
-						Confidence: categoryConfidence(
-							category,
-							imbalance,
-							flatImbalance,
-							flatOK,
-							0,
-						),
+						Symbol:     state.symbol,
+						Source:     perspectives.SourceDepthFlow,
+						Category:   category,
+						Strength:   raw,
+						Confidence: confidence,
 					}, true
 				}
 			}
 
 			raw := math.Abs(level1)
-			category := depthflowCategory(reasonDepthSkeptic, imbalance, flatImbalance, flatOK)
+			category, evidence := depthflowReading(
+				reasonDepthSkeptic, imbalance, flatImbalance, flatOK, 0,
+			)
+
+			confidence, err := state.tracked.Observe(category, evidence)
+
+			if err != nil {
+				errnie.Error(err)
+
+				return perspectives.Measurement{}, false
+			}
 
 			return perspectives.Measurement{
-				Symbol:   state.symbol,
-				Source:   perspectives.SourceDepthFlow,
-				Category: category,
-				Strength: raw,
-				Confidence: categoryConfidence(
-					category,
-					imbalance,
-					flatImbalance,
-					flatOK,
-					0,
-				),
+				Symbol:     state.symbol,
+				Source:     perspectives.SourceDepthFlow,
+				Category:   category,
+				Strength:   raw,
+				Confidence: confidence,
 			}, true
 		}
 	}
@@ -226,20 +236,22 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 		return perspectives.Measurement{}, false
 	}
 
-	category := depthflowCategory("trade_pressure", 0, 0, false)
+	category, evidence := depthflowReading("trade_pressure", 0, 0, false, flow)
+
+	confidence, err := state.tracked.Observe(category, evidence)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
-		Symbol:   state.symbol,
-		Source:   perspectives.SourceDepthFlow,
-		Category: category,
-		Strength: flow,
-		Confidence: categoryConfidence(
-			category,
-			0,
-			0,
-			false,
-			flow,
-		),
+		Symbol:     state.symbol,
+		Source:     perspectives.SourceDepthFlow,
+		Category:   category,
+		Strength:   flow,
+		Confidence: confidence,
 	}, true
 }
 

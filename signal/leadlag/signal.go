@@ -158,31 +158,36 @@ func (signal *Signal) measure(
 	state *symbolState,
 ) (perspectives.Measurement, bool) {
 	if !anchorMoved {
+		category, evidence := leadlagReading(false, anchor.change(), 0, 0)
+
+		confidence, err := state.tracked.Observe(category, evidence)
+
+		if err != nil {
+			return perspectives.Measurement{}, false
+		}
+
 		return perspectives.Measurement{
-			Source:   perspectives.SourceLeadLag,
-			Category: perspectives.CategoryAnchorStall,
-			Strength: 0,
-			Confidence: categoryConfidence(perspectives.CategoryAnchorStall, anchor.change(), 0, 0),
+			Source:     perspectives.SourceLeadLag,
+			Category:   category,
+			Strength:   0,
+			Confidence: confidence,
 		}, true
 	}
 
 	if bars, corr, ok := state.crossLag(anchor); ok {
-		category := perspectives.CategorySynchronizedDrift
+		category, evidence := leadlagReading(true, anchor.change(), corr, bars)
 
-		if float64(bars)/float64(maxLagBars) >= minLagFraction {
-			category = perspectives.CategoryInefficientLag
+		confidence, err := state.tracked.Observe(category, evidence)
+
+		if err != nil {
+			return perspectives.Measurement{}, false
 		}
 
 		return perspectives.Measurement{
-			Source:   perspectives.SourceLeadLag,
-			Category: category,
-			Strength: corr / leadlagMinimumLagCorrelation,
-			Confidence: categoryConfidence(
-				category,
-				anchor.change(),
-				corr,
-				bars,
-			),
+			Source:     perspectives.SourceLeadLag,
+			Category:   category,
+			Strength:   corr / leadlagMinimumLagCorrelation,
+			Confidence: confidence,
 		}, true
 	}
 
@@ -192,22 +197,19 @@ func (signal *Signal) measure(
 		return perspectives.Measurement{}, false
 	}
 
-	category := perspectives.CategorySynchronizedDrift
+	category, evidence := leadlagReading(true, anchor.change(), corr, 0)
 
-	if corr < leadlagMinimumLagCorrelation {
-		category = perspectives.CategoryDecoupledMove
+	confidence, err := state.tracked.Observe(category, evidence)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
 	}
 
 	return perspectives.Measurement{
-		Source:   perspectives.SourceLeadLag,
-		Category: category,
-		Strength: corr / leadlagMinimumLagCorrelation,
-		Confidence: categoryConfidence(
-			category,
-			anchor.change(),
-			corr,
-			0,
-		),
+		Source:     perspectives.SourceLeadLag,
+		Category:   category,
+		Strength:   corr / leadlagMinimumLagCorrelation,
+		Confidence: confidence,
 	}, true
 }
 

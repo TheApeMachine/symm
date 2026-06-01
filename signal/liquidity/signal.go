@@ -36,6 +36,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
+	tracked     sync.Map // symbol -> *perspectives.Category
 	floor       *adaptive.SNRField
 }
 
@@ -98,7 +99,23 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
-	category, confidence := classifyLiquidity(quoteVol, peers)
+	category, evidence, err := liquidityReading(quoteVol, peers)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
+	}
+
+	trackedRaw, _ := signal.tracked.LoadOrStore(
+		row.Symbol,
+		perspectives.NewCategory(perspectives.CategoryTypeNone),
+	)
+	tracked := trackedRaw.(*perspectives.Category)
+
+	confidence, err := tracked.Observe(category, evidence)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
 		Symbol:     row.Symbol,

@@ -69,52 +69,32 @@ profile-replay: build
 	@echo "  curl -o $(PROFILE_DIR)/replay-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
 	@echo "Flame graph:"
 	@echo "  go tool pprof -http=:0 $(PROFILE_DIR)/replay-cpu.prof"
-	SYMM_PPROF=1 SYMM_REPLAY_LOOP=1 SYMM_LOG_STDOUT=1 \
-		SYMM_REPLAY_FILE=$(REPLAY_FILE) ./$(SYMM_BIN)
+	SYMM_PPROF=1 ./$(SYMM_BIN) --config cmd/cfg/profile-replay.yml
 
-PROFILE_TUNE_ITERATIONS ?= 32
 profile-tune: build
 	@mkdir -p $(PROFILE_DIR)
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
 	@echo "=== profile tune ==="
 	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
-	@echo "While trials run, open that URL — click profile, enter seconds (e.g. 30)."
-	@echo "Or capture to disk:"
-	@echo "  curl -o $(PROFILE_DIR)/tune-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'"
-	@echo "Flame graph:"
-	@echo "  go tool pprof -http=:0 $(PROFILE_DIR)/tune-cpu.prof"
-	@echo "Label filter in pprof UI: symm.eval / symm.tune"
-	SYMM_PPROF=1 ./$(SYMM_BIN) tune \
-		--pprof 1 \
-		--replay "$(REPLAY_FILE)" \
-		--auto-holdout=$(AUTO_HOLDOUT) \
-		--walk-forward-folds $(WALK_FORWARD_FOLDS) \
-		--replay-perturb=$(REPLAY_PERTURB) \
-		--stress-holdout=$(STRESS_HOLDOUT) \
-		--output "$(TUNED_OUTPUT)" \
-		--perspectives-output "$(PERSPECTIVES_OUTPUT)" \
-		--iterations $(PROFILE_TUNE_ITERATIONS) \
-		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
+	SYMM_PPROF=1 ./$(SYMM_BIN) tune --config cmd/cfg/tune.yml
 
 run: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
-	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
-	./$(SYMM_BIN)
-
-AUDIT_FILE ?= $(LOG_DIR)/audit-$(shell date -u +%Y%m%dT%H%M%SZ).jsonl
+	@echo "Replay: make replay REPLAY_FILE=runs/capture.jsonl"
+	./$(SYMM_BIN) --config cmd/cfg/config.yml
 
 audit: build
 	@mkdir -p $(LOG_DIR)
-	@echo "symm running with desk audit log at $(AUDIT_FILE)"
+	@echo "symm running with desk audit log (see cmd/cfg/record.yml audit.file)"
 	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
+	./$(SYMM_BIN) --config cmd/cfg/record.yml
 
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	@echo "Replay: make replay REPLAY_FILE=replay/fixtures/sample.jsonl"
-	SYMM_PPROF=1 ./$(SYMM_BIN)
+	@echo "Replay: make replay REPLAY_FILE=runs/capture.jsonl"
+	SYMM_PPROF=1 ./$(SYMM_BIN) --config cmd/cfg/config.yml
 
 REPLAY_PACE ?= 50ms
 RECORD_FILE ?= runs/capture.jsonl
@@ -131,30 +111,19 @@ STRESS_HOLDOUT ?= true
 
 replay: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE)" && exit 1)
-	SYMM_REPLAY_FILE=$(REPLAY_FILE) SYMM_REPLAY_PACE=$(REPLAY_PACE) ./$(SYMM_BIN)
+	./$(SYMM_BIN) --config cmd/cfg/replay.yml
 
 record: build
 	@mkdir -p $(dir $(RECORD_FILE)) $(LOG_DIR)
-	@echo "Recording live capture to $(RECORD_FILE) (Ctrl+C to stop, then: make tune)"
+	@echo "Recording live capture (Ctrl+C to stop, then: make tune)"
 	@echo "Desk config: config/tuned.json + config/perspectives.yaml when present (Go builtins otherwise)"
-	@echo "Paper execution stress: on (Markov outage model — override: make record EXECUTION_STRESS=0)"
-	@echo "Desk audit log: $(AUDIT_FILE) (for inspection; tune recomputes regret from replay)"
-	SYMM_EXECUTION_STRESS=$(EXECUTION_STRESS) SYMM_RECORD_FILE=$(RECORD_FILE) SYMM_AUDIT_FILE=$(AUDIT_FILE) ./$(SYMM_BIN)
+	@echo "Config: cmd/cfg/record.yml (paper + execution stress + audit log)"
+	./$(SYMM_BIN) --config cmd/cfg/record.yml
 
 tune: build
 	@test -f "$(REPLAY_FILE)" || (echo "Missing $(REPLAY_FILE). Run: make record" && exit 1)
-	@echo "Tuning $(REPLAY_FILE) — holdout wallet fitness = score_eur − gate regret (Ctrl+C saves best; progress on stderr)"
-	@echo "Holdout: auto tail + $(WALK_FORWARD_FOLDS) walk-forward folds | train perturb: $(REPLAY_PERTURB) | holdout stress: $(STRESS_HOLDOUT)"
-	./$(SYMM_BIN) tune \
-		--replay "$(REPLAY_FILE)" \
-		--auto-holdout=$(AUTO_HOLDOUT) \
-		--walk-forward-folds $(WALK_FORWARD_FOLDS) \
-		--replay-perturb=$(REPLAY_PERTURB) \
-		--stress-holdout=$(STRESS_HOLDOUT) \
-		--output "$(TUNED_OUTPUT)" \
-		--perspectives-output "$(PERSPECTIVES_OUTPUT)" \
-		$(if $(ITERATIONS),--iterations $(ITERATIONS),) \
-		--workers $(or $(WORKERS),$(shell sysctl -n hw.ncpu 2>/dev/null || nproc))
+	@echo "Tuning $(REPLAY_FILE) (Ctrl+C to stop)"
+	./$(SYMM_BIN) tune --config cmd/cfg/tune.yml
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

@@ -42,6 +42,7 @@ type FluidSymbol struct {
 	priceFD     *adaptive.FracDiff
 	fracScale   adaptive.AlphaEMA
 	fracReturn  float64
+	tracked     *perspectives.Category
 }
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
@@ -59,6 +60,7 @@ func NewFluidSymbol(symbol string) *FluidSymbol {
 		pressure: adaptive.NewEMA(0),
 		flux:     newFluxAccumulator(config.System.BookFluxWindow),
 		priceFD:  adaptive.NewFracDiff(config.System.FractionalDiffOrder, config.System.FractionalDiffWidth),
+		tracked:  perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -249,41 +251,24 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 	divergence, _ := row["div"].(float64)
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
-	category := fluidCategory(divergence, turbulence, viscosity, re)
+	category, evidence := fluidReading(divergence, turbulence, viscosity, re)
+
+	confidence, err := state.tracked.Observe(category, evidence)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
-		Symbol:   state.symbol,
-		Source:   perspectives.SourceFluid,
-		Category: category,
-		Last:     state.last,
-		Strength: re,
-		Confidence: categoryConfidence(
-			category,
-			divergence,
-			turbulence,
-			viscosity,
-			re,
-		),
+		Symbol:     state.symbol,
+		Source:     perspectives.SourceFluid,
+		Category:   category,
+		Last:       state.last,
+		Strength:   re,
+		Confidence: confidence,
 	}, true
-}
-
-/*
-fluidCategory maps the fluid-dynamics row onto the mechanical perspective:
-stationary turbulence dominating the field is turbulent (fragile); a wide spread
-(low viscosity) is a viscous grind; a strong directional divergence on an
-elevated Reynolds number is an inertial push; everything else is laminar.
-*/
-func fluidCategory(divergence, turbulence, viscosity, reynolds float64) perspectives.CategoryType {
-	switch {
-	case turbulence > 0 && turbulence >= math.Abs(divergence):
-		return perspectives.CategoryTurbulent
-	case viscosity > 0 && viscosity < 0.5:
-		return perspectives.CategoryViscous
-	case math.Abs(divergence) >= 0.2 && reynolds >= 0.2:
-		return perspectives.CategoryInertial
-	default:
-		return perspectives.CategoryLaminar
-	}
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {

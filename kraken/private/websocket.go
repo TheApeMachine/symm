@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -124,6 +125,50 @@ func (socket *WebSocket) NextReqID() int {
 }
 
 /*
+Connect dials wss://ws-auth.kraken.com/v2 and subscribes to executions.
+*/
+func (socket *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
+	return socket.Start()
+}
+
+/*
+Send writes one add_order frame with a fresh session token.
+*/
+func (socket *WebSocket) Send(channel string, message any) error {
+	if channel != public.OrdersChannel {
+		return fmt.Errorf("private websocket: unsupported channel %s", channel)
+	}
+
+	token, err := socket.Token(socket.ctx)
+
+	if err != nil {
+		return err
+	}
+
+	payload, err := sonic.Marshal(message)
+
+	if err != nil {
+		return fmt.Errorf("private websocket encode: %w", err)
+	}
+
+	var frame map[string]any
+
+	if err := sonic.Unmarshal(payload, &frame); err != nil {
+		return fmt.Errorf("private websocket decode: %w", err)
+	}
+
+	params, ok := frame["params"].(map[string]any)
+
+	if !ok {
+		return fmt.Errorf("private websocket: missing params")
+	}
+
+	params["token"] = token
+
+	return socket.WriteJSON(frame)
+}
+
+/*
 WriteJSON sends one frame on the authenticated socket.
 */
 func (socket *WebSocket) WriteJSON(payload any) error {
@@ -144,7 +189,7 @@ func (socket *WebSocket) WriteJSON(payload any) error {
 /*
 Close shuts down the socket and returns any connection close error.
 */
-func (socket *WebSocket) Close() error {
+func (socket *WebSocket) Close(channel string) error {
 	socket.cancel()
 
 	socket.mu.Lock()

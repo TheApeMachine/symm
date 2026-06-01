@@ -1,5 +1,11 @@
 package perspectives
 
+import (
+	"fmt"
+
+	"github.com/theapemachine/symm/numeric/adaptive"
+)
+
 type CategoryType string
 
 const (
@@ -50,3 +56,98 @@ const (
 	CategoryFragileExpansion   CategoryType = "fragile_expansion"
 	CategoryActiveReversal     CategoryType = "active_reversal"
 )
+
+/*
+Categories is a threshold-band classifier on one scalar observation. It does not
+score every class and pick the highest — it finds which band the observation falls
+into (see adaptive.Classifier).
+*/
+type Categories adaptive.Classifier
+
+/*
+NewCategories builds a band classifier. upper holds len(categories)-1 observation
+thresholds; categories lists the bands low-to-high.
+*/
+func NewCategories(upper []float64, categories []CategoryType) (Categories, error) {
+	if len(categories) == 0 {
+		return Categories{}, fmt.Errorf("perspectives: NewCategories needs at least one category")
+	}
+
+	if len(upper) != len(categories)-1 {
+		return Categories{}, fmt.Errorf(
+			"perspectives: NewCategories needs len(upper) == len(categories)-1, got %d and %d",
+			len(upper), len(categories),
+		)
+	}
+
+	codes := make([]float64, len(categories))
+	labels := make([]string, len(categories))
+
+	for index, category := range categories {
+		codes[index] = float64(index)
+		labels[index] = string(category)
+	}
+
+	classifier := adaptive.NewClassifier(upper, codes, labels)
+
+	return Categories(*classifier), nil
+}
+
+func (categories Categories) classifier() *adaptive.Classifier {
+	return (*adaptive.Classifier)(&categories)
+}
+
+/*
+Classify maps one observation into the band it falls in.
+*/
+func (categories Categories) Classify(observation float64) (CategoryType, error) {
+	code, err := categories.classifier().Code(observation)
+
+	if err != nil {
+		return CategoryTypeNone, err
+	}
+
+	return CategoryType(categories.classifier().Label(code)), nil
+}
+
+/*
+Clarity is band margin for the observation — how deep inside its band, not shift
+confidence over time.
+*/
+func (categories Categories) Clarity(observation float64) float64 {
+	return categories.classifier().Confidence(observation)
+}
+
+/*
+Category tracks the current assignment and accumulated shift evidence.
+*/
+type Category struct {
+	Type       CategoryType
+	Confidence *adaptive.Accumulator
+}
+
+func NewCategory(categoryType CategoryType) *Category {
+	return &Category{
+		Type:       categoryType,
+		Confidence: adaptive.NewAccumulator(0),
+	}
+}
+
+/*
+Observe updates Type and charges the accumulator when the category shifts.
+evidence is typically Clarity or strength at the moment of change.
+*/
+func (category *Category) Observe(next CategoryType, evidence float64) (float64, error) {
+	if category == nil || category.Confidence == nil {
+		return 0, fmt.Errorf("perspectives: Category.Observe nil receiver")
+	}
+
+	signal := 0.0
+
+	if next != category.Type {
+		category.Type = next
+		signal = evidence
+	}
+
+	return category.Confidence.Next(0, signal)
+}

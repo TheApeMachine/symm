@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -26,7 +25,7 @@ type Crypto struct {
 	balance     *user.Balance
 }
 
-func NewCrypto(ctx context.Context, pool *qpool.Q) (*Crypto, error) {
+func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
@@ -52,13 +51,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) (*Crypto, error) {
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe("trader:"+channel, 128)
 	}
 
-	return crypto, errnie.Error(errnie.Require(map[string]any{
-		"ctx":     ctx,
-		"cancel":  cancel,
-		"pool":    pool,
-		"desk":    crypto.desk,
-		"balance": crypto.balance,
-	}))
+	return crypto
 }
 
 func (crypto *Crypto) Tick() error {
@@ -78,28 +71,11 @@ func (crypto *Crypto) Tick() error {
 			continue
 		}
 
-		switch action.Type {
-		case perspectives.ActionEnter:
-			errnie.Error(crypto.desk.AddOrder(
-				action.Symbol, trading.Buy, action.Price, action.Quantity,
-			))
-		case perspectives.ActionExit:
-			errnie.Error(crypto.desk.AddOrder(
-				action.Symbol, trading.Sell, action.Price, action.Quantity,
-			))
-		case perspectives.ActionStopLoss:
-			errnie.Error(crypto.desk.AddOrder(
-				action.Symbol, trading.Sell, action.Price, action.Quantity,
-			))
-		case perspectives.ActionTakeProfit:
-			errnie.Error(crypto.desk.AddOrder(
-				action.Symbol, trading.Buy, action.Price, action.Quantity,
-			))
-		case perspectives.ActionShort:
-			errnie.Error(crypto.desk.AddOrder(
-				action.Symbol, trading.Sell, action.Price, action.Quantity,
-			))
+		if action.Type == perspectives.ActionNone {
+			continue
 		}
+
+		errnie.Error(crypto.desk.Submit(action))
 	}
 
 	return crypto.err

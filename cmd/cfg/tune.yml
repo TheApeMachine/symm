@@ -1,0 +1,10 @@
+trading:
+  model: replay
+
+headless: true
+
+replay:
+  file: runs/capture.jsonl
+  pace: 0s
+  perturb:
+    enabled: true

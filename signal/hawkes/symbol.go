@@ -25,12 +25,14 @@ type HawkesSymbol struct {
 	lastFitTime     time.Time
 	fitCooldown     time.Duration
 	minFitEvents    int
+	tracked         *perspectives.Category
 }
 
 func NewHawkesSymbol() *HawkesSymbol {
 	return &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  config.System.HawkesFitCooldown,
+		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
 
@@ -113,37 +115,18 @@ func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (per
 		raw = intensity / mu
 	}
 
-	category := hawkesCategory(fit, asymmetry, sellSide)
+	category, evidence := hawkesReading(fit, asymmetry, sellSide)
+
+	confidence, err := sym.tracked.Observe(category, evidence)
+
+	if err != nil {
+		return perspectives.Measurement{}, false
+	}
 
 	return perspectives.Measurement{
-		Source:   perspectives.SourceHawkes,
-		Category: category,
+		Source:     perspectives.SourceHawkes,
+		Category:   category,
 		Strength:   raw,
-		Confidence: categoryConfidence(category, fit, asymmetry, sellSide),
+		Confidence: confidence,
 	}, true
-}
-
-/*
-hawkesCategory maps the fitted Hawkes state onto the thermal perspective: a
-spectral radius approaching the critical branch is contested saturation; a
-dominant-side intensity below its own exogenous baseline is exhaustion; a
-strongly one-sided cluster is a directional frenzy; otherwise organic.
-*/
-func hawkesCategory(fit BivariateFit, asymmetry float64, sellSide bool) perspectives.CategoryType {
-	intensity, mu := fit.BuyIntensity, fit.MuBuy
-
-	if sellSide {
-		intensity, mu = fit.SellIntensity, fit.MuSell
-	}
-
-	switch {
-	case fit.SpectralRadius >= 0.85:
-		return perspectives.CategorySaturation
-	case mu > 0 && intensity < mu:
-		return perspectives.CategoryExhaustion
-	case asymmetry >= 0.15:
-		return perspectives.CategoryFrenzy
-	default:
-		return perspectives.CategoryOrganic
-	}
 }
