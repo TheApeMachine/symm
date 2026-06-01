@@ -5,6 +5,7 @@ import (
 	"container/ring"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -50,17 +51,19 @@ func NewStory(ctx context.Context, pool *qpool.Q) (*Story, error) {
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	recordPath := viper.GetViper().GetString("trading.record.file")
+	if viper.GetViper().GetString("trading.model") == "record" {
+		recordPath := viper.GetViper().GetString("trading.record.file")
 
-	fh, err := os.Create(recordPath)
+		fh, err := os.Create(recordPath)
 
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("market story: create record file %q: %w", recordPath, err)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("market story: create record file %q: %w", recordPath, err)
+		}
+
+		story.recordFile = fh
+		story.recorder = bufio.NewWriter(fh)
 	}
-
-	story.recordFile = fh
-	story.recorder = bufio.NewWriter(fh)
 
 	for _, channel := range []string{"measurements", "actions"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
@@ -82,81 +85,92 @@ func (story *Story) Tick() error {
 		ok          bool
 	)
 
-	defer story.recorder.Flush()
-
-	for row := range story.subscribers["measurements"].Incoming {
-		fmt.Println("story.Tick", "measurement", row)
-
-		if row == nil {
-			errnie.Warn("nil measurement")
-			continue
-		}
-
-		if measurement, ok = row.Value.(perspectives.Measurement); !ok {
-			errnie.Warn("invalid measurement")
-			continue
-		}
-
-		raw, err := sonic.Marshal(measurement)
-
-		if err != nil {
-			errnie.Error(err)
-		}
-
-		fmt.Println(string(raw))
-		_, err = story.recorder.Write(append(raw, '\n'))
-
-		if err != nil {
-			errnie.Error(err)
-		}
-
-		errnie.Error(story.recorder.Flush())
-
-		story.buffer.Value = measurement
-		story.buffer.Next()
-
-		actions := make([]*perspectives.ActionType, 0)
-
-		for _, tree := range story.trees {
-			if buffered, bufferedOK := story.buffer.Value.(perspectives.Measurement); bufferedOK {
-				tree.AddMeasurement(buffered)
-			}
-
-			if action := tree.Action(); action != nil {
-				actions = append(actions, action)
-			}
-		}
-
-		if len(story.trees) == 0 || len(actions) == 0 {
-			measurements := make([]perspectives.Measurement, 0)
-
-			story.buffer.Do(func(value any) {
-				if value == nil {
-					return
-				}
-
-				buffered, bufferedOK := value.(perspectives.Measurement)
-
-				if !bufferedOK {
-					return
-				}
-
-				measurements = append(measurements, buffered)
-			})
-
-			story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
-				return perspectives.NewTree(story.ctx, measurements)
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value())
-		}
-
-		for _, action := range actions {
-			story.broadcasts["actions"].Send(&qpool.QValue[any]{Value: action})
-		}
+	if story.recorder != nil {
+		defer story.recorder.Flush()
 	}
 
-	return story.ctx.Err()
+	incoming := story.subscribers["measurements"].Incoming
+
+	for {
+		select {
+		case <-story.ctx.Done():
+			return story.ctx.Err()
+		case row, ok := <-incoming:
+			if !ok {
+				return io.EOF
+			}
+
+			errnie.Debug("story.Tick", "measurement", row)
+
+			if row == nil {
+				errnie.Warn("nil measurement")
+				continue
+			}
+
+			if measurement, ok = row.Value.(perspectives.Measurement); !ok {
+				errnie.Warn("invalid measurement")
+				continue
+			}
+
+			if story.recorder != nil {
+				raw, err := sonic.Marshal(measurement)
+
+				if err != nil {
+					errnie.Error(err)
+				}
+
+				errnie.Debug("story.Tick", "measurement row", string(raw))
+				_, err = story.recorder.Write(append(raw, '\n'))
+
+				if err != nil {
+					errnie.Error(err)
+				}
+			}
+
+			story.buffer.Value = measurement
+			story.buffer.Next()
+
+			actions := make([]*perspectives.ActionType, 0)
+
+			for _, tree := range story.trees {
+				if buffered, bufferedOK := story.buffer.Value.(perspectives.Measurement); bufferedOK {
+					tree.AddMeasurement(buffered)
+				}
+
+				if action := tree.Action(); action != nil {
+					actions = append(actions, action)
+				}
+			}
+
+			if len(story.trees) == 0 || len(actions) == 0 {
+				measurements := make([]perspectives.Measurement, 0)
+
+				story.buffer.Do(func(value any) {
+					if value == nil {
+						return
+					}
+
+					buffered, bufferedOK := value.(perspectives.Measurement)
+
+					if !bufferedOK {
+						return
+					}
+
+					measurements = append(measurements, buffered)
+				})
+
+				story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
+					return perspectives.NewTree(story.ctx, measurements)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value())
+			}
+
+			for _, action := range actions {
+				story.broadcasts["actions"].Send(&qpool.QValue[any]{Value: action})
+			}
+		}
+	}
 }
 
 /*

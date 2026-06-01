@@ -119,7 +119,11 @@ func (ws *WebSocket) Tick() error {
 			if err := conn.WriteJSON(message.Value); err != nil {
 				errnie.Error(err)
 			}
-		case socketMessage := <-incoming:
+		case socketMessage, ok := <-incoming:
+			if !ok {
+				return ws.ctx.Err()
+			}
+
 			if ch := ws.broadcasts[socketMessage.Channel]; ch != nil {
 				ch.Send(&qpool.QValue[any]{Value: socketMessage})
 			}

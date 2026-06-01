@@ -59,8 +59,14 @@ var (
 				errnie.Error(err)
 			}).Value()
 
+			hub, err := ui.NewHub(cmd.Context(), pool)
+
+			if err != nil {
+				return err
+			}
+
 			systems := []System{
-				ui.NewHub(cmd.Context(), pool),
+				hub,
 				public.NewWebSocket(cmd.Context(), pool),
 				kraken.NewInstrument(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),

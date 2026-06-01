@@ -193,7 +193,7 @@ type Decision struct {
 
 ## Perspectives and playbooks
 
-Boot uses the Go constructors in `market/perspectives/` (`NewTrendPerspective`, etc.) unless a YAML registry file exists and loads successfully. By default that path is `runs/perspectives.yaml` (written by `make tune`); set `SYMM_PERSPECTIVES_FILE` to override. `config/perspectives.yaml` is a version-controlled export of the same builtin trees (`BuiltinDocument()`), not auto-loaded at boot.
+Boot uses the Go constructors in `market/perspectives/` (`NewTrendPerspective`, etc.) unless a YAML registry file exists and loads successfully. By default that path is `market/perspectives/cfg/perspectives.yaml` (written by `symm tune` / `make tune`); set `SYMM_PERSPECTIVES_FILE` to override. `config/perspectives.yaml` is a version-controlled export of the same builtin trees (`BuiltinDocument()`), not auto-loaded at boot.
 
 Order is conviction-first for the Go builtin registry: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite tree shape, registry order, playbook count, regimes, policies, and entry/deny/exit branch structure inside the valid YAML schema.
 
@@ -381,12 +381,15 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 
 ### Parameter and tree search
 
-`symm tune` runs a replay-backed search over two spaces:
+`symm tune` runs a replay-backed bounded parallel scan over perspective branch trees:
 
-- numeric tunables from `TunableSpecs()`
-- MCTS-searched perspective-tree YAML built from measurements observed in the replay
+- measurements are read from `trading.record.file` (or `trading.replay.file` when the record path is unset)
+- the scan enumerates category/unit/condition/value predicates from observed measurement distributions
+- it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
+- each candidate tree is scored in-process with `ReplaySimulation` (realized plus marked fractional return)
+- the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
 
-Before evaluating candidates, tune runs the signal stack once over the training replay and records the categories, sources, SNR counts, and SNR quantiles that actually appeared. Candidate playbooks are then searched with a Monte Carlo tree search over the YAML document itself: add/remove playbooks, change registry order, change regime/policy labels, add/remove/replace/grow entry/deny/exit branches, set category conditions and thresholds on existing gates, set exit observations, and vary thresholds from replay-observed SNR quantiles. There is no fixed playbook template in the search path. Each trial is scored in-process (train + walk-forward holdouts, no subprocess); the best eligible tree set is written to `--perspectives-output`.
+Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.
 
 Headless replay (`symm eval`, `symm tune`, `SYMM_HEADLESS=1`) always runs at machine speed: `ReplayPace` is forced to zero so captures are not slept through in real time.
 
@@ -431,7 +434,8 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 - `--max-thresholds` bounds unique threshold values per category/unit; `0` scans all unique observed values.
 - `--beam-width` bounds how many primitive entry and exit candidates are combined as sibling trees.
 - `--candidate-limit` caps scored candidate trees; `0` scans the generated bounded space.
-- `--candidate-report` writes every scored candidate as JSONL with `score`, `profit_loss`, `return_pct`, and the candidate branches. `make tune` writes this to `runs/candidates.jsonl` by default.
+- Every scored candidate prints `profit_loss` and percent return to stderr.
+- `--candidate-report` optionally also writes every scored candidate as JSONL with `score`, `profit_loss`, `return_pct`, and the candidate branches.
 - Each improved best tree is written immediately to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the path.
 - Progress and the final summary print to **stderr**.
 
@@ -441,7 +445,7 @@ symm tune
   --max-thresholds    128       threshold values per category/unit; 0 = all
   --beam-width        256       primitive entry/exit candidates to combine
   --candidate-limit   100000    scored candidate cap; 0 = generated bounded space
-  --candidate-report  runs/candidates.jsonl
+  --candidate-report  ""        optional JSONL candidate report
 ```
 
 ### Hawkes internal optimizer
@@ -585,7 +589,7 @@ make profile-replay REPLAY_FILE=runs/capture.jsonl
 
 ```bash
 make record    # live capture → runs/capture.jsonl + audit log (Ctrl+C when done)
-make tune      # searches tunables + learned tree YAML; writes runs/tuned.json + runs/perspectives.yaml
+make tune      # bounded parallel scan; writes market/perspectives/cfg/perspectives.yaml
 ```
 
 That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
@@ -595,7 +599,7 @@ That is the whole loop. **Tune does not read the audit file** — it replays `ru
 - **`make tune`** adds the default walk-forward folds.
 - **`make tune`** perturbs train replay evals.
 - **`make tune`** maximizes velocity-adjusted wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`).
-- **`make run`** loads `runs/tuned.json` and `runs/perspectives.yaml` when present; otherwise the Go builtin playbooks apply.
+- **`make run`** loads `market/perspectives/cfg/perspectives.yaml` when present (or the path in `SYMM_PERSPECTIVES_FILE`); otherwise the embedded Go builtin playbooks apply.
 
 Optional overrides:
 
@@ -636,7 +640,7 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_AUDIT_FILE`        | Path to write desk audit JSONL (gate rejects deduped)   |
 | `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`) |
 | `SYMM_AUDIT_MAX_MB`      | Rotate audit log after this many megabytes (default `32`) |
-| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry at boot when the file exists (default path `runs/perspectives.yaml`; missing file → Go builtins) |
+| `SYMM_PERSPECTIVES_FILE` | YAML perspective registry at boot when the file exists (default path `market/perspectives/cfg/perspectives.yaml`; missing file → Go builtins) |
 | `SYMM_KRAKEN_API_KEY`    | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone |
 | `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret                               |
 | `SYMM_LIVE`              | `1` or `true` to enable the live desk and crypto wallet |
@@ -747,7 +751,7 @@ Full environment wiring is in `config/config.go`.
 | `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
 | `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
 
-Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (default 128), `--beam-width` (default 256), `--candidate-limit` (default 100000), and `--candidate-report` (empty by default in direct CLI use). `make tune` exposes the same knobs as `TUNE_WORKERS`, `TUNE_MAX_THRESHOLDS`, `TUNE_BEAM_WIDTH`, `TUNE_CANDIDATE_LIMIT`, and `TUNE_CANDIDATE_REPORT`.
+Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (default 128), `--beam-width` (default 256), `--candidate-limit` (default 100000), and `--candidate-report` (empty by default). `make tune` exposes the same scan knobs as `TUNE_WORKERS`, `TUNE_MAX_THRESHOLDS`, `TUNE_BEAM_WIDTH`, and `TUNE_CANDIDATE_LIMIT`.
 
 </details>
 

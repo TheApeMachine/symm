@@ -232,7 +232,11 @@ func (search *ScanSearch) actionBranches() []scanCandidate {
 	candidates := make([]scanCandidate, 0)
 
 	for _, branch := range search.branches(perspectives.ObservationNotHolding) {
-		for _, actionType := range searchEntryActions[1:] {
+		for _, actionType := range searchEntryActions {
+			if actionType == perspectives.ActionNone {
+				continue
+			}
+
 			next := branch
 			next.Action = perspectives.Action{Type: actionType}
 			candidates = append(candidates, scanCandidate{
@@ -243,7 +247,11 @@ func (search *ScanSearch) actionBranches() []scanCandidate {
 	}
 
 	for _, branch := range search.branches(perspectives.ObservationHolding) {
-		for _, actionType := range searchExitActions[1:] {
+		for _, actionType := range searchExitActions {
+			if actionType == perspectives.ActionNone {
+				continue
+			}
+
 			next := branch
 			next.Action = perspectives.Action{Type: actionType}
 			candidates = append(candidates, scanCandidate{

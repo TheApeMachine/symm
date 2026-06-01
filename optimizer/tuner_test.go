@@ -32,6 +32,7 @@ func TestReplaySimulationScore(t *testing.T) {
 			Condition:   perspectives.ConditionIsGreaterThan,
 			Unit:        perspectives.UnitSNR,
 			Value:       1.0,
+			ValueSet:    true,
 			Action:      perspectives.Action{Type: perspectives.ActionLimit},
 		}}
 

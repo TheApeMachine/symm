@@ -4,7 +4,15 @@ branches:
       observation: not_holding
       condition: '>='
       unit: snr
-      value: 1.0769848268679534
+      value: 0.8727853932400677
       value_set: true
       action:
-        type: market
+        type: limit
+    - category: liquidity_vacuum
+      observation: holding
+      condition: '>='
+      unit: snr
+      value: 0.9869026358925104
+      value_set: true
+      action:
+        type: stop_loss

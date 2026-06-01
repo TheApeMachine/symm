@@ -77,6 +77,7 @@ func TestWriteBranches(t *testing.T) {
 func TestTuneMeasurements(t *testing.T) {
 	convey.Convey("Given a candidate report path", t, func() {
 		path := filepath.Join(t.TempDir(), "candidates.jsonl")
+		candidates := make([]CandidateScore, 0)
 		rows := []perspectives.Measurement{
 			{
 				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
@@ -101,6 +102,9 @@ func TestTuneMeasurements(t *testing.T) {
 				MaxThresholds:       2,
 				BeamWidth:           4,
 				CandidateLimit:      8,
+				OnCandidate: func(candidate CandidateScore) {
+					candidates = append(candidates, candidate)
+				},
 			},
 		)
 		raw, readErr := os.ReadFile(path)
@@ -110,6 +114,9 @@ func TestTuneMeasurements(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(readErr, convey.ShouldBeNil)
 			convey.So(summary.Candidates, convey.ShouldEqual, 8)
+			convey.So(len(candidates), convey.ShouldEqual, summary.Candidates)
+			convey.So(candidates[0].ProfitLoss(), convey.ShouldEqual, candidates[0].Score)
+			convey.So(candidates[0].ReturnPct(), convey.ShouldEqual, candidates[0].Score*100)
 			convey.So(len(lines), convey.ShouldEqual, summary.Candidates)
 			convey.So(lines[0], convey.ShouldContainSubstring, `"profit_loss"`)
 			convey.So(lines[0], convey.ShouldContainSubstring, `"return_pct"`)

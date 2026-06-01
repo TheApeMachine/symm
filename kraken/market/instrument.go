@@ -2,7 +2,9 @@ package market
 
 import (
 	"context"
+	"io"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -109,13 +111,14 @@ func NewInstrumentSubscription(ctx context.Context, pool *qpool.Q) <-chan *Instr
 }
 
 type Instrument struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	Pairs       []string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	subscribersMu  sync.RWMutex
+	Pairs          []string
 }
 
 func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
@@ -140,7 +143,10 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 }
 
 func (instrument *Instrument) Tick() error {
+	instrument.subscribersMu.RLock()
 	incoming := instrument.subscribers["instrument"].Incoming
+	publicBroadcast := instrument.broadcasts["kraken:public"]
+	instrument.subscribersMu.RUnlock()
 
 	for {
 		select {
@@ -148,7 +154,7 @@ func (instrument *Instrument) Tick() error {
 			return instrument.ctx.Err()
 		case message, ok := <-incoming:
 			if !ok {
-				return instrument.ctx.Err()
+				return io.EOF
 			}
 
 			if message == nil {
@@ -175,7 +181,7 @@ func (instrument *Instrument) Tick() error {
 
 				instrument.Pairs = append(instrument.Pairs, pair.Symbol)
 
-				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
 						"channel":  "ticker",
@@ -184,7 +190,7 @@ func (instrument *Instrument) Tick() error {
 					},
 				}})
 
-				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
 						"channel":  "book",
@@ -194,7 +200,7 @@ func (instrument *Instrument) Tick() error {
 					},
 				}})
 
-				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
 						"channel":  "ohlc",
@@ -204,7 +210,7 @@ func (instrument *Instrument) Tick() error {
 					},
 				}})
 
-				instrument.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
 						"channel":  "trade",
@@ -224,6 +230,9 @@ func (instrument *Instrument) Close() error {
 
 	instrument.cancel()
 	instrument.cancel = nil
+
+	instrument.subscribersMu.Lock()
+	defer instrument.subscribersMu.Unlock()
 
 	for channel, subscriber := range instrument.subscribers {
 		if subscriber == nil {

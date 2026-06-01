@@ -37,6 +37,7 @@ type TuneOptions struct {
 	BeamWidth           int
 	CandidateLimit      int
 	OnBest              func(BestTree)
+	OnCandidate         func(CandidateScore)
 }
 
 /*
@@ -46,6 +47,18 @@ type CandidateScore struct {
 	Candidate int
 	Score     float64
 	Branches  perspectives.BranchList
+}
+
+func (candidate CandidateScore) ProfitLoss() float64 {
+	return candidate.Score
+}
+
+func (candidate CandidateScore) ReturnPct() float64 {
+	return candidate.Score * 100
+}
+
+func (candidate CandidateScore) BranchCount() int {
+	return countBranches(candidate.Branches)
 }
 
 /*
@@ -132,6 +145,10 @@ func TuneMeasurements(
 		}
 	}
 	onCandidate := func(candidate CandidateScore) {
+		if options.OnCandidate != nil {
+			options.OnCandidate(candidate)
+		}
+
 		if reporter == nil || writeErr != nil {
 			return
 		}
@@ -365,9 +382,9 @@ func (reporter *candidateReporter) Write(candidate CandidateScore) error {
 	return reporter.encoder.Encode(candidateReport{
 		Candidate:   candidate.Candidate,
 		Score:       candidate.Score,
-		ProfitLoss:  candidate.Score,
-		ReturnPct:   candidate.Score * 100,
-		BranchCount: countBranches(candidate.Branches),
+		ProfitLoss:  candidate.ProfitLoss(),
+		ReturnPct:   candidate.ReturnPct(),
+		BranchCount: candidate.BranchCount(),
 		Branches: branchDocumentsFromBranches(
 			candidate.Branches,
 		),

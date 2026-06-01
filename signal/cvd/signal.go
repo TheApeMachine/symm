@@ -87,10 +87,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor: adaptive.NewSNRField(),
 	}
 
-	for _, channel := range []string{"trade"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
-	}
+	signal.broadcasts["trade"] = pool.CreateBroadcastGroup("trade", 10*time.Millisecond)
+	signal.subscribers["trade"] = signal.broadcasts["trade"].Subscribe("trade", 128)
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 

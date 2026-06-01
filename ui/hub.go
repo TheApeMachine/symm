@@ -2,10 +2,14 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fasthttp/websocket"
@@ -59,6 +63,8 @@ type Hub struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscriptions map[string]*qpool.Subscriber
 	clients       *sync.Map
+	server        *http.Server
+	nextConnID    uint64
 }
 
 /*
@@ -67,7 +73,7 @@ NewHub subscribes to all broadcast groups on pool.
 func NewHub(
 	ctx context.Context,
 	pool *qpool.Q,
-) *Hub {
+) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
@@ -82,29 +88,60 @@ func NewHub(
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	hub.subscriptions["ui"] = hub.broadcasts["ui"].Subscribe("ui", 128)
 
-	go hub.Serve(viper.GetViper().GetString("ui.addr"))
-
-	return hub
-}
-
-func (hub *Hub) Close() error {
-	hub.cancel()
-	return nil
-}
-
-/*
-Serve starts the websocket server on addr (e.g. :8765).
-*/
-func (hub *Hub) Serve(addr string) error {
+	addr := viper.GetViper().GetString("ui.addr")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)
 
-	server := &http.Server{
-		Addr:    addr,
+	listener, err := net.Listen("tcp", addr)
+
+	if err != nil {
+		cancel()
+
+		return nil, fmt.Errorf("ui hub: listen %s: %w", addr, err)
+	}
+
+	hub.server = &http.Server{
 		Handler: mux,
 	}
 
-	return server.ListenAndServe()
+	go func() {
+		serveErr := hub.server.Serve(listener)
+
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errnie.Error(serveErr)
+		}
+	}()
+
+	return hub, nil
+}
+
+func (hub *Hub) Close() error {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if hub.server != nil {
+		if err := hub.server.Shutdown(shutdownCtx); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	hub.clients.Range(func(key, value any) bool {
+		conn, ok := value.(*websocket.Conn)
+
+		if ok {
+			if err := conn.Close(); err != nil {
+				errnie.Error(err)
+			}
+		}
+
+		hub.clients.Delete(key)
+
+		return true
+	})
+
+	hub.cancel()
+
+	return nil
 }
 
 func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
@@ -115,7 +152,8 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	hub.clients.Store("ws", conn)
+	connID := atomic.AddUint64(&hub.nextConnID, 1)
+	hub.clients.Store(connID, conn)
 }
 
 /*
@@ -146,8 +184,20 @@ func (hub *Hub) Tick() error {
 			}
 
 			hub.clients.Range(func(key, value any) bool {
-				client := value.(*websocket.Conn)
-				client.WriteJSON(out)
+				conn, ok := value.(*websocket.Conn)
+
+				if !ok {
+					hub.clients.Delete(key)
+
+					return true
+				}
+
+				if err := conn.WriteJSON(out); err != nil {
+					errnie.Error(err)
+					_ = conn.Close()
+					hub.clients.Delete(key)
+				}
+
 				return true
 			})
 		}

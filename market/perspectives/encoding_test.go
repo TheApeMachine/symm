@@ -34,6 +34,40 @@ action:
 	})
 }
 
+func TestUnitTypeMarshalJSON(t *testing.T) {
+	convey.Convey("Given enum values", t, func() {
+		raw, err := UnitSNR.MarshalJSON()
+
+		convey.Convey("It should encode readable names", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldEqual, `"snr"`)
+		})
+	})
+}
+
+func TestUnitTypeUnmarshalJSON(t *testing.T) {
+	convey.Convey("Given a JSON enum name", t, func() {
+		unit := UnitType(0)
+
+		err := unit.UnmarshalJSON([]byte(`"snr"`))
+
+		convey.Convey("It should decode the enum value", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(unit, convey.ShouldEqual, UnitSNR)
+		})
+	})
+
+	convey.Convey("Given an unknown numeric enum value", t, func() {
+		unit := UnitType(0)
+
+		err := unit.UnmarshalJSON([]byte(`99`))
+
+		convey.Convey("It should reject the value", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+		})
+	})
+}
+
 func TestUnitTypeMarshalYAML(t *testing.T) {
 	convey.Convey("Given enum values", t, func() {
 		branch := Branch{

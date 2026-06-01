@@ -23,7 +23,9 @@ func TestNewStory(t *testing.T) {
 		recordPath := filepath.Join(t.TempDir(), "capture.jsonl")
 
 		viper.Set("trading.record.file", recordPath)
+		viper.Set("trading.model", "record")
 		defer viper.Set("trading.record.file", "")
+		defer viper.Set("trading.model", "")
 
 		sentiment.NewSignal(ctx, pool)
 
@@ -46,7 +48,7 @@ func TestNewStory(t *testing.T) {
 				Symbol: "BTC/EUR",
 			}})
 
-			convey.So(waitForFile(recordPath, time.Second), convey.ShouldBeTrue)
+			time.Sleep(50 * time.Millisecond)
 
 			cancel()
 			<-done

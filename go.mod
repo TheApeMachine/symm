@@ -6,6 +6,7 @@ require (
 	github.com/bytedance/sonic v1.15.1
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
+	go.yaml.in/yaml/v3 v3.0.4
 )
 
 require (
@@ -49,7 +50,6 @@ require (
 	go.opentelemetry.io/otel v1.43.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.27.0 // indirect
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect

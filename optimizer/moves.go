@@ -61,7 +61,6 @@ type Move struct {
 	depth       int
 	category    perspectives.CategoryType
 	observation perspectives.ObservationType
-	metric      string
 	regime      perspectives.Regime
 	condition   perspectives.ConditionType
 	unit        perspectives.UnitType
@@ -79,7 +78,8 @@ func (search *TreeSearch) moves(
 		len(searchUnits) *
 		len(searchConditions) *
 		len(searchQuantiles) *
-		len(searchExitActions)
+		len(searchExitActions) *
+		maxBranchDepth
 	moves := make([]Move, 0, moveCount)
 
 	for depth := 0; depth < maxBranchDepth; depth++ {
@@ -137,7 +137,6 @@ func (search *TreeSearch) applyMove(
 	branch := perspectives.Branch{
 		Category:    move.category,
 		Observation: move.observation,
-		Metric:      move.metric,
 		Regime:      move.regime,
 		Condition:   move.condition,
 		Unit:        move.unit,

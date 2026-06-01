@@ -66,8 +66,9 @@ func TestTrackerMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		now := time.Now()
 		symbol := "BTC/EUR"
 
+		originalMinFillToCancel := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
 		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
-		defer viper.Set("signals.min_fill_to_cancel_ratio", 0.0)
+		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
 
 		state := tracker.stateLocked(symbol, market.Pair{})
 		state.cancelBid = 0.3
@@ -96,8 +97,9 @@ func TestTrackerMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 		now := time.Now()
 		symbol := "BTC/EUR"
 
+		originalMinFillToCancel := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
 		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
-		defer viper.Set("signals.min_fill_to_cancel_ratio", 0.0)
+		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
 
 		state := tracker.stateLocked(symbol, market.Pair{})
 		state.cancelBid = 1
