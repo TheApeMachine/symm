@@ -3,12 +3,21 @@ package trading
 import (
 	"context"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-const MethodAddOrder = "add_order"
+const (
+	MethodAddOrder     = "add_order"
+	MethodAmendOrder   = "amend_order"
+	MethodCancelOrder  = "cancel_order"
+	MethodCancelOrders = "cancel_orders"
+	MethodBatchAdd     = "batch_add_orders"
+	MethodBatchCancel  = "batch_cancel_orders"
+	MethodEditOrder    = "edit_order"
+)
 
 /*
 Side and OrderType mirror Kraken WebSocket v2 add_order params.
@@ -54,15 +63,6 @@ type AddParams struct {
 	ClOrdID    string    `json:"cl_ord_id,omitempty"`
 	Triggers   *Triggers `json:"triggers,omitempty"`
 	Token      string    `json:"token,omitempty"`
-}
-
-/*
-AddRequest is one Kraken WebSocket v2 add_order frame.
-*/
-type AddRequest struct {
-	Method string    `json:"method"`
-	Params AddParams `json:"params"`
-	ReqID  int       `json:"req_id,omitempty"`
 }
 
 /*
@@ -112,9 +112,68 @@ func NewOrder(ctx context.Context) (*Client, error) {
 }
 
 func (client *Client) AddOrder(params AddParams) error {
-	return errnie.Error(client.conn.Send(public.OrdersChannel, AddRequest{
-		Method: MethodAddOrder,
-		Params: params,
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodAddOrder,
+		"params": params,
+	}))
+}
+
+func (client *Client) AmendOrder(orderID string) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodAmendOrder,
+		"params": fiber.Map{
+			"order_id": orderID,
+		},
+	}))
+}
+
+func (client *Client) CancelOrder(orderID string) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodCancelOrder,
+		"params": fiber.Map{
+			"order_id": orderID,
+		},
+	}))
+}
+
+func (client *Client) CancelAll() error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodCancelOrders,
+		"params": fiber.Map{
+			"cancel_all": true,
+		},
+	}))
+}
+
+func (client *Client) CancelOnDisconnect() error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodCancelOrders,
+		"params": fiber.Map{
+			"cancel_on_disconnect": true,
+		},
+	}))
+}
+
+func (client *Client) BatchAdd(params []AddParams) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodBatchAdd,
+		"params": params,
+	}))
+}
+
+func (client *Client) BatchCancel(orderIDs []string) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodBatchCancel,
+		"params": orderIDs,
+	}))
+}
+
+func (client *Client) EditOrder(orderID string, params AddParams) error {
+	return errnie.Error(client.conn.Send(public.OrdersChannel, fiber.Map{
+		"method": MethodEditOrder,
+		"params": fiber.Map{
+			"order_id": orderID,
+		},
 	}))
 }
 

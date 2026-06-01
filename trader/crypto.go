@@ -62,20 +62,23 @@ func (crypto *Crypto) Tick() error {
 
 	for row := range crypto.subscribers["actions"].Incoming {
 		if row == nil {
-			errnie.Warn("nil action")
 			continue
 		}
 
 		if action, ok = row.Value.(perspectives.Action); !ok {
-			errnie.Warn("invalid action")
 			continue
 		}
 
-		if action.Type == perspectives.ActionNone {
-			continue
+		switch action.Type {
+		case perspectives.ActionEnter:
+			crypto.desk.AddOrder(action)
+		case perspectives.ActionExit:
+			crypto.desk.AddOrder(action)
+		case perspectives.ActionStopLoss:
+			crypto.desk.AddOrder(action)
+		case perspectives.ActionTakeProfit:
+			crypto.desk.AddOrder(action)
 		}
-
-		errnie.Error(crypto.desk.Submit(action))
 	}
 
 	return crypto.err

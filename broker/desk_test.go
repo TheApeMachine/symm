@@ -1,57 +1,42 @@
 package broker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func TestDesk_paramsFromAction(t *testing.T) {
+func TestDesk_NextClOrdID(t *testing.T) {
 	convey.Convey("Given a desk", t, func() {
 		desk := &Desk{}
 
-		convey.Convey("When the action is enter", func() {
-			params, err := desk.paramsFromAction(perspectives.Action{
-				Type:     perspectives.ActionEnter,
-				Symbol:   "BTC/USD",
-				Price:    50000,
-				Quantity: 0.01,
-			})
+		convey.Convey("When NextClOrdID is called", func() {
+			clOrdID := desk.NextClOrdID()
 
-			convey.Convey("It should build a limit buy", func() {
-				convey.So(err, convey.ShouldBeNil)
-				convey.So(params.OrderType, convey.ShouldEqual, trading.Limit)
-				convey.So(params.Side, convey.ShouldEqual, trading.Buy)
-				convey.So(params.LimitPrice, convey.ShouldEqual, 50000)
+			convey.Convey("It should return a client order id with the desk prefix", func() {
+				convey.So(clOrdID, convey.ShouldStartWith, "s")
+				convey.So(len(clOrdID), convey.ShouldBeGreaterThan, 1)
 			})
 		})
 
-		convey.Convey("When the action is stop loss without price", func() {
-			_, err := desk.paramsFromAction(perspectives.Action{
-				Type:     perspectives.ActionStopLoss,
-				Symbol:   "BTC/USD",
-				Quantity: 0.01,
-			})
+		convey.Convey("When NextClOrdID is called twice", func() {
+			first := desk.NextClOrdID()
+			second := desk.NextClOrdID()
 
-			convey.Convey("It should error", func() {
-				convey.So(err, convey.ShouldNotBeNil)
+			convey.Convey("It should return distinct ids", func() {
+				convey.So(first, convey.ShouldNotEqual, second)
+				convey.So(strings.HasPrefix(first, "s"), convey.ShouldBeTrue)
+				convey.So(strings.HasPrefix(second, "s"), convey.ShouldBeTrue)
 			})
 		})
 	})
 }
 
-func BenchmarkDesk_paramsFromAction(b *testing.B) {
+func BenchmarkDesk_NextClOrdID(b *testing.B) {
 	desk := &Desk{}
-	action := perspectives.Action{
-		Type:     perspectives.ActionEnter,
-		Symbol:   "BTC/USD",
-		Price:    50000,
-		Quantity: 0.01,
-	}
 
 	for b.Loop() {
-		_, _ = desk.paramsFromAction(action)
+		_ = desk.NextClOrdID()
 	}
 }
