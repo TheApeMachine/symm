@@ -69,19 +69,10 @@ func (crypto *Crypto) Tick() error {
 			continue
 		}
 
-		switch action.Type {
-		case perspectives.ActionEnter:
-			crypto.desk.AddOrder(action)
-		case perspectives.ActionExit:
-			crypto.desk.AddOrder(action)
-		case perspectives.ActionStopLoss:
-			crypto.desk.AddOrder(action)
-		case perspectives.ActionTakeProfit:
-			crypto.desk.AddOrder(action)
-		}
+		errnie.Error(crypto.desk.AddOrder(action))
 	}
 
-	return crypto.err
+	return nil
 }
 
 func (crypto *Crypto) Close() error {

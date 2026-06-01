@@ -15,6 +15,8 @@ import (
 
 const methodAddOrder = "add_order"
 
+var _ public.WebSocketClient = (*WebSocket)(nil)
+
 /*
 WebSocket simulates the authenticated Kraken WebSocket v2 trading socket.
 */
@@ -23,12 +25,17 @@ type WebSocket struct {
 	cancel  context.CancelFunc
 	handler func(payload []byte)
 	mu      sync.Mutex
+	streams map[string]chan *public.SocketMessage
 }
 
 func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	ws := &WebSocket{ctx: ctx, cancel: cancel}
+	ws := &WebSocket{
+		ctx:     ctx,
+		cancel:  cancel,
+		streams: make(map[string]chan *public.SocketMessage),
+	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    ctx,
@@ -37,6 +44,15 @@ func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 }
 
 func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	if _, ok := ws.streams[channel]; ok {
+		return nil
+	}
+
+	ws.streams[channel] = make(chan *public.SocketMessage, 256)
+
 	return nil
 }
 
@@ -67,10 +83,33 @@ func (ws *WebSocket) Send(channel string, message any) error {
 	return ws.simulateAddOrder(frame.Params)
 }
 
-func (ws *WebSocket) Close(channel string) error {
-	ws.cancel()
+func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 
-	return ws.ctx.Err()
+	stream, ok := ws.streams[channel]
+
+	if !ok {
+		return nil, fmt.Errorf("channel %s not found", channel)
+	}
+
+	return stream, nil
+}
+
+func (ws *WebSocket) Close(channel string) error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	stream, ok := ws.streams[channel]
+
+	if !ok {
+		return fmt.Errorf("channel %s not found", channel)
+	}
+
+	close(stream)
+	delete(ws.streams, channel)
+
+	return nil
 }
 
 func (ws *WebSocket) OnMessage(handler func(payload []byte)) {
@@ -159,11 +198,34 @@ func (ws *WebSocket) deliver(payload []byte) {
 	handler := ws.handler
 	ws.mu.Unlock()
 
-	if handler == nil {
+	if handler != nil {
+		handler(payload)
+	}
+
+	var message public.SocketMessage
+
+	if err := sonic.Unmarshal(payload, &message); err != nil {
 		return
 	}
 
-	handler(payload)
+	if message.Channel == "" {
+		return
+	}
+
+	ws.mu.Lock()
+	stream, ok := ws.streams[message.Channel]
+	ws.mu.Unlock()
+
+	if !ok {
+		return
+	}
+
+	row := message
+
+	select {
+	case stream <- &row:
+	case <-ws.ctx.Done():
+	}
 }
 
 func nextPaperOrderID() string {

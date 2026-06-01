@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
@@ -10,9 +11,13 @@ import (
 	"github.com/theapemachine/symm/replay"
 )
 
+var socket *WebSocket
+var socketOnce sync.Once
+
 type WebSocketClient interface {
 	Connect(endpoint EndpointType, channel string) error
 	Send(channel string, message any) error
+	Stream(channel string) (<-chan *SocketMessage, error)
 	Close(channel string) error
 }
 
@@ -26,16 +31,18 @@ type WebSocket struct {
 func NewWebSocket(ctx context.Context) (*WebSocket, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	ws := &WebSocket{
-		ctx:    ctx,
-		cancel: cancel,
-		conns:  make(map[string]*websocket.Conn),
-	}
+	socketOnce.Do(func() {
+		socket = &WebSocket{
+			ctx:    ctx,
+			cancel: cancel,
+			conns:  make(map[string]*websocket.Conn),
+		}
+	})
 
-	return ws, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    ctx,
-		"cancel": cancel,
-		"conns":  ws.conns,
+	return socket, errnie.Error(errnie.Require(map[string]any{
+		"ctx":    socket.ctx,
+		"cancel": socket.cancel,
+		"conns":  socket.conns,
 	}))
 }
 
@@ -100,14 +107,14 @@ frame, decodes the envelope, and unmarshals the data array into []T, emitting on
 decode live in the same goroutine, so a consumer ranges the result directly with
 no intermediate pump. The channel closes when ctx is canceled or the socket ends.
 */
-func Stream[T any](ws *WebSocket, channel string) (<-chan *T, error) {
+func (ws *WebSocket) Stream(channel string) (<-chan *SocketMessage, error) {
 	conn, ok := ws.conns[channel]
 
 	if !ok {
 		return nil, fmt.Errorf("channel %s not found", channel)
 	}
 
-	out := make(chan *T, 256)
+	out := make(chan *SocketMessage, 256)
 
 	go func() {
 		defer close(out)
@@ -119,15 +126,11 @@ func Stream[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 			default:
 				message, ok := ws.read(conn, channel)
 
-				if !ok {
-					return
-				}
-
-				if message == nil {
+				if !ok || message == nil {
 					continue
 				}
 
-				var rows []T
+				var rows []SocketMessage
 
 				if err := sonic.Unmarshal(message.Data, &rows); err != nil {
 					errnie.Error(fmt.Errorf("kraken ws decode %s: %w", channel, err))
@@ -136,10 +139,6 @@ func Stream[T any](ws *WebSocket, channel string) (<-chan *T, error) {
 				}
 
 				for index := range rows {
-					if tagged, ok := any(&rows[index]).(envelopeTyped); ok {
-						tagged.SetEnvelopeType(message.Type)
-					}
-
 					out <- &rows[index]
 				}
 			}
@@ -210,7 +209,9 @@ func (ws *WebSocket) read(
 		return nil, false
 	}
 
-	_ = replay.WriteWS(channel, replay.DirectionIn, payload)
+	if err := replay.WriteWS(channel, replay.DirectionIn, payload); err != nil {
+		errnie.Error(err)
+	}
 
 	var message SocketMessage
 

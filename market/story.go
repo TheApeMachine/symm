@@ -20,6 +20,7 @@ type Story struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	buffer      *ring.Ring
+	trees       []*perspectives.Tree
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q) *Story {
@@ -32,6 +33,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		buffer:      ring.New(128),
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		trees:       make([]*perspectives.Tree, 0),
 	}
 
 	for _, channel := range []string{"measurements"} {
@@ -64,7 +66,30 @@ func (story *Story) Tick() error {
 
 		story.buffer.Value = measurement
 		story.buffer.Next()
+	}
 
+	actions := make([]*perspectives.ActionType, 0)
+
+	for _, tree := range story.trees {
+		tree.AddMeasurement(story.buffer.Value.(perspectives.Measurement))
+
+		if action := tree.Action(); action != nil {
+			actions = append(actions, action)
+		}
+	}
+
+	if len(story.trees) == 0 || len(actions) == 0 {
+		measurements := make([]perspectives.Measurement, 0)
+
+		story.buffer.Do(func(value any) {
+			measurements = append(measurements, value.(perspectives.Measurement))
+		})
+
+		story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
+			return perspectives.NewTree(story.ctx, measurements)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value())
 	}
 
 	return story.ctx.Err()

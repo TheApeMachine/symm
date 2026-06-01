@@ -30,8 +30,7 @@ func TestStream(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should reject Stream for unknown channels", func() {
-			_, err := Stream[SocketMessage](socket, "ticker")
-
+			_, err := socket.Stream("ticker")
 			convey.So(err, convey.ShouldNotBeNil)
 		})
 	})

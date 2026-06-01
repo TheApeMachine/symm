@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -45,46 +47,49 @@ from the shared feed; the upstream keeps running for the others.
 func NewTradeSubscription(
 	ctx context.Context, symbols ...string,
 ) <-chan *TradeUpdate {
-	return tradeFeed.subscribe(ctx, subscriptionSpec{symbols: symbols})
-}
+	out := make(chan *TradeUpdate, 128)
 
-// dialTrades opens one upstream connection to the public trade channel for
-// symbols. It is the shared feed's reopen function, not called per consumer.
-func dialTrades(
-	ctx context.Context, symbols []string,
-) <-chan *TradeUpdate {
-	ws, err := public.NewWebSocket(ctx)
+	client := errnie.Does(func() (*kraken.Client, error) {
+		return kraken.NewClient(ctx)
+	}).Or(func(err error) {
+		errnie.Error(err)
+	}).Value()
 
-	if err != nil {
+	if err := client.Send(public.TradesChannel, public.Subscription{
+		Method: public.MethodSubscribe,
+		Params: TradeParams{
+			Channel:  public.TradesChannel,
+			Symbol:   symbols,
+			Snapshot: true,
+		},
+	}); err != nil {
 		errnie.Error(err)
 		return closed[TradeUpdate]()
 	}
 
-	if err := ws.Connect(public.WebSocketURL, public.TradesChannel); err != nil {
-		errnie.Error(err)
-		return closed[TradeUpdate]()
-	}
+	for msg := range errnie.Does(func() (<-chan *public.SocketMessage, error) {
+		stream, err := client.Stream(public.TradesChannel)
 
-	for _, batch := range symbolBatches(symbols) {
-		if err := ws.Send(public.TradesChannel, public.Subscription{
-			Method: public.MethodSubscribe,
-			Params: TradeParams{
-				Channel:  public.TradesChannel,
-				Symbol:   batch,
-				Snapshot: true,
-			},
-		}); err != nil {
-			errnie.Error(err)
-			return closed[TradeUpdate]()
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	stream, err := public.Stream[TradeUpdate](ws, public.TradesChannel)
-
-	if err != nil {
+		return stream, nil
+	}).Or(func(err error) {
 		errnie.Error(err)
-		return closed[TradeUpdate]()
+	}).Value() {
+		if msg == nil {
+			continue
+		}
+
+		var trade TradeUpdate
+		if err := sonic.Unmarshal(msg.Data, &trade); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out <- &trade
 	}
 
-	return stream
+	return out
 }

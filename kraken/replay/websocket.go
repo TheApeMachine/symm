@@ -7,6 +7,8 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+var _ public.WebSocketClient = (*WebSocket)(nil)
+
 /*
 WebSocket is a no-live-dial client used while replay fixtures drive market data
 through kraken/market. Order traffic is handled by the optimizer trader, not here.
@@ -33,6 +35,14 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 
 func (ws *WebSocket) Send(channel string, message any) error {
 	return nil
+}
+
+func (ws *WebSocket) Stream(channel string) (<-chan *public.SocketMessage, error) {
+	out := make(chan *public.SocketMessage)
+
+	close(out)
+
+	return out, nil
 }
 
 func (ws *WebSocket) Close(channel string) error {

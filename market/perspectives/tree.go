@@ -2,20 +2,24 @@ package perspectives
 
 import (
 	"context"
+	"embed"
 	"errors"
-	"os"
+	"io/fs"
 	"slices"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
+//go:embed cfg/perspectives.yaml
+var embedded embed.FS
+
 type Tree struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
 	branches      []Branch
-	measurements  []Measurement
+	Measurements  []Measurement
 	currentAction *ActionType
 }
 
@@ -24,30 +28,38 @@ func NewTree(
 ) (*Tree, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	fh := errnie.Does(func() (*os.File, error) {
-		return os.Open("perspectives.yaml")
+	cfgReader := errnie.Does(func() (fs.File, error) {
+		return embedded.Open("cfg/perspectives.yaml")
 	}).Or(func(err error) {
 		errnie.Error(err)
 	}).Value()
 
-	defer fh.Close()
+	defer cfgReader.Close()
 
 	v := viper.New()
-	v.ReadConfig(fh)
+	errnie.Error(v.ReadConfig(cfgReader))
 
 	tree := &Tree{
 		ctx:          ctx,
 		cancel:       cancel,
 		branches:     v.Get("branches").([]Branch),
-		measurements: measurements,
+		Measurements: measurements,
 	}
 
 	return tree, errnie.Error(errnie.Require((map[string]any{
 		"ctx":          tree.ctx,
 		"cancel":       tree.cancel,
 		"branches":     tree.branches,
-		"measurements": tree.measurements,
+		"measurements": tree.Measurements,
 	})))
+}
+
+func (tree *Tree) Action() *ActionType {
+	return tree.currentAction
+}
+
+func (tree *Tree) AddMeasurement(measurement Measurement) {
+	tree.Measurements = append(tree.Measurements, measurement)
 }
 
 /*
@@ -62,7 +74,7 @@ Branch thresholds on UnitSNR compare against Measurement.SNR (temporal surprise)
 UnitConfidence thresholds compare against Measurement.Confidence (instantaneous
 clarity). Both are supplied by the signal.
 */
-func (tree *Tree) Walk(measurements []Measurement, branches []Branch) *ActionType {
+func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionType {
 	for _, branch := range branches {
 		index := slices.IndexFunc(measurements, func(measurement Measurement) bool {
 			return measurement.Category == branch.Category
@@ -83,7 +95,7 @@ func (tree *Tree) Walk(measurements []Measurement, branches []Branch) *ActionTyp
 		}
 
 		if len(branch.Branches) > 0 {
-			tree.Walk(measurements, branch.Branches)
+			tree.Walk(measurements, branch.Branches...)
 		}
 	}
 

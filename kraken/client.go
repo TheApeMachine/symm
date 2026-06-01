@@ -2,11 +2,11 @@ package kraken
 
 import (
 	"context"
+	"os"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
@@ -29,8 +29,8 @@ func NewClient(ctx context.Context) (*Client, error) {
 		case "live":
 			return private.NewRest(
 				ctx,
-				config.System.KrakenAPIKey,
-				config.System.KrakenAPISecret,
+				os.Getenv("SYMM_KRAKEN_API_KEY"),
+				os.Getenv("SYMM_KRAKEN_API_SECRET"),
 				public.EndpointAddOrder,
 			)
 		case "replay":
@@ -47,8 +47,8 @@ func NewClient(ctx context.Context) (*Client, error) {
 		case "live":
 			return private.NewWebSocket(
 				ctx,
-				config.System.KrakenAPIKey,
-				config.System.KrakenAPISecret,
+				os.Getenv("SYMM_KRAKEN_API_KEY"),
+				os.Getenv("SYMM_KRAKEN_API_SECRET"),
 			)
 		case "replay":
 			return replay.NewWebSocket(ctx)
@@ -72,6 +72,10 @@ func NewClient(ctx context.Context) (*Client, error) {
 		"rest":   client.rest,
 		"ws":     client.ws,
 	}))
+}
+
+func (client *Client) Stream(channel string) (<-chan *public.SocketMessage, error) {
+	return client.ws.Stream(channel)
 }
 
 func (client *Client) Send(channel string, message any) error {
