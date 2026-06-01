@@ -45,11 +45,13 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 
 func (desk *Desk) AddOrder(action perspectives.Action) error {
 	return errnie.Error(desk.orders.AddOrder(trading.AddParams{
-		OrderType:  trading.Limit,
+		OrderType:  trading.OrderType(action.Type),
 		Side:       action.Side,
 		Symbol:     action.Symbol,
 		LimitPrice: action.Price,
 		OrderQty:   action.Quantity,
+		ClOrdID:    desk.NextClOrdID(),
+		Triggers:   &trading.Triggers{},
 	}))
 }
 

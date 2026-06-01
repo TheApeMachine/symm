@@ -42,11 +42,16 @@ type ActionType uint8
 
 const (
 	ActionNone ActionType = iota
-	ActionEnter
-	ActionExit
+	ActionLimit
+	ActionMarket
+	ActionIceberg
 	ActionStopLoss
+	ActionStopLossLimit
 	ActionTakeProfit
-	ActionShort
+	ActionTakeProfitLimit
+	ActionTrailingStop
+	ActionTrailingStopLimit
+	ActionSettlePosition
 )
 
 type Action struct {
