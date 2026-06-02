@@ -9,10 +9,11 @@ import (
 )
 
 const (
-	DefaultMCTSIterations      = 256
+	DefaultMCTSIterations      = 1024
 	DefaultHybridSeedCount     = 50
-	DefaultHybridShallowDepth  = 0
+	DefaultHybridShallowDepth  = 2
 	DefaultMCTSSeedPriorVisits = 10
+	DefaultMCTSMaxThresholds   = 0
 	explorationWeight          = 1.41
 	mctsRewardSigmoidScale     = 10.0
 )
@@ -24,6 +25,7 @@ type MCTSOptions struct {
 	Iterations        int
 	SeedPriorVisits   int
 	MaxReasoningSteps int
+	MaxThresholds     int
 }
 
 /*
@@ -56,6 +58,7 @@ type TreeSearch struct {
 	bestClosedTrades  int
 	iterations        int
 	maxReasoningSteps int
+	maxThresholds     int
 	cachedMoves       []Move
 	onBest            func(BestTree)
 }
@@ -71,6 +74,10 @@ func normalizeMCTSOptions(options MCTSOptions) MCTSOptions {
 
 	if options.MaxReasoningSteps <= 0 {
 		options.MaxReasoningSteps = DefaultMaxReasoningSteps
+	}
+
+	if options.MaxThresholds < 0 {
+		options.MaxThresholds = DefaultMCTSMaxThresholds
 	}
 
 	return options
@@ -102,6 +109,7 @@ func NewHybridTreeSearch(
 		rng:               rand.New(rand.NewSource(rand.Int63())),
 		iterations:        options.Iterations,
 		maxReasoningSteps: options.MaxReasoningSteps,
+		maxThresholds:     options.MaxThresholds,
 	}
 
 	search.evaluate = search.scoreBranches
@@ -222,9 +230,10 @@ func (search *TreeSearch) expand(node *Node) *Node {
 		return node
 	}
 
-	last := len(node.untried) - 1
-	move := node.untried[last]
-	node.untried = node.untried[:last]
+	moveIndex := search.sampleMoveIndex(node.untried, node.branches)
+	move := node.untried[moveIndex]
+	node.untried[moveIndex] = node.untried[len(node.untried)-1]
+	node.untried = node.untried[:len(node.untried)-1]
 
 	childBranches := search.applyMove(node.branches, move)
 
@@ -323,8 +332,14 @@ func (search *TreeSearch) generateAllMoves() []Move {
 
 			for _, regime := range searchRegimes {
 				for _, unit := range searchUnits {
+					values := search.profile.AdaptiveValues(
+						category,
+						unit,
+						search.maxThresholds,
+					)
+
 					for _, condition := range searchConditions {
-						for _, quantile := range searchQuantiles {
+						for _, value := range values {
 							for _, action := range actions {
 								moves = append(moves, Move{
 									category:    category,
@@ -332,7 +347,7 @@ func (search *TreeSearch) generateAllMoves() []Move {
 									regime:      regime,
 									condition:   condition,
 									unit:        unit,
-									quantile:    quantile,
+									value:       value,
 									action:      action,
 								})
 							}

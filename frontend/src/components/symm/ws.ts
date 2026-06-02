@@ -13,8 +13,10 @@ export const registerTradeChart = (
 		volume: number;
 	}) => void,
 ) => {
-	unregisterFns.get(symbol)?.();
+	unregisterTradeChart(symbol);
 	unregisterFns.set(symbol, OhlcDataProvider.registerSymbol(symbol, appendBar));
+
+	return () => unregisterTradeChart(symbol);
 };
 
 export const unregisterTradeChart = (symbol: string) => {

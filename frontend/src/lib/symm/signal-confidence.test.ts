@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -27,3 +28,4 @@ describe("formatSignalConfidence", () => {
 		expect(formatSignalConfidence(3.492)).toBe("87.3");
 	});
 });
+

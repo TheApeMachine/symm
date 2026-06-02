@@ -1,3 +1,4 @@
+
 import { useSyncExternalStore } from "react";
 
 import {
@@ -17,3 +18,4 @@ export const useDashboardLayout = (): LayoutDocument =>
 		getLayoutSnapshot,
 		defaultLayoutDocument,
 	);
+

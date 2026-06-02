@@ -1,3 +1,4 @@
+
 import type { WalletPayload } from "#/lib/symm/events";
 import { isWalletPayload } from "#/lib/symm/events";
 
@@ -93,3 +94,4 @@ function createWalletDataProviderImpl() {
 export type WalletStore = ReturnType<typeof createWalletDataProvider>;
 
 export const WalletDataProvider = shared;
+

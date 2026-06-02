@@ -44,15 +44,41 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 }
 
 func (desk *Desk) AddOrder(action perspectives.Action) error {
-	return errnie.Error(desk.orders.AddOrder(trading.AddParams{
+	if desk.orders.Halted() {
+		return errnie.Error(fmt.Errorf("order circuit breaker tripped"))
+	}
+
+	clOrdID := desk.NextClOrdID()
+
+	resultCh, err := desk.orders.AddOrder(trading.AddParams{
 		OrderType:  trading.OrderType(action.Type),
 		Side:       action.Side,
 		Symbol:     action.Symbol,
 		LimitPrice: action.Price,
 		OrderQty:   action.Quantity,
-		ClOrdID:    desk.NextClOrdID(),
+		ClOrdID:    clOrdID,
 		Triggers:   &trading.Triggers{},
-	}))
+	})
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	result := <-resultCh
+
+	if !result.Success {
+		if result.Error != "" {
+			return errnie.Error(fmt.Errorf(
+				"order %s rejected: %s",
+				result.ClOrdID,
+				result.Error,
+			))
+		}
+
+		return errnie.Error(fmt.Errorf("order %s rejected", result.ClOrdID))
+	}
+
+	return nil
 }
 
 func (desk *Desk) NextClOrdID() string {

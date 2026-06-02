@@ -18,6 +18,7 @@ export type LayoutPanel = {
 export type LayoutDocument = {
 	event: "layout";
 	ts: string;
+	anchor_symbol?: string;
 	panels: LayoutPanel[];
 };
 
@@ -108,6 +109,14 @@ export const normalizeLayoutDocument = (
 		sources: panel.sources?.map((source) => source.trim()).filter(Boolean),
 	})),
 });
+
+export const gaugeSourcesFor = (panel?: LayoutPanel): string[] => {
+	if (panel?.sources !== undefined && panel.sources.length > 0) {
+		return panel.sources;
+	}
+
+	return [...DEFAULT_GAUGE_SOURCES];
+};
 
 export const gaugeLabelFor = (panel: LayoutPanel, source: string): string =>
 	panel.labels?.[source] ?? source;

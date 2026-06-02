@@ -1,3 +1,4 @@
+
 import {
 	ChartModifierBase2D,
 	EChart2DModifierType,
@@ -467,3 +468,4 @@ export class NodeHoverPaletteProvider implements IPointMarkerPaletteProvider {
 		return undefined;
 	}
 }
+

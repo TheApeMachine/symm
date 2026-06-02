@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -29,3 +30,4 @@ describe("fluid visual params", () => {
 		expect(merged).toEqual(defaultFluidVisualParams());
 	});
 });
+

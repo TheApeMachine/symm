@@ -1,3 +1,4 @@
+
 import { memo, useCallback } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
@@ -22,3 +23,4 @@ export const PredictionChart = memo(function PredictionChart() {
 		/>
 	);
 });
+

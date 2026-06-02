@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 
 type ThemeMode = "light" | "dark" | "auto";
@@ -79,3 +80,4 @@ export default function ThemeToggle() {
 		</button>
 	);
 }
+

@@ -1,3 +1,4 @@
+
 export const parseTimeSec = (raw: unknown): number | undefined => {
 	if (typeof raw !== "string") {
 		return undefined;
@@ -11,3 +12,4 @@ export const parseTimeSec = (raw: unknown): number | undefined => {
 
 	return parsed / 1000;
 };
+

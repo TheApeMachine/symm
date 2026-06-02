@@ -1,3 +1,4 @@
+
 import { bench, describe } from "vitest";
 
 import {
@@ -35,3 +36,4 @@ describe("fluid-grid surface projection", () => {
 		smoothHeightmapSpatial(heightmap, 3);
 	});
 });
+

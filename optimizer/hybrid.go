@@ -173,12 +173,30 @@ func mergeDepthSeeds(
 
 func branchListKey(branches perspectives.BranchList) string {
 	canonical := perspectives.CanonicalPlaybookBranches(branches)
-	categories := categoriesInBranchList(canonical)
-	parts := make([]string, len(categories))
+	parts := make([]string, 0, len(canonical))
 
-	for index, category := range categories {
-		parts[index] = string(category)
+	for _, branch := range canonical {
+		parts = append(parts, branchFingerprint(branch))
 	}
 
-	return fmt.Sprintf("%s#%d", strings.Join(parts, "|"), reasoningDepth(canonical))
+	return strings.Join(parts, "|")
+}
+
+func branchFingerprint(branch perspectives.Branch) string {
+	children := make([]string, 0, len(branch.Branches))
+
+	for _, child := range branch.Branches {
+		children = append(children, branchFingerprint(child))
+	}
+
+	return fmt.Sprintf(
+		"%s:%d:%d:%d:%.12g:%d[%s]",
+		branch.Category,
+		branch.Observation,
+		branch.Unit,
+		branch.Condition,
+		branch.Value,
+		branch.Action.Type,
+		strings.Join(children, ","),
+	)
 }

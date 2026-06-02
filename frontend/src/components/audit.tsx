@@ -1,3 +1,4 @@
+
 import {
 	useSymmAuditRows,
 	useSymmConnected,
@@ -65,3 +66,4 @@ export const AuditPanel = () => {
 		</SidebarSection>
 	);
 };
+

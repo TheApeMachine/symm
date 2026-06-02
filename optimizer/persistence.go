@@ -215,6 +215,7 @@ func TuneMeasurements(
 				MCTSOptions: MCTSOptions{
 					Iterations:        options.MCTSIterations,
 					MaxReasoningSteps: options.MaxReasoningSteps,
+					MaxThresholds:     options.MaxThresholds,
 				},
 				SeedCount:    options.HybridSeedCount,
 				ShallowDepth: options.ShallowDepth,

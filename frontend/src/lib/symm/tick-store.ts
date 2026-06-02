@@ -1,3 +1,4 @@
+
 type Listener = () => void;
 
 let tickCount = 0;
@@ -68,3 +69,4 @@ export const TickStore = {
 		}
 	},
 };
+

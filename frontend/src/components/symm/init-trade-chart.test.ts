@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 
 import { isOhlcRow, ohlcRowToBar } from "#/components/symm/ohlc-data-provider";
@@ -41,3 +42,4 @@ describe("ohlcRowToBar", () => {
 		expect(bar.volume).toBe(3);
 	});
 });
+

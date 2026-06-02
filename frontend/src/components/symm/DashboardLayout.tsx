@@ -33,7 +33,7 @@ const ChartFallback = () => (
 	</div>
 );
 
-const useOpenChartSymbols = () => {
+const useOpenChartSymbols = (anchorSymbol?: string) => {
 	const wallet = useSymmWallet();
 
 	return useMemo(() => {
@@ -46,8 +46,12 @@ const useOpenChartSymbols = () => {
 			return open;
 		}
 
+		if (anchorSymbol !== undefined && anchorSymbol.length > 0) {
+			return [anchorSymbol];
+		}
+
 		return ["BTC/EUR"];
-	}, [wallet.currency, wallet.inventory]);
+	}, [wallet.currency, wallet.inventory, anchorSymbol]);
 };
 
 const SurfacePanel = ({ panel }: { panel: LayoutPanel }) => (
@@ -60,7 +64,7 @@ const SurfacePanel = ({ panel }: { panel: LayoutPanel }) => (
 
 export const DashboardLayout = () => {
 	const layout = useDashboardLayout();
-	const chartSymbols = useOpenChartSymbols();
+	const chartSymbols = useOpenChartSymbols(layout.anchor_symbol);
 	const gaugePanel = panelsByType(layout, "gauge_grid")[0];
 	const surfacePanel = panelsByType(layout, "surface")[0];
 
@@ -91,7 +95,7 @@ export const DashboardLayout = () => {
 								{
 									key: "heatmap",
 									label: "Signal Map",
-									content: <SignalHeatmap />,
+									content: <SignalHeatmap panel={gaugePanel} />,
 								},
 							]}
 						/>
@@ -123,7 +127,7 @@ export const DashboardLayout = () => {
 								label: "Signal Map",
 								content: (
 									<div className="min-h-0 flex-1 p-1">
-										<SignalHeatmap />
+										<SignalHeatmap panel={gaugePanel} />
 									</div>
 								),
 							},

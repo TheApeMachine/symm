@@ -1,3 +1,4 @@
+
 import { bench, describe } from "vitest";
 
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
@@ -85,3 +86,4 @@ describe("TradesDataProvider", () => {
 		}
 	});
 });
+

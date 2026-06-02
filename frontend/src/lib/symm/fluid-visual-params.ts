@@ -1,3 +1,4 @@
+
 export type FluidVisualParams = {
 	yMin: number;
 	yMax: number;
@@ -150,3 +151,4 @@ export const saveFluidVisualParams = (params: FluidVisualParams): void => {
 		console.warn("failed to persist fluid visual params", error);
 	}
 };
+

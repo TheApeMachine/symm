@@ -1,3 +1,4 @@
+
 import { useState, type ReactNode } from "react";
 
 export type PanelTab = {
@@ -64,3 +65,4 @@ export const PanelTabs = ({ id, tabs, className = "" }: PanelTabsProps) => {
 		</div>
 	);
 };
+

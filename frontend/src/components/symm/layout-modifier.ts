@@ -1,3 +1,4 @@
+
 import {
 	applyOpacityToHtmlColor,
 	ChartModifierBase2D,
@@ -226,3 +227,4 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		});
 	}
 }
+

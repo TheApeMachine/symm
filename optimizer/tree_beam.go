@@ -72,6 +72,8 @@ func (search *ScanSearch) emitNestedGateExpansions(
 			continue
 		}
 
+		search.recordNestedGateAffinity(survivor, gate)
+
 		if !send(scanCandidate{
 			branches: nested,
 			group:    survivorGroup(survivor),
@@ -81,4 +83,19 @@ func (search *ScanSearch) emitNestedGateExpansions(
 	}
 
 	return true
+}
+
+func (search *ScanSearch) recordNestedGateAffinity(
+	survivor CandidateScore, gate perspectives.Branch,
+) {
+	if search.pairAffinity == nil {
+		return
+	}
+
+	entryCategory := primaryEntryCategory(survivor.Branches)
+	search.pairAffinity.RecordNestedGate(
+		entryCategory,
+		gate.Category,
+		survivor.AdjustedScore,
+	)
 }

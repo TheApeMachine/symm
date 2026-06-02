@@ -161,6 +161,11 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	if err := conn.WriteJSON(LayoutDocument()); err != nil {
+		hub.dropClient(conn, err)
+		return
+	}
+
 	if err := hub.writeHeartbeat(conn, hub.tickSeq.Load()); err != nil {
 		hub.dropClient(conn, err)
 		return

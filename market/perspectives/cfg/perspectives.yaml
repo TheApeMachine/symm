@@ -12,7 +12,7 @@ branches:
       observation: holding
       condition: '>='
       unit: snr
-      value: 0.3536397438686685
+      value: 0.006907263057069473
       value_set: true
       action:
         type: stop_loss

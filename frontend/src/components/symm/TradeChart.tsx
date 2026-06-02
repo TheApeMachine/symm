@@ -1,3 +1,4 @@
+
 import { memo, useCallback } from "react";
 import { SciChartGroup, SciChartReact } from "scichart-react";
 
@@ -69,3 +70,4 @@ export const TradeChartGrid = memo(function TradeChartGrid({
 		</div>
 	);
 });
+

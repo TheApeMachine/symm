@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 )
 
 func TestNewSet(t *testing.T) {
@@ -56,13 +57,26 @@ func TestSetRemove(t *testing.T) {
 	})
 }
 
+func TestAnchorSymbol(t *testing.T) {
+	Convey("Given market config", t, func() {
+		viper.Set("market.anchor_symbol", "ETH/EUR")
+		viper.Set("market.default_symbols", []string{"BTC/EUR"})
+
+		Convey("It should prefer market.anchor_symbol", func() {
+			So(AnchorSymbol(), ShouldEqual, "ETH/EUR")
+		})
+	})
+}
+
 func TestSetStreams(t *testing.T) {
 	Convey("Given a focus set with one open position", t, func() {
+		viper.Set("market.anchor_symbol", "")
+		viper.Set("market.default_symbols", []string{"BTC/EUR"})
 		set := NewSet()
 		set.Add("ALGO/EUR")
 
 		Convey("It should always stream the anchor symbol", func() {
-			So(set.Streams(AnchorSymbol), ShouldBeTrue)
+			So(set.Streams(AnchorSymbol()), ShouldBeTrue)
 		})
 
 		Convey("It should stream only the anchor and open positions", func() {

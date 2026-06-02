@@ -1,3 +1,4 @@
+
 export type OhlcBar = {
 	sec: number;
 	open: number;
@@ -152,6 +153,8 @@ const barsToArrays = (bars: OhlcBar[]): OhlcVArrays => {
 
 type SymbolSink = (bar: OhlcBar) => void;
 
+const MAX_HISTORY_BARS = 2_000;
+
 const emptyArrays = (): OhlcVArrays => ({
 	xValues: [],
 	openValues: [],
@@ -230,6 +233,10 @@ class OhlcDataProviderImpl {
 			bars.push(bar);
 		}
 
+		if (bars.length > MAX_HISTORY_BARS) {
+			bars.splice(0, bars.length - MAX_HISTORY_BARS);
+		}
+
 		this.history.set(symbol, bars);
 		this.sinks.get(symbol)?.(bar);
 	}
@@ -298,3 +305,4 @@ function createOhlcDataProviderImpl(): OhlcDataProviderApi {
 export type OhlcStore = ReturnType<typeof createOhlcDataProvider>;
 
 export const OhlcDataProvider: OhlcDataProviderApi = shared;
+

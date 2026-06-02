@@ -53,6 +53,7 @@ type scanCandidate struct {
 
 type scanResult struct {
 	candidate     scanCandidate
+	branches      perspectives.BranchList
 	rawScore      float64
 	adjustedScore float64
 	closedTrades  int
@@ -299,7 +300,9 @@ func (search *ScanSearch) score(
 	var workers sync.WaitGroup
 
 	for range search.options.Workers {
-		workers.Go(func() {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
 
 			for candidate := range candidates {
 				canonical := perspectives.CanonicalPlaybookBranches(
@@ -311,15 +314,14 @@ func (search *ScanSearch) score(
 				rawScore := replay.Score
 
 				results <- scanResult{
-					candidate: candidate,
-					rawScore:  rawScore,
-					adjustedScore: search.guard.AdjustedScore(
-						rawScore, canonical,
-					),
-					closedTrades: replay.ClosedTrades,
+					candidate:     candidate,
+					branches:      canonical,
+					rawScore:      rawScore,
+					adjustedScore: search.guard.AdjustedScore(rawScore, canonical),
+					closedTrades:  replay.ClosedTrades,
 				}
 			}
-		})
+		}()
 	}
 
 	go func() {
@@ -366,9 +368,7 @@ func (search *ScanSearch) reserveCandidate() (int, bool) {
 }
 
 func (search *ScanSearch) accept(result scanResult) {
-	canonical := perspectives.CanonicalPlaybookBranches(
-		result.candidate.branches,
-	)
+	canonical := result.branches
 	entry := CandidateScore{
 		Candidate:     result.candidate.index,
 		Score:         result.rawScore,
@@ -506,35 +506,100 @@ func (search *ScanSearch) rankedEntryBranchers() []perspectives.Branch {
 
 	type rankedBrancher struct {
 		branch perspectives.Branch
+		score  float64
 		passes int
 	}
 
 	ranked := make([]rankedBrancher, 0, len(branchers))
+	byCategory := make(map[perspectives.CategoryType][]rankedBrancher)
 
 	for _, brancher := range branchers {
-		ranked = append(ranked, rankedBrancher{
+		passes := search.profile.GatePassCount(
+			brancher.Category,
+			brancher.Unit,
+			brancher.Condition,
+			brancher.Value,
+		)
+		entry := rankedBrancher{
 			branch: brancher,
-			passes: search.profile.GatePassCount(
+			score: search.profile.GateSelectivityScore(
 				brancher.Category,
 				brancher.Unit,
 				brancher.Condition,
 				brancher.Value,
 			),
+			passes: passes,
+		}
+
+		ranked = append(ranked, entry)
+		byCategory[brancher.Category] = append(byCategory[brancher.Category], entry)
+	}
+
+	less := func(left, right rankedBrancher) bool {
+		if left.score != right.score {
+			return left.score > right.score
+		}
+
+		return left.passes > right.passes
+	}
+
+	for category := range byCategory {
+		sort.Slice(byCategory[category], func(leftIndex, rightIndex int) bool {
+			return less(byCategory[category][leftIndex], byCategory[category][rightIndex])
 		})
 	}
 
 	sort.Slice(ranked, func(leftIndex, rightIndex int) bool {
-		return ranked[leftIndex].passes > ranked[rightIndex].passes
+		return less(ranked[leftIndex], ranked[rightIndex])
 	})
 
 	limited := make([]perspectives.Branch, 0, search.options.BeamWidth)
+	seen := make(map[string]struct{}, search.options.BeamWidth)
+	categories := search.profile.Categories()
 
-	for index := range search.options.BeamWidth {
-		if index >= len(ranked) {
+	for layer := 0; len(limited) < search.options.BeamWidth; layer++ {
+		progress := false
+
+		for _, category := range categories {
+			candidates := byCategory[category]
+
+			if layer >= len(candidates) {
+				continue
+			}
+
+			key := branchFingerprint(candidates[layer].branch)
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			limited = append(limited, candidates[layer].branch)
+			seen[key] = struct{}{}
+			progress = true
+
+			if len(limited) == search.options.BeamWidth {
+				return limited
+			}
+		}
+
+		if !progress {
+			break
+		}
+	}
+
+	for _, candidate := range ranked {
+		if len(limited) == search.options.BeamWidth {
 			break
 		}
 
-		limited = append(limited, ranked[index].branch)
+		key := branchFingerprint(candidate.branch)
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		limited = append(limited, candidate.branch)
+		seen[key] = struct{}{}
 	}
 
 	return limited

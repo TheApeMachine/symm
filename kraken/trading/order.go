@@ -128,12 +128,13 @@ type Ack struct {
 }
 
 /*
-Client sends order frames to kraken:private.
+Client sends order frames to kraken:private and tracks acknowledgements.
 */
 type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	orders *qpool.BroadcastGroup
+	ledger *Ledger
 }
 
 func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
@@ -145,16 +146,36 @@ func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 		orders: pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond),
 	}
 
+	ledger, err := NewLedger(ctx, pool, orderClient.orders)
+
+	if err != nil {
+		cancel()
+
+		return nil, errnie.Error(err)
+	}
+
+	orderClient.ledger = ledger
+
+	go func() {
+		if runErr := ledger.Run(); runErr != nil {
+			errnie.Error(runErr)
+		}
+	}()
+
 	return orderClient, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    orderClient.ctx,
 		"cancel": orderClient.cancel,
 		"orders": orderClient.orders,
+		"ledger": orderClient.ledger,
 	}))
 }
 
+func (client *Client) Halted() bool {
+	return client.ledger.Halted()
+}
+
 /*
-send publishes an order frame on the private broadcast. Delivery is fire-and-forget:
-BroadcastGroup.Send does not surface subscriber back-pressure or handler errors.
+send publishes an order frame on the private broadcast.
 */
 func (client *Client) send(payload fiber.Map) error {
 	client.orders.Send(&qpool.QValue[any]{
@@ -165,11 +186,29 @@ func (client *Client) send(payload fiber.Map) error {
 	return nil
 }
 
-func (client *Client) AddOrder(params AddParams) error {
-	return errnie.Error(client.send(fiber.Map{
+func (client *Client) AddOrder(params AddParams) (<-chan OrderResult, error) {
+	if params.ClOrdID == "" {
+		return nil, errnie.Error(errnie.Require(map[string]any{
+			"params.ClOrdID": params.ClOrdID,
+		}))
+	}
+
+	if client.Halted() {
+		return nil, errnie.Error(errnie.Require(map[string]any{
+			"halted": client.Halted(),
+		}))
+	}
+
+	resultCh := client.ledger.Register(params.ClOrdID)
+
+	if err := client.send(fiber.Map{
 		"method": MethodAddOrder,
 		"params": params,
-	}))
+	}); err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	return resultCh, nil
 }
 
 func (client *Client) AmendOrder(params AmendParams) error {
@@ -223,6 +262,10 @@ func (client *Client) EditOrder(params EditParams) error {
 
 func (client *Client) Close() error {
 	client.cancel()
+
+	if client.ledger != nil {
+		return client.ledger.Close()
+	}
 
 	return nil
 }

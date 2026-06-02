@@ -1,3 +1,4 @@
+
 import { memo } from "react";
 
 import ThemeToggle from "#/components/ThemeToggle";
@@ -60,3 +61,4 @@ export const DashboardHeader = memo(function DashboardHeader() {
 		</header>
 	);
 });
+

@@ -1,3 +1,4 @@
+
 import {
 	AnnotationHoverModifier,
 	DiscontinuousDateAxis,
@@ -394,3 +395,4 @@ registerType(
 	},
 	true,
 );
+

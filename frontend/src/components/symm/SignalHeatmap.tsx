@@ -16,44 +16,29 @@ import {
 } from "scichart";
 import { SciChartReact } from "scichart-react";
 
-import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
+import type { ConfidenceStore } from "#/components/symm/confidence-data-provider";
+import {
+	gaugeLabelFor,
+	gaugeSourcesFor,
+	type LayoutPanel,
+} from "#/lib/symm/layout-schema";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 
-const SOURCES = [
-	"hawkes",
-	"fluid",
-	"pumpdump",
-	"causal",
-	"depthflow",
-	"leadlag",
-	"liquidity",
-	"sentiment",
-] as const;
-
-const SOURCE_LABELS: Record<string, string> = {
-	hawkes: "Hawkes",
-	fluid: "Fluid",
-	pumpdump: "Pump",
-	causal: "Causal",
-	depthflow: "Depth",
-	leadlag: "L-Lag",
-	liquidity: "Basis",
-	sentiment: "Sent",
-};
-
-// Rolling window: how many time columns to keep
 const TIME_COLS = 120;
-// Publish a new column every 500ms
 const TICK_MS = 500;
 
-const initSignalHeatmap = async (rootElement: string | HTMLDivElement) => {
+const initSignalHeatmap = async (
+	rootElement: string | HTMLDivElement,
+	sources: readonly string[],
+	panel?: LayoutPanel,
+) => {
 	await ensureSciChartWasm();
 
 	const { sciChartSurface, wasmContext } =
 		await SciChartSurface.create(rootElement);
 
-	const nRows = SOURCES.length;
-	// zValues[row][col]: row = source index, col = time step (oldest → newest)
+	const nRows = sources.length;
 	const zValues = zeroArray2D([nRows, TIME_COLS]);
 
 	sciChartSurface.xAxes.add(
@@ -101,13 +86,16 @@ const initSignalHeatmap = async (rootElement: string | HTMLDivElement) => {
 		}),
 	);
 
-	// Source name overlays — pinned to the left edge of each row
-	for (let i = 0; i < SOURCES.length; i++) {
+	const labelPanel = panel ?? { type: "gauge_grid" as const };
+
+	for (let index = 0; index < sources.length; index++) {
+		const source = sources[index];
+
 		sciChartSurface.annotations.add(
 			new TextAnnotation({
-				text: SOURCE_LABELS[SOURCES[i]] ?? SOURCES[i],
+				text: gaugeLabelFor(labelPanel, source),
 				x1: 1,
-				y1: i,
+				y1: index,
 				xCoordinateMode: ECoordinateMode.DataValue,
 				yCoordinateMode: ECoordinateMode.DataValue,
 				horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
@@ -143,23 +131,44 @@ const initSignalHeatmap = async (rootElement: string | HTMLDivElement) => {
 
 type Controls = { push: (values: number[]) => void };
 
-export const SignalHeatmap = memo(function SignalHeatmap() {
-	const onInit = useCallback((result: { controls: Controls }) => {
-		const tick = () => {
-			const snapshot = ConfidenceDataProvider.snapshot();
-			const values = SOURCES.map((src) => snapshot.get(src)?.confidence ?? 0);
-			result.controls.push(values);
-		};
+type SignalHeatmapProps = {
+	panel?: LayoutPanel;
+};
 
-		tick();
-		const timer = setInterval(tick, TICK_MS);
+export const SignalHeatmap = memo(function SignalHeatmap({
+	panel,
+}: SignalHeatmapProps) {
+	const stores = useSymmTelemetryStores();
+	const sources = gaugeSourcesFor(panel);
 
-		return () => clearInterval(timer);
-	}, []);
+	const initChart = useCallback(
+		(rootElement: string | HTMLDivElement) =>
+			initSignalHeatmap(rootElement, sources, panel),
+		[sources, panel],
+	);
+
+	const onInit = useCallback(
+		(result: { controls: Controls }) => {
+			const tick = (confidence: ConfidenceStore) => {
+				const snapshot = confidence.snapshot();
+				const values = sources.map(
+					(source) => snapshot.get(source)?.confidence ?? 0,
+				);
+				result.controls.push(values);
+			};
+
+			tick(stores.confidence);
+			const timer = setInterval(() => tick(stores.confidence), TICK_MS);
+
+			return () => clearInterval(timer);
+		},
+		[sources, stores.confidence],
+	);
 
 	return (
 		<SciChartReact
-			initChart={initSignalHeatmap}
+			key={sources.join(",")}
+			initChart={initChart}
 			onInit={onInit}
 			className="h-full w-full"
 		/>

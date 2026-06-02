@@ -1,3 +1,4 @@
+
 interface Props {
 	connected: boolean;
 	message?: string;
@@ -13,3 +14,4 @@ export const EmptyHint = ({ connected, message }: Props) => {
 		</p>
 	);
 };
+

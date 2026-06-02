@@ -1,3 +1,4 @@
+
 interface Props {
 	allow: boolean;
 	inPlay: boolean;
@@ -24,3 +25,4 @@ export const VerdictBadge = ({ allow, inPlay }: Props) => {
 		</span>
 	);
 };
+

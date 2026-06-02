@@ -53,3 +53,29 @@ func countLTEValues(values []float64, threshold float64) int {
 		return values[index] > threshold
 	})
 }
+
+func (profile *Profile) GateSelectivityScore(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+	condition perspectives.ConditionType,
+	threshold float64,
+) float64 {
+	profile.PrepareCache()
+
+	categoryTotal := profile.categoryCounts[category]
+
+	if categoryTotal == 0 || profile.Len() == 0 {
+		return 0
+	}
+
+	passes := profile.GatePassCount(category, unit, condition, threshold)
+
+	if passes == 0 {
+		return 0
+	}
+
+	categoryWeight := float64(categoryTotal) / float64(profile.Len())
+	passRate := float64(passes) / float64(categoryTotal)
+
+	return categoryWeight * gateSelectivity(passRate)
+}

@@ -1,3 +1,4 @@
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { TradesDataProvider } from "#/components/symm/trades-data-provider";
@@ -104,3 +105,4 @@ describe("TradesDataProvider", () => {
 		expect(TradesDataProvider.snapshot()).not.toBe(first);
 	});
 });
+

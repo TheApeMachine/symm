@@ -1,3 +1,4 @@
+
 /** Wire protocol events pushed over ws://host/ws */
 
 export type SymmEventName =
@@ -75,6 +76,7 @@ export type EnginePulseEvent = SymmEvent & {
 	ticker_ready?: number;
 	symbols_total?: number;
 	fluid_sampled?: number;
+	fluid_warming?: number;
 	avg_prediction?: number;
 	avg_prediction_multiple?: number;
 	avg_required_return?: number;
@@ -82,6 +84,14 @@ export type EnginePulseEvent = SymmEvent & {
 	avg_error_multiple?: number;
 	forecast_symbols?: number;
 	scaled_forecast_symbols?: number;
+	forecast_rejects?: Record<string, number>;
+	signals?: Array<{
+		symbol: string;
+		source: string;
+		score: number;
+		regime: string;
+		reason: string;
+	}>;
 };
 
 export type TickEvent = SymmEvent & {
@@ -109,6 +119,7 @@ export type AuditEvent = SymmEvent & {
 
 export type DecisionRow = {
 	symbol: string;
+	source?: string;
 	regime: string;
 	reason: string;
 	score: number;
@@ -123,6 +134,9 @@ export type EvaluationRow = {
 	combined: number;
 	allow: boolean;
 	why: string;
+	support?: number;
+	expected_return?: number;
+	required_edge?: number;
 	signals: { source: string; confidence: number }[];
 };
 
@@ -387,3 +401,4 @@ export const isHelloEvent = (
 
 	return (raw as Record<string, unknown>).event === "hello";
 };
+

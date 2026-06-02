@@ -44,8 +44,6 @@ var (
 		perspectives.ActionTrailingStopLimit,
 		perspectives.ActionSettlePosition,
 	}
-
-	searchQuantiles = []float64{0.25, 0.5, 0.75}
 )
 
 /*
@@ -58,6 +56,6 @@ type Move struct {
 	regime      perspectives.Regime
 	condition   perspectives.ConditionType
 	unit        perspectives.UnitType
-	quantile    float64
+	value       float64
 	action      perspectives.ActionType
 }

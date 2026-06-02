@@ -1,3 +1,4 @@
+
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 import type { SciChart3DSurface } from "scichart";
@@ -102,3 +103,4 @@ export const FluidSurfaceChart = memo(function FluidSurfaceChart() {
 		</Flex.Column>
 	);
 });
+

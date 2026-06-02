@@ -1,3 +1,4 @@
+
 import {
 	useSymmConnected,
 	useSymmTradePanelRows,
@@ -121,3 +122,4 @@ export const TradesPanel = () => {
 		</SidebarSection>
 	);
 };
+

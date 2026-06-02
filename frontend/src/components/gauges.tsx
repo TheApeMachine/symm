@@ -2,7 +2,6 @@ import { memo, useCallback, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 
 import {
-	ConfidenceDataProvider,
 	type ConfidenceFactor,
 	formatConfidenceFactor,
 } from "#/components/symm/confidence-data-provider";
@@ -11,8 +10,10 @@ import { formatSignalConfidence } from "#/lib/symm/signal-confidence";
 import {
 	defaultLayoutDocument,
 	gaugeLabelFor,
+	gaugeSourcesFor,
 	type LayoutPanel,
 } from "#/lib/symm/layout-schema";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 import "#/lib/symm/scichart-setup";
 
 type SignalGaugeProps = {
@@ -41,6 +42,7 @@ const GaugeFactorTooltip = ({
 };
 
 const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
+	const stores = useSymmTelemetryStores();
 	const [confidence, setConfidence] = useState(0);
 	const [factors, setFactors] = useState<ConfidenceFactor[]>([]);
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
@@ -53,7 +55,8 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 
 	const onInit = useCallback(
 		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
-			const latest = ConfidenceDataProvider.snapshot().get(source);
+			const confidenceStore = stores.confidence;
+			const latest = confidenceStore.snapshot().get(source);
 
 			if (latest !== undefined) {
 				result.controls.update(latest.confidence);
@@ -61,21 +64,18 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 				setFactors(latest.factors ?? []);
 			}
 
-			const unregister = ConfidenceDataProvider.registerSource(
-				source,
-				(row) => {
-					result.controls.update(row.confidence);
-					setConfidence(row.confidence);
-					setFactors(row.factors ?? []);
-				},
-			);
+			const unregister = confidenceStore.registerSource(source, (row) => {
+				result.controls.update(row.confidence);
+				setConfidence(row.confidence);
+				setFactors(row.factors ?? []);
+			});
 
 			return () => {
 				unregister();
 				result.controls.dispose();
 			};
 		},
-		[source],
+		[source, stores.confidence],
 	);
 
 	return (
@@ -96,7 +96,7 @@ export const Gauges = ({ panel }: { panel?: LayoutPanel }) => {
 		panel ??
 		defaultLayoutDocument().panels.find((entry) => entry.type === "gauge_grid");
 
-	const sources = gaugePanel?.sources ?? [];
+	const sources = gaugeSourcesFor(gaugePanel);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col overflow-hidden rounded border border-(--dash-border) bg-(--dash-panel) p-1">

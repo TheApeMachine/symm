@@ -132,6 +132,38 @@ func (profile *Profile) Values(
 	return sampleValues(values, limit)
 }
 
+/*
+AdaptiveValues returns representative in-sample thresholds for stochastic search.
+
+Unlike Values, which treats limit <= 0 as "all unique values" for exhaustive
+beam scans, AdaptiveValues derives a compact threshold set from the observed
+distribution when no explicit limit is supplied. This keeps MCTS moves tied to
+current market conditions without hard-coding a small quantile grid.
+*/
+func (profile *Profile) AdaptiveValues(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+	limit int,
+) []float64 {
+	profile.PrepareCache()
+
+	values := uniqueSortedValues(profile.sortedValues[profileValueKey(category, unit)])
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	if limit <= 0 {
+		limit = adaptiveThresholdLimit(len(values))
+	}
+
+	if len(values) <= limit {
+		return values
+	}
+
+	return sampleValues(values, limit)
+}
+
 func (profile *Profile) value(
 	row perspectives.Measurement,
 	unit perspectives.UnitType,
@@ -203,4 +235,28 @@ func sampleValues(values []float64, limit int) []float64 {
 	}
 
 	return sampled
+}
+
+func adaptiveThresholdLimit(valueCount int) int {
+	if valueCount <= 0 {
+		return 0
+	}
+
+	if valueCount <= 3 {
+		return valueCount
+	}
+
+	// Square-root growth gives richer thresholds in volatile tapes while avoiding
+	// an exploding MCTS branching factor on long captures.
+	limit := int(math.Round(math.Sqrt(float64(valueCount))))
+
+	if limit < 3 {
+		return 3
+	}
+
+	if limit > 16 {
+		return 16
+	}
+
+	return limit
 }

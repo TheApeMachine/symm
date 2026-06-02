@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -34,3 +35,4 @@ describe("priceLabelDecimals", () => {
 		expect(priceLabelDecimals(5000)).toBe(0);
 	});
 });
+

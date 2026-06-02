@@ -2,14 +2,43 @@ package focus
 
 import (
 	"maps"
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-AnchorSymbol always streams on the UI bus alongside symbols with open positions.
+AnchorSymbol returns the symbol that always streams on the UI bus alongside
+symbols with open positions. It is read from market.anchor_symbol, then the
+first market.default_symbols entry.
 */
-const AnchorSymbol = "BTC/EUR"
+func AnchorSymbol() string {
+	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
+
+	if anchor != "" {
+		return anchor
+	}
+
+	defaults := viper.GetStringSlice("market.default_symbols")
+
+	if len(defaults) > 0 {
+		first := strings.TrimSpace(defaults[0])
+
+		if first != "" {
+			return first
+		}
+	}
+
+	errnie.Error(errnie.Require(map[string]any{
+		"market.anchor_symbol":   viper.GetString("market.anchor_symbol"),
+		"market.default_symbols": defaults,
+	}))
+
+	return ""
+}
 
 /*
 Set is the shared set of symbols with an open position. The trader is its only
@@ -71,7 +100,7 @@ func (set *Set) Has(symbol string) bool {
 Streams reports whether symbol should publish per-pair UI telemetry.
 */
 func (set *Set) Streams(symbol string) bool {
-	if symbol == AnchorSymbol {
+	if symbol == AnchorSymbol() {
 		return true
 	}
 

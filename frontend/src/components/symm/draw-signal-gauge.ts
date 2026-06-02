@@ -1,3 +1,4 @@
+
 import {
 	EAxisAlignment,
 	ECoordinateMode,
@@ -229,3 +230,4 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 		} satisfies SignalGaugeControls,
 	};
 };
+

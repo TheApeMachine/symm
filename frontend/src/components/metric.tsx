@@ -1,3 +1,4 @@
+
 interface Props {
 	label: string;
 	value: string;
@@ -16,3 +17,4 @@ export const Metric = ({ label, value, tone }: Props) => {
 		</div>
 	);
 };
+

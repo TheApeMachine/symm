@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
@@ -87,6 +88,7 @@ func TestEmit(t *testing.T) {
 
 func TestPublishField(t *testing.T) {
 	Convey("Given a fluid signal bound to the focus set", t, func() {
+		viper.Set("market.default_symbols", []string{"BTC/EUR"})
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
@@ -105,11 +107,11 @@ func TestPublishField(t *testing.T) {
 		})
 		unfocused.FeedBook(bookSnapshot("ETH/EUR", 99, 10, 101, 6))
 
-		anchor := signal.state(focus.AnchorSymbol)
+		anchor := signal.state(focus.AnchorSymbol())
 		anchor.FeedTicker(market.TickerUpdate{
-			Symbol: focus.AnchorSymbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
+			Symbol: focus.AnchorSymbol(), Last: 100, Bid: 99, Ask: 101, Volume: 1000,
 		})
-		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol, 99, 10, 101, 6))
+		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol(), 99, 10, 101, 6))
 
 		signal.publishField(anchor)
 

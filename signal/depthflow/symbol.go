@@ -24,22 +24,22 @@ Kraken sends a snapshot then checksum-verified deltas; the maintained market.Boo
 is folded locally so imbalance reads reflect the full book, not the last delta slice.
 */
 type DepthSymbol struct {
-	mu                    sync.RWMutex
-	symbol                string
-	book                  market.Book
-	bookReady             bool
-	bookDiverged          bool
-	bookDepth             int
-	decayLambda           float64
+	mu                     sync.RWMutex
+	symbol                 string
+	book                   market.Book
+	bookReady              bool
+	bookDiverged           bool
+	bookDepth              int
+	decayLambda            float64
 	spoofWeightedThreshold float64
-	spoofLevel1Reject     float64
-	last                  float64
-	bid          float64
-	ask          float64
-	buyPressure  float64
-	pressure     *adaptive.EMA
-	score        *numeric.Derived
-	tracked      *perspectives.Category
+	spoofLevel1Reject      float64
+	last                   float64
+	bid                    float64
+	ask                    float64
+	buyPressure            float64
+	pressure               *adaptive.EMA
+	score                  *numeric.Derived
+	tracked                *perspectives.Category
 }
 
 func NewDepthSymbol(symbol string) *DepthSymbol {

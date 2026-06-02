@@ -1,3 +1,4 @@
+
 export type ConfidenceFactor = {
 	name: string;
 	value: number;
@@ -152,3 +153,4 @@ export const ConfidenceDataProvider = shared;
 
 export const formatConfidenceFactor = (factor: ConfidenceFactor): string =>
 	`${factor.name}=${factor.value.toFixed(4)}`;
+

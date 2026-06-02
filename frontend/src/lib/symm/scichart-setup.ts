@@ -1,3 +1,4 @@
+
 import {
 	SciChart3DSurface,
 	SciChartDefaults,
@@ -63,3 +64,4 @@ export const ensureSciChartWasm = async (): Promise<void> => {
 if (typeof window !== "undefined") {
 	void ensureSciChartWasm();
 }
+

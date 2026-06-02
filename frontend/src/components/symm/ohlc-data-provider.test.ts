@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -213,3 +214,4 @@ describe("OhlcDataProvider.getRandomOHLCVData", () => {
 		expect(data.openValues).toHaveLength(data.xValues.length);
 	});
 });
+

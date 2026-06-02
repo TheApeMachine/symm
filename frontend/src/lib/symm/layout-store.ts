@@ -1,3 +1,4 @@
+
 import {
 	defaultLayoutDocument,
 	isLayoutDocument,
@@ -51,3 +52,4 @@ class LayoutStoreImpl {
 export const LayoutStore = new LayoutStoreImpl();
 
 export const createLayoutStore = () => new LayoutStoreImpl();
+

@@ -1,3 +1,4 @@
+
 import {
 	SciChartSurface,
 	NumericAxis,
@@ -139,3 +140,4 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		controls: { appendReading },
 	};
 };
+

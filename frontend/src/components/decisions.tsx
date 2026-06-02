@@ -1,3 +1,4 @@
+
 import {
 	useSymmConnected,
 	useSymmDecisionTrace,
@@ -209,7 +210,7 @@ const EvaluationTable = ({ evaluations }: { evaluations: EvaluationRow[] }) => (
 						<td className="px-3 py-1.5 font-medium">{row.symbol}</td>
 						<td className="px-2 py-1.5 text-right tabular-nums">
 							{row.combined.toFixed(3)}
-							{row.support > 1 ? (
+							{(row.support ?? 0) > 1 ? (
 								<span className="ml-1 text-(--dash-muted)">×{row.support}</span>
 							) : null}
 						</td>
@@ -275,3 +276,4 @@ const SignalTable = ({
 		</table>
 	</div>
 );
+

@@ -14,7 +14,7 @@ import (
 
 func TestLoadMeasurements(t *testing.T) {
 	convey.Convey("Given a measurement JSONL file", t, func() {
-		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		path := filepath.Join(t.TempDir(), "capture.jsonl")
 		raw := []byte(
 			`{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":2,"Last":100}` + "\n" +
 				`{"Symbol":"BTC/EUR","Source":12,"Category":"aggressive_drive","SNR":3,"Last":101}` + "\n",
@@ -34,7 +34,7 @@ func TestLoadMeasurements(t *testing.T) {
 	})
 
 	convey.Convey("Given a tape with a truncated tail line", t, func() {
-		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		path := filepath.Join(t.TempDir(), "capture.jsonl")
 		raw := []byte(
 			`{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":2,"Last":100}` + "\n" +
 				`{"a` + "\n",
@@ -52,7 +52,7 @@ func TestLoadMeasurements(t *testing.T) {
 	})
 
 	convey.Convey("Given only malformed measurement lines", t, func() {
-		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		path := filepath.Join(t.TempDir(), "capture.jsonl")
 		raw := []byte(`{bad` + "\n" + `{"incomplete":` + "\n")
 
 		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)

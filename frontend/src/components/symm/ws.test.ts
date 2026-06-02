@@ -1,3 +1,4 @@
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { OhlcBar } from "#/components/symm/ohlc-data-provider";
@@ -38,3 +39,4 @@ describe("registerTradeChart", () => {
 		expect(bars[0]?.close).toBe(1.5);
 	});
 });
+

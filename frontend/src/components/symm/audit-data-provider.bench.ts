@@ -1,3 +1,4 @@
+
 import { bench, describe } from "vitest";
 
 import { AuditDataProvider } from "#/components/symm/audit-data-provider";
@@ -19,3 +20,4 @@ describe("AuditDataProvider", () => {
 		}
 	});
 });
+

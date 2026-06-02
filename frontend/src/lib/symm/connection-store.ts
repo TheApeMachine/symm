@@ -1,3 +1,4 @@
+
 type Listener = () => void;
 
 const createStore = <T>(initial: T) => {
@@ -26,3 +27,4 @@ const createStore = <T>(initial: T) => {
 export const ConnectionStore = createStore(false);
 
 export const useConnectionStore = () => ConnectionStore;
+

@@ -1,3 +1,4 @@
+
 import { memo, useCallback, type ChangeEvent } from "react";
 
 import { Flex } from "#/components/ui/flex";
@@ -72,3 +73,4 @@ export const FluidVisualEditor = memo(function FluidVisualEditor({
 		</Flex.Column>
 	);
 });
+

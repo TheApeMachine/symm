@@ -4,25 +4,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func valuePassesGate(
-	value float64,
-	threshold float64,
-	condition perspectives.ConditionType,
-) bool {
-	switch condition {
-	case perspectives.ConditionIsGreaterThanOrEqual:
-		return value >= threshold
-	case perspectives.ConditionIsLessThanOrEqual:
-		return value <= threshold
-	case perspectives.ConditionIsGreaterThan:
-		return value > threshold
-	case perspectives.ConditionIsLessThan:
-		return value < threshold
-	default:
-		return false
-	}
-}
-
 func (search *TreeSearch) branchFromMove(move Move) perspectives.Branch {
 	return perspectives.Branch{
 		Category:    move.category,
@@ -30,7 +11,7 @@ func (search *TreeSearch) branchFromMove(move Move) perspectives.Branch {
 		Regime:      move.regime,
 		Condition:   move.condition,
 		Unit:        move.unit,
-		Value:       search.profile.Quantile(move.category, move.unit, move.quantile),
+		Value:       move.value,
 		ValueSet:    true,
 		Action: perspectives.Action{
 			Type: move.action,
@@ -41,8 +22,6 @@ func (search *TreeSearch) branchFromMove(move Move) perspectives.Branch {
 func (search *TreeSearch) moveReachable(
 	move Move, branches perspectives.BranchList,
 ) bool {
-	threshold := search.profile.Quantile(move.category, move.unit, move.quantile)
-
 	if search.profile.categoryCount(move.category) == 0 {
 		return false
 	}
@@ -54,7 +33,7 @@ func (search *TreeSearch) moveReachable(
 	}
 
 	return search.profile.GatePassCount(
-		move.category, move.unit, move.condition, threshold,
+		move.category, move.unit, move.condition, move.value,
 	) > 0
 }
 
@@ -116,10 +95,11 @@ func (search *TreeSearch) moveCompatible(
 	}
 }
 
-func (search *TreeSearch) moveWeight(move Move) float64 {
-	threshold := search.profile.Quantile(move.category, move.unit, move.quantile)
+func (search *TreeSearch) moveWeightForBranches(
+	move Move, branches perspectives.BranchList,
+) float64 {
 	passes := search.profile.GatePassCount(
-		move.category, move.unit, move.condition, threshold,
+		move.category, move.unit, move.condition, move.value,
 	)
 
 	if passes == 0 {
@@ -134,8 +114,13 @@ func (search *TreeSearch) moveWeight(move Move) float64 {
 
 	categoryFrac := float64(categoryTotal) / float64(search.profile.Len())
 	passRate := float64(passes) / float64(categoryTotal)
+	selectivity := gateSelectivity(passRate)
 
-	return categoryFrac * passRate
+	if selectivity <= 0 {
+		return 0
+	}
+
+	return categoryFrac * selectivity * categoryNovelty(branches, move.category)
 }
 
 func (search *TreeSearch) reachableMoves(
@@ -174,7 +159,7 @@ func (search *TreeSearch) sampleRolloutMove(
 			continue
 		}
 
-		weight := search.moveWeight(move)
+		weight := search.moveWeightForBranches(move, branches)
 
 		if weight <= 0 {
 			continue
@@ -206,4 +191,77 @@ func (search *TreeSearch) sampleRolloutMove(
 	}
 
 	return weighted[len(weighted)-1]
+}
+
+func (search *TreeSearch) sampleMoveIndex(
+	moves []Move, branches perspectives.BranchList,
+) int {
+	if len(moves) <= 1 {
+		return 0
+	}
+
+	total := 0.0
+	weights := make([]float64, len(moves))
+
+	for index, move := range moves {
+		weight := search.moveWeightForBranches(move, branches)
+
+		if weight <= 0 {
+			continue
+		}
+
+		weights[index] = weight
+		total += weight
+	}
+
+	if total <= 0 {
+		return search.rng.Intn(len(moves))
+	}
+
+	pick := search.rng.Float64() * total
+
+	for index, weight := range weights {
+		pick -= weight
+
+		if pick <= 0 {
+			return index
+		}
+	}
+
+	return len(moves) - 1
+}
+
+func gateSelectivity(passRate float64) float64 {
+	if passRate <= 0 || passRate >= 1 {
+		return 0
+	}
+
+	return 4 * passRate * (1 - passRate)
+}
+
+func categoryNovelty(
+	branches perspectives.BranchList, category perspectives.CategoryType,
+) float64 {
+	occurrences := countCategoryInBranches(branches, category)
+
+	return 1 / float64(occurrences+1)
+}
+
+func countCategoryInBranches(
+	branches perspectives.BranchList, category perspectives.CategoryType,
+) int {
+	count := 0
+
+	for _, branch := range branches {
+		if branch.Category == category {
+			count++
+		}
+
+		count += countCategoryInBranches(
+			perspectives.BranchList(branch.Branches),
+			category,
+		)
+	}
+
+	return count
 }

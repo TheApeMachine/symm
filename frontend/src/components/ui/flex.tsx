@@ -1,3 +1,4 @@
+
 import { cva, type VariantProps } from "class-variance-authority";
 import {
 	type HTMLMotionProps,
@@ -5,7 +6,7 @@ import {
 	motion,
 } from "motion/react";
 import type React from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "#/lib/utils";
 
 export { AnimatePresence } from "motion/react";
 
@@ -271,6 +272,7 @@ Flex.Row = ({
 	return (
 		<Flex
 			direction="row"
+			className={className}
 			fullHeight={fullHeight}
 			fullWidth={fullWidth}
 			{...props}
@@ -290,6 +292,7 @@ Flex.Column = ({
 	return (
 		<Flex
 			direction="column"
+			className={className}
 			fullHeight={fullHeight}
 			fullWidth={fullWidth}
 			{...props}
@@ -316,3 +319,4 @@ Flex.Center = ({
 		</Flex>
 	);
 };
+

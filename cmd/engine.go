@@ -56,7 +56,10 @@ func (engine *Engine) Start() error {
 			name = systemType.Elem().String()
 		}
 
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
 			fmt.Println("[symm] tick:start", name)
 
 			if err := system.Tick(); err != nil {
@@ -70,7 +73,7 @@ func (engine *Engine) Start() error {
 			}
 
 			fmt.Println("[symm] tick:stop", name)
-		})
+		}()
 	}
 
 	wg.Wait()

@@ -1,3 +1,4 @@
+
 import { createLazyFileRoute } from "@tanstack/react-router";
 
 import { DashboardHeader } from "#/components/header";
@@ -31,3 +32,4 @@ const TradingDashboard = () => {
 export const Route = createLazyFileRoute("/")({
 	component: TradingDashboard,
 });
+

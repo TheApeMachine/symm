@@ -1,3 +1,4 @@
+
 import type { IThemeProvider } from "scichart";
 import { SciChartJsNavyTheme } from "scichart";
 
@@ -157,3 +158,4 @@ export class SciChart2022AppTheme implements AppThemeBase {
 }
 
 export const appTheme = new SciChart2022AppTheme();
+

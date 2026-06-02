@@ -1,3 +1,4 @@
+
 import type { ExecutionFill, WalletPayload } from "#/lib/symm/events";
 import { isExecutionFill, isWalletPayload } from "#/lib/symm/events";
 
@@ -18,7 +19,6 @@ export type TradePanelRow = {
 type Listener = () => void;
 
 const MAX_OPEN = 12;
-const MAX_FILLS = 12;
 
 const positionEconomics = (
 	symbol: string,
@@ -55,7 +55,6 @@ Open positions are driven by wallet snapshots; fills come from execution events.
 */
 class TradesDataProviderImpl {
 	private openRows: TradePanelRow[] = [];
-	private fillRows: TradePanelRow[] = [];
 	private panelRows: readonly TradePanelRow[] = [];
 	private listeners = new Set<Listener>();
 	private markFallback = new Map<string, number>();
@@ -73,7 +72,7 @@ class TradesDataProviderImpl {
 	}
 
 	private rebuildPanelRows() {
-		this.panelRows = [...this.openRows, ...this.fillRows];
+		this.panelRows = [...this.openRows];
 	}
 
 	setMark(symbol: string, markPrice: number) {
@@ -175,23 +174,10 @@ class TradesDataProviderImpl {
 		this.notify();
 	}
 
-	ingestFill(fill: ExecutionFill) {
-		const kind: "enter" | "exit" = fill.Side === "buy" ? "enter" : "exit";
-
-		const row: TradePanelRow = {
-			key: `fill:${fill.OrderID}`,
-			kind,
-			symbol: fill.Symbol,
-			side: fill.Side,
-			qty: fill.Qty,
-			price: fill.Price,
-			notionalEur: fill.Qty * fill.Price,
-		};
-
-		// Prepend newest fill; drop oldest beyond cap.
-		this.fillRows = [row, ...this.fillRows].slice(0, MAX_FILLS);
-		this.rebuildPanelRows();
-		this.notify();
+	ingestFill(_fill: ExecutionFill) {
+		// Open cards are derived from wallet inventory snapshots. Execution fills can
+		// arrive before the wallet frame and used to create duplicate transient rows,
+		// so the sidebar keeps fills out of the visible snapshot.
 	}
 
 	ingest(raw: unknown) {
@@ -209,7 +195,6 @@ class TradesDataProviderImpl {
 
 	reset() {
 		this.openRows = [];
-		this.fillRows = [];
 		this.panelRows = [];
 		this.markFallback.clear();
 		this.notify();
@@ -236,3 +221,4 @@ function createTradesDataProviderImpl() {
 export type TradesStore = ReturnType<typeof createTradesDataProvider>;
 
 export const TradesDataProvider = shared;
+

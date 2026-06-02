@@ -1,3 +1,4 @@
+
 import { bench, describe } from "vitest";
 
 import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
@@ -18,3 +19,4 @@ describe("ConfidenceDataProvider", () => {
 		});
 	});
 });
+

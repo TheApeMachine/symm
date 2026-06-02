@@ -1,3 +1,4 @@
+
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 
 import { useSymmStream } from "#/lib/symm/ws-stream";
@@ -54,3 +55,4 @@ function RootStream({ children }: { children: React.ReactNode }) {
 		</html>
 	);
 }
+

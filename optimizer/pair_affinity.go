@@ -195,7 +195,7 @@ func rankGatesByAffinity(
 	gates []perspectives.Branch,
 	profile *Profile,
 ) []perspectives.Branch {
-	if len(gates) <= 1 {
+	if index == nil || len(gates) <= 1 {
 		return gates
 	}
 
@@ -209,6 +209,17 @@ func rankGatesByAffinity(
 
 		if leftPrior != rightPrior {
 			return leftPrior > rightPrior
+		}
+
+		leftScore := profile.GateSelectivityScore(
+			left.Category, left.Unit, left.Condition, left.Value,
+		)
+		rightScore := profile.GateSelectivityScore(
+			right.Category, right.Unit, right.Condition, right.Value,
+		)
+
+		if leftScore != rightScore {
+			return leftScore > rightScore
 		}
 
 		leftPasses := profile.GatePassCount(

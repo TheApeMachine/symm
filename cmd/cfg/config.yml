@@ -1,54 +1,33 @@
-trading:
-  model: paper
-
-  paper:
-    wallet_eur: 200.0
-    stress_enabled: true
-
-  replay:
-    file: runs/capture.jsonl
-    loop: true
-    pace: 50ms
-    log:
-      stdout: true
-    perturb:
-      enabled: true
-      seed: 0
-      qty_jitter_sigma: 0.05
-      timestamp_jitter: 50ms
-
-  record:
-    file: runs/capture.jsonl
-
-  audit:
-    file: runs/audit.jsonl
-
 market:
+  quote_currency: EUR
   symbols: []
+  anchor_symbol: ""
   default_symbols:
     - BTC/EUR
-  quote_currency: EUR
-  max_scan_symbols: 64
-  book_depth_levels: 5
-  subscribe_batch: 50
+  max_scan_symbols: 0
+  book_depth_levels: 10
+
+trading:
+  order_ack_timeout: 500ms
+  model: paper
+  record:
+    file: runs/capture.jsonl
+  replay:
+    file: runs/capture.jsonl
+  paper:
+    wallet_eur: 200
+
+optimizer:
+  tune:
+    candidate_report: ""
 
 signals:
-  book_depth_decay_lambda: 1000
   spoof_weighted_threshold: 0.5
-  spoof_level1_reject: -0.1
-  min_fill_to_cancel_ratio: 0.15
-  book_flux_window: 10s
-  fractional_diff_order: 0.4
-  fractional_diff_width: 16
-  volume_clock_bars_per_day: 0
-  hawkes_fit_cooldown: 5s
+  min_fill_to_cancel_ratio: 0.1
+  hawkes_fit_cooldown: 5
   causal:
-    contagion_window: 128
-    contagion_min_samples: 16
-    contagion_break: 0.9
+    contagion_break: 0.8
     condition_switch: 1000
 
 ui:
-  addr: ":8765"
-  telemetry_buffer: 512
-  heartbeat_interval: 250ms
+  heartbeat_interval: 5s

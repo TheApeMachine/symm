@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	defaultLayoutDocument,
+	gaugeSourcesFor,
 	isLayoutDocument,
 } from "#/lib/symm/layout-schema";
 import {
@@ -14,6 +15,26 @@ describe("layout schema", () => {
 		const layout = defaultLayoutDocument();
 		expect(isLayoutDocument(layout)).toBe(true);
 		expect(layout.panels.some((panel) => panel.type === "surface")).toBe(true);
+	});
+
+	it("derives gauge sources from layout panels", () => {
+		expect(
+			gaugeSourcesFor({
+				type: "gauge_grid",
+				sources: ["fluid", "hawkes"],
+			}),
+		).toEqual(["fluid", "hawkes"]);
+	});
+
+	it("accepts layout payloads with anchor_symbol", () => {
+		expect(
+			isLayoutDocument({
+				event: "layout",
+				ts: "2026-06-02T00:00:00Z",
+				anchor_symbol: "ETH/EUR",
+				panels: [{ type: "audit_panel" }],
+			}),
+		).toBe(true);
 	});
 
 	it("reads nested height matrices", () => {

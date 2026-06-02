@@ -1,3 +1,4 @@
+
 import { bench, describe } from "vitest";
 
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
@@ -35,3 +36,4 @@ describe("PredictionsDataProvider", () => {
 		});
 	});
 });
+

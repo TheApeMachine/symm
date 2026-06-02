@@ -1,3 +1,4 @@
+
 import {
 	AnnotationHoverModifier,
 	DiscontinuousDateAxis,
@@ -288,9 +289,13 @@ export const initTradeChart = async (
 	let userControlsViewport = false;
 
 	const setXVisibleRange = (range: NumberRange) => {
-		suppressViewportTracking = false;
-		xAxis.visibleRange = range;
-		suppressViewportTracking = false;
+		suppressViewportTracking = true;
+
+		try {
+			xAxis.visibleRange = range;
+		} finally {
+			suppressViewportTracking = false;
+		}
 	};
 
 	const onVisibleRangeChanged = () => {
@@ -298,7 +303,7 @@ export const initTradeChart = async (
 			return;
 		}
 
-		userControlsViewport = false;
+		userControlsViewport = true;
 	};
 
 	xAxis.visibleRangeChanged.subscribe(onVisibleRangeChanged);
@@ -636,3 +641,4 @@ registerType(
 	},
 	true,
 );
+

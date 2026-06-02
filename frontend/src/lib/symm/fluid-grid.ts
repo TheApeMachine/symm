@@ -1,3 +1,4 @@
+
 import type { FieldSnapshotEvent, FluidSymbolRow } from "#/lib/symm/events";
 
 export const FLUID_GRID_SIZE = 32;
@@ -597,3 +598,4 @@ export function gridFromSnapshot(
 ): FluidGrid {
 	return buildFluidGrid(snapshot.symbols ?? [], size);
 }
+

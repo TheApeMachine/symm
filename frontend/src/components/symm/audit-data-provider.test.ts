@@ -1,3 +1,4 @@
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { AuditDataProvider } from "#/components/symm/audit-data-provider";
@@ -87,3 +88,4 @@ describe("AuditDataProvider", () => {
 		expect(AuditDataProvider.snapshot()).toEqual([]);
 	});
 });
+
