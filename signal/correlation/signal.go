@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -27,7 +28,8 @@ const (
 	correlationBatchInterval = 250 * time.Millisecond
 	// energyFloor excludes coins whose variance is below this fraction of the slow
 	// market-energy baseline — dead-flat and illiquid coins cannot vote as herd.
-	energyFloor = 0.0625
+	energyFloor     = 0.0625
+	rawSubscriberID = "signal/correlation:raw"
 )
 
 /*
@@ -117,10 +119,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/correlation ready")
 
 	return signal
 }
@@ -215,19 +219,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					if trade.Price > 0 {
 						latest[trade.Symbol] = trade.Price
 					}
@@ -385,6 +383,7 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) {
 			Confidence: coin.state.pipe.Confidence(),
 		}
 		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+		activate.Once("signal/correlation:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }

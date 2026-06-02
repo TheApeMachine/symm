@@ -4,7 +4,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-const maxBranchDepth = 2
+const maxReasoningSteps = DefaultMaxReasoningSteps
 
 var (
 	searchObservations = []perspectives.ObservationType{
@@ -79,10 +79,10 @@ func (search *TreeSearch) moves(
 		len(searchConditions) *
 		len(searchQuantiles) *
 		len(searchExitActions) *
-		maxBranchDepth
+		maxReasoningSteps
 	moves := make([]Move, 0, moveCount)
 
-	for depth := 0; depth < maxBranchDepth; depth++ {
+	for depth := 0; depth < maxReasoningSteps; depth++ {
 		if depth > 0 && len(branches) == 0 {
 			continue
 		}

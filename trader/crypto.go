@@ -2,15 +2,21 @@ package trader
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
-	"github.com/theapemachine/symm/market/perspectives"
+)
+
+const (
+	cryptoRawSubscriberID     = "trader/crypto:raw"
+	cryptoActionsSubscriberID = "trader/crypto:actions"
 )
 
 /*
@@ -24,6 +30,9 @@ type Crypto struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	desk        *broker.Desk
+	auditSeq    atomic.Int64
+	cash        float64
+	inventory   map[string]float64
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
@@ -35,6 +44,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 		ui:          pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
+		inventory:   make(map[string]float64),
 		desk: errnie.Does(func() (*broker.Desk, error) {
 			return broker.NewDesk(ctx, pool)
 		}).Or(func(err error) {
@@ -44,37 +54,56 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 
 	for _, channel := range []string{"raw", "actions"} {
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(channel, 128)
+
+		subscriberID := cryptoRawSubscriberID
+
+		if channel == "actions" {
+			subscriberID = cryptoActionsSubscriberID
+		}
+
+		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(subscriberID, 128)
 	}
+
+	crypto.subscribers["ui:resync"] = pool.CreateBroadcastGroup(
+		"ui:resync", 10*time.Millisecond,
+	).Subscribe("trader/crypto:resync", 128)
+
+	user.NewBalance(pool)
+
+	activate.Boot("trader/crypto ready")
 
 	return crypto
 }
 
 func (crypto *Crypto) Tick() error {
-	cash := 0.0
-	inventory := make(map[string]float64)
 	quote := quoteCurrency()
 
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case row, ok := <-crypto.subscribers["actions"].Incoming:
+		case _, ok := <-crypto.subscribers["ui:resync"].Incoming:
 			if !ok {
-				return nil
+				return crypto.ctx.Err()
 			}
 
-			if row == nil {
-				continue
-			}
+			crypto.resendWallet()
+		// case row, ok := <-crypto.subscribers["actions"].Incoming:
+		// 	if !ok {
+		// 		return nil
+		// 	}
 
-			action, actionOK := row.Value.(perspectives.Action)
+		// 	if row == nil {
+		// 		continue
+		// 	}
 
-			if !actionOK {
-				continue
-			}
+		// 	action, actionOK := row.Value.(perspectives.Action)
 
-			errnie.Error(crypto.desk.AddOrder(action))
+		// 	if !actionOK {
+		// 		continue
+		// 	}
+
+		// 	errnie.Error(crypto.desk.AddOrder(action))
 		case message := <-crypto.subscribers["raw"].Incoming:
 			if message == nil || message.Value == nil {
 				continue
@@ -86,40 +115,34 @@ func (crypto *Crypto) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "executions":
-					execution := errnie.Does(func() (user.Execution, error) {
-						return user.DecodeExecution(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
+			switch envelope.Channel {
+			case public.ExecutionsChannel:
+				activate.Once("trader/crypto:executions-channel")
 
+				for _, execution := range errnie.Does(func() ([]user.Execution, error) {
+					return user.DecodeExecutions(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					crypto.publishFill(execution)
-				case "balances":
-					for _, row := range errnie.Does(func() ([]user.Balance, error) {
-						return user.DecodeBalances(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value() {
-						if isQuoteAsset(row.Asset, quote) {
-							cash = row.Balance
-							continue
-						}
+				}
+			case public.BalancesChannel:
+				activate.Once("trader/crypto:balances-channel")
 
-						if row.Balance > 0 {
-							inventory[row.Asset] = row.Balance
-							continue
-						}
-
-						delete(inventory, row.Asset)
+				for _, balance := range errnie.Does(func() ([]user.Balance, error) {
+					return user.DecodeBalances(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
+					if isQuoteAsset(balance.Asset, quote) {
+						crypto.cash = balance.Balance
+					} else if balance.Balance > 0 {
+						crypto.inventory[balance.Asset] = balance.Balance
+					} else {
+						delete(crypto.inventory, balance.Asset)
 					}
 
-					crypto.sendWallet(cash, inventory)
+					crypto.sendWallet(crypto.cash, crypto.inventory)
 				}
 			}
 		}
@@ -131,6 +154,10 @@ func (crypto *Crypto) publishFill(execution user.Execution) {
 		return
 	}
 
+	activate.Once("trader/crypto:fill")
+
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+
 	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"OrderID": execution.OrderID,
 		"Symbol":  execution.Symbol,
@@ -138,6 +165,25 @@ func (crypto *Crypto) publishFill(execution user.Execution) {
 		"Qty":     execution.LastQty,
 		"Price":   execution.LastPrice,
 	}})
+
+	auditEvent := "entry"
+	if execution.Side == "sell" {
+		auditEvent = "exit"
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":       "audit",
+		"ts":          ts,
+		"audit_event": auditEvent,
+		"seq":         crypto.auditSeq.Add(1),
+		"symbol":      execution.Symbol,
+		"source":      "trader",
+		"reason":      execution.OrderID,
+	}})
+}
+
+func (crypto *Crypto) resendWallet() {
+	crypto.sendWallet(crypto.cash, crypto.inventory)
 }
 
 func (crypto *Crypto) sendWallet(cash float64, inventory map[string]float64) {

@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"container/ring"
 	"context"
+	"fmt"
 	"io"
+	"math"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -35,6 +39,7 @@ type Story struct {
 	lastGauge   map[string]time.Time
 	recordFile  *os.File
 	recorder    *bufio.Writer
+	pulseSeq    atomic.Int64
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q) *Story {
@@ -71,6 +76,8 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
 		storyMeasurementsSubscriberID, 128,
 	)
+
+	activate.Boot("market/story ready")
 
 	return story
 }
@@ -114,18 +121,21 @@ func (story *Story) Tick() error {
 				}})
 			}
 
-			if len(latestMark) > 0 {
-				now := time.Now().UTC().Format(time.RFC3339Nano)
+			now := time.Now()
+			nowStr := now.UTC().Format(time.RFC3339Nano)
 
+			if len(latestMark) > 0 {
 				for symbol, price := range latestMark {
 					story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 						"event":  "mark",
-						"ts":     now,
+						"ts":     nowStr,
 						"symbol": symbol,
 						"price":  price,
 					}})
 				}
 			}
+
+			story.publishEnginePulse(latestConf, nowStr)
 
 		case row, ok := <-incoming:
 			if !ok {
@@ -146,18 +156,29 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			if story.recorder != nil {
-				raw, err := sonic.Marshal(measurement)
+			activate.Once("market/story:measurement source=" + measurement.Source.String())
 
-				if err != nil {
-					errnie.Error(err)
+			if story.recorder != nil {
+				recorded := measurement
+
+				if recorded.At.IsZero() {
+					recorded.At = time.Now().UTC()
 				}
 
-				errnie.Debug("story.Tick", "measurement row", string(raw))
-				_, err = story.recorder.Write(append(raw, '\n'))
-
-				if err != nil {
+				raw := errnie.Does(func() ([]byte, error) {
+					return sonic.Marshal(recorded)
+				}).Or(func(err error) {
 					errnie.Error(err)
+				}).Value()
+
+				activate.Once("market/story:recording")
+
+				if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
+					errnie.Error(writeErr)
+				}
+
+				if flushErr := story.recorder.Flush(); flushErr != nil {
+					errnie.Error(flushErr)
 				}
 			}
 
@@ -208,13 +229,63 @@ func (story *Story) Tick() error {
 				}).Or(func(err error) {
 					errnie.Error(err)
 				}).Value())
+
+				activate.Once(fmt.Sprintf(
+					"market/story:playbook-tree trees=%d",
+					len(story.trees),
+				))
 			}
 
 			for _, action := range actions {
+				activate.Once("market/story:action")
 				story.broadcasts["actions"].Send(&qpool.QValue[any]{Value: action})
 			}
 		}
 	}
+}
+
+// publishEnginePulse emits a system-health summary derived from the latest
+// per-source confidence map. The prediction chart plots avg_prediction_multiple.
+func (story *Story) publishEnginePulse(latestConf map[string]float64, ts string) {
+	seq := story.pulseSeq.Add(1)
+
+	if len(latestConf) == 0 {
+		story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":        "engine_pulse",
+			"ts":           ts,
+			"seq":          seq,
+			"phase":        "ticking",
+			"measurements": 0,
+			"open":         0,
+		}})
+		return
+	}
+
+	var sum float64
+	for _, v := range latestConf {
+		sum += v
+	}
+	avg := sum / float64(len(latestConf))
+
+	var variance float64
+	for _, v := range latestConf {
+		d := v - avg
+		variance += d * d
+	}
+	stddev := math.Sqrt(variance / float64(len(latestConf)))
+
+	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":                   "engine_pulse",
+		"ts":                      ts,
+		"seq":                     seq,
+		"phase":                   "ticking",
+		"measurements":            len(latestConf),
+		"open":                    0,
+		"avg_prediction":          avg,
+		"avg_prediction_multiple": avg,
+		"avg_error":               stddev,
+		"avg_error_multiple":      stddev,
+	}})
 }
 
 /*

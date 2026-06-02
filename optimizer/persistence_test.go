@@ -22,13 +22,32 @@ func TestLoadMeasurements(t *testing.T) {
 
 		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
 
-		rows, err := LoadMeasurements(path)
+		rows, skipped, err := LoadMeasurements(path)
 
 		convey.Convey("It should decode each measurement row", func() {
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(skipped, convey.ShouldEqual, 0)
 			convey.So(len(rows), convey.ShouldEqual, 2)
 			convey.So(rows[0].Category, convey.ShouldEqual, perspectives.CategoryLaminar)
 			convey.So(rows[1].Source, convey.ShouldEqual, perspectives.SourceCVD)
+		})
+	})
+
+	convey.Convey("Given a tape with a truncated tail line", t, func() {
+		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		raw := []byte(
+			`{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":2,"Last":100}` + "\n" +
+				`{"a` + "\n",
+		)
+
+		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
+
+		rows, skipped, err := LoadMeasurements(path)
+
+		convey.Convey("It should load valid rows and skip the tail fragment", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(skipped, convey.ShouldEqual, 1)
+			convey.So(len(rows), convey.ShouldEqual, 1)
 		})
 	})
 }

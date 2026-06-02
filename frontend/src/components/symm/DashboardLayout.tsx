@@ -1,11 +1,13 @@
 import { Suspense, lazy, useMemo } from "react";
 
 import { AuditPanel } from "#/components/audit";
-import { TradesPanel } from "#/components/trades";
 import { Gauges } from "#/components/gauges";
+import { PanelTabs } from "#/components/symm/PanelTabs";
+import { SignalHeatmap } from "#/components/symm/SignalHeatmap";
+import { TradesPanel } from "#/components/trades";
 import { panelsByType, type LayoutPanel } from "#/lib/symm/layout-schema";
-import { useDashboardLayout } from "#/lib/symm/use-dashboard-layout";
 import { useSymmWallet } from "#/lib/symm/use-dashboard-data";
+import { useDashboardLayout } from "#/lib/symm/use-dashboard-layout";
 
 const PredictionChart = lazy(() =>
 	import("#/components/symm/PredictionChart").then((module) => ({
@@ -62,34 +64,82 @@ export const DashboardLayout = () => {
 	const gaugePanel = panelsByType(layout, "gauge_grid")[0];
 	const surfacePanel = panelsByType(layout, "surface")[0];
 
+	const hasPrediction = panelsByType(layout, "prediction_chart").length > 0;
+	const hasTradeGrid = panelsByType(layout, "trade_grid").length > 0;
+	const hasTradesPanel = panelsByType(layout, "trades_panel").length > 0;
+	const hasAuditPanel = panelsByType(layout, "audit_panel").length > 0;
+
 	return (
 		<div className="dashboard-workspace">
 			<section className="dashboard-primary">
 				<div className="dashboard-top-row">
-					{panelsByType(layout, "prediction_chart").length > 0 ? (
-						<Suspense fallback={<ChartFallback />}>
-							<PredictionChart />
-						</Suspense>
+					{/* Top-left: Prediction chart OR signal heatmap */}
+					{hasPrediction ? (
+						<PanelTabs
+							id="top-left"
+							className="rounded border border-(--dash-border) bg-(--dash-panel)"
+							tabs={[
+								{
+									key: "prediction",
+									label: "Prediction",
+									content: (
+										<Suspense fallback={<ChartFallback />}>
+											<PredictionChart />
+										</Suspense>
+									),
+								},
+								{
+									key: "heatmap",
+									label: "Signal Map",
+									content: <SignalHeatmap />,
+								},
+							]}
+						/>
 					) : null}
+
+					{/* Top-right: Gauges */}
 					{gaugePanel !== undefined ? <Gauges panel={gaugePanel} /> : null}
 				</div>
-				{panelsByType(layout, "trade_grid").length > 0 ? (
-					<div className="dashboard-trade-panel">
-						<Suspense fallback={<ChartFallback />}>
-							<TradeChartGrid symbols={chartSymbols} />
-						</Suspense>
-					</div>
+
+				{/* Main chart area: OHLC trade charts OR signal heatmap full-width */}
+				{hasTradeGrid ? (
+					<PanelTabs
+						id="main-chart"
+						className="dashboard-trade-panel"
+						tabs={[
+							{
+								key: "candles",
+								label: "Charts",
+								content: (
+									<div className="flex min-h-0 flex-1 overflow-hidden p-1">
+										<Suspense fallback={<ChartFallback />}>
+											<TradeChartGrid symbols={chartSymbols} />
+										</Suspense>
+									</div>
+								),
+							},
+							{
+								key: "heatmap",
+								label: "Signal Map",
+								content: (
+									<div className="min-h-0 flex-1 p-1">
+										<SignalHeatmap />
+									</div>
+								),
+							},
+						]}
+					/>
 				) : null}
 			</section>
+
 			<section className="dashboard-secondary">
+				{/* Sidebar: trades + audit with tabs */}
 				<div className="dashboard-trades-strip">
-					{panelsByType(layout, "trades_panel").length > 0 ? (
-						<TradesPanel />
-					) : null}
-					{panelsByType(layout, "audit_panel").length > 0 ? (
-						<AuditPanel />
-					) : null}
+					{hasTradesPanel ? <TradesPanel /> : null}
+					{hasAuditPanel ? <AuditPanel /> : null}
 				</div>
+
+				{/* Bottom: fluid 3D surface */}
 				{surfacePanel !== undefined ? (
 					<SurfacePanel panel={surfacePanel} />
 				) : null}

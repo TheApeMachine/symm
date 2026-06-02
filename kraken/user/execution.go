@@ -79,18 +79,20 @@ func (execution *Execution) IsSnapshot() bool {
 }
 
 /*
-DecodeExecution decodes one executions data row after SplitDataRows.
+DecodeExecutions decodes every row in an executions channel message.
 */
-func DecodeExecution(row *public.SocketMessage) (Execution, error) {
-	var execution Execution
+func DecodeExecutions(message *public.SocketMessage) ([]Execution, error) {
+	var executions []Execution
 
-	if err := sonic.Unmarshal(row.Data, &execution); err != nil {
-		return Execution{}, err
+	if err := sonic.Unmarshal(message.Data, &executions); err != nil {
+		return nil, err
 	}
 
-	execution.SetEnvelopeType(row.Type)
+	for index := range executions {
+		executions[index].SetEnvelopeType(message.Type)
+	}
 
-	return execution, nil
+	return executions, nil
 }
 
 var (

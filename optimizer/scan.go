@@ -25,10 +25,12 @@ const (
 ScanOptions bounds the offline parallel branch scan.
 */
 type ScanOptions struct {
-	Workers        int
-	MaxThresholds  int
-	BeamWidth      int
-	CandidateLimit int
+	Workers           int
+	MaxThresholds     int
+	BeamWidth         int
+	CandidateLimit    int
+	MaxReasoningSteps int
+	Guard             GuardOptions
 }
 
 /*
@@ -58,6 +60,7 @@ type ScanSearch struct {
 	profile     *Profile
 	rows        []perspectives.Measurement
 	options     ScanOptions
+	guard       *OverfitGuard
 	bestScore   float64
 	bestBranch  perspectives.BranchList
 	onBest      func(BestTree)
@@ -72,35 +75,42 @@ func NewScanSearch(
 	rows []perspectives.Measurement,
 	options ScanOptions,
 ) *ScanSearch {
+	options = normalizeScanOptions(options)
+
 	return &ScanSearch{
 		ctx:     ctx,
 		profile: profile,
 		rows:    rows,
-		options: normalizeScanOptions(options),
+		options: options,
+		guard:   NewOverfitGuard(ctx, options.Guard),
 	}
 }
 
 /*
-Run scores primitive branches, parent-child paths, and entry/exit sibling pairs.
+Run scores primitive branches, sibling pairs, and nested reasoning chains.
+Each deepening pass adds one sequential gate before the action leaf.
 */
 func (search *ScanSearch) Run() (perspectives.BranchList, ScanStats) {
 	best := perspectives.BranchList{}
 	search.bestScore = search.evaluate(best)
 
 	actionBranches := search.actionBranches()
-	branchers := search.branchers()
+	branchers := search.limitedBranchers()
 
-	search.score(func(send func(scanCandidate) bool) {
-		search.emitActionBranches(send, actionBranches)
-	})
+	for depth := 1; depth <= search.options.MaxReasoningSteps; depth++ {
+		reasoningDepth := depth
 
-	search.score(func(send func(scanCandidate) bool) {
-		search.emitSiblingBranches(send, actionBranches)
-	})
+		search.score(func(send func(scanCandidate) bool) {
+			if reasoningDepth == 1 {
+				search.emitActionBranches(send, actionBranches)
+				search.emitSiblingBranches(send, actionBranches)
 
-	search.score(func(send func(scanCandidate) bool) {
-		search.emitNestedBranches(send, branchers, actionBranches)
-	})
+				return
+			}
+
+			search.emitReasoningChains(send, branchers, actionBranches, reasoningDepth)
+		})
+	}
 
 	stats := ScanStats{
 		Candidates: search.candidates,
@@ -125,6 +135,16 @@ func normalizeScanOptions(options ScanOptions) ScanOptions {
 
 	if options.CandidateLimit < 0 {
 		options.CandidateLimit = DefaultScanCandidateLimit
+	}
+
+	if options.MaxReasoningSteps <= 0 {
+		options.MaxReasoningSteps = DefaultMaxReasoningSteps
+	}
+
+	options.Guard = normalizeGuardOptions(options.Guard)
+
+	if options.Guard.MaxReasoningSteps <= 0 {
+		options.Guard.MaxReasoningSteps = options.MaxReasoningSteps
 	}
 
 	return options
@@ -195,6 +215,14 @@ func (search *ScanSearch) accept(result scanResult) {
 		})
 	}
 
+	if result.score <= search.bestScore {
+		return
+	}
+
+	if !search.guard.AcceptTrainCandidate(result.candidate.branches, search.rows) {
+		return
+	}
+
 	search.mu.Lock()
 	defer search.mu.Unlock()
 
@@ -222,7 +250,19 @@ func (search *ScanSearch) best() perspectives.BranchList {
 }
 
 func (search *ScanSearch) evaluate(branches perspectives.BranchList) float64 {
-	return NewReplaySimulation(search.ctx, branches, search.rows).Score()
+	raw := NewReplaySimulation(search.ctx, branches, search.rows).Result().Score
+
+	return search.guard.AdjustedScore(raw, branches)
+}
+
+func (search *ScanSearch) limitedBranchers() []perspectives.Branch {
+	branchers := search.branchers()
+
+	if len(branchers) <= search.options.BeamWidth {
+		return branchers
+	}
+
+	return branchers[:search.options.BeamWidth]
 }
 
 func (search *ScanSearch) actionBranches() []scanCandidate {
@@ -310,25 +350,78 @@ func (search *ScanSearch) emitActionBranches(
 	return true
 }
 
-func (search *ScanSearch) emitNestedBranches(
+func (search *ScanSearch) emitReasoningChains(
 	send func(scanCandidate) bool,
 	branchers []perspectives.Branch,
 	actions []scanCandidate,
+	targetDepth int,
 ) {
-	for _, brancher := range branchers {
-		for _, action := range actions {
-			child := action.branches[0]
-			parent := brancher
-			parent.Branches = []perspectives.Branch{child}
+	chainLength := targetDepth - 1
 
-			if !send(scanCandidate{
-				branches: perspectives.BranchList{parent},
-				group:    action.group,
-			}) {
-				return
-			}
+	for _, action := range actions {
+		leaf := action.branches[0]
+
+		if !search.emitBrancherChain(
+			send, nil, branchers, leaf, chainLength, action.group,
+		) {
+			return
 		}
 	}
+}
+
+func (search *ScanSearch) emitBrancherChain(
+	send func(scanCandidate) bool,
+	prefix []perspectives.Branch,
+	branchers []perspectives.Branch,
+	leaf perspectives.Branch,
+	remaining int,
+	group actionGroup,
+) bool {
+	if remaining == 0 {
+		root := attachLeafChain(prefix, leaf)
+
+		return send(scanCandidate{
+			branches: perspectives.BranchList{root},
+			group:    group,
+		})
+	}
+
+	for _, brancher := range branchers {
+		if len(prefix) > 0 &&
+			!isBranchCompatible(prefix[len(prefix)-1], brancher) {
+			continue
+		}
+
+		nextPrefix := append(prefix, brancher)
+
+		if !search.emitBrancherChain(
+			send, nextPrefix, branchers, leaf, remaining-1, group,
+		) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func attachLeafChain(
+	chain []perspectives.Branch, leaf perspectives.Branch,
+) perspectives.Branch {
+	if len(chain) == 0 {
+		return leaf
+	}
+
+	root := chain[0]
+	current := &root
+
+	for index := 1; index < len(chain); index++ {
+		current.Branches = []perspectives.Branch{chain[index]}
+		current = &current.Branches[0]
+	}
+
+	current.Branches = []perspectives.Branch{leaf}
+
+	return root
 }
 
 func (search *ScanSearch) emitSiblingBranches(

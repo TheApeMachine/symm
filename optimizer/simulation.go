@@ -30,11 +30,26 @@ func NewReplaySimulation(
 }
 
 /*
+ReplayResult holds realized PnL and round-trip activity from one replay pass.
+*/
+type ReplayResult struct {
+	Score        float64
+	ClosedTrades int
+}
+
+/*
 Score replays measurements and returns realized plus marked PnL.
 */
 func (simulation *ReplaySimulation) Score() float64 {
+	return simulation.Result().Score
+}
+
+/*
+Result replays measurements and returns PnL with trade activity.
+*/
+func (simulation *ReplaySimulation) Result() ReplayResult {
 	if len(simulation.rows) == 0 {
-		return 0
+		return ReplayResult{}
 	}
 
 	measurements := newReplayMeasurements()
@@ -66,7 +81,10 @@ func (simulation *ReplaySimulation) Score() float64 {
 		ledger.apply(*actionType, row)
 	}
 
-	return ledger.totalReturn(simulation.lastPrices())
+	return ReplayResult{
+		Score:        ledger.totalReturn(simulation.lastPrices()),
+		ClosedTrades: ledger.closedTrades,
+	}
 }
 
 func (simulation *ReplaySimulation) branchContext(
@@ -167,8 +185,9 @@ type replayPosition struct {
 }
 
 type replayLedger struct {
-	positions map[string]replayPosition
-	realized  float64
+	positions    map[string]replayPosition
+	realized     float64
+	closedTrades int
 }
 
 func newReplayLedger() *replayLedger {
@@ -219,6 +238,7 @@ func (ledger *replayLedger) closeLong(symbol string, price float64) {
 	}
 
 	ledger.realized += (price - position.entryPrice) / position.entryPrice
+	ledger.closedTrades++
 	delete(ledger.positions, symbol)
 }
 

@@ -7,13 +7,17 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
-const tickCapacity = 4096
+const (
+	tickCapacity    = 4096
+	rawSubscriberID = "signal/hawkes:raw"
+)
 
 /*
 Signal detects trade-cluster excitation via a bivariate self-exciting Hawkes
@@ -77,10 +81,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/hawkes ready")
 
 	return signal
 }
@@ -101,19 +107,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
 					state := stored.(*symbolState)
 					state.append(trade)
@@ -127,6 +127,7 @@ func (signal *Signal) Tick() error {
 					measurement.Symbol = trade.Symbol
 					measurement.Last = trade.Price
 					measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+					activate.Once("signal/hawkes:measurement")
 					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 				}
 			}

@@ -2,12 +2,26 @@ package user
 
 import (
 	"context"
+	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-const balanceSnapshot = "snapshot"
+const (
+	BalanceSnapshot = "snapshot"
+	BalanceUpdate   = "update"
+)
+
+/*
+SubscribeFrame is the Kraken WebSocket v2 subscribe request for balances.
+See https://docs.kraken.com/api/docs/websocket-v2/balances
+*/
+type SubscribeFrame struct {
+	Method string        `json:"method"`
+	Params BalanceParams `json:"params"`
+}
 
 /*
 TokenSource supplies short-lived authenticated WebSocket tokens for balances.
@@ -63,22 +77,7 @@ func (balance *Balance) SetEnvelopeType(kind string) {
 }
 
 func (balance *Balance) IsSnapshot() bool {
-	return balance.Envelope == balanceSnapshot
-}
-
-/*
-DecodeBalance decodes one balances data row after SplitDataRows.
-*/
-func DecodeBalance(row *public.SocketMessage) (Balance, error) {
-	var balance Balance
-
-	if err := sonic.Unmarshal(row.Data, &balance); err != nil {
-		return Balance{}, err
-	}
-
-	balance.SetEnvelopeType(row.Type)
-
-	return balance, nil
+	return balance.Envelope == BalanceSnapshot
 }
 
 /*
@@ -96,4 +95,19 @@ func DecodeBalances(message *public.SocketMessage) ([]Balance, error) {
 	}
 
 	return rows, nil
+}
+
+func NewBalance(pool *qpool.Q) {
+	pool.CreateBroadcastGroup(
+		"kraken:private", 10*time.Millisecond,
+	).Send(&qpool.QValue[any]{
+		Type: public.BalancesChannel,
+		Value: SubscribeFrame{
+			Method: "subscribe",
+			Params: BalanceParams{
+				Channel:  public.BalancesChannel,
+				Snapshot: true,
+			},
+		},
+	})
 }

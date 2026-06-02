@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -18,6 +19,8 @@ mapping book shape onto the weight-of-the-book perspective (LoadedImbalance /
 SpoofTrap / BookThinning / DenseNeutrality). Toxic near-touch walls are excluded
 via the shared toxicity tracker before distance-decay weighting.
 */
+const rawSubscriberID = "signal/depthflow:raw"
+
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -42,10 +45,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/depthflow ready")
 
 	return signal
 }
@@ -71,35 +76,29 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.observeTrade(trade)
-				case "ticker":
-					ticker := errnie.Does(func() (market.TickerUpdate, error) {
-						return market.DecodeTicker(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.TickerChannel:
+				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
+					return market.DecodeTickers(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
-				case "book":
-					delta := errnie.Does(func() (market.Book, error) {
-						return market.DecodeBook(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.BookChannel:
+				for _, delta := range errnie.Does(func() ([]market.Book, error) {
+					return market.DecodeBooks(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.state(delta.Symbol).ApplyBook(delta)
 					signal.emit(delta.Symbol)
 				}
@@ -136,6 +135,7 @@ func (signal *Signal) emit(symbol string) {
 	if ok {
 		measurement.Symbol = symbol
 		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+		activate.Once("signal/depthflow:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 }

@@ -36,6 +36,8 @@ type TuneOptions struct {
 	MaxThresholds       int
 	BeamWidth           int
 	CandidateLimit      int
+	MaxReasoningSteps   int
+	Guard               GuardOptions
 	OnBest              func(BestTree)
 	OnCandidate         func(CandidateScore)
 }
@@ -63,17 +65,19 @@ func (candidate CandidateScore) BranchCount() int {
 
 /*
 LoadMeasurements reads the JSONL measurement tape written by market.Story.
+Malformed or truncated lines are skipped; skipped counts incomplete tail rows.
 */
-func LoadMeasurements(path string) ([]perspectives.Measurement, error) {
+func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
 	file, err := os.Open(path)
 
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	defer file.Close()
 
 	rows := make([]perspectives.Measurement, 0)
+	skipped := 0
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -87,17 +91,26 @@ func LoadMeasurements(path string) ([]perspectives.Measurement, error) {
 		measurement := perspectives.Measurement{}
 
 		if err := sonic.Unmarshal([]byte(line), &measurement); err != nil {
-			return nil, fmt.Errorf("optimizer: measurement line %d: %w", lineNumber, err)
+			skipped++
+
+			continue
 		}
 
 		rows = append(rows, measurement)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, skipped, err
 	}
 
-	return rows, nil
+	if len(rows) == 0 {
+		return nil, skipped, fmt.Errorf(
+			"optimizer: no valid measurements in %s (skipped %d lines)",
+			path, skipped,
+		)
+	}
+
+	return rows, skipped, nil
 }
 
 /*
@@ -163,10 +176,12 @@ func TuneMeasurements(
 		&tuner.profile,
 		rows,
 		ScanOptions{
-			Workers:        options.Workers,
-			MaxThresholds:  options.MaxThresholds,
-			BeamWidth:      options.BeamWidth,
-			CandidateLimit: options.CandidateLimit,
+			Workers:           options.Workers,
+			MaxThresholds:     options.MaxThresholds,
+			BeamWidth:         options.BeamWidth,
+			CandidateLimit:    options.CandidateLimit,
+			MaxReasoningSteps: options.MaxReasoningSteps,
+			Guard:             options.Guard,
 		},
 	)
 	search.onBest = onBest
@@ -174,6 +189,16 @@ func TuneMeasurements(
 
 	var stats ScanStats
 	tuner.branches, stats = search.Run()
+
+	guard := NewOverfitGuard(ctx, options.Guard)
+
+	if options.Guard.WalkForward.Enabled && len(tuner.branches) > 0 {
+		ok, _ := guard.ValidateWalkForward(tuner.branches, rows)
+
+		if !ok {
+			tuner.branches = perspectives.BranchList{}
+		}
+	}
 
 	if reporter != nil {
 		if err := reporter.Close(); err != nil && writeErr == nil {

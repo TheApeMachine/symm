@@ -2,10 +2,12 @@ package toxicity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -38,7 +40,9 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 
 	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-	tox.subscribers["raw"] = raw.Subscribe("raw", 128)
+	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 128)
+
+	activate.Boot("toxicity ready l3=" + fmt.Sprint(tox.l3Active))
 
 	return tox
 }
@@ -63,71 +67,65 @@ func (tox *Toxicity) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					tox.observeTrade(trade)
-				case "ticker":
-					ticker := errnie.Does(func() (market.TickerUpdate, error) {
-						return market.DecodeTicker(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.TickerChannel:
+				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
+					return market.DecodeTickers(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
 					tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
 					tox.publishMeasurement(ticker.Symbol)
-				case "book":
-					update := errnie.Does(func() (market.Book, error) {
-						return market.DecodeBook(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.BookChannel:
+				for _, update := range errnie.Does(func() ([]market.Book, error) {
+					return market.DecodeBooks(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					if !tox.l3Active {
 						tox.observeBook(update)
 						tox.publishMeasurement(update.Symbol)
 					}
 				}
 			}
-		case message := <-tox.subscribers["level3"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+			// case message := <-tox.subscribers["level3"].Incoming:
+			// 	if message == nil || message.Value == nil {
+			// 		continue
+			// 	}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			// 	envelope, ok := message.Value.(public.SocketMessage)
 
-			if !ok {
-				continue
-			}
+			// 	if !ok {
+			// 		continue
+			// 	}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "level3":
-					update := errnie.Does(func() (market.Level3Update, error) {
-						// return market.DecodeLevel3(row)
-						return market.Level3Update{}, nil
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
+			// 	for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
+			// 		return envelope.SplitDataRows()
+			// 	}).Or(func(err error) {
+			// 		errnie.Error(err)
+			// 	}).Value() {
+			// 		switch row.Channel {
+			// 		case "level3":
+			// 			update := errnie.Does(func() (market.Level3Update, error) {
+			// 				// return market.DecodeLevel3(row)
+			// 				return market.Level3Update{}, nil
+			// 			}).Or(func(err error) {
+			// 				errnie.Error(err)
+			// 			}).Value()
 
-					tox.observeLevel3(&update)
-				}
-			}
+			// 			tox.observeLevel3(&update)
+			// 		}
+			// 	}
 		}
 	}
 }
@@ -158,6 +156,7 @@ func (tox *Toxicity) publishMeasurement(symbol string) {
 
 	measurement.Symbol = symbol
 
+	activate.Once("toxicity:measurement")
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 }
 

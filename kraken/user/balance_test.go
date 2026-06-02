@@ -11,7 +11,7 @@ func TestDecodeBalances(t *testing.T) {
 	Convey("Given a balances snapshot envelope", t, func() {
 		message := &public.SocketMessage{
 			Channel: public.BalancesChannel,
-			Type:    balanceSnapshot,
+			Type:    BalanceSnapshot,
 			Data: []byte(`[
 				{
 					"asset":"EUR",

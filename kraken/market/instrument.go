@@ -2,14 +2,17 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -96,17 +99,19 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 	}
 
 	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
-	instrument.broadcasts["instrument"] = pool.CreateBroadcastGroup("instrument", 10*time.Millisecond)
-	instrument.subscribers["instrument"] = instrument.broadcasts["instrument"].Subscribe(
+	instrument.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	instrument.subscribers["raw"] = instrument.broadcasts["raw"].Subscribe(
 		instrumentSubscriberID, 128,
 	)
+
+	activate.Boot("kraken/instrument ready")
 
 	return instrument
 }
 
 func (instrument *Instrument) Tick() error {
 	instrument.subscribersMu.RLock()
-	incoming := instrument.subscribers["instrument"].Incoming
+	incoming := instrument.subscribers["raw"].Incoming
 	publicBroadcast := instrument.broadcasts["kraken:public"]
 	instrument.subscribersMu.RUnlock()
 
@@ -129,59 +134,92 @@ func (instrument *Instrument) Tick() error {
 				continue
 			}
 
-			var update InstrumentUpdate
-
-			if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
-				errnie.Error(err)
+			if envelope.Channel != public.InstrumentsChannel {
 				continue
 			}
 
-			for _, pair := range update.Pairs {
-				if slices.Contains(instrument.Pairs, pair.Symbol) {
-					continue
-				}
-
-				instrument.Pairs = append(instrument.Pairs, pair.Symbol)
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "ticker",
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "book",
-						"depth":    1000,
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "ohlc",
-						"interval": 1,
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "trade",
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-			}
+			instrument.applyCatalogUpdate(publicBroadcast, envelope)
 		}
+	}
+}
+
+func (instrument *Instrument) applyCatalogUpdate(
+	publicBroadcast *qpool.BroadcastGroup,
+	envelope public.SocketMessage,
+) {
+	var update InstrumentUpdate
+
+	if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if len(update.Pairs) > 0 {
+		activate.Once(fmt.Sprintf(
+			"kraken/instrument:catalog pairs=%d",
+			len(update.Pairs),
+		))
+	}
+
+	watched := viper.GetStringSlice("market.symbols")
+	maxScan := viper.GetInt("market.max_scan_symbols")
+
+	for _, pair := range update.Pairs {
+		if len(watched) > 0 && !slices.Contains(watched, pair.Symbol) {
+			continue
+		}
+
+		if maxScan > 0 && len(instrument.Pairs) >= maxScan {
+			break
+		}
+
+		if slices.Contains(instrument.Pairs, pair.Symbol) {
+			continue
+		}
+
+		instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+
+		if len(instrument.Pairs) == 1 {
+			activate.Once("kraken/instrument:first-pair-subscribe")
+		}
+
+		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{
+				"channel":  "ticker",
+				"symbol":   []string{pair.Symbol},
+				"snapshot": true,
+			},
+		}})
+
+		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{
+				"channel":  "book",
+				"depth":    1000,
+				"symbol":   []string{pair.Symbol},
+				"snapshot": true,
+			},
+		}})
+
+		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{
+				"channel":  "ohlc",
+				"interval": 1,
+				"symbol":   []string{pair.Symbol},
+				"snapshot": true,
+			},
+		}})
+
+		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{
+				"channel":  "trade",
+				"symbol":   []string{pair.Symbol},
+				"snapshot": true,
+			},
+		}})
 	}
 }
 

@@ -5,34 +5,36 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-func DecodeTrade(message *public.SocketMessage) (TradeUpdate, error) {
-	var trade TradeUpdate
+func DecodeTrades(message *public.SocketMessage) ([]TradeUpdate, error) {
+	var trades []TradeUpdate
 
-	if err := sonic.Unmarshal(message.Data, &trade); err != nil {
-		return TradeUpdate{}, err
+	if err := sonic.Unmarshal(message.Data, &trades); err != nil {
+		return nil, err
 	}
 
-	return trade, nil
+	return trades, nil
 }
 
-func DecodeTicker(message *public.SocketMessage) (TickerUpdate, error) {
-	var ticker TickerUpdate
+func DecodeTickers(message *public.SocketMessage) ([]TickerUpdate, error) {
+	var tickers []TickerUpdate
 
-	if err := sonic.Unmarshal(message.Data, &ticker); err != nil {
-		return TickerUpdate{}, err
+	if err := sonic.Unmarshal(message.Data, &tickers); err != nil {
+		return nil, err
 	}
 
-	return ticker, nil
+	return tickers, nil
 }
 
-func DecodeBook(message *public.SocketMessage) (Book, error) {
-	var book Book
+func DecodeBooks(message *public.SocketMessage) ([]Book, error) {
+	var books []Book
 
-	if err := sonic.Unmarshal(message.Data, &book); err != nil {
-		return Book{}, err
+	if err := sonic.Unmarshal(message.Data, &books); err != nil {
+		return nil, err
 	}
 
-	book.SetEnvelopeType(message.Type)
+	for index := range books {
+		books[index].SetEnvelopeType(message.Type)
+	}
 
-	return book, nil
+	return books, nil
 }

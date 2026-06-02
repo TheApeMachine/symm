@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -20,6 +21,7 @@ const (
 	cvdWindow           = 15 * time.Minute // executed-flow horizon
 	minCVDFusedSamples  = 12
 	cvdFusedHistorySize = 128
+	rawSubscriberID     = "signal/cvd:raw"
 )
 
 /*
@@ -89,10 +91,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/cvd ready")
 
 	return signal
 }
@@ -190,19 +194,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.observe(trade)
 				}
 			}
@@ -255,6 +253,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		Confidence: confidence,
 	}
 	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	activate.Once("signal/cvd:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 

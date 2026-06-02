@@ -138,7 +138,7 @@ func (search *TreeSearch) expand(node *Node) *Node {
 
 func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
-	targetDepth := len(search.profile.Categories()) * maxBranchDepth
+	targetDepth := len(search.profile.Categories()) * maxReasoningSteps
 
 	for search.branchCount(branches) < targetDepth {
 		moves := search.moves(branches)

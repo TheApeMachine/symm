@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -18,6 +19,7 @@ const (
 	minAnchorMove   = 0.05
 	minLagFraction  = 0.35
 	publishInterval = 200 * time.Millisecond
+	rawSubscriberID = "signal/leadlag:raw"
 )
 
 func resolvedSymbols() []string {
@@ -85,10 +87,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/leadlag ready")
 
 	return signal
 }
@@ -109,19 +113,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "ticker":
-					ticker := errnie.Does(func() (market.TickerUpdate, error) {
-						return market.DecodeTicker(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TickerChannel:
+				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
+					return market.DecodeTickers(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					if ticker.Last <= 0 {
 						continue
 					}
@@ -174,6 +172,7 @@ func (signal *Signal) publish() {
 			measurement.Symbol = key.(string)
 			measurement.Last = follower.lastPrice()
 			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+			activate.Once("signal/leadlag:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		}
 

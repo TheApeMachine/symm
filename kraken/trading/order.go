@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	MethodAddOrder     = "add_order"
-	MethodAmendOrder   = "amend_order"
-	MethodCancelOrder  = "cancel_order"
-	MethodCancelOrders = "cancel_orders"
-	MethodBatchAdd     = "batch_add_orders"
-	MethodBatchCancel  = "batch_cancel_orders"
-	MethodEditOrder    = "edit_order"
+	MethodAddOrder             = "add_order"
+	MethodAmendOrder           = "amend_order"
+	MethodCancelOrder          = "cancel_order"
+	MethodCancelAll            = "cancel_all"
+	MethodCancelAllOrdersAfter = "cancel_all_orders_after"
+	MethodBatchAdd             = "batch_add"
+	MethodBatchCancel          = "batch_cancel"
+	MethodEditOrder            = "edit_order"
 )
 
 /*
@@ -53,7 +54,6 @@ type Triggers struct {
 
 /*
 AddParams is the params object on an add_order frame.
-The authenticated socket injects token before send.
 */
 type AddParams struct {
 	OrderType  OrderType `json:"order_type"`
@@ -62,8 +62,55 @@ type AddParams struct {
 	OrderQty   float64   `json:"order_qty,omitempty"`
 	LimitPrice float64   `json:"limit_price,omitempty"`
 	ClOrdID    string    `json:"cl_ord_id,omitempty"`
+	PostOnly   bool      `json:"post_only,omitempty"`
 	Triggers   *Triggers `json:"triggers,omitempty"`
 	Token      string    `json:"token,omitempty"`
+}
+
+type AmendParams struct {
+	OrderID    string  `json:"order_id,omitempty"`
+	ClOrdID    string  `json:"cl_ord_id,omitempty"`
+	OrderQty   float64 `json:"order_qty,omitempty"`
+	LimitPrice float64 `json:"limit_price,omitempty"`
+	Symbol     string  `json:"symbol,omitempty"`
+	Token      string  `json:"token,omitempty"`
+}
+
+type CancelParams struct {
+	OrderID      []string `json:"order_id,omitempty"`
+	ClOrdID      []string `json:"cl_ord_id,omitempty"`
+	OrderUserref []int    `json:"order_userref,omitempty"`
+	Token        string   `json:"token,omitempty"`
+}
+
+type CancelAllParams struct {
+	Token string `json:"token,omitempty"`
+}
+
+type CancelAllOrdersAfterParams struct {
+	Timeout int    `json:"timeout"`
+	Token   string `json:"token,omitempty"`
+}
+
+type BatchAddParams struct {
+	Symbol   string      `json:"symbol"`
+	Orders   []AddParams `json:"orders"`
+	Token    string      `json:"token,omitempty"`
+	Validate bool        `json:"validate,omitempty"`
+}
+
+type BatchCancelParams struct {
+	Orders  []string `json:"orders,omitempty"`
+	ClOrdID []string `json:"cl_ord_id,omitempty"`
+	Token   string   `json:"token,omitempty"`
+}
+
+type EditParams struct {
+	OrderID    string  `json:"order_id"`
+	Symbol     string  `json:"symbol"`
+	OrderQty   float64 `json:"order_qty,omitempty"`
+	LimitPrice float64 `json:"limit_price,omitempty"`
+	Token      string  `json:"token,omitempty"`
 }
 
 /*
@@ -81,8 +128,7 @@ type Ack struct {
 }
 
 /*
-Client sends order frames to the orders pool channel.
-private.WebSocket picks them up and forwards to Kraken.
+Client sends order frames to kraken:private.
 */
 type Client struct {
 	ctx    context.Context
@@ -96,7 +142,7 @@ func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 	orderClient := &Client{
 		ctx:    ctx,
 		cancel: cancel,
-		orders: pool.CreateBroadcastGroup(public.OrdersChannel, 10*time.Millisecond),
+		orders: pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond),
 	}
 
 	return orderClient, errnie.Error(errnie.Require(map[string]any{
@@ -107,7 +153,11 @@ func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 }
 
 func (client *Client) send(payload fiber.Map) error {
-	client.orders.Send(&qpool.QValue[any]{Value: payload})
+	client.orders.Send(&qpool.QValue[any]{
+		Type:  public.OrdersChannel,
+		Value: payload,
+	})
+
 	return nil
 }
 
@@ -118,70 +168,57 @@ func (client *Client) AddOrder(params AddParams) error {
 	}))
 }
 
-func (client *Client) AmendOrder(orderID string) error {
+func (client *Client) AmendOrder(params AmendParams) error {
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodAmendOrder,
-		"params": fiber.Map{"order_id": orderID},
+		"params": params,
 	}))
 }
 
-func (client *Client) CancelOrder(orderID string) error {
+func (client *Client) CancelOrder(params CancelParams) error {
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodCancelOrder,
-		"params": fiber.Map{"order_id": orderID},
+		"params": params,
 	}))
 }
 
-func (client *Client) CancelAll() error {
+func (client *Client) CancelAll(params CancelAllParams) error {
 	return errnie.Error(client.send(fiber.Map{
-		"method": MethodCancelOrders,
-		"params": fiber.Map{"cancel_all": true},
+		"method": MethodCancelAll,
+		"params": params,
 	}))
 }
 
-func (client *Client) CancelOnDisconnect() error {
+func (client *Client) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
 	return errnie.Error(client.send(fiber.Map{
-		"method": MethodCancelOrders,
-		"params": fiber.Map{"cancel_on_disconnect": true},
+		"method": MethodCancelAllOrdersAfter,
+		"params": params,
 	}))
 }
 
-func (client *Client) BatchAdd(params []AddParams) error {
+func (client *Client) BatchAdd(params BatchAddParams) error {
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodBatchAdd,
 		"params": params,
 	}))
 }
 
-func (client *Client) BatchCancel(orderIDs []string) error {
+func (client *Client) BatchCancel(params BatchCancelParams) error {
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodBatchCancel,
-		"params": orderIDs,
+		"params": params,
 	}))
 }
 
-func (client *Client) EditOrder(orderID string, params AddParams) error {
-	editParams := fiber.Map{"order_id": orderID}
-
-	if params.OrderQty > 0 {
-		editParams["order_qty"] = params.OrderQty
-	}
-
-	if params.LimitPrice > 0 {
-		editParams["limit_price"] = params.LimitPrice
-	}
-
-	if params.Triggers != nil {
-		editParams["triggers"] = params.Triggers
-	}
-
+func (client *Client) EditOrder(params EditParams) error {
 	return errnie.Error(client.send(fiber.Map{
 		"method": MethodEditOrder,
-		"params": editParams,
+		"params": params,
 	}))
 }
 
 func (client *Client) Close() error {
 	client.cancel()
+
 	return nil
 }

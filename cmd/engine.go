@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -44,10 +46,20 @@ func (engine *Engine) Start() error {
 	var wg sync.WaitGroup
 
 	for _, system := range engine.systems {
+		system := system
+		name := reflect.TypeOf(system).Elem().String()
+
 		wg.Go(func() {
+			fmt.Println("[symm] tick:start", name)
+
 			if err := system.Tick(); err != nil {
+				fmt.Println("[symm] tick:stop", name, "err=", err)
 				engine.err = errors.Join(engine.err, errnie.Error(err))
+
+				return
 			}
+
+			fmt.Println("[symm] tick:stop", name)
 		})
 	}
 

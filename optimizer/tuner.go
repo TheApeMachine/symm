@@ -159,10 +159,11 @@ func (tuner *Tuner) Finish() {
 	tuner.finished = true
 	rows := tuner.profile.Rows()
 	search := NewScanSearch(tuner.ctx, &tuner.profile, rows, ScanOptions{
-		Workers:        runtime.NumCPU(),
-		MaxThresholds:  DefaultScanMaxThresholds,
-		BeamWidth:      DefaultScanBeamWidth,
-		CandidateLimit: DefaultScanCandidateLimit,
+		Workers:           runtime.NumCPU(),
+		MaxThresholds:     DefaultScanMaxThresholds,
+		BeamWidth:         DefaultScanBeamWidth,
+		CandidateLimit:    DefaultScanCandidateLimit,
+		MaxReasoningSteps: DefaultMaxReasoningSteps,
 	})
 	tuner.branches, _ = search.Run()
 

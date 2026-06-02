@@ -1,5 +1,7 @@
 package perspectives
 
+import "time"
+
 type SourceType uint8
 
 const (
@@ -61,6 +63,7 @@ sense of signal-to-noise. Perspective branches gate on SNR (UnitSNR); UnitConfid
 gates on the instantaneous clarity instead.
 */
 type Measurement struct {
+	At         time.Time `json:"at,omitempty"`
 	Symbol     string
 	Source     SourceType
 	Category   CategoryType

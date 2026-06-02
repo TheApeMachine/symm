@@ -2,6 +2,7 @@ package private
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -16,6 +18,7 @@ import (
 type WebSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	err         error
 	pool        *qpool.Q
 	conn        *websocket.Conn
 	broadcasts  map[string]*qpool.BroadcastGroup
@@ -30,8 +33,12 @@ func NewWebSocket(
 	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
 ) public.WebSocketClient {
 	if viper.GetViper().GetString("trading.model") == "paper" {
+		activate.Boot("kraken/private paper websocket")
+
 		return paper.NewWebSocket(ctx, pool)
 	}
+
+	activate.Boot("kraken/private live websocket")
 
 	rest, err := NewRest(
 		ctx, apiKey, apiSecret, public.EndpointWebSocketsToken,
@@ -58,9 +65,11 @@ func NewWebSocketFromRest(
 		subscribers: make(map[string]*qpool.Subscriber),
 	}
 
-	for _, channel := range []string{"executions", "balances", "orders"} {
+	for _, channel := range []string{"raw", "kraken:private"} {
 		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 128)
+		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
+			"kraken/private:"+channel, 128,
+		)
 	}
 
 	return ws
@@ -86,93 +95,54 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 
 	ws.conn = conn
 
+	activate.Once("kraken/private:connected:" + string(endpoint))
+
 	return nil
 }
 
 func (ws *WebSocket) Tick() error {
-	incoming := make(chan public.SocketMessage, 64)
-	readerErr := make(chan error, 1)
-
-	go ws.readLoop(incoming, readerErr)
-
-	ordersIncoming := ws.subscribers["orders"].Incoming
-
 	for {
 		select {
 		case <-ws.ctx.Done():
-			return ws.ctx.Err()
-		case err := <-readerErr:
-			if err != nil {
-				return err
-			}
-
-			return ws.ctx.Err()
-		case message, ok := <-ordersIncoming:
+			return ws.err
+		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
 			if !ok {
-				return ws.ctx.Err()
+				errnie.Debug("kraken.private.websocket.Tick", "no ok")
+				return nil
 			}
 
 			if message == nil {
+				errnie.Debug("kraken.private.websocket.Tick", "nil message")
 				continue
 			}
 
-			ws.mu.Lock()
-			conn := ws.conn
-			ws.mu.Unlock()
-
-			if conn == nil {
-				continue
+			if ws.conn == nil {
+				return fmt.Errorf("kraken private websocket: not connected")
 			}
 
-			if err := conn.WriteJSON(message.Value); err != nil {
-				errnie.Error(err)
-			}
-		case socketMessage, ok := <-incoming:
-			if !ok {
-				return ws.ctx.Err()
-			}
-
-			if ch := ws.broadcasts[socketMessage.Channel]; ch != nil {
-				ch.Send(&qpool.QValue[any]{Value: socketMessage})
-			}
-		}
-	}
-}
-
-func (ws *WebSocket) readLoop(
-	out chan<- public.SocketMessage,
-	errOut chan<- error,
-) {
-	defer close(out)
-
-	for {
-		select {
-		case <-ws.ctx.Done():
-			errOut <- ws.ctx.Err()
-			return
+			errnie.Error(ws.conn.WriteJSON(message.Value))
 		default:
 		}
 
-		ws.mu.Lock()
-		conn := ws.conn
-		ws.mu.Unlock()
-
-		if conn == nil {
-			continue
+		if ws.conn == nil {
+			return fmt.Errorf("kraken private websocket: not connected")
 		}
 
 		var message public.SocketMessage
 
-		if err := conn.ReadJSON(&message); err != nil {
-			errOut <- err
-			return
+		if err := ws.conn.ReadJSON(&message); err != nil {
+			return errnie.Error(err)
 		}
 
-		select {
-		case out <- message:
-		case <-ws.ctx.Done():
-			errOut <- ws.ctx.Err()
-			return
+		if message.Channel != "" {
+			activate.Once("kraken/private:channel:" + message.Channel)
+		}
+
+		if ch := ws.broadcasts["raw"]; ch != nil {
+			ch.Send(&qpool.QValue[any]{
+				Type:  message.Channel,
+				Value: message,
+			})
 		}
 	}
 }

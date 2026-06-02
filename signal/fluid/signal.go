@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -25,6 +26,7 @@ book, trades, and ticks; the field model lives in FluidSymbol.
 // interval keeps the UI channel lean without collapsing the field to a flat
 // anchor-only plane when per-pair streams are focus-gated elsewhere.
 const fieldSnapshotInterval = 200 * time.Millisecond
+const rawSubscriberID = "signal/fluid:raw"
 
 type Signal struct {
 	ctx               context.Context
@@ -54,12 +56,14 @@ func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
 	signal.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+
+	activate.Boot("signal/fluid ready")
 
 	return signal
 }
@@ -85,37 +89,31 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.state(trade.Symbol).FeedTradeSide(trade.Timestamp, trade.Qty, trade.Side)
 					signal.emit(trade.Symbol)
-				case "ticker":
-					ticker := errnie.Does(func() (market.TickerUpdate, error) {
-						return market.DecodeTicker(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.TickerChannel:
+				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
+					return market.DecodeTickers(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
 					signal.emit(ticker.Symbol)
-				case "book":
-					delta := errnie.Does(func() (market.Book, error) {
-						return market.DecodeBook(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+				}
+			case public.BookChannel:
+				for _, delta := range errnie.Does(func() ([]market.Book, error) {
+					return market.DecodeBooks(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.state(delta.Symbol).FeedBook(delta)
 					signal.emit(delta.Symbol)
 				}
@@ -136,6 +134,7 @@ func (signal *Signal) emit(symbol string) {
 
 	if ok {
 		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+		activate.Once("signal/fluid:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 

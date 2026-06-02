@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -17,7 +18,10 @@ import (
 
 // pumpWindow is the recent-volume horizon the lift is measured over — short, because
 // the signal is hunting "verticality": a sudden spike against the symbol's own norm.
-const pumpWindow = time.Minute
+const (
+	pumpWindow      = time.Minute
+	rawSubscriberID = "signal/pumpdump:raw"
+)
 
 /*
 Signal measuring Pump and Dump market dynamics — the ignition perspective.
@@ -71,10 +75,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	for _, channel := range []string{"raw"} {
 		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(channel, 128)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 128)
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	activate.Boot("signal/pumpdump ready")
 
 	return signal
 }
@@ -143,19 +149,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-				return envelope.SplitDataRows()
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value() {
-				switch row.Channel {
-				case "trade":
-					trade := errnie.Does(func() (market.TradeUpdate, error) {
-						return market.DecodeTrade(row)
-					}).Or(func(err error) {
-						errnie.Error(err)
-					}).Value()
-
+			switch envelope.Channel {
+			case public.TradesChannel:
+				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+					return market.DecodeTrades(&envelope)
+				}).Or(func(err error) {
+					errnie.Error(err)
+				}).Value() {
 					signal.observe(trade)
 				}
 			}
@@ -205,6 +205,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		Confidence: state.pipe.Confidence(),
 	}
 	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	activate.Once("signal/pumpdump:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 }
 
