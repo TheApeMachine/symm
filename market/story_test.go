@@ -88,7 +88,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryDivergentMove,
+			Category: perspectives.CategorySystemicBeta,
 			SNR:      1,
 			Last:     50_000,
 		}})

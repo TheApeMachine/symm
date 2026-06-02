@@ -30,6 +30,7 @@ TuneOptions controls a measurement-backed optimizer run.
 type TuneOptions struct {
 	OutputPath          string
 	CandidateReportPath string
+	MaxMeasurements     int
 	Workers             int
 	MaxThresholds       int
 	BeamWidth           int
@@ -59,8 +60,16 @@ func (candidate CandidateScore) ProfitLoss() float64 {
 	return candidate.Score
 }
 
+func (candidate CandidateScore) ReturnPerTrade() float64 {
+	if candidate.ClosedTrades <= 0 {
+		return 0
+	}
+
+	return candidate.Score / float64(candidate.ClosedTrades)
+}
+
 func (candidate CandidateScore) ReturnPct() float64 {
-	return candidate.Score * 100
+	return candidate.ReturnPerTrade() * 100
 }
 
 func (candidate CandidateScore) BranchCount() int {
@@ -127,6 +136,35 @@ func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
 }
 
 /*
+SubsampleMeasurements returns an evenly spaced subset capped at maxRows.
+*/
+func SubsampleMeasurements(
+	rows []perspectives.Measurement, maxRows int,
+) []perspectives.Measurement {
+	if maxRows <= 0 || len(rows) <= maxRows {
+		return rows
+	}
+
+	stride := len(rows) / maxRows
+
+	if stride < 1 {
+		stride = 1
+	}
+
+	sampled := make([]perspectives.Measurement, 0, maxRows)
+
+	for index := 0; index < len(rows); index += stride {
+		sampled = append(sampled, rows[index])
+
+		if len(sampled) >= maxRows {
+			break
+		}
+	}
+
+	return sampled
+}
+
+/*
 TuneMeasurements searches trees against a recorded measurement tape.
 */
 func TuneMeasurements(
@@ -134,6 +172,10 @@ func TuneMeasurements(
 	rows []perspectives.Measurement,
 	options TuneOptions,
 ) (SessionSummary, error) {
+	if options.MaxMeasurements > 0 {
+		rows = SubsampleMeasurements(rows, options.MaxMeasurements)
+	}
+
 	tuner := &Tuner{
 		ctx:     ctx,
 		profile: Profile{ctx: ctx},

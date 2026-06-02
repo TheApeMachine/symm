@@ -43,15 +43,29 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 	}))
 }
 
+func (desk *Desk) Halted() bool {
+	if desk.orders == nil {
+		return true
+	}
+
+	return desk.orders.Halted()
+}
+
 func (desk *Desk) AddOrder(action perspectives.Action) error {
 	if desk.orders.Halted() {
 		return errnie.Error(fmt.Errorf("order circuit breaker tripped"))
 	}
 
+	orderType, err := perspectives.OrderTypeFromActionType(action.Type)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	clOrdID := desk.NextClOrdID()
 
 	resultCh, err := desk.orders.AddOrder(trading.AddParams{
-		OrderType:  trading.OrderType(action.Type),
+		OrderType:  orderType,
 		Side:       action.Side,
 		Symbol:     action.Symbol,
 		LimitPrice: action.Price,

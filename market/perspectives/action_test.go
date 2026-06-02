@@ -37,3 +37,21 @@ func TestActionFromMeasurement(t *testing.T) {
 		})
 	})
 }
+
+func TestOrderTypeFromActionType(t *testing.T) {
+	convey.Convey("Given playbook action types", t, func() {
+		convey.Convey("It should map limit actions to Kraken limit orders", func() {
+			orderType, err := OrderTypeFromActionType(ActionLimit)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(orderType, convey.ShouldEqual, trading.Limit)
+		})
+
+		convey.Convey("It should map stop-loss-limit exits to Kraken stop-loss-limit", func() {
+			orderType, err := OrderTypeFromActionType(ActionStopLossLimit)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(orderType, convey.ShouldEqual, trading.StopLossLimit)
+		})
+	})
+}

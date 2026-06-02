@@ -216,10 +216,20 @@ func (story *Story) ingestMeasurement(
 		return
 	}
 
+	if measurement.Symbol == "" || measurement.Last <= 0 {
+		return
+	}
+
+	action := perspectives.ActionFromMeasurement(*actionType, measurement)
+
+	if perspectives.IsEntryAction(*actionType) && action.Quantity <= 0 {
+		return
+	}
+
 	activate.Once("market/story:action")
 
 	story.raw.Send(&qpool.QValue[any]{
-		Value: perspectives.ActionFromMeasurement(*actionType, measurement),
+		Value: action,
 	})
 }
 

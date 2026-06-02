@@ -12,8 +12,9 @@ import (
 
 const (
 	DefaultScanBeamWidth       = 256
-	DefaultScanCandidateLimit  = 100000
+	DefaultScanCandidateLimit  = 10000
 	DefaultScanMaxThresholds   = 128
+	DefaultTuneMaxMeasurements = 250000
 	DefaultBootstrapSeedBudget = 2048
 	DefaultBootstrapPairBudget = 512
 )
@@ -159,14 +160,26 @@ func (search *ScanSearch) run() ScanStats {
 		}
 
 		previous := survivors
-		search.phaseCandidates = 0
-		search.phaseCandidateLimit = deepeningBudget
 		branchers := search.rankedEntryBranchers()
+		deepenBudget := max(1, deepeningBudget/2)
+		widenBudget := max(1, deepeningBudget-deepenBudget)
+
+		search.phaseCandidates = 0
+		search.phaseCandidateLimit = deepenBudget
 
 		search.runBeamPhase(func(send func(scanCandidate) bool) {
 			search.emitDeepeningExpansions(send, survivors, branchers)
 		})
 		search.mergeDeepeningSurvivors(previous)
+		survivors = search.beamScoresClone()
+
+		search.phaseCandidates = 0
+		search.phaseCandidateLimit = widenBudget
+
+		search.runBeamPhase(func(send func(scanCandidate) bool) {
+			search.emitWidenExpansions(send, survivors, actionBranches)
+		})
+		search.mergeDeepeningSurvivors(append(previous, survivors...))
 		survivors = search.beamScoresClone()
 	}
 
@@ -384,7 +397,7 @@ func (search *ScanSearch) accept(result scanResult) {
 	search.recordPairAffinity(entry)
 	search.recordBeam(entry)
 
-	if search.guard.AcceptTrainCandidate(canonical) {
+	if search.guard.AcceptTrainCandidate(canonical) || trainSeedEligible(entry) {
 		search.recordTopK(entry)
 	}
 

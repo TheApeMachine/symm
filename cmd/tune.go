@@ -37,6 +37,17 @@ var tuneCmd = &cobra.Command{
 			)
 		}
 
+		if maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag); err != nil {
+			return err
+		} else if maxMeasurements > 0 && len(rows) > maxMeasurements {
+			fmt.Fprintf(
+				os.Stderr,
+				"symm tune: subsampling %d measurements to %d rows\n",
+				len(rows),
+				maxMeasurements,
+			)
+		}
+
 		scanOptions, err := tuneScanOptions(cmd)
 
 		if err != nil {
@@ -80,16 +91,25 @@ var tuneCmd = &cobra.Command{
 			optimizer.TuneOptions{
 				OutputPath:          outputPath,
 				CandidateReportPath: tuneCandidateReportPath(cmd),
-				Workers:             scanOptions.Workers,
-				MaxThresholds:       scanOptions.MaxThresholds,
-				BeamWidth:           scanOptions.BeamWidth,
-				CandidateLimit:      scanOptions.CandidateLimit,
-				MaxReasoningSteps:   scanOptions.MaxReasoningSteps,
-				Hybrid:              hybridEnabled,
-				HybridSeedCount:     hybridSeeds,
-				ShallowDepth:        shallowDepth,
-				MCTSIterations:      mctsIterations,
-				Guard:               guardOptions,
+				MaxMeasurements: func() int {
+					maxMeasurements, flagErr := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
+
+					if flagErr != nil {
+						return optimizer.DefaultTuneMaxMeasurements
+					}
+
+					return maxMeasurements
+				}(),
+				Workers:           scanOptions.Workers,
+				MaxThresholds:     scanOptions.MaxThresholds,
+				BeamWidth:         scanOptions.BeamWidth,
+				CandidateLimit:    scanOptions.CandidateLimit,
+				MaxReasoningSteps: scanOptions.MaxReasoningSteps,
+				Hybrid:            hybridEnabled,
+				HybridSeedCount:   hybridSeeds,
+				ShallowDepth:      shallowDepth,
+				MCTSIterations:    mctsIterations,
+				Guard:             guardOptions,
 				OnBest: func(best optimizer.BestTree) {
 					fmt.Fprintf(
 						os.Stderr,
@@ -101,9 +121,13 @@ var tuneCmd = &cobra.Command{
 					)
 				},
 				OnCandidate: func(candidate optimizer.CandidateScore) {
+					if candidate.ClosedTrades <= 0 {
+						return
+					}
+
 					fmt.Fprintf(
 						os.Stderr,
-						"symm tune: candidate=%d registry=%d nodes=%d depth=%d trades=%d profit_loss=%.6f return=%.4f%%\n",
+						"symm tune: candidate=%d registry=%d nodes=%d depth=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
 						candidate.Candidate,
 						candidate.RegistryWidth(),
 						candidate.BranchCount(),
@@ -148,6 +172,11 @@ func init() {
 		tuneCandidateLimitFlag,
 		optimizer.DefaultScanCandidateLimit,
 		"max candidate trees to score; 0 scans the generated space",
+	)
+	tuneCmd.Flags().Int(
+		tuneMaxMeasurementsFlag,
+		optimizer.DefaultTuneMaxMeasurements,
+		"max replay rows from the capture tape; 0 uses the full file",
 	)
 	tuneCmd.Flags().Int(
 		tuneMaxReasoningStepsFlag,
@@ -223,6 +252,7 @@ const tuneHybridSeedsFlag = "hybrid-seeds"
 const tuneShallowDepthFlag = "shallow-depth"
 const tuneMCTSIterationsFlag = "mcts-iterations"
 const tuneCandidateReportFlag = "candidate-report"
+const tuneMaxMeasurementsFlag = "max-measurements"
 
 func tuneMeasurementPath() (string, error) {
 	path := strings.TrimSpace(viper.GetString("trading.record.file"))

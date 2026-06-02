@@ -11,7 +11,7 @@ import (
 const (
 	DefaultMCTSIterations      = 1024
 	DefaultHybridSeedCount     = 50
-	DefaultHybridShallowDepth  = 2
+	DefaultHybridShallowDepth  = 4
 	DefaultMCTSSeedPriorVisits = 10
 	DefaultMCTSMaxThresholds   = 0
 	explorationWeight          = 1.41

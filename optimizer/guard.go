@@ -144,8 +144,7 @@ func (guard *OverfitGuard) AcceptTrainCandidate(
 }
 
 /*
-PersistCandidate is the minimum bar for writing an improved tree to YAML: the
-replay must have closed at least one round trip. Profit may still be negative.
+PersistCandidate is the minimum bar for writing an improved tree to YAML.
 */
 func (guard *OverfitGuard) PersistCandidate(
 	branches perspectives.BranchList,
@@ -153,6 +152,10 @@ func (guard *OverfitGuard) PersistCandidate(
 	result := guard.replayResult(branches).Result()
 
 	if result.ClosedTrades < guard.options.MinRoundTrips {
+		return false
+	}
+
+	if result.Score <= 0 {
 		return false
 	}
 
@@ -174,7 +177,11 @@ func (guard *OverfitGuard) ImprovesPersistedBest(
 		return false
 	}
 
-	if bestClosedTrades < guard.options.MinRoundTrips {
+	if adjustedScore <= 0 {
+		return false
+	}
+
+	if bestClosedTrades < guard.options.MinRoundTrips || bestScore <= 0 {
 		return true
 	}
 

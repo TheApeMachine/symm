@@ -123,6 +123,30 @@ func ActionFromMeasurement(
 	return action
 }
 
+/*
+OrderTypeFromActionType maps a playbook action to the Kraken order_type string.
+*/
+func OrderTypeFromActionType(actionType ActionType) (trading.OrderType, error) {
+	switch actionType {
+	case ActionLimit, ActionIceberg:
+		return trading.Limit, nil
+	case ActionMarket, ActionSettlePosition:
+		return trading.Market, nil
+	case ActionStopLoss, ActionTrailingStop:
+		return trading.StopLoss, nil
+	case ActionStopLossLimit, ActionTrailingStopLimit:
+		return trading.StopLossLimit, nil
+	case ActionTakeProfit:
+		return trading.TakeProfit, nil
+	case ActionTakeProfitLimit:
+		return trading.TakeProfitLimit, nil
+	default:
+		return "", errnie.Require(map[string]any{
+			"actionType": actionType,
+		})
+	}
+}
+
 func entryNotionalQuantity(price float64) float64 {
 	if price <= 0 {
 		return 0

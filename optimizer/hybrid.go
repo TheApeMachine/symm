@@ -56,7 +56,7 @@ func RunHybridSearch(
 	search.onCandidate = options.OnCandidate
 
 	seeds, scanStats := search.RunTopK(options.SeedCount)
-	seeds = mergeDepthSeeds(seeds, search.beamScoresClone(), options.SeedCount)
+	seeds = selectHybridSeeds(seeds, search.beamScoresClone(), options.SeedCount)
 
 	mcts := NewHybridTreeSearch(ctx, profile, rows, options.Guard, seeds, options.MCTSOptions)
 	mcts.onBest = options.OnBest
@@ -84,16 +84,27 @@ func RunHybridSearch(
 func insertTopK(
 	top []CandidateScore, entry CandidateScore, limit int,
 ) []CandidateScore {
-	if limit <= 0 {
-		return top
-	}
-
-	if entry.AdjustedScore <= 0 &&
-		perspectives.HasInvalidTopLevelDenySiblings(entry.Branches) {
+	if limit <= 0 || !trainSeedEligible(entry) {
 		return top
 	}
 
 	return insertDepthStratifiedBeam(top, entry, limit)
+}
+
+/*
+selectHybridSeeds merges guard-valid top-K results with the full depth-stratified
+beam so MCTS receives both profitable and structurally deep starting points.
+*/
+func selectHybridSeeds(
+	scored []CandidateScore, beam []CandidateScore, limit int,
+) []CandidateScore {
+	if limit <= 0 {
+		return scored
+	}
+
+	pool := append(append([]CandidateScore(nil), scored...), beam...)
+
+	return collapseDepthStratifiedBeam(pool, limit)
 }
 
 func insertBeam(
@@ -125,50 +136,7 @@ func insertBeam(
 func mergeDepthSeeds(
 	scored []CandidateScore, beam []CandidateScore, limit int,
 ) []CandidateScore {
-	if limit <= 0 {
-		return scored
-	}
-
-	merged := append([]CandidateScore(nil), scored...)
-	seen := make(map[string]struct{}, len(merged))
-
-	for _, entry := range merged {
-		seen[branchListKey(entry.Branches)] = struct{}{}
-	}
-
-	deepest := append([]CandidateScore(nil), beam...)
-	sort.Slice(deepest, func(leftIndex, rightIndex int) bool {
-		leftDepth := reasoningDepth(deepest[leftIndex].Branches)
-		rightDepth := reasoningDepth(deepest[rightIndex].Branches)
-
-		if leftDepth != rightDepth {
-			return leftDepth > rightDepth
-		}
-
-		return deepest[leftIndex].AdjustedScore > deepest[rightIndex].AdjustedScore
-	})
-
-	for _, entry := range deepest {
-		if len(merged) >= limit {
-			break
-		}
-
-		key := branchListKey(entry.Branches)
-
-		if _, ok := seen[key]; ok {
-			continue
-		}
-
-		if entry.AdjustedScore <= 0 &&
-			perspectives.HasInvalidTopLevelDenySiblings(entry.Branches) {
-			continue
-		}
-
-		merged = append(merged, entry)
-		seen[key] = struct{}{}
-	}
-
-	return merged
+	return selectHybridSeeds(scored, beam, limit)
 }
 
 func branchListKey(branches perspectives.BranchList) string {

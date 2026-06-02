@@ -231,7 +231,7 @@ func TestRobustUnderJitter(t *testing.T) {
 	})
 }
 
-func TestPersistCandidateAllowsNegativeProfit(t *testing.T) {
+func TestPersistCandidateRejectsNegativeProfit(t *testing.T) {
 	convey.Convey("Given a losing but active replay tree", t, func() {
 		ctx := context.Background()
 		rows := []perspectives.Measurement{
@@ -273,8 +273,8 @@ func TestPersistCandidateAllowsNegativeProfit(t *testing.T) {
 		}
 		guard := NewOverfitGuard(ctx, GuardOptions{}, PrecompileTape(rows))
 
-		convey.Convey("It should allow persistence without positive profit", func() {
-			convey.So(guard.PersistCandidate(branches), convey.ShouldBeTrue)
+		convey.Convey("It should reject persistence without positive profit", func() {
+			convey.So(guard.PersistCandidate(branches), convey.ShouldBeFalse)
 			convey.So(guard.AcceptTrainCandidate(branches), convey.ShouldBeFalse)
 		})
 	})
@@ -291,10 +291,10 @@ func TestImprovesPersistedBest(t *testing.T) {
 			)
 		})
 
-		convey.Convey("It should accept a losing active candidate", func() {
+		convey.Convey("It should reject a losing active candidate", func() {
 			convey.So(
 				guard.ImprovesPersistedBest(-0.02, 1, 0, 0),
-				convey.ShouldBeTrue,
+				convey.ShouldBeFalse,
 			)
 		})
 	})
@@ -302,13 +302,17 @@ func TestImprovesPersistedBest(t *testing.T) {
 	convey.Convey("Given an active negative best", t, func() {
 		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
 
-		convey.Convey("It should require a higher score to replace it", func() {
+		convey.Convey("It should require a profitable score to replace it", func() {
 			convey.So(
 				guard.ImprovesPersistedBest(-0.03, 1, -0.02, 1),
 				convey.ShouldBeFalse,
 			)
 			convey.So(
 				guard.ImprovesPersistedBest(-0.01, 1, -0.02, 1),
+				convey.ShouldBeFalse,
+			)
+			convey.So(
+				guard.ImprovesPersistedBest(0.01, 1, -0.02, 1),
 				convey.ShouldBeTrue,
 			)
 		})
@@ -357,8 +361,8 @@ func TestScanSearchIgnoresInertZeroReturn(t *testing.T) {
 	})
 }
 
-func TestScanSearchOnBestOnNegativeImprovement(t *testing.T) {
-	convey.Convey("Given a replay tape with trade activity", t, func() {
+func TestScanSearchOnBestRequiresProfit(t *testing.T) {
+	convey.Convey("Given a losing replay tape", t, func() {
 		ctx := context.Background()
 		profile := Profile{ctx: ctx}
 		rows := []perspectives.Measurement{
@@ -391,8 +395,8 @@ func TestScanSearchOnBestOnNegativeImprovement(t *testing.T) {
 		}
 		search.Run()
 
-		convey.Convey("It should emit onBest for the least-loss active tree", func() {
-			convey.So(bestCount, convey.ShouldBeGreaterThan, 0)
+		convey.Convey("It should not persist a losing tree", func() {
+			convey.So(bestCount, convey.ShouldEqual, 0)
 		})
 	})
 }

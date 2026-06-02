@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,16 +26,17 @@ const cryptoRawSubscriberID = "trader/crypto:raw"
 Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames.
 */
 type Crypto struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	ui          *qpool.BroadcastGroup
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	desk        *broker.Desk
-	streams     *focus.Set
-	auditSeq    atomic.Int64
-	cash        float64
-	inventory   map[string]float64
+	ctx           context.Context
+	cancel        context.CancelFunc
+	ui            *qpool.BroadcastGroup
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	desk          *broker.Desk
+	streams       *focus.Set
+	pendingOrders sync.Map
+	auditSeq      atomic.Int64
+	cash          float64
+	inventory     map[string]float64
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
@@ -141,6 +143,11 @@ func (crypto *Crypto) handleAction(action perspectives.Action) {
 		return
 	}
 
+	if crypto.desk.Halted() {
+		activate.Once("trader/crypto:order-halted")
+		return
+	}
+
 	if action.Side == trading.Buy {
 		if crypto.streams != nil && crypto.streams.Has(action.Symbol) {
 			return
@@ -149,6 +156,14 @@ func (crypto *Crypto) handleAction(action perspectives.Action) {
 		if action.Quantity <= 0 {
 			return
 		}
+
+		if _, pending := crypto.pendingOrders.Load(action.Symbol); pending {
+			return
+		}
+
+		crypto.pendingOrders.Store(action.Symbol, struct{}{})
+
+		defer crypto.pendingOrders.Delete(action.Symbol)
 	}
 
 	if action.Side == trading.Sell {
@@ -164,6 +179,11 @@ func (crypto *Crypto) handleAction(action perspectives.Action) {
 	}
 
 	if err := crypto.desk.AddOrder(action); err != nil {
+		if crypto.desk.Halted() {
+			activate.Once("trader/crypto:order-halted")
+			return
+		}
+
 		errnie.Error(err)
 		return
 	}

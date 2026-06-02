@@ -204,3 +204,53 @@ func TestReplaySimulationScoreUsesGlobalMeasurements(t *testing.T) {
 		})
 	})
 }
+
+func TestReplaySimulationReentryCooldown(t *testing.T) {
+	convey.Convey("Given alternating entry and exit signals", t, func() {
+		ctx := context.Background()
+		rows := make([]perspectives.Measurement, 0, 1200)
+
+		for index := range 1200 {
+			price := 100.0
+
+			if index%2 == 1 {
+				price = 101.0
+			}
+
+			rows = append(rows, perspectives.Measurement{
+				Symbol:   "BTC/EUR",
+				Source:   perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2,
+				Last:     price,
+			})
+		}
+
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
+
+		result := NewReplaySimulation(ctx, branches, rows).Result()
+
+		convey.Convey("It should suppress immediate re-entry churn", func() {
+			convey.So(result.ClosedTrades, convey.ShouldBeLessThan, 120)
+		})
+	})
+}

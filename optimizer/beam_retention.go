@@ -2,11 +2,15 @@ package optimizer
 
 import (
 	"sort"
+
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 const (
-	DefaultMinBeamDepthSlots = 8
-	DefaultBeamPruneFactor   = 4
+	DefaultMinBeamDepthSlots    = 8
+	DefaultBeamPruneFactor      = 4
+	DefaultMaxGatesPerSurvivor  = 12
+	DefaultMaxWidensPerSurvivor = 8
 )
 
 /*
@@ -71,20 +75,30 @@ func insertDepthStratifiedBeam(
 }
 
 func compareBeamCandidates(left, right CandidateScore) bool {
-	if left.ClosedTrades != right.ClosedTrades {
-		return left.ClosedTrades > right.ClosedTrades
+	if left.AdjustedScore != right.AdjustedScore {
+		return left.AdjustedScore > right.AdjustedScore
 	}
 
-	if left.ClosedTrades == 0 &&
-		reasoningDepth(left.Branches) != reasoningDepth(right.Branches) {
+	leftPerTrade := left.ReturnPerTrade()
+	rightPerTrade := right.ReturnPerTrade()
+
+	if leftPerTrade != rightPerTrade {
+		return leftPerTrade > rightPerTrade
+	}
+
+	if left.ClosedTrades != right.ClosedTrades {
+		if left.ClosedTrades == 0 || right.ClosedTrades == 0 {
+			return left.ClosedTrades > right.ClosedTrades
+		}
+
+		return left.ClosedTrades < right.ClosedTrades
+	}
+
+	if reasoningDepth(left.Branches) != reasoningDepth(right.Branches) {
 		return reasoningDepth(left.Branches) > reasoningDepth(right.Branches)
 	}
 
-	if left.Score != right.Score {
-		return left.Score > right.Score
-	}
-
-	return reasoningDepth(left.Branches) > reasoningDepth(right.Branches)
+	return left.Score > right.Score
 }
 
 /*
@@ -105,6 +119,31 @@ func beamEligible(entry CandidateScore) bool {
 	}
 
 	return false
+}
+
+/*
+trainSeedEligible selects MCTS root seeds from scored shallow search results.
+Profitable trees are preferred, but multi-step playbooks must survive even when
+the tape is net-negative so deep search can continue widening and deepening.
+*/
+func trainSeedEligible(entry CandidateScore) bool {
+	if !beamEligible(entry) {
+		return false
+	}
+
+	if perspectives.HasInvalidTopLevelDenySiblings(entry.Branches) {
+		return false
+	}
+
+	if entry.AdjustedScore > 0 {
+		return true
+	}
+
+	if reasoningDepth(entry.Branches) >= 2 {
+		return true
+	}
+
+	return len(entry.Branches) > 2
 }
 
 func bucketCandidatesByDepth(

@@ -151,7 +151,14 @@ func TestTuneMeasurements(t *testing.T) {
 			convey.So(summary.Candidates, convey.ShouldEqual, 8)
 			convey.So(len(candidates), convey.ShouldEqual, summary.Candidates)
 			convey.So(candidates[0].ProfitLoss(), convey.ShouldEqual, candidates[0].Score)
-			convey.So(candidates[0].ReturnPct(), convey.ShouldEqual, candidates[0].Score*100)
+			if candidates[0].ClosedTrades > 0 {
+				convey.So(
+					candidates[0].ReturnPct(),
+					convey.ShouldAlmostEqual,
+					(candidates[0].Score/float64(candidates[0].ClosedTrades))*100,
+					0.000001,
+				)
+			}
 			convey.So(len(lines), convey.ShouldEqual, summary.Candidates)
 			convey.So(lines[0], convey.ShouldContainSubstring, `"profit_loss"`)
 			convey.So(lines[0], convey.ShouldContainSubstring, `"return_pct"`)
@@ -174,7 +181,7 @@ func TestTuneMeasurementsWritesBestTree(t *testing.T) {
 			{
 				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
 				Category: perspectives.CategoryExhaustion,
-				SNR:      2, Last: 95,
+				SNR:      2, Last: 110,
 			},
 		}
 
@@ -200,6 +207,24 @@ func TestTuneMeasurementsWritesBestTree(t *testing.T) {
 			convey.So(readErr, convey.ShouldBeNil)
 			convey.So(writeCount, convey.ShouldBeGreaterThan, 0)
 			convey.So(string(raw), convey.ShouldContainSubstring, "branches:")
+		})
+	})
+}
+
+func TestSubsampleMeasurements(t *testing.T) {
+	convey.Convey("Given a long measurement tape", t, func() {
+		rows := make([]perspectives.Measurement, 1000)
+
+		for index := range rows {
+			rows[index] = perspectives.Measurement{Symbol: "BTC/EUR", Last: float64(index)}
+		}
+
+		convey.Convey("It should cap the replay rows evenly", func() {
+			sampled := SubsampleMeasurements(rows, 100)
+
+			convey.So(len(sampled), convey.ShouldEqual, 100)
+			convey.So(sampled[0].Last, convey.ShouldEqual, 0)
+			convey.So(sampled[1].Last, convey.ShouldEqual, 10)
 		})
 	})
 }

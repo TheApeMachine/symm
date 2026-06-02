@@ -14,6 +14,8 @@ const (
 	DefaultTakerFeePct = 0.004
 	// DefaultSlippagePct is half-spread crossing per side (5 bps).
 	DefaultSlippagePct = 0.0005
+	// DefaultReentryTickCooldown suppresses immediate re-entry churn on dense tapes.
+	DefaultReentryTickCooldown = 500
 )
 
 /*
@@ -139,6 +141,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 
 	measurements := newReplayMeasurements()
 	ledger := newReplayLedger(simulation.costs)
+	ledger.reentryTickCooldown = scaleReentryTickCooldown(len(simulation.rows))
 
 	for _, row := range simulation.rows {
 		measurements.Add(row)
@@ -153,6 +156,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 			ledger,
 		)
 		simulation.applyEvaluator(ledger, branchContext, row)
+		ledger.onTick(row.Symbol)
 	}
 
 	return ReplayResult{
@@ -161,8 +165,21 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 }
 
+func scaleReentryTickCooldown(tapeLen int) int {
+	if tapeLen <= 0 {
+		return DefaultReentryTickCooldown
+	}
+
+	if tapeLen >= DefaultReentryTickCooldown*10 {
+		return DefaultReentryTickCooldown
+	}
+
+	return max(1, tapeLen/100)
+}
+
 func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 	ledger := newReplayLedger(simulation.costs)
+	ledger.reentryTickCooldown = scaleReentryTickCooldown(simulation.tape.Len())
 
 	for _, tick := range simulation.tape.Ticks {
 		if tick.Row.Symbol == "" {
@@ -175,6 +192,7 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 			ledger,
 		)
 		simulation.applyEvaluator(ledger, branchContext, tick.Row)
+		ledger.onTick(tick.Row.Symbol)
 	}
 
 	return ReplayResult{
@@ -295,17 +313,29 @@ type replayPosition struct {
 }
 
 type replayLedger struct {
-	costs        ReplayCosts
-	positions    map[string]replayPosition
-	realized     float64
-	closedTrades int
+	costs               ReplayCosts
+	positions           map[string]replayPosition
+	reentryTickCooldown int
+	ticksSinceClose     map[string]int
+	realized            float64
+	closedTrades        int
 }
 
 func newReplayLedger(costs ReplayCosts) *replayLedger {
 	return &replayLedger{
-		costs:     costs,
-		positions: make(map[string]replayPosition),
+		costs:               costs,
+		positions:           make(map[string]replayPosition),
+		reentryTickCooldown: DefaultReentryTickCooldown,
+		ticksSinceClose:     make(map[string]int),
 	}
+}
+
+func (ledger *replayLedger) onTick(symbol string) {
+	if symbol == "" || ledger.holding(symbol) {
+		return
+	}
+
+	ledger.ticksSinceClose[symbol]++
 }
 
 func (ledger *replayLedger) apply(
@@ -336,6 +366,11 @@ func (ledger *replayLedger) openLong(symbol string, price float64) {
 		return
 	}
 
+	if ticksSinceClose, blocked := ledger.ticksSinceClose[symbol]; blocked &&
+		ticksSinceClose < ledger.reentryTickCooldown {
+		return
+	}
+
 	entryFill := price * (1 + ledger.costs.SlippagePct)
 
 	ledger.positions[symbol] = replayPosition{
@@ -344,6 +379,7 @@ func (ledger *replayLedger) openLong(symbol string, price float64) {
 	}
 
 	ledger.realized -= ledger.costs.TakerFeePct
+	delete(ledger.ticksSinceClose, symbol)
 }
 
 func (ledger *replayLedger) closeLong(symbol string, price float64) {
@@ -359,6 +395,7 @@ func (ledger *replayLedger) closeLong(symbol string, price float64) {
 	ledger.realized += gross - ledger.costs.TakerFeePct
 	ledger.closedTrades++
 	delete(ledger.positions, symbol)
+	delete(ledger.ticksSinceClose, symbol)
 }
 
 func (ledger *replayLedger) observations(

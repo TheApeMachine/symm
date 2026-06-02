@@ -93,6 +93,29 @@ func nestGateUnderEntry(
 	return next, true
 }
 
+func widenWithExit(
+	base perspectives.BranchList, exit perspectives.Branch,
+) (perspectives.BranchList, bool) {
+	entryIndex := perspectives.FindEntryIndex(base)
+
+	if entryIndex < 0 {
+		return base, false
+	}
+
+	exitIndex := perspectives.FindExitIndex(base)
+	next := base.Clone()
+
+	if exitIndex < 0 {
+		next = append(next, exit)
+
+		return next, true
+	}
+
+	next[exitIndex] = exit
+
+	return next, true
+}
+
 func appendEntryPathSibling(
 	branches perspectives.BranchList, entry perspectives.Branch,
 ) perspectives.BranchList {

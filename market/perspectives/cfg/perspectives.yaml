@@ -1,6 +1,6 @@
 version: 1
 branches:
-    - category: divergent_move
+    - category: systemic_beta
       observation: not_holding
       condition: '>='
       unit: snr
@@ -12,7 +12,7 @@ branches:
       observation: holding
       condition: '>='
       unit: snr
-      value: 0.006907263057069473
+      value: 0.5179113698786534
       value_set: true
       action:
-        type: stop_loss
+        type: stop_loss_limit

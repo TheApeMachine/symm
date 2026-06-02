@@ -57,7 +57,17 @@ func (search *ScanSearch) emitNestedGateExpansions(
 	gates []perspectives.Branch,
 	entryCategory perspectives.CategoryType,
 ) bool {
-	for _, gate := range gates {
+	limit := len(gates)
+
+	if limit == 0 {
+		return true
+	}
+
+	if limit > DefaultMaxGatesPerSurvivor {
+		limit = DefaultMaxGatesPerSurvivor
+	}
+
+	for _, gate := range gates[:limit] {
 		if gate.Observation != perspectives.ObservationNone {
 			continue
 		}
@@ -84,6 +94,53 @@ func (search *ScanSearch) emitNestedGateExpansions(
 	}
 
 	return true
+}
+
+/*
+emitWidenExpansions explores sibling exit alternatives for each survivor without
+increasing reasoning depth. This keeps the beam wide while deepening runs deep.
+*/
+func (search *ScanSearch) emitWidenExpansions(
+	send func(scanCandidate) bool,
+	survivors []CandidateScore,
+	actionBranches []scanCandidate,
+) {
+	exits := search.groupCandidates(actionBranches, actionGroupExit)
+
+	for _, survivor := range survivors {
+		base := survivor.Branches
+		entryCategory := primaryEntryCategory(base)
+		rankedExits := rankExitsByAffinity(search.pairAffinity, entryCategory, exits)
+		limit := len(rankedExits)
+
+		if limit == 0 {
+			continue
+		}
+
+		if limit > DefaultMaxWidensPerSurvivor {
+			limit = DefaultMaxWidensPerSurvivor
+		}
+
+		for _, exit := range rankedExits[:limit] {
+			if search.coOccurrence != nil &&
+				!entryExitPairReachable(search.coOccurrence, base, exit.branches) {
+				continue
+			}
+
+			widened, ok := widenWithExit(base, exit.branches[0])
+
+			if !ok || branchListsEqual(base, widened) {
+				continue
+			}
+
+			if !send(scanCandidate{
+				branches: widened,
+				group:    actionGroupEntry,
+			}) {
+				return
+			}
+		}
+	}
 }
 
 func (search *ScanSearch) recordNestedGateAffinity(
