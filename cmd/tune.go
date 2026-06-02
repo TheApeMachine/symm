@@ -106,7 +106,8 @@ Run the optimizer against a recorded measurement capture.
 Measurements are read from trading.record.file in the config. Realized round-trip
 PnL is the only objective; structure and depth are discovered, not preset. An
 improved tree is written to
-market/perspectives/cfg/perspectives.yaml when one beats the persist bar.
+market/perspectives/cfg/perspectives.yaml whenever a new best-scoring candidate
+with closed round trips appears.
 `
 
 const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"

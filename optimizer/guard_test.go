@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -333,10 +334,10 @@ func TestImprovesPersistedBest(t *testing.T) {
 			)
 		})
 
-		convey.Convey("It should reject a losing active candidate", func() {
+		convey.Convey("It should accept the first active candidate", func() {
 			convey.So(
-				guard.ImprovesPersistedBest(-0.02, 1, 0, 0),
-				convey.ShouldBeFalse,
+				guard.ImprovesPersistedBest(-0.02, 1, math.Inf(-1), -1),
+				convey.ShouldBeTrue,
 			)
 		})
 	})
@@ -344,13 +345,13 @@ func TestImprovesPersistedBest(t *testing.T) {
 	convey.Convey("Given an active negative best", t, func() {
 		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{}, nil)
 
-		convey.Convey("It should require a profitable score to replace it", func() {
-			convey.So(
-				guard.ImprovesPersistedBest(-0.03, 1, -0.02, 1),
-				convey.ShouldBeFalse,
-			)
+		convey.Convey("It should promote a less negative score", func() {
 			convey.So(
 				guard.ImprovesPersistedBest(-0.01, 1, -0.02, 1),
+				convey.ShouldBeTrue,
+			)
+			convey.So(
+				guard.ImprovesPersistedBest(-0.03, 1, -0.02, 1),
 				convey.ShouldBeFalse,
 			)
 			convey.So(
@@ -403,7 +404,7 @@ func TestScanSearchIgnoresInertZeroReturn(t *testing.T) {
 	})
 }
 
-func TestScanSearchOnBestRequiresProfit(t *testing.T) {
+func TestScanSearchOnBestTracksBestCandidate(t *testing.T) {
 	convey.Convey("Given a losing replay tape", t, func() {
 		ctx := context.Background()
 		profile := Profile{ctx: ctx}
@@ -437,8 +438,8 @@ func TestScanSearchOnBestRequiresProfit(t *testing.T) {
 		}
 		search.Run()
 
-		convey.Convey("It should not persist a losing tree", func() {
-			convey.So(bestCount, convey.ShouldEqual, 0)
+		convey.Convey("It should persist the best losing tree", func() {
+			convey.So(bestCount, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }

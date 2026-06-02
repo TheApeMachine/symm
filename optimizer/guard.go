@@ -153,17 +153,13 @@ func (guard *OverfitGuard) PersistCandidate(
 		return false
 	}
 
-	if result.Score <= 0 {
-		return false
-	}
-
 	return perspectives.IsCanonicalPlaybook(branches)
 }
 
 /*
-ImprovesPersistedBest reports whether a scored replay should replace the tree
-written to YAML. Inert candidates (zero closed round trips, 0% return) are never
-promoted; once an active playbook is recorded, only a higher adjusted score wins.
+ImprovesPersistedBest reports whether a scored replay should replace the best
+candidate written to YAML. Inert candidates (zero closed round trips) are never
+promoted; otherwise the highest realized PnL wins, including negative scores.
 */
 func (guard *OverfitGuard) ImprovesPersistedBest(
 	adjustedScore float64,
@@ -175,11 +171,7 @@ func (guard *OverfitGuard) ImprovesPersistedBest(
 		return false
 	}
 
-	if adjustedScore <= 0 {
-		return false
-	}
-
-	if bestClosedTrades < guard.options.MinRoundTrips || bestScore <= 0 {
+	if bestClosedTrades < guard.options.MinRoundTrips {
 		return true
 	}
 
