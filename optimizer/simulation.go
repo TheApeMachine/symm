@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"context"
+	"time"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -109,28 +110,50 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 		return ReplayResult{}
 	}
 
-	measurements := newReplayMeasurements()
+	measurements := acquireReplayMeasurements()
 	ledger := acquireReplayLedger(simulation.costs)
 
+	defer releaseReplayMeasurements(measurements)
 	defer releaseReplayLedger(ledger)
 
 	ledger.reentryTickCooldown = reentryCooldownForRows(simulation.rows)
+	medianInterval := medianMeasurementInterval(simulation.rows)
+	ledger.configureExecutionStress(
+		simulation.costs.effectiveExecutionLatency(simulation.rows, simulation.tape),
+		medianInterval,
+	)
 
-	for _, row := range simulation.rows {
+	lastAt := time.Time{}
+	lastRow := perspectives.Measurement{}
+
+	for tickIndex, row := range simulation.rows {
+		ledger.tickIndex = tickIndex
+		ledger.onTickStart(row.At, row)
 		measurements.Add(row)
 
 		if row.Symbol == "" {
 			continue
 		}
 
+		snapshotBuffer := acquireReplaySnapshotBuffer()
+		snapshotBuffer = append(snapshotBuffer, measurements.Snapshot(row.Symbol)...)
+
 		branchContext := simulation.branchContext(
 			row,
-			measurements.Snapshot(row.Symbol),
+			snapshotBuffer,
 			ledger,
 		)
-		simulation.applyEvaluator(ledger, branchContext, row)
+		simulation.applyEvaluator(ledger, branchContext, row, snapshotBuffer)
+		releaseReplaySnapshotBuffer(snapshotBuffer)
 		ledger.onTick(row.Symbol)
+
+		if !row.At.IsZero() {
+			lastAt = row.At
+			lastRow = row
+		}
 	}
+
+	ledger.flushPending(lastAt, lastRow)
 
 	return ReplayResult{
 		Score:        ledger.realizedReturn(),
@@ -149,7 +172,19 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 		ledger.reentryTickCooldown = 1
 	}
 
-	for _, tick := range simulation.tape.Ticks {
+	medianInterval := simulation.tape.MedianInterval
+	ledger.configureExecutionStress(
+		simulation.costs.effectiveExecutionLatency(nil, simulation.tape),
+		medianInterval,
+	)
+
+	lastAt := time.Time{}
+	lastRow := perspectives.Measurement{}
+
+	for tickIndex, tick := range simulation.tape.Ticks {
+		ledger.tickIndex = tickIndex
+		ledger.onTickStart(tick.Row.At, tick.Row)
+
 		if tick.Row.Symbol == "" {
 			continue
 		}
@@ -159,9 +194,16 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 			tick.Snapshots,
 			ledger,
 		)
-		simulation.applyEvaluator(ledger, branchContext, tick.Row)
+		simulation.applyEvaluator(ledger, branchContext, tick.Row, tick.Snapshots)
 		ledger.onTick(tick.Row.Symbol)
+
+		if !tick.Row.At.IsZero() {
+			lastAt = tick.Row.At
+			lastRow = tick.Row
+		}
 	}
+
+	ledger.flushPending(lastAt, lastRow)
 
 	return ReplayResult{
 		Score:        ledger.realizedReturn(),
@@ -193,6 +235,7 @@ func (simulation *ReplaySimulation) applyEvaluator(
 	ledger *replayLedger,
 	branchContext perspectives.BranchContext,
 	row perspectives.Measurement,
+	snapshots []perspectives.Measurement,
 ) {
 	evaluator := perspectives.NewBranchEvaluator(branchContext)
 	actionType := evaluator.Action(simulation.branches)
@@ -205,7 +248,7 @@ func (simulation *ReplaySimulation) applyEvaluator(
 		return
 	}
 
-	ledger.apply(*actionType, row)
+	ledger.queueAction(*actionType, row, snapshots)
 }
 
 func (simulation *ReplaySimulation) branchContext(

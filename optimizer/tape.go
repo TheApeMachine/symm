@@ -1,6 +1,8 @@
 package optimizer
 
 import (
+	"time"
+
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -26,6 +28,7 @@ type ReplayTape struct {
 	Ticks               []PrecompiledTick
 	LastPrices          map[string]float64
 	ReentryTickCooldown int
+	MedianInterval      time.Duration
 }
 
 func (tape ReplayTape) Len() int {
@@ -72,5 +75,6 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 		Ticks:               ticks,
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
+		MedianInterval:      medianMeasurementInterval(rows),
 	}
 }

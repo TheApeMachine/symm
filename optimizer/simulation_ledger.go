@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -99,6 +100,14 @@ type replayPosition struct {
 	quantity   float64
 }
 
+type pendingReplayAction struct {
+	executeAt   time.Time
+	executeTick int
+	action      perspectives.ActionType
+	measurement perspectives.Measurement
+	snapshots   []perspectives.Measurement
+}
+
 type replayLedger struct {
 	costs               ReplayCosts
 	positions           map[string]replayPosition
@@ -108,6 +117,10 @@ type replayLedger struct {
 	closedTrades        int
 	observationScratch  map[perspectives.ObservationType]float64
 	metricsScratch      map[string]float64
+	pending             []pendingReplayAction
+	tickIndex           int
+	medianInterval      time.Duration
+	executionLatency    time.Duration
 }
 
 func newReplayLedger(costs ReplayCosts) *replayLedger {
@@ -126,11 +139,90 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.reentryTickCooldown = 1
 	ledger.realized = 0
 	ledger.closedTrades = 0
+	ledger.tickIndex = 0
+	ledger.medianInterval = 0
+	ledger.executionLatency = 0
+	ledger.pending = ledger.pending[:0]
 
 	clear(ledger.positions)
 	clear(ledger.ticksSinceClose)
 	clear(ledger.observationScratch)
 	clear(ledger.metricsScratch)
+}
+
+func (ledger *replayLedger) configureExecutionStress(
+	latency time.Duration,
+	medianInterval time.Duration,
+) {
+	ledger.executionLatency = latency
+	ledger.medianInterval = medianInterval
+}
+
+func (ledger *replayLedger) onTickStart(
+	at time.Time,
+	row perspectives.Measurement,
+) {
+	ledger.flushPending(at, row)
+}
+
+func (ledger *replayLedger) flushPending(
+	at time.Time,
+	currentRow perspectives.Measurement,
+) {
+	if len(ledger.pending) == 0 {
+		return
+	}
+
+	remaining := ledger.pending[:0]
+
+	for _, item := range ledger.pending {
+		if ledger.executionReady(item, at) {
+			ledger.applyStressed(
+				item.action,
+				executionFillMeasurement(item.measurement, currentRow),
+				item.snapshots,
+			)
+			continue
+		}
+
+		remaining = append(remaining, item)
+	}
+
+	ledger.pending = remaining
+}
+
+func executionFillMeasurement(
+	signalRow perspectives.Measurement,
+	currentRow perspectives.Measurement,
+) perspectives.Measurement {
+	if currentRow.Symbol != signalRow.Symbol || currentRow.Last <= 0 {
+		return signalRow
+	}
+
+	fillRow := signalRow
+	fillRow.Last = currentRow.Last
+	fillRow.SpreadBPS = currentRow.SpreadBPS
+
+	if !currentRow.At.IsZero() {
+		fillRow.At = currentRow.At
+	}
+
+	return fillRow
+}
+
+func (ledger *replayLedger) executionReady(
+	item pendingReplayAction,
+	at time.Time,
+) bool {
+	if ledger.executionLatency <= 0 {
+		return true
+	}
+
+	if !at.IsZero() && !item.executeAt.IsZero() {
+		return !at.Before(item.executeAt)
+	}
+
+	return item.executeTick <= ledger.tickIndex
 }
 
 func (ledger *replayLedger) onTick(symbol string) {
@@ -146,18 +238,46 @@ func (ledger *replayLedger) onTick(symbol string) {
 func (ledger *replayLedger) apply(
 	actionType perspectives.ActionType, measurement perspectives.Measurement,
 ) {
+	ledger.applyStressed(actionType, measurement, nil)
+}
+
+func (ledger *replayLedger) queueAction(
+	actionType perspectives.ActionType,
+	measurement perspectives.Measurement,
+	snapshots []perspectives.Measurement,
+) {
+	if ledger.executionLatency <= 0 {
+		ledger.applyStressed(actionType, measurement, snapshots)
+
+		return
+	}
+
+	latencyTicks := executionLatencyTicks(ledger.executionLatency, ledger.medianInterval)
+
+	ledger.pending = append(ledger.pending, pendingReplayAction{
+		executeAt:   measurement.At.Add(ledger.executionLatency),
+		executeTick: ledger.tickIndex + latencyTicks,
+		action:      actionType,
+		measurement: measurement,
+		snapshots:   snapshots,
+	})
+}
+
+func (ledger *replayLedger) applyStressed(
+	actionType perspectives.ActionType,
+	measurement perspectives.Measurement,
+	snapshots []perspectives.Measurement,
+) {
 	if measurement.Last <= 0 {
 		return
 	}
 
+	slippagePct := executionSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
+	feePct := ledger.costs.feePct(actionType)
+
 	switch actionType {
 	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
-		ledger.openLong(
-			measurement.Symbol,
-			measurement.Last,
-			measurement.SpreadBPS,
-			ledger.costs.feePct(actionType),
-		)
+		ledger.openLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
 	case perspectives.ActionSettlePosition,
 		perspectives.ActionStopLoss,
 		perspectives.ActionStopLossLimit,
@@ -165,12 +285,7 @@ func (ledger *replayLedger) apply(
 		perspectives.ActionTakeProfitLimit,
 		perspectives.ActionTrailingStop,
 		perspectives.ActionTrailingStopLimit:
-		ledger.closeLong(
-			measurement.Symbol,
-			measurement.Last,
-			measurement.SpreadBPS,
-			ledger.costs.feePct(actionType),
-		)
+		ledger.closeLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
 	case perspectives.ActionNone:
 		return
 	}
@@ -179,8 +294,8 @@ func (ledger *replayLedger) apply(
 func (ledger *replayLedger) openLong(
 	symbol string,
 	price float64,
-	spreadBPS float64,
 	feePct float64,
+	slippagePct float64,
 ) {
 	if _, open := ledger.positions[symbol]; open {
 		return
@@ -191,7 +306,6 @@ func (ledger *replayLedger) openLong(
 		return
 	}
 
-	slippagePct := halfSpreadSlippagePct(ledger.costs, spreadBPS)
 	entryFill := price * (1 + slippagePct)
 
 	ledger.positions[symbol] = replayPosition{
@@ -223,8 +337,8 @@ func (ledger *replayLedger) previewClosePnL(
 func (ledger *replayLedger) closeLong(
 	symbol string,
 	price float64,
-	spreadBPS float64,
 	feePct float64,
+	slippagePct float64,
 ) {
 	position, open := ledger.positions[symbol]
 
@@ -232,7 +346,6 @@ func (ledger *replayLedger) closeLong(
 		return
 	}
 
-	slippagePct := halfSpreadSlippagePct(ledger.costs, spreadBPS)
 	exitFill := price * (1 - slippagePct)
 	gross := (exitFill - position.entryPrice) / position.entryPrice
 

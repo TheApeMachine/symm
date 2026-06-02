@@ -25,6 +25,7 @@ type CausalSymbol struct {
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
 	hy             *hyReturns
+	regime         regimeTracker
 	lastPrice      float64
 	bid            float64
 	ask            float64
@@ -239,7 +240,9 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) cau
 		return causalOutcome{}
 	}
 
-	roles, inverted, condition := selectRolesFromTable(nodeTable, contagion)
+	roles, inverted, condition := selectRolesWithTracker(
+		nodeTable, contagion, &state.regime, len(state.samples),
+	)
 	suffix := ""
 
 	if inverted {

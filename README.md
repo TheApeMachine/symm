@@ -295,7 +295,7 @@ Partitions order-book depth into a `FluidGridSize × FluidGridSize` (32×32) gri
 
 ### 🧪 Causal
 
-Implements Pearl's causal ladder (association → intervention → counterfactual) on a microstructure DAG: `MacroMomentum → PriceVelocity ← LocalFlow`, with `Liquidity` as a backdoor control. Hayashi-Yoshida covariance handles asynchronous tick timing without interpolation. Regime switching is gated by a Kalman-based contagion detector (`CausalConditionSwitch`, `CausalContagionBreak`). `EndogenousAlpha` — price movement driven by internal order flow rather than systemic spillover — is a required condition in the trend playbook.
+Implements Pearl's causal ladder (association → intervention → counterfactual) on a microstructure DAG: `MacroMomentum → PriceVelocity ← LocalFlow`, with `Liquidity` as a backdoor control. Hayashi-Yoshida covariance handles asynchronous tick timing without interpolation. Regime switching is gated by a Kalman-based contagion detector (`CausalConditionSwitch`, `CausalContagionBreak`); consecutive-sample hysteresis (derived from history length) prevents noisy condition/contagion trips from whipping between flow and liquidity-panic roles. `EndogenousAlpha` — price movement driven by internal order flow rather than systemic spillover — is a required condition in the trend playbook.
 
 ### 📊 CVD
 
@@ -385,6 +385,7 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 - the scan enumerates category/unit/condition/value predicates from observed measurement distributions
 - it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
 - each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
+- replay scoring applies optional execution stress: derived 50–200ms fill latency from tape cadence (`trading.replay.execution_latency_ms` to override) and expanded slippage when snapshot categories indicate turbulence or liquidity stress (`trading.replay.execution_stress_enabled`, default on)
 - the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
 
 Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.

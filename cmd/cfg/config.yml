@@ -20,6 +20,9 @@ trading:
     file: runs/capture.jsonl
   replay:
     file: runs/capture.jsonl
+    # Derive 50–200ms latency from tape when unset; set explicitly to override.
+    execution_latency_ms: 0
+    execution_stress_enabled: true
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.

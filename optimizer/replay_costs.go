@@ -1,6 +1,8 @@
 package optimizer
 
 import (
+	"time"
+
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -19,9 +21,11 @@ ReplayCosts models per-side execution drag for offline replay scoring.
 Fees are stored as fractions (0.004 = 0.40%).
 */
 type ReplayCosts struct {
-	MakerFeePct float64
-	TakerFeePct float64
-	SlippagePct float64
+	MakerFeePct            float64
+	TakerFeePct            float64
+	SlippagePct            float64
+	ExecutionLatency       time.Duration
+	ExecutionStressEnabled bool
 }
 
 /*
@@ -67,9 +71,11 @@ func ReplayCostsFromViper() ReplayCosts {
 	}
 
 	return ReplayCosts{
-		MakerFeePct: makerPct / 100.0,
-		TakerFeePct: takerPct / 100.0,
-		SlippagePct: slippageBps / 10000.0,
+		MakerFeePct:            makerPct / 100.0,
+		TakerFeePct:            takerPct / 100.0,
+		SlippagePct:            slippageBps / 10000.0,
+		ExecutionLatency:       replayExecutionLatencyFromViper(),
+		ExecutionStressEnabled: replayExecutionStressEnabledFromViper(),
 	}
 }
 

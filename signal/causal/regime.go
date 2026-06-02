@@ -106,3 +106,28 @@ func selectRolesFromTable(
 
 	return normal, false, condition
 }
+
+func selectRolesWithTracker(
+	nodeTable dagNodeTable,
+	contagion float64,
+	tracker *regimeTracker,
+	historyLen int,
+) (causalRoles, bool, float64) {
+	_, rawInverted, condition := selectRolesFromTable(nodeTable, contagion)
+
+	if tracker == nil {
+		if rawInverted {
+			return panicRoles(), true, condition
+		}
+
+		return normalRoles(), false, condition
+	}
+
+	inverted := tracker.apply(rawInverted, deriveRegimeHysteresisSamples(historyLen))
+
+	if inverted {
+		return panicRoles(), true, condition
+	}
+
+	return normalRoles(), false, condition
+}

@@ -145,6 +145,11 @@ func TestCausalSymbolEvaluateConditionBreak(t *testing.T) {
 		state.mu.Unlock()
 
 		outcome := state.evaluate(newCausalSample(0.1, 80, 2, 0), 0)
+		hysteresis := deriveRegimeHysteresisSamples(len(state.samples))
+
+		for range hysteresis - 1 {
+			outcome = state.evaluate(newCausalSample(0.1, 80, 2, 0), 0)
+		}
 
 		Convey("It should classify through the inverted regime", func() {
 			So(outcome.inverted, ShouldBeTrue)
