@@ -25,6 +25,7 @@ BranchEvaluator walks branches against one market state.
 */
 type BranchEvaluator struct {
 	context BranchContext
+	audit   *WalkAudit
 	err     error
 }
 
@@ -32,6 +33,7 @@ type branchDecision struct {
 	actionType ActionType
 	depth      int
 	found      bool
+	path       []BranchPathNode
 }
 
 /*
@@ -52,7 +54,7 @@ func (evaluator *BranchEvaluator) Err() error {
 Action returns the deepest reachable branch action.
 */
 func (evaluator *BranchEvaluator) Action(branches BranchList) *ActionType {
-	decision := evaluator.walk(branches, 0)
+	decision := evaluator.walk(branches, 0, nil)
 
 	if !decision.found {
 		return nil
@@ -62,24 +64,40 @@ func (evaluator *BranchEvaluator) Action(branches BranchList) *ActionType {
 }
 
 func (evaluator *BranchEvaluator) walk(
-	branches BranchList, depth int,
+	branches BranchList, depth int, path []BranchPathNode,
 ) branchDecision {
 	best := branchDecision{}
 
-	for _, branch := range branches {
-		if !evaluator.passes(branch) {
+	for index, branch := range branches {
+		check := evaluator.checkBranch(branch)
+
+		if evaluator.audit != nil {
+			evaluator.audit.recordStep(BranchStep{
+				Depth:      depth,
+				Index:      index,
+				Branch:     branchDescriptor(branch),
+				Pass:       check.pass,
+				FailReason: check.reason,
+				Compared:   check.compared,
+			})
+		}
+
+		if !check.pass {
 			continue
 		}
+
+		currentPath := appendBranchPath(path, depth, index)
 
 		if branch.Action.Type != ActionNone && (!best.found || depth > best.depth) {
 			best = branchDecision{
 				actionType: branch.Action.Type,
 				depth:      depth,
 				found:      true,
+				path:       currentPath,
 			}
 		}
 
-		child := evaluator.walk(BranchList(branch.Branches), depth+1)
+		child := evaluator.walk(BranchList(branch.Branches), depth+1, currentPath)
 
 		if child.found && (!best.found || child.depth > best.depth) {
 			best = child
@@ -89,75 +107,21 @@ func (evaluator *BranchEvaluator) walk(
 	return best
 }
 
+func appendBranchPath(
+	path []BranchPathNode, depth int, index int,
+) []BranchPathNode {
+	next := make([]BranchPathNode, len(path)+1)
+	copy(next, path)
+	next[len(path)] = BranchPathNode{Depth: depth, Index: index}
+
+	return next
+}
+
 /*
 PassesBranch reports whether one branch predicate matches the current context.
 */
 func (evaluator *BranchEvaluator) PassesBranch(branch Branch) bool {
-	return evaluator.passes(branch)
-}
-
-func (evaluator *BranchEvaluator) passes(branch Branch) bool {
-	if !evaluator.matchesRegime(branch) {
-		return false
-	}
-
-	if !evaluator.matchesObservation(branch) {
-		return false
-	}
-
-	if !evaluator.matchesAction(branch) {
-		return false
-	}
-
-	return evaluator.matchesCategoryAndCondition(branch)
-}
-
-func (evaluator *BranchEvaluator) matchesRegime(branch Branch) bool {
-	if branch.Regime == RegimeNone {
-		return true
-	}
-
-	return evaluator.context.Regime == branch.Regime
-}
-
-func (evaluator *BranchEvaluator) matchesObservation(branch Branch) bool {
-	if branch.Observation == ObservationNone {
-		return true
-	}
-
-	value, ok := evaluator.context.Observations[branch.Observation]
-
-	if branch.Unit != UnitNone {
-		return ok
-	}
-
-	switch branch.Condition {
-	case ConditionIsFalse:
-		return !ok || value == 0
-	case ConditionIsTrue:
-		return ok && value != 0
-	default:
-		return ok
-	}
-}
-
-func (evaluator *BranchEvaluator) matchesAction(branch Branch) bool {
-	if branch.Action.Type == ActionNone {
-		return true
-	}
-
-	if branch.Observation == ObservationNotHolding {
-		return evaluator.isEntryAction(branch.Action.Type)
-	}
-
-	if branch.Observation == ObservationHolding {
-		return evaluator.isExitAction(branch.Action.Type)
-	}
-
-	return evaluator.fail(
-		"action %d requires holding or not_holding observation",
-		branch.Action.Type,
-	)
+	return evaluator.checkBranch(branch).pass
 }
 
 func (evaluator *BranchEvaluator) isEntryAction(actionType ActionType) bool {
@@ -188,56 +152,6 @@ func (evaluator *BranchEvaluator) isExitAction(actionType ActionType) bool {
 			actionType,
 		)
 	}
-}
-
-func (evaluator *BranchEvaluator) matchesCategoryAndCondition(
-	branch Branch,
-) bool {
-	if branch.Category == CategoryTypeNone {
-		return evaluator.matchesNumericCondition(Measurement{}, branch)
-	}
-
-	for _, measurement := range evaluator.context.Measurements {
-		if measurement.Category != branch.Category {
-			continue
-		}
-
-		if evaluator.matchesNumericCondition(measurement, branch) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (evaluator *BranchEvaluator) matchesNumericCondition(
-	measurement Measurement, branch Branch,
-) bool {
-	if branch.Unit == UnitNone && !branch.hasNumericCondition() {
-		return true
-	}
-
-	if branch.Unit == UnitNone {
-		return evaluator.fail(
-			"numeric branch condition %d has no unit",
-			branch.Condition,
-		)
-	}
-
-	if branch.Condition == ConditionNone {
-		return evaluator.fail(
-			"branch unit %d has no condition",
-			branch.Unit,
-		)
-	}
-
-	value, ok := evaluator.value(measurement, branch)
-
-	if !ok {
-		return false
-	}
-
-	return evaluator.compare(value, branch.Value, branch.Condition)
 }
 
 func (branch Branch) hasNumericCondition() bool {

@@ -106,6 +106,16 @@ func (condition *ConditionType) UnmarshalJSON(data []byte) error {
 	return unmarshalEnumJSON(data, condition, conditionNames)
 }
 
+func (action ActionType) String() string {
+	name, ok := actionNames[action]
+
+	if ok {
+		return name
+	}
+
+	return fmt.Sprintf("action_%d", action)
+}
+
 func (action ActionType) MarshalYAML() (any, error) {
 	return marshalEnum(action, actionNames)
 }
@@ -120,6 +130,26 @@ func (action *ActionType) UnmarshalYAML(value *yaml.Node) error {
 
 func (action *ActionType) UnmarshalJSON(data []byte) error {
 	return unmarshalEnumJSON(data, action, actionNames)
+}
+
+func (observation ObservationType) String() string {
+	name, ok := observationNames[observation]
+
+	if ok {
+		return name
+	}
+
+	return fmt.Sprintf("observation_%d", observation)
+}
+
+func (unit UnitType) String() string {
+	name, ok := unitNames[unit]
+
+	if ok {
+		return name
+	}
+
+	return fmt.Sprintf("unit_%d", unit)
 }
 
 func (observation ObservationType) MarshalYAML() (any, error) {

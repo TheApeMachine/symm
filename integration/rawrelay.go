@@ -1,0 +1,96 @@
+package integration
+
+import (
+	"context"
+	"time"
+
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/public"
+)
+
+var replayRelayChannels = []string{
+	public.TickerChannel,
+	public.BookChannel,
+	public.TradesChannel,
+	public.CandlesChannel,
+	public.InstrumentsChannel,
+	"level3",
+}
+
+/*
+RawRelay forwards replay websocket channel frames onto the shared raw bus.
+*/
+type RawRelay struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	raw         *qpool.BroadcastGroup
+	subscribers []*qpool.Subscriber
+}
+
+func NewRawRelay(ctx context.Context, pool *qpool.Q) *RawRelay {
+	ctx, cancel := context.WithCancel(ctx)
+
+	relay := &RawRelay{
+		ctx:    ctx,
+		cancel: cancel,
+		raw:    pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
+	}
+
+	for _, channel := range replayRelayChannels {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		subscriber := group.Subscribe("integration/rawrelay:"+channel, 4096)
+
+		if subscriber == nil {
+			cancel()
+			return nil
+		}
+
+		relay.subscribers = append(relay.subscribers, subscriber)
+	}
+
+	return relay
+}
+
+func (relay *RawRelay) Tick() error {
+	for {
+		select {
+		case <-relay.ctx.Done():
+			return relay.ctx.Err()
+		default:
+		}
+
+		forwarded := false
+
+		for _, subscriber := range relay.subscribers {
+			select {
+			case message := <-subscriber.Incoming:
+				if message == nil || message.Value == nil {
+					continue
+				}
+
+				envelope, ok := message.Value.(public.SocketMessage)
+
+				if !ok {
+					continue
+				}
+
+				relay.raw.Send(&qpool.QValue[any]{
+					Type:  envelope.Channel,
+					Value: envelope,
+				})
+				forwarded = true
+			default:
+			}
+		}
+
+		if !forwarded {
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+}
+
+func (relay *RawRelay) Close() error {
+	relay.cancel()
+
+	return nil
+}

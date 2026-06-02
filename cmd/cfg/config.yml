@@ -31,6 +31,8 @@ trading:
     maker_fee_pct: 0.16
     slippage_bps: 5
     latency_profile: runs/network_latency.json
+  audit:
+    file: runs/audit.jsonl
 
 optimizer:
   tune:

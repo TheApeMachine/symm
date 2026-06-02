@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -41,6 +42,8 @@ type Story struct {
 	lastGauge   map[string]time.Time
 	recordFile  *os.File
 	recorder    *bufio.Writer
+	auditWriter *audit.Writer
+	auditDedup  playbookWalkDedup
 	pulseSeq    atomic.Int64
 }
 
@@ -74,6 +77,16 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, e
 		story.recordFile = fh
 		story.recorder = bufio.NewWriter(fh)
 	}
+
+	auditWriter, err := audit.OpenWriter()
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("story: audit writer: %w", err)
+	}
+
+	story.auditWriter = auditWriter
+	story.auditDedup = newPlaybookWalkDedup()
 
 	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
@@ -227,18 +240,40 @@ func (story *Story) ingestMeasurement(
 		story.tree.Branches()...,
 	)
 
+	blockReason := ""
+
 	if actionType == nil || *actionType == perspectives.ActionNone {
+		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
+			return fmt.Errorf("playbook walk audit: %w", err)
+		}
+
 		return nil
 	}
 
 	if perspectives.IsEntryAction(*actionType) && !trading.DeskReady() {
+		blockReason = "desk_not_ready"
+
+		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
+			return fmt.Errorf("playbook walk audit: %w", err)
+		}
+
 		return nil
 	}
 
 	action := perspectives.ActionFromMeasurement(*actionType, measurement)
 
 	if perspectives.IsEntryAction(*actionType) && action.Quantity <= 0 {
+		blockReason = "entry_quantity_zero"
+
+		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
+			return fmt.Errorf("playbook walk audit: %w", err)
+		}
+
 		return nil
+	}
+
+	if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
+		return fmt.Errorf("playbook walk audit: %w", err)
 	}
 
 	activate.Once("market/story:action")
@@ -336,6 +371,14 @@ func (story *Story) Close() error {
 		}
 
 		story.recordFile = nil
+	}
+
+	if story.auditWriter != nil {
+		if auditErr := story.auditWriter.Close(); auditErr != nil && closeErr == nil {
+			closeErr = auditErr
+		}
+
+		story.auditWriter = nil
 	}
 
 	return closeErr

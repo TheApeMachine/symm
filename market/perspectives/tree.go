@@ -23,6 +23,7 @@ type Tree struct {
 	branches      BranchList
 	Measurements  []Measurement
 	currentAction *ActionType
+	walkAudit     *WalkAudit
 }
 
 func NewTree(
@@ -89,6 +90,10 @@ func (tree *Tree) Action() *ActionType {
 	return tree.currentAction
 }
 
+func (tree *Tree) Err() error {
+	return tree.err
+}
+
 func (tree *Tree) Branches() BranchList {
 	return tree.branches
 }
@@ -103,6 +108,14 @@ func (tree *Tree) AddMeasurement(measurement Measurement) {
 
 func (tree *Tree) ResetWalk() {
 	tree.currentAction = nil
+	tree.walkAudit = nil
+}
+
+/*
+WalkAudit returns the branch trace from the latest WalkContext call.
+*/
+func (tree *Tree) WalkAudit() *WalkAudit {
+	return tree.walkAudit
 }
 
 /*
@@ -124,8 +137,13 @@ func (tree *Tree) WalkContext(
 		walkBranches = CanonicalPlaybookBranches(tree.branches)
 	}
 
+	audit := &WalkAudit{
+		Context: branchContext,
+	}
+
 	evaluator := NewBranchEvaluator(branchContext)
-	tree.currentAction = evaluator.Action(walkBranches)
+	tree.currentAction = evaluator.ActionAudited(walkBranches, audit)
+	tree.walkAudit = audit
 	tree.err = evaluator.Err()
 
 	return tree.currentAction

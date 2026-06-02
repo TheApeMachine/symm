@@ -76,6 +76,8 @@ func TestTreeResetWalk(t *testing.T) {
 			Observations: map[ObservationType]float64{ObservationNotHolding: 1},
 		})
 		So(tree.Action(), ShouldNotBeNil)
+		So(tree.WalkAudit(), ShouldNotBeNil)
+		So(len(tree.WalkAudit().Steps), ShouldBeGreaterThan, 0)
 
 		tree.ResetWalk()
 
