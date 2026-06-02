@@ -8,6 +8,59 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func TestReplaySimulationFeesRejectSubPercentScalps(t *testing.T) {
+	convey.Convey("Given a sub-percent round trip", t, func() {
+		ctx := context.Background()
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2.0, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2.0, Last: 100.10,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2.0, Last: 100.10,
+			},
+		}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
+
+		withFees := NewReplaySimulation(ctx, branches, rows).Score()
+		withoutFees := NewReplaySimulationWithCosts(
+			ctx, branches, rows, ReplayCosts{},
+		).Score()
+
+		convey.Convey("It should look profitable without fees and lose after fees", func() {
+			convey.So(withoutFees, convey.ShouldBeGreaterThan, 0)
+			convey.So(withFees, convey.ShouldBeLessThan, 0)
+		})
+	})
+}
+
 func TestReplaySimulationExit(t *testing.T) {
 	convey.Convey("Given entry and exit branches", t, func() {
 		ctx := context.Background()

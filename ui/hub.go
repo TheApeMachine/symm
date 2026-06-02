@@ -233,7 +233,15 @@ func (hub *Hub) Tick() error {
 }
 
 func (hub *Hub) heartbeatInterval() time.Duration {
-	return viper.GetDuration("ui.heartbeat_interval")
+	const defaultHeartbeat = time.Second
+
+	interval := viper.GetDuration("ui.heartbeat_interval")
+
+	if interval <= 0 {
+		return defaultHeartbeat
+	}
+
+	return interval
 }
 
 func (hub *Hub) publishHeartbeat(seq int64) {

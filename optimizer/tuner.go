@@ -13,7 +13,7 @@ import (
 
 /*
 Tuner is the tune-time stand-in for market.Story: it ingests measurements,
-searches perspective branch trees with MCTS, and publishes actions.
+searches perspective branch trees with ScanSearch, and publishes actions.
 */
 type Tuner struct {
 	ctx         context.Context
@@ -25,7 +25,6 @@ type Tuner struct {
 	tree        *perspectives.Tree
 	branches    perspectives.BranchList
 	trader      *Trader
-	seed        int64
 	mu          sync.Mutex
 	finished    bool
 }
@@ -43,7 +42,6 @@ func NewTuner(ctx context.Context, pool *qpool.Q) *Tuner {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		profile:     Profile{ctx: ctx},
-		seed:        time.Now().UnixNano(),
 	}
 
 	for _, channel := range []string{"measurements", "actions"} {
@@ -146,7 +144,7 @@ func (tuner *Tuner) publish(
 }
 
 /*
-Finish runs the bounded scan once replay measurements are collected.
+Finish runs hybrid beam+MCTS search once replay measurements are collected.
 */
 func (tuner *Tuner) Finish() {
 	tuner.mu.Lock()
@@ -158,14 +156,33 @@ func (tuner *Tuner) Finish() {
 
 	tuner.finished = true
 	rows := tuner.profile.Rows()
-	search := NewScanSearch(tuner.ctx, &tuner.profile, rows, ScanOptions{
-		Workers:           runtime.NumCPU(),
-		MaxThresholds:     DefaultScanMaxThresholds,
-		BeamWidth:         DefaultScanBeamWidth,
-		CandidateLimit:    DefaultScanCandidateLimit,
-		MaxReasoningSteps: DefaultMaxReasoningSteps,
-	})
-	tuner.branches, _ = search.Run()
+
+	branches, _, err := RunHybridSearch(
+		tuner.ctx,
+		&tuner.profile,
+		rows,
+		HybridOptions{
+			ScanOptions: ScanOptions{
+				Workers:           runtime.NumCPU(),
+				MaxThresholds:     DefaultScanMaxThresholds,
+				BeamWidth:         DefaultScanBeamWidth,
+				CandidateLimit:    DefaultScanCandidateLimit,
+				MaxReasoningSteps: DefaultMaxReasoningSteps,
+			},
+			MCTSOptions: MCTSOptions{
+				Iterations:        DefaultMCTSIterations,
+				MaxReasoningSteps: DefaultMaxReasoningSteps,
+			},
+			SeedCount:    DefaultHybridSeedCount,
+			ShallowDepth: DefaultHybridShallowDepth,
+		},
+	)
+
+	if err != nil {
+		return
+	}
+
+	tuner.branches = branches
 
 	tree, err := perspectives.NewTreeFromBranches(tuner.ctx, tuner.branches)
 
@@ -177,7 +194,7 @@ func (tuner *Tuner) Finish() {
 }
 
 /*
-Branches returns the best branch registry found by MCTS.
+Branches returns the best branch registry found by ScanSearch.
 */
 func (tuner *Tuner) Branches() perspectives.BranchList {
 	tuner.mu.Lock()
@@ -204,6 +221,8 @@ type SessionSummary struct {
 	BranchCount      int     `json:"branch_count"`
 	Candidates       int     `json:"candidates"`
 	Workers          int     `json:"workers"`
+	HybridSeeds      int     `json:"hybrid_seeds,omitempty"`
+	MCTSRounds       int     `json:"mcts_rounds,omitempty"`
 	BestScore        float64 `json:"best_score"`
 }
 
@@ -230,6 +249,19 @@ func (tuner *Tuner) Summary() SessionSummary {
 String formats the session summary for stderr.
 */
 func (summary SessionSummary) String() string {
+	if summary.MCTSRounds > 0 {
+		return fmt.Sprintf(
+			"measurements=%d branches=%d candidates=%d workers=%d seeds=%d mcts=%d score=%.6f",
+			summary.MeasurementCount,
+			summary.BranchCount,
+			summary.Candidates,
+			summary.Workers,
+			summary.HybridSeeds,
+			summary.MCTSRounds,
+			summary.BestScore,
+		)
+	}
+
 	if summary.Candidates > 0 {
 		return fmt.Sprintf(
 			"measurements=%d branches=%d candidates=%d workers=%d score=%.6f",

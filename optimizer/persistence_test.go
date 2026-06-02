@@ -50,6 +50,22 @@ func TestLoadMeasurements(t *testing.T) {
 			convey.So(len(rows), convey.ShouldEqual, 1)
 		})
 	})
+
+	convey.Convey("Given only malformed measurement lines", t, func() {
+		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		raw := []byte(`{bad` + "\n" + `{"incomplete":` + "\n")
+
+		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
+
+		rows, skipped, err := LoadMeasurements(path)
+
+		convey.Convey("It should return an error reporting skipped lines", func() {
+			convey.So(len(rows), convey.ShouldEqual, 0)
+			convey.So(skipped, convey.ShouldEqual, 2)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "skipped 2")
+		})
+	})
 }
 
 func TestWriteBranches(t *testing.T) {

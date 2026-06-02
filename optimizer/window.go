@@ -87,12 +87,12 @@ func GenerateTimeWindows(
 		return nil
 	}
 
-	if rows[0].At.IsZero() {
+	if rows[0].At == nil || rows[0].At.IsZero() {
 		return nil
 	}
 
-	start := rows[0].At
-	end := rows[len(rows)-1].At
+	start := *rows[0].At
+	end := *rows[len(rows)-1].At
 
 	if !end.After(start) {
 		return nil
@@ -139,6 +139,10 @@ func GenerateTimeWindows(
 
 func indexAtOrAfter(rows []perspectives.Measurement, at time.Time) int {
 	for index, row := range rows {
+		if row.At == nil || row.At.IsZero() {
+			continue
+		}
+
 		if !row.At.Before(at) {
 			return index
 		}

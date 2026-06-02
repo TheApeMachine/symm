@@ -37,7 +37,12 @@ func NewBalances(
 	}
 
 	assets := make(map[string]float64)
-	seed := viper.GetViper().GetFloat64("trading.paper.wallet_eur")
+	quoteKey := "trading.paper.wallet_" + strings.ToLower(quote)
+	seed := viper.GetViper().GetFloat64(quoteKey)
+
+	if seed <= 0 && strings.EqualFold(quote, "EUR") {
+		seed = viper.GetViper().GetFloat64("trading.paper.wallet_eur")
+	}
 
 	if seed > 0 {
 		assets[quote] = seed

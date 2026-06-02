@@ -140,6 +140,7 @@ func (guard *OverfitGuard) AcceptTrainCandidate(
 
 /*
 ValidateWalkForward scores holdout slices and returns whether the tree survives.
+Decay compares return-per-trade on each window's train slice against its test slice.
 */
 func (guard *OverfitGuard) ValidateWalkForward(
 	branches perspectives.BranchList,
@@ -156,30 +157,35 @@ func (guard *OverfitGuard) ValidateWalkForward(
 		return true, 0
 	}
 
-	trainScore := NewReplaySimulation(guard.ctx, branches, rows).Result().Score
 	wins := 0
 	holdoutTotal := 0.0
 
 	for _, window := range windows {
+		trainRows := rows[window.TrainStart:window.TrainEnd]
 		testRows := rows[window.TestStart:window.TestEnd]
-		testScore := NewReplaySimulation(
-			guard.ctx, branches, testRows,
-		).Result().Score
 
-		if testScore <= 0 {
+		trainResult := NewReplaySimulation(guard.ctx, branches, trainRows).Result()
+		testResult := NewReplaySimulation(guard.ctx, branches, testRows).Result()
+
+		if trainResult.ClosedTrades == 0 || testResult.ClosedTrades == 0 {
 			continue
 		}
 
-		if trainScore > 0 {
-			decay := (trainScore - testScore) / trainScore
+		trainPerTrade := trainResult.ReturnPerTrade()
+		testPerTrade := testResult.ReturnPerTrade()
 
-			if decay > guard.options.WalkForward.MaxHoldoutDecay {
-				continue
-			}
+		if testPerTrade <= 0 {
+			continue
+		}
+
+		decay := holdoutDecay(trainPerTrade, testPerTrade)
+
+		if decay > guard.options.WalkForward.MaxHoldoutDecay {
+			continue
 		}
 
 		wins++
-		holdoutTotal += testScore
+		holdoutTotal += testPerTrade
 	}
 
 	minWins := int(math.Ceil(float64(len(windows)) * guard.options.WalkForward.MinWinRate))

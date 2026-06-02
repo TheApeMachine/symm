@@ -32,6 +32,8 @@ func TestNewInstrument(t *testing.T) {
 
 func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 	convey.Convey("Given a filtered instrument catalog update", t, func() {
+		defer viper.Reset()
+
 		viper.Set("market.symbols", []string{"BTC/EUR"})
 		viper.Set("market.max_scan_symbols", 8)
 
@@ -43,7 +45,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		subscriber := outbound.Subscribe("test:instrument:outbound", 16)
 
-		instrument := &Instrument{Pairs: make([]string, 0)}
+		instrument := &Instrument{
+			Pairs:   make([]string, 0),
+			pairSet: make(map[string]struct{}),
+		}
 
 		data, marshalErr := json.Marshal(InstrumentUpdate{
 			Pairs: []InstrumentPair{
@@ -63,7 +68,14 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 		convey.Convey("It should subscribe only configured symbols", func() {
 			convey.So(instrument.Pairs, convey.ShouldResemble, []string{"BTC/EUR"})
 
-			frame := <-subscriber.Incoming
+			var frame *qpool.QValue[any]
+
+			select {
+			case frame = <-subscriber.Incoming:
+			case <-time.After(2 * time.Second):
+				convey.So("applyCatalogUpdate did not emit a subscribe frame", convey.ShouldBeEmpty)
+			}
+
 			convey.So(frame, convey.ShouldNotBeNil)
 			convey.So(frame.Value, convey.ShouldNotBeNil)
 		})

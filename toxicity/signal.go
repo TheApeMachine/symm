@@ -98,34 +98,7 @@ func (tox *Toxicity) Tick() error {
 					}
 				}
 			}
-			// case message := <-tox.subscribers["level3"].Incoming:
-			// 	if message == nil || message.Value == nil {
-			// 		continue
-			// 	}
-
-			// 	envelope, ok := message.Value.(public.SocketMessage)
-
-			// 	if !ok {
-			// 		continue
-			// 	}
-
-			// 	for _, row := range errnie.Does(func() ([]*public.SocketMessage, error) {
-			// 		return envelope.SplitDataRows()
-			// 	}).Or(func(err error) {
-			// 		errnie.Error(err)
-			// 	}).Value() {
-			// 		switch row.Channel {
-			// 		case "level3":
-			// 			update := errnie.Does(func() (market.Level3Update, error) {
-			// 				// return market.DecodeLevel3(row)
-			// 				return market.Level3Update{}, nil
-			// 			}).Or(func(err error) {
-			// 				errnie.Error(err)
-			// 			}).Value()
-
-			// 			tox.observeLevel3(&update)
-			// 		}
-			// 	}
+			// TODO: handle level3 on tox.subscribers["level3"] when L3 feed is wired.
 		}
 	}
 }

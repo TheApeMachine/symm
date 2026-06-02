@@ -113,32 +113,41 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
+				trades := errnie.Does(func() ([]market.TradeUpdate, error) {
 					return market.DecodeTrades(&envelope)
 				}).Or(func(err error) {
 					errnie.Error(err)
-				}).Value() {
+				}).Value()
+
+				for _, trade := range trades {
 					signal.state(trade.Symbol).FeedTrade(trade)
-					signal.publish()
 				}
+
+				signal.publish()
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
+				tickers := errnie.Does(func() ([]market.TickerUpdate, error) {
 					return market.DecodeTickers(&envelope)
 				}).Or(func(err error) {
 					errnie.Error(err)
-				}).Value() {
+				}).Value()
+
+				for _, ticker := range tickers {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
-					signal.publish()
 				}
+
+				signal.publish()
 			case public.BookChannel:
-				for _, delta := range errnie.Does(func() ([]market.Book, error) {
+				books := errnie.Does(func() ([]market.Book, error) {
 					return market.DecodeBooks(&envelope)
 				}).Or(func(err error) {
 					errnie.Error(err)
-				}).Value() {
+				}).Value()
+
+				for _, delta := range books {
 					signal.state(delta.Symbol).FeedBook(delta)
-					signal.publish()
 				}
+
+				signal.publish()
 			}
 		}
 	}

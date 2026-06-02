@@ -3,6 +3,7 @@ package paper
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
@@ -62,7 +63,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 
 	switch method {
 	case trading.MethodAddOrder:
-		params, ok := frame["params"].(trading.AddParams)
+		params, ok := addParamsFromAny(frame["params"])
 
 		if !ok {
 			return public.SocketMessage{}
@@ -139,7 +140,26 @@ func (orders *Orders) amendOrder(params any) public.SocketMessage {
 
 	orders.amendStored(order, qty, limitPrice)
 
-	return public.SocketMessage{}
+	if qty <= 0 {
+		qty = order.orderQty
+	}
+
+	if limitPrice <= 0 {
+		limitPrice = order.limitPrice
+	}
+
+	return orders.executionMessage(user.Execution{
+		ExecType:    "amended",
+		OrderID:     order.orderID,
+		ClOrdID:     order.clOrdID,
+		Symbol:      order.symbol,
+		Side:        string(order.side),
+		OrderType:   string(order.orderType),
+		OrderQty:    qty,
+		LimitPrice:  limitPrice,
+		OrderStatus: "open",
+		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func (orders *Orders) cancelOrder(params any) public.SocketMessage {
@@ -181,9 +201,10 @@ func (orders *Orders) cancelOrder(params any) public.SocketMessage {
 }
 
 func (orders *Orders) cancelAll() public.SocketMessage {
-	executions := make([]user.Execution, 0, len(orders.open))
+	ids := orders.openOrderIDs()
+	executions := make([]user.Execution, 0, len(ids))
 
-	for _, orderID := range orders.openOrderIDs() {
+	for _, orderID := range ids {
 		order, ok := orders.takeOrder(orderID)
 
 		if !ok {

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -31,12 +30,15 @@ TuneOptions controls a measurement-backed optimizer run.
 type TuneOptions struct {
 	OutputPath          string
 	CandidateReportPath string
-	Seed                int64
 	Workers             int
 	MaxThresholds       int
 	BeamWidth           int
 	CandidateLimit      int
 	MaxReasoningSteps   int
+	Hybrid              bool
+	HybridSeedCount     int
+	ShallowDepth        int
+	MCTSIterations      int
 	Guard               GuardOptions
 	OnBest              func(BestTree)
 	OnCandidate         func(CandidateScore)
@@ -65,7 +67,8 @@ func (candidate CandidateScore) BranchCount() int {
 
 /*
 LoadMeasurements reads the JSONL measurement tape written by market.Story.
-Malformed or truncated lines are skipped; skipped counts incomplete tail rows.
+Malformed, truncated, or unparsable JSONL lines increment skipped; skipped is not
+limited to tail fragments.
 */
 func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
 	file, err := os.Open(path)
@@ -121,16 +124,9 @@ func TuneMeasurements(
 	rows []perspectives.Measurement,
 	options TuneOptions,
 ) (SessionSummary, error) {
-	seed := options.Seed
-
-	if seed == 0 {
-		seed = time.Now().UnixNano()
-	}
-
 	tuner := &Tuner{
 		ctx:     ctx,
 		profile: Profile{ctx: ctx},
-		seed:    seed,
 	}
 
 	for _, row := range rows {
@@ -188,15 +184,61 @@ func TuneMeasurements(
 	search.onCandidate = onCandidate
 
 	var stats ScanStats
-	tuner.branches, stats = search.Run()
+	var hybridStats HybridStats
 
-	guard := NewOverfitGuard(ctx, options.Guard)
+	if options.Hybrid {
+		tuner.branches, hybridStats, err = RunHybridSearch(
+			ctx,
+			&tuner.profile,
+			rows,
+			HybridOptions{
+				ScanOptions: ScanOptions{
+					Workers:           options.Workers,
+					MaxThresholds:     options.MaxThresholds,
+					BeamWidth:         options.BeamWidth,
+					CandidateLimit:    options.CandidateLimit,
+					MaxReasoningSteps: options.MaxReasoningSteps,
+					Guard:             options.Guard,
+				},
+				MCTSOptions: MCTSOptions{
+					Iterations:        options.MCTSIterations,
+					MaxReasoningSteps: options.MaxReasoningSteps,
+				},
+				SeedCount:    options.HybridSeedCount,
+				ShallowDepth: options.ShallowDepth,
+				Guard:        options.Guard,
+				OnBest:       onBest,
+				OnCandidate:  onCandidate,
+			},
+		)
 
-	if options.Guard.WalkForward.Enabled && len(tuner.branches) > 0 {
-		ok, _ := guard.ValidateWalkForward(tuner.branches, rows)
+		if err != nil {
+			return SessionSummary{}, err
+		}
 
-		if !ok {
-			tuner.branches = perspectives.BranchList{}
+		stats = hybridStats.Scan
+
+		if options.Guard.WalkForward.Enabled && len(tuner.branches) == 0 && options.OutputPath != "" {
+			if err := WriteBranches(options.OutputPath, tuner.branches); err != nil && writeErr == nil {
+				writeErr = err
+			}
+		}
+	} else {
+		tuner.branches, stats = search.Run()
+
+		if options.Guard.WalkForward.Enabled && len(tuner.branches) > 0 {
+			guard := NewOverfitGuard(ctx, options.Guard)
+			ok, _ := guard.ValidateWalkForward(tuner.branches, rows)
+
+			if !ok {
+				tuner.branches = perspectives.BranchList{}
+
+				if options.OutputPath != "" {
+					if err := WriteBranches(options.OutputPath, tuner.branches); err != nil && writeErr == nil {
+						writeErr = err
+					}
+				}
+			}
 		}
 	}
 
@@ -213,6 +255,8 @@ func TuneMeasurements(
 	summary := tuner.Summary()
 	summary.Candidates = stats.Candidates
 	summary.Workers = stats.Workers
+	summary.HybridSeeds = hybridStats.SeedCount
+	summary.MCTSRounds = hybridStats.MCTSRounds
 
 	return summary, nil
 }

@@ -32,4 +32,12 @@ type TickerUpdate struct {
 	Volume    float64 `json:"volume"`
 	VWAP      float64 `json:"vwap"`
 	Timestamp string  `json:"timestamp"`
+	Type      string  `json:"-"`
+}
+
+/*
+SetEnvelopeType records the channel envelope tag (snapshot or update).
+*/
+func (ticker *TickerUpdate) SetEnvelopeType(kind string) {
+	ticker.Type = kind
 }

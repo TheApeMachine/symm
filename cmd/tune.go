@@ -43,7 +43,31 @@ var tuneCmd = &cobra.Command{
 			return err
 		}
 
-		guardOptions, err := tuneGuardOptions(cmd)
+		guardOptions, err := tuneGuardOptions(cmd, scanOptions)
+
+		if err != nil {
+			return err
+		}
+
+		hybridEnabled, err := cmd.Flags().GetBool(tuneHybridFlag)
+
+		if err != nil {
+			return err
+		}
+
+		hybridSeeds, err := cmd.Flags().GetInt(tuneHybridSeedsFlag)
+
+		if err != nil {
+			return err
+		}
+
+		shallowDepth, err := cmd.Flags().GetInt(tuneShallowDepthFlag)
+
+		if err != nil {
+			return err
+		}
+
+		mctsIterations, err := cmd.Flags().GetInt(tuneMCTSIterationsFlag)
 
 		if err != nil {
 			return err
@@ -61,6 +85,10 @@ var tuneCmd = &cobra.Command{
 				BeamWidth:           scanOptions.BeamWidth,
 				CandidateLimit:      scanOptions.CandidateLimit,
 				MaxReasoningSteps:   scanOptions.MaxReasoningSteps,
+				Hybrid:              hybridEnabled,
+				HybridSeedCount:     hybridSeeds,
+				ShallowDepth:        shallowDepth,
+				MCTSIterations:      mctsIterations,
 				Guard:               guardOptions,
 				OnBest: func(best optimizer.BestTree) {
 					fmt.Fprintf(
@@ -143,6 +171,26 @@ func init() {
 		false,
 		"validate the winning tree on rolling holdout windows",
 	)
+	tuneCmd.Flags().Bool(
+		tuneHybridFlag,
+		true,
+		"progressive deepening: shallow beam search seeds deep MCTS",
+	)
+	tuneCmd.Flags().Int(
+		tuneHybridSeedsFlag,
+		optimizer.DefaultHybridSeedCount,
+		"top shallow trees passed as MCTS root seeds",
+	)
+	tuneCmd.Flags().Int(
+		tuneShallowDepthFlag,
+		optimizer.DefaultHybridShallowDepth,
+		"max reasoning steps for the exhaustive shallow beam phase",
+	)
+	tuneCmd.Flags().Int(
+		tuneMCTSIterationsFlag,
+		optimizer.DefaultMCTSIterations,
+		"MCTS iterations for the deep search phase",
+	)
 	tuneCmd.Flags().String(
 		tuneCandidateReportFlag,
 		"",
@@ -167,6 +215,10 @@ const tuneComplexityPenaltyFlag = "complexity-penalty"
 const tuneMinRoundTripsFlag = "min-round-trips"
 const tuneJitterFlag = "jitter"
 const tuneWalkForwardFlag = "walk-forward"
+const tuneHybridFlag = "hybrid"
+const tuneHybridSeedsFlag = "hybrid-seeds"
+const tuneShallowDepthFlag = "shallow-depth"
+const tuneMCTSIterationsFlag = "mcts-iterations"
 const tuneCandidateReportFlag = "candidate-report"
 
 func tuneMeasurementPath() (string, error) {
@@ -251,13 +303,9 @@ func tuneScanOptions(cmd *cobra.Command) (optimizer.ScanOptions, error) {
 	})
 }
 
-func tuneGuardOptions(cmd *cobra.Command) (optimizer.GuardOptions, error) {
-	maxReasoningSteps, err := cmd.Flags().GetInt(tuneMaxReasoningStepsFlag)
-
-	if err != nil {
-		return optimizer.GuardOptions{}, err
-	}
-
+func tuneGuardOptions(
+	cmd *cobra.Command, scanOptions optimizer.ScanOptions,
+) (optimizer.GuardOptions, error) {
 	complexityPenalty, err := cmd.Flags().GetFloat64(tuneComplexityPenaltyFlag)
 
 	if err != nil {
@@ -282,10 +330,6 @@ func tuneGuardOptions(cmd *cobra.Command) (optimizer.GuardOptions, error) {
 		return optimizer.GuardOptions{}, err
 	}
 
-	if maxReasoningSteps <= 0 {
-		return optimizer.GuardOptions{}, fmt.Errorf("tune: max-reasoning-steps must be > 0")
-	}
-
 	if complexityPenalty <= 0 {
 		return optimizer.GuardOptions{}, fmt.Errorf("tune: complexity-penalty must be > 0")
 	}
@@ -295,7 +339,7 @@ func tuneGuardOptions(cmd *cobra.Command) (optimizer.GuardOptions, error) {
 	}
 
 	return optimizer.GuardOptions{
-		MaxReasoningSteps: maxReasoningSteps,
+		MaxReasoningSteps: scanOptions.MaxReasoningSteps,
 		ComplexityPenalty: complexityPenalty,
 		MinRoundTrips:     minRoundTrips,
 		JitterEnabled:     jitterEnabled,

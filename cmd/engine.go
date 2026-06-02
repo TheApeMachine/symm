@@ -44,17 +44,27 @@ func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
 
 func (engine *Engine) Start() error {
 	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	tickErrors := make([]error, 0)
 
 	for _, system := range engine.systems {
 		system := system
-		name := reflect.TypeOf(system).Elem().String()
+		systemType := reflect.TypeOf(system)
+		name := systemType.String()
+
+		if systemType.Kind() == reflect.Ptr {
+			name = systemType.Elem().String()
+		}
 
 		wg.Go(func() {
 			fmt.Println("[symm] tick:start", name)
 
 			if err := system.Tick(); err != nil {
 				fmt.Println("[symm] tick:stop", name, "err=", err)
-				engine.err = errors.Join(engine.err, errnie.Error(err))
+
+				errMu.Lock()
+				tickErrors = append(tickErrors, errnie.Error(err))
+				errMu.Unlock()
 
 				return
 			}
@@ -64,6 +74,8 @@ func (engine *Engine) Start() error {
 	}
 
 	wg.Wait()
+
+	engine.err = errors.Join(tickErrors...)
 
 	return engine.err
 }

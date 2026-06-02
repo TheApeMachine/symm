@@ -2,7 +2,9 @@ package private
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -13,7 +15,10 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/user"
 )
+
+const privateReadPoll = 50 * time.Millisecond
 
 type WebSocket struct {
 	ctx         context.Context
@@ -72,6 +77,10 @@ func NewWebSocketFromRest(
 		)
 	}
 
+	if err := user.NewBalance(pool, ws); err != nil {
+		errnie.Error(err)
+	}
+
 	return ws
 }
 
@@ -104,11 +113,11 @@ func (ws *WebSocket) Tick() error {
 	for {
 		select {
 		case <-ws.ctx.Done():
-			return ws.err
+			return ws.ctx.Err()
 		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
 			if !ok {
 				errnie.Debug("kraken.private.websocket.Tick", "no ok")
-				return nil
+				return ws.ctx.Err()
 			}
 
 			if message == nil {
@@ -120,7 +129,11 @@ func (ws *WebSocket) Tick() error {
 				return fmt.Errorf("kraken private websocket: not connected")
 			}
 
-			errnie.Error(ws.conn.WriteJSON(message.Value))
+			if err := ws.conn.WriteJSON(message.Value); err != nil {
+				ws.err = errnie.Error(err)
+
+				return ws.err
+			}
 		default:
 		}
 
@@ -128,11 +141,25 @@ func (ws *WebSocket) Tick() error {
 			return fmt.Errorf("kraken private websocket: not connected")
 		}
 
+		if err := ws.conn.SetReadDeadline(time.Now().Add(privateReadPoll)); err != nil {
+			ws.err = errnie.Error(err)
+
+			return ws.err
+		}
+
 		var message public.SocketMessage
 
 		if err := ws.conn.ReadJSON(&message); err != nil {
-			return errnie.Error(err)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				continue
+			}
+
+			ws.err = errnie.Error(err)
+
+			return ws.err
 		}
+
+		_ = ws.conn.SetReadDeadline(time.Time{})
 
 		if message.Channel != "" {
 			activate.Once("kraken/private:channel:" + message.Channel)

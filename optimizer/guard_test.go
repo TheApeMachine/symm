@@ -9,6 +9,61 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
+	convey.Convey("Given stable per-trade performance across windows", t, func() {
+		ctx := context.Background()
+		rows := make([]perspectives.Measurement, 0, 120)
+
+		for index := range 120 {
+			price := 100.0
+
+			if index%6 == 5 {
+				price = 110.0
+			}
+
+			rows = append(rows, perspectives.Measurement{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: price,
+			})
+		}
+
+		branches := perspectives.BranchList{{
+			Category:    perspectives.CategoryLaminar,
+			Observation: perspectives.ObservationNotHolding,
+			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:        perspectives.UnitSNR,
+			Value:       1, ValueSet: true,
+			Action: perspectives.Action{Type: perspectives.ActionLimit},
+		}}
+
+		guard := NewOverfitGuard(ctx, GuardOptions{
+			WalkForward: WalkForwardOptions{
+				Enabled:         true,
+				TrainFraction:   0.7,
+				TestFraction:    0.1,
+				StepFraction:    0.1,
+				MinWinRate:      0.5,
+				MaxHoldoutDecay: 0.9,
+			},
+		})
+
+		ok, _ := guard.ValidateWalkForward(branches, rows)
+
+		convey.Convey("It should not reject solely because the test window is shorter", func() {
+			convey.So(ok, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestPerturbBranchValue(t *testing.T) {
+	convey.Convey("Given a threshold near zero", t, func() {
+		convey.Convey("It should apply a meaningful absolute shift", func() {
+			convey.So(perturbBranchValue(0.001, 0.05), convey.ShouldAlmostEqual, 0.051, 0.0001)
+		})
+	})
+}
+
 func TestReasoningDepth(t *testing.T) {
 	convey.Convey("Given sibling denies and one nested exit", t, func() {
 		branches := perspectives.BranchList{
@@ -116,8 +171,9 @@ func TestGenerateTimeWindows(t *testing.T) {
 		rows := make([]perspectives.Measurement, 24)
 
 		for index := range rows {
+			at := start.Add(time.Duration(index) * time.Hour)
 			rows[index] = perspectives.Measurement{
-				At: start.Add(time.Duration(index) * time.Hour),
+				At: &at,
 			}
 		}
 

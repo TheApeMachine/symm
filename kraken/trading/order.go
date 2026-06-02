@@ -152,6 +152,10 @@ func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 	}))
 }
 
+/*
+send publishes an order frame on the private broadcast. Delivery is fire-and-forget:
+BroadcastGroup.Send does not surface subscriber back-pressure or handler errors.
+*/
 func (client *Client) send(payload fiber.Map) error {
 	client.orders.Send(&qpool.QValue[any]{
 		Type:  public.OrdersChannel,

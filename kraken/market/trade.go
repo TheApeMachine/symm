@@ -30,4 +30,12 @@ type TradeUpdate struct {
 	OrdType   string    `json:"ord_type"`
 	TradeID   int64     `json:"trade_id"`
 	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"-"`
+}
+
+/*
+SetEnvelopeType records the channel envelope tag (snapshot or update).
+*/
+func (trade *TradeUpdate) SetEnvelopeType(kind string) {
+	trade.Type = kind
 }

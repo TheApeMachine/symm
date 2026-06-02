@@ -63,6 +63,7 @@ type WebSocket struct {
 	pairs       []string
 	ui          *qpool.BroadcastGroup
 	candles     map[string]*ohlcBar
+	watchSet    map[string]struct{}
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
@@ -76,6 +77,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 			broadcasts:  make(map[string]*qpool.BroadcastGroup),
 			subscribers: make(map[string]*qpool.Subscriber),
 			candles:     make(map[string]*ohlcBar),
+			watchSet:    buildWatchSet(viper.GetStringSlice("market.symbols")),
 		}
 	})
 
@@ -213,12 +215,6 @@ func (ws *WebSocket) applyTickers(msg SocketMessage) {
 		return
 	}
 
-	watched := viper.GetStringSlice("market.symbols")
-	watchSet := make(map[string]struct{}, len(watched))
-	for _, s := range watched {
-		watchSet[s] = struct{}{}
-	}
-
 	now := time.Now()
 	nowStr := now.UTC().Format(time.RFC3339Nano)
 	floor := (now.Unix() / 60) * 60
@@ -227,8 +223,8 @@ func (ws *WebSocket) applyTickers(msg SocketMessage) {
 		if t.Last <= 0 || t.Symbol == "" {
 			continue
 		}
-		if len(watchSet) > 0 {
-			if _, ok := watchSet[t.Symbol]; !ok {
+		if len(ws.watchSet) > 0 {
+			if _, ok := ws.watchSet[t.Symbol]; !ok {
 				continue
 			}
 		}
@@ -272,4 +268,14 @@ func (ws *WebSocket) Close() error {
 	}
 
 	return errnie.Error(ws.conn.Close())
+}
+
+func buildWatchSet(symbols []string) map[string]struct{} {
+	watchSet := make(map[string]struct{}, len(symbols))
+
+	for _, symbol := range symbols {
+		watchSet[symbol] = struct{}{}
+	}
+
+	return watchSet
 }

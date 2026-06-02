@@ -203,9 +203,7 @@ func (orders *Orders) roundToTick(price, tick float64) float64 {
 		return price
 	}
 
-	inv := 1.0 / tick
-
-	return math.Round(price*inv) / inv
+	return math.Round(price/tick) * tick
 }
 
 func (orders *Orders) roundFee(fee float64) float64 {

@@ -49,9 +49,8 @@ const TICK_MS = 500;
 const initSignalHeatmap = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
 
-	const { sciChartSurface, wasmContext } = await SciChartSurface.create(
-		rootElement,
-	);
+	const { sciChartSurface, wasmContext } =
+		await SciChartSurface.create(rootElement);
 
 	const nRows = SOURCES.length;
 	// zValues[row][col]: row = source index, col = time step (oldest → newest)
@@ -122,14 +121,15 @@ const initSignalHeatmap = async (rootElement: string | HTMLDivElement) => {
 
 	sciChartSurface.background = "transparent";
 
-	let col = 0;
-
 	const push = (values: number[]) => {
-		const slot = col % TIME_COLS;
 		for (let row = 0; row < nRows; row++) {
-			zValues[row][slot] = values[row] ?? 0;
+			for (let col = 0; col < TIME_COLS - 1; col++) {
+				zValues[row][col] = zValues[row][col + 1];
+			}
+
+			zValues[row][TIME_COLS - 1] = values[row] ?? 0;
 		}
-		col++;
+
 		dataSeries.setZValues(zValues);
 		sciChartSurface.invalidateElement();
 	};
@@ -147,9 +147,7 @@ export const SignalHeatmap = memo(function SignalHeatmap() {
 	const onInit = useCallback((result: { controls: Controls }) => {
 		const tick = () => {
 			const snapshot = ConfidenceDataProvider.snapshot();
-			const values = SOURCES.map(
-				(src) => snapshot.get(src)?.confidence ?? 0,
-			);
+			const values = SOURCES.map((src) => snapshot.get(src)?.confidence ?? 0);
 			result.controls.push(values);
 		};
 

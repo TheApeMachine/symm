@@ -1,10 +1,37 @@
 package paper
 
 import (
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
+
+func addParamsFromAny(params any) (trading.AddParams, bool) {
+	if addParams, ok := params.(trading.AddParams); ok {
+		return addParams, true
+	}
+
+	frame := paramsMap(params)
+
+	if frame == nil {
+		return trading.AddParams{}, false
+	}
+
+	raw, err := sonic.Marshal(frame)
+
+	if err != nil {
+		return trading.AddParams{}, false
+	}
+
+	var addParams trading.AddParams
+
+	if err := sonic.Unmarshal(raw, &addParams); err != nil {
+		return trading.AddParams{}, false
+	}
+
+	return addParams, true
+}
 
 func paramsMap(params any) map[string]any {
 	if params == nil {

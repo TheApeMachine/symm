@@ -97,17 +97,31 @@ func DecodeBalances(message *public.SocketMessage) ([]Balance, error) {
 	return rows, nil
 }
 
-func NewBalance(pool *qpool.Q) {
+func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {
+	params := BalanceParams{
+		Channel:  public.BalancesChannel,
+		Snapshot: true,
+	}
+
+	if tokenSource != nil {
+		token, err := tokenSource.Token(context.Background())
+
+		if err != nil {
+			return err
+		}
+
+		params.Token = token
+	}
+
 	pool.CreateBroadcastGroup(
 		"kraken:private", 10*time.Millisecond,
 	).Send(&qpool.QValue[any]{
 		Type: public.BalancesChannel,
 		Value: SubscribeFrame{
 			Method: "subscribe",
-			Params: BalanceParams{
-				Channel:  public.BalancesChannel,
-				Snapshot: true,
-			},
+			Params: params,
 		},
 	})
+
+	return nil
 }

@@ -2,9 +2,12 @@ package optimizer
 
 import (
 	"context"
+	"math"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
+
+const jitterReferenceMagnitude = 1.0
 
 /*
 robustUnderJitter re-scores perturbed threshold copies; rejects brittle gates.
@@ -47,11 +50,17 @@ func perturbBranchValues(
 }
 
 func perturbBranchTree(branch *perspectives.Branch, fraction float64) {
-	if branch.ValueSet && branch.Value != 0 {
-		branch.Value *= 1 + fraction
+	if branch.ValueSet {
+		branch.Value = perturbBranchValue(branch.Value, fraction)
 	}
 
 	for index := range branch.Branches {
 		perturbBranchTree(&branch.Branches[index], fraction)
 	}
+}
+
+func perturbBranchValue(value float64, fraction float64) float64 {
+	magnitude := math.Max(math.Abs(value), jitterReferenceMagnitude)
+
+	return value + fraction*magnitude
 }

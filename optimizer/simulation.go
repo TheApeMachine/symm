@@ -2,11 +2,37 @@ package optimizer
 
 import (
 	"context"
+	"math"
 	"sort"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
 )
+
+const (
+	// DefaultTakerFeePct is Kraken spot taker fee at the lowest volume tier (0.40%).
+	DefaultTakerFeePct = 0.004
+	// DefaultSlippagePct is half-spread crossing per side (5 bps).
+	DefaultSlippagePct = 0.0005
+)
+
+/*
+ReplayCosts models per-side execution drag for offline replay scoring.
+*/
+type ReplayCosts struct {
+	TakerFeePct float64
+	SlippagePct float64
+}
+
+/*
+DefaultReplayCosts returns conservative Kraken spot assumptions for tuning.
+*/
+func DefaultReplayCosts() ReplayCosts {
+	return ReplayCosts{
+		TakerFeePct: DefaultTakerFeePct,
+		SlippagePct: DefaultSlippagePct,
+	}
+}
 
 /*
 ReplaySimulation walks a candidate tree across collected replay measurements.
@@ -15,6 +41,7 @@ type ReplaySimulation struct {
 	ctx      context.Context
 	branches perspectives.BranchList
 	rows     []perspectives.Measurement
+	costs    ReplayCosts
 }
 
 func NewReplaySimulation(
@@ -26,6 +53,24 @@ func NewReplaySimulation(
 		ctx:      ctx,
 		branches: branches.Clone(),
 		rows:     rows,
+		costs:    DefaultReplayCosts(),
+	}
+}
+
+/*
+NewReplaySimulationWithCosts replays with explicit fee and slippage assumptions.
+*/
+func NewReplaySimulationWithCosts(
+	ctx context.Context,
+	branches perspectives.BranchList,
+	rows []perspectives.Measurement,
+	costs ReplayCosts,
+) *ReplaySimulation {
+	return &ReplaySimulation{
+		ctx:      ctx,
+		branches: branches.Clone(),
+		rows:     rows,
+		costs:    costs,
 	}
 }
 
@@ -35,6 +80,17 @@ ReplayResult holds realized PnL and round-trip activity from one replay pass.
 type ReplayResult struct {
 	Score        float64
 	ClosedTrades int
+}
+
+/*
+ReturnPerTrade is mean net PnL per closed round trip.
+*/
+func (result ReplayResult) ReturnPerTrade() float64 {
+	if result.ClosedTrades <= 0 {
+		return 0
+	}
+
+	return result.Score / float64(result.ClosedTrades)
 }
 
 /*
@@ -53,7 +109,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 
 	measurements := newReplayMeasurements()
-	ledger := newReplayLedger()
+	ledger := newReplayLedger(simulation.costs)
 
 	for _, row := range simulation.rows {
 		measurements.Add(row)
@@ -185,13 +241,15 @@ type replayPosition struct {
 }
 
 type replayLedger struct {
+	costs        ReplayCosts
 	positions    map[string]replayPosition
 	realized     float64
 	closedTrades int
 }
 
-func newReplayLedger() *replayLedger {
+func newReplayLedger(costs ReplayCosts) *replayLedger {
 	return &replayLedger{
+		costs:     costs,
 		positions: make(map[string]replayPosition),
 	}
 }
@@ -224,10 +282,14 @@ func (ledger *replayLedger) openLong(symbol string, price float64) {
 		return
 	}
 
+	entryFill := price * (1 + ledger.costs.SlippagePct)
+
 	ledger.positions[symbol] = replayPosition{
-		entryPrice: price,
+		entryPrice: entryFill,
 		quantity:   1,
 	}
+
+	ledger.realized -= ledger.costs.TakerFeePct
 }
 
 func (ledger *replayLedger) closeLong(symbol string, price float64) {
@@ -237,7 +299,10 @@ func (ledger *replayLedger) closeLong(symbol string, price float64) {
 		return
 	}
 
-	ledger.realized += (price - position.entryPrice) / position.entryPrice
+	exitFill := price * (1 - ledger.costs.SlippagePct)
+	gross := (exitFill - position.entryPrice) / position.entryPrice
+
+	ledger.realized += gross - ledger.costs.TakerFeePct
 	ledger.closedTrades++
 	delete(ledger.positions, symbol)
 }
@@ -271,7 +336,8 @@ func (ledger *replayLedger) metrics(
 		return metrics
 	}
 
-	change := measurement.Last - position.entryPrice
+	exitFill := measurement.Last * (1 - ledger.costs.SlippagePct)
+	change := exitFill - position.entryPrice
 	metrics["unrealized_return"] = (change / position.entryPrice) * 100
 
 	return metrics
@@ -293,8 +359,17 @@ func (ledger *replayLedger) totalReturn(lastPrices map[string]float64) float64 {
 			continue
 		}
 
-		total += (lastPrice - position.entryPrice) / position.entryPrice
+		exitFill := lastPrice * (1 - ledger.costs.SlippagePct)
+		total += (exitFill - position.entryPrice) / position.entryPrice
 	}
 
 	return total
+}
+
+func holdoutDecay(trainPerTrade float64, testPerTrade float64) float64 {
+	if trainPerTrade <= 0 {
+		return math.Inf(1)
+	}
+
+	return (trainPerTrade - testPerTrade) / trainPerTrade
 }

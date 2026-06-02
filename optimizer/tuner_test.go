@@ -80,86 +80,6 @@ func TestTraderEvaluate(t *testing.T) {
 	})
 }
 
-func TestTreeSearchRun(t *testing.T) {
-	convey.Convey("Given replay measurements", t, func() {
-		ctx := context.Background()
-		profile := Profile{ctx: ctx}
-		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2.0,
-			Last:     100,
-		})
-		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2.5,
-			Last:     110,
-		})
-
-		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
-		search := tuner.newTreeSearch()
-		search.iterations = 32
-		branches := search.Run()
-
-		convey.Convey("It should return a branch registry", func() {
-			convey.So(len(branches), convey.ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestTreeSearchRunKeepsEmptyTreeWhenTradingLoses(t *testing.T) {
-	convey.Convey("Given replay measurements with falling prices", t, func() {
-		ctx := context.Background()
-		profile := Profile{ctx: ctx}
-		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2.0,
-			Last:     100,
-		})
-		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2.5,
-			Last:     90,
-		})
-
-		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
-		search := tuner.newTreeSearch()
-		search.iterations = 32
-		branches := search.Run()
-
-		convey.Convey("It should not choose a losing trade over no trade", func() {
-			convey.So(len(branches), convey.ShouldEqual, 0)
-		})
-	})
-}
-
-func TestTreeSearchMoves(t *testing.T) {
-	convey.Convey("Given generated optimizer moves", t, func() {
-		ctx := context.Background()
-		profile := Profile{ctx: ctx}
-		profile.Add(perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Source:   perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2,
-			Last:     100,
-		})
-
-		tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
-		search := tuner.newTreeSearch()
-		moves := search.moves(perspectives.BranchList{})
-
-		convey.Convey("It should only attach state-coherent actions", func() {
-			for _, move := range moves {
-				convey.So(move.validActionForObservation(), convey.ShouldBeTrue)
-			}
-		})
-	})
-}
-
 func TestScanSearchRun(t *testing.T) {
 	convey.Convey("Given replay measurements with entry and exit opportunities", t, func() {
 		ctx := context.Background()
@@ -214,7 +134,6 @@ func TestTunerFinish(t *testing.T) {
 			ctx:     ctx,
 			profile: Profile{ctx: ctx},
 			trader:  trader,
-			seed:    1,
 		}
 
 		tuner.ingest(perspectives.Measurement{
@@ -257,54 +176,6 @@ func TestSessionSummaryString(t *testing.T) {
 		})
 	})
 
-}
-
-func (move Move) validActionForObservation() bool {
-	switch move.observation {
-	case perspectives.ObservationNone:
-		return move.action == perspectives.ActionNone
-	case perspectives.ObservationNotHolding:
-		return move.action == perspectives.ActionNone ||
-			move.action == perspectives.ActionLimit ||
-			move.action == perspectives.ActionMarket ||
-			move.action == perspectives.ActionIceberg
-	case perspectives.ObservationHolding:
-		return move.action == perspectives.ActionNone ||
-			move.action == perspectives.ActionStopLoss ||
-			move.action == perspectives.ActionStopLossLimit ||
-			move.action == perspectives.ActionTakeProfit ||
-			move.action == perspectives.ActionTakeProfitLimit ||
-			move.action == perspectives.ActionTrailingStop ||
-			move.action == perspectives.ActionTrailingStopLimit ||
-			move.action == perspectives.ActionSettlePosition
-	default:
-		return false
-	}
-}
-
-func BenchmarkTreeSearchRun(b *testing.B) {
-	ctx := context.Background()
-	profile := Profile{ctx: ctx}
-
-	for index := range 64 {
-		profile.Add(perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Source:   perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      float64(index % 8),
-			Last:     100 + float64(index),
-		})
-	}
-
-	tuner := &Tuner{ctx: ctx, profile: profile, seed: 1}
-	search := tuner.newTreeSearch()
-	search.iterations = 64
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = search.Run()
-	}
 }
 
 func BenchmarkScanSearchRun(b *testing.B) {

@@ -12,6 +12,10 @@ func DecodeTrades(message *public.SocketMessage) ([]TradeUpdate, error) {
 		return nil, err
 	}
 
+	for index := range trades {
+		trades[index].SetEnvelopeType(message.Type)
+	}
+
 	return trades, nil
 }
 
@@ -20,6 +24,10 @@ func DecodeTickers(message *public.SocketMessage) ([]TickerUpdate, error) {
 
 	if err := sonic.Unmarshal(message.Data, &tickers); err != nil {
 		return nil, err
+	}
+
+	for index := range tickers {
+		tickers[index].SetEnvelopeType(message.Type)
 	}
 
 	return tickers, nil

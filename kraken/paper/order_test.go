@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,9 +13,13 @@ import (
 
 func TestOrdersSend(t *testing.T) {
 	Convey("Given a paper orders socket", t, func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 		ws := NewWebSocket(ctx, pool)
+		defer ws.Close()
+
 		orders := ws.sockets[public.OrdersChannel].(*Orders)
 
 		Convey("It should fill add_order on executions", func() {
@@ -74,6 +79,10 @@ func TestOrdersSend(t *testing.T) {
 
 			orderID := extractOrderID(open)
 
+			if orderID == "" {
+				t.Fatal("extractOrderID returned empty orderID")
+			}
+
 			out := orders.Send(&qpool.QValue[any]{
 				Type: public.OrdersChannel,
 				Value: map[string]any{
@@ -93,14 +102,14 @@ func TestOrdersSend(t *testing.T) {
 func extractOrderID(message public.SocketMessage) string {
 	start := string(message.Data)
 	from := `"order_id":"`
-	index := indexOf(start, from)
+	index := strings.Index(start, from)
 
 	if index < 0 {
 		return ""
 	}
 
 	rest := start[index+len(from):]
-	end := indexOf(rest, `"`)
+	end := strings.Index(rest, `"`)
 
 	if end < 0 {
 		return ""
@@ -109,20 +118,14 @@ func extractOrderID(message public.SocketMessage) string {
 	return rest[:end]
 }
 
-func indexOf(text, part string) int {
-	for index := 0; index+len(part) <= len(text); index++ {
-		if text[index:index+len(part)] == part {
-			return index
-		}
-	}
-
-	return -1
-}
-
 func BenchmarkOrdersSend(b *testing.B) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	pool := qpool.NewQ(ctx, 1, 4, nil)
 	ws := NewWebSocket(ctx, pool)
+	defer ws.Close()
+
 	orders := ws.sockets[public.OrdersChannel].(*Orders)
 	message := &qpool.QValue[any]{
 		Type: public.OrdersChannel,

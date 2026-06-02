@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/user"
 )
 
 /*
@@ -61,6 +62,10 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	go prices.Run()
 	go catalog.Load()
 
+	if err := user.NewBalance(pool, nil); err != nil {
+		errnie.Error(err)
+	}
+
 	activate.Boot("kraken/paper websocket ready")
 
 	return ws
@@ -88,9 +93,19 @@ func (ws *WebSocket) Tick() error {
 
 			var out public.SocketMessage
 
-			if socket, ok := ws.sockets[message.Type]; ok {
-				out = socket.Send(message)
+			socket, registered := ws.sockets[message.Type]
+
+			if !registered {
+				errnie.Debug(
+					"kraken.paper.websocket.Tick",
+					"unregistered message type",
+					message.Type,
+				)
+
+				continue
 			}
+
+			out = socket.Send(message)
 
 			if out.Channel == "" {
 				continue

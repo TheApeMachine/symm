@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"container/ring"
 	"context"
-	"fmt"
 	"io"
 	"math"
 	"os"
@@ -64,10 +63,10 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 
 	if err != nil {
 		errnie.Error(err)
+	} else {
+		story.recordFile = fh
+		story.recorder = bufio.NewWriter(fh)
 	}
-
-	story.recordFile = fh
-	story.recorder = bufio.NewWriter(fh)
 
 	for _, channel := range []string{"measurements", "actions"} {
 		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
@@ -161,8 +160,9 @@ func (story *Story) Tick() error {
 			if story.recorder != nil {
 				recorded := measurement
 
-				if recorded.At.IsZero() {
-					recorded.At = time.Now().UTC()
+				if recorded.At == nil || recorded.At.IsZero() {
+					now := time.Now().UTC()
+					recorded.At = &now
 				}
 
 				raw := errnie.Does(func() ([]byte, error) {
@@ -175,10 +175,6 @@ func (story *Story) Tick() error {
 
 				if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
 					errnie.Error(writeErr)
-				}
-
-				if flushErr := story.recorder.Flush(); flushErr != nil {
-					errnie.Error(flushErr)
 				}
 			}
 
@@ -230,10 +226,7 @@ func (story *Story) Tick() error {
 					errnie.Error(err)
 				}).Value())
 
-				activate.Once(fmt.Sprintf(
-					"market/story:playbook-tree trees=%d",
-					len(story.trees),
-				))
+				activate.Once("market/story:playbook-tree")
 			}
 
 			for _, action := range actions {
@@ -275,16 +268,14 @@ func (story *Story) publishEnginePulse(latestConf map[string]float64, ts string)
 	stddev := math.Sqrt(variance / float64(len(latestConf)))
 
 	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":                   "engine_pulse",
-		"ts":                      ts,
-		"seq":                     seq,
-		"phase":                   "ticking",
-		"measurements":            len(latestConf),
-		"open":                    0,
-		"avg_prediction":          avg,
-		"avg_prediction_multiple": avg,
-		"avg_error":               stddev,
-		"avg_error_multiple":      stddev,
+		"event":          "engine_pulse",
+		"ts":             ts,
+		"seq":            seq,
+		"phase":          "ticking",
+		"measurements":   len(latestConf),
+		"open":           0,
+		"avg_prediction": avg,
+		"avg_error":      stddev,
 	}})
 }
 

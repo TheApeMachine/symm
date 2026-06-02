@@ -3,7 +3,7 @@ package paper
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -11,6 +11,8 @@ import (
 Identifier mints Kraken-shaped identifiers for simulated private events.
 */
 type Identifier struct{}
+
+var fallbackCounter uint64
 
 func NewIdentifier() *Identifier {
 	return &Identifier{}
@@ -36,7 +38,18 @@ func (identifier *Identifier) hex(byteCount int) string {
 	buffer := make([]byte, byteCount)
 
 	if _, err := rand.Read(buffer); err != nil {
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		counter := atomic.AddUint64(&fallbackCounter, 1)
+		seed := uint64(time.Now().UnixNano()) ^ counter
+
+		for index := range buffer {
+			if index%8 == 0 {
+				seed = uint64(time.Now().UnixNano()) ^ atomic.LoadUint64(&fallbackCounter)
+			}
+
+			buffer[index] = byte(seed >> ((index % 8) * 8))
+		}
+
+		return hex.EncodeToString(buffer)
 	}
 
 	return hex.EncodeToString(buffer)

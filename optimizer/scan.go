@@ -66,6 +66,8 @@ type ScanSearch struct {
 	onBest      func(BestTree)
 	onCandidate func(CandidateScore)
 	candidates  int
+	topK        int
+	topScores   []CandidateScore
 	mu          sync.Mutex
 }
 
@@ -91,8 +93,25 @@ Run scores primitive branches, sibling pairs, and nested reasoning chains.
 Each deepening pass adds one sequential gate before the action leaf.
 */
 func (search *ScanSearch) Run() (perspectives.BranchList, ScanStats) {
-	best := perspectives.BranchList{}
-	search.bestScore = search.evaluate(best)
+	search.topK = 0
+	search.topScores = nil
+
+	return search.best(), search.run()
+}
+
+/*
+RunTopK returns the highest-scoring guard-valid shallow trees for MCTS seeding.
+*/
+func (search *ScanSearch) RunTopK(limit int) ([]CandidateScore, ScanStats) {
+	search.topK = limit
+	search.topScores = make([]CandidateScore, 0, limit)
+	stats := search.run()
+
+	return search.topScoresClone(), stats
+}
+
+func (search *ScanSearch) run() ScanStats {
+	search.bestScore = search.evaluate(perspectives.BranchList{})
 
 	actionBranches := search.actionBranches()
 	branchers := search.limitedBranchers()
@@ -112,12 +131,27 @@ func (search *ScanSearch) Run() (perspectives.BranchList, ScanStats) {
 		})
 	}
 
-	stats := ScanStats{
+	return ScanStats{
 		Candidates: search.candidates,
 		Workers:    search.options.Workers,
 	}
+}
 
-	return search.best(), stats
+func (search *ScanSearch) topScoresClone() []CandidateScore {
+	search.mu.Lock()
+	defer search.mu.Unlock()
+
+	cloned := make([]CandidateScore, len(search.topScores))
+
+	for index, entry := range search.topScores {
+		cloned[index] = CandidateScore{
+			Candidate: entry.Candidate,
+			Score:     entry.Score,
+			Branches:  entry.Branches.Clone(),
+		}
+	}
+
+	return cloned
 }
 
 func normalizeScanOptions(options ScanOptions) ScanOptions {
@@ -207,12 +241,18 @@ func (search *ScanSearch) reserveCandidate() (int, bool) {
 }
 
 func (search *ScanSearch) accept(result scanResult) {
+	entry := CandidateScore{
+		Candidate: result.candidate.index,
+		Score:     result.score,
+		Branches:  result.candidate.branches.Clone(),
+	}
+
 	if search.onCandidate != nil {
-		search.onCandidate(CandidateScore{
-			Candidate: result.candidate.index,
-			Score:     result.score,
-			Branches:  result.candidate.branches.Clone(),
-		})
+		search.onCandidate(entry)
+	}
+
+	if search.guard.AcceptTrainCandidate(result.candidate.branches, search.rows) {
+		search.recordTopK(entry)
 	}
 
 	if result.score <= search.bestScore {
@@ -240,6 +280,17 @@ func (search *ScanSearch) accept(result scanResult) {
 			Branches:  result.candidate.branches.Clone(),
 		})
 	}
+}
+
+func (search *ScanSearch) recordTopK(entry CandidateScore) {
+	if search.topK <= 0 {
+		return
+	}
+
+	search.mu.Lock()
+	defer search.mu.Unlock()
+
+	search.topScores = insertTopK(search.topScores, entry, search.topK)
 }
 
 func (search *ScanSearch) best() perspectives.BranchList {

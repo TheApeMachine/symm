@@ -2,7 +2,6 @@ package market
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"slices"
 	"sync"
@@ -84,6 +83,7 @@ type Instrument struct {
 	subscribers   map[string]*qpool.Subscriber
 	subscribersMu sync.RWMutex
 	Pairs         []string
+	pairSet       map[string]struct{}
 }
 
 func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
@@ -96,6 +96,7 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		Pairs:       make([]string, 0),
+		pairSet:     make(map[string]struct{}),
 	}
 
 	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
@@ -155,10 +156,7 @@ func (instrument *Instrument) applyCatalogUpdate(
 	}
 
 	if len(update.Pairs) > 0 {
-		activate.Once(fmt.Sprintf(
-			"kraken/instrument:catalog pairs=%d",
-			len(update.Pairs),
-		))
+		activate.Once("kraken/instrument:catalog")
 	}
 
 	watched := viper.GetStringSlice("market.symbols")
@@ -173,54 +171,45 @@ func (instrument *Instrument) applyCatalogUpdate(
 			break
 		}
 
-		if slices.Contains(instrument.Pairs, pair.Symbol) {
+		if _, known := instrument.pairSet[pair.Symbol]; known {
 			continue
 		}
 
 		instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+		instrument.pairSet[pair.Symbol] = struct{}{}
 
 		if len(instrument.Pairs) == 1 {
 			activate.Once("kraken/instrument:first-pair-subscribe")
 		}
 
-		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-			"method": "subscribe",
-			"params": map[string]any{
-				"channel":  "ticker",
-				"symbol":   []string{pair.Symbol},
-				"snapshot": true,
-			},
-		}})
-
-		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-			"method": "subscribe",
-			"params": map[string]any{
-				"channel":  "book",
-				"depth":    1000,
-				"symbol":   []string{pair.Symbol},
-				"snapshot": true,
-			},
-		}})
-
-		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-			"method": "subscribe",
-			"params": map[string]any{
-				"channel":  "ohlc",
-				"interval": 1,
-				"symbol":   []string{pair.Symbol},
-				"snapshot": true,
-			},
-		}})
-
-		publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-			"method": "subscribe",
-			"params": map[string]any{
-				"channel":  "trade",
-				"symbol":   []string{pair.Symbol},
-				"snapshot": true,
-			},
-		}})
+		publicBroadcast.Send(subscribeFrame("ticker", pair.Symbol, nil))
+		publicBroadcast.Send(subscribeFrame("book", pair.Symbol, map[string]any{
+			"depth": 1000,
+		}))
+		publicBroadcast.Send(subscribeFrame("ohlc", pair.Symbol, map[string]any{
+			"interval": 1,
+		}))
+		publicBroadcast.Send(subscribeFrame("trade", pair.Symbol, nil))
 	}
+}
+
+func subscribeFrame(
+	channel, symbol string, extra map[string]any,
+) *qpool.QValue[any] {
+	params := map[string]any{
+		"channel":  channel,
+		"symbol":   []string{symbol},
+		"snapshot": true,
+	}
+
+	for key, value := range extra {
+		params[key] = value
+	}
+
+	return &qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": params,
+	}}
 }
 
 func (instrument *Instrument) Close() error {

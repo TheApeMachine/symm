@@ -9,19 +9,14 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const (
-	cryptoRawSubscriberID     = "trader/crypto:raw"
-	cryptoActionsSubscriberID = "trader/crypto:actions"
-)
+const cryptoRawSubscriberID = "trader/crypto:raw"
 
 /*
-Crypto routes perspective actions through the broker desk and publishes wallet
-snapshots to the ui broadcast.
+Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames.
 */
 type Crypto struct {
 	ctx         context.Context
@@ -29,7 +24,6 @@ type Crypto struct {
 	ui          *qpool.BroadcastGroup
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	desk        *broker.Desk
 	auditSeq    atomic.Int64
 	cash        float64
 	inventory   map[string]float64
@@ -45,30 +39,16 @@ func NewCrypto(ctx context.Context, pool *qpool.Q) *Crypto {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		inventory:   make(map[string]float64),
-		desk: errnie.Does(func() (*broker.Desk, error) {
-			return broker.NewDesk(ctx, pool)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value(),
 	}
 
-	for _, channel := range []string{"raw", "actions"} {
-		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-
-		subscriberID := cryptoRawSubscriberID
-
-		if channel == "actions" {
-			subscriberID = cryptoActionsSubscriberID
-		}
-
-		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(subscriberID, 128)
-	}
+	crypto.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	crypto.subscribers["raw"] = crypto.broadcasts["raw"].Subscribe(
+		cryptoRawSubscriberID, 128,
+	)
 
 	crypto.subscribers["ui:resync"] = pool.CreateBroadcastGroup(
 		"ui:resync", 10*time.Millisecond,
 	).Subscribe("trader/crypto:resync", 128)
-
-	user.NewBalance(pool)
 
 	activate.Boot("trader/crypto ready")
 
@@ -88,22 +68,6 @@ func (crypto *Crypto) Tick() error {
 			}
 
 			crypto.resendWallet()
-		// case row, ok := <-crypto.subscribers["actions"].Incoming:
-		// 	if !ok {
-		// 		return nil
-		// 	}
-
-		// 	if row == nil {
-		// 		continue
-		// 	}
-
-		// 	action, actionOK := row.Value.(perspectives.Action)
-
-		// 	if !actionOK {
-		// 		continue
-		// 	}
-
-		// 	errnie.Error(crypto.desk.AddOrder(action))
 		case message := <-crypto.subscribers["raw"].Incoming:
 			if message == nil || message.Value == nil {
 				continue
@@ -141,12 +105,22 @@ func (crypto *Crypto) Tick() error {
 					} else {
 						delete(crypto.inventory, balance.Asset)
 					}
-
-					crypto.sendWallet(crypto.cash, crypto.inventory)
 				}
+
+				crypto.sendWallet(crypto.cash, walletInventorySnapshot(crypto.inventory))
 			}
 		}
 	}
+}
+
+func walletInventorySnapshot(inventory map[string]float64) map[string]float64 {
+	snapshot := make(map[string]float64, len(inventory))
+
+	for asset, amount := range inventory {
+		snapshot[asset] = amount
+	}
+
+	return snapshot
 }
 
 func (crypto *Crypto) publishFill(execution user.Execution) {
@@ -183,7 +157,7 @@ func (crypto *Crypto) publishFill(execution user.Execution) {
 }
 
 func (crypto *Crypto) resendWallet() {
-	crypto.sendWallet(crypto.cash, crypto.inventory)
+	crypto.sendWallet(crypto.cash, walletInventorySnapshot(crypto.inventory))
 }
 
 func (crypto *Crypto) sendWallet(cash float64, inventory map[string]float64) {

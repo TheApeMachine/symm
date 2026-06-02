@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"math"
 	"math/rand"
 
@@ -8,10 +9,21 @@ import (
 )
 
 const (
-	DefaultMCTSIterations = 256
-	explorationWeight     = 1.41
-	maxBranchCountDepth   = 256
+	DefaultMCTSIterations      = 256
+	DefaultHybridSeedCount     = 50
+	DefaultHybridShallowDepth  = 2
+	DefaultMCTSSeedPriorVisits = 10
+	explorationWeight          = 1.41
 )
+
+/*
+MCTSOptions bounds deep TreeSearch after shallow beam seeding.
+*/
+type MCTSOptions struct {
+	Iterations        int
+	SeedPriorVisits   int
+	MaxReasoningSteps int
+}
 
 /*
 Node is one position in the branch-construction search tree.
@@ -29,42 +41,108 @@ type Node struct {
 TreeSearch runs MCTS over perspective branch registries.
 */
 type TreeSearch struct {
-	profile    *Profile
-	evaluate   func(perspectives.BranchList) float64
-	rng        *rand.Rand
-	root       *Node
-	best       *Node
-	bestScore  float64
-	iterations int
-	onBest     func(BestTree)
+	ctx               context.Context
+	profile           *Profile
+	rows              []perspectives.Measurement
+	guard             *OverfitGuard
+	evaluate          func(perspectives.BranchList) float64
+	rng               *rand.Rand
+	root              *Node
+	best              perspectives.BranchList
+	bestScore         float64
+	iterations        int
+	maxReasoningSteps int
+	onBest            func(BestTree)
 }
 
-func (tuner *Tuner) newTreeSearch() *TreeSearch {
-	search := &TreeSearch{
-		profile:    &tuner.profile,
-		evaluate:   tuner.evaluator(),
-		rng:        rand.New(rand.NewSource(tuner.seed)),
-		iterations: DefaultMCTSIterations,
+func normalizeMCTSOptions(options MCTSOptions) MCTSOptions {
+	if options.Iterations <= 0 {
+		options.Iterations = DefaultMCTSIterations
 	}
 
-	search.root = &Node{
-		branches: perspectives.BranchList{},
+	if options.SeedPriorVisits <= 0 {
+		options.SeedPriorVisits = DefaultMCTSSeedPriorVisits
 	}
-	search.root.untried = search.moves(search.root.branches)
+
+	if options.MaxReasoningSteps <= 0 {
+		options.MaxReasoningSteps = DefaultMaxReasoningSteps
+	}
+
+	return options
+}
+
+/*
+NewHybridTreeSearch seeds MCTS root nodes from shallow beam survivors.
+*/
+func NewHybridTreeSearch(
+	ctx context.Context,
+	profile *Profile,
+	rows []perspectives.Measurement,
+	guardOptions GuardOptions,
+	seeds []CandidateScore,
+	options MCTSOptions,
+) *TreeSearch {
+	options = normalizeMCTSOptions(options)
+	guard := NewOverfitGuard(ctx, guardOptions)
+
+	search := &TreeSearch{
+		ctx:               ctx,
+		profile:           profile,
+		rows:              rows,
+		guard:             guard,
+		rng:               rand.New(rand.NewSource(rand.Int63())),
+		iterations:        options.Iterations,
+		maxReasoningSteps: options.MaxReasoningSteps,
+	}
+
+	search.evaluate = search.scoreBranches
+	search.root = &Node{branches: perspectives.BranchList{}}
+	search.bestScore = search.evaluate(search.root.branches)
+	search.best = search.root.branches.Clone()
+	search.seedRoot(seeds, options.SeedPriorVisits)
 
 	return search
+}
+
+func (search *TreeSearch) scoreBranches(branches perspectives.BranchList) float64 {
+	raw := NewReplaySimulation(search.ctx, branches, search.rows).Result().Score
+
+	return search.guard.AdjustedScore(raw, branches)
+}
+
+func (search *TreeSearch) seedRoot(seeds []CandidateScore, priorVisits int) {
+	for _, seed := range seeds {
+		score := search.evaluate(seed.Branches)
+
+		if score <= 0 {
+			continue
+		}
+
+		child := &Node{
+			branches: seed.Branches.Clone(),
+			parent:   search.root,
+			visits:   priorVisits,
+			value:    score * float64(priorVisits),
+			untried:  search.moves(seed.Branches),
+		}
+		search.root.children = append(search.root.children, child)
+		search.root.visits += priorVisits
+
+		if score > search.bestScore {
+			search.bestScore = score
+			search.best = seed.Branches.Clone()
+		}
+	}
+
+	if len(search.root.children) == 0 {
+		search.root.untried = search.moves(search.root.branches)
+	}
 }
 
 /*
 Run finds the most profitable branch registry for the replay profile.
 */
 func (search *TreeSearch) Run() perspectives.BranchList {
-	search.bestScore = search.evaluate(search.root.branches)
-	search.best = &Node{
-		branches: search.root.branches.Clone(),
-		value:    search.bestScore,
-	}
-
 	for iteration := 0; iteration < search.iterations; iteration++ {
 		node := search.selectNode()
 		child := search.expand(node)
@@ -72,7 +150,7 @@ func (search *TreeSearch) Run() perspectives.BranchList {
 		search.backpropagate(child, reward)
 	}
 
-	return search.best.branches.Clone()
+	return search.best.Clone()
 }
 
 func (search *TreeSearch) selectNode() *Node {
@@ -138,24 +216,25 @@ func (search *TreeSearch) expand(node *Node) *Node {
 
 func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
-	targetDepth := len(search.profile.Categories()) * maxReasoningSteps
 
-	for search.branchCount(branches) < targetDepth {
-		moves := search.moves(branches)
+	for reasoningDepth(branches) < search.maxReasoningSteps {
+		moves := search.reachableMoves(search.allMoves(), branches)
 
 		if len(moves) == 0 {
 			break
 		}
 
-		move := moves[search.rng.Intn(len(moves))]
+		move := search.sampleRolloutMove(moves, branches)
 		branches = search.applyMove(branches, move)
 	}
 
 	score := search.evaluate(branches)
 
-	if len(branches) > 0 && score > search.bestScore {
+	if len(branches) > 0 &&
+		score > search.bestScore &&
+		search.guard.AcceptTrainCandidate(branches, search.rows) {
 		search.bestScore = score
-		search.best = &Node{branches: branches.Clone(), value: score}
+		search.best = branches.Clone()
 		search.emitBest(iteration, branches, score)
 	}
 
@@ -176,43 +255,84 @@ func (search *TreeSearch) emitBest(
 	})
 }
 
-func (search *TreeSearch) branchCount(
-	branches perspectives.BranchList,
-) int {
-	type stackFrame struct {
-		branches perspectives.BranchList
-		depth    int
-	}
-
-	count := 0
-	stack := []stackFrame{{branches: branches, depth: 0}}
-
-	for len(stack) > 0 {
-		frame := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		if frame.depth > maxBranchCountDepth {
-			continue
-		}
-
-		for _, branch := range frame.branches {
-			count++
-
-			if len(branch.Branches) > 0 {
-				stack = append(stack, stackFrame{
-					branches: perspectives.BranchList(branch.Branches),
-					depth:    frame.depth + 1,
-				})
-			}
-		}
-	}
-
-	return count
-}
-
 func (search *TreeSearch) backpropagate(node *Node, reward float64) {
 	for current := node; current != nil; current = current.parent {
 		current.visits++
 		current.value += reward
 	}
+}
+
+func (search *TreeSearch) moves(
+	branches perspectives.BranchList,
+) []Move {
+	if reasoningDepth(branches) >= search.maxReasoningSteps {
+		return nil
+	}
+
+	return search.reachableMoves(search.allMoves(), branches)
+}
+
+func (search *TreeSearch) allMoves() []Move {
+	categories := search.profile.Categories()
+	moves := make([]Move, 0)
+
+	for _, category := range categories {
+		for _, observation := range searchObservations {
+			actions := search.actions(observation)
+
+			for _, regime := range searchRegimes {
+				for _, unit := range searchUnits {
+					for _, condition := range searchConditions {
+						for _, quantile := range searchQuantiles {
+							for _, action := range actions {
+								moves = append(moves, Move{
+									category:    category,
+									observation: observation,
+									regime:      regime,
+									condition:   condition,
+									unit:        unit,
+									quantile:    quantile,
+									action:      action,
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return moves
+}
+
+func (search *TreeSearch) actions(
+	observation perspectives.ObservationType,
+) []perspectives.ActionType {
+	switch observation {
+	case perspectives.ObservationNotHolding:
+		return searchEntryActions
+	case perspectives.ObservationHolding:
+		return searchExitActions
+	default:
+		return []perspectives.ActionType{perspectives.ActionNone}
+	}
+}
+
+func (search *TreeSearch) applyMove(
+	branches perspectives.BranchList, move Move,
+) perspectives.BranchList {
+	branch := search.branchFromMove(move)
+
+	if len(branches) == 0 {
+		return perspectives.BranchList{branch}
+	}
+
+	next := branches.Clone()
+	parent := &next[len(next)-1]
+	parent.Branches = append(
+		perspectives.BranchList(parent.Branches).Clone(),
+		branch,
+	)
+
+	return next
 }
