@@ -131,7 +131,7 @@ func TestTreeSearchApplyMoveNestsGates(t *testing.T) {
 			observation: perspectives.ObservationNone,
 			condition:   perspectives.ConditionIsGreaterThanOrEqual,
 			unit:        perspectives.UnitSNR,
-			quantile:    0.5,
+			value:       profile.Quantile(perspectives.CategoryRiskOnSurge, perspectives.UnitSNR, 0.5),
 			action:      perspectives.ActionNone,
 		}
 

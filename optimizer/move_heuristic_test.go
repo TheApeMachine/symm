@@ -31,7 +31,7 @@ func TestMoveReachable(t *testing.T) {
 			category:    perspectives.CategoryLaminar,
 			unit:        perspectives.UnitSNR,
 			condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			quantile:    0.5,
+			value:       profile.Quantile(perspectives.CategoryLaminar, perspectives.UnitSNR, 0.5),
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
 		}, perspectives.BranchList{})
@@ -39,7 +39,7 @@ func TestMoveReachable(t *testing.T) {
 			category:    perspectives.CategoryToxicBluff,
 			unit:        perspectives.UnitSNR,
 			condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			quantile:    0.5,
+			value:       profile.Quantile(perspectives.CategoryLaminar, perspectives.UnitSNR, 0.5),
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
 		}, perspectives.BranchList{})
@@ -56,19 +56,27 @@ func TestSampleRolloutMoveWeighting(t *testing.T) {
 		ctx := context.Background()
 		profile := Profile{ctx: ctx}
 
-		for range 20 {
+		for index := range 20 {
+			snr := float64(2)
+
+			if index%5 == 0 {
+				snr = 0.5
+			}
+
 			profile.Add(perspectives.Measurement{
 				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
 				Category: perspectives.CategoryLaminar,
-				SNR:      2, Confidence: 1,
+				SNR:      snr, Confidence: 1,
 			})
 		}
 
-		profile.Add(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
-			Category: perspectives.CategoryExhaustion,
-			SNR:      0.1, Confidence: 1,
-		})
+		for index := range 4 {
+			profile.Add(perspectives.Measurement{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      0.1 + float64(index)*0.1, Confidence: 1,
+			})
+		}
 
 		search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{
 			Iterations: 1,
@@ -78,7 +86,7 @@ func TestSampleRolloutMoveWeighting(t *testing.T) {
 			category:    perspectives.CategoryLaminar,
 			unit:        perspectives.UnitSNR,
 			condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			quantile:    0.25,
+			value:       profile.Quantile(perspectives.CategoryLaminar, perspectives.UnitSNR, 0.25),
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
 		}
@@ -86,13 +94,18 @@ func TestSampleRolloutMoveWeighting(t *testing.T) {
 			category:    perspectives.CategoryExhaustion,
 			unit:        perspectives.UnitSNR,
 			condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			quantile:    0.75,
+			value:       profile.Quantile(perspectives.CategoryExhaustion, perspectives.UnitSNR, 0.75),
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
 		}
 
 		convey.Convey("It should rank the high-pass move above the rare gate", func() {
-			convey.So(search.moveWeight(heavy), convey.ShouldBeGreaterThan, search.moveWeight(light))
+			empty := perspectives.BranchList{}
+			convey.So(
+				search.moveWeightForBranches(heavy, empty),
+				convey.ShouldBeGreaterThan,
+				search.moveWeightForBranches(light, empty),
+			)
 		})
 	})
 }
