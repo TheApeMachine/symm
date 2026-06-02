@@ -22,119 +22,63 @@ var tuneCmd = &cobra.Command{
 			return err
 		}
 
-		rows, skipped, err := optimizer.LoadMeasurements(path)
+		options := optimizer.DefaultTuneOptions(runtime.NumCPU())
+		options.OutputPath = tunePerspectivesPath()
+		options.CandidateReportPath = tuneCandidateReportPath(cmd)
+
+		total, countSkipped, err := optimizer.CountMeasurementLines(path)
 
 		if err != nil {
 			return err
 		}
 
-		if skipped > 0 {
+		sampleCap := optimizer.DeriveMeasurementSampleCap(total, options.Workers)
+
+		optimizer.TuneLog("loading measurements from %s", path)
+
+		rows, skipped, err := optimizer.LoadMeasurements(path, sampleCap)
+
+		if err != nil {
+			return err
+		}
+
+		if skipped > 0 || countSkipped > 0 {
 			fmt.Fprintf(
 				os.Stderr,
 				"symm tune: skipped %d malformed measurement lines in %s\n",
-				skipped,
+				skipped+countSkipped,
 				path,
 			)
 		}
 
-		maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
-
-		if err != nil {
-			return err
-		}
-
-		if maxMeasurements > 0 && len(rows) > maxMeasurements {
+		options.OnBest = func(best optimizer.BestTree) {
 			fmt.Fprintf(
 				os.Stderr,
-				"symm tune: subsampling %d measurements to %d rows\n",
-				len(rows),
-				maxMeasurements,
+				"symm tune: best candidate=%d branches=%d score=%.6f -> %s\n",
+				best.Iteration,
+				len(best.Branches),
+				best.Score,
+				options.OutputPath,
+			)
+		}
+		options.OnCandidate = func(candidate optimizer.CandidateScore) {
+			if candidate.ClosedTrades <= 0 {
+				return
+			}
+
+			fmt.Fprintf(
+				os.Stderr,
+				"symm tune: candidate=%d depth=%d registry=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
+				candidate.Candidate,
+				candidate.ReasoningDepth(),
+				candidate.RegistryWidth(),
+				candidate.ClosedTrades,
+				candidate.ProfitLoss(),
+				candidate.ReturnPct(),
 			)
 		}
 
-		scanOptions, err := tuneScanOptions(cmd)
-
-		if err != nil {
-			return err
-		}
-
-		guardOptions, err := tuneGuardOptions(cmd, scanOptions)
-
-		if err != nil {
-			return err
-		}
-
-		hybridEnabled, err := cmd.Flags().GetBool(tuneHybridFlag)
-
-		if err != nil {
-			return err
-		}
-
-		hybridSeeds, err := cmd.Flags().GetInt(tuneHybridSeedsFlag)
-
-		if err != nil {
-			return err
-		}
-
-		shallowDepth, err := cmd.Flags().GetInt(tuneShallowDepthFlag)
-
-		if err != nil {
-			return err
-		}
-
-		mctsIterations, err := cmd.Flags().GetInt(tuneMCTSIterationsFlag)
-
-		if err != nil {
-			return err
-		}
-
-		outputPath := tunePerspectivesPath()
-		summary, err := optimizer.TuneMeasurements(
-			cmd.Context(),
-			rows,
-			optimizer.TuneOptions{
-				OutputPath:          outputPath,
-				CandidateReportPath: tuneCandidateReportPath(cmd),
-				MaxMeasurements:     maxMeasurements,
-				Workers:             scanOptions.Workers,
-				MaxThresholds:       scanOptions.MaxThresholds,
-				BeamWidth:           scanOptions.BeamWidth,
-				CandidateLimit:      scanOptions.CandidateLimit,
-				MaxReasoningSteps:   scanOptions.MaxReasoningSteps,
-				Hybrid:              hybridEnabled,
-				HybridSeedCount:     hybridSeeds,
-				ShallowDepth:        shallowDepth,
-				MCTSIterations:      mctsIterations,
-				Guard:               guardOptions,
-				OnBest: func(best optimizer.BestTree) {
-					fmt.Fprintf(
-						os.Stderr,
-						"symm tune: best candidate=%d branches=%d score=%.6f -> %s\n",
-						best.Iteration,
-						len(best.Branches),
-						best.Score,
-						outputPath,
-					)
-				},
-				OnCandidate: func(candidate optimizer.CandidateScore) {
-					if candidate.ClosedTrades <= 0 {
-						return
-					}
-
-					fmt.Fprintf(
-						os.Stderr,
-						"symm tune: candidate=%d registry=%d nodes=%d depth=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
-						candidate.Candidate,
-						candidate.RegistryWidth(),
-						candidate.BranchCount(),
-						candidate.ReasoningDepth(),
-						candidate.ClosedTrades,
-						candidate.ProfitLoss(),
-						candidate.ReturnPct(),
-					)
-				},
-			},
-		)
+		summary, err := optimizer.TuneMeasurements(cmd.Context(), rows, options)
 
 		if err != nil {
 			return err
@@ -149,106 +93,24 @@ var tuneCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(tuneCmd)
 
-	tuneCmd.Flags().Int(
-		tuneWorkersFlag,
-		runtime.NumCPU(),
-		"parallel scan workers",
-	)
-	tuneCmd.Flags().Int(
-		tuneMaxThresholdsFlag,
-		optimizer.DefaultScanMaxThresholds,
-		"max threshold values per category/unit; 0 scans all unique values",
-	)
-	tuneCmd.Flags().Int(
-		tuneBeamWidthFlag,
-		optimizer.DefaultScanBeamWidth,
-		"top entry/exit candidates to combine as sibling branches",
-	)
-	tuneCmd.Flags().Int(
-		tuneCandidateLimitFlag,
-		optimizer.DefaultScanCandidateLimit,
-		"max candidate trees to score; 0 scans the generated space",
-	)
-	tuneCmd.Flags().Int(
-		tuneMaxMeasurementsFlag,
-		optimizer.DefaultTuneMaxMeasurements,
-		"max replay rows from the capture tape; 0 uses the full file",
-	)
-	tuneCmd.Flags().Int(
-		tuneMaxReasoningStepsFlag,
-		optimizer.DefaultMaxReasoningSteps,
-		"max nested reasoning steps per decision path",
-	)
-	tuneCmd.Flags().Float64(
-		tuneComplexityPenaltyFlag,
-		optimizer.DefaultComplexityPenalty,
-		"profit penalty per reasoning step to prefer simpler trees",
-	)
-	tuneCmd.Flags().Int(
-		tuneMinRoundTripsFlag,
-		optimizer.DefaultMinRoundTrips,
-		"minimum closed round trips required to accept a candidate",
-	)
-	tuneCmd.Flags().Bool(
-		tuneJitterFlag,
-		false,
-		"reject candidates that fail threshold jitter stress tests",
-	)
-	tuneCmd.Flags().Bool(
-		tuneWalkForwardFlag,
-		false,
-		"validate the winning tree on rolling holdout windows",
-	)
-	tuneCmd.Flags().Bool(
-		tuneHybridFlag,
-		true,
-		"progressive deepening: shallow beam search seeds deep MCTS",
-	)
-	tuneCmd.Flags().Int(
-		tuneHybridSeedsFlag,
-		optimizer.DefaultHybridSeedCount,
-		"top shallow trees passed as MCTS root seeds",
-	)
-	tuneCmd.Flags().Int(
-		tuneShallowDepthFlag,
-		optimizer.DefaultHybridShallowDepth,
-		"max reasoning steps for the exhaustive shallow beam phase",
-	)
-	tuneCmd.Flags().Int(
-		tuneMCTSIterationsFlag,
-		optimizer.DefaultMCTSIterations,
-		"MCTS iterations for the deep search phase",
-	)
 	tuneCmd.Flags().String(
 		tuneCandidateReportFlag,
 		"",
-		"JSONL path for every scored candidate's profit/loss",
+		"optional JSONL path for every scored candidate (advanced)",
 	)
 }
 
 const tuneLong = `
 Run the optimizer against a recorded measurement capture.
 
-Use the default config (cmd/cfg/config.yml). Measurements are read directly from
-trading.record.file and each improved tree is written to market/perspectives/cfg/perspectives.yaml.
+Measurements are read from trading.record.file in the config. Realized round-trip
+PnL is the only objective; structure and depth are discovered, not preset. An
+improved tree is written to
+market/perspectives/cfg/perspectives.yaml when one beats the persist bar.
 `
 
 const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"
-const tuneWorkersFlag = "workers"
-const tuneMaxThresholdsFlag = "max-thresholds"
-const tuneBeamWidthFlag = "beam-width"
-const tuneCandidateLimitFlag = "candidate-limit"
-const tuneMaxReasoningStepsFlag = "max-reasoning-steps"
-const tuneComplexityPenaltyFlag = "complexity-penalty"
-const tuneMinRoundTripsFlag = "min-round-trips"
-const tuneJitterFlag = "jitter"
-const tuneWalkForwardFlag = "walk-forward"
-const tuneHybridFlag = "hybrid"
-const tuneHybridSeedsFlag = "hybrid-seeds"
-const tuneShallowDepthFlag = "shallow-depth"
-const tuneMCTSIterationsFlag = "mcts-iterations"
 const tuneCandidateReportFlag = "candidate-report"
-const tuneMaxMeasurementsFlag = "max-measurements"
 
 func tuneMeasurementPath() (string, error) {
 	path := strings.TrimSpace(viper.GetString("trading.record.file"))
@@ -290,116 +152,4 @@ func tuneCandidateReportPath(cmd *cobra.Command) string {
 	}
 
 	return ""
-}
-
-func tuneScanOptions(cmd *cobra.Command) (optimizer.ScanOptions, error) {
-	workers, err := cmd.Flags().GetInt(tuneWorkersFlag)
-
-	if err != nil {
-		return optimizer.ScanOptions{}, err
-	}
-
-	maxThresholds, err := cmd.Flags().GetInt(tuneMaxThresholdsFlag)
-
-	if err != nil {
-		return optimizer.ScanOptions{}, err
-	}
-
-	beamWidth, err := cmd.Flags().GetInt(tuneBeamWidthFlag)
-
-	if err != nil {
-		return optimizer.ScanOptions{}, err
-	}
-
-	candidateLimit, err := cmd.Flags().GetInt(tuneCandidateLimitFlag)
-
-	if err != nil {
-		return optimizer.ScanOptions{}, err
-	}
-
-	maxReasoningSteps, err := cmd.Flags().GetInt(tuneMaxReasoningStepsFlag)
-
-	if err != nil {
-		return optimizer.ScanOptions{}, err
-	}
-
-	return validTuneScanOptions(optimizer.ScanOptions{
-		Workers:           workers,
-		MaxThresholds:     maxThresholds,
-		BeamWidth:         beamWidth,
-		CandidateLimit:    candidateLimit,
-		MaxReasoningSteps: maxReasoningSteps,
-	})
-}
-
-func tuneGuardOptions(
-	cmd *cobra.Command, scanOptions optimizer.ScanOptions,
-) (optimizer.GuardOptions, error) {
-	complexityPenalty, err := cmd.Flags().GetFloat64(tuneComplexityPenaltyFlag)
-
-	if err != nil {
-		return optimizer.GuardOptions{}, err
-	}
-
-	minRoundTrips, err := cmd.Flags().GetInt(tuneMinRoundTripsFlag)
-
-	if err != nil {
-		return optimizer.GuardOptions{}, err
-	}
-
-	jitterEnabled, err := cmd.Flags().GetBool(tuneJitterFlag)
-
-	if err != nil {
-		return optimizer.GuardOptions{}, err
-	}
-
-	walkForwardEnabled, err := cmd.Flags().GetBool(tuneWalkForwardFlag)
-
-	if err != nil {
-		return optimizer.GuardOptions{}, err
-	}
-
-	if complexityPenalty <= 0 {
-		return optimizer.GuardOptions{}, fmt.Errorf("tune: complexity-penalty must be > 0")
-	}
-
-	if minRoundTrips <= 0 {
-		return optimizer.GuardOptions{}, fmt.Errorf("tune: min-round-trips must be > 0")
-	}
-
-	return optimizer.GuardOptions{
-		MaxReasoningSteps: scanOptions.MaxReasoningSteps,
-		ComplexityPenalty: complexityPenalty,
-		MinRoundTrips:     minRoundTrips,
-		JitterEnabled:     jitterEnabled,
-		WalkForward: optimizer.WalkForwardOptions{
-			Enabled: walkForwardEnabled,
-		},
-	}, nil
-}
-
-func validTuneScanOptions(
-	options optimizer.ScanOptions,
-) (optimizer.ScanOptions, error) {
-	if options.Workers <= 0 {
-		return optimizer.ScanOptions{}, fmt.Errorf("tune: workers must be > 0")
-	}
-
-	if options.MaxThresholds < 0 {
-		return optimizer.ScanOptions{}, fmt.Errorf("tune: max-thresholds must be >= 0")
-	}
-
-	if options.BeamWidth <= 0 {
-		return optimizer.ScanOptions{}, fmt.Errorf("tune: beam-width must be > 0")
-	}
-
-	if options.CandidateLimit < 0 {
-		return optimizer.ScanOptions{}, fmt.Errorf("tune: candidate-limit must be >= 0")
-	}
-
-	if options.MaxReasoningSteps <= 0 {
-		return optimizer.ScanOptions{}, fmt.Errorf("tune: max-reasoning-steps must be > 0")
-	}
-
-	return options, nil
 }

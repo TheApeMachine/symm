@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func TestInsertDepthStratifiedBeam(t *testing.T) {
-	convey.Convey("Given shallow candidates that score slightly better than deep ones", t, func() {
+func TestInsertScoreBeam(t *testing.T) {
+	convey.Convey("Given shallow and deep candidates with different scores", t, func() {
 		deep := CandidateScore{
 			Candidate:     1,
 			Score:         -0.004,
@@ -42,21 +42,12 @@ func TestInsertDepthStratifiedBeam(t *testing.T) {
 			},
 		}
 
-		beam := insertDepthStratifiedBeam(nil, flat, 4)
-		beam = insertDepthStratifiedBeam(beam, deep, 4)
+		beam := insertScoreBeam(nil, flat, 4)
+		beam = insertScoreBeam(beam, deep, 4)
 
-		convey.Convey("It should retain the deeper playbook over shallow traders", func() {
-			maxDepth := 0
-
-			for _, candidate := range beam {
-				depth := reasoningDepth(candidate.Branches)
-
-				if depth > maxDepth {
-					maxDepth = depth
-				}
-			}
-
-			convey.So(maxDepth, convey.ShouldBeGreaterThan, 1)
+		convey.Convey("It should retain the higher-scoring playbook regardless of depth", func() {
+			convey.So(len(beam), convey.ShouldEqual, 2)
+			convey.So(beam[0].Candidate, convey.ShouldEqual, flat.Candidate)
 		})
 	})
 }

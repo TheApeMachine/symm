@@ -7,11 +7,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-const (
-	// DefaultReentryTickCooldown suppresses immediate re-entry churn on dense tapes.
-	DefaultReentryTickCooldown = 500
-)
-
 /*
 ReplaySimulation walks a candidate tree across collected replay measurements.
 */
@@ -120,7 +115,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 
 	defer releaseReplayLedger(ledger)
 
-	ledger.reentryTickCooldown = scaleReentryTickCooldown(len(simulation.rows))
+	ledger.reentryTickCooldown = reentryCooldownForRows(simulation.rows)
 
 	for _, row := range simulation.rows {
 		measurements.Add(row)
@@ -144,22 +139,16 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 }
 
-func scaleReentryTickCooldown(tapeLen int) int {
-	if tapeLen <= 0 {
-		return DefaultReentryTickCooldown
-	}
-
-	scaled := max(1, tapeLen/100)
-
-	return min(scaled, DefaultReentryTickCooldown)
-}
-
 func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 	ledger := acquireReplayLedger(simulation.costs)
 
 	defer releaseReplayLedger(ledger)
 
-	ledger.reentryTickCooldown = scaleReentryTickCooldown(simulation.tape.Len())
+	ledger.reentryTickCooldown = simulation.tape.ReentryTickCooldown
+
+	if ledger.reentryTickCooldown <= 0 {
+		ledger.reentryTickCooldown = 1
+	}
 
 	for _, tick := range simulation.tape.Ticks {
 		if tick.Row.Symbol == "" {
@@ -179,6 +168,26 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 		Score:        ledger.realizedReturn(),
 		ClosedTrades: ledger.closedTrades,
 	}
+}
+
+func reentryCooldownForRows(rows []perspectives.Measurement) int {
+	categories := make(map[perspectives.CategoryType]struct{})
+
+	for _, row := range rows {
+		if row.Category == perspectives.CategoryTypeNone {
+			continue
+		}
+
+		categories[row.Category] = struct{}{}
+	}
+
+	categoryCount := len(categories)
+
+	if categoryCount <= 0 {
+		categoryCount = 1
+	}
+
+	return deriveReentryTickCooldown(len(rows), categoryCount)
 }
 
 func (simulation *ReplaySimulation) applyEvaluator(

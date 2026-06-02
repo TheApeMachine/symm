@@ -39,7 +39,6 @@ type TuneOptions struct {
 	MaxReasoningSteps   int
 	Hybrid              bool
 	HybridSeedCount     int
-	ShallowDepth        int
 	MCTSIterations      int
 	Guard               GuardOptions
 	OnBest              func(BestTree)
@@ -85,12 +84,41 @@ func (candidate CandidateScore) ReasoningDepth() int {
 	return reasoningDepth(candidate.Branches)
 }
 
+func CountMeasurementLines(path string) (int, int, error) {
+	return countValidMeasurementLines(path)
+}
+
 /*
 LoadMeasurements reads the JSONL measurement tape written by market.Story.
-Malformed, truncated, or unparsable JSONL lines increment skipped; skipped is not
-limited to tail fragments.
+When maxRows is positive and the file is larger, only an evenly spaced sample
+is retained so multi-million-row captures do not load entirely into memory.
+Malformed, truncated, or unparsable JSONL lines increment skipped.
 */
-func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
+func LoadMeasurements(path string, maxRows int) ([]perspectives.Measurement, int, error) {
+	if maxRows <= 0 {
+		return loadAllMeasurements(path)
+	}
+
+	total, skipped, err := countValidMeasurementLines(path)
+
+	if err != nil {
+		return nil, skipped, err
+	}
+
+	if total <= maxRows {
+		rows, loadSkipped, loadErr := loadAllMeasurements(path)
+
+		return rows, skipped + loadSkipped, loadErr
+	}
+
+	TuneLog("subsampling %d measurements to %d rows", total, maxRows)
+
+	rows, sampleSkipped, err := loadSampledMeasurements(path, total, maxRows)
+
+	return rows, skipped + sampleSkipped, err
+}
+
+func loadAllMeasurements(path string) ([]perspectives.Measurement, int, error) {
 	file, err := os.Open(path)
 
 	if err != nil {
@@ -104,7 +132,7 @@ func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
-	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
 		if line == "" {
@@ -131,6 +159,112 @@ func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
 			"optimizer: no valid measurements in %s (skipped %d lines)",
 			path, skipped,
 		)
+	}
+
+	return rows, skipped, nil
+}
+
+func countValidMeasurementLines(path string) (int, int, error) {
+	file, err := os.Open(path)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	defer file.Close()
+
+	total := 0
+	skipped := 0
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" {
+			continue
+		}
+
+		measurement := perspectives.Measurement{}
+
+		if err := sonic.Unmarshal([]byte(line), &measurement); err != nil {
+			skipped++
+
+			continue
+		}
+
+		total++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, skipped, err
+	}
+
+	if total == 0 {
+		return 0, skipped, fmt.Errorf(
+			"optimizer: no valid measurements in %s (skipped %d lines)",
+			path, skipped,
+		)
+	}
+
+	return total, skipped, nil
+}
+
+func loadSampledMeasurements(
+	path string, total, maxRows int,
+) ([]perspectives.Measurement, int, error) {
+	targets := make(map[int]struct{}, maxRows)
+	lastIndex := total - 1
+	step := float64(lastIndex) / float64(maxRows-1)
+
+	for sampleIndex := range maxRows {
+		index := int(math.Round(step * float64(sampleIndex)))
+
+		if index > lastIndex {
+			index = lastIndex
+		}
+
+		targets[index] = struct{}{}
+	}
+
+	file, err := os.Open(path)
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	defer file.Close()
+
+	rows := make([]perspectives.Measurement, 0, maxRows)
+	skipped := 0
+	validIndex := 0
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" {
+			continue
+		}
+
+		measurement := perspectives.Measurement{}
+
+		if err := sonic.Unmarshal([]byte(line), &measurement); err != nil {
+			skipped++
+
+			continue
+		}
+
+		if _, keep := targets[validIndex]; keep {
+			rows = append(rows, measurement)
+		}
+
+		validIndex++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, skipped, err
 	}
 
 	return rows, skipped, nil
@@ -171,9 +305,7 @@ func TuneMeasurements(
 	rows []perspectives.Measurement,
 	options TuneOptions,
 ) (SessionSummary, error) {
-	if options.MaxMeasurements > 0 {
-		rows = SubsampleMeasurements(rows, options.MaxMeasurements)
-	}
+	TuneLog("building profile (%d rows)", len(rows))
 
 	tuner := &Tuner{
 		ctx:     ctx,
@@ -185,6 +317,22 @@ func TuneMeasurements(
 	}
 
 	tuner.profile.PrepareCache()
+
+	TuneLog("precompiling replay tape")
+
+	tape := PrecompileTape(rows)
+	budget := DeriveSearchBudget(&tuner.profile, tape, options.Workers)
+
+	applyBudgetToTuneOptions(&options, budget)
+
+	TuneLog(
+		"search budget: beam=%d candidates=%d thresholds=%d depth=%d mcts=%d",
+		budget.BeamWidth,
+		budget.CandidateLimit,
+		budget.MaxThresholds,
+		budget.MaxReasoningSteps,
+		budget.MCTSIterations,
+	)
 
 	reporter, err := newCandidateReporter(options.CandidateReportPath)
 
@@ -220,21 +368,17 @@ func TuneMeasurements(
 		}
 	}
 
-	search := NewScanSearch(
-		ctx,
-		&tuner.profile,
-		rows,
-		ScanOptions{
-			Workers:           options.Workers,
-			MaxThresholds:     options.MaxThresholds,
-			BeamWidth:         options.BeamWidth,
-			CandidateLimit:    options.CandidateLimit,
-			MaxReasoningSteps: options.MaxReasoningSteps,
-			Guard:             options.Guard,
-		},
-	)
-	search.onBest = onBest
-	search.onCandidate = onCandidate
+	TuneLog("compiled %d decision ticks", tape.Len())
+
+	scanOptions := ScanOptions{
+		Workers:           options.Workers,
+		MaxThresholds:     options.MaxThresholds,
+		BeamWidth:         options.BeamWidth,
+		CandidateLimit:    options.CandidateLimit,
+		MaxReasoningSteps: options.MaxReasoningSteps,
+		Guard:             options.Guard,
+		Budget:            budget,
+	}
 
 	var stats ScanStats
 	var hybridStats HybridStats
@@ -244,25 +388,19 @@ func TuneMeasurements(
 			ctx,
 			&tuner.profile,
 			rows,
+			tape,
 			HybridOptions{
-				ScanOptions: ScanOptions{
-					Workers:           options.Workers,
-					MaxThresholds:     options.MaxThresholds,
-					BeamWidth:         options.BeamWidth,
-					CandidateLimit:    options.CandidateLimit,
-					MaxReasoningSteps: options.MaxReasoningSteps,
-					Guard:             options.Guard,
-				},
+				ScanOptions: scanOptions,
 				MCTSOptions: MCTSOptions{
 					Iterations:        options.MCTSIterations,
 					MaxReasoningSteps: options.MaxReasoningSteps,
 					MaxThresholds:     options.MaxThresholds,
+					Budget:            budget,
 				},
-				SeedCount:    options.HybridSeedCount,
-				ShallowDepth: options.ShallowDepth,
-				Guard:        options.Guard,
-				OnBest:       onBest,
-				OnCandidate:  onCandidate,
+				SeedCount:   options.HybridSeedCount,
+				Guard:       options.Guard,
+				OnBest:      onBest,
+				OnCandidate: onCandidate,
 			},
 		)
 
@@ -272,10 +410,16 @@ func TuneMeasurements(
 
 		stats = hybridStats.Scan
 	} else {
+		search := NewScanSearchWithTape(ctx, &tuner.profile, rows, tape, scanOptions)
+		search.onBest = onBest
+		search.onCandidate = onCandidate
+
 		tuner.branches, stats = search.Run()
 
 		if options.Guard.WalkForward.Enabled {
-			guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows), &tuner.profile)
+			TuneLog("walk-forward validation")
+
+			guard := NewOverfitGuard(ctx, options.Guard, tape, &tuner.profile)
 			tuner.branches = SelectWalkForwardBest(
 				guard,
 				rows,

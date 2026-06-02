@@ -1,6 +1,9 @@
 package optimizer
 
 import (
+	"time"
+	"math"
+
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -8,10 +11,52 @@ import (
 runBeamPhase scores one generation of candidates and retains the top beam survivors.
 */
 func (search *ScanSearch) runBeamPhase(
+	phase string,
 	generate func(send func(scanCandidate) bool),
 ) {
+	TuneLog("scoring %s", phase)
+
+	started := time.Now()
+	scoredBefore := search.candidates
+
 	search.beamScores = nil
 	search.score(generate)
+
+	phaseCount := search.candidates - scoredBefore
+	elapsed := time.Since(started).Round(time.Millisecond)
+
+	if search.haltPhaseOnStagnation &&
+		search.progress != nil &&
+		search.progress.Stagnant(search.options.BeamWidth) &&
+		phaseCount > 0 {
+		bestScore := search.progress.BestScore()
+
+		if math.IsInf(bestScore, 0) {
+			TuneLog(
+				"finished %s early: reward stalled (%d candidates, %s)",
+				phase,
+				phaseCount,
+				elapsed,
+			)
+		} else {
+			TuneLog(
+				"finished %s early: reward stalled at %.6f (%d candidates, %s)",
+				phase,
+				bestScore,
+				phaseCount,
+				elapsed,
+			)
+		}
+
+		return
+	}
+
+	TuneLog(
+		"finished %s (%d candidates, %s)",
+		phase,
+		phaseCount,
+		elapsed,
+	)
 }
 
 /*
@@ -23,7 +68,7 @@ func (search *ScanSearch) emitBootstrapPlaybooks(
 	actionBranches []scanCandidate,
 ) {
 	search.emitDecisionSeeds(send)
-	search.emitSiblingBranches(send, actionBranches, DefaultBootstrapPairBudget)
+	search.emitSiblingBranches(send, actionBranches, search.budget.BeamWidth)
 }
 
 /*
@@ -63,8 +108,8 @@ func (search *ScanSearch) emitNestedGateExpansions(
 		return true
 	}
 
-	if limit > DefaultMaxGatesPerSurvivor {
-		limit = DefaultMaxGatesPerSurvivor
+	if limit > search.budget.MaxGatesPerSurvivor {
+		limit = search.budget.MaxGatesPerSurvivor
 	}
 
 	for _, gate := range gates[:limit] {
@@ -117,8 +162,8 @@ func (search *ScanSearch) emitWidenExpansions(
 			continue
 		}
 
-		if limit > DefaultMaxWidensPerSurvivor {
-			limit = DefaultMaxWidensPerSurvivor
+		if limit > search.budget.MaxWidensPerSurvivor {
+			limit = search.budget.MaxWidensPerSurvivor
 		}
 
 		for _, exit := range rankedExits[:limit] {

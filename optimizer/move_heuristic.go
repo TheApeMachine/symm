@@ -146,6 +146,8 @@ func (search *TreeSearch) reachableMoves(
 func (search *TreeSearch) sampleRolloutMove(
 	moves []Move, branches perspectives.BranchList,
 ) Move {
+	moves = search.activeMoves(moves, branches)
+
 	weighted := make([]Move, 0, len(moves))
 	weights := make([]float64, 0, len(moves))
 	total := 0.0
@@ -200,35 +202,91 @@ func (search *TreeSearch) sampleMoveIndex(
 		return 0
 	}
 
-	total := 0.0
-	weights := make([]float64, len(moves))
+	candidateIndexes := search.activeMoveIndexes(moves, branches)
 
-	for index, move := range moves {
-		weight := search.moveWeightForBranches(move, branches)
+	total := 0.0
+	weights := make([]float64, len(candidateIndexes))
+
+	for weightIndex, moveIndex := range candidateIndexes {
+		weight := search.moveWeightForBranches(moves[moveIndex], branches)
 
 		if weight <= 0 {
 			continue
 		}
 
-		weights[index] = weight
+		weights[weightIndex] = weight
 		total += weight
 	}
 
 	if total <= 0 {
-		return search.rng.Intn(len(moves))
+		return candidateIndexes[search.rng.Intn(len(candidateIndexes))]
 	}
 
 	pick := search.rng.Float64() * total
 
-	for index, weight := range weights {
+	for weightIndex, weight := range weights {
 		pick -= weight
 
 		if pick <= 0 {
-			return index
+			return candidateIndexes[weightIndex]
 		}
 	}
 
-	return len(moves) - 1
+	return candidateIndexes[len(candidateIndexes)-1]
+}
+
+func (search *TreeSearch) activeMoves(
+	moves []Move, branches perspectives.BranchList,
+) []Move {
+	indexes := search.activeMoveIndexes(moves, branches)
+	active := make([]Move, 0, len(indexes))
+
+	for _, moveIndex := range indexes {
+		active = append(active, moves[moveIndex])
+	}
+
+	return active
+}
+
+func (search *TreeSearch) activeMoveIndexes(
+	moves []Move, branches perspectives.BranchList,
+) []int {
+	indexes := make([]int, 0, len(moves))
+
+	for index := range moves {
+		indexes = append(indexes, index)
+	}
+
+	if search.progress == nil ||
+		!search.progress.Stagnant(search.stagnationWindow) {
+		return indexes
+	}
+
+	deepening := make([]int, 0, len(indexes))
+
+	for _, moveIndex := range indexes {
+		if moves[moveIndex].observation != perspectives.ObservationNone {
+			continue
+		}
+
+		if perspectives.FindEntryIndex(branches) < 0 {
+			continue
+		}
+
+		deepening = append(deepening, moveIndex)
+	}
+
+	if len(deepening) > 0 {
+		return deepening
+	}
+
+	return indexes
+}
+
+func (search *TreeSearch) deepeningMoves(
+	moves []Move, branches perspectives.BranchList,
+) []Move {
+	return search.activeMoves(moves, branches)
 }
 
 func gateSelectivity(passRate float64) float64 {

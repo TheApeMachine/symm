@@ -91,15 +91,7 @@ run-profile: build
 
 tune: build
 	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
-	@echo "Tuning measurements from runs/capture.jsonl (trading.record.file in $(CONFIG), workers=$(TUNE_WORKERS), max_thresholds=$(TUNE_MAX_THRESHOLDS), beam=$(TUNE_BEAM_WIDTH), candidates=$(TUNE_CANDIDATE_LIMIT), max_measurements=$(TUNE_MAX_MEASUREMENTS))"
-	./$(SYMM_BIN) tune \
-		--config $(CONFIG) \
-		--workers $(TUNE_WORKERS) \
-		--max-thresholds $(TUNE_MAX_THRESHOLDS) \
-		--beam-width $(TUNE_BEAM_WIDTH) \
-		--candidate-limit $(TUNE_CANDIDATE_LIMIT) \
-		--max-measurements $(TUNE_MAX_MEASUREMENTS) \
-		--shallow-depth 2
+	./$(SYMM_BIN) tune --config $(CONFIG)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

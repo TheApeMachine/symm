@@ -82,8 +82,9 @@ func TestRunHybridSearch(t *testing.T) {
 		}
 
 		profile.PrepareCache()
+		tape := PrecompileTape(rows)
 
-		branches, stats, err := RunHybridSearch(ctx, &profile, rows, HybridOptions{
+		branches, stats, err := RunHybridSearch(ctx, &profile, rows, tape, HybridOptions{
 			ScanOptions: ScanOptions{
 				Workers:           2,
 				MaxThresholds:     2,
@@ -95,8 +96,7 @@ func TestRunHybridSearch(t *testing.T) {
 				Iterations:        16,
 				MaxReasoningSteps: 4,
 			},
-			SeedCount:    4,
-			ShallowDepth: 2,
+			SeedCount: 4,
 		})
 
 		convey.Convey("It should deepen beam seeds with MCTS", func() {
@@ -177,13 +177,13 @@ func BenchmarkRunHybridSearch(b *testing.B) {
 			Iterations:        8,
 			MaxReasoningSteps: 4,
 		},
-		SeedCount:    4,
-		ShallowDepth: 2,
+		SeedCount: 4,
 	}
+	tape := PrecompileTape(rows)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = RunHybridSearch(ctx, &profile, rows, options)
+		_, _, _ = RunHybridSearch(ctx, &profile, rows, tape, options)
 	}
 }

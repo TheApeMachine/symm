@@ -22,49 +22,57 @@ type HybridStats struct {
 HybridOptions configures progressive deepening: beam trunk, MCTS branches.
 */
 type HybridOptions struct {
-	ScanOptions  ScanOptions
-	MCTSOptions  MCTSOptions
-	SeedCount    int
-	ShallowDepth int
-	Guard        GuardOptions
-	OnBest       func(BestTree)
-	OnCandidate  func(CandidateScore)
+	ScanOptions ScanOptions
+	MCTSOptions MCTSOptions
+	SeedCount   int
+	Guard       GuardOptions
+	OnBest      func(BestTree)
+	OnCandidate func(CandidateScore)
 }
 
 /*
-RunHybridSearch exhaustively scans shallow trees, then deepens seeds with MCTS.
+RunHybridSearch scores multi-signal beam candidates, then deepens seeds with MCTS.
 */
 func RunHybridSearch(
 	ctx context.Context,
 	profile *Profile,
 	rows []perspectives.Measurement,
+	tape ReplayTape,
 	options HybridOptions,
 ) (perspectives.BranchList, HybridStats, error) {
 	if options.SeedCount <= 0 {
-		options.SeedCount = DefaultHybridSeedCount
+		budget := options.ScanOptions.Budget
+
+		if budget.IsZero() {
+			budget = DeriveSearchBudget(profile, tape, options.ScanOptions.Workers)
+		}
+
+		options.SeedCount = budget.HybridSeedCount
 	}
 
-	shallowOptions := options.ScanOptions
-	shallowOptions.Guard = options.Guard
-
-	if options.ShallowDepth > 0 {
-		shallowOptions.MaxReasoningSteps = options.ShallowDepth
-	}
-
-	search := NewScanSearch(ctx, profile, rows, shallowOptions)
+	search := NewScanSearchWithTape(ctx, profile, rows, tape, options.ScanOptions)
 	search.onBest = options.OnBest
 	search.onCandidate = options.OnCandidate
+
+	TuneLog("beam search (max depth %d)", options.ScanOptions.MaxReasoningSteps)
 
 	seeds, scanStats := search.RunTopK(options.SeedCount)
 	seeds = selectHybridSeeds(seeds, search.beamScoresClone(), options.SeedCount)
 
-	mcts := NewHybridTreeSearch(ctx, profile, rows, options.Guard, seeds, options.MCTSOptions)
+	TuneLog("mcts search (%d seeds, %d iterations)", len(seeds), options.MCTSOptions.Iterations)
+
+	mcts := NewHybridTreeSearchWithTape(
+		ctx, profile, rows, tape, options.Guard, seeds, options.MCTSOptions,
+	)
+	mcts.SetStagnationWindow(options.ScanOptions.BeamWidth)
 	mcts.onBest = options.OnBest
 
 	branches := mcts.Run()
 
 	if options.Guard.WalkForward.Enabled {
-		guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows), profile)
+		TuneLog("walk-forward validation")
+
+		guard := NewOverfitGuard(ctx, options.Guard, tape, profile)
 		branches = SelectWalkForwardBest(
 			guard,
 			rows,
@@ -88,7 +96,7 @@ func insertTopK(
 		return top
 	}
 
-	return insertDepthStratifiedBeam(top, entry, limit)
+	return insertScoreBeam(top, entry, limit)
 }
 
 /*
@@ -104,7 +112,7 @@ func selectHybridSeeds(
 
 	pool := append(append([]CandidateScore(nil), scored...), beam...)
 
-	return collapseDepthStratifiedBeam(pool, limit)
+	return collapseScoreBeam(pool, limit)
 }
 
 func insertBeam(
@@ -119,11 +127,7 @@ func insertBeam(
 		left := top[leftIndex]
 		right := top[rightIndex]
 
-		if left.Score != right.Score {
-			return left.Score > right.Score
-		}
-
-		return reasoningDepth(left.Branches) > reasoningDepth(right.Branches)
+		return compareBeamCandidates(left, right)
 	})
 
 	if len(top) > limit {

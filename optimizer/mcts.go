@@ -4,18 +4,9 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"runtime"
 
 	"github.com/theapemachine/symm/market/perspectives"
-)
-
-const (
-	DefaultMCTSIterations      = 1024
-	DefaultHybridSeedCount     = 50
-	DefaultHybridShallowDepth  = 4
-	DefaultMCTSSeedPriorVisits = 10
-	DefaultMCTSMaxThresholds   = 0
-	explorationWeight          = 1.41
-	mctsRewardSigmoidScale     = 10.0
 )
 
 /*
@@ -26,6 +17,7 @@ type MCTSOptions struct {
 	SeedPriorVisits   int
 	MaxReasoningSteps int
 	MaxThresholds     int
+	Budget            SearchBudget
 }
 
 /*
@@ -61,26 +53,26 @@ type TreeSearch struct {
 	maxThresholds     int
 	cachedMoves       []Move
 	onBest            func(BestTree)
+	progress          *SearchProgress
+	stagnationWindow  int
+	explorationWeight float64
+	rewardScale       float64
+	budget            SearchBudget
 }
 
-func normalizeMCTSOptions(options MCTSOptions) MCTSOptions {
-	if options.Iterations <= 0 {
-		options.Iterations = DefaultMCTSIterations
+func normalizeMCTSOptions(
+	options MCTSOptions,
+	profile *Profile,
+	tape ReplayTape,
+	workers int,
+) MCTSOptions {
+	budget := options.Budget
+
+	if budget.IsZero() && profile != nil {
+		budget = DeriveSearchBudget(profile, tape, workers)
 	}
 
-	if options.SeedPriorVisits <= 0 {
-		options.SeedPriorVisits = DefaultMCTSSeedPriorVisits
-	}
-
-	if options.MaxReasoningSteps <= 0 {
-		options.MaxReasoningSteps = DefaultMaxReasoningSteps
-	}
-
-	if options.MaxThresholds < 0 {
-		options.MaxThresholds = DefaultMCTSMaxThresholds
-	}
-
-	return options
+	return applyBudgetToMCTSOptions(options, budget)
 }
 
 /*
@@ -94,9 +86,37 @@ func NewHybridTreeSearch(
 	seeds []CandidateScore,
 	options MCTSOptions,
 ) *TreeSearch {
-	options = normalizeMCTSOptions(options)
+	return NewHybridTreeSearchWithTape(
+		ctx, profile, rows, ReplayTape{}, guardOptions, seeds, options,
+	)
+}
+
+/*
+NewHybridTreeSearchWithTape reuses a precompiled replay tape across MCTS rollouts.
+*/
+func NewHybridTreeSearchWithTape(
+	ctx context.Context,
+	profile *Profile,
+	rows []perspectives.Measurement,
+	tape ReplayTape,
+	guardOptions GuardOptions,
+	seeds []CandidateScore,
+	options MCTSOptions,
+) *TreeSearch {
+	workers := runtime.NumCPU()
+	options = normalizeMCTSOptions(options, profile, tape, workers)
+	budget := options.Budget
+
+	if budget.IsZero() {
+		budget = DeriveSearchBudget(profile, tape, workers)
+	}
+
 	profile.PrepareCache()
-	tape := PrecompileTape(rows)
+
+	if tape.Len() == 0 {
+		tape = PrecompileTape(rows)
+	}
+
 	guard := NewOverfitGuard(ctx, guardOptions, tape, profile)
 
 	search := &TreeSearch{
@@ -104,12 +124,15 @@ func NewHybridTreeSearch(
 		profile:           profile,
 		rows:              rows,
 		tape:              tape,
-		coOccurrence:      NewCoOccurrenceIndex(tape),
+		coOccurrence:      NewCoOccurrenceIndex(tape, budget.MinChainSupport),
 		guard:             guard,
 		rng:               rand.New(rand.NewSource(rand.Int63())),
 		iterations:        options.Iterations,
 		maxReasoningSteps: options.MaxReasoningSteps,
 		maxThresholds:     options.MaxThresholds,
+		explorationWeight: budget.ExplorationWeight,
+		rewardScale:       budget.MCTSRewardScale,
+		budget:            budget,
 	}
 
 	search.evaluate = search.scoreBranches
@@ -118,9 +141,17 @@ func NewHybridTreeSearch(
 	search.bestScore = math.Inf(-1)
 	search.bestClosedTrades = -1
 	search.best = perspectives.BranchList{}
+	search.progress = NewSearchProgress()
+	search.stagnationWindow = budget.BeamWidth
 	search.seedRoot(seeds, options.SeedPriorVisits)
 
 	return search
+}
+
+func (search *TreeSearch) SetStagnationWindow(beamWidth int) {
+	if beamWidth > 0 {
+		search.stagnationWindow = beamWidth
+	}
 }
 
 func (search *TreeSearch) scoreBranches(branches perspectives.BranchList) float64 {
@@ -141,7 +172,7 @@ func (search *TreeSearch) seedRoot(seeds []CandidateScore, priorVisits int) {
 		}
 
 		canonical := perspectives.CanonicalPlaybookBranches(seed.Branches)
-		reward := normalizeMCTSReward(score)
+		reward := search.normalizeMCTSReward(score)
 
 		child := &Node{
 			branches: canonical.Clone(),
@@ -177,10 +208,45 @@ Run finds the most profitable branch registry for the replay profile.
 */
 func (search *TreeSearch) Run() perspectives.BranchList {
 	for iteration := 0; iteration < search.iterations; iteration++ {
+		if search.progress != nil &&
+			search.progress.Stagnant(search.stagnationWindow) &&
+			iteration > 0 {
+			bestScore := search.progress.BestScore()
+
+			if math.IsInf(bestScore, 0) {
+				TuneLog(
+					"mcts pivot at iteration %d/%d: reward stalled, nesting entry gates",
+					iteration+1,
+					search.iterations,
+				)
+			} else {
+				TuneLog(
+					"mcts pivot at iteration %d/%d: reward stalled at %.6f, nesting entry gates",
+					iteration+1,
+					search.iterations,
+					bestScore,
+				)
+			}
+
+			search.progress.ResetStagnation()
+		}
+
 		node := search.selectNode()
 		child := search.expand(node)
 		reward := search.rollout(iteration, child)
 		search.backpropagate(child, reward)
+
+		if iteration == 0 ||
+			(iteration+1)%32 == 0 ||
+			iteration+1 == search.iterations {
+			bestScore := search.bestScore
+
+			if math.IsInf(bestScore, 0) {
+				TuneLog("mcts iteration %d/%d (no persistable best yet)", iteration+1, search.iterations)
+			} else {
+				TuneLog("mcts iteration %d/%d best realized score %.6f", iteration+1, search.iterations, bestScore)
+			}
+		}
 	}
 
 	return search.best.Clone()
@@ -237,7 +303,7 @@ func (search *TreeSearch) uct(parent, child *Node) float64 {
 	}
 
 	exploit := child.value / float64(child.visits)
-	explore := explorationWeight * math.Sqrt(
+	explore := search.explorationWeight * math.Sqrt(
 		math.Log(float64(parent.visits))/float64(child.visits),
 	)
 
@@ -282,12 +348,14 @@ func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	}
 
 	score := search.evaluate(branches)
+	closedTrades := 0
 
 	if len(branches) > 0 {
 		canonical := perspectives.CanonicalPlaybookBranches(branches)
 		replay := NewReplaySimulationWithTape(
 			search.ctx, canonical, search.tape,
 		).Result()
+		closedTrades = replay.ClosedTrades
 
 		if search.guard.ImprovesPersistedBest(
 			score, replay.ClosedTrades, search.bestScore, search.bestClosedTrades,
@@ -299,7 +367,15 @@ func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 		}
 	}
 
-	return normalizeMCTSReward(score)
+	if search.progress != nil {
+		search.progress.Record(
+			score,
+			closedTrades,
+			search.guard.ImprovesPersistedBest,
+		)
+	}
+
+	return search.normalizeMCTSReward(score)
 }
 
 func (search *TreeSearch) emitBest(
@@ -333,8 +409,14 @@ func (search *TreeSearch) moves(
 	return search.reachableMoves(search.allMoves(), branches)
 }
 
-func normalizeMCTSReward(pnlScore float64) float64 {
-	return 1.0 / (1.0 + math.Exp(-pnlScore*mctsRewardSigmoidScale))
+func (search *TreeSearch) normalizeMCTSReward(pnlScore float64) float64 {
+	scale := search.rewardScale
+
+	if scale <= 0 {
+		scale = 1
+	}
+
+	return 1.0 / (1.0 + math.Exp(-pnlScore*scale))
 }
 
 func (search *TreeSearch) allMoves() []Move {

@@ -2,21 +2,13 @@ package optimizer
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"sort"
 	"sync"
 
 	"github.com/theapemachine/symm/market/perspectives"
-)
-
-const (
-	DefaultScanBeamWidth       = 256
-	DefaultScanCandidateLimit  = 10000
-	DefaultScanMaxThresholds   = 128
-	DefaultTuneMaxMeasurements = 250000
-	DefaultBootstrapSeedBudget = 2048
-	DefaultBootstrapPairBudget = 512
 )
 
 type actionGroup uint8
@@ -36,6 +28,7 @@ type ScanOptions struct {
 	CandidateLimit    int
 	MaxReasoningSteps int
 	Guard             GuardOptions
+	Budget            SearchBudget
 }
 
 /*
@@ -82,8 +75,11 @@ type ScanSearch struct {
 	topK                int
 	topScores           []CandidateScore
 	beamScores          []CandidateScore
-	pairAffinity        *PairAffinityIndex
-	mu                  sync.Mutex
+	pairAffinity          *PairAffinityIndex
+	progress              *SearchProgress
+	haltPhaseOnStagnation bool
+	budget                SearchBudget
+	mu                    sync.Mutex
 }
 
 func NewScanSearch(
@@ -92,10 +88,34 @@ func NewScanSearch(
 	rows []perspectives.Measurement,
 	options ScanOptions,
 ) *ScanSearch {
+	return NewScanSearchWithTape(ctx, profile, rows, ReplayTape{}, options)
+}
+
+/*
+NewScanSearchWithTape reuses a precompiled replay tape when scoring candidates.
+*/
+func NewScanSearchWithTape(
+	ctx context.Context,
+	profile *Profile,
+	rows []perspectives.Measurement,
+	tape ReplayTape,
+	options ScanOptions,
+) *ScanSearch {
 	options = normalizeScanOptions(options)
 	profile.PrepareCache()
-	tape := PrecompileTape(rows)
-	coOccurrence := NewCoOccurrenceIndex(tape)
+
+	if tape.Len() == 0 {
+		tape = PrecompileTape(rows)
+	}
+
+	budget := options.Budget
+
+	if budget.IsZero() {
+		budget = DeriveSearchBudget(profile, tape, options.Workers)
+	}
+
+	options = applyBudgetToScanOptions(options, budget)
+	coOccurrence := NewCoOccurrenceIndex(tape, budget.MinChainSupport)
 
 	return &ScanSearch{
 		ctx:          ctx,
@@ -106,6 +126,7 @@ func NewScanSearch(
 		options:      options,
 		guard:        NewOverfitGuard(ctx, options.Guard, tape, profile),
 		pairAffinity: NewPairAffinityIndex(),
+		budget:       budget,
 	}
 }
 
@@ -135,60 +156,97 @@ func (search *ScanSearch) run() ScanStats {
 	search.bestScore = math.Inf(-1)
 	search.bestClosedTrades = -1
 
-	actionBranches := search.actionBranches()
-	deepeningBudget := search.deepeningCandidateBudget()
-	survivors := make([]CandidateScore, 0)
+	progress := NewSearchProgress()
+	search.progress = progress
 
-	search.phaseCandidates = 0
-	search.phaseCandidateLimit = search.bootstrapSeedBudget()
-	search.runBeamPhase(func(send func(scanCandidate) bool) {
+	actionBranches := search.actionBranches()
+
+	search.runAdaptivePhase("decision seeds", func(send func(scanCandidate) bool) {
 		search.emitDecisionSeeds(send)
 	})
-	seedSurvivors := search.beamScoresClone()
 
-	search.phaseCandidates = 0
-	search.phaseCandidateLimit = search.bootstrapPairBudget()
-	search.runBeamPhase(func(send func(scanCandidate) bool) {
-		search.emitSiblingBranches(send, actionBranches, search.bootstrapPairBudget())
-	})
-	search.mergeDeepeningSurvivors(seedSurvivors)
-	survivors = search.beamScoresClone()
+	survivors := search.beamScoresClone()
+	searchDepth := maxReasoningDepthInBeam(survivors)
 
-	for depth := 1; depth <= search.options.MaxReasoningSteps; depth++ {
+	for search.hasCandidateBudget() {
 		if len(survivors) == 0 {
 			break
 		}
 
-		previous := survivors
-		branchers := search.rankedEntryBranchers()
-		var deepenBudget int
-		var widenBudget int
+		if !progress.Stagnant(search.options.BeamWidth) {
+			previous := survivors
+			search.runAdaptivePhase(
+				fmt.Sprintf("widen exits (depth %d)", searchDepth),
+				func(send func(scanCandidate) bool) {
+					search.emitWidenExpansions(send, survivors, actionBranches)
+				},
+			)
+			search.mergeDeepeningSurvivors(append(previous, survivors...))
+			survivors = search.beamScoresClone()
+			searchDepth = maxReasoningDepthInBeam(survivors)
 
-		if deepeningBudget == 0 {
-			deepenBudget = 0
-			widenBudget = 0
-		} else {
-			deepenBudget = deepeningBudget / 2
-			widenBudget = deepeningBudget - deepenBudget
+			continue
 		}
 
-		search.phaseCandidates = 0
-		search.phaseCandidateLimit = deepenBudget
+		if searchDepth >= search.options.MaxReasoningSteps {
+			break
+		}
 
-		search.runBeamPhase(func(send func(scanCandidate) bool) {
-			search.emitDeepeningExpansions(send, survivors, branchers)
-		})
+		bestScore := progress.BestScore()
+
+		if math.IsInf(bestScore, 0) {
+			TuneLog(
+				"reward stalled after %d candidates without improvement (depth %d), nesting entry gates",
+				progress.SinceImprovement(),
+				searchDepth,
+			)
+		} else {
+			TuneLog(
+				"reward stalled at %.6f after %d candidates without improvement (depth %d), nesting entry gates",
+				bestScore,
+				progress.SinceImprovement(),
+				searchDepth,
+			)
+		}
+
+		previous := survivors
+		branchers := search.rankedEntryBranchers()
+
+		search.runAdaptivePhase(
+			fmt.Sprintf("deepen gates (depth %d)", searchDepth+1),
+			func(send func(scanCandidate) bool) {
+				search.emitDeepeningExpansions(send, survivors, branchers)
+			},
+		)
 		search.mergeDeepeningSurvivors(previous)
 		survivors = search.beamScoresClone()
 
-		search.phaseCandidates = 0
-		search.phaseCandidateLimit = widenBudget
+		newDepth := maxReasoningDepthInBeam(survivors)
 
-		search.runBeamPhase(func(send func(scanCandidate) bool) {
-			search.emitWidenExpansions(send, survivors, actionBranches)
-		})
-		search.mergeDeepeningSurvivors(append(previous, survivors...))
-		survivors = search.beamScoresClone()
+		if newDepth > searchDepth {
+			searchDepth = newDepth
+			progress.ResetStagnation()
+
+			continue
+		}
+
+		if progress.Stagnant(search.options.BeamWidth) {
+			search.runAdaptivePhase(
+				fmt.Sprintf("widen exits (depth %d)", searchDepth),
+				func(send func(scanCandidate) bool) {
+					search.emitWidenExpansions(send, survivors, actionBranches)
+				},
+			)
+			search.mergeDeepeningSurvivors(append(previous, survivors...))
+			survivors = search.beamScoresClone()
+		}
+
+		if progress.Stagnant(search.options.BeamWidth) {
+			searchDepth++
+			progress.ResetStagnation()
+
+			TuneLog("still stalled, raising target depth to %d", searchDepth)
+		}
 	}
 
 	return ScanStats{
@@ -197,52 +255,25 @@ func (search *ScanSearch) run() ScanStats {
 	}
 }
 
-func (search *ScanSearch) bootstrapTotalBudget() int {
+func (search *ScanSearch) hasCandidateBudget() bool {
 	if search.options.CandidateLimit <= 0 {
-		return DefaultBootstrapSeedBudget + DefaultBootstrapPairBudget
+		return true
 	}
 
-	if search.options.CandidateLimit <= 4096 {
-		return max(128, search.options.CandidateLimit/4)
-	}
-
-	return DefaultBootstrapSeedBudget + DefaultBootstrapPairBudget
+	return search.candidates < search.options.CandidateLimit
 }
 
-func (search *ScanSearch) bootstrapSeedBudget() int {
-	total := search.bootstrapTotalBudget()
+func (search *ScanSearch) runAdaptivePhase(
+	phase string,
+	generate func(send func(scanCandidate) bool),
+) {
+	search.phaseCandidates = 0
+	search.phaseCandidateLimit = 0
+	search.haltPhaseOnStagnation = true
 
-	if total <= DefaultBootstrapPairBudget {
-		return total
-	}
+	search.runBeamPhase(phase, generate)
 
-	return min(DefaultBootstrapSeedBudget, total-DefaultBootstrapPairBudget)
-}
-
-func (search *ScanSearch) bootstrapPairBudget() int {
-	total := search.bootstrapTotalBudget()
-
-	return min(DefaultBootstrapPairBudget, total-search.bootstrapSeedBudget())
-}
-
-func (search *ScanSearch) deepeningCandidateBudget() int {
-	if search.options.CandidateLimit <= 0 {
-		return 0
-	}
-
-	remaining := search.options.CandidateLimit - search.bootstrapTotalBudget()
-
-	if remaining <= 0 {
-		return max(1, search.options.CandidateLimit/(search.options.MaxReasoningSteps+1))
-	}
-
-	budget := remaining / search.options.MaxReasoningSteps
-
-	if budget <= 0 {
-		return remaining
-	}
-
-	return budget
+	search.haltPhaseOnStagnation = false
 }
 
 func (search *ScanSearch) beamScoresClone() []CandidateScore {
@@ -288,27 +319,7 @@ func normalizeScanOptions(options ScanOptions) ScanOptions {
 		options.Workers = runtime.NumCPU()
 	}
 
-	if options.MaxThresholds < 0 {
-		options.MaxThresholds = DefaultScanMaxThresholds
-	}
-
-	if options.BeamWidth <= 0 {
-		options.BeamWidth = DefaultScanBeamWidth
-	}
-
-	if options.CandidateLimit < 0 {
-		options.CandidateLimit = DefaultScanCandidateLimit
-	}
-
-	if options.MaxReasoningSteps <= 0 {
-		options.MaxReasoningSteps = DefaultMaxReasoningSteps
-	}
-
-	options.Guard = normalizeGuardOptions(options.Guard)
-
-	if options.Guard.MaxReasoningSteps <= 0 {
-		options.Guard.MaxReasoningSteps = options.MaxReasoningSteps
-	}
+	options.Guard = normalizeGuardOptions(options.Guard, profile, tape)
 
 	return options
 }
@@ -377,6 +388,12 @@ func (search *ScanSearch) reserveCandidate() (int, bool) {
 		return 0, false
 	}
 
+	if search.haltPhaseOnStagnation &&
+		search.progress != nil &&
+		search.progress.Stagnant(search.options.BeamWidth) {
+		return 0, false
+	}
+
 	if search.phaseCandidateLimit > 0 &&
 		search.phaseCandidates >= search.phaseCandidateLimit {
 		return 0, false
@@ -400,6 +417,14 @@ func (search *ScanSearch) accept(result scanResult) {
 
 	if search.onCandidate != nil && beamEligible(entry) {
 		search.onCandidate(entry)
+	}
+
+	if search.progress != nil {
+		search.progress.Record(
+			result.adjustedScore,
+			result.closedTrades,
+			search.guard.ImprovesPersistedBest,
+		)
 	}
 
 	search.recordPairAffinity(entry)
@@ -451,7 +476,7 @@ func (search *ScanSearch) mergeDeepeningSurvivors(previous []CandidateScore) {
 	search.mu.Lock()
 	defer search.mu.Unlock()
 
-	search.beamScores = collapseDepthStratifiedBeam(
+	search.beamScores = collapseScoreBeam(
 		append(search.beamScores, previous...),
 		search.options.BeamWidth,
 	)
@@ -467,10 +492,10 @@ func (search *ScanSearch) recordBeam(entry CandidateScore) {
 
 	search.beamScores = append(search.beamScores, entry)
 
-	pruneLimit := search.options.BeamWidth * DefaultBeamPruneFactor
+	pruneLimit := search.options.BeamWidth * search.budget.BeamPruneFactor
 
 	if len(search.beamScores) > pruneLimit {
-		search.beamScores = collapseDepthStratifiedBeam(
+		search.beamScores = collapseScoreBeam(
 			search.beamScores, search.options.BeamWidth,
 		)
 	}
@@ -668,6 +693,15 @@ func (search *ScanSearch) rankedEntryBranchers() []perspectives.Branch {
 
 func (search *ScanSearch) emitDecisionSeeds(send func(scanCandidate) bool) {
 	for _, playbook := range BuildDecisionSeedPlaybooks(search.profile, search.coOccurrence) {
+		if !send(scanCandidate{
+			branches: playbook,
+			group:    actionGroupEntry,
+		}) {
+			return
+		}
+	}
+
+	for _, playbook := range BuildProfileNestedSeedPlaybooks(search.profile, search.coOccurrence) {
 		if !send(scanCandidate{
 			branches: playbook,
 			group:    actionGroupEntry,

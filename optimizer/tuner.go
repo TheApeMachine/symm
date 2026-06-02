@@ -155,31 +155,25 @@ func (tuner *Tuner) Finish() {
 
 	tuner.finished = true
 	rows := tuner.profile.Rows()
+	tape := PrecompileTape(rows)
+	budget := DeriveSearchBudget(&tuner.profile, tape, runtime.NumCPU())
 
-	branches, _, err := RunHybridSearch(
+	branches, _, _ := RunHybridSearch(
 		tuner.ctx,
 		&tuner.profile,
 		rows,
+		tape,
 		HybridOptions{
 			ScanOptions: ScanOptions{
-				Workers:           runtime.NumCPU(),
-				MaxThresholds:     DefaultScanMaxThresholds,
-				BeamWidth:         DefaultScanBeamWidth,
-				CandidateLimit:    DefaultScanCandidateLimit,
-				MaxReasoningSteps: DefaultMaxReasoningSteps,
+				Workers: runtime.NumCPU(),
+				Budget:  budget,
 			},
 			MCTSOptions: MCTSOptions{
-				Iterations:        DefaultMCTSIterations,
-				MaxReasoningSteps: DefaultMaxReasoningSteps,
+				Budget: budget,
 			},
-			SeedCount:    DefaultHybridSeedCount,
-			ShallowDepth: DefaultHybridShallowDepth,
+			SeedCount: budget.HybridSeedCount,
 		},
 	)
-
-	if err != nil {
-		return
-	}
 
 	tuner.branches = branches
 

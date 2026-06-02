@@ -1,15 +1,9 @@
 package optimizer
 
 import (
-	"math"
 	"sort"
 
 	"github.com/theapemachine/symm/market/perspectives"
-)
-
-const (
-	DefaultMinChainSupport         = 2
-	DefaultMinChainSupportFraction = 0.001
 )
 
 /*
@@ -21,7 +15,7 @@ type CoOccurrenceIndex struct {
 	minSupport int
 }
 
-func NewCoOccurrenceIndex(tape ReplayTape) *CoOccurrenceIndex {
+func NewCoOccurrenceIndex(tape ReplayTape, minSupport int) *CoOccurrenceIndex {
 	tickSets := make([]map[perspectives.CategoryType]struct{}, 0, tape.Len())
 
 	for _, tick := range tape.Ticks {
@@ -32,24 +26,14 @@ func NewCoOccurrenceIndex(tape ReplayTape) *CoOccurrenceIndex {
 		tickSets = append(tickSets, snapshotCategorySet(tick.Snapshots))
 	}
 
+	if minSupport <= 0 {
+		minSupport = deriveMinChainSupport(len(tickSets))
+	}
+
 	return &CoOccurrenceIndex{
 		tickSets:   tickSets,
-		minSupport: resolveMinChainSupport(len(tickSets)),
+		minSupport: minSupport,
 	}
-}
-
-func resolveMinChainSupport(tickCount int) int {
-	if tickCount <= 0 {
-		return DefaultMinChainSupport
-	}
-
-	fractionSupport := int(math.Ceil(float64(tickCount) * DefaultMinChainSupportFraction))
-
-	if fractionSupport < DefaultMinChainSupport {
-		return DefaultMinChainSupport
-	}
-
-	return fractionSupport
 }
 
 func snapshotCategorySet(

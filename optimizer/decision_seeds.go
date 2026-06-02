@@ -1,6 +1,8 @@
 package optimizer
 
 import (
+	"sort"
+
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -79,6 +81,7 @@ var (
 	}
 
 	decisionExitCategories = []perspectives.CategoryType{
+		perspectives.CategoryExhaustion,
 		perspectives.CategoryActiveReversal,
 		perspectives.CategoryThermalExhaustion,
 		perspectives.CategoryFadedExhaustion,
@@ -132,6 +135,112 @@ func BuildDecisionSeedPlaybooks(
 	}
 
 	return playbooks
+}
+
+type profileNestedPair struct {
+	outer   perspectives.CategoryType
+	inner   perspectives.CategoryType
+	support int
+}
+
+/*
+BuildProfileNestedSeedPlaybooks materializes two-gate entry chains from categories
+observed on the tape. These seed deepening when DECISION.md templates do not match.
+*/
+func BuildProfileNestedSeedPlaybooks(
+	profile *Profile,
+	index *CoOccurrenceIndex,
+) []perspectives.BranchList {
+	categories := profile.Categories()
+
+	if len(categories) < 2 {
+		return nil
+	}
+
+	pairs := rankedProfileNestedPairs(categories, index)
+	playbooks := make([]perspectives.BranchList, 0, len(pairs)*len(categories))
+	seen := make(map[string]struct{})
+
+	for _, pair := range pairs {
+		entryRoot := perspectives.Branch{
+			Category:    pair.outer,
+			Observation: perspectives.ObservationNone,
+			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:        perspectives.UnitSNR,
+			Value:       profile.Quantile(pair.outer, perspectives.UnitSNR, 0.5),
+			ValueSet:    true,
+			Branches: []perspectives.Branch{
+				gateBranch(
+					profile, pair.inner, perspectives.ObservationNotHolding, perspectives.ActionLimit,
+				),
+			},
+		}
+
+		for _, exitCategory := range categories {
+			if exitCategory == pair.inner {
+				continue
+			}
+
+			exit := gateBranch(
+				profile, exitCategory, perspectives.ObservationHolding, perspectives.ActionSettlePosition,
+			)
+			playbook := append(perspectives.BranchList{entryRoot}, exit)
+			key := branchListKey(playbook)
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			playbooks = append(playbooks, playbook)
+		}
+	}
+
+	return playbooks
+}
+
+func rankedProfileNestedPairs(
+	categories []perspectives.CategoryType,
+	index *CoOccurrenceIndex,
+) []profileNestedPair {
+	pairs := make([]profileNestedPair, 0, len(categories)*len(categories))
+
+	for _, outer := range categories {
+		for _, inner := range categories {
+			if outer == inner {
+				continue
+			}
+
+			support := 0
+
+			if index != nil {
+				support = index.chainSupport([]perspectives.CategoryType{outer, inner})
+			}
+
+			pairs = append(pairs, profileNestedPair{
+				outer:   outer,
+				inner:   inner,
+				support: support,
+			})
+		}
+	}
+
+	sort.SliceStable(pairs, func(leftIndex, rightIndex int) bool {
+		left := pairs[leftIndex]
+		right := pairs[rightIndex]
+
+		if left.support != right.support {
+			return left.support > right.support
+		}
+
+		if left.outer != right.outer {
+			return left.outer < right.outer
+		}
+
+		return left.inner < right.inner
+	})
+
+	return pairs
 }
 
 func reachableEntryChainPrefixes(

@@ -114,7 +114,7 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 	return &replayLedger{
 		costs:               costs,
 		positions:           make(map[string]replayPosition),
-		reentryTickCooldown: DefaultReentryTickCooldown,
+		reentryTickCooldown: 1,
 		ticksSinceClose:     make(map[string]int),
 		observationScratch:  make(map[perspectives.ObservationType]float64, 1),
 		metricsScratch:      make(map[string]float64, 2),
@@ -123,7 +123,7 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 
 func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.costs = costs
-	ledger.reentryTickCooldown = DefaultReentryTickCooldown
+	ledger.reentryTickCooldown = 1
 	ledger.realized = 0
 	ledger.closedTrades = 0
 

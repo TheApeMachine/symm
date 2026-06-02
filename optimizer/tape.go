@@ -23,8 +23,9 @@ type PrecompiledTick struct {
 ReplayTape is market state compiled once and shared across candidate scoring.
 */
 type ReplayTape struct {
-	Ticks      []PrecompiledTick
-	LastPrices map[string]float64
+	Ticks               []PrecompiledTick
+	LastPrices          map[string]float64
+	ReentryTickCooldown int
 }
 
 func (tape ReplayTape) Len() int {
@@ -38,9 +39,14 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 	ring := make([]perspectives.Measurement, 0, StoryRingCapacity)
 	ticks := make([]PrecompiledTick, len(rows))
 	lastPrices := make(map[string]float64)
+	categories := make(map[perspectives.CategoryType]struct{})
 
 	for index, row := range rows {
 		ring = market.AppendRingMeasurement(ring, row)
+
+		if row.Category != perspectives.CategoryTypeNone {
+			categories[row.Category] = struct{}{}
+		}
 
 		if row.Symbol == "" {
 			continue
@@ -56,8 +62,15 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 		}
 	}
 
+	categoryCount := len(categories)
+
+	if categoryCount <= 0 {
+		categoryCount = 1
+	}
+
 	return ReplayTape{
-		Ticks:      ticks,
-		LastPrices: lastPrices,
+		Ticks:               ticks,
+		LastPrices:          lastPrices,
+		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
 	}
 }

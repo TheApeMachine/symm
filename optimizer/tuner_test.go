@@ -8,6 +8,29 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func profitableMultiSignalRows() []perspectives.Measurement {
+	return []perspectives.Measurement{
+		{
+			Symbol: "BTC/EUR", Source: perspectives.SourceSentiment,
+			Category: perspectives.CategoryRiskOnSurge,
+			SNR:      2,
+			Last:     100,
+		},
+		{
+			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      2,
+			Last:     100,
+		},
+		{
+			Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+			Category: perspectives.CategoryExhaustion,
+			SNR:      2,
+			Last:     110,
+		},
+	}
+}
+
 func TestReplaySimulationScore(t *testing.T) {
 	convey.Convey("Given a completed round trip", t, func() {
 		ctx := context.Background()
@@ -106,26 +129,7 @@ func TestScanSearchRun(t *testing.T) {
 	convey.Convey("Given replay measurements with entry and exit opportunities", t, func() {
 		ctx := context.Background()
 		profile := Profile{ctx: ctx}
-		rows := []perspectives.Measurement{
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
-				SNR:      2,
-				Last:     100,
-			},
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
-				Category: perspectives.CategoryExhaustion,
-				SNR:      2,
-				Last:     110,
-			},
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
-				Category: perspectives.CategoryExhaustion,
-				SNR:      2,
-				Last:     105,
-			},
-		}
+		rows := profitableMultiSignalRows()
 
 		for _, row := range rows {
 			profile.Add(row)
@@ -216,6 +220,12 @@ func TestTunerFinish(t *testing.T) {
 		}
 
 		tuner.ingest(perspectives.Measurement{
+			Symbol: "BTC/EUR", Source: perspectives.SourceSentiment,
+			Category: perspectives.CategoryRiskOnSurge,
+			SNR:      2.0,
+			Last:     100,
+		})
+		tuner.ingest(perspectives.Measurement{
 			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
 			Category: perspectives.CategoryLaminar,
 			SNR:      2.0,
@@ -232,7 +242,7 @@ func TestTunerFinish(t *testing.T) {
 		summary := tuner.Summary()
 
 		convey.Convey("It should search branches after replay ends", func() {
-			convey.So(summary.MeasurementCount, convey.ShouldEqual, 2)
+			convey.So(summary.MeasurementCount, convey.ShouldEqual, 3)
 			convey.So(summary.BranchCount, convey.ShouldBeGreaterThan, 0)
 			convey.So(summary.BestScore, convey.ShouldBeGreaterThan, 0)
 		})

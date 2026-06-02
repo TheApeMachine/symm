@@ -3,17 +3,9 @@ package optimizer
 import (
 	"context"
 	"math"
+	"runtime"
 
 	"github.com/theapemachine/symm/market/perspectives"
-)
-
-const (
-	DefaultMaxReasoningSteps = 8
-	DefaultComplexityPenalty = 0.002
-	DefaultMinRoundTrips     = 1
-	DefaultJitterFractions   = 3
-	DefaultWalkForwardMinWin = 0.7
-	DefaultHoldoutDecayLimit = 0.4
 )
 
 /*
@@ -59,51 +51,41 @@ func NewOverfitGuard(
 	tape ReplayTape,
 	profile *Profile,
 ) *OverfitGuard {
+	options = normalizeGuardOptions(options, profile, tape)
+
 	return &OverfitGuard{
 		ctx:     ctx,
-		options: normalizeGuardOptions(options),
+		options: options,
 		tape:    tape,
 		profile: profile,
 	}
 }
 
-func normalizeGuardOptions(options GuardOptions) GuardOptions {
-	if options.MaxReasoningSteps <= 0 {
-		options.MaxReasoningSteps = DefaultMaxReasoningSteps
+func normalizeGuardOptions(
+	options GuardOptions,
+	profile *Profile,
+	tape ReplayTape,
+) GuardOptions {
+	if profile != nil && tape.Len() > 0 {
+		budget := DeriveSearchBudget(profile, tape, runtime.NumCPU())
+
+		if options.MaxReasoningSteps <= 0 {
+			options.MaxReasoningSteps = budget.MaxReasoningSteps
+		}
+
+		if options.MinRoundTrips <= 0 {
+			options.MinRoundTrips = budget.MinRoundTrips
+		}
+
+		options.ComplexityPenalty = budget.ComplexityPenalty
 	}
 
-	if options.ComplexityPenalty <= 0 {
-		options.ComplexityPenalty = DefaultComplexityPenalty
+	if options.JitterEnabled && len(options.JitterFractions) == 0 && profile != nil {
+		options.JitterFractions = deriveJitterFractions(profile)
 	}
 
-	if options.MinRoundTrips <= 0 {
-		options.MinRoundTrips = DefaultMinRoundTrips
-	}
-
-	if options.JitterEnabled && len(options.JitterFractions) == 0 {
-		options.JitterFractions = []float64{-0.05, -0.02, 0.02, 0.05}
-	}
-
-	if options.WalkForward.Enabled {
-		if options.WalkForward.TrainFraction <= 0 {
-			options.WalkForward.TrainFraction = 0.7
-		}
-
-		if options.WalkForward.TestFraction <= 0 {
-			options.WalkForward.TestFraction = 0.1
-		}
-
-		if options.WalkForward.StepFraction <= 0 {
-			options.WalkForward.StepFraction = options.WalkForward.TestFraction
-		}
-
-		if options.WalkForward.MinWinRate <= 0 {
-			options.WalkForward.MinWinRate = DefaultWalkForwardMinWin
-		}
-
-		if options.WalkForward.MaxHoldoutDecay <= 0 {
-			options.WalkForward.MaxHoldoutDecay = DefaultHoldoutDecayLimit
-		}
+	if options.WalkForward.Enabled && profile != nil {
+		options.WalkForward = deriveWalkForwardOptions(profile.Len(), options.WalkForward)
 	}
 
 	return options
@@ -116,6 +98,10 @@ profitable shallow trees beat over-specific deep ones.
 func (guard *OverfitGuard) AdjustedScore(
 	rawScore float64, branches perspectives.BranchList,
 ) float64 {
+	if guard.options.ComplexityPenalty <= 0 {
+		return rawScore
+	}
+
 	depth := reasoningDepth(branches)
 
 	return rawScore - float64(depth)*guard.options.ComplexityPenalty
