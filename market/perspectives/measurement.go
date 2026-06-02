@@ -71,4 +71,5 @@ type Measurement struct {
 	Confidence float64 // cross-sectional band margin; 0 on a boundary
 	SNR        float64 // temporal surprise: sigma above this symbol's own recent clarity floor
 	Last       float64 // last traded price, carried for the trader's sizing/fill
+	SpreadBPS  float64 // quoted spread in basis points when bid/ask are known; 0 falls back to static replay slippage
 }

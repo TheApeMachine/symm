@@ -63,13 +63,13 @@ func RunHybridSearch(
 
 	branches := mcts.Run()
 
-	if options.Guard.WalkForward.Enabled && len(branches) > 0 {
-		guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows))
-		ok, _ := guard.ValidateWalkForward(branches, rows)
-
-		if !ok {
-			branches = perspectives.BranchList{}
-		}
+	if options.Guard.WalkForward.Enabled {
+		guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows), profile)
+		branches = SelectWalkForwardBest(
+			guard,
+			rows,
+			mcts.walkForwardFinalists(seeds),
+		)
 	}
 
 	stats := HybridStats{

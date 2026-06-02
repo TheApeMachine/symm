@@ -104,7 +104,7 @@ func NewScanSearch(
 		tape:         tape,
 		coOccurrence: coOccurrence,
 		options:      options,
-		guard:        NewOverfitGuard(ctx, options.Guard, tape),
+		guard:        NewOverfitGuard(ctx, options.Guard, tape, profile),
 		pairAffinity: NewPairAffinityIndex(),
 	}
 }
@@ -504,6 +504,46 @@ func (search *ScanSearch) best() perspectives.BranchList {
 	defer search.mu.Unlock()
 
 	return search.bestBranch.Clone()
+}
+
+func (search *ScanSearch) walkForwardFinalists() []CandidateScore {
+	search.mu.Lock()
+	defer search.mu.Unlock()
+
+	pool := make(
+		[]CandidateScore,
+		0,
+		len(search.topScores)+len(search.beamScores)+1,
+	)
+
+	for _, entry := range search.topScores {
+		pool = append(pool, cloneCandidateScore(entry))
+	}
+
+	for _, entry := range search.beamScores {
+		pool = append(pool, cloneCandidateScore(entry))
+	}
+
+	if len(search.bestBranch) > 0 {
+		pool = append(pool, CandidateScore{
+			Score:         search.bestScore,
+			AdjustedScore: search.bestScore,
+			ClosedTrades:  search.bestClosedTrades,
+			Branches:      search.bestBranch.Clone(),
+		})
+	}
+
+	return dedupeCandidatesByBranch(pool)
+}
+
+func cloneCandidateScore(entry CandidateScore) CandidateScore {
+	return CandidateScore{
+		Candidate:     entry.Candidate,
+		Score:         entry.Score,
+		AdjustedScore: entry.AdjustedScore,
+		ClosedTrades:  entry.ClosedTrades,
+		Branches:      entry.Branches.Clone(),
+	}
 }
 
 func (search *ScanSearch) evaluateRaw(branches perspectives.BranchList) float64 {

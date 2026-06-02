@@ -20,6 +20,16 @@ func TestCoOccurrenceIndexChainReachable(t *testing.T) {
 				Category: perspectives.CategoryExhaustion,
 				SNR:      2, Last: 110,
 			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 105,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 108,
+			},
 		}
 		index := NewCoOccurrenceIndex(PrecompileTape(rows))
 

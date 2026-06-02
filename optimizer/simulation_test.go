@@ -205,6 +205,61 @@ func TestReplaySimulationScoreUsesGlobalMeasurements(t *testing.T) {
 	})
 }
 
+func TestReplaySimulationDynamicSlippage(t *testing.T) {
+	convey.Convey("Given a wide contemporaneous spread", t, func() {
+		ctx := context.Background()
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
+		wideRows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100, SpreadBPS: 40,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 100.20, SpreadBPS: 40,
+			},
+		}
+		tightRows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100, SpreadBPS: 2,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 100.20, SpreadBPS: 2,
+			},
+		}
+
+		wideSpread := NewReplaySimulation(ctx, branches, wideRows).Score()
+		tightSpread := NewReplaySimulation(ctx, branches, tightRows).Score()
+
+		convey.Convey("It should charge more drag when the tape spread is wider", func() {
+			convey.So(wideSpread, convey.ShouldBeLessThan, tightSpread)
+		})
+	})
+}
+
 func TestReplaySimulationReentryCooldown(t *testing.T) {
 	convey.Convey("Given alternating entry and exit signals", t, func() {
 		ctx := context.Background()
@@ -285,4 +340,37 @@ func TestReplaySimulationReentryCooldown(t *testing.T) {
 			convey.So(delayedResult.ClosedTrades, convey.ShouldBeLessThan, 120)
 		})
 	})
+}
+
+func BenchmarkReplaySimulationResult(b *testing.B) {
+	ctx := context.Background()
+	rows := make([]perspectives.Measurement, 512)
+
+	for index := range rows {
+		rows[index] = perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      float64(index%4 + 1),
+			Last:     100 + float64(index),
+		}
+	}
+
+	branches := perspectives.BranchList{{
+		Category:    perspectives.CategoryLaminar,
+		Observation: perspectives.ObservationNotHolding,
+		Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+		Unit:        perspectives.UnitSNR,
+		Value:       1,
+		ValueSet:    true,
+		Action:      perspectives.Action{Type: perspectives.ActionLimit},
+	}}
+	tape := PrecompileTape(rows)
+	simulation := NewReplaySimulationWithTape(ctx, branches, tape)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = simulation.Result()
+	}
 }

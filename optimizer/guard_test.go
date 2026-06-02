@@ -56,7 +56,7 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 				MinWinRate:      0.5,
 				MaxHoldoutDecay: 0.9,
 			},
-		}, PrecompileTape(rows))
+		}, PrecompileTape(rows), nil)
 
 		ok, _ := guard.ValidateWalkForward(branches, rows)
 
@@ -67,9 +67,31 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 }
 
 func TestPerturbBranchValue(t *testing.T) {
-	convey.Convey("Given a threshold near zero", t, func() {
-		convey.Convey("It should apply a meaningful absolute shift", func() {
-			convey.So(perturbBranchValue(0.001, 0.05), convey.ShouldAlmostEqual, 0.051, 0.0001)
+	convey.Convey("Given a threshold near zero with a wide SNR distribution", t, func() {
+		profile := Profile{}
+		profile.Add(perspectives.Measurement{
+			Category: perspectives.CategoryLaminar,
+			SNR:      0.001,
+		})
+		profile.Add(perspectives.Measurement{
+			Category: perspectives.CategoryLaminar,
+			SNR:      2,
+		})
+		profile.PrepareCache()
+		scale := profile.JitterScale(
+			perspectives.CategoryLaminar,
+			perspectives.UnitSNR,
+			0.001,
+		)
+
+		convey.Convey("It should perturb relative to the observed IQR", func() {
+			convey.So(scale, convey.ShouldAlmostEqual, 1.999, 0.001)
+			convey.So(
+				perturbBranchValue(0.001, 0.05, scale),
+				convey.ShouldAlmostEqual,
+				0.001+0.05*scale,
+				0.0001,
+			)
 		})
 	})
 }
@@ -97,7 +119,7 @@ func TestOverfitGuardAdjustedScore(t *testing.T) {
 	convey.Convey("Given equal profit at different reasoning depth", t, func() {
 		guard := NewOverfitGuard(context.Background(), GuardOptions{
 			ComplexityPenalty: 0.01,
-		}, ReplayTape{})
+		}, ReplayTape{}, nil)
 		shallow := perspectives.BranchList{{
 			Category: perspectives.CategoryLaminar,
 		}}
@@ -154,7 +176,7 @@ func TestOverfitGuardAcceptTrainCandidate(t *testing.T) {
 				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
 			},
 		}
-		guard := NewOverfitGuard(ctx, GuardOptions{MinRoundTrips: 1}, PrecompileTape(rows))
+		guard := NewOverfitGuard(ctx, GuardOptions{MinRoundTrips: 1}, PrecompileTape(rows), nil)
 
 		convey.Convey("It should accept profitable round trips", func() {
 			convey.So(guard.AcceptTrainCandidate(branches), convey.ShouldBeTrue)
@@ -221,9 +243,19 @@ func TestRobustUnderJitter(t *testing.T) {
 		baseline := NewReplaySimulation(ctx, branches, rows).Result().Score
 
 		convey.Convey("It should survive small threshold perturbations", func() {
+			profile := Profile{}
+			profile.Add(rows[0])
+			profile.Add(rows[1])
+			profile.PrepareCache()
+
 			convey.So(
 				robustUnderJitter(
-					ctx, branches, PrecompileTape(rows), []float64{-0.02, 0.02}, baseline,
+					ctx,
+					branches,
+					PrecompileTape(rows),
+					[]float64{-0.02, 0.02},
+					baseline,
+					&profile,
 				),
 				convey.ShouldBeTrue,
 			)
@@ -271,7 +303,7 @@ func TestPersistCandidateRejectsNegativeProfit(t *testing.T) {
 				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
 			},
 		}
-		guard := NewOverfitGuard(ctx, GuardOptions{}, PrecompileTape(rows))
+		guard := NewOverfitGuard(ctx, GuardOptions{}, PrecompileTape(rows), nil)
 
 		convey.Convey("It should reject persistence without positive profit", func() {
 			convey.So(guard.PersistCandidate(branches), convey.ShouldBeFalse)
@@ -282,7 +314,7 @@ func TestPersistCandidateRejectsNegativeProfit(t *testing.T) {
 
 func TestImprovesPersistedBest(t *testing.T) {
 	convey.Convey("Given an inert zero-return baseline", t, func() {
-		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
+		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{}, nil)
 
 		convey.Convey("It should reject another inert candidate", func() {
 			convey.So(
@@ -300,7 +332,7 @@ func TestImprovesPersistedBest(t *testing.T) {
 	})
 
 	convey.Convey("Given an active negative best", t, func() {
-		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
+		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{}, nil)
 
 		convey.Convey("It should require a profitable score to replace it", func() {
 			convey.So(
@@ -423,7 +455,7 @@ func TestIsBranchCompatible(t *testing.T) {
 }
 
 func BenchmarkOverfitGuardAdjustedScore(b *testing.B) {
-	guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
+	guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{}, nil)
 	branches := perspectives.BranchList{{
 		Category: perspectives.CategoryLaminar,
 		Branches: []perspectives.Branch{

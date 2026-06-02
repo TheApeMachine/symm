@@ -97,7 +97,7 @@ func NewHybridTreeSearch(
 	options = normalizeMCTSOptions(options)
 	profile.PrepareCache()
 	tape := PrecompileTape(rows)
-	guard := NewOverfitGuard(ctx, guardOptions, tape)
+	guard := NewOverfitGuard(ctx, guardOptions, tape, profile)
 
 	search := &TreeSearch{
 		ctx:               ctx,
@@ -184,6 +184,25 @@ func (search *TreeSearch) Run() perspectives.BranchList {
 	}
 
 	return search.best.Clone()
+}
+
+func (search *TreeSearch) walkForwardFinalists(
+	seeds []CandidateScore,
+) []CandidateScore {
+	pool := make([]CandidateScore, 0, len(seeds)+1)
+
+	if len(search.best) > 0 {
+		pool = append(pool, CandidateScore{
+			Score:         search.bestScore,
+			AdjustedScore: search.bestScore,
+			ClosedTrades:  search.bestClosedTrades,
+			Branches:      search.best.Clone(),
+		})
+	}
+
+	pool = append(pool, seeds...)
+
+	return dedupeCandidatesByBranch(pool)
 }
 
 func (search *TreeSearch) selectNode() *Node {

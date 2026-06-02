@@ -116,6 +116,28 @@ func (profile *Profile) Quantile(
 	return values[index]
 }
 
+/*
+JitterScale returns the IQR of a category/unit distribution for threshold perturbation.
+When the IQR is zero, the absolute threshold magnitude is used instead.
+*/
+func (profile *Profile) JitterScale(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+	value float64,
+) float64 {
+	profile.PrepareCache()
+
+	q1 := profile.Quantile(category, unit, 0.25)
+	q3 := profile.Quantile(category, unit, 0.75)
+	iqr := q3 - q1
+
+	if iqr > 0 {
+		return iqr
+	}
+
+	return math.Max(math.Abs(value), 1e-9)
+}
+
 func (profile *Profile) Values(
 	category perspectives.CategoryType,
 	unit perspectives.UnitType,

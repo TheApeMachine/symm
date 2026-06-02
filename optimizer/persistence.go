@@ -271,28 +271,16 @@ func TuneMeasurements(
 		}
 
 		stats = hybridStats.Scan
-
-		if options.Guard.WalkForward.Enabled && len(tuner.branches) == 0 && options.OutputPath != "" {
-			if err := WriteBranches(options.OutputPath, tuner.branches); err != nil && writeErr == nil {
-				writeErr = err
-			}
-		}
 	} else {
 		tuner.branches, stats = search.Run()
 
-		if options.Guard.WalkForward.Enabled && len(tuner.branches) > 0 {
-			guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows))
-			ok, _ := guard.ValidateWalkForward(tuner.branches, rows)
-
-			if !ok {
-				tuner.branches = perspectives.BranchList{}
-
-				if options.OutputPath != "" {
-					if err := WriteBranches(options.OutputPath, tuner.branches); err != nil && writeErr == nil {
-						writeErr = err
-					}
-				}
-			}
+		if options.Guard.WalkForward.Enabled {
+			guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows), &tuner.profile)
+			tuner.branches = SelectWalkForwardBest(
+				guard,
+				rows,
+				search.walkForwardFinalists(),
+			)
 		}
 	}
 

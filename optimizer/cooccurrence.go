@@ -1,9 +1,15 @@
 package optimizer
 
 import (
+	"math"
 	"sort"
 
 	"github.com/theapemachine/symm/market/perspectives"
+)
+
+const (
+	DefaultMinChainSupport         = 2
+	DefaultMinChainSupportFraction = 0.001
 )
 
 /*
@@ -11,7 +17,8 @@ CoOccurrenceIndex records which category sets appear together on one tick snapsh
 Walk can only descend when every category in a chain is present at that moment.
 */
 type CoOccurrenceIndex struct {
-	tickSets []map[perspectives.CategoryType]struct{}
+	tickSets   []map[perspectives.CategoryType]struct{}
+	minSupport int
 }
 
 func NewCoOccurrenceIndex(tape ReplayTape) *CoOccurrenceIndex {
@@ -25,7 +32,24 @@ func NewCoOccurrenceIndex(tape ReplayTape) *CoOccurrenceIndex {
 		tickSets = append(tickSets, snapshotCategorySet(tick.Snapshots))
 	}
 
-	return &CoOccurrenceIndex{tickSets: tickSets}
+	return &CoOccurrenceIndex{
+		tickSets:   tickSets,
+		minSupport: resolveMinChainSupport(len(tickSets)),
+	}
+}
+
+func resolveMinChainSupport(tickCount int) int {
+	if tickCount <= 0 {
+		return DefaultMinChainSupport
+	}
+
+	fractionSupport := int(math.Ceil(float64(tickCount) * DefaultMinChainSupportFraction))
+
+	if fractionSupport < DefaultMinChainSupport {
+		return DefaultMinChainSupport
+	}
+
+	return fractionSupport
 }
 
 func snapshotCategorySet(
@@ -51,19 +75,27 @@ one tick snapshot, matching Tree.Walk / BranchEvaluator depth traversal.
 func (index *CoOccurrenceIndex) ChainReachable(
 	categories []perspectives.CategoryType,
 ) bool {
+	return index.chainSupport(categories) >= index.minSupport
+}
+
+func (index *CoOccurrenceIndex) chainSupport(
+	categories []perspectives.CategoryType,
+) int {
 	required := uniqueCategories(categories)
 
 	if len(required) == 0 {
-		return false
+		return 0
 	}
+
+	support := 0
 
 	for _, tickSet := range index.tickSets {
 		if categorySetContains(tickSet, required) {
-			return true
+			support++
 		}
 	}
 
-	return false
+	return support
 }
 
 /*

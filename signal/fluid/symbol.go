@@ -295,6 +295,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 		Source:     perspectives.SourceFluid,
 		Category:   category,
 		Last:       state.last,
+		SpreadBPS:  state.spreadBPS,
 		Strength:   re,
 		Confidence: confidence,
 	}, true

@@ -2,8 +2,6 @@ package optimizer
 
 import (
 	"context"
-	"math"
-	"sort"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -140,7 +138,10 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 
 	measurements := newReplayMeasurements()
-	ledger := newReplayLedger(simulation.costs)
+	ledger := acquireReplayLedger(simulation.costs)
+
+	defer releaseReplayLedger(ledger)
+
 	ledger.reentryTickCooldown = scaleReentryTickCooldown(len(simulation.rows))
 
 	for _, row := range simulation.rows {
@@ -176,7 +177,10 @@ func scaleReentryTickCooldown(tapeLen int) int {
 }
 
 func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
-	ledger := newReplayLedger(simulation.costs)
+	ledger := acquireReplayLedger(simulation.costs)
+
+	defer releaseReplayLedger(ledger)
+
 	ledger.reentryTickCooldown = scaleReentryTickCooldown(simulation.tape.Len())
 
 	for _, tick := range simulation.tape.Ticks {
@@ -242,225 +246,4 @@ func (simulation *ReplaySimulation) lastPrices() map[string]float64 {
 	}
 
 	return lastPrices
-}
-
-type replayMeasurements struct {
-	global  map[perspectives.SourceType]perspectives.Measurement
-	symbols map[string]map[perspectives.SourceType]perspectives.Measurement
-}
-
-func newReplayMeasurements() *replayMeasurements {
-	return &replayMeasurements{
-		global:  make(map[perspectives.SourceType]perspectives.Measurement),
-		symbols: make(map[string]map[perspectives.SourceType]perspectives.Measurement),
-	}
-}
-
-func (measurements *replayMeasurements) Add(
-	measurement perspectives.Measurement,
-) {
-	if measurement.Symbol == "" {
-		measurements.global[measurement.Source] = measurement
-
-		return
-	}
-
-	symbolRows, ok := measurements.symbols[measurement.Symbol]
-
-	if !ok {
-		symbolRows = make(map[perspectives.SourceType]perspectives.Measurement)
-		measurements.symbols[measurement.Symbol] = symbolRows
-	}
-
-	symbolRows[measurement.Source] = measurement
-}
-
-func (measurements *replayMeasurements) Snapshot(
-	symbol string,
-) []perspectives.Measurement {
-	rows := make(
-		[]perspectives.Measurement, 0,
-		len(measurements.global)+len(measurements.symbols[symbol]),
-	)
-
-	rows = append(rows, sortedMeasurementsBySource(measurements.global)...)
-	rows = append(rows, sortedMeasurementsBySource(measurements.symbols[symbol])...)
-
-	return rows
-}
-
-func sortedMeasurementsBySource(
-	rows map[perspectives.SourceType]perspectives.Measurement,
-) []perspectives.Measurement {
-	sorted := make([]perspectives.Measurement, 0, len(rows))
-
-	for _, measurement := range rows {
-		sorted = append(sorted, measurement)
-	}
-
-	sort.Slice(sorted, func(leftIndex, rightIndex int) bool {
-		return sorted[leftIndex].Source < sorted[rightIndex].Source
-	})
-
-	return sorted
-}
-
-type replayPosition struct {
-	entryPrice float64
-	quantity   float64
-}
-
-type replayLedger struct {
-	costs               ReplayCosts
-	positions           map[string]replayPosition
-	reentryTickCooldown int
-	ticksSinceClose     map[string]int
-	realized            float64
-	closedTrades        int
-}
-
-func newReplayLedger(costs ReplayCosts) *replayLedger {
-	return &replayLedger{
-		costs:               costs,
-		positions:           make(map[string]replayPosition),
-		reentryTickCooldown: DefaultReentryTickCooldown,
-		ticksSinceClose:     make(map[string]int),
-	}
-}
-
-func (ledger *replayLedger) onTick(symbol string) {
-	if symbol == "" || ledger.holding(symbol) {
-		return
-	}
-
-	if ticksSinceClose, tracked := ledger.ticksSinceClose[symbol]; tracked {
-		ledger.ticksSinceClose[symbol] = ticksSinceClose + 1
-	}
-}
-
-func (ledger *replayLedger) apply(
-	actionType perspectives.ActionType, measurement perspectives.Measurement,
-) {
-	if measurement.Last <= 0 {
-		return
-	}
-
-	switch actionType {
-	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
-		ledger.openLong(measurement.Symbol, measurement.Last)
-	case perspectives.ActionSettlePosition,
-		perspectives.ActionStopLoss,
-		perspectives.ActionStopLossLimit,
-		perspectives.ActionTakeProfit,
-		perspectives.ActionTakeProfitLimit,
-		perspectives.ActionTrailingStop,
-		perspectives.ActionTrailingStopLimit:
-		ledger.closeLong(measurement.Symbol, measurement.Last)
-	case perspectives.ActionNone:
-		return
-	}
-}
-
-func (ledger *replayLedger) openLong(symbol string, price float64) {
-	if _, open := ledger.positions[symbol]; open {
-		return
-	}
-
-	if ticksSinceClose, tracked := ledger.ticksSinceClose[symbol]; tracked &&
-		ticksSinceClose < ledger.reentryTickCooldown {
-		return
-	}
-
-	entryFill := price * (1 + ledger.costs.SlippagePct)
-
-	ledger.positions[symbol] = replayPosition{
-		entryPrice: entryFill,
-		quantity:   1,
-	}
-
-	ledger.realized -= ledger.costs.TakerFeePct
-	delete(ledger.ticksSinceClose, symbol)
-}
-
-func (ledger *replayLedger) closeLong(symbol string, price float64) {
-	position, open := ledger.positions[symbol]
-
-	if !open || position.entryPrice <= 0 {
-		return
-	}
-
-	exitFill := price * (1 - ledger.costs.SlippagePct)
-	gross := (exitFill - position.entryPrice) / position.entryPrice
-
-	ledger.realized += gross - ledger.costs.TakerFeePct
-	ledger.closedTrades++
-	delete(ledger.positions, symbol)
-	ledger.ticksSinceClose[symbol] = 0
-}
-
-func (ledger *replayLedger) observations(
-	symbol string,
-) map[perspectives.ObservationType]float64 {
-	observations := make(map[perspectives.ObservationType]float64, 1)
-
-	if ledger.holding(symbol) {
-		observations[perspectives.ObservationHolding] = 1
-
-		return observations
-	}
-
-	observations[perspectives.ObservationNotHolding] = 1
-
-	return observations
-}
-
-func (ledger *replayLedger) metrics(
-	measurement perspectives.Measurement,
-) map[string]float64 {
-	metrics := map[string]float64{
-		"last": measurement.Last,
-	}
-
-	position, open := ledger.positions[measurement.Symbol]
-
-	if !open || position.entryPrice <= 0 || measurement.Last <= 0 {
-		return metrics
-	}
-
-	exitFill := measurement.Last * (1 - ledger.costs.SlippagePct)
-	change := exitFill - position.entryPrice
-	metrics["unrealized_return"] = (change / position.entryPrice) * 100
-
-	return metrics
-}
-
-func (ledger *replayLedger) holding(symbol string) bool {
-	_, open := ledger.positions[symbol]
-
-	return open
-}
-
-func (ledger *replayLedger) totalReturn(lastPrices map[string]float64) float64 {
-	total := ledger.realized
-
-	for symbol, position := range ledger.positions {
-		lastPrice, ok := lastPrices[symbol]
-
-		if !ok || lastPrice <= 0 || position.entryPrice <= 0 {
-			continue
-		}
-
-		exitFill := lastPrice * (1 - ledger.costs.SlippagePct)
-		total += (exitFill - position.entryPrice) / position.entryPrice
-	}
-
-	return total
-}
-
-func holdoutDecay(trainPerTrade float64, testPerTrade float64) float64 {
-	if trainPerTrade <= 0 {
-		return math.Inf(1)
-	}
-
-	return (trainPerTrade - testPerTrade) / trainPerTrade
 }

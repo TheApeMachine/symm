@@ -50,17 +50,20 @@ type OverfitGuard struct {
 	ctx     context.Context
 	options GuardOptions
 	tape    ReplayTape
+	profile *Profile
 }
 
 func NewOverfitGuard(
 	ctx context.Context,
 	options GuardOptions,
 	tape ReplayTape,
+	profile *Profile,
 ) *OverfitGuard {
 	return &OverfitGuard{
 		ctx:     ctx,
 		options: normalizeGuardOptions(options),
 		tape:    tape,
+		profile: profile,
 	}
 }
 
@@ -138,8 +141,17 @@ func (guard *OverfitGuard) AcceptTrainCandidate(
 		return true
 	}
 
+	if guard.profile == nil {
+		return false
+	}
+
 	return robustUnderJitter(
-		guard.ctx, branches, guard.tape, guard.options.JitterFractions, result.Score,
+		guard.ctx,
+		branches,
+		guard.tape,
+		guard.options.JitterFractions,
+		result.Score,
+		guard.profile,
 	)
 }
 
@@ -189,13 +201,29 @@ func (guard *OverfitGuard) ImprovesPersistedBest(
 }
 
 /*
-ValidateWalkForward scores holdout slices and returns whether the tree survives.
-Decay compares return-per-trade on each window's train slice against its test slice.
+WalkForwardResult summarizes holdout performance across rolling windows.
 */
-func (guard *OverfitGuard) ValidateWalkForward(
+type WalkForwardResult struct {
+	Wins         int
+	Windows      int
+	HoldoutTotal float64
+}
+
+func (result WalkForwardResult) AvgTestPerTrade() float64 {
+	if result.Wins <= 0 {
+		return 0
+	}
+
+	return result.HoldoutTotal / float64(result.Wins)
+}
+
+/*
+EvaluateWalkForward scores holdout slices without applying a binary pass/fail gate.
+*/
+func (guard *OverfitGuard) EvaluateWalkForward(
 	branches perspectives.BranchList,
 	rows []perspectives.Measurement,
-) (bool, float64) {
+) WalkForwardResult {
 	windows := GenerateIndexWindows(
 		len(rows),
 		guard.options.WalkForward.TrainFraction,
@@ -204,11 +232,10 @@ func (guard *OverfitGuard) ValidateWalkForward(
 	)
 
 	if len(windows) == 0 {
-		return true, 0
+		return WalkForwardResult{}
 	}
 
-	wins := 0
-	holdoutTotal := 0.0
+	result := WalkForwardResult{Windows: len(windows)}
 
 	for _, window := range windows {
 		trainRows := rows[window.TrainStart:window.TrainEnd]
@@ -238,13 +265,32 @@ func (guard *OverfitGuard) ValidateWalkForward(
 			continue
 		}
 
-		wins++
-		holdoutTotal += testPerTrade
+		result.Wins++
+		result.HoldoutTotal += testPerTrade
 	}
 
-	minWins := int(math.Ceil(float64(len(windows)) * guard.options.WalkForward.MinWinRate))
+	return result
+}
 
-	return wins >= minWins, holdoutTotal
+/*
+ValidateWalkForward scores holdout slices and returns whether the tree survives.
+Decay compares return-per-trade on each window's train slice against its test slice.
+*/
+func (guard *OverfitGuard) ValidateWalkForward(
+	branches perspectives.BranchList,
+	rows []perspectives.Measurement,
+) (bool, float64) {
+	result := guard.EvaluateWalkForward(branches, rows)
+
+	if result.Windows == 0 {
+		return true, 0
+	}
+
+	minWins := int(
+		math.Ceil(float64(result.Windows) * guard.options.WalkForward.MinWinRate),
+	)
+
+	return result.Wins >= minWins, result.HoldoutTotal
 }
 
 func (guard *OverfitGuard) replayResult(

@@ -53,6 +53,38 @@ func TestProfilePrepareCache(t *testing.T) {
 	})
 }
 
+func TestProfileJitterScale(t *testing.T) {
+	convey.Convey("Given sorted SNR values for one category", t, func() {
+		profile := Profile{ctx: context.Background()}
+		profile.Add(perspectives.Measurement{
+			Category: perspectives.CategoryLaminar,
+			SNR:      1,
+		})
+		profile.Add(perspectives.Measurement{
+			Category: perspectives.CategoryLaminar,
+			SNR:      3,
+		})
+		profile.Add(perspectives.Measurement{
+			Category: perspectives.CategoryLaminar,
+			SNR:      5,
+		})
+		profile.PrepareCache()
+
+		convey.Convey("It should scale jitter by the observed IQR", func() {
+			convey.So(
+				profile.JitterScale(
+					perspectives.CategoryLaminar,
+					perspectives.UnitSNR,
+					2,
+				),
+				convey.ShouldAlmostEqual,
+				2,
+				0.0001,
+			)
+		})
+	})
+}
+
 func TestPrecompileTapeMatchesLiveReplay(t *testing.T) {
 	convey.Convey("Given the same measurement tape", t, func() {
 		ctx := context.Background()

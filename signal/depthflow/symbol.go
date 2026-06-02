@@ -219,6 +219,8 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 				Symbol:     state.symbol,
 				Source:     perspectives.SourceDepthFlow,
 				Category:   category,
+				Last:       state.last,
+				SpreadBPS:  state.spreadBPSLocked(),
 				Strength:   raw,
 				Confidence: confidence,
 			}, true
@@ -242,9 +244,36 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, bool) {
 		Symbol:     state.symbol,
 		Source:     perspectives.SourceDepthFlow,
 		Category:   category,
+		Last:       state.last,
+		SpreadBPS:  state.spreadBPSLocked(),
 		Strength:   raw,
 		Confidence: confidence,
 	}, true
+}
+
+func (state *DepthSymbol) spreadBPSLocked() float64 {
+	if state.bid > 0 && state.ask > 0 && state.ask >= state.bid {
+		mid := (state.bid + state.ask) / 2
+
+		if mid > 0 {
+			return (state.ask - state.bid) / mid * 10000
+		}
+	}
+
+	bids := state.book.Bids
+	asks := state.book.Asks
+
+	if len(bids) == 0 || len(asks) == 0 {
+		return 0
+	}
+
+	mid := (bids[0].Price + asks[0].Price) / 2
+
+	if mid <= 0 {
+		return 0
+	}
+
+	return (asks[0].Price - bids[0].Price) / mid * 10000
 }
 
 func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement, bool) {
@@ -272,6 +301,8 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 		Symbol:     state.symbol,
 		Source:     perspectives.SourceDepthFlow,
 		Category:   category,
+		Last:       state.last,
+		SpreadBPS:  state.spreadBPSLocked(),
 		Strength:   flow,
 		Confidence: confidence,
 	}, true
