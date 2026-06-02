@@ -46,3 +46,17 @@ func DecodeBooks(message *public.SocketMessage) ([]Book, error) {
 
 	return books, nil
 }
+
+func DecodeOrders(message *public.SocketMessage) ([]Order, error) {
+	var books []Order
+
+	if err := sonic.Unmarshal(message.Data, &books); err != nil {
+		return nil, err
+	}
+
+	for index := range books {
+		books[index].SetEnvelopeType(message.Type)
+	}
+
+	return books, nil
+}

@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -134,4 +135,16 @@ func Level3Available() bool {
 
 func Level3EventTime(raw string, fallback time.Time) time.Time {
 	return OrderEventTime(raw, fallback)
+}
+
+func orderToken(ctx context.Context) (string, error) {
+	orderTokenSourceMu.RLock()
+	source := orderTokenSource
+	orderTokenSourceMu.RUnlock()
+
+	if source == nil {
+		return "", fmt.Errorf("market: level3 token source not configured")
+	}
+
+	return source.Token(ctx)
 }

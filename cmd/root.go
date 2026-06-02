@@ -78,16 +78,25 @@ var (
 
 			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
 
+			if err := configureLevel3(
+				cmd.Context(),
+				os.Getenv("SYMM_KRAKEN_API_KEY"),
+				os.Getenv("SYMM_KRAKEN_API_SECRET"),
+			); err != nil {
+				return err
+			}
+
 			if err := engine.AddSystems(
 				hub,
 				public.NewWebSocket(cmd.Context(), pool, streams),
 				private.NewWebSocket(
 					cmd.Context(),
 					pool,
-					os.Getenv("KRAKEN_API_KEY"),
-					os.Getenv("KRAKEN_API_SECRET"),
+					os.Getenv("SYMM_KRAKEN_API_KEY"),
+					os.Getenv("SYMM_KRAKEN_API_SECRET"),
 				),
 				kraken.NewInstrument(cmd.Context(), pool),
+				kraken.NewLevel3WebSocket(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),
 				correlation.NewSignal(cmd.Context(), pool),
 				cvd.NewSignal(cmd.Context(), pool),

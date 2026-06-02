@@ -347,7 +347,7 @@ Book checksum health is tracked per signal and symbol. A `fluid` snapshot recove
 > Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk routes entries and exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), recording the same economics labels on exchange fills as paper does on `FillPaper`. If the live session fails to start while `SYMM_LIVE=1`, the engine aborts boot instead of falling back to paper.
 
 > [!NOTE]
-> L3 toxicity: `SYMM_KRAKEN_API_KEY` and `SYMM_KRAKEN_API_SECRET` alone enable the authenticated Kraken `level3` feed at boot (`market.ConfigureLevel3`). Per-order cancel velocity replaces the L2 book fallback in `toxicity.Toxicity` for flash-spoof detection. This is market-data only — without `SYMM_LIVE=1` the desk stays in paper mode.
+> L3 toxicity: set `SYMM_KRAKEN_API_KEY` and `SYMM_KRAKEN_API_SECRET` to enable authenticated Kraken `level3` on `wss://ws-l3.kraken.com/v2` (`configureLevel3` at boot in `cmd/level3.go`). `Level3WebSocket` mirrors instrument subscriptions onto the L3 socket; per-order cancel velocity in `toxicity.Toxicity` replaces the L2 book fallback for flash-spoof detection. Market-data only — without `SYMM_LIVE=1` the desk stays in paper mode.
 
 Entries require a complete top-of-book quote (bid and ask) before `PreflightGates` runs spread and slippage checks. Missing ticker/book data rejects the order rather than synthesizing a zero-spread quote from last alone.
 

@@ -275,7 +275,7 @@ func (ledger *replayLedger) applyStressed(
 
 	slippagePct := executionSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
 
-	if perspectives.IsMakerAction(actionType) {
+	if perspectives.IsMakerAction(actionType) && ledger.costs.ExecutionStressEnabled {
 		slippagePct += broker.ReplayMakerAdverseSlippagePct(
 			measurement.SpreadBPS,
 			executionStressMultiplier(snapshots),

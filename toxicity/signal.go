@@ -42,6 +42,9 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
 
+	level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
+	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
+
 	activate.Boot("toxicity ready l3=" + fmt.Sprint(tox.l3Active))
 
 	return tox
@@ -52,67 +55,113 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
+	level3In := tox.subscribers["level3"]
+
 	for {
 		select {
 		case <-tox.ctx.Done():
 			return tox.ctx.Err()
 		case message := <-tox.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
+			if err := tox.handleRaw(message); err != nil {
+				return err
 			}
-
-			envelope, ok := message.Value.(public.SocketMessage)
-
-			if !ok {
-				continue
+		case message := <-level3In.Incoming:
+			if err := tox.handleLevel3(message); err != nil {
+				return err
 			}
-
-			switch envelope.Channel {
-			case public.TradesChannel:
-				trades, err := market.DecodeTrades(&envelope)
-
-				if err != nil {
-					return fmt.Errorf("toxicity: decode trades: %w", err)
-				}
-
-				for _, trade := range trades {
-					tox.observeTrade(trade)
-				}
-			case public.TickerChannel:
-				tickers, err := market.DecodeTickers(&envelope)
-
-				if err != nil {
-					return fmt.Errorf("toxicity: decode tickers: %w", err)
-				}
-
-				for _, ticker := range tickers {
-					tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
-					tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
-
-					if err := tox.publishMeasurement(ticker.Symbol); err != nil {
-						return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
-					}
-				}
-			case public.BookChannel:
-				books, err := market.DecodeBooks(&envelope)
-
-				if err != nil {
-					return fmt.Errorf("toxicity: decode books: %w", err)
-				}
-
-				for _, update := range books {
-					if !tox.l3Active {
-						tox.observeBook(update)
-
-						if err := tox.publishMeasurement(update.Symbol); err != nil {
-							return fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err)
-						}
-					}
-				}
-			}
-			// TODO: handle level3 on tox.subscribers["level3"] when L3 feed is wired.
 		}
 	}
+}
+
+func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
+	if message == nil || message.Value == nil {
+		return nil
+	}
+
+	envelope, ok := message.Value.(public.SocketMessage)
+
+	if !ok {
+		return nil
+	}
+
+	switch envelope.Channel {
+	case public.TradesChannel:
+		trades, err := market.DecodeTrades(&envelope)
+
+		if err != nil {
+			return fmt.Errorf("toxicity: decode trades: %w", err)
+		}
+
+		for _, trade := range trades {
+			tox.observeTrade(trade)
+		}
+	case public.TickerChannel:
+		tickers, err := market.DecodeTickers(&envelope)
+
+		if err != nil {
+			return fmt.Errorf("toxicity: decode tickers: %w", err)
+		}
+
+		for _, ticker := range tickers {
+			tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
+			tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
+
+			if err := tox.publishMeasurement(ticker.Symbol); err != nil {
+				return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
+			}
+		}
+	case public.BookChannel:
+		if tox.l3Active {
+			return nil
+		}
+
+		books, err := market.DecodeBooks(&envelope)
+
+		if err != nil {
+			return fmt.Errorf("toxicity: decode books: %w", err)
+		}
+
+		for _, update := range books {
+			tox.observeBook(update)
+
+			if err := tox.publishMeasurement(update.Symbol); err != nil {
+				return fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (tox *Toxicity) handleLevel3(message *qpool.QValue[any]) error {
+	if message == nil || message.Value == nil {
+		return nil
+	}
+
+	envelope, ok := message.Value.(public.SocketMessage)
+
+	if !ok {
+		return nil
+	}
+
+	if envelope.Channel != public.Level3Channel {
+		return nil
+	}
+
+	tox.l3Active = true
+
+	orders, err := market.DecodeOrders(&envelope)
+
+	if err != nil {
+		return fmt.Errorf("toxicity: decode level3: %w", err)
+	}
+
+	for index := range orders {
+		update := orders[index]
+		tox.observeLevel3(&update)
+	}
+
+	return nil
 }
 
 func (tox *Toxicity) observeTrade(trade market.TradeUpdate) {

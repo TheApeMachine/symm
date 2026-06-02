@@ -42,7 +42,7 @@ func (tracker *Tracker) ApplyOrder(
 		tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
 		delete(state.orders, orderID)
 
-	case "amend":
+	case "modify", "amend":
 		order := state.orders[orderID]
 
 		if order == nil {

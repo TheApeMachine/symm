@@ -137,5 +137,5 @@ func ReplayExchangeLatency() time.Duration {
 		return profile.RTT()
 	}
 
-	return SharedNetworkLatency().ExchangeRoundTrip()
+	return 0
 }

@@ -22,7 +22,7 @@ func (tox *Toxicity) observeLevel3(update *market.Level3Update) {
 		tox.applyLevel3Event(update.Symbol, SideAsk, event, frameTime, now)
 	}
 
-	tox.publishMeasurement(update.Symbol)
+	_ = tox.publishMeasurement(update.Symbol)
 }
 
 func (tox *Toxicity) applyLevel3Event(
