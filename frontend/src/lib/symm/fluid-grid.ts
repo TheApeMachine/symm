@@ -1,4 +1,3 @@
-
 import type { FieldSnapshotEvent, FluidSymbolRow } from "#/lib/symm/events";
 
 export const FLUID_GRID_SIZE = 32;
@@ -505,44 +504,6 @@ export function buildFluidGrid(
 	);
 	const fallback = median(displayValues);
 
-	if (finiteRows.length === 1) {
-		const row = finiteRows[0];
-		const peak = displayHeight(row, outliers.clippedAt);
-		const zRank =
-			changes.length === 1 ? 0.5 : percentileRank(row.change_pct, changes);
-		const xRank = vols.length === 1 ? 0.5 : percentileRank(row.vol, vols);
-		const zOrigin = binIndex(zRank, size);
-		const xOrigin = binIndex(xRank, size);
-		const sigma = Math.max(size / 6, 2);
-		const sigmaSq = 2 * sigma * sigma;
-
-		for (let zIndex = 0; zIndex < size; zIndex++) {
-			for (let xIndex = 0; xIndex < size; xIndex++) {
-				const deltaZ = zIndex - zOrigin;
-				const deltaX = xIndex - xOrigin;
-				const distSq = deltaZ * deltaZ + deltaX * deltaX;
-
-				heights[zIndex][xIndex] = peak * Math.exp(-distSq / sigmaSq);
-			}
-		}
-
-		const smoothed = emaSmoothHeights(heights);
-
-		for (let zIndex = 0; zIndex < size; zIndex++) {
-			for (let xIndex = 0; xIndex < size; xIndex++) {
-				heights[zIndex][xIndex] = smoothed[zIndex][xIndex];
-			}
-		}
-
-		return {
-			heights,
-			min: 0,
-			max: peak,
-			filledCells: size * size,
-			outliers,
-		};
-	}
-
 	for (const row of finiteRows) {
 		if (fieldActivity(row) <= 0) {
 			continue;
@@ -598,4 +559,3 @@ export function gridFromSnapshot(
 ): FluidGrid {
 	return buildFluidGrid(snapshot.symbols ?? [], size);
 }
-

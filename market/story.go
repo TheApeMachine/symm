@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
@@ -93,9 +93,9 @@ Tick joins the latest measurements from the perspective signals and publishes th
 
 UI events are rate-limited to storyUIInterval. Measurements flood the channel at high frequency
 and selecting one "publish" case per measurement would starve the timer and flood the WebSocket.
-Instead, we accumulate the latest value per source/symbol and flush cross-sectional
-means to the "ui" broadcast on the timer tick — a single batch per interval regardless
-of measurement rate.
+Instead, we accumulate per-source/symbol readings between UI ticks and flush
+cross-sectional means on the timer — then reset the window so each gauge frame
+reflects the last interval, not the lifetime of the process.
 */
 func (story *Story) Tick() error {
 	if story.recorder != nil {
@@ -103,18 +103,34 @@ func (story *Story) Tick() error {
 	}
 
 	incoming := story.subscribers["measurements"].Incoming
-	uiFlush := time.NewTicker(storyUIInterval)
-
-	defer uiFlush.Stop()
-
 	latest := newGaugeReadings()
 
 	for {
 		select {
 		case <-story.ctx.Done():
 			return story.ctx.Err()
+		case row, ok := <-incoming:
+			if !ok {
+				continue
+			}
 
-		case <-uiFlush.C:
+			if row == nil {
+				errnie.Error(nil, "story: nil measurement envelope")
+				continue
+			}
+
+			measurement, typeOK := row.Value.(perspectives.Measurement)
+
+			if !typeOK {
+				errnie.Error(nil, "story: invalid measurement type %T", row.Value)
+				continue
+			}
+
+			if err := story.ingestMeasurement(measurement, latest); err != nil {
+				errnie.Error(err, "story: ingest %s", measurement.Symbol)
+				continue
+			}
+
 			for source := range latest.bySource {
 				if !perspectives.DashboardGaugeSource(source) {
 					continue
@@ -143,25 +159,7 @@ func (story *Story) Tick() error {
 			nowStr := now.UTC().Format(time.RFC3339Nano)
 
 			story.publishEnginePulse(latest.sourceSNRMeans(), nowStr)
-
-		case row, ok := <-incoming:
-			if !ok {
-				return io.EOF
-			}
-
-			if row == nil {
-				return fmt.Errorf("story: nil measurement envelope")
-			}
-
-			measurement, typeOK := row.Value.(perspectives.Measurement)
-
-			if !typeOK {
-				return fmt.Errorf("story: invalid measurement type %T", row.Value)
-			}
-
-			if err := story.ingestMeasurement(measurement, latest); err != nil {
-				return fmt.Errorf("story: ingest %s: %w", measurement.Symbol, err)
-			}
+			latest = newGaugeReadings()
 		}
 	}
 }

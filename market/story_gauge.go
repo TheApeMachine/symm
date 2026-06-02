@@ -1,8 +1,8 @@
 package market
 
 /*
-gaugeReadings holds the latest per-symbol clarity and SNR for each dashboard
-source. Story flushes cross-sectional means on the UI ticker, not lifetime maxima.
+gaugeReadings holds per-symbol clarity and SNR for one ingested measurement.
+Story means them when publishing that measurement's dashboard frame.
 */
 type gaugeReadings struct {
 	bySource map[string]*gaugeSourceReadings

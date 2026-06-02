@@ -205,13 +205,8 @@ func (signal *Signal) emit(symbol string) error {
 }
 
 // publishField ships an aggregated universe field snapshot to the dashboard
-// surface. Per-pair UI streams stay focus-gated elsewhere; the fluid surface
-// needs the full symbol set to render meaningful topology.
-func (signal *Signal) publishField(state *FluidSymbol) error {
-	if state.Row() == nil {
-		return nil
-	}
-
+// surface when at least one symbol has field data.
+func (signal *Signal) publishField(_ *FluidSymbol) error {
 	states := signal.fieldScratch[:0]
 
 	signal.symbols.Range(func(_, value any) bool {

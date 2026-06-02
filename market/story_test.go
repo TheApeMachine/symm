@@ -91,22 +91,134 @@ func TestStoryGaugeMeanConfidence(t *testing.T) {
 			Confidence: 0.2,
 		}})
 
-		convey.Convey("It should flush the cross-sectional mean on the UI ticker", func() {
-			var frame map[string]any
+		convey.		Convey("It should flush gauge clarity for each ingested measurement", func() {
+			var last map[string]any
+			deadline := time.After(500 * time.Millisecond)
 
+		drain:
+			for {
+				select {
+				case row := <-uiSubscriber.Incoming:
+					parsed, ok := row.Value.(map[string]any)
+
+					if ok && parsed["source"] == "hawkes" {
+						last = parsed
+					}
+				case <-deadline:
+					break drain
+				}
+			}
+
+			convey.So(last, convey.ShouldNotBeNil)
+			convey.So(last["source"], convey.ShouldEqual, "hawkes")
+			convey.So(last["confidence"], convey.ShouldAlmostEqual, 0.2, 1e-9)
+			convey.So(last["count"], convey.ShouldEqual, 1)
+		})
+
+		cancel()
+		<-done
+		convey.So(story.Close(), convey.ShouldBeNil)
+	})
+}
+
+func TestStoryGaugeTracksLatestMeasurement(t *testing.T) {
+	convey.Convey("Given successive gauge readings for one source", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
+
+		uiSubscriber := story.ui.Subscribe("test:story:gauge-latest", 8)
+		done := make(chan struct{})
+
+		go func() {
+			_ = story.Tick()
+			close(done)
+		}()
+
+		measurements := story.broadcasts["measurements"]
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     perspectives.SourceHawkes,
+			Confidence: 1.0,
+		}})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     perspectives.SourceHawkes,
+			Confidence: 0.1,
+		}})
+
+		var last map[string]any
+		deadline := time.After(500 * time.Millisecond)
+
+	drain:
+		for {
 			select {
 			case row := <-uiSubscriber.Incoming:
 				parsed, ok := row.Value.(map[string]any)
 
-				convey.So(ok, convey.ShouldBeTrue)
-				frame = parsed
-			case <-time.After(500 * time.Millisecond):
-				convey.So("gauge frame", convey.ShouldBeBlank)
+				if ok && parsed["source"] == "hawkes" {
+					last = parsed
+				}
+			case <-deadline:
+				break drain
 			}
+		}
 
+		convey.Convey("It should publish the latest reading instead of freezing on the first", func() {
+			convey.So(last, convey.ShouldNotBeNil)
+			convey.So(last["confidence"], convey.ShouldAlmostEqual, 0.1, 1e-9)
+			convey.So(last["count"], convey.ShouldEqual, 1)
+		})
+
+		cancel()
+		<-done
+		convey.So(story.Close(), convey.ShouldBeNil)
+	})
+}
+
+func TestStoryTickSurvivesBadMeasurement(t *testing.T) {
+	convey.Convey("Given a bad measurement followed by a valid one", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
+
+		uiSubscriber := story.ui.Subscribe("test:story:bad-measurement", 8)
+		done := make(chan struct{})
+
+		go func() {
+			_ = story.Tick()
+			close(done)
+		}()
+
+		measurements := story.broadcasts["measurements"]
+		measurements.Send(&qpool.QValue[any]{Value: "not-a-measurement"})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     perspectives.SourceHawkes,
+			Confidence: 0.42,
+		}})
+
+		var frame map[string]any
+
+		select {
+		case row := <-uiSubscriber.Incoming:
+			parsed, ok := row.Value.(map[string]any)
+
+			convey.So(ok, convey.ShouldBeTrue)
+			frame = parsed
+		case <-time.After(500 * time.Millisecond):
+			convey.So("gauge frame after bad measurement", convey.ShouldBeBlank)
+		}
+
+		convey.Convey("It should keep ticking and publish the valid reading", func() {
 			convey.So(frame["source"], convey.ShouldEqual, "hawkes")
-			convey.So(frame["confidence"], convey.ShouldAlmostEqual, 0.6, 1e-9)
-			convey.So(frame["count"], convey.ShouldEqual, 2)
+			convey.So(frame["confidence"], convey.ShouldAlmostEqual, 0.42, 1e-9)
 		})
 
 		cancel()

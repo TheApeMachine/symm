@@ -1,4 +1,3 @@
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -83,8 +82,8 @@ describe("projectFluidGridToHeightmap", () => {
 });
 
 describe("buildFluidGrid", () => {
-	it("keeps a visible hotspot when only one symbol is present", () => {
-		const grid = buildFluidGrid([
+	it("uses cross-section bins instead of a synthetic gaussian for sparse input", () => {
+		const sparse = buildFluidGrid([
 			{
 				symbol: "BTC/EUR",
 				change_pct: 1.2,
@@ -96,7 +95,38 @@ describe("buildFluidGrid", () => {
 				re: 1200,
 			},
 		]);
-		const projected = projectFluidGridToHeightmap(grid, 50, 50, -0.3, 0.3);
+
+		expect(sparse.max).toBeGreaterThan(0);
+
+		const crossSection = buildFluidGrid([
+			{
+				symbol: "LOW/EUR",
+				change_pct: -8,
+				vol: 10,
+				div: 0.1,
+				vort: 0.2,
+				turb: 0.3,
+				visc: 0.05,
+				re: 40,
+			},
+			{
+				symbol: "HIGH/EUR",
+				change_pct: 8,
+				vol: 5000,
+				div: 0.8,
+				vort: 0.7,
+				turb: 0.6,
+				visc: 0.05,
+				re: 900,
+			},
+		]);
+		const projected = projectFluidGridToHeightmap(
+			crossSection,
+			50,
+			50,
+			-0.3,
+			0.3,
+		);
 		const values = projected.display.flat();
 		const min = Math.min(...values);
 		const max = Math.max(...values);
@@ -112,4 +142,3 @@ describe("spatialSmoothRadius", () => {
 		);
 	});
 });
-
