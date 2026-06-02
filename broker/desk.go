@@ -64,7 +64,7 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 
 	clOrdID := desk.NextClOrdID()
 
-	resultCh, err := desk.orders.AddOrder(trading.AddParams{
+	addParams := trading.AddParams{
 		OrderType:  orderType,
 		Side:       action.Side,
 		Symbol:     action.Symbol,
@@ -72,7 +72,13 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		OrderQty:   action.Quantity,
 		ClOrdID:    clOrdID,
 		Triggers:   &trading.Triggers{},
-	})
+	}
+
+	if perspectives.IsMakerAction(action.Type) {
+		addParams.PostOnly = true
+	}
+
+	resultCh, err := desk.orders.AddOrder(addParams)
 
 	if err != nil {
 		return errnie.Error(err)

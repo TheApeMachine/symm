@@ -6,7 +6,7 @@ import "github.com/theapemachine/symm/market/perspectives"
 StoryRingCapacity matches the live story measurement window. Each walk sees at
 most this many recent measurements — the same replay search space as the optimizer.
 */
-const StoryRingCapacity = 128
+const StoryRingCapacity = 1024
 
 /*
 AppendRingMeasurement appends one row and trims to StoryRingCapacity.

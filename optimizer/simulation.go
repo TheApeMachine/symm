@@ -97,7 +97,7 @@ func (result ReplayResult) ReturnPerTrade() float64 {
 }
 
 /*
-Score replays measurements and returns realized plus marked PnL.
+Score replays measurements and returns realized PnL from closed round trips.
 */
 func (simulation *ReplaySimulation) Score() float64 {
 	return simulation.Result().Score
@@ -139,7 +139,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 
 	return ReplayResult{
-		Score:        ledger.totalReturn(simulation.lastPrices()),
+		Score:        ledger.realizedReturn(),
 		ClosedTrades: ledger.closedTrades,
 	}
 }
@@ -176,7 +176,7 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 	}
 
 	return ReplayResult{
-		Score:        ledger.totalReturn(simulation.tape.LastPrices),
+		Score:        ledger.realizedReturn(),
 		ClosedTrades: ledger.closedTrades,
 	}
 }
@@ -210,18 +210,4 @@ func (simulation *ReplaySimulation) branchContext(
 		Observations: ledger.observations(row.Symbol),
 		Metrics:      ledger.metrics(row),
 	}
-}
-
-func (simulation *ReplaySimulation) lastPrices() map[string]float64 {
-	lastPrices := make(map[string]float64)
-
-	for _, row := range simulation.rows {
-		if row.Symbol == "" || row.Last <= 0 {
-			continue
-		}
-
-		lastPrices[row.Symbol] = row.Last
-	}
-
-	return lastPrices
 }

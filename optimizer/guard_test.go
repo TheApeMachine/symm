@@ -227,19 +227,29 @@ func TestRobustUnderJitter(t *testing.T) {
 				SNR:      3, Last: 100,
 			},
 			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
 				SNR:      3, Last: 110,
 			},
 		}
-		branches := perspectives.BranchList{{
-			Category:    perspectives.CategoryLaminar,
-			Observation: perspectives.ObservationNotHolding,
-			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:        perspectives.UnitSNR,
-			Value:       1, ValueSet: true,
-			Action: perspectives.Action{Type: perspectives.ActionLimit},
-		}}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
 		baseline := NewReplaySimulation(ctx, branches, rows).Result().Score
 
 		convey.Convey("It should survive small threshold perturbations", func() {

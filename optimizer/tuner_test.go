@@ -9,7 +9,7 @@ import (
 )
 
 func TestReplaySimulationScore(t *testing.T) {
-	convey.Convey("Given a profile with rising prices", t, func() {
+	convey.Convey("Given a completed round trip", t, func() {
 		ctx := context.Background()
 		rows := []perspectives.Measurement{
 			{
@@ -19,26 +19,37 @@ func TestReplaySimulationScore(t *testing.T) {
 				Last:     100,
 			},
 			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
-				SNR:      2.5,
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2.0,
 				Last:     110,
 			},
 		}
 
-		branches := perspectives.BranchList{{
-			Category:    perspectives.CategoryLaminar,
-			Observation: perspectives.ObservationNotHolding,
-			Condition:   perspectives.ConditionIsGreaterThan,
-			Unit:        perspectives.UnitSNR,
-			Value:       1.0,
-			ValueSet:    true,
-			Action:      perspectives.Action{Type: perspectives.ActionLimit},
-		}}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThan,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
 
 		score := NewReplaySimulation(ctx, branches, rows).Score()
 
-		convey.Convey("It should reward profitable entry branches", func() {
+		convey.Convey("It should reward realized round-trip profit", func() {
 			convey.So(score, convey.ShouldBeGreaterThan, 0)
 		})
 	})
@@ -56,25 +67,36 @@ func TestTraderEvaluate(t *testing.T) {
 				Last:     100,
 			},
 			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
-				SNR:      2.5,
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2.0,
 				Last:     110,
 			},
 		}
-		branches := perspectives.BranchList{{
-			Category:    perspectives.CategoryLaminar,
-			Observation: perspectives.ObservationNotHolding,
-			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:        perspectives.UnitSNR,
-			Value:       2.0,
-			ValueSet:    true,
-			Action:      perspectives.Action{Type: perspectives.ActionLimit},
-		}}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       2.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
 
 		score := trader.Evaluate(branches, rows)
 
-		convey.Convey("It should replay the full measurement stream", func() {
+		convey.Convey("It should score realized round-trip profit", func() {
 			convey.So(score, convey.ShouldBeGreaterThan, 0)
 		})
 	})
@@ -200,9 +222,9 @@ func TestTunerFinish(t *testing.T) {
 			Last:     100,
 		})
 		tuner.ingest(perspectives.Measurement{
-			Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
-			SNR:      2.5,
+			Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+			Category: perspectives.CategoryExhaustion,
+			SNR:      2.0,
 			Last:     110,
 		})
 		tuner.Finish()

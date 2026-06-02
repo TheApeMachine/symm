@@ -46,7 +46,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, file io.Reader) (*WebSocke
 		"kraken:public", "ticker", "book", "trade", "ohlc", "instrument", "level3",
 	} {
 		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 128)
+		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(channel, 1024)
 	}
 
 	return ws, errnie.Error(errnie.Require(map[string]any{

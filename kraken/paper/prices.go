@@ -30,7 +30,7 @@ func NewPrices(ctx context.Context, pool *qpool.Q) *Prices {
 
 func (prices *Prices) Run() {
 	group := prices.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-	subscriber := group.Subscribe("paper:prices", 128)
+	subscriber := group.Subscribe("paper:prices", 1024)
 
 	for {
 		select {

@@ -51,7 +51,7 @@ func NewTuner(ctx context.Context, pool *qpool.Q) *Tuner {
 	}
 
 	tuner.subscribers["measurements"] = tuner.broadcasts["measurements"].Subscribe(
-		"optimizer:tuner", 128,
+		"optimizer:tuner", 1024,
 	)
 
 	return tuner

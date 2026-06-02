@@ -46,7 +46,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	for _, channel := range []string{"raw", "kraken:private"} {
 		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
-			"kraken/paper:"+channel, 128,
+			"kraken/paper:"+channel, 1024,
 		)
 	}
 
@@ -66,6 +66,8 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		errnie.Error(err)
 	}
 
+	go ws.runPrivate()
+
 	activate.Boot("kraken/paper websocket ready")
 
 	return ws
@@ -76,51 +78,9 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 }
 
 func (ws *WebSocket) Tick() error {
-	for {
-		select {
-		case <-ws.ctx.Done():
-			return ws.err
-		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
-			if !ok {
-				errnie.Debug("kraken.paper.websocket.Tick", "no ok")
-				return nil
-			}
+	<-ws.ctx.Done()
 
-			if message == nil {
-				errnie.Debug("kraken.paper.websocket.Tick", "nil message")
-				continue
-			}
-
-			var out public.SocketMessage
-
-			socket, registered := ws.sockets[message.Type]
-
-			if !registered {
-				errnie.Debug(
-					"kraken.paper.websocket.Tick",
-					"unregistered message type",
-					message.Type,
-				)
-
-				continue
-			}
-
-			out = socket.Send(message)
-
-			if out.Channel == "" {
-				continue
-			}
-
-			activate.Once("kraken/paper:channel:" + out.Channel)
-
-			if ch := ws.broadcasts["raw"]; ch != nil {
-				ch.Send(&qpool.QValue[any]{
-					Type:  out.Channel,
-					Value: out,
-				})
-			}
-		}
-	}
+	return ws.ctx.Err()
 }
 
 func (ws *WebSocket) Close() error {

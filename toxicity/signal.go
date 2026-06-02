@@ -40,7 +40,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 
 	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 128)
+	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
 
 	activate.Boot("toxicity ready l3=" + fmt.Sprint(tox.l3Active))
 

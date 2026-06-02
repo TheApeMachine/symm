@@ -53,9 +53,9 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 		return orders.executionMessage(execution)
 	}
 
-	frame, ok := message.Value.(map[string]any)
+	frame := paramsMap(message.Value)
 
-	if !ok {
+	if frame == nil {
 		return public.SocketMessage{}
 	}
 

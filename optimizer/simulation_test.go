@@ -173,37 +173,48 @@ func TestReplaySimulationScoreUsesGlobalMeasurements(t *testing.T) {
 				Last:     100,
 			},
 			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
-				Category: perspectives.CategoryAggressiveDrive,
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
 				SNR:      2.0,
 				Last:     110,
 			},
 		}
 
-		branches := perspectives.BranchList{{
-			Category:  perspectives.CategoryRiskOnSurge,
-			Condition: perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:      perspectives.UnitSNR,
-			Value:     1.0,
-			ValueSet:  true,
-			Branches: []perspectives.Branch{
-				{
-					Category:    perspectives.CategoryAggressiveDrive,
-					Observation: perspectives.ObservationNotHolding,
-					Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-					Unit:        perspectives.UnitSNR,
-					Value:       1.0,
-					ValueSet:    true,
-					Action: perspectives.Action{
-						Type: perspectives.ActionLimit,
+		branches := perspectives.BranchList{
+			{
+				Category:  perspectives.CategoryRiskOnSurge,
+				Condition: perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:      perspectives.UnitSNR,
+				Value:     1.0,
+				ValueSet:  true,
+				Branches: []perspectives.Branch{
+					{
+						Category:    perspectives.CategoryAggressiveDrive,
+						Observation: perspectives.ObservationNotHolding,
+						Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+						Unit:        perspectives.UnitSNR,
+						Value:       1.0,
+						ValueSet:    true,
+						Action: perspectives.Action{
+							Type: perspectives.ActionLimit,
+						},
 					},
 				},
 			},
-		}}
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1.0,
+				ValueSet:    true,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
 
 		score := NewReplaySimulation(ctx, branches, rows).Score()
 
-		convey.Convey("It should make global context available to symbol decisions", func() {
+		convey.Convey("It should score realized profit from completed round trips", func() {
 			convey.So(score, convey.ShouldBeGreaterThan, 0)
 		})
 	})
@@ -342,6 +353,42 @@ func TestReplaySimulationReentryCooldown(t *testing.T) {
 
 			convey.So(delayedResult.ClosedTrades, convey.ShouldBeGreaterThan, 0)
 			convey.So(delayedResult.ClosedTrades, convey.ShouldBeLessThan, 120)
+		})
+	})
+}
+
+func TestReplaySimulationScoreIsRealizedOnly(t *testing.T) {
+	convey.Convey("Given an entry-only playbook and rising prices", t, func() {
+		ctx := context.Background()
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceCausal,
+				Category: perspectives.CategorySystemicBeta,
+				SNR:      2.0, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceCausal,
+				Category: perspectives.CategorySystemicBeta,
+				SNR:      2.0, Last: 150,
+			},
+		}
+		branches := perspectives.BranchList{{
+			Category:    perspectives.CategorySystemicBeta,
+			Observation: perspectives.ObservationNotHolding,
+			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:        perspectives.UnitSNR,
+			Value:       1.0,
+			ValueSet:    true,
+			Action:      perspectives.Action{Type: perspectives.ActionLimit},
+		}}
+
+		result := NewReplaySimulationWithCosts(
+			ctx, branches, rows, ReplayCosts{},
+		).Result()
+
+		convey.Convey("It should not score open inventory at end of tape", func() {
+			convey.So(result.ClosedTrades, convey.ShouldEqual, 0)
+			convey.So(result.Score, convey.ShouldEqual, 0)
 		})
 	})
 }

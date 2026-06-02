@@ -2,6 +2,7 @@ package trading
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,7 +14,12 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const ledgerSubscriberID = "kraken/trading:ledger"
+const (
+	ledgerSubscriberID = "kraken/trading:ledger"
+	// LedgerBroadcastID carries order acknowledgements off the raw market bus so
+	// slow consumers cannot drop ack frames under full tape load.
+	LedgerBroadcastID = "trading:ledger"
+)
 
 /*
 OrderResult is the resolved outcome for one client order id.
@@ -36,7 +42,7 @@ Ledger multiplexes private order acknowledgements onto per-order futures.
 type Ledger struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	raw        *qpool.BroadcastGroup
+	acks       *qpool.BroadcastGroup
 	orders     *qpool.BroadcastGroup
 	mu         sync.Mutex
 	pending    map[string]*pendingOrder
@@ -55,7 +61,7 @@ func NewLedger(
 	ledger := &Ledger{
 		ctx:     ctx,
 		cancel:  cancel,
-		raw:     pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
+		acks:    pool.CreateBroadcastGroup(LedgerBroadcastID, 10*time.Millisecond),
 		orders:  orders,
 		pending: make(map[string]*pendingOrder),
 	}
@@ -64,15 +70,30 @@ func NewLedger(
 		return make(chan OrderResult, 1)
 	}
 
-	ledger.subscriber = ledger.raw.Subscribe(ledgerSubscriberID, 256)
+	ledger.subscriber = ledger.acks.Subscribe(
+		fmt.Sprintf("%s:%p", ledgerSubscriberID, ledger), 256,
+	)
 
 	return ledger, errnie.Error(errnie.Require(map[string]any{
 		"ctx":        ledger.ctx,
 		"cancel":     ledger.cancel,
-		"raw":        ledger.raw,
+		"acks":       ledger.acks,
 		"orders":     ledger.orders,
 		"subscriber": ledger.subscriber,
 	}))
+}
+
+/*
+PublishLedgerAck forwards a private order acknowledgement to the ledger bus.
+*/
+func PublishLedgerAck(pool *qpool.Q, value any) {
+	if pool == nil || value == nil {
+		return
+	}
+
+	pool.CreateBroadcastGroup(LedgerBroadcastID, 10*time.Millisecond).Send(
+		&qpool.QValue[any]{Value: value},
+	)
 }
 
 func AckTimeout() time.Duration {
@@ -86,7 +107,7 @@ func AckTimeout() time.Duration {
 }
 
 func (ledger *Ledger) Run() error {
-	defer ledger.raw.Unsubscribe(ledger.subscriber.ID)
+	defer ledger.acks.Unsubscribe(ledger.subscriber.ID)
 
 	for {
 		select {
@@ -108,10 +129,6 @@ func (ledger *Ledger) Run() error {
 
 func (ledger *Ledger) Halted() bool {
 	return ledger.tripped.Load()
-}
-
-func (ledger *Ledger) RawGroup() *qpool.BroadcastGroup {
-	return ledger.raw
 }
 
 func (ledger *Ledger) ReleaseResult(resultCh chan OrderResult) {
@@ -164,12 +181,19 @@ func (ledger *Ledger) Register(clOrdID string) chan OrderResult {
 			Success: false,
 			Error:   "order ack timeout",
 		})
-		ledger.trip()
 	})
 
 	ledger.pending[clOrdID] = entry
 
 	return resultCh
+}
+
+func (ledger *Ledger) tripIfLive() {
+	if viper.GetString("trading.model") == "paper" {
+		return
+	}
+
+	ledger.trip()
 }
 
 func (ledger *Ledger) trip() {
@@ -239,6 +263,10 @@ func (ledger *Ledger) handle(value any) {
 	}
 
 	ledger.resolve(clOrdID, result)
+
+	if !success {
+		ledger.tripIfLive()
+	}
 }
 
 func (ledger *Ledger) handleExecution(execution user.Execution) {
@@ -253,6 +281,7 @@ func (ledger *Ledger) handleExecution(execution user.Execution) {
 			Error:   execution.OrderStatus,
 			OrderID: execution.OrderID,
 		})
+		ledger.tripIfLive()
 
 		return
 	}

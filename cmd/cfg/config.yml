@@ -5,6 +5,10 @@ market:
     - BTC/EUR
   max_scan_symbols: 0
   book_depth_levels: 10
+  subscribe_pace: 50ms
+  ws_reconnect_initial: 1s
+  ws_reconnect_max: 2m
+  ws_reconnect_multiplier: 2
 
 trading:
   order_ack_timeout: 500ms

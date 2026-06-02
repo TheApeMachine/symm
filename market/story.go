@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -76,7 +77,7 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
-		storyMeasurementsSubscriberID, 128,
+		storyMeasurementsSubscriberID, 1024,
 	)
 
 	activate.Boot("market/story ready")
@@ -217,6 +218,10 @@ func (story *Story) ingestMeasurement(
 	)
 
 	if actionType == nil || *actionType == perspectives.ActionNone {
+		return
+	}
+
+	if perspectives.IsEntryAction(*actionType) && !trading.DeskReady() {
 		return
 	}
 

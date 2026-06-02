@@ -41,7 +41,7 @@ func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
 
 	for _, channel := range []string{"actions"} {
 		trader.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("optimizer:trader", 128)
+		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("optimizer:trader", 1024)
 	}
 
 	return trader

@@ -3,7 +3,6 @@ package private
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -15,23 +14,27 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
 const privateReadPoll = 50 * time.Millisecond
 
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q
-	conn        *websocket.Conn
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	mu          sync.Mutex
-	rest        *Rest
-	token       string
-	tokenUntil  time.Time
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q
+	conn            *websocket.Conn
+	broadcasts      map[string]*qpool.BroadcastGroup
+	subscribers     map[string]*qpool.Subscriber
+	mu              sync.Mutex
+	reconnectPolicy *public.ReconnectPolicy
+	outboundReplay  []any
+	replayMu        sync.RWMutex
+	rest            *Rest
+	token           string
+	tokenUntil      time.Time
 }
 
 func NewWebSocket(
@@ -62,23 +65,31 @@ func NewWebSocketFromRest(
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		rest:        rest,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		rest:            rest,
+		reconnectPolicy: public.NewReconnectPolicyFromConfig(),
+		broadcasts:      make(map[string]*qpool.BroadcastGroup),
+		subscribers:     make(map[string]*qpool.Subscriber),
+		outboundReplay:  make([]any, 0),
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
 		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
-			"kraken/private:"+channel, 128,
+			"kraken/private:"+channel, 1024,
 		)
 	}
 
 	if err := user.NewBalance(pool, ws); err != nil {
 		errnie.Error(err)
+	}
+
+	if err := ws.dialUntilConnected(public.WebSocketAuthURL); err != nil {
+		errnie.Error(err)
+	} else {
+		activate.Boot("kraken/private websocket connected")
 	}
 
 	return ws
@@ -90,23 +101,14 @@ func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error
 	}
 
 	ws.mu.Lock()
-	defer ws.mu.Unlock()
+	connected := ws.conn != nil
+	ws.mu.Unlock()
 
-	if ws.conn != nil {
+	if connected {
 		return nil
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	ws.conn = conn
-
-	activate.Once("kraken/private:connected:" + string(endpoint))
-
-	return nil
+	return ws.dialUntilConnected(endpoint)
 }
 
 func (ws *WebSocket) Tick() error {
@@ -125,23 +127,49 @@ func (ws *WebSocket) Tick() error {
 				continue
 			}
 
-			if ws.conn == nil {
-				return fmt.Errorf("kraken private websocket: not connected")
+			ws.mu.Lock()
+			connected := ws.conn != nil
+			ws.mu.Unlock()
+
+			if !connected {
+				if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
+					return reconnectErr
+				}
 			}
 
-			if err := ws.conn.WriteJSON(message.Value); err != nil {
-				ws.err = errnie.Error(err)
+			for {
+				if err := ws.writeOutboundFrame(message.Value, true); err != nil {
+					if ws.ctx.Err() != nil {
+						return ws.ctx.Err()
+					}
 
-				return ws.err
+					ws.err = errnie.Error(err)
+
+					if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
+						return reconnectErr
+					}
+
+					continue
+				}
+
+				break
 			}
 		default:
 		}
 
-		if ws.conn == nil {
-			return fmt.Errorf("kraken private websocket: not connected")
+		ws.mu.Lock()
+		conn := ws.conn
+		ws.mu.Unlock()
+
+		if conn == nil {
+			if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
+				return reconnectErr
+			}
+
+			continue
 		}
 
-		if err := ws.conn.SetReadDeadline(time.Now().Add(privateReadPoll)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(privateReadPoll)); err != nil {
 			ws.err = errnie.Error(err)
 
 			return ws.err
@@ -149,17 +177,25 @@ func (ws *WebSocket) Tick() error {
 
 		var message public.SocketMessage
 
-		if err := ws.conn.ReadJSON(&message); err != nil {
+		if err := conn.ReadJSON(&message); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				continue
 			}
 
+			if ws.ctx.Err() != nil {
+				return ws.ctx.Err()
+			}
+
 			ws.err = errnie.Error(err)
 
-			return ws.err
+			if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
+				return reconnectErr
+			}
+
+			continue
 		}
 
-		_ = ws.conn.SetReadDeadline(time.Time{})
+		_ = conn.SetReadDeadline(time.Time{})
 
 		if message.Channel != "" {
 			activate.Once("kraken/private:channel:" + message.Channel)
@@ -171,21 +207,18 @@ func (ws *WebSocket) Tick() error {
 				Value: message,
 			})
 		}
+
+		if message.Channel == public.ExecutionsChannel {
+			trading.PublishLedgerAck(ws.pool, message)
+		}
 	}
 }
 
 func (ws *WebSocket) Close() error {
 	ws.cancel()
+	ws.dropConnection()
 
-	ws.mu.Lock()
-	conn := ws.conn
-	ws.mu.Unlock()
-
-	if conn == nil {
-		return nil
-	}
-
-	return errnie.Error(conn.Close())
+	return nil
 }
 
 func (ws *WebSocket) Token(ctx context.Context) (string, error) {

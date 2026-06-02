@@ -35,6 +35,7 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 		defer viper.Reset()
 
 		viper.Set("market.max_scan_symbols", 0)
+		viper.Set("market.quote_currency", "EUR")
 
 		outbound, outboundErr := qpool.NewBroadcastGroup(
 			context.Background(), "test:instrument:outbound", 10*time.Millisecond,
@@ -43,6 +44,54 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 		convey.So(outboundErr, convey.ShouldBeNil)
 
 		subscriber := outbound.Subscribe("test:instrument:outbound", 16)
+
+		instrument := &Instrument{
+			Pairs:   make([]string, 0),
+			pairSet: make(map[string]struct{}),
+		}
+
+		data, marshalErr := json.Marshal(InstrumentUpdate{
+			Pairs: []InstrumentPair{
+				{Symbol: "ETH/EUR", Base: "ETH", Quote: "EUR"},
+				{Symbol: "BTC/USD", Base: "BTC", Quote: "USD"},
+				{Symbol: "BTC/EUR", Base: "BTC", Quote: "EUR"},
+			},
+		})
+
+		convey.So(marshalErr, convey.ShouldBeNil)
+
+		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
+			Channel: public.InstrumentsChannel,
+			Type:    "snapshot",
+			Data:    data,
+		})
+
+		convey.Convey("It should subscribe only quote-currency pairs", func() {
+			convey.So(instrument.Pairs, convey.ShouldResemble, []string{"ETH/EUR", "BTC/EUR"})
+
+			var frame *qpool.QValue[any]
+
+			select {
+			case frame = <-subscriber.Incoming:
+			case <-time.After(2 * time.Second):
+				convey.So("applyCatalogUpdate did not emit a subscribe frame", convey.ShouldBeEmpty)
+			}
+
+			convey.So(frame, convey.ShouldNotBeNil)
+			convey.So(frame.Value, convey.ShouldNotBeNil)
+		})
+	})
+
+	convey.Convey("Given an explicit market.symbols watchlist", t, func() {
+		defer viper.Reset()
+
+		viper.Set("market.symbols", []string{"BTC/EUR"})
+
+		outbound, outboundErr := qpool.NewBroadcastGroup(
+			context.Background(), "test:instrument:outbound-watch", 10*time.Millisecond,
+		)
+
+		convey.So(outboundErr, convey.ShouldBeNil)
 
 		instrument := &Instrument{
 			Pairs:   make([]string, 0),
@@ -64,26 +113,113 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 			Data:    data,
 		})
 
-		convey.Convey("It should subscribe every catalog pair", func() {
-			convey.So(instrument.Pairs, convey.ShouldResemble, []string{"ETH/EUR", "BTC/EUR"})
+		convey.So(instrument.Pairs, convey.ShouldResemble, []string{"BTC/EUR"})
+	})
 
-			var frame *qpool.QValue[any]
+	convey.Convey("Given book_depth_levels in config", t, func() {
+		defer viper.Reset()
 
-			select {
-			case frame = <-subscriber.Incoming:
-			case <-time.After(2 * time.Second):
-				convey.So("applyCatalogUpdate did not emit a subscribe frame", convey.ShouldBeEmpty)
-			}
+		viper.Set("market.quote_currency", "EUR")
+		viper.Set("market.book_depth_levels", 10)
 
-			convey.So(frame, convey.ShouldNotBeNil)
-			convey.So(frame.Value, convey.ShouldNotBeNil)
+		outbound, outboundErr := qpool.NewBroadcastGroup(
+			context.Background(), "test:instrument:outbound-depth", 10*time.Millisecond,
+		)
+
+		convey.So(outboundErr, convey.ShouldBeNil)
+
+		subscriber := outbound.Subscribe("test:instrument:outbound-depth", 16)
+
+		instrument := &Instrument{
+			Pairs:   make([]string, 0),
+			pairSet: make(map[string]struct{}),
+		}
+
+		data, marshalErr := json.Marshal(InstrumentUpdate{
+			Pairs: []InstrumentPair{
+				{Symbol: "BTC/EUR", Base: "BTC", Quote: "EUR"},
+			},
 		})
+
+		convey.So(marshalErr, convey.ShouldBeNil)
+
+		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
+			Channel: public.InstrumentsChannel,
+			Type:    "snapshot",
+			Data:    data,
+		})
+
+		var bookFrame *qpool.QValue[any]
+
+		for range 3 {
+			select {
+			case frame := <-subscriber.Incoming:
+				payload, ok := frame.Value.(map[string]any)
+
+				if !ok {
+					continue
+				}
+
+				params, ok := payload["params"].(map[string]any)
+
+				if !ok {
+					continue
+				}
+
+				if params["channel"] == "book" {
+					bookFrame = frame
+				}
+			case <-time.After(2 * time.Second):
+			}
+		}
+
+		convey.So(bookFrame, convey.ShouldNotBeNil)
+
+		params, ok := bookFrame.Value.(map[string]any)["params"].(map[string]any)
+
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(params["depth"], convey.ShouldEqual, 10)
+	})
+
+	convey.Convey("Given delisted pairs in the catalog", t, func() {
+		defer viper.Reset()
+
+		viper.Set("market.quote_currency", "EUR")
+
+		outbound, outboundErr := qpool.NewBroadcastGroup(
+			context.Background(), "test:instrument:outbound-status", 10*time.Millisecond,
+		)
+
+		convey.So(outboundErr, convey.ShouldBeNil)
+
+		instrument := &Instrument{
+			Pairs:   make([]string, 0),
+			pairSet: make(map[string]struct{}),
+		}
+
+		data, marshalErr := json.Marshal(InstrumentUpdate{
+			Pairs: []InstrumentPair{
+				{Symbol: "DEAD/EUR", Base: "DEAD", Quote: "EUR", Status: "delisted"},
+				{Symbol: "PEPE/EUR", Base: "PEPE", Quote: "EUR", Status: "online"},
+			},
+		})
+
+		convey.So(marshalErr, convey.ShouldBeNil)
+
+		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
+			Channel: public.InstrumentsChannel,
+			Type:    "snapshot",
+			Data:    data,
+		})
+
+		convey.So(instrument.Pairs, convey.ShouldResemble, []string{"PEPE/EUR"})
 	})
 
 	convey.Convey("Given max_scan_symbols caps discovery", t, func() {
 		defer viper.Reset()
 
 		viper.Set("market.max_scan_symbols", 1)
+		viper.Set("market.quote_currency", "EUR")
 
 		outbound, outboundErr := qpool.NewBroadcastGroup(
 			context.Background(), "test:instrument:outbound-cap", 10*time.Millisecond,
@@ -118,6 +254,7 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 		defer viper.Reset()
 
 		viper.Set("market.max_scan_symbols", 0)
+		viper.Set("market.quote_currency", "EUR")
 
 		outbound, outboundErr := qpool.NewBroadcastGroup(
 			context.Background(), "test:instrument:outbound-new", 10*time.Millisecond,

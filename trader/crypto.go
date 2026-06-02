@@ -59,12 +59,12 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 
 	crypto.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	crypto.subscribers["raw"] = crypto.broadcasts["raw"].Subscribe(
-		cryptoRawSubscriberID, 128,
+		cryptoRawSubscriberID, 1024,
 	)
 
 	crypto.subscribers["ui:resync"] = pool.CreateBroadcastGroup(
 		"ui:resync", 10*time.Millisecond,
-	).Subscribe("trader/crypto:resync", 128)
+	).Subscribe("trader/crypto:resync", 1024)
 
 	activate.Boot("trader/crypto ready")
 
@@ -119,6 +119,7 @@ func (crypto *Crypto) handleRaw(message *qpool.QValue[any]) {
 		}
 	case public.BalancesChannel:
 		activate.Once("trader/crypto:balances-channel")
+		trading.MarkDeskReady()
 
 		for _, balance := range errnie.Does(func() ([]user.Balance, error) {
 			return user.DecodeBalances(&envelope)

@@ -22,7 +22,27 @@ func TestOrdersSend(t *testing.T) {
 
 		orders := ws.sockets[public.OrdersChannel].(*Orders)
 
-		Convey("It should fill add_order on executions", func() {
+		Convey("It should fill limit add_order on executions", func() {
+			out := orders.Send(&qpool.QValue[any]{
+				Type: public.OrdersChannel,
+				Value: map[string]any{
+					"method": trading.MethodAddOrder,
+					"params": trading.AddParams{
+						OrderType:  trading.Limit,
+						Side:       trading.Buy,
+						Symbol:     "BTC/EUR",
+						OrderQty:   0.001,
+						LimitPrice: 50_000,
+						ClOrdID:    "paper-limit-fill",
+					},
+				},
+			})
+
+			So(out.Channel, ShouldEqual, public.ExecutionsChannel)
+			So(string(out.Data), ShouldContainSubstring, `"cl_ord_id":"paper-limit-fill"`)
+		})
+
+		Convey("It should reject market add_order without a reference price", func() {
 			out := orders.Send(&qpool.QValue[any]{
 				Type: public.OrdersChannel,
 				Value: map[string]any{
@@ -37,8 +57,7 @@ func TestOrdersSend(t *testing.T) {
 				},
 			})
 
-			So(out.Channel, ShouldEqual, public.ExecutionsChannel)
-			So(out.Type, ShouldEqual, "update")
+			So(out.Channel, ShouldBeEmpty)
 		})
 
 		Convey("It should rest post-only limits on the book", func() {

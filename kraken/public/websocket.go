@@ -21,12 +21,14 @@ import (
 
 var socket *WebSocket
 var socketOnce sync.Once
+var outboundOnce sync.Once
 
 const publicOutboundSubscriberID = "kraken:public:websocket"
 
 const (
 	publicRawSubscriberID    = "kraken/public:raw"
 	publicLevel3SubscriberID = "kraken/public:level3"
+	publicSubscribePace      = 50 * time.Millisecond
 )
 
 type WebSocketClient interface {
@@ -42,18 +44,24 @@ type SocketMessage struct {
 }
 
 type WebSocket struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q
-	conn           *websocket.Conn
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	recorder       io.Writer
-	pairs          []string
-	ui             *qpool.BroadcastGroup
-	streams        *focus.Set
-	ohlcSubscribed map[string]struct{}
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q
+	conn            *websocket.Conn
+	connMu          sync.RWMutex
+	reconnectPolicy *ReconnectPolicy
+	subscribeReplay []any
+	replayMu        sync.RWMutex
+	broadcasts      map[string]*qpool.BroadcastGroup
+	subscribers     map[string]*qpool.Subscriber
+	recorder        io.Writer
+	pairs           []string
+	ui              *qpool.BroadcastGroup
+	streams         *focus.Set
+	ohlcSubscribed  map[string]struct{}
+	lastSubscribe   time.Time
+	subscribeMu     sync.Mutex
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSocket {
@@ -61,12 +69,14 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 
 	socketOnce.Do(func() {
 		socket = &WebSocket{
-			ctx:            ctx,
-			cancel:         cancel,
-			pool:           pool,
-			broadcasts:     make(map[string]*qpool.BroadcastGroup),
-			subscribers:    make(map[string]*qpool.Subscriber),
-			ohlcSubscribed: make(map[string]struct{}),
+			ctx:             ctx,
+			cancel:          cancel,
+			pool:            pool,
+			reconnectPolicy: NewReconnectPolicyFromConfig(),
+			broadcasts:      make(map[string]*qpool.BroadcastGroup),
+			subscribers:     make(map[string]*qpool.Subscriber),
+			ohlcSubscribed:  make(map[string]struct{}),
+			subscribeReplay: make([]any, 0),
 		}
 	})
 
@@ -84,13 +94,17 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 			subscriberID = publicLevel3SubscriberID
 		}
 
-		socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(subscriberID, 128)
+		socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(subscriberID, 1024)
 	}
 
 	socket.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
 	socket.subscribers["kraken:public"] = socket.broadcasts["kraken:public"].Subscribe(
-		publicOutboundSubscriberID, 128,
+		publicOutboundSubscriberID, 8192,
 	)
+
+	outboundOnce.Do(func() {
+		go socket.runOutbound()
+	})
 
 	if viper.GetViper().Get("trading.model") == "record" {
 		recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
@@ -102,7 +116,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 		socket.recorder = bufio.NewWriter(recorder)
 	}
 
-	if err := socket.Connect(WebSocketURL, "kraken:public"); err != nil {
+	if err := socket.dialUntilConnected(ctx, WebSocketURL); err != nil {
 		errnie.Error(err)
 	} else {
 		activate.Boot("kraken/public websocket connected")
@@ -126,19 +140,15 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
 	errnie.Debug("kraken.public.websocket.Connect", endpoint, channel)
 
-	if endpoint == "" {
-		endpoint = WebSocketURL
+	ws.connMu.RLock()
+	connected := ws.conn != nil
+	ws.connMu.RUnlock()
+
+	if connected {
+		return nil
 	}
 
-	if ws.conn, _, ws.err = websocket.DefaultDialer.Dial(
-		string(endpoint), nil,
-	); ws.err != nil {
-		return ws.err
-	}
-
-	activate.Once("kraken/public:connected:" + string(endpoint))
-
-	return nil
+	return ws.dialUntilConnected(ws.ctx, endpoint)
 }
 
 func (ws *WebSocket) Tick() error {
@@ -146,33 +156,35 @@ func (ws *WebSocket) Tick() error {
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
-		case message, ok := <-ws.subscribers["kraken:public"].Incoming:
-			if !ok {
-				errnie.Debug("kraken.public.websocket.Tick", "no ok")
-				return nil
-			}
-
-			if message == nil {
-				errnie.Debug("kraken.public.websocket.Tick", "nil message")
-				continue
-			}
-
-			if ws.conn == nil {
-				return fmt.Errorf("kraken public websocket: not connected")
-			}
-
-			errnie.Error(ws.conn.WriteJSON(message.Value))
 		default:
 		}
 
-		if ws.conn == nil {
-			return fmt.Errorf("kraken public websocket: not connected")
+		ws.connMu.RLock()
+		connected := ws.conn != nil
+		ws.connMu.RUnlock()
+
+		if !connected {
+			if err := ws.reconnect(WebSocketURL); err != nil {
+				return errnie.Error(err)
+			}
+
+			continue
 		}
 
 		var message SocketMessage
 
-		if err := ws.conn.ReadJSON(&message); err != nil {
-			return errnie.Error(err)
+		if err := ws.readMessage(&message); err != nil {
+			if ws.ctx.Err() != nil {
+				return errnie.Error(ws.ctx.Err())
+			}
+
+			errnie.Error(err)
+
+			if reconnectErr := ws.reconnect(WebSocketURL); reconnectErr != nil {
+				return errnie.Error(reconnectErr)
+			}
+
+			continue
 		}
 
 		if message.Channel != "" {
@@ -190,6 +202,96 @@ func (ws *WebSocket) Tick() error {
 			ws.applyOhlc(message)
 		}
 	}
+}
+
+func (ws *WebSocket) runOutbound() {
+	inbound := ws.subscribers["kraken:public"].Incoming
+
+	for {
+		select {
+		case <-ws.ctx.Done():
+			return
+		case message, ok := <-inbound:
+			if !ok {
+				return
+			}
+
+			if message == nil {
+				continue
+			}
+
+			ws.connMu.RLock()
+			connected := ws.conn != nil
+			ws.connMu.RUnlock()
+
+			if !connected {
+				if err := ws.reconnect(WebSocketURL); err != nil {
+					return
+				}
+			}
+
+			for {
+				if err := ws.writeOutbound(message.Value); err != nil {
+					if ws.ctx.Err() != nil {
+						return
+					}
+
+					errnie.Error(err)
+
+					if reconnectErr := ws.reconnect(WebSocketURL); reconnectErr != nil {
+						return
+					}
+
+					continue
+				}
+
+				break
+			}
+		}
+	}
+}
+
+func (ws *WebSocket) writeOutbound(value any) error {
+	return ws.writeOutboundFrame(value, true)
+}
+
+func (ws *WebSocket) writeOutboundFrame(value any, record bool) error {
+	if record {
+		if frame, ok := value.(map[string]any); ok {
+			if method, _ := frame["method"].(string); method == "subscribe" {
+				ws.recordSubscribeFrame(value)
+			}
+		}
+	}
+
+	if frame, ok := value.(map[string]any); ok {
+		if method, _ := frame["method"].(string); method == "subscribe" {
+			pace := viper.GetDuration("market.subscribe_pace")
+
+			if pace <= 0 {
+				pace = publicSubscribePace
+			}
+
+			ws.subscribeMu.Lock()
+
+			if since := time.Since(ws.lastSubscribe); since < pace {
+				time.Sleep(pace - since)
+			}
+
+			ws.lastSubscribe = time.Now()
+			ws.subscribeMu.Unlock()
+		}
+	}
+
+	ws.connMu.RLock()
+	conn := ws.conn
+	ws.connMu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("kraken public websocket: not connected")
+	}
+
+	return conn.WriteJSON(value)
 }
 
 func (ws *WebSocket) bindChartStreams(streams *focus.Set) {
@@ -290,10 +392,7 @@ func (ws *WebSocket) applyOhlc(msg SocketMessage) {
 
 func (ws *WebSocket) Close() error {
 	ws.cancel()
+	ws.dropConnection()
 
-	if ws.conn == nil {
-		return nil
-	}
-
-	return errnie.Error(ws.conn.Close())
+	return nil
 }

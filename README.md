@@ -151,6 +151,8 @@ There is no separate public-client system. Kraken connectivity lives in `kraken/
 
 `market.DiscoverSymbols` replaces the symbol list with every online pair in the configured quote currency at boot, so signals watch the full tradable universe rather than a fixed watch list.
 
+Paper mode starts a private dispatch goroutine at websocket construction so the balance subscribe is processed before `engine.Start` fans out measurements. `trading.DeskReady()` gates story entry actions until that snapshot is published. A single `order_ack_timeout` rejects only that order in paper mode; the ledger trips the cancel-all circuit breaker on explicit exchange rejection in live mode only.
+
 ## Core types
 
 ### 📐 Measurement
@@ -386,7 +388,7 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 - measurements are read from `trading.record.file` (or `trading.replay.file` when the record path is unset)
 - the scan enumerates category/unit/condition/value predicates from observed measurement distributions
 - it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
-- each candidate tree is scored in-process with `ReplaySimulation` (realized plus marked fractional return)
+- each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
 - the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
 
 Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.

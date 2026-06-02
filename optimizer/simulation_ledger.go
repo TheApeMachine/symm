@@ -267,21 +267,8 @@ func (ledger *replayLedger) holding(symbol string) bool {
 	return open
 }
 
-func (ledger *replayLedger) totalReturn(lastPrices map[string]float64) float64 {
-	total := ledger.realized
-
-	for symbol, position := range ledger.positions {
-		lastPrice, ok := lastPrices[symbol]
-
-		if !ok || lastPrice <= 0 || position.entryPrice <= 0 {
-			continue
-		}
-
-		exitFill := lastPrice * (1 - ledger.costs.SlippagePct)
-		total += (exitFill - position.entryPrice) / position.entryPrice
-	}
-
-	return total
+func (ledger *replayLedger) realizedReturn() float64 {
+	return ledger.realized
 }
 
 func holdoutDecay(trainPerTrade float64, testPerTrade float64) float64 {

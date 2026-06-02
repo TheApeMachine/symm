@@ -84,7 +84,7 @@ func NewHub(
 	}
 
 	hub.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 500*time.Millisecond)
-	hub.subscribers["ui"] = hub.broadcasts["ui"].Subscribe(uiHubSubscriberID, 128)
+	hub.subscribers["ui"] = hub.broadcasts["ui"].Subscribe(uiHubSubscriberID, 1024)
 	hub.broadcasts[uiResyncChannel] = pool.CreateBroadcastGroup(uiResyncChannel, 10*time.Millisecond)
 
 	addr := strings.TrimSpace(viper.GetString("ui.addr"))

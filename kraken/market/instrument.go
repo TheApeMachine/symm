@@ -2,7 +2,10 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,7 +104,7 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
 	instrument.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	instrument.subscribers["raw"] = instrument.broadcasts["raw"].Subscribe(
-		instrumentSubscriberID, 128,
+		instrumentSubscriberID, 1024,
 	)
 
 	activate.Boot("kraken/instrument ready")
@@ -159,9 +162,22 @@ func (instrument *Instrument) applyCatalogUpdate(
 	}
 
 	maxScan := viper.GetInt("market.max_scan_symbols")
+	watched := viper.GetStringSlice("market.symbols")
+	quoteCurrency := strings.ToUpper(strings.TrimSpace(viper.GetString("market.quote_currency")))
+	bookDepth := viper.GetInt("market.book_depth_levels")
+
+	if bookDepth <= 0 {
+		bookDepth = 10
+	}
+
+	newSymbols := make([]string, 0)
 
 	for _, pair := range update.Pairs {
-		if maxScan > 0 && len(instrument.Pairs) >= maxScan {
+		if !instrumentPairScannable(pair, watched, quoteCurrency) {
+			continue
+		}
+
+		if maxScan > 0 && len(instrument.Pairs)+len(newSymbols) >= maxScan {
 			break
 		}
 
@@ -169,27 +185,78 @@ func (instrument *Instrument) applyCatalogUpdate(
 			continue
 		}
 
-		instrument.Pairs = append(instrument.Pairs, pair.Symbol)
-		instrument.pairSet[pair.Symbol] = struct{}{}
+		newSymbols = append(newSymbols, pair.Symbol)
+	}
+
+	if len(newSymbols) == 0 {
+		return
+	}
+
+	for _, symbol := range newSymbols {
+		instrument.Pairs = append(instrument.Pairs, symbol)
+		instrument.pairSet[symbol] = struct{}{}
 
 		if len(instrument.Pairs) == 1 {
 			activate.Once("kraken/instrument:first-pair-subscribe")
 		}
+	}
 
-		publicBroadcast.Send(subscribeFrame("ticker", pair.Symbol, nil))
-		publicBroadcast.Send(subscribeFrame("book", pair.Symbol, map[string]any{
-			"depth": 1000,
+	instrument.publishSubscriptions(publicBroadcast, newSymbols, bookDepth)
+
+	activate.Once(fmt.Sprintf("kraken/instrument:subscribed:%d", len(instrument.Pairs)))
+}
+
+func instrumentPairScannable(
+	pair InstrumentPair, watched []string, quoteCurrency string,
+) bool {
+	if len(watched) > 0 {
+		return slices.Contains(watched, pair.Symbol)
+	}
+
+	if quoteCurrency != "" &&
+		!strings.EqualFold(strings.TrimSpace(pair.Quote), quoteCurrency) {
+		return false
+	}
+
+	status := strings.ToLower(strings.TrimSpace(pair.Status))
+
+	if status != "" && status != "online" {
+		return false
+	}
+
+	return pair.Symbol != ""
+}
+
+const instrumentSubscribeBatch = 25
+
+func (instrument *Instrument) publishSubscriptions(
+	publicBroadcast *qpool.BroadcastGroup,
+	symbols []string,
+	bookDepth int,
+) {
+	for start := 0; start < len(symbols); start += instrumentSubscribeBatch {
+		end := start + instrumentSubscribeBatch
+
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+
+		batch := symbols[start:end]
+
+		publicBroadcast.Send(subscribeFrame("ticker", batch, nil))
+		publicBroadcast.Send(subscribeFrame("book", batch, map[string]any{
+			"depth": bookDepth,
 		}))
-		publicBroadcast.Send(subscribeFrame("trade", pair.Symbol, nil))
+		publicBroadcast.Send(subscribeFrame("trade", batch, nil))
 	}
 }
 
 func subscribeFrame(
-	channel, symbol string, extra map[string]any,
+	channel string, symbols []string, extra map[string]any,
 ) *qpool.QValue[any] {
 	params := map[string]any{
 		"channel":  channel,
-		"symbol":   []string{symbol},
+		"symbol":   symbols,
 		"snapshot": true,
 	}
 
