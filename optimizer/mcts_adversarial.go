@@ -11,34 +11,50 @@ MCTS maps defensive guardrails against unobserved signal combinations.
 func (search *TreeSearch) sampleAdversarialMove(
 	moves []Move, branches perspectives.BranchList,
 ) Move {
-	bestIndex := 0
-	bestSupport := int(^uint(0) >> 1)
+	chosen := moves[0]
+	lowestReachScore := 2.0
 
-	for index, move := range moves {
-		support := search.moveChainSupport(move, branches)
+	for _, move := range moves {
+		reachScore := search.moveChainReachabilityScore(move, branches)
 
-		if move.theoretical && support < bestSupport {
-			bestSupport = support
-			bestIndex = index
+		if !move.theoretical {
+			continue
+		}
+
+		if reachScore < lowestReachScore {
+			lowestReachScore = reachScore
+			chosen = move
 		}
 	}
 
-	if bestSupport < int(^uint(0)>>1) {
-		return moves[bestIndex]
+	if lowestReachScore < 1 {
+		return chosen
 	}
 
 	lowestSupport := int(^uint(0) >> 1)
 
-	for index, move := range moves {
+	for _, move := range moves {
 		support := search.moveChainSupport(move, branches)
 
 		if support < lowestSupport {
 			lowestSupport = support
-			bestIndex = index
+			chosen = move
 		}
 	}
 
-	return moves[bestIndex]
+	return chosen
+}
+
+func (search *TreeSearch) moveChainReachabilityScore(
+	move Move, branches perspectives.BranchList,
+) float64 {
+	if search.coOccurrence == nil {
+		return 1
+	}
+
+	chain := search.moveChainCategories(move, branches)
+
+	return search.coOccurrence.ChainReachabilityScore(chain)
 }
 
 func (search *TreeSearch) moveChainSupport(

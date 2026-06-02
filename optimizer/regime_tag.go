@@ -1,6 +1,9 @@
 package optimizer
 
 import (
+	"math"
+
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -40,11 +43,16 @@ func categoryStructuralRegime(
 }
 
 /*
-DominantStructuralRegime picks the highest-SNR causal category on a tick snapshot.
+DominantStructuralRegime classifies a tick snapshot using causal categories
+and condition-number/contagion proxies carried on causal measurements.
 */
 func DominantStructuralRegime(
 	snapshots []perspectives.Measurement,
 ) StructuralRegime {
+	if causalRegime, ok := causalStructuralRegime(snapshots); ok {
+		return causalRegime
+	}
+
 	bestRegime := StructuralRegimeUnclassified
 	bestSNR := 0.0
 
@@ -62,6 +70,47 @@ func DominantStructuralRegime(
 	}
 
 	return bestRegime
+}
+
+func causalStructuralRegime(
+	snapshots []perspectives.Measurement,
+) (StructuralRegime, bool) {
+	conditionSwitch := viper.GetViper().GetFloat64("signals.causal.condition_switch")
+	panicStrength := 0.0
+	hasCausal := false
+	hasLiquidityShock := false
+
+	for _, measurement := range snapshots {
+		if measurement.Source != perspectives.SourceCausal {
+			continue
+		}
+
+		hasCausal = true
+
+		if measurement.Category == perspectives.CategoryLiquidityShock {
+			hasLiquidityShock = true
+
+			if measurement.Strength > panicStrength {
+				panicStrength = measurement.Strength
+			}
+		}
+	}
+
+	if !hasCausal {
+		return StructuralRegimeUnclassified, false
+	}
+
+	if hasLiquidityShock {
+		if conditionSwitch > 0 && panicStrength >= conditionSwitch {
+			return StructuralRegimeLiquidityPanic, true
+		}
+
+		if conditionSwitch <= 0 || panicStrength > 0 {
+			return StructuralRegimeLiquidityPanic, true
+		}
+	}
+
+	return StructuralRegimeUnclassified, false
 }
 
 /*
@@ -137,4 +186,22 @@ func testSliceHasUnprecedentedRegime(
 	}
 
 	return false
+}
+
+func regimePairMinRows(regime StructuralRegime, rowCount int) int {
+	if rowCount <= 0 {
+		return 2
+	}
+
+	minRows := int(math.Ceil(math.Sqrt(float64(rowCount))))
+
+	if minRows < 2 {
+		return 2
+	}
+
+	if regime == StructuralRegimeLiquidityPanic && minRows > 4 {
+		return 4
+	}
+
+	return minRows
 }

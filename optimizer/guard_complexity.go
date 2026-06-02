@@ -7,15 +7,14 @@ import (
 )
 
 const (
-	extremePassRateHigh  = 0.95
-	extremePassRateLow   = 0.05
-	informationGainWaive = 0.75
+	extremePassRateHigh = 0.95
+	extremePassRateLow  = 0.05
 )
 
 /*
-adaptiveComplexityPenalty scales the flat per-step tax by each gate's empirical
-selectivity. Informative gates (balanced pass rates) are waived; extreme pass
-rates that fingerprint noise are penalized aggressively.
+adaptiveComplexityPenalty scales each reasoning gate by replay pass rate and
+Shannon information gain on win/loss outcomes. Informative gates are waived;
+extreme pass rates that fingerprint noise are penalized aggressively.
 */
 func (guard *OverfitGuard) adaptiveComplexityPenalty(
 	branches perspectives.BranchList,
@@ -26,24 +25,38 @@ func (guard *OverfitGuard) adaptiveComplexityPenalty(
 		return 0
 	}
 
-	if guard.profile == nil {
-		depth := reasoningDepth(branches)
+	minSamples := 1
 
-		return float64(depth) * base
+	if guard.tape.Len() > 0 {
+		minSamples = deriveMinChainSupport(guard.tape.Len())
 	}
 
-	return sumGateComplexityPenalty(guard.profile, branches, base)
+	var collector *gateStatsCollector
+
+	if guard.tape.Len() > 0 {
+		collector = collectGateReplayStats(guard.ctx, guard.tape, branches)
+	}
+
+	return sumGateComplexityPenalty(
+		guard.profile,
+		collector,
+		branches,
+		base,
+		minSamples,
+	)
 }
 
 func sumGateComplexityPenalty(
 	profile *Profile,
+	collector *gateStatsCollector,
 	branches perspectives.BranchList,
 	basePenalty float64,
+	minSamples int,
 ) float64 {
 	total := 0.0
 
 	for _, branch := range branches {
-		total += gateComplexityPenalty(profile, branch, basePenalty)
+		total += gateComplexityPenalty(profile, collector, branch, basePenalty, minSamples)
 	}
 
 	return total
@@ -51,13 +64,15 @@ func sumGateComplexityPenalty(
 
 func gateComplexityPenalty(
 	profile *Profile,
+	collector *gateStatsCollector,
 	branch perspectives.Branch,
 	basePenalty float64,
+	minSamples int,
 ) float64 {
 	penalty := 0.0
 
 	if branch.ValueSet {
-		weight := gateComplexityWeight(profile, branch)
+		weight := gateComplexityWeight(profile, collector, branch, minSamples)
 
 		if weight > 0 {
 			penalty += basePenalty * weight
@@ -65,7 +80,9 @@ func gateComplexityPenalty(
 	}
 
 	for _, child := range branch.Branches {
-		penalty += gateComplexityPenalty(profile, child, basePenalty)
+		penalty += gateComplexityPenalty(
+			profile, collector, child, basePenalty, minSamples,
+		)
 	}
 
 	return penalty
@@ -73,23 +90,26 @@ func gateComplexityPenalty(
 
 func gateComplexityWeight(
 	profile *Profile,
+	collector *gateStatsCollector,
 	branch perspectives.Branch,
+	minSamples int,
 ) float64 {
-	passes := profile.GatePassCount(
-		branch.Category, branch.Unit, branch.Condition, branch.Value,
-	)
-	categoryTotal := profile.categoryCount(branch.Category)
+	passRate := profileGatePassRate(profile, branch)
+	replayStats := GatePathStats{}
 
-	if categoryTotal <= 0 {
-		return 1
+	if collector != nil {
+		replayStats = collector.statsFor(branch)
+
+		if replayStats.TapeBefore > 0 {
+			passRate = replayStats.TapePassRate()
+		}
 	}
 
-	passRate := float64(passes) / float64(categoryTotal)
-	selectivity := gateSelectivity(passRate)
-
-	if selectivity >= informationGainWaive {
+	if informationGainSignificant(replayStats, minSamples) {
 		return 0
 	}
+
+	selectivity := gateSelectivity(passRate)
 
 	if passRate >= extremePassRateHigh || passRate <= extremePassRateLow {
 		extremeWeight := 1 + (1 - selectivity)
@@ -101,5 +121,33 @@ func gateComplexityWeight(
 		return 1
 	}
 
+	gain := replayStats.InformationGainBits()
+
+	if gain > 0 {
+		gainWeight := 1 - math.Min(1, gain)
+
+		return math.Min(1-selectivity, gainWeight)
+	}
+
 	return 1 - selectivity
+}
+
+func profileGatePassRate(
+	profile *Profile,
+	branch perspectives.Branch,
+) float64 {
+	if profile == nil {
+		return 0.5
+	}
+
+	passes := profile.GatePassCount(
+		branch.Category, branch.Unit, branch.Condition, branch.Value,
+	)
+	categoryTotal := profile.categoryCount(branch.Category)
+
+	if categoryTotal <= 0 {
+		return 0
+	}
+
+	return float64(passes) / float64(categoryTotal)
 }

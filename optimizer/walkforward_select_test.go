@@ -22,17 +22,17 @@ func TestCoOccurrenceIndexMinSupport(t *testing.T) {
 				SNR:      2, Last: 110,
 			},
 		}
-		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 4)
 
-		convey.Convey("It should reject statistically insignificant chains", func() {
-			convey.So(index.ChainReachable([]perspectives.CategoryType{
+		convey.Convey("It should decay hard-insignificant chains instead of hard pruning", func() {
+			chain := []perspectives.CategoryType{
 				perspectives.CategoryLaminar,
 				perspectives.CategoryExhaustion,
-			}), convey.ShouldBeFalse)
-			convey.So(index.chainSupport([]perspectives.CategoryType{
-				perspectives.CategoryLaminar,
-				perspectives.CategoryExhaustion,
-			}), convey.ShouldEqual, 1)
+			}
+			convey.So(index.chainSupport(chain), convey.ShouldEqual, 1)
+			score := index.ChainReachabilityScore(chain)
+			convey.So(score, convey.ShouldBeGreaterThan, 0)
+			convey.So(score, convey.ShouldBeLessThan, 1)
 		})
 	})
 }

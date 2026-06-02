@@ -203,6 +203,23 @@ func (ledger *replayLedger) openLong(
 	delete(ledger.ticksSinceClose, symbol)
 }
 
+func (ledger *replayLedger) previewClosePnL(
+	symbol string,
+	price float64,
+	spreadBPS float64,
+) float64 {
+	position, open := ledger.positions[symbol]
+
+	if !open || position.entryPrice <= 0 || price <= 0 {
+		return 0
+	}
+
+	slippagePct := halfSpreadSlippagePct(ledger.costs, spreadBPS)
+	exitFill := price * (1 - slippagePct)
+
+	return (exitFill - position.entryPrice) / position.entryPrice
+}
+
 func (ledger *replayLedger) closeLong(
 	symbol string,
 	price float64,

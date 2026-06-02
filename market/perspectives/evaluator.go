@@ -89,6 +89,13 @@ func (evaluator *BranchEvaluator) walk(
 	return best
 }
 
+/*
+PassesBranch reports whether one branch predicate matches the current context.
+*/
+func (evaluator *BranchEvaluator) PassesBranch(branch Branch) bool {
+	return evaluator.passes(branch)
+}
+
 func (evaluator *BranchEvaluator) passes(branch Branch) bool {
 	if !evaluator.matchesRegime(branch) {
 		return false

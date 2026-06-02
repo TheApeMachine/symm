@@ -254,6 +254,14 @@ func deriveTheoreticalUCTDiscount(beamWidth int) float64 {
 	return 1 / math.Sqrt(float64(beamWidth))
 }
 
+func deriveAdversarialRolloutFraction(beamWidth int) float64 {
+	if beamWidth <= 0 {
+		return 0.1
+	}
+
+	return 1 / float64(beamWidth)
+}
+
 func deriveAdversarialRolloutInterval(iterations int, beamWidth int) int {
 	if iterations <= 0 || beamWidth <= 0 {
 		return 0

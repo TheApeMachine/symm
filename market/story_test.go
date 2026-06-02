@@ -62,6 +62,59 @@ func TestNewStory(t *testing.T) {
 	})
 }
 
+func TestStoryGaugeMeanConfidence(t *testing.T) {
+	convey.Convey("Given a story publishing gauge frames", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
+
+		uiSubscriber := story.ui.Subscribe("test:story:gauge", 8)
+		done := make(chan struct{})
+
+		go func() {
+			_ = story.Tick()
+			close(done)
+		}()
+
+		measurements := story.broadcasts["measurements"]
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     perspectives.SourceHawkes,
+			Confidence: 1.0,
+		}})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "ETH/EUR",
+			Source:     perspectives.SourceHawkes,
+			Confidence: 0.2,
+		}})
+
+		convey.Convey("It should flush the cross-sectional mean on the UI ticker", func() {
+			var frame map[string]any
+
+			select {
+			case row := <-uiSubscriber.Incoming:
+				parsed, ok := row.Value.(map[string]any)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				frame = parsed
+			case <-time.After(500 * time.Millisecond):
+				convey.So("gauge frame", convey.ShouldBeBlank)
+			}
+
+			convey.So(frame["source"], convey.ShouldEqual, "hawkes")
+			convey.So(frame["confidence"], convey.ShouldAlmostEqual, 0.6, 1e-9)
+			convey.So(frame["count"], convey.ShouldEqual, 2)
+		})
+
+		cancel()
+		<-done
+		convey.So(story.Close(), convey.ShouldBeNil)
+	})
+}
+
 func TestStoryPublishActionOnRaw(t *testing.T) {
 	convey.Convey("Given a story wired to raw", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -90,10 +143,10 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		}()
 
 		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:     "BTC/EUR",
-			Category:   perspectives.CategoryVolumeStarvation,
-			SNR:        1.0,
-			Last:       50_000,
+			Symbol:   "BTC/EUR",
+			Category: perspectives.CategoryVolumeStarvation,
+			SNR:      1.0,
+			Last:     50_000,
 		}})
 		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",

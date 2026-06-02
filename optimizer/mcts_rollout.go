@@ -23,8 +23,7 @@ func (search *TreeSearch) scoreBranches(branches perspectives.BranchList) float6
 
 func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
-	adversarial := search.budget.AdversarialRolloutInterval > 0 &&
-		(iteration+1)%search.budget.AdversarialRolloutInterval == 0
+	adversarial := search.shouldRunAdversarialRollout(iteration)
 
 	for step := 0; step < search.maxReasoningSteps; step++ {
 		moves := search.reachableMoves(search.allMoves(), branches)
@@ -87,6 +86,20 @@ func (search *TreeSearch) emitBest(
 		Score:     score,
 		Branches:  branches.Clone(),
 	})
+}
+
+func (search *TreeSearch) shouldRunAdversarialRollout(iteration int) bool {
+	fraction := search.budget.AdversarialRolloutFraction
+
+	if fraction > 0 && search.rng.Float64() < fraction {
+		return true
+	}
+
+	if search.budget.AdversarialRolloutInterval <= 0 {
+		return false
+	}
+
+	return (iteration+1)%search.budget.AdversarialRolloutInterval == 0
 }
 
 func (search *TreeSearch) normalizeMCTSReward(pnlScore float64) float64 {

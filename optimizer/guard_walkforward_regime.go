@@ -7,8 +7,17 @@ import (
 func (guard *OverfitGuard) evaluateChronologicalWindow(
 	branches perspectives.BranchList,
 	rows []perspectives.Measurement,
+	tags []StructuralRegime,
 	window IndexWindow,
 ) (win bool, testPerTrade float64) {
+	trainRegimes := regimeSetInRange(tags, window.TrainStart, window.TrainEnd)
+
+	if testSliceHasUnprecedentedRegime(
+		trainRegimes, tags, window.TestStart, window.TestEnd,
+	) {
+		return false, 0
+	}
+
 	trainRows := rows[window.TrainStart:window.TrainEnd]
 	testRows := rows[window.TestStart:window.TestEnd]
 
@@ -46,31 +55,49 @@ func (guard *OverfitGuard) evaluateRegimeStratifiedWindow(
 	window IndexWindow,
 ) (win bool, testPerTrade float64) {
 	trainRegimes := regimeSetInRange(tags, window.TrainStart, window.TrainEnd)
+	bestPerTrade := 0.0
+	passed := false
 
-	if testSliceHasUnprecedentedRegime(
-		trainRegimes, tags, window.TestStart, window.TestEnd,
-	) {
-		return false, 0
+	for regime := range trainRegimes {
+		if regime == StructuralRegimeUnclassified {
+			continue
+		}
+
+		regimeWin, perTrade := guard.evaluateRegimePairWindow(
+			branches, rows, tags, window, regime,
+		)
+
+		if !regimeWin {
+			continue
+		}
+
+		passed = true
+
+		if perTrade > bestPerTrade {
+			bestPerTrade = perTrade
+		}
 	}
 
-	dominantTrain := dominantRegimeInRange(tags, window.TrainStart, window.TrainEnd)
+	return passed, bestPerTrade
+}
 
-	if dominantTrain == StructuralRegimeUnclassified {
-		return false, 0
-	}
+func (guard *OverfitGuard) evaluateRegimePairWindow(
+	branches perspectives.BranchList,
+	rows []perspectives.Measurement,
+	tags []StructuralRegime,
+	window IndexWindow,
+	regime StructuralRegime,
+) (win bool, testPerTrade float64) {
+	trainSlice := rows[window.TrainStart:window.TrainEnd]
+	testSlice := rows[window.TestStart:window.TestEnd]
+	trainTags := tags[window.TrainStart:window.TrainEnd]
+	testTags := tags[window.TestStart:window.TestEnd]
 
-	trainRows := filterRowsByRegime(
-		rows[window.TrainStart:window.TrainEnd],
-		tags[window.TrainStart:window.TrainEnd],
-		dominantTrain,
-	)
-	testRows := filterRowsByRegime(
-		rows[window.TestStart:window.TestEnd],
-		tags[window.TestStart:window.TestEnd],
-		dominantTrain,
-	)
+	trainRows := filterRowsByRegime(trainSlice, trainTags, regime)
+	testRows := filterRowsByRegime(testSlice, testTags, regime)
+	minRows := regimePairMinRows(regime, len(rows))
 
-	if len(trainRows) < 2 || len(testRows) < 1 {
+	if len(trainRows) < minRows || len(testRows) < 1 {
 		return false, 0
 	}
 
@@ -99,34 +126,4 @@ func (guard *OverfitGuard) evaluateRegimeStratifiedWindow(
 	}
 
 	return true, testPerTrade
-}
-
-func dominantRegimeInRange(
-	tags []StructuralRegime,
-	start int,
-	end int,
-) StructuralRegime {
-	counts := make(map[StructuralRegime]int)
-
-	for index := start; index < end && index < len(tags); index++ {
-		regime := tags[index]
-
-		if regime == StructuralRegimeUnclassified {
-			continue
-		}
-
-		counts[regime]++
-	}
-
-	bestRegime := StructuralRegimeUnclassified
-	bestCount := 0
-
-	for regime, count := range counts {
-		if count > bestCount {
-			bestCount = count
-			bestRegime = regime
-		}
-	}
-
-	return bestRegime
 }

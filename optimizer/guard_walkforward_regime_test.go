@@ -55,7 +55,8 @@ func TestEvaluateChronologicalWindow(t *testing.T) {
 		}, PrecompileTape(rows), nil)
 
 		window := IndexWindow{TrainStart: 0, TrainEnd: 84, TestStart: 84, TestEnd: 120}
-		win, perTrade := guard.evaluateChronologicalWindow(branches, rows, window)
+		tags := TagRowRegimes(rows)
+		win, perTrade := guard.evaluateChronologicalWindow(branches, rows, tags, window)
 
 		convey.Convey("It should accept stable chronological holdout performance", func() {
 			convey.So(win, convey.ShouldBeTrue)
@@ -64,7 +65,7 @@ func TestEvaluateChronologicalWindow(t *testing.T) {
 	})
 }
 
-func TestDominantRegimeInRange(t *testing.T) {
+func TestRegimeSetInRange(t *testing.T) {
 	convey.Convey("Given regime tags across a window", t, func() {
 		tags := []StructuralRegime{
 			StructuralRegimeNormalFlow,
@@ -73,10 +74,14 @@ func TestDominantRegimeInRange(t *testing.T) {
 			StructuralRegimeLiquidityPanic,
 		}
 
-		regime := dominantRegimeInRange(tags, 0, 4)
+		regimes := regimeSetInRange(tags, 0, 4)
 
-		convey.Convey("It should pick the most frequent regime", func() {
-			convey.So(regime, convey.ShouldEqual, StructuralRegimeNormalFlow)
+		convey.Convey("It should collect distinct regimes in the slice", func() {
+			convey.So(len(regimes), convey.ShouldEqual, 2)
+			_, hasNormal := regimes[StructuralRegimeNormalFlow]
+			_, hasPanic := regimes[StructuralRegimeLiquidityPanic]
+			convey.So(hasNormal, convey.ShouldBeTrue)
+			convey.So(hasPanic, convey.ShouldBeTrue)
 		})
 	})
 }

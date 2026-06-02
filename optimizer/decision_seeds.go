@@ -256,7 +256,7 @@ func reachableEntryChainPrefixes(
 	for end := 1; end <= len(chain); end++ {
 		prefix := chain[:end]
 
-		if !index.ChainReachable(prefix) {
+		if index.ChainReachabilityScore(prefix) <= 0 {
 			continue
 		}
 

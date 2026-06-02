@@ -217,7 +217,7 @@ func (guard *OverfitGuard) EvaluateWalkForward(
 
 	for _, window := range windows {
 		chronoWin, chronoPerTrade := guard.evaluateChronologicalWindow(
-			branches, rows, window,
+			branches, rows, regimeTags, window,
 		)
 
 		if chronoWin {

@@ -37,25 +37,15 @@ func (search *TreeSearch) moveReachability(
 	}
 
 	chain := search.moveChainCategories(move, branches)
-	hard, nearMiss := search.coOccurrence.ChainReachability(
-		chain, search.budget.NearMissTickJitter,
-	)
+	reachScore := search.coOccurrence.ChainReachabilityScore(chain)
 
-	if hard {
-		return true, false, 1
+	if reachScore <= 0 {
+		return false, false, 0
 	}
 
-	if nearMiss {
-		discount := search.budget.TheoreticalUCTDiscount
+	theoretical = reachScore < 1
 
-		if discount <= 0 {
-			discount = 0.25
-		}
-
-		return true, true, discount
-	}
-
-	return false, false, 0
+	return true, theoretical, reachScore
 }
 
 func (search *TreeSearch) moveChainCategories(

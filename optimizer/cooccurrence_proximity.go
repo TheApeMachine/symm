@@ -61,7 +61,9 @@ func (index *CoOccurrenceIndex) ChainReachability(
 		return true, false
 	}
 
-	if index.ChainReachable(categories) {
+	support := index.chainSupport(categories)
+
+	if support >= index.minSupport {
 		return true, false
 	}
 

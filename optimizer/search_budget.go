@@ -30,6 +30,7 @@ type SearchBudget struct {
 	NearMissTickJitter         int
 	TheoreticalUCTDiscount     float64
 	AdversarialRolloutInterval int
+	AdversarialRolloutFraction float64
 }
 
 func (budget SearchBudget) IsZero() bool {
@@ -122,6 +123,7 @@ func DeriveSearchBudget(
 		NearMissTickJitter:         deriveNearMissTickJitter(tickCount),
 		TheoreticalUCTDiscount:     deriveTheoreticalUCTDiscount(beamWidth),
 		AdversarialRolloutInterval: deriveAdversarialRolloutInterval(mctsIterations, beamWidth),
+		AdversarialRolloutFraction: deriveAdversarialRolloutFraction(beamWidth),
 	}
 }
 

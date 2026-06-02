@@ -11,8 +11,9 @@ CoOccurrenceIndex records which category sets appear together on one tick snapsh
 Walk can only descend when every category in a chain is present at that moment.
 */
 type CoOccurrenceIndex struct {
-	tickSets   []map[perspectives.CategoryType]struct{}
-	minSupport int
+	tickSets        []map[perspectives.CategoryType]struct{}
+	minSupport      int
+	proximityJitter int
 }
 
 func NewCoOccurrenceIndex(tape ReplayTape, minSupport int) *CoOccurrenceIndex {
@@ -31,8 +32,9 @@ func NewCoOccurrenceIndex(tape ReplayTape, minSupport int) *CoOccurrenceIndex {
 	}
 
 	return &CoOccurrenceIndex{
-		tickSets:   tickSets,
-		minSupport: minSupport,
+		tickSets:        tickSets,
+		minSupport:      minSupport,
+		proximityJitter: deriveNearMissTickJitter(len(tickSets)),
 	}
 }
 
@@ -59,7 +61,50 @@ one tick snapshot, matching Tree.Walk / BranchEvaluator depth traversal.
 func (index *CoOccurrenceIndex) ChainReachable(
 	categories []perspectives.CategoryType,
 ) bool {
-	return index.chainSupport(categories) >= index.minSupport
+	return index.ChainReachabilityScore(categories) > 0
+}
+
+/*
+ChainReachabilityScore returns probabilistic support in [0,1]. Hard
+co-occurrence scores 1; near-miss proximity decays linearly toward zero.
+*/
+func (index *CoOccurrenceIndex) ChainReachabilityScore(
+	categories []perspectives.CategoryType,
+) float64 {
+	if index == nil {
+		return 1
+	}
+
+	support := index.chainSupport(categories)
+
+	if support >= index.minSupport {
+		return 1
+	}
+
+	if index.minSupport <= 0 {
+		return 0
+	}
+
+	hardScore := float64(support) / float64(index.minSupport)
+
+	if index.proximityJitter <= 0 {
+		return hardScore
+	}
+
+	proximity := index.ProximityChainSupport(categories, index.proximityJitter)
+
+	if proximity <= 0 {
+		return hardScore
+	}
+
+	proxScore := float64(proximity) / float64(index.minSupport)
+	blended := hardScore + (proxScore * (1 - hardScore))
+
+	if blended > 1 {
+		return 1
+	}
+
+	return blended
 }
 
 func (index *CoOccurrenceIndex) chainSupport(
@@ -229,7 +274,7 @@ func filterReachableBranchers(
 	for _, brancher := range branchers {
 		chain := append(anchorCategories, brancher.Category)
 
-		if index.ChainReachable(chain) {
+		if index.ChainReachabilityScore(chain) > 0 {
 			reachable = append(reachable, brancher)
 		}
 	}
@@ -279,7 +324,7 @@ func filterReachableEntryCandidates(
 	for _, candidate := range candidates {
 		chain := append(anchor, categoriesInBranchList(candidate.branches)...)
 
-		if index.ChainReachable(chain) {
+		if index.ChainReachabilityScore(chain) > 0 {
 			reachable = append(reachable, candidate)
 		}
 	}
@@ -298,7 +343,7 @@ func nestedEntryGateReachable(
 
 	chain := append(entryPathCategories(base), gate.Category)
 
-	return index.ChainReachable(chain)
+	return index.ChainReachabilityScore(chain) > 0
 }
 
 func entryExitPairReachable(
@@ -310,7 +355,7 @@ func entryExitPairReachable(
 		return true
 	}
 
-	if !index.ChainReachable(categoriesInBranchList(entry)) {
+	if index.ChainReachabilityScore(categoriesInBranchList(entry)) <= 0 {
 		return false
 	}
 
@@ -328,7 +373,8 @@ func exitExpansionReachable(
 
 	entryCategories := entryPathCategories(base)
 
-	if len(entryCategories) > 0 && !index.ChainReachable(entryCategories) {
+	if len(entryCategories) > 0 &&
+		index.ChainReachabilityScore(entryCategories) <= 0 {
 		return false
 	}
 

@@ -24,18 +24,6 @@ const (
 	storyUIInterval               = 100 * time.Millisecond
 )
 
-type gaugeReadings struct {
-	clarity map[string]float64
-	snr     map[string]float64
-}
-
-func newGaugeReadings() gaugeReadings {
-	return gaugeReadings{
-		clarity: make(map[string]float64),
-		snr:     make(map[string]float64),
-	}
-}
-
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
@@ -105,8 +93,9 @@ Tick joins the latest measurements from the perspective signals and publishes th
 
 UI events are rate-limited to storyUIInterval. Measurements flood the channel at high frequency
 and selecting one "publish" case per measurement would starve the timer and flood the WebSocket.
-Instead, we accumulate the latest value per source/symbol in local maps and flush them to the
-"ui" broadcast on the timer tick — a single batch per interval regardless of measurement rate.
+Instead, we accumulate the latest value per source/symbol and flush cross-sectional
+means to the "ui" broadcast on the timer tick — a single batch per interval regardless
+of measurement rate.
 */
 func (story *Story) Tick() error {
 	if story.recorder != nil {
@@ -126,17 +115,24 @@ func (story *Story) Tick() error {
 			return story.ctx.Err()
 
 		case <-uiFlush.C:
-			for source, clarity := range latest.clarity {
+			for source := range latest.bySource {
 				if !perspectives.DashboardGaugeSource(source) {
+					continue
+				}
+
+				clarity, count := latest.meanClarity(source)
+
+				if count == 0 {
 					continue
 				}
 
 				frame := map[string]any{
 					"source":     source,
 					"confidence": clarity,
+					"count":      count,
 				}
 
-				if snr := latest.snr[source]; snr > 0 {
+				if snr := latest.meanSNR(source); snr > 0 {
 					frame["snr"] = snr
 				}
 
@@ -146,7 +142,7 @@ func (story *Story) Tick() error {
 			now := time.Now()
 			nowStr := now.UTC().Format(time.RFC3339Nano)
 
-			story.publishEnginePulse(latest.snr, nowStr)
+			story.publishEnginePulse(latest.sourceSNRMeans(), nowStr)
 
 		case row, ok := <-incoming:
 			if !ok {
@@ -201,13 +197,7 @@ func (story *Story) ingestMeasurement(
 	source := measurement.Source.String()
 
 	if source != "" && perspectives.DashboardGaugeSource(source) {
-		if measurement.Confidence > latest.clarity[source] {
-			latest.clarity[source] = measurement.Confidence
-		}
-
-		if measurement.SNR > latest.snr[source] {
-			latest.snr[source] = measurement.SNR
-		}
+		latest.record(source, measurement.Symbol, measurement.Confidence, measurement.SNR)
 	}
 
 	if measurement.Symbol == "" || measurement.Last <= 0 {
