@@ -157,11 +157,9 @@ func (crypto *Crypto) handleAction(action perspectives.Action) {
 			return
 		}
 
-		if _, pending := crypto.pendingOrders.Load(action.Symbol); pending {
+		if _, loaded := crypto.pendingOrders.LoadOrStore(action.Symbol, struct{}{}); loaded {
 			return
 		}
-
-		crypto.pendingOrders.Store(action.Symbol, struct{}{})
 
 		defer crypto.pendingOrders.Delete(action.Symbol)
 	}

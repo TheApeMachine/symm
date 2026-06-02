@@ -28,12 +28,14 @@ See https://docs.kraken.com/api/docs/websocket-v2/add_order/
 type OrderType string
 
 const (
-	Limit           OrderType = "limit"
-	Market          OrderType = "market"
-	StopLoss        OrderType = "stop-loss"
-	StopLossLimit   OrderType = "stop-loss-limit"
-	TakeProfit      OrderType = "take-profit"
-	TakeProfitLimit OrderType = "take-profit-limit"
+	Limit             OrderType = "limit"
+	Market            OrderType = "market"
+	StopLoss          OrderType = "stop-loss"
+	StopLossLimit     OrderType = "stop-loss-limit"
+	TakeProfit        OrderType = "take-profit"
+	TakeProfitLimit   OrderType = "take-profit-limit"
+	TrailingStop      OrderType = "trailing-stop"
+	TrailingStopLimit OrderType = "trailing-stop-limit"
 )
 
 type Side string

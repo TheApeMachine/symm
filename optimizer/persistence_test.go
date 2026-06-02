@@ -224,7 +224,20 @@ func TestSubsampleMeasurements(t *testing.T) {
 
 			convey.So(len(sampled), convey.ShouldEqual, 100)
 			convey.So(sampled[0].Last, convey.ShouldEqual, 0)
-			convey.So(sampled[1].Last, convey.ShouldEqual, 10)
+			convey.So(sampled[len(sampled)-1].Last, convey.ShouldEqual, 999)
+		})
+
+		convey.Convey("It should preserve tail coverage for non-divisor lengths", func() {
+			shortRows := make([]perspectives.Measurement, 199)
+
+			for index := range shortRows {
+				shortRows[index] = perspectives.Measurement{Symbol: "BTC/EUR", Last: float64(index)}
+			}
+
+			sampled := SubsampleMeasurements(shortRows, 100)
+
+			convey.So(len(sampled), convey.ShouldEqual, 100)
+			convey.So(sampled[len(sampled)-1].Last, convey.ShouldBeGreaterThanOrEqualTo, 150)
 		})
 	})
 }

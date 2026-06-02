@@ -250,7 +250,39 @@ func TestReplaySimulationReentryCooldown(t *testing.T) {
 		result := NewReplaySimulation(ctx, branches, rows).Result()
 
 		convey.Convey("It should suppress immediate re-entry churn", func() {
+			convey.So(result.ClosedTrades, convey.ShouldBeGreaterThan, 0)
 			convey.So(result.ClosedTrades, convey.ShouldBeLessThan, 120)
+		})
+
+		convey.Convey("It should allow first entry after a delayed buy signal", func() {
+			delayedRows := make([]perspectives.Measurement, 0, 1200)
+
+			for index := range 1200 {
+				price := 100.0
+
+				if index%2 == 1 {
+					price = 101.0
+				}
+
+				snr := 0.0
+
+				if index >= 8 {
+					snr = 2
+				}
+
+				delayedRows = append(delayedRows, perspectives.Measurement{
+					Symbol:   "BTC/EUR",
+					Source:   perspectives.SourceFluid,
+					Category: perspectives.CategoryLaminar,
+					SNR:      snr,
+					Last:     price,
+				})
+			}
+
+			delayedResult := NewReplaySimulation(ctx, branches, delayedRows).Result()
+
+			convey.So(delayedResult.ClosedTrades, convey.ShouldBeGreaterThan, 0)
+			convey.So(delayedResult.ClosedTrades, convey.ShouldBeLessThan, 120)
 		})
 	})
 }

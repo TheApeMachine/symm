@@ -37,9 +37,13 @@ var tuneCmd = &cobra.Command{
 			)
 		}
 
-		if maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag); err != nil {
+		maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
+
+		if err != nil {
 			return err
-		} else if maxMeasurements > 0 && len(rows) > maxMeasurements {
+		}
+
+		if maxMeasurements > 0 && len(rows) > maxMeasurements {
 			fmt.Fprintf(
 				os.Stderr,
 				"symm tune: subsampling %d measurements to %d rows\n",
@@ -91,25 +95,17 @@ var tuneCmd = &cobra.Command{
 			optimizer.TuneOptions{
 				OutputPath:          outputPath,
 				CandidateReportPath: tuneCandidateReportPath(cmd),
-				MaxMeasurements: func() int {
-					maxMeasurements, flagErr := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
-
-					if flagErr != nil {
-						return optimizer.DefaultTuneMaxMeasurements
-					}
-
-					return maxMeasurements
-				}(),
-				Workers:           scanOptions.Workers,
-				MaxThresholds:     scanOptions.MaxThresholds,
-				BeamWidth:         scanOptions.BeamWidth,
-				CandidateLimit:    scanOptions.CandidateLimit,
-				MaxReasoningSteps: scanOptions.MaxReasoningSteps,
-				Hybrid:            hybridEnabled,
-				HybridSeedCount:   hybridSeeds,
-				ShallowDepth:      shallowDepth,
-				MCTSIterations:    mctsIterations,
-				Guard:             guardOptions,
+				MaxMeasurements:     maxMeasurements,
+				Workers:             scanOptions.Workers,
+				MaxThresholds:       scanOptions.MaxThresholds,
+				BeamWidth:           scanOptions.BeamWidth,
+				CandidateLimit:      scanOptions.CandidateLimit,
+				MaxReasoningSteps:   scanOptions.MaxReasoningSteps,
+				Hybrid:              hybridEnabled,
+				HybridSeedCount:     hybridSeeds,
+				ShallowDepth:        shallowDepth,
+				MCTSIterations:      mctsIterations,
+				Guard:               guardOptions,
 				OnBest: func(best optimizer.BestTree) {
 					fmt.Fprintf(
 						os.Stderr,

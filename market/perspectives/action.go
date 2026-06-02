@@ -1,6 +1,7 @@
 package perspectives
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -132,18 +133,20 @@ func OrderTypeFromActionType(actionType ActionType) (trading.OrderType, error) {
 		return trading.Limit, nil
 	case ActionMarket, ActionSettlePosition:
 		return trading.Market, nil
-	case ActionStopLoss, ActionTrailingStop:
+	case ActionStopLoss:
 		return trading.StopLoss, nil
-	case ActionStopLossLimit, ActionTrailingStopLimit:
+	case ActionStopLossLimit:
 		return trading.StopLossLimit, nil
+	case ActionTrailingStop:
+		return trading.TrailingStop, nil
+	case ActionTrailingStopLimit:
+		return trading.TrailingStopLimit, nil
 	case ActionTakeProfit:
 		return trading.TakeProfit, nil
 	case ActionTakeProfitLimit:
 		return trading.TakeProfitLimit, nil
 	default:
-		return "", errnie.Require(map[string]any{
-			"actionType": actionType,
-		})
+		return "", fmt.Errorf("unsupported actionType: %v", actionType)
 	}
 }
 

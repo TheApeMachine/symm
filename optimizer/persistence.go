@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,20 +146,18 @@ func SubsampleMeasurements(
 		return rows
 	}
 
-	stride := len(rows) / maxRows
-
-	if stride < 1 {
-		stride = 1
-	}
-
 	sampled := make([]perspectives.Measurement, 0, maxRows)
+	lastIndex := len(rows) - 1
+	step := float64(lastIndex) / float64(maxRows-1)
 
-	for index := 0; index < len(rows); index += stride {
-		sampled = append(sampled, rows[index])
+	for sampleIndex := range maxRows {
+		index := int(math.Round(step * float64(sampleIndex)))
 
-		if len(sampled) >= maxRows {
-			break
+		if index > lastIndex {
+			index = lastIndex
 		}
+
+		sampled = append(sampled, rows[index])
 	}
 
 	return sampled

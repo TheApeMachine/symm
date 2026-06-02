@@ -52,7 +52,7 @@ func (desk *Desk) Halted() bool {
 }
 
 func (desk *Desk) AddOrder(action perspectives.Action) error {
-	if desk.orders.Halted() {
+	if desk.Halted() {
 		return errnie.Error(fmt.Errorf("order circuit breaker tripped"))
 	}
 

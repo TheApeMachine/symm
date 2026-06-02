@@ -170,11 +170,9 @@ func scaleReentryTickCooldown(tapeLen int) int {
 		return DefaultReentryTickCooldown
 	}
 
-	if tapeLen >= DefaultReentryTickCooldown*10 {
-		return DefaultReentryTickCooldown
-	}
+	scaled := max(1, tapeLen/100)
 
-	return max(1, tapeLen/100)
+	return min(scaled, DefaultReentryTickCooldown)
 }
 
 func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
@@ -335,7 +333,9 @@ func (ledger *replayLedger) onTick(symbol string) {
 		return
 	}
 
-	ledger.ticksSinceClose[symbol]++
+	if ticksSinceClose, tracked := ledger.ticksSinceClose[symbol]; tracked {
+		ledger.ticksSinceClose[symbol] = ticksSinceClose + 1
+	}
 }
 
 func (ledger *replayLedger) apply(
@@ -366,7 +366,7 @@ func (ledger *replayLedger) openLong(symbol string, price float64) {
 		return
 	}
 
-	if ticksSinceClose, blocked := ledger.ticksSinceClose[symbol]; blocked &&
+	if ticksSinceClose, tracked := ledger.ticksSinceClose[symbol]; tracked &&
 		ticksSinceClose < ledger.reentryTickCooldown {
 		return
 	}
@@ -395,7 +395,7 @@ func (ledger *replayLedger) closeLong(symbol string, price float64) {
 	ledger.realized += gross - ledger.costs.TakerFeePct
 	ledger.closedTrades++
 	delete(ledger.positions, symbol)
-	delete(ledger.ticksSinceClose, symbol)
+	ledger.ticksSinceClose[symbol] = 0
 }
 
 func (ledger *replayLedger) observations(

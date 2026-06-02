@@ -122,6 +122,10 @@ func (search *ScanSearch) emitWidenExpansions(
 		}
 
 		for _, exit := range rankedExits[:limit] {
+			if len(exit.branches) == 0 {
+				continue
+			}
+
 			if search.coOccurrence != nil &&
 				!entryExitPairReachable(search.coOccurrence, base, exit.branches) {
 				continue

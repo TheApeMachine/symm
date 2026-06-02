@@ -198,6 +198,30 @@ func TestScanSearchProgressesBeyondDepthTwo(t *testing.T) {
 		search.Run()
 
 		convey.Convey("It should reach reasoning depth beyond two", func() {
+			entry := perspectives.Branch{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Action:      perspectives.Action{Type: perspectives.ActionLimit},
+			}
+			exit := perspectives.Branch{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Action:      perspectives.Action{Type: perspectives.ActionSettlePosition},
+			}
+			gate := perspectives.Branch{
+				Category:    perspectives.CategoryRiskOnSurge,
+				Observation: perspectives.ObservationNone,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1,
+				ValueSet:    true,
+			}
+			nested, ok := nestGateUnderEntry(perspectives.BranchList{entry, exit}, gate)
+			baselineDepth := reasoningDepth(nested)
+
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(len(scored), convey.ShouldBeGreaterThan, 0)
+
 			deepest := 0
 
 			for _, candidate := range scored {
@@ -208,7 +232,7 @@ func TestScanSearchProgressesBeyondDepthTwo(t *testing.T) {
 				}
 			}
 
-			convey.So(deepest, convey.ShouldBeGreaterThanOrEqualTo, 3)
+			convey.So(deepest, convey.ShouldBeGreaterThan, baselineDepth)
 		})
 	})
 }

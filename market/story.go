@@ -186,6 +186,10 @@ func (story *Story) ingestMeasurement(
 		}
 	}
 
+	if measurement.Symbol == "" || measurement.Last <= 0 {
+		return
+	}
+
 	if story.tree == nil {
 		tree, err := perspectives.NewTree(story.ctx, []perspectives.Measurement{})
 
@@ -213,10 +217,6 @@ func (story *Story) ingestMeasurement(
 	)
 
 	if actionType == nil || *actionType == perspectives.ActionNone {
-		return
-	}
-
-	if measurement.Symbol == "" || measurement.Last <= 0 {
 		return
 	}
 

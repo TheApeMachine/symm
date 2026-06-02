@@ -53,5 +53,23 @@ func TestOrderTypeFromActionType(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(orderType, convey.ShouldEqual, trading.StopLossLimit)
 		})
+
+		convey.Convey("It should map trailing stops to Kraken trailing-stop types", func() {
+			trailingStop, err := OrderTypeFromActionType(ActionTrailingStop)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(trailingStop, convey.ShouldEqual, trading.TrailingStop)
+
+			trailingStopLimit, err := OrderTypeFromActionType(ActionTrailingStopLimit)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(trailingStopLimit, convey.ShouldEqual, trading.TrailingStopLimit)
+		})
+
+		convey.Convey("It should reject unsupported action types", func() {
+			_, err := OrderTypeFromActionType(ActionNone)
+
+			convey.So(err, convey.ShouldNotBeNil)
+		})
 	})
 }

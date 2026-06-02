@@ -161,8 +161,16 @@ func (search *ScanSearch) run() ScanStats {
 
 		previous := survivors
 		branchers := search.rankedEntryBranchers()
-		deepenBudget := max(1, deepeningBudget/2)
-		widenBudget := max(1, deepeningBudget-deepenBudget)
+		var deepenBudget int
+		var widenBudget int
+
+		if deepeningBudget == 0 {
+			deepenBudget = 0
+			widenBudget = 0
+		} else {
+			deepenBudget = deepeningBudget / 2
+			widenBudget = deepeningBudget - deepenBudget
+		}
 
 		search.phaseCandidates = 0
 		search.phaseCandidateLimit = deepenBudget
