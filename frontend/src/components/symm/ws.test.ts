@@ -1,4 +1,3 @@
-
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { OhlcBar } from "#/components/symm/ohlc-data-provider";
@@ -20,7 +19,7 @@ describe("registerTradeChart", () => {
 	it("routes ingested candle bars to registered charts", () => {
 		const bars: OhlcBar[] = [];
 
-		registerTradeChart("BTC/EUR", (bar) => {
+		registerTradeChart(OhlcDataProvider, "BTC/EUR", (bar) => {
 			bars.push(bar);
 		});
 
@@ -39,4 +38,3 @@ describe("registerTradeChart", () => {
 		expect(bars[0]?.close).toBe(1.5);
 	});
 });
-

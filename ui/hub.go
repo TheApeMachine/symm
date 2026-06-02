@@ -87,7 +87,14 @@ func NewHub(
 	hub.subscribers["ui"] = hub.broadcasts["ui"].Subscribe(uiHubSubscriberID, 128)
 	hub.broadcasts[uiResyncChannel] = pool.CreateBroadcastGroup(uiResyncChannel, 10*time.Millisecond)
 
-	addr := viper.GetViper().GetString("ui.addr")
+	addr := strings.TrimSpace(viper.GetString("ui.addr"))
+
+	if addr == "" {
+		errnie.Error(errnie.Require(map[string]any{
+			"ui.addr": addr,
+		}))
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)
 

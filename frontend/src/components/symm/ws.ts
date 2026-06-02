@@ -1,8 +1,9 @@
-import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
+import type { OhlcStore } from "#/components/symm/ohlc-data-provider";
 
 const unregisterFns = new Map<string, () => void>();
 
 export const registerTradeChart = (
+	ohlcStore: OhlcStore,
 	symbol: string,
 	appendBar: (bar: {
 		sec: number;
@@ -14,7 +15,7 @@ export const registerTradeChart = (
 	}) => void,
 ) => {
 	unregisterTradeChart(symbol);
-	unregisterFns.set(symbol, OhlcDataProvider.registerSymbol(symbol, appendBar));
+	unregisterFns.set(symbol, ohlcStore.registerSymbol(symbol, appendBar));
 
 	return () => unregisterTradeChart(symbol);
 };

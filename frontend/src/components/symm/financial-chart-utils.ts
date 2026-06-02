@@ -1,4 +1,3 @@
-
 import {
 	AnnotationHoverModifier,
 	DiscontinuousDateAxis,
@@ -32,6 +31,8 @@ import { SciTraderDarkTheme } from "scichart-financial-tools";
 
 export const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 export const VISIBLE_CANDLE_COUNT = 300;
+const DEFAULT_BAR_STEP_MS = 60_000;
+const DEFAULT_PAD_MS = 60_000;
 
 export const candleChartXExtents = (
 	firstX: number,
@@ -44,8 +45,8 @@ export const candleChartXExtents = (
 			? (lastX - firstX) / (barCountInWindow - 1)
 			: priorBarX !== undefined
 				? lastX - priorBarX
-				: 60;
-	const pad = Math.max(barStep * 2, 60);
+				: DEFAULT_BAR_STEP_MS;
+	const pad = Math.max(barStep * 2, DEFAULT_PAD_MS);
 
 	return { min: firstX - pad, max: lastX + pad };
 };
@@ -56,7 +57,7 @@ export const shiftTrailingVisibleRange = (
 	lastX: number,
 	barStep: number,
 ): { min: number; max: number } => {
-	const followTolerance = Math.max(barStep * 2, 60);
+	const followTolerance = Math.max(barStep * 2, DEFAULT_PAD_MS);
 	const span = visibleMax - visibleMin;
 	const pad = followTolerance / 2;
 
@@ -77,7 +78,8 @@ export const resolveFollowVisibleRange = (
 	const nativeX = ohlc.getNativeXValues();
 	const lastIndex = barCount - 1;
 	const lastX = nativeX.get(lastIndex);
-	const barStep = lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : 60;
+	const barStep =
+		lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : DEFAULT_BAR_STEP_MS;
 
 	if (mode === "live" && currentRange !== undefined) {
 		const shifted = shiftTrailingVisibleRange(
@@ -395,4 +397,3 @@ registerType(
 	},
 	true,
 );
-

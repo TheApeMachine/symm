@@ -33,7 +33,20 @@ def slice_archive(source: pathlib.Path, output: pathlib.Path) -> int:
 
     for index, match in enumerate(matches):
         relative = pathlib.PurePosixPath(match.group(1).lstrip("/"))
-        destination = output / pathlib.Path(*relative.parts)
+
+        if not relative.parts or any(
+            part in ("", ".", "..") or "/" in part or "\\" in part
+            for part in relative.parts
+        ):
+            raise SystemExit(f"unsafe archive member path: {relative!s}")
+
+        destination = output.joinpath(*relative.parts)
+        output_root = output.resolve(strict=False)
+        destination_root = destination.resolve(strict=False)
+
+        if output_root not in destination_root.parents and destination_root != output_root:
+            raise SystemExit(f"archive member escapes output directory: {relative!s}")
+
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         destination.parent.mkdir(parents=True, exist_ok=True)

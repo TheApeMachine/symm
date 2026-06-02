@@ -1,4 +1,3 @@
-
 import { memo, useCallback } from "react";
 import { SciChartGroup, SciChartReact } from "scichart-react";
 
@@ -7,6 +6,7 @@ import {
 	type TTradeChartInitResult,
 } from "#/components/symm/init-trade-chart";
 import { registerTradeChart } from "#/components/symm/ws";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 
 type TradeChartProps = {
 	symbol: string;
@@ -17,6 +17,8 @@ export const TradeChart = memo(function TradeChart({
 	symbol,
 	className = "",
 }: TradeChartProps) {
+	const stores = useSymmTelemetryStores();
+
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) => {
 			if (typeof rootElement === "string") {
@@ -30,8 +32,8 @@ export const TradeChart = memo(function TradeChart({
 
 	const onInit = useCallback(
 		(result: TTradeChartInitResult) =>
-			registerTradeChart(symbol, result.appendBar),
-		[symbol],
+			registerTradeChart(stores.ohlc, symbol, result.appendBar),
+		[stores.ohlc, symbol],
 	);
 
 	return (
@@ -70,4 +72,3 @@ export const TradeChartGrid = memo(function TradeChartGrid({
 		</div>
 	);
 });
-

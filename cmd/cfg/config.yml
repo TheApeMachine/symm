@@ -1,6 +1,5 @@
 market:
   quote_currency: EUR
-  symbols: []
   anchor_symbol: ""
   default_symbols:
     - BTC/EUR
@@ -30,4 +29,5 @@ signals:
     condition_switch: 1000
 
 ui:
-  heartbeat_interval: 5s
+  addr: 127.0.0.1:8765
+  heartbeat_interval: 1s

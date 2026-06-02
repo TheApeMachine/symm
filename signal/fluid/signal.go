@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
@@ -156,8 +155,7 @@ func (signal *Signal) publishField(state *FluidSymbol) {
 		return
 	}
 
-	symbols := viper.GetStringSlice("market.symbols")
-	rows := make([]map[string]any, 0, len(symbols))
+	rows := make([]map[string]any, 0, 64)
 
 	signal.symbols.Range(func(_, value any) bool {
 		row := value.(*FluidSymbol).Row()

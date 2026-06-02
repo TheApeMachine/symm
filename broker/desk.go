@@ -64,7 +64,17 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		return errnie.Error(err)
 	}
 
-	result := <-resultCh
+	defer desk.orders.ReleaseOrderResult(resultCh)
+
+	var result trading.OrderResult
+
+	select {
+	case result = <-resultCh:
+	case <-desk.ctx.Done():
+		return errnie.Error(fmt.Errorf("order cancelled: %w", desk.ctx.Err()))
+	case <-time.After(trading.AckTimeout()):
+		return errnie.Error(fmt.Errorf("order %s ack timeout", clOrdID))
+	}
 
 	if !result.Success {
 		if result.Error != "" {

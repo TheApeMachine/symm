@@ -1,9 +1,7 @@
-
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 import type { SciChart3DSurface } from "scichart";
 
-import { FluidDataProvider } from "#/components/symm/fluid-data-provider";
 import { FluidVisualEditor } from "#/components/symm/FluidVisualEditor";
 import {
 	createDrawExample,
@@ -22,6 +20,7 @@ import {
 	readHeightMatrix,
 	StreamDataProvider,
 } from "#/lib/symm/stream-data-provider";
+import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 import { gridFromPayload, gridFromSnapshot } from "#/lib/symm/fluid-grid";
 import {
 	isFieldSnapshotEvent,
@@ -55,6 +54,7 @@ const heightsFromPayload = (
 };
 
 const FluidFieldSurfaceChart = memo(function FluidFieldSurfaceChart() {
+	const stores = useSymmTelemetryStores();
 	const [editMode, setEditMode] = useState(false);
 	const [visualParams, setVisualParams] = useState(loadFluidVisualParams);
 	const controlsRef = useRef<FluidSurfaceControls | null>(null);
@@ -92,9 +92,8 @@ const FluidFieldSurfaceChart = memo(function FluidFieldSurfaceChart() {
 			controlsRef.current = initResult.controls;
 			initResult.controls.applyVisualParams(loadFluidVisualParams());
 
-			const unregister = FluidDataProvider.registerSink(
-				initResult.controls.update,
-			);
+			const fluidStore = stores.fluid;
+			const unregister = fluidStore.registerSink(initResult.controls.update);
 
 			return () => {
 				unregister();
@@ -102,7 +101,7 @@ const FluidFieldSurfaceChart = memo(function FluidFieldSurfaceChart() {
 				initResult.controls.dispose();
 			};
 		},
-		[],
+		[stores.fluid],
 	);
 
 	return (
@@ -203,4 +202,3 @@ export const GenericSurfaceChart = memo(function GenericSurfaceChart({
 
 	return <GenericStreamSurfaceChart panel={panel} />;
 });
-

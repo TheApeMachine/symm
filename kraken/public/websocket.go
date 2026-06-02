@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/focus"
 )
 
 var socket *WebSocket
@@ -39,49 +41,37 @@ type SocketMessage struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// ohlcBar tracks the running OHLC state within a minute for one symbol.
-type ohlcBar struct {
-	open, high, low, close float64
-	intervalSec            int64
-}
-
-// tickerFrame is the minimal subset of a Kraken v2 ticker data row needed for OHLC.
-type tickerFrame struct {
-	Symbol string  `json:"symbol"`
-	Last   float64 `json:"last"`
-}
-
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q
-	conn        *websocket.Conn
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	recorder    io.Writer
-	pairs       []string
-	ui          *qpool.BroadcastGroup
-	candles     map[string]*ohlcBar
-	watchSet    map[string]struct{}
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q
+	conn           *websocket.Conn
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	recorder       io.Writer
+	pairs          []string
+	ui             *qpool.BroadcastGroup
+	streams        *focus.Set
+	ohlcSubscribed map[string]struct{}
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
+func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
 		socket = &WebSocket{
-			ctx:         ctx,
-			cancel:      cancel,
-			pool:        pool,
-			broadcasts:  make(map[string]*qpool.BroadcastGroup),
-			subscribers: make(map[string]*qpool.Subscriber),
-			candles:     make(map[string]*ohlcBar),
-			watchSet:    buildWatchSet(viper.GetStringSlice("market.symbols")),
+			ctx:            ctx,
+			cancel:         cancel,
+			pool:           pool,
+			broadcasts:     make(map[string]*qpool.BroadcastGroup),
+			subscribers:    make(map[string]*qpool.Subscriber),
+			ohlcSubscribed: make(map[string]struct{}),
 		}
 	})
 
 	socket.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	socket.bindChartStreams(streams)
 
 	for _, channel := range []string{
 		"raw", "level3",
@@ -196,66 +186,104 @@ func (ws *WebSocket) Tick() error {
 			})
 		}
 
-		if message.Channel == TickerChannel {
-			ws.applyTickers(message)
+		if message.Channel == CandlesChannel {
+			ws.applyOhlc(message)
 		}
 	}
 }
 
-// applyTickers builds per-symbol 1-minute OHLC bars from ticker last-prices and
-// publishes candle_bar events to the "ui" broadcast. Only symbols listed in
-// market.symbols are published; an empty list passes all symbols.
-func (ws *WebSocket) applyTickers(msg SocketMessage) {
+func (ws *WebSocket) bindChartStreams(streams *focus.Set) {
+	if streams == nil {
+		return
+	}
+
+	ws.streams = streams
+	streams.SetStreamNotifier(ws.onStreamChange)
+	ws.ensureOhlcSubscription(focus.AnchorSymbol())
+
+	for _, symbol := range streams.Snapshot() {
+		ws.ensureOhlcSubscription(symbol)
+	}
+}
+
+func (ws *WebSocket) onStreamChange(symbol string, added bool) {
+	if !added {
+		return
+	}
+
+	ws.ensureOhlcSubscription(symbol)
+}
+
+func (ws *WebSocket) ensureOhlcSubscription(symbol string) {
+	symbol = strings.TrimSpace(symbol)
+
+	if symbol == "" {
+		return
+	}
+
+	if _, known := ws.ohlcSubscribed[symbol]; known {
+		return
+	}
+
+	ws.ohlcSubscribed[symbol] = struct{}{}
+
+	outbound := ws.broadcasts["kraken:public"]
+
+	if outbound == nil {
+		return
+	}
+
+	outbound.Send(&qpool.QValue[any]{
+		Value: OhlcSubscribeFrame(symbol),
+	})
+}
+
+// applyOhlc publishes Kraken v2 ohlc rows as candle_bar frames for chart-stream
+// symbols only. Updates share interval_begin so the frontend updates bars in place.
+func (ws *WebSocket) applyOhlc(msg SocketMessage) {
 	if ws.ui == nil {
 		return
 	}
 
-	var frames []tickerFrame
-	if err := json.Unmarshal(msg.Data, &frames); err != nil {
+	candles, err := DecodeOhlc(&msg)
+
+	if err != nil {
+		errnie.Error(err)
 		return
 	}
 
-	now := time.Now()
-	nowStr := now.UTC().Format(time.RFC3339Nano)
-	floor := (now.Unix() / 60) * 60
+	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 
-	for _, t := range frames {
-		if t.Last <= 0 || t.Symbol == "" {
+	for _, candle := range candles {
+		if candle.Symbol == "" {
 			continue
 		}
-		if len(ws.watchSet) > 0 {
-			if _, ok := ws.watchSet[t.Symbol]; !ok {
-				continue
-			}
+
+		if ws.streams != nil && !ws.streams.Streams(candle.Symbol) {
+			continue
 		}
 
-		bar, exists := ws.candles[t.Symbol]
-		if !exists || bar.intervalSec != floor {
-			ws.candles[t.Symbol] = &ohlcBar{
-				open: t.Last, high: t.Last, low: t.Last, close: t.Last,
-				intervalSec: floor,
-			}
-			bar = ws.candles[t.Symbol]
-		} else {
-			bar.close = t.Last
-			if t.Last > bar.high {
-				bar.high = t.Last
-			}
-			if t.Last < bar.low {
-				bar.low = t.Last
-			}
+		sec, secErr := CandleIntervalSec(candle)
+
+		if secErr != nil {
+			errnie.Error(secErr)
+			continue
 		}
 
 		ws.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":  "candle_bar",
-			"ts":     nowStr,
-			"symbol": t.Symbol,
-			"sec":    bar.intervalSec,
-			"open":   bar.open,
-			"high":   bar.high,
-			"low":    bar.low,
-			"close":  bar.close,
-			"volume": 0.0,
+			"event":          "candle_bar",
+			"ts":             nowStr,
+			"symbol":         candle.Symbol,
+			"sec":            sec,
+			"interval_begin": candle.IntervalBegin,
+			"interval":       candle.Interval,
+			"open":           candle.Open,
+			"high":           candle.High,
+			"low":            candle.Low,
+			"close":          candle.Close,
+			"volume":         candle.Volume,
+			"trades":         candle.Trades,
+			"vwap":           candle.VWAP,
 		}})
 	}
 }
@@ -268,14 +296,4 @@ func (ws *WebSocket) Close() error {
 	}
 
 	return errnie.Error(ws.conn.Close())
-}
-
-func buildWatchSet(symbols []string) map[string]struct{} {
-	watchSet := make(map[string]struct{}, len(symbols))
-
-	for _, symbol := range symbols {
-		watchSet[symbol] = struct{}{}
-	}
-
-	return watchSet
 }

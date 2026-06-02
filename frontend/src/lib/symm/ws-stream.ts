@@ -1,4 +1,3 @@
-
 import { useCallback } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
 
@@ -69,6 +68,8 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 		TickStore.ingestHeartbeat(payload);
 		return;
 	}
+
+	TickStore.ingest();
 
 	if (isAuditEvent(payload)) {
 		stores.audit.ingest(payload);
@@ -174,4 +175,3 @@ export const useSymmStream = () => {
 		onError: () => ConnectionStore.set(false),
 	});
 };
-

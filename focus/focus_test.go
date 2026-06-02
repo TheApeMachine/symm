@@ -58,17 +58,35 @@ func TestSetRemove(t *testing.T) {
 }
 
 func TestAnchorSymbol(t *testing.T) {
-	Convey("Given market config", t, func() {
-		viper.Set("market.anchor_symbol", "ETH/EUR")
-		viper.Set("market.default_symbols", []string{"BTC/EUR"})
+	t.Cleanup(viper.Reset)
 
+	Convey("Given market config", t, func() {
 		Convey("It should prefer market.anchor_symbol", func() {
+			viper.Set("market.anchor_symbol", "ETH/EUR")
+			viper.Set("market.default_symbols", []string{"BTC/EUR"})
+
 			So(AnchorSymbol(), ShouldEqual, "ETH/EUR")
+		})
+
+		Convey("It should fall back to the first default symbol", func() {
+			viper.Set("market.anchor_symbol", "")
+			viper.Set("market.default_symbols", []string{"BTC/EUR"})
+
+			So(AnchorSymbol(), ShouldEqual, "BTC/EUR")
+		})
+
+		Convey("It should panic when anchor config is missing", func() {
+			viper.Set("market.anchor_symbol", "")
+			viper.Set("market.default_symbols", []string{})
+
+			So(func() { AnchorSymbol() }, ShouldPanic)
 		})
 	})
 }
 
 func TestSetStreams(t *testing.T) {
+	t.Cleanup(viper.Reset)
+
 	Convey("Given a focus set with one open position", t, func() {
 		viper.Set("market.anchor_symbol", "")
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})

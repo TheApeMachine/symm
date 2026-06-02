@@ -40,7 +40,7 @@ const DEFAULT_GAUGE_LABELS: Record<string, string> = {
 	causal: "Causal",
 	depthflow: "Depth",
 	leadlag: "LeadLag",
-	liquidity: "Basis",
+	liquidity: "Liquidity",
 	sentiment: "Sent",
 };
 
@@ -112,7 +112,7 @@ export const normalizeLayoutDocument = (
 
 export const gaugeSourcesFor = (panel?: LayoutPanel): string[] => {
 	if (panel?.sources !== undefined && panel.sources.length > 0) {
-		return panel.sources;
+		return [...panel.sources];
 	}
 
 	return [...DEFAULT_GAUGE_SOURCES];

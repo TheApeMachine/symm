@@ -1,4 +1,3 @@
-
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
@@ -82,8 +81,8 @@ describe("PredictionsDataProvider", () => {
 		unregister();
 
 		expect(readings).toEqual([
-			{ kind: "average", x: firstSec, value: 0.005 },
-			{ kind: "error", x: firstSec, value: 0.002 },
+			{ kind: "average", x: firstSec, value: 0.00125 },
+			{ kind: "error", x: firstSec, value: 0.0005 },
 		]);
 	});
 
@@ -153,4 +152,3 @@ describe("PredictionsDataProvider", () => {
 		});
 	});
 });
-

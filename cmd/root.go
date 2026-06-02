@@ -62,11 +62,13 @@ var (
 				errnie.Error(err)
 			}).Value()
 
+			streams := focus.NewSet()
+
 			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
 
 			engine.AddSystems(
 				ui.NewHub(cmd.Context(), pool),
-				public.NewWebSocket(cmd.Context(), pool),
+				public.NewWebSocket(cmd.Context(), pool, streams),
 				private.NewWebSocket(
 					cmd.Context(),
 					pool,
@@ -79,15 +81,15 @@ var (
 				cvd.NewSignal(cmd.Context(), pool),
 				depthflow.NewSignal(cmd.Context(), pool),
 				exhaust.NewSignal(cmd.Context(), pool),
-				fluid.NewSignal(cmd.Context(), pool, focus.NewSet()),
+				fluid.NewSignal(cmd.Context(), pool, streams),
 				hawkes.NewSignal(cmd.Context(), pool),
 				leadlag.NewSignal(cmd.Context(), pool),
 				liquidity.NewSignal(cmd.Context(), pool),
 				pumpdump.NewSignal(cmd.Context(), pool),
 				sentiment.NewSignal(cmd.Context(), pool),
 				toxicity.NewToxicity(cmd.Context(), pool),
-				market.NewStory(cmd.Context(), pool),
-				trader.NewCrypto(cmd.Context(), pool),
+				market.NewStory(cmd.Context(), pool, streams),
+				trader.NewCrypto(cmd.Context(), pool, streams),
 			)
 
 			activate.Boot("engine.Start")
@@ -170,12 +172,8 @@ func initConfig() {
 
 	viper.WatchConfig()
 
-	if len(viper.GetStringSlice("market.symbols")) == 0 {
-		defaults := viper.GetStringSlice("market.default_symbols")
-
-		if len(defaults) > 0 {
-			viper.Set("market.symbols", defaults)
-		}
+	if strings.TrimSpace(viper.GetString("ui.addr")) == "" {
+		viper.Set("ui.addr", "127.0.0.1:8765")
 	}
 }
 

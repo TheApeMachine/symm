@@ -88,6 +88,8 @@ func TestEmit(t *testing.T) {
 
 func TestPublishField(t *testing.T) {
 	Convey("Given a fluid signal bound to the focus set", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.anchor_symbol", "BTC/EUR")
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

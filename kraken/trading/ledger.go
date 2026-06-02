@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -111,7 +110,40 @@ func (ledger *Ledger) Halted() bool {
 	return ledger.tripped.Load()
 }
 
-func (ledger *Ledger) Register(clOrdID string) <-chan OrderResult {
+func (ledger *Ledger) RawGroup() *qpool.BroadcastGroup {
+	return ledger.raw
+}
+
+func (ledger *Ledger) ReleaseResult(resultCh chan OrderResult) {
+	select {
+	case <-resultCh:
+	default:
+	}
+
+	ledger.resultPool.Put(resultCh)
+}
+
+func (ledger *Ledger) Unregister(clOrdID string) {
+	ledger.mu.Lock()
+	entry, ok := ledger.pending[clOrdID]
+
+	if !ok {
+		ledger.mu.Unlock()
+
+		return
+	}
+
+	delete(ledger.pending, clOrdID)
+	ledger.mu.Unlock()
+
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+
+	ledger.ReleaseResult(entry.result)
+}
+
+func (ledger *Ledger) Register(clOrdID string) chan OrderResult {
 	ledger.mu.Lock()
 	defer ledger.mu.Unlock()
 
@@ -183,23 +215,17 @@ func (ledger *Ledger) handle(value any) {
 		return
 	}
 
-	raw, err := sonic.Marshal(frame)
+	success, _ := frame["success"].(bool)
+	errorText, _ := frame["error"].(string)
 
-	if err != nil {
-		errnie.Error(err)
+	resultFrame, _ := frame["result"].(map[string]any)
 
+	if resultFrame == nil {
 		return
 	}
 
-	var ack Ack
-
-	if err := sonic.Unmarshal(raw, &ack); err != nil {
-		errnie.Error(err)
-
-		return
-	}
-
-	clOrdID := ack.Result.ClOrdID
+	clOrdID, _ := resultFrame["cl_ord_id"].(string)
+	orderID, _ := resultFrame["order_id"].(string)
 
 	if clOrdID == "" {
 		return
@@ -207,9 +233,9 @@ func (ledger *Ledger) handle(value any) {
 
 	result := OrderResult{
 		ClOrdID: clOrdID,
-		Success: ack.Success,
-		Error:   ack.Error,
-		OrderID: ack.Result.OrderID,
+		Success: success,
+		Error:   errorText,
+		OrderID: orderID,
 	}
 
 	ledger.resolve(clOrdID, result)
@@ -260,7 +286,6 @@ func (ledger *Ledger) resolve(clOrdID string, result OrderResult) {
 	}
 
 	entry.result <- result
-	ledger.resultPool.Put(entry.result)
 }
 
 func (ledger *Ledger) Close() error {

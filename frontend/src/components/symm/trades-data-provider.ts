@@ -1,4 +1,3 @@
-
 import type { ExecutionFill, WalletPayload } from "#/lib/symm/events";
 import { isExecutionFill, isWalletPayload } from "#/lib/symm/events";
 
@@ -176,7 +175,7 @@ class TradesDataProviderImpl {
 
 	ingestFill(_fill: ExecutionFill) {
 		// Open cards are derived from wallet inventory snapshots. Execution fills can
-		// arrive before the wallet frame and used to create duplicate transient rows,
+		// arrive before the wallet frame and be used to create duplicate transient rows,
 		// so the sidebar keeps fills out of the visible snapshot.
 	}
 
@@ -221,4 +220,3 @@ function createTradesDataProviderImpl() {
 export type TradesStore = ReturnType<typeof createTradesDataProvider>;
 
 export const TradesDataProvider = shared;
-

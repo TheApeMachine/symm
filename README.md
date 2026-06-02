@@ -464,9 +464,9 @@ symm tune
 
 | Component       | Frames emitted                                | Rate                |
 |-----------------|-----------------------------------------------|---------------------|
-| `view.Gauges`   | per-source SNR gauge                          | rate-limited 200 ms |
-| `view.OHLC`     | `candle_bar` (anchor + open-position symbols) | per candle close    |
-| `signal/fluid`  | `field_row` (spatial book grid)               | per book update     |
+| `kraken/market/instrument` | subscribes ticker/book/trade/ohlc for every catalog pair | on catalog update |
+| `kraken/public`            | `candle_bar` (anchor + open-position symbols)            | per ticker frame  |
+| `signal/fluid`             | `field_snapshot` (universe book-flow grid)               | rate-limited 200 ms |
 | `trader.Crypto` | `wallet`, `audit`, fill events                | per event           |
 | `ui.Hub`        | `heartbeat` (seq, queue depth, drop count)    | 250 ms              |
 
@@ -477,12 +477,12 @@ symm tune
 | `confidence` | view.Gauges | per-source SNR gauge value                                |
 | `wallet`     | Crypto      | balance, inventory, marks                                 |
 | `audit`      | Crypto      | decision detail: conviction, edge, playbook, perspectives |
-| `candle_bar` | view.OHLC   | OHLC + volume for chart                                   |
-| `field_row`  | Fluid       | book-flow grid row for spatial visualization              |
+| `candle_bar`     | kraken/public | OHLC + volume for chart                                   |
+| `field_snapshot` | signal/fluid  | aggregated universe surface snapshot                      |
 | `heartbeat`  | Hub         | monotonic seq, queue depth, drop count                    |
 | fill events  | Crypto      | order fill payload                                        |
 
-`view.OHLC` reconciles candle subscriptions against `focus.Set` so chart data is only published for the anchor symbol (BTC/EUR) and symbols currently held. `view.Gauges` publishes `Measurement.Strength` (raw signal energy) as the gauge value; perspective trees still gate on `SNR` after the adaptive noise floor has warmed up (~12 samples per symbol).
+`kraken/market/instrument` subscribes to every pair Kraken lists on the instrument channel; newly listed markets are picked up on the next catalog update. Signals such as `pumpdump`, `fluid`, and `leadlag` consume the shared `raw` bus and do not depend on config symbol lists. `default_symbols` and `anchor_symbol` only choose the dashboard anchor chart. Chart candles use Kraken's [`ohlc` WebSocket channel](https://docs.kraken.com/api/docs/websocket-v2/ohlc) subscribed only for the anchor symbol and open positions; `candle_bar` frames carry `interval_begin`, OHLC, and volume so the frontend updates the forming bar in place.
 
 ## Numeric layer
 

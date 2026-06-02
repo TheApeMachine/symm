@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -21,26 +21,6 @@ const (
 	publishInterval = 200 * time.Millisecond
 	rawSubscriberID = "signal/leadlag:raw"
 )
-
-func resolvedSymbols() []string {
-	symbols := viper.GetStringSlice("market.symbols")
-
-	if len(symbols) > 0 {
-		return symbols
-	}
-
-	defaults := viper.GetStringSlice("market.default_symbols")
-
-	if len(defaults) > 0 {
-		return defaults
-	}
-
-	return []string{"BTC/EUR"}
-}
-
-func anchorSymbol() string {
-	return resolvedSymbols()[0]
-}
 
 /*
 Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
@@ -151,7 +131,8 @@ func (signal *Signal) publish() {
 		return
 	}
 
-	anchorRaw, ok := signal.symbols.Load(anchorSymbol())
+	anchorName := focus.AnchorSymbol()
+	anchorRaw, ok := signal.symbols.Load(anchorName)
 
 	if !ok {
 		return
@@ -161,7 +142,7 @@ func (signal *Signal) publish() {
 	anchorMoved := anchor.change() >= minAnchorMove
 
 	signal.symbols.Range(func(key, value any) bool {
-		if key.(string) == anchorSymbol() {
+		if key.(string) == anchorName {
 			return true
 		}
 

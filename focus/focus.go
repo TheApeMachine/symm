@@ -11,9 +11,9 @@ import (
 )
 
 /*
-AnchorSymbol returns the symbol that always streams on the UI bus alongside
-symbols with open positions. It is read from market.anchor_symbol, then the
-first market.default_symbols entry.
+AnchorSymbol returns the dashboard anchor pair for chart and UI telemetry.
+It is read from market.anchor_symbol, then the first market.default_symbols entry.
+Discovery signals consume every pair the instrument catalog subscribes to.
 */
 func AnchorSymbol() string {
 	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
@@ -32,12 +32,10 @@ func AnchorSymbol() string {
 		}
 	}
 
-	errnie.Error(errnie.Require(map[string]any{
+	panic(errnie.Require(map[string]any{
 		"market.anchor_symbol":   viper.GetString("market.anchor_symbol"),
 		"market.default_symbols": defaults,
 	}))
-
-	return ""
 }
 
 /*
@@ -47,9 +45,12 @@ per-symbol UI frame, so the dashboard bus only carries data for symbols we are
 actually trading. Reads are lock-free; writes serialize and copy-on-write so a
 reader always sees a consistent snapshot.
 */
+type StreamNotifier func(symbol string, added bool)
+
 type Set struct {
-	mu      sync.Mutex
-	symbols atomic.Pointer[map[string]struct{}]
+	mu             sync.Mutex
+	symbols        atomic.Pointer[map[string]struct{}]
+	streamNotifier StreamNotifier
 }
 
 /*
@@ -64,15 +65,32 @@ func NewSet() *Set {
 }
 
 /*
+SetStreamNotifier registers a callback when chart-stream symbols are added or removed.
+*/
+func (set *Set) SetStreamNotifier(notifier StreamNotifier) {
+	set.mu.Lock()
+	defer set.mu.Unlock()
+
+	set.streamNotifier = notifier
+}
+
+/*
 Add marks symbol as in focus.
 */
 func (set *Set) Add(symbol string) {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 
-	next := maps.Clone(*set.symbols.Load())
+	current := *set.symbols.Load()
+
+	if _, ok := current[symbol]; ok {
+		return
+	}
+
+	next := maps.Clone(current)
 	next[symbol] = struct{}{}
 	set.symbols.Store(&next)
+	set.streamNotifierLocked(symbol, true)
 }
 
 /*
@@ -82,9 +100,24 @@ func (set *Set) Remove(symbol string) {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 
-	next := maps.Clone(*set.symbols.Load())
+	current := *set.symbols.Load()
+
+	if _, ok := current[symbol]; !ok {
+		return
+	}
+
+	next := maps.Clone(current)
 	delete(next, symbol)
 	set.symbols.Store(&next)
+	set.streamNotifierLocked(symbol, false)
+}
+
+func (set *Set) streamNotifierLocked(symbol string, added bool) {
+	if set.streamNotifier == nil {
+		return
+	}
+
+	set.streamNotifier(symbol, added)
 }
 
 /*

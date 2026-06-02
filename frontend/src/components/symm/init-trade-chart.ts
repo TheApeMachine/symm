@@ -1,4 +1,3 @@
-
 import {
 	AnnotationHoverModifier,
 	DiscontinuousDateAxis,
@@ -132,7 +131,7 @@ export const createFinancialChart = async (
 
 	const xAxis = new DiscontinuousDateAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Bottom,
-		autoRange: EAutoRange.Always,
+		autoRange: EAutoRange.Never,
 		cursorLabelFormat: ENumericFormat.Date_HHMM,
 		drawMajorBands: true,
 		drawMinorGridLines: true,
@@ -182,8 +181,8 @@ export const createFinancialChart = async (
 	}
 
 	if (xValues.length === 0) {
-		const nowSec = Math.floor(Date.now() / 1000);
-		xAxis.visibleRange = new NumberRange(nowSec - 60, nowSec);
+		const nowMs = Date.now();
+		xAxis.visibleRange = new NumberRange(nowMs - 60_000, nowMs);
 	}
 
 	const candleDataSeries = new OhlcDataSeries(wasmContext, {
@@ -327,14 +326,15 @@ export const initTradeChart = async (
 	};
 
 	const appendBar = (bar: OhlcBar) => {
+		const xMs = bar.sec * 1000;
 		const lastIndex = ohlcDataSeries.count() - 1;
 		const lastX =
 			lastIndex >= 0
 				? (ohlcDataSeries.getNativeXValues().get(lastIndex) as number)
 				: null;
-		const isNewBar = lastX !== bar.sec;
+		const isNewBar = lastX !== xMs;
 
-		if (lastX === bar.sec) {
+		if (lastX === xMs) {
 			ohlcDataSeries.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
 
 			if (volumeDataSeries !== undefined) {
@@ -344,10 +344,10 @@ export const initTradeChart = async (
 			return;
 		}
 
-		ohlcDataSeries.append(bar.sec, bar.open, bar.high, bar.low, bar.close);
+		ohlcDataSeries.append(xMs, bar.open, bar.high, bar.low, bar.close);
 
 		if (volumeDataSeries !== undefined) {
-			volumeDataSeries.append(bar.sec, bar.volume);
+			volumeDataSeries.append(xMs, bar.volume);
 		}
 
 		if (!hasInitialRange) {
@@ -641,4 +641,3 @@ registerType(
 	},
 	true,
 );
-

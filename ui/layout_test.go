@@ -8,7 +8,10 @@ import (
 )
 
 func TestLayoutDocument(t *testing.T) {
+	t.Cleanup(viper.Reset)
+
 	Convey("Given market config", t, func() {
+		viper.Set("market.anchor_symbol", "")
 		viper.Set("market.default_symbols", []string{"ETH/EUR"})
 
 		doc := LayoutDocument()
@@ -33,7 +36,9 @@ func TestLayoutDocument(t *testing.T) {
 }
 
 func BenchmarkLayoutDocument(b *testing.B) {
+	viper.Set("market.anchor_symbol", "")
 	viper.Set("market.default_symbols", []string{"BTC/EUR"})
+	b.Cleanup(viper.Reset)
 
 	for b.Loop() {
 		_ = LayoutDocument()

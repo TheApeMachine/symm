@@ -2,7 +2,6 @@ package market
 
 import (
 	"bufio"
-	"container/ring"
 	"context"
 	"io"
 	"math"
@@ -15,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -33,29 +33,32 @@ type Story struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	ui          *qpool.BroadcastGroup
-	buffer      *ring.Ring
-	trees       []*perspectives.Tree
+	raw         *qpool.BroadcastGroup
+	streams     *focus.Set
+	tree        *perspectives.Tree
+	ringWindow  []perspectives.Measurement
 	lastGauge   map[string]time.Time
 	recordFile  *os.File
 	recorder    *bufio.Writer
 	pulseSeq    atomic.Int64
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
-		buffer:      ring.New(128),
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		trees:       make([]*perspectives.Tree, 0),
+		streams:     streams,
+		ringWindow:  make([]perspectives.Measurement, 0, StoryRingCapacity),
 		lastGauge:   make(map[string]time.Time),
 	}
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	story.raw = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 
 	recordPath := viper.GetViper().GetString("trading.record.file")
 
@@ -68,9 +71,9 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		story.recorder = bufio.NewWriter(fh)
 	}
 
-	for _, channel := range []string{"measurements", "actions"} {
-		story.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-	}
+	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
+		"measurements", 10*time.Millisecond,
+	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
 		storyMeasurementsSubscriberID, 128,
@@ -99,11 +102,7 @@ func (story *Story) Tick() error {
 
 	defer uiFlush.Stop()
 
-	// Latest values accumulated between timer ticks. Written by the measurement
-	// case, read and published by the timer case. Both run on the same goroutine
-	// so no mutex needed.
-	latestConf := make(map[string]float64) // source name → confidence
-	latestMark := make(map[string]float64) // symbol → last price
+	latestConf := make(map[string]float64)
 
 	for {
 		select {
@@ -111,9 +110,11 @@ func (story *Story) Tick() error {
 			return story.ctx.Err()
 
 		case <-uiFlush.C:
-			// Publish one confidence row per source — at most one WebSocket
-			// frame per source per interval, regardless of measurement rate.
 			for source, conf := range latestConf {
+				if !perspectives.DashboardGaugeSource(source) {
+					continue
+				}
+
 				story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 					"source":     source,
 					"confidence": conf,
@@ -122,17 +123,6 @@ func (story *Story) Tick() error {
 
 			now := time.Now()
 			nowStr := now.UTC().Format(time.RFC3339Nano)
-
-			if len(latestMark) > 0 {
-				for symbol, price := range latestMark {
-					story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-						"event":  "mark",
-						"ts":     nowStr,
-						"symbol": symbol,
-						"price":  price,
-					}})
-				}
-			}
 
 			story.publishEnginePulse(latestConf, nowStr)
 
@@ -155,85 +145,96 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			activate.Once("market/story:measurement source=" + measurement.Source.String())
-
-			if story.recorder != nil {
-				recorded := measurement
-
-				if recorded.At.IsZero() {
-					recorded.At = time.Now().UTC()
-				}
-
-				raw := errnie.Does(func() ([]byte, error) {
-					return sonic.Marshal(recorded)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value()
-
-				activate.Once("market/story:recording")
-
-				if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
-					errnie.Error(writeErr)
-				}
-			}
-
-			story.buffer.Value = measurement
-			story.buffer.Next()
-
-			// Accumulate — do NOT publish here. The timer case above handles it.
-			// SNR is in noise-sigma units; the gauge maps 0..4σ onto 0..100%.
-			if source := measurement.Source.String(); source != "" {
-				latestConf[source] = measurement.SNR
-			}
-
-			if measurement.Last > 0 && measurement.Symbol != "" {
-				latestMark[measurement.Symbol] = measurement.Last
-			}
-
-			actions := make([]*perspectives.ActionType, 0)
-
-			for _, tree := range story.trees {
-				if buffered, bufferedOK := story.buffer.Value.(perspectives.Measurement); bufferedOK {
-					tree.AddMeasurement(buffered)
-				}
-
-				if action := tree.Action(); action != nil {
-					actions = append(actions, action)
-				}
-			}
-
-			if len(story.trees) == 0 || len(actions) == 0 {
-				measurements := make([]perspectives.Measurement, 0)
-
-				story.buffer.Do(func(value any) {
-					if value == nil {
-						return
-					}
-
-					buffered, bufferedOK := value.(perspectives.Measurement)
-
-					if !bufferedOK {
-						return
-					}
-
-					measurements = append(measurements, buffered)
-				})
-
-				story.trees = append(story.trees, errnie.Does(func() (*perspectives.Tree, error) {
-					return perspectives.NewTree(story.ctx, measurements)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value())
-
-				activate.Once("market/story:playbook-tree")
-			}
-
-			for _, action := range actions {
-				activate.Once("market/story:action")
-				story.broadcasts["actions"].Send(&qpool.QValue[any]{Value: action})
-			}
+			story.ingestMeasurement(measurement, latestConf)
 		}
 	}
+}
+
+func (story *Story) ingestMeasurement(
+	measurement perspectives.Measurement,
+	latestConf map[string]float64,
+) {
+	activate.Once("market/story:measurement source=" + measurement.Source.String())
+
+	if story.recorder != nil {
+		recorded := measurement
+
+		if recorded.At.IsZero() {
+			recorded.At = time.Now().UTC()
+		}
+
+		raw := errnie.Does(func() ([]byte, error) {
+			return sonic.Marshal(recorded)
+		}).Or(func(err error) {
+			errnie.Error(err)
+		}).Value()
+
+		activate.Once("market/story:recording")
+
+		if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
+			errnie.Error(writeErr)
+		}
+	}
+
+	story.ringWindow = AppendRingMeasurement(story.ringWindow, measurement)
+
+	source := measurement.Source.String()
+
+	if source != "" && perspectives.DashboardGaugeSource(source) {
+		if measurement.SNR > latestConf[source] {
+			latestConf[source] = measurement.SNR
+		}
+	}
+
+	if story.tree == nil {
+		tree, err := perspectives.NewTree(story.ctx, []perspectives.Measurement{})
+
+		if err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		story.tree = tree
+		activate.Once("market/story:playbook-tree")
+	}
+
+	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)
+	story.tree.ResetWalk()
+
+	actionType := story.tree.WalkContext(
+		perspectives.BranchContext{
+			Measurements: snapshots,
+			Observations: story.observations(measurement.Symbol),
+			Metrics: map[string]float64{
+				"last": measurement.Last,
+			},
+		},
+		story.tree.Branches()...,
+	)
+
+	if actionType == nil || *actionType == perspectives.ActionNone {
+		return
+	}
+
+	activate.Once("market/story:action")
+
+	story.raw.Send(&qpool.QValue[any]{
+		Value: perspectives.ActionFromMeasurement(*actionType, measurement),
+	})
+}
+
+func (story *Story) observations(symbol string) map[perspectives.ObservationType]float64 {
+	observations := make(map[perspectives.ObservationType]float64, 1)
+
+	if story.streams != nil && story.streams.Has(symbol) {
+		observations[perspectives.ObservationHolding] = 1
+
+		return observations
+	}
+
+	observations[perspectives.ObservationNotHolding] = 1
+
+	return observations
 }
 
 // publishEnginePulse emits a system-health summary derived from the latest
@@ -254,27 +255,31 @@ func (story *Story) publishEnginePulse(latestConf map[string]float64, ts string)
 	}
 
 	var sum float64
-	for _, v := range latestConf {
-		sum += v
+	for _, value := range latestConf {
+		sum += value
 	}
 	avg := sum / float64(len(latestConf))
 
 	var variance float64
-	for _, v := range latestConf {
-		d := v - avg
-		variance += d * d
+	for _, value := range latestConf {
+		delta := value - avg
+		variance += delta * delta
 	}
 	stddev := math.Sqrt(variance / float64(len(latestConf)))
 
+	const gaugeFullSigma = 4.0
+
 	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":          "engine_pulse",
-		"ts":             ts,
-		"seq":            seq,
-		"phase":          "ticking",
-		"measurements":   len(latestConf),
-		"open":           0,
-		"avg_prediction": avg,
-		"avg_error":      stddev,
+		"event":                   "engine_pulse",
+		"ts":                      ts,
+		"seq":                     seq,
+		"phase":                   "ticking",
+		"measurements":            len(latestConf),
+		"open":                    0,
+		"avg_prediction":          avg,
+		"avg_prediction_multiple": avg / gaugeFullSigma,
+		"avg_error":               stddev,
+		"avg_error_multiple":      stddev / gaugeFullSigma,
 	}})
 }
 

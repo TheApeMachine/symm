@@ -186,7 +186,7 @@ func (client *Client) send(payload fiber.Map) error {
 	return nil
 }
 
-func (client *Client) AddOrder(params AddParams) (<-chan OrderResult, error) {
+func (client *Client) AddOrder(params AddParams) (chan OrderResult, error) {
 	if params.ClOrdID == "" {
 		return nil, errnie.Error(errnie.Require(map[string]any{
 			"params.ClOrdID": params.ClOrdID,
@@ -205,10 +205,16 @@ func (client *Client) AddOrder(params AddParams) (<-chan OrderResult, error) {
 		"method": MethodAddOrder,
 		"params": params,
 	}); err != nil {
+		client.ledger.Unregister(params.ClOrdID)
+
 		return nil, errnie.Error(err)
 	}
 
 	return resultCh, nil
+}
+
+func (client *Client) ReleaseOrderResult(resultCh chan OrderResult) {
+	client.ledger.ReleaseResult(resultCh)
 }
 
 func (client *Client) AmendOrder(params AmendParams) error {

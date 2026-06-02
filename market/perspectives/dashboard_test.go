@@ -25,6 +25,7 @@ func TestDashboardGaugeNames(t *testing.T) {
 
 		Convey("It should label each dashboard source", func() {
 			So(DashboardGaugeLabel("fluid"), ShouldEqual, "Fluid")
+			So(DashboardGaugeLabel("liquidity"), ShouldEqual, "Liquidity")
 			So(DashboardGaugeLabel("unknown"), ShouldEqual, "unknown")
 		})
 	})

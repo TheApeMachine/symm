@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -8,7 +9,7 @@ import (
 StoryRingCapacity matches market.Story's measurement ring buffer. Each replay
 decision sees at most this many recent measurements — the live search space.
 */
-const StoryRingCapacity = 128
+const StoryRingCapacity = market.StoryRingCapacity
 
 /*
 PrecompiledTick holds one replay row and the ring-window snapshot at that moment.
@@ -39,7 +40,7 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 	lastPrices := make(map[string]float64)
 
 	for index, row := range rows {
-		ring = appendRingMeasurement(ring, row)
+		ring = market.AppendRingMeasurement(ring, row)
 
 		if row.Symbol == "" {
 			continue
@@ -51,7 +52,7 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 
 		ticks[index] = PrecompiledTick{
 			Row:       row,
-			Snapshots: ringSnapshot(ring, row.Symbol),
+			Snapshots: market.RingSnapshot(ring, row.Symbol),
 		}
 	}
 
@@ -59,32 +60,4 @@ func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
 		Ticks:      ticks,
 		LastPrices: lastPrices,
 	}
-}
-
-func appendRingMeasurement(
-	ring []perspectives.Measurement, row perspectives.Measurement,
-) []perspectives.Measurement {
-	ring = append(ring, row)
-
-	if len(ring) <= StoryRingCapacity {
-		return ring
-	}
-
-	return ring[len(ring)-StoryRingCapacity:]
-}
-
-func ringSnapshot(
-	ring []perspectives.Measurement, symbol string,
-) []perspectives.Measurement {
-	snapshots := make([]perspectives.Measurement, 0, len(ring))
-
-	for _, measurement := range ring {
-		if measurement.Symbol != "" && measurement.Symbol != symbol {
-			continue
-		}
-
-		snapshots = append(snapshots, measurement)
-	}
-
-	return snapshots
 }

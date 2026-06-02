@@ -22,7 +22,7 @@ var dashboardGaugeLabels = map[SourceType]string{
 	SourceCausal:    "Causal",
 	SourceDepthFlow: "Depth",
 	SourceLeadLag:   "L-Lag",
-	SourceLiquidity: "Basis",
+	SourceLiquidity: "Liquidity",
 	SourceSentiment: "Sent",
 }
 
@@ -75,8 +75,27 @@ func DashboardGaugeLabelMap() map[string]string {
 			continue
 		}
 
-		labels[name] = DashboardGaugeLabel(name)
+		if label, ok := dashboardGaugeLabels[source]; ok {
+			labels[name] = label
+
+			continue
+		}
+
+		labels[name] = name
 	}
 
 	return labels
+}
+
+/*
+DashboardGaugeSource reports whether name is rendered on the dashboard gauge grid.
+*/
+func DashboardGaugeSource(name string) bool {
+	for _, source := range DashboardGaugeSources {
+		if source.String() == name {
+			return true
+		}
+	}
+
+	return false
 }

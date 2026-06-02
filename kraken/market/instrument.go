@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 	"io"
-	"slices"
 	"sync"
 	"time"
 
@@ -159,14 +158,9 @@ func (instrument *Instrument) applyCatalogUpdate(
 		activate.Once("kraken/instrument:catalog")
 	}
 
-	watched := viper.GetStringSlice("market.symbols")
 	maxScan := viper.GetInt("market.max_scan_symbols")
 
 	for _, pair := range update.Pairs {
-		if len(watched) > 0 && !slices.Contains(watched, pair.Symbol) {
-			continue
-		}
-
 		if maxScan > 0 && len(instrument.Pairs) >= maxScan {
 			break
 		}
@@ -185,9 +179,6 @@ func (instrument *Instrument) applyCatalogUpdate(
 		publicBroadcast.Send(subscribeFrame("ticker", pair.Symbol, nil))
 		publicBroadcast.Send(subscribeFrame("book", pair.Symbol, map[string]any{
 			"depth": 1000,
-		}))
-		publicBroadcast.Send(subscribeFrame("ohlc", pair.Symbol, map[string]any{
-			"interval": 1,
 		}))
 		publicBroadcast.Send(subscribeFrame("trade", pair.Symbol, nil))
 	}

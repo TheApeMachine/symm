@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -120,8 +121,8 @@ func (tuner *Tuner) ingest(measurement perspectives.Measurement) {
 		return
 	}
 
-	tuner.ringWindow = appendRingMeasurement(tuner.ringWindow, measurement)
-	snapshots := ringSnapshot(tuner.ringWindow, measurement.Symbol)
+	tuner.ringWindow = market.AppendRingMeasurement(tuner.ringWindow, measurement)
+	snapshots := market.RingSnapshot(tuner.ringWindow, measurement.Symbol)
 	tuner.tree.ResetWalk()
 
 	action := tuner.tree.Walk(snapshots, tuner.tree.Branches()...)
@@ -137,11 +138,7 @@ func (tuner *Tuner) publish(
 	measurement perspectives.Measurement, actionType perspectives.ActionType,
 ) {
 	tuner.broadcasts["actions"].Send(&qpool.QValue[any]{
-		Value: perspectives.Action{
-			Type:   actionType,
-			Symbol: measurement.Symbol,
-			Price:  measurement.Last,
-		},
+		Value: perspectives.ActionFromMeasurement(actionType, measurement),
 	})
 }
 

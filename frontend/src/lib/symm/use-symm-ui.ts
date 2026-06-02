@@ -38,9 +38,10 @@ export const useSymmScanProgress = () => {
 
 export const useMarketWatchSymbol = () => {
 	const layout = useDashboardLayout();
+	const anchor = layout?.anchor_symbol;
 
-	if (layout.anchor_symbol !== undefined && layout.anchor_symbol.length > 0) {
-		return layout.anchor_symbol;
+	if (typeof anchor === "string" && anchor.length > 0) {
+		return anchor;
 	}
 
 	return "BTC/EUR";

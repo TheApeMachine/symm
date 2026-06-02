@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -23,6 +23,7 @@ import {
 	type LayoutPanel,
 } from "#/lib/symm/layout-schema";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
+import { confidenceToGaugePercent } from "#/lib/symm/signal-confidence";
 import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
 
 const TIME_COLS = 120;
@@ -135,11 +136,14 @@ type SignalHeatmapProps = {
 	panel?: LayoutPanel;
 };
 
+const heatmapValue = (confidence: number): number =>
+	Math.min(4, confidenceToGaugePercent(confidence) / 25);
+
 export const SignalHeatmap = memo(function SignalHeatmap({
 	panel,
 }: SignalHeatmapProps) {
 	const stores = useSymmTelemetryStores();
-	const sources = gaugeSourcesFor(panel);
+	const sources = useMemo(() => gaugeSourcesFor(panel), [panel]);
 
 	const initChart = useCallback(
 		(rootElement: string | HTMLDivElement) =>
@@ -151,9 +155,11 @@ export const SignalHeatmap = memo(function SignalHeatmap({
 		(result: { controls: Controls }) => {
 			const tick = (confidence: ConfidenceStore) => {
 				const snapshot = confidence.snapshot();
-				const values = sources.map(
-					(source) => snapshot.get(source)?.confidence ?? 0,
-				);
+				const values = sources.map((source) => {
+					const row = snapshot.get(source);
+
+					return row === undefined ? 0 : heatmapValue(row.confidence);
+				});
 				result.controls.push(values);
 			};
 

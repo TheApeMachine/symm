@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/replay"
@@ -33,7 +34,7 @@ func NewClient(ctx context.Context, pool *qpool.Q) (*Client, error) {
 
 	switch viper.GetViper().GetString("trading.model") {
 	case "record":
-		ws = public.NewWebSocket(ctx, pool)
+		ws = public.NewWebSocket(ctx, pool, focus.NewSet())
 	case "replay":
 		var file *os.File
 

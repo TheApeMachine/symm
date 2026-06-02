@@ -1,4 +1,3 @@
-
 import type { EnginePulseEvent } from "#/lib/symm/events";
 import { isEnginePulseEvent } from "#/lib/symm/events";
 
@@ -13,6 +12,8 @@ export type PredictionReading = {
 type ReadingSink = (reading: PredictionReading) => void;
 
 const MAX_BUFFER = 1200;
+const GAUGE_FULL_SIGMA = 4;
+const MAX_PLOT_MULTIPLE = 8;
 
 const timeSec = (value: unknown): number | undefined => {
 	if (typeof value !== "string" || value.length === 0) {
@@ -36,10 +37,24 @@ const finiteNumber = (value: unknown): number | undefined => {
 	return value;
 };
 
-const scaledValue = (
+const plotMultiple = (
 	preferred: unknown,
-	fallback: unknown,
-): number | undefined => finiteNumber(preferred) ?? finiteNumber(fallback);
+	snrFallback: unknown,
+): number | undefined => {
+	const multiple = finiteNumber(preferred);
+
+	if (multiple !== undefined) {
+		return Math.min(MAX_PLOT_MULTIPLE, Math.max(0, multiple));
+	}
+
+	const snr = finiteNumber(snrFallback);
+
+	if (snr === undefined) {
+		return undefined;
+	}
+
+	return Math.min(MAX_PLOT_MULTIPLE, Math.max(0, snr / GAUGE_FULL_SIGMA));
+};
 
 class PredictionsDataProviderImpl {
 	private sink: ReadingSink | null = null;
@@ -135,11 +150,11 @@ class PredictionsDataProviderImpl {
 
 		const horizonSec = this.updateHorizon(pulseSec);
 
-		const realizedMultiple = scaledValue(
+		const realizedMultiple = plotMultiple(
 			raw.avg_prediction_multiple,
 			raw.avg_prediction,
 		);
-		const wireError = scaledValue(raw.avg_error_multiple, raw.avg_error);
+		const wireError = plotMultiple(raw.avg_error_multiple, raw.avg_error);
 
 		if (realizedMultiple === undefined) {
 			return;
@@ -199,4 +214,3 @@ function createPredictionsDataProviderImpl() {
 export type PredictionsStore = ReturnType<typeof createPredictionsDataProvider>;
 
 export const PredictionsDataProvider = shared;
-

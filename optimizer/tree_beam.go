@@ -44,7 +44,7 @@ func (search *ScanSearch) emitDeepeningExpansions(
 			search.pairAffinity, entryCategory, reachableGates, search.profile,
 		)
 
-		if !search.emitNestedGateExpansions(send, survivor, base, reachableGates) {
+		if !search.emitNestedGateExpansions(send, survivor, base, reachableGates, entryCategory) {
 			return
 		}
 	}
@@ -55,6 +55,7 @@ func (search *ScanSearch) emitNestedGateExpansions(
 	survivor CandidateScore,
 	base perspectives.BranchList,
 	gates []perspectives.Branch,
+	entryCategory perspectives.CategoryType,
 ) bool {
 	for _, gate := range gates {
 		if gate.Observation != perspectives.ObservationNone {
@@ -72,7 +73,7 @@ func (search *ScanSearch) emitNestedGateExpansions(
 			continue
 		}
 
-		search.recordNestedGateAffinity(survivor, gate)
+		search.recordNestedGateAffinity(survivor, gate, entryCategory)
 
 		if !send(scanCandidate{
 			branches: nested,
@@ -86,13 +87,14 @@ func (search *ScanSearch) emitNestedGateExpansions(
 }
 
 func (search *ScanSearch) recordNestedGateAffinity(
-	survivor CandidateScore, gate perspectives.Branch,
+	survivor CandidateScore,
+	gate perspectives.Branch,
+	entryCategory perspectives.CategoryType,
 ) {
 	if search.pairAffinity == nil {
 		return
 	}
 
-	entryCategory := primaryEntryCategory(survivor.Branches)
 	search.pairAffinity.RecordNestedGate(
 		entryCategory,
 		gate.Category,
