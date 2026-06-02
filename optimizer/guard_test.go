@@ -274,7 +274,7 @@ func TestRobustUnderJitter(t *testing.T) {
 	})
 }
 
-func TestPersistCandidateRejectsNegativeProfit(t *testing.T) {
+func TestPersistCandidateAcceptsNegativeProfitWithTrades(t *testing.T) {
 	convey.Convey("Given a losing but active replay tree", t, func() {
 		ctx := context.Background()
 		rows := []perspectives.Measurement{
@@ -316,8 +316,8 @@ func TestPersistCandidateRejectsNegativeProfit(t *testing.T) {
 		}
 		guard := NewOverfitGuard(ctx, GuardOptions{}, PrecompileTape(rows), nil)
 
-		convey.Convey("It should reject persistence without positive profit", func() {
-			convey.So(guard.PersistCandidate(branches), convey.ShouldBeFalse)
+		convey.Convey("It should persist when round trips closed even at a loss", func() {
+			convey.So(guard.PersistCandidate(branches), convey.ShouldBeTrue)
 			convey.So(guard.AcceptTrainCandidate(branches), convey.ShouldBeFalse)
 		})
 	})

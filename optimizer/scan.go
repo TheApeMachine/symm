@@ -57,24 +57,24 @@ type scanResult struct {
 ScanSearch scores a bounded beam of candidate branch trees.
 */
 type ScanSearch struct {
-	ctx                 context.Context
-	profile             *Profile
-	rows                []perspectives.Measurement
-	tape                ReplayTape
-	coOccurrence        *CoOccurrenceIndex
-	options             ScanOptions
-	guard               *OverfitGuard
-	bestScore           float64
-	bestClosedTrades    int
-	bestBranch          perspectives.BranchList
-	onBest              func(BestTree)
-	onCandidate         func(CandidateScore)
-	candidates          int
-	phaseCandidates     int
-	phaseCandidateLimit int
-	topK                int
-	topScores           []CandidateScore
-	beamScores          []CandidateScore
+	ctx                   context.Context
+	profile               *Profile
+	rows                  []perspectives.Measurement
+	tape                  ReplayTape
+	coOccurrence          *CoOccurrenceIndex
+	options               ScanOptions
+	guard                 *OverfitGuard
+	bestScore             float64
+	bestClosedTrades      int
+	bestBranch            perspectives.BranchList
+	onBest                func(BestTree)
+	onCandidate           func(CandidateScore)
+	candidates            int
+	phaseCandidates       int
+	phaseCandidateLimit   int
+	topK                  int
+	topScores             []CandidateScore
+	beamScores            []CandidateScore
 	pairAffinity          *PairAffinityIndex
 	progress              *SearchProgress
 	haltPhaseOnStagnation bool
@@ -166,54 +166,22 @@ func (search *ScanSearch) run() ScanStats {
 	})
 
 	survivors := search.beamScoresClone()
-	searchDepth := maxReasoningDepthInBeam(survivors)
+	targetDepth := seedSearchTargetDepth(survivors)
 
-	for search.hasCandidateBudget() {
+	for search.hasCandidateBudget() && targetDepth <= search.options.MaxReasoningSteps {
 		if len(survivors) == 0 {
 			break
 		}
 
-		if !progress.Stagnant(search.options.BeamWidth) {
-			previous := survivors
-			search.runAdaptivePhase(
-				fmt.Sprintf("widen exits (depth %d)", searchDepth),
-				func(send func(scanCandidate) bool) {
-					search.emitWidenExpansions(send, survivors, actionBranches)
-				},
-			)
-			search.mergeDeepeningSurvivors(append(previous, survivors...))
-			survivors = search.beamScoresClone()
-			searchDepth = maxReasoningDepthInBeam(survivors)
-
-			continue
-		}
-
-		if searchDepth >= search.options.MaxReasoningSteps {
-			break
-		}
-
-		bestScore := progress.BestScore()
-
-		if math.IsInf(bestScore, 0) {
-			TuneLog(
-				"reward stalled after %d candidates without improvement (depth %d), nesting entry gates",
-				progress.SinceImprovement(),
-				searchDepth,
-			)
-		} else {
-			TuneLog(
-				"reward stalled at %.6f after %d candidates without improvement (depth %d), nesting entry gates",
-				bestScore,
-				progress.SinceImprovement(),
-				searchDepth,
-			)
+		if progress.Stagnant(search.options.BeamWidth) {
+			search.logSearchStalled(targetDepth)
 		}
 
 		previous := survivors
 		branchers := search.rankedEntryBranchers()
 
 		search.runAdaptivePhase(
-			fmt.Sprintf("deepen gates (depth %d)", searchDepth+1),
+			fmt.Sprintf("deepen gates (depth %d)", targetDepth+1),
 			func(send func(scanCandidate) bool) {
 				search.emitDeepeningExpansions(send, survivors, branchers)
 			},
@@ -221,18 +189,10 @@ func (search *ScanSearch) run() ScanStats {
 		search.mergeDeepeningSurvivors(previous)
 		survivors = search.beamScoresClone()
 
-		newDepth := maxReasoningDepthInBeam(survivors)
-
-		if newDepth > searchDepth {
-			searchDepth = newDepth
-			progress.ResetStagnation()
-
-			continue
-		}
-
 		if progress.Stagnant(search.options.BeamWidth) {
+			previous = survivors
 			search.runAdaptivePhase(
-				fmt.Sprintf("widen exits (depth %d)", searchDepth),
+				fmt.Sprintf("widen exits (depth %d)", targetDepth),
 				func(send func(scanCandidate) bool) {
 					search.emitWidenExpansions(send, survivors, actionBranches)
 				},
@@ -241,18 +201,42 @@ func (search *ScanSearch) run() ScanStats {
 			survivors = search.beamScoresClone()
 		}
 
-		if progress.Stagnant(search.options.BeamWidth) {
-			searchDepth++
-			progress.ResetStagnation()
-
-			TuneLog("still stalled, raising target depth to %d", searchDepth)
+		if !progress.Stagnant(search.options.BeamWidth) {
+			continue
 		}
+
+		nextDepth := targetDepth + 1
+
+		TuneLog("no improvement at depth %d, advancing to %d", targetDepth, nextDepth)
+		targetDepth = nextDepth
+		progress.ResetStagnation()
 	}
 
 	return ScanStats{
 		Candidates: search.candidates,
 		Workers:    search.options.Workers,
 	}
+}
+
+func (search *ScanSearch) logSearchStalled(targetDepth int) {
+	bestScore := search.progress.BestScore()
+
+	if math.IsInf(bestScore, 0) {
+		TuneLog(
+			"reward stalled after %d candidates without improvement (depth %d), nesting entry gates",
+			search.progress.SinceImprovement(),
+			targetDepth,
+		)
+
+		return
+	}
+
+	TuneLog(
+		"reward stalled at %.6f after %d candidates without improvement (depth %d), nesting entry gates",
+		bestScore,
+		search.progress.SinceImprovement(),
+		targetDepth,
+	)
 }
 
 func (search *ScanSearch) hasCandidateBudget() bool {

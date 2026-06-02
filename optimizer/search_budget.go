@@ -68,20 +68,28 @@ func DeriveSearchBudget(
 
 	distinctThresholds := profileDistinctThresholdCount(profile)
 	beamWidth := categoryCount * workers
-	candidateLimit := tickCount * categoryCount * workers
+	maxReasoningSteps := deriveMaxReasoningSteps(tape, profile)
+	stagnationWindow := beamWidth
 
-	if candidateLimit < beamWidth {
+	if stagnationWindow <= 0 {
+		stagnationWindow = 1
+	}
+
+	candidateLimit := beamWidth * stagnationWindow * maxReasoningSteps * 2
+
+	if candidateLimit < beamWidth*workers {
 		candidateLimit = beamWidth * workers
 	}
 
-	maxReasoningSteps := categoryCount
+	maxThresholds := distinctThresholds
+	thresholdCap := beamWidth * workers
 
-	if maxReasoningSteps > tickCount {
-		maxReasoningSteps = tickCount
+	if maxThresholds > thresholdCap {
+		maxThresholds = thresholdCap
 	}
 
-	if maxReasoningSteps < 1 {
-		maxReasoningSteps = 1
+	if maxThresholds < 1 {
+		maxThresholds = 1
 	}
 
 	mctsIterations := candidateLimit / beamWidth
@@ -101,15 +109,15 @@ func DeriveSearchBudget(
 		HybridSeedCount:      beamWidth,
 		MCTSIterations:       mctsIterations,
 		MCTSSeedPriorVisits:  int(math.Ceil(math.Sqrt(float64(beamWidth)))),
-		MinChainSupport:        deriveMinChainSupport(tickCount),
-		BeamPruneFactor:        2 + int(math.Log2(float64(max(2, beamWidth)))),
-		MaxGatesPerSurvivor:    categoryCount,
-		MaxWidensPerSurvivor:   categoryCount,
-		ReentryTickCooldown:    deriveReentryTickCooldown(tickCount, categoryCount),
-		MinRoundTrips:          1,
-		ComplexityPenalty:      0,
-		ExplorationWeight:      math.Sqrt(2),
-		MCTSRewardScale:        rewardScale,
+		MinChainSupport:      deriveMinChainSupport(tickCount),
+		BeamPruneFactor:      2 + int(math.Log2(float64(max(2, beamWidth)))),
+		MaxGatesPerSurvivor:  categoryCount,
+		MaxWidensPerSurvivor: categoryCount,
+		ReentryTickCooldown:  deriveReentryTickCooldown(tickCount, categoryCount),
+		MinRoundTrips:        1,
+		ComplexityPenalty:    0,
+		ExplorationWeight:    math.Sqrt(2),
+		MCTSRewardScale:      rewardScale,
 	}
 }
 
@@ -141,6 +149,48 @@ func deriveMeasurementSampleCap(totalRows int, workers int) int {
 	}
 
 	return sample
+}
+
+/*
+deriveMaxReasoningSteps bounds reasoning depth from reachable entry chains, deny
+wrappers observed on the tape, and log-scaled room for deepen passes.
+*/
+func deriveMaxReasoningSteps(tape ReplayTape, profile *Profile) int {
+	index := NewCoOccurrenceIndex(tape, 0)
+	maxEntryChain := 0
+
+	for _, chain := range decisionEntryChains {
+		for _, prefix := range reachableEntryChainPrefixes(index, chain) {
+			if len(prefix) > maxEntryChain {
+				maxEntryChain = len(prefix)
+			}
+		}
+	}
+
+	denySeen := 0
+
+	for _, category := range decisionDenyCategories {
+		if index.categorySeen(category) {
+			denySeen++
+		}
+	}
+
+	depth := maxEntryChain + denySeen
+	extraDeepening := int(math.Ceil(math.Log2(float64(max(2, tape.Len())))))
+
+	depth += extraDeepening
+
+	if depth < 2 {
+		depth = 2
+	}
+
+	categoryCount := len(profile.Categories())
+
+	if categoryCount > 0 && depth > categoryCount {
+		depth = categoryCount
+	}
+
+	return depth
 }
 
 func deriveMinChainSupport(tickCount int) int {

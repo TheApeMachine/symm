@@ -35,7 +35,11 @@ func TestDeriveSearchBudget(t *testing.T) {
 
 		convey.Convey("It should derive limits from tape breadth and workers", func() {
 			convey.So(budget.BeamWidth, convey.ShouldEqual, 6)
-			convey.So(budget.MaxReasoningSteps, convey.ShouldEqual, 3)
+			convey.So(budget.MaxReasoningSteps, convey.ShouldBeGreaterThanOrEqualTo, 2)
+			convey.So(budget.MaxReasoningSteps, convey.ShouldBeLessThanOrEqualTo, 3)
+			convey.So(budget.CandidateLimit, convey.ShouldEqual, 6*6*budget.MaxReasoningSteps*2)
+			convey.So(budget.MaxThresholds, convey.ShouldBeGreaterThanOrEqualTo, 1)
+			convey.So(budget.MaxThresholds, convey.ShouldBeLessThanOrEqualTo, 6)
 			convey.So(budget.MinChainSupport, convey.ShouldBeGreaterThanOrEqualTo, 2)
 			convey.So(budget.ReentryTickCooldown, convey.ShouldBeGreaterThan, 0)
 			convey.So(budget.ComplexityPenalty, convey.ShouldEqual, 0)

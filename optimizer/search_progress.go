@@ -78,3 +78,30 @@ func maxReasoningDepthInBeam(beam []CandidateScore) int {
 
 	return maxDepth
 }
+
+/*
+seedSearchTargetDepth is the shallowest reasoning depth among beam survivors with
+closed round trips. Deny-wrapper nesting can inflate maxReasoningDepthInBeam while
+traded seeds stay shallow; search depth must advance from the traded baseline.
+*/
+func seedSearchTargetDepth(beam []CandidateScore) int {
+	targetDepth := 0
+
+	for _, candidate := range beam {
+		if candidate.ClosedTrades <= 0 {
+			continue
+		}
+
+		depth := reasoningDepth(candidate.Branches)
+
+		if targetDepth == 0 || depth < targetDepth {
+			targetDepth = depth
+		}
+	}
+
+	if targetDepth <= 0 {
+		return 1
+	}
+
+	return targetDepth
+}

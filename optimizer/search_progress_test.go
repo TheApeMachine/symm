@@ -4,47 +4,70 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
-func TestSearchProgressStagnant(t *testing.T) {
-	convey.Convey("Given a progress tracker with beam width 4", t, func() {
-		progress := NewSearchProgress()
-		improves := func(
-			candidateScore float64, candidateTrades int,
-			bestScore float64, bestTrades int,
-		) bool {
-			guard := OverfitGuard{}
-
-			return guard.ImprovesPersistedBest(
-				candidateScore, candidateTrades, bestScore, bestTrades,
-			)
+func TestSeedSearchTargetDepth(t *testing.T) {
+	convey.Convey("Given beam survivors with deny-inflated depth and shallow traded seeds", t, func() {
+		shallow := CandidateScore{
+			ClosedTrades: 10,
+			Branches: perspectives.BranchList{
+				{
+					Category: perspectives.CategoryLaminar,
+					Branches: []perspectives.Branch{
+						{
+							Category:    perspectives.CategoryLaminar,
+							Observation: perspectives.ObservationNotHolding,
+							Action:      perspectives.Action{Type: perspectives.ActionLimit},
+						},
+					},
+				},
+			},
+		}
+		deep := CandidateScore{
+			ClosedTrades: 0,
+			Branches: perspectives.BranchList{
+				{
+					Category: perspectives.CategoryToxicBluff,
+					Branches: []perspectives.Branch{
+						{
+							Category: perspectives.CategorySaturation,
+							Branches: []perspectives.Branch{
+								{
+									Category: perspectives.CategoryTurbulent,
+									Branches: []perspectives.Branch{
+										{
+											Category: perspectives.CategoryLiquidityShock,
+											Branches: []perspectives.Branch{
+												{
+													Category: perspectives.CategoryMechanicalCollapse,
+													Branches: []perspectives.Branch{
+														{
+															Category: perspectives.CategorySystemicBeta,
+															Branches: []perspectives.Branch{
+																{
+																	Category:    perspectives.CategoryLaminar,
+																	Observation: perspectives.ObservationNotHolding,
+																	Action:      perspectives.Action{Type: perspectives.ActionLimit},
+																},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		}
 
-		convey.Convey("It should stagnate after a full beam of non-improving scores", func() {
-			progress.Record(0.10, 5, improves)
-
-			for range 3 {
-				progress.Record(0.05, 5, improves)
-			}
-
-			convey.So(progress.Stagnant(4), convey.ShouldBeFalse)
-
-			progress.Record(0.05, 5, improves)
-
-			convey.So(progress.Stagnant(4), convey.ShouldBeTrue)
-		})
-
-		convey.Convey("It should reset stagnation after a new best", func() {
-			for range 4 {
-				progress.Record(0.05, 5, improves)
-			}
-
-			convey.So(progress.Stagnant(4), convey.ShouldBeTrue)
-
-			progress.Record(0.20, 6, improves)
-
-			convey.So(progress.Stagnant(4), convey.ShouldBeFalse)
-			convey.So(progress.SinceImprovement(), convey.ShouldEqual, 0)
+		convey.Convey("It should start from the shallowest traded depth", func() {
+			convey.So(seedSearchTargetDepth([]CandidateScore{deep, shallow}), convey.ShouldEqual, 2)
+			convey.So(maxReasoningDepthInBeam([]CandidateScore{deep, shallow}), convey.ShouldEqual, 7)
 		})
 	})
 }
