@@ -2,6 +2,7 @@ package perspectives
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -119,6 +120,54 @@ func (categories Categories) Clarity(observation float64) float64 {
 }
 
 /*
+Standout is winner margin over the nearest competing category band — see
+adaptive.Classifier.Standout.
+*/
+func (categories Categories) Standout(observation float64) float64 {
+	return categories.classifier().Standout(observation)
+}
+
+/*
+ScoreCategorySNR folds category standout into the symbol's running noise floor
+and returns sigma above that baseline. Standout must be a unit band margin in
+[0, 1]; invalid input or an immeasurable floor returns an error.
+*/
+func ScoreCategorySNR(floor *adaptive.SNRField, symbol string, standout float64) (float64, error) {
+	if floor == nil {
+		return 0, fmt.Errorf("perspectives: ScoreCategorySNR nil floor")
+	}
+
+	if symbol == "" {
+		return 0, fmt.Errorf("perspectives: ScoreCategorySNR empty symbol")
+	}
+
+	if err := validateUnitMargin("standout", standout); err != nil {
+		return 0, err
+	}
+
+	return floor.Score(symbol, standout)
+}
+
+/*
+AssignCategorySNR scores standout and writes the result onto measurement.SNR.
+*/
+func AssignCategorySNR(
+	measurement *Measurement,
+	floor *adaptive.SNRField,
+	standout float64,
+) error {
+	snr, err := ScoreCategorySNR(floor, measurement.Symbol, standout)
+
+	if err != nil {
+		return err
+	}
+
+	measurement.SNR = snr
+
+	return nil
+}
+
+/*
 Category tracks the current assignment and accumulated shift evidence.
 */
 type Category struct {
@@ -135,19 +184,45 @@ func NewCategory(categoryType CategoryType) *Category {
 
 /*
 Observe updates Type and charges the accumulator when the category shifts.
-evidence is typically Clarity or strength at the moment of change.
+It returns clarity — instantaneous band margin for this reading. The accumulator
+is charged with standout (winner margin over alternatives), not clarity.
 */
-func (category *Category) Observe(next CategoryType, evidence float64) (float64, error) {
+func (category *Category) Observe(
+	next CategoryType,
+	clarity float64,
+	standout float64,
+) (float64, error) {
 	if category == nil || category.Confidence == nil {
 		return 0, fmt.Errorf("perspectives: Category.Observe nil receiver")
 	}
 
-	signal := 0.0
+	if err := validateUnitMargin("clarity", clarity); err != nil {
+		return 0, err
+	}
+
+	if err := validateUnitMargin("standout", standout); err != nil {
+		return 0, err
+	}
 
 	if next != category.Type {
 		category.Type = next
-		signal = evidence
+
+		if _, err := category.Confidence.Next(0, standout); err != nil {
+			return 0, err
+		}
 	}
 
-	return category.Confidence.Next(0, signal)
+	return clarity, nil
+}
+
+func validateUnitMargin(name string, value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return fmt.Errorf("perspectives: Category.Observe invalid %s", name)
+	}
+
+	if value > 1 {
+		return fmt.Errorf("perspectives: Category.Observe %s above unit band: %v", name, value)
+	}
+
+	return nil
 }

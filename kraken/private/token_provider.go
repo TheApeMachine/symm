@@ -2,9 +2,9 @@ package private
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -29,26 +29,22 @@ NewTokenProvider builds a token cache from API credentials.
 func NewTokenProvider(ctx context.Context, apiKey, apiSecret string) (*TokenProvider, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
+	rest, err := NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("kraken/private: token provider rest: %w", err)
+	}
+
 	provider := &TokenProvider{
 		ctx:    ctx,
 		cancel: cancel,
+		rest:   rest,
 		token:  "",
 		until:  time.Time{},
 	}
 
-	provider.rest = errnie.Does(func() (*Rest, error) {
-		return NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
-	}).Or(func(err error) {
-		provider.err = errnie.Error(err)
-	}).Value()
-
-	return provider, errnie.Error(errnie.Require(map[string]any{
-		"rest":   provider.rest,
-		"token":  provider.token,
-		"until":  provider.until,
-		"ctx":    provider.ctx,
-		"cancel": provider.cancel,
-	}))
+	return provider, nil
 }
 
 /*

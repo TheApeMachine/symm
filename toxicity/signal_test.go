@@ -39,6 +39,8 @@ func TestPublishMeasurement(t *testing.T) {
 		symbol := "ETH/EUR"
 		now := time.Now()
 
+		warmTrackerSNR(t, tox.tracker, symbol, now)
+
 		tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tox.tracker.stateLocked(symbol, market.Pair{})

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -39,6 +40,9 @@ func TestNewSignal(t *testing.T) {
 
 func TestObserveTrade(t *testing.T) {
 	Convey("Given a depthflow signal with a measurements subscriber", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.book_depth_levels", 10)
+
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
@@ -50,7 +54,8 @@ func TestObserveTrade(t *testing.T) {
 		symbol := "ETH/EUR"
 		now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-		state := signal.state(symbol)
+		state, err := signal.state(symbol)
+		So(err, ShouldBeNil)
 		state.ApplyBook(bookSnapshot(symbol, 99, 8, 101, 4))
 		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
 
@@ -87,6 +92,8 @@ func TestObserveTrade(t *testing.T) {
 }
 
 func BenchmarkObserveTrade(b *testing.B) {
+	viper.Set("market.book_depth_levels", 10)
+
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -97,7 +104,10 @@ func BenchmarkObserveTrade(b *testing.B) {
 	signal.broadcasts["measurements"].Subscribe("bench:depthflow", 1024)
 
 	symbol := "ETH/EUR"
-	state := signal.state(symbol)
+	state, err := signal.state(symbol)
+	if err != nil {
+		b.Fatal(err)
+	}
 	state.ApplyBook(bookSnapshot(symbol, 99, 8, 101, 4))
 	state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
 

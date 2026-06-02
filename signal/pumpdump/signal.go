@@ -2,11 +2,11 @@ package pumpdump
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -151,12 +151,16 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.observe(trade)
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("pumpdump: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
+					if err := signal.observe(trade); err != nil {
+						return fmt.Errorf("pumpdump: observe %s: %w", trade.Symbol, err)
+					}
 				}
 			}
 		}
@@ -165,9 +169,9 @@ func (signal *Signal) Tick() error {
 
 // observe folds one executed trade into its symbol's window state and emits the
 // ignition reading for that symbol.
-func (signal *Signal) observe(trade market.TradeUpdate) {
+func (signal *Signal) observe(trade market.TradeUpdate) error {
 	if trade.Price <= 0 || trade.Qty <= 0 {
-		return
+		return nil
 	}
 
 	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newPumpState())
@@ -180,7 +184,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	anchor := state.volume.Anchor()
 
 	if anchor <= 0 {
-		return
+		return nil
 	}
 
 	rvol := state.scale(state.volume.Sum(), state.volBase)
@@ -189,9 +193,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	code, err := state.pipe.Push(rvol, precursor)
 
 	if err != nil {
-		errnie.Error(err)
-
-		return
+		return err
 	}
 
 	ignition := math.Max(0, (rvol-1)*(1+precursor))
@@ -204,9 +206,16 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		Strength:   ignition,
 		Confidence: state.pipe.Confidence(),
 	}
-	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	if err := perspectives.AssignCategorySNR(
+		&measurement, signal.floor, state.pipe.Standout(),
+	); err != nil {
+		return err
+	}
+
 	activate.Once("signal/pumpdump:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

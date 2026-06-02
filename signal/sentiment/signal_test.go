@@ -39,10 +39,10 @@ func TestMeasure(t *testing.T) {
 		signal.symbols.Store("C/EUR", 1.5)
 
 		Convey("When breadth clears the risk-on threshold", func() {
-			measurement, ok := signal.measure("A/EUR", 2.0)
+			measurement, _, err := signal.measure("A/EUR", 2.0)
 
 			Convey("It should classify a risk-on surge", func() {
-				So(ok, ShouldBeTrue)
+				So(err, ShouldBeNil)
 				So(measurement.Source, ShouldEqual, perspectives.SourceSentiment)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryRiskOnSurge)
 				So(measurement.Strength, ShouldBeGreaterThanOrEqualTo, 1)
@@ -57,10 +57,10 @@ func TestMeasure(t *testing.T) {
 		signal.symbols.Store("FLAT/EUR", -1.0)
 
 		Convey("When the symbol leads the pack", func() {
-			measurement, ok := signal.measure("LEAD/EUR", 4.0)
+			measurement, _, err := signal.measure("LEAD/EUR", 4.0)
 
 			Convey("It should classify a divergent move", func() {
-				So(ok, ShouldBeTrue)
+				So(err, ShouldBeNil)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryDivergentMove)
 			})
 		})
@@ -103,6 +103,6 @@ func BenchmarkMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = signal.measure("A/EUR", 2.0)
+		_, _, _ = signal.measure("A/EUR", 2.0)
 	}
 }

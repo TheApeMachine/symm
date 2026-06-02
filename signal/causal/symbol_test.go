@@ -68,10 +68,10 @@ func TestCausalSymbolMeasure(t *testing.T) {
 
 		seedLadderHistory(state, minCausalHistory+8)
 
-		measurement, ok := state.Measure(0.5, 0, base.Add(time.Second))
+		measurement, _, err := state.Measure(0.5, 0, base.Add(time.Second))
 
 		Convey("It should publish a ladder measurement with category confidence", func() {
-			So(ok, ShouldBeTrue)
+			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, perspectives.SourceCausal)
 			So(measurement.Category, ShouldEqual, perspectives.CategoryEndogenousAlpha)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
@@ -84,10 +84,10 @@ func TestCausalSymbolMeasure(t *testing.T) {
 
 		state.FeedTicker(market.TickerUpdate{Last: 100, ChangePct: 1.5, Volume: 1000})
 
-		measurement, ok := state.Measure(0.8, 0, time.Now())
+		measurement, _, err := state.Measure(0.8, 0, time.Now())
 
 		Convey("It should classify systemic beta from macro association", func() {
-			So(ok, ShouldBeTrue)
+			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, perspectives.CategorySystemicBeta)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
@@ -109,10 +109,10 @@ func TestCausalSymbolMeasure(t *testing.T) {
 			})
 		}
 
-		measurement, ok := state.Measure(0, 0, base.Add(time.Second))
+		measurement, _, err := state.Measure(0, 0, base.Add(time.Second))
 
 		Convey("It should classify causal noise from flow pressure", func() {
-			So(ok, ShouldBeTrue)
+			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, perspectives.CategoryCausalNoise)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
@@ -157,10 +157,11 @@ func TestCausalSymbolMeasureWithoutPrice(t *testing.T) {
 	Convey("Given a symbol without a last price", t, func() {
 		state := NewCausalSymbol()
 
-		_, ok := state.Measure(0.5, 0, time.Now())
+		measurement, _, err := state.Measure(0.5, 0, time.Now())
 
 		Convey("It should not publish", func() {
-			So(ok, ShouldBeFalse)
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 		})
 	})
 }
@@ -200,6 +201,6 @@ func BenchmarkCausalSymbolMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = state.Measure(0.5, 0.2, now)
+		_, _, _ = state.Measure(0.5, 0.2, now)
 	}
 }

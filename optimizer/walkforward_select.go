@@ -23,6 +23,7 @@ func SelectWalkForwardBest(
 	}
 
 	bestIndex := 0
+	bestWins := -1
 	bestHoldout := math.Inf(-1)
 	bestAdjusted := math.Inf(-1)
 
@@ -32,12 +33,15 @@ func SelectWalkForwardBest(
 		}
 
 		result := guard.EvaluateWalkForward(candidate.Branches, rows)
+		wins := result.Wins
 		holdout := result.AvgTestPerTrade()
 		adjusted := candidate.AdjustedScore
 
-		if holdout > bestHoldout ||
-			(holdout == bestHoldout && adjusted > bestAdjusted) {
+		if wins > bestWins ||
+			(wins == bestWins && holdout > bestHoldout) ||
+			(wins == bestWins && holdout == bestHoldout && adjusted > bestAdjusted) {
 			bestIndex = index
+			bestWins = wins
 			bestHoldout = holdout
 			bestAdjusted = adjusted
 		}

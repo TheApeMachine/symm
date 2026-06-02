@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
@@ -18,7 +19,7 @@ type Orders struct {
 	ctx        context.Context
 	socket     *WebSocket
 	balances   *Balances
-	prices     *Prices
+	quotes     *broker.QuoteCache
 	catalog    *PairCatalog
 	identifier *Identifier
 	mu         sync.RWMutex
@@ -29,7 +30,7 @@ func NewOrders(
 	ctx context.Context,
 	socket *WebSocket,
 	balances *Balances,
-	prices *Prices,
+	quotes *broker.QuoteCache,
 	catalog *PairCatalog,
 	identifier *Identifier,
 ) *Orders {
@@ -37,7 +38,7 @@ func NewOrders(
 		ctx:        ctx,
 		socket:     socket,
 		balances:   balances,
-		prices:     prices,
+		quotes:     quotes,
 		catalog:    catalog,
 		identifier: identifier,
 		open:       make(map[string]*openOrder),
@@ -104,6 +105,12 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 		params.ClOrdID = clOrdID
 
 		return orders.fillParams(params)
+	}
+
+	quote, ok := orders.quotes.Snapshot(params.Symbol)
+
+	if !ok || broker.WouldCrossPostOnly(quote, params.Side, params.LimitPrice) {
+		return rejectedExecution(clOrdID, "post-only order would take liquidity")
 	}
 
 	order := &openOrder{

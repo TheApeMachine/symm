@@ -74,13 +74,7 @@ func NewLedger(
 		fmt.Sprintf("%s:%p", ledgerSubscriberID, ledger), 256,
 	)
 
-	return ledger, errnie.Error(errnie.Require(map[string]any{
-		"ctx":        ledger.ctx,
-		"cancel":     ledger.cancel,
-		"acks":       ledger.acks,
-		"orders":     ledger.orders,
-		"subscriber": ledger.subscriber,
-	}))
+	return ledger, nil
 }
 
 /*
@@ -213,11 +207,14 @@ func (ledger *Ledger) trip() {
 func (ledger *Ledger) handle(value any) {
 	if envelope, ok := value.(public.SocketMessage); ok {
 		if envelope.Channel == public.ExecutionsChannel {
-			executions := errnie.Does(func() ([]user.Execution, error) {
-				return user.DecodeExecutions(&envelope)
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
+			executions, err := user.DecodeExecutions(&envelope)
+
+			if err != nil {
+				errnie.Error(fmt.Errorf("kraken/trading/ledger: decode executions: %w", err))
+				ledger.tripIfLive()
+
+				return
+			}
 
 			for _, execution := range executions {
 				ledger.handleExecution(execution)

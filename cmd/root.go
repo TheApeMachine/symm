@@ -3,14 +3,12 @@ package cmd
 import (
 	"embed"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
@@ -50,24 +48,38 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pool := errnie.Does(func() (*qpool.Q, error) {
-				return qpool.NewQ(cmd.Context(), 1, 4, nil), nil
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
+			pool := qpool.NewQ(cmd.Context(), 1, 4, nil)
 
-			engine := errnie.Does(func() (*Engine, error) {
-				return NewEngine(cmd.Context(), pool)
-			}).Or(func(err error) {
-				errnie.Error(err)
-			}).Value()
+			engine, err := NewEngine(cmd.Context(), pool)
+
+			if err != nil {
+				return err
+			}
 
 			streams := focus.NewSet()
 
+			story, storyErr := market.NewStory(cmd.Context(), pool, streams)
+
+			if storyErr != nil {
+				return storyErr
+			}
+
+			hub, hubErr := ui.NewHub(cmd.Context(), pool)
+
+			if hubErr != nil {
+				return hubErr
+			}
+
+			crypto, cryptoErr := trader.NewCrypto(cmd.Context(), pool, streams)
+
+			if cryptoErr != nil {
+				return cryptoErr
+			}
+
 			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
 
-			engine.AddSystems(
-				ui.NewHub(cmd.Context(), pool),
+			if err := engine.AddSystems(
+				hub,
 				public.NewWebSocket(cmd.Context(), pool, streams),
 				private.NewWebSocket(
 					cmd.Context(),
@@ -88,13 +100,15 @@ var (
 				pumpdump.NewSignal(cmd.Context(), pool),
 				sentiment.NewSignal(cmd.Context(), pool),
 				toxicity.NewToxicity(cmd.Context(), pool),
-				market.NewStory(cmd.Context(), pool, streams),
-				trader.NewCrypto(cmd.Context(), pool, streams),
-			)
+				story,
+				crypto,
+			); err != nil {
+				return err
+			}
 
 			activate.Boot("engine.Start")
 
-			return errnie.Error(engine.Start())
+			return engine.Start()
 		},
 	}
 )
@@ -156,11 +170,12 @@ func initConfig() {
 	}
 
 	if !loaded {
-		cfgReader := errnie.Does(func() (fs.File, error) {
-			return embedded.Open("cfg/config.yml")
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		cfgReader, err := embedded.Open("cfg/config.yml")
+
+		if err != nil {
+			fmt.Printf("embedded config file not readable: %v\n", err)
+			return
+		}
 
 		defer cfgReader.Close()
 
@@ -171,10 +186,6 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
-
-	if strings.TrimSpace(viper.GetString("ui.addr")) == "" {
-		viper.Set("ui.addr", "127.0.0.1:8765")
-	}
 }
 
 const rootLong = `

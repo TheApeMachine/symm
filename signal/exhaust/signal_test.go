@@ -54,7 +54,10 @@ func TestObserveBook(t *testing.T) {
 				depth := 20.0 - float64(index)*2
 				askPrice := 101.0 + float64(index)*0.5
 				signal.observeBook(thinningBook(symbol, depth, askPrice))
-				signal.emit(symbol)
+
+				if err := signal.emit(symbol); err != nil {
+					t.Fatalf("emit: %v", err)
+				}
 			}
 
 			var measurement perspectives.Measurement
@@ -101,6 +104,9 @@ func BenchmarkObserveBook(b *testing.B) {
 
 	for b.Loop() {
 		signal.observeBook(delta)
-		signal.emit(symbol)
+
+		if err := signal.emit(symbol); err != nil {
+			b.Fatalf("emit: %v", err)
+		}
 	}
 }

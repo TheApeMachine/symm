@@ -83,14 +83,14 @@ func (store *historyStore) observe(
 	}
 }
 
-func (store *historyStore) measure(symbol string) (perspectives.Measurement, bool) {
+func (store *historyStore) measure(symbol string) (perspectives.Measurement, float64, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	history, ok := store.bySymbol[symbol]
 
 	if !ok || history == nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	return exhaustMeasurement(history.snapshot(), history.tracked)
@@ -205,11 +205,11 @@ func imbalanceFlip(imbalances ring.FloatRing, side int) float64 {
 	prior := numeric.Mean(ordered[:len(ordered)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
-		return math.Min(1, math.Abs(recent)/math.Max(prior, 1e-9))
+		return perspectives.UnitCompetitionMargin(math.Abs(recent), math.Max(prior, 1e-9))
 	}
 
 	if side < 0 && prior < 0 && recent > 0 {
-		return math.Min(1, recent/math.Max(math.Abs(prior), 1e-9))
+		return perspectives.UnitCompetitionMargin(recent, math.Max(math.Abs(prior), 1e-9))
 	}
 
 	return 0

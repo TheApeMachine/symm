@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 /*
@@ -69,32 +69,44 @@ func (tox *Toxicity) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("toxicity: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
 					tox.observeTrade(trade)
 				}
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("toxicity: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
 					tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
 					tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
-					tox.publishMeasurement(ticker.Symbol)
+
+					if err := tox.publishMeasurement(ticker.Symbol); err != nil {
+						return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
+					}
 				}
 			case public.BookChannel:
-				for _, update := range errnie.Does(func() ([]market.Book, error) {
-					return market.DecodeBooks(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				books, err := market.DecodeBooks(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("toxicity: decode books: %w", err)
+				}
+
+				for _, update := range books {
 					if !tox.l3Active {
 						tox.observeBook(update)
-						tox.publishMeasurement(update.Symbol)
+
+						if err := tox.publishMeasurement(update.Symbol); err != nil {
+							return fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err)
+						}
 					}
 				}
 			}
@@ -119,18 +131,24 @@ func (tox *Toxicity) observeBook(update market.Book) {
 	}
 }
 
-func (tox *Toxicity) publishMeasurement(symbol string) {
+func (tox *Toxicity) publishMeasurement(symbol string) error {
 	now := time.Now()
-	measurement, ok := tox.tracker.Measure(symbol, now)
+	measurement, err := tox.tracker.Measure(symbol, now)
 
-	if !ok {
-		return
+	if err != nil {
+		return err
+	}
+
+	if measurement.Source == perspectives.SourceNone {
+		return nil
 	}
 
 	measurement.Symbol = symbol
 
 	activate.Once("toxicity:measurement")
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
+
+	return nil
 }
 
 func (tox *Toxicity) Close() error {

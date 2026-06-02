@@ -3,7 +3,6 @@ package optimizer
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -199,7 +198,7 @@ func (simulation *ReplaySimulation) applyEvaluator(
 	actionType := evaluator.Action(simulation.branches)
 
 	if evaluator.Err() != nil {
-		errnie.Error(evaluator.Err())
+		return
 	}
 
 	if actionType == nil {

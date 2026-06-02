@@ -73,11 +73,10 @@ func (classifier *Classifier) Code(observation float64) (float64, error) {
 }
 
 /*
-Confidence returns how decisively observation lands in its assigned class:
-distance to the nearest class boundary, normalised by half the local band width.
-High when deep inside a band (a clear StochasticNoise reads high); low on a
-boundary where another category is plausible. Category-agnostic — it says how
-clearly we measured, not what we measured.
+Confidence returns band clarity in [0, 1]: how deep the observation sits inside its
+assigned band. Interior bands reach 1 at the centre; open-ended head/tail bands
+saturate toward 1 with distance from the flip boundary so pathological raw inputs
+never produce unbounded clarity.
 */
 func (classifier *Classifier) Confidence(observation float64) float64 {
 	if classifier == nil || len(classifier.upper) == 0 {
@@ -85,9 +84,9 @@ func (classifier *Classifier) Confidence(observation float64) float64 {
 	}
 
 	classIndex := classifier.classIndex(observation)
-	margin := classifier.margin(observation, classIndex)
+	inBandMargin := classifier.margin(observation, classIndex)
 
-	if margin <= 0 {
+	if inBandMargin <= 0 {
 		return 0
 	}
 
@@ -97,7 +96,47 @@ func (classifier *Classifier) Confidence(observation float64) float64 {
 		return 0
 	}
 
-	return margin / halfWidth
+	if inBandMargin > halfWidth {
+		return inBandMargin / (inBandMargin + halfWidth)
+	}
+
+	return inBandMargin / halfWidth
+}
+
+/*
+Standout is winner clarity minus the strongest adjacent-category clarity at the
+neighbor band boundary — a unit competition margin in [0, 1].
+*/
+func (classifier *Classifier) Standout(observation float64) float64 {
+	if classifier == nil || len(classifier.upper) == 0 {
+		return 0
+	}
+
+	winIndex := classifier.classIndex(observation)
+	win := classifier.Confidence(observation)
+
+	if win <= 0 {
+		return 0
+	}
+
+	runner := 0.0
+	upperCount := len(classifier.upper)
+
+	if winIndex > 0 {
+		runner = math.Max(runner, classifier.Confidence(classifier.upper[winIndex-1]))
+	}
+
+	if winIndex < upperCount {
+		runner = math.Max(runner, classifier.Confidence(classifier.upper[winIndex]))
+	}
+
+	margin := win - runner
+
+	if margin <= 0 {
+		return 0
+	}
+
+	return margin
 }
 
 func (classifier *Classifier) classIndex(observation float64) int {
@@ -146,7 +185,7 @@ func (classifier *Classifier) localHalfWidth(classIndex int) float64 {
 }
 
 /*
-Label returns the label for one class code.
+Label returns the label for the class code.
 */
 func (classifier *Classifier) Label(code float64) string {
 	for index, classCode := range classifier.codes {

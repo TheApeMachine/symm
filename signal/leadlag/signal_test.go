@@ -35,10 +35,10 @@ func TestMeasure(t *testing.T) {
 			anchor.observeTicker(0.01, 50000, time.Now())
 			follower.observeTicker(2.0, 100, time.Now())
 
-			measurement, ok := signal.measure(anchor, false, follower)
+			measurement, _, err := signal.measure(anchor, false, follower)
 
 			Convey("It should classify an anchor stall", func() {
-				So(ok, ShouldBeTrue)
+				So(err, ShouldBeNil)
 				So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryAnchorStall)
 			})
@@ -48,10 +48,11 @@ func TestMeasure(t *testing.T) {
 			anchor.observeTicker(1.0, 50000, time.Now())
 			follower.observeTicker(1.5, 100, time.Now())
 
-			_, ok := signal.measure(anchor, true, follower)
+			measurement, _, err := signal.measure(anchor, true, follower)
 
 			Convey("It should withhold the reading", func() {
-				So(ok, ShouldBeFalse)
+				So(err, ShouldBeNil)
+				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 			})
 		})
 	})
@@ -82,6 +83,6 @@ func BenchmarkMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = signal.measure(anchor, true, follower)
+		_, _, _ = signal.measure(anchor, true, follower)
 	}
 }

@@ -337,13 +337,9 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run 
 
 ### Paper / live parity
 
-Paper fills use the same `broker.Quote` path as live orders: the desk caches Kraken ticker bid/ask and L2 depth per symbol, then `market.SlippageFill` prices the order through the book (VWAP through available depth, otherwise half-spread on last). `broker.Buy` and `broker.Sell` run `PreflightGates` — quote freshness, max spread, projected slippage — before reserving cash, for both paper and live.
+Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Post-only limits rest on the simulated book and fill when the live quote crosses them; immediate-cross post-only orders are rejected, matching Kraken behavior.
 
-Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`market.LoadPairCatalog`), tiered by `Fee30DVolume`, and stored on `PositionBinding` as entry and exit fee rates. Maker-entry mode scores maker entry plus taker exit; taker fallback only fires when the taker-entry round trip still clears the edge gate.
-
-Paper reject simulation keeps the entry reservation in place until `trader/paper.go` emits the reject ack, matching the live order lifecycle and preventing one rejected order from releasing another pending entry's cash.
-
-`ExecutionStressEnabled` applies the same stale-quote, shallow-depth, and adverse-ask stress to both paper and live fills. Any new live execution behavior must be mirrored in `trader/paper.go` / `broker.SubmitPaper`.
+Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`kraken/paper/catalog.go`). The trader marks a symbol as holding only after an execution fill (not on open ack), publishes `AvgEntry` and `Marks` on wallet frames for the frontend Trades panel, and keeps entry pending locks until fill or reject.
 
 Book checksum health is tracked per signal and symbol. A `fluid` snapshot recovery does not clear a `depthflow` divergence for the same pair; each maintained book must realign before the blind-state clears.
 

@@ -9,7 +9,7 @@ Confidence accumulates when the category shifts.
 func exhaustMeasurement(
 	history symbolHistory,
 	tracked *perspectives.Category,
-) (perspectives.Measurement, bool) {
+) (perspectives.Measurement, float64, error) {
 	urgency, category, evidence := exitScoreLong(history)
 
 	if urgency <= 0 {
@@ -17,17 +17,14 @@ func exhaustMeasurement(
 	}
 
 	if urgency <= 0 || category == perspectives.CategoryTypeNone {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
-	if urgency > 0.999 {
-		urgency = 0.999
-	}
-
-	confidence, err := tracked.Observe(category, evidence)
+	standout := evidence
+	confidence, err := tracked.Observe(category, evidence, standout)
 
 	if err != nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -35,5 +32,5 @@ func exhaustMeasurement(
 		Category:   category,
 		Strength:   urgency / (1 - urgency),
 		Confidence: confidence,
-	}, true
+	}, standout, nil
 }

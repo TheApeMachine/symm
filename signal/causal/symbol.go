@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -69,7 +68,7 @@ func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
 	state.changePct = row.ChangePct
 }
 
-func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) {
+func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -93,11 +92,12 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) {
 	pressure, err := state.pressure.Next(0, sign)
 
 	if err != nil {
-		errnie.Error(err)
-		return
+		return err
 	}
 
 	state.buyPressure = pressure
+
+	return nil
 }
 
 func (state *CausalSymbol) FeedBook(delta market.Book) {
@@ -133,12 +133,12 @@ func (state *CausalSymbol) FeedBook(delta market.Book) {
 func (state *CausalSymbol) Measure(
 	macroMomentum, contagion float64,
 	now time.Time,
-) (perspectives.Measurement, bool) {
+) (perspectives.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if state.lastPrice <= 0 {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	state.resolvePendingLocked(now)
@@ -159,13 +159,12 @@ func (state *CausalSymbol) Measure(
 			evidence := causalEvidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
+			standout := evidence
 
-			confidence, err := state.tracked.Observe(category, evidence)
+			confidence, err := state.tracked.Observe(category, evidence, standout)
 
 			if err != nil {
-				errnie.Error(err)
-
-				return perspectives.Measurement{}, false
+				return perspectives.Measurement{}, 0, err
 			}
 
 			return perspectives.Measurement{
@@ -174,7 +173,7 @@ func (state *CausalSymbol) Measure(
 				Strength:   outcome.raw,
 				Confidence: confidence,
 				Last:       state.lastPrice,
-			}, true
+			}, standout, nil
 		}
 	}
 
@@ -185,7 +184,7 @@ func (state *CausalSymbol) Measure(
 	}
 
 	if state.changePct == 0 && macroMomentum == 0 && state.buyPressure == 0 {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
@@ -193,13 +192,12 @@ func (state *CausalSymbol) Measure(
 	evidence := causalEvidence(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
+	standout := evidence
 
-	confidence, err := state.tracked.Observe(category, evidence)
+	confidence, err := state.tracked.Observe(category, evidence, standout)
 
 	if err != nil {
-		errnie.Error(err)
-
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -208,7 +206,7 @@ func (state *CausalSymbol) Measure(
 		Strength:   fallbackRaw,
 		Confidence: confidence,
 		Last:       state.lastPrice,
-	}, true
+	}, standout, nil
 }
 
 func (state *CausalSymbol) ChangePct() float64 {

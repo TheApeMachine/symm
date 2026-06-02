@@ -3,10 +3,9 @@ package perspectives
 import (
 	"context"
 	"embed"
+	"fmt"
 	"io"
-	"io/fs"
 
-	"github.com/theapemachine/errnie"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -31,11 +30,12 @@ func NewTree(
 ) (*Tree, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	cfgReader := errnie.Does(func() (fs.File, error) {
-		return embedded.Open("cfg/perspectives.yaml")
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	cfgReader, err := embedded.Open("cfg/perspectives.yaml")
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("perspectives tree: open cfg: %w", err)
+	}
 
 	defer cfgReader.Close()
 
@@ -43,14 +43,14 @@ func NewTree(
 
 	if err != nil {
 		cancel()
-		return nil, errnie.Error(err)
+		return nil, fmt.Errorf("perspectives tree: read cfg: %w", err)
 	}
 
 	document := treeDocument{}
 
 	if err := yaml.Unmarshal(raw, &document); err != nil {
 		cancel()
-		return nil, errnie.Error(err)
+		return nil, fmt.Errorf("perspectives tree: parse cfg: %w", err)
 	}
 
 	if document.Branches == nil {
@@ -64,12 +64,7 @@ func NewTree(
 		Measurements: measurements,
 	}
 
-	return tree, errnie.Error(errnie.Require((map[string]any{
-		"ctx":          tree.ctx,
-		"cancel":       tree.cancel,
-		"branches":     tree.branches,
-		"measurements": tree.Measurements,
-	})))
+	return tree, nil
 }
 
 /*
@@ -87,11 +82,7 @@ func NewTreeFromBranches(
 		Measurements: make([]Measurement, 0),
 	}
 
-	return tree, errnie.Error(errnie.Require(map[string]any{
-		"ctx":      tree.ctx,
-		"cancel":   tree.cancel,
-		"branches": tree.branches,
-	}))
+	return tree, nil
 }
 
 func (tree *Tree) Action() *ActionType {
@@ -136,10 +127,6 @@ func (tree *Tree) WalkContext(
 	evaluator := NewBranchEvaluator(branchContext)
 	tree.currentAction = evaluator.Action(walkBranches)
 	tree.err = evaluator.Err()
-
-	if tree.err != nil {
-		errnie.Error(tree.err)
-	}
 
 	return tree.currentAction
 }

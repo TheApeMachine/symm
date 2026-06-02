@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 )
@@ -22,10 +23,8 @@ const (
 /*
 SNR is the detection-theory signal-to-noise ratio of one scalar series: how many
 of the series' own noise standard deviations the latest value stands above its
-running mean. It is dimensionless and therefore comparable across signals that
-measure entirely different raw quantities — a value of 1 means "one sigma above
-my own background" whether the input was order-book odds, a peer ratio, or a
-trade intensity.
+running mean. Signals pass category standout — winner margin over alternatives —
+not band clarity (Confidence).
 
 The mean and standard deviation are exponentially weighted, measured from the
 samples seen *before* the current one (so the current reading is scored against
@@ -53,30 +52,50 @@ func NewSNR() *SNR {
 /*
 Score folds value into the running baseline and returns its SNR: max(0, (value −
 mean) / std) against the baseline from before this sample. It returns 0 while the
-series is still warming up or has no measurable spread.
+series is still warming up. Invalid standout or an immeasurable noise floor returns
+an error — never a silent substitute.
 */
-func (snr *SNR) Score(value float64) float64 {
+func (snr *SNR) Score(value float64) (float64, error) {
+	if err := validateStandout(value); err != nil {
+		return 0, err
+	}
+
 	result := 0.0
 	folded := value
 
 	if snr.moments.Observations() >= snr.minObs {
+		mean := snr.moments.Mean()
 		std := math.Sqrt(snr.moments.VarianceEWMA())
 
-		if std >= snrEpsilon {
-			mean := snr.moments.Mean()
-
-			if zScore := (value - mean) / std; zScore > 0 {
-				result = zScore
+		if std < snrEpsilon {
+			if value != mean {
+				return 0, ErrInsufficientStandoutSpread
 			}
-
+		} else if zScore := (value - mean) / std; zScore > 0 {
+			result = zScore
 			folded = clampToBand(value, mean, snr.clampSigma*std)
 		}
 	}
 
-	// alpha is fixed-valid by the constructor, so Update cannot error here.
-	_ = snr.moments.Update(folded, snr.alpha)
+	if err := snr.moments.Update(folded, snr.alpha); err != nil {
+		return 0, err
+	}
 
-	return result
+	return result, nil
+}
+
+var ErrInsufficientStandoutSpread = errors.New("adaptive: SNR insufficient standout spread")
+
+func validateStandout(value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return fmt.Errorf("adaptive: SNR invalid standout: %v", value)
+	}
+
+	if value > 1 {
+		return fmt.Errorf("adaptive: SNR standout above unit band: %v", value)
+	}
+
+	return nil
 }
 
 /*
@@ -88,7 +107,7 @@ func (snr *SNR) Next(out float64, _ ...float64) (float64, error) {
 		return 0, errors.New("adaptive: SNR.Next nil receiver")
 	}
 
-	return snr.Score(out), nil
+	return snr.Score(out)
 }
 
 // clampToBand limits value to [center-radius, center+radius].
@@ -125,7 +144,7 @@ func NewSNRField() *SNRField {
 Score returns the SNR of value within symbol's own series, creating the series on
 first use.
 */
-func (field *SNRField) Score(symbol string, value float64) float64 {
+func (field *SNRField) Score(symbol string, value float64) (float64, error) {
 	field.mu.Lock()
 	tracker, ok := field.series[symbol]
 

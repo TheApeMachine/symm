@@ -1,0 +1,269 @@
+package optimizer
+
+import (
+	"sort"
+
+	"github.com/theapemachine/symm/market/perspectives"
+)
+
+func (search *ScanSearch) rankedEntryBranchers() []perspectives.Branch {
+	branchers := search.branchers()
+
+	if len(branchers) <= search.options.BeamWidth {
+		return branchers
+	}
+
+	type rankedBrancher struct {
+		branch perspectives.Branch
+		score  float64
+		passes int
+	}
+
+	ranked := make([]rankedBrancher, 0, len(branchers))
+	byCategory := make(map[perspectives.CategoryType][]rankedBrancher)
+
+	for _, brancher := range branchers {
+		passes := search.profile.GatePassCount(
+			brancher.Category,
+			brancher.Unit,
+			brancher.Condition,
+			brancher.Value,
+		)
+		entry := rankedBrancher{
+			branch: brancher,
+			score: search.profile.GateSelectivityScore(
+				brancher.Category,
+				brancher.Unit,
+				brancher.Condition,
+				brancher.Value,
+			),
+			passes: passes,
+		}
+
+		ranked = append(ranked, entry)
+		byCategory[brancher.Category] = append(byCategory[brancher.Category], entry)
+	}
+
+	less := func(left, right rankedBrancher) bool {
+		if left.score != right.score {
+			return left.score > right.score
+		}
+
+		return left.passes > right.passes
+	}
+
+	for category := range byCategory {
+		sort.Slice(byCategory[category], func(leftIndex, rightIndex int) bool {
+			return less(byCategory[category][leftIndex], byCategory[category][rightIndex])
+		})
+	}
+
+	sort.Slice(ranked, func(leftIndex, rightIndex int) bool {
+		return less(ranked[leftIndex], ranked[rightIndex])
+	})
+
+	limited := make([]perspectives.Branch, 0, search.options.BeamWidth)
+	seen := make(map[string]struct{}, search.options.BeamWidth)
+	categories := search.profile.Categories()
+
+	for layer := 0; len(limited) < search.options.BeamWidth; layer++ {
+		progress := false
+
+		for _, category := range categories {
+			candidates := byCategory[category]
+
+			if layer >= len(candidates) {
+				continue
+			}
+
+			key := branchFingerprint(candidates[layer].branch)
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			limited = append(limited, candidates[layer].branch)
+			seen[key] = struct{}{}
+			progress = true
+
+			if len(limited) == search.options.BeamWidth {
+				return limited
+			}
+		}
+
+		if !progress {
+			break
+		}
+	}
+
+	for _, candidate := range ranked {
+		if len(limited) == search.options.BeamWidth {
+			break
+		}
+
+		key := branchFingerprint(candidate.branch)
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		limited = append(limited, candidate.branch)
+		seen[key] = struct{}{}
+	}
+
+	return limited
+}
+
+func (search *ScanSearch) emitDecisionSeeds(send func(scanCandidate) bool) {
+	for _, playbook := range BuildDecisionSeedPlaybooks(search.profile, search.coOccurrence) {
+		if !send(scanCandidate{
+			branches: playbook,
+			group:    actionGroupEntry,
+		}) {
+			return
+		}
+	}
+
+	for _, playbook := range BuildProfileNestedSeedPlaybooks(search.profile, search.coOccurrence) {
+		if !send(scanCandidate{
+			branches: playbook,
+			group:    actionGroupEntry,
+		}) {
+			return
+		}
+	}
+}
+
+func (search *ScanSearch) actionBranches() []scanCandidate {
+	candidates := make([]scanCandidate, 0)
+
+	for _, branch := range search.branches(perspectives.ObservationNotHolding) {
+		for _, actionType := range searchEntryActions {
+			if actionType == perspectives.ActionNone {
+				continue
+			}
+
+			next := branch
+			next.Action = perspectives.Action{Type: actionType}
+			candidates = append(candidates, scanCandidate{
+				branches: perspectives.BranchList{next},
+				group:    actionGroupEntry,
+			})
+		}
+	}
+
+	for _, branch := range search.branches(perspectives.ObservationHolding) {
+		for _, actionType := range searchExitActions {
+			if actionType == perspectives.ActionNone {
+				continue
+			}
+
+			next := branch
+			next.Action = perspectives.Action{Type: actionType}
+			candidates = append(candidates, scanCandidate{
+				branches: perspectives.BranchList{next},
+				group:    actionGroupExit,
+			})
+		}
+	}
+
+	return candidates
+}
+
+func (search *ScanSearch) branchers() []perspectives.Branch {
+	return search.branches(perspectives.ObservationNone)
+}
+
+func (search *ScanSearch) branches(
+	observation perspectives.ObservationType,
+) []perspectives.Branch {
+	categories := search.profile.Categories()
+	branches := make([]perspectives.Branch, 0)
+
+	for _, category := range categories {
+		for _, unit := range searchUnits {
+			values := search.profile.Values(
+				category,
+				unit,
+				search.options.MaxThresholds,
+			)
+
+			for _, condition := range searchConditions {
+				for _, value := range values {
+					branches = append(branches, perspectives.Branch{
+						Category:    category,
+						Observation: observation,
+						Condition:   condition,
+						Unit:        unit,
+						Value:       value,
+						ValueSet:    true,
+					})
+				}
+			}
+		}
+	}
+
+	return branches
+}
+
+func (search *ScanSearch) emitSiblingBranches(
+	send func(scanCandidate) bool,
+	actions []scanCandidate,
+	maxPairs int,
+) {
+	entries := search.groupCandidates(actions, actionGroupEntry)
+	exits := search.groupCandidates(actions, actionGroupExit)
+	emitted := 0
+
+	for _, entry := range entries {
+		entryCategory := primaryEntryCategory(entry.branches)
+		rankedExits := rankExitsByAffinity(search.pairAffinity, entryCategory, exits)
+
+		for _, exit := range rankedExits {
+			if maxPairs > 0 && emitted >= maxPairs {
+				return
+			}
+
+			if search.coOccurrence != nil {
+				if !entryExitPairReachable(
+					search.coOccurrence, entry.branches, exit.branches,
+				) {
+					continue
+				}
+			}
+
+			branches := entry.branches.Clone()
+			branches = append(branches, exit.branches.Clone()...)
+
+			if !send(scanCandidate{
+				branches: branches,
+				group:    actionGroupEntry,
+			}) {
+				return
+			}
+
+			emitted++
+		}
+	}
+}
+
+func (search *ScanSearch) groupCandidates(
+	candidates []scanCandidate,
+	group actionGroup,
+) []scanCandidate {
+	grouped := make([]scanCandidate, 0, search.options.BeamWidth)
+
+	for _, candidate := range candidates {
+		if candidate.group != group {
+			continue
+		}
+
+		grouped = append(grouped, candidate)
+
+		if len(grouped) == search.options.BeamWidth {
+			return grouped
+		}
+	}
+
+	return grouped
+}

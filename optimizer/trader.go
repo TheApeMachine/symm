@@ -2,9 +2,9 @@ package optimizer
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -23,8 +23,15 @@ type Trader struct {
 	desk        *broker.Desk
 }
 
-func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
+func NewTrader(ctx context.Context, pool *qpool.Q) (*Trader, error) {
 	ctx, cancel := context.WithCancel(ctx)
+
+	desk, err := broker.NewDesk(ctx, pool)
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("optimizer trader: desk: %w", err)
+	}
 
 	trader := &Trader{
 		ctx:         ctx,
@@ -32,11 +39,7 @@ func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		desk: errnie.Does(func() (*broker.Desk, error) {
-			return broker.NewDesk(ctx, pool)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value(),
+		desk:        desk,
 	}
 
 	for _, channel := range []string{"actions"} {
@@ -44,7 +47,7 @@ func NewTrader(ctx context.Context, pool *qpool.Q) *Trader {
 		trader.subscribers[channel] = trader.broadcasts[channel].Subscribe("optimizer:trader", 1024)
 	}
 
-	return trader
+	return trader, nil
 }
 
 func (trader *Trader) Tick() error {
@@ -64,10 +67,12 @@ func (trader *Trader) Tick() error {
 			action, ok := row.Value.(perspectives.Action)
 
 			if !ok {
-				continue
+				return fmt.Errorf("optimizer trader: invalid action type %T", row.Value)
 			}
 
-			errnie.Error(trader.desk.AddOrder(action))
+			if err := trader.desk.AddOrder(action); err != nil {
+				return fmt.Errorf("optimizer trader: order: %w", err)
+			}
 		}
 	}
 }

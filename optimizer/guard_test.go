@@ -16,16 +16,20 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 		rows := make([]perspectives.Measurement, 0, 120)
 
 		for index := range 120 {
-			price := 100.0
-
 			if index%6 == 5 {
-				price = 110.0
+				rows = append(rows, perspectives.Measurement{
+					Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+					Category: perspectives.CategoryExhaustion,
+					SNR:      2, Last: 200,
+				})
+
+				continue
 			}
 
 			rows = append(rows, perspectives.Measurement{
 				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
 				Category: perspectives.CategoryLaminar,
-				SNR:      2, Last: price,
+				SNR:      2, Last: 100,
 			})
 		}
 
@@ -39,7 +43,7 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 				Action: perspectives.Action{Type: perspectives.ActionLimit},
 			},
 			{
-				Category:    perspectives.CategoryLaminar,
+				Category:    perspectives.CategoryExhaustion,
 				Observation: perspectives.ObservationHolding,
 				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
 				Unit:        perspectives.UnitSNR,

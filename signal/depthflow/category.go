@@ -27,7 +27,7 @@ func depthflowReading(
 	switch category {
 	case perspectives.CategoryLoadedImbalance:
 		if !flatOK {
-			return category, math.Min(1, math.Abs(weightedImbalance))
+			return category, perspectives.UnitMagnitudeMargin(math.Abs(weightedImbalance))
 		}
 
 		boundary := math.Abs(weightedImbalance) * bookThinningFlatFraction
@@ -51,13 +51,22 @@ func depthflowReading(
 
 		return category, margin / math.Max(math.Abs(flatImbalance), 1e-12)
 	case perspectives.CategorySpoofTrap:
-		return category, math.Min(1, math.Abs(weightedImbalance))
+		return category, perspectives.UnitMagnitudeMargin(math.Abs(weightedImbalance))
 	default:
 		if flow > 0 {
-			return category, math.Min(1, flow)
+			return category, perspectives.UnitCompetitionMargin(flow, 1)
 		}
 
-		return category, math.Max(0, 1-math.Abs(weightedImbalance))
+		margin := 1 - math.Abs(weightedImbalance)
+
+		if margin <= 0 {
+			return category, 0
+		}
+
+		return category, perspectives.UnitCompetitionMargin(
+			margin,
+			math.Max(math.Abs(weightedImbalance), 1e-12),
+		)
 	}
 }
 

@@ -2,10 +2,10 @@ package liquidity
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -25,8 +25,8 @@ Signal ranks a symbol's quote volume against the live cross-section of its peers
 and maps the standing onto the scarcity perspective. It is a cross-asset signal:
 the verdict for one symbol depends on where its quote volume sits in the peer
 median. Confidence is classification clarity — margin to the nearest peer
-quartile; SNR is how surprising that clarity is versus the symbol's own recent
-baseline.
+quartile; SNR scores category standout — peer deviation from the median — against
+the symbol's own recent baseline.
 
 | Category          | Quote Volume vs peer median | Market "Feel"     |
 |:------------------|:----------------------------|:------------------|
@@ -87,22 +87,33 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("liquidity: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
 					if ticker.Last <= 0 {
 						continue
 					}
 
-					measurement, ok := signal.measure(ticker)
+					measurement, standout, err := signal.measure(ticker)
 
-					if !ok {
+					if err != nil {
+						return fmt.Errorf("liquidity: measure %s: %w", ticker.Symbol, err)
+					}
+
+					if measurement.Symbol == "" {
 						continue
 					}
 
-					measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+					if err := perspectives.AssignCategorySNR(
+						&measurement, signal.floor, standout,
+					); err != nil {
+						return fmt.Errorf("liquidity: snr %s: %w", ticker.Symbol, err)
+					}
+
 					activate.Once("signal/liquidity:measurement")
 					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 				}
@@ -115,27 +126,30 @@ func (signal *Signal) Tick() error {
 measure records the latest quote volume for the ticking symbol and ranks it
 against the live peer cross-section.
 */
-func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement, bool) {
+func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement, float64, error) {
 	signal.symbols.Store(row.Symbol, row.Volume*row.Last)
 
 	quoteVol, peers := signal.crossSection(row.Symbol)
 
 	if quoteVol <= 0 || len(peers) < minLiquidityPeers {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	median := numeric.PercentileSorted(numeric.CopySorted(peers), 0.5)
 
 	if median <= 0 {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, fmt.Errorf(
+			"liquidity: non-positive peer median for %s",
+			row.Symbol,
+		)
 	}
 
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
-	category, evidence, err := liquidityReading(quoteVol, peers)
+	category, clarity, standout, err := liquidityReading(quoteVol, peers)
 
 	if err != nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	trackedRaw, _ := signal.tracked.LoadOrStore(
@@ -144,10 +158,10 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 	)
 	tracked := trackedRaw.(*perspectives.Category)
 
-	confidence, err := tracked.Observe(category, evidence)
+	confidence, err := tracked.Observe(category, clarity, standout)
 
 	if err != nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -157,7 +171,7 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 		Last:       row.Last,
 		Strength:   raw,
 		Confidence: confidence,
-	}, true
+	}, standout, nil
 }
 
 /*

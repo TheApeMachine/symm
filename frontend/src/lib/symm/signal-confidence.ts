@@ -1,4 +1,3 @@
-
 export const SIGNAL_SOURCES = [
 	"hawkes",
 	"fluid",
@@ -28,18 +27,18 @@ export const SIGNAL_LABELS: Record<SignalSource, string> = {
 export const isSignalSource = (source: string): source is SignalSource =>
 	SIGNAL_SOURCES.includes(source as SignalSource);
 
-// Confidence is now a signal-to-noise ratio in noise-sigma units. The gauge maps
-// 0..GAUGE_FULL_SIGMA sigma onto 0..100% and caps there, so a reading sits at the
-// noise floor (1 sigma) around a quarter of the dial and pins at strong spikes
-// instead of running off to thousands.
-const GAUGE_FULL_SIGMA = 4;
-
+// Hub confidence frames carry category-band clarity on 0..1. SNR (sigma surprise)
+// rides alongside as snr when present. The gauge maps clarity onto 0..100%.
 export const confidenceToGaugePercent = (confidence: number): number => {
-	if (confidence <= 0) {
+	if (!Number.isFinite(confidence) || confidence <= 0) {
 		return 0;
 	}
 
-	return Math.min(100, (confidence / GAUGE_FULL_SIGMA) * 100);
+	if (confidence > 1) {
+		throw new Error(`signal confidence out of unit interval: ${confidence}`);
+	}
+
+	return confidence * 100;
 };
 
 export const formatSignalConfidence = (confidence: number): string => {
@@ -60,4 +59,3 @@ export const emptySignalConfidences = (): SignalConfidenceSnapshot => ({
 	liquidity: 0,
 	sentiment: 0,
 });
-

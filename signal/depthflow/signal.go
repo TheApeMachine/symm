@@ -2,14 +2,15 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -55,9 +56,20 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	return signal
 }
 
-func (signal *Signal) state(symbol string) *DepthSymbol {
-	stored, _ := signal.symbols.LoadOrStore(symbol, NewDepthSymbol(symbol))
-	return stored.(*DepthSymbol)
+func (signal *Signal) state(symbol string) (*DepthSymbol, error) {
+	if stored, ok := signal.symbols.Load(symbol); ok {
+		return stored.(*DepthSymbol), nil
+	}
+
+	created, err := NewDepthSymbol(symbol)
+
+	if err != nil {
+		return nil, err
+	}
+
+	stored, _ := signal.symbols.LoadOrStore(symbol, created)
+
+	return stored.(*DepthSymbol), nil
 }
 
 func (signal *Signal) Tick() error {
@@ -78,29 +90,52 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.observeTrade(trade)
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("depthflow: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
+					if err := signal.observeTrade(trade); err != nil {
+						return fmt.Errorf("depthflow: observe trade %s: %w", trade.Symbol, err)
+					}
 				}
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.state(ticker.Symbol).FeedTicker(ticker)
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("depthflow: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
+					state, err := signal.state(ticker.Symbol)
+
+					if err != nil {
+						return fmt.Errorf("depthflow: state %s: %w", ticker.Symbol, err)
+					}
+
+					state.FeedTicker(ticker)
 				}
 			case public.BookChannel:
-				for _, delta := range errnie.Does(func() ([]market.Book, error) {
-					return market.DecodeBooks(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.state(delta.Symbol).ApplyBook(delta)
-					signal.emit(delta.Symbol)
+				books, err := market.DecodeBooks(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("depthflow: decode books: %w", err)
+				}
+
+				for _, delta := range books {
+					state, err := signal.state(delta.Symbol)
+
+					if err != nil {
+						return fmt.Errorf("depthflow: state %s: %w", delta.Symbol, err)
+					}
+
+					state.ApplyBook(delta)
+
+					if err := signal.emit(delta.Symbol); err != nil {
+						return fmt.Errorf("depthflow: emit %s: %w", delta.Symbol, err)
+					}
 				}
 			}
 		}
@@ -109,35 +144,54 @@ func (signal *Signal) Tick() error {
 
 // observeTrade folds one trade's aggressor side into depth-weighted pressure and
 // emits the symbol's reading.
-func (signal *Signal) observeTrade(trade market.TradeUpdate) {
+func (signal *Signal) observeTrade(trade market.TradeUpdate) error {
 	sign := -1.0
 
 	if trade.Side == "buy" {
 		sign = 1.0
 	}
 
-	if _, err := signal.state(trade.Symbol).PushTradePressure(sign); err != nil {
-		errnie.Error(err)
+	state, err := signal.state(trade.Symbol)
+
+	if err != nil {
+		return err
 	}
 
-	signal.emit(trade.Symbol)
+	if _, err := state.PushTradePressure(sign); err != nil {
+		return err
+	}
+
+	return signal.emit(trade.Symbol)
 }
 
-func (signal *Signal) emit(symbol string) {
+func (signal *Signal) emit(symbol string) error {
 	raw, ok := signal.symbols.Load(symbol)
 
 	if !ok {
-		return
+		return nil
 	}
 
-	measurement, ok := raw.(*DepthSymbol).Measure()
+	measurement, standout, err := raw.(*DepthSymbol).Measure()
 
-	if ok {
-		measurement.Symbol = symbol
-		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
-		activate.Once("signal/depthflow:measurement")
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if err != nil {
+		return err
 	}
+
+	if measurement.Source == perspectives.SourceNone {
+		return nil
+	}
+
+	measurement.Symbol = symbol
+	if err := perspectives.AssignCategorySNR(
+		&measurement, signal.floor, standout,
+	); err != nil {
+		return err
+	}
+
+	activate.Once("signal/depthflow:measurement")
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

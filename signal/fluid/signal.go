@@ -2,16 +2,17 @@ package fluid
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -67,9 +68,20 @@ func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
 	return signal
 }
 
-func (signal *Signal) state(symbol string) *FluidSymbol {
-	stored, _ := signal.symbols.LoadOrStore(symbol, NewFluidSymbol(symbol))
-	return stored.(*FluidSymbol)
+func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
+	if stored, ok := signal.symbols.Load(symbol); ok {
+		return stored.(*FluidSymbol), nil
+	}
+
+	created, err := NewFluidSymbol(symbol)
+
+	if err != nil {
+		return nil, err
+	}
+
+	stored, _ := signal.symbols.LoadOrStore(symbol, created)
+
+	return stored.(*FluidSymbol), nil
 }
 
 func (signal *Signal) Tick() error {
@@ -90,54 +102,102 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.state(trade.Symbol).FeedTradeSide(trade.Timestamp, trade.Qty, trade.Side)
-					signal.emit(trade.Symbol)
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("fluid: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
+					state, err := signal.state(trade.Symbol)
+
+					if err != nil {
+						return fmt.Errorf("fluid: state %s: %w", trade.Symbol, err)
+					}
+
+					if err := state.FeedTradeSide(
+						trade.Timestamp, trade.Qty, trade.Side,
+					); err != nil {
+						return fmt.Errorf("fluid: trade side %s: %w", trade.Symbol, err)
+					}
+
+					if err := signal.emit(trade.Symbol); err != nil {
+						return fmt.Errorf("fluid: emit %s: %w", trade.Symbol, err)
+					}
 				}
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.state(ticker.Symbol).FeedTicker(ticker)
-					signal.emit(ticker.Symbol)
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("fluid: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
+					state, err := signal.state(ticker.Symbol)
+
+					if err != nil {
+						return fmt.Errorf("fluid: state %s: %w", ticker.Symbol, err)
+					}
+
+					state.FeedTicker(ticker)
+
+					if err := signal.emit(ticker.Symbol); err != nil {
+						return fmt.Errorf("fluid: emit %s: %w", ticker.Symbol, err)
+					}
 				}
 			case public.BookChannel:
-				for _, delta := range errnie.Does(func() ([]market.Book, error) {
-					return market.DecodeBooks(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.state(delta.Symbol).FeedBook(delta)
-					signal.emit(delta.Symbol)
+				books, err := market.DecodeBooks(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("fluid: decode books: %w", err)
+				}
+
+				for _, delta := range books {
+					state, err := signal.state(delta.Symbol)
+
+					if err != nil {
+						return fmt.Errorf("fluid: state %s: %w", delta.Symbol, err)
+					}
+
+					state.FeedBook(delta)
+
+					if err := signal.emit(delta.Symbol); err != nil {
+						return fmt.Errorf("fluid: emit %s: %w", delta.Symbol, err)
+					}
 				}
 			}
 		}
 	}
 }
 
-func (signal *Signal) emit(symbol string) {
+func (signal *Signal) emit(symbol string) error {
 	raw, ok := signal.symbols.Load(symbol)
 
 	if !ok {
-		return
+		return nil
 	}
 
 	state := raw.(*FluidSymbol)
-	measurement, ok := state.Measure()
+	measurement, standout, err := state.Measure()
 
-	if ok {
-		measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	if err != nil {
+		return err
+	}
+
+	if measurement.Source != perspectives.SourceNone {
+		if err := perspectives.AssignCategorySNR(
+			&measurement, signal.floor, standout,
+		); err != nil {
+			return err
+		}
+
 		activate.Once("signal/fluid:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 
 	signal.publishField(state)
+
+	return nil
 }
 
 // publishField ships an aggregated universe field snapshot to the dashboard

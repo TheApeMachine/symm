@@ -7,6 +7,7 @@ export type ConfidenceFactor = {
 export type ConfidenceRow = {
 	source: string;
 	confidence: number;
+	snr?: number;
 	count?: number;
 	factors?: ConfidenceFactor[];
 };
@@ -89,13 +90,14 @@ class ConfidenceDataProviderImpl {
 		}
 
 		const source = normalizeSource(raw.source);
+		const payload = raw as Record<string, unknown>;
 		const row: ConfidenceRow = {
 			source,
 			confidence: raw.confidence,
+			snr: typeof payload.snr === "number" ? payload.snr : undefined,
 			count: raw.count,
 			factors:
-				raw.factors ??
-				normalizeFactors((raw as Record<string, unknown>).factors),
+				raw.factors ?? normalizeFactors(payload.factors),
 		};
 
 		this.latest.set(source, row);

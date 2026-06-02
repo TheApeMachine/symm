@@ -31,7 +31,8 @@ func TestNewStory(t *testing.T) {
 
 		sentiment.NewSignal(ctx, pool)
 
-		story := NewStory(ctx, pool, focus.NewSet())
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
 
 		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
 		convey.So(story.subscribers["measurements"].ID, convey.ShouldEqual, storyMeasurementsSubscriberID)
@@ -44,8 +45,7 @@ func TestNewStory(t *testing.T) {
 				close(done)
 			}()
 
-			measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-			measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 				Symbol: "BTC/EUR",
 			}})
 
@@ -77,9 +77,9 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		defer viper.Set("trading.paper.wallet_eur", 0)
 		defer trading.ResetDeskReady()
 
-		story := NewStory(ctx, pool, focus.NewSet())
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-		subscriber := raw.Subscribe("test:story:raw", 4)
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
+		subscriber := story.raw.Subscribe("test:story:raw", 4)
 
 		done := make(chan struct{})
 
@@ -88,11 +88,22 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 			close(done)
 		}()
 
-		measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Category:   perspectives.CategoryThermalExhaustion,
+			Confidence: 30,
+			Last:       50_000,
+		}})
+		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategorySystemicBeta,
-			SNR:      1,
+			Category: perspectives.CategoryLiquidityVacuum,
+			SNR:      1.011867,
+			Last:     50_000,
+		}})
+		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Category: perspectives.CategoryMechanicalCollapse,
+			SNR:      1.0,
 			Last:     50_000,
 		}})
 
@@ -127,9 +138,9 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		viper.Set("trading.paper.wallet_eur", 200.0)
 		defer viper.Set("trading.paper.wallet_eur", 0)
 
-		story := NewStory(ctx, pool, focus.NewSet())
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-		subscriber := raw.Subscribe("test:story:ready", 4)
+		story, storyErr := NewStory(ctx, pool, focus.NewSet())
+		convey.So(storyErr, convey.ShouldBeNil)
+		subscriber := story.raw.Subscribe("test:story:ready", 4)
 
 		done := make(chan struct{})
 
@@ -138,11 +149,23 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 			close(done)
 		}()
 
-		measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+		measurements := story.broadcasts["measurements"]
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "BTC/EUR",
+			Category:   perspectives.CategoryThermalExhaustion,
+			Confidence: 30,
+			Last:       50_000,
+		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategorySystemicBeta,
-			SNR:      1,
+			Category: perspectives.CategoryLiquidityVacuum,
+			SNR:      1.011867,
+			Last:     50_000,
+		}})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Category: perspectives.CategoryMechanicalCollapse,
+			SNR:      1.0,
 			Last:     50_000,
 		}})
 
@@ -159,9 +182,21 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		trading.MarkDeskReady()
 
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:     "ETH/EUR",
+			Category:   perspectives.CategoryThermalExhaustion,
+			Confidence: 30,
+			Last:       3_000,
+		}})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "ETH/EUR",
-			Category: perspectives.CategorySystemicBeta,
-			SNR:      1,
+			Category: perspectives.CategoryLiquidityVacuum,
+			SNR:      1.011867,
+			Last:     3_000,
+		}})
+		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol:   "ETH/EUR",
+			Category: perspectives.CategoryMechanicalCollapse,
+			SNR:      1.0,
 			Last:     3_000,
 		}})
 

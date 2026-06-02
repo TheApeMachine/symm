@@ -2,14 +2,15 @@ package causal
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -113,41 +114,49 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				trades := errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value()
+				trades, err := market.DecodeTrades(&envelope)
 
-				for _, trade := range trades {
-					signal.state(trade.Symbol).FeedTrade(trade)
+				if err != nil {
+					return fmt.Errorf("causal: decode trades: %w", err)
 				}
 
-				signal.publish()
+				for _, trade := range trades {
+					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
+						return fmt.Errorf("causal: feed trade %s: %w", trade.Symbol, err)
+					}
+				}
+
+				if err := signal.publish(); err != nil {
+					return fmt.Errorf("causal: publish: %w", err)
+				}
 			case public.TickerChannel:
-				tickers := errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value()
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("causal: decode tickers: %w", err)
+				}
 
 				for _, ticker := range tickers {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
 				}
 
-				signal.publish()
+				if err := signal.publish(); err != nil {
+					return fmt.Errorf("causal: publish: %w", err)
+				}
 			case public.BookChannel:
-				books := errnie.Does(func() ([]market.Book, error) {
-					return market.DecodeBooks(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value()
+				books, err := market.DecodeBooks(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("causal: decode books: %w", err)
+				}
 
 				for _, delta := range books {
 					signal.state(delta.Symbol).FeedBook(delta)
 				}
 
-				signal.publish()
+				if err := signal.publish(); err != nil {
+					return fmt.Errorf("causal: publish: %w", err)
+				}
 			}
 		}
 	}
@@ -166,9 +175,9 @@ func (signal *Signal) throttle() bool {
 
 // publish runs the causal fit for every symbol against the current cross-asset
 // macro momentum and contagion, emitting one structural reading each.
-func (signal *Signal) publish() {
+func (signal *Signal) publish() error {
 	if !signal.throttle() {
-		return
+		return nil
 	}
 
 	now := time.Now()
@@ -177,15 +186,28 @@ func (signal *Signal) publish() {
 	macros := macroMedians(entries)
 
 	for _, entry := range entries {
-		measurement, ok := entry.state.Measure(macros[entry.symbol], contagion, now)
+		measurement, standout, err := entry.state.Measure(macros[entry.symbol], contagion, now)
 
-		if ok {
-			measurement.Symbol = entry.symbol
-			measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
-			activate.Once("signal/causal:measurement")
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		if err != nil {
+			return fmt.Errorf("causal: measure %s: %w", entry.symbol, err)
 		}
+
+		if measurement.Source == perspectives.SourceNone {
+			continue
+		}
+
+		measurement.Symbol = entry.symbol
+		if err := perspectives.AssignCategorySNR(
+			&measurement, signal.floor, standout,
+		); err != nil {
+			return fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
+		}
+
+		activate.Once("signal/causal:measurement")
+		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
+
+	return nil
 }
 
 func (signal *Signal) snapshotEntries() []publishEntry {

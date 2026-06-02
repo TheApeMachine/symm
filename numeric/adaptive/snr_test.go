@@ -14,24 +14,31 @@ func TestSNRScore(t *testing.T) {
 			score := 0.0
 
 			for range defaultSNRMinObs - 1 {
-				score = snr.Score(1.0)
+				var err error
+				score, err = snr.Score(0.5)
+
+				So(err, ShouldBeNil)
 			}
 
 			So(score, ShouldEqual, 0)
 		})
 
 		Convey("It should stay near 0 for a steady stream then spike on an outlier", func() {
-			// Seed a noisy-but-stationary baseline around 1.0.
 			for index := range 200 {
 				if index%2 == 0 {
-					snr.Score(1.1)
+					_, err := snr.Score(0.55)
+					So(err, ShouldBeNil)
 				} else {
-					snr.Score(0.9)
+					_, err := snr.Score(0.45)
+					So(err, ShouldBeNil)
 				}
 			}
 
-			steady := snr.Score(1.0)
-			spike := snr.Score(5.0)
+			steady, err := snr.Score(0.5)
+			So(err, ShouldBeNil)
+
+			spike, err := snr.Score(0.95)
+			So(err, ShouldBeNil)
 
 			Convey("the steady reading is below the noise floor", func() {
 				So(steady, ShouldBeLessThan, 1)
@@ -43,43 +50,98 @@ func TestSNRScore(t *testing.T) {
 		})
 
 		Convey("It should never return a negative SNR", func() {
-			for range 50 {
-				snr.Score(10.0)
+			for index := range 50 {
+				value := 0.55
+
+				if index%2 == 1 {
+					value = 0.45
+				}
+
+				_, err := snr.Score(value)
+				So(err, ShouldBeNil)
 			}
 
-			So(snr.Score(0.0), ShouldEqual, 0)
+			score, err := snr.Score(0.3)
+			So(err, ShouldBeNil)
+			So(score, ShouldEqual, 0)
+		})
+
+		Convey("It should error on non-unit standout instead of silently scoring 0", func() {
+			for range defaultSNRMinObs {
+				_, err := snr.Score(0.5)
+				So(err, ShouldBeNil)
+			}
+
+			_, err := snr.Score(1_218_322_141.582215)
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("It should error when spread is immeasurable but standout shifted", func() {
+			for range defaultSNRMinObs {
+				_, err := snr.Score(0.2)
+				So(err, ShouldBeNil)
+			}
+
+			_, err := snr.Score(0.21)
+			So(err, ShouldEqual, ErrInsufficientStandoutSpread)
 		})
 	})
 }
 
 func TestSNRFieldScore(t *testing.T) {
-	Convey("Given a per-symbol SNR field", t, func() {
+	Convey("Given a per-symbol SNR field on unit standout", t, func() {
 		field := NewSNRField()
 
-		// Two symbols on completely different scales, each with its own noise.
 		for index := range 200 {
-			high, low := 101.0, 99.0
-			dHigh, dLow := 0.011, 0.009
+			high, low := 0.55, 0.45
 
 			if index%2 == 1 {
 				high, low = low, high
-				dHigh, dLow = dLow, dHigh
 			}
 
-			field.Score("BTC/EUR", high)
-			field.Score("BTC/EUR", low)
-			field.Score("DOGE/EUR", dHigh)
-			field.Score("DOGE/EUR", dLow)
+			_, err := field.Score("BTC/EUR", high)
+			So(err, ShouldBeNil)
+
+			_, err = field.Score("BTC/EUR", low)
+			So(err, ShouldBeNil)
+
+			_, err = field.Score("DOGE/EUR", 0.11)
+			So(err, ShouldBeNil)
+
+			_, err = field.Score("DOGE/EUR", 0.09)
+			So(err, ShouldBeNil)
 		}
 
 		Convey("It should normalize each symbol against its own noise", func() {
-			// A within-band reading is quiet; an outlier (relative to that
-			// symbol's own scale) clears the floor — for both, despite the
-			// 10,000x difference in raw magnitude.
-			So(field.Score("BTC/EUR", 100.0), ShouldBeLessThan, 1)
-			So(field.Score("BTC/EUR", 140.0), ShouldBeGreaterThan, 3)
-			So(field.Score("DOGE/EUR", 0.010), ShouldBeLessThan, 1)
-			So(field.Score("DOGE/EUR", 0.014), ShouldBeGreaterThan, 3)
+			steady, err := field.Score("BTC/EUR", 0.5)
+			So(err, ShouldBeNil)
+			So(steady, ShouldBeLessThan, 1)
+
+			spike, err := field.Score("BTC/EUR", 0.95)
+			So(err, ShouldBeNil)
+			So(spike, ShouldBeGreaterThan, 3)
+
+			dogeQuiet, err := field.Score("DOGE/EUR", 0.10)
+			So(err, ShouldBeNil)
+			So(dogeQuiet, ShouldBeLessThan, 1)
+
+			dogeSpike, err := field.Score("DOGE/EUR", 0.14)
+			So(err, ShouldBeNil)
+			So(dogeSpike, ShouldBeGreaterThan, 3)
 		})
 	})
+}
+
+func BenchmarkSNRScore(b *testing.B) {
+	snr := NewSNR()
+
+	for index := range defaultSNRMinObs {
+		_, _ = snr.Score(float64(index%3) * 0.1)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = snr.Score(0.75)
+	}
 }

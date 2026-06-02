@@ -93,15 +93,18 @@ func TestRepetitionPenalty(t *testing.T) {
 		}
 
 		Convey("when inputs are empty, It should return the original slice", func() {
-			So(RepetitionPenalty(nil, []string{"a"}, 0.5), ShouldBeNil)
+			out, err := RepetitionPenalty(nil, []string{"a"}, 0.5)
+			So(err, ShouldBeNil)
+			So(out, ShouldBeNil)
 
-			out := RepetitionPenalty(base, nil, 0.5)
-
+			out, err = RepetitionPenalty(base, nil, 0.5)
+			So(err, ShouldBeNil)
 			So(out, ShouldResemble, base)
 		})
 
 		Convey("when recent contains a token, It should down-weight and renormalize", func() {
-			out := RepetitionPenalty(base, []string{"a"}, 0.25)
+			out, err := RepetitionPenalty(base, []string{"a"}, 0.25)
+			So(err, ShouldBeNil)
 			total := 0.0
 
 			for _, entry := range out {

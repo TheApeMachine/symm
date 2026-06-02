@@ -22,16 +22,21 @@ type SignalGaugeProps = {
 
 const GaugeFactorTooltip = ({
 	confidence,
+	snr,
 	factors,
 }: {
 	confidence: number;
+	snr?: number;
 	factors: ConfidenceFactor[];
 }) => {
 	return (
 		<div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 rounded border border-(--dash-border) bg-(--dash-panel)/95 px-1 py-0.5 text-[8px] leading-tight text-(--dash-muted) opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
 			<div className="truncate font-mono">
-				snr={formatSignalConfidence(confidence)}
+				clarity={formatSignalConfidence(confidence)}
 			</div>
+			{snr !== undefined ? (
+				<div className="truncate font-mono">snr={snr.toFixed(2)}σ</div>
+			) : null}
 			{factors.map((factor) => (
 				<div key={factor.name} className="truncate font-mono">
 					{formatConfidenceFactor(factor)}
@@ -44,6 +49,7 @@ const GaugeFactorTooltip = ({
 const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 	const stores = useSymmTelemetryStores();
 	const [confidence, setConfidence] = useState(0);
+	const [snr, setSnr] = useState<number | undefined>(undefined);
 	const [factors, setFactors] = useState<ConfidenceFactor[]>([]);
 	const initChart = useCallback((rootElement: string | HTMLDivElement) => {
 		if (typeof rootElement === "string") {
@@ -61,12 +67,14 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 			if (latest !== undefined) {
 				result.controls.update(latest.confidence);
 				setConfidence(latest.confidence);
+				setSnr(latest.snr);
 				setFactors(latest.factors ?? []);
 			}
 
 			const unregister = confidenceStore.registerSource(source, (row) => {
 				result.controls.update(row.confidence);
 				setConfidence(row.confidence);
+				setSnr(row.snr);
 				setFactors(row.factors ?? []);
 			});
 
@@ -86,7 +94,7 @@ const SignalGauge = memo(function SignalGauge({ source }: SignalGaugeProps) {
 				className="h-full w-full min-h-0"
 				innerContainerProps={{ className: "h-full w-full" }}
 			/>
-			<GaugeFactorTooltip confidence={confidence} factors={factors} />
+			<GaugeFactorTooltip confidence={confidence} snr={snr} factors={factors} />
 		</div>
 	);
 });

@@ -2,7 +2,6 @@ package learned
 
 import (
 	"errors"
-	"math"
 
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -86,8 +85,13 @@ func (weight *Weight) Next(
 		return 0, err
 	}
 
-	weight.value += smoothedAdjustment
-	weight.value = math.Max(0, math.Min(1, weight.value))
+	raw := weight.value + smoothedAdjustment
+
+	if raw < 0 {
+		raw = 0
+	}
+
+	weight.value = raw / (raw + 1)
 
 	return weight.value, nil
 }

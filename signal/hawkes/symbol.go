@@ -101,17 +101,19 @@ func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (
 Measure fits the arrival stream and emits the thermal reading. Confidence is
 category clarity — how decisively the fitted state lands in its assigned category.
 */
-func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (perspectives.Measurement, bool) {
+func (sym *HawkesSymbol) Measure(
+	ticks []market.TradeUpdate, now time.Time,
+) (perspectives.Measurement, float64, error) {
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
 	if !ok || !context.EnoughEvents(stream) {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	fit, ok := sym.fitForEvents(stream, now)
 
 	if !ok {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
@@ -130,11 +132,13 @@ func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (per
 	}
 
 	category, evidence := hawkesReading(fit, asymmetry, sellSide)
+	standout := evidence
+	clarity := evidence
 
-	confidence, err := sym.tracked.Observe(category, evidence)
+	confidence, err := sym.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -142,5 +146,5 @@ func (sym *HawkesSymbol) Measure(ticks []market.TradeUpdate, now time.Time) (per
 		Category:   category,
 		Strength:   raw,
 		Confidence: confidence,
-	}, true
+	}, standout, nil
 }

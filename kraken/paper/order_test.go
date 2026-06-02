@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -50,7 +51,7 @@ func TestOrdersSend(t *testing.T) {
 					"params": trading.AddParams{
 						OrderType:  trading.Market,
 						Side:       trading.Buy,
-						Symbol:     "BTC/EUR",
+						Symbol:     "NOQUOTE/EUR",
 						OrderQty:   0.01,
 						LimitPrice: 50_000,
 					},
@@ -61,6 +62,13 @@ func TestOrdersSend(t *testing.T) {
 		})
 
 		Convey("It should rest post-only limits on the book", func() {
+			broker.EnsureQuoteCache(ctx, pool).InstallQuoteForTest(broker.Quote{
+				Symbol: "BTC/EUR",
+				Bid:    59_000,
+				Ask:    60_500,
+				Last:   60_000,
+			})
+
 			out := orders.Send(&qpool.QValue[any]{
 				Type: public.OrdersChannel,
 				Value: map[string]any{

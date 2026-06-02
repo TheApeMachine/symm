@@ -2,13 +2,14 @@ package exhaust
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -73,11 +74,13 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("exhaust: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
 					sign := -1.0
 
 					if trade.Side == "buy" {
@@ -85,25 +88,38 @@ func (signal *Signal) Tick() error {
 					}
 
 					signal.history.observe(trade.Symbol, 0, 0, 0, 0, sign, 0, trade.Price)
-					signal.emit(trade.Symbol)
+
+					if err := signal.emit(trade.Symbol); err != nil {
+						return fmt.Errorf("exhaust: emit %s: %w", trade.Symbol, err)
+					}
 				}
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("exhaust: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
 					signal.history.observe(ticker.Symbol, 0, 0, 0, 0, 0, 0, ticker.Last)
-					signal.emit(ticker.Symbol)
+
+					if err := signal.emit(ticker.Symbol); err != nil {
+						return fmt.Errorf("exhaust: emit %s: %w", ticker.Symbol, err)
+					}
 				}
 			case public.BookChannel:
-				for _, delta := range errnie.Does(func() ([]market.Book, error) {
-					return market.DecodeBooks(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				books, err := market.DecodeBooks(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("exhaust: decode books: %w", err)
+				}
+
+				for _, delta := range books {
 					signal.observeBook(delta)
-					signal.emit(delta.Symbol)
+
+					if err := signal.emit(delta.Symbol); err != nil {
+						return fmt.Errorf("exhaust: emit %s: %w", delta.Symbol, err)
+					}
 				}
 			}
 		}
@@ -146,19 +162,26 @@ func (signal *Signal) observeBook(delta market.Book) {
 }
 
 // emit publishes the exhaustion reading for the one symbol an event touched.
-// Each symbol's reading is independent, so there is no need to re-measure the
-// whole cross-section on every event.
-func (signal *Signal) emit(symbol string) {
-	measurement, ok := signal.history.measure(symbol)
+func (signal *Signal) emit(symbol string) error {
+	measurement, standout, err := signal.history.measure(symbol)
 
-	if !ok {
-		return
+	if err != nil {
+		return err
+	}
+
+	if measurement.Source == perspectives.SourceNone {
+		return nil
 	}
 
 	measurement.Symbol = symbol
-	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	if err := perspectives.AssignCategorySNR(&measurement, signal.floor, standout); err != nil {
+		return err
+	}
+
 	activate.Once("signal/exhaust:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

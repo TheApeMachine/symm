@@ -56,10 +56,10 @@ func TestMeasure(t *testing.T) {
 		now := base.Add(128 * 100 * time.Millisecond)
 
 		Convey("When enough arrivals exist to fit", func() {
-			measurement, ok := symbol.Measure(ticks, now)
+			measurement, _, err := symbol.Measure(ticks, now)
 
 			Convey("It should publish a thermal perspective reading", func() {
-				So(ok, ShouldBeTrue)
+				So(err, ShouldBeNil)
 				So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
 				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
@@ -76,6 +76,6 @@ func BenchmarkMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = symbol.Measure(ticks, now)
+		_, _, _ = symbol.Measure(ticks, now)
 	}
 }

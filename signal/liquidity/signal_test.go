@@ -39,17 +39,19 @@ func TestMeasure(t *testing.T) {
 		signal.symbols.Store("PEER/EUR", 900.0)
 
 		Convey("When the symbol sits well above the peer median", func() {
-			measurement, ok := signal.measure(market.TickerUpdate{
+			measurement, standout, err := signal.measure(market.TickerUpdate{
 				Symbol: "ALT/EUR",
 				Last:   10,
 				Volume: 125,
 			})
 
 			Convey("It should publish robust liquidity", func() {
-				So(ok, ShouldBeTrue)
+				So(err, ShouldBeNil)
+				So(measurement.Symbol, ShouldNotBeBlank)
+				So(standout, ShouldBeGreaterThan, 0)
 				So(measurement.Source, ShouldEqual, perspectives.SourceLiquidity)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryRobustLiquidity)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
 			})
 		})
 
@@ -58,14 +60,14 @@ func TestMeasure(t *testing.T) {
 			defer lone.Close()
 			lone.symbols.Store("SOLO/EUR", 500.0)
 
-			_, ok := lone.measure(market.TickerUpdate{
+			_, _, err := lone.measure(market.TickerUpdate{
 				Symbol: "SOLO/EUR",
 				Last:   5,
 				Volume: 100,
 			})
 
 			Convey("It should withhold the reading", func() {
-				So(ok, ShouldBeFalse)
+				So(err, ShouldBeNil)
 			})
 		})
 	})
@@ -76,15 +78,15 @@ func TestCategory(t *testing.T) {
 		peers := []float64{800, 900, 1000, 1100}
 
 		Convey("It should map peer quartiles onto scarcity categories", func() {
-			category, _, err := liquidityReading(1200, peers)
+			category, _, _, err := liquidityReading(1200, peers)
 			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryRobustLiquidity)
 
-			category, _, err = liquidityReading(950, peers)
+			category, _, _, err = liquidityReading(950, peers)
 			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryMedianDepth)
 
-			category, _, err = liquidityReading(500, peers)
+			category, _, _, err = liquidityReading(500, peers)
 			So(err, ShouldBeNil)
 			So(category, ShouldEqual, perspectives.CategoryExtremeScarcity)
 		})
@@ -108,6 +110,6 @@ func BenchmarkMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = signal.measure(row)
+		_, _, _ = signal.measure(row)
 	}
 }

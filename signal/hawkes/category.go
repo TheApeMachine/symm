@@ -58,10 +58,11 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (perspect
 		}
 
 		if baseline > 0 && intensity >= baseline {
-			margin := (intensity - baseline) / baseline
+			margin := intensity - baseline
+			score := margin / (margin + baseline)
 
-			if margin > headroom {
-				headroom = margin
+			if score > headroom {
+				headroom = score
 			}
 		}
 

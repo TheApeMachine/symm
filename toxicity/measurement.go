@@ -24,51 +24,51 @@ Measure classifies book-quality into toxicity perspective categories. Strength
 holds the raw asymmetry; Confidence is band margin at the moment of selection;
 SNR is adaptive sigma of Confidence against this symbol's own history.
 */
-func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measurement, bool) {
+func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measurement, error) {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
 	state := tracker.symbols[symbol]
 
 	if state == nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, nil
 	}
 
 	snapshot := bookQualitySnapshotLocked(state, at)
 	category, strength, evidence := classifyBookQuality(tracker, snapshot)
 
 	if category == perspectives.CategoryTypeNone || strength <= 0 || evidence <= 0 {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, nil
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, nil
 	}
 
-	confidence, err := state.tracked.Observe(category, evidence)
+	confidence, err := state.tracked.Observe(category, evidence, evidence)
 
-	if err != nil || confidence <= 0 {
-		return perspectives.Measurement{}, false
+	if err != nil {
+		return perspectives.Measurement{}, err
+	}
+
+	if confidence <= 0 {
+		return perspectives.Measurement{}, nil
 	}
 
 	if math.IsNaN(confidence) || math.IsInf(confidence, 0) {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, nil
 	}
 
-	snr := tracker.floor.Score(symbol, confidence)
+	standout := evidence
 
-	if snr <= 0 {
-		snr = confidence
+	snr, err := perspectives.ScoreCategorySNR(tracker.floor, symbol, standout)
+
+	if err != nil {
+		return perspectives.Measurement{}, err
 	}
 
-	if math.IsNaN(snr) || math.IsInf(snr, 0) {
-		return perspectives.Measurement{}, false
-	}
-
-	lastPrice := state.lastPrice
-
-	if lastPrice <= 0 {
-		lastPrice = state.mid
+	if state.lastPrice <= 0 {
+		return perspectives.Measurement{}, nil
 	}
 
 	return perspectives.Measurement{
@@ -78,8 +78,8 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (perspectives.Measu
 		Strength:   strength,
 		Confidence: confidence,
 		SNR:        snr,
-		Last:       lastPrice,
-	}, true
+		Last:       state.lastPrice,
+	}, nil
 }
 
 func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnapshot {
@@ -122,15 +122,9 @@ func classifyBookQuality(
 	tracker *Tracker, snapshot bookQualitySnapshot,
 ) (perspectives.CategoryType, float64, float64) {
 	if snapshot.toxicNear {
-		strength := snapshot.toxicBluffStrength
-
-		if strength < 1 {
-			strength = 1
-		}
-
 		evidence := toxicBluffEvidence(snapshot.toxicBluffStrength)
 
-		return perspectives.CategoryToxicBluff, strength, evidence
+		return perspectives.CategoryToxicBluff, snapshot.toxicBluffStrength, evidence
 	}
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
@@ -147,12 +141,8 @@ func classifyBookQuality(
 
 	if bidVacuum || askVacuum {
 		margin := maxRatio - threshold
-		evidence := margin / threshold
+		evidence := margin / (margin + threshold)
 		strength := maxRatio / threshold
-
-		if evidence > 1 {
-			evidence = 1
-		}
 
 		return perspectives.CategoryLiquidityVacuum, strength, evidence
 	}
@@ -178,7 +168,7 @@ func toxicBluffEvidence(churnRatio float64) float64 {
 	margin := churnRatio - flashChurnRatioThreshold
 	span := 1 - flashChurnRatioThreshold
 
-	return math.Min(1, margin/span)
+	return margin / (margin + span)
 }
 
 func cancelFillRatio(cancel, fill float64) float64 {

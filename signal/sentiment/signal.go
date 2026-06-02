@@ -2,11 +2,11 @@ package sentiment
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -90,26 +90,37 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TickerChannel:
-				for _, ticker := range errnie.Does(func() ([]market.TickerUpdate, error) {
-					return market.DecodeTickers(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				tickers, err := market.DecodeTickers(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("sentiment: decode tickers: %w", err)
+				}
+
+				for _, ticker := range tickers {
 					if ticker.Last <= 0 {
 						continue
 					}
 
 					signal.symbols.Store(ticker.Symbol, ticker.ChangePct)
 
-					measurement, ok := signal.measure(ticker.Symbol, ticker.ChangePct)
+					measurement, standout, err := signal.measure(ticker.Symbol, ticker.ChangePct)
 
-					if !ok {
+					if err != nil {
+						return fmt.Errorf("sentiment: measure %s: %w", ticker.Symbol, err)
+					}
+
+					if measurement.Source == perspectives.SourceNone {
 						continue
 					}
 
 					measurement.Symbol = ticker.Symbol
 					measurement.Last = ticker.Last
-					measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+					if err := perspectives.AssignCategorySNR(
+						&measurement, signal.floor, standout,
+					); err != nil {
+						return fmt.Errorf("sentiment: snr %s: %w", ticker.Symbol, err)
+					}
+
 					activate.Once("signal/sentiment:measurement")
 					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 				}
@@ -119,11 +130,11 @@ func (signal *Signal) Tick() error {
 }
 
 // measure classifies one symbol against the live cross-section breadth.
-func (signal *Signal) measure(symbol string, change float64) (perspectives.Measurement, bool) {
+func (signal *Signal) measure(symbol string, change float64) (perspectives.Measurement, float64, error) {
 	breadth, _, universe, ok := signal.breadth()
 
 	if !ok {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	surgeThreshold := signal.surgeThreshold(universe)
@@ -131,6 +142,7 @@ func (signal *Signal) measure(symbol string, change float64) (perspectives.Measu
 	category, evidence := sentimentReading(
 		breadth, change, surgeThreshold, signal.isLeader(change),
 	)
+	standout := evidence
 
 	trackedRaw, _ := signal.tracked.LoadOrStore(
 		symbol,
@@ -138,10 +150,10 @@ func (signal *Signal) measure(symbol string, change float64) (perspectives.Measu
 	)
 	tracked := trackedRaw.(*perspectives.Category)
 
-	confidence, err := tracked.Observe(category, evidence)
+	confidence, err := tracked.Observe(category, evidence, standout)
 
 	if err != nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -149,7 +161,7 @@ func (signal *Signal) measure(symbol string, change float64) (perspectives.Measu
 		Category:   category,
 		Strength:   signal.breadthOdds(breadth),
 		Confidence: confidence,
-	}, true
+	}, standout, nil
 }
 
 // breadth returns the fraction of the universe that is rising and the strongest

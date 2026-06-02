@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 type symbolBookFixture struct {
@@ -31,7 +33,9 @@ func (fixture symbolBookFixture) snapshot(
 func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 	Convey("Given a fluid symbol fed a delta before any snapshot", t, func() {
 		symbol := "ETH/EUR"
-		state := NewFluidSymbol(symbol)
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		delta := fixture.snapshot(99, 10, 101, 6)
@@ -43,9 +47,10 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		})
 
 		Convey("It should report Measure as not ready", func() {
-			_, ok := state.Measure()
+			measurement, _, err := state.Measure()
 
-			So(ok, ShouldBeFalse)
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 		})
 	})
 }
@@ -53,7 +58,9 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	Convey("Given a fluid symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"
-		state := NewFluidSymbol(symbol)
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		state.FeedTicker(market.TickerUpdate{
@@ -61,10 +68,11 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 		})
 		state.FeedBook(fixture.snapshot(99, 10, 101, 6))
 
-		_, ok := state.Measure()
+		measurement, _, err := state.Measure()
 
 		Convey("It should publish a field reading", func() {
-			So(ok, ShouldBeTrue)
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldNotBeEmpty)
 		})
 
 		Convey("When the maintained book diverges from the exchange checksum", func() {
@@ -73,10 +81,11 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta.Checksum = 1
 			state.FeedBook(badDelta)
 
-			_, ok := state.Measure()
+			measurement, _, err := state.Measure()
 
 			Convey("It should suppress field emission", func() {
-				So(ok, ShouldBeFalse)
+				So(err, ShouldBeNil)
+				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 			})
 
 			Convey("It should suppress dashboard rows", func() {
@@ -88,7 +97,12 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 
 func BenchmarkFluidSymbolMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
-	state := NewFluidSymbol(symbol)
+	viper.Set("market.book_depth_levels", 10)
+	state, err := NewFluidSymbol(symbol)
+
+	if err != nil {
+		b.Fatal(err)
+	}
 	fixture := symbolBookFixture{symbol: symbol}
 
 	state.FeedTicker(market.TickerUpdate{
@@ -99,6 +113,6 @@ func BenchmarkFluidSymbolMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = state.Measure()
+		_, _, _ = state.Measure()
 	}
 }

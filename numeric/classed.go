@@ -38,6 +38,14 @@ func (classed *Classed) Confidence() float64 {
 	return classed.classifier.Confidence(classed.classify.lastObservation)
 }
 
+func (classed *Classed) Standout() float64 {
+	if classed == nil || classed.classifier == nil {
+		return 0
+	}
+
+	return classed.classifier.Standout(classed.classify.lastObservation)
+}
+
 func (classed *Classed) Reset() error {
 	return classed.derived.Reset()
 }

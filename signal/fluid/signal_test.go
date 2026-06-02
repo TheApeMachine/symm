@@ -42,6 +42,9 @@ func TestNewSignal(t *testing.T) {
 
 func TestEmit(t *testing.T) {
 	Convey("Given a fluid signal with a measurements subscriber", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.book_depth_levels", 10)
+
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
@@ -52,7 +55,8 @@ func TestEmit(t *testing.T) {
 		measurements := signal.broadcasts["measurements"].Subscribe("test:fluid", 64)
 		symbol := "ETH/EUR"
 
-		state := signal.state(symbol)
+		state, err := signal.state(symbol)
+		So(err, ShouldBeNil)
 		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000})
 		state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6))
 
@@ -91,6 +95,7 @@ func TestPublishField(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})
+		viper.Set("market.book_depth_levels", 10)
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
@@ -103,13 +108,15 @@ func TestPublishField(t *testing.T) {
 
 		uiFrames := signal.ui.Subscribe("test:fluid-ui", 8)
 
-		unfocused := signal.state("ETH/EUR")
+		unfocused, err := signal.state("ETH/EUR")
+		So(err, ShouldBeNil)
 		unfocused.FeedTicker(market.TickerUpdate{
 			Symbol: "ETH/EUR", Last: 100, Bid: 99, Ask: 101, Volume: 1000,
 		})
 		unfocused.FeedBook(bookSnapshot("ETH/EUR", 99, 10, 101, 6))
 
-		anchor := signal.state(focus.AnchorSymbol())
+		anchor, err := signal.state(focus.AnchorSymbol())
+		So(err, ShouldBeNil)
 		anchor.FeedTicker(market.TickerUpdate{
 			Symbol: focus.AnchorSymbol(), Last: 100, Bid: 99, Ask: 101, Volume: 1000,
 		})
@@ -135,6 +142,8 @@ func TestPublishField(t *testing.T) {
 }
 
 func BenchmarkEmit(b *testing.B) {
+	viper.Set("market.book_depth_levels", 10)
+
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
@@ -145,7 +154,10 @@ func BenchmarkEmit(b *testing.B) {
 	signal.broadcasts["measurements"].Subscribe("bench:fluid", 1024)
 
 	symbol := "ETH/EUR"
-	state := signal.state(symbol)
+	state, err := signal.state(symbol)
+	if err != nil {
+		b.Fatal(err)
+	}
 	state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000})
 	state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6))
 

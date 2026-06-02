@@ -88,6 +88,6 @@ func fluidReading(
 			return perspectives.CategoryLaminar, 0
 		}
 
-		return perspectives.CategoryLaminar, math.Min(1, headroom/fluidInertialThreshold)
+		return perspectives.CategoryLaminar, headroom / (headroom + fluidInertialThreshold)
 	}
 }

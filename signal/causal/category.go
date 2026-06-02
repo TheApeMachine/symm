@@ -136,7 +136,13 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 		headroom := conditionSwitch - outcome.condition
 
 		if headroom < margin {
-			margin = headroom / conditionSwitch
+			span := conditionSwitch
+
+			if headroom <= 0 {
+				margin = 0
+			} else {
+				margin = headroom / (headroom + span)
+			}
 		}
 	}
 
@@ -174,7 +180,9 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 			margin = math.Max(margin, 1)
 		} else {
 			excess := outcome.condition - conditionSwitch
-			margin = math.Max(margin, excess/conditionSwitch)
+			score := excess / (excess + conditionSwitch)
+
+			margin = math.Max(margin, score)
 		}
 	}
 

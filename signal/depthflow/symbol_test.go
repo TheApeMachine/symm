@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 type symbolBookFixture struct {
@@ -42,7 +44,9 @@ func (fixture symbolBookFixture) snapshot(
 func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 	Convey("Given a depthflow symbol fed a delta before any snapshot", t, func() {
 		symbol := "ETH/EUR"
-		state := NewDepthSymbol(symbol)
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewDepthSymbol(symbol)
+		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		delta := fixture.snapshot(99, 8, 101, 4)
@@ -55,9 +59,10 @@ func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 
 		Convey("It should not emit a book-derived measurement", func() {
 			state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
-			_, ok := state.Measure()
+			measurement, _, err := state.Measure()
 
-			So(ok, ShouldBeFalse)
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 		})
 	})
 }
@@ -65,16 +70,19 @@ func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	Convey("Given a depthflow symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"
-		state := NewDepthSymbol(symbol)
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewDepthSymbol(symbol)
+		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		state.ApplyBook(fixture.snapshot(99, 8, 101, 4))
 		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
 
-		_, ok := state.Measure()
+		measurement, _, err := state.Measure()
 
 		Convey("It should publish a book-derived measurement", func() {
-			So(ok, ShouldBeTrue)
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldNotBeEmpty)
 		})
 
 		Convey("When the maintained book diverges from the exchange checksum", func() {
@@ -83,10 +91,11 @@ func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta.Checksum = 1
 			state.ApplyBook(badDelta)
 
-			_, ok := state.Measure()
+			measurement, _, err := state.Measure()
 
 			Convey("It should suppress book-derived emission", func() {
-				So(ok, ShouldBeFalse)
+				So(err, ShouldBeNil)
+				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 			})
 		})
 	})
@@ -94,7 +103,12 @@ func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 
 func BenchmarkDepthSymbolMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
-	state := NewDepthSymbol(symbol)
+	viper.Set("market.book_depth_levels", 10)
+	state, err := NewDepthSymbol(symbol)
+
+	if err != nil {
+		b.Fatal(err)
+	}
 	fixture := symbolBookFixture{symbol: symbol}
 
 	state.ApplyBook(fixture.snapshot(99, 8, 101, 4))
@@ -103,6 +117,6 @@ func BenchmarkDepthSymbolMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = state.Measure()
+		_, _, _ = state.Measure()
 	}
 }

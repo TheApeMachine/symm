@@ -1,5 +1,7 @@
 package perspectives
 
+const GaugeFullSigma = 4.0
+
 /*
 DashboardGaugeSources lists signal sources rendered on the gauge grid and signal
 heatmap. Order is stable for layout documents and frontend row indexing.

@@ -48,9 +48,9 @@ func TestMeasureFusedConfidence(t *testing.T) {
 	Convey("Given a cold fused history", t, func() {
 		Convey("It should return zero confidence before warm-up completes", func() {
 			cold := newCVDState()
-			_, confidence := cold.measureFused(1)
+			_, clarity, _ := cold.measureFused(1)
 
-			So(confidence, ShouldEqual, 0)
+			So(clarity, ShouldEqual, 0)
 		})
 	})
 }

@@ -6,12 +6,13 @@ import (
 )
 
 /*
-liquidityReading ranks quote volume against peer quartiles and returns shift evidence.
+liquidityReading ranks quote volume against peer quartiles. clarity is band
+margin; standout is returned separately by the caller from peer deviation.
 */
 func liquidityReading(
 	quoteVol float64,
 	peers []float64,
-) (perspectives.CategoryType, float64, error) {
+) (perspectives.CategoryType, float64, float64, error) {
 	sorted := numeric.CopySorted(peers)
 	q1 := numeric.PercentileSorted(sorted, 0.25)
 	q3 := numeric.PercentileSorted(sorted, 0.75)
@@ -26,14 +27,14 @@ func liquidityReading(
 	)
 
 	if err != nil {
-		return perspectives.CategoryTypeNone, 0, err
+		return perspectives.CategoryTypeNone, 0, 0, err
 	}
 
 	category, err := categories.Classify(quoteVol)
 
 	if err != nil {
-		return perspectives.CategoryTypeNone, 0, err
+		return perspectives.CategoryTypeNone, 0, 0, err
 	}
 
-	return category, categories.Clarity(quoteVol), nil
+	return category, categories.Clarity(quoteVol), categories.Standout(quoteVol), nil
 }

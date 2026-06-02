@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -52,14 +53,15 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 
 	identifier := NewIdentifier()
 	catalog := NewPairCatalog(ctx)
-	prices := NewPrices(ctx, pool)
+	quotes := broker.EnsureQuoteCache(ctx, pool)
 	balances := NewBalances(ws, identifier, catalog)
-	orders := NewOrders(ctx, ws, balances, prices, catalog, identifier)
+	orders := NewOrders(ctx, ws, balances, quotes, catalog, identifier)
+
+	quotes.Subscribe(orders.tryMatchQuote)
 
 	ws.sockets[public.BalancesChannel] = balances
 	ws.sockets[public.OrdersChannel] = orders
 
-	go prices.Run()
 	go catalog.Load()
 
 	if err := user.NewBalance(pool, nil); err != nil {

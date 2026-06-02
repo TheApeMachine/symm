@@ -69,23 +69,21 @@ func (rest *Rest) Get(
 		}
 	}
 
-	response := errnie.Does(func() (*client.Response, error) {
-		return rest.client.Get(strings.Join([]string{
-			string(rest.endpoint), params.Encode(),
-		}, "?"), client.Config{
-			Ctx:     rest.ctx,
-			Timeout: 3 * time.Second,
-			Header:  header,
-		})
-	}).Or(func(err error) {
-		rest.err = errnie.Error(err)
+	response, err := rest.client.Get(strings.Join([]string{
+		string(rest.endpoint), params.Encode(),
+	}, "?"), client.Config{
+		Ctx:     rest.ctx,
+		Timeout: 3 * time.Second,
+		Header:  header,
 	})
 
-	if rest.err != nil {
+	if err != nil {
+		rest.err = err
+
 		return rest.err
 	}
 
-	resp := response.Value()
+	resp := response
 
 	if resp == nil {
 		rest.err = fmt.Errorf("kraken public rest: empty response")
@@ -131,22 +129,20 @@ func (rest *Rest) Post(
 		}
 	}
 
-	response := errnie.Does(func() (*client.Response, error) {
-		return rest.client.Post(string(rest.endpoint), client.Config{
-			Ctx:     rest.ctx,
-			Timeout: 3 * time.Second,
-			Header:  header,
-			Body:    request,
-		})
-	}).Or(func(err error) {
-		rest.err = errnie.Error(err)
+	response, err := rest.client.Post(string(rest.endpoint), client.Config{
+		Ctx:     rest.ctx,
+		Timeout: 3 * time.Second,
+		Header:  header,
+		Body:    request,
 	})
 
-	if rest.err != nil {
+	if err != nil {
+		rest.err = err
+
 		return rest.err
 	}
 
-	resp := response.Value()
+	resp := response
 
 	if resp == nil {
 		rest.err = fmt.Errorf("kraken public rest: empty response")

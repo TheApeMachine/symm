@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/market"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -28,7 +28,7 @@ the size of whatever slice the feed happened to send.
 type FluidSymbol struct {
 	mu           sync.RWMutex
 	symbol       string
-	book         market.Book
+	book         krakenmarket.Book
 	bookReady    bool
 	bookDiverged bool
 	bookDepth    int
@@ -51,11 +51,11 @@ type FluidSymbol struct {
 // the baseline against which turbulence is measured as an excess over the norm.
 const fracScaleAlpha = 0.05
 
-func NewFluidSymbol(symbol string) *FluidSymbol {
-	depth := viper.GetViper().GetInt("market.book_depth_levels")
+func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
+	depth, err := symmarket.RequiredBookDepthLevels()
 
-	if depth <= 0 {
-		depth = 10
+	if err != nil {
+		return nil, err
 	}
 
 	return &FluidSymbol{
@@ -68,10 +68,10 @@ func NewFluidSymbol(symbol string) *FluidSymbol {
 			viper.GetViper().GetInt("signals.fractional_diff_width"),
 		),
 		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
-	}
+	}, nil
 }
 
-func (state *FluidSymbol) FeedTicker(row market.TickerUpdate) {
+func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -113,14 +113,14 @@ func (state *FluidSymbol) observePriceLocked(price float64) {
 	_ = state.fracScale.Update(math.Abs(value), fracScaleAlpha)
 }
 
-func (state *FluidSymbol) FeedBook(update market.Book) {
+func (state *FluidSymbol) FeedBook(update krakenmarket.Book) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	state.feedBookLocked(update)
 }
 
-func (state *FluidSymbol) feedBookLocked(update market.Book) {
+func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book) {
 	if update.IsSnapshot() {
 		state.bookReady = true
 		state.bookDiverged = false
@@ -155,18 +155,18 @@ func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
 	}
 }
 
-func (state *FluidSymbol) cloneBookLevels(levels []market.BookLevel) []market.BookLevel {
+func (state *FluidSymbol) cloneBookLevels(levels []krakenmarket.BookLevel) []krakenmarket.BookLevel {
 	if len(levels) == 0 {
 		return nil
 	}
 
-	out := make([]market.BookLevel, len(levels))
+	out := make([]krakenmarket.BookLevel, len(levels))
 	copy(out, levels)
 
 	return out
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []market.BookLevel) {
+func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}
@@ -187,7 +187,7 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []market.BookLevel) {
 	}
 }
 
-func (state *FluidSymbol) sideChangeFlux(previous, updated []market.BookLevel) float64 {
+func (state *FluidSymbol) sideChangeFlux(previous, updated []krakenmarket.BookLevel) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))
 
 	for _, level := range previous {
@@ -213,7 +213,7 @@ func (state *FluidSymbol) sideChangeFlux(previous, updated []market.BookLevel) f
 	return flux
 }
 
-func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) {
+func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -227,11 +227,15 @@ func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) 
 		sign = 1.0
 	}
 
-	state.buyPressure = errnie.Does(func() (float64, error) {
-		return state.pressure.Next(0, sign)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+	value, err := state.pressure.Next(0, sign)
+
+	if err != nil {
+		return err
+	}
+
+	state.buyPressure = value
+
+	return nil
 }
 
 func (state *FluidSymbol) HasBook() bool {
@@ -257,37 +261,37 @@ func (state *FluidSymbol) Row() map[string]any {
 	return state.wireRowLocked()
 }
 
-func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
+func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if state.bookDiverged {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	row := state.wireRowLocked()
 
 	if row == nil {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	re, ok := row["re"].(float64)
 
 	if !ok || re <= 0 {
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, nil
 	}
 
 	divergence, _ := row["div"].(float64)
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
 	category, evidence := fluidReading(divergence, turbulence, viscosity, re)
+	standout := evidence
+	clarity := evidence
 
-	confidence, err := state.tracked.Observe(category, evidence)
+	confidence, err := state.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
-		errnie.Error(err)
-
-		return perspectives.Measurement{}, false
+		return perspectives.Measurement{}, 0, err
 	}
 
 	return perspectives.Measurement{
@@ -298,7 +302,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, bool) {
 		SpreadBPS:  state.spreadBPS,
 		Strength:   re,
 		Confidence: confidence,
-	}, true
+	}, standout, nil
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {

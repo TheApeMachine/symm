@@ -46,7 +46,13 @@ func TestSelectWalkForwardBest(t *testing.T) {
 			price := 100.0
 
 			if index%6 == 5 {
-				price = 110.0
+				rows = append(rows, perspectives.Measurement{
+					Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+					Category: perspectives.CategoryExhaustion,
+					SNR:      2, Last: 200,
+				})
+
+				continue
 			}
 
 			rows = append(rows, perspectives.Measurement{
@@ -66,7 +72,7 @@ func TestSelectWalkForwardBest(t *testing.T) {
 				Action: perspectives.Action{Type: perspectives.ActionLimit},
 			},
 			{
-				Category:    perspectives.CategoryLaminar,
+				Category:    perspectives.CategoryExhaustion,
 				Observation: perspectives.ObservationHolding,
 				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
 				Unit:        perspectives.UnitSNR,

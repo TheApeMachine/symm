@@ -3,7 +3,6 @@ package replay
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand"
 	"time"
 
@@ -71,7 +70,7 @@ func PerturbLine(line Line, config PerturbConfig, random *rand.Rand) (Line, erro
 		return line, nil
 	}
 
-	payload, err := perturbBookPayload(line.Payload, random, clampSigma(config.QtyJitterSigma))
+	payload, err := perturbBookPayload(line.Payload, random, config.QtyJitterSigma)
 
 	if err != nil {
 		return line, fmt.Errorf("perturb book payload: %w", err)
@@ -83,10 +82,18 @@ func PerturbLine(line Line, config PerturbConfig, random *rand.Rand) (Line, erro
 }
 
 func perturbBookPayload(payload json.RawMessage, random *rand.Rand, sigma float64) (json.RawMessage, error) {
+	if sigma <= 0 {
+		return payload, nil
+	}
+
+	if sigma > 0.25 {
+		return nil, fmt.Errorf("replay: qty jitter sigma %v exceeds 0.25", sigma)
+	}
+
 	var envelope socketEnvelope
 
 	if err := sonic.Unmarshal(payload, &envelope); err != nil {
-		return payload, nil
+		return nil, fmt.Errorf("perturb book envelope: %w", err)
 	}
 
 	if envelope.Type == "snapshot" {
@@ -224,9 +231,5 @@ func NewPerturbRandom(seed int64) *rand.Rand {
 }
 
 func clampSigma(sigma float64) float64 {
-	if sigma <= 0 {
-		return 0
-	}
-
-	return math.Min(sigma, 0.25)
+	return sigma
 }

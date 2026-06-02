@@ -1,6 +1,9 @@
 package probability
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 /*
 Ranked is one token-probability pair for sampling or beam expansion.
@@ -126,14 +129,22 @@ func AdditiveSmoothing(count float64, total float64, vocabSize int, smoothing fl
 /*
 RepetitionPenalty scales down probabilities of recently seen tokens and renormalizes.
 */
-func RepetitionPenalty(distribution []Ranked, recentTokens []string, penaltyWeight float64) []Ranked {
+func RepetitionPenalty(
+	distribution []Ranked, recentTokens []string, penaltyWeight float64,
+) ([]Ranked, error) {
 	if len(distribution) == 0 || len(recentTokens) == 0 {
-		return distribution
+		return distribution, nil
+	}
+
+	if penaltyWeight < 0 || penaltyWeight > 1 {
+		return nil, fmt.Errorf("probability: penaltyWeight out of unit interval")
 	}
 
 	const penaltyMin = 1e-9
 
-	penaltyWeight = math.Max(penaltyMin, math.Min(1, penaltyWeight))
+	if penaltyWeight < penaltyMin {
+		penaltyWeight = penaltyMin
+	}
 
 	recent := make(map[string]struct{}, len(recentTokens))
 
@@ -160,14 +171,14 @@ func RepetitionPenalty(distribution []Ranked, recentTokens []string, penaltyWeig
 	}
 
 	if total == 0 {
-		return distribution
+		return distribution, nil
 	}
 
 	for index := range adjusted {
 		adjusted[index].Probability /= total
 	}
 
-	return adjusted
+	return adjusted, nil
 }
 
 /*

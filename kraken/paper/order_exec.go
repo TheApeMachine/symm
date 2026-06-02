@@ -8,14 +8,13 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
 const (
-	halfSpreadBps      = 2.5
-	marketSlippageBps  = 1.0
 	triggerSlippageBps = 0.5
 )
 
@@ -182,7 +181,19 @@ func (orders *Orders) resolveFillPrice(params trading.AddParams) (float64, float
 	case trading.Limit:
 		return params.LimitPrice, 0
 	case trading.Market:
-		return orders.prices.Last(params.Symbol), halfSpreadBps + marketSlippageBps
+		quote, ok := orders.quotes.Snapshot(params.Symbol)
+
+		if !ok {
+			return 0, 0
+		}
+
+		fill, err := broker.SlippageFill(quote, params.Side, params.OrderQty)
+
+		if err != nil {
+			return 0, 0
+		}
+
+		return fill.Price, fill.SlippageBps
 	default:
 		fillPrice := 0.0
 

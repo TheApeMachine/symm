@@ -2,11 +2,11 @@ package cvd
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -128,7 +128,7 @@ measureFused sigma-clamps fused absorption strength, bands it against the
 symbol's own fused history quartiles, and returns the category plus clarity
 (classification confidence from the quartile boundaries).
 */
-func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, float64) {
+func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, float64, float64) {
 	clamped, err := state.sigma.Next(0, fused)
 
 	if err != nil {
@@ -139,7 +139,7 @@ func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, f
 	samples := state.fusedHist.Ordered()
 
 	if len(samples) < minCVDFusedSamples {
-		return perspectives.CategoryStochasticBalance, 0
+		return perspectives.CategoryStochasticBalance, 0, 0
 	}
 
 	sorted := numeric.CopySorted(samples)
@@ -151,17 +151,18 @@ func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, f
 		cvdBandCodes,
 		cvdBandLabels,
 	)
-	confidence := classifier.Confidence(clamped)
+	clarity := classifier.Confidence(clamped)
+	standout := classifier.Standout(clamped)
 
 	switch {
 	case clamped <= q1:
-		return perspectives.CategoryVolumeStarvation, confidence
+		return perspectives.CategoryVolumeStarvation, clarity, standout
 	case clamped <= q2:
-		return perspectives.CategoryStochasticBalance, confidence
+		return perspectives.CategoryStochasticBalance, clarity, standout
 	case clamped <= q3:
-		return perspectives.CategoryHiddenAbsorption, confidence
+		return perspectives.CategoryHiddenAbsorption, clarity, standout
 	default:
-		return perspectives.CategoryAggressiveDrive, confidence
+		return perspectives.CategoryAggressiveDrive, clarity, standout
 	}
 }
 
@@ -196,12 +197,16 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
-					signal.observe(trade)
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("cvd: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
+					if err := signal.observe(trade); err != nil {
+						return fmt.Errorf("cvd: observe %s: %w", trade.Symbol, err)
+					}
 				}
 			}
 		}
@@ -210,9 +215,9 @@ func (signal *Signal) Tick() error {
 
 // observe folds one executed trade into its symbol's window state and emits the
 // absorption reading for that symbol.
-func (signal *Signal) observe(trade market.TradeUpdate) {
+func (signal *Signal) observe(trade market.TradeUpdate) error {
 	if trade.Price <= 0 || trade.Qty <= 0 {
-		return
+		return nil
 	}
 
 	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newCVDState())
@@ -234,7 +239,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	anchor := state.signed.Anchor()
 
 	if gross <= 0 || anchor <= 0 {
-		return
+		return nil
 	}
 
 	conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
@@ -242,7 +247,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 
 	fused := activity * conviction * (1 + drift)
-	category, confidence := state.measureFused(fused)
+	category, clarity, standout := state.measureFused(fused)
 
 	measurement := perspectives.Measurement{
 		Symbol:     trade.Symbol,
@@ -250,11 +255,16 @@ func (signal *Signal) observe(trade market.TradeUpdate) {
 		Category:   category,
 		Last:       trade.Price,
 		Strength:   fused,
-		Confidence: confidence,
+		Confidence: clarity,
 	}
-	measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+	if err := perspectives.AssignCategorySNR(&measurement, signal.floor, standout); err != nil {
+		return err
+	}
+
 	activate.Once("signal/cvd:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

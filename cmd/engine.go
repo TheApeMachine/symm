@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
@@ -34,12 +33,7 @@ func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
 		systems: make([]System, 0),
 	}
 
-	return engine, errnie.Error(errnie.Require(map[string]any{
-		"ctx":     engine.ctx,
-		"cancel":  engine.cancel,
-		"pool":    engine.pool,
-		"systems": engine.systems,
-	}))
+	return engine, nil
 }
 
 func (engine *Engine) Start() error {
@@ -66,7 +60,7 @@ func (engine *Engine) Start() error {
 				fmt.Println("[symm] tick:stop", name, "err=", err)
 
 				errMu.Lock()
-				tickErrors = append(tickErrors, errnie.Error(err))
+				tickErrors = append(tickErrors, err)
 				errMu.Unlock()
 
 				return

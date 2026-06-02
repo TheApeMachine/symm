@@ -11,11 +11,47 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func warmTrackerSNR(t *testing.T, tracker *Tracker, symbol string, now time.Time) {
+	t.Helper()
+
+	tracker.ObserveMid(symbol, market.Pair{}, 100)
+	tracker.ObserveLast(symbol, market.Pair{}, 100)
+
+	originalMinFillToCancel := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
+	viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
+
+	state := tracker.stateLocked(symbol, market.Pair{})
+	state.cancelBid = 0.3
+	state.fillBid = 0.1
+
+	for index := range 15 {
+		evidence := 0.45
+
+		if index%2 == 1 {
+			evidence = 0.55
+		}
+
+		_, err := state.tracked.Observe(
+			perspectives.CategoryLiquidityVacuum,
+			evidence,
+			evidence,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = perspectives.ScoreCategorySNR(tracker.floor, symbol, evidence)
+		convey.So(err, convey.ShouldBeNil)
+	}
+
+	viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
+}
+
 func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 	convey.Convey("Given a near-touch toxic cancel with churn ratio", t, func() {
 		tracker := NewTracker()
 		now := time.Now()
 		symbol := "ETH/EUR"
+
+		warmTrackerSNR(t, tracker, symbol, now)
 
 		tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tracker.ObserveLast(symbol, market.Pair{}, 100)
@@ -23,10 +59,10 @@ func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 		state.toxic[100] = now.Add(time.Minute)
 		state.toxicChurn[100] = 4.5
 
-		measurement, ok := tracker.Measure(symbol, now)
+		measurement, err := tracker.Measure(symbol, now)
 
 		convey.Convey("It should retain churn ratio as strength with confidence and SNR", func() {
-			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryToxicBluff)
 			convey.So(measurement.Strength, convey.ShouldEqual, 4.5)
 			convey.So(measurement.Confidence, convey.ShouldBeGreaterThan, 0)
@@ -42,15 +78,17 @@ func TestTrackerMeasureToxicBluff(t *testing.T) {
 		now := time.Now()
 		symbol := "ETH/EUR"
 
+		warmTrackerSNR(t, tracker, symbol, now)
+
 		tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tracker.stateLocked(symbol, market.Pair{})
 		state.toxic[100] = now.Add(time.Minute)
 
-		measurement, ok := tracker.Measure(symbol, now)
+		measurement, err := tracker.Measure(symbol, now)
 
 		convey.Convey("It should publish toxic bluff with measurable strength", func() {
-			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryToxicBluff)
 			convey.So(measurement.Strength, convey.ShouldBeGreaterThan, 0)
 			convey.So(measurement.Confidence, convey.ShouldBeGreaterThan, 0)
@@ -70,15 +108,17 @@ func TestTrackerMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
 		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
 
+		warmTrackerSNR(t, tracker, symbol, now)
+
 		state := tracker.stateLocked(symbol, market.Pair{})
 		state.cancelBid = 0.3
 		state.fillBid = 0.1
 		tracker.ObserveLast(symbol, market.Pair{}, 50000)
 
-		measurement, ok := tracker.Measure(symbol, now)
+		measurement, err := tracker.Measure(symbol, now)
 
 		convey.Convey("It should publish bounded strength with confidence and SNR", func() {
-			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryLiquidityVacuum)
 			convey.So(measurement.Strength, convey.ShouldAlmostEqual, 20, 0.01)
 			convey.So(measurement.Strength, convey.ShouldBeLessThan, 1e6)
@@ -105,10 +145,11 @@ func TestTrackerMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 		state.cancelBid = 1
 		state.fillBid = 0
 
-		_, ok := tracker.Measure(symbol, now)
+		measurement, err := tracker.Measure(symbol, now)
 
 		convey.Convey("It should not publish an incomplete asymmetry reading", func() {
-			convey.So(ok, convey.ShouldBeFalse)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(measurement.Source, convey.ShouldEqual, perspectives.SourceNone)
 		})
 	})
 }

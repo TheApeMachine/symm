@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,9 +24,8 @@ var outboundOnce sync.Once
 const publicOutboundSubscriberID = "kraken:public:websocket"
 
 const (
-	publicRawSubscriberID    = "kraken/public:raw"
+	publicRawSubscriberID      = "kraken/public:raw"
 	publicLevel3SubscriberID = "kraken/public:level3"
-	publicSubscribePace      = 50 * time.Millisecond
 )
 
 type WebSocketClient interface {
@@ -81,7 +78,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 	})
 
 	socket.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	socket.bindChartStreams(streams)
+	socket.broadcasts["ui:charts"] = pool.CreateBroadcastGroup("ui:charts", 10*time.Millisecond)
 
 	for _, channel := range []string{
 		"raw", "level3",
@@ -105,6 +102,8 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 	outboundOnce.Do(func() {
 		go socket.runOutbound()
 	})
+
+	socket.bindChartStreams(streams)
 
 	if viper.GetViper().Get("trading.model") == "record" {
 		recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
@@ -199,194 +198,10 @@ func (ws *WebSocket) Tick() error {
 		}
 
 		if message.Channel == CandlesChannel {
-			ws.applyOhlc(message)
-		}
-	}
-}
-
-func (ws *WebSocket) runOutbound() {
-	inbound := ws.subscribers["kraken:public"].Incoming
-
-	for {
-		select {
-		case <-ws.ctx.Done():
-			return
-		case message, ok := <-inbound:
-			if !ok {
-				return
-			}
-
-			if message == nil {
-				continue
-			}
-
-			ws.connMu.RLock()
-			connected := ws.conn != nil
-			ws.connMu.RUnlock()
-
-			if !connected {
-				if err := ws.reconnect(WebSocketURL); err != nil {
-					return
-				}
-			}
-
-			for {
-				if err := ws.writeOutbound(message.Value); err != nil {
-					if ws.ctx.Err() != nil {
-						return
-					}
-
-					errnie.Error(err)
-
-					if reconnectErr := ws.reconnect(WebSocketURL); reconnectErr != nil {
-						return
-					}
-
-					continue
-				}
-
-				break
+			if err := ws.applyOhlc(message); err != nil {
+				return err
 			}
 		}
-	}
-}
-
-func (ws *WebSocket) writeOutbound(value any) error {
-	return ws.writeOutboundFrame(value, true)
-}
-
-func (ws *WebSocket) writeOutboundFrame(value any, record bool) error {
-	if record {
-		if frame, ok := value.(map[string]any); ok {
-			if method, _ := frame["method"].(string); method == "subscribe" {
-				ws.recordSubscribeFrame(value)
-			}
-		}
-	}
-
-	if frame, ok := value.(map[string]any); ok {
-		if method, _ := frame["method"].(string); method == "subscribe" {
-			pace := viper.GetDuration("market.subscribe_pace")
-
-			if pace <= 0 {
-				pace = publicSubscribePace
-			}
-
-			ws.subscribeMu.Lock()
-
-			if since := time.Since(ws.lastSubscribe); since < pace {
-				time.Sleep(pace - since)
-			}
-
-			ws.lastSubscribe = time.Now()
-			ws.subscribeMu.Unlock()
-		}
-	}
-
-	ws.connMu.RLock()
-	conn := ws.conn
-	ws.connMu.RUnlock()
-
-	if conn == nil {
-		return fmt.Errorf("kraken public websocket: not connected")
-	}
-
-	return conn.WriteJSON(value)
-}
-
-func (ws *WebSocket) bindChartStreams(streams *focus.Set) {
-	if streams == nil {
-		return
-	}
-
-	ws.streams = streams
-	streams.SetStreamNotifier(ws.onStreamChange)
-	ws.ensureOhlcSubscription(focus.AnchorSymbol())
-
-	for _, symbol := range streams.Snapshot() {
-		ws.ensureOhlcSubscription(symbol)
-	}
-}
-
-func (ws *WebSocket) onStreamChange(symbol string, added bool) {
-	if !added {
-		return
-	}
-
-	ws.ensureOhlcSubscription(symbol)
-}
-
-func (ws *WebSocket) ensureOhlcSubscription(symbol string) {
-	symbol = strings.TrimSpace(symbol)
-
-	if symbol == "" {
-		return
-	}
-
-	if _, known := ws.ohlcSubscribed[symbol]; known {
-		return
-	}
-
-	ws.ohlcSubscribed[symbol] = struct{}{}
-
-	outbound := ws.broadcasts["kraken:public"]
-
-	if outbound == nil {
-		return
-	}
-
-	outbound.Send(&qpool.QValue[any]{
-		Value: OhlcSubscribeFrame(symbol),
-	})
-}
-
-// applyOhlc publishes Kraken v2 ohlc rows as candle_bar frames for chart-stream
-// symbols only. Updates share interval_begin so the frontend updates bars in place.
-func (ws *WebSocket) applyOhlc(msg SocketMessage) {
-	if ws.ui == nil {
-		return
-	}
-
-	candles, err := DecodeOhlc(&msg)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
-
-	for _, candle := range candles {
-		if candle.Symbol == "" {
-			continue
-		}
-
-		if ws.streams != nil && !ws.streams.Streams(candle.Symbol) {
-			continue
-		}
-
-		sec, secErr := CandleIntervalSec(candle)
-
-		if secErr != nil {
-			errnie.Error(secErr)
-			continue
-		}
-
-		ws.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":          "candle_bar",
-			"ts":             nowStr,
-			"symbol":         candle.Symbol,
-			"sec":            sec,
-			"interval_begin": candle.IntervalBegin,
-			"interval":       candle.Interval,
-			"open":           candle.Open,
-			"high":           candle.High,
-			"low":            candle.Low,
-			"close":          candle.Close,
-			"volume":         candle.Volume,
-			"trades":         candle.Trades,
-			"vwap":           candle.VWAP,
-		}})
 	}
 }
 

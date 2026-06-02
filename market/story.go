@@ -3,6 +3,7 @@ package market
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
@@ -23,6 +23,18 @@ const (
 	storyMeasurementsSubscriberID = "market:story"
 	storyUIInterval               = 100 * time.Millisecond
 )
+
+type gaugeReadings struct {
+	clarity map[string]float64
+	snr     map[string]float64
+}
+
+func newGaugeReadings() gaugeReadings {
+	return gaugeReadings{
+		clarity: make(map[string]float64),
+		snr:     make(map[string]float64),
+	}
+}
 
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
@@ -44,7 +56,7 @@ type Story struct {
 	pulseSeq    atomic.Int64
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -63,11 +75,14 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 
 	recordPath := viper.GetViper().GetString("trading.record.file")
 
-	fh, err := os.Create(recordPath)
+	if recordPath != "" {
+		fh, err := os.Create(recordPath)
 
-	if err != nil {
-		errnie.Error(err)
-	} else {
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("story: record file %q: %w", recordPath, err)
+		}
+
 		story.recordFile = fh
 		story.recorder = bufio.NewWriter(fh)
 	}
@@ -82,7 +97,7 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 
 	activate.Boot("market/story ready")
 
-	return story
+	return story, nil
 }
 
 /*
@@ -103,7 +118,7 @@ func (story *Story) Tick() error {
 
 	defer uiFlush.Stop()
 
-	latestConf := make(map[string]float64)
+	latest := newGaugeReadings()
 
 	for {
 		select {
@@ -111,50 +126,54 @@ func (story *Story) Tick() error {
 			return story.ctx.Err()
 
 		case <-uiFlush.C:
-			for source, conf := range latestConf {
+			for source, clarity := range latest.clarity {
 				if !perspectives.DashboardGaugeSource(source) {
 					continue
 				}
 
-				story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+				frame := map[string]any{
 					"source":     source,
-					"confidence": conf,
-				}})
+					"confidence": clarity,
+				}
+
+				if snr := latest.snr[source]; snr > 0 {
+					frame["snr"] = snr
+				}
+
+				story.ui.Send(&qpool.QValue[any]{Value: frame})
 			}
 
 			now := time.Now()
 			nowStr := now.UTC().Format(time.RFC3339Nano)
 
-			story.publishEnginePulse(latestConf, nowStr)
+			story.publishEnginePulse(latest.snr, nowStr)
 
 		case row, ok := <-incoming:
 			if !ok {
 				return io.EOF
 			}
 
-			errnie.Debug("story.Tick", "measurement", row)
-
 			if row == nil {
-				errnie.Warn("nil measurement")
-				continue
+				return fmt.Errorf("story: nil measurement envelope")
 			}
 
-			measurement, ok := row.Value.(perspectives.Measurement)
+			measurement, typeOK := row.Value.(perspectives.Measurement)
 
-			if !ok {
-				errnie.Warn("invalid measurement")
-				continue
+			if !typeOK {
+				return fmt.Errorf("story: invalid measurement type %T", row.Value)
 			}
 
-			story.ingestMeasurement(measurement, latestConf)
+			if err := story.ingestMeasurement(measurement, latest); err != nil {
+				return fmt.Errorf("story: ingest %s: %w", measurement.Symbol, err)
+			}
 		}
 	}
 }
 
 func (story *Story) ingestMeasurement(
 	measurement perspectives.Measurement,
-	latestConf map[string]float64,
-) {
+	latest gaugeReadings,
+) error {
 	activate.Once("market/story:measurement source=" + measurement.Source.String())
 
 	if story.recorder != nil {
@@ -164,16 +183,16 @@ func (story *Story) ingestMeasurement(
 			recorded.At = time.Now().UTC()
 		}
 
-		raw := errnie.Does(func() ([]byte, error) {
-			return sonic.Marshal(recorded)
-		}).Or(func(err error) {
-			errnie.Error(err)
-		}).Value()
+		raw, err := sonic.Marshal(recorded)
+
+		if err != nil {
+			return fmt.Errorf("marshal measurement: %w", err)
+		}
 
 		activate.Once("market/story:recording")
 
 		if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
-			errnie.Error(writeErr)
+			return fmt.Errorf("write measurement record: %w", writeErr)
 		}
 	}
 
@@ -182,21 +201,24 @@ func (story *Story) ingestMeasurement(
 	source := measurement.Source.String()
 
 	if source != "" && perspectives.DashboardGaugeSource(source) {
-		if measurement.SNR > latestConf[source] {
-			latestConf[source] = measurement.SNR
+		if measurement.Confidence > latest.clarity[source] {
+			latest.clarity[source] = measurement.Confidence
+		}
+
+		if measurement.SNR > latest.snr[source] {
+			latest.snr[source] = measurement.SNR
 		}
 	}
 
 	if measurement.Symbol == "" || measurement.Last <= 0 {
-		return
+		return nil
 	}
 
 	if story.tree == nil {
 		tree, err := perspectives.NewTree(story.ctx, []perspectives.Measurement{})
 
 		if err != nil {
-			errnie.Error(err)
-			return
+			return fmt.Errorf("playbook tree: %w", err)
 		}
 
 		story.tree = tree
@@ -218,17 +240,17 @@ func (story *Story) ingestMeasurement(
 	)
 
 	if actionType == nil || *actionType == perspectives.ActionNone {
-		return
+		return nil
 	}
 
 	if perspectives.IsEntryAction(*actionType) && !trading.DeskReady() {
-		return
+		return nil
 	}
 
 	action := perspectives.ActionFromMeasurement(*actionType, measurement)
 
 	if perspectives.IsEntryAction(*actionType) && action.Quantity <= 0 {
-		return
+		return nil
 	}
 
 	activate.Once("market/story:action")
@@ -236,6 +258,8 @@ func (story *Story) ingestMeasurement(
 	story.raw.Send(&qpool.QValue[any]{
 		Value: action,
 	})
+
+	return nil
 }
 
 func (story *Story) observations(symbol string) map[perspectives.ObservationType]float64 {
@@ -254,10 +278,10 @@ func (story *Story) observations(symbol string) map[perspectives.ObservationType
 
 // publishEnginePulse emits a system-health summary derived from the latest
 // per-source confidence map. The prediction chart plots avg_prediction_multiple.
-func (story *Story) publishEnginePulse(latestConf map[string]float64, ts string) {
+func (story *Story) publishEnginePulse(latestSNR map[string]float64, ts string) {
 	seq := story.pulseSeq.Add(1)
 
-	if len(latestConf) == 0 {
+	if len(latestSNR) == 0 {
 		story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 			"event":        "engine_pulse",
 			"ts":           ts,
@@ -270,31 +294,29 @@ func (story *Story) publishEnginePulse(latestConf map[string]float64, ts string)
 	}
 
 	var sum float64
-	for _, value := range latestConf {
+	for _, value := range latestSNR {
 		sum += value
 	}
-	avg := sum / float64(len(latestConf))
+	avg := sum / float64(len(latestSNR))
 
 	var variance float64
-	for _, value := range latestConf {
+	for _, value := range latestSNR {
 		delta := value - avg
 		variance += delta * delta
 	}
-	stddev := math.Sqrt(variance / float64(len(latestConf)))
-
-	const gaugeFullSigma = 4.0
+	stddev := math.Sqrt(variance / float64(len(latestSNR)))
 
 	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"event":                   "engine_pulse",
 		"ts":                      ts,
 		"seq":                     seq,
 		"phase":                   "ticking",
-		"measurements":            len(latestConf),
+		"measurements":            len(latestSNR),
 		"open":                    0,
 		"avg_prediction":          avg,
-		"avg_prediction_multiple": avg / gaugeFullSigma,
+		"avg_prediction_multiple": avg / perspectives.GaugeFullSigma,
 		"avg_error":               stddev,
-		"avg_error_multiple":      stddev / gaugeFullSigma,
+		"avg_error_multiple":      stddev / perspectives.GaugeFullSigma,
 	}})
 }
 
@@ -310,15 +332,23 @@ func (story *Story) Close() error {
 		}
 	}
 
+	var closeErr error
+
 	if story.recorder != nil {
-		errnie.Error(story.recorder.Flush())
+		if flushErr := story.recorder.Flush(); flushErr != nil {
+			closeErr = flushErr
+		}
+
 		story.recorder = nil
 	}
 
 	if story.recordFile != nil {
-		errnie.Error(story.recordFile.Close())
+		if fileErr := story.recordFile.Close(); fileErr != nil && closeErr == nil {
+			closeErr = fileErr
+		}
+
 		story.recordFile = nil
 	}
 
-	return nil
+	return closeErr
 }

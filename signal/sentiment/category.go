@@ -25,7 +25,9 @@ func sentimentReading(
 	}
 
 	if leader && change != 0 {
-		return perspectives.CategoryDivergentMove, math.Min(1, math.Abs(change))
+		margin := math.Abs(change)
+
+		return perspectives.CategoryDivergentMove, margin / (margin + 1)
 	}
 
 	margin := surgeThreshold - breadth

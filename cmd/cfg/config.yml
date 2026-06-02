@@ -12,6 +12,9 @@ market:
 
 trading:
   order_ack_timeout: 500ms
+  max_quote_age: 5s
+  max_spread_bps: 100
+  max_slippage_bps: 50
   model: paper
   record:
     file: runs/capture.jsonl

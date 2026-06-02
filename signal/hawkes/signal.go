@@ -2,10 +2,10 @@ package hawkes
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -60,7 +60,7 @@ func (state *symbolState) append(trade market.TradeUpdate) {
 	state.ticks = append(state.ticks, trade)
 }
 
-func (state *symbolState) measure(now time.Time) (perspectives.Measurement, bool) {
+func (state *symbolState) measure(now time.Time) (perspectives.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -109,24 +109,35 @@ func (signal *Signal) Tick() error {
 
 			switch envelope.Channel {
 			case public.TradesChannel:
-				for _, trade := range errnie.Does(func() ([]market.TradeUpdate, error) {
-					return market.DecodeTrades(&envelope)
-				}).Or(func(err error) {
-					errnie.Error(err)
-				}).Value() {
+				trades, err := market.DecodeTrades(&envelope)
+
+				if err != nil {
+					return fmt.Errorf("hawkes: decode trades: %w", err)
+				}
+
+				for _, trade := range trades {
 					stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
 					state := stored.(*symbolState)
 					state.append(trade)
 
-					measurement, ok := state.measure(time.Now())
+					measurement, standout, err := state.measure(time.Now())
 
-					if !ok {
+					if err != nil {
+						return fmt.Errorf("hawkes: measure %s: %w", trade.Symbol, err)
+					}
+
+					if measurement.Source == perspectives.SourceNone {
 						continue
 					}
 
 					measurement.Symbol = trade.Symbol
 					measurement.Last = trade.Price
-					measurement.SNR = signal.floor.Score(measurement.Symbol, measurement.Confidence)
+					if err := perspectives.AssignCategorySNR(
+						&measurement, signal.floor, standout,
+					); err != nil {
+						return fmt.Errorf("hawkes: snr %s: %w", trade.Symbol, err)
+					}
+
 					activate.Once("signal/hawkes:measurement")
 					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 				}

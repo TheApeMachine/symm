@@ -109,14 +109,16 @@ func TestObserve(t *testing.T) {
 				}
 			}
 
-			Convey("It publishes an ignition measurement carrying symbol and price", func() {
+			Convey("It publishes unit clarity and SNR on the measurement", func() {
 				So(measurement.Source, ShouldEqual, perspectives.SourcePumpDump)
 				So(measurement.Symbol, ShouldEqual, "ALT/EUR")
 				So(measurement.Last, ShouldBeGreaterThan, 0)
+				So(measurement.Confidence, ShouldBeGreaterThanOrEqualTo, 0)
+				So(measurement.Confidence, ShouldBeLessThanOrEqualTo, 1)
+				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 
 				_, known := pumpCategorySet()[measurement.Category]
 				So(known, ShouldBeTrue)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 			})
 
 			Convey("It creates per-symbol pipeline state", func() {
