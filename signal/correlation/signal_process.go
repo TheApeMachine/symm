@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math/bits"
 
@@ -207,36 +209,50 @@ its assigned category band; SNR is how surprising that clarity is versus the
 coin's own recent baseline, not how large the strength is.
 */
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) error {
+	tasks := make([]chan *qpool.QValue[any], 0, len(active))
+
 	for _, coin := range active {
-		agree := hashBits - bits.OnesCount64(coin.sig^mode)
-		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
-		energy := coin.state.energy.Value()
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			agree := hashBits - bits.OnesCount64(coin.sig^mode)
+			corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
+			energy := coin.state.energy.Value()
 
-		code, err := coin.state.pipe.Push(corr, energy, baseline)
+			code, err := coin.state.pipe.Push(corr, energy, baseline)
 
-		if err != nil {
-			return fmt.Errorf("correlation: pipe %s: %w", coin.symbol, err)
-		}
+			if err != nil {
+				return nil, fmt.Errorf("correlation: pipe %s: %w", coin.symbol, err)
+			}
 
-		raw := energy * (1 + 2*corr) / baseline
+			raw := energy * (1 + 2*corr) / baseline
 
-		measurement := perspectives.Measurement{
-			Symbol:     coin.symbol,
-			Source:     perspectives.SourceCorrelation,
-			Category:   signal.categories[coin.state.pipe.Label(code)],
-			Last:       coin.price,
-			Strength:   raw,
-			Confidence: coin.state.pipe.Confidence(),
-		}
-		if err := perspectives.AssignCategorySNR(
-			&measurement, signal.floor, coin.state.pipe.Standout(),
-		); err != nil {
-			return fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
-		}
+			measurement := perspectives.Measurement{
+				Symbol:     coin.symbol,
+				Source:     perspectives.SourceCorrelation,
+				Category:   signal.categories[coin.state.pipe.Label(code)],
+				Last:       coin.price,
+				Strength:   raw,
+				Confidence: coin.state.pipe.Confidence(),
+			}
 
-		activate.Once("signal/correlation:measurement")
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := perspectives.AssignCategorySNR(
+				&measurement, signal.floor, coin.state.pipe.Standout(),
+			); err != nil {
+				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
+			}
+
+			activate.Once("signal/correlation:measurement")
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+			return nil, nil
+		}))
 	}
 
-	return nil
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
 }

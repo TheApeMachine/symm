@@ -67,6 +67,80 @@ func TestMeasure(t *testing.T) {
 	})
 }
 
+func TestObserveTrades(t *testing.T) {
+	Convey("Given a hawkes signal with a measurements subscriber", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		measurements := signal.broadcasts["measurements"].Subscribe("test:hawkes", 64)
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		trades := tradeBurst("ALT/EUR", base, 128)
+
+		Convey("When a multi-print burst is observed", func() {
+			err := signal.observeTrades(trades)
+
+			So(err, ShouldBeNil)
+
+			var measurement perspectives.Measurement
+			received := false
+			deadline := time.After(time.Second)
+
+			for !received {
+				select {
+				case value := <-measurements.Incoming:
+					reading, ok := value.Value.(perspectives.Measurement)
+
+					if ok {
+						measurement = reading
+						received = true
+					}
+				case <-deadline:
+					t.Fatal("timed out waiting for hawkes measurement")
+				}
+			}
+
+			Convey("It publishes one thermal reading for the symbol", func() {
+				So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
+				So(measurement.Symbol, ShouldEqual, "ALT/EUR")
+				So(measurement.Strength, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+func BenchmarkObserveTrades(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewSignal(ctx, pool)
+	defer signal.Close()
+
+	signal.broadcasts["measurements"].Subscribe("bench:hawkes", 1024)
+
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	trades := tradeBurst("ALT/EUR", base, 128)
+
+	if err := signal.observeTrades(trades); err != nil {
+		b.Fatal(err)
+	}
+
+	touches := append([]tradeTouch(nil), signal.tradeScratch...)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := signal.publishTouches(touches); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkMeasure(b *testing.B) {
 	symbol := NewHawkesSymbol()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

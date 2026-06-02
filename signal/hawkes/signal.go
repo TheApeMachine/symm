@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -26,13 +27,20 @@ Saturation / Organic / Exhaustion). It consumes the executed trade tape; the
 per-symbol fit is cooldown-throttled inside HawkesSymbol.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map
-	floor       *adaptive.SNRField
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	broadcasts   map[string]*qpool.BroadcastGroup
+	subscribers  map[string]*qpool.Subscriber
+	symbols      sync.Map
+	tradeScratch []tradeTouch
+	floor        *adaptive.SNRField
+}
+
+type tradeTouch struct {
+	symbol string
+	state  *symbolState
+	last   float64
 }
 
 /*
@@ -116,37 +124,100 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 
-				for _, trade := range trades {
-					stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
-					state := stored.(*symbolState)
-					state.append(trade)
-
-					measurement, standout, err := state.measure(time.Now())
-
-					if err != nil {
-						errnie.Error(err, "hawkes: measure %s", trade.Symbol)
-						continue
-					}
-
-					if measurement.Source == perspectives.SourceNone {
-						continue
-					}
-
-					measurement.Symbol = trade.Symbol
-					measurement.Last = trade.Price
-					if err := perspectives.AssignCategorySNR(
-						&measurement, signal.floor, standout,
-					); err != nil {
-						errnie.Error(err, "hawkes: snr %s", trade.Symbol)
-						continue
-					}
-
-					activate.Once("signal/hawkes:measurement")
-					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+				if err := signal.observeTrades(trades); err != nil {
+					errnie.Error(err, "hawkes: observe trades")
 				}
 			}
 		}
 	}
+}
+
+func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
+	touches := signal.tradeScratch[:0]
+	indexBySymbol := make(map[string]int, len(trades))
+
+	for _, trade := range trades {
+		if trade.Price <= 0 || trade.Qty <= 0 {
+			continue
+		}
+
+		stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
+		state := stored.(*symbolState)
+		state.append(trade)
+
+		if touchIndex, ok := indexBySymbol[trade.Symbol]; ok {
+			touches[touchIndex].last = trade.Price
+			continue
+		}
+
+		indexBySymbol[trade.Symbol] = len(touches)
+		touches = append(touches, tradeTouch{
+			symbol: trade.Symbol,
+			state:  state,
+			last:   trade.Price,
+		})
+	}
+
+	signal.tradeScratch = touches
+
+	if len(touches) == 0 {
+		return nil
+	}
+
+	return signal.publishTouches(touches)
+}
+
+func (signal *Signal) publishTouches(touches []tradeTouch) error {
+	tasks := make([]chan *qpool.QValue[any], 0, len(touches))
+
+	for _, touch := range touches {
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			now := touchLastTime(touch.state)
+			measurement, standout, err := touch.state.measure(now)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if measurement.Source == perspectives.SourceNone {
+				return nil, nil
+			}
+
+			measurement.Symbol = touch.symbol
+			measurement.Last = touch.last
+
+			if err := perspectives.AssignCategorySNR(
+				&measurement, signal.floor, standout,
+			); err != nil {
+				return nil, err
+			}
+
+			activate.Once("signal/hawkes:measurement")
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+			return nil, nil
+		}))
+	}
+
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
+}
+
+func touchLastTime(state *symbolState) time.Time {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if tickCount := len(state.ticks); tickCount > 0 {
+		return state.ticks[tickCount-1].Timestamp
+	}
+
+	return time.Now()
 }
 
 func (signal *Signal) Close() error {

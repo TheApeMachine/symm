@@ -2,14 +2,13 @@ package fluid
 
 import (
 	"context"
+	"errors"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
-	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -21,27 +20,21 @@ Signal applies order-book fluid dynamics per symbol and maps the field onto the
 mechanical perspective (Laminar / Turbulent / Inertial / Viscous). It consumes
 book, trades, and ticks; the field model lives in FluidSymbol.
 */
-// fieldSnapshotInterval rate-limits the aggregated universe field snapshot. The
-// surface needs every symbol to build change% × vol topology; one snapshot per
-// interval keeps the UI channel lean without collapsing the field to a flat
-// anchor-only plane when per-pair streams are focus-gated elsewhere.
-const fieldSnapshotInterval = 200 * time.Millisecond
 const rawSubscriberID = "signal/fluid:raw"
 
 type Signal struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	pool              *qpool.Q
-	broadcasts        map[string]*qpool.BroadcastGroup
-	subscribers       map[string]*qpool.Subscriber
-	symbols           sync.Map
-	tracker           *focus.Set
-	ui                *qpool.BroadcastGroup
-	lastFieldSnapshot atomic.Int64
-	floor             *adaptive.SNRField
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	broadcasts   map[string]*qpool.BroadcastGroup
+	subscribers  map[string]*qpool.Subscriber
+	symbols      sync.Map
+	fieldScratch []*FluidSymbol
+	ui           *qpool.BroadcastGroup
+	floor        *adaptive.SNRField
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -50,7 +43,6 @@ func NewSignal(ctx context.Context, pool *qpool.Q, tracker *focus.Set) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		tracker:     tracker,
 		floor:       adaptive.NewSNRField(),
 	}
 
@@ -205,50 +197,81 @@ func (signal *Signal) emit(symbol string) error {
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	}
 
-	signal.publishField(state)
+	if err := signal.publishField(state); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 // publishField ships an aggregated universe field snapshot to the dashboard
-// surface. Per-pair UI streams stay focus-gated; the fluid surface is not a
-// single-pair chart and needs the full symbol set to render meaningful topology.
-func (signal *Signal) publishField(state *FluidSymbol) {
+// surface. Per-pair UI streams stay focus-gated elsewhere; the fluid surface
+// needs the full symbol set to render meaningful topology.
+func (signal *Signal) publishField(state *FluidSymbol) error {
 	if state.Row() == nil {
-		return
+		return nil
 	}
 
-	now := time.Now()
-	lastNano := signal.lastFieldSnapshot.Load()
-
-	if lastNano > 0 && now.Sub(time.Unix(0, lastNano)) < fieldSnapshotInterval {
-		return
-	}
-
-	rows := make([]map[string]any, 0, 64)
+	states := signal.fieldScratch[:0]
 
 	signal.symbols.Range(func(_, value any) bool {
-		row := value.(*FluidSymbol).Row()
-
-		if row != nil {
-			rows = append(rows, row)
-		}
+		states = append(states, value.(*FluidSymbol))
 
 		return true
 	})
 
-	if len(rows) == 0 {
-		return
+	signal.fieldScratch = states
+
+	tasks := make([]chan *qpool.QValue[any], 0, len(states))
+
+	for _, fluidState := range states {
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			row := fluidState.Row()
+
+			if row == nil {
+				return nil, nil
+			}
+
+			return row, nil
+		}))
 	}
 
-	signal.lastFieldSnapshot.Store(now.UnixNano())
+	rows := make([]map[string]any, 0, len(tasks))
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+
+		if value.Value == nil {
+			continue
+		}
+
+		row, ok := value.Value.(map[string]any)
+
+		if !ok {
+			return errors.Join(err, errors.New("fluid: field row has unexpected type"))
+		}
+
+		rows = append(rows, row)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
 
 	signal.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"event":        "field_snapshot",
-		"ts":           now.UTC().Format(time.RFC3339Nano),
+		"ts":           time.Now().UTC().Format(time.RFC3339Nano),
 		"symbol_count": len(rows),
 		"symbols":      rows,
 	}})
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

@@ -275,7 +275,7 @@ Bivariate self-exciting point process fitted on the trade stream. Buy arrivals e
 
 ### 📡 LeadLag
 
-Uses BTC/EUR as the anchor asset. Measures the Pearson cross-correlation between the anchor's returns and each altcoin's returns over a 256-bar per-symbol ring, then quantifies the unfinished lag fraction. When BTC has moved and an altcoin has not responded, `InefficientLag` fires. Publish rate is throttled to 200 ms to cap O(ring × maxLag × symbols) cost.
+Uses BTC/EUR as the anchor asset. Anchor movement is derived from the anchor ticker ring over the lag search window (`maxLagBars × barInterval`) and scored against an adaptive move baseline — not Kraken's 24h `change_pct`. When the anchor has not moved, a single `AnchorStall` measurement publishes on the anchor symbol; when it has moved, follower lag readings publish for every symbol in the universe. Each follower is measured with Hayashi-Yoshida cross-correlation over a 256-sample per-symbol ring, then quantified by lag fraction. When BTC has moved and an altcoin has not responded, `InefficientLag` fires. Publish rate is throttled to 200 ms to cap O(ring × maxLag × symbols) cost; follower measurements run on the qpool fast path inside each publish tick.
 
 ### 💧 Liquidity
 
@@ -467,7 +467,7 @@ symm tune
 |----------------------------|----------------------------------------------------------|---------------------|
 | `kraken/market/instrument` | subscribes ticker/book/trade/ohlc for every catalog pair | on catalog update   |
 | `kraken/public`            | `candle_bar` (anchor + open-position symbols)            | per ticker frame    |
-| `signal/fluid`             | `field_snapshot` (universe book-flow grid)               | rate-limited 200 ms |
+| `signal/fluid`             | `field_snapshot` (universe book-flow grid)               | on emit             |
 | `trader.Crypto`            | `wallet`, `audit`, fill events                           | per event           |
 | `ui.Hub`                   | `heartbeat` (seq, queue depth, drop count)               | 250 ms              |
 

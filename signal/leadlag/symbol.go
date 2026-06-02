@@ -26,11 +26,10 @@ pairs sampled on every ticker frame, so the lag can be measured in bars rather
 than in a same-instant cross-section spread.
 */
 type symbolState struct {
-	mu        sync.RWMutex
-	changePct float64
-	last      float64
-	prices    numeric.PriceSampleRing
-	tracked   *perspectives.Category
+	mu      sync.RWMutex
+	last    float64
+	prices  numeric.PriceSampleRing
+	tracked *perspectives.Category
 }
 
 func newSymbolState() *symbolState {
@@ -40,11 +39,10 @@ func newSymbolState() *symbolState {
 	}
 }
 
-func (state *symbolState) observeTicker(changePct, last float64, at time.Time) {
+func (state *symbolState) observeTicker(last float64, at time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.changePct = changePct
 	state.last = last
 	state.prices.Push(at, last)
 }
@@ -61,13 +59,6 @@ func (state *symbolState) lastPrice() float64 {
 	defer state.mu.RUnlock()
 
 	return state.last
-}
-
-func (state *symbolState) change() float64 {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
-	return state.changePct
 }
 
 /*

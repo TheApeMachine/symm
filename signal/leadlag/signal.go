@@ -2,8 +2,8 @@ package leadlag
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	minAnchorMove   = 0.05
 	minLagFraction  = 0.35
 	publishInterval = 200 * time.Millisecond
 	rawSubscriberID = "signal/leadlag:raw"
@@ -28,6 +27,11 @@ const (
 Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
 lead-lag structure onto the anchor perspective. It is cross-asset: each
 follower's verdict is its lagged Hayashi-Yoshida correlation against the anchor.
+
+Anchor movement is derived from the anchor ticker ring over the lag search
+window and scored against the anchor's own adaptive move baseline — not Kraken's
+24h change_pct. Measurements publish for every symbol in the universe; focus
+applies only to UI chart streams elsewhere.
 
 Confidence is classification clarity — margin to the lag-fraction or correlation
 boundary; SNR is how surprising that clarity is versus the follower's own recent
@@ -44,27 +48,30 @@ The cross-correlation recompute is throttled (publishInterval); it is O(ring ×
 maxLagBars) per follower and would otherwise saturate a core at ticker rate.
 */
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
-	symbols       sync.Map
-	lastPublishMu sync.Mutex
-	lastPublish   time.Time
-	floor         *adaptive.SNRField
+	ctx             context.Context
+	cancel          context.CancelFunc
+	pool            *qpool.Q
+	broadcasts      map[string]*qpool.BroadcastGroup
+	subscribers     map[string]*qpool.Subscriber
+	symbols         sync.Map
+	anchorBaseline  moveBaseline
+	followerScratch []string
+	lastPublishMu   sync.Mutex
+	lastPublish     time.Time
+	floor           *adaptive.SNRField
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		broadcasts:     make(map[string]*qpool.BroadcastGroup),
+		subscribers:    make(map[string]*qpool.Subscriber),
+		anchorBaseline: *newMoveBaseline(),
+		floor:          adaptive.NewSNRField(),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -104,18 +111,24 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 
+				ingested := false
+
 				for _, ticker := range tickers {
 					if ticker.Last <= 0 {
 						continue
 					}
 
 					stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
-					stored.(*symbolState).observeTicker(ticker.ChangePct, ticker.Last, signal.timestamp(ticker))
+					stored.(*symbolState).observeTicker(ticker.Last, signal.timestamp(ticker))
+					ingested = true
+				}
 
-					if err := signal.publish(); err != nil {
-						errnie.Error(err, "leadlag: publish")
-						continue
-					}
+				if !ingested {
+					continue
+				}
+
+				if err := signal.publish(); err != nil {
+					errnie.Error(err, "leadlag: publish")
 				}
 			}
 		}
@@ -147,43 +160,110 @@ func (signal *Signal) publish() error {
 	}
 
 	anchor := anchorRaw.(*symbolState)
-	anchorMoved := math.Abs(anchor.change()) >= minAnchorMove
+	move := signal.anchorMoveStatus(anchor)
 
-	var publishErr error
+	if !move.ready {
+		return nil
+	}
+
+	if !move.moved {
+		return signal.publishAnchorStall(anchorName, anchor, move.stallMargin)
+	}
+
+	return signal.publishFollowers(anchorName, anchor)
+}
+
+func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) error {
+	followers := signal.followerScratch[:0]
 
 	signal.symbols.Range(func(key, value any) bool {
-		if key.(string) == anchorName {
+		symbol := key.(string)
+
+		if symbol == anchorName {
 			return true
 		}
 
-		follower := value.(*symbolState)
-		measurement, standout, err := signal.measure(anchor, anchorMoved, follower)
-
-		if err != nil {
-			publishErr = fmt.Errorf("leadlag: measure %s: %w", key.(string), err)
-			return false
-		}
-
-		if measurement.Source == perspectives.SourceNone {
-			return true
-		}
-
-		measurement.Symbol = key.(string)
-		measurement.Last = follower.lastPrice()
-		if err := perspectives.AssignCategorySNR(
-			&measurement, signal.floor, standout,
-		); err != nil {
-			publishErr = fmt.Errorf("leadlag: snr %s: %w", key.(string), err)
-			return false
-		}
-
-		activate.Once("signal/leadlag:measurement")
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		followers = append(followers, symbol)
 
 		return true
 	})
 
-	return publishErr
+	signal.followerScratch = followers
+
+	tasks := make([]chan *qpool.QValue[any], 0, len(followers))
+
+	for _, symbolName := range followers {
+		raw, ok := signal.symbols.Load(symbolName)
+
+		if !ok {
+			continue
+		}
+
+		follower := raw.(*symbolState)
+
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			measurement, standout, err := signal.measureFollower(anchor, follower)
+
+			if err != nil {
+				return nil, fmt.Errorf("leadlag: measure %s: %w", symbolName, err)
+			}
+
+			if measurement.Source == perspectives.SourceNone {
+				return nil, nil
+			}
+
+			measurement.Symbol = symbolName
+			measurement.Last = follower.lastPrice()
+
+			if err := signal.sendMeasurement(&measurement, standout); err != nil {
+				return nil, fmt.Errorf("leadlag: snr %s: %w", symbolName, err)
+			}
+
+			return nil, nil
+		}))
+	}
+
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
+}
+
+func (signal *Signal) publishAnchorStall(
+	anchorName string,
+	anchor *symbolState,
+	stallMargin float64,
+) error {
+	measurement, standout, err := signal.measureAnchorStall(anchor, stallMargin)
+
+	if err != nil {
+		return fmt.Errorf("leadlag: measure anchor stall: %w", err)
+	}
+
+	measurement.Symbol = anchorName
+	measurement.Last = anchor.lastPrice()
+
+	return signal.sendMeasurement(&measurement, standout)
+}
+
+func (signal *Signal) sendMeasurement(
+	measurement *perspectives.Measurement,
+	standout float64,
+) error {
+	if err := perspectives.AssignCategorySNR(
+		measurement, signal.floor, standout,
+	); err != nil {
+		return err
+	}
+
+	activate.Once("signal/leadlag:measurement")
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: *measurement})
+
+	return nil
 }
 
 // throttle reports whether enough time has passed to recompute; crossLag is
@@ -201,32 +281,34 @@ func (signal *Signal) throttle() bool {
 	return true
 }
 
-// measure classifies one follower's lead-lag relationship to the anchor.
-func (signal *Signal) measure(
+func (signal *Signal) measureAnchorStall(
 	anchor *symbolState,
-	anchorMoved bool,
-	state *symbolState,
+	stallMargin float64,
 ) (perspectives.Measurement, float64, error) {
-	if !anchorMoved {
-		category, evidence := leadlagReading(false, anchor.change(), 0, 0)
-		standout := evidence
+	category, evidence := leadlagReading(false, stallMargin, 0, 0)
+	standout := evidence
 
-		confidence, err := state.tracked.Observe(category, evidence, standout)
+	confidence, err := anchor.tracked.Observe(category, evidence, standout)
 
-		if err != nil {
-			return perspectives.Measurement{}, 0, err
-		}
-
-		return perspectives.Measurement{
-			Source:     perspectives.SourceLeadLag,
-			Category:   category,
-			Strength:   0,
-			Confidence: confidence,
-		}, standout, nil
+	if err != nil {
+		return perspectives.Measurement{}, 0, err
 	}
 
+	return perspectives.Measurement{
+		Source:     perspectives.SourceLeadLag,
+		Category:   category,
+		Strength:   0,
+		Confidence: confidence,
+	}, standout, nil
+}
+
+// measureFollower classifies one follower's lead-lag relationship to the anchor.
+func (signal *Signal) measureFollower(
+	anchor *symbolState,
+	state *symbolState,
+) (perspectives.Measurement, float64, error) {
 	if bars, corr, ok := state.crossLag(anchor); ok {
-		category, evidence := leadlagReading(true, anchor.change(), corr, bars)
+		category, evidence := leadlagReading(true, 0, corr, bars)
 		standout := evidence
 
 		confidence, err := state.tracked.Observe(category, evidence, standout)
@@ -249,7 +331,7 @@ func (signal *Signal) measure(
 		return perspectives.Measurement{}, 0, nil
 	}
 
-	category, evidence := leadlagReading(true, anchor.change(), corr, 0)
+	category, evidence := leadlagReading(true, 0, corr, 0)
 	standout := evidence
 
 	confidence, err := state.tracked.Observe(category, evidence, standout)

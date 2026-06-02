@@ -30,7 +30,7 @@ func TestNewSignal(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		signal := NewSignal(ctx, pool, nil)
+		signal := NewSignal(ctx, pool)
 		defer signal.Close()
 
 		Convey("It should wire measurements and ui broadcasts", func() {
@@ -49,7 +49,7 @@ func TestEmit(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		signal := NewSignal(ctx, pool, nil)
+		signal := NewSignal(ctx, pool)
 		defer signal.Close()
 
 		measurements := signal.broadcasts["measurements"].Subscribe("test:fluid", 64)
@@ -91,7 +91,7 @@ func TestEmit(t *testing.T) {
 }
 
 func TestPublishField(t *testing.T) {
-	Convey("Given a fluid signal bound to the focus set", t, func() {
+	Convey("Given a fluid signal with multiple symbols in the universe", t, func() {
 		t.Cleanup(viper.Reset)
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})
@@ -100,10 +100,7 @@ func TestPublishField(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		tracker := focus.NewSet()
-		tracker.Add("ALGO/EUR")
-
-		signal := NewSignal(ctx, pool, tracker)
+		signal := NewSignal(ctx, pool)
 		defer signal.Close()
 
 		uiFrames := signal.ui.Subscribe("test:fluid-ui", 8)
@@ -122,7 +119,9 @@ func TestPublishField(t *testing.T) {
 		})
 		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol(), 99, 10, 101, 6))
 
-		signal.publishField(anchor)
+		if err := signal.publishField(anchor); err != nil {
+			t.Fatal(err)
+		}
 
 		select {
 		case value := <-uiFrames.Incoming:
@@ -141,6 +140,44 @@ func TestPublishField(t *testing.T) {
 	})
 }
 
+func BenchmarkPublishField(b *testing.B) {
+	viper.Set("market.book_depth_levels", 10)
+
+	ctx := context.Background()
+	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	defer pool.Close()
+
+	signal := NewSignal(ctx, pool)
+	defer pool.Close()
+
+	for _, symbol := range []string{"ETH/EUR", "BTC/EUR", "SOL/EUR", "ADA/EUR"} {
+		state, err := signal.state(symbol)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		state.FeedTicker(market.TickerUpdate{
+			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
+		})
+		state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6))
+	}
+
+	trigger, err := signal.state("ETH/EUR")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := signal.publishField(trigger); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkEmit(b *testing.B) {
 	viper.Set("market.book_depth_levels", 10)
 
@@ -148,7 +185,7 @@ func BenchmarkEmit(b *testing.B) {
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
-	signal := NewSignal(ctx, pool, nil)
+	signal := NewSignal(ctx, pool)
 	defer signal.Close()
 
 	signal.broadcasts["measurements"].Subscribe("bench:fluid", 1024)

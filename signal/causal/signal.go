@@ -2,6 +2,7 @@ package causal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -193,29 +194,43 @@ func (signal *Signal) publish() error {
 	entries := signal.snapshotEntries()
 	macros := macroMedians(entries)
 
+	tasks := make([]chan *qpool.QValue[any], 0, len(entries))
+
 	for _, entry := range entries {
-		measurement, standout, err := entry.state.Measure(macros[entry.symbol], contagion, now)
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			measurement, standout, err := entry.state.Measure(macros[entry.symbol], contagion, now)
 
-		if err != nil {
-			return fmt.Errorf("causal: measure %s: %w", entry.symbol, err)
-		}
+			if err != nil {
+				return nil, fmt.Errorf("causal: measure %s: %w", entry.symbol, err)
+			}
 
-		if measurement.Source == perspectives.SourceNone {
-			continue
-		}
+			if measurement.Source == perspectives.SourceNone {
+				return nil, nil
+			}
 
-		measurement.Symbol = entry.symbol
-		if err := perspectives.AssignCategorySNR(
-			&measurement, signal.floor, standout,
-		); err != nil {
-			return fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
-		}
+			measurement.Symbol = entry.symbol
 
-		activate.Once("signal/causal:measurement")
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := perspectives.AssignCategorySNR(
+				&measurement, signal.floor, standout,
+			); err != nil {
+				return nil, fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
+			}
+
+			activate.Once("signal/causal:measurement")
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+			return nil, nil
+		}))
 	}
 
-	return nil
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
 }
 
 func (signal *Signal) snapshotEntries() []publishEntry {

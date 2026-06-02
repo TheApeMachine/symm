@@ -102,7 +102,7 @@ var (
 				cvd.NewSignal(cmd.Context(), pool),
 				depthflow.NewSignal(cmd.Context(), pool),
 				exhaust.NewSignal(cmd.Context(), pool),
-				fluid.NewSignal(cmd.Context(), pool, streams),
+				fluid.NewSignal(cmd.Context(), pool),
 				hawkes.NewSignal(cmd.Context(), pool),
 				leadlag.NewSignal(cmd.Context(), pool),
 				liquidity.NewSignal(cmd.Context(), pool),

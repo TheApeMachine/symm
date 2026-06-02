@@ -13,7 +13,7 @@ func TestSymbolStatePriceSamples(t *testing.T) {
 		start := time.Now()
 
 		for index := range 20 {
-			state.observeTicker(0.01, 100+float64(index), start.Add(time.Duration(index)*time.Second))
+			state.observeTicker(100+float64(index), start.Add(time.Duration(index)*time.Second))
 		}
 
 		Convey("It should retain enough samples for correlation", func() {
@@ -28,8 +28,8 @@ func TestSymbolStateCrossLagInsufficientData(t *testing.T) {
 		follower := newSymbolState()
 		now := time.Now()
 
-		anchor.observeTicker(0.01, 100, now)
-		follower.observeTicker(0.01, 200, now)
+		anchor.observeTicker(100, now)
+		follower.observeTicker(200, now)
 
 		_, _, ok := follower.crossLag(anchor)
 
@@ -47,8 +47,8 @@ func TestSymbolStateContemporaneous(t *testing.T) {
 
 		for index := range 20 {
 			at := start.Add(time.Duration(index) * time.Second)
-			anchor.observeTicker(0.01, 100+float64(index), at)
-			follower.observeTicker(0.01, 200+float64(index)*2, at)
+			anchor.observeTicker(100+float64(index), at)
+			follower.observeTicker(200+float64(index)*2, at)
 		}
 
 		correlation, ok := follower.contemporaneous(anchor)

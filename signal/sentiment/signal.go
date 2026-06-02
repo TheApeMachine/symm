@@ -2,6 +2,7 @@ package sentiment
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 	"time"
@@ -97,53 +98,114 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 
-				for _, ticker := range tickers {
-					if ticker.Last <= 0 {
-						continue
-					}
-
-					signal.symbols.Store(ticker.Symbol, ticker.ChangePct)
-
-					measurement, standout, err := signal.measure(ticker.Symbol, ticker.ChangePct)
-
-					if err != nil {
-						errnie.Error(err, "sentiment: measure %s", ticker.Symbol)
-						continue
-					}
-
-					if measurement.Source == perspectives.SourceNone {
-						continue
-					}
-
-					measurement.Symbol = ticker.Symbol
-					measurement.Last = ticker.Last
-					if err := perspectives.AssignCategorySNR(
-						&measurement, signal.floor, standout,
-					); err != nil {
-						errnie.Error(err, "sentiment: snr %s", ticker.Symbol)
-						continue
-					}
-
-					activate.Once("signal/sentiment:measurement")
-					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+				if err := signal.publishTickers(tickers); err != nil {
+					errnie.Error(err, "sentiment: publish tickers")
 				}
 			}
 		}
 	}
 }
 
+/*
+sentimentSnapshot is one cross-section read shared by every symbol in a ticker
+batch so breadth and leadership thresholds are not recomputed per coin.
+*/
+type sentimentSnapshot struct {
+	breadth         float64
+	universe        int
+	surgeThreshold  float64
+	leaderThreshold float64
+}
+
+func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
+	rows := make([]market.TickerUpdate, 0, len(tickers))
+
+	for _, ticker := range tickers {
+		if ticker.Last <= 0 {
+			continue
+		}
+
+		signal.symbols.Store(ticker.Symbol, ticker.ChangePct)
+		rows = append(rows, ticker)
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	snapshot, ok := signal.snapshot()
+
+	if !ok {
+		return nil
+	}
+
+	signal.breadthHist.Push(snapshot.breadth)
+
+	tasks := make([]chan *qpool.QValue[any], 0, len(rows))
+
+	for _, row := range rows {
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			measurement, standout, err := signal.measureFromSnapshot(
+				row.Symbol, row.ChangePct, snapshot,
+			)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if measurement.Source == perspectives.SourceNone {
+				return nil, nil
+			}
+
+			measurement.Symbol = row.Symbol
+			measurement.Last = row.Last
+
+			if err := perspectives.AssignCategorySNR(
+				&measurement, signal.floor, standout,
+			); err != nil {
+				return nil, err
+			}
+
+			activate.Once("signal/sentiment:measurement")
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+			return nil, nil
+		}))
+	}
+
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
+}
+
 // measure classifies one symbol against the live cross-section breadth.
 func (signal *Signal) measure(symbol string, change float64) (perspectives.Measurement, float64, error) {
-	breadth, _, universe, ok := signal.breadth()
+	snapshot, ok := signal.snapshot()
 
 	if !ok {
 		return perspectives.Measurement{}, 0, nil
 	}
 
-	surgeThreshold := signal.surgeThreshold(universe)
-	signal.breadthHist.Push(breadth)
+	signal.breadthHist.Push(snapshot.breadth)
+
+	return signal.measureFromSnapshot(symbol, change, snapshot)
+}
+
+func (signal *Signal) measureFromSnapshot(
+	symbol string,
+	change float64,
+	snapshot sentimentSnapshot,
+) (perspectives.Measurement, float64, error) {
 	category, evidence := sentimentReading(
-		breadth, change, surgeThreshold, signal.isLeader(change),
+		snapshot.breadth,
+		change,
+		snapshot.surgeThreshold,
+		math.Abs(change) >= snapshot.leaderThreshold && change != 0,
 	)
 	standout := evidence
 
@@ -162,9 +224,38 @@ func (signal *Signal) measure(symbol string, change float64) (perspectives.Measu
 	return perspectives.Measurement{
 		Source:     perspectives.SourceSentiment,
 		Category:   category,
-		Strength:   signal.breadthOdds(breadth),
+		Strength:   signal.breadthOdds(snapshot.breadth),
 		Confidence: confidence,
 	}, standout, nil
+}
+
+func (signal *Signal) snapshot() (sentimentSnapshot, bool) {
+	breadth, _, universe, ok := signal.breadth()
+
+	if !ok {
+		return sentimentSnapshot{}, false
+	}
+
+	magnitudes := make([]float64, 0, 16)
+
+	signal.symbols.Range(func(_, value any) bool {
+		magnitudes = append(magnitudes, math.Abs(value.(float64)))
+
+		return true
+	})
+
+	leaderThreshold := 0.0
+
+	if len(magnitudes) >= 2 {
+		leaderThreshold = numeric.PercentileSorted(numeric.CopySorted(magnitudes), 0.90)
+	}
+
+	return sentimentSnapshot{
+		breadth:         breadth,
+		universe:        universe,
+		surgeThreshold:  signal.surgeThreshold(universe),
+		leaderThreshold: leaderThreshold,
+	}, true
 }
 
 // breadth returns the fraction of the universe that is rising and the strongest

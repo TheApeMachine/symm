@@ -2,12 +2,13 @@ package leadlag
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -26,52 +27,61 @@ func TestNewSignal(t *testing.T) {
 	})
 }
 
-func TestMeasure(t *testing.T) {
+func TestMeasureAnchorStall(t *testing.T) {
+	Convey("Given a lead-lag signal", t, func() {
+		signal := &Signal{}
+		anchor := newSymbolState()
+
+		measurement, _, err := signal.measureAnchorStall(anchor, 0.6)
+
+		Convey("It should classify an anchor stall on the unit interval", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
+			So(measurement.Category, ShouldEqual, perspectives.CategoryAnchorStall)
+			So(measurement.Confidence, ShouldEqual, 0.6)
+		})
+	})
+}
+
+func TestMeasureFollower(t *testing.T) {
 	Convey("Given a lead-lag signal", t, func() {
 		signal := &Signal{}
 		anchor := newSymbolState()
 		follower := newSymbolState()
 
-		Convey("When the anchor has not moved", func() {
-			anchor.observeTicker(0.01, 50000, time.Now())
-			follower.observeTicker(2.0, 100, time.Now())
-
-			measurement, _, err := signal.measure(anchor, false, follower)
-
-			Convey("It should classify an anchor stall", func() {
-				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
-				So(measurement.Category, ShouldEqual, perspectives.CategoryAnchorStall)
-			})
-		})
-
-		Convey("When the anchor change is moderately negative during stall", func() {
-			anchor.observeTicker(-0.02, 50000, time.Now())
-			follower.observeTicker(2.0, 100, time.Now())
-
-			measurement, _, err := signal.measure(
-				anchor,
-				math.Abs(anchor.change()) >= minAnchorMove,
-				follower,
-			)
-
-			Convey("It should keep clarity on the unit interval", func() {
-				So(err, ShouldBeNil)
-				So(measurement.Confidence, ShouldBeGreaterThan, 0)
-				So(measurement.Confidence, ShouldBeLessThanOrEqualTo, 1)
-			})
-		})
-
 		Convey("When both series lack enough overlap", func() {
-			anchor.observeTicker(1.0, 50000, time.Now())
-			follower.observeTicker(1.5, 100, time.Now())
+			anchor.observeTicker(50000, time.Now())
+			follower.observeTicker(100, time.Now())
 
-			measurement, _, err := signal.measure(anchor, true, follower)
+			measurement, _, err := signal.measureFollower(anchor, follower)
 
 			Convey("It should withhold the reading", func() {
 				So(err, ShouldBeNil)
 				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 			})
+		})
+	})
+}
+
+func TestPublishAnchorStall(t *testing.T) {
+	Convey("Given a lead-lag signal", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		anchor := newSymbolState()
+		signal.symbols.Store(focus.AnchorSymbol(), anchor)
+
+		err := signal.publishAnchorStall(focus.AnchorSymbol(), anchor, 0.5)
+
+		Convey("It should publish one anchor stall reading", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 }
@@ -86,7 +96,7 @@ func TestThrottle(t *testing.T) {
 	})
 }
 
-func BenchmarkMeasure(b *testing.B) {
+func BenchmarkMeasureFollower(b *testing.B) {
 	signal := &Signal{}
 	anchor := newSymbolState()
 	follower := newSymbolState()
@@ -94,13 +104,13 @@ func BenchmarkMeasure(b *testing.B) {
 
 	for index := range minLagSamples {
 		at := base.Add(time.Duration(index) * time.Minute)
-		anchor.observeTicker(0.5, 50000+float64(index), at)
-		follower.observeTicker(1.0, 100+float64(index), at.Add(2*time.Minute))
+		anchor.observeTicker(50000+float64(index), at)
+		follower.observeTicker(100+float64(index), at.Add(2*time.Minute))
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = signal.measure(anchor, true, follower)
+		_, _, _ = signal.measureFollower(anchor, follower)
 	}
 }

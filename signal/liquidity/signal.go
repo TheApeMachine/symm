@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -95,31 +96,8 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 
-				for _, ticker := range tickers {
-					if ticker.Last <= 0 {
-						continue
-					}
-
-					measurement, standout, err := signal.measure(ticker)
-
-					if err != nil {
-						errnie.Error(err, "liquidity: measure %s", ticker.Symbol)
-						continue
-					}
-
-					if measurement.Symbol == "" {
-						continue
-					}
-
-					if err := perspectives.AssignCategorySNR(
-						&measurement, signal.floor, standout,
-					); err != nil {
-						errnie.Error(err, "liquidity: snr %s", ticker.Symbol)
-						continue
-					}
-
-					activate.Once("signal/liquidity:measurement")
-					signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+				if err := signal.publishTickers(tickers); err != nil {
+					errnie.Error(err, "liquidity: publish tickers")
 				}
 			}
 		}
@@ -130,10 +108,83 @@ func (signal *Signal) Tick() error {
 measure records the latest quote volume for the ticking symbol and ranks it
 against the live peer cross-section.
 */
+func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
+	rows := make([]market.TickerUpdate, 0, len(tickers))
+
+	for _, ticker := range tickers {
+		if ticker.Last <= 0 {
+			continue
+		}
+
+		signal.symbols.Store(ticker.Symbol, ticker.Volume*ticker.Last)
+		rows = append(rows, ticker)
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	volumes := signal.volumeSnapshot()
+	tasks := make([]chan *qpool.QValue[any], 0, len(rows))
+
+	for _, row := range rows {
+		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+			measurement, standout, err := signal.measureFromVolumes(row, volumes)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if measurement.Symbol == "" {
+				return nil, nil
+			}
+
+			if err := perspectives.AssignCategorySNR(
+				&measurement, signal.floor, standout,
+			); err != nil {
+				return nil, err
+			}
+
+			activate.Once("signal/liquidity:measurement")
+			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+			return nil, nil
+		}))
+	}
+
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+	}
+
+	return err
+}
+
 func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement, float64, error) {
 	signal.symbols.Store(row.Symbol, row.Volume*row.Last)
 
-	quoteVol, peers := signal.crossSection(row.Symbol)
+	volumes := signal.volumeSnapshot()
+
+	return signal.measureFromVolumes(row, volumes)
+}
+
+func (signal *Signal) measureFromVolumes(
+	row market.TickerUpdate,
+	volumes map[string]float64,
+) (perspectives.Measurement, float64, error) {
+	quoteVol := volumes[row.Symbol]
+
+	peers := make([]float64, 0, len(volumes)-1)
+
+	for symbol, volume := range volumes {
+		if symbol == row.Symbol || volume <= 0 {
+			continue
+		}
+
+		peers = append(peers, volume)
+	}
 
 	if quoteVol <= 0 || len(peers) < minLiquidityPeers {
 		return perspectives.Measurement{}, 0, nil
@@ -176,6 +227,18 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 		Strength:   raw,
 		Confidence: confidence,
 	}, standout, nil
+}
+
+func (signal *Signal) volumeSnapshot() map[string]float64 {
+	volumes := make(map[string]float64)
+
+	signal.symbols.Range(func(key, value any) bool {
+		volumes[key.(string)] = value.(float64)
+
+		return true
+	})
+
+	return volumes
 }
 
 /*
