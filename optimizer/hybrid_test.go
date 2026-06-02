@@ -81,6 +81,8 @@ func TestRunHybridSearch(t *testing.T) {
 			profile.Add(row)
 		}
 
+		profile.PrepareCache()
+
 		branches, stats, err := RunHybridSearch(ctx, &profile, rows, HybridOptions{
 			ScanOptions: ScanOptions{
 				Workers:           2,

@@ -2,7 +2,9 @@ package optimizer
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -42,19 +44,19 @@ func RunHybridSearch(
 		options.SeedCount = DefaultHybridSeedCount
 	}
 
-	if options.ShallowDepth <= 0 {
-		options.ShallowDepth = DefaultHybridShallowDepth
-	}
-
 	shallowOptions := options.ScanOptions
-	shallowOptions.MaxReasoningSteps = options.ShallowDepth
 	shallowOptions.Guard = options.Guard
+
+	if options.ShallowDepth > 0 {
+		shallowOptions.MaxReasoningSteps = options.ShallowDepth
+	}
 
 	search := NewScanSearch(ctx, profile, rows, shallowOptions)
 	search.onBest = options.OnBest
 	search.onCandidate = options.OnCandidate
 
 	seeds, scanStats := search.RunTopK(options.SeedCount)
+	seeds = mergeDepthSeeds(seeds, search.beamScoresClone(), options.SeedCount)
 
 	mcts := NewHybridTreeSearch(ctx, profile, rows, options.Guard, seeds, options.MCTSOptions)
 	mcts.onBest = options.OnBest
@@ -62,7 +64,7 @@ func RunHybridSearch(
 	branches := mcts.Run()
 
 	if options.Guard.WalkForward.Enabled && len(branches) > 0 {
-		guard := NewOverfitGuard(ctx, options.Guard)
+		guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows))
 		ok, _ := guard.ValidateWalkForward(branches, rows)
 
 		if !ok {
@@ -82,13 +84,35 @@ func RunHybridSearch(
 func insertTopK(
 	top []CandidateScore, entry CandidateScore, limit int,
 ) []CandidateScore {
-	if limit <= 0 || entry.Score <= 0 {
+	if limit <= 0 {
+		return top
+	}
+
+	if entry.AdjustedScore <= 0 &&
+		perspectives.HasInvalidTopLevelDenySiblings(entry.Branches) {
+		return top
+	}
+
+	return insertDepthStratifiedBeam(top, entry, limit)
+}
+
+func insertBeam(
+	top []CandidateScore, entry CandidateScore, limit int,
+) []CandidateScore {
+	if limit <= 0 {
 		return top
 	}
 
 	top = append(top, entry)
 	sort.Slice(top, func(leftIndex, rightIndex int) bool {
-		return top[leftIndex].Score > top[rightIndex].Score
+		left := top[leftIndex]
+		right := top[rightIndex]
+
+		if left.Score != right.Score {
+			return left.Score > right.Score
+		}
+
+		return reasoningDepth(left.Branches) > reasoningDepth(right.Branches)
 	})
 
 	if len(top) > limit {
@@ -96,4 +120,65 @@ func insertTopK(
 	}
 
 	return top
+}
+
+func mergeDepthSeeds(
+	scored []CandidateScore, beam []CandidateScore, limit int,
+) []CandidateScore {
+	if limit <= 0 {
+		return scored
+	}
+
+	merged := append([]CandidateScore(nil), scored...)
+	seen := make(map[string]struct{}, len(merged))
+
+	for _, entry := range merged {
+		seen[branchListKey(entry.Branches)] = struct{}{}
+	}
+
+	deepest := append([]CandidateScore(nil), beam...)
+	sort.Slice(deepest, func(leftIndex, rightIndex int) bool {
+		leftDepth := reasoningDepth(deepest[leftIndex].Branches)
+		rightDepth := reasoningDepth(deepest[rightIndex].Branches)
+
+		if leftDepth != rightDepth {
+			return leftDepth > rightDepth
+		}
+
+		return deepest[leftIndex].AdjustedScore > deepest[rightIndex].AdjustedScore
+	})
+
+	for _, entry := range deepest {
+		if len(merged) >= limit {
+			break
+		}
+
+		key := branchListKey(entry.Branches)
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		if entry.AdjustedScore <= 0 &&
+			perspectives.HasInvalidTopLevelDenySiblings(entry.Branches) {
+			continue
+		}
+
+		merged = append(merged, entry)
+		seen[key] = struct{}{}
+	}
+
+	return merged
+}
+
+func branchListKey(branches perspectives.BranchList) string {
+	canonical := perspectives.CanonicalPlaybookBranches(branches)
+	categories := categoriesInBranchList(canonical)
+	parts := make([]string, len(categories))
+
+	for index, category := range categories {
+		parts[index] = string(category)
+	}
+
+	return fmt.Sprintf("%s#%d", strings.Join(parts, "|"), reasoningDepth(canonical))
 }

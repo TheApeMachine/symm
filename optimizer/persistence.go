@@ -48,9 +48,11 @@ type TuneOptions struct {
 CandidateScore is one scored candidate tree emitted by the scanner.
 */
 type CandidateScore struct {
-	Candidate int
-	Score     float64
-	Branches  perspectives.BranchList
+	Candidate     int
+	Score         float64
+	AdjustedScore float64
+	ClosedTrades  int
+	Branches      perspectives.BranchList
 }
 
 func (candidate CandidateScore) ProfitLoss() float64 {
@@ -63,6 +65,14 @@ func (candidate CandidateScore) ReturnPct() float64 {
 
 func (candidate CandidateScore) BranchCount() int {
 	return countBranches(candidate.Branches)
+}
+
+func (candidate CandidateScore) RegistryWidth() int {
+	return len(candidate.Branches)
+}
+
+func (candidate CandidateScore) ReasoningDepth() int {
+	return reasoningDepth(candidate.Branches)
 }
 
 /*
@@ -132,6 +142,8 @@ func TuneMeasurements(
 	for _, row := range rows {
 		tuner.profile.Add(row)
 	}
+
+	tuner.profile.PrepareCache()
 
 	reporter, err := newCandidateReporter(options.CandidateReportPath)
 
@@ -227,7 +239,7 @@ func TuneMeasurements(
 		tuner.branches, stats = search.Run()
 
 		if options.Guard.WalkForward.Enabled && len(tuner.branches) > 0 {
-			guard := NewOverfitGuard(ctx, options.Guard)
+			guard := NewOverfitGuard(ctx, options.Guard, PrecompileTape(rows))
 			ok, _ := guard.ValidateWalkForward(tuner.branches, rows)
 
 			if !ok {
@@ -276,7 +288,7 @@ func WriteBranches(path string, branches perspectives.BranchList) error {
 	document := branchDocument{
 		Version: 1,
 		Branches: branchDocumentsFromBranches(
-			branches,
+			perspectives.CanonicalPlaybookBranches(branches),
 		),
 	}
 

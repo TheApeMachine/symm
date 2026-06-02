@@ -24,6 +24,7 @@ type Tuner struct {
 	profile     Profile
 	tree        *perspectives.Tree
 	branches    perspectives.BranchList
+	ringWindow  []perspectives.Measurement
 	trader      *Trader
 	mu          sync.Mutex
 	finished    bool
@@ -119,10 +120,11 @@ func (tuner *Tuner) ingest(measurement perspectives.Measurement) {
 		return
 	}
 
-	tuner.tree.AddMeasurement(measurement)
+	tuner.ringWindow = appendRingMeasurement(tuner.ringWindow, measurement)
+	snapshots := ringSnapshot(tuner.ringWindow, measurement.Symbol)
 	tuner.tree.ResetWalk()
 
-	action := tuner.tree.Walk(tuner.tree.Measurements, tuner.tree.Branches()...)
+	action := tuner.tree.Walk(snapshots, tuner.tree.Branches()...)
 
 	if action == nil {
 		return

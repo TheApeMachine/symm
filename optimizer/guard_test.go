@@ -28,14 +28,24 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 			})
 		}
 
-		branches := perspectives.BranchList{{
-			Category:    perspectives.CategoryLaminar,
-			Observation: perspectives.ObservationNotHolding,
-			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:        perspectives.UnitSNR,
-			Value:       1, ValueSet: true,
-			Action: perspectives.Action{Type: perspectives.ActionLimit},
-		}}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNotHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionLimit},
+			},
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
 
 		guard := NewOverfitGuard(ctx, GuardOptions{
 			WalkForward: WalkForwardOptions{
@@ -46,7 +56,7 @@ func TestValidateWalkForwardUsesTrainWindow(t *testing.T) {
 				MinWinRate:      0.5,
 				MaxHoldoutDecay: 0.9,
 			},
-		})
+		}, PrecompileTape(rows))
 
 		ok, _ := guard.ValidateWalkForward(branches, rows)
 
@@ -87,7 +97,7 @@ func TestOverfitGuardAdjustedScore(t *testing.T) {
 	convey.Convey("Given equal profit at different reasoning depth", t, func() {
 		guard := NewOverfitGuard(context.Background(), GuardOptions{
 			ComplexityPenalty: 0.01,
-		})
+		}, ReplayTape{})
 		shallow := perspectives.BranchList{{
 			Category: perspectives.CategoryLaminar,
 		}}
@@ -144,10 +154,10 @@ func TestOverfitGuardAcceptTrainCandidate(t *testing.T) {
 				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
 			},
 		}
-		guard := NewOverfitGuard(ctx, GuardOptions{MinRoundTrips: 1})
+		guard := NewOverfitGuard(ctx, GuardOptions{MinRoundTrips: 1}, PrecompileTape(rows))
 
 		convey.Convey("It should accept profitable round trips", func() {
-			convey.So(guard.AcceptTrainCandidate(branches, rows), convey.ShouldBeTrue)
+			convey.So(guard.AcceptTrainCandidate(branches), convey.ShouldBeTrue)
 		})
 	})
 }
@@ -173,7 +183,7 @@ func TestGenerateTimeWindows(t *testing.T) {
 		for index := range rows {
 			at := start.Add(time.Duration(index) * time.Hour)
 			rows[index] = perspectives.Measurement{
-				At: &at,
+				At: at,
 			}
 		}
 
@@ -212,9 +222,177 @@ func TestRobustUnderJitter(t *testing.T) {
 
 		convey.Convey("It should survive small threshold perturbations", func() {
 			convey.So(
-				robustUnderJitter(ctx, branches, rows, []float64{-0.02, 0.02}, baseline),
+				robustUnderJitter(
+					ctx, branches, PrecompileTape(rows), []float64{-0.02, 0.02}, baseline,
+				),
 				convey.ShouldBeTrue,
 			)
+		})
+	})
+}
+
+func TestPersistCandidateAllowsNegativeProfit(t *testing.T) {
+	convey.Convey("Given a losing but active replay tree", t, func() {
+		ctx := context.Background()
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 95,
+			},
+		}
+		branches := perspectives.BranchList{
+			{
+				Category:    perspectives.CategoryLaminar,
+				Observation: perspectives.ObservationNone,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Branches: []perspectives.Branch{{
+					Category:    perspectives.CategoryLaminar,
+					Observation: perspectives.ObservationNotHolding,
+					Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+					Unit:        perspectives.UnitSNR,
+					Value:       1, ValueSet: true,
+					Action: perspectives.Action{Type: perspectives.ActionLimit},
+				}},
+			},
+			{
+				Category:    perspectives.CategoryExhaustion,
+				Observation: perspectives.ObservationHolding,
+				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:        perspectives.UnitSNR,
+				Value:       1, ValueSet: true,
+				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
+			},
+		}
+		guard := NewOverfitGuard(ctx, GuardOptions{}, PrecompileTape(rows))
+
+		convey.Convey("It should allow persistence without positive profit", func() {
+			convey.So(guard.PersistCandidate(branches), convey.ShouldBeTrue)
+			convey.So(guard.AcceptTrainCandidate(branches), convey.ShouldBeFalse)
+		})
+	})
+}
+
+func TestImprovesPersistedBest(t *testing.T) {
+	convey.Convey("Given an inert zero-return baseline", t, func() {
+		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
+
+		convey.Convey("It should reject another inert candidate", func() {
+			convey.So(
+				guard.ImprovesPersistedBest(0, 0, 0, 0),
+				convey.ShouldBeFalse,
+			)
+		})
+
+		convey.Convey("It should accept a losing active candidate", func() {
+			convey.So(
+				guard.ImprovesPersistedBest(-0.02, 1, 0, 0),
+				convey.ShouldBeTrue,
+			)
+		})
+	})
+
+	convey.Convey("Given an active negative best", t, func() {
+		guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
+
+		convey.Convey("It should require a higher score to replace it", func() {
+			convey.So(
+				guard.ImprovesPersistedBest(-0.03, 1, -0.02, 1),
+				convey.ShouldBeFalse,
+			)
+			convey.So(
+				guard.ImprovesPersistedBest(-0.01, 1, -0.02, 1),
+				convey.ShouldBeTrue,
+			)
+		})
+	})
+}
+
+func TestScanSearchIgnoresInertZeroReturn(t *testing.T) {
+	convey.Convey("Given an inert candidate before active losers", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 95,
+			},
+		}
+
+		for _, row := range rows {
+			profile.Add(row)
+		}
+
+		bestScores := make([]float64, 0)
+		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
+			Workers:           1,
+			MaxThresholds:     2,
+			BeamWidth:         4,
+			CandidateLimit:    64,
+			MaxReasoningSteps: 1,
+		})
+		search.onBest = func(best BestTree) {
+			bestScores = append(bestScores, best.Score)
+		}
+		search.Run()
+
+		convey.Convey("It should not lock YAML to an inert 0% return", func() {
+			for _, score := range bestScores {
+				convey.So(score, convey.ShouldNotEqual, 0)
+			}
+		})
+	})
+}
+
+func TestScanSearchOnBestOnNegativeImprovement(t *testing.T) {
+	convey.Convey("Given a replay tape with trade activity", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 95,
+			},
+		}
+
+		for _, row := range rows {
+			profile.Add(row)
+		}
+
+		bestCount := 0
+		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
+			Workers:           2,
+			MaxThresholds:     2,
+			BeamWidth:         4,
+			CandidateLimit:    64,
+			MaxReasoningSteps: 2,
+		})
+		search.onBest = func(best BestTree) {
+			bestCount++
+		}
+		search.Run()
+
+		convey.Convey("It should emit onBest for the least-loss active tree", func() {
+			convey.So(bestCount, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -241,7 +419,7 @@ func TestIsBranchCompatible(t *testing.T) {
 }
 
 func BenchmarkOverfitGuardAdjustedScore(b *testing.B) {
-	guard := NewOverfitGuard(context.Background(), GuardOptions{})
+	guard := NewOverfitGuard(context.Background(), GuardOptions{}, ReplayTape{})
 	branches := perspectives.BranchList{{
 		Category: perspectives.CategoryLaminar,
 		Branches: []perspectives.Branch{

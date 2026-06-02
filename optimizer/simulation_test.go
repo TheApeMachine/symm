@@ -112,27 +112,28 @@ func TestReplaySimulationExit(t *testing.T) {
 }
 
 func TestReplaySimulationScoreUsesLatestMeasurements(t *testing.T) {
-	convey.Convey("Given a category that has already been replaced", t, func() {
+	convey.Convey("Given a category that has aged out of the story ring", t, func() {
 		ctx := context.Background()
-		rows := []perspectives.Measurement{
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
-				Category: perspectives.CategoryAggressiveDrive,
-				SNR:      2.0,
-			},
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
-				Category: perspectives.CategoryStochasticBalance,
-				SNR:      2.0,
-				Last:     100,
-			},
-			{
+		rows := make([]perspectives.Measurement, 0, StoryRingCapacity+3)
+		rows = append(rows, perspectives.Measurement{
+			Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
+			Category: perspectives.CategoryAggressiveDrive,
+			SNR:      2.0,
+		})
+
+		for range StoryRingCapacity {
+			rows = append(rows, perspectives.Measurement{
 				Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
 				Category: perspectives.CategoryStochasticBalance,
 				SNR:      2.0,
-				Last:     120,
-			},
+			})
 		}
+
+		rows = append(rows, perspectives.Measurement{
+			Symbol: "BTC/EUR", Source: perspectives.SourceCVD,
+			Category: perspectives.CategoryStochasticBalance,
+			SNR:      2.0, Last: 120,
+		})
 
 		branches := perspectives.BranchList{{
 			Category:    perspectives.CategoryAggressiveDrive,
@@ -146,7 +147,7 @@ func TestReplaySimulationScoreUsesLatestMeasurements(t *testing.T) {
 
 		score := NewReplaySimulation(ctx, branches, rows).Score()
 
-		convey.Convey("It should not keep stale categories alive", func() {
+		convey.Convey("It should not keep categories that fell out of the ring window", func() {
 			convey.So(score, convey.ShouldEqual, 0)
 		})
 	})

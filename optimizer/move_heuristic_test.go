@@ -34,7 +34,7 @@ func TestMoveReachable(t *testing.T) {
 			quantile:    0.5,
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
-		})
+		}, perspectives.BranchList{})
 		unreachable := search.moveReachable(Move{
 			category:    perspectives.CategoryToxicBluff,
 			unit:        perspectives.UnitSNR,
@@ -42,7 +42,7 @@ func TestMoveReachable(t *testing.T) {
 			quantile:    0.5,
 			observation: perspectives.ObservationNotHolding,
 			action:      perspectives.ActionLimit,
-		})
+		}, perspectives.BranchList{})
 
 		convey.Convey("It should reject gates that never fire on the tape", func() {
 			convey.So(reachable, convey.ShouldBeTrue)

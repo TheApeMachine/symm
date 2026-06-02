@@ -160,9 +160,8 @@ func (story *Story) Tick() error {
 			if story.recorder != nil {
 				recorded := measurement
 
-				if recorded.At == nil || recorded.At.IsZero() {
-					now := time.Now().UTC()
-					recorded.At = &now
+				if recorded.At.IsZero() {
+					recorded.At = time.Now().UTC()
 				}
 
 				raw := errnie.Does(func() ([]byte, error) {

@@ -101,7 +101,7 @@ func TestScanSearchRun(t *testing.T) {
 				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
 				Category: perspectives.CategoryExhaustion,
 				SNR:      2,
-				Last:     90,
+				Last:     105,
 			},
 		}
 
@@ -110,18 +110,75 @@ func TestScanSearchRun(t *testing.T) {
 		}
 
 		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
-			Workers:        2,
-			MaxThresholds:  2,
-			BeamWidth:      8,
-			CandidateLimit: 512,
+			Workers:           2,
+			MaxThresholds:     2,
+			BeamWidth:         8,
+			CandidateLimit:    512,
+			MaxReasoningSteps: 2,
 		})
-		branches, stats := search.Run()
-		score := NewReplaySimulation(ctx, branches, rows).Score()
+		topK, stats := search.RunTopK(1)
 
-		convey.Convey("It should score a positive bounded scan candidate", func() {
+		convey.Convey("It should score complete playbook candidates", func() {
 			convey.So(stats.Candidates, convey.ShouldBeGreaterThan, 0)
-			convey.So(len(branches), convey.ShouldBeGreaterThan, 0)
-			convey.So(score, convey.ShouldBeGreaterThan, 0)
+			convey.So(len(topK), convey.ShouldBeGreaterThan, 0)
+			convey.So(topK[0].BranchCount(), convey.ShouldBeGreaterThanOrEqualTo, 2)
+			convey.So(topK[0].Score, convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestScanSearchScoresCompletePlaybooks(t *testing.T) {
+	convey.Convey("Given many category thresholds and a tight candidate budget", t, func() {
+		ctx := context.Background()
+		profile := Profile{ctx: ctx}
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2,
+				Last:     100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2,
+				Last:     110,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2,
+				Last:     90,
+			},
+		}
+
+		for _, row := range rows {
+			profile.Add(row)
+		}
+
+		scored := make([]CandidateScore, 0)
+		search := NewScanSearch(ctx, &profile, rows, ScanOptions{
+			Workers:           2,
+			MaxThresholds:     4,
+			BeamWidth:         16,
+			CandidateLimit:    64,
+			MaxReasoningSteps: 4,
+		})
+		search.onCandidate = func(candidate CandidateScore) {
+			scored = append(scored, candidate)
+		}
+		search.Run()
+
+		convey.Convey("It should emit complete playbooks not orphan single-action leaves", func() {
+			convey.So(len(scored), convey.ShouldBeGreaterThan, 0)
+
+			for _, candidate := range scored {
+				convey.So(
+					candidate.BranchCount(),
+					convey.ShouldBeGreaterThanOrEqualTo,
+					2,
+				)
+			}
 		})
 	})
 }
@@ -238,8 +295,9 @@ func BenchmarkReplaySimulationScore(b *testing.B) {
 	}}
 
 	b.ReportAllocs()
+	tape := PrecompileTape(rows)
 
 	for b.Loop() {
-		_ = NewReplaySimulation(ctx, branches, rows).Score()
+		_ = NewReplaySimulationWithTape(ctx, branches, tape).Score()
 	}
 }

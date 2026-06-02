@@ -160,3 +160,46 @@ func TestTuneMeasurements(t *testing.T) {
 		})
 	})
 }
+
+func TestTuneMeasurementsWritesBestTree(t *testing.T) {
+	convey.Convey("Given an output path and trade activity on the tape", t, func() {
+		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
+		writeCount := 0
+		rows := []perspectives.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
+				Category: perspectives.CategoryLaminar,
+				SNR:      2, Last: 100,
+			},
+			{
+				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
+				Category: perspectives.CategoryExhaustion,
+				SNR:      2, Last: 95,
+			},
+		}
+
+		_, err := TuneMeasurements(
+			context.Background(),
+			rows,
+			TuneOptions{
+				OutputPath:     outputPath,
+				Workers:        2,
+				MaxThresholds:  2,
+				BeamWidth:      8,
+				CandidateLimit: 512,
+				Hybrid:         false,
+				OnBest: func(best BestTree) {
+					writeCount++
+				},
+			},
+		)
+		raw, readErr := os.ReadFile(outputPath)
+
+		convey.Convey("It should overwrite the YAML when a new best tree appears", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(writeCount, convey.ShouldBeGreaterThan, 0)
+			convey.So(string(raw), convey.ShouldContainSubstring, "branches:")
+		})
+	})
+}

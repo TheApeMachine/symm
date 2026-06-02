@@ -41,6 +41,7 @@ type ReplaySimulation struct {
 	ctx      context.Context
 	branches perspectives.BranchList
 	rows     []perspectives.Measurement
+	tape     ReplayTape
 	costs    ReplayCosts
 }
 
@@ -49,12 +50,22 @@ func NewReplaySimulation(
 	branches perspectives.BranchList,
 	rows []perspectives.Measurement,
 ) *ReplaySimulation {
-	return &ReplaySimulation{
-		ctx:      ctx,
-		branches: branches.Clone(),
-		rows:     rows,
-		costs:    DefaultReplayCosts(),
-	}
+	return NewReplaySimulationWithTapeAndCosts(
+		ctx, branches, PrecompileTape(rows), DefaultReplayCosts(),
+	)
+}
+
+/*
+NewReplaySimulationWithTape replays against a shared precompiled measurement tape.
+*/
+func NewReplaySimulationWithTape(
+	ctx context.Context,
+	branches perspectives.BranchList,
+	tape ReplayTape,
+) *ReplaySimulation {
+	return NewReplaySimulationWithTapeAndCosts(
+		ctx, branches, tape, DefaultReplayCosts(),
+	)
 }
 
 /*
@@ -66,10 +77,24 @@ func NewReplaySimulationWithCosts(
 	rows []perspectives.Measurement,
 	costs ReplayCosts,
 ) *ReplaySimulation {
+	return NewReplaySimulationWithTapeAndCosts(
+		ctx, branches, PrecompileTape(rows), costs,
+	)
+}
+
+/*
+NewReplaySimulationWithTapeAndCosts replays a shared tape with explicit costs.
+*/
+func NewReplaySimulationWithTapeAndCosts(
+	ctx context.Context,
+	branches perspectives.BranchList,
+	tape ReplayTape,
+	costs ReplayCosts,
+) *ReplaySimulation {
 	return &ReplaySimulation{
 		ctx:      ctx,
-		branches: branches.Clone(),
-		rows:     rows,
+		branches: perspectives.CanonicalPlaybookBranches(branches),
+		tape:     tape,
 		costs:    costs,
 	}
 }
@@ -104,6 +129,10 @@ func (simulation *ReplaySimulation) Score() float64 {
 Result replays measurements and returns PnL with trade activity.
 */
 func (simulation *ReplaySimulation) Result() ReplayResult {
+	if simulation.tape.Len() > 0 {
+		return simulation.resultFromTape()
+	}
+
 	if len(simulation.rows) == 0 {
 		return ReplayResult{}
 	}
@@ -123,24 +152,54 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 			measurements.Snapshot(row.Symbol),
 			ledger,
 		)
-		evaluator := perspectives.NewBranchEvaluator(branchContext)
-		actionType := evaluator.Action(simulation.branches)
-
-		if evaluator.Err() != nil {
-			errnie.Error(evaluator.Err())
-		}
-
-		if actionType == nil {
-			continue
-		}
-
-		ledger.apply(*actionType, row)
+		simulation.applyEvaluator(ledger, branchContext, row)
 	}
 
 	return ReplayResult{
 		Score:        ledger.totalReturn(simulation.lastPrices()),
 		ClosedTrades: ledger.closedTrades,
 	}
+}
+
+func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
+	ledger := newReplayLedger(simulation.costs)
+
+	for _, tick := range simulation.tape.Ticks {
+		if tick.Row.Symbol == "" {
+			continue
+		}
+
+		branchContext := simulation.branchContext(
+			tick.Row,
+			tick.Snapshots,
+			ledger,
+		)
+		simulation.applyEvaluator(ledger, branchContext, tick.Row)
+	}
+
+	return ReplayResult{
+		Score:        ledger.totalReturn(simulation.tape.LastPrices),
+		ClosedTrades: ledger.closedTrades,
+	}
+}
+
+func (simulation *ReplaySimulation) applyEvaluator(
+	ledger *replayLedger,
+	branchContext perspectives.BranchContext,
+	row perspectives.Measurement,
+) {
+	evaluator := perspectives.NewBranchEvaluator(branchContext)
+	actionType := evaluator.Action(simulation.branches)
+
+	if evaluator.Err() != nil {
+		errnie.Error(evaluator.Err())
+	}
+
+	if actionType == nil {
+		return
+	}
+
+	ledger.apply(*actionType, row)
 }
 
 func (simulation *ReplaySimulation) branchContext(
@@ -208,31 +267,26 @@ func (measurements *replayMeasurements) Snapshot(
 		len(measurements.global)+len(measurements.symbols[symbol]),
 	)
 
-	rows = appendMeasurementsBySource(rows, measurements.global)
-	rows = appendMeasurementsBySource(rows, measurements.symbols[symbol])
+	rows = append(rows, sortedMeasurementsBySource(measurements.global)...)
+	rows = append(rows, sortedMeasurementsBySource(measurements.symbols[symbol])...)
 
 	return rows
 }
 
-func appendMeasurementsBySource(
-	rows []perspectives.Measurement,
-	bySource map[perspectives.SourceType]perspectives.Measurement,
+func sortedMeasurementsBySource(
+	rows map[perspectives.SourceType]perspectives.Measurement,
 ) []perspectives.Measurement {
-	sources := make([]perspectives.SourceType, 0, len(bySource))
+	sorted := make([]perspectives.Measurement, 0, len(rows))
 
-	for source := range bySource {
-		sources = append(sources, source)
+	for _, measurement := range rows {
+		sorted = append(sorted, measurement)
 	}
 
-	sort.Slice(sources, func(leftIndex, rightIndex int) bool {
-		return sources[leftIndex] < sources[rightIndex]
+	sort.Slice(sorted, func(leftIndex, rightIndex int) bool {
+		return sorted[leftIndex].Source < sorted[rightIndex].Source
 	})
 
-	for _, source := range sources {
-		rows = append(rows, bySource[source])
-	}
-
-	return rows
+	return sorted
 }
 
 type replayPosition struct {

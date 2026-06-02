@@ -11,9 +11,10 @@ import (
 const (
 	DefaultMCTSIterations      = 256
 	DefaultHybridSeedCount     = 50
-	DefaultHybridShallowDepth  = 2
+	DefaultHybridShallowDepth  = 0
 	DefaultMCTSSeedPriorVisits = 10
 	explorationWeight          = 1.41
+	mctsRewardSigmoidScale     = 10.0
 )
 
 /*
@@ -44,14 +45,18 @@ type TreeSearch struct {
 	ctx               context.Context
 	profile           *Profile
 	rows              []perspectives.Measurement
+	tape              ReplayTape
+	coOccurrence      *CoOccurrenceIndex
 	guard             *OverfitGuard
 	evaluate          func(perspectives.BranchList) float64
 	rng               *rand.Rand
 	root              *Node
 	best              perspectives.BranchList
 	bestScore         float64
+	bestClosedTrades  int
 	iterations        int
 	maxReasoningSteps int
+	cachedMoves       []Move
 	onBest            func(BestTree)
 }
 
@@ -83,12 +88,16 @@ func NewHybridTreeSearch(
 	options MCTSOptions,
 ) *TreeSearch {
 	options = normalizeMCTSOptions(options)
-	guard := NewOverfitGuard(ctx, guardOptions)
+	profile.PrepareCache()
+	tape := PrecompileTape(rows)
+	guard := NewOverfitGuard(ctx, guardOptions, tape)
 
 	search := &TreeSearch{
 		ctx:               ctx,
 		profile:           profile,
 		rows:              rows,
+		tape:              tape,
+		coOccurrence:      NewCoOccurrenceIndex(tape),
 		guard:             guard,
 		rng:               rand.New(rand.NewSource(rand.Int63())),
 		iterations:        options.Iterations,
@@ -96,41 +105,57 @@ func NewHybridTreeSearch(
 	}
 
 	search.evaluate = search.scoreBranches
+	search.cachedMoves = search.generateAllMoves()
 	search.root = &Node{branches: perspectives.BranchList{}}
-	search.bestScore = search.evaluate(search.root.branches)
-	search.best = search.root.branches.Clone()
+	search.bestScore = math.Inf(-1)
+	search.bestClosedTrades = -1
+	search.best = perspectives.BranchList{}
 	search.seedRoot(seeds, options.SeedPriorVisits)
 
 	return search
 }
 
 func (search *TreeSearch) scoreBranches(branches perspectives.BranchList) float64 {
-	raw := NewReplaySimulation(search.ctx, branches, search.rows).Result().Score
+	canonical := perspectives.CanonicalPlaybookBranches(branches)
+	raw := NewReplaySimulationWithTape(
+		search.ctx, canonical, search.tape,
+	).Result().Score
 
-	return search.guard.AdjustedScore(raw, branches)
+	return search.guard.AdjustedScore(raw, canonical)
 }
 
 func (search *TreeSearch) seedRoot(seeds []CandidateScore, priorVisits int) {
 	for _, seed := range seeds {
 		score := search.evaluate(seed.Branches)
 
-		if score <= 0 {
+		if perspectives.HasInvalidTopLevelDenySiblings(seed.Branches) {
 			continue
 		}
 
+		canonical := perspectives.CanonicalPlaybookBranches(seed.Branches)
+		reward := normalizeMCTSReward(score)
+
 		child := &Node{
-			branches: seed.Branches.Clone(),
+			branches: canonical.Clone(),
 			parent:   search.root,
 			visits:   priorVisits,
-			value:    score * float64(priorVisits),
-			untried:  search.moves(seed.Branches),
+			value:    reward * float64(priorVisits),
+			untried:  search.moves(canonical),
 		}
 		search.root.children = append(search.root.children, child)
 		search.root.visits += priorVisits
 
-		if score > search.bestScore {
+		replay := NewReplaySimulationWithTape(
+			search.ctx, canonical, search.tape,
+		).Result()
+
+		if search.guard.ImprovesPersistedBest(
+			score, replay.ClosedTrades, search.bestScore, search.bestClosedTrades,
+		) && search.guard.PersistCandidate(canonical) {
 			search.bestScore = score
-			search.best = seed.Branches.Clone()
+			search.bestClosedTrades = replay.ClosedTrades
+			search.best = canonical.Clone()
+			search.emitBest(0, canonical, score)
 		}
 	}
 
@@ -217,7 +242,7 @@ func (search *TreeSearch) expand(node *Node) *Node {
 func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
 
-	for reasoningDepth(branches) < search.maxReasoningSteps {
+	for step := 0; step < search.maxReasoningSteps; step++ {
 		moves := search.reachableMoves(search.allMoves(), branches)
 
 		if len(moves) == 0 {
@@ -230,15 +255,23 @@ func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 
 	score := search.evaluate(branches)
 
-	if len(branches) > 0 &&
-		score > search.bestScore &&
-		search.guard.AcceptTrainCandidate(branches, search.rows) {
-		search.bestScore = score
-		search.best = branches.Clone()
-		search.emitBest(iteration, branches, score)
+	if len(branches) > 0 {
+		canonical := perspectives.CanonicalPlaybookBranches(branches)
+		replay := NewReplaySimulationWithTape(
+			search.ctx, canonical, search.tape,
+		).Result()
+
+		if search.guard.ImprovesPersistedBest(
+			score, replay.ClosedTrades, search.bestScore, search.bestClosedTrades,
+		) && search.guard.PersistCandidate(canonical) {
+			search.bestScore = score
+			search.bestClosedTrades = replay.ClosedTrades
+			search.best = canonical.Clone()
+			search.emitBest(iteration, canonical, score)
+		}
 	}
 
-	return score
+	return normalizeMCTSReward(score)
 }
 
 func (search *TreeSearch) emitBest(
@@ -272,7 +305,15 @@ func (search *TreeSearch) moves(
 	return search.reachableMoves(search.allMoves(), branches)
 }
 
+func normalizeMCTSReward(pnlScore float64) float64 {
+	return 1.0 / (1.0 + math.Exp(-pnlScore*mctsRewardSigmoidScale))
+}
+
 func (search *TreeSearch) allMoves() []Move {
+	return search.cachedMoves
+}
+
+func (search *TreeSearch) generateAllMoves() []Move {
 	categories := search.profile.Categories()
 	moves := make([]Move, 0)
 
@@ -327,12 +368,22 @@ func (search *TreeSearch) applyMove(
 		return perspectives.BranchList{branch}
 	}
 
-	next := branches.Clone()
-	parent := &next[len(next)-1]
-	parent.Branches = append(
-		perspectives.BranchList(parent.Branches).Clone(),
-		branch,
-	)
+	switch move.observation {
+	case perspectives.ObservationNone:
+		if perspectives.FindEntryIndex(branches) >= 0 {
+			nested, ok := nestGateUnderEntry(branches, branch)
 
-	return next
+			if ok {
+				return nested
+			}
+		}
+
+		return branches.Clone()
+	case perspectives.ObservationNotHolding:
+		return appendEntryPathSibling(branches, branch)
+	case perspectives.ObservationHolding:
+		return appendExitSibling(branches, branch)
+	default:
+		return append(branches.Clone(), branch)
+	}
 }

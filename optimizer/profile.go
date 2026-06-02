@@ -12,12 +12,17 @@ import (
 Profile holds replay measurements used to derive branch thresholds.
 */
 type Profile struct {
-	ctx  context.Context
-	rows []perspectives.Measurement
+	ctx            context.Context
+	rows           []perspectives.Measurement
+	sortedValues   map[string][]float64
+	categoryCounts map[perspectives.CategoryType]int
+	categories     []perspectives.CategoryType
+	prepared       bool
 }
 
 func (profile *Profile) Add(measurement perspectives.Measurement) {
 	profile.rows = append(profile.rows, measurement)
+	profile.prepared = false
 }
 
 func (profile *Profile) Len() int {
@@ -31,24 +36,58 @@ func (profile *Profile) Rows() []perspectives.Measurement {
 	return rows
 }
 
-func (profile *Profile) Categories() []perspectives.CategoryType {
-	seen := make(map[perspectives.CategoryType]struct{})
-	order := make([]perspectives.CategoryType, 0)
+/*
+PrepareCache pre-sorts category metrics so quantiles and gate counts are O(log N).
+Call once after loading the full measurement tape.
+*/
+func (profile *Profile) PrepareCache() {
+	if profile.prepared {
+		return
+	}
+
+	grouped := make(map[string][]float64)
+	categoryCounts := make(map[perspectives.CategoryType]int)
+	categorySeen := make(map[perspectives.CategoryType]struct{})
+	categories := make([]perspectives.CategoryType, 0)
 
 	for _, row := range profile.rows {
 		if row.Category == perspectives.CategoryTypeNone {
 			continue
 		}
 
-		if _, ok := seen[row.Category]; ok {
-			continue
+		categoryCounts[row.Category]++
+
+		if _, seen := categorySeen[row.Category]; !seen {
+			categorySeen[row.Category] = struct{}{}
+			categories = append(categories, row.Category)
 		}
 
-		seen[row.Category] = struct{}{}
-		order = append(order, row.Category)
+		grouped[profileValueKey(row.Category, perspectives.UnitSNR)] =
+			append(grouped[profileValueKey(row.Category, perspectives.UnitSNR)], row.SNR)
+		grouped[profileValueKey(row.Category, perspectives.UnitConfidence)] =
+			append(
+				grouped[profileValueKey(row.Category, perspectives.UnitConfidence)],
+				row.Confidence,
+			)
 	}
 
-	return order
+	sortedValues := make(map[string][]float64, len(grouped))
+
+	for key, values := range grouped {
+		sort.Float64s(values)
+		sortedValues[key] = values
+	}
+
+	profile.sortedValues = sortedValues
+	profile.categoryCounts = categoryCounts
+	profile.categories = categories
+	profile.prepared = true
+}
+
+func (profile *Profile) Categories() []perspectives.CategoryType {
+	profile.PrepareCache()
+
+	return profile.categories
 }
 
 func (profile *Profile) Quantile(
@@ -56,28 +95,13 @@ func (profile *Profile) Quantile(
 	unit perspectives.UnitType,
 	percentile float64,
 ) float64 {
-	values := make([]float64, 0)
+	profile.PrepareCache()
 
-	for _, row := range profile.rows {
-		if row.Category != category {
-			continue
-		}
-
-		switch unit {
-		case perspectives.UnitSNR:
-			values = append(values, row.SNR)
-		case perspectives.UnitConfidence:
-			values = append(values, row.Confidence)
-		default:
-			continue
-		}
-	}
+	values := profile.sortedValues[profileValueKey(category, unit)]
 
 	if len(values) == 0 {
 		return 0
 	}
-
-	sort.Float64s(values)
 
 	index := int(math.Round(percentile * float64(len(values)-1)))
 
@@ -97,29 +121,9 @@ func (profile *Profile) Values(
 	unit perspectives.UnitType,
 	limit int,
 ) []float64 {
-	seen := make(map[float64]struct{})
-	values := make([]float64, 0)
+	profile.PrepareCache()
 
-	for _, row := range profile.rows {
-		if row.Category != category {
-			continue
-		}
-
-		value, ok := profile.value(row, unit)
-
-		if !ok {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		values = append(values, value)
-	}
-
-	sort.Float64s(values)
+	values := uniqueSortedValues(profile.sortedValues[profileValueKey(category, unit)])
 
 	if limit <= 0 || len(values) <= limit {
 		return values
@@ -140,6 +144,41 @@ func (profile *Profile) value(
 	default:
 		return 0, false
 	}
+}
+
+func profileValueKey(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+) string {
+	switch unit {
+	case perspectives.UnitSNR:
+		return string(category) + ":snr"
+	case perspectives.UnitConfidence:
+		return string(category) + ":conf"
+	default:
+		return string(category) + ":unknown"
+	}
+}
+
+func uniqueSortedValues(values []float64) []float64 {
+	if len(values) == 0 {
+		return values
+	}
+
+	unique := make([]float64, 0, len(values))
+	lastValue := values[0]
+	unique = append(unique, lastValue)
+
+	for index := 1; index < len(values); index++ {
+		if values[index] == lastValue {
+			continue
+		}
+
+		lastValue = values[index]
+		unique = append(unique, lastValue)
+	}
+
+	return unique
 }
 
 func sampleValues(values []float64, limit int) []float64 {

@@ -103,9 +103,12 @@ var tuneCmd = &cobra.Command{
 				OnCandidate: func(candidate optimizer.CandidateScore) {
 					fmt.Fprintf(
 						os.Stderr,
-						"symm tune: candidate=%d branches=%d profit_loss=%.6f return=%.4f%%\n",
+						"symm tune: candidate=%d registry=%d nodes=%d depth=%d trades=%d profit_loss=%.6f return=%.4f%%\n",
 						candidate.Candidate,
+						candidate.RegistryWidth(),
 						candidate.BranchCount(),
+						candidate.ReasoningDepth(),
+						candidate.ClosedTrades,
 						candidate.ProfitLoss(),
 						candidate.ReturnPct(),
 					)

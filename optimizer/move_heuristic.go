@@ -4,48 +4,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-/*
-GatePassCount returns rows where category matches and the gate would fire.
-*/
-func (profile *Profile) GatePassCount(
-	category perspectives.CategoryType,
-	unit perspectives.UnitType,
-	condition perspectives.ConditionType,
-	threshold float64,
-) int {
-	count := 0
-
-	for _, row := range profile.rows {
-		if row.Category != category {
-			continue
-		}
-
-		value, ok := profile.value(row, unit)
-
-		if !ok {
-			continue
-		}
-
-		if valuePassesGate(value, threshold, condition) {
-			count++
-		}
-	}
-
-	return count
-}
-
-func (profile *Profile) categoryCount(category perspectives.CategoryType) int {
-	count := 0
-
-	for _, row := range profile.rows {
-		if row.Category == category {
-			count++
-		}
-	}
-
-	return count
-}
-
 func valuePassesGate(
 	value float64,
 	threshold float64,
@@ -80,16 +38,53 @@ func (search *TreeSearch) branchFromMove(move Move) perspectives.Branch {
 	}
 }
 
-func (search *TreeSearch) moveReachable(move Move) bool {
+func (search *TreeSearch) moveReachable(
+	move Move, branches perspectives.BranchList,
+) bool {
 	threshold := search.profile.Quantile(move.category, move.unit, move.quantile)
 
 	if search.profile.categoryCount(move.category) == 0 {
 		return false
 	}
 
+	if search.coOccurrence != nil {
+		if !search.moveChainReachable(move, branches) {
+			return false
+		}
+	}
+
 	return search.profile.GatePassCount(
 		move.category, move.unit, move.condition, threshold,
 	) > 0
+}
+
+func (search *TreeSearch) moveChainReachable(
+	move Move, branches perspectives.BranchList,
+) bool {
+	switch move.observation {
+	case perspectives.ObservationNone:
+		return search.coOccurrence.ChainReachable(
+			append(entryPathCategories(branches), move.category),
+		)
+	case perspectives.ObservationNotHolding:
+		if len(branches) == 0 {
+			return search.coOccurrence.ChainReachable(
+				[]perspectives.CategoryType{move.category},
+			)
+		}
+
+		return search.coOccurrence.ChainReachable(
+			append(entryPathCategories(branches), move.category),
+		)
+	case perspectives.ObservationHolding:
+		return search.coOccurrence.CategoriesReachable(
+			[]perspectives.CategoryType{move.category},
+		)
+	default:
+		return search.coOccurrence.ChainReachable(
+			append(categoriesInBranchList(branches), move.category),
+		)
+	}
 }
 
 func (search *TreeSearch) moveCompatible(
@@ -99,9 +94,26 @@ func (search *TreeSearch) moveCompatible(
 		return true
 	}
 
-	parent := branches[len(branches)-1]
+	branch := search.branchFromMove(move)
 
-	return isBranchCompatible(parent, search.branchFromMove(move))
+	switch move.observation {
+	case perspectives.ObservationNone:
+		if entryIndex := perspectives.FindEntryIndex(branches); entryIndex >= 0 {
+			entry := branches[entryIndex]
+
+			if anchor, ok := lastEntryChainGate(entry); ok {
+				return isBranchCompatible(anchor, branch)
+			}
+		}
+
+		if anchor, ok := lastGateBranch(branches); ok {
+			return isBranchCompatible(anchor, branch)
+		}
+
+		return true
+	default:
+		return true
+	}
 }
 
 func (search *TreeSearch) moveWeight(move Move) float64 {
@@ -132,7 +144,7 @@ func (search *TreeSearch) reachableMoves(
 	reachable := make([]Move, 0, len(moves))
 
 	for _, move := range moves {
-		if !search.moveReachable(move) {
+		if !search.moveReachable(move, branches) {
 			continue
 		}
 
@@ -154,7 +166,7 @@ func (search *TreeSearch) sampleRolloutMove(
 	total := 0.0
 
 	for _, move := range moves {
-		if !search.moveReachable(move) {
+		if !search.moveReachable(move, branches) {
 			continue
 		}
 

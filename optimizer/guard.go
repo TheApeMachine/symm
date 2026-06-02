@@ -49,12 +49,18 @@ OverfitGuard scores and filters candidate trees.
 type OverfitGuard struct {
 	ctx     context.Context
 	options GuardOptions
+	tape    ReplayTape
 }
 
-func NewOverfitGuard(ctx context.Context, options GuardOptions) *OverfitGuard {
+func NewOverfitGuard(
+	ctx context.Context,
+	options GuardOptions,
+	tape ReplayTape,
+) *OverfitGuard {
 	return &OverfitGuard{
 		ctx:     ctx,
 		options: normalizeGuardOptions(options),
+		tape:    tape,
 	}
 }
 
@@ -117,9 +123,8 @@ AcceptTrainCandidate rejects trees that fail minimum activity or jitter stress.
 */
 func (guard *OverfitGuard) AcceptTrainCandidate(
 	branches perspectives.BranchList,
-	rows []perspectives.Measurement,
 ) bool {
-	result := NewReplaySimulation(guard.ctx, branches, rows).Result()
+	result := guard.replayResult(branches).Result()
 
 	if result.ClosedTrades < guard.options.MinRoundTrips {
 		return false
@@ -134,8 +139,46 @@ func (guard *OverfitGuard) AcceptTrainCandidate(
 	}
 
 	return robustUnderJitter(
-		guard.ctx, branches, rows, guard.options.JitterFractions, result.Score,
+		guard.ctx, branches, guard.tape, guard.options.JitterFractions, result.Score,
 	)
+}
+
+/*
+PersistCandidate is the minimum bar for writing an improved tree to YAML: the
+replay must have closed at least one round trip. Profit may still be negative.
+*/
+func (guard *OverfitGuard) PersistCandidate(
+	branches perspectives.BranchList,
+) bool {
+	result := guard.replayResult(branches).Result()
+
+	if result.ClosedTrades < guard.options.MinRoundTrips {
+		return false
+	}
+
+	return perspectives.IsCanonicalPlaybook(branches)
+}
+
+/*
+ImprovesPersistedBest reports whether a scored replay should replace the tree
+written to YAML. Inert candidates (zero closed round trips, 0% return) are never
+promoted; once an active playbook is recorded, only a higher adjusted score wins.
+*/
+func (guard *OverfitGuard) ImprovesPersistedBest(
+	adjustedScore float64,
+	closedTrades int,
+	bestScore float64,
+	bestClosedTrades int,
+) bool {
+	if closedTrades < guard.options.MinRoundTrips {
+		return false
+	}
+
+	if bestClosedTrades < guard.options.MinRoundTrips {
+		return true
+	}
+
+	return adjustedScore > bestScore
 }
 
 /*
@@ -164,8 +207,12 @@ func (guard *OverfitGuard) ValidateWalkForward(
 		trainRows := rows[window.TrainStart:window.TrainEnd]
 		testRows := rows[window.TestStart:window.TestEnd]
 
-		trainResult := NewReplaySimulation(guard.ctx, branches, trainRows).Result()
-		testResult := NewReplaySimulation(guard.ctx, branches, testRows).Result()
+		trainResult := NewReplaySimulationWithTape(
+			guard.ctx, branches, PrecompileTape(trainRows),
+		).Result()
+		testResult := NewReplaySimulationWithTape(
+			guard.ctx, branches, PrecompileTape(testRows),
+		).Result()
 
 		if trainResult.ClosedTrades == 0 || testResult.ClosedTrades == 0 {
 			continue
@@ -191,6 +238,12 @@ func (guard *OverfitGuard) ValidateWalkForward(
 	minWins := int(math.Ceil(float64(len(windows)) * guard.options.WalkForward.MinWinRate))
 
 	return wins >= minWins, holdoutTotal
+}
+
+func (guard *OverfitGuard) replayResult(
+	branches perspectives.BranchList,
+) *ReplaySimulation {
+	return NewReplaySimulationWithTape(guard.ctx, branches, guard.tape)
 }
 
 /*

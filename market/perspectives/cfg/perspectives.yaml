@@ -1,18 +1,18 @@
 version: 1
 branches:
-    - category: liquidity_vacuum
+    - category: divergent_move
       observation: not_holding
       condition: '>='
       unit: snr
-      value: 0.8727853932400677
+      value: 0
       value_set: true
       action:
         type: limit
-    - category: liquidity_vacuum
+    - category: systemic_beta
       observation: holding
       condition: '>='
       unit: snr
-      value: 0.9869026358925104
+      value: 0.3536397438686685
       value_set: true
       action:
         type: stop_loss

@@ -15,7 +15,7 @@ robustUnderJitter re-scores perturbed threshold copies; rejects brittle gates.
 func robustUnderJitter(
 	ctx context.Context,
 	branches perspectives.BranchList,
-	rows []perspectives.Measurement,
+	tape ReplayTape,
 	fractions []float64,
 	baselineScore float64,
 ) bool {
@@ -27,7 +27,7 @@ func robustUnderJitter(
 
 	for _, fraction := range fractions {
 		perturbed := perturbBranchValues(branches, fraction)
-		score := NewReplaySimulation(ctx, perturbed, rows).Result().Score
+		score := NewReplaySimulationWithTape(ctx, perturbed, tape).Result().Score
 
 		if score < floor {
 			return false

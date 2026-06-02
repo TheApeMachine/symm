@@ -127,8 +127,14 @@ WalkContext traverses the tree using the complete branch evaluation context.
 func (tree *Tree) WalkContext(
 	branchContext BranchContext, branches ...Branch,
 ) *ActionType {
+	walkBranches := BranchList(branches)
+
+	if len(walkBranches) == 0 {
+		walkBranches = CanonicalPlaybookBranches(tree.branches)
+	}
+
 	evaluator := NewBranchEvaluator(branchContext)
-	tree.currentAction = evaluator.Action(BranchList(branches))
+	tree.currentAction = evaluator.Action(walkBranches)
 	tree.err = evaluator.Err()
 
 	if tree.err != nil {
