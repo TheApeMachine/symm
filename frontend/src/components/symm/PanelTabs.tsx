@@ -1,4 +1,3 @@
-
 import { useState, type ReactNode } from "react";
 
 export type PanelTab = {
@@ -59,10 +58,9 @@ export const PanelTabs = ({ id, tabs, className = "" }: PanelTabsProps) => {
 					</button>
 				))}
 			</div>
-			<div className="min-h-0 flex-1 overflow-hidden">
+			<div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
 				{activeTab?.content}
 			</div>
 		</div>
 	);
 };
-

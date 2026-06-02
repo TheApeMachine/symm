@@ -95,6 +95,29 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	})
 }
 
+func TestFluidSymbolMeasureLaminarField(t *testing.T) {
+	Convey("Given a balanced book with no Reynolds activity", t, func() {
+		symbol := "BTC/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
+		fixture := symbolBookFixture{symbol: symbol}
+
+		state.FeedTicker(market.TickerUpdate{
+			Symbol: symbol, Last: 100, Bid: 100, Ask: 100, Volume: 1000,
+		})
+		state.FeedBook(fixture.snapshot(100, 5, 100, 5))
+
+		measurement, _, err := state.Measure()
+
+		Convey("It should still publish a laminar reading", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceFluid)
+			So(measurement.Category, ShouldEqual, perspectives.CategoryLaminar)
+		})
+	})
+}
+
 func BenchmarkFluidSymbolMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
 	viper.Set("market.book_depth_levels", 10)

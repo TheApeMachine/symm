@@ -4,6 +4,7 @@ import { AuditPanel } from "#/components/audit";
 import { Gauges } from "#/components/gauges";
 import { PanelTabs } from "#/components/symm/PanelTabs";
 import { SignalHeatmap } from "#/components/symm/SignalHeatmap";
+import { SignalSurpriseHeatmap } from "#/components/symm/SignalSurpriseHeatmap";
 import { TradesPanel } from "#/components/trades";
 import { panelsByType, type LayoutPanel } from "#/lib/symm/layout-schema";
 import { useSymmWallet } from "#/lib/symm/use-dashboard-data";
@@ -28,7 +29,7 @@ const GenericSurfaceChart = lazy(() =>
 );
 
 const ChartFallback = () => (
-	<div className="flex min-h-0 flex-1 items-center justify-center rounded border border-dashed border-(--dash-border) bg-(--dash-panel) text-xs text-(--dash-muted)">
+	<div className="flex h-full min-h-0 flex-1 items-center justify-center rounded border border-dashed border-(--dash-border) bg-(--dash-panel) text-xs text-(--dash-muted)">
 		Loading chart…
 	</div>
 );
@@ -94,8 +95,12 @@ export const DashboardLayout = () => {
 								},
 								{
 									key: "heatmap",
-									label: "Signal Map",
-									content: <SignalHeatmap panel={gaugePanel} />,
+									label: "Confidence",
+									content: (
+										<div className="h-full min-h-0 flex-1">
+											<SignalHeatmap panel={gaugePanel} />
+										</div>
+									),
 								},
 							]}
 						/>
@@ -115,7 +120,7 @@ export const DashboardLayout = () => {
 								key: "candles",
 								label: "Charts",
 								content: (
-									<div className="flex min-h-0 flex-1 overflow-hidden p-1">
+									<div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden p-1">
 										<Suspense fallback={<ChartFallback />}>
 											<TradeChartGrid symbols={chartSymbols} />
 										</Suspense>
@@ -123,11 +128,11 @@ export const DashboardLayout = () => {
 								),
 							},
 							{
-								key: "heatmap",
-								label: "Signal Map",
+								key: "surprise",
+								label: "Surprise",
 								content: (
-									<div className="min-h-0 flex-1 p-1">
-										<SignalHeatmap panel={gaugePanel} />
+									<div className="h-full min-h-0 flex-1 p-1">
+										<SignalSurpriseHeatmap panel={gaugePanel} />
 									</div>
 								),
 							},

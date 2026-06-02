@@ -257,6 +257,11 @@ body {
   background: var(--dash-panel);
 }
 
+.dashboard-trade-panel > .flex-1 > * {
+  height: 100%;
+  min-height: 0;
+}
+
 .dashboard-panel-header {
   flex-shrink: 0;
   border-bottom: 1px solid var(--dash-border);

@@ -40,7 +40,7 @@ export const TradeChart = memo(function TradeChart({
 		<SciChartReact
 			initChart={initChart}
 			onInit={onInit}
-			className={`min-h-0 w-full flex-1 ${className}`}
+			className={`h-full min-h-0 w-full ${className}`}
 			innerContainerProps={{ className: "h-full w-full" }}
 		/>
 	);
@@ -57,15 +57,15 @@ export const TradeChartGrid = memo(function TradeChartGrid({
 		symbols.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2";
 
 	return (
-		<div className={`grid min-h-0 flex-1 gap-1 ${gridClass}`}>
+		<div className={`grid h-full min-h-0 flex-1 gap-1 ${gridClass}`}>
 			<SciChartGroup>
 				{symbols.map((symbol) => (
 					<div
 						key={symbol}
-						className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-(--dash-border)"
+						className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded border border-(--dash-border)"
 					>
 						<div className="dashboard-panel-header shrink-0">{symbol}</div>
-						<TradeChart symbol={symbol} />
+						<TradeChart symbol={symbol} className="flex-1" />
 					</div>
 				))}
 			</SciChartGroup>

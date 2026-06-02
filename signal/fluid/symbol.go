@@ -277,7 +277,7 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
 
 	re, ok := row["re"].(float64)
 
-	if !ok || re <= 0 {
+	if !ok {
 		return perspectives.Measurement{}, 0, nil
 	}
 
@@ -287,6 +287,17 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
 	category, evidence := fluidReading(divergence, turbulence, viscosity, re)
 	standout := evidence
 	clarity := evidence
+
+	if clarity <= 0 {
+		activity := math.Max(
+			math.Abs(divergence),
+			math.Max(turbulence, re),
+		)
+
+		if activity > 0 {
+			clarity = perspectives.UnitMagnitudeMargin(activity)
+		}
+	}
 
 	confidence, err := state.tracked.Observe(category, clarity, standout)
 

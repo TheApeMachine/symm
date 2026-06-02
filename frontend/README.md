@@ -4,6 +4,8 @@ The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots 
 
 The prediction chart uses aggregate `engine_pulse` cross-section required-return multiples (entry-candidate thesis vs friction, averaged over symbols with live entry signals — not per-trade P/L). Green is realized at pulse time. Orange is the forward forecast for the next pulse, plotted one pulse interval ahead on the time axis. Red is the catch-up error when realization meets the prior forecast. The desk currently persists the last multiple as the forward guess; online feedback into signals/perspectives is not wired yet. Per-symbol `prediction` / `prediction_settled` events stay off this aggregate chart.
 
+The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
+
 # Getting Started
 
 To run this application:
