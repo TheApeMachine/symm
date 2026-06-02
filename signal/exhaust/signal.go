@@ -2,9 +2,9 @@ package exhaust
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -77,7 +77,8 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("exhaust: decode trades: %w", err)
+					errnie.Error(err, "exhaust: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
@@ -90,35 +91,40 @@ func (signal *Signal) Tick() error {
 					signal.history.observe(trade.Symbol, 0, 0, 0, 0, sign, 0, trade.Price)
 
 					if err := signal.emit(trade.Symbol); err != nil {
-						return fmt.Errorf("exhaust: emit %s: %w", trade.Symbol, err)
+						errnie.Error(err, "exhaust: emit %s", trade.Symbol)
+						continue
 					}
 				}
 			case public.TickerChannel:
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("exhaust: decode tickers: %w", err)
+					errnie.Error(err, "exhaust: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
 					signal.history.observe(ticker.Symbol, 0, 0, 0, 0, 0, 0, ticker.Last)
 
 					if err := signal.emit(ticker.Symbol); err != nil {
-						return fmt.Errorf("exhaust: emit %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "exhaust: emit %s", ticker.Symbol)
+						continue
 					}
 				}
 			case public.BookChannel:
 				books, err := market.DecodeBooks(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("exhaust: decode books: %w", err)
+					errnie.Error(err, "exhaust: decode books")
+					continue
 				}
 
 				for _, delta := range books {
 					signal.observeBook(delta)
 
 					if err := signal.emit(delta.Symbol); err != nil {
-						return fmt.Errorf("exhaust: emit %s: %w", delta.Symbol, err)
+						errnie.Error(err, "exhaust: emit %s", delta.Symbol)
+						continue
 					}
 				}
 			}

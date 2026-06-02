@@ -290,48 +290,6 @@ func filterReachableEntryBranchers(
 	return filterReachableBranchers(index, entryPathCategories(base), branchers)
 }
 
-func filterReachableExitCandidates(
-	index *CoOccurrenceIndex,
-	candidates []scanCandidate,
-) []scanCandidate {
-	if index == nil {
-		return candidates
-	}
-
-	reachable := make([]scanCandidate, 0, len(candidates))
-
-	for _, candidate := range candidates {
-		if index.CategoriesReachable(categoriesInBranchList(candidate.branches)) {
-			reachable = append(reachable, candidate)
-		}
-	}
-
-	return reachable
-}
-
-func filterReachableEntryCandidates(
-	index *CoOccurrenceIndex,
-	base perspectives.BranchList,
-	candidates []scanCandidate,
-) []scanCandidate {
-	if index == nil {
-		return candidates
-	}
-
-	anchor := entryPathCategories(base)
-	reachable := make([]scanCandidate, 0, len(candidates))
-
-	for _, candidate := range candidates {
-		chain := append(anchor, categoriesInBranchList(candidate.branches)...)
-
-		if index.ChainReachabilityScore(chain) > 0 {
-			reachable = append(reachable, candidate)
-		}
-	}
-
-	return reachable
-}
-
 func nestedEntryGateReachable(
 	index *CoOccurrenceIndex,
 	base perspectives.BranchList,
@@ -356,25 +314,6 @@ func entryExitPairReachable(
 	}
 
 	if index.ChainReachabilityScore(categoriesInBranchList(entry)) <= 0 {
-		return false
-	}
-
-	return index.CategoriesReachable(categoriesInBranchList(exit))
-}
-
-func exitExpansionReachable(
-	index *CoOccurrenceIndex,
-	base perspectives.BranchList,
-	exit perspectives.BranchList,
-) bool {
-	if index == nil {
-		return true
-	}
-
-	entryCategories := entryPathCategories(base)
-
-	if len(entryCategories) > 0 &&
-		index.ChainReachabilityScore(entryCategories) <= 0 {
 		return false
 	}
 

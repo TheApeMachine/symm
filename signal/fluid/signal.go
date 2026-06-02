@@ -2,11 +2,11 @@ package fluid
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
@@ -105,64 +105,74 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("fluid: decode trades: %w", err)
+					errnie.Error(err, "fluid: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
 					state, err := signal.state(trade.Symbol)
 
 					if err != nil {
-						return fmt.Errorf("fluid: state %s: %w", trade.Symbol, err)
+						errnie.Error(err, "fluid: state %s", trade.Symbol)
+						continue
 					}
 
 					if err := state.FeedTradeSide(
 						trade.Timestamp, trade.Qty, trade.Side,
 					); err != nil {
-						return fmt.Errorf("fluid: trade side %s: %w", trade.Symbol, err)
+						errnie.Error(err, "fluid: trade side %s", trade.Symbol)
+						continue
 					}
 
 					if err := signal.emit(trade.Symbol); err != nil {
-						return fmt.Errorf("fluid: emit %s: %w", trade.Symbol, err)
+						errnie.Error(err, "fluid: emit %s", trade.Symbol)
+						continue
 					}
 				}
 			case public.TickerChannel:
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("fluid: decode tickers: %w", err)
+					errnie.Error(err, "fluid: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
 					state, err := signal.state(ticker.Symbol)
 
 					if err != nil {
-						return fmt.Errorf("fluid: state %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "fluid: state %s", ticker.Symbol)
+						continue
 					}
 
 					state.FeedTicker(ticker)
 
 					if err := signal.emit(ticker.Symbol); err != nil {
-						return fmt.Errorf("fluid: emit %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "fluid: emit %s", ticker.Symbol)
+						continue
 					}
 				}
 			case public.BookChannel:
 				books, err := market.DecodeBooks(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("fluid: decode books: %w", err)
+					errnie.Error(err, "fluid: decode books")
+					continue
 				}
 
 				for _, delta := range books {
 					state, err := signal.state(delta.Symbol)
 
 					if err != nil {
-						return fmt.Errorf("fluid: state %s: %w", delta.Symbol, err)
+						errnie.Error(err, "fluid: state %s", delta.Symbol)
+						continue
 					}
 
 					state.FeedBook(delta)
 
 					if err := signal.emit(delta.Symbol); err != nil {
-						return fmt.Errorf("fluid: emit %s: %w", delta.Symbol, err)
+						errnie.Error(err, "fluid: emit %s", delta.Symbol)
+						continue
 					}
 				}
 			}

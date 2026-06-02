@@ -186,20 +186,6 @@ func (profile *Profile) AdaptiveValues(
 	return sampleValues(values, limit)
 }
 
-func (profile *Profile) value(
-	row perspectives.Measurement,
-	unit perspectives.UnitType,
-) (float64, bool) {
-	switch unit {
-	case perspectives.UnitSNR:
-		return row.SNR, true
-	case perspectives.UnitConfidence:
-		return row.Confidence, true
-	default:
-		return 0, false
-	}
-}
-
 func profileValueKey(
 	category perspectives.CategoryType,
 	unit perspectives.UnitType,

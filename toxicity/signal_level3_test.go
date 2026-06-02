@@ -49,4 +49,25 @@ func TestToxicityHandleLevel3(t *testing.T) {
 			So(tox.tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
 		})
 	})
+
+	Convey("Given a level3 envelope without order data", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		tox := NewToxicity(ctx, pool)
+		level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
+		tox.subscribers["level3"] = level3.Subscribe("toxicity:test-level3-empty", 16)
+
+		level3.Send(&qpool.QValue[any]{Value: public.SocketMessage{
+			Channel: public.Level3Channel,
+			Type:    "update",
+		}})
+
+		err := tox.handleLevel3(<-tox.subscribers["level3"].Incoming)
+
+		Convey("It should ignore the frame without error", func() {
+			So(err, ShouldBeNil)
+		})
+	})
 }

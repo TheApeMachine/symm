@@ -3,7 +3,6 @@ package optimizer
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/theapemachine/symm/market/perspectives"
@@ -113,34 +112,6 @@ func selectHybridSeeds(
 	pool := append(append([]CandidateScore(nil), scored...), beam...)
 
 	return collapseScoreBeam(pool, limit)
-}
-
-func insertBeam(
-	top []CandidateScore, entry CandidateScore, limit int,
-) []CandidateScore {
-	if limit <= 0 {
-		return top
-	}
-
-	top = append(top, entry)
-	sort.Slice(top, func(leftIndex, rightIndex int) bool {
-		left := top[leftIndex]
-		right := top[rightIndex]
-
-		return compareBeamCandidates(left, right)
-	})
-
-	if len(top) > limit {
-		top = top[:limit]
-	}
-
-	return top
-}
-
-func mergeDepthSeeds(
-	scored []CandidateScore, beam []CandidateScore, limit int,
-) []CandidateScore {
-	return selectHybridSeeds(scored, beam, limit)
 }
 
 func branchListKey(branches perspectives.BranchList) string {

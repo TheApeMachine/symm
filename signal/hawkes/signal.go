@@ -2,10 +2,10 @@ package hawkes
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -112,7 +112,8 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("hawkes: decode trades: %w", err)
+					errnie.Error(err, "hawkes: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
@@ -123,7 +124,8 @@ func (signal *Signal) Tick() error {
 					measurement, standout, err := state.measure(time.Now())
 
 					if err != nil {
-						return fmt.Errorf("hawkes: measure %s: %w", trade.Symbol, err)
+						errnie.Error(err, "hawkes: measure %s", trade.Symbol)
+						continue
 					}
 
 					if measurement.Source == perspectives.SourceNone {
@@ -135,7 +137,8 @@ func (signal *Signal) Tick() error {
 					if err := perspectives.AssignCategorySNR(
 						&measurement, signal.floor, standout,
 					); err != nil {
-						return fmt.Errorf("hawkes: snr %s: %w", trade.Symbol, err)
+						errnie.Error(err, "hawkes: snr %s", trade.Symbol)
+						continue
 					}
 
 					activate.Once("signal/hawkes:measurement")

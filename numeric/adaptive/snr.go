@@ -16,7 +16,10 @@ const (
 	// defaultSNRClampSigma bounds the value folded into the baseline so a single
 	// spike — the very thing we detect — cannot inflate the floor that detects it.
 	defaultSNRClampSigma = 4
-	// snrEpsilon guards against a degenerate (zero-spread) noise estimate.
+	// defaultSNRMinStd is the regularized noise floor for unit-interval standout:
+	// a minimum expected spread of 2% of [0, 1].
+	defaultSNRMinStd = 0.02
+	// snrEpsilon guards against a degenerate historical std in the clamp path.
 	snrEpsilon = 1e-12
 )
 
@@ -28,14 +31,17 @@ not band clarity (Confidence).
 
 The mean and standard deviation are exponentially weighted, measured from the
 samples seen *before* the current one (so the current reading is scored against
-its history, not itself), and the folded value is clamped to clampSigma so a
-genuine spike registers as a high SNR without raising the floor.
+its history, not itself). Scoring uses sqrt(historicalVar + minStd²) so the
+denominator never collapses when variance flatlines. The folded value is clamped
+to clampSigma against true historical std so a genuine spike registers as a high
+SNR without raising the floor.
 */
 type SNR struct {
 	moments    EWMoments
 	minObs     int
 	alpha      float64
 	clampSigma float64
+	minStd     float64
 }
 
 /*
@@ -46,14 +52,15 @@ func NewSNR() *SNR {
 		minObs:     defaultSNRMinObs,
 		alpha:      defaultSNRAlpha,
 		clampSigma: defaultSNRClampSigma,
+		minStd:     defaultSNRMinStd,
 	}
 }
 
 /*
 Score folds value into the running baseline and returns its SNR: max(0, (value −
-mean) / std) against the baseline from before this sample. It returns 0 while the
-series is still warming up. Invalid standout or an immeasurable noise floor returns
-an error — never a silent substitute.
+mean) / sqrt(historicalVar + minStd²)) against the baseline from before this
+sample. It returns 0 while the series is still warming up. Invalid standout
+returns an error — never a silent substitute.
 */
 func (snr *SNR) Score(value float64) (float64, error) {
 	if err := validateStandout(value); err != nil {
@@ -65,15 +72,25 @@ func (snr *SNR) Score(value float64) (float64, error) {
 
 	if snr.moments.Observations() >= snr.minObs {
 		mean := snr.moments.Mean()
-		std := math.Sqrt(snr.moments.VarianceEWMA())
 
-		if std < snrEpsilon {
-			if value != mean {
-				return 0, ErrInsufficientStandoutSpread
-			}
-		} else if zScore := (value - mean) / std; zScore > 0 {
+		historicalVar := snr.moments.VarianceEWMA()
+
+		if historicalVar < 0 {
+			historicalVar = 0
+		}
+
+		floorVar := snr.minStd * snr.minStd
+		std := math.Sqrt(historicalVar + floorVar)
+
+		if zScore := (value - mean) / std; zScore > 0 {
 			result = zScore
-			folded = clampToBand(value, mean, snr.clampSigma*std)
+			histStd := math.Sqrt(historicalVar)
+
+			if histStd < snrEpsilon {
+				histStd = snrEpsilon
+			}
+
+			folded = clampToBand(value, mean, snr.clampSigma*histStd)
 		}
 	}
 
@@ -83,8 +100,6 @@ func (snr *SNR) Score(value float64) (float64, error) {
 
 	return result, nil
 }
-
-var ErrInsufficientStandoutSpread = errors.New("adaptive: SNR insufficient standout spread")
 
 func validateStandout(value float64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {

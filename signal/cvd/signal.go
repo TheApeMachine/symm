@@ -2,11 +2,11 @@ package cvd
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -200,12 +200,14 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("cvd: decode trades: %w", err)
+					errnie.Error(err, "cvd: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
 					if err := signal.observe(trade); err != nil {
-						return fmt.Errorf("cvd: observe %s: %w", trade.Symbol, err)
+						errnie.Error(err, "cvd: observe %s", trade.Symbol)
+						continue
 					}
 				}
 			}

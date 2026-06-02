@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -63,11 +64,13 @@ func (tox *Toxicity) Tick() error {
 			return tox.ctx.Err()
 		case message := <-tox.subscribers["raw"].Incoming:
 			if err := tox.handleRaw(message); err != nil {
-				return err
+				errnie.Error(err, "toxicity: handle raw")
+				continue
 			}
 		case message := <-level3In.Incoming:
 			if err := tox.handleLevel3(message); err != nil {
-				return err
+				errnie.Error(err, "toxicity: handle level3")
+				continue
 			}
 		}
 	}

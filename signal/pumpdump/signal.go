@@ -2,11 +2,11 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -154,12 +154,14 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("pumpdump: decode trades: %w", err)
+					errnie.Error(err, "pumpdump: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
 					if err := signal.observe(trade); err != nil {
-						return fmt.Errorf("pumpdump: observe %s: %w", trade.Symbol, err)
+						errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
+						continue
 					}
 				}
 			}

@@ -76,14 +76,26 @@ func TestSNRScore(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("It should error when spread is immeasurable but standout shifted", func() {
+		Convey("It should regularize collapsed variance instead of exploding", func() {
+			for range defaultSNRMinObs + 20 {
+				_, err := snr.Score(0.5)
+				So(err, ShouldBeNil)
+			}
+
+			score, err := snr.Score(0.5004)
+			So(err, ShouldBeNil)
+			So(score, ShouldAlmostEqual, 0.02, 1e-9)
+		})
+
+		Convey("It should score a micro-jump above a flat baseline without error", func() {
 			for range defaultSNRMinObs {
 				_, err := snr.Score(0.2)
 				So(err, ShouldBeNil)
 			}
 
-			_, err := snr.Score(0.21)
-			So(err, ShouldEqual, ErrInsufficientStandoutSpread)
+			score, err := snr.Score(0.21)
+			So(err, ShouldBeNil)
+			So(score, ShouldAlmostEqual, 0.5, 1e-9)
 		})
 	})
 }
@@ -127,7 +139,8 @@ func TestSNRFieldScore(t *testing.T) {
 
 			dogeSpike, err := field.Score("DOGE/EUR", 0.14)
 			So(err, ShouldBeNil)
-			So(dogeSpike, ShouldBeGreaterThan, 3)
+			So(dogeSpike, ShouldBeGreaterThan, 1)
+			So(dogeSpike, ShouldBeLessThan, 10)
 		})
 	})
 }

@@ -79,6 +79,20 @@ func TestDecodeOrders(t *testing.T) {
 			So(rows[0].Type, ShouldEqual, "update")
 		})
 	})
+
+	Convey("Given a level3 envelope without order data", t, func() {
+		message := &public.SocketMessage{
+			Channel: public.Level3Channel,
+			Type:    "update",
+		}
+
+		Convey("It should return no rows without error", func() {
+			rows, err := DecodeOrders(message)
+
+			So(err, ShouldBeNil)
+			So(rows, ShouldBeNil)
+		})
+	})
 }
 
 func TestReplaySubscribeFramesRefreshesToken(t *testing.T) {

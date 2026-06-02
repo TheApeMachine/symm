@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -117,23 +118,27 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("causal: decode trades: %w", err)
+					errnie.Error(err, "causal: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
 					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
-						return fmt.Errorf("causal: feed trade %s: %w", trade.Symbol, err)
+						errnie.Error(err, "causal: feed trade %s", trade.Symbol)
+						continue
 					}
 				}
 
 				if err := signal.publish(); err != nil {
-					return fmt.Errorf("causal: publish: %w", err)
+					errnie.Error(err, "causal: publish")
+					continue
 				}
 			case public.TickerChannel:
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("causal: decode tickers: %w", err)
+					errnie.Error(err, "causal: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
@@ -141,13 +146,15 @@ func (signal *Signal) Tick() error {
 				}
 
 				if err := signal.publish(); err != nil {
-					return fmt.Errorf("causal: publish: %w", err)
+					errnie.Error(err, "causal: publish")
+					continue
 				}
 			case public.BookChannel:
 				books, err := market.DecodeBooks(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("causal: decode books: %w", err)
+					errnie.Error(err, "causal: decode books")
+					continue
 				}
 
 				for _, delta := range books {
@@ -155,7 +162,8 @@ func (signal *Signal) Tick() error {
 				}
 
 				if err := signal.publish(); err != nil {
-					return fmt.Errorf("causal: publish: %w", err)
+					errnie.Error(err, "causal: publish")
+					continue
 				}
 			}
 		}

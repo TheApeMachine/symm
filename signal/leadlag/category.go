@@ -1,6 +1,8 @@
 package leadlag
 
 import (
+	"math"
+
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -13,7 +15,7 @@ func leadlagReading(
 	lagBars int,
 ) (perspectives.CategoryType, float64) {
 	if !anchorMoved {
-		margin := minAnchorMove - anchorChange
+		margin := minAnchorMove - math.Abs(anchorChange)
 
 		if margin <= 0 {
 			return perspectives.CategoryAnchorStall, 0

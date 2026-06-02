@@ -2,11 +2,11 @@ package correlation
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -142,7 +142,8 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("correlation: decode trades: %w", err)
+					errnie.Error(err, "correlation: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
@@ -157,7 +158,8 @@ func (signal *Signal) Tick() error {
 			}
 
 			if err := signal.process(latest); err != nil {
-				return fmt.Errorf("correlation: process: %w", err)
+				errnie.Error(err, "correlation: process")
+				continue
 			}
 
 			clear(latest)

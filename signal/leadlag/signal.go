@@ -3,9 +3,11 @@ package leadlag
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
@@ -98,7 +100,8 @@ func (signal *Signal) Tick() error {
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("leadlag: decode tickers: %w", err)
+					errnie.Error(err, "leadlag: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
@@ -110,7 +113,8 @@ func (signal *Signal) Tick() error {
 					stored.(*symbolState).observeTicker(ticker.ChangePct, ticker.Last, signal.timestamp(ticker))
 
 					if err := signal.publish(); err != nil {
-						return fmt.Errorf("leadlag: publish: %w", err)
+						errnie.Error(err, "leadlag: publish")
+						continue
 					}
 				}
 			}
@@ -143,7 +147,7 @@ func (signal *Signal) publish() error {
 	}
 
 	anchor := anchorRaw.(*symbolState)
-	anchorMoved := anchor.change() >= minAnchorMove
+	anchorMoved := math.Abs(anchor.change()) >= minAnchorMove
 
 	var publishErr error
 

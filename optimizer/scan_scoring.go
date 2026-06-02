@@ -296,9 +296,3 @@ func (search *ScanSearch) evaluateRaw(branches perspectives.BranchList) float64 
 		search.ctx, branches, search.tape,
 	).Result().Score
 }
-
-func (search *ScanSearch) evaluateAdjusted(branches perspectives.BranchList) float64 {
-	return search.guard.AdjustedScore(
-		search.evaluateRaw(branches), branches,
-	)
-}

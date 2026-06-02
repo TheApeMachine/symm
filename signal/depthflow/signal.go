@@ -2,10 +2,10 @@ package depthflow
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -93,26 +93,30 @@ func (signal *Signal) Tick() error {
 				trades, err := market.DecodeTrades(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("depthflow: decode trades: %w", err)
+					errnie.Error(err, "depthflow: decode trades")
+					continue
 				}
 
 				for _, trade := range trades {
 					if err := signal.observeTrade(trade); err != nil {
-						return fmt.Errorf("depthflow: observe trade %s: %w", trade.Symbol, err)
+						errnie.Error(err, "depthflow: observe trade %s", trade.Symbol)
+						continue
 					}
 				}
 			case public.TickerChannel:
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("depthflow: decode tickers: %w", err)
+					errnie.Error(err, "depthflow: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
 					state, err := signal.state(ticker.Symbol)
 
 					if err != nil {
-						return fmt.Errorf("depthflow: state %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "depthflow: state %s", ticker.Symbol)
+						continue
 					}
 
 					state.FeedTicker(ticker)
@@ -121,20 +125,23 @@ func (signal *Signal) Tick() error {
 				books, err := market.DecodeBooks(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("depthflow: decode books: %w", err)
+					errnie.Error(err, "depthflow: decode books")
+					continue
 				}
 
 				for _, delta := range books {
 					state, err := signal.state(delta.Symbol)
 
 					if err != nil {
-						return fmt.Errorf("depthflow: state %s: %w", delta.Symbol, err)
+						errnie.Error(err, "depthflow: state %s", delta.Symbol)
+						continue
 					}
 
 					state.ApplyBook(delta)
 
 					if err := signal.emit(delta.Symbol); err != nil {
-						return fmt.Errorf("depthflow: emit %s: %w", delta.Symbol, err)
+						errnie.Error(err, "depthflow: emit %s", delta.Symbol)
+						continue
 					}
 				}
 			}

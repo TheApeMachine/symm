@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -41,6 +42,23 @@ func TestMeasure(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
 				So(measurement.Category, ShouldEqual, perspectives.CategoryAnchorStall)
+			})
+		})
+
+		Convey("When the anchor change is moderately negative during stall", func() {
+			anchor.observeTicker(-0.02, 50000, time.Now())
+			follower.observeTicker(2.0, 100, time.Now())
+
+			measurement, _, err := signal.measure(
+				anchor,
+				math.Abs(anchor.change()) >= minAnchorMove,
+				follower,
+			)
+
+			Convey("It should keep clarity on the unit interval", func() {
+				So(err, ShouldBeNil)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
+				So(measurement.Confidence, ShouldBeLessThanOrEqualTo, 1)
 			})
 		})
 

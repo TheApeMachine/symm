@@ -2,11 +2,11 @@ package sentiment
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -93,7 +93,8 @@ func (signal *Signal) Tick() error {
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("sentiment: decode tickers: %w", err)
+					errnie.Error(err, "sentiment: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
@@ -106,7 +107,8 @@ func (signal *Signal) Tick() error {
 					measurement, standout, err := signal.measure(ticker.Symbol, ticker.ChangePct)
 
 					if err != nil {
-						return fmt.Errorf("sentiment: measure %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "sentiment: measure %s", ticker.Symbol)
+						continue
 					}
 
 					if measurement.Source == perspectives.SourceNone {
@@ -118,7 +120,8 @@ func (signal *Signal) Tick() error {
 					if err := perspectives.AssignCategorySNR(
 						&measurement, signal.floor, standout,
 					); err != nil {
-						return fmt.Errorf("sentiment: snr %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "sentiment: snr %s", ticker.Symbol)
+						continue
 					}
 
 					activate.Once("signal/sentiment:measurement")

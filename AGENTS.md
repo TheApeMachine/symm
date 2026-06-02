@@ -311,3 +311,7 @@ By default, you should ALWAYS reason from the code, look at the current code, an
 You should NOT, under any circumstance, resort to using the git history to just redefine the problem by reverting to some previous version of the code and call it a fix.
 
 A very subtle failure mode you will encounter is that you will look at the git history, and not clearly mark that knowledge as coming from git. Then your context will show that information and you will believe that is a source of truth, so ALWAYS clearly mark information coming from the git history. The best way to deal with this is by just NOT looking at the git history at all, or at least not to start with that, and first look at the actual current reality of the code.
+
+## dropg Linker Error
+
+Read the Makefile!

@@ -2,9 +2,7 @@ package market
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -23,6 +21,12 @@ const level3ControlSubscriberID = "kraken/market:level3-control"
 
 const level3ReadPoll = 50 * time.Millisecond
 
+type level3ReadResult struct {
+	message public.SocketMessage
+	handled bool
+	err     error
+}
+
 /*
 Level3WebSocket maintains an authenticated Kraken level3 connection and mirrors
 public instrument subscriptions onto it for per-order toxicity tracking.
@@ -38,6 +42,7 @@ type Level3WebSocket struct {
 	publicControl   *qpool.Subscriber
 	subscribeReplay []any
 	replayMu        sync.RWMutex
+	inbound         chan level3ReadResult
 }
 
 func NewLevel3WebSocket(ctx context.Context, pool *qpool.Q) *Level3WebSocket {
@@ -49,11 +54,14 @@ func NewLevel3WebSocket(ctx context.Context, pool *qpool.Q) *Level3WebSocket {
 		pool:            pool,
 		reconnectPolicy: public.NewReconnectPolicyFromConfig(),
 		subscribeReplay: make([]any, 0),
+		inbound:         make(chan level3ReadResult, 8),
 	}
 
 	ws.broadcasts = pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
 	ws.publicControl = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond).
 		Subscribe(level3ControlSubscriberID, 1024)
+
+	go ws.readLoop()
 
 	if Level3Available() {
 		if err := ws.dialUntilConnected(public.WebSocketL3URL); err != nil {
@@ -73,10 +81,25 @@ func (ws *Level3WebSocket) Tick() error {
 		return ws.ctx.Err()
 	}
 
+	reconnectTicker := time.NewTicker(level3ReadPoll)
+	defer reconnectTicker.Stop()
+
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.ctx.Err()
+		case <-reconnectTicker.C:
+			ws.connMu.RLock()
+			connected := ws.conn != nil
+			ws.connMu.RUnlock()
+
+			if connected {
+				continue
+			}
+
+			if err := ws.reconnect(public.WebSocketL3URL); err != nil {
+				return err
+			}
 		case message, ok := <-ws.publicControl.Incoming:
 			if !ok {
 				return ws.ctx.Err()
@@ -89,55 +112,36 @@ func (ws *Level3WebSocket) Tick() error {
 			if err := ws.handlePublicControl(message.Value); err != nil {
 				return err
 			}
-		default:
-		}
+		case result := <-ws.inbound:
+			if result.err != nil {
+				if ws.ctx.Err() != nil {
+					return ws.ctx.Err()
+				}
 
-		ws.connMu.RLock()
-		connected := ws.conn != nil
-		ws.connMu.RUnlock()
+				errnie.Error(result.err)
 
-		if !connected {
-			if err := ws.reconnect(public.WebSocketL3URL); err != nil {
-				return err
-			}
+				if reconnectErr := ws.reconnect(public.WebSocketL3URL); reconnectErr != nil {
+					return reconnectErr
+				}
 
-			continue
-		}
-
-		socketMessage, handled, err := ws.readInbound()
-
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
 				continue
 			}
 
-			if ws.ctx.Err() != nil {
-				return ws.ctx.Err()
+			if result.handled {
+				continue
 			}
 
-			errnie.Error(err)
-
-			if reconnectErr := ws.reconnect(public.WebSocketL3URL); reconnectErr != nil {
-				return reconnectErr
+			if result.message.Channel != "" {
+				activate.Once("kraken/market:level3:" + result.message.Channel)
 			}
 
-			continue
+			ws.recordInbound(result.message)
+
+			ws.broadcasts.Send(&qpool.QValue[any]{
+				Type:  result.message.Channel,
+				Value: result.message,
+			})
 		}
-
-		if handled {
-			continue
-		}
-
-		if socketMessage.Channel != "" {
-			activate.Once("kraken/market:level3:" + socketMessage.Channel)
-		}
-
-		ws.recordInbound(socketMessage)
-
-		ws.broadcasts.Send(&qpool.QValue[any]{
-			Type:  socketMessage.Channel,
-			Value: socketMessage,
-		})
 	}
 }
 
@@ -335,31 +339,64 @@ func (ws *Level3WebSocket) recordInbound(message public.SocketMessage) {
 	_ = replay.WriteWS(public.Level3Channel, replay.DirectionIn, payload)
 }
 
-func (ws *Level3WebSocket) readInbound() (public.SocketMessage, bool, error) {
-	ws.connMu.RLock()
-	conn := ws.conn
-	ws.connMu.RUnlock()
-
-	if conn == nil {
-		return public.SocketMessage{}, false, fmt.Errorf("kraken/market level3 websocket: not connected")
-	}
-
-	if err := conn.SetReadDeadline(time.Now().Add(level3ReadPoll)); err != nil {
-		return public.SocketMessage{}, false, err
-	}
-
-	_, payload, err := conn.ReadMessage()
-
-	if err != nil {
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return public.SocketMessage{}, false, os.ErrDeadlineExceeded
+func (ws *Level3WebSocket) readLoop() {
+	for {
+		if ws.ctx.Err() != nil {
+			return
 		}
 
-		return public.SocketMessage{}, false, err
+		ws.connMu.RLock()
+		conn := ws.conn
+		ws.connMu.RUnlock()
+
+		if conn == nil {
+			select {
+			case <-ws.ctx.Done():
+				return
+			case <-time.After(level3ReadPoll):
+			}
+
+			continue
+		}
+
+		_, payload, err := conn.ReadMessage()
+
+		if err != nil {
+			if ws.ctx.Err() != nil {
+				return
+			}
+
+			ws.connMu.RLock()
+			stale := ws.conn != conn
+			ws.connMu.RUnlock()
+
+			if stale {
+				continue
+			}
+
+			ws.sendInbound(level3ReadResult{err: err})
+
+			continue
+		}
+
+		message, handled, parseErr := parseInboundPayload(payload)
+
+		ws.sendInbound(level3ReadResult{
+			message: message,
+			handled: handled,
+			err:     parseErr,
+		})
 	}
+}
 
-	_ = conn.SetReadDeadline(time.Time{})
+func (ws *Level3WebSocket) sendInbound(result level3ReadResult) {
+	select {
+	case ws.inbound <- result:
+	case <-ws.ctx.Done():
+	}
+}
 
+func parseInboundPayload(payload []byte) (public.SocketMessage, bool, error) {
 	var frame map[string]any
 
 	if err := sonic.Unmarshal(payload, &frame); err != nil {

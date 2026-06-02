@@ -75,12 +75,6 @@ func (search *TreeSearch) moveReachable(
 	return allowed
 }
 
-func (search *TreeSearch) moveChainReachable(
-	move Move, branches perspectives.BranchList,
-) bool {
-	return search.moveReachable(move, branches)
-}
-
 func (search *TreeSearch) moveCompatible(
 	branches perspectives.BranchList, move Move,
 ) bool {
@@ -300,12 +294,6 @@ func (search *TreeSearch) activeMoveIndexes(
 	}
 
 	return indexes
-}
-
-func (search *TreeSearch) deepeningMoves(
-	moves []Move, branches perspectives.BranchList,
-) []Move {
-	return search.activeMoves(moves, branches)
 }
 
 func gateSelectivity(passRate float64) float64 {

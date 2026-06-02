@@ -48,6 +48,10 @@ func DecodeBooks(message *public.SocketMessage) ([]Book, error) {
 }
 
 func DecodeOrders(message *public.SocketMessage) ([]Order, error) {
+	if message == nil || len(message.Data) == 0 {
+		return nil, nil
+	}
+
 	var books []Order
 
 	if err := sonic.Unmarshal(message.Data, &books); err != nil {

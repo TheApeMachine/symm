@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
@@ -90,7 +91,8 @@ func (signal *Signal) Tick() error {
 				tickers, err := market.DecodeTickers(&envelope)
 
 				if err != nil {
-					return fmt.Errorf("liquidity: decode tickers: %w", err)
+					errnie.Error(err, "liquidity: decode tickers")
+					continue
 				}
 
 				for _, ticker := range tickers {
@@ -101,7 +103,8 @@ func (signal *Signal) Tick() error {
 					measurement, standout, err := signal.measure(ticker)
 
 					if err != nil {
-						return fmt.Errorf("liquidity: measure %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "liquidity: measure %s", ticker.Symbol)
+						continue
 					}
 
 					if measurement.Symbol == "" {
@@ -111,7 +114,8 @@ func (signal *Signal) Tick() error {
 					if err := perspectives.AssignCategorySNR(
 						&measurement, signal.floor, standout,
 					); err != nil {
-						return fmt.Errorf("liquidity: snr %s: %w", ticker.Symbol, err)
+						errnie.Error(err, "liquidity: snr %s", ticker.Symbol)
+						continue
 					}
 
 					activate.Once("signal/liquidity:measurement")

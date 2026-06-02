@@ -282,9 +282,3 @@ func (ws *WebSocket) readInbound(message *SocketMessage) (handled bool, err erro
 
 	return false, nil
 }
-
-func (ws *WebSocket) readMessage(message *SocketMessage) error {
-	_, err := ws.readInbound(message)
-
-	return err
-}
