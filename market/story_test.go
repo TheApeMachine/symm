@@ -72,6 +72,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 
 		viper.Set("trading.record.file", recordPath)
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.quote_currency", "EUR")
 		trading.MarkDeskReady()
 		defer viper.Set("trading.record.file", "")
 		defer viper.Set("trading.paper.wallet_eur", 0)
@@ -90,8 +91,8 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 
 		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:     "BTC/EUR",
-			Category:   perspectives.CategoryThermalExhaustion,
-			Confidence: 30,
+			Category:   perspectives.CategoryVolumeStarvation,
+			SNR:        1.0,
 			Last:       50_000,
 		}})
 		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
@@ -102,7 +103,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		}})
 		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryMechanicalCollapse,
+			Category: perspectives.CategoryLiquidityVacuum,
 			SNR:      1.0,
 			Last:     50_000,
 		}})
@@ -136,7 +137,9 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		defer trading.ResetDeskReady()
 
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.quote_currency", "EUR")
 		defer viper.Set("trading.paper.wallet_eur", 0)
+		defer viper.Set("market.quote_currency", "")
 
 		story, storyErr := NewStory(ctx, pool, focus.NewSet())
 		convey.So(storyErr, convey.ShouldBeNil)
@@ -151,10 +154,10 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 
 		measurements := story.broadcasts["measurements"]
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:     "BTC/EUR",
-			Category:   perspectives.CategoryThermalExhaustion,
-			Confidence: 30,
-			Last:       50_000,
+			Symbol:   "BTC/EUR",
+			Category: perspectives.CategoryVolumeStarvation,
+			SNR:      1.0,
+			Last:     50_000,
 		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
@@ -164,7 +167,7 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryMechanicalCollapse,
+			Category: perspectives.CategoryLiquidityVacuum,
 			SNR:      1.0,
 			Last:     50_000,
 		}})
@@ -182,10 +185,10 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		trading.MarkDeskReady()
 
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:     "ETH/EUR",
-			Category:   perspectives.CategoryThermalExhaustion,
-			Confidence: 30,
-			Last:       3_000,
+			Symbol:   "ETH/EUR",
+			Category: perspectives.CategoryVolumeStarvation,
+			SNR:      1.0,
+			Last:     3_000,
 		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "ETH/EUR",
@@ -195,7 +198,7 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "ETH/EUR",
-			Category: perspectives.CategoryMechanicalCollapse,
+			Category: perspectives.CategoryLiquidityVacuum,
 			SNR:      1.0,
 			Last:     3_000,
 		}})

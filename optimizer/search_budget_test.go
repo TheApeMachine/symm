@@ -42,7 +42,10 @@ func TestDeriveSearchBudget(t *testing.T) {
 			convey.So(budget.MaxThresholds, convey.ShouldBeLessThanOrEqualTo, 6)
 			convey.So(budget.MinChainSupport, convey.ShouldBeGreaterThanOrEqualTo, 2)
 			convey.So(budget.ReentryTickCooldown, convey.ShouldBeGreaterThan, 0)
-			convey.So(budget.ComplexityPenalty, convey.ShouldEqual, 0)
+			convey.So(budget.ComplexityPenalty, convey.ShouldBeGreaterThan, 0)
+			convey.So(budget.NearMissTickJitter, convey.ShouldBeGreaterThan, 0)
+			convey.So(budget.TheoreticalUCTDiscount, convey.ShouldBeGreaterThan, 0)
+			convey.So(budget.AdversarialRolloutInterval, convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }

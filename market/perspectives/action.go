@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
@@ -172,22 +171,12 @@ func entryNotionalQuantity(price float64) float64 {
 	quote := strings.ToLower(viper.GetString("market.quote_currency"))
 
 	if quote == "" {
-		quote = "eur"
+		return 0
 	}
 
 	notional := viper.GetFloat64("trading.paper.wallet_" + quote)
 
-	if notional <= 0 && quote == "eur" {
-		notional = viper.GetFloat64("trading.paper.wallet_eur")
-	}
-
 	if notional <= 0 {
-		errnie.Error(errnie.Require(map[string]any{
-			"price":    price,
-			"notional": notional,
-			"quote":    quote,
-		}))
-
 		return 0
 	}
 

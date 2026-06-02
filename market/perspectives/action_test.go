@@ -11,7 +11,9 @@ import (
 func TestActionFromMeasurement(t *testing.T) {
 	convey.Convey("Given a configured paper wallet", t, func() {
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.quote_currency", "EUR")
 		defer viper.Set("trading.paper.wallet_eur", 0)
+		defer viper.Set("market.quote_currency", "")
 
 		measurement := Measurement{
 			Symbol: "BTC/EUR",

@@ -39,8 +39,13 @@ func (search *TreeSearch) uct(parent, child *Node) float64 {
 	explore := search.explorationWeight * math.Sqrt(
 		math.Log(float64(parent.visits))/float64(child.visits),
 	)
+	discount := child.uctDiscount
 
-	return exploit + explore
+	if discount <= 0 {
+		discount = 1
+	}
+
+	return (exploit + explore) * discount
 }
 
 func (search *TreeSearch) expand(node *Node) *Node {
@@ -56,9 +61,10 @@ func (search *TreeSearch) expand(node *Node) *Node {
 	childBranches := search.applyMove(node.branches, move)
 
 	child := &Node{
-		branches: childBranches,
-		parent:   node,
-		untried:  search.moves(childBranches),
+		branches:    childBranches,
+		parent:      node,
+		untried:     search.moves(childBranches),
+		uctDiscount: move.uctDiscount,
 	}
 
 	node.children = append(node.children, child)

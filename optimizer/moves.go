@@ -48,6 +48,8 @@ var (
 
 /*
 Move is one MCTS expansion that appends a gated branch.
+Theoretical moves explore out-of-distribution category chains with a UCT
+discount so the search maps survival responses without exhausting budget.
 */
 type Move struct {
 	depth       int
@@ -58,4 +60,6 @@ type Move struct {
 	unit        perspectives.UnitType
 	value       float64
 	action      perspectives.ActionType
+	theoretical bool
+	uctDiscount float64
 }

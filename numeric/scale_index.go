@@ -15,8 +15,12 @@ func NewScaleIndex(index int) *ScaleIndex {
 }
 
 func (scale *ScaleIndex) Next(out float64, values ...float64) (float64, error) {
-	if out <= 0 || scale.index >= len(values) || values[scale.index] <= 0 {
+	if scale.index >= len(values) || values[scale.index] <= 0 {
 		return 0, nil
+	}
+
+	if out <= 0 {
+		return values[scale.index], nil
 	}
 
 	return out * values[scale.index], nil

@@ -92,19 +92,16 @@ func normalizeGuardOptions(
 }
 
 /*
-AdjustedScore subtracts a small penalty per reasoning step so equally
-profitable shallow trees beat over-specific deep ones.
+AdjustedScore subtracts an adaptive selectivity penalty per reasoning gate so
+equally profitable shallow trees beat over-specific deep ones, while waiving
+tax on gates that split the tape with genuine discriminatory power.
 */
 func (guard *OverfitGuard) AdjustedScore(
 	rawScore float64, branches perspectives.BranchList,
 ) float64 {
-	if guard.options.ComplexityPenalty <= 0 {
-		return rawScore
-	}
+	penalty := guard.adaptiveComplexityPenalty(branches)
 
-	depth := reasoningDepth(branches)
-
-	return rawScore - float64(depth)*guard.options.ComplexityPenalty
+	return rawScore - penalty
 }
 
 /*
@@ -180,11 +177,13 @@ func (guard *OverfitGuard) ImprovesPersistedBest(
 
 /*
 WalkForwardResult summarizes holdout performance across rolling windows.
+RegimeWins counts windows that pass regime-stratified holdout testing.
 */
 type WalkForwardResult struct {
 	Wins         int
 	Windows      int
 	HoldoutTotal float64
+	RegimeWins   int
 }
 
 func (result WalkForwardResult) AvgTestPerTrade() float64 {
@@ -214,37 +213,25 @@ func (guard *OverfitGuard) EvaluateWalkForward(
 	}
 
 	result := WalkForwardResult{Windows: len(windows)}
+	regimeTags := TagRowRegimes(rows)
 
 	for _, window := range windows {
-		trainRows := rows[window.TrainStart:window.TrainEnd]
-		testRows := rows[window.TestStart:window.TestEnd]
+		chronoWin, chronoPerTrade := guard.evaluateChronologicalWindow(
+			branches, rows, window,
+		)
 
-		trainResult := NewReplaySimulationWithTape(
-			guard.ctx, branches, PrecompileTape(trainRows),
-		).Result()
-		testResult := NewReplaySimulationWithTape(
-			guard.ctx, branches, PrecompileTape(testRows),
-		).Result()
-
-		if trainResult.ClosedTrades == 0 || testResult.ClosedTrades == 0 {
-			continue
+		if chronoWin {
+			result.Wins++
+			result.HoldoutTotal += chronoPerTrade
 		}
 
-		trainPerTrade := trainResult.ReturnPerTrade()
-		testPerTrade := testResult.ReturnPerTrade()
+		regimeWin, _ := guard.evaluateRegimeStratifiedWindow(
+			branches, rows, regimeTags, window,
+		)
 
-		if testPerTrade <= 0 {
-			continue
+		if regimeWin {
+			result.RegimeWins++
 		}
-
-		decay := holdoutDecay(trainPerTrade, testPerTrade)
-
-		if decay > guard.options.WalkForward.MaxHoldoutDecay {
-			continue
-		}
-
-		result.Wins++
-		result.HoldoutTotal += testPerTrade
 	}
 
 	return result
@@ -264,11 +251,17 @@ func (guard *OverfitGuard) ValidateWalkForward(
 		return true, 0
 	}
 
+	effectiveWins := result.Wins
+
+	if result.RegimeWins > effectiveWins {
+		effectiveWins = result.RegimeWins
+	}
+
 	minWins := int(
 		math.Ceil(float64(result.Windows) * guard.options.WalkForward.MinWinRate),
 	)
 
-	return result.Wins >= minWins, result.HoldoutTotal
+	return effectiveWins >= minWins, result.HoldoutTotal
 }
 
 func (guard *OverfitGuard) replayResult(

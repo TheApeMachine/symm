@@ -23,6 +23,8 @@ func (search *TreeSearch) scoreBranches(branches perspectives.BranchList) float6
 
 func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 	branches := node.branches.Clone()
+	adversarial := search.budget.AdversarialRolloutInterval > 0 &&
+		(iteration+1)%search.budget.AdversarialRolloutInterval == 0
 
 	for step := 0; step < search.maxReasoningSteps; step++ {
 		moves := search.reachableMoves(search.allMoves(), branches)
@@ -31,7 +33,14 @@ func (search *TreeSearch) rollout(iteration int, node *Node) float64 {
 			break
 		}
 
-		move := search.sampleRolloutMove(moves, branches)
+		var move Move
+
+		if adversarial && step == 0 {
+			move = search.sampleAdversarialMove(moves, branches)
+		} else {
+			move = search.sampleRolloutMove(moves, branches)
+		}
+
 		branches = search.applyMove(branches, move)
 	}
 

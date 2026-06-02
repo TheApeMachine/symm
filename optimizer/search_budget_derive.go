@@ -211,3 +211,59 @@ func deriveWalkForwardOptions(
 
 	return options
 }
+
+func deriveComplexityPenalty(
+	profile *Profile,
+	tape ReplayTape,
+	maxReasoningSteps int,
+) float64 {
+	if profile.Len() == 0 || maxReasoningSteps <= 0 {
+		return 0
+	}
+
+	rewardScale := deriveMCTSRewardScale(profile)
+
+	if rewardScale <= 0 {
+		return 0
+	}
+
+	sqrtRows := math.Sqrt(float64(max(1, tape.Len())))
+
+	return 1 / (rewardScale * sqrtRows * float64(maxReasoningSteps))
+}
+
+func deriveNearMissTickJitter(tickCount int) int {
+	if tickCount <= 1 {
+		return 1
+	}
+
+	jitter := int(math.Ceil(math.Sqrt(float64(tickCount))))
+
+	if jitter < 1 {
+		return 1
+	}
+
+	return jitter
+}
+
+func deriveTheoreticalUCTDiscount(beamWidth int) float64 {
+	if beamWidth <= 0 {
+		return 0.25
+	}
+
+	return 1 / math.Sqrt(float64(beamWidth))
+}
+
+func deriveAdversarialRolloutInterval(iterations int, beamWidth int) int {
+	if iterations <= 0 || beamWidth <= 0 {
+		return 0
+	}
+
+	interval := iterations / (beamWidth * 2)
+
+	if interval < 1 {
+		return 1
+	}
+
+	return interval
+}

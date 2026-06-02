@@ -2,6 +2,7 @@ package market
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -45,4 +46,21 @@ func RequiredFloat(key string) (float64, error) {
 	}
 
 	return value, nil
+}
+
+func RequiredPaperWallet() (float64, error) {
+	quote, err := RequiredQuoteCurrency()
+
+	if err != nil {
+		return 0, err
+	}
+
+	key := "trading.paper.wallet_" + strings.ToLower(quote)
+	wallet := viper.GetFloat64(key)
+
+	if wallet <= 0 {
+		return 0, fmt.Errorf("%s must be positive", key)
+	}
+
+	return wallet, nil
 }

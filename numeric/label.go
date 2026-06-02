@@ -23,7 +23,7 @@ func NewLabelTap(classifier *adaptive.Classifier) *LabelTap {
 }
 
 func (label *LabelTap) Next(out float64, values ...float64) (float64, error) {
-	move, err := label.move.Next(0, values[len(values)-2], values[len(values)-1])
+	move, err := label.move.Next(0, values[len(values)-1], values[len(values)-2])
 
 	if err != nil {
 		return out, err

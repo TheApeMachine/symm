@@ -24,12 +24,13 @@ type MCTSOptions struct {
 Node is one position in the branch-construction search tree.
 */
 type Node struct {
-	branches perspectives.BranchList
-	parent   *Node
-	children []*Node
-	visits   int
-	value    float64
-	untried  []Move
+	branches    perspectives.BranchList
+	parent      *Node
+	children    []*Node
+	visits      int
+	value       float64
+	untried     []Move
+	uctDiscount float64
 }
 
 /*

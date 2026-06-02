@@ -121,21 +121,49 @@ func TestReasoningDepth(t *testing.T) {
 }
 
 func TestOverfitGuardAdjustedScore(t *testing.T) {
-	convey.Convey("Given equal profit at different reasoning depth", t, func() {
+	convey.Convey("Given equal profit with selective shallow vs extreme deep gates", t, func() {
+		profile := Profile{ctx: context.Background()}
+
+		for index := range 100 {
+			snr := 0.01
+
+			if index >= 50 {
+				snr = 2
+			}
+
+			profile.Add(perspectives.Measurement{
+				Category: perspectives.CategoryLaminar,
+				SNR:      snr,
+			})
+		}
+
+		profile.PrepareCache()
 		guard := NewOverfitGuard(context.Background(), GuardOptions{
-			ComplexityPenalty: 0.01,
-		}, ReplayTape{}, nil)
+			ComplexityPenalty: 0.05,
+		}, ReplayTape{}, &profile)
 		shallow := perspectives.BranchList{{
-			Category: perspectives.CategoryLaminar,
+			Category:  perspectives.CategoryLaminar,
+			Condition: perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:      perspectives.UnitSNR,
+			Value:     1,
+			ValueSet:  true,
 		}}
 		deep := perspectives.BranchList{{
-			Category: perspectives.CategoryLaminar,
-			Branches: []perspectives.Branch{
-				{Category: perspectives.CategoryExhaustion},
-			},
+			Category:  perspectives.CategoryLaminar,
+			Condition: perspectives.ConditionIsGreaterThanOrEqual,
+			Unit:      perspectives.UnitSNR,
+			Value:     0.01,
+			ValueSet:  true,
+			Branches: []perspectives.Branch{{
+				Category:  perspectives.CategoryLaminar,
+				Condition: perspectives.ConditionIsGreaterThanOrEqual,
+				Unit:      perspectives.UnitSNR,
+				Value:     0.01,
+				ValueSet:  true,
+			}},
 		}}
 
-		convey.Convey("It should prefer the shallower tree", func() {
+		convey.Convey("It should prefer the shallower selective tree", func() {
 			shallowScore := guard.AdjustedScore(0.10, shallow)
 			deepScore := guard.AdjustedScore(0.10, deep)
 			convey.So(shallowScore, convey.ShouldBeGreaterThan, deepScore)

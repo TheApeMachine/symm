@@ -1,32 +1,20 @@
 version: 1
 branches:
     - branches:
-        - branches:
-            - branches:
-                - category: mechanical_collapse
-                  observation: not_holding
-                  condition: '>='
-                  unit: snr
-                  value: 0.9872860295872437
-                  value_set: true
-                  action:
-                    type: limit
-              category: liquidity_vacuum
-              condition: '>='
-              unit: snr
-              value: 1.0118653269228077
-              value_set: true
-          category: liquidity_vacuum
-          condition: <
+        - category: volume_starvation
+          observation: not_holding
+          condition: '>='
           unit: snr
-          value: 1.0118700422412632
+          value: 0
           value_set: true
-      category: thermal_exhaustion
-      condition: '>'
-      unit: confidence
-      value: 29.07248943585229
+          action:
+            type: limit
+      category: liquidity_vacuum
+      condition: '>='
+      unit: snr
+      value: 0.3699086224945151
       value_set: true
-    - category: systemic_herd
+    - category: median_depth
       observation: holding
       condition: '>='
       unit: snr

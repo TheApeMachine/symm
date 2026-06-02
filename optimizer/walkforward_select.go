@@ -34,6 +34,11 @@ func SelectWalkForwardBest(
 
 		result := guard.EvaluateWalkForward(candidate.Branches, rows)
 		wins := result.Wins
+
+		if result.RegimeWins > wins {
+			wins = result.RegimeWins
+		}
+
 		holdout := result.AvgTestPerTrade()
 		adjusted := candidate.AdjustedScore
 

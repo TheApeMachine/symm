@@ -30,22 +30,17 @@ func NewBalances(
 	identifier *Identifier,
 	catalog *PairCatalog,
 ) *Balances {
-	quote := viper.GetViper().GetString("market.quote_currency")
-
-	if quote == "" {
-		quote = "EUR"
-	}
+	quote := strings.TrimSpace(viper.GetViper().GetString("market.quote_currency"))
 
 	assets := make(map[string]float64)
-	quoteKey := "trading.paper.wallet_" + strings.ToLower(quote)
-	seed := viper.GetViper().GetFloat64(quoteKey)
 
-	if seed <= 0 && strings.EqualFold(quote, "EUR") {
-		seed = viper.GetViper().GetFloat64("trading.paper.wallet_eur")
-	}
+	if quote != "" {
+		quoteKey := "trading.paper.wallet_" + strings.ToLower(quote)
+		seed := viper.GetViper().GetFloat64(quoteKey)
 
-	if seed > 0 {
-		assets[quote] = seed
+		if seed > 0 {
+			assets[quote] = seed
+		}
 	}
 
 	return &Balances{

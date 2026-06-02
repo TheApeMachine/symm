@@ -11,11 +11,11 @@ import (
 func TestExitScoreLong(t *testing.T) {
 	Convey("Given deteriorating long-side book history", t, func() {
 		history := symbolHistory{
-			bidDepths:  ring.FloatRing{},
-			spreads:    ring.FloatRing{},
-			pressures:  ring.FloatRing{},
-			imbalances: ring.FloatRing{},
-			densities:  ring.FloatRing{},
+			bidDepths:  ring.NewFloatRing(exitHistoryCap),
+			spreads:    ring.NewFloatRing(exitHistoryCap),
+			pressures:  ring.NewFloatRing(exitHistoryCap),
+			imbalances: ring.NewFloatRing(exitHistoryCap),
+			densities:  ring.NewFloatRing(exitHistoryCap),
 		}
 
 		for _, value := range []float64{10, 10, 10, 10, 8, 6} {

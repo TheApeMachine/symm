@@ -26,7 +26,7 @@ func TestHistoryStoreObserve(t *testing.T) {
 
 func TestDepthTrend(t *testing.T) {
 	Convey("Given shrinking depth samples", t, func() {
-		samples := ring.FloatRing{}
+		samples := ring.NewFloatRing(exitHistoryCap)
 		for _, value := range []float64{10, 10, 10, 10, 8, 6} {
 			samples.Push(value)
 		}

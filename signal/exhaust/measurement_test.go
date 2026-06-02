@@ -11,11 +11,11 @@ import (
 func TestExhaustMeasurement(t *testing.T) {
 	Convey("Given warmed exit history", t, func() {
 		history := symbolHistory{
-			bidDepths:  ring.FloatRing{},
-			spreads:    ring.FloatRing{},
-			pressures:  ring.FloatRing{},
-			imbalances: ring.FloatRing{},
-			densities:  ring.FloatRing{},
+			bidDepths:  ring.NewFloatRing(exitHistoryCap),
+			spreads:    ring.NewFloatRing(exitHistoryCap),
+			pressures:  ring.NewFloatRing(exitHistoryCap),
+			imbalances: ring.NewFloatRing(exitHistoryCap),
+			densities:  ring.NewFloatRing(exitHistoryCap),
 			tracked:    perspectives.NewCategory(perspectives.CategoryTypeNone),
 		}
 

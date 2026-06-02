@@ -19,51 +19,76 @@ func (search *TreeSearch) branchFromMove(move Move) perspectives.Branch {
 	}
 }
 
+func (search *TreeSearch) moveReachability(
+	move Move, branches perspectives.BranchList,
+) (allowed bool, theoretical bool, uctDiscount float64) {
+	if search.profile.categoryCount(move.category) == 0 {
+		return false, false, 0
+	}
+
+	if search.profile.GatePassCount(
+		move.category, move.unit, move.condition, move.value,
+	) <= 0 {
+		return false, false, 0
+	}
+
+	if search.coOccurrence == nil {
+		return true, false, 1
+	}
+
+	chain := search.moveChainCategories(move, branches)
+	hard, nearMiss := search.coOccurrence.ChainReachability(
+		chain, search.budget.NearMissTickJitter,
+	)
+
+	if hard {
+		return true, false, 1
+	}
+
+	if nearMiss {
+		discount := search.budget.TheoreticalUCTDiscount
+
+		if discount <= 0 {
+			discount = 0.25
+		}
+
+		return true, true, discount
+	}
+
+	return false, false, 0
+}
+
+func (search *TreeSearch) moveChainCategories(
+	move Move, branches perspectives.BranchList,
+) []perspectives.CategoryType {
+	switch move.observation {
+	case perspectives.ObservationNone:
+		return append(entryPathCategories(branches), move.category)
+	case perspectives.ObservationNotHolding:
+		if len(branches) == 0 {
+			return []perspectives.CategoryType{move.category}
+		}
+
+		return append(entryPathCategories(branches), move.category)
+	case perspectives.ObservationHolding:
+		return []perspectives.CategoryType{move.category}
+	default:
+		return append(categoriesInBranchList(branches), move.category)
+	}
+}
+
 func (search *TreeSearch) moveReachable(
 	move Move, branches perspectives.BranchList,
 ) bool {
-	if search.profile.categoryCount(move.category) == 0 {
-		return false
-	}
+	allowed, _, _ := search.moveReachability(move, branches)
 
-	if search.coOccurrence != nil {
-		if !search.moveChainReachable(move, branches) {
-			return false
-		}
-	}
-
-	return search.profile.GatePassCount(
-		move.category, move.unit, move.condition, move.value,
-	) > 0
+	return allowed
 }
 
 func (search *TreeSearch) moveChainReachable(
 	move Move, branches perspectives.BranchList,
 ) bool {
-	switch move.observation {
-	case perspectives.ObservationNone:
-		return search.coOccurrence.ChainReachable(
-			append(entryPathCategories(branches), move.category),
-		)
-	case perspectives.ObservationNotHolding:
-		if len(branches) == 0 {
-			return search.coOccurrence.ChainReachable(
-				[]perspectives.CategoryType{move.category},
-			)
-		}
-
-		return search.coOccurrence.ChainReachable(
-			append(entryPathCategories(branches), move.category),
-		)
-	case perspectives.ObservationHolding:
-		return search.coOccurrence.CategoriesReachable(
-			[]perspectives.CategoryType{move.category},
-		)
-	default:
-		return search.coOccurrence.ChainReachable(
-			append(categoriesInBranchList(branches), move.category),
-		)
-	}
+	return search.moveReachable(move, branches)
 }
 
 func (search *TreeSearch) moveCompatible(
@@ -129,7 +154,9 @@ func (search *TreeSearch) reachableMoves(
 	reachable := make([]Move, 0, len(moves))
 
 	for _, move := range moves {
-		if !search.moveReachable(move, branches) {
+		allowed, theoretical, uctDiscount := search.moveReachability(move, branches)
+
+		if !allowed {
 			continue
 		}
 
@@ -137,6 +164,8 @@ func (search *TreeSearch) reachableMoves(
 			continue
 		}
 
+		move.theoretical = theoretical
+		move.uctDiscount = uctDiscount
 		reachable = append(reachable, move)
 	}
 

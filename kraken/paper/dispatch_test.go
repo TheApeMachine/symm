@@ -12,6 +12,7 @@ import (
 )
 
 func TestWebSocketMarksDeskReadyAtBoot(t *testing.T) {
+	trading.ResetDeskReady()
 	t.Cleanup(trading.ResetDeskReady)
 
 	Convey("Given a paper websocket constructed before engine start", t, func() {
@@ -20,6 +21,7 @@ func TestWebSocketMarksDeskReadyAtBoot(t *testing.T) {
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.quote_currency", "EUR")
 		t.Cleanup(viper.Reset)
 
 		So(trading.DeskReady(), ShouldBeFalse)

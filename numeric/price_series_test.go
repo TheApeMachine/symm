@@ -29,7 +29,7 @@ func TestPriceSampleRingPush(t *testing.T) {
 
 func TestSynchronizedLogReturns(t *testing.T) {
 	Convey("Given overlapping price windows", t, func() {
-		start := time.Now()
+		start := time.Now().Truncate(time.Minute)
 		left := []PriceSample{
 			{At: start, Price: 100},
 			{At: start.Add(time.Minute), Price: 101},
