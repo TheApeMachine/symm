@@ -8,31 +8,9 @@ import (
 )
 
 const (
-	// DefaultTakerFeePct is Kraken spot taker fee at the lowest volume tier (0.40%).
-	DefaultTakerFeePct = 0.004
-	// DefaultSlippagePct is half-spread crossing per side (5 bps).
-	DefaultSlippagePct = 0.0005
 	// DefaultReentryTickCooldown suppresses immediate re-entry churn on dense tapes.
 	DefaultReentryTickCooldown = 500
 )
-
-/*
-ReplayCosts models per-side execution drag for offline replay scoring.
-*/
-type ReplayCosts struct {
-	TakerFeePct float64
-	SlippagePct float64
-}
-
-/*
-DefaultReplayCosts returns conservative Kraken spot assumptions for tuning.
-*/
-func DefaultReplayCosts() ReplayCosts {
-	return ReplayCosts{
-		TakerFeePct: DefaultTakerFeePct,
-		SlippagePct: DefaultSlippagePct,
-	}
-}
 
 /*
 ReplaySimulation walks a candidate tree across collected replay measurements.

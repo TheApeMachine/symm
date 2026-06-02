@@ -15,6 +15,10 @@ trading:
     file: runs/capture.jsonl
   paper:
     wallet_eur: 200
+    # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.
+    taker_fee_pct: 0.26
+    maker_fee_pct: 0.16
+    slippage_bps: 5
 
 optimizer:
   tune:

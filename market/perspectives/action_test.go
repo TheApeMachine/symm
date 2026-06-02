@@ -38,6 +38,20 @@ func TestActionFromMeasurement(t *testing.T) {
 	})
 }
 
+func TestIsMakerAction(t *testing.T) {
+	convey.Convey("Given playbook action types", t, func() {
+		convey.Convey("It should treat resting limit entries as maker", func() {
+			convey.So(IsMakerAction(ActionLimit), convey.ShouldBeTrue)
+			convey.So(IsMakerAction(ActionIceberg), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("It should treat market exits as taker", func() {
+			convey.So(IsMakerAction(ActionSettlePosition), convey.ShouldBeFalse)
+			convey.So(IsMakerAction(ActionStopLoss), convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestOrderTypeFromActionType(t *testing.T) {
 	convey.Convey("Given playbook action types", t, func() {
 		convey.Convey("It should map limit actions to Kraken limit orders", func() {

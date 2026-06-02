@@ -12,8 +12,8 @@ LOG_DIR ?= runs
 TUNE_WORKERS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)
 TUNE_MAX_THRESHOLDS ?= 128
 TUNE_BEAM_WIDTH ?= 256
-TUNE_CANDIDATE_LIMIT ?= 10000
-TUNE_MAX_MEASUREMENTS ?= 250000
+TUNE_CANDIDATE_LIMIT ?= 2000
+TUNE_MAX_MEASUREMENTS ?= 500000
 
 RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
@@ -98,7 +98,8 @@ tune: build
 		--max-thresholds $(TUNE_MAX_THRESHOLDS) \
 		--beam-width $(TUNE_BEAM_WIDTH) \
 		--candidate-limit $(TUNE_CANDIDATE_LIMIT) \
-		--max-measurements $(TUNE_MAX_MEASUREMENTS)
+		--max-measurements $(TUNE_MAX_MEASUREMENTS) \
+		--shallow-depth 2
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

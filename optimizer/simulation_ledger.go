@@ -152,7 +152,12 @@ func (ledger *replayLedger) apply(
 
 	switch actionType {
 	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
-		ledger.openLong(measurement.Symbol, measurement.Last, measurement.SpreadBPS)
+		ledger.openLong(
+			measurement.Symbol,
+			measurement.Last,
+			measurement.SpreadBPS,
+			ledger.costs.feePct(actionType),
+		)
 	case perspectives.ActionSettlePosition,
 		perspectives.ActionStopLoss,
 		perspectives.ActionStopLossLimit,
@@ -160,13 +165,23 @@ func (ledger *replayLedger) apply(
 		perspectives.ActionTakeProfitLimit,
 		perspectives.ActionTrailingStop,
 		perspectives.ActionTrailingStopLimit:
-		ledger.closeLong(measurement.Symbol, measurement.Last, measurement.SpreadBPS)
+		ledger.closeLong(
+			measurement.Symbol,
+			measurement.Last,
+			measurement.SpreadBPS,
+			ledger.costs.feePct(actionType),
+		)
 	case perspectives.ActionNone:
 		return
 	}
 }
 
-func (ledger *replayLedger) openLong(symbol string, price float64, spreadBPS float64) {
+func (ledger *replayLedger) openLong(
+	symbol string,
+	price float64,
+	spreadBPS float64,
+	feePct float64,
+) {
 	if _, open := ledger.positions[symbol]; open {
 		return
 	}
@@ -184,11 +199,16 @@ func (ledger *replayLedger) openLong(symbol string, price float64, spreadBPS flo
 		quantity:   1,
 	}
 
-	ledger.realized -= ledger.costs.TakerFeePct
+	ledger.realized -= feePct
 	delete(ledger.ticksSinceClose, symbol)
 }
 
-func (ledger *replayLedger) closeLong(symbol string, price float64, spreadBPS float64) {
+func (ledger *replayLedger) closeLong(
+	symbol string,
+	price float64,
+	spreadBPS float64,
+	feePct float64,
+) {
 	position, open := ledger.positions[symbol]
 
 	if !open || position.entryPrice <= 0 {
@@ -199,7 +219,7 @@ func (ledger *replayLedger) closeLong(symbol string, price float64, spreadBPS fl
 	exitFill := price * (1 - slippagePct)
 	gross := (exitFill - position.entryPrice) / position.entryPrice
 
-	ledger.realized += gross - ledger.costs.TakerFeePct
+	ledger.realized += gross - feePct
 	ledger.closedTrades++
 	delete(ledger.positions, symbol)
 	ledger.ticksSinceClose[symbol] = 0

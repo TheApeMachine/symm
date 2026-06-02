@@ -49,7 +49,11 @@ func TestReplaySimulationFeesRejectSubPercentScalps(t *testing.T) {
 			},
 		}
 
-		withFees := NewReplaySimulation(ctx, branches, rows).Score()
+		withFees := NewReplaySimulationWithCosts(ctx, branches, rows, ReplayCosts{
+			MakerFeePct: 0.004,
+			TakerFeePct: 0.004,
+			SlippagePct: DefaultSlippageBps / 10000.0,
+		}).Score()
 		withoutFees := NewReplaySimulationWithCosts(
 			ctx, branches, rows, ReplayCosts{},
 		).Score()

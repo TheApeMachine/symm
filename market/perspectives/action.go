@@ -125,6 +125,20 @@ func ActionFromMeasurement(
 }
 
 /*
+IsMakerAction reports whether paper/Kraken would classify the fill as maker.
+Only resting limit entries match kraken/paper order execution today.
+*/
+func IsMakerAction(actionType ActionType) bool {
+	orderType, err := OrderTypeFromActionType(actionType)
+
+	if err != nil {
+		return false
+	}
+
+	return orderType == trading.Limit
+}
+
+/*
 OrderTypeFromActionType maps a playbook action to the Kraken order_type string.
 */
 func OrderTypeFromActionType(actionType ActionType) (trading.OrderType, error) {
