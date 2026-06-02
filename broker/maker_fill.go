@@ -20,6 +20,7 @@ func NewMakerQueueState(
 	side trading.Side,
 	limitPrice float64,
 	activeAtUnixNano int64,
+	tickSize float64,
 ) MakerQueueState {
 	levels := quote.Book.Bids
 
@@ -28,14 +29,28 @@ func NewMakerQueueState(
 	}
 
 	return MakerQueueState{
-		QueueAhead: BookLevelQty(levels, limitPrice),
+		QueueAhead: BookLevelQty(levels, limitPrice, tickSize),
 		ActiveAt:   activeAtUnixNano,
 	}
 }
 
-func BookLevelQty(levels []market.BookLevel, price float64) float64 {
+func priceTickIndex(price, tickSize float64) int64 {
+	if tickSize <= 0 {
+		return 0
+	}
+
+	return int64(math.Round(price / tickSize))
+}
+
+func BookLevelQty(levels []market.BookLevel, price float64, tickSize float64) float64 {
+	if tickSize <= 0 {
+		return 0
+	}
+
+	targetTick := priceTickIndex(price, tickSize)
+
 	for _, level := range levels {
-		if level.Price == price {
+		if priceTickIndex(level.Price, tickSize) == targetTick {
 			return level.Qty
 		}
 	}
@@ -96,6 +111,7 @@ func MakerAdverseSelectionBps(
 	quote Quote,
 	trade market.TradeUpdate,
 	limitPrice float64,
+	tickSize float64,
 ) float64 {
 	spreadBps := MidSpreadBps(quote) * 2
 
@@ -103,7 +119,7 @@ func MakerAdverseSelectionBps(
 		return 0
 	}
 
-	levelQty := BookLevelQty(queueSideLevels(quote, side), limitPrice)
+	levelQty := BookLevelQty(queueSideLevels(quote, side), limitPrice, tickSize)
 
 	if levelQty <= 0 {
 		return spreadBps
@@ -130,8 +146,9 @@ func MakerRestingFillPrice(
 	limitPrice float64,
 	quote Quote,
 	trade market.TradeUpdate,
+	tickSize float64,
 ) (float64, float64) {
-	adverseBps := MakerAdverseSelectionBps(side, quote, trade, limitPrice)
+	adverseBps := MakerAdverseSelectionBps(side, quote, trade, limitPrice, tickSize)
 	fillPrice := limitPrice
 
 	if side == trading.Buy {

@@ -337,7 +337,7 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run 
 
 ### Paper / live parity
 
-Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping RTT (persisted to `runs/network_latency.json` for optimizer replay). Post-only limits rest on the simulated book with L2 queue position ahead of the order, become active after one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
+Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping p95 RTT (persisted to `runs/network_latency.json` for optimizer replay). Taker fills snapshot the quote only after one-way latency from submission — the book the order could actually reach — not the quote visible at click time. Post-only limits rest on the simulated book with L2 queue position ahead of the order (matched by tick index, not float equality), become active after p95 one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
 
 Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`kraken/paper/catalog.go`). The trader marks a symbol as holding only after an execution fill (not on open ack), publishes `AvgEntry` and `Marks` on wallet frames for the frontend Trades panel, and keeps entry pending locks until fill or reject.
 
@@ -386,7 +386,7 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 - it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
 - each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
 - replay scoring applies optional execution stress: derived 50–200ms fill latency from tape cadence (`trading.replay.execution_latency_ms` to override) and expanded slippage when snapshot categories indicate turbulence or liquidity stress (`trading.replay.execution_stress_enabled`, default on)
-- measured Kraken ping RTT is persisted to `trading.paper.latency_profile` (`runs/network_latency.json`); optimizer replay uses that RTT in scoring math without sleeping, while paper mode defers every simulated exchange response by the live round-trip
+- measured Kraken ping RTT is persisted to `trading.paper.latency_profile` (`runs/network_latency.json`) with p95 one-way latency for activation and fill timing; optimizer replay uses that p95 RTT in scoring math without sleeping, while paper mode defers every simulated exchange response by the live p95 round-trip
 - limit (maker) replay entries also pay adverse-selection slippage derived from spread and stress context, matching the pessimistic paper matcher rather than filling at limit with zero drag
 - the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
 
@@ -540,6 +540,7 @@ make build          # → bin/symm
 make run            # build + run (paper defaults)
 make audit          # like run, plus JSONL desk audit log (off by default)
 make test-go        # full test suite
+make test-e2e       # replay-backed integration harness → runs/e2e-report.json
 make test-frontend  # TypeScript check (src/lib/symm) + Vitest
 make test-cover     # coverage report → runs/coverage.out
 make bench          # package benchmarks
@@ -578,6 +579,10 @@ Replay-only profiling (no search):
 ```bash
 make profile-replay REPLAY_FILE=runs/capture.jsonl
 ```
+
+### Integration harness (`integration/`)
+
+`make test-e2e` runs a replay-backed end-to-end harness: synthetic JSONL market data is played through `kraken/replay`, forwarded onto the shared `raw` bus, and exercised by the same signal → story → paper-trader stack used in production. Scenarios cover every measurement source (CVD, fluid, hawkes, depthflow, sentiment, correlation, causal, leadlag, liquidity, exhaust, pumpdump, toxicity), playbook entry/exit audits, paper fill inventory updates, and black-swan crash recovery. Granular pass/fail output is written to `runs/e2e-report.json` and echoed in the test log.
 
 > [!WARNING]
 > Bare `go test ./...` without the linkname flag fails at link time. Either use `make test-go`, or run once per shell:

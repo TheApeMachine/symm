@@ -19,7 +19,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-frontend bench run audit tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -29,6 +29,10 @@ test: test-go test-race test-frontend
 
 test-go:
 	go test ./...
+
+test-e2e:
+	@mkdir -p runs
+	go test $(LDFLAGS) ./integration/... -count=1 -timeout 300s
 
 test-race:
 ifeq ($(shell uname -s),Darwin)

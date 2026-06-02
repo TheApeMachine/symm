@@ -113,6 +113,8 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 		return rejectedExecution(clOrdID, "post-only order would take liquidity")
 	}
 
+	meta := orders.catalog.Meta(params.Symbol)
+
 	order := &openOrder{
 		orderID:    orders.identifier.OrderID(),
 		clOrdID:    clOrdID,
@@ -127,6 +129,7 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 			params.Side,
 			params.LimitPrice,
 			time.Now().Add(public.SharedNetworkLatency().OneWay()).UnixNano(),
+			meta.tickSize,
 		),
 	}
 

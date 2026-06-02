@@ -10,19 +10,36 @@ import (
 )
 
 func (ws *WebSocket) scheduleExchangeDelivery(delivery func()) {
+	ws.scheduleAfter(public.SharedNetworkLatency().ExchangeRoundTrip(), delivery)
+}
+
+func (ws *WebSocket) scheduleAfter(delay time.Duration, delivery func()) {
 	if delivery == nil {
 		return
 	}
 
-	roundTrip := public.SharedNetworkLatency().ExchangeRoundTrip()
-
-	if roundTrip <= 0 {
+	if delay <= 0 {
 		delivery()
 
 		return
 	}
 
-	time.AfterFunc(roundTrip, delivery)
+	time.AfterFunc(delay, delivery)
+}
+
+func (ws *WebSocket) broadcastExecution(out public.SocketMessage) {
+	if out.Channel == "" {
+		return
+	}
+
+	activate.Once("kraken/paper:channel:" + out.Channel)
+
+	if channel := ws.broadcasts["raw"]; channel != nil {
+		channel.Send(&qpool.QValue[any]{
+			Type:  out.Channel,
+			Value: out,
+		})
+	}
 }
 
 func (ws *WebSocket) deliverPrivateResponse(
@@ -56,14 +73,7 @@ func (ws *WebSocket) deliverExecution(out public.SocketMessage) {
 		return
 	}
 
-	activate.Once("kraken/paper:channel:" + out.Channel)
-
 	ws.scheduleExchangeDelivery(func() {
-		if channel := ws.broadcasts["raw"]; channel != nil {
-			channel.Send(&qpool.QValue[any]{
-				Type:  out.Channel,
-				Value: out,
-			})
-		}
+		ws.broadcastExecution(out)
 	})
 }

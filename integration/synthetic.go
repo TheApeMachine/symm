@@ -184,12 +184,155 @@ func (builder *CaptureBuilder) AppendSentimentSlumpCrossSection() {
 	builder.AppendTicker(testSymbolPrimary, 70, 69, 71, -2.5)
 }
 
+func (builder *CaptureBuilder) AppendTradeBurst(
+	symbol string, count int, startPrice, qty float64, side string,
+) {
+	trades := make([]market.TradeUpdate, 0, count)
+
+	for index := range count {
+		tradeSide := side
+
+		if side == "alternate" {
+			if index%2 == 0 {
+				tradeSide = "buy"
+			} else {
+				tradeSide = "sell"
+			}
+		}
+
+		trades = append(trades, market.TradeUpdate{
+			Symbol:    symbol,
+			Side:      tradeSide,
+			Price:     startPrice + float64(index)*0.01,
+			Qty:       qty + float64(index%5)*0.1,
+			OrdType:   "market",
+			TradeID:   int64(builder.tick*10000 + index),
+			Timestamp: builder.timestamp().Add(time.Duration(index) * 100 * time.Millisecond),
+		})
+	}
+
+	builder.appendFrame(public.TradesChannel, "update", trades)
+}
+
+func (builder *CaptureBuilder) AppendBookThinning(symbol string, frames int) {
+	for index := range frames {
+		depth := 20.0 - float64(index)*2
+		askPrice := 101.0 + float64(index)*0.5
+
+		book := market.Book{
+			Symbol: symbol,
+			Bids:   []market.BookLevel{{Price: 100, Qty: depth}},
+			Asks:   []market.BookLevel{{Price: askPrice, Qty: depth * 0.5}},
+			Timestamp: builder.timestampRFC3339(),
+		}
+		book.SetEnvelopeType(market.BookSnapshot)
+
+		builder.appendFrame(public.BookChannel, market.BookSnapshot, []market.Book{book})
+	}
+}
+
+func (builder *CaptureBuilder) AppendBookLevelShrink(
+	symbol string, bidPrice, prevQty, nextQty float64,
+) {
+	book := market.Book{
+		Symbol:    symbol,
+		Bids:      []market.BookLevel{{Price: bidPrice, Qty: nextQty}},
+		Asks:      []market.BookLevel{{Price: bidPrice + 2, Qty: 10}},
+		Timestamp: builder.timestampRFC3339(),
+	}
+	book.SetEnvelopeType(market.BookUpdate)
+
+	builder.appendFrame(public.BookChannel, market.BookUpdate, []market.Book{book})
+}
+
+func (builder *CaptureBuilder) AppendToxicityCancelWall(symbol string, mid float64) {
+	builder.AppendTicker(symbol, mid, mid-0.5, mid+0.5, 0)
+	builder.AppendBookSnapshot(symbol, mid-0.5, 100, mid+0.5, 10)
+	builder.AppendBookLevelShrink(symbol, mid-0.5, 100, 5)
+	builder.AppendBookLevelShrink(symbol, mid-0.5, 5, 0)
+}
+
+func (builder *CaptureBuilder) AppendLiquidityCrossSection() {
+	builder.AppendTicker(testSymbolPrimary, 10, 9.9, 10.1, 1)
+	builder.AppendTicker(testSymbolSecondary, 8, 7.9, 8.1, 0.5)
+	builder.AppendTicker(testSymbolLeader, 12, 11.9, 12.1, 2)
+	builder.AppendTicker(testSymbolPrimary, 10, 9.9, 10.1, 1)
+	builder.AppendTicker(testSymbolSecondary, 8, 7.9, 8.1, 0.5)
+	builder.AppendTicker(testSymbolLeader, 12, 11.9, 12.1, 2)
+}
+
+func (builder *CaptureBuilder) AppendPumpLift(symbol string, count int) {
+	for index := range count {
+		builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
+			Symbol:    symbol,
+			Side:      "buy",
+			Price:     10 + float64(index)*0.05,
+			Qty:       1.5 + float64(index)*0.25,
+			OrdType:   "market",
+			TradeID:   int64(builder.tick*1000 + index),
+			Timestamp: builder.timestamp().Add(time.Duration(index) * time.Millisecond),
+		}})
+	}
+}
+
+func (builder *CaptureBuilder) AppendDepthflowTape(symbol string) {
+	builder.AppendTicker(symbol, 100, 99, 101, 0.5)
+	builder.AppendBookSnapshot(symbol, 99, 8, 101, 4)
+	builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
+		Symbol: symbol, Side: "buy", Price: 100, Qty: 3,
+		Timestamp: builder.timestamp(),
+	}})
+}
+
+func (builder *CaptureBuilder) AppendCausalCrossSection() {
+	for _, symbol := range []string{testSymbolPrimary, testSymbolSecondary, testSymbolLeader} {
+		builder.AppendTicker(symbol, 100, 99, 101, 1)
+		builder.AppendBookSnapshot(symbol, 99, 8, 101, 6)
+		builder.AppendBuyTrades(symbol, 12, 100, 2)
+	}
+}
+
+func (builder *CaptureBuilder) AppendLeadLagStall() {
+	for range 24 {
+		builder.AppendTicker(testSymbolLeader, 100, 99, 101, 0)
+		builder.AppendTicker(testSymbolPrimary, 100+float64(builder.tick)*0.01, 99, 101, 0.5)
+	}
+}
+
+func (builder *CaptureBuilder) AppendCorrelationHerd() {
+	prices := map[string]float64{
+		testSymbolPrimary:   100,
+		testSymbolSecondary: 50,
+		testSymbolLeader:    75,
+	}
+
+	for range 40 {
+		for symbol, price := range prices {
+			builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
+				Symbol:    symbol,
+				Side:      "buy",
+				Price:     price,
+				Qty:       1,
+				Timestamp: builder.timestamp(),
+			}})
+			prices[symbol] = price * 1.01
+		}
+
+		builder.tick += 6
+	}
+}
+
 func (builder *CaptureBuilder) AppendBlackSwanCrash() {
-	builder.AppendTicker(testSymbolPrimary, 100, 99, 101, 0)
+	builder.AppendTicker(testSymbolLeader, 100, 99, 101, -1)
+	builder.AppendTicker(testSymbolSecondary, 80, 79, 81, -4)
+	builder.AppendTicker(testSymbolPrimary, 100, 99, 101, -0.5)
 	builder.AppendBookSnapshot(testSymbolPrimary, 99, 5, 101, 5)
-	builder.AppendTicker(testSymbolPrimary, 55, 50, 60, -45)
+	builder.AppendTicker(testSymbolPrimary, 55, 50, 60, -12)
+	builder.AppendTicker(testSymbolLeader, 70, 69, 71, -25)
+	builder.AppendTicker(testSymbolSecondary, 40, 39, 41, -50)
 	builder.AppendBookSnapshot(testSymbolPrimary, 50, 1, 60, 1)
 	builder.AppendSellTrade(testSymbolPrimary, 52, 25)
-	builder.AppendTicker(testSymbolPrimary, 58, 54, 62, -40)
+	builder.AppendTicker(testSymbolPrimary, 58, 54, 62, -11)
 	builder.AppendBookSnapshot(testSymbolPrimary, 54, 8, 62, 8)
+	builder.AppendSentimentSlumpCrossSection()
 }

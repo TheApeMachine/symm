@@ -13,8 +13,25 @@ func TestNetworkLatencyOneWay(t *testing.T) {
 		latency := NewNetworkLatency()
 		latency.RecordRTT(100 * time.Millisecond)
 
-		Convey("It should expose half RTT as one-way latency", func() {
+		Convey("It should expose p95 one-way latency", func() {
 			So(latency.OneWay(), ShouldEqual, 50*time.Millisecond)
+		})
+	})
+
+	Convey("Given a latency burst in the tail", t, func() {
+		latency := NewNetworkLatency()
+
+		for range 20 {
+			latency.RecordRTT(100 * time.Millisecond)
+		}
+
+		for range 5 {
+			latency.RecordRTT(200 * time.Millisecond)
+		}
+
+		Convey("It should use p95 RTT instead of the mean", func() {
+			So(latency.OneWay(), ShouldEqual, 100*time.Millisecond)
+			So(latency.OneWay(), ShouldBeGreaterThan, latency.MeanRTT()/2)
 		})
 	})
 

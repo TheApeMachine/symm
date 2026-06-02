@@ -20,7 +20,7 @@ func TestIntegrationE2E(t *testing.T) {
 		ConfigureViper(auditPath)
 
 		reportPath := filepath.Join("runs", "e2e-report.json")
-		report := RunSuite(context.Background(), defaultScenarios())
+		report := RunSuite(context.Background(), auditPath, allScenarios())
 
 		_ = os.MkdirAll(filepath.Dir(reportPath), 0o755)
 		writeErr := report.WriteJSON(reportPath)
@@ -45,7 +45,7 @@ func TestIntegrationE2E(t *testing.T) {
 /*
 RunSuite executes all scenarios and returns an aggregate report.
 */
-func RunSuite(parent context.Context, scenarios []Scenario) *SuiteReport {
+func RunSuite(parent context.Context, auditPath string, scenarios []Scenario) *SuiteReport {
 	started := time.Now()
 	suite := &SuiteReport{
 		StartedAt: started,
@@ -56,7 +56,7 @@ func RunSuite(parent context.Context, scenarios []Scenario) *SuiteReport {
 		builder := buildCapture(scenario)
 		ctx, cancel := context.WithCancel(parent)
 
-		harness, err := NewHarness(ctx, builder.Reader())
+		harness, err := NewHarness(ctx, builder.Reader(), auditPath)
 
 		if err != nil {
 			cancel()
@@ -96,7 +96,7 @@ func BenchmarkIntegrationReplayHarness(b *testing.B) {
 
 	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
-		harness, err := NewHarness(ctx, builder.Reader())
+		harness, err := NewHarness(ctx, builder.Reader(), filepath.Join(b.TempDir(), "audit.jsonl"))
 
 		if err != nil {
 			b.Fatal(err)

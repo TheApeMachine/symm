@@ -65,6 +65,28 @@ func (orders *Orders) executionMessages(executions []user.Execution) public.Sock
 }
 
 func (orders *Orders) fillParams(params trading.AddParams) public.SocketMessage {
+	oneWay := public.SharedNetworkLatency().OneWay()
+
+	if oneWay <= 0 {
+		return orders.buildFillExecution(params)
+	}
+
+	orders.scheduleTakerFill(params, oneWay)
+
+	return public.SocketMessage{}
+}
+
+func (orders *Orders) scheduleTakerFill(params trading.AddParams, oneWay time.Duration) {
+	orders.socket.scheduleAfter(oneWay, func() {
+		out := orders.buildFillExecution(params)
+
+		orders.socket.scheduleAfter(oneWay, func() {
+			orders.socket.broadcastExecution(out)
+		})
+	})
+}
+
+func (orders *Orders) buildFillExecution(params trading.AddParams) public.SocketMessage {
 	clOrdID := params.ClOrdID
 
 	if clOrdID == "" {
@@ -196,7 +218,7 @@ func (orders *Orders) fillRestingParams(
 	orderType := string(params.OrderType)
 
 	fillPrice, _ := broker.MakerRestingFillPrice(
-		params.Side, params.LimitPrice, quote, trade,
+		params.Side, params.LimitPrice, quote, trade, meta.tickSize,
 	)
 
 	if fillPrice <= 0 {
@@ -251,6 +273,7 @@ func (orders *Orders) fillRestingParams(
 func (orders *Orders) resolveFillPrice(params trading.AddParams) (float64, float64) {
 	switch params.OrderType {
 	case trading.Limit:
+		meta := orders.catalog.Meta(params.Symbol)
 		quote, ok := orders.quotes.Snapshot(params.Symbol)
 
 		if !ok {
@@ -263,7 +286,9 @@ func (orders *Orders) resolveFillPrice(params trading.AddParams) (float64, float
 			Qty:    params.OrderQty,
 		}
 
-		return broker.MakerRestingFillPrice(params.Side, params.LimitPrice, quote, trade)
+		return broker.MakerRestingFillPrice(
+			params.Side, params.LimitPrice, quote, trade, meta.tickSize,
+		)
 	case trading.Market:
 		quote, ok := orders.quotes.Snapshot(params.Symbol)
 

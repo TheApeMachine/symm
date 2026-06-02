@@ -10,6 +10,16 @@ import (
 )
 
 /*
+FillEvent is one trader fill frame from the ui bus.
+*/
+type FillEvent struct {
+	Symbol string
+	Side   string
+	Qty    float64
+	Price  float64
+}
+
+/*
 Tape collects measurements, actions, and wallet frames during a scenario.
 */
 type Tape struct {
@@ -18,14 +28,16 @@ type Tape struct {
 	measurements []perspectives.Measurement
 	actions      []perspectives.Action
 	wallets      []map[string]any
+	fills        []FillEvent
 	rawFrames    int
 }
 
 func NewTape() *Tape {
 	return &Tape{
-		measurements: make([]perspectives.Measurement, 0, 64),
-		actions:      make([]perspectives.Action, 0, 8),
-		wallets:      make([]map[string]any, 0, 4),
+		measurements: make([]perspectives.Measurement, 0, 256),
+		actions:      make([]perspectives.Action, 0, 16),
+		wallets:      make([]map[string]any, 0, 16),
+		fills:        make([]FillEvent, 0, 8),
 	}
 }
 
@@ -37,7 +49,7 @@ func (tape *Tape) Subscribe(pool *qpool.Q) {
 	rawSub := raw.Subscribe("integration:tape:raw", 4096)
 
 	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	uiSub := ui.Subscribe("integration:tape:ui", 64)
+	uiSub := ui.Subscribe("integration:tape:ui", 256)
 
 	go tape.drainMeasurements(measurementSub)
 	go tape.drainRaw(rawSub)
@@ -99,28 +111,71 @@ func (tape *Tape) drainUI(subscriber *qpool.Subscriber) {
 
 		payload, ok := message.Value.(map[string]any)
 
-		if !ok || payload["event"] != "wallet" {
+		if !ok {
 			continue
 		}
 
 		tape.mu.Lock()
-		tape.wallets = append(tape.wallets, payload)
+
+		if payload["event"] == "wallet" {
+			tape.wallets = append(tape.wallets, payload)
+
+			tape.mu.Unlock()
+
+			continue
+		}
+
+		fill := FillEvent{Side: stringFromAny(payload["Side"])}
+		fill.Symbol = stringFromAny(payload["Symbol"])
+		fill.Qty = floatFromAny(payload["Qty"])
+		fill.Price = floatFromAny(payload["Price"])
+
+		if fill.Symbol != "" && fill.Qty > 0 {
+			tape.fills = append(tape.fills, fill)
+		}
+
 		tape.mu.Unlock()
 	}
 }
 
-func (tape *Tape) Snapshot() TapeSnapshot {
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+
+	return text
+}
+
+func floatFromAny(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
+func (tape *Tape) Snapshot(auditPath string) TapeSnapshot {
 	tape.mu.Lock()
 	defer tape.mu.Unlock()
 
 	measurements := append([]perspectives.Measurement(nil), tape.measurements...)
 	actions := append([]perspectives.Action(nil), tape.actions...)
 	wallets := append([]map[string]any(nil), tape.wallets...)
+	fills := append([]FillEvent(nil), tape.fills...)
+
+	auditRows, _ := readAuditRows(auditPath)
 
 	return TapeSnapshot{
 		Measurements: measurements,
 		Actions:      actions,
 		Wallets:      wallets,
+		Fills:        fills,
+		AuditRows:    auditRows,
 		RawFrames:    tape.rawFrames,
 		DeskReady:    trading.DeskReady(),
 	}
@@ -133,6 +188,8 @@ type TapeSnapshot struct {
 	Measurements []perspectives.Measurement
 	Actions      []perspectives.Action
 	Wallets      []map[string]any
+	Fills        []FillEvent
+	AuditRows    []AuditRow
 	RawFrames    int
 	DeskReady    bool
 }
@@ -149,6 +206,34 @@ func (snapshot TapeSnapshot) latestBySource(source perspectives.SourceType) pers
 	}
 
 	return latest
+}
+
+func (snapshot TapeSnapshot) countBySource(source perspectives.SourceType) int {
+	count := 0
+
+	for _, reading := range snapshot.Measurements {
+		if reading.Source == source {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (snapshot TapeSnapshot) countsBySource() map[string]int {
+	counts := make(map[string]int)
+
+	for _, reading := range snapshot.Measurements {
+		name := reading.Source.String()
+
+		if name == "" {
+			continue
+		}
+
+		counts[name]++
+	}
+
+	return counts
 }
 
 func (snapshot TapeSnapshot) categoriesForSource(source perspectives.SourceType) []string {
@@ -193,4 +278,25 @@ func (snapshot TapeSnapshot) lastWalletBalance() float64 {
 	balance, _ := last["Balance"].(float64)
 
 	return balance
+}
+
+func (snapshot TapeSnapshot) lastInventoryMap() map[string]float64 {
+	if len(snapshot.Wallets) == 0 {
+		return nil
+	}
+
+	last := snapshot.Wallets[len(snapshot.Wallets)-1]
+	inventory, _ := last["Inventory"].(map[string]float64)
+
+	return inventory
+}
+
+func (snapshot TapeSnapshot) lastInventory(baseAsset string) float64 {
+	inventory := snapshot.lastInventoryMap()
+
+	if inventory == nil {
+		return 0
+	}
+
+	return inventory[baseAsset]
 }

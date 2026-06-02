@@ -46,9 +46,10 @@ type Harness struct {
 	tape       *Tape
 	streams    *focus.Set
 	measureBus *qpool.BroadcastGroup
+	auditPath  string
 }
 
-func NewHarness(parent context.Context, capture io.Reader) (*Harness, error) {
+func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*Harness, error) {
 	ctx, cancel := context.WithCancel(parent)
 
 	pool := qpool.NewQ(ctx, 2, 8, qpool.NewConfig())
@@ -138,6 +139,7 @@ func NewHarness(parent context.Context, capture io.Reader) (*Harness, error) {
 		tape:       tape,
 		streams:    streams,
 		measureBus: pool.CreateBroadcastGroup("measurements", 10*time.Millisecond),
+		auditPath:  auditPath,
 	}
 
 	return harness, nil
@@ -160,9 +162,6 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		Checks:    make([]CheckResult, 0, len(scenario.Checks)),
 	}
 
-	runCtx, cancel := context.WithTimeout(harness.ctx, scenarioRunTimeout)
-	defer cancel()
-
 	var engineErr error
 	engineDone := make(chan struct{})
 
@@ -172,6 +171,11 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	}()
 
 	time.Sleep(150 * time.Millisecond)
+
+	for _, symbol := range scenario.HoldingSymbols {
+		harness.streams.Add(symbol)
+	}
+
 	harness.publishDirectMeasurements(scenario.DirectMeasurements)
 
 	replayDone := make(chan error, 1)
@@ -180,9 +184,17 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		replayDone <- harness.replay.Tick()
 	}()
 
+	runTimeout := scenarioRunTimeout
+
+	if scenario.RunTimeout > 0 {
+		runTimeout = scenario.RunTimeout
+	}
+
+	replayDeadline := time.After(runTimeout)
+
 	select {
 	case replayErr := <-replayDone:
-		if replayErr != nil && runCtx.Err() == nil {
+		if replayErr != nil {
 			report.Checks = append(report.Checks, CheckResult{
 				ID:     "replay.tick",
 				Name:   "Replay capture playback",
@@ -190,12 +202,12 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 				Detail: replayErr.Error(),
 			})
 		}
-	case <-runCtx.Done():
+	case <-replayDeadline:
 		report.Checks = append(report.Checks, CheckResult{
 			ID:     "replay.tick",
 			Name:   "Replay capture playback",
 			Pass:   false,
-			Detail: runCtx.Err().Error(),
+			Detail: "timed out waiting for replay playback",
 		})
 	}
 
@@ -206,10 +218,10 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	}
 
 	time.Sleep(settle)
-	cancel()
+	harness.cancel()
 	<-engineDone
 
-	snapshot := harness.tape.Snapshot()
+	snapshot := harness.tape.Snapshot(harness.auditPath)
 
 	for _, check := range scenario.Checks {
 		pass, detail, contextMap := check.Evaluate(snapshot, engineErr)
@@ -255,7 +267,10 @@ func ConfigureViper(auditPath string) {
 		testSymbolSecondary,
 		testSymbolLeader,
 	})
+	viper.Set("market.anchor_symbol", testSymbolLeader)
+	viper.Set("market.default_symbols", []string{testSymbolLeader})
 	viper.Set("trading.audit.file", auditPath)
+	viper.Set("trading.audit.gate_cooldown", 0)
 }
 
 func resetTradingReady() {

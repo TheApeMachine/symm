@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestMakerQueueState(t *testing.T) {
 				Bids: []market.BookLevel{{Price: 100, Qty: 2.5}},
 			},
 		}
-		state := NewMakerQueueState(quote, trading.Buy, 100, time.Now().UnixNano())
+		state := NewMakerQueueState(quote, trading.Buy, 100, time.Now().UnixNano(), 0.01)
 
 		Convey("It should require trade depletion before filling", func() {
 			So(state.QueueAhead, ShouldEqual, 2.5)
@@ -44,11 +45,25 @@ func TestMakerRestingFillPrice(t *testing.T) {
 		}
 		trade := market.TradeUpdate{Side: "sell", Price: 100, Qty: 1}
 
-		fillPrice, adverseBps := MakerRestingFillPrice(trading.Buy, 100, quote, trade)
+		fillPrice, adverseBps := MakerRestingFillPrice(trading.Buy, 100, quote, trade, 0.01)
 
 		Convey("It should charge adverse selection above the limit", func() {
 			So(adverseBps, ShouldBeGreaterThan, 0)
 			So(fillPrice, ShouldBeGreaterThan, 100)
+		})
+	})
+}
+
+func TestBookLevelQtyMatchesTickIndexAcrossFloatSources(t *testing.T) {
+	Convey("Given engine and JSON prices that differ at float64 equality", t, func() {
+		tickSize := 0.01
+		limitPrice := 100.0
+		bookPrice := math.Nextafter(100.0, 101.0)
+		levels := []market.BookLevel{{Price: bookPrice, Qty: 4.5}}
+
+		Convey("It should still resolve queue depth at the same tick", func() {
+			So(limitPrice == bookPrice, ShouldBeFalse)
+			So(BookLevelQty(levels, limitPrice, tickSize), ShouldEqual, 4.5)
 		})
 	})
 }
@@ -76,6 +91,6 @@ func BenchmarkMakerRestingFillPrice(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = MakerRestingFillPrice(trading.Buy, 100, quote, trade)
+		_, _ = MakerRestingFillPrice(trading.Buy, 100, quote, trade, 0.01)
 	}
 }

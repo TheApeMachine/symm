@@ -16,6 +16,7 @@ and optimizer scoring without sleeping through real network delay.
 */
 type LatencyProfile struct {
 	RTTNS     int64     `json:"rtt_ns"`
+	P95RTTNS  int64     `json:"p95_rtt_ns,omitempty"`
 	OneWayNS  int64     `json:"one_way_ns"`
 	Samples   uint64    `json:"samples"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -40,12 +41,30 @@ func (profile LatencyProfile) RTT() time.Duration {
 	return time.Duration(profile.RTTNS)
 }
 
-func (profile LatencyProfile) OneWay() time.Duration {
-	if profile.OneWayNS <= 0 {
-		return 0
+func (profile LatencyProfile) P95RTT() time.Duration {
+	if profile.P95RTTNS > 0 {
+		return time.Duration(profile.P95RTTNS)
 	}
 
-	return time.Duration(profile.OneWayNS)
+	if profile.OneWayNS > 0 {
+		return time.Duration(profile.OneWayNS) * 2
+	}
+
+	return profile.RTT()
+}
+
+func (profile LatencyProfile) OneWay() time.Duration {
+	if profile.OneWayNS > 0 {
+		return time.Duration(profile.OneWayNS)
+	}
+
+	p95RTT := profile.P95RTT()
+
+	if p95RTT > 0 {
+		return p95RTT / 2
+	}
+
+	return 0
 }
 
 func LoadLatencyProfile() (LatencyProfile, bool) {
@@ -88,9 +107,16 @@ func SaveLatencyProfile(profile LatencyProfile) error {
 var profilePersistMu sync.Mutex
 
 func (latency *NetworkLatency) persistProfileLocked() {
+	oneWay := latency.p95RTT / 2
+
+	if oneWay <= 0 && latency.lastRTT > 0 {
+		oneWay = latency.lastRTT / 2
+	}
+
 	profile := LatencyProfile{
 		RTTNS:     latency.lastRTT.Nanoseconds(),
-		OneWayNS:  (latency.lastRTT / 2).Nanoseconds(),
+		P95RTTNS:  latency.p95RTT.Nanoseconds(),
+		OneWayNS:  oneWay.Nanoseconds(),
 		Samples:   latency.samples,
 		UpdatedAt: latency.updated,
 	}
@@ -105,9 +131,16 @@ func (latency *NetworkLatency) SnapshotProfile() LatencyProfile {
 	latency.mu.RLock()
 	defer latency.mu.RUnlock()
 
+	oneWay := latency.p95RTT / 2
+
+	if oneWay <= 0 && latency.lastRTT > 0 {
+		oneWay = latency.lastRTT / 2
+	}
+
 	return LatencyProfile{
 		RTTNS:     latency.lastRTT.Nanoseconds(),
-		OneWayNS:  (latency.lastRTT / 2).Nanoseconds(),
+		P95RTTNS:  latency.p95RTT.Nanoseconds(),
+		OneWayNS:  oneWay.Nanoseconds(),
 		Samples:   latency.samples,
 		UpdatedAt: latency.updated,
 	}
@@ -117,6 +150,12 @@ func (latency *NetworkLatency) SnapshotProfile() LatencyProfile {
 ExchangeRoundTrip is the full client↔Kraken websocket latency for one request.
 */
 func (latency *NetworkLatency) ExchangeRoundTrip() time.Duration {
+	p95RTT := latency.P95RTT()
+
+	if p95RTT > 0 {
+		return p95RTT
+	}
+
 	rtt := latency.RTT()
 
 	if rtt > 0 {
@@ -134,7 +173,7 @@ func (latency *NetworkLatency) ExchangeRoundTrip() time.Duration {
 
 func ReplayExchangeLatency() time.Duration {
 	if profile, ok := LoadLatencyProfile(); ok {
-		return profile.RTT()
+		return profile.P95RTT()
 	}
 
 	return 0
