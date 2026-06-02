@@ -1,0 +1,53 @@
+package depthflow
+
+import (
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market/perspectives"
+)
+
+func TestDepthSymbolMeasureSpreadBPS(t *testing.T) {
+	Convey("Given a verified book and ticker", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewDepthSymbol(symbol)
+		So(err, ShouldBeNil)
+
+		fixture := symbolBookFixture{symbol: symbol}
+		state.ApplyBook(fixture.snapshot(99, 8, 101, 4))
+		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+
+		measurement, _, err := state.Measure()
+
+		Convey("It should publish spread in basis points from the book", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldNotBeEmpty)
+			So(measurement.SpreadBPS, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestDepthSymbolMeasureTradePressureFallback(t *testing.T) {
+	Convey("Given trade pressure without a ready book", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewDepthSymbol(symbol)
+		So(err, ShouldBeNil)
+
+		_, pushErr := state.PushTradePressure(0.8)
+		So(pushErr, ShouldBeNil)
+
+		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+
+		measurement, _, err := state.Measure()
+
+		Convey("It should fall back to trade-pressure measurement", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, perspectives.SourceDepthFlow)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
+		})
+	})
+}

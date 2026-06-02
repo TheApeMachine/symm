@@ -73,15 +73,27 @@ func (cache *QuoteCache) Subscribe(listener quoteListener) {
 }
 
 func (cache *QuoteCache) run(pool *qpool.Q) {
+	if pool == nil {
+		return
+	}
+
 	group := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	subscriber := group.Subscribe("broker:quotes", 4096)
+
+	if subscriber == nil {
+		return
+	}
 
 	for {
 		select {
 		case <-cache.ctx.Done():
 			return
 		case message, ok := <-subscriber.Incoming:
-			if !ok || message == nil || message.Value == nil {
+			if !ok {
+				return
+			}
+
+			if message == nil || message.Value == nil {
 				continue
 			}
 

@@ -114,10 +114,12 @@ func BenchmarkQuoteCacheSnapshot(b *testing.B) {
 func TestEnsureQuoteCache(t *testing.T) {
 	Convey("Given a pool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		defer pool.Close()
+
+		defer func() {
+			cancel()
+			pool.Close()
+		}()
 
 		Convey("It should return a shared cache instance", func() {
 			first := EnsureQuoteCache(ctx, pool)
