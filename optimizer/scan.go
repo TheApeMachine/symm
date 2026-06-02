@@ -319,8 +319,6 @@ func normalizeScanOptions(options ScanOptions) ScanOptions {
 		options.Workers = runtime.NumCPU()
 	}
 
-	options.Guard = normalizeGuardOptions(options.Guard, profile, tape)
-
 	return options
 }
 

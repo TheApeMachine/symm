@@ -31,7 +31,7 @@ func TestCoOccurrenceIndexChainReachable(t *testing.T) {
 				SNR:      2, Last: 108,
 			},
 		}
-		index := NewCoOccurrenceIndex(PrecompileTape(rows))
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
 
 		convey.Convey("It should accept chains present on one snapshot", func() {
 			convey.So(index.ChainReachable([]perspectives.CategoryType{
@@ -85,7 +85,7 @@ func TestBuildDecisionSeedPlaybooks(t *testing.T) {
 		}
 
 		profile.PrepareCache()
-		index := NewCoOccurrenceIndex(PrecompileTape(rows))
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
 		playbooks := BuildDecisionSeedPlaybooks(&profile, index)
 
 		convey.Convey("It should emit nested reachable decision seeds", func() {
@@ -129,7 +129,7 @@ func TestEntryExitPairReachableWithoutCoOccurrence(t *testing.T) {
 			SNR:      2, Last: 110,
 		})
 
-		index := NewCoOccurrenceIndex(PrecompileTape(rows))
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
 		entry := perspectives.BranchList{{
 			Category: perspectives.CategoryLaminar,
 		}}
@@ -169,7 +169,7 @@ func TestNestedEntryGateReachableWithoutExitCategory(t *testing.T) {
 				SNR:      2, Last: 105,
 			},
 		}
-		index := NewCoOccurrenceIndex(PrecompileTape(rows))
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
 		base := perspectives.BranchList{
 			{
 				Category:    perspectives.CategoryLaminar,

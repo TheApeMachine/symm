@@ -259,7 +259,7 @@ func applyBudgetToTuneOptions(options *TuneOptions, budget SearchBudget) {
 	options.Guard.ComplexityPenalty = budget.ComplexityPenalty
 }
 
-func applyBudgetToScanOptions(options *ScanOptions, budget SearchBudget) ScanOptions {
+func applyBudgetToScanOptions(options ScanOptions, budget SearchBudget) ScanOptions {
 	if options.Workers <= 0 {
 		options.Workers = runtime.NumCPU()
 	}
@@ -301,7 +301,7 @@ func deriveJitterFractions(profile *Profile) []float64 {
 		center := profile.Quantile(category, perspectives.UnitSNR, 0.5)
 		scale := profile.JitterScale(category, perspectives.UnitSNR, center)
 
-	if scale <= 0 || center == 0 {
+		if scale <= 0 || center == 0 {
 			continue
 		}
 

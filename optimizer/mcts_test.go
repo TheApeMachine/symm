@@ -10,16 +10,18 @@ import (
 
 func TestNormalizeMCTSReward(t *testing.T) {
 	convey.Convey("Given replay PnL scores", t, func() {
+		search := &TreeSearch{rewardScale: 1}
+
 		convey.Convey("It should map zero return to 0.5", func() {
-			convey.So(normalizeMCTSReward(0), convey.ShouldAlmostEqual, 0.5, 0.0001)
+			convey.So(search.normalizeMCTSReward(0), convey.ShouldAlmostEqual, 0.5, 0.0001)
 		})
 
 		convey.Convey("It should map positive return above 0.5", func() {
-			convey.So(normalizeMCTSReward(0.10), convey.ShouldBeGreaterThan, 0.5)
+			convey.So(search.normalizeMCTSReward(0.10), convey.ShouldBeGreaterThan, 0.5)
 		})
 
 		convey.Convey("It should map negative return below 0.5", func() {
-			convey.So(normalizeMCTSReward(-0.10), convey.ShouldBeLessThan, 0.5)
+			convey.So(search.normalizeMCTSReward(-0.10), convey.ShouldBeLessThan, 0.5)
 		})
 	})
 }

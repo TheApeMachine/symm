@@ -22,7 +22,7 @@ func TestCoOccurrenceIndexMinSupport(t *testing.T) {
 				SNR:      2, Last: 110,
 			},
 		}
-		index := NewCoOccurrenceIndex(PrecompileTape(rows))
+		index := NewCoOccurrenceIndex(PrecompileTape(rows), 0)
 
 		convey.Convey("It should reject statistically insignificant chains", func() {
 			convey.So(index.ChainReachable([]perspectives.CategoryType{
