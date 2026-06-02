@@ -29,10 +29,8 @@ func TestWebSocketMarksDeskReadyAtBoot(t *testing.T) {
 		_ = NewWebSocket(ctx, pool)
 
 		Convey("It should process the balance subscribe before measurements arrive", func() {
-			select {
-			case <-time.After(200 * time.Millisecond):
-				So(trading.DeskReady(), ShouldBeTrue)
-			}
+			<-time.After(200 * time.Millisecond)
+			So(trading.DeskReady(), ShouldBeTrue)
 		})
 	})
 }

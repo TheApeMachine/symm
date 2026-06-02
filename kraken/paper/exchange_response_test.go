@@ -43,10 +43,8 @@ func TestWebSocketDefersExchangeResponses(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			So(trading.DeskReady(), ShouldBeFalse)
 
-			select {
-			case <-time.After(120 * time.Millisecond):
-				So(trading.DeskReady(), ShouldBeTrue)
-			}
+			time.Sleep(120 * time.Millisecond)
+			So(trading.DeskReady(), ShouldBeTrue)
 		})
 	})
 }
