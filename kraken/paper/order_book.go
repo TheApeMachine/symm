@@ -1,6 +1,7 @@
 package paper
 
 import (
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
@@ -13,6 +14,7 @@ type openOrder struct {
 	orderQty   float64
 	limitPrice float64
 	postOnly   bool
+	queue      broker.MakerQueueState
 }
 
 func (orders *Orders) storeOrder(order *openOrder) {

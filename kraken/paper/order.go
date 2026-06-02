@@ -122,6 +122,12 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 		orderQty:   params.OrderQty,
 		limitPrice: params.LimitPrice,
 		postOnly:   true,
+		queue: broker.NewMakerQueueState(
+			quote,
+			params.Side,
+			params.LimitPrice,
+			time.Now().Add(public.SharedNetworkLatency().OneWay()).UnixNano(),
+		),
 	}
 
 	orders.storeOrder(order)

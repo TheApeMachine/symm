@@ -247,14 +247,44 @@ func (ws *WebSocket) dialUntilConnected(ctx context.Context, endpoint EndpointTy
 	}
 }
 
-func (ws *WebSocket) readMessage(message *SocketMessage) error {
+func (ws *WebSocket) readInbound(message *SocketMessage) (handled bool, err error) {
 	ws.connMu.RLock()
 	conn := ws.conn
 	ws.connMu.RUnlock()
 
 	if conn == nil {
-		return fmt.Errorf("kraken public websocket: not connected")
+		return false, fmt.Errorf("kraken public websocket: not connected")
 	}
 
-	return conn.ReadJSON(message)
+	_, payload, err := conn.ReadMessage()
+
+	if err != nil {
+		return false, err
+	}
+
+	var frame map[string]any
+
+	if err := sonic.Unmarshal(payload, &frame); err != nil {
+		return false, err
+	}
+
+	if method, _ := frame["method"].(string); method == "pong" {
+		if ws.latencyProbe != nil {
+			ws.latencyProbe.observePong(frame)
+		}
+
+		return true, nil
+	}
+
+	if err := sonic.Unmarshal(payload, message); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func (ws *WebSocket) readMessage(message *SocketMessage) error {
+	_, err := ws.readInbound(message)
+
+	return err
 }

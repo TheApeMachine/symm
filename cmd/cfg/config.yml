@@ -9,6 +9,7 @@ market:
   ws_reconnect_initial: 1s
   ws_reconnect_max: 2m
   ws_reconnect_multiplier: 2
+  ws_ping_interval: 15s
 
 trading:
   order_ack_timeout: 500ms
@@ -29,6 +30,7 @@ trading:
     taker_fee_pct: 0.26
     maker_fee_pct: 0.16
     slippage_bps: 5
+    latency_profile: runs/network_latency.json
 
 optimizer:
   tune:

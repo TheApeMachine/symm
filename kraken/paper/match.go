@@ -1,13 +1,15 @@
 package paper
 
 import (
-	"github.com/theapemachine/qpool"
+	"time"
+
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
 /*
-tryMatchQuote fills resting post-only limits when the live quote crosses them.
+tryMatchQuote evaluates resting limits against the latest quote after network latency.
 */
 func (orders *Orders) tryMatchQuote(symbol string, quote broker.Quote) {
 	if symbol == "" {
@@ -18,15 +20,19 @@ func (orders *Orders) tryMatchQuote(symbol string, quote broker.Quote) {
 	pending := make([]*openOrder, 0)
 
 	for _, order := range orders.open {
-		if order.symbol != symbol {
+		if order.symbol != symbol || !order.postOnly || order.orderType != trading.Limit {
 			continue
 		}
 
-		if !order.postOnly || order.orderType != trading.Limit {
+		if !orders.restingOrderLive(order, quote.UpdatedAt) {
 			continue
 		}
 
 		if !restingLimitCrossed(order, quote) {
+			continue
+		}
+
+		if !order.queue.Ready() {
 			continue
 		}
 
@@ -36,8 +42,73 @@ func (orders *Orders) tryMatchQuote(symbol string, quote broker.Quote) {
 	orders.mu.Unlock()
 
 	for _, order := range pending {
-		orders.fillRestingOrder(order)
+		orders.fillRestingOrder(order, quote, market.TradeUpdate{
+			Symbol:    symbol,
+			Side:      restingTradeSide(order.side),
+			Price:     order.limitPrice,
+			Qty:       order.orderQty,
+			Timestamp: quote.UpdatedAt,
+		})
 	}
+}
+
+func (orders *Orders) tryMatchTrade(_ string, trade market.TradeUpdate) {
+	if trade.Symbol == "" {
+		return
+	}
+
+	quote, ok := orders.quotes.Snapshot(trade.Symbol)
+
+	if !ok {
+		return
+	}
+
+	orders.mu.Lock()
+	pending := make([]*openOrder, 0)
+
+	for _, order := range orders.open {
+		if order.symbol != trade.Symbol || !order.postOnly || order.orderType != trading.Limit {
+			continue
+		}
+
+		if !orders.restingOrderLive(order, trade.Timestamp) {
+			continue
+		}
+
+		depletionQty, relevant := broker.TradeDepletesMakerQueue(
+			order.side, order.limitPrice, trade,
+		)
+
+		if !relevant {
+			continue
+		}
+
+		order.queue.Deplete(depletionQty)
+
+		if !order.queue.Ready() {
+			continue
+		}
+
+		pending = append(pending, order)
+	}
+
+	orders.mu.Unlock()
+
+	for _, order := range pending {
+		orders.fillRestingOrder(order, quote, trade)
+	}
+}
+
+func (orders *Orders) restingOrderLive(order *openOrder, eventAt time.Time) bool {
+	if order.queue.ActiveAt <= 0 {
+		return true
+	}
+
+	if eventAt.IsZero() {
+		return time.Now().UnixNano() >= order.queue.ActiveAt
+	}
+
+	return eventAt.UnixNano() >= order.queue.ActiveAt
 }
 
 func restingLimitCrossed(order *openOrder, quote broker.Quote) bool {
@@ -52,7 +123,19 @@ func restingLimitCrossed(order *openOrder, quote broker.Quote) bool {
 	return false
 }
 
-func (orders *Orders) fillRestingOrder(order *openOrder) {
+func restingTradeSide(side trading.Side) string {
+	if side == trading.Sell {
+		return "buy"
+	}
+
+	return "sell"
+}
+
+func (orders *Orders) fillRestingOrder(
+	order *openOrder,
+	quote broker.Quote,
+	trade market.TradeUpdate,
+) {
 	order, ok := orders.takeOrder(order.orderID)
 
 	if !ok {
@@ -66,22 +149,14 @@ func (orders *Orders) fillRestingOrder(order *openOrder) {
 		OrderQty:   order.orderQty,
 		LimitPrice: order.limitPrice,
 		ClOrdID:    order.clOrdID,
+		PostOnly:   true,
 	}
 
-	out := orders.fillParams(params)
+	out := orders.fillRestingParams(params, quote, trade)
 
 	if out.Channel == "" {
 		return
 	}
 
-	channel := orders.socket.broadcasts["raw"]
-
-	if channel == nil {
-		return
-	}
-
-	channel.Send(&qpool.QValue[any]{
-		Type:  out.Channel,
-		Value: out,
-	})
+	orders.socket.deliverExecution(out)
 }

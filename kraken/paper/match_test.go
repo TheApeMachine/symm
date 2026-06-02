@@ -8,6 +8,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -48,17 +49,31 @@ func TestOrdersMatchRestingLimit(t *testing.T) {
 			},
 		})
 
-		convey.Convey("It should fill when the ask crosses the limit", func() {
+		convey.Convey("It should fill when the ask crosses the limit after queue depletion", func() {
 			convey.So(string(open.Data), convey.ShouldContainSubstring, `"order_status":"open"`)
 
+			resting, found := orders.orderByClOrdID("resting-buy")
+			convey.So(found, convey.ShouldBeTrue)
+			resting.queue.ActiveAt = time.Now().Add(-time.Second).UnixNano()
+
 			crossed := broker.Quote{
-				Symbol:    "BTC/EUR",
-				Bid:       49_900,
-				Ask:       49_950,
-				Last:      49_925,
+				Symbol: "BTC/EUR",
+				Bid:    49_900,
+				Ask:    49_950,
+				Last:   49_925,
+				Book: market.Book{
+					Bids: []market.BookLevel{{Price: 50_000, Qty: 0}},
+				},
 				UpdatedAt: time.Now().UTC(),
 			}
 
+			orders.tryMatchTrade("BTC/EUR", market.TradeUpdate{
+				Symbol:    "BTC/EUR",
+				Side:      "sell",
+				Price:     50_000,
+				Qty:       0.01,
+				Timestamp: time.Now().UTC(),
+			})
 			orders.tryMatchQuote("BTC/EUR", crossed)
 
 			_, stillOpen := orders.orderByClOrdID("resting-buy")

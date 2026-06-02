@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -273,6 +274,14 @@ func (ledger *replayLedger) applyStressed(
 	}
 
 	slippagePct := executionSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
+
+	if perspectives.IsMakerAction(actionType) {
+		slippagePct += broker.ReplayMakerAdverseSlippagePct(
+			measurement.SpreadBPS,
+			executionStressMultiplier(snapshots),
+		)
+	}
+
 	feePct := ledger.costs.feePct(actionType)
 
 	switch actionType {

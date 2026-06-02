@@ -2,10 +2,13 @@ package optimizer
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -170,6 +173,27 @@ func BenchmarkExecutionStressMultiplier(b *testing.B) {
 	for b.Loop() {
 		_ = executionStressMultiplier(snapshots)
 	}
+}
+
+func TestReplaySimulationUsesStoredLatencyProfile(t *testing.T) {
+	convey.Convey("Given a persisted exchange latency profile", t, func() {
+		path := filepath.Join(t.TempDir(), "network_latency.json")
+		viper.Set("trading.paper.latency_profile", path)
+
+		defer viper.Set("trading.paper.latency_profile", "")
+
+		err := public.SaveLatencyProfile(public.LatencyProfile{
+			RTTNS: (95 * time.Millisecond).Nanoseconds(),
+		})
+		convey.So(err, convey.ShouldBeNil)
+
+		costs := ReplayCosts{ExecutionStressEnabled: true}
+		latency := costs.effectiveExecutionLatency(nil, ReplayTape{})
+
+		convey.Convey("It should score with stored RTT without sleeping", func() {
+			convey.So(latency, convey.ShouldEqual, 95*time.Millisecond)
+		})
+	})
 }
 
 func BenchmarkReplayMeasurementsPool(b *testing.B) {

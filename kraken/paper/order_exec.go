@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
@@ -19,9 +20,11 @@ const (
 )
 
 func (orders *Orders) queueExecution(execution user.Execution) {
-	orders.socket.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type:  public.OrdersChannel,
-		Value: execution,
+	orders.socket.scheduleExchangeDelivery(func() {
+		orders.socket.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+			Type:  public.OrdersChannel,
+			Value: execution,
+		})
 	})
 }
 
@@ -176,10 +179,91 @@ func (orders *Orders) cancelExecution(order *openOrder) user.Execution {
 	}
 }
 
+func (orders *Orders) fillRestingParams(
+	params trading.AddParams,
+	quote broker.Quote,
+	trade market.TradeUpdate,
+) public.SocketMessage {
+	clOrdID := params.ClOrdID
+
+	if clOrdID == "" {
+		clOrdID = orders.identifier.ClOrdID()
+	}
+
+	orderID := orders.identifier.OrderID()
+	meta := orders.catalog.Meta(params.Symbol)
+	side := string(params.Side)
+	orderType := string(params.OrderType)
+
+	fillPrice, _ := broker.MakerRestingFillPrice(
+		params.Side, params.LimitPrice, quote, trade,
+	)
+
+	if fillPrice <= 0 {
+		errnie.Debug("paper.Orders.fillRestingParams: no fill price for", params.Symbol)
+
+		return public.SocketMessage{}
+	}
+
+	fillPrice = orders.roundToTick(fillPrice, meta.tickSize)
+	cost := params.OrderQty * fillPrice
+	feeRate := meta.makerPct / 100.0
+	feeCost := orders.roundFee(cost * feeRate)
+
+	feeUSD := feeCost
+
+	if meta.quote != "USD" && !strings.HasSuffix(meta.quote, "USD") {
+		feeUSD = 0
+	}
+
+	execID := orders.identifier.ExecID()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	orders.balances.ApplyFill(params.Symbol, side, params.OrderQty, fillPrice, feeCost, execID)
+
+	return orders.executionMessage(user.Execution{
+		ExecType:     "trade",
+		OrderID:      orderID,
+		ClOrdID:      clOrdID,
+		Symbol:       params.Symbol,
+		Side:         side,
+		OrderType:    orderType,
+		OrderQty:     params.OrderQty,
+		LastQty:      params.OrderQty,
+		LastPrice:    fillPrice,
+		AvgPrice:     fillPrice,
+		CumQty:       params.OrderQty,
+		CumCost:      cost,
+		Cost:         cost,
+		LiquidityInd: "m",
+		OrderStatus:  "filled",
+		Timestamp:    now,
+		ExecID:       execID,
+		FeeUsdEquiv:  feeUSD,
+		FeeCcyPref:   meta.quote,
+		Fees: []user.ExecutionFee{{
+			Asset: meta.quote,
+			Qty:   feeCost,
+		}},
+	})
+}
+
 func (orders *Orders) resolveFillPrice(params trading.AddParams) (float64, float64) {
 	switch params.OrderType {
 	case trading.Limit:
-		return params.LimitPrice, 0
+		quote, ok := orders.quotes.Snapshot(params.Symbol)
+
+		if !ok {
+			return params.LimitPrice, 0
+		}
+
+		trade := market.TradeUpdate{
+			Symbol: params.Symbol,
+			Price:  params.LimitPrice,
+			Qty:    params.OrderQty,
+		}
+
+		return broker.MakerRestingFillPrice(params.Side, params.LimitPrice, quote, trade)
 	case trading.Market:
 		quote, ok := orders.quotes.Snapshot(params.Symbol)
 

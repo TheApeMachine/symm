@@ -24,7 +24,7 @@ var outboundOnce sync.Once
 const publicOutboundSubscriberID = "kraken:public:websocket"
 
 const (
-	publicRawSubscriberID      = "kraken/public:raw"
+	publicRawSubscriberID    = "kraken/public:raw"
 	publicLevel3SubscriberID = "kraken/public:level3"
 )
 
@@ -59,12 +59,15 @@ type WebSocket struct {
 	ohlcSubscribed  map[string]struct{}
 	lastSubscribe   time.Time
 	subscribeMu     sync.Mutex
+	latencyProbe    *latencyProbe
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
+		BootstrapNetworkLatency()
+
 		socket = &WebSocket{
 			ctx:             ctx,
 			cancel:          cancel,
@@ -74,6 +77,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 			subscribers:     make(map[string]*qpool.Subscriber),
 			ohlcSubscribed:  make(map[string]struct{}),
 			subscribeReplay: make([]any, 0),
+			latencyProbe:    newLatencyProbe(SharedNetworkLatency()),
 		}
 	})
 
@@ -119,6 +123,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 		errnie.Error(err)
 	} else {
 		activate.Boot("kraken/public websocket connected")
+		socket.latencyProbe.start(ctx, socket.writePingFrame)
 	}
 
 	errnie.Debug("kraken.public.websocket.NewWebSocket", "subscribing to", "instrument")
@@ -134,6 +139,9 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 	activate.Boot("kraken/public websocket ready")
 
 	return socket
+}
+func (ws *WebSocket) writePingFrame(frame map[string]any) error {
+	return ws.writeOutboundFrame(frame, false)
 }
 
 func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
@@ -171,8 +179,9 @@ func (ws *WebSocket) Tick() error {
 		}
 
 		var message SocketMessage
+		handled, err := ws.readInbound(&message)
 
-		if err := ws.readMessage(&message); err != nil {
+		if err != nil {
 			if ws.ctx.Err() != nil {
 				return errnie.Error(ws.ctx.Err())
 			}
@@ -183,6 +192,10 @@ func (ws *WebSocket) Tick() error {
 				return errnie.Error(reconnectErr)
 			}
 
+			continue
+		}
+
+		if handled {
 			continue
 		}
 

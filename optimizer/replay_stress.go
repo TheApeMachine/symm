@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -191,6 +192,10 @@ func (costs ReplayCosts) effectiveExecutionLatency(
 
 	if !costs.ExecutionStressEnabled {
 		return 0
+	}
+
+	if replayLatency := public.ReplayExchangeLatency(); replayLatency > 0 {
+		return replayLatency
 	}
 
 	if len(rows) > 0 {

@@ -26,15 +26,18 @@ type Quote struct {
 
 type quoteListener func(symbol string, quote Quote)
 
+type tradeListener func(symbol string, trade market.TradeUpdate)
+
 /*
 QuoteCache ingests public ticker and book frames from the raw bus.
 */
 type QuoteCache struct {
-	ctx       context.Context
-	mu        sync.RWMutex
-	quotes    map[string]Quote
-	books     map[string]market.Book
-	listeners []quoteListener
+	ctx            context.Context
+	mu             sync.RWMutex
+	quotes         map[string]Quote
+	books          map[string]market.Book
+	listeners      []quoteListener
+	tradeListeners []tradeListener
 }
 
 var (
@@ -69,6 +72,16 @@ func (cache *QuoteCache) Subscribe(listener quoteListener) {
 
 	cache.mu.Lock()
 	cache.listeners = append(cache.listeners, listener)
+	cache.mu.Unlock()
+}
+
+func (cache *QuoteCache) SubscribeTrades(listener tradeListener) {
+	if listener == nil {
+		return
+	}
+
+	cache.mu.Lock()
+	cache.tradeListeners = append(cache.tradeListeners, listener)
 	cache.mu.Unlock()
 }
 
@@ -108,6 +121,8 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 				cache.ingestTickers(envelope)
 			case public.BookChannel:
 				cache.ingestBooks(envelope)
+			case public.TradesChannel:
+				cache.ingestTrades(envelope)
 			}
 		}
 	}
@@ -199,6 +214,30 @@ func (cache *QuoteCache) updateBook(row market.Book) {
 	cache.quotes[row.Symbol] = quote
 
 	cache.notifyLocked(row.Symbol, quote)
+}
+
+func (cache *QuoteCache) ingestTrades(envelope public.SocketMessage) {
+	rows, err := market.DecodeTrades(&envelope)
+
+	if err != nil {
+		return
+	}
+
+	for _, row := range rows {
+		if row.Symbol == "" {
+			continue
+		}
+
+		cache.notifyTradeLocked(row)
+	}
+}
+
+func (cache *QuoteCache) notifyTradeLocked(trade market.TradeUpdate) {
+	listeners := append([]tradeListener(nil), cache.tradeListeners...)
+
+	for _, listener := range listeners {
+		listener(trade.Symbol, trade)
+	}
 }
 
 func (cache *QuoteCache) notifyLocked(symbol string, quote Quote) {

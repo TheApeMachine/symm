@@ -337,7 +337,7 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run 
 
 ### Paper / live parity
 
-Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Post-only limits rest on the simulated book and fill when the live quote crosses them; immediate-cross post-only orders are rejected, matching Kraken behavior.
+Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping RTT (persisted to `runs/network_latency.json` for optimizer replay). Post-only limits rest on the simulated book with L2 queue position ahead of the order, become active after one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
 
 Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`kraken/paper/catalog.go`). The trader marks a symbol as holding only after an execution fill (not on open ack), publishes `AvgEntry` and `Marks` on wallet frames for the frontend Trades panel, and keeps entry pending locks until fill or reject.
 
@@ -386,6 +386,8 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 - it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
 - each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
 - replay scoring applies optional execution stress: derived 50–200ms fill latency from tape cadence (`trading.replay.execution_latency_ms` to override) and expanded slippage when snapshot categories indicate turbulence or liquidity stress (`trading.replay.execution_stress_enabled`, default on)
+- measured Kraken ping RTT is persisted to `trading.paper.latency_profile` (`runs/network_latency.json`); optimizer replay uses that RTT in scoring math without sleeping, while paper mode defers every simulated exchange response by the live round-trip
+- limit (maker) replay entries also pay adverse-selection slippage derived from spread and stress context, matching the pessimistic paper matcher rather than filling at limit with zero drag
 - the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
 
 Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.
@@ -461,25 +463,25 @@ symm tune
 
 **Frame producers:**
 
-| Component       | Frames emitted                                | Rate                |
-|-----------------|-----------------------------------------------|---------------------|
-| `kraken/market/instrument` | subscribes ticker/book/trade/ohlc for every catalog pair | on catalog update |
-| `kraken/public`            | `candle_bar` (anchor + open-position symbols)            | per ticker frame  |
+| Component                  | Frames emitted                                           | Rate                |
+|----------------------------|----------------------------------------------------------|---------------------|
+| `kraken/market/instrument` | subscribes ticker/book/trade/ohlc for every catalog pair | on catalog update   |
+| `kraken/public`            | `candle_bar` (anchor + open-position symbols)            | per ticker frame    |
 | `signal/fluid`             | `field_snapshot` (universe book-flow grid)               | rate-limited 200 ms |
-| `trader.Crypto` | `wallet`, `audit`, fill events                | per event           |
-| `ui.Hub`        | `heartbeat` (seq, queue depth, drop count)    | 250 ms              |
+| `trader.Crypto`            | `wallet`, `audit`, fill events                           | per event           |
+| `ui.Hub`                   | `heartbeat` (seq, queue depth, drop count)               | 250 ms              |
 
 **UI frame events:**
 
-| Event        | Source      | Contents                                                  |
-|--------------|-------------|-----------------------------------------------------------|
-| `confidence` | view.Gauges | per-source SNR gauge value                                |
-| `wallet`     | Crypto      | balance, inventory, marks                                 |
-| `audit`      | Crypto      | decision detail: conviction, edge, playbook, perspectives |
+| Event            | Source        | Contents                                                  |
+|------------------|---------------|-----------------------------------------------------------|
+| `confidence`     | view.Gauges   | per-source SNR gauge value                                |
+| `wallet`         | Crypto        | balance, inventory, marks                                 |
+| `audit`          | Crypto        | decision detail: conviction, edge, playbook, perspectives |
 | `candle_bar`     | kraken/public | OHLC + volume for chart                                   |
 | `field_snapshot` | signal/fluid  | aggregated universe surface snapshot                      |
-| `heartbeat`  | Hub         | monotonic seq, queue depth, drop count                    |
-| fill events  | Crypto      | order fill payload                                        |
+| `heartbeat`      | Hub           | monotonic seq, queue depth, drop count                    |
+| fill events      | Crypto        | order fill payload                                        |
 
 `kraken/market/instrument` subscribes to every pair Kraken lists on the instrument channel; newly listed markets are picked up on the next catalog update. Signals such as `pumpdump`, `fluid`, and `leadlag` consume the shared `raw` bus and do not depend on config symbol lists. `default_symbols` and `anchor_symbol` only choose the dashboard anchor chart. Chart candles use Kraken's [`ohlc` WebSocket channel](https://docs.kraken.com/api/docs/websocket-v2/ohlc) subscribed only for the anchor symbol and open positions; `candle_bar` frames carry `interval_begin`, OHLC, and volume so the frontend updates the forming bar in place.
 

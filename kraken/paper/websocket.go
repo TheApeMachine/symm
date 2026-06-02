@@ -12,6 +12,10 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
+func init() {
+	public.BootstrapNetworkLatency()
+}
+
 /*
 Socket handles one kraken:private message type and returns the raw bus payload.
 */
@@ -58,6 +62,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	orders := NewOrders(ctx, ws, balances, quotes, catalog, identifier)
 
 	quotes.Subscribe(orders.tryMatchQuote)
+	quotes.SubscribeTrades(orders.tryMatchTrade)
 
 	ws.sockets[public.BalancesChannel] = balances
 	ws.sockets[public.OrdersChannel] = orders
