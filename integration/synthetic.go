@@ -114,6 +114,12 @@ func (builder *CaptureBuilder) AppendInstrumentCatalog() {
 func (builder *CaptureBuilder) AppendTicker(
 	symbol string, last, bid, ask, changePct float64,
 ) {
+	builder.AppendTickerAt(symbol, last, bid, ask, changePct, builder.timestamp())
+}
+
+func (builder *CaptureBuilder) AppendTickerAt(
+	symbol string, last, bid, ask, changePct float64, at time.Time,
+) {
 	builder.appendFrame(public.TickerChannel, "update", []market.TickerUpdate{{
 		Symbol:    symbol,
 		Last:      last,
@@ -123,7 +129,7 @@ func (builder *CaptureBuilder) AppendTicker(
 		AskQty:    10,
 		ChangePct: changePct,
 		Volume:    1000,
-		Timestamp: builder.timestampRFC3339(),
+		Timestamp: at.UTC().Format(time.RFC3339Nano),
 	}})
 }
 
@@ -215,6 +221,7 @@ func (builder *CaptureBuilder) AppendTradeBurst(
 }
 
 func (builder *CaptureBuilder) AppendBookThinning(symbol string, frames int) {
+	builder.AppendTicker(symbol, 100, 99, 101, 0)
 	for index := range frames {
 		depth := 20.0 - float64(index)*2
 		askPrice := 101.0 + float64(index)*0.5
@@ -293,10 +300,57 @@ func (builder *CaptureBuilder) AppendCausalCrossSection() {
 }
 
 func (builder *CaptureBuilder) AppendLeadLagStall() {
-	for range 24 {
-		builder.AppendTicker(testSymbolLeader, 100, 99, 101, 0)
-		builder.AppendTicker(testSymbolPrimary, 100+float64(builder.tick)*0.01, 99, 101, 0.5)
+	for index := range 20 {
+		at := builder.origin.Add(time.Duration(index) * 5 * time.Minute)
+		builder.AppendTickerAt(testSymbolLeader, 100, 99, 101, 0, at)
+		builder.AppendTickerAt(testSymbolPrimary, 100.01, 99, 101, 0.5, at)
 	}
+}
+
+func correlationPostReplayTrades() []market.TradeUpdate {
+	prices := map[string]float64{
+		testSymbolPrimary:   100,
+		testSymbolSecondary: 50,
+		testSymbolLeader:    75,
+	}
+	origin := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	trades := make([]market.TradeUpdate, 0, 40*3)
+
+	for batch := range 33 {
+		at := origin.Add(time.Duration(batch) * 260 * time.Millisecond)
+
+		for symbol, price := range prices {
+			trades = append(trades, market.TradeUpdate{
+				Symbol:    symbol,
+				Side:      "buy",
+				Price:     price,
+				Qty:       1,
+				Timestamp: at,
+			})
+			prices[symbol] = price * 1.02
+		}
+	}
+
+	return trades
+}
+
+func leadLagPostReplayTickers() []market.TickerUpdate {
+	origin := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	tickers := make([]market.TickerUpdate, 0, 40)
+
+	for index := range 20 {
+		at := origin.Add(time.Duration(index) * 5 * time.Minute)
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolLeader, Last: 100, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolPrimary, Last: 100.01, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+	}
+
+	return tickers
 }
 
 func (builder *CaptureBuilder) AppendCorrelationHerd() {

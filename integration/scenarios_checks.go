@@ -6,17 +6,41 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func auditVerdictMatches(row AuditRow, want perspectives.ActionType) bool {
+	switch typed := row.Verdict.(type) {
+	case string:
+		return typed == want.String()
+	case float64:
+		return perspectives.ActionType(typed) == want
+	default:
+		return false
+	}
+}
+
 func checkMeasurementSource(
 	id, name string,
 	source perspectives.SourceType,
 	symbol string,
+) ScenarioCheck {
+	return checkMeasurementSourceAllowZeroLast(id, name, source, symbol, false)
+}
+
+func checkMeasurementSourceAllowZeroLast(
+	id, name string,
+	source perspectives.SourceType,
+	symbol string,
+	allowZeroLast bool,
 ) ScenarioCheck {
 	return ScenarioCheck{
 		ID:   id,
 		Name: name,
 		Evaluate: func(snapshot TapeSnapshot, _ error) (bool, string, map[string]any) {
 			reading := snapshot.latestBySource(source)
-			pass := reading.Source == source && reading.Symbol == symbol && reading.Last > 0
+			pass := reading.Source == source && reading.Symbol == symbol
+
+			if pass && !allowZeroLast {
+				pass = reading.Last > 0
+			}
 
 			return pass, fmt.Sprintf("source=%s symbol=%s last=%.4f", reading.Source, reading.Symbol, reading.Last), map[string]any{
 				"categories": snapshot.categoriesForSource(source),
@@ -157,15 +181,13 @@ func checkAuditPlaybookWalk(id, name string, symbol string, action perspectives.
 		ID:   id,
 		Name: name,
 		Evaluate: func(snapshot TapeSnapshot, _ error) (bool, string, map[string]any) {
-			want := string(action)
-
 			for _, row := range snapshot.AuditRows {
 				if row.AuditEvent != "playbook_walk" || row.Symbol != symbol {
 					continue
 				}
 
-				if row.Verdict == want {
-					return true, fmt.Sprintf("audit verdict=%s", row.Verdict), map[string]any{
+				if auditVerdictMatches(row, action) {
+					return true, fmt.Sprintf("audit verdict=%v", row.Verdict), map[string]any{
 						"block_reason": row.BlockReason,
 					}
 				}

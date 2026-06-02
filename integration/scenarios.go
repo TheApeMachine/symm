@@ -3,6 +3,7 @@ package integration
 import (
 	"time"
 
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -24,6 +25,10 @@ type Scenario struct {
 	BuildCapture       func(*CaptureBuilder)
 	DirectMeasurements []perspectives.Measurement
 	HoldingSymbols     []string
+	PostReplayTrades   []market.TradeUpdate
+	PostReplayTickers  []market.TickerUpdate
+	PostReplayDelay    time.Duration
+	PostReplayPace     time.Duration
 	SettleDelay        time.Duration
 	RunTimeout         time.Duration
 	Checks             []ScenarioCheck

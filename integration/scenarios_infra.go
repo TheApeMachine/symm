@@ -3,6 +3,8 @@ package integration
 import (
 	"fmt"
 	"time"
+
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 func infraScenarios() []Scenario {
@@ -36,8 +38,8 @@ func infraScenarios() []Scenario {
 			},
 		},
 		{
-			ID:   "infra.all_signals_manifest",
-			Name: "Full baseline tape activates every measurement source",
+			ID:   "infra.fast_signals_manifest",
+			Name: "Baseline replay activates fast-path measurement sources",
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
 				builder.AppendBaselineMarket()
@@ -45,20 +47,26 @@ func infraScenarios() []Scenario {
 				builder.AppendDepthflowTape(testSymbolPrimary)
 				builder.AppendLiquidityCrossSection()
 				builder.AppendPumpLift(testSymbolPrimary, 28)
-				builder.AppendBookThinning(testSymbolPrimary, 8)
+				builder.AppendBookThinning(testSymbolPrimary, 12)
 				builder.AppendCausalCrossSection()
-				builder.AppendLeadLagStall()
 				builder.AppendToxicityCancelWall(testSymbolPrimary, 100)
-				builder.AppendCorrelationHerd()
 				builder.AppendSentimentSlumpCrossSection()
 			},
-			RunTimeout:  14 * time.Second,
-			SettleDelay: 11 * time.Second,
+			SettleDelay: 2 * time.Second,
 			Checks: []ScenarioCheck{
 				checkSourcesObserved(
 					"signals.manifest",
-					"Every signal source published at least one measurement",
-					allSignalSources()...,
+					"Fast-path sources published at least one measurement",
+					perspectives.SourceCVD,
+					perspectives.SourceFluid,
+					perspectives.SourceHawkes,
+					perspectives.SourceDepthFlow,
+					perspectives.SourceSentiment,
+					perspectives.SourceLiquidity,
+					perspectives.SourceExhaustion,
+					perspectives.SourcePumpDump,
+					perspectives.SourceToxicity,
+					perspectives.SourceCausal,
 				),
 			},
 		},

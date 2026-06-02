@@ -59,34 +59,43 @@ func (relay *RawRelay) Tick() error {
 		default:
 		}
 
-		forwarded := false
-
-		for _, subscriber := range relay.subscribers {
-			select {
-			case message := <-subscriber.Incoming:
-				if message == nil || message.Value == nil {
-					continue
-				}
-
-				envelope, ok := message.Value.(public.SocketMessage)
-
-				if !ok {
-					continue
-				}
-
-				relay.raw.Send(&qpool.QValue[any]{
-					Type:  envelope.Channel,
-					Value: envelope,
-				})
-				forwarded = true
-			default:
-			}
-		}
+		forwarded := relay.forwardOne()
 
 		if !forwarded {
-			time.Sleep(2 * time.Millisecond)
+			select {
+			case <-relay.ctx.Done():
+				return relay.ctx.Err()
+			case <-time.After(2 * time.Millisecond):
+			}
 		}
 	}
+}
+
+func (relay *RawRelay) forwardOne() bool {
+	for _, subscriber := range relay.subscribers {
+		select {
+		case message := <-subscriber.Incoming:
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(public.SocketMessage)
+
+			if !ok {
+				continue
+			}
+
+			relay.raw.Send(&qpool.QValue[any]{
+				Type:  envelope.Channel,
+				Value: envelope,
+			})
+
+			return true
+		default:
+		}
+	}
+
+	return false
 }
 
 func (relay *RawRelay) Close() error {

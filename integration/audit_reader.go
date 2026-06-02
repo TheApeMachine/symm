@@ -13,7 +13,7 @@ AuditRow is one JSONL frame from trading.audit.file.
 type AuditRow struct {
 	AuditEvent  string `json:"audit_event"`
 	Symbol      string `json:"symbol"`
-	Verdict     string `json:"verdict"`
+	Verdict     any    `json:"verdict"`
 	BlockReason string `json:"block_reason"`
 }
 

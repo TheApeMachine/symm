@@ -8,3 +8,4 @@ symm.txt
 .DS_Store
 *.test
 *.jsonl
+integration/runs/

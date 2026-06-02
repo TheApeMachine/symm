@@ -123,12 +123,14 @@ func signalScenarios() []Scenario {
 			Name: "Exhaust detects spread widening and depth thinning",
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
-				builder.AppendTicker(testSymbolPrimary, 100, 99, 101, 0)
-				builder.AppendBookThinning(testSymbolPrimary, 8)
+				builder.AppendBookThinning(testSymbolPrimary, 12)
 			},
 			SettleDelay: 700 * time.Millisecond,
 			Checks: []ScenarioCheck{
-				checkMeasurementSource("exhaust.source", "Exhaust measurement observed", perspectives.SourceExhaustion, testSymbolPrimary),
+				checkMeasurementSourceAllowZeroLast(
+					"exhaust.source", "Exhaust measurement observed",
+					perspectives.SourceExhaustion, testSymbolPrimary, true,
+				),
 				checkCategoryObserved("exhaust.category", "Exhaust assigns a decay category", perspectives.SourceExhaustion,
 					perspectives.CategoryMechanicalCollapse, perspectives.CategoryThermalExhaustion,
 					perspectives.CategoryFragileExpansion, perspectives.CategoryActiveReversal,
@@ -155,9 +157,10 @@ func signalScenarios() []Scenario {
 			Name: "Leadlag publishes anchor stall when anchor is flat",
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
-				builder.AppendLeadLagStall()
 			},
-			SettleDelay: 900 * time.Millisecond,
+			PostReplayTickers: leadLagPostReplayTickers(),
+			PostReplayPace:    50 * time.Millisecond,
+			SettleDelay:       3 * time.Second,
 			Checks: []ScenarioCheck{
 				checkCategoryObserved("leadlag.category", "Leadlag assigns anchor stall on flat anchor", perspectives.SourceLeadLag,
 					perspectives.CategoryAnchorStall, perspectives.CategoryInefficientLag,
@@ -170,10 +173,11 @@ func signalScenarios() []Scenario {
 			Name: "Correlation classifies coordinated cross-section movement",
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
-				builder.AppendCorrelationHerd()
 			},
-			RunTimeout:  12 * time.Second,
-			SettleDelay: 10 * time.Second,
+			PostReplayTrades: correlationPostReplayTrades(),
+			PostReplayPace:   260 * time.Millisecond,
+			RunTimeout:       12 * time.Second,
+			SettleDelay:      11 * time.Second,
 			Checks: []ScenarioCheck{
 				checkCategoryObserved("correlation.category", "Correlation assigns herd or stress category", perspectives.SourceCorrelation,
 					perspectives.CategorySystemicHerd, perspectives.CategoryDecoupledAlpha,

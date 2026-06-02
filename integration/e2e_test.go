@@ -16,11 +16,11 @@ func TestIntegrationE2E(t *testing.T) {
 		testconfig.Load(t)
 		resetTradingReady()
 
-		auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
-		ConfigureViper(auditPath)
+		auditDir := t.TempDir()
+		ConfigureViper(filepath.Join(auditDir, "suite-audit.jsonl"))
 
 		reportPath := filepath.Join("runs", "e2e-report.json")
-		report := RunSuite(context.Background(), auditPath, allScenarios())
+		report := RunSuite(context.Background(), auditDir, allScenarios())
 
 		_ = os.MkdirAll(filepath.Dir(reportPath), 0o755)
 		writeErr := report.WriteJSON(reportPath)
@@ -45,7 +45,7 @@ func TestIntegrationE2E(t *testing.T) {
 /*
 RunSuite executes all scenarios and returns an aggregate report.
 */
-func RunSuite(parent context.Context, auditPath string, scenarios []Scenario) *SuiteReport {
+func RunSuite(parent context.Context, auditDir string, scenarios []Scenario) *SuiteReport {
 	started := time.Now()
 	suite := &SuiteReport{
 		StartedAt: started,
@@ -53,10 +53,13 @@ func RunSuite(parent context.Context, auditPath string, scenarios []Scenario) *S
 	}
 
 	for _, scenario := range scenarios {
+		scenarioAudit := filepath.Join(auditDir, scenario.ID+".jsonl")
+		ConfigureViper(scenarioAudit)
+
 		builder := buildCapture(scenario)
 		ctx, cancel := context.WithCancel(parent)
 
-		harness, err := NewHarness(ctx, builder.Reader(), auditPath)
+		harness, err := NewHarness(ctx, builder.Reader(), scenarioAudit)
 
 		if err != nil {
 			cancel()

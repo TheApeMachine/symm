@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -16,10 +17,21 @@ func executionScenarios() []Scenario {
 				builder.AppendInstrumentCatalog()
 				builder.AppendTicker(testSymbolPrimary, 100, 99.5, 100.5, 0)
 				builder.AppendBookSnapshot(testSymbolPrimary, 99.5, 30, 100.5, 30)
-				builder.AppendSellTrade(testSymbolPrimary, 100.5, 0.05)
 			},
 			DirectMeasurements: playbookLiquidityVacuumMeasurements(testSymbolPrimary, 100),
-			SettleDelay:        2500 * time.Millisecond,
+			PostReplayTrades: []market.TradeUpdate{
+				{
+					Symbol: testSymbolPrimary, Side: "sell", Price: 100, Qty: 2,
+					Timestamp: time.Date(2026, 6, 3, 12, 30, 0, 0, time.UTC),
+				},
+				{
+					Symbol: testSymbolPrimary, Side: "sell", Price: 100, Qty: 2,
+					Timestamp: time.Date(2026, 6, 3, 12, 30, 1, 0, time.UTC),
+				},
+			},
+			PostReplayDelay: 400 * time.Millisecond,
+			PostReplayPace:  100 * time.Millisecond,
+			SettleDelay:     2500 * time.Millisecond,
 			Checks: []ScenarioCheck{
 				checkActionType("execution.action", "Limit entry action observed on raw",
 					perspectives.ActionLimit, testSymbolPrimary),

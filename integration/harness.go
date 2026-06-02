@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/viper"
@@ -211,13 +213,37 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		})
 	}
 
-	settle := scenario.SettleDelay
+	postDelay := scenario.PostReplayDelay
 
-	if settle <= 0 {
-		settle = 400 * time.Millisecond
+	if postDelay <= 0 {
+		postDelay = 300 * time.Millisecond
 	}
 
-	time.Sleep(settle)
+	time.Sleep(postDelay)
+
+	pace := scenario.PostReplayPace
+
+	if pace <= 0 {
+		pace = 50 * time.Millisecond
+	}
+
+	for _, trade := range scenario.PostReplayTrades {
+		harness.InjectTrade(trade)
+		time.Sleep(pace)
+	}
+
+	for _, ticker := range scenario.PostReplayTickers {
+		harness.InjectTicker(ticker)
+		time.Sleep(pace)
+	}
+
+	settleDelay := scenario.SettleDelay
+
+	if settleDelay <= 0 {
+		settleDelay = 400 * time.Millisecond
+	}
+
+	time.Sleep(settleDelay)
 	harness.cancel()
 	<-engineDone
 
@@ -270,7 +296,10 @@ func ConfigureViper(auditPath string) {
 	viper.Set("market.anchor_symbol", testSymbolLeader)
 	viper.Set("market.default_symbols", []string{testSymbolLeader})
 	viper.Set("trading.audit.file", auditPath)
-	viper.Set("trading.audit.gate_cooldown", 0)
+	viper.Set("trading.audit.gate_cooldown", time.Nanosecond)
+	viper.Set("trading.paper.default_one_way_latency", time.Millisecond)
+	viper.Set("trading.paper.latency_profile", filepath.Join(os.TempDir(), "symm-integration-no-latency.json"))
+	viper.Set("trading.order_ack_timeout", 5*time.Second)
 }
 
 func resetTradingReady() {
