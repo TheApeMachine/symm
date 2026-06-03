@@ -17,7 +17,8 @@ type WsStatusContextValue = {
 	online: boolean;
 	setOnline: (online: boolean) => void;
 	balance: number;
-	setBalance: (balance: number) => void;
+	openPositions: number;
+	setWallet: (balance: number, openPositions: number) => void;
 	actions: ActionEvent[];
 	pushAction: (action: ActionEvent) => void;
 };
@@ -27,15 +28,29 @@ const WsStatusContext = createContext<WsStatusContextValue | null>(null);
 export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [online, setOnline] = useState(false);
 	const [balance, setBalance] = useState(0);
+	const [openPositions, setOpenPositions] = useState(0);
 	const [actions, setActions] = useState<ActionEvent[]>([]);
+
+	const setWallet = useCallback((nextBalance: number, nextOpen: number) => {
+		setBalance(nextBalance);
+		setOpenPositions(nextOpen);
+	}, []);
 
 	const pushAction = useCallback((action: ActionEvent) => {
 		setActions((prev) => [action, ...prev].slice(0, 50));
 	}, []);
 
 	const value = useMemo(
-		() => ({ online, setOnline, balance, setBalance, actions, pushAction }),
-		[online, balance, actions, pushAction],
+		() => ({
+			online,
+			setOnline,
+			balance,
+			openPositions,
+			setWallet,
+			actions,
+			pushAction,
+		}),
+		[online, balance, openPositions, setWallet, actions, pushAction],
 	);
 
 	return (

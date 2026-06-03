@@ -246,11 +246,9 @@ func (ws *WebSocket) readFrame() (err error) {
 		ws.latencies.Next()
 	}
 
-	if message.Type == "ohlc" {
+	if message.Channel == "ohlc" {
 		ws.publishOhlc(message.Data)
 	}
-
-	sockMsgPool.Put(message)
 
 	return nil
 }
@@ -294,6 +292,7 @@ func (ws *WebSocket) publishOhlc(message json.RawMessage) {
 
 	for _, candle := range candles {
 		sym, _ := candle["symbol"].(string)
+
 		if slices.Contains(ws.streams.Snapshot(), sym) && ui != nil {
 			ui.Send(&qpool.QValue[any]{
 				Type:  "ohlc",

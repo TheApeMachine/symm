@@ -32,23 +32,15 @@ const ConnectionBadge = () => {
 };
 
 const PageHeader = () => {
-	const { balance } = useWsStatus();
+	const { balance, openPositions } = useWsStatus();
 
 	return (
 		<Page.Header>
 			<Button className="h-auto! gap-4 px-4 py-3 text-left" variant="outline">
 				<div className="flex flex-col gap-0.5">
-					<h3>TICK {0}</h3>
-					<p className="whitespace-break-spaces font-normal text-muted-foreground">
-						{0} measurements
-					</p>
-				</div>
-			</Button>
-			<Button className="h-auto! gap-4 px-4 py-3 text-left" variant="outline">
-				<div className="flex flex-col gap-0.5">
 					<h3>€{balance.toFixed(2)}</h3>
 					<p className="whitespace-break-spaces font-normal text-muted-foreground">
-						0 open positions
+						{openPositions} open position{openPositions === 1 ? "" : "s"}
 					</p>
 				</div>
 			</Button>

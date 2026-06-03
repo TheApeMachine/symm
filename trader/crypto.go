@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -36,6 +37,7 @@ type Crypto struct {
 	inventory     map[string]float64
 	avgEntry      map[string]float64
 	marks         map[string]float64
+	pending       map[string]struct{}
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
@@ -61,11 +63,12 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		inventory:   make(map[string]float64),
 		avgEntry:    make(map[string]float64),
 		marks:       make(map[string]float64),
+		pending:     make(map[string]struct{}),
 	}
 
 	for _, channel := range []string{"raw"} {
 		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(channel, 1024)
+		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 
 	activate.Boot("trader/crypto ready")
@@ -73,56 +76,121 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 	return crypto
 }
 
+/*
+Tick consumes the raw bus. Story emits Action structs (entry/exit verdicts) and
+the paper desk emits execution maps. Actions submit orders; executions update
+inventory and the shared focus set so the not-holding gate sees open positions.
+*/
 func (crypto *Crypto) Tick() error {
+	incoming := crypto.subscribers["raw"].Incoming
+
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case message := <-crypto.subscribers["raw"].Incoming:
+		case message := <-incoming:
 			if message == nil || message.Value == nil {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
-
-			if !ok {
+			if action, ok := message.Value.(perspectives.Action); ok {
+				crypto.submit(action)
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			switch channel {
-			case "actions":
-				action, ok := message.Value.(perspectives.Action)
-
-				if !ok {
-					continue
-				}
-
-				switch action.Type {
-				case perspectives.ActionLimit:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionMarket:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionIceberg:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionStopLoss:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionStopLossLimit:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionTakeProfit:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionTakeProfitLimit:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionTrailingStop:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionTrailingStopLimit:
-					crypto.desk.AddOrder(action)
-				case perspectives.ActionSettlePosition:
-					crypto.desk.AddOrder(action)
-				}
+			if envelope, ok := message.Value.(map[string]any); ok {
+				crypto.observeExecution(envelope)
 			}
 		}
 	}
+}
+
+/*
+submit forwards an entry or exit verdict to the desk. One in-flight order per
+symbol is allowed: entries only when flat, exits only when holding, and never
+while an order for that symbol is still resolving. This is race-free because
+Tick processes actions and executions on a single goroutine. Exit verdicts carry
+no quantity, so we settle the full position we currently hold.
+*/
+func (crypto *Crypto) submit(action perspectives.Action) {
+	if action.Type == perspectives.ActionNone {
+		return
+	}
+
+	if _, inFlight := crypto.pending[action.Symbol]; inFlight {
+		return
+	}
+
+	held := crypto.inventory[action.Symbol]
+
+	if perspectives.IsEntryAction(action.Type) && held > 0 {
+		return
+	}
+
+	if perspectives.IsExitAction(action.Type) {
+		if held <= 0 {
+			return
+		}
+
+		action.Quantity = held
+	}
+
+	// A desk rejection is the gate working as intended, not an in-flight order.
+	if err := crypto.desk.AddOrder(action); err != nil {
+		return
+	}
+
+	crypto.pending[action.Symbol] = struct{}{}
+}
+
+/*
+observeExecution applies a paper fill to inventory and the focus set, clearing
+the in-flight marker. A buy opens or adds to a position; a settling sell closes
+it. A zero-quantity execution is a no-fill: it only clears the in-flight marker.
+*/
+func (crypto *Crypto) observeExecution(envelope map[string]any) {
+	if envelope["channel"] != "executions" {
+		return
+	}
+
+	symbol, _ := envelope["symbol"].(string)
+
+	if symbol == "" {
+		return
+	}
+
+	delete(crypto.pending, symbol)
+
+	side, _ := envelope["side"].(string)
+	qty, _ := envelope["qty"].(float64)
+	price, _ := envelope["price"].(float64)
+
+	if qty <= 0 {
+		return
+	}
+
+	if side == string(trading.Buy) {
+		crypto.openPosition(symbol, qty, price)
+		return
+	}
+
+	crypto.closePosition(symbol)
+}
+
+func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
+	prevQty := crypto.inventory[symbol]
+	prevCost := prevQty * crypto.avgEntry[symbol]
+	newQty := prevQty + qty
+
+	crypto.inventory[symbol] = newQty
+	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
+	crypto.streams.Add(symbol)
+}
+
+func (crypto *Crypto) closePosition(symbol string) {
+	delete(crypto.inventory, symbol)
+	delete(crypto.avgEntry, symbol)
+	crypto.streams.Remove(symbol)
 }
 
 func (crypto *Crypto) Close() error {

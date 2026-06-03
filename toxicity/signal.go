@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -83,21 +84,25 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(*public.SocketMessage)
+	envelope, ok := message.Value.(map[string]any)
 
 	if !ok {
 		return nil
 	}
 
-	switch envelope.Type {
-	case "trades":
-		trades := signalpool.GetTrades(envelope)
+	channel, _ := envelope["channel"].(string)
+	rawData, _ := envelope["data"].(json.RawMessage)
+	frame := &public.SocketMessage{Channel: channel, Data: rawData}
+
+	switch channel {
+	case public.TradesChannel:
+		trades := signalpool.GetTrades(frame)
 
 		for _, trade := range trades {
 			tox.observeTrade(trade)
 		}
-	case "tickers":
-		tickers := signalpool.GetTickers(envelope)
+	case public.TickerChannel:
+		tickers := signalpool.GetTickers(frame)
 
 		for _, ticker := range tickers {
 			tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
@@ -107,12 +112,12 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 				return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
 			}
 		}
-	case "books":
+	case public.BookChannel:
 		if tox.l3Active {
 			return nil
 		}
 
-		books := signalpool.GetBooks(envelope)
+		books := signalpool.GetBooks(frame)
 
 		for _, update := range books {
 			tox.observeBook(update)

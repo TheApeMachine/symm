@@ -58,6 +58,8 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		}
 	}
 
+	balances := response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond))
+
 	ws := &WebSocket{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -65,8 +67,8 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		sockets: map[string]types.Socket{
-			"balances": response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond)),
-			"orders":   response.NewOrders(ctx, pool),
+			"balances": balances,
+			"orders":   response.NewOrders(ctx, pool, balances),
 		},
 		latencies: ring,
 	}

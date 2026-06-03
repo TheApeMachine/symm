@@ -119,10 +119,8 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		addParams.PostOnly = true
 	}
 
-	addErr := trading.NewOrderClient(desk.ctx, desk.pool).AddOrder(addParams)
-
-	if addErr != nil {
-		return err
+	if addErr := trading.NewOrderClient(desk.ctx, desk.pool).AddOrder(addParams); addErr != nil {
+		return addErr
 	}
 
 	return nil

@@ -1,7 +1,7 @@
 {
   "pass": false,
-  "started_at": "2026-06-03T11:41:05.867229+02:00",
-  "elapsed": 13063292,
+  "started_at": "2026-06-03T23:11:54.794982+02:00",
+  "elapsed": 10595917,
   "scenarios": [
     {
       "id": "infra.replay_raw_bus",

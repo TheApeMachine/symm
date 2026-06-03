@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -139,19 +140,23 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 				continue
 			}
 
-			envelope, ok := message.Value.(*public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			frame := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TickerChannel:
-				cache.ingestTickers(envelope)
+				cache.ingestTickers(frame)
 			case public.BookChannel:
-				cache.ingestBooks(envelope)
+				cache.ingestBooks(frame)
 			case public.TradesChannel:
-				cache.ingestTrades(envelope)
+				cache.ingestTrades(frame)
 			}
 		}
 	}

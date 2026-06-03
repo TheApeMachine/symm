@@ -167,7 +167,7 @@ func (client *OrderClient) AddOrder(params AddParams) error {
 	}
 
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodAddOrder,
 			"params": params,

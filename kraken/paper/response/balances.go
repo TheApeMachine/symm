@@ -2,6 +2,8 @@ package response
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +14,9 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
 )
+
+// ErrInsufficientFunds rejects a fill that the wallet cannot fund in the spent currency.
+var ErrInsufficientFunds = errors.New("paper balances: insufficient funds")
 
 /*
 Balances simulates the Kraken balances channel on the shared raw bus.
@@ -86,18 +91,36 @@ func (balances *Balances) Observe(socket types.Socket) {
 }
 
 /*
-ApplyFill updates wallet balances after a simulated fill and notifies observers.
+ApplyFill settles a simulated fill against the multi-currency wallet, faithful to
+Kraken: a buy spends the pair's quote currency, a sell spends its base. The fill
+is rejected (ErrInsufficientFunds, wallet untouched) when the spent currency is
+short — exactly as the exchange would reject an order you cannot fund.
 */
-func (balances *Balances) ApplyFill(symbol, side string, qty, price, fee float64, _ string) {
-	base := symbol[:strings.IndexByte(symbol, '/')]
+func (balances *Balances) ApplyFill(symbol, side string, qty, price, fee float64, _ string) error {
+	slash := strings.IndexByte(symbol, '/')
+
+	if slash <= 0 {
+		return fmt.Errorf("paper balances: malformed symbol %q", symbol)
+	}
+
+	base := symbol[:slash]
+	quote := symbol[slash+1:]
 	cost := qty * price
 
 	if side == "buy" {
+		if balances.available(quote) < cost+fee {
+			return ErrInsufficientFunds
+		}
+
+		balances.adjust(quote, -(cost + fee))
 		balances.adjust(base, qty)
-		balances.adjust(balances.quote, -(cost + fee))
 	} else {
+		if balances.available(base) < qty {
+			return ErrInsufficientFunds
+		}
+
 		balances.adjust(base, -qty)
-		balances.adjust(balances.quote, cost-fee)
+		balances.adjust(quote, cost-fee)
 	}
 
 	for _, observer := range balances.observers {
@@ -108,6 +131,18 @@ func (balances *Balances) ApplyFill(symbol, side string, qty, price, fee float64
 	}
 
 	balances.publishUI()
+
+	return nil
+}
+
+func (balances *Balances) available(asset string) float64 {
+	for _, row := range balances.model.Asset {
+		if row.Asset == asset {
+			return row.Balance
+		}
+	}
+
+	return 0
 }
 
 func (balances *Balances) adjust(asset string, delta float64) {
@@ -141,17 +176,24 @@ func (balances *Balances) publishUI() {
 		return
 	}
 
-	total := 0.0
-	for _, a := range balances.model.Asset {
-		if a.Asset == balances.quote {
-			total = a.Balance
-			break
+	cash := 0.0
+	open := 0
+
+	for _, asset := range balances.model.Asset {
+		if asset.Asset == balances.quote {
+			cash = asset.Balance
+			continue
+		}
+
+		if asset.Balance > 0 {
+			open++
 		}
 	}
 
 	balances.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"event":   "wallet",
-		"balance": total,
+		"balance": cash,
+		"open":    open,
 	}})
 }
 

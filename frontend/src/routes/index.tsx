@@ -72,7 +72,7 @@ const DashboardLayout = () => {
 		),
 	);
 
-	const { setOnline, setBalance, pushAction } = useWsStatus();
+	const { setOnline, setWallet, pushAction } = useWsStatus();
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
@@ -84,7 +84,10 @@ const DashboardLayout = () => {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
 				if (raw.event === "wallet") {
-					setBalance(raw.balance as number);
+					setWallet(
+						(raw.balance as number) ?? 0,
+						(raw.open as number) ?? 0,
+					);
 					return;
 				}
 
