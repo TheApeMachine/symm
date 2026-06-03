@@ -4,8 +4,10 @@ import (
 	"container/ring"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -20,14 +22,6 @@ import (
 
 var socket *WebSocket
 var socketOnce sync.Once
-var outboundOnce sync.Once
-
-const publicOutboundSubscriberID = "kraken:public:websocket"
-
-const (
-	publicRawSubscriberID    = "kraken/public:raw"
-	publicLevel3SubscriberID = "kraken/public:level3"
-)
 
 type WebSocketClient interface {
 	Connect(EndpointType, string, uint64) error
@@ -130,6 +124,10 @@ func (ws *WebSocket) Tick() (err error) {
 				ws.handleError(errnie.Error(err))
 				continue
 			}
+
+			if time.Now().Unix()%64 == 0 {
+				ws.recordLatency()
+			}
 		default:
 		}
 
@@ -190,6 +188,22 @@ func (ws *WebSocket) handleError(err error) {
 		ws.Connect(WebSocketURL, "kraken:public", 0)
 		return
 	}
+}
+
+func (ws *WebSocket) recordLatency() {
+	// Write the latency ring to the file.
+	latencyFile, err := os.OpenFile("runs/network_latency.json", os.O_CREATE|os.O_WRONLY, 0644)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	defer latencyFile.Close()
+
+	ws.latencies.Do(func(value any) {
+		fmt.Fprintf(latencyFile, "%d\n", value)
+	})
 }
 
 func (ws *WebSocket) publishOhlc(message map[string]any) {

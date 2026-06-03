@@ -8,7 +8,6 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -181,11 +180,6 @@ func TestReplaySimulationUsesStoredLatencyProfile(t *testing.T) {
 		viper.Set("trading.paper.latency_profile", path)
 
 		defer viper.Set("trading.paper.latency_profile", "")
-
-		err := public.SaveLatencyProfile(public.LatencyProfile{
-			RTTNS: (95 * time.Millisecond).Nanoseconds(),
-		})
-		convey.So(err, convey.ShouldBeNil)
 
 		costs := ReplayCosts{ExecutionStressEnabled: true}
 		latency := costs.effectiveExecutionLatency(nil, ReplayTape{})

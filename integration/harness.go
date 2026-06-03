@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -320,18 +319,6 @@ func (harness *Harness) waitDeskReady(timeout time.Duration) {
 		}
 
 		harness.sleep(10 * time.Millisecond)
-	}
-}
-
-/*
-ConfigureViper sets paper/replay-friendly defaults for integration runs.
-*/
-func integrationLatencyProfile() public.LatencyProfile {
-	return public.LatencyProfile{
-		RTTNS:     (2 * time.Millisecond).Nanoseconds(),
-		OneWayNS:  time.Millisecond.Nanoseconds(),
-		Samples:   1,
-		UpdatedAt: time.Now().UTC(),
 	}
 }
 

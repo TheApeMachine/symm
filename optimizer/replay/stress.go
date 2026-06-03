@@ -1,11 +1,13 @@
 package replay
 
 import (
+	"fmt"
 	"math"
+	"os"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -194,15 +196,26 @@ func (costs ReplayCosts) effectiveExecutionLatency(
 		return 0
 	}
 
-	if replayLatency := public.ReplayExchangeLatency(); replayLatency > 0 {
-		return replayLatency
+	// Load the latency ring from the file.
+	latencyFile, err := os.Open("runs/network_latency.json")
+	if err != nil {
+		errnie.Error(err)
+		return 0
+	}
+	defer latencyFile.Close()
+
+	var latency time.Duration
+
+	for {
+		var value time.Duration
+		_, err = fmt.Fscanf(latencyFile, "%d\n", &value)
+		latency += value
+		if err != nil {
+			break
+		}
 	}
 
-	if len(rows) > 0 {
-		return deriveExecutionLatency(rows)
-	}
-
-	return deriveExecutionLatencyFromTape(tape)
+	return latency
 }
 
 func replayExecutionLatencyFromViper() time.Duration {
