@@ -12,6 +12,7 @@ import {
 import type { initFluidSurfaceChart } from "#/components/charts/fluid/init-fluid-surface-chart";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
 import { TradeChartGrid } from "#/components/charts/trade/TradeChart";
+import { ingestCandleWire } from "#/components/charts/trade/trade-chart-wire";
 import {
 	Card,
 	CardFrame,
@@ -71,7 +72,7 @@ const DashboardLayout = () => {
 		),
 	);
 
-	const { setOnline, setBalance } = useWsStatus();
+	const { setOnline, setBalance, pushAction } = useWsStatus();
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
@@ -84,6 +85,15 @@ const DashboardLayout = () => {
 
 				if (raw.event === "wallet") {
 					setBalance(raw.balance as number);
+					return;
+				}
+
+				if (raw.event === "action") {
+					pushAction({
+						type: raw.type as string,
+						symbol: raw.symbol as string,
+						ts: Date.now(),
+					});
 					return;
 				}
 
@@ -100,6 +110,12 @@ const DashboardLayout = () => {
 						}
 					}
 
+					return;
+				}
+
+				// ohlc candle data — route to trade chart
+				if (typeof raw.symbol === "string" && typeof raw.open === "number") {
+					ingestCandleWire(raw);
 					return;
 				}
 
@@ -182,7 +198,7 @@ const DashboardLayout = () => {
 									value="tab-1"
 									className="flex align-center justify-evenly h-full w-full p-0"
 								>
-									<TradeChartGrid symbols={["BTCEUR"]} />
+									<TradeChartGrid symbols={["BTC/EUR"]} />
 									<FluidFieldSurfaceChart bridgeRef={fluidRef} />
 								</TabsPanel>
 								<TabsPanel value="tab-2">

@@ -1,204 +1,39 @@
-import { Link } from "@tanstack/react-router";
-import {
-	BlocksIcon,
-	BotIcon,
-	ChevronRightIcon,
-	CpuIcon,
-	FlaskConicalIcon,
-	GaugeIcon,
-	KanbanIcon,
-	LightbulbIcon,
-	MicroscopeIcon,
-	NetworkIcon,
-} from "lucide-react";
-import {
-	Accordion,
-	AccordionItem,
-	AccordionPanel,
-	AccordionTrigger,
-} from "#/components/ui/accordion";
-import { Button } from "#/components/ui/button";
-import { Flex } from "../ui/flex";
+import { useWsStatus } from "#/providers/ws-status";
 
-export const Navigation = ({
-	onNavigate,
-}: {
-	onNavigate?: () => void;
-} = {}) => {
+const ACTION_LABELS: Record<string, string> = {
+	limit:               "Limit",
+	market:              "Market",
+	iceberg:             "Iceberg",
+	stop_loss:           "Stop Loss",
+	stop_loss_limit:     "Stop Loss Limit",
+	take_profit:         "Take Profit",
+	take_profit_limit:   "Take Profit Limit",
+	trailing_stop:       "Trailing Stop",
+	trailing_stop_limit: "Trailing Stop Limit",
+	settle_position:     "Settle",
+};
+
+export const Navigation = () => {
+	const { actions } = useWsStatus();
+
 	return (
-		<Accordion className="w-full">
-			<AccordionItem value="item-1">
-				<AccordionTrigger>
-					<BlocksIcon /> Projects
-				</AccordionTrigger>
-				<AccordionPanel className="flex flex-col gap-2">
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<KanbanIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Kanban</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Kanban board for managing projects
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<LightbulbIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Request Feature</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Request a new feature for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-				</AccordionPanel>
-			</AccordionItem>
-			<AccordionItem value="item-2">
-				<AccordionTrigger>
-					<MicroscopeIcon /> Research
-				</AccordionTrigger>
-				<AccordionPanel className="flex flex-col gap-2">
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<NetworkIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Architecture</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Architecture for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<GaugeIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Benchmarks</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Benchmarks for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<FlaskConicalIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>New Benchmark</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Create a new benchmark for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<MicroscopeIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>New Research Project</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Create a new research project for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-				</AccordionPanel>
-			</AccordionItem>
-			<AccordionItem value="item-3">
-				<AccordionTrigger>
-					<NetworkIcon /> Models
-				</AccordionTrigger>
-				<AccordionPanel className="flex flex-col gap-2">
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<CpuIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Models</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Models for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-				</AccordionPanel>
-			</AccordionItem>
-			<AccordionItem value="item-4">
-				<AccordionTrigger>
-					<BotIcon /> Agents
-				</AccordionTrigger>
-				<AccordionPanel className="flex flex-col gap-2">
-					<Link to={"/"} onClick={onNavigate}>
-						<Button
-							className="w-full h-auto! flex flex-row items-center justify-between gap-4 px-4 py-3 text-left"
-							variant="outline"
-						>
-							<BotIcon className="shrink-0" />
-							<Flex.Column gap={1} className="text-left" fullWidth>
-								<h3>Agentic</h3>
-								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									Agents for the project
-								</p>
-							</Flex.Column>
-							<ChevronRightIcon
-								aria-hidden="true"
-								className="in-[[data-slot=button]:hover]:translate-x-0.5 transition-transform"
-							/>
-						</Button>
-					</Link>
-				</AccordionPanel>
-			</AccordionItem>
-		</Accordion>
+		<div className="flex flex-col gap-1 p-2 text-xs">
+			<p className="px-1 py-0.5 font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">
+				Actions
+			</p>
+			{actions.length === 0 ? (
+				<p className="px-1 text-muted-foreground">No actions yet</p>
+			) : (
+				actions.map((a) => (
+					<div
+						key={a.ts}
+						className="flex items-center justify-between rounded border border-border px-2 py-1 bg-card"
+					>
+						<span className="font-medium">{ACTION_LABELS[a.type] ?? a.type}</span>
+						<span className="text-muted-foreground">{a.symbol}</span>
+					</div>
+				))
+			)}
+		</div>
 	);
 };

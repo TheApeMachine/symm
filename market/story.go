@@ -211,9 +211,17 @@ func (story *Story) ingestMeasurement(
 		story.tree.Branches()...,
 	)
 
-	story.raw.Send(&qpool.QValue[any]{
-		Value: perspectives.ActionFromMeasurement(actionType, measurement),
-	})
+	action := perspectives.ActionFromMeasurement(actionType, measurement)
+
+	story.raw.Send(&qpool.QValue[any]{Value: action})
+
+	if actionType != perspectives.ActionNone {
+		story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+			"event":  "action",
+			"type":   action.Type.String(),
+			"symbol": action.Symbol,
+		}})
+	}
 
 	return nil
 }

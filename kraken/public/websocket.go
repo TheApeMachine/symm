@@ -72,7 +72,7 @@ func NewWebSocket(
 			streams:     streams,
 		}
 
-		for _, channel := range []string{"raw", "level3", "kraken:public"} {
+		for _, channel := range []string{"raw", "level3", "kraken:public", "ui"} {
 			socket.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 			socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 1024)
 		}
@@ -288,10 +288,12 @@ func (ws *WebSocket) publishOhlc(message json.RawMessage) {
 		return
 	}
 
+	ui := ws.broadcasts["ui"]
+
 	for _, candle := range candles {
 		sym, _ := candle["symbol"].(string)
-		if slices.Contains(ws.streams.Snapshot(), sym) {
-			ws.broadcasts["ui:charts"].Send(&qpool.QValue[any]{
+		if slices.Contains(ws.streams.Snapshot(), sym) && ui != nil {
+			ui.Send(&qpool.QValue[any]{
 				Type:  "ohlc",
 				Value: candle,
 			})
