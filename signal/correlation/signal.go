@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"encoding/json"
 	"context"
 	"math/rand"
 	"sync"
@@ -105,6 +106,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	activate.Boot("signal/correlation ready")
 
@@ -137,9 +139,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TradesChannel:
-				trades := signalpool.GetTrades(envelope)
+				trades := signalpool.GetTrades(sm)
 
 				for _, trade := range trades {
 					if trade.Price > 0 {

@@ -16,11 +16,7 @@ import {
 } from "scichart";
 
 import { appTheme } from "#/components/charts/shared/theme";
-import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
-import {
-	confidenceToGaugePercent,
-	formatSignalConfidence,
-} from "#/lib/symm/signal-confidence";
+import { ensureSciChartWasm } from "#/lib/utils";
 
 const GAUGE_BANDS = [50, 75, 100] as const;
 const GRADIENT_COLORS = [
@@ -127,7 +123,7 @@ const buildGaugeArcs = (
 	});
 
 	const label = new NativeTextAnnotation({
-		text: formatSignalConfidence(0),
+		text: "0",
 		x1: 0,
 		y1: 0,
 		textColor: "#FFFFFF",
@@ -219,8 +215,8 @@ export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
 					return;
 				}
 
-				applyGaugeNeedle(gaugeArcs, confidenceToGaugePercent(confidence));
-				gaugeArcs.label.text = formatSignalConfidence(confidence);
+				applyGaugeNeedle(gaugeArcs, confidence * 100);
+				gaugeArcs.label.text = confidence.toFixed(2).toString();
 				sciChartSurface.invalidateElement();
 			},
 			dispose() {

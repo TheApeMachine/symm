@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
@@ -77,6 +78,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	activate.Boot("signal/causal ready")
 
@@ -114,9 +116,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TradesChannel:
-				trades := signalpool.GetTrades(envelope)
+				trades := signalpool.GetTrades(sm)
 
 				for _, trade := range trades {
 					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
@@ -129,8 +135,8 @@ func (signal *Signal) Tick() error {
 					errnie.Error(err, "causal: publish")
 					continue
 				}
-			case public.TickerChannel:
-				tickers := signalpool.GetTickers(envelope)
+			case "tickers":
+				tickers := signalpool.GetTickers(sm)
 
 				for _, ticker := range tickers {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
@@ -140,8 +146,8 @@ func (signal *Signal) Tick() error {
 					errnie.Error(err, "causal: publish")
 					continue
 				}
-			case public.BookChannel:
-				books := signalpool.GetBooks(envelope)
+			case "books":
+				books := signalpool.GetBooks(sm)
 
 				for _, delta := range books {
 					signal.state(delta.Symbol).FeedBook(delta)
@@ -203,6 +209,9 @@ func (signal *Signal) publish() error {
 
 			activate.Once("signal/causal:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if ui := signal.broadcasts["ui"]; ui != nil {
+				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+			}
 
 			return nil, nil
 		}))

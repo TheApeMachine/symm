@@ -8,6 +8,22 @@ import (
 	"github.com/spf13/viper"
 )
 
+func TestScanSymbolCap(t *testing.T) {
+	Convey("Given market.max_scan_symbols", t, func() {
+		viper.Set("market.max_scan_symbols", 12)
+
+		Convey("It should return the configured cap", func() {
+			So(ScanSymbolCap(), ShouldEqual, 12)
+		})
+
+		viper.Set("market.max_scan_symbols", 0)
+
+		Convey("It should apply the default when unset", func() {
+			So(ScanSymbolCap(), ShouldEqual, defaultScanSymbolCap)
+		})
+	})
+}
+
 func TestRequiredBookDepthLevels(t *testing.T) {
 	Convey("Given market.book_depth_levels", t, func() {
 		viper.Set("market.book_depth_levels", 10)

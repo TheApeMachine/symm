@@ -1,6 +1,7 @@
 package leadlag
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
@@ -81,6 +82,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	activate.Boot("signal/leadlag ready")
 
@@ -103,9 +105,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TickerChannel:
-				tickers := signalpool.GetTickers(envelope)
+				tickers := signalpool.GetTickers(sm)
 
 				ingested := false
 
@@ -258,6 +264,9 @@ func (signal *Signal) sendMeasurement(
 
 	activate.Once("signal/leadlag:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: *measurement})
+	if ui := signal.broadcasts["ui"]; ui != nil {
+		ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+	}
 
 	return nil
 }

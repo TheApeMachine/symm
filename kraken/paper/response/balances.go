@@ -3,6 +3,7 @@ package response
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
@@ -19,14 +20,16 @@ type Balances struct {
 	quote     string
 	model     user.Balances
 	observers []types.Socket
+	ui        *qpool.BroadcastGroup
 }
 
-func NewBalances() *Balances {
+func NewBalances(ui *qpool.BroadcastGroup) *Balances {
 	quote := viper.GetViper().GetString("market.quote_currency")
 	balance := viper.GetViper().GetFloat64("trading.paper.wallet_" + strings.ToLower(quote))
 
-	return &Balances{
+	b := &Balances{
 		quote: quote,
+		ui:    ui,
 		model: user.Balances{
 			Asset: []user.Balance{
 				{
@@ -41,14 +44,41 @@ func NewBalances() *Balances {
 			},
 		},
 	}
+
+	b.publishUI()
+
+	return b
 }
 
 func (balances *Balances) Send(message *qpool.QValue[any]) map[string]any {
-	if _, ok := message.Value.(user.SubscribeFrame); ok {
-		return balances.snapshot()
+	frame, ok := message.Value.(map[string]any)
+
+	if !ok {
+		return nil
 	}
 
-	return nil
+	out := map[string]any{
+		"method":   frame["method"],
+		"req_id":   frame["req_id"],
+		"success":  true,
+		"time_in":  frame["time_in"],
+		"time_out": time.Now(),
+	}
+
+	switch frame["method"] {
+	case "subscribe":
+		out["result"] = balances.model
+	}
+
+	for _, observer := range balances.observers {
+		observer.Send(&qpool.QValue[any]{
+			Type:  "kraken:private",
+			Value: out,
+		})
+	}
+
+	return out
+
 }
 
 func (balances *Balances) Observe(socket types.Socket) {
@@ -76,6 +106,8 @@ func (balances *Balances) ApplyFill(symbol, side string, qty, price, fee float64
 			Value: balances.snapshot(),
 		})
 	}
+
+	balances.publishUI()
 }
 
 func (balances *Balances) adjust(asset string, delta float64) {
@@ -102,6 +134,25 @@ func (balances *Balances) adjust(asset string, delta float64) {
 		Balance: delta,
 		Wallets: []user.BalanceWallet{{Balance: delta, Type: "spot", ID: "main"}},
 	})
+}
+
+func (balances *Balances) publishUI() {
+	if balances.ui == nil {
+		return
+	}
+
+	total := 0.0
+	for _, a := range balances.model.Asset {
+		if a.Asset == balances.quote {
+			total = a.Balance
+			break
+		}
+	}
+
+	balances.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":   "wallet",
+		"balance": total,
+	}})
 }
 
 func (balances *Balances) snapshot() map[string]any {

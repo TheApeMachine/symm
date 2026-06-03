@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -16,13 +16,6 @@ import {
 } from "scichart";
 import { SciChartReact } from "scichart-react";
 
-import { TelemetryManifestPlaceholder } from "#/components/dashboard/TelemetryManifestPlaceholder";
-import {
-	gaugeLabelFor,
-	gaugeSourcesFor,
-	hasGaugeSources,
-	type LayoutPanel,
-} from "#/lib/symm/layout-schema";
 import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
 import { confidenceToGaugePercent } from "#/lib/symm/signal-confidence";
 import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
@@ -32,80 +25,59 @@ const TIME_COLS = 120;
 const initSignalHeatmap = async (
 	rootElement: string | HTMLDivElement,
 	sources: readonly string[],
-	panel?: LayoutPanel,
+	labels: Record<string, string>,
 ) => {
 	await ensureSciChartWasm();
 
-	const { sciChartSurface, wasmContext } =
-		await SciChartSurface.create(rootElement);
-
+	const { sciChartSurface, wasmContext } = await SciChartSurface.create(rootElement);
 	const nRows = sources.length;
 	const zValues = zeroArray2D([nRows, TIME_COLS]);
 
-	sciChartSurface.xAxes.add(
-		new NumericAxis(wasmContext, {
-			isVisible: false,
-			autoRange: EAutoRange.Never,
-			visibleRange: new NumberRange(0, TIME_COLS),
-		}),
-	);
+	sciChartSurface.xAxes.add(new NumericAxis(wasmContext, {
+		isVisible: false,
+		autoRange: EAutoRange.Never,
+		visibleRange: new NumberRange(0, TIME_COLS),
+	}));
 
-	sciChartSurface.yAxes.add(
-		new NumericAxis(wasmContext, {
-			axisAlignment: EAxisAlignment.Left,
-			isVisible: false,
-			autoRange: EAutoRange.Never,
-			visibleRange: new NumberRange(-0.5, nRows - 0.5),
-		}),
-	);
+	sciChartSurface.yAxes.add(new NumericAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Left,
+		isVisible: false,
+		autoRange: EAutoRange.Never,
+		visibleRange: new NumberRange(-0.5, nRows - 0.5),
+	}));
 
 	const dataSeries = new UniformHeatmapDataSeries(wasmContext, {
-		zValues,
-		xStart: 0,
-		xStep: 1,
-		yStart: 0,
-		yStep: 1,
+		zValues, xStart: 0, xStep: 1, yStart: 0, yStep: 1,
 	});
 
-	const colorMap = new HeatmapColorMap({
-		minimum: 0,
-		maximum: 4,
-		gradientStops: [
-			{ offset: 0, color: "#0b0f14" },
-			{ offset: 0.15, color: "#1e3a5f" },
-			{ offset: 0.4, color: "#1d6c4c" },
-			{ offset: 0.7, color: "#38bdf8" },
-			{ offset: 1, color: "#4ade80" },
-		],
-	});
-
-	sciChartSurface.renderableSeries.add(
-		new UniformHeatmapRenderableSeries(wasmContext, {
-			dataSeries,
-			colorMap,
-			useLinearTextureFiltering: true,
+	sciChartSurface.renderableSeries.add(new UniformHeatmapRenderableSeries(wasmContext, {
+		dataSeries,
+		colorMap: new HeatmapColorMap({
+			minimum: 0,
+			maximum: 4,
+			gradientStops: [
+				{ offset: 0, color: "#0b0f14" },
+				{ offset: 0.15, color: "#1e3a5f" },
+				{ offset: 0.4, color: "#1d6c4c" },
+				{ offset: 0.7, color: "#38bdf8" },
+				{ offset: 1, color: "#4ade80" },
+			],
 		}),
-	);
+		useLinearTextureFiltering: true,
+	}));
 
-	const labelPanel = panel ?? { type: "gauge_grid" as const };
-
-	for (let index = 0; index < sources.length; index++) {
-		const source = sources[index];
-
-		sciChartSurface.annotations.add(
-			new TextAnnotation({
-				text: gaugeLabelFor(labelPanel, source),
-				x1: 1,
-				y1: index,
-				xCoordinateMode: ECoordinateMode.DataValue,
-				yCoordinateMode: ECoordinateMode.DataValue,
-				horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
-				verticalAnchorPoint: EVerticalAnchorPoint.Center,
-				fontSize: 9,
-				textColor: "rgba(226,232,240,0.7)",
-				background: "rgba(11,15,20,0.6)",
-			}),
-		);
+	for (let i = 0; i < sources.length; i++) {
+		sciChartSurface.annotations.add(new TextAnnotation({
+			text: labels[sources[i]] ?? sources[i],
+			x1: 1, y1: i,
+			xCoordinateMode: ECoordinateMode.DataValue,
+			yCoordinateMode: ECoordinateMode.DataValue,
+			horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
+			verticalAnchorPoint: EVerticalAnchorPoint.Center,
+			fontSize: 9,
+			textColor: "rgba(226,232,240,0.7)",
+			background: "rgba(11,15,20,0.6)",
+		}));
 	}
 
 	sciChartSurface.background = "transparent";
@@ -115,52 +87,41 @@ const initSignalHeatmap = async (
 			for (let col = 0; col < TIME_COLS - 1; col++) {
 				zValues[row][col] = zValues[row][col + 1];
 			}
-
 			zValues[row][TIME_COLS - 1] = values[row] ?? 0;
 		}
-
 		dataSeries.setZValues(zValues);
 		sciChartSurface.invalidateElement();
 	};
 
-	return {
-		sciChartSurface,
-		wasmContext,
-		controls: { push },
-	};
+	return { sciChartSurface, wasmContext, controls: { push } };
 };
 
 type Controls = { push: (values: number[]) => void };
-
-type SignalHeatmapProps = {
-	panel?: LayoutPanel;
-};
 
 const heatmapValue = (confidence: number): number =>
 	Math.min(4, confidenceToGaugePercent(confidence) / 25);
 
 export const SignalHeatmap = memo(function SignalHeatmap({
-	panel,
-}: SignalHeatmapProps) {
+	sources,
+	labels,
+}: {
+	sources: string[];
+	labels: Record<string, string>;
+}) {
 	const stores = useSymmTelemetryStores();
-	const sources = useMemo(() => gaugeSourcesFor(panel), [panel]);
 
 	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) =>
-			initSignalHeatmap(rootElement, sources, panel),
-		[sources, panel],
+		(rootElement: string | HTMLDivElement) => initSignalHeatmap(rootElement, sources, labels),
+		[sources, labels],
 	);
 
 	const onInit = useCallback(
 		(result: { controls: Controls }) => {
 			const current = new Map<string, number>();
-
-			for (const source of sources) {
-				current.set(source, 0);
-			}
+			for (const source of sources) current.set(source, 0);
 
 			const shiftFrame = () => {
-				result.controls.push(sources.map((source) => current.get(source) ?? 0));
+				result.controls.push(sources.map((s) => current.get(s) ?? 0));
 			};
 
 			const unregisters = sources.map((source) =>
@@ -170,18 +131,10 @@ export const SignalHeatmap = memo(function SignalHeatmap({
 				}),
 			);
 
-			return () => {
-				for (const unregister of unregisters) {
-					unregister();
-				}
-			};
+			return () => { for (const u of unregisters) u(); };
 		},
 		[sources, stores.confidence],
 	);
-
-	if (!hasGaugeSources(panel)) {
-		return <TelemetryManifestPlaceholder label="Waiting for gauge manifest…" />;
-	}
 
 	return (
 		<SciChartReact

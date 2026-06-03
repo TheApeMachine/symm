@@ -3,7 +3,7 @@ market:
   anchor_symbol: ""
   default_symbols:
     - BTC/EUR
-  max_scan_symbols: 0
+  max_scan_symbols: 64
   book_depth_levels: 10
   subscribe_pace: 50ms
   ws_reconnect_initial: 1s

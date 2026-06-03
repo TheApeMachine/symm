@@ -128,7 +128,7 @@ func TestPublishField(t *testing.T) {
 			frame, ok := value.Value.(map[string]any)
 
 			So(ok, ShouldBeTrue)
-			So(frame["event"], ShouldEqual, "field_snapshot")
+			So(frame["type"], ShouldEqual, "fluid")
 
 			symbols, ok := frame["symbols"].([]map[string]any)
 

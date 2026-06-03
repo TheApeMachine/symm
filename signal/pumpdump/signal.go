@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"encoding/json"
 	"context"
 	"math"
 	"sync"
@@ -80,6 +81,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	activate.Boot("signal/pumpdump ready")
 
@@ -141,6 +143,7 @@ func (signal *Signal) Tick() error {
 			return signal.ctx.Err()
 		case message := <-signal.subscribers["raw"].Incoming:
 			if message == nil || message.Value == nil {
+				errnie.Error(nil, "pumpdump: got nil message")
 				continue
 			}
 
@@ -150,9 +153,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TradesChannel:
-				trades := signalpool.GetTrades(envelope)
+				trades := signalpool.GetTrades(sm)
 
 				for _, trade := range trades {
 					if err := signal.observe(trade); err != nil {
@@ -212,6 +219,19 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 	activate.Once("signal/pumpdump:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if ui := signal.broadcasts["ui"]; ui != nil {
+		ui.Send(
+			&qpool.QValue[any]{
+				Value: map[string]any{
+					"chart":      "gauge",
+					"source":     measurement.Source.String(),
+					"confidence": measurement.Confidence,
+					"snr":        measurement.SNR,
+					"symbol":     measurement.Symbol,
+				},
+			},
+		)
+	}
 
 	return nil
 }

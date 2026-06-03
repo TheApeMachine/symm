@@ -41,7 +41,7 @@ func TestBranchEvaluatorActionAudited(t *testing.T) {
 		convey.Convey("It should record the branch trace and winning path", func() {
 			convey.So(evaluator.Err(), convey.ShouldBeNil)
 			convey.So(action, convey.ShouldNotBeNil)
-			convey.So(*action, convey.ShouldEqual, ActionIceberg)
+			convey.So(action, convey.ShouldEqual, ActionIceberg)
 			convey.So(len(audit.Steps), convey.ShouldEqual, 2)
 			convey.So(audit.Steps[0].Pass, convey.ShouldBeTrue)
 			convey.So(audit.Steps[0].Compared.Left, convey.ShouldEqual, 2)

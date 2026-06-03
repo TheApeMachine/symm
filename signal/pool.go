@@ -1,11 +1,11 @@
 package signal
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -46,50 +46,50 @@ var balancesPool = sync.Pool{
 	},
 }
 
-func GetTrades(data map[string]any) []market.TradeUpdate {
+func GetTrades(data *public.SocketMessage) []market.TradeUpdate {
 	trades := tradesPool.Get().([]market.TradeUpdate)
 	defer tradesPool.Put(trades)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &trades)
+	sonic.Unmarshal(data.Data, &trades)
 	return trades
 }
 
-func GetTickers(data map[string]any) []market.TickerUpdate {
+func GetTickers(data *public.SocketMessage) []market.TickerUpdate {
 	tickers := tickersPool.Get().([]market.TickerUpdate)
 	defer tickersPool.Put(tickers)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &tickers)
+	sonic.Unmarshal(data.Data, &tickers)
 	return tickers
 }
 
-func GetBooks(data map[string]any) []market.Book {
+func GetBooks(data *public.SocketMessage) []market.Book {
 	books := booksPool.Get().([]market.Book)
 	defer booksPool.Put(books)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &books)
+	sonic.Unmarshal(data.Data, &books)
 	return books
 }
 
-func GetOrders(data map[string]any) []trading.OrderUpdate {
+func GetOrders(data *public.SocketMessage) []trading.OrderUpdate {
 	orders := ordersPool.Get().([]trading.OrderUpdate)
 	defer ordersPool.Put(orders)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &orders)
+	sonic.Unmarshal(data.Data, &orders)
 	return orders
 }
 
-func GetExecutions(data map[string]any) []user.Execution {
+func GetExecutions(data *public.SocketMessage) []user.Execution {
 	executions := executionsPool.Get().([]user.Execution)
 	defer executionsPool.Put(executions)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &executions)
+	sonic.Unmarshal(data.Data, &executions)
 	return executions
 }
 
-func GetBalances(data map[string]any) []user.Balance {
+func GetBalances(data *public.SocketMessage) []user.Balance {
 	balances := balancesPool.Get().([]user.Balance)
 	defer balancesPool.Put(balances)
 
-	sonic.Unmarshal(data["data"].(json.RawMessage), &balances)
+	sonic.Unmarshal(data.Data, &balances)
 	return balances
 }

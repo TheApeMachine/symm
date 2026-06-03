@@ -47,7 +47,7 @@ import {
 import { resolveFollowVisibleRange } from "#/components/charts/shared/financial-chart-utils";
 import { appTheme } from "#/components/charts/shared/theme";
 import type { OhlcBar } from "#/components/charts/trade/trade-chart-wire";
-import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
+import { ensureSciChartWasm } from "#/lib/utils";
 
 const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 const VOLUME_PALETTE_PROVIDER_TYPE = "TradingAnnotationVolumePaletteProvider";

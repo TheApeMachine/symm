@@ -144,9 +144,11 @@ func NewOrderClient(ctx context.Context, pool *qpool.Q) *OrderClient {
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &OrderClient{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
 	}
 
 	for _, channel := range []string{"kraken:private"} {

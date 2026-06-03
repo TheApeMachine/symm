@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"sync/atomic"
 	"time"
@@ -96,8 +95,6 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		storyMeasurementsSubscriberID, 1024,
 	)
 
-	perspectives.BootstrapTelemetryManifest()
-
 	activate.Boot("market/story ready")
 
 	return story
@@ -146,30 +143,6 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			for source := range latest.bySource {
-				clarity, count := latest.meanClarity(source)
-
-				if count == 0 {
-					continue
-				}
-
-				frame := map[string]any{
-					"source":     source,
-					"confidence": clarity,
-					"count":      count,
-				}
-
-				if snr := latest.meanSNR(source); snr > 0 {
-					frame["snr"] = snr
-				}
-
-				story.ui.Send(&qpool.QValue[any]{Value: frame})
-			}
-
-			now := time.Now()
-			nowStr := now.UTC().Format(time.RFC3339Nano)
-
-			story.publishEnginePulse(latest.sourceSNRMeans(), nowStr)
 			latest = newGaugeReadings()
 		}
 	}
@@ -202,8 +175,6 @@ func (story *Story) ingestMeasurement(
 	}
 
 	story.ringWindow = AppendRingMeasurement(story.ringWindow, measurement)
-
-	perspectives.DefaultTelemetryRegistry().ObserveMeasurement(measurement)
 
 	source := measurement.Source.String()
 
@@ -240,46 +211,8 @@ func (story *Story) ingestMeasurement(
 		story.tree.Branches()...,
 	)
 
-	blockReason := ""
-
-	if actionType == nil || *actionType == perspectives.ActionNone {
-		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
-			return fmt.Errorf("playbook walk audit: %w", err)
-		}
-
-		return nil
-	}
-
-	if perspectives.IsEntryAction(*actionType) {
-		blockReason = "desk_not_ready"
-
-		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
-			return fmt.Errorf("playbook walk audit: %w", err)
-		}
-
-		return nil
-	}
-
-	action := perspectives.ActionFromMeasurement(*actionType, measurement)
-
-	if perspectives.IsEntryAction(*actionType) && action.Quantity <= 0 {
-		blockReason = "entry_quantity_zero"
-
-		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
-			return fmt.Errorf("playbook walk audit: %w", err)
-		}
-
-		return nil
-	}
-
-	if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {
-		return fmt.Errorf("playbook walk audit: %w", err)
-	}
-
-	activate.Once("market/story:action")
-
 	story.raw.Send(&qpool.QValue[any]{
-		Value: action,
+		Value: perspectives.ActionFromMeasurement(actionType, measurement),
 	})
 
 	return nil
@@ -297,50 +230,6 @@ func (story *Story) observations(symbol string) map[perspectives.ObservationType
 	observations[perspectives.ObservationNotHolding] = 1
 
 	return observations
-}
-
-// publishEnginePulse emits a system-health summary derived from the latest
-// per-source confidence map. The prediction chart plots avg_prediction_multiple.
-func (story *Story) publishEnginePulse(latestSNR map[string]float64, ts string) {
-	seq := story.pulseSeq.Add(1)
-
-	if len(latestSNR) == 0 {
-		story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":        "engine_pulse",
-			"ts":           ts,
-			"seq":          seq,
-			"phase":        "ticking",
-			"measurements": 0,
-			"open":         0,
-		}})
-		return
-	}
-
-	var sum float64
-	for _, value := range latestSNR {
-		sum += value
-	}
-	avg := sum / float64(len(latestSNR))
-
-	var variance float64
-	for _, value := range latestSNR {
-		delta := value - avg
-		variance += delta * delta
-	}
-	stddev := math.Sqrt(variance / float64(len(latestSNR)))
-
-	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":                   "engine_pulse",
-		"ts":                      ts,
-		"seq":                     seq,
-		"phase":                   "ticking",
-		"measurements":            len(latestSNR),
-		"open":                    0,
-		"avg_prediction":          avg,
-		"avg_prediction_multiple": avg / perspectives.GaugeFullSigma,
-		"avg_error":               stddev,
-		"avg_error_multiple":      stddev / perspectives.GaugeFullSigma,
-	}})
 }
 
 /*

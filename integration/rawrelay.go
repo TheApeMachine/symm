@@ -85,8 +85,9 @@ func (relay *RawRelay) forwardOne() bool {
 				continue
 			}
 
+			ch, _ := envelope["channel"].(string)
 			relay.raw.Send(&qpool.QValue[any]{
-				Type:  envelope["channel"].(string),
+				Type:  ch,
 				Value: envelope,
 			})
 

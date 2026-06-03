@@ -89,7 +89,8 @@ func (crypto *Crypto) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			switch channel {
 			case "actions":
 				action, ok := message.Value.(perspectives.Action)
 

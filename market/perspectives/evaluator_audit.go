@@ -5,7 +5,7 @@ ActionAudited returns the deepest reachable branch action and fills audit.
 */
 func (evaluator *BranchEvaluator) ActionAudited(
 	branches BranchList, audit *WalkAudit,
-) *ActionType {
+) ActionType {
 	evaluator.audit = audit
 
 	decision := evaluator.walk(branches, 0, nil)
@@ -22,10 +22,10 @@ func (evaluator *BranchEvaluator) ActionAudited(
 	evaluator.audit = nil
 
 	if !decision.found {
-		return nil
+		return ActionNone
 	}
 
-	return &decision.actionType
+	return decision.actionType
 }
 
 func (evaluator *BranchEvaluator) checkBranch(branch Branch) branchCheck {

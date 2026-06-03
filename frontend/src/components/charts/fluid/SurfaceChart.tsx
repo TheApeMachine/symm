@@ -1,204 +1,43 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { type MutableRefObject, useCallback } from "react";
 import type { SciChart3DSurface } from "scichart";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
+import { initFluidSurfaceChart } from "#/components/charts/fluid/init-fluid-surface-chart";
+import type { FluidPushBridge } from "#/routes/index";
 
-import { FluidVisualEditor } from "#/components/charts/fluid/FluidVisualEditor";
-import {
-	createDrawExample,
-	type FluidSurfaceControls,
-} from "#/components/charts/fluid/init-fluid-surface-chart";
-import { drawGenericSurface } from "#/components/charts/fluid/init-generic-surface-chart";
-import { Flex } from "#/components/ui/flex";
-import {
-	type FieldSnapshotEvent,
-	isFieldSnapshotEvent,
-} from "#/lib/symm/events";
-import { gridFromPayload, gridFromSnapshot } from "#/lib/symm/fluid-grid";
-import {
-	defaultFluidVisualParams,
-	type FluidVisualParamKey,
-	type FluidVisualParams,
-	loadFluidVisualParams,
-	saveFluidVisualParams,
-} from "#/lib/symm/fluid-visual-params";
-import type { LayoutPanel } from "#/lib/symm/layout-schema";
-import {
-	readHeightMatrix,
-	StreamDataProvider,
-} from "#/lib/symm/stream-data-provider";
-import { useSymmTelemetryStores } from "#/lib/symm/telemetry-context";
-import "#/lib/symm/scichart-setup";
-
-const FLUID_STREAM = "field_snapshot";
-
-const heightsFromPayload = (
-	payload: unknown,
-	heightKey: string,
-): number[][] | undefined => {
-	const direct = readHeightMatrix(payload, heightKey);
-
-	if (direct !== undefined) {
-		return direct;
-	}
-
-	if (!isFieldSnapshotEvent(payload)) {
-		return undefined;
-	}
-
-	const snapshot = payload as FieldSnapshotEvent;
-	const grid = snapshot.grid?.heights?.length
-		? gridFromPayload(snapshot.grid)
-		: gridFromSnapshot(snapshot);
-
-	return grid.heights;
-};
-
-const FluidFieldSurfaceChart = memo(function FluidFieldSurfaceChart() {
-	const stores = useSymmTelemetryStores();
-	const [editMode, setEditMode] = useState(false);
-	const [visualParams, setVisualParams] = useState(loadFluidVisualParams);
-	const controlsRef = useRef<FluidSurfaceControls | null>(null);
-
-	const initChart = useMemo(
-		() => createDrawExample(loadFluidVisualParams()),
-		[],
-	);
-
-	const applyParams = useCallback((params: FluidVisualParams) => {
-		setVisualParams(params);
-		saveFluidVisualParams(params);
-		controlsRef.current?.applyVisualParams(params);
-	}, []);
-
-	const handleParamChange = useCallback(
-		(key: FluidVisualParamKey, value: number) => {
-			setVisualParams((previous) => {
-				const next = { ...previous, [key]: value };
-				saveFluidVisualParams(next);
-				controlsRef.current?.applyVisualParams(next);
-
-				return next;
-			});
-		},
-		[],
-	);
-
-	const handleReset = useCallback(() => {
-		applyParams(defaultFluidVisualParams());
-	}, [applyParams]);
-
-	const onInit = useCallback(
-		(initResult: TResolvedReturnType<ReturnType<typeof createDrawExample>>) => {
-			controlsRef.current = initResult.controls;
-			initResult.controls.applyVisualParams(loadFluidVisualParams());
-
-			const fluidStore = stores.fluid;
-			const unregister = fluidStore.registerSink(initResult.controls.update);
-
-			return () => {
-				unregister();
-				controlsRef.current = null;
-				initResult.controls.dispose();
-			};
-		},
-		[stores.fluid],
-	);
-
-	return (
-		<Flex.Column className="fluid-chart-shell relative h-full w-full min-h-0">
-			<Flex.Row className="absolute top-2 left-2 z-20">
-				<button
-					type="button"
-					className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-						editMode
-							? "border-(--dash-accent) bg-(--dash-row-active) text-(--dash-accent)"
-							: "border-(--dash-border) bg-(--dash-panel)/90 text-(--dash-muted) hover:text-(--dash-text)"
-					}`}
-					onClick={() => setEditMode((active) => !active)}
-				>
-					{editMode ? "Done" : "Edit"}
-				</button>
-			</Flex.Row>
-			{editMode ? (
-				<FluidVisualEditor
-					params={visualParams}
-					onChange={handleParamChange}
-					onReset={handleReset}
-				/>
-			) : null}
-			<SciChartReact<
-				SciChart3DSurface,
-				TResolvedReturnType<ReturnType<typeof createDrawExample>>
-			>
-				initChart={initChart}
-				onInit={onInit}
-				className="h-full w-full min-h-0"
-			/>
-		</Flex.Column>
-	);
-});
-
-const GenericStreamSurfaceChart = memo(function GenericStreamSurfaceChart({
-	panel,
+export const FluidFieldSurfaceChart = ({
+	bridgeRef,
 }: {
-	panel: LayoutPanel;
-}) {
-	const stream = panel.stream ?? FLUID_STREAM;
-	const heightKey = panel.height_key ?? "grid.heights";
-
+	bridgeRef: MutableRefObject<FluidPushBridge>;
+}) => {
 	const onInit = useCallback(
-		(initResult: TResolvedReturnType<typeof drawGenericSurface>) => {
-			const applyPayload = (payload: unknown) => {
-				const heights = heightsFromPayload(payload, heightKey);
+		(result: TResolvedReturnType<typeof initFluidSurfaceChart>) => {
+			const bridge = bridgeRef.current;
+			bridge.push = result.controls.push;
+			bridge.ready = true;
 
-				if (heights === undefined) {
-					return;
-				}
+			for (const frame of bridge.pending) {
+				bridge.push(frame);
+			}
 
-				initResult.controls.update(heights);
-			};
-
-			const latest = StreamDataProvider.snapshot(stream);
-			applyPayload(latest);
-
-			const unregister = StreamDataProvider.subscribe(stream, applyPayload);
+			bridge.pending = [];
 
 			return () => {
-				unregister();
-				initResult.controls.dispose();
+				bridge.push = () => {};
+				bridge.ready = false;
+				bridge.pending = [];
 			};
 		},
-		[heightKey, stream],
+		[bridgeRef],
 	);
-
-	const initChart = useMemo(() => drawGenericSurface, []);
 
 	return (
 		<SciChartReact<
 			SciChart3DSurface,
-			TResolvedReturnType<typeof drawGenericSurface>
+			TResolvedReturnType<typeof initFluidSurfaceChart>
 		>
-			initChart={initChart}
+			initChart={initFluidSurfaceChart}
 			onInit={onInit}
-			className="h-full w-full"
+			style={{ height: "100%", width: "50%" }}
 		/>
 	);
-});
-
-/*
-GenericSurfaceChart renders schema-driven surface panels. The fluid field stream
-accumulates incremental field_row frames in FluidDataProvider before projection.
-*/
-export const SurfaceChart = memo(function SurfaceChart({
-	panel,
-}: {
-	panel: LayoutPanel;
-}) {
-	const stream = panel.stream ?? FLUID_STREAM;
-
-	if (stream === FLUID_STREAM) {
-		return <FluidFieldSurfaceChart />;
-	}
-
-	return <GenericStreamSurfaceChart panel={panel} />;
-});
+};

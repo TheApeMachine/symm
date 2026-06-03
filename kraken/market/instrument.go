@@ -3,18 +3,15 @@ package market
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -86,7 +83,6 @@ type Instrument struct {
 	subscribers   map[string]*qpool.Subscriber
 	subscribersMu sync.RWMutex
 	Pairs         []string
-	pairSet       map[string]struct{}
 }
 
 func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
@@ -99,25 +95,23 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		Pairs:       make([]string, 0),
-		pairSet:     make(map[string]struct{}),
 	}
 
-	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
-	instrument.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	instrument.broadcasts["kraken:public"] = bus.Group(pool, "kraken:public", 10*time.Millisecond)
+	instrument.broadcasts["raw"] = bus.Group(pool, "raw", 10*time.Millisecond)
 	instrument.subscribers["raw"] = instrument.broadcasts["raw"].Subscribe(
-		instrumentSubscriberID, 1024,
+		instrumentSubscriberID, 128,
 	)
-
-	activate.Boot("kraken/instrument ready")
 
 	return instrument
 }
 
 func (instrument *Instrument) Tick() error {
-	instrument.subscribersMu.RLock()
 	incoming := instrument.subscribers["raw"].Incoming
 	publicBroadcast := instrument.broadcasts["kraken:public"]
-	instrument.subscribersMu.RUnlock()
+	bookDepth := viper.GetInt("market.book_depth_levels")
+	scanCap := viper.GetInt("market.max_scan_symbols")
+	pace := viper.GetDuration("market.subscribe_pace")
 
 	for {
 		select {
@@ -132,143 +126,79 @@ func (instrument *Instrument) Tick() error {
 				continue
 			}
 
-			envelope, envelopeOK := message.Value.(map[string]any)
+			envelope, ok := message.Value.(map[string]any)
 
-			if !envelopeOK {
+			if !ok {
 				continue
 			}
 
-			if envelope["channel"].(string) != public.InstrumentsChannel {
+			channel, _ := envelope["channel"].(string)
+
+			if channel != public.InstrumentsChannel {
 				continue
 			}
 
-			instrument.applyCatalogUpdate(publicBroadcast, envelope)
+			data, _ := envelope["data"].(json.RawMessage)
+
+			var update InstrumentUpdate
+
+			if err := sonic.Unmarshal(data, &update); err != nil {
+				continue
+			}
+
+			for _, pair := range update.Pairs {
+				if scanCap > 0 && len(instrument.Pairs) >= scanCap {
+					break
+				}
+
+				if slices.Contains(instrument.Pairs, pair.Symbol) {
+					continue
+				}
+
+				instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "ticker",
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "book",
+						"depth":    bookDepth,
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "ohlc",
+						"interval": 1,
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+					"method": "subscribe",
+					"params": map[string]any{
+						"channel":  "trade",
+						"symbol":   []string{pair.Symbol},
+						"snapshot": true,
+					},
+				}})
+
+				time.Sleep(pace)
+			}
 		}
 	}
-}
-
-func (instrument *Instrument) applyCatalogUpdate(
-	publicBroadcast *qpool.BroadcastGroup,
-	envelope map[string]any,
-) {
-	var update InstrumentUpdate
-
-	if err := sonic.Unmarshal(envelope["data"].(json.RawMessage), &update); err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	if len(update.Pairs) > 0 {
-		activate.Once("kraken/instrument:catalog")
-	}
-
-	maxScan := viper.GetInt("market.max_scan_symbols")
-	watched := viper.GetStringSlice("market.symbols")
-	quoteCurrency := strings.ToUpper(strings.TrimSpace(viper.GetString("market.quote_currency")))
-	bookDepth := viper.GetInt("market.book_depth_levels")
-
-	if bookDepth <= 0 {
-		bookDepth = 10
-	}
-
-	newSymbols := make([]string, 0)
-
-	for _, pair := range update.Pairs {
-		if !instrumentPairScannable(pair, watched, quoteCurrency) {
-			continue
-		}
-
-		if maxScan > 0 && len(instrument.Pairs)+len(newSymbols) >= maxScan {
-			break
-		}
-
-		if _, known := instrument.pairSet[pair.Symbol]; known {
-			continue
-		}
-
-		newSymbols = append(newSymbols, pair.Symbol)
-	}
-
-	if len(newSymbols) == 0 {
-		return
-	}
-
-	for _, symbol := range newSymbols {
-		instrument.Pairs = append(instrument.Pairs, symbol)
-		instrument.pairSet[symbol] = struct{}{}
-
-		if len(instrument.Pairs) == 1 {
-			activate.Once("kraken/instrument:first-pair-subscribe")
-		}
-	}
-
-	instrument.publishSubscriptions(publicBroadcast, newSymbols, bookDepth)
-
-	activate.Once(fmt.Sprintf("kraken/instrument:subscribed:%d", len(instrument.Pairs)))
-}
-
-func instrumentPairScannable(
-	pair InstrumentPair, watched []string, quoteCurrency string,
-) bool {
-	if len(watched) > 0 {
-		return slices.Contains(watched, pair.Symbol)
-	}
-
-	if quoteCurrency != "" &&
-		!strings.EqualFold(strings.TrimSpace(pair.Quote), quoteCurrency) {
-		return false
-	}
-
-	status := strings.ToLower(strings.TrimSpace(pair.Status))
-
-	if status != "" && status != "online" {
-		return false
-	}
-
-	return pair.Symbol != ""
-}
-
-const instrumentSubscribeBatch = 25
-
-func (instrument *Instrument) publishSubscriptions(
-	publicBroadcast *qpool.BroadcastGroup,
-	symbols []string,
-	bookDepth int,
-) {
-	for start := 0; start < len(symbols); start += instrumentSubscribeBatch {
-		end := start + instrumentSubscribeBatch
-
-		if end > len(symbols) {
-			end = len(symbols)
-		}
-
-		batch := symbols[start:end]
-
-		publicBroadcast.Send(subscribeFrame("ticker", batch, nil))
-		publicBroadcast.Send(subscribeFrame("book", batch, map[string]any{
-			"depth": bookDepth,
-		}))
-		publicBroadcast.Send(subscribeFrame("trade", batch, nil))
-	}
-}
-
-func subscribeFrame(
-	channel string, symbols []string, extra map[string]any,
-) *qpool.QValue[any] {
-	params := map[string]any{
-		"channel":  channel,
-		"symbol":   symbols,
-		"snapshot": true,
-	}
-
-	for key, value := range extra {
-		params[key] = value
-	}
-
-	return &qpool.QValue[any]{Value: map[string]any{
-		"method": "subscribe",
-		"params": params,
-	}}
 }
 
 func (instrument *Instrument) Close() error {

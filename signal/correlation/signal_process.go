@@ -242,6 +242,7 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 
 			activate.Once("signal/correlation:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if ui := signal.broadcasts["ui"]; ui != nil { ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}}) }
 
 			return nil, nil
 		}))

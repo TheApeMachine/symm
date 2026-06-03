@@ -38,6 +38,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	latencyFile, err := os.OpenFile("runs/network_latency.json", os.O_RDONLY, 0644)
 
 	if err != nil {
+		cancel()
 		errnie.Error(err)
 		return nil
 	}
@@ -64,7 +65,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		sockets: map[string]types.Socket{
-			"balances": response.NewBalances(),
+			"balances": response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond)),
 			"orders":   response.NewOrders(ctx, pool),
 		},
 		latencies: ring,
@@ -114,7 +115,6 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ticker.C:
 			time.Sleep(ws.latencies.Value.(time.Duration))
 			ws.latencies.Next()
-		default:
 		}
 	}
 }

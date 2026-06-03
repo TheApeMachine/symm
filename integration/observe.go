@@ -96,9 +96,9 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 			tape.actions = append(tape.actions, action)
 		}
 
-		envelope, envelopeOK := message.Value.(map[string]any)
+		envelope, envelopeOK := message.Value.(*public.SocketMessage)
 
-		if envelopeOK && envelope["channel"].(string) == public.ExecutionsChannel {
+		if envelopeOK && envelope.Channel == public.ExecutionsChannel {
 			executions := signalpool.GetExecutions(envelope)
 
 			for _, execution := range executions {

@@ -22,7 +22,7 @@ type Tree struct {
 	err           error
 	branches      BranchList
 	Measurements  []Measurement
-	currentAction *ActionType
+	currentAction ActionType
 	walkAudit     *WalkAudit
 }
 
@@ -86,7 +86,7 @@ func NewTreeFromBranches(
 	return tree, nil
 }
 
-func (tree *Tree) Action() *ActionType {
+func (tree *Tree) Action() ActionType {
 	return tree.currentAction
 }
 
@@ -107,7 +107,7 @@ func (tree *Tree) AddMeasurement(measurement Measurement) {
 }
 
 func (tree *Tree) ResetWalk() {
-	tree.currentAction = nil
+	tree.currentAction = ActionNone
 	tree.walkAudit = nil
 }
 
@@ -121,7 +121,7 @@ func (tree *Tree) WalkAudit() *WalkAudit {
 /*
 Walk traverses the tree and returns the Action at the deepest reachable branch.
 */
-func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) *ActionType {
+func (tree *Tree) Walk(measurements []Measurement, branches ...Branch) ActionType {
 	return tree.WalkContext(BranchContext{Measurements: measurements}, branches...)
 }
 
@@ -130,7 +130,7 @@ WalkContext traverses the tree using the complete branch evaluation context.
 */
 func (tree *Tree) WalkContext(
 	branchContext BranchContext, branches ...Branch,
-) *ActionType {
+) ActionType {
 	walkBranches := BranchList(branches)
 
 	if len(walkBranches) == 0 {

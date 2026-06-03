@@ -1,58 +1,35 @@
 {
   "pass": false,
-  "started_at": "2026-06-03T05:02:42.215028+02:00",
-  "elapsed": 135290780791,
+  "started_at": "2026-06-03T11:41:05.867229+02:00",
+  "elapsed": 13063292,
   "scenarios": [
     {
       "id": "infra.replay_raw_bus",
       "name": "Replay websocket feeds the raw bus",
-      "pass": true,
-      "started_at": "2026-06-03T05:02:42.216623+02:00",
-      "elapsed": 855211541,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "raw.frames",
-          "name": "Raw bus received replay frames",
-          "pass": true,
-          "detail": "raw_frames=5",
-          "context": {
-            "raw_frames": 5
-          }
-        },
-        {
-          "id": "desk.ready",
-          "name": "Paper desk reports ready after balance handshake",
-          "pass": true,
-          "detail": "desk_ready=true"
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "infra.fast_signals_manifest",
       "name": "Baseline replay activates fast-path measurement sources",
-      "pass": true,
-      "started_at": "2026-06-03T05:02:43.072495+02:00",
-      "elapsed": 2450847083,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signals.manifest",
-          "name": "Fast-path sources published at least one measurement",
-          "pass": true,
-          "detail": "missing=[]",
-          "context": {
-            "counts": {
-              "causal": 1,
-              "cvd": 225,
-              "depthflow": 241,
-              "exhaustion": 216,
-              "fluid": 259,
-              "hawkes": 1,
-              "liquidity": 12,
-              "pumpdump": 225,
-              "sentiment": 16,
-              "toxicity": 2
-            }
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -60,26 +37,14 @@
       "id": "signal.validate.cvd.aggressive_drive",
       "name": "cvd → aggressive_drive when sustained one-sided buy aggression on the tape",
       "pass": false,
-      "started_at": "2026-06-03T05:02:45.524072+02:00",
-      "elapsed": 1191929875,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "cvd latest reading on SYN/EUR must be aggressive_drive",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=volume_starvation want=aggressive_drive",
-          "context": {
-            "condition": "sustained one-sided buy aggression on the tape",
-            "expected": "aggressive_drive",
-            "fixture": "cvd.aggressive_drive",
-            "observed": [
-              "stochastic_balance",
-              "volume_starvation"
-            ],
-            "publish_n": 96,
-            "source": 12,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -87,26 +52,14 @@
       "id": "signal.validate.cvd.hidden_absorption",
       "name": "cvd → hidden_absorption when high volume with muted price progress (absorption)",
       "pass": false,
-      "started_at": "2026-06-03T05:02:46.716594+02:00",
-      "elapsed": 1190294875,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "cvd latest reading on SYN/EUR must be hidden_absorption",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=volume_starvation want=hidden_absorption",
-          "context": {
-            "condition": "high volume with muted price progress (absorption)",
-            "expected": "hidden_absorption",
-            "fixture": "cvd.hidden_absorption",
-            "observed": [
-              "stochastic_balance",
-              "volume_starvation"
-            ],
-            "publish_n": 80,
-            "source": 12,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -114,26 +67,14 @@
       "id": "signal.validate.cvd.stochastic_balance",
       "name": "cvd → stochastic_balance when balanced two-sided flow around the local mean",
       "pass": false,
-      "started_at": "2026-06-03T05:02:47.907451+02:00",
-      "elapsed": 1156377667,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "cvd latest reading on SYN/EUR must be stochastic_balance",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=volume_starvation want=stochastic_balance",
-          "context": {
-            "condition": "balanced two-sided flow around the local mean",
-            "expected": "stochastic_balance",
-            "fixture": "cvd.stochastic_balance",
-            "observed": [
-              "stochastic_balance",
-              "volume_starvation"
-            ],
-            "publish_n": 32,
-            "source": 12,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -141,51 +82,29 @@
       "id": "signal.validate.cvd.volume_starvation",
       "name": "cvd → volume_starvation when negligible executed volume relative to history",
       "pass": false,
-      "started_at": "2026-06-03T05:02:49.064292+02:00",
-      "elapsed": 1150969667,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "cvd latest reading on SYN/EUR must be volume_starvation",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=stochastic_balance want=volume_starvation",
-          "context": {
-            "condition": "negligible executed volume relative to history",
-            "expected": "volume_starvation",
-            "fixture": "cvd.volume_starvation",
-            "observed": [
-              "stochastic_balance"
-            ],
-            "publish_n": 2,
-            "source": 12,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.fluid.laminar",
       "name": "fluid → laminar when calm book with low divergence and Reynolds number",
-      "pass": true,
-      "started_at": "2026-06-03T05:02:50.215904+02:00",
-      "elapsed": 1150646875,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "fluid latest reading on SYN/EUR must be laminar",
-          "pass": true,
-          "detail": "category=laminar snr=0.0000",
-          "context": {
-            "condition": "calm book with low divergence and Reynolds number",
-            "expected": "laminar",
-            "fixture": "fluid.laminar",
-            "observed": [
-              "laminar"
-            ],
-            "publish_n": 2,
-            "source": 1,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -193,26 +112,14 @@
       "id": "signal.validate.fluid.turbulent",
       "name": "fluid → turbulent when turbulence dominates divergence",
       "pass": false,
-      "started_at": "2026-06-03T05:02:51.367222+02:00",
-      "elapsed": 1151650541,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "fluid latest reading on SYN/EUR must be turbulent",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=viscous want=turbulent",
-          "context": {
-            "condition": "turbulence dominates divergence",
-            "expected": "turbulent",
-            "fixture": "fluid.turbulent",
-            "observed": [
-              "viscous",
-              "inertial"
-            ],
-            "publish_n": 18,
-            "source": 1,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -220,26 +127,14 @@
       "id": "signal.validate.fluid.inertial",
       "name": "fluid → inertial when strong divergence with inertial Reynolds read",
       "pass": false,
-      "started_at": "2026-06-03T05:02:52.519751+02:00",
-      "elapsed": 1163080459,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "fluid latest reading on SYN/EUR must be inertial",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=viscous want=inertial",
-          "context": {
-            "condition": "strong divergence with inertial Reynolds read",
-            "expected": "inertial",
-            "fixture": "fluid.inertial",
-            "observed": [
-              "laminar",
-              "viscous"
-            ],
-            "publish_n": 42,
-            "source": 1,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -247,25 +142,14 @@
       "id": "signal.validate.fluid.viscous",
       "name": "fluid → viscous when high viscosity read below the viscous threshold",
       "pass": false,
-      "started_at": "2026-06-03T05:02:53.683923+02:00",
-      "elapsed": 1151017084,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "fluid latest reading on SYN/EUR must be viscous",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=laminar want=viscous",
-          "context": {
-            "condition": "high viscosity read below the viscous threshold",
-            "expected": "viscous",
-            "fixture": "fluid.viscous",
-            "observed": [
-              "laminar"
-            ],
-            "publish_n": 2,
-            "source": 1,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -273,23 +157,14 @@
       "id": "signal.validate.hawkes.frenzy",
       "name": "hawkes → frenzy when asymmetric buy-side Hawkes intensity",
       "pass": false,
-      "started_at": "2026-06-03T05:02:54.836047+02:00",
-      "elapsed": 1462389916,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "hawkes latest reading on SYN/EUR must be frenzy",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "asymmetric buy-side Hawkes intensity",
-            "expected": "frenzy",
-            "fixture": "hawkes.frenzy",
-            "observed": [],
-            "publish_n": 0,
-            "source": 2,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -297,23 +172,14 @@
       "id": "signal.validate.hawkes.saturation",
       "name": "hawkes → saturation when near-critical spectral radius from clustered prints",
       "pass": false,
-      "started_at": "2026-06-03T05:02:56.299132+02:00",
-      "elapsed": 1350498209,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "hawkes latest reading on SYN/EUR must be saturation",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "near-critical spectral radius from clustered prints",
-            "expected": "saturation",
-            "fixture": "hawkes.saturation",
-            "observed": [],
-            "publish_n": 0,
-            "source": 2,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -321,23 +187,14 @@
       "id": "signal.validate.hawkes.organic",
       "name": "hawkes → organic when low clustering with organic baseline intensity",
       "pass": false,
-      "started_at": "2026-06-03T05:02:57.650466+02:00",
-      "elapsed": 1352122792,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "hawkes latest reading on SYN/EUR must be organic",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "low clustering with organic baseline intensity",
-            "expected": "organic",
-            "fixture": "hawkes.organic",
-            "observed": [],
-            "publish_n": 0,
-            "source": 2,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -345,75 +202,44 @@
       "id": "signal.validate.hawkes.exhaustion",
       "name": "hawkes → exhaustion when intensity collapse after a burst",
       "pass": false,
-      "started_at": "2026-06-03T05:02:59.003607+02:00",
-      "elapsed": 1351508375,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "hawkes latest reading on SYN/EUR must be exhaustion",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "intensity collapse after a burst",
-            "expected": "exhaustion",
-            "fixture": "hawkes.exhaustion",
-            "observed": [],
-            "publish_n": 0,
-            "source": 2,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.depthflow.loaded_imbalance",
       "name": "depthflow → loaded_imbalance when persistent bid-heavy book without spoof pathology",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:00.356487+02:00",
-      "elapsed": 1150998250,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "depthflow latest reading on SYN/EUR must be loaded_imbalance",
-          "pass": true,
-          "detail": "category=loaded_imbalance snr=0.0000",
-          "context": {
-            "condition": "persistent bid-heavy book without spoof pathology",
-            "expected": "loaded_imbalance",
-            "fixture": "depthflow.loaded_imbalance",
-            "observed": [
-              "loaded_imbalance"
-            ],
-            "publish_n": 2,
-            "source": 4,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.depthflow.spoof_trap",
       "name": "depthflow → spoof_trap when pathological near-touch imbalance (spoof trap)",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:01.507905+02:00",
-      "elapsed": 1150728167,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "depthflow latest reading on SYN/EUR must be spoof_trap",
-          "pass": true,
-          "detail": "category=spoof_trap snr=0.0000",
-          "context": {
-            "condition": "pathological near-touch imbalance (spoof trap)",
-            "expected": "spoof_trap",
-            "fixture": "depthflow.spoof_trap",
-            "observed": [
-              "spoof_trap"
-            ],
-            "publish_n": 1,
-            "source": 4,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -421,25 +247,14 @@
       "id": "signal.validate.depthflow.book_thinning",
       "name": "depthflow → book_thinning when depth pulls away from the touch",
       "pass": false,
-      "started_at": "2026-06-03T05:03:02.659818+02:00",
-      "elapsed": 1152155875,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "depthflow latest reading on SYN/EUR must be book_thinning",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=loaded_imbalance want=book_thinning",
-          "context": {
-            "condition": "depth pulls away from the touch",
-            "expected": "book_thinning",
-            "fixture": "depthflow.book_thinning",
-            "observed": [
-              "loaded_imbalance"
-            ],
-            "publish_n": 10,
-            "source": 4,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -447,76 +262,44 @@
       "id": "signal.validate.depthflow.dense_neutrality",
       "name": "depthflow → dense_neutrality when flat, balanced book at the touch",
       "pass": false,
-      "started_at": "2026-06-03T05:03:03.812938+02:00",
-      "elapsed": 1150808792,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "depthflow latest reading on SYN/EUR must be dense_neutrality",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "flat, balanced book at the touch",
-            "expected": "dense_neutrality",
-            "fixture": "depthflow.dense_neutrality",
-            "observed": [],
-            "publish_n": 0,
-            "source": 4,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.sentiment.systemic_slump",
       "name": "sentiment → systemic_slump when weak cross-section breadth with negative changes",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:04.964395+02:00",
-      "elapsed": 1151055792,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "sentiment latest reading on SYN/EUR must be systemic_slump",
-          "pass": true,
-          "detail": "category=systemic_slump snr=0.0000",
-          "context": {
-            "condition": "weak cross-section breadth with negative changes",
-            "expected": "systemic_slump",
-            "fixture": "sentiment.systemic_slump",
-            "observed": [
-              "risk_on_surge",
-              "systemic_slump"
-            ],
-            "publish_n": 3,
-            "source": 5,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.sentiment.risk_on_surge",
       "name": "sentiment → risk_on_surge when broad positive breadth above the surge threshold",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:06.116392+02:00",
-      "elapsed": 1151097375,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "sentiment latest reading on SYN/EUR must be risk_on_surge",
-          "pass": true,
-          "detail": "category=risk_on_surge snr=0.0000",
-          "context": {
-            "condition": "broad positive breadth above the surge threshold",
-            "expected": "risk_on_surge",
-            "fixture": "sentiment.risk_on_surge",
-            "observed": [
-              "risk_on_surge"
-            ],
-            "publish_n": 3,
-            "source": 5,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -524,26 +307,14 @@
       "id": "signal.validate.sentiment.divergent_move",
       "name": "sentiment → divergent_move when leader symbol moves against the broad tape",
       "pass": false,
-      "started_at": "2026-06-03T05:03:07.268193+02:00",
-      "elapsed": 1150759667,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "sentiment latest reading on SYN/EUR must be divergent_move",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=systemic_slump want=divergent_move",
-          "context": {
-            "condition": "leader symbol moves against the broad tape",
-            "expected": "divergent_move",
-            "fixture": "sentiment.divergent_move",
-            "observed": [
-              "divergent_move",
-              "systemic_slump"
-            ],
-            "publish_n": 3,
-            "source": 5,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -551,27 +322,14 @@
       "id": "signal.validate.liquidity.robust_liquidity",
       "name": "liquidity → robust_liquidity when primary symbol quote volume in the top peer quartile",
       "pass": false,
-      "started_at": "2026-06-03T05:03:08.419528+02:00",
-      "elapsed": 1151106583,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "liquidity latest reading on SYN/EUR must be robust_liquidity",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=median_depth want=robust_liquidity",
-          "context": {
-            "condition": "primary symbol quote volume in the top peer quartile",
-            "expected": "robust_liquidity",
-            "fixture": "liquidity.robust",
-            "observed": [
-              "robust_liquidity",
-              "median_depth",
-              "extreme_scarcity"
-            ],
-            "publish_n": 4,
-            "source": 9,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -579,25 +337,14 @@
       "id": "signal.validate.liquidity.median_depth",
       "name": "liquidity → median_depth when primary symbol quote volume between peer quartiles",
       "pass": false,
-      "started_at": "2026-06-03T05:03:09.57147+02:00",
-      "elapsed": 1150785917,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "liquidity latest reading on SYN/EUR must be median_depth",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "no measurement for probe symbol",
-          "context": {
-            "condition": "primary symbol quote volume between peer quartiles",
-            "expected": "median_depth",
-            "fixture": "liquidity.median_depth",
-            "observed": [
-              "extreme_scarcity"
-            ],
-            "publish_n": 1,
-            "source": 9,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -605,25 +352,14 @@
       "id": "signal.validate.liquidity.extreme_scarcity",
       "name": "liquidity → extreme_scarcity when primary symbol quote volume in the bottom peer quartile",
       "pass": false,
-      "started_at": "2026-06-03T05:03:10.722931+02:00",
-      "elapsed": 1150602125,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "liquidity latest reading on SYN/EUR must be extreme_scarcity",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "no measurement for probe symbol",
-          "context": {
-            "condition": "primary symbol quote volume in the bottom peer quartile",
-            "expected": "extreme_scarcity",
-            "fixture": "liquidity.extreme_scarcity",
-            "observed": [
-              "robust_liquidity"
-            ],
-            "publish_n": 1,
-            "source": 9,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -631,55 +367,29 @@
       "id": "signal.validate.pumpdump.vertical_ignition",
       "name": "pumpdump → vertical_ignition when accelerating buy tape with rising lift scores",
       "pass": false,
-      "started_at": "2026-06-03T05:03:11.874286+02:00",
-      "elapsed": 1162535958,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "pumpdump latest reading on SYN/EUR must be vertical_ignition",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=coiled_compression want=vertical_ignition",
-          "context": {
-            "condition": "accelerating buy tape with rising lift scores",
-            "expected": "vertical_ignition",
-            "fixture": "pumpdump.vertical_ignition",
-            "observed": [
-              "organic_trend",
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 40,
-            "source": 3,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.pumpdump.coiled_compression",
       "name": "pumpdump → coiled_compression when tight range with coiled volume precursor",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:13.037705+02:00",
-      "elapsed": 1154373416,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "pumpdump latest reading on SYN/EUR must be coiled_compression",
-          "pass": true,
-          "detail": "category=coiled_compression snr=2.0164",
-          "context": {
-            "condition": "tight range with coiled volume precursor",
-            "expected": "coiled_compression",
-            "fixture": "pumpdump.coiled_compression",
-            "observed": [
-              "organic_trend",
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 20,
-            "source": 3,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -687,27 +397,14 @@
       "id": "signal.validate.pumpdump.organic_trend",
       "name": "pumpdump → organic_trend when steady organic drift without ignition",
       "pass": false,
-      "started_at": "2026-06-03T05:03:14.192935+02:00",
-      "elapsed": 1155846917,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "pumpdump latest reading on SYN/EUR must be organic_trend",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=coiled_compression want=organic_trend",
-          "context": {
-            "condition": "steady organic drift without ignition",
-            "expected": "organic_trend",
-            "fixture": "pumpdump.organic_trend",
-            "observed": [
-              "organic_trend",
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 24,
-            "source": 3,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -715,27 +412,14 @@
       "id": "signal.validate.pumpdump.faded_exhaustion",
       "name": "pumpdump → faded_exhaustion when lift fades after an impulse",
       "pass": false,
-      "started_at": "2026-06-03T05:03:15.349799+02:00",
-      "elapsed": 1175072625,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "pumpdump latest reading on SYN/EUR must be faded_exhaustion",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=organic_trend want=faded_exhaustion",
-          "context": {
-            "condition": "lift fades after an impulse",
-            "expected": "faded_exhaustion",
-            "fixture": "pumpdump.faded_exhaustion",
-            "observed": [
-              "organic_trend",
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 56,
-            "source": 3,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -743,52 +427,29 @@
       "id": "signal.validate.exhaustion.mechanical_collapse",
       "name": "exhaustion → mechanical_collapse when book thinning dominates exit score",
       "pass": false,
-      "started_at": "2026-06-03T05:03:16.525672+02:00",
-      "elapsed": 1152204250,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "exhaustion latest reading on SYN/EUR must be mechanical_collapse",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=fragile_expansion want=mechanical_collapse",
-          "context": {
-            "condition": "book thinning dominates exit score",
-            "expected": "mechanical_collapse",
-            "fixture": "exhaust.mechanical_collapse",
-            "observed": [
-              "fragile_expansion",
-              "mechanical_collapse"
-            ],
-            "publish_n": 13,
-            "source": 10,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.exhaustion.fragile_expansion",
       "name": "exhaustion → fragile_expansion when spread widening dominates exit score",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:17.678509+02:00",
-      "elapsed": 1151763916,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "exhaustion latest reading on SYN/EUR must be fragile_expansion",
-          "pass": true,
-          "detail": "category=fragile_expansion snr=0.0000",
-          "context": {
-            "condition": "spread widening dominates exit score",
-            "expected": "fragile_expansion",
-            "fixture": "exhaust.fragile_expansion",
-            "observed": [
-              "fragile_expansion"
-            ],
-            "publish_n": 10,
-            "source": 10,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -796,23 +457,14 @@
       "id": "signal.validate.exhaustion.thermal_exhaustion",
       "name": "exhaustion → thermal_exhaustion when pressure fade dominates exit score",
       "pass": false,
-      "started_at": "2026-06-03T05:03:18.831958+02:00",
-      "elapsed": 1153220250,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "exhaustion latest reading on SYN/EUR must be thermal_exhaustion",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "pressure fade dominates exit score",
-            "expected": "thermal_exhaustion",
-            "fixture": "exhaust.thermal_exhaustion",
-            "observed": [],
-            "publish_n": 0,
-            "source": 10,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -820,25 +472,14 @@
       "id": "signal.validate.exhaustion.active_reversal",
       "name": "exhaustion → active_reversal when imbalance flip dominates exit score",
       "pass": false,
-      "started_at": "2026-06-03T05:03:19.985652+02:00",
-      "elapsed": 1152772334,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "exhaustion latest reading on SYN/EUR must be active_reversal",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=thermal_exhaustion want=active_reversal",
-          "context": {
-            "condition": "imbalance flip dominates exit score",
-            "expected": "active_reversal",
-            "fixture": "exhaust.active_reversal",
-            "observed": [
-              "thermal_exhaustion"
-            ],
-            "publish_n": 1,
-            "source": 10,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -846,51 +487,29 @@
       "id": "signal.validate.causal.endogenous_alpha",
       "name": "causal → endogenous_alpha when intervention ladder read with endogenous alpha",
       "pass": false,
-      "started_at": "2026-06-03T05:03:21.139827+02:00",
-      "elapsed": 2455695417,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "causal latest reading on SYN/EUR must be endogenous_alpha",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=systemic_beta want=endogenous_alpha",
-          "context": {
-            "condition": "intervention ladder read with endogenous alpha",
-            "expected": "endogenous_alpha",
-            "fixture": "causal.endogenous_alpha",
-            "observed": [
-              "systemic_beta"
-            ],
-            "publish_n": 1,
-            "source": 7,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.causal.systemic_beta",
       "name": "causal → systemic_beta when macro association drives beta read",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:23.596433+02:00",
-      "elapsed": 2454300375,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "causal latest reading on SYN/EUR must be systemic_beta",
-          "pass": true,
-          "detail": "category=systemic_beta snr=0.0000",
-          "context": {
-            "condition": "macro association drives beta read",
-            "expected": "systemic_beta",
-            "fixture": "causal.systemic_beta",
-            "observed": [
-              "systemic_beta"
-            ],
-            "publish_n": 1,
-            "source": 7,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -898,25 +517,14 @@
       "id": "signal.validate.causal.liquidity_shock",
       "name": "causal → liquidity_shock when regime inversion shock on the ladder",
       "pass": false,
-      "started_at": "2026-06-03T05:03:26.051447+02:00",
-      "elapsed": 2451537917,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "causal latest reading on SYN/EUR must be liquidity_shock",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "no measurement for probe symbol",
-          "context": {
-            "condition": "regime inversion shock on the ladder",
-            "expected": "liquidity_shock",
-            "fixture": "causal.liquidity_shock",
-            "observed": [
-              "systemic_beta"
-            ],
-            "publish_n": 1,
-            "source": 7,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -924,23 +532,14 @@
       "id": "signal.validate.causal.causal_noise",
       "name": "causal → causal_noise when buy pressure without price change (noise)",
       "pass": false,
-      "started_at": "2026-06-03T05:03:28.503842+02:00",
-      "elapsed": 2454075333,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "causal latest reading on SYN/EUR must be causal_noise",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "buy pressure without price change (noise)",
-            "expected": "causal_noise",
-            "fixture": "causal.causal_noise",
-            "observed": [],
-            "publish_n": 0,
-            "source": 7,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -948,25 +547,14 @@
       "id": "signal.validate.leadlag.anchor_stall",
       "name": "leadlag → anchor_stall when flat anchor with follower drift",
       "pass": false,
-      "started_at": "2026-06-03T05:03:30.959086+02:00",
-      "elapsed": 8123278208,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "leadlag latest reading on SYN/EUR must be anchor_stall",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "no measurement for probe symbol",
-          "context": {
-            "condition": "flat anchor with follower drift",
-            "expected": "anchor_stall",
-            "fixture": "leadlag.anchor_stall",
-            "observed": [
-              "anchor_stall"
-            ],
-            "publish_n": 8,
-            "source": 8,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -974,25 +562,14 @@
       "id": "signal.validate.leadlag.inefficient_lag",
       "name": "leadlag → inefficient_lag when follower lags anchor beyond min lag fraction",
       "pass": false,
-      "started_at": "2026-06-03T05:03:39.083577+02:00",
-      "elapsed": 8117920000,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "leadlag latest reading on SYN/EUR must be inefficient_lag",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "no measurement for probe symbol",
-          "context": {
-            "condition": "follower lags anchor beyond min lag fraction",
-            "expected": "inefficient_lag",
-            "fixture": "leadlag.inefficient_lag",
-            "observed": [
-              "anchor_stall"
-            ],
-            "publish_n": 2,
-            "source": 8,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1000,77 +577,44 @@
       "id": "signal.validate.leadlag.synchronized_drift",
       "name": "leadlag → synchronized_drift when anchor and follower move together",
       "pass": false,
-      "started_at": "2026-06-03T05:03:47.202219+02:00",
-      "elapsed": 8117367291,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "leadlag latest reading on SYN/EUR must be synchronized_drift",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=decoupled_move want=synchronized_drift",
-          "context": {
-            "condition": "anchor and follower move together",
-            "expected": "synchronized_drift",
-            "fixture": "leadlag.synchronized_drift",
-            "observed": [
-              "decoupled_move"
-            ],
-            "publish_n": 2,
-            "source": 8,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.leadlag.decoupled_move",
       "name": "leadlag → decoupled_move when low correlation between anchor and follower",
-      "pass": true,
-      "started_at": "2026-06-03T05:03:55.320433+02:00",
-      "elapsed": 8117684125,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "leadlag latest reading on SYN/EUR must be decoupled_move",
-          "pass": true,
-          "detail": "category=decoupled_move snr=0.0000",
-          "context": {
-            "condition": "low correlation between anchor and follower",
-            "expected": "decoupled_move",
-            "fixture": "leadlag.decoupled_move",
-            "observed": [
-              "decoupled_move"
-            ],
-            "publish_n": 2,
-            "source": 8,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.correlation.systemic_herd",
       "name": "correlation → systemic_herd when coordinated cross-section buy drift",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:03.439021+02:00",
-      "elapsed": 10748987875,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "correlation latest reading on SYN/EUR must be systemic_herd",
-          "pass": true,
-          "detail": "category=systemic_herd snr=0.0000",
-          "context": {
-            "condition": "coordinated cross-section buy drift",
-            "expected": "systemic_herd",
-            "fixture": "correlation.systemic_herd",
-            "observed": [
-              "systemic_herd"
-            ],
-            "publish_n": 6,
-            "source": 6,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1078,26 +622,14 @@
       "id": "signal.validate.correlation.decoupled_alpha",
       "name": "correlation → decoupled_alpha when one symbol diverges from the herd fingerprint",
       "pass": false,
-      "started_at": "2026-06-03T05:04:14.188977+02:00",
-      "elapsed": 10722281958,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "correlation latest reading on SYN/EUR must be decoupled_alpha",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=divergent_stress want=decoupled_alpha",
-          "context": {
-            "condition": "one symbol diverges from the herd fingerprint",
-            "expected": "decoupled_alpha",
-            "fixture": "correlation.decoupled_alpha",
-            "observed": [
-              "systemic_herd",
-              "divergent_stress"
-            ],
-            "publish_n": 3,
-            "source": 6,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1105,50 +637,29 @@
       "id": "signal.validate.correlation.stochastic_noise",
       "name": "correlation → stochastic_noise when quiet uncorrelated movement",
       "pass": false,
-      "started_at": "2026-06-03T05:04:24.91248+02:00",
-      "elapsed": 1650612917,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "correlation latest reading on SYN/EUR must be stochastic_noise",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "source never published a measurement",
-          "context": {
-            "condition": "quiet uncorrelated movement",
-            "expected": "stochastic_noise",
-            "fixture": "correlation.stochastic_noise",
-            "observed": [],
-            "publish_n": 0,
-            "source": 6,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "signal.validate.correlation.divergent_stress",
       "name": "correlation → divergent_stress when contrarian symbol against the majority fingerprint",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:26.564016+02:00",
-      "elapsed": 10723943666,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "correlation latest reading on SYN/EUR must be divergent_stress",
-          "pass": true,
-          "detail": "category=divergent_stress snr=0.0000",
-          "context": {
-            "condition": "contrarian symbol against the majority fingerprint",
-            "expected": "divergent_stress",
-            "fixture": "correlation.divergent_stress",
-            "observed": [
-              "systemic_herd",
-              "divergent_stress"
-            ],
-            "publish_n": 3,
-            "source": 6,
-            "symbol": "SYN/EUR"
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1156,25 +667,14 @@
       "id": "signal.validate.toxicity.toxic_bluff",
       "name": "toxicity → toxic_bluff when near-touch cancel-heavy book updates",
       "pass": false,
-      "started_at": "2026-06-03T05:04:37.2892+02:00",
-      "elapsed": 1151177333,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "toxicity latest reading on SYN/EUR must be toxic_bluff",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=liquidity_vacuum want=toxic_bluff",
-          "context": {
-            "condition": "near-touch cancel-heavy book updates",
-            "expected": "toxic_bluff",
-            "fixture": "toxicity.toxic_bluff",
-            "observed": [
-              "liquidity_vacuum"
-            ],
-            "publish_n": 4,
-            "source": 13,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1182,26 +682,14 @@
       "id": "signal.validate.toxicity.liquidity_vacuum",
       "name": "toxicity → liquidity_vacuum when vacuum after liquidity pulls from the touch",
       "pass": false,
-      "started_at": "2026-06-03T05:04:38.442386+02:00",
-      "elapsed": 1151463292,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "toxicity latest reading on SYN/EUR must be liquidity_vacuum",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=toxic_bluff want=liquidity_vacuum",
-          "context": {
-            "condition": "vacuum after liquidity pulls from the touch",
-            "expected": "liquidity_vacuum",
-            "fixture": "toxicity.liquidity_vacuum",
-            "observed": [
-              "liquidity_vacuum",
-              "toxic_bluff"
-            ],
-            "publish_n": 5,
-            "source": 13,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
@@ -1209,221 +697,104 @@
       "id": "signal.validate.toxicity.hard_support",
       "name": "toxicity → hard_support when stable size at the touch without bluff cancels",
       "pass": false,
-      "started_at": "2026-06-03T05:04:39.59489+02:00",
-      "elapsed": 1150730625,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "signal.category",
-          "name": "toxicity latest reading on SYN/EUR must be hard_support",
+          "id": "harness.boot",
+          "name": "Harness construction",
           "pass": false,
-          "detail": "latest=toxic_bluff want=hard_support",
-          "context": {
-            "condition": "stable size at the touch without bluff cancels",
-            "expected": "hard_support",
-            "fixture": "toxicity.hard_support",
-            "observed": [
-              "toxic_bluff"
-            ],
-            "publish_n": 2,
-            "source": 13,
-            "symbol": "SYN/EUR"
-          }
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "playbook.limit_entry",
       "name": "Perspective tree publishes limit entry on raw",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:40.747219+02:00",
-      "elapsed": 1062251416,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "playbook.action",
-          "name": "Story publishes limit entry action",
-          "pass": true,
-          "detail": "action=limit qty=0.00399002"
-        },
-        {
-          "id": "playbook.audit",
-          "name": "Playbook walk audit records limit verdict",
-          "pass": true,
-          "detail": "audit verdict=limit",
-          "context": {
-            "block_reason": ""
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "playbook.settle_holding",
       "name": "Holding observation routes to settle_position",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:41.810418+02:00",
-      "elapsed": 1056218875,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "playbook.exit",
-          "name": "Story publishes settle_position while holding",
-          "pass": true,
-          "detail": "action=settle_position qty=0.00000000"
-        },
-        {
-          "id": "playbook.exit_audit",
-          "name": "Playbook walk audit records settle verdict",
-          "pass": true,
-          "detail": "audit verdict=settle_position",
-          "context": {
-            "block_reason": ""
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "execution.limit_fill_inventory",
       "name": "Limit entry fills through paper matcher and updates inventory",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:42.867382+02:00",
-      "elapsed": 7862741959,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "execution.engine",
-          "name": "Trader did not fail before scenario cancel",
-          "pass": true,
-          "detail": "ok"
-        },
-        {
-          "id": "execution.action",
-          "name": "Limit entry action observed on raw",
-          "pass": true,
-          "detail": "action=limit qty=1.99501247"
-        },
-        {
-          "id": "execution.fill",
-          "name": "Trader publishes fill frame",
-          "pass": true,
-          "detail": "qty=1.99501247 price=100.0000"
-        },
-        {
-          "id": "execution.inventory",
-          "name": "Paper wallet holds SYN base inventory",
-          "pass": true,
-          "detail": "SYN=1.99501247",
-          "context": {
-            "inventory": {
-              "SYN": 1.9950124688279303
-            }
-          }
-        },
-        {
-          "id": "execution.cash",
-          "name": "Cash balance decreases after entry fill",
-          "pass": true,
-          "detail": "balance=-0.0000",
-          "context": {
-            "balance": -2.7930298074352322e-9,
-            "decreased": 200.00000000279303,
-            "initial": 200,
-            "wallets": 4
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "execution.settle_reduces_inventory",
       "name": "Settle action exits held inventory through paper desk",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:50.731171+02:00",
-      "elapsed": 3458277083,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "execution.exit",
-          "name": "Settle action observed on raw",
-          "pass": true,
-          "detail": "action=settle_position qty=0.00000000"
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "black_swan.crash_recovery",
       "name": "System continues measuring through crash and wide spread",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:54.190523+02:00",
-      "elapsed": 1651568500,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "black_swan.desk",
-          "name": "Desk stays unhalted through crash replay",
-          "pass": true,
-          "detail": "desk remained ready"
-        },
-        {
-          "id": "black_swan.fluid",
-          "name": "Fluid still publishes after crash",
-          "pass": true,
-          "detail": "source=fluid symbol=SYN/EUR last=70.0000",
-          "context": {
-            "categories": [
-              "laminar",
-              "turbulent",
-              "viscous"
-            ]
-          }
-        },
-        {
-          "id": "black_swan.cvd",
-          "name": "CVD still publishes after crash",
-          "pass": true,
-          "detail": "source=cvd symbol=SYN/EUR last=52.0000",
-          "context": {
-            "categories": [
-              "stochastic_balance"
-            ]
-          }
-        },
-        {
-          "id": "black_swan.sentiment",
-          "name": "Sentiment classifies stress after crash",
-          "pass": true,
-          "detail": "matched systemic_slump",
-          "context": {
-            "categories": [
-              "divergent_move",
-              "systemic_slump",
-              "risk_on_surge"
-            ]
-          }
-        },
-        {
-          "id": "black_swan.spread",
-          "name": "Wide-spread book frames were ingested",
-          "pass": true,
-          "detail": "raw_frames=16"
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     },
     {
       "id": "black_swan.post_crash_entry_gate",
       "name": "Playbook still evaluates entries after crash without tripping halt",
-      "pass": true,
-      "started_at": "2026-06-03T05:04:55.843039+02:00",
-      "elapsed": 1665747125,
+      "pass": false,
+      "started_at": "0001-01-01T00:00:00Z",
+      "elapsed": 0,
       "checks": [
         {
-          "id": "black_swan.halt",
-          "name": "Desk remains ready for post-crash playbook walk",
-          "pass": true,
-          "detail": "desk ready after crash"
-        },
-        {
-          "id": "black_swan.playbook_audit",
-          "name": "Playbook walk audit emitted after crash",
-          "pass": true,
-          "detail": "playbook_walk logged",
-          "context": {
-            "block_reason": "",
-            "verdict": null
-          }
+          "id": "harness.boot",
+          "name": "Harness construction",
+          "pass": false,
+          "detail": "integration harness: register systems: nil system passed to AddSystems"
         }
       ]
     }

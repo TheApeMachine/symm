@@ -83,20 +83,20 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(map[string]any)
+	envelope, ok := message.Value.(*public.SocketMessage)
 
 	if !ok {
 		return nil
 	}
 
-	switch envelope["channel"].(string) {
-	case public.TradesChannel:
+	switch envelope.Type {
+	case "trades":
 		trades := signalpool.GetTrades(envelope)
 
 		for _, trade := range trades {
 			tox.observeTrade(trade)
 		}
-	case public.TickerChannel:
+	case "tickers":
 		tickers := signalpool.GetTickers(envelope)
 
 		for _, ticker := range tickers {
@@ -107,7 +107,7 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 				return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
 			}
 		}
-	case public.BookChannel:
+	case "books":
 		if tox.l3Active {
 			return nil
 		}
@@ -131,13 +131,22 @@ func (tox *Toxicity) handleLevel3(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(map[string]any)
+	envelope, ok := message.Value.(*public.SocketMessage)
 
 	if !ok {
 		return nil
 	}
 
-	if envelope["channel"].(string) != public.Level3Channel {
+	switch envelope.Type {
+	case "orders":
+		orders := signalpool.GetOrders(envelope)
+		for _, order := range orders {
+			fmt.Println(order)
+		}
+	}
+
+	ch := envelope.Channel
+	if ch != public.Level3Channel {
 		return nil
 	}
 

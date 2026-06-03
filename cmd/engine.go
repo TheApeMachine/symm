@@ -43,31 +43,16 @@ func (engine *Engine) Start() error {
 
 	for _, system := range engine.systems {
 		system := system
-		systemType := reflect.TypeOf(system)
-		name := systemType.String()
 
-		if systemType.Kind() == reflect.Ptr {
-			name = systemType.Elem().String()
-		}
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			fmt.Println("[symm] tick:start", name)
-
+		wg.Go(func() {
 			if err := system.Tick(); err != nil {
-				fmt.Println("[symm] tick:stop", name, "err=", err)
-
 				errMu.Lock()
 				tickErrors = append(tickErrors, err)
 				errMu.Unlock()
 
 				return
 			}
-
-			fmt.Println("[symm] tick:stop", name)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -78,7 +63,14 @@ func (engine *Engine) Start() error {
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
+	for _, s := range systems {
+		if s == nil || reflect.ValueOf(s).IsNil() {
+			return fmt.Errorf("nil system passed to AddSystems")
+		}
+	}
+
 	engine.systems = append(engine.systems, systems...)
+
 	return nil
 }
 

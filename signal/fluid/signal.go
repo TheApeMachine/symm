@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -47,13 +49,13 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
 
-	signal.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.ui = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	activate.Boot("signal/fluid ready")
 
@@ -92,9 +94,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TradesChannel:
-				trades := signalpool.GetTrades(envelope)
+				trades := signalpool.GetTrades(sm)
 
 				for _, trade := range trades {
 					state, err := signal.state(trade.Symbol)
@@ -117,7 +123,7 @@ func (signal *Signal) Tick() error {
 					}
 				}
 			case public.TickerChannel:
-				tickers := signalpool.GetTickers(envelope)
+				tickers := signalpool.GetTickers(sm)
 
 				for _, ticker := range tickers {
 					state, err := signal.state(ticker.Symbol)
@@ -135,7 +141,7 @@ func (signal *Signal) Tick() error {
 					}
 				}
 			case public.BookChannel:
-				books := signalpool.GetBooks(envelope)
+				books := signalpool.GetBooks(sm)
 
 				for _, delta := range books {
 					state, err := signal.state(delta.Symbol)
@@ -180,6 +186,16 @@ func (signal *Signal) emit(symbol string) error {
 
 		activate.Once("signal/fluid:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		if signal.ui != nil {
+			signal.ui.Send(&qpool.QValue[any]{
+				Value: map[string]any{
+					"chart":      "gauge",
+					"source":     measurement.Source.String(),
+					"confidence": measurement.Confidence,
+					"snr":        measurement.SNR,
+				},
+			})
+		}
 	}
 
 	if err := signal.publishField(state); err != nil {
@@ -245,7 +261,7 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 	}
 
 	signal.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":        "field_snapshot",
+		"type":         "fluid",
 		"ts":           time.Now().UTC().Format(time.RFC3339Nano),
 		"symbol_count": len(rows),
 		"symbols":      rows,

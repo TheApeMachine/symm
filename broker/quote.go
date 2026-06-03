@@ -139,13 +139,13 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			envelope, ok := message.Value.(*public.SocketMessage)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			switch envelope.Channel {
 			case public.TickerChannel:
 				cache.ingestTickers(envelope)
 			case public.BookChannel:
@@ -157,7 +157,7 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 	}
 }
 
-func (cache *QuoteCache) ingestTickers(envelope map[string]any) {
+func (cache *QuoteCache) ingestTickers(envelope *public.SocketMessage) {
 	for _, row := range signalpool.GetTickers(envelope) {
 		if row.Symbol == "" {
 			continue
@@ -167,7 +167,7 @@ func (cache *QuoteCache) ingestTickers(envelope map[string]any) {
 	}
 }
 
-func (cache *QuoteCache) ingestBooks(envelope map[string]any) {
+func (cache *QuoteCache) ingestBooks(envelope *public.SocketMessage) {
 	for _, row := range signalpool.GetBooks(envelope) {
 		if row.Symbol == "" {
 			continue
@@ -233,7 +233,7 @@ func (cache *QuoteCache) updateBook(row market.Book) {
 	cache.notifyLocked(row.Symbol, quote)
 }
 
-func (cache *QuoteCache) ingestTrades(envelope map[string]any) {
+func (cache *QuoteCache) ingestTrades(envelope *public.SocketMessage) {
 	for _, row := range signalpool.GetTrades(envelope) {
 		if row.Symbol == "" {
 			continue

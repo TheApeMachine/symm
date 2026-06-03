@@ -1,6 +1,7 @@
 package sentiment
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"math"
@@ -68,6 +69,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	activate.Boot("signal/sentiment ready")
 
@@ -90,9 +92,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			switch envelope["channel"].(string) {
+			channel, _ := envelope["channel"].(string)
+			rawData, _ := envelope["data"].(json.RawMessage)
+			sm := &public.SocketMessage{Channel: channel, Data: rawData}
+
+			switch channel {
 			case public.TickerChannel:
-				tickers := signalpool.GetTickers(envelope)
+				tickers := signalpool.GetTickers(sm)
 
 				if err := signal.publishTickers(tickers); err != nil {
 					errnie.Error(err, "sentiment: publish tickers")
@@ -164,6 +170,9 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 
 			activate.Once("signal/sentiment:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if ui := signal.broadcasts["ui"]; ui != nil {
+				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+			}
 
 			return nil, nil
 		}))

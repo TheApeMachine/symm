@@ -1,12 +1,7 @@
-
 import { cva, type VariantProps } from "class-variance-authority";
-import {
-	type HTMLMotionProps,
-	type Transition,
-	motion,
-} from "motion/react";
+import { type HTMLMotionProps, motion, type Transition } from "motion/react";
 import type React from "react";
-import { cn } from "#/lib/utils";
+import { cn } from "@/lib/utils";
 
 export { AnimatePresence } from "motion/react";
 
@@ -32,7 +27,10 @@ type AppearVariant =
 
 const appearPresets: Record<
 	AppearVariant,
-	Pick<HTMLMotionProps<"div">, "initial" | "animate" | "exit" | "transition" | "whileHover" | "whileTap">
+	Pick<
+		HTMLMotionProps<"div">,
+		"initial" | "animate" | "exit" | "transition" | "whileHover" | "whileTap"
+	>
 > = {
 	panelBottomRight: {
 		initial: { opacity: 0, scale: 0.85, y: 16 },
@@ -264,7 +262,6 @@ type FlexWithoutDirection = Omit<
 
 Flex.Row = ({
 	children,
-	className,
 	fullHeight,
 	fullWidth,
 	...props
@@ -272,7 +269,6 @@ Flex.Row = ({
 	return (
 		<Flex
 			direction="row"
-			className={className}
 			fullHeight={fullHeight}
 			fullWidth={fullWidth}
 			{...props}
@@ -284,7 +280,6 @@ Flex.Row = ({
 
 Flex.Column = ({
 	children,
-	className,
 	fullHeight,
 	fullWidth,
 	...props
@@ -292,7 +287,6 @@ Flex.Column = ({
 	return (
 		<Flex
 			direction="column"
-			className={className}
 			fullHeight={fullHeight}
 			fullWidth={fullWidth}
 			{...props}
@@ -319,4 +313,3 @@ Flex.Center = ({
 		</Flex>
 	);
 };
-

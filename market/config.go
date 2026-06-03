@@ -8,6 +8,22 @@ import (
 	"github.com/spf13/viper"
 )
 
+const defaultScanSymbolCap = 64
+
+/*
+ScanSymbolCap is the maximum instrument-catalog pairs to subscribe per boot.
+When market.max_scan_symbols is zero or negative, the documented default applies.
+*/
+func ScanSymbolCap() int {
+	cap := viper.GetInt("market.max_scan_symbols")
+
+	if cap <= 0 {
+		return defaultScanSymbolCap
+	}
+
+	return cap
+}
+
 func RequiredBookDepthLevels() (int, error) {
 	depth := viper.GetInt("market.book_depth_levels")
 

@@ -131,11 +131,11 @@ func (tuner *Tuner) ingest(measurement perspectives.Measurement) {
 
 	action := tuner.tree.Walk(snapshots, tuner.tree.Branches()...)
 
-	if action == nil {
+	if action == perspectives.ActionNone {
 		return
 	}
 
-	tuner.publish(measurement, *action)
+	tuner.publish(measurement, action)
 }
 
 func (tuner *Tuner) publish(
