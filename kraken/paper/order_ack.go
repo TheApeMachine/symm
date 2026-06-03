@@ -6,7 +6,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
@@ -54,8 +53,6 @@ func (ws *WebSocket) publishOrderAck(
 	channel, _ := out["channel"].(string)
 
 	if channel != "" {
-		trading.PublishLedgerAck(ws.pool, out)
-
 		return
 	}
 
@@ -65,5 +62,8 @@ func (ws *WebSocket) publishOrderAck(
 		return
 	}
 
-	trading.PublishLedgerAck(ws.pool, rejectedExecution(clOrdID, "paper rejected"))
+	ws.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type:  public.ExecutionsChannel,
+		Value: rejectedExecution(clOrdID, "paper rejected"),
+	})
 }

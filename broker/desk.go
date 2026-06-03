@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -48,7 +47,7 @@ func (desk *Desk) Halted() bool {
 		return true
 	}
 
-	return desk.orders.Halted()
+	return false
 }
 
 func (desk *Desk) AddOrder(action perspectives.Action) error {
@@ -133,34 +132,10 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		addParams.PostOnly = true
 	}
 
-	resultCh, err := desk.orders.AddOrder(addParams)
+	addErr := desk.orders.AddOrder(addParams)
 
-	if err != nil {
+	if addErr != nil {
 		return err
-	}
-
-	defer desk.orders.ReleaseOrderResult(resultCh)
-
-	var result trading.OrderResult
-
-	select {
-	case result = <-resultCh:
-	case <-desk.ctx.Done():
-		return fmt.Errorf("order cancelled: %w", desk.ctx.Err())
-	case <-time.After(trading.AckTimeout()):
-		return fmt.Errorf("order %s ack timeout", clOrdID)
-	}
-
-	if !result.Success {
-		if result.Error != "" {
-			return fmt.Errorf(
-				"order %s rejected: %s",
-				result.ClOrdID,
-				result.Error,
-			)
-		}
-
-		return fmt.Errorf("order %s rejected", result.ClOrdID)
 	}
 
 	return nil

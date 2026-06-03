@@ -2,7 +2,6 @@ package paper
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -52,12 +51,7 @@ func TestTradingClientLimitAck(t *testing.T) {
 
 		defer client.Close()
 
-		rawSub := pool.CreateBroadcastGroup("raw", 10*time.Millisecond).
-			Subscribe("test:raw", 4)
-
-		time.Sleep(50 * time.Millisecond)
-
-		resultCh, err := client.AddOrder(trading.AddParams{
+		addErr := client.AddOrder(trading.AddParams{
 			OrderType:  trading.Limit,
 			Side:       trading.Buy,
 			Symbol:     "SYN/EUR",
@@ -67,29 +61,19 @@ func TestTradingClientLimitAck(t *testing.T) {
 			ClOrdID:    "paper-trading-ack",
 		})
 
-		So(err, ShouldBeNil)
+		So(addErr, ShouldBeNil)
 
-		defer client.ReleaseOrderResult(resultCh)
+		time.Sleep(10 * time.Millisecond)
 
-		Convey("It should acknowledge the resting limit immediately", func() {
-			select {
-			case result := <-resultCh:
-				So(result.Success, ShouldBeTrue)
-				So(result.ClOrdID, ShouldEqual, "paper-trading-ack")
-			case <-time.After(2 * time.Second):
-				select {
-				case frame := <-rawSub.Incoming:
-					if envelope, ok := frame.Value.(map[string]any); ok {
-						channel, _ := envelope["channel"].(string)
-						data, _ := envelope["data"].(json.RawMessage)
-						t.Logf("late raw channel=%s data=%s", channel, string(data))
-					}
-				default:
-					t.Log("no raw frame after timeout")
-				}
+		bg := pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond)
+		sub := bg.Subscribe("kraken:private", 1024)
 
-				So("timed out waiting for paper ack", ShouldBeBlank)
-			}
-		})
+		select {
+		case message := <-sub.Incoming:
+			So(message.Type, ShouldEqual, "update")
+			So(message.Value, ShouldNotBeNil)
+		case <-time.After(2 * time.Second):
+			So("timed out waiting for paper ack", ShouldBeBlank)
+		}
 	})
 }

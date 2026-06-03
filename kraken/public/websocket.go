@@ -34,7 +34,7 @@ type WebSocket struct {
 	cancel      context.CancelFunc
 	err         error
 	pool        *qpool.Q
-	conn        *websocket.Conn
+	conns       []*websocket.Conn
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	recorder    io.Writer
@@ -42,7 +42,12 @@ type WebSocket struct {
 	latencies   *ring.Ring
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSocket {
+func NewWebSocket(
+	ctx context.Context,
+	pool *qpool.Q,
+	streams *focus.Set,
+	conns ...*websocket.Conn,
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
@@ -53,6 +58,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 			broadcasts:  make(map[string]*qpool.BroadcastGroup),
 			subscribers: make(map[string]*qpool.Subscriber),
 			latencies:   ring.New(64),
+			conns:       conns,
 		}
 
 		for _, channel := range []string{"raw", "level3", "ui", "kraken:public"} {
@@ -69,16 +75,31 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSo
 		}})
 
 		activate.Boot("kraken/public websocket ready")
+
+		if len(conns) == 0 {
+			socket.Connect(WebSocketURL, "kraken:public", 0)
+		}
 	})
 
 	return socket
+}
+
+/*
+AppendConn registers an authenticated WebSocket on the process public socket.
+*/
+func AppendConn(conn *websocket.Conn) {
+	if conn == nil || socket == nil {
+		return
+	}
+
+	socket.conns = append(socket.conns, conn)
 }
 
 func (ws *WebSocket) Connect(
 	endpoint EndpointType, channel string, n uint64,
 ) error {
 	// Error, retry.
-	ws.conn, _, ws.err = websocket.DefaultDialer.Dial(string(endpoint), nil)
+	ws.conns[0], _, ws.err = websocket.DefaultDialer.Dial(string(endpoint), nil)
 
 	if ws.err != nil {
 		errnie.Error(ws.err)
@@ -118,7 +139,7 @@ func (ws *WebSocket) Tick() (err error) {
 				return ws.ctx.Err()
 			}
 		case <-ticker.C:
-			if err = ws.conn.WriteJSON(map[string]any{
+			if err = ws.conns[0].WriteJSON(map[string]any{
 				"method": "ping",
 			}); err != nil {
 				ws.handleError(errnie.Error(err))
@@ -134,7 +155,7 @@ func (ws *WebSocket) Tick() (err error) {
 		message := sockMsgPool.Get().(map[string]any)
 		defer sockMsgPool.Put(message)
 
-		if err = ws.conn.ReadJSON(&message); err != nil {
+		if err = ws.conns[0].ReadJSON(&message); err != nil {
 			ws.handleError(errnie.Error(err))
 			continue
 		}
@@ -225,7 +246,7 @@ func (ws *WebSocket) publishOhlc(message map[string]any) {
 }
 
 func (ws *WebSocket) Close() error {
-	ws.conn.Close()
+	ws.conns[0].Close()
 	ws.cancel()
 	return nil
 }

@@ -19,13 +19,9 @@ func TestNewOrderClient(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		client, err := NewOrder(ctx, pool)
+		_, err := NewOrder(ctx, pool)
 
 		So(err, ShouldBeNil)
-
-		Convey("It should start halted until orders flow", func() {
-			So(client.Halted(), ShouldBeFalse)
-		})
 	})
 }
 

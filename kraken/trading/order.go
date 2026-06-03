@@ -136,7 +136,6 @@ type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	orders *qpool.BroadcastGroup
-	ledger *Ledger
 }
 
 func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
@@ -148,32 +147,11 @@ func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
 		orders: pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond),
 	}
 
-	ledger, err := NewLedger(ctx, pool, orderClient.orders)
-
-	if err != nil {
-		cancel()
-
-		return nil, errnie.Error(err)
-	}
-
-	orderClient.ledger = ledger
-
-	go func() {
-		if runErr := ledger.Run(); runErr != nil {
-			errnie.Error(runErr)
-		}
-	}()
-
 	return orderClient, errnie.Error(errnie.Require(map[string]any{
 		"ctx":    orderClient.ctx,
 		"cancel": orderClient.cancel,
 		"orders": orderClient.orders,
-		"ledger": orderClient.ledger,
 	}))
-}
-
-func (client *Client) Halted() bool {
-	return client.ledger.Halted()
 }
 
 /*
@@ -199,35 +177,21 @@ func (client *Client) send(payload fiber.Map) error {
 	return nil
 }
 
-func (client *Client) AddOrder(params AddParams) (chan OrderResult, error) {
+func (client *Client) AddOrder(params AddParams) error {
 	if params.ClOrdID == "" {
-		return nil, errnie.Error(errnie.Require(map[string]any{
+		return errnie.Error(errnie.Require(map[string]any{
 			"params.ClOrdID": params.ClOrdID,
 		}))
 	}
-
-	if client.Halted() {
-		return nil, errnie.Error(errnie.Require(map[string]any{
-			"halted": client.Halted(),
-		}))
-	}
-
-	resultCh := client.ledger.Register(params.ClOrdID)
 
 	if err := client.send(fiber.Map{
 		"method": MethodAddOrder,
 		"params": params,
 	}); err != nil {
-		client.ledger.Unregister(params.ClOrdID)
-
-		return nil, errnie.Error(err)
+		return errnie.Error(err)
 	}
 
-	return resultCh, nil
-}
-
-func (client *Client) ReleaseOrderResult(resultCh chan OrderResult) {
-	client.ledger.ReleaseResult(resultCh)
+	return nil
 }
 
 func (client *Client) AmendOrder(params AmendParams) error {
@@ -281,10 +245,5 @@ func (client *Client) EditOrder(params EditParams) error {
 
 func (client *Client) Close() error {
 	client.cancel()
-
-	if client.ledger != nil {
-		return client.ledger.Close()
-	}
-
 	return nil
 }

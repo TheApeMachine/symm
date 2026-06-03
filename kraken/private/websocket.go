@@ -2,9 +2,7 @@ package private
 
 import (
 	"context"
-	"errors"
-	"os"
-	"sync"
+	"math"
 	"time"
 
 	"github.com/fasthttp/websocket"
@@ -14,85 +12,58 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const privateReadPoll = 50 * time.Millisecond
-
+/*
+WebSocket maintains the authenticated Kraken WebSocket for public.WebSocket conns.
+*/
 type WebSocket struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q
-	conn           *websocket.Conn
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	mu             sync.Mutex
-	outboundReplay []any
-	replayMu       sync.RWMutex
-	rest           *Rest
-	token          string
-	tokenUntil     time.Time
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	provider *TokenProvider
+	conns    []*websocket.Conn
 }
 
+/*
+NewWebSocket returns paper simulation or a live authenticated connection holder.
+*/
 func NewWebSocket(
 	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
 ) public.WebSocketClient {
 	if viper.GetViper().GetString("trading.model") == "paper" {
 		activate.Boot("kraken/private paper websocket")
-
 		return paper.NewWebSocket(ctx, pool)
 	}
 
 	activate.Boot("kraken/private live websocket")
-
-	rest, err := NewRest(
-		ctx, apiKey, apiSecret, public.EndpointWebSocketsToken,
-	)
+	provider, err := NewTokenProvider(ctx, apiKey, apiSecret)
 
 	if err != nil {
+		errnie.Error(err)
 		return nil
 	}
 
-	return NewWebSocketFromRest(ctx, pool, rest)
-}
-
-func NewWebSocketFromRest(
-	ctx context.Context, pool *qpool.Q, rest *Rest,
-) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		rest:           rest,
-		broadcasts:     make(map[string]*qpool.BroadcastGroup),
-		subscribers:    make(map[string]*qpool.Subscriber),
-		outboundReplay: make([]any, 0),
+		ctx:      ctx,
+		cancel:   cancel,
+		provider: provider,
+		conns:    make([]*websocket.Conn, 1),
 	}
 
-	for _, channel := range []string{"raw", "kraken:private"} {
-		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
-			"kraken/private:"+channel, 1024,
-		)
+	if balanceErr := user.NewBalance(pool, provider); balanceErr != nil {
+		errnie.Error(balanceErr)
 	}
 
-	if err := user.NewBalance(pool, ws); err != nil {
-		errnie.Error(err)
-	}
-
-	if err := ws.dialUntilConnected(public.WebSocketAuthURL); err != nil {
-		errnie.Error(err)
-	} else {
-		activate.Boot("kraken/private websocket connected")
-	}
-
-	return ws
+	return public.NewWebSocket(ctx, pool, nil, ws.conns...)
 }
 
+/*
+Connect dials the authenticated endpoint and registers the conn on public.WebSocket.
+*/
 func (ws *WebSocket) Connect(
 	endpoint public.EndpointType, channel string, n uint64,
 ) error {
@@ -100,152 +71,43 @@ func (ws *WebSocket) Connect(
 		endpoint = public.WebSocketAuthURL
 	}
 
-	ws.mu.Lock()
-	connected := ws.conn != nil
-	ws.mu.Unlock()
+	ws.conns[0], _, ws.err = websocket.DefaultDialer.Dial(string(endpoint), nil)
 
-	if connected {
+	if ws.err != nil {
+		errnie.Error(ws.err)
+
+		n = uint64(
+			math.Round((math.Pow(
+				math.Phi, float64(n),
+			) + math.Pow(
+				math.Phi-1, float64(n),
+			)) / math.Sqrt(5)),
+		)
+
+		time.Sleep(time.Duration(n) * time.Second)
+
 		return nil
 	}
 
-	return ws.dialUntilConnected(endpoint)
-}
-
-func (ws *WebSocket) Tick() error {
-	for {
-		select {
-		case <-ws.ctx.Done():
-			return ws.ctx.Err()
-		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
-			if !ok {
-				errnie.Debug("kraken.private.websocket.Tick", "no ok")
-				return ws.ctx.Err()
-			}
-
-			if message == nil {
-				errnie.Debug("kraken.private.websocket.Tick", "nil message")
-				continue
-			}
-
-			ws.mu.Lock()
-			connected := ws.conn != nil
-			ws.mu.Unlock()
-
-			if !connected {
-				if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
-					return reconnectErr
-				}
-			}
-
-			for {
-				if err := ws.writeOutboundFrame(message.Value, true); err != nil {
-					if ws.ctx.Err() != nil {
-						return ws.ctx.Err()
-					}
-
-					ws.err = errnie.Error(err)
-
-					if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
-						return reconnectErr
-					}
-
-					continue
-				}
-
-				break
-			}
-		default:
-		}
-
-		ws.mu.Lock()
-		conn := ws.conn
-		ws.mu.Unlock()
-
-		if conn == nil {
-			if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
-				return reconnectErr
-			}
-
-			continue
-		}
-
-		if err := conn.SetReadDeadline(time.Now().Add(privateReadPoll)); err != nil {
-			ws.err = errnie.Error(err)
-
-			return ws.err
-		}
-
-		var message map[string]any
-
-		if err := conn.ReadJSON(&message); err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				continue
-			}
-
-			if ws.ctx.Err() != nil {
-				return ws.ctx.Err()
-			}
-
-			ws.err = errnie.Error(err)
-
-			if reconnectErr := ws.reconnect(public.WebSocketAuthURL); reconnectErr != nil {
-				return reconnectErr
-			}
-
-			continue
-		}
-
-		_ = conn.SetReadDeadline(time.Time{})
-
-		channel, _ := message["channel"].(string)
-
-		if channel != "" {
-			activate.Once("kraken/private:channel:" + channel)
-		}
-
-		if ch := ws.broadcasts["raw"]; ch != nil {
-			ch.Send(&qpool.QValue[any]{
-				Type:  channel,
-				Value: message,
-			})
-		}
-
-		if channel == public.ExecutionsChannel {
-			trading.PublishLedgerAck(ws.pool, message)
-		}
-	}
-}
-
-func (ws *WebSocket) Close() error {
-	ws.cancel()
-	ws.dropConnection()
+	public.AppendConn(ws.conns[0])
+	activate.Boot("kraken/private websocket connected")
 
 	return nil
 }
 
-func (ws *WebSocket) Token(ctx context.Context) (string, error) {
-	ws.mu.Lock()
+/*
+Tick blocks until the authenticated session context is cancelled.
+*/
+func (ws *WebSocket) Tick() error {
+	return nil
+}
 
-	if ws.token != "" && time.Now().Before(ws.tokenUntil.Add(-tokenRefreshLead)) {
-		token := ws.token
-		ws.mu.Unlock()
+/*
+Close shuts down the authenticated connection holder.
+*/
+func (ws *WebSocket) Close() error {
+	ws.conns[0].Close()
+	ws.cancel()
 
-		return token, nil
-	}
-
-	ws.mu.Unlock()
-
-	token, expires, err := ws.rest.WebSocketToken(ctx)
-
-	if err != nil {
-		return "", err
-	}
-
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	ws.token = token
-	ws.tokenUntil = time.Now().Add(expires)
-
-	return ws.token, nil
+	return nil
 }

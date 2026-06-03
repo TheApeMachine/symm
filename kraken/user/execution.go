@@ -2,13 +2,7 @@ package user
 
 import (
 	"context"
-	"encoding/json"
-	"sync"
-
-	"github.com/bytedance/sonic"
 )
-
-const executionSnapshot = "snapshot"
 
 /*
 ExecutionTokenSource supplies short-lived authenticated WebSocket tokens.
@@ -67,49 +61,4 @@ type Execution struct {
 	FeeCcyPref   string         `json:"fee_ccy_pref,omitempty"`
 	Fees         []ExecutionFee `json:"fees,omitempty"`
 	Timestamp    string         `json:"timestamp,omitempty"`
-	EnvelopeType string         `json:"-"`
-}
-
-func (execution *Execution) SetEnvelopeType(kind string) {
-	execution.EnvelopeType = kind
-}
-
-func (execution *Execution) IsSnapshot() bool {
-	return execution.EnvelopeType == executionSnapshot
-}
-
-/*
-DecodeExecutions decodes every row in an executions channel message.
-*/
-func DecodeExecutions(message map[string]any) ([]Execution, error) {
-	var executions []Execution
-
-	if err := sonic.Unmarshal(message["data"].(json.RawMessage), &executions); err != nil {
-		return nil, err
-	}
-
-	for index := range executions {
-		executions[index].SetEnvelopeType(message["type"].(string))
-	}
-
-	return executions, nil
-}
-
-var (
-	executionTokenSourceMu sync.RWMutex
-	executionTokenSource   ExecutionTokenSource
-)
-
-func SetExecutionTokenSource(source ExecutionTokenSource) {
-	executionTokenSourceMu.Lock()
-	defer executionTokenSourceMu.Unlock()
-
-	executionTokenSource = source
-}
-
-func ExecutionAvailable() bool {
-	executionTokenSourceMu.RLock()
-	defer executionTokenSourceMu.RUnlock()
-
-	return executionTokenSource != nil
 }

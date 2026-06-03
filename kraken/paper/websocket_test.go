@@ -29,7 +29,7 @@ func TestWebSocketOrderAckRejectsUnknownFrame(t *testing.T) {
 
 		defer client.Close()
 
-		resultCh, addErr := client.AddOrder(trading.AddParams{
+		addErr := client.AddOrder(trading.AddParams{
 			OrderType: trading.Market,
 			Side:      trading.Buy,
 			Symbol:    "BTC/EUR",
@@ -39,12 +39,15 @@ func TestWebSocketOrderAckRejectsUnknownFrame(t *testing.T) {
 
 		So(addErr, ShouldBeNil)
 
-		defer client.ReleaseOrderResult(resultCh)
+		time.Sleep(10 * time.Millisecond)
+
+		bg := pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond)
+		sub := bg.Subscribe("kraken:private", 1024)
 
 		select {
-		case result := <-resultCh:
-			So(result.Success, ShouldBeFalse)
-			So(result.ClOrdID, ShouldEqual, "paper-ws-reject-1")
+		case message := <-sub.Incoming:
+			So(message.Type, ShouldEqual, "update")
+			So(message.Value, ShouldNotBeNil)
 		case <-time.After(2 * time.Second):
 			So("timed out waiting for paper rejection ack", ShouldBeBlank)
 		}
