@@ -50,6 +50,10 @@ func NewWebSocket(
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
+	if len(conns) == 0 {
+		conns = make([]*websocket.Conn, 1)
+	}
+
 	socketOnce.Do(func() {
 		socket = &WebSocket{
 			ctx:         ctx,

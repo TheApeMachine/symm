@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -251,7 +250,7 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
-	if perspectives.IsEntryAction(*actionType) && !trading.DeskReady() {
+	if perspectives.IsEntryAction(*actionType) {
 		blockReason = "desk_not_ready"
 
 		if err := story.maybeWritePlaybookWalkAudit(measurement, blockReason); err != nil {

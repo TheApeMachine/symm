@@ -71,12 +71,8 @@ type Balance struct {
 	Envelope   string          `json:"-"`
 }
 
-func (balance *Balance) SetEnvelopeType(kind string) {
-	balance.Envelope = kind
-}
-
-func (balance *Balance) IsSnapshot() bool {
-	return balance.Envelope == BalanceSnapshot
+type Balances struct {
+	Asset []Balance `json:"asset"`
 }
 
 func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {
@@ -98,7 +94,7 @@ func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {
 	pool.CreateBroadcastGroup(
 		"kraken:private", 10*time.Millisecond,
 	).Send(&qpool.QValue[any]{
-		Type: public.BalancesChannel,
+		Type: "balances",
 		Value: SubscribeFrame{
 			Method: "subscribe",
 			Params: params,

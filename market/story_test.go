@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/signal/sentiment"
 )
@@ -235,12 +234,10 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		viper.Set("trading.paper.wallet_eur", 200.0)
 		viper.Set("market.perspectives.fixture_playbook", true)
 		viper.Set("market.quote_currency", "EUR")
-		trading.MarkDeskReady()
 		defer viper.Set("trading.record.file", "")
 		defer viper.Set("trading.paper.wallet_eur", 0)
 		defer viper.Set("market.perspectives.fixture_playbook", false)
 		defer viper.Set("market.quote_currency", "")
-		defer trading.ResetDeskReady()
 
 		story := NewStory(ctx, pool, focus.NewSet())
 		subscriber := story.raw.Subscribe("test:story:raw", 4)
@@ -281,8 +278,6 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		trading.ResetDeskReady()
-		defer trading.ResetDeskReady()
 
 		viper.Set("trading.paper.wallet_eur", 200.0)
 		viper.Set("market.perspectives.fixture_playbook", true)
@@ -316,8 +311,6 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 			default:
 			}
 		})
-
-		trading.MarkDeskReady()
 
 		for _, row := range perspectives.FixturePlaybookEntryMeasurements("ETH/EUR", 3_000) {
 			measurements.Send(&qpool.QValue[any]{Value: row})

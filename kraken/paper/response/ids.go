@@ -1,4 +1,4 @@
-package paper
+package response
 
 import (
 	"crypto/rand"

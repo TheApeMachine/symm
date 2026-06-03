@@ -31,7 +31,6 @@ func TestDecodeBalances(t *testing.T) {
 			So(rows[0].Asset, ShouldEqual, "EUR")
 			So(rows[0].Balance, ShouldEqual, 200)
 			So(rows[0].Wallets[0].ID, ShouldEqual, "main")
-			So(rows[0].IsSnapshot(), ShouldBeTrue)
 		})
 	})
 }

@@ -19,9 +19,9 @@ func TestNewOrderClient(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		_, err := NewOrder(ctx, pool)
+		client := NewOrderClient(ctx, pool)
 
-		So(err, ShouldBeNil)
+		So(client, ShouldNotBeNil)
 	})
 }
 
@@ -50,8 +50,7 @@ func BenchmarkNewOrder(b *testing.B) {
 
 	for b.Loop() {
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		client, _ := NewOrder(ctx, pool)
-		_ = client
+		_ = NewOrderClient(ctx, pool)
 		pool.Close()
 	}
 }

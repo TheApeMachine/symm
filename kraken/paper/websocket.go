@@ -1,23 +1,21 @@
 package paper
 
 import (
+	"container/ring"
 	"context"
+	"fmt"
+	"math/rand"
+	"os"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/paper/response"
+	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
 )
-
-/*
-Socket handles one kraken:private message type and returns the raw bus payload.
-*/
-type Socket interface {
-	Send(message *qpool.QValue[any]) map[string]any
-}
 
 /*
 WebSocket simulates Kraken private websocket traffic on raw and kraken:private.
@@ -25,15 +23,39 @@ WebSocket simulates Kraken private websocket traffic on raw and kraken:private.
 type WebSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	err         error
 	pool        *qpool.Q
+	err         error
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	sockets     map[string]Socket
+	sockets     map[string]types.Socket
+	latencies   *ring.Ring
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
+
+	// Load the latency ring from the file.
+	latencyFile, err := os.OpenFile("runs/network_latency.json", os.O_RDONLY, 0644)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	defer latencyFile.Close()
+	ring := ring.New(64)
+
+	for {
+		var value time.Duration
+		_, err = fmt.Fscanf(latencyFile, "%d\n", &value)
+
+		ring.Value = time.Duration(value)
+		ring.Next()
+
+		if err != nil {
+			break
+		}
+	}
 
 	ws := &WebSocket{
 		ctx:         ctx,
@@ -41,7 +63,11 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		sockets:     make(map[string]Socket),
+		sockets: map[string]types.Socket{
+			"balances": response.NewBalances(),
+			"orders":   response.NewOrders(ctx, pool),
+		},
+		latencies: ring,
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
@@ -51,25 +77,9 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		)
 	}
 
-	identifier := NewIdentifier()
-	catalog := NewPairCatalog(ctx)
-	quotes := broker.EnsureQuoteCache(ctx, pool)
-	balances := NewBalances(ws, identifier, catalog)
-	orders := NewOrders(ctx, ws, balances, quotes, catalog, identifier)
-
-	quotes.Subscribe(orders.tryMatchQuote)
-	quotes.SubscribeTrades(orders.tryMatchTrade)
-
-	ws.sockets[public.BalancesChannel] = balances
-	ws.sockets[public.OrdersChannel] = orders
-
-	go catalog.Load()
-
 	if err := user.NewBalance(pool, nil); err != nil {
 		errnie.Error(err)
 	}
-
-	go ws.runPrivate()
 
 	activate.Boot("kraken/paper websocket ready")
 
@@ -79,17 +89,37 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 func (ws *WebSocket) Connect(
 	endpoint public.EndpointType, channel string, n uint64,
 ) error {
+	rndConnDelay := rand.Intn(100)
+	time.Sleep(time.Duration(rndConnDelay) * time.Millisecond)
 	return nil
 }
 
-func (ws *WebSocket) Tick() error {
-	<-ws.ctx.Done()
+func (ws *WebSocket) Tick() (err error) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 
-	return ws.ctx.Err()
+	for {
+		select {
+		case <-ws.ctx.Done():
+			return ws.err
+		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
+			if !ok || message == nil {
+				return ws.ctx.Err()
+			}
+
+			ws.broadcasts["raw"].Send(&qpool.QValue[any]{
+				Type:  message.Type,
+				Value: ws.sockets[message.Type].Send(message),
+			})
+		case <-ticker.C:
+			time.Sleep(ws.latencies.Value.(time.Duration))
+			ws.latencies.Next()
+		default:
+		}
+	}
 }
 
 func (ws *WebSocket) Close() error {
 	ws.cancel()
-
 	return nil
 }

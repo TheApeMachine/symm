@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -26,11 +25,9 @@ func TestStoryPlaybookWalkAudit(t *testing.T) {
 		viper.Set("trading.audit.file", auditPath)
 		viper.Set("trading.paper.wallet_eur", 200.0)
 		viper.Set("market.quote_currency", "EUR")
-		trading.MarkDeskReady()
 		defer viper.Set("trading.audit.file", "")
 		defer viper.Set("trading.paper.wallet_eur", 0)
 		defer viper.Set("market.quote_currency", "")
-		defer trading.ResetDeskReady()
 
 		story := NewStory(ctx, pool, focus.NewSet())
 

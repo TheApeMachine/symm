@@ -59,14 +59,6 @@ var (
 			streams := focus.NewSet()
 			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
 
-			if err := configureLevel3(
-				cmd.Context(),
-				os.Getenv("SYMM_KRAKEN_API_KEY"),
-				os.Getenv("SYMM_KRAKEN_API_SECRET"),
-			); err != nil {
-				return err
-			}
-
 			if err := engine.AddSystems(
 				ui.NewHub(cmd.Context(), pool),
 				public.NewWebSocket(cmd.Context(), pool, streams),

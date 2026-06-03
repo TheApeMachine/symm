@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 const cryptoRawSubscriberID = "trader/crypto:raw"
@@ -62,14 +63,10 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		marks:       make(map[string]float64),
 	}
 
-	crypto.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-	crypto.subscribers["raw"] = crypto.broadcasts["raw"].Subscribe(
-		cryptoRawSubscriberID, 1024,
-	)
-
-	crypto.subscribers["ui:resync"] = pool.CreateBroadcastGroup(
-		"ui:resync", 10*time.Millisecond,
-	).Subscribe("trader/crypto:resync", 1024)
+	for _, channel := range []string{"raw"} {
+		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(channel, 1024)
+	}
 
 	activate.Boot("trader/crypto ready")
 
@@ -77,29 +74,51 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 }
 
 func (crypto *Crypto) Tick() error {
-	if err := crypto.ensureBalanceSnapshot(); err != nil {
-		return err
-	}
-
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
-		case _, ok := <-crypto.subscribers["ui:resync"].Incoming:
-			if !ok {
-				return crypto.ctx.Err()
-			}
-
-			if err := crypto.requestBalanceSnapshot(); err != nil {
-				return err
-			}
-
-			if err := crypto.resendWallet(); err != nil {
-				return err
-			}
 		case message := <-crypto.subscribers["raw"].Incoming:
-			if err := crypto.handleRaw(message); err != nil {
-				return err
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			envelope, ok := message.Value.(map[string]any)
+
+			if !ok {
+				continue
+			}
+
+			switch envelope["channel"].(string) {
+			case "actions":
+				action, ok := message.Value.(perspectives.Action)
+
+				if !ok {
+					continue
+				}
+
+				switch action.Type {
+				case perspectives.ActionLimit:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionMarket:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionIceberg:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionStopLoss:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionStopLossLimit:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionTakeProfit:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionTakeProfitLimit:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionTrailingStop:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionTrailingStopLimit:
+					crypto.desk.AddOrder(action)
+				case perspectives.ActionSettlePosition:
+					crypto.desk.AddOrder(action)
+				}
 			}
 		}
 	}

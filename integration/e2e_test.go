@@ -32,7 +32,6 @@ func TestIntegrationE2E(t *testing.T) {
 
 	Convey("Given the replay-backed integration harness", t, func() {
 		testconfig.Load(t)
-		resetTradingReady()
 
 		auditDir := t.TempDir()
 		ConfigureViper(filepath.Join(auditDir, "suite-audit.jsonl"))
@@ -109,7 +108,6 @@ func RunSuite(parent context.Context, auditDir string, scenarios []Scenario) *Su
 		suite.Scenarios = append(suite.Scenarios, harness.RunScenario(scenario))
 		harness.Close()
 		scenarioCancel()
-		resetTradingReady()
 	}
 
 	suite.Elapsed = time.Since(started)
@@ -147,6 +145,5 @@ func BenchmarkIntegrationReplayHarness(b *testing.B) {
 		})
 		harness.Close()
 		cancel()
-		resetTradingReady()
 	}
 }

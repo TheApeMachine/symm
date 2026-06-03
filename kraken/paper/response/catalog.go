@@ -1,4 +1,4 @@
-package paper
+package response
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 
 const (
 	defaultTakerFeePct = 0.40
-	// DefaultMakerFeePct is the paper fill rate when AssetPairs metadata is unavailable.
 	DefaultMakerFeePct = 0.25
 	defaultTickSize    = 0.01
 )

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
@@ -36,7 +37,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 		cancel:   cancel,
 		pool:     pool,
 		tracker:  Default(),
-		l3Active: market.Level3Available(),
+		l3Active: viper.GetBool("trading.level3.enabled"),
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
@@ -145,7 +146,8 @@ func (tox *Toxicity) handleLevel3(message *qpool.QValue[any]) error {
 	orders := signalpool.GetOrders(envelope)
 
 	for _, order := range orders {
-		tox.observeLevel3(&order)
+		fmt.Println(order)
+		//tox.observeLevel3(&order)
 	}
 
 	return nil

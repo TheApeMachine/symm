@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
@@ -29,7 +30,7 @@ var booksPool = sync.Pool{
 
 var ordersPool = sync.Pool{
 	New: func() any {
-		return make([]market.Order, 0)
+		return make([]trading.OrderUpdate, 0)
 	},
 }
 
@@ -69,8 +70,8 @@ func GetBooks(data map[string]any) []market.Book {
 	return books
 }
 
-func GetOrders(data map[string]any) []market.Order {
-	orders := ordersPool.Get().([]market.Order)
+func GetOrders(data map[string]any) []trading.OrderUpdate {
+	orders := ordersPool.Get().([]trading.OrderUpdate)
 	defer ordersPool.Put(orders)
 
 	sonic.Unmarshal(data["data"].(json.RawMessage), &orders)

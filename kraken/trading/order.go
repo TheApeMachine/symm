@@ -4,10 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 const (
@@ -129,121 +127,139 @@ type Ack struct {
 	} `json:"result"`
 }
 
-/*
-Client sends order frames to kraken:private and tracks acknowledgements.
-*/
-type Client struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	orders *qpool.BroadcastGroup
+type OrderUpdate struct {
+	OrderID      string `json:"order_id"`
+	OrderUserref int    `json:"order_userref"`
 }
 
-func NewOrder(ctx context.Context, pool *qpool.Q) (*Client, error) {
+type OrderClient struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+}
+
+func NewOrderClient(ctx context.Context, pool *qpool.Q) *OrderClient {
 	ctx, cancel := context.WithCancel(ctx)
 
-	orderClient := &Client{
+	client := &OrderClient{
 		ctx:    ctx,
 		cancel: cancel,
-		orders: pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond),
+		pool:   pool,
 	}
 
-	return orderClient, errnie.Error(errnie.Require(map[string]any{
-		"ctx":    orderClient.ctx,
-		"cancel": orderClient.cancel,
-		"orders": orderClient.orders,
-	}))
+	for _, channel := range []string{"kraken:private"} {
+		client.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		client.subscribers[channel] = client.broadcasts[channel].Subscribe(channel, 1024)
+	}
+
+	return client
 }
 
-/*
-send publishes an order frame on the private broadcast.
-*/
-func (client *Client) send(payload fiber.Map) error {
-	frame := map[string]any{
-		"method": payload["method"],
-	}
-
-	switch params := payload["params"].(type) {
-	case AddParams:
-		frame["params"] = params
-	default:
-		frame["params"] = payload["params"]
-	}
-
-	client.orders.Send(&qpool.QValue[any]{
-		Type:  public.OrdersChannel,
-		Value: frame,
-	})
-
-	return nil
-}
-
-func (client *Client) AddOrder(params AddParams) error {
+func (client *OrderClient) AddOrder(params AddParams) error {
 	if params.ClOrdID == "" {
 		return errnie.Error(errnie.Require(map[string]any{
 			"params.ClOrdID": params.ClOrdID,
 		}))
 	}
 
-	if err := client.send(fiber.Map{
-		"method": MethodAddOrder,
-		"params": params,
-	}); err != nil {
-		return errnie.Error(err)
-	}
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodAddOrder,
+			"params": params,
+		},
+	})
 
 	return nil
 }
 
-func (client *Client) AmendOrder(params AmendParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodAmendOrder,
-		"params": params,
-	}))
+func (client *OrderClient) AmendOrder(params AmendParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodAmendOrder,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) CancelOrder(params CancelParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodCancelOrder,
-		"params": params,
-	}))
+func (client *OrderClient) CancelOrder(params CancelParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodCancelOrder,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) CancelAll(params CancelAllParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodCancelAll,
-		"params": params,
-	}))
+func (client *OrderClient) CancelAll(params CancelAllParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodCancelAll,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodCancelAllOrdersAfter,
-		"params": params,
-	}))
+func (client *OrderClient) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodCancelAllOrdersAfter,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) BatchAdd(params BatchAddParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodBatchAdd,
-		"params": params,
-	}))
+func (client *OrderClient) BatchAdd(params BatchAddParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodBatchAdd,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) BatchCancel(params BatchCancelParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodBatchCancel,
-		"params": params,
-	}))
+func (client *OrderClient) BatchCancel(params BatchCancelParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodBatchCancel,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) EditOrder(params EditParams) error {
-	return errnie.Error(client.send(fiber.Map{
-		"method": MethodEditOrder,
-		"params": params,
-	}))
+func (client *OrderClient) EditOrder(params EditParams) error {
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type: "kraken:private",
+		Value: map[string]any{
+			"method": MethodEditOrder,
+			"params": params,
+		},
+	})
+
+	return nil
 }
 
-func (client *Client) Close() error {
+func (client *OrderClient) Close() error {
 	client.cancel()
 	return nil
 }

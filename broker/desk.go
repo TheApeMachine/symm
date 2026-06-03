@@ -14,7 +14,6 @@ type Desk struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	pool   *qpool.Q
-	orders *trading.Client
 	quotes *QuoteCache
 	stress *StressCache
 	err    error
@@ -23,18 +22,10 @@ type Desk struct {
 func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	orders, err := trading.NewOrder(ctx, pool)
-
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("broker desk: order client: %w", err)
-	}
-
 	desk := &Desk{
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
-		orders: orders,
 		quotes: EnsureQuoteCache(ctx, pool),
 		stress: EnsureStressCache(ctx, pool),
 	}
@@ -43,10 +34,6 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 }
 
 func (desk *Desk) Halted() bool {
-	if desk.orders == nil {
-		return true
-	}
-
 	return false
 }
 
@@ -132,7 +119,7 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		addParams.PostOnly = true
 	}
 
-	addErr := desk.orders.AddOrder(addParams)
+	addErr := trading.NewOrderClient(desk.ctx, desk.pool).AddOrder(addParams)
 
 	if addErr != nil {
 		return err

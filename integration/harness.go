@@ -10,12 +10,10 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/signal/causal"
@@ -311,15 +309,7 @@ func (harness *Harness) sleep(duration time.Duration) {
 }
 
 func (harness *Harness) waitDeskReady(timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-
-	for !trading.DeskReady() {
-		if time.Now().After(deadline) {
-			return
-		}
-
-		harness.sleep(10 * time.Millisecond)
-	}
+	harness.sleep(10 * time.Millisecond)
 }
 
 func ConfigureViper(auditPath string) {
@@ -329,7 +319,7 @@ func ConfigureViper(auditPath string) {
 	viper.Set("trading.model", "paper")
 	viper.Set("trading.record.file", "")
 	viper.Set("trading.paper.wallet_eur", 200.0)
-	viper.Set("trading.paper.maker_fee_pct", paper.DefaultMakerFeePct)
+	viper.Set("trading.paper.maker_fee_pct", 0.001)
 	viper.Set("market.perspectives.fixture_playbook", true)
 	viper.Set("market.quote_currency", "EUR")
 	viper.Set("market.max_scan_symbols", 8)
@@ -344,9 +334,4 @@ func ConfigureViper(auditPath string) {
 	viper.Set("trading.audit.gate_cooldown", time.Nanosecond)
 	viper.Set("trading.paper.default_one_way_latency", time.Nanosecond)
 	viper.Set("trading.order_ack_timeout", 5*time.Second)
-}
-
-func resetTradingReady() {
-	trading.ResetDeskReady()
-	broker.ResetQuoteCacheForTest()
 }

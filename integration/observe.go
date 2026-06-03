@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	signalpool "github.com/theapemachine/symm/signal"
 )
@@ -198,7 +197,6 @@ func (tape *Tape) Snapshot(auditPath string) TapeSnapshot {
 		Fills:        fills,
 		AuditRows:    auditRows,
 		RawFrames:    tape.rawFrames,
-		DeskReady:    trading.DeskReady(),
 	}
 }
 
