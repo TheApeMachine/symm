@@ -72,10 +72,12 @@ func NewWebSocket(
 			streams:     streams,
 		}
 
-		for _, channel := range []string{"raw", "level3", "kraken:public", "ui"} {
+		for _, channel := range []string{"raw", "level3", "kraken:public"} {
 			socket.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 			socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 1024)
 		}
+
+		socket.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 		socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
 			"method": "subscribe",

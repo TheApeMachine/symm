@@ -176,6 +176,7 @@ func (instrument *Instrument) Tick() error {
 					},
 				}})
 
+
 				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
