@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,8 +28,11 @@ func TestBalancesSnapshot(t *testing.T) {
 		Convey("It should seed quote wallet from config", func() {
 			message := balances.Send(&qpool.QValue[any]{Value: user.SubscribeFrame{}})
 
-			So(message.Channel, ShouldEqual, public.BalancesChannel)
-			So(string(message.Data), ShouldContainSubstring, `"asset"`)
+			channel, _ := message["channel"].(string)
+			data, _ := message["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, public.BalancesChannel)
+			So(string(data), ShouldContainSubstring, `"asset"`)
 		})
 	})
 }
@@ -51,8 +55,11 @@ func TestBalancesApplyFill(t *testing.T) {
 		after := balances.snapshot()
 
 		Convey("It should credit base asset after a buy", func() {
-			So(after.Channel, ShouldEqual, public.BalancesChannel)
-			So(string(after.Data), ShouldContainSubstring, `"asset":"BTC"`)
+			channel, _ := after["channel"].(string)
+			data, _ := after["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, public.BalancesChannel)
+			So(string(data), ShouldContainSubstring, `"asset":"BTC"`)
 		})
 	})
 }

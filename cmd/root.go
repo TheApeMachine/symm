@@ -57,25 +57,6 @@ var (
 			}
 
 			streams := focus.NewSet()
-
-			story, storyErr := market.NewStory(cmd.Context(), pool, streams)
-
-			if storyErr != nil {
-				return storyErr
-			}
-
-			hub, hubErr := ui.NewHub(cmd.Context(), pool)
-
-			if hubErr != nil {
-				return hubErr
-			}
-
-			crypto, cryptoErr := trader.NewCrypto(cmd.Context(), pool, streams)
-
-			if cryptoErr != nil {
-				return cryptoErr
-			}
-
 			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
 
 			if err := configureLevel3(
@@ -87,7 +68,7 @@ var (
 			}
 
 			if err := engine.AddSystems(
-				hub,
+				ui.NewHub(cmd.Context(), pool),
 				public.NewWebSocket(cmd.Context(), pool, streams),
 				private.NewWebSocket(
 					cmd.Context(),
@@ -96,7 +77,6 @@ var (
 					os.Getenv("SYMM_KRAKEN_API_SECRET"),
 				),
 				kraken.NewInstrument(cmd.Context(), pool),
-				kraken.NewLevel3WebSocket(cmd.Context(), pool),
 				causal.NewSignal(cmd.Context(), pool),
 				correlation.NewSignal(cmd.Context(), pool),
 				cvd.NewSignal(cmd.Context(), pool),
@@ -109,8 +89,8 @@ var (
 				pumpdump.NewSignal(cmd.Context(), pool),
 				sentiment.NewSignal(cmd.Context(), pool),
 				toxicity.NewToxicity(cmd.Context(), pool),
-				story,
-				crypto,
+				market.NewStory(cmd.Context(), pool, streams),
+				trader.NewCrypto(cmd.Context(), pool, streams),
 			); err != nil {
 				return err
 			}

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/broker"
@@ -36,14 +37,15 @@ type Crypto struct {
 	marks         map[string]float64
 }
 
-func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Crypto, error) {
+func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk, err := broker.NewDesk(ctx, pool)
 
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("trader/crypto: desk: %w", err)
+		errnie.Error(fmt.Errorf("trader/crypto: desk: %w", err), "trader/crypto")
+		return nil
 	}
 
 	crypto := &Crypto{
@@ -71,7 +73,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Crypto,
 
 	activate.Boot("trader/crypto ready")
 
-	return crypto, nil
+	return crypto
 }
 
 func (crypto *Crypto) Tick() error {

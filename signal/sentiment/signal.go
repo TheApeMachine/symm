@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -83,20 +84,15 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			switch envelope["channel"].(string) {
 			case public.TickerChannel:
-				tickers, err := market.DecodeTickers(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "sentiment: decode tickers")
-					continue
-				}
+				tickers := signalpool.GetTickers(envelope)
 
 				if err := signal.publishTickers(tickers); err != nil {
 					errnie.Error(err, "sentiment: publish tickers")

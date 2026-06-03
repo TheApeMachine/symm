@@ -6,7 +6,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 func TestPreflightGates(t *testing.T) {
@@ -22,26 +24,81 @@ func TestPreflightGates(t *testing.T) {
 		}
 
 		Convey("It should accept maker limits", func() {
-			So(PreflightGates(quote, trading.Buy, 0.01, trading.Limit), ShouldBeNil)
+			request := PreflightRequest{
+				Quote:      quote,
+				Side:       trading.Buy,
+				Quantity:   0.01,
+				OrderType:  trading.Limit,
+				ActionType: perspectives.ActionLimit,
+			}
+
+			So(PreflightGates(request), ShouldBeNil)
 		})
 
 		Convey("It should reject incomplete quotes", func() {
 			incomplete := Quote{Symbol: "BTC/EUR", Last: 100, UpdatedAt: time.Now().UTC()}
+			request := PreflightRequest{
+				Quote:      incomplete,
+				Side:       trading.Buy,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: perspectives.ActionMarket,
+			}
 
-			So(
-				PreflightGates(incomplete, trading.Buy, 0.01, trading.Market),
-				ShouldNotBeNil,
-			)
+			So(PreflightGates(request), ShouldNotBeNil)
 		})
 
-		Convey("It should reject stale quotes", func() {
+		Convey("It should reject stale quotes for entries", func() {
 			stale := quote
 			stale.UpdatedAt = time.Now().UTC().Add(-1 * time.Hour)
+			request := PreflightRequest{
+				Quote:      stale,
+				Side:       trading.Buy,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: perspectives.ActionMarket,
+			}
 
-			So(
-				PreflightGates(stale, trading.Buy, 0.01, trading.Market),
-				ShouldNotBeNil,
-			)
+			So(PreflightGates(request), ShouldNotBeNil)
+		})
+
+		Convey("It should bypass stress and slippage gates for exits", func() {
+			stale := quote
+			stale.UpdatedAt = time.Now().UTC().Add(-1 * time.Hour)
+			request := PreflightRequest{
+				Quote:      stale,
+				Side:       trading.Sell,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: perspectives.ActionSettlePosition,
+				Stress: SymbolStress{
+					ToxicityCategory: perspectives.CategoryToxicBluff,
+					ToxicitySNR:      4,
+				},
+			}
+
+			So(PreflightGates(request), ShouldBeNil)
+		})
+
+		Convey("It should tighten entry slippage under hostile stress", func() {
+			wideBook := quote
+			wideBook.Book.Asks = []market.BookLevel{
+				{Price: 100, Qty: 0.001},
+				{Price: 101, Qty: 0.02},
+			}
+			request := PreflightRequest{
+				Quote:      wideBook,
+				Side:       trading.Buy,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: perspectives.ActionMarket,
+				Stress: SymbolStress{
+					ToxicityCategory: perspectives.CategoryToxicBluff,
+					ToxicitySNR:      1,
+				},
+			}
+
+			So(PreflightGates(request), ShouldNotBeNil)
 		})
 	})
 }
@@ -57,7 +114,15 @@ func BenchmarkPreflightGates(b *testing.B) {
 		UpdatedAt: time.Now().UTC(),
 	}
 
+	request := PreflightRequest{
+		Quote:      quote,
+		Side:       trading.Buy,
+		Quantity:   0.01,
+		OrderType:  trading.Limit,
+		ActionType: perspectives.ActionLimit,
+	}
+
 	for b.Loop() {
-		_ = PreflightGates(quote, trading.Buy, 0.01, trading.Limit)
+		_ = PreflightGates(request)
 	}
 }

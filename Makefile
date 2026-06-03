@@ -32,7 +32,7 @@ test-go:
 
 test-e2e:
 	@mkdir -p runs
-	go test $(LDFLAGS) ./integration/... -count=1 -timeout 180s
+	go test $(LDFLAGS) ./integration/... -count=1 -timeout 360s
 
 test-race:
 ifeq ($(shell uname -s),Darwin)

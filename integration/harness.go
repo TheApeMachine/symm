@@ -14,8 +14,8 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/replay"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -44,7 +44,7 @@ type Harness struct {
 	cancel     context.CancelFunc
 	pool       *qpool.Q
 	engine     *cmd.Engine
-	replay     *replay.WebSocket
+	replay     *paper.WebSocket
 	relay      *RawRelay
 	tape       *Tape
 	streams    *focus.Set
@@ -57,15 +57,7 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 
 	pool := qpool.NewQ(ctx, 2, 8, qpool.NewConfig())
 
-	replaySocket, err := replay.NewWebSocket(ctx, pool, capture)
-
-	if err != nil {
-		cancel()
-		pool.Close()
-
-		return nil, fmt.Errorf("integration harness: replay websocket: %w", err)
-	}
-
+	replaySocket := paper.NewWebSocket(ctx, pool)
 	relay := NewRawRelay(ctx, pool)
 
 	if relay == nil {
@@ -85,23 +77,8 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	}
 
 	streams := focus.NewSet()
-	story, storyErr := market.NewStory(ctx, pool, streams)
-
-	if storyErr != nil {
-		cancel()
-		pool.Close()
-
-		return nil, fmt.Errorf("integration harness: story: %w", storyErr)
-	}
-
-	crypto, cryptoErr := trader.NewCrypto(ctx, pool, streams)
-
-	if cryptoErr != nil {
-		cancel()
-		pool.Close()
-
-		return nil, fmt.Errorf("integration harness: crypto: %w", cryptoErr)
-	}
+	story := market.NewStory(ctx, pool, streams)
+	crypto := trader.NewCrypto(ctx, pool, streams)
 
 	if err := engine.AddSystems(
 		relay,
@@ -210,8 +187,6 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 			Detail: "timed out waiting for replay playback",
 		})
 	}
-
-	reloadIntegrationLatencyProfile()
 
 	postDelay := scenario.PostReplayDelay
 
@@ -360,21 +335,15 @@ func integrationLatencyProfile() public.LatencyProfile {
 	}
 }
 
-func reloadIntegrationLatencyProfile() {
-	public.SharedNetworkLatency().Reset()
-	public.SharedNetworkLatency().LoadProfile(integrationLatencyProfile())
-}
-
 func ConfigureViper(auditPath string) {
 	profilePath := filepath.Join(os.TempDir(), "symm-integration-latency.json")
 	viper.Set("trading.paper.latency_profile", profilePath)
 
-	_ = public.SaveLatencyProfile(integrationLatencyProfile())
-	reloadIntegrationLatencyProfile()
-
 	viper.Set("trading.model", "paper")
 	viper.Set("trading.record.file", "")
 	viper.Set("trading.paper.wallet_eur", 200.0)
+	viper.Set("trading.paper.maker_fee_pct", paper.DefaultMakerFeePct)
+	viper.Set("market.perspectives.fixture_playbook", true)
 	viper.Set("market.quote_currency", "EUR")
 	viper.Set("market.max_scan_symbols", 8)
 	viper.Set("market.symbols", []string{
@@ -392,6 +361,5 @@ func ConfigureViper(auditPath string) {
 
 func resetTradingReady() {
 	trading.ResetDeskReady()
-	public.SharedNetworkLatency().Reset()
 	broker.ResetQuoteCacheForTest()
 }

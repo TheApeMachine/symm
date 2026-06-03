@@ -1,24 +1,25 @@
 package user
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 func TestDecodeExecutions(t *testing.T) {
 	Convey("Given an empty executions snapshot", t, func() {
-		message := &public.SocketMessage{
-			Channel: public.ExecutionsChannel,
-			Type:    "snapshot",
-			Data:    []byte(`[]`),
+		message := map[string]any{
+			"channel": public.ExecutionsChannel,
+			"type":    "snapshot",
+			"data":    []byte(`[]`),
 		}
 
 		Convey("It should decode zero rows", func() {
-			rows, err := DecodeExecutions(message)
-
-			So(err, ShouldBeNil)
+			var rows []Execution
+			So(sonic.Unmarshal(message["data"].(json.RawMessage), &rows), ShouldBeNil)
 			So(len(rows), ShouldEqual, 0)
 		})
 	})

@@ -11,7 +11,25 @@ import (
 	"github.com/theapemachine/symm/internal/testconfig"
 )
 
+const (
+	integrationE2ESuiteTimeout = 330 * time.Second
+	// integrationE2EMinTestTimeout is the go test -timeout floor (per-category signal validation).
+	integrationE2EMinTestTimeout = 300 * time.Second
+)
+
 func TestIntegrationE2E(t *testing.T) {
+	if deadline, hasDeadline := t.Deadline(); hasDeadline {
+		remaining := time.Until(deadline)
+
+		if remaining < integrationE2EMinTestTimeout {
+			t.Fatalf(
+				"TestIntegrationE2E needs go test -timeout at least %s (have %s); run: make test-e2e",
+				integrationE2EMinTestTimeout,
+				remaining.Round(time.Second),
+			)
+		}
+	}
+
 	Convey("Given the replay-backed integration harness", t, func() {
 		testconfig.Load(t)
 		resetTradingReady()
@@ -20,7 +38,7 @@ func TestIntegrationE2E(t *testing.T) {
 		ConfigureViper(filepath.Join(auditDir, "suite-audit.jsonl"))
 
 		reportPath := filepath.Join("runs", "e2e-report.json")
-		suiteCtx, suiteCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		suiteCtx, suiteCancel := context.WithTimeout(context.Background(), integrationE2ESuiteTimeout)
 		defer suiteCancel()
 
 		report := RunSuite(suiteCtx, auditDir, allScenarios())
@@ -116,8 +134,8 @@ func BenchmarkIntegrationReplayHarness(b *testing.B) {
 		}
 
 		_ = harness.RunScenario(Scenario{
-			ID:   "bench.replay",
-			Name: "Replay baseline",
+			ID:          "bench.replay",
+			Name:        "Replay baseline",
 			SettleDelay: 200 * time.Millisecond,
 			Checks: []ScenarioCheck{{
 				ID:   "raw.frames",

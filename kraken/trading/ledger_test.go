@@ -33,10 +33,10 @@ func TestLedger_Register(t *testing.T) {
 		Convey("It should resolve add_order executions by cl_ord_id", func() {
 			resultCh := ledger.Register("paper-cl-1")
 
-			PublishLedgerAck(pool, public.SocketMessage{
-				Channel: public.ExecutionsChannel,
-				Type:    "update",
-				Data: []byte(
+			PublishLedgerAck(pool, map[string]any{
+				"channel": public.ExecutionsChannel,
+				"type":    "update",
+				"data": []byte(
 					`[{"cl_ord_id":"paper-cl-1","order_id":"O1","exec_type":"trade","order_status":"filled"}]`,
 				),
 			})
@@ -76,7 +76,7 @@ func TestLedger_AckSurvivesRawFlood(t *testing.T) {
 		for range 512 {
 			raw.Send(&qpool.QValue[any]{
 				Type:  public.TradesChannel,
-				Value: public.SocketMessage{Channel: public.TradesChannel},
+				Value: map[string]any{"channel": public.TradesChannel},
 			})
 		}
 
@@ -88,10 +88,10 @@ func TestLedger_AckSurvivesRawFlood(t *testing.T) {
 		viper.Set("trading.order_ack_timeout", time.Second)
 		resultCh := ledger.Register("paper-cl-flood")
 
-		PublishLedgerAck(pool, public.SocketMessage{
-			Channel: public.ExecutionsChannel,
-			Type:    "update",
-			Data: []byte(
+		PublishLedgerAck(pool, map[string]any{
+			"channel": public.ExecutionsChannel,
+			"type":    "update",
+			"data": []byte(
 				`[{"cl_ord_id":"paper-cl-flood","order_id":"O2","exec_type":"trade","order_status":"filled"}]`,
 			),
 		})
@@ -163,10 +163,10 @@ func TestLedger_LiveRejectTrips(t *testing.T) {
 		viper.Set("trading.model", "live")
 		resultCh := ledger.Register("live-cl-reject-1")
 
-		PublishLedgerAck(pool, public.SocketMessage{
-			Channel: public.ExecutionsChannel,
-			Type:    "update",
-			Data: []byte(
+		PublishLedgerAck(pool, map[string]any{
+			"channel": public.ExecutionsChannel,
+			"type":    "update",
+			"data": []byte(
 				`[{"cl_ord_id":"live-cl-reject-1","exec_type":"rejected","order_status":"rejected"}]`,
 			),
 		})

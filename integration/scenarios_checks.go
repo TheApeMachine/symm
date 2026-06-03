@@ -49,6 +49,58 @@ func checkMeasurementSourceAllowZeroLast(
 	}
 }
 
+/*
+checkSignalCategoryFixture requires the probe symbol's latest measurement from the
+source to equal the expected category under the synthetic tape. Observed categories
+are reported for post-run evaluation; passing only one of several possible labels
+is not sufficient.
+*/
+func checkSignalCategoryFixture(
+	id, name string,
+	probe SignalCategoryProbe,
+) ScenarioCheck {
+	return ScenarioCheck{
+		ID:   id,
+		Name: name,
+		Evaluate: func(snapshot TapeSnapshot, _ error) (bool, string, map[string]any) {
+			reading := snapshot.latestBySourceSymbol(probe.Source, probe.Symbol)
+			observed := snapshot.categoriesForSource(probe.Source)
+
+			contextMap := map[string]any{
+				"expected":  probe.Category,
+				"observed":  observed,
+				"fixture":   probe.Fixture,
+				"condition": probe.Condition,
+				"symbol":    probe.Symbol,
+				"source":    probe.Source,
+				"publish_n": snapshot.countBySource(probe.Source),
+			}
+
+			if snapshot.countBySource(probe.Source) == 0 {
+				return false, "source never published a measurement", contextMap
+			}
+
+			if reading.Source != probe.Source || reading.Symbol != probe.Symbol {
+				return false, "no measurement for probe symbol", contextMap
+			}
+
+			if reading.Category != probe.Category {
+				return false, fmt.Sprintf(
+					"latest=%s want=%s",
+					reading.Category,
+					probe.Category,
+				), contextMap
+			}
+
+			if !snapshot.hasCategory(probe.Source, probe.Category) {
+				return false, "expected category never observed during run", contextMap
+			}
+
+			return true, fmt.Sprintf("category=%s snr=%.4f", reading.Category, reading.SNR), contextMap
+		},
+	}
+}
+
 func checkCategoryObserved(
 	id, name string,
 	source perspectives.SourceType,
@@ -204,17 +256,12 @@ func playbookLiquidityVacuumMeasurements(
 	symbol string,
 	last float64,
 ) []perspectives.Measurement {
-	return []perspectives.Measurement{
-		{Symbol: symbol, Category: perspectives.CategorySystemicSlump, SNR: 1.0, Last: last},
-		{Symbol: symbol, Category: perspectives.CategoryVolumeStarvation, SNR: 1.0, Last: last},
-	}
+	return perspectives.FixturePlaybookEntryMeasurements(symbol, last)
 }
 
 func playbookMedianDepthExitMeasurements(
 	symbol string,
 	last float64,
 ) []perspectives.Measurement {
-	return []perspectives.Measurement{
-		{Symbol: symbol, Category: perspectives.CategorySystemicBeta, SNR: 1.5, Last: last},
-	}
+	return perspectives.FixturePlaybookExitMeasurements(symbol, last)
 }

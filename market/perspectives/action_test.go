@@ -23,9 +23,11 @@ func TestActionFromMeasurement(t *testing.T) {
 		convey.Convey("When building an entry action", func() {
 			action := ActionFromMeasurement(ActionLimit, measurement)
 
-			convey.Convey("It should buy with wallet-notional sizing", func() {
+			convey.Convey("It should buy with fee-aware wallet-notional sizing", func() {
+				wantQty := entrySpendableNotional(200, entryDefaultMakerFeePct) / 50_000
+
 				convey.So(action.Side, convey.ShouldEqual, trading.Buy)
-				convey.So(action.Quantity, convey.ShouldAlmostEqual, 200.0/50_000, 0.0000001)
+				convey.So(action.Quantity, convey.ShouldAlmostEqual, wantQty, 0.0000001)
 			})
 		})
 
@@ -36,6 +38,17 @@ func TestActionFromMeasurement(t *testing.T) {
 				convey.So(action.Side, convey.ShouldEqual, trading.Sell)
 				convey.So(action.Quantity, convey.ShouldEqual, 0)
 			})
+		})
+	})
+}
+
+func TestEntrySpendableNotional(t *testing.T) {
+	convey.Convey("Given wallet notional and maker fee percent", t, func() {
+		spendable := entrySpendableNotional(200, entryDefaultMakerFeePct)
+
+		convey.Convey("It should leave headroom for maker fees on the full notional", func() {
+			fee := spendable * entryDefaultMakerFeePct / 100
+			convey.So(spendable+fee, convey.ShouldAlmostEqual, 200, 0.0001)
 		})
 	})
 }

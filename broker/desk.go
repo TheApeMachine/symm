@@ -17,6 +17,7 @@ type Desk struct {
 	pool   *qpool.Q
 	orders *trading.Client
 	quotes *QuoteCache
+	stress *StressCache
 	err    error
 }
 
@@ -36,6 +37,7 @@ func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
 		pool:   pool,
 		orders: orders,
 		quotes: EnsureQuoteCache(ctx, pool),
+		stress: EnsureStressCache(ctx, pool),
 	}
 
 	return desk, nil
@@ -66,7 +68,43 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		return fmt.Errorf("preflight: no quote for %s", action.Symbol)
 	}
 
-	if err := PreflightGates(quote, action.Side, action.Quantity, orderType); err != nil {
+	stress := desk.stress.Snapshot(action.Symbol)
+
+	if perspectives.IsEntryAction(action.Type) {
+		if stress.RejectsDiscretionaryEntry() {
+			return fmt.Errorf(
+				"preflight: toxic regime blocks discretionary entry for %s",
+				action.Symbol,
+			)
+		}
+
+		if stress.DeskRegimeForStress() == DeskRegimeRestricted {
+			if orderType != trading.Limit {
+				return fmt.Errorf(
+					"preflight: restricted desk rejects aggressive entry during turbulence for %s",
+					action.Symbol,
+				)
+			}
+
+			if !perspectives.IsMakerAction(action.Type) {
+				return fmt.Errorf(
+					"preflight: restricted desk requires post-only limits for %s",
+					action.Symbol,
+				)
+			}
+		}
+	}
+
+	request := PreflightRequest{
+		Quote:      quote,
+		Side:       action.Side,
+		Quantity:   action.Quantity,
+		OrderType:  orderType,
+		ActionType: action.Type,
+		Stress:     stress,
+	}
+
+	if err := PreflightGates(request); err != nil {
 		return err
 	}
 

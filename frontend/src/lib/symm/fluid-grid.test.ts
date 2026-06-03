@@ -58,10 +58,22 @@ describe("blendHeightmapTowardPeaks", () => {
 
 describe("projectFluidGridToHeightmap", () => {
 	it("softens spike height while keeping a visible hotspot", () => {
+		const size = 5;
 		const grid = {
-			heights: Array.from({ length: 5 }, (_, zIndex) =>
-				Array.from({ length: 5 }, (_, xIndex) =>
+			heights: Array.from({ length: size }, (_, zIndex) =>
+				Array.from({ length: size }, (_, xIndex) =>
 					zIndex === 2 && xIndex === 2 ? 10 : 1,
+				),
+			),
+			turbulence: Array.from({ length: size }, () =>
+				Array.from({ length: size }, () => 0),
+			),
+			volumes: Array.from({ length: size }, () =>
+				Array.from({ length: size }, () => 1),
+			),
+			anomalySNR: Array.from({ length: size }, (_, zIndex) =>
+				Array.from({ length: size }, (_, xIndex) =>
+					zIndex === 2 && xIndex === 2 ? 2 : 0,
 				),
 			),
 			min: 1,
@@ -78,6 +90,7 @@ describe("projectFluidGridToHeightmap", () => {
 
 		expect(projected.display[5][5]).toBeLessThan(projected.raw[5][5]);
 		expect(projected.display[5][5]).toBeGreaterThan(projected.display[4][5]);
+		expect(projected.anomalySNR[5][5]).toBeGreaterThan(0);
 	});
 });
 

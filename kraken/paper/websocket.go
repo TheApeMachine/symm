@@ -12,15 +12,11 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-func init() {
-	public.BootstrapNetworkLatency()
-}
-
 /*
 Socket handles one kraken:private message type and returns the raw bus payload.
 */
 type Socket interface {
-	Send(message *qpool.QValue[any]) public.SocketMessage
+	Send(message *qpool.QValue[any]) map[string]any
 }
 
 /*
@@ -80,7 +76,9 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	return ws
 }
 
-func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
+func (ws *WebSocket) Connect(
+	endpoint public.EndpointType, channel string, n uint64,
+) error {
 	return nil
 }
 

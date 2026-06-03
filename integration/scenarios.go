@@ -20,11 +20,11 @@ type ScenarioCheck struct {
 Scenario is one deterministic replay-backed integration path.
 */
 type Scenario struct {
-	ID                 string
-	Name               string
-	BuildCapture       func(*CaptureBuilder)
-	DirectMeasurements []perspectives.Measurement
-	HoldingSymbols     []string
+	ID                     string
+	Name                   string
+	BuildCapture           func(*CaptureBuilder)
+	DirectMeasurements     []perspectives.Measurement
+	HoldingSymbols         []string
 	PostReplayTrades       []market.TradeUpdate
 	PostReplayTradeBatches [][]market.TradeUpdate
 	PostReplayTickers      []market.TickerUpdate
@@ -33,15 +33,15 @@ type Scenario struct {
 	PostOrderTickers       []market.TickerUpdate
 	PostOrderBooks         []market.Book
 	PostOrderDelay         time.Duration
-	PostReplayDelay    time.Duration
-	PostReplayPace     time.Duration
-	SettleDelay        time.Duration
-	RunTimeout         time.Duration
-	Checks             []ScenarioCheck
+	PostReplayDelay        time.Duration
+	PostReplayPace         time.Duration
+	SettleDelay            time.Duration
+	RunTimeout             time.Duration
+	Checks                 []ScenarioCheck
 }
 
 func allScenarios() []Scenario {
-	scenarios := make([]Scenario, 0, 32)
+	scenarios := make([]Scenario, 0, 64)
 	scenarios = append(scenarios, infraScenarios()...)
 	scenarios = append(scenarios, signalScenarios()...)
 	scenarios = append(scenarios, playbookScenarios()...)

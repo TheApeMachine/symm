@@ -154,7 +154,7 @@ func (orders *Orders) fillRestingOrder(
 
 	out := orders.fillRestingParams(params, quote, trade)
 
-	if out.Channel == "" {
+	if channel, _ := out["channel"].(string); channel == "" {
 		return
 	}
 

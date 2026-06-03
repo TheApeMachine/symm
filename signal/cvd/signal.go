@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -189,20 +190,15 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			switch envelope["channel"].(string) {
 			case public.TradesChannel:
-				trades, err := market.DecodeTrades(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "cvd: decode trades")
-					continue
-				}
+				trades := signalpool.GetTrades(envelope)
 
 				for _, trade := range trades {
 					if err := signal.observe(trade); err != nil {

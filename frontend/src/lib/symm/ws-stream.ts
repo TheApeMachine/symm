@@ -1,7 +1,10 @@
 import { useCallback } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket.js";
-
-import { isConfidenceRow } from "#/components/symm/confidence-data-provider";
+import { isConfidenceRow } from "#/components/charts/confidence/confidence-data-provider";
+import {
+	ingestCandleWire,
+	parseCandleWire,
+} from "#/components/charts/trade/trade-chart-wire";
 import { ConnectionStore } from "#/lib/symm/connection-store";
 import {
 	isAuditEvent,
@@ -103,6 +106,14 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 		return;
 	}
 
+	const candle = parseCandleWire(payload);
+
+	if (candle !== undefined) {
+		ingestCandleWire(payload);
+		stores.trades.setMark(candle.symbol, candle.bar.close);
+		return;
+	}
+
 	if (typeof payload === "object" && payload !== null) {
 		const row = payload as Record<string, unknown>;
 
@@ -117,13 +128,6 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 				case "field_snapshot":
 				case "field_grid":
 					stores.fluid.ingest(payload);
-					return;
-				case "candle_bar":
-					stores.ohlc.ingest(payload);
-					StreamDataProvider.ingest("candle_bar", payload);
-					if (typeof row.symbol === "string" && typeof row.close === "number") {
-						stores.trades.setMark(row.symbol, row.close);
-					}
 					return;
 				case "mark":
 					if (typeof row.symbol === "string" && typeof row.price === "number") {
@@ -142,7 +146,6 @@ export const routePayload = (stores: SymmTelemetryStores, payload: unknown) => {
 	}
 
 	stores.trades.ingest(payload);
-	stores.ohlc.ingest(payload);
 };
 
 export const useSymmStream = () => {

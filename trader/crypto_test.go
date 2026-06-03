@@ -100,8 +100,7 @@ func TestCryptoReceivesPaperBalanceAfterSubscribe(t *testing.T) {
 
 		_ = paper.NewWebSocket(ctx, pool)
 
-		crypto, err := NewCrypto(ctx, pool, focus.NewSet())
-		So(err, ShouldBeNil)
+		crypto := NewCrypto(ctx, pool, focus.NewSet())
 		subscriber := crypto.ui.Subscribe("test:trader:paper-wallet", 4)
 
 		go func() {

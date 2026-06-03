@@ -8,6 +8,9 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
+// entryDefaultMakerFeePct matches kraken/paper.DefaultMakerFeePct (cannot import paper: import cycle).
+const entryDefaultMakerFeePct = 0.25
+
 type UnitType uint8
 
 const (
@@ -180,5 +183,29 @@ func entryNotionalQuantity(price float64) float64 {
 		return 0
 	}
 
-	return notional / price
+	spendable := entrySpendableNotional(notional, entryMakerFeePercent())
+
+	return spendable / price
+}
+
+func entryMakerFeePercent() float64 {
+	feePct := viper.GetFloat64("trading.paper.maker_fee_pct")
+
+	if feePct <= 0 {
+		return entryDefaultMakerFeePct
+	}
+
+	return feePct
+}
+
+func entrySpendableNotional(notional, feePct float64) float64 {
+	if notional <= 0 {
+		return 0
+	}
+
+	if feePct <= 0 {
+		return notional
+	}
+
+	return notional / (1 + feePct/100)
 }

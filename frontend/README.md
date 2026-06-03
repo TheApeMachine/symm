@@ -6,6 +6,26 @@ The prediction chart uses aggregate `engine_pulse` cross-section required-return
 
 The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
 
+## Source layout
+
+```
+src/
+  components/
+    dashboard/          # layout shell (DashboardLayout, PanelTabs, placeholders)
+    charts/
+      shared/             # SciChart theme + financial chart helpers
+      confidence/         # gauges, heatmaps, confidence wire adapter
+      fluid/              # 3D surface chart + field_row wire adapter
+      prediction/         # engine pulse wire adapter
+      trade/              # OHLC chart + trade-chart-wire adapter
+    panels/
+      data/               # audit, decisions, wallet, trades panel stores
+    audit.tsx, trades.tsx # panel UI (consume lib/symm hooks)
+  lib/symm/               # wire protocol, layout schema, WS routing, stores
+```
+
+Chart adapters under `components/charts/*/` parse websocket frames and call the mounted chart's update function. Trade candles use `trade-chart-wire.ts` (not a telemetry store). SciChart data series own the rendered history; adapters do not mirror it.
+
 # Getting Started
 
 To run this application:

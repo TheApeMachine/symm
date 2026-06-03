@@ -1,9 +1,6 @@
 package paper
 
 import (
-	"time"
-
-	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/public"
@@ -11,39 +8,25 @@ import (
 )
 
 func (ws *WebSocket) scheduleExchangeDelivery(delivery func()) {
-	if viper.GetString("trading.model") == "paper" {
-		delivery()
-
-		return
-	}
-
-	ws.scheduleAfter(public.SharedNetworkLatency().ExchangeRoundTrip(), delivery)
-}
-
-func (ws *WebSocket) scheduleAfter(delay time.Duration, delivery func()) {
 	if delivery == nil {
 		return
 	}
 
-	if delay <= 0 {
-		delivery()
-
-		return
-	}
-
-	time.AfterFunc(delay, delivery)
+	delivery()
 }
 
-func (ws *WebSocket) broadcastExecution(out public.SocketMessage) {
-	if out.Channel == "" {
+func (ws *WebSocket) broadcastExecution(out map[string]any) {
+	channel, _ := out["channel"].(string)
+
+	if channel == "" {
 		return
 	}
 
-	activate.Once("kraken/paper:channel:" + out.Channel)
+	activate.Once("kraken/paper:channel:" + channel)
 
-	if channel := ws.broadcasts["raw"]; channel != nil {
-		channel.Send(&qpool.QValue[any]{
-			Type:  out.Channel,
+	if raw := ws.broadcasts["raw"]; raw != nil {
+		raw.Send(&qpool.QValue[any]{
+			Type:  channel,
 			Value: out,
 		})
 	}
@@ -51,23 +34,25 @@ func (ws *WebSocket) broadcastExecution(out public.SocketMessage) {
 
 func (ws *WebSocket) deliverPrivateResponse(
 	message *qpool.QValue[any],
-	out public.SocketMessage,
+	out map[string]any,
 ) {
-	if out.Channel == "" {
+	channel, _ := out["channel"].(string)
+
+	if channel == "" {
 		ws.publishOrderAck(message, out)
 
 		return
 	}
 
-	activate.Once("kraken/paper:channel:" + out.Channel)
+	activate.Once("kraken/paper:channel:" + channel)
 
-	if out.Channel == public.BalancesChannel {
+	if channel == public.BalancesChannel {
 		trading.MarkDeskReady()
 	}
 
-	if channel := ws.broadcasts["raw"]; channel != nil {
-		channel.Send(&qpool.QValue[any]{
-			Type:  out.Channel,
+	if raw := ws.broadcasts["raw"]; raw != nil {
+		raw.Send(&qpool.QValue[any]{
+			Type:  channel,
 			Value: out,
 		})
 	}
@@ -75,8 +60,10 @@ func (ws *WebSocket) deliverPrivateResponse(
 	ws.publishOrderAck(message, out)
 }
 
-func (ws *WebSocket) deliverExecution(out public.SocketMessage) {
-	if out.Channel == "" {
+func (ws *WebSocket) deliverExecution(out map[string]any) {
+	channel, _ := out["channel"].(string)
+
+	if channel == "" {
 		return
 	}
 

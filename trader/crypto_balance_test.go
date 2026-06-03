@@ -25,8 +25,7 @@ func TestEnsureBalanceSnapshot(t *testing.T) {
 
 		_ = paper.NewWebSocket(ctx, pool)
 
-		crypto, err := NewCrypto(ctx, pool, focus.NewSet())
-		So(err, ShouldBeNil)
+		crypto := NewCrypto(ctx, pool, focus.NewSet())
 
 		subscriber := crypto.ui.Subscribe("test:crypto:balance", 4)
 

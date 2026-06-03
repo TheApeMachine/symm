@@ -2,10 +2,10 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 const executionSnapshot = "snapshot"
@@ -81,15 +81,15 @@ func (execution *Execution) IsSnapshot() bool {
 /*
 DecodeExecutions decodes every row in an executions channel message.
 */
-func DecodeExecutions(message *public.SocketMessage) ([]Execution, error) {
+func DecodeExecutions(message map[string]any) ([]Execution, error) {
 	var executions []Execution
 
-	if err := sonic.Unmarshal(message.Data, &executions); err != nil {
+	if err := sonic.Unmarshal(message["data"].(json.RawMessage), &executions); err != nil {
 		return nil, err
 	}
 
 	for index := range executions {
-		executions[index].SetEnvelopeType(message.Type)
+		executions[index].SetEnvelopeType(message["type"].(string))
 	}
 
 	return executions, nil

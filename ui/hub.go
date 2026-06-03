@@ -15,8 +15,10 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 const (
@@ -73,7 +75,7 @@ NewHub subscribes to all broadcast groups on pool.
 func NewHub(
 	ctx context.Context,
 	pool *qpool.Q,
-) (*Hub, error) {
+) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
@@ -97,7 +99,8 @@ func NewHub(
 
 	if addr == "" {
 		cancel()
-		return nil, fmt.Errorf("ui.addr must be set")
+		errnie.Error(fmt.Errorf("ui.addr must be set"), "ui hub")
+		return nil
 	}
 
 	mux := http.NewServeMux()
@@ -107,7 +110,8 @@ func NewHub(
 
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("ui hub listen %q: %w", addr, err)
+		errnie.Error(fmt.Errorf("ui hub listen %q: %w", addr, err), "ui hub")
+		return nil
 	}
 
 	hub.server = &http.Server{
@@ -115,6 +119,10 @@ func NewHub(
 	}
 
 	activate.Boot("ui/hub listening on " + addr)
+
+	perspectives.DefaultTelemetryRegistry().Subscribe(func() {
+		hub.fanoutLayout()
+	})
 
 	go func() {
 		serveErr := hub.server.Serve(listener)
@@ -124,7 +132,7 @@ func NewHub(
 		}
 	}()
 
-	return hub, nil
+	return hub
 }
 
 func (hub *Hub) Close() error {
@@ -225,6 +233,10 @@ func (hub *Hub) Tick() error {
 	}
 }
 
+func (hub *Hub) fanoutLayout() {
+	hub.fanoutMap(LayoutDocument())
+}
+
 func (hub *Hub) fanout(value *qpool.QValue[any]) {
 	if value == nil || value.Value == nil {
 		return
@@ -233,6 +245,14 @@ func (hub *Hub) fanout(value *qpool.QValue[any]) {
 	out, ok := value.Value.(map[string]any)
 
 	if !ok {
+		return
+	}
+
+	hub.fanoutMap(out)
+}
+
+func (hub *Hub) fanoutMap(out map[string]any) {
+	if out == nil {
 		return
 	}
 

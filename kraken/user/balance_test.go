@@ -1,18 +1,20 @@
 package user
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
 func TestDecodeBalances(t *testing.T) {
 	Convey("Given a balances snapshot envelope", t, func() {
-		message := &public.SocketMessage{
-			Channel: public.BalancesChannel,
-			Type:    BalanceSnapshot,
-			Data: []byte(`[
+		message := map[string]any{
+			"channel": public.BalancesChannel,
+			"type":    BalanceSnapshot,
+			"data": []byte(`[
 				{
 					"asset":"EUR",
 					"asset_class":"currency",
@@ -23,9 +25,8 @@ func TestDecodeBalances(t *testing.T) {
 		}
 
 		Convey("It should decode Kraken field names without renaming", func() {
-			rows, err := DecodeBalances(message)
-
-			So(err, ShouldBeNil)
+			var rows []Balance
+			So(sonic.Unmarshal(message["data"].(json.RawMessage), &rows), ShouldBeNil)
 			So(len(rows), ShouldEqual, 1)
 			So(rows[0].Asset, ShouldEqual, "EUR")
 			So(rows[0].Balance, ShouldEqual, 200)

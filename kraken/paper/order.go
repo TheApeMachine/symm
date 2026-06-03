@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -45,9 +44,11 @@ func NewOrders(
 	}
 }
 
-func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
-	if envelope, ok := message.Value.(public.SocketMessage); ok {
-		return envelope
+func (orders *Orders) Send(message *qpool.QValue[any]) map[string]any {
+	if envelope, ok := message.Value.(map[string]any); ok {
+		if channel, _ := envelope["channel"].(string); channel != "" {
+			return envelope
+		}
 	}
 
 	if execution, ok := message.Value.(user.Execution); ok {
@@ -57,7 +58,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 	frame := paramsMap(message.Value)
 
 	if frame == nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	method, _ := frame["method"].(string)
@@ -67,7 +68,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 		params, ok := addParamsFromAny(frame["params"])
 
 		if !ok {
-			return public.SocketMessage{}
+			return nil
 		}
 
 		return orders.addOrder(params)
@@ -78,7 +79,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 	case trading.MethodCancelAll:
 		return orders.cancelAll()
 	case trading.MethodCancelAllOrdersAfter:
-		return public.SocketMessage{}
+		return nil
 	case trading.MethodBatchAdd:
 		return orders.batchAdd(frame["params"])
 	case trading.MethodBatchCancel:
@@ -87,12 +88,12 @@ func (orders *Orders) Send(message *qpool.QValue[any]) public.SocketMessage {
 		return orders.editOrder(frame["params"])
 	}
 
-	return public.SocketMessage{}
+	return map[string]any{}
 }
 
-func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
+func (orders *Orders) addOrder(params trading.AddParams) map[string]any {
 	if params.Symbol == "" || params.OrderQty <= 0 {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	clOrdID := params.ClOrdID
@@ -128,7 +129,7 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 			quote,
 			params.Side,
 			params.LimitPrice,
-			time.Now().Add(public.SharedNetworkLatency().OneWay()).UnixNano(),
+			time.Now().UnixNano(),
 			meta.tickSize,
 		),
 	}
@@ -138,17 +139,17 @@ func (orders *Orders) addOrder(params trading.AddParams) public.SocketMessage {
 	return orders.openExecution(order)
 }
 
-func (orders *Orders) amendOrder(params any) public.SocketMessage {
+func (orders *Orders) amendOrder(params any) map[string]any {
 	frame := paramsMap(params)
 
 	if frame == nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	order, ok := orders.resolveOrder(frame)
 
 	if !ok {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	qty, _ := frame["order_qty"].(float64)
@@ -178,11 +179,11 @@ func (orders *Orders) amendOrder(params any) public.SocketMessage {
 	})
 }
 
-func (orders *Orders) cancelOrder(params any) public.SocketMessage {
+func (orders *Orders) cancelOrder(params any) map[string]any {
 	frame := paramsMap(params)
 
 	if frame == nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	executions := make([]user.Execution, 0)
@@ -216,7 +217,7 @@ func (orders *Orders) cancelOrder(params any) public.SocketMessage {
 	return orders.executionMessages(executions)
 }
 
-func (orders *Orders) cancelAll() public.SocketMessage {
+func (orders *Orders) cancelAll() map[string]any {
 	ids := orders.openOrderIDs()
 	executions := make([]user.Execution, 0, len(ids))
 
@@ -233,14 +234,14 @@ func (orders *Orders) cancelAll() public.SocketMessage {
 	return orders.executionMessages(executions)
 }
 
-func (orders *Orders) batchAdd(params any) public.SocketMessage {
+func (orders *Orders) batchAdd(params any) map[string]any {
 	symbol, items, ok := batchOrders(params)
 
 	if !ok {
-		return public.SocketMessage{}
+		return nil
 	}
 
-	messages := make([]public.SocketMessage, 0, len(items))
+	messages := make([]map[string]any, 0, len(items))
 
 	for _, item := range items {
 		item.Symbol = symbol
@@ -250,11 +251,11 @@ func (orders *Orders) batchAdd(params any) public.SocketMessage {
 	return orders.publishMessages(messages)
 }
 
-func (orders *Orders) batchCancel(params any) public.SocketMessage {
+func (orders *Orders) batchCancel(params any) map[string]any {
 	frame := paramsMap(params)
 
 	if frame == nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	executions := make([]user.Execution, 0)
@@ -288,24 +289,24 @@ func (orders *Orders) batchCancel(params any) public.SocketMessage {
 	return orders.executionMessages(executions)
 }
 
-func (orders *Orders) editOrder(params any) public.SocketMessage {
+func (orders *Orders) editOrder(params any) map[string]any {
 	frame := paramsMap(params)
 
 	if frame == nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	orderID, _ := frame["order_id"].(string)
 	symbol, _ := frame["symbol"].(string)
 
 	if orderID == "" || symbol == "" {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	order, ok := orders.takeOrder(orderID)
 
 	if !ok {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	qty, _ := frame["order_qty"].(float64)

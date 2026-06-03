@@ -1,15 +1,13 @@
-
 import { describe, expect, it } from "vitest";
-
-import { AuditDataProvider } from "#/components/symm/audit-data-provider";
-import { ConfidenceDataProvider } from "#/components/symm/confidence-data-provider";
-import { OhlcDataProvider } from "#/components/symm/ohlc-data-provider";
-import { PredictionsDataProvider } from "#/components/symm/predictions-data-provider";
-import { TradesDataProvider } from "#/components/symm/trades-data-provider";
+import { ConfidenceDataProvider } from "#/components/charts/confidence/confidence-data-provider";
+import { PredictionsDataProvider } from "#/components/charts/prediction/predictions-data-provider";
+import { registerTradeChart } from "#/components/charts/trade/trade-chart-wire";
+import { AuditDataProvider } from "#/components/panels/data/audit-data-provider";
+import { TradesDataProvider } from "#/components/panels/data/trades-data-provider";
 import { LayoutStore } from "#/lib/symm/layout-store";
 import { defaultSymmTelemetryStores } from "#/lib/symm/telemetry-stores";
-import { routePayload } from "#/lib/symm/ws-stream";
 import { TickStore } from "#/lib/symm/tick-store";
+import { routePayload } from "#/lib/symm/ws-stream";
 
 describe("routePayload", () => {
 	it("increments tick count from crypto tick events", () => {
@@ -90,7 +88,7 @@ describe("routePayload", () => {
 	it("routes mark events to trades without mutating candle history", () => {
 		TradesDataProvider.reset();
 		const bars: number[] = [];
-		const unregister = OhlcDataProvider.registerSymbol("ROUTE/EUR", (bar) => {
+		const unregister = registerTradeChart("ROUTE/EUR", (bar) => {
 			bars.push(bar.sec);
 		});
 
@@ -177,4 +175,3 @@ describe("routePayload", () => {
 		LayoutStore.reset();
 	});
 });
-

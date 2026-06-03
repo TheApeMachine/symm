@@ -3,15 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	confidenceToGaugePercent,
 	formatSignalConfidence,
-	isSignalSource,
 } from "#/lib/symm/signal-confidence";
-
-describe("isSignalSource", () => {
-	it("accepts backend liquidity source for basis gauge", () => {
-		expect(isSignalSource("liquidity")).toBe(true);
-		expect(isSignalSource("basis")).toBe(false);
-	});
-});
 
 describe("confidenceToGaugePercent", () => {
 	it("maps normalized confidence to gauge needle range", () => {

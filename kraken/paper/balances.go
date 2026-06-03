@@ -1,6 +1,7 @@
 package paper
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -52,7 +53,7 @@ func NewBalances(
 	}
 }
 
-func (balances *Balances) Send(message *qpool.QValue[any]) public.SocketMessage {
+func (balances *Balances) Send(message *qpool.QValue[any]) map[string]any {
 	if _, ok := message.Value.(user.SubscribeFrame); ok {
 		return balances.snapshot()
 	}
@@ -60,7 +61,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) public.SocketMessage 
 	frame, ok := message.Value.(map[string]any)
 
 	if !ok {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	switch frame["method"] {
@@ -72,7 +73,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) public.SocketMessage 
 		return balances.snapshot()
 	}
 
-	return public.SocketMessage{}
+	return nil
 }
 
 func (balances *Balances) ApplyFill(
@@ -129,7 +130,7 @@ func (balances *Balances) ApplyFill(
 	}
 }
 
-func (balances *Balances) snapshot() public.SocketMessage {
+func (balances *Balances) snapshot() map[string]any {
 	balances.mu.Lock()
 	rows := make([]user.Balance, 0, len(balances.assets))
 
@@ -146,9 +147,9 @@ func (balances *Balances) snapshot() public.SocketMessage {
 	return balances.message(user.BalanceSnapshot, rows)
 }
 
-func (balances *Balances) message(kind string, rows []user.Balance) public.SocketMessage {
+func (balances *Balances) message(kind string, rows []user.Balance) map[string]any {
 	if len(rows) == 0 {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	balances.mu.Lock()
@@ -158,13 +159,13 @@ func (balances *Balances) message(kind string, rows []user.Balance) public.Socke
 	data, err := sonic.Marshal(rows)
 
 	if err != nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
-	return public.SocketMessage{
-		Channel: public.BalancesChannel,
-		Type:    kind,
-		Data:    data,
+	return map[string]any{
+		"channel": public.BalancesChannel,
+		"type":    kind,
+		"data":    json.RawMessage(data),
 	}
 }
 

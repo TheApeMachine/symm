@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -81,29 +82,21 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(public.SocketMessage)
+	envelope, ok := message.Value.(map[string]any)
 
 	if !ok {
 		return nil
 	}
 
-	switch envelope.Channel {
+	switch envelope["channel"].(string) {
 	case public.TradesChannel:
-		trades, err := market.DecodeTrades(&envelope)
-
-		if err != nil {
-			return fmt.Errorf("toxicity: decode trades: %w", err)
-		}
+		trades := signalpool.GetTrades(envelope)
 
 		for _, trade := range trades {
 			tox.observeTrade(trade)
 		}
 	case public.TickerChannel:
-		tickers, err := market.DecodeTickers(&envelope)
-
-		if err != nil {
-			return fmt.Errorf("toxicity: decode tickers: %w", err)
-		}
+		tickers := signalpool.GetTickers(envelope)
 
 		for _, ticker := range tickers {
 			tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
@@ -118,11 +111,7 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 			return nil
 		}
 
-		books, err := market.DecodeBooks(&envelope)
-
-		if err != nil {
-			return fmt.Errorf("toxicity: decode books: %w", err)
-		}
+		books := signalpool.GetBooks(envelope)
 
 		for _, update := range books {
 			tox.observeBook(update)
@@ -141,27 +130,22 @@ func (tox *Toxicity) handleLevel3(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(public.SocketMessage)
+	envelope, ok := message.Value.(map[string]any)
 
 	if !ok {
 		return nil
 	}
 
-	if envelope.Channel != public.Level3Channel {
+	if envelope["channel"].(string) != public.Level3Channel {
 		return nil
 	}
 
 	tox.l3Active = true
 
-	orders, err := market.DecodeOrders(&envelope)
+	orders := signalpool.GetOrders(envelope)
 
-	if err != nil {
-		return fmt.Errorf("toxicity: decode level3: %w", err)
-	}
-
-	for index := range orders {
-		update := orders[index]
-		tox.observeLevel3(&update)
+	for _, order := range orders {
+		tox.observeLevel3(&order)
 	}
 
 	return nil

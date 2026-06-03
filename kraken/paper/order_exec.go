@@ -1,6 +1,7 @@
 package paper
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"time"
@@ -38,25 +39,25 @@ func (orders *Orders) queueExecutions(executions []user.Execution) {
 	}
 }
 
-func (orders *Orders) executionMessage(execution user.Execution) public.SocketMessage {
+func (orders *Orders) executionMessage(execution user.Execution) map[string]any {
 	data, err := sonic.Marshal([]user.Execution{execution})
 
 	if err != nil {
 		errnie.Error(err)
 
-		return public.SocketMessage{}
+		return nil
 	}
 
-	return public.SocketMessage{
-		Channel: public.ExecutionsChannel,
-		Type:    "update",
-		Data:    data,
+	return map[string]any{
+		"channel": public.ExecutionsChannel,
+		"type":    "update",
+		"data":    json.RawMessage(data),
 	}
 }
 
-func (orders *Orders) executionMessages(executions []user.Execution) public.SocketMessage {
+func (orders *Orders) executionMessages(executions []user.Execution) map[string]any {
 	if len(executions) == 0 {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	orders.queueExecutions(executions)
@@ -64,29 +65,11 @@ func (orders *Orders) executionMessages(executions []user.Execution) public.Sock
 	return orders.executionMessage(executions[0])
 }
 
-func (orders *Orders) fillParams(params trading.AddParams) public.SocketMessage {
-	oneWay := public.SharedNetworkLatency().OneWay()
-
-	if oneWay <= 0 {
-		return orders.buildFillExecution(params)
-	}
-
-	orders.scheduleTakerFill(params, oneWay)
-
-	return public.SocketMessage{}
+func (orders *Orders) fillParams(params trading.AddParams) map[string]any {
+	return orders.buildFillExecution(params)
 }
 
-func (orders *Orders) scheduleTakerFill(params trading.AddParams, oneWay time.Duration) {
-	orders.socket.scheduleAfter(oneWay, func() {
-		out := orders.buildFillExecution(params)
-
-		orders.socket.scheduleAfter(oneWay, func() {
-			orders.socket.broadcastExecution(out)
-		})
-	})
-}
-
-func (orders *Orders) buildFillExecution(params trading.AddParams) public.SocketMessage {
+func (orders *Orders) buildFillExecution(params trading.AddParams) map[string]any {
 	clOrdID := params.ClOrdID
 
 	if clOrdID == "" {
@@ -104,7 +87,7 @@ func (orders *Orders) buildFillExecution(params trading.AddParams) public.Socket
 	if fillPrice <= 0 {
 		errnie.Debug("paper.Orders.fillParams: no reference price for", params.Symbol, orderType)
 
-		return public.SocketMessage{}
+		return nil
 	}
 
 	if slipBps > 0 {
@@ -171,7 +154,7 @@ func (orders *Orders) buildFillExecution(params trading.AddParams) public.Socket
 	})
 }
 
-func (orders *Orders) openExecution(order *openOrder) public.SocketMessage {
+func (orders *Orders) openExecution(order *openOrder) map[string]any {
 	return orders.executionMessage(user.Execution{
 		ExecType:    "new",
 		OrderID:     order.orderID,
@@ -205,7 +188,7 @@ func (orders *Orders) fillRestingParams(
 	params trading.AddParams,
 	quote broker.Quote,
 	trade market.TradeUpdate,
-) public.SocketMessage {
+) map[string]any {
 	clOrdID := params.ClOrdID
 
 	if clOrdID == "" {
@@ -224,7 +207,7 @@ func (orders *Orders) fillRestingParams(
 	if fillPrice <= 0 {
 		errnie.Debug("paper.Orders.fillRestingParams: no fill price for", params.Symbol)
 
-		return public.SocketMessage{}
+		return nil
 	}
 
 	fillPrice = orders.roundToTick(fillPrice, meta.tickSize)

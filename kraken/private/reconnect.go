@@ -2,6 +2,7 @@ package private
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -72,13 +73,11 @@ func (ws *WebSocket) dialUntilConnected(endpoint public.EndpointType) error {
 		endpoint = public.WebSocketAuthURL
 	}
 
-	for {
-		delay := ws.reconnectPolicy.NextDelay()
-
+	for attempt := uint64(0); ; attempt++ {
 		select {
 		case <-ws.ctx.Done():
 			return errnie.Error(ws.ctx.Err())
-		case <-time.After(delay):
+		case <-time.After(dialBackoff(attempt)):
 		}
 
 		conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
@@ -93,7 +92,6 @@ func (ws *WebSocket) dialUntilConnected(endpoint public.EndpointType) error {
 		ws.conn = conn
 		ws.mu.Unlock()
 
-		ws.reconnectPolicy.Reset()
 		runstats.WSConnect()
 		activate.Once("kraken/private:connected:" + string(endpoint))
 
@@ -111,13 +109,11 @@ func (ws *WebSocket) reconnect(endpoint public.EndpointType) error {
 	runstats.WSReconnect()
 	activate.Boot("kraken/private websocket reconnecting")
 
-	for {
-		delay := ws.reconnectPolicy.NextDelay()
-
+	for attempt := uint64(0); ; attempt++ {
 		select {
 		case <-ws.ctx.Done():
 			return errnie.Error(ws.ctx.Err())
-		case <-time.After(delay):
+		case <-time.After(dialBackoff(attempt)):
 		}
 
 		conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
@@ -132,7 +128,6 @@ func (ws *WebSocket) reconnect(endpoint public.EndpointType) error {
 		ws.conn = conn
 		ws.mu.Unlock()
 
-		ws.reconnectPolicy.Reset()
 		runstats.WSConnect()
 		activate.Boot("kraken/private websocket reconnected")
 
@@ -162,4 +157,20 @@ func (ws *WebSocket) writeOutboundFrame(value any, record bool) error {
 	}
 
 	return conn.WriteJSON(value)
+}
+
+func dialBackoff(attempt uint64) time.Duration {
+	delay := uint64(
+		math.Round((math.Pow(
+			math.Phi, float64(attempt),
+		) + math.Pow(
+			math.Phi-1, float64(attempt),
+		)) / math.Sqrt(5)),
+	)
+
+	if delay == 0 {
+		delay = 1
+	}
+
+	return time.Duration(delay) * time.Second
 }

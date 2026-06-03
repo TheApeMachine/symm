@@ -80,10 +80,19 @@ func executionScenarios() []Scenario {
 					ID:   "execution.cash",
 					Name: "Cash balance decreases after entry fill",
 					Evaluate: func(snapshot TapeSnapshot, _ error) (bool, string, map[string]any) {
-						pass := snapshot.lastWalletBalance() > 0 && snapshot.lastWalletBalance() < 200
+						initial := snapshot.initialWalletBalance()
+						last := snapshot.lastWalletBalance()
+						decreased := initial - last
+						pass := len(snapshot.Wallets) >= 2 &&
+							initial > 0 &&
+							decreased > 0.01 &&
+							last > -0.01
 
-						return pass, formatCash(snapshot.lastWalletBalance()), map[string]any{
-							"balance": snapshot.lastWalletBalance(),
+						return pass, formatCash(last), map[string]any{
+							"balance":   last,
+							"decreased": decreased,
+							"initial":   initial,
+							"wallets":   len(snapshot.Wallets),
 						}
 					},
 				},

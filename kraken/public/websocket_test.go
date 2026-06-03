@@ -27,7 +27,7 @@ func TestNewWebSocketSingleton(t *testing.T) {
 
 		Convey("It should return the process-wide socket", func() {
 			So(first, ShouldEqual, second)
-			So(first.reconnectPolicy, ShouldNotBeNil)
+			So(first.latencies, ShouldNotBeNil)
 		})
 	})
 }

@@ -10,11 +10,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
-	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -108,20 +108,15 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			switch envelope["channel"].(string) {
 			case public.TradesChannel:
-				trades, err := market.DecodeTrades(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "causal: decode trades")
-					continue
-				}
+				trades := signalpool.GetTrades(envelope)
 
 				for _, trade := range trades {
 					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
@@ -135,12 +130,7 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 			case public.TickerChannel:
-				tickers, err := market.DecodeTickers(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "causal: decode tickers")
-					continue
-				}
+				tickers := signalpool.GetTickers(envelope)
 
 				for _, ticker := range tickers {
 					signal.state(ticker.Symbol).FeedTicker(ticker)
@@ -151,12 +141,7 @@ func (signal *Signal) Tick() error {
 					continue
 				}
 			case public.BookChannel:
-				books, err := market.DecodeBooks(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "causal: decode books")
-					continue
-				}
+				books := signalpool.GetBooks(envelope)
 
 				for _, delta := range books {
 					signal.state(delta.Symbol).FeedBook(delta)

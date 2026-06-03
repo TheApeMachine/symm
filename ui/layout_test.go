@@ -5,14 +5,18 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 func TestLayoutDocument(t *testing.T) {
 	t.Cleanup(viper.Reset)
+	perspectives.ResetTelemetryRegistryForTest()
+	t.Cleanup(perspectives.ResetTelemetryRegistryForTest)
 
 	Convey("Given market config", t, func() {
 		viper.Set("market.anchor_symbol", "")
 		viper.Set("market.default_symbols", []string{"ETH/EUR"})
+		perspectives.BootstrapTelemetryManifest()
 
 		doc := LayoutDocument()
 
@@ -24,13 +28,19 @@ func TestLayoutDocument(t *testing.T) {
 			panels, ok := doc["panels"].([]map[string]any)
 
 			So(ok, ShouldBeTrue)
-			So(len(panels), ShouldEqual, 6)
+			So(len(panels), ShouldEqual, 7)
 			So(panels[1]["type"], ShouldEqual, "gauge_grid")
+			So(panels[2]["type"], ShouldEqual, "gauge_strip")
 
-			sources, ok := panels[1]["sources"].([]string)
+			gridSources, ok := panels[1]["sources"].([]string)
 
 			So(ok, ShouldBeTrue)
-			So(len(sources), ShouldEqual, 8)
+			So(len(gridSources), ShouldEqual, 8)
+
+			stripSources, ok := panels[2]["sources"].([]string)
+
+			So(ok, ShouldBeTrue)
+			So(len(stripSources), ShouldEqual, 5)
 		})
 	})
 }

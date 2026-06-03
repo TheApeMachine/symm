@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	testSymbolPrimary          = "SYN/EUR"
-	testSymbolSecondary        = "LAG/EUR"
-	testSymbolLeader           = "LEAD/EUR"
-	correlationWarmupBatches   = 33
+	testSymbolPrimary        = "SYN/EUR"
+	testSymbolSecondary      = "LAG/EUR"
+	testSymbolLeader         = "LEAD/EUR"
+	correlationWarmupBatches = 33
 )
 
 /*
@@ -47,10 +47,10 @@ func (builder *CaptureBuilder) appendFrame(channel, frameType string, payload an
 		panic(err)
 	}
 
-	line, err := sonic.Marshal(public.SocketMessage{
-		Channel: channel,
-		Type:    frameType,
-		Data:    raw,
+	line, err := sonic.Marshal(map[string]any{
+		"channel": channel,
+		"type":    frameType,
+		"data":    raw,
 	})
 
 	if err != nil {
@@ -228,9 +228,9 @@ func (builder *CaptureBuilder) AppendBookThinning(symbol string, frames int) {
 		askPrice := 101.0 + float64(index)*0.5
 
 		book := market.Book{
-			Symbol: symbol,
-			Bids:   []market.BookLevel{{Price: 100, Qty: depth}},
-			Asks:   []market.BookLevel{{Price: askPrice, Qty: depth * 0.5}},
+			Symbol:    symbol,
+			Bids:      []market.BookLevel{{Price: 100, Qty: depth}},
+			Asks:      []market.BookLevel{{Price: askPrice, Qty: depth * 0.5}},
 			Timestamp: builder.timestampRFC3339(),
 		}
 		book.SetEnvelopeType(market.BookSnapshot)
@@ -329,6 +329,137 @@ func correlationPostReplayTradeBatches() [][]market.TradeUpdate {
 				Qty:    1,
 			})
 			prices[symbol] = price * 1.02
+		}
+
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
+func leadLagInefficientLagTickers() []market.TickerUpdate {
+	origin := time.Now().UTC().Add(-90 * time.Minute)
+	tickers := make([]market.TickerUpdate, 0, 28)
+
+	for index := range 14 {
+		at := origin.Add(time.Duration(index) * 5 * time.Minute)
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolLeader, Last: 100, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolPrimary, Last: 100 + float64(index)*0.4, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+	}
+
+	return tickers
+}
+
+func leadLagSynchronizedDriftTickers() []market.TickerUpdate {
+	origin := time.Now().UTC().Add(-90 * time.Minute)
+	tickers := make([]market.TickerUpdate, 0, 28)
+
+	for index := range 14 {
+		at := origin.Add(time.Duration(index) * 5 * time.Minute)
+		move := float64(index) * 0.2
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolLeader, Last: 100 + move, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolPrimary, Last: 100 + move + 0.05, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+	}
+
+	return tickers
+}
+
+func leadLagDecoupledMoveTickers() []market.TickerUpdate {
+	origin := time.Now().UTC().Add(-90 * time.Minute)
+	tickers := make([]market.TickerUpdate, 0, 28)
+
+	for index := range 14 {
+		at := origin.Add(time.Duration(index) * 5 * time.Minute)
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolLeader, Last: 100 + float64(index)*0.3, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+		tickers = append(tickers, market.TickerUpdate{
+			Symbol: testSymbolPrimary, Last: 100 - float64(index)*0.35, Bid: 99, Ask: 101,
+			Timestamp: at.UTC().Format(time.RFC3339Nano),
+		})
+	}
+
+	return tickers
+}
+
+func correlationDecoupledTradeBatches() [][]market.TradeUpdate {
+	prices := map[string]float64{
+		testSymbolPrimary:   100,
+		testSymbolSecondary: 50,
+		testSymbolLeader:    75,
+	}
+	batches := make([][]market.TradeUpdate, 0, correlationWarmupBatches)
+
+	for range correlationWarmupBatches {
+		batch := make([]market.TradeUpdate, 0, len(prices))
+
+		for symbol, price := range prices {
+			side := "buy"
+
+			if symbol == testSymbolPrimary {
+				side = "sell"
+			}
+
+			batch = append(batch, market.TradeUpdate{
+				Symbol: symbol,
+				Side:   side,
+				Price:  price,
+				Qty:    1,
+			})
+
+			if symbol == testSymbolPrimary {
+				prices[symbol] = price * 0.98
+			} else {
+				prices[symbol] = price * 1.02
+			}
+		}
+
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
+func correlationDivergentStressTradeBatches() [][]market.TradeUpdate {
+	prices := map[string]float64{
+		testSymbolPrimary:   100,
+		testSymbolSecondary: 50,
+		testSymbolLeader:    75,
+	}
+	batches := make([][]market.TradeUpdate, 0, correlationWarmupBatches)
+
+	for range correlationWarmupBatches {
+		batch := make([]market.TradeUpdate, 0, len(prices))
+
+		for symbol, price := range prices {
+			side := "buy"
+			next := price * 1.02
+
+			if symbol == testSymbolPrimary {
+				side = "sell"
+				next = price * 0.97
+			}
+
+			batch = append(batch, market.TradeUpdate{
+				Symbol: symbol,
+				Side:   side,
+				Price:  price,
+				Qty:    1,
+			})
+			prices[symbol] = next
 		}
 
 		batches = append(batches, batch)

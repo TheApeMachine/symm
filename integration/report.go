@@ -3,7 +3,6 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -13,10 +12,10 @@ import (
 CheckResult is one granular pass/fail assertion with debugging context.
 */
 type CheckResult struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Pass    bool   `json:"pass"`
-	Detail  string `json:"detail,omitempty"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Pass    bool           `json:"pass"`
+	Detail  string         `json:"detail,omitempty"`
 	Context map[string]any `json:"context,omitempty"`
 }
 
@@ -24,12 +23,12 @@ type CheckResult struct {
 ScenarioReport summarizes one synthetic scenario run.
 */
 type ScenarioReport struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Pass      bool           `json:"pass"`
-	StartedAt time.Time      `json:"started_at"`
-	Elapsed   time.Duration  `json:"elapsed"`
-	Checks    []CheckResult  `json:"checks"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Pass      bool          `json:"pass"`
+	StartedAt time.Time     `json:"started_at"`
+	Elapsed   time.Duration `json:"elapsed"`
+	Checks    []CheckResult `json:"checks"`
 }
 
 /*
@@ -129,12 +128,4 @@ func (report *SuiteReport) WriteJSON(path string) error {
 	}
 
 	return nil
-}
-
-func writeReport(writer io.Writer, report *SuiteReport) {
-	if writer == nil {
-		return
-	}
-
-	_, _ = io.WriteString(writer, report.FormatText())
 }

@@ -1,11 +1,10 @@
-
 import {
 	useSymmConnected,
 	useSymmTradePanelRows,
 } from "#/lib/symm/use-dashboard-data";
-import { SidebarSection } from "./sidebar-section";
 import { EmptyHint } from "./hint";
-import type { TradePanelRow } from "./symm/trades-data-provider";
+import type { TradePanelRow } from "./panels/data/trades-data-provider";
+import { SidebarSection } from "./sidebar-section";
 
 const formatSignedEur = (value: number) => {
 	const prefix = value >= 0 ? "+" : "−";
@@ -110,16 +109,17 @@ export const TradesPanel = () => {
 				/>
 			) : (
 				<ul className="space-y-1 px-2 pb-2">
-					{rows.slice(0, 24).map((row) =>
-						row.kind === "open" ? (
-							<OpenRow key={row.key} row={row} />
-						) : (
-							<FillRow key={row.key} row={row} />
-						),
-					)}
+					{rows
+						.slice(0, 24)
+						.map((row) =>
+							row.kind === "open" ? (
+								<OpenRow key={row.key} row={row} />
+							) : (
+								<FillRow key={row.key} row={row} />
+							),
+						)}
 				</ul>
 			)}
 		</SidebarSection>
 	);
 };
-

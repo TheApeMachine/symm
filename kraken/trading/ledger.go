@@ -205,9 +205,9 @@ func (ledger *Ledger) trip() {
 }
 
 func (ledger *Ledger) handle(value any) {
-	if envelope, ok := value.(public.SocketMessage); ok {
-		if envelope.Channel == public.ExecutionsChannel {
-			executions, err := user.DecodeExecutions(&envelope)
+	if envelope, ok := value.(map[string]any); ok {
+		if envelope["channel"].(string) == public.ExecutionsChannel {
+			executions, err := user.DecodeExecutions(envelope)
 
 			if err != nil {
 				errnie.Error(fmt.Errorf("kraken/trading/ledger: decode executions: %w", err))

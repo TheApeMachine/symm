@@ -6,22 +6,50 @@ import (
 
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 /*
-PreflightGates rejects orders when quote quality or projected slippage is unacceptable.
-Both paper and live desks call this before submitting an order.
+PreflightRequest carries quote, order, intent, and live stress for gate evaluation.
 */
-func PreflightGates(
-	quote Quote,
-	side trading.Side,
-	qty float64,
-	orderType trading.OrderType,
-) error {
-	if quote.Bid <= 0 || quote.Ask <= 0 {
-		return fmt.Errorf("preflight: incomplete quote for %s", quote.Symbol)
+type PreflightRequest struct {
+	Quote      Quote
+	Side       trading.Side
+	Quantity   float64
+	OrderType  trading.OrderType
+	ActionType perspectives.ActionType
+	Stress     SymbolStress
+}
+
+/*
+PreflightGates rejects orders when quote quality or projected slippage is unacceptable.
+Exit actions bypass volatility and stress gates so liquidations are never blocked.
+*/
+func PreflightGates(request PreflightRequest) error {
+	if request.Quantity <= 0 {
+		return fmt.Errorf("preflight: quantity must be positive")
 	}
 
+	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {
+		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
+	}
+
+	if perspectives.IsExitAction(request.ActionType) {
+		return nil
+	}
+
+	if err := preflightQuoteQuality(request.Quote); err != nil {
+		return err
+	}
+
+	if request.OrderType == trading.Limit {
+		return nil
+	}
+
+	return preflightMarketSlippage(request)
+}
+
+func preflightQuoteQuality(quote Quote) error {
 	maxAge, err := market.RequiredDuration("trading.max_quote_age")
 
 	if err != nil {
@@ -53,11 +81,11 @@ func PreflightGates(
 		)
 	}
 
-	if orderType == trading.Limit {
-		return nil
-	}
+	return nil
+}
 
-	fill, err := SlippageFill(quote, side, qty)
+func preflightMarketSlippage(request PreflightRequest) error {
+	fill, err := SlippageFill(request.Quote, request.Side, request.Quantity)
 
 	if err != nil {
 		return err
@@ -69,12 +97,14 @@ func PreflightGates(
 		return fmt.Errorf("preflight: %w", err)
 	}
 
+	maxSlippageBps = request.Stress.EntrySlippageCapBps(maxSlippageBps)
+
 	if fill.SlippageBps > maxSlippageBps {
 		return fmt.Errorf(
 			"preflight: projected slippage %.2f bps exceeds limit %.2f for %s",
 			fill.SlippageBps,
 			maxSlippageBps,
-			quote.Symbol,
+			request.Quote.Symbol,
 		)
 	}
 

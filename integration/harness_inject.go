@@ -45,10 +45,10 @@ func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
 
 	raw.Send(&qpool.QValue[any]{
 		Type: public.TickerChannel,
-		Value: public.SocketMessage{
-			Channel: public.TickerChannel,
-			Type:    "update",
-			Data:    rawData,
+		Value: map[string]any{
+			"channel": public.TickerChannel,
+			"type":    "update",
+			"data":    rawData,
 		},
 	})
 }
@@ -73,24 +73,24 @@ func (harness *Harness) InjectBook(book market.Book) {
 
 	raw.Send(&qpool.QValue[any]{
 		Type: public.BookChannel,
-		Value: public.SocketMessage{
-			Channel: public.BookChannel,
-			Type:    market.BookSnapshot,
-			Data:    rawData,
+		Value: map[string]any{
+			"channel": public.BookChannel,
+			"type":    market.BookSnapshot,
+			"data":    rawData,
 		},
 	})
 }
 
-func marketTradeEnvelope(trade market.TradeUpdate) (public.SocketMessage, error) {
+func marketTradeEnvelope(trade market.TradeUpdate) (map[string]any, error) {
 	raw, err := sonic.Marshal([]market.TradeUpdate{trade})
 
 	if err != nil {
-		return public.SocketMessage{}, err
+		return nil, err
 	}
 
-	return public.SocketMessage{
-		Channel: public.TradesChannel,
-		Type:    "update",
-		Data:    raw,
+	return map[string]any{
+		"channel": public.TradesChannel,
+		"type":    "update",
+		"data":    raw,
 	}, nil
 }

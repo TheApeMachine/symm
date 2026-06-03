@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 const postTradeFixture = `{
@@ -43,8 +42,8 @@ func TestNewPostTrade(t *testing.T) {
 		posttrade := &PostTrade{}
 
 		convey.Convey("It should unmarshal trade transparency fields", func() {
-			convey.So(json.Unmarshal([]byte(postTradeFixture), &public.Response{
-				Result: posttrade,
+			convey.So(json.Unmarshal([]byte(postTradeFixture), &map[string]any{
+				"result": posttrade,
 			}), convey.ShouldBeNil)
 			convey.So(posttrade.Count, convey.ShouldEqual, 1)
 			convey.So(len(posttrade.Trades), convey.ShouldEqual, 1)
@@ -65,6 +64,8 @@ func BenchmarkNewPostTrade(b *testing.B) {
 
 	for b.Loop() {
 		posttrade := &PostTrade{}
-		_ = json.Unmarshal(payload, &public.Response{Result: posttrade})
+		if err := json.Unmarshal(payload, &map[string]any{"result": posttrade}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -1,12 +1,21 @@
 import type { FieldSnapshotEvent, FluidSymbolRow } from "#/lib/symm/events";
+import {
+	anomalySNRForActivity,
+	emaSmoothHeightsVolumeAware,
+	smoothHeightmapSpatialAdaptive,
+} from "#/lib/symm/fluid-grid-smoothing";
 
 export const FLUID_GRID_SIZE = 32;
 export const FLUID_HEIGHT_EMA_ALPHA = 0.35;
 
 let smoothedHeights: number[][] | null = null;
+let smoothedVolumes: number[][] | null = null;
 
 export type FluidGrid = {
 	heights: number[][];
+	turbulence: number[][];
+	volumes: number[][];
+	anomalySNR: number[][];
 	min: number;
 	max: number;
 	filledCells: number;
@@ -37,9 +46,14 @@ export function gridFromPayload(payload: {
 	};
 }): FluidGrid {
 	const fallback = Number.isFinite(payload.min) ? payload.min : 0;
+	const heights = sanitizeHeights(payload.heights, fallback);
+	const size = heights.length;
 
 	return {
-		heights: sanitizeHeights(payload.heights, fallback),
+		heights,
+		turbulence: emptyGrid(size),
+		volumes: emptyGrid(size),
+		anomalySNR: emptyGrid(size),
 		min: payload.min,
 		max: payload.max,
 		filledCells: payload.filled_cells,
@@ -56,6 +70,12 @@ export function gridFromPayload(payload: {
 function sanitizeHeights(heights: number[][], fallback: number): number[][] {
 	return heights.map((row) =>
 		row.map((value) => (Number.isFinite(value) ? value : fallback)),
+	);
+}
+
+function emptyGrid(size: number): number[][] {
+	return Array.from({ length: size }, () =>
+		Array.from({ length: size }, () => 0),
 	);
 }
 
@@ -167,38 +187,24 @@ function displayActivity(value: number, clippedAt: number): number {
 
 function emaSmoothHeights(
 	raw: number[][],
-	alpha = FLUID_HEIGHT_EMA_ALPHA,
+	volumes: number[][],
 ): number[][] {
-	const size = raw.length;
+	const next = emaSmoothHeightsVolumeAware(
+		raw,
+		volumes,
+		smoothedHeights,
+		FLUID_HEIGHT_EMA_ALPHA,
+	);
 
-	if (!smoothedHeights || smoothedHeights.length !== size) {
-		smoothedHeights = raw.map((row) => [...row]);
-		return smoothedHeights;
-	}
-
-	for (let z = 0; z < size; z++) {
-		for (let x = 0; x < size; x++) {
-			const next = raw[z][x];
-			const prev = smoothedHeights[z][x];
-
-			if (!Number.isFinite(next)) {
-				continue;
-			}
-
-			if (!Number.isFinite(prev)) {
-				smoothedHeights[z][x] = next;
-				continue;
-			}
-
-			smoothedHeights[z][x] = alpha * next + (1 - alpha) * prev;
-		}
-	}
+	smoothedHeights = next;
+	smoothedVolumes = volumes.map((row) => [...row]);
 
 	return smoothedHeights;
 }
 
 export function resetFluidHeightSmoothing() {
 	smoothedHeights = null;
+	smoothedVolumes = null;
 }
 
 /** Fractional bilinear sample on a square height grid. */
@@ -352,9 +358,15 @@ export function projectFluidGridToHeightmap(
 	targetX: number,
 	yMin: number,
 	yMax: number,
-): { raw: number[][]; display: number[][] } {
+): { raw: number[][]; display: number[][]; anomalySNR: number[][] } {
 	const raw = Array.from({ length: targetZ }, () =>
 		Array.from({ length: targetX }, () => yMin),
+	);
+	const turbulence = Array.from({ length: targetZ }, () =>
+		Array.from({ length: targetX }, () => 0),
+	);
+	const anomalySNR = Array.from({ length: targetZ }, () =>
+		Array.from({ length: targetX }, () => 0),
 	);
 	const srcSize = grid.heights.length;
 	const span = grid.max - grid.min;
@@ -366,7 +378,7 @@ export function projectFluidGridToHeightmap(
 	const ySpan = yMax - yMin;
 
 	if (srcSize === 0) {
-		return { raw, display: raw };
+		return { raw, display: raw, anomalySNR };
 	}
 
 	for (let zIndex = 0; zIndex < targetZ; zIndex++) {
@@ -381,6 +393,11 @@ export function projectFluidGridToHeightmap(
 
 			const srcX = (xIndex * (rowLen - 1)) / Math.max(targetX - 1, 1);
 			const sample = bilinearSampleGrid(grid.heights, srcZ, srcX);
+			const turbSample = bilinearSampleGrid(grid.turbulence, srcZ, srcX);
+			const snrSample = bilinearSampleGrid(grid.anomalySNR, srcZ, srcX);
+
+			turbulence[zIndex][xIndex] = turbSample;
+			anomalySNR[zIndex][xIndex] = snrSample;
 
 			if (!Number.isFinite(sample) || sample <= 0) {
 				continue;
@@ -395,15 +412,28 @@ export function projectFluidGridToHeightmap(
 	}
 
 	const radius = spatialSmoothRadius(targetZ, targetX);
-	const smoothed = smoothHeightmapSpatial(raw, radius);
+	const smoothed = smoothHeightmapSpatialAdaptive(raw, turbulence, radius);
 	const peakBlend = Math.min(0.5, 0.2 + radius / Math.max(targetZ, targetX, 1));
 	const display = blendHeightmapTowardPeaks(smoothed, raw, peakBlend);
 
-	return { raw, display };
+	return { raw, display, anomalySNR };
 }
 
-function displayHeight(row: FluidSymbolRow, clippedAt: number): number {
-	return displayActivity(fieldActivity(row), clippedAt);
+function cellTurbulence(row: FluidSymbolRow, clippedAt: number): number {
+	const re = Math.abs(row.re);
+	const turb = Math.abs(row.turb);
+
+	if (re <= 0 && turb <= 0) {
+		return 0;
+	}
+
+	const activity = Math.max(re, turb);
+
+	if (clippedAt <= 0) {
+		return activity;
+	}
+
+	return activity / clippedAt;
 }
 
 function fieldActivity(row: FluidSymbolRow): number {
@@ -461,6 +491,10 @@ export function summarizeFluidScaling(
 	};
 }
 
+function displayHeight(row: FluidSymbolRow, clippedAt: number): number {
+	return displayActivity(fieldActivity(row), clippedAt);
+}
+
 /** Bin symbols by change% × vol rank; height = median clipped fluid activity. */
 export function buildFluidGrid(
 	rows: FluidSymbolRow[],
@@ -469,13 +503,28 @@ export function buildFluidGrid(
 	const heights = Array.from({ length: size }, () =>
 		Array.from({ length: size }, () => Number.NaN),
 	);
+	const turbulence = emptyGrid(size);
+	const volumes = emptyGrid(size);
+	const anomalySNR = emptyGrid(size);
 	const cells = Array.from({ length: size }, () =>
+		Array.from({ length: size }, () => [] as number[]),
+	);
+	const turbCells = Array.from({ length: size }, () =>
+		Array.from({ length: size }, () => [] as number[]),
+	);
+	const volumeCells = Array.from({ length: size }, () =>
+		Array.from({ length: size }, () => [] as number[]),
+	);
+	const snrCells = Array.from({ length: size }, () =>
 		Array.from({ length: size }, () => [] as number[]),
 	);
 
 	if (rows.length === 0) {
 		return {
 			heights,
+			turbulence,
+			volumes,
+			anomalySNR,
 			min: 0,
 			max: 1,
 			filledCells: 0,
@@ -494,7 +543,16 @@ export function buildFluidGrid(
 	);
 	const outliers = summarizeFluidScaling(finiteRows);
 	if (finiteRows.length === 0) {
-		return { heights, min: 0, max: 1, filledCells: 0, outliers };
+		return {
+			heights,
+			turbulence,
+			volumes,
+			anomalySNR,
+			min: 0,
+			max: 1,
+			filledCells: 0,
+			outliers,
+		};
 	}
 
 	const changes = finiteRows.map((r) => r.change_pct).sort((a, b) => a - b);
@@ -511,7 +569,12 @@ export function buildFluidGrid(
 
 		const x = binIndex(percentileRank(row.change_pct, changes), size);
 		const z = binIndex(percentileRank(row.vol, vols), size);
+		const activity = fieldActivity(row);
+
 		cells[z][x].push(displayHeight(row, outliers.clippedAt));
+		turbCells[z][x].push(cellTurbulence(row, outliers.clippedAt));
+		volumeCells[z][x].push(row.vol);
+		snrCells[z][x].push(anomalySNRForActivity(activity, outliers.clippedAt));
 	}
 
 	let min = Number.POSITIVE_INFINITY;
@@ -521,6 +584,12 @@ export function buildFluidGrid(
 			const values = cells[z][x];
 			const y = values.length > 0 ? medianPositive(values) : Number.NaN;
 			heights[z][x] = y;
+			turbulence[z][x] =
+				turbCells[z][x].length > 0 ? medianPositive(turbCells[z][x]) : 0;
+			volumes[z][x] =
+				volumeCells[z][x].length > 0 ? medianPositive(volumeCells[z][x]) : 0;
+			anomalySNR[z][x] =
+				snrCells[z][x].length > 0 ? medianPositive(snrCells[z][x]) : 0;
 			if (Number.isFinite(y)) {
 				min = Math.min(min, y);
 				max = Math.max(max, y);
@@ -529,7 +598,7 @@ export function buildFluidGrid(
 	}
 
 	const filledCells = smoothEmptyCells(heights, 0);
-	const smoothed = emaSmoothHeights(heights);
+	const smoothed = emaSmoothHeights(heights, volumes);
 
 	for (let z = 0; z < size; z++) {
 		for (let x = 0; x < size; x++) {
@@ -550,7 +619,16 @@ export function buildFluidGrid(
 		}
 	}
 
-	return { heights, min, max, filledCells, outliers };
+	return {
+		heights,
+		turbulence,
+		volumes,
+		anomalySNR,
+		min,
+		max,
+		filledCells,
+		outliers,
+	};
 }
 
 export function gridFromSnapshot(

@@ -60,10 +60,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(marshalErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    data,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    data,
 		})
 
 		convey.Convey("It should subscribe only quote-currency pairs", func() {
@@ -107,10 +107,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(marshalErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    data,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    data,
 		})
 
 		convey.So(instrument.Pairs, convey.ShouldResemble, []string{"BTC/EUR"})
@@ -143,10 +143,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(marshalErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    data,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    data,
 		})
 
 		var bookFrame *qpool.QValue[any]
@@ -206,10 +206,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(marshalErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    data,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    data,
 		})
 
 		convey.So(instrument.Pairs, convey.ShouldResemble, []string{"PEPE/EUR"})
@@ -241,10 +241,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(marshalErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    data,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    data,
 		})
 
 		convey.So(len(instrument.Pairs), convey.ShouldEqual, 1)
@@ -275,10 +275,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(firstErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "snapshot",
-			Data:    first,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "snapshot",
+			"data":    first,
 		})
 
 		second, secondErr := json.Marshal(InstrumentUpdate{
@@ -289,10 +289,10 @@ func TestInstrumentApplyCatalogUpdate(t *testing.T) {
 
 		convey.So(secondErr, convey.ShouldBeNil)
 
-		instrument.applyCatalogUpdate(outbound, public.SocketMessage{
-			Channel: public.InstrumentsChannel,
-			Type:    "update",
-			Data:    second,
+		instrument.applyCatalogUpdate(outbound, map[string]any{
+			"channel": public.InstrumentsChannel,
+			"type":    "update",
+			"data":    second,
 		})
 
 		convey.So(instrument.Pairs, convey.ShouldResemble, []string{"BTC/EUR", "PEPE/EUR"})

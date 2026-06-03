@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 const bookDepthLevels = 10
@@ -138,13 +139,13 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 				continue
 			}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			switch envelope["channel"].(string) {
 			case public.TickerChannel:
 				cache.ingestTickers(envelope)
 			case public.BookChannel:
@@ -156,14 +157,8 @@ func (cache *QuoteCache) run(pool *qpool.Q) {
 	}
 }
 
-func (cache *QuoteCache) ingestTickers(envelope public.SocketMessage) {
-	rows, err := market.DecodeTickers(&envelope)
-
-	if err != nil {
-		return
-	}
-
-	for _, row := range rows {
+func (cache *QuoteCache) ingestTickers(envelope map[string]any) {
+	for _, row := range signalpool.GetTickers(envelope) {
 		if row.Symbol == "" {
 			continue
 		}
@@ -172,14 +167,8 @@ func (cache *QuoteCache) ingestTickers(envelope public.SocketMessage) {
 	}
 }
 
-func (cache *QuoteCache) ingestBooks(envelope public.SocketMessage) {
-	rows, err := market.DecodeBooks(&envelope)
-
-	if err != nil {
-		return
-	}
-
-	for _, row := range rows {
+func (cache *QuoteCache) ingestBooks(envelope map[string]any) {
+	for _, row := range signalpool.GetBooks(envelope) {
 		if row.Symbol == "" {
 			continue
 		}
@@ -244,14 +233,8 @@ func (cache *QuoteCache) updateBook(row market.Book) {
 	cache.notifyLocked(row.Symbol, quote)
 }
 
-func (cache *QuoteCache) ingestTrades(envelope public.SocketMessage) {
-	rows, err := market.DecodeTrades(&envelope)
-
-	if err != nil {
-		return
-	}
-
-	for _, row := range rows {
+func (cache *QuoteCache) ingestTrades(envelope map[string]any) {
+	for _, row := range signalpool.GetTrades(envelope) {
 		if row.Symbol == "" {
 			continue
 		}

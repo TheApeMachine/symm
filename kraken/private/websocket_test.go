@@ -26,7 +26,7 @@ func TestNewWebSocketPaperMode(t *testing.T) {
 
 		Convey("It should delegate to the paper websocket", func() {
 			So(client, ShouldNotBeNil)
-			So(client.Connect(public.WebSocketAuthURL, "executions"), ShouldBeNil)
+			So(client.Connect(public.WebSocketAuthURL, "executions", 0), ShouldBeNil)
 			So(client.Close(), ShouldBeNil)
 		})
 	})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -78,23 +77,6 @@ func (balance *Balance) SetEnvelopeType(kind string) {
 
 func (balance *Balance) IsSnapshot() bool {
 	return balance.Envelope == BalanceSnapshot
-}
-
-/*
-DecodeBalances decodes every row in a balances channel message.
-*/
-func DecodeBalances(message *public.SocketMessage) ([]Balance, error) {
-	var rows []Balance
-
-	if err := sonic.Unmarshal(message.Data, &rows); err != nil {
-		return nil, err
-	}
-
-	for index := range rows {
-		rows[index].SetEnvelopeType(message.Type)
-	}
-
-	return rows, nil
 }
 
 func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {

@@ -104,13 +104,13 @@ func batchOrders(params any) (string, []trading.AddParams, bool) {
 	return "", nil, false
 }
 
-func (orders *Orders) publishMessages(messages []public.SocketMessage) public.SocketMessage {
+func (orders *Orders) publishMessages(messages []map[string]any) map[string]any {
 	if len(messages) == 0 {
-		return public.SocketMessage{}
+		return nil
 	}
 
 	for index := 1; index < len(messages); index++ {
-		if messages[index].Channel == "" {
+		if channel, _ := messages[index]["channel"].(string); channel == "" {
 			continue
 		}
 

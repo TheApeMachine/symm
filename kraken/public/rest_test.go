@@ -35,11 +35,11 @@ func TestRestGet(t *testing.T) {
 			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
-			var response Response
+			var response map[string]any
 			err := rest.Get(requestCtx, fiber.Map{"pair": "BTC/USD"}, &response)
 
-			if err != nil || response.Result == nil {
-				t.Skipf("live Kraken REST unavailable: err=%v result=%v", err, response.Result)
+			if err != nil || response["result"] == nil {
+				t.Skipf("live Kraken REST unavailable: err=%v result=%v", err, response["result"])
 			}
 
 			So(rest.Close(), ShouldBeNil)

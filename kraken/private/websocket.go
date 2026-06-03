@@ -21,20 +21,19 @@ import (
 const privateReadPoll = 50 * time.Millisecond
 
 type WebSocket struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q
-	conn            *websocket.Conn
-	broadcasts      map[string]*qpool.BroadcastGroup
-	subscribers     map[string]*qpool.Subscriber
-	mu              sync.Mutex
-	reconnectPolicy *public.ReconnectPolicy
-	outboundReplay  []any
-	replayMu        sync.RWMutex
-	rest            *Rest
-	token           string
-	tokenUntil      time.Time
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q
+	conn           *websocket.Conn
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	mu             sync.Mutex
+	outboundReplay []any
+	replayMu       sync.RWMutex
+	rest           *Rest
+	token          string
+	tokenUntil     time.Time
 }
 
 func NewWebSocket(
@@ -65,14 +64,13 @@ func NewWebSocketFromRest(
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		rest:            rest,
-		reconnectPolicy: public.NewReconnectPolicyFromConfig(),
-		broadcasts:      make(map[string]*qpool.BroadcastGroup),
-		subscribers:     make(map[string]*qpool.Subscriber),
-		outboundReplay:  make([]any, 0),
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		rest:           rest,
+		broadcasts:     make(map[string]*qpool.BroadcastGroup),
+		subscribers:    make(map[string]*qpool.Subscriber),
+		outboundReplay: make([]any, 0),
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
@@ -95,7 +93,9 @@ func NewWebSocketFromRest(
 	return ws
 }
 
-func (ws *WebSocket) Connect(endpoint public.EndpointType, channel string) error {
+func (ws *WebSocket) Connect(
+	endpoint public.EndpointType, channel string, n uint64,
+) error {
 	if endpoint == "" {
 		endpoint = public.WebSocketAuthURL
 	}
@@ -175,7 +175,7 @@ func (ws *WebSocket) Tick() error {
 			return ws.err
 		}
 
-		var message public.SocketMessage
+		var message map[string]any
 
 		if err := conn.ReadJSON(&message); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -197,18 +197,20 @@ func (ws *WebSocket) Tick() error {
 
 		_ = conn.SetReadDeadline(time.Time{})
 
-		if message.Channel != "" {
-			activate.Once("kraken/private:channel:" + message.Channel)
+		channel, _ := message["channel"].(string)
+
+		if channel != "" {
+			activate.Once("kraken/private:channel:" + channel)
 		}
 
 		if ch := ws.broadcasts["raw"]; ch != nil {
 			ch.Send(&qpool.QValue[any]{
-				Type:  message.Channel,
+				Type:  channel,
 				Value: message,
 			})
 		}
 
-		if message.Channel == public.ExecutionsChannel {
+		if channel == public.ExecutionsChannel {
 			trading.PublishLedgerAck(ws.pool, message)
 		}
 	}

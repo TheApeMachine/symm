@@ -32,10 +32,10 @@ func TestToxicityHandleLevel3(t *testing.T) {
 			"asks":[]
 		}]`)
 
-		level3.Send(&qpool.QValue[any]{Value: public.SocketMessage{
-			Channel: public.Level3Channel,
-			Type:    "update",
-			Data:    payload,
+		level3.Send(&qpool.QValue[any]{Value: map[string]any{
+			"channel": public.Level3Channel,
+			"type":    "update",
+			"data":    payload,
 		}})
 
 		tox.tracker.ObserveMid("BTC/EUR", market.Pair{}, 100)
@@ -59,9 +59,9 @@ func TestToxicityHandleLevel3(t *testing.T) {
 		level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
 		tox.subscribers["level3"] = level3.Subscribe("toxicity:test-level3-empty", 16)
 
-		level3.Send(&qpool.QValue[any]{Value: public.SocketMessage{
-			Channel: public.Level3Channel,
-			Type:    "update",
+		level3.Send(&qpool.QValue[any]{Value: map[string]any{
+			"channel": public.Level3Channel,
+			"type":    "update",
 		}})
 
 		err := tox.handleLevel3(<-tox.subscribers["level3"].Incoming)

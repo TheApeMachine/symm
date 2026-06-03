@@ -1,16 +1,17 @@
 package public
 
 import (
-	"bufio"
+	"container/ring"
 	"context"
 	"encoding/json"
 	"io"
-	"os"
+	"math"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
@@ -29,198 +30,188 @@ const (
 )
 
 type WebSocketClient interface {
-	Connect(endpoint EndpointType, channel string) error
+	Connect(EndpointType, string, uint64) error
 	Tick() error
 	Close() error
 }
 
-type SocketMessage struct {
-	Channel string          `json:"channel"`
-	Type    string          `json:"type"`
-	Data    json.RawMessage `json:"data"`
-}
-
 type WebSocket struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q
-	conn            *websocket.Conn
-	connMu          sync.RWMutex
-	reconnectPolicy *ReconnectPolicy
-	subscribeReplay []any
-	replayMu        sync.RWMutex
-	broadcasts      map[string]*qpool.BroadcastGroup
-	subscribers     map[string]*qpool.Subscriber
-	recorder        io.Writer
-	pairs           []string
-	ui              *qpool.BroadcastGroup
-	streams         *focus.Set
-	ohlcSubscribed  map[string]struct{}
-	lastSubscribe   time.Time
-	subscribeMu     sync.Mutex
-	latencyProbe    *latencyProbe
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q
+	conn        *websocket.Conn
+	broadcasts  map[string]*qpool.BroadcastGroup
+	subscribers map[string]*qpool.Subscriber
+	recorder    io.Writer
+	streams     *focus.Set
+	latencies   *ring.Ring
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q, streams *focus.Set) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
-		BootstrapNetworkLatency()
-
 		socket = &WebSocket{
-			ctx:             ctx,
-			cancel:          cancel,
-			pool:            pool,
-			reconnectPolicy: NewReconnectPolicyFromConfig(),
-			broadcasts:      make(map[string]*qpool.BroadcastGroup),
-			subscribers:     make(map[string]*qpool.Subscriber),
-			ohlcSubscribed:  make(map[string]struct{}),
-			subscribeReplay: make([]any, 0),
-			latencyProbe:    newLatencyProbe(SharedNetworkLatency()),
+			ctx:         ctx,
+			cancel:      cancel,
+			pool:        pool,
+			broadcasts:  make(map[string]*qpool.BroadcastGroup),
+			subscribers: make(map[string]*qpool.Subscriber),
+			latencies:   ring.New(64),
 		}
+
+		for _, channel := range []string{"raw", "level3", "ui", "kraken:public"} {
+			socket.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+			socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 1024)
+		}
+
+		socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{
+				"channel":  "instrument",
+				"snapshot": true,
+			},
+		}})
+
+		activate.Boot("kraken/public websocket ready")
 	})
-
-	socket.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	socket.broadcasts["ui:charts"] = pool.CreateBroadcastGroup("ui:charts", 10*time.Millisecond)
-
-	for _, channel := range []string{
-		"raw", "level3",
-	} {
-		socket.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-
-		subscriberID := publicRawSubscriberID
-
-		if channel == "level3" {
-			subscriberID = publicLevel3SubscriberID
-		}
-
-		socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(subscriberID, 1024)
-	}
-
-	socket.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
-	socket.subscribers["kraken:public"] = socket.broadcasts["kraken:public"].Subscribe(
-		publicOutboundSubscriberID, 8192,
-	)
-
-	outboundOnce.Do(func() {
-		go socket.runOutbound()
-	})
-
-	socket.bindChartStreams(streams)
-
-	if viper.GetViper().Get("trading.model") == "record" {
-		recorder, err := os.Create(viper.GetViper().GetString("trading.record.file"))
-
-		if err != nil {
-			errnie.Error(err)
-		}
-
-		socket.recorder = bufio.NewWriter(recorder)
-	}
-
-	if err := socket.dialUntilConnected(ctx, WebSocketURL); err != nil {
-		errnie.Error(err)
-	} else {
-		activate.Boot("kraken/public websocket connected")
-		socket.latencyProbe.start(ctx, socket.writePingFrame)
-	}
-
-	errnie.Debug("kraken.public.websocket.NewWebSocket", "subscribing to", "instrument")
-
-	socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel":  "instrument",
-			"snapshot": true,
-		},
-	}})
-
-	activate.Boot("kraken/public websocket ready")
 
 	return socket
 }
-func (ws *WebSocket) writePingFrame(frame map[string]any) error {
-	return ws.writeOutboundFrame(frame, false)
-}
 
-func (ws *WebSocket) Connect(endpoint EndpointType, channel string) error {
-	errnie.Debug("kraken.public.websocket.Connect", endpoint, channel)
+func (ws *WebSocket) Connect(
+	endpoint EndpointType, channel string, n uint64,
+) error {
+	// Error, retry.
+	ws.conn, _, ws.err = websocket.DefaultDialer.Dial(string(endpoint), nil)
 
-	ws.connMu.RLock()
-	connected := ws.conn != nil
-	ws.connMu.RUnlock()
+	if ws.err != nil {
+		errnie.Error(ws.err)
 
-	if connected {
-		return nil
+		// Backoff delay time by using Fibonacci sequence.
+		n = uint64(
+			math.Round((math.Pow(
+				math.Phi, float64(n),
+			) + math.Pow(
+				math.Phi-1, float64(n),
+			)) / math.Sqrt(5)),
+		)
+
+		// Wait for the next retry.
+		time.Sleep(time.Duration(n) * time.Second)
 	}
 
-	return ws.dialUntilConnected(ws.ctx, endpoint)
+	return nil
 }
 
-func (ws *WebSocket) Tick() error {
+var sockMsgPool = sync.Pool{
+	New: func() any {
+		return make(map[string]any)
+	},
+}
+
+func (ws *WebSocket) Tick() (err error) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
+		case message, ok := <-ws.subscribers["kraken:public"].Incoming:
+			if !ok || message == nil {
+				return ws.ctx.Err()
+			}
+		case <-ticker.C:
+			if err = ws.conn.WriteJSON(map[string]any{
+				"method": "ping",
+			}); err != nil {
+				ws.handleError(errnie.Error(err))
+				continue
+			}
 		default:
 		}
 
-		ws.connMu.RLock()
-		connected := ws.conn != nil
-		ws.connMu.RUnlock()
+		message := sockMsgPool.Get().(map[string]any)
+		defer sockMsgPool.Put(message)
 
-		if !connected {
-			if err := ws.reconnect(WebSocketURL); err != nil {
-				return errnie.Error(err)
-			}
-
+		if err = ws.conn.ReadJSON(&message); err != nil {
+			ws.handleError(errnie.Error(err))
 			continue
-		}
-
-		var message SocketMessage
-		handled, err := ws.readInbound(&message)
-
-		if err != nil {
-			if ws.ctx.Err() != nil {
-				return errnie.Error(ws.ctx.Err())
-			}
-
-			errnie.Error(err)
-
-			if reconnectErr := ws.reconnect(WebSocketURL); reconnectErr != nil {
-				return errnie.Error(reconnectErr)
-			}
-
-			continue
-		}
-
-		if handled {
-			continue
-		}
-
-		if message.Channel != "" {
-			activate.Once("kraken/public:channel:" + message.Channel)
 		}
 
 		if ch := ws.broadcasts["raw"]; ch != nil {
 			ch.Send(&qpool.QValue[any]{
-				Type:  message.Channel,
+				Type:  message["type"].(string),
 				Value: message,
 			})
 		}
 
-		if message.Channel == CandlesChannel {
-			if err := ws.applyOhlc(message); err != nil {
-				return err
-			}
+		if message["type"].(string) == "pong" {
+			ws.latencies.Value = time.Since(message["time_in"].(time.Time))
+			ws.latencies.Next()
+		}
+
+		if message["type"].(string) == "ohlc" {
+			ws.publishOhlc(message)
+		}
+	}
+}
+
+func (ws *WebSocket) handleError(err error) {
+	switch err {
+	case websocket.ErrCloseSent:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	case io.ErrUnexpectedEOF:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	case websocket.ErrNilConn:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	case websocket.ErrNilNetConn:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	case websocket.ErrReadLimit:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	case websocket.ErrBadHandshake:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	default:
+		ws.Close()
+		ws.Connect(WebSocketURL, "kraken:public", 0)
+		return
+	}
+}
+
+func (ws *WebSocket) publishOhlc(message map[string]any) {
+	var candles []map[string]any
+
+	if err := sonic.Unmarshal(message["data"].(json.RawMessage), &candles); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	for _, candle := range candles {
+		if slices.Contains(ws.streams.Snapshot(), candle["symbol"].(string)) {
+			ws.broadcasts["ui:charts"].Send(&qpool.QValue[any]{
+				Type:  message["type"].(string),
+				Value: candle,
+			})
 		}
 	}
 }
 
 func (ws *WebSocket) Close() error {
+	ws.conn.Close()
 	ws.cancel()
-	ws.dropConnection()
-
 	return nil
 }

@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -39,8 +40,11 @@ func TestOrdersSend(t *testing.T) {
 				},
 			})
 
-			So(out.Channel, ShouldEqual, public.ExecutionsChannel)
-			So(string(out.Data), ShouldContainSubstring, `"cl_ord_id":"paper-limit-fill"`)
+			channel, _ := out["channel"].(string)
+			data, _ := out["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, public.ExecutionsChannel)
+			So(string(data), ShouldContainSubstring, `"cl_ord_id":"paper-limit-fill"`)
 		})
 
 		Convey("It should reject market add_order without a reference price", func() {
@@ -58,7 +62,9 @@ func TestOrdersSend(t *testing.T) {
 				},
 			})
 
-			So(out.Channel, ShouldBeEmpty)
+			channel, _ := out["channel"].(string)
+
+			So(channel, ShouldBeEmpty)
 		})
 
 		Convey("It should rest post-only limits on the book", func() {
@@ -84,11 +90,21 @@ func TestOrdersSend(t *testing.T) {
 				},
 			})
 
-			So(out.Channel, ShouldEqual, public.ExecutionsChannel)
-			So(string(out.Data), ShouldContainSubstring, `"order_status":"open"`)
+			channel, _ := out["channel"].(string)
+			data, _ := out["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, public.ExecutionsChannel)
+			So(string(data), ShouldContainSubstring, `"order_status":"open"`)
 		})
 
 		Convey("It should cancel resting orders on cancel_order", func() {
+			broker.EnsureQuoteCache(ctx, pool).InstallQuoteForTest(broker.Quote{
+				Symbol: "BTC/EUR",
+				Bid:    59_000,
+				Ask:    60_500,
+				Last:   60_000,
+			})
+
 			open := orders.Send(&qpool.QValue[any]{
 				Type: public.OrdersChannel,
 				Value: map[string]any{
@@ -120,22 +136,36 @@ func TestOrdersSend(t *testing.T) {
 				},
 			})
 
-			So(out.Channel, ShouldEqual, public.ExecutionsChannel)
-			So(string(out.Data), ShouldContainSubstring, `"exec_type":"canceled"`)
+			channel, _ := out["channel"].(string)
+			data, _ := out["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, public.ExecutionsChannel)
+			So(string(data), ShouldContainSubstring, `"exec_type":"canceled"`)
 		})
 	})
 }
 
-func extractOrderID(message public.SocketMessage) string {
-	start := string(message.Data)
-	from := `"order_id":"`
-	index := strings.Index(start, from)
+func extractOrderID(message map[string]any) string {
+	data, ok := message["data"].(json.RawMessage)
+
+	if !ok {
+		return ""
+	}
+
+	from := `"order_id":`
+	index := strings.Index(string(data), from)
 
 	if index < 0 {
 		return ""
 	}
 
-	rest := start[index+len(from):]
+	rest := strings.TrimSpace(string(data[index+len(from):]))
+
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+
+	rest = rest[1:]
 	end := strings.Index(rest, `"`)
 
 	if end < 0 {

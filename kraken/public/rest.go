@@ -3,8 +3,10 @@ package public
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -45,6 +47,18 @@ func NewRest(
 	}
 }
 
+var responsePool = sync.Pool{
+	New: func() any {
+		return &client.Response{}
+	},
+}
+
+var envelopePool = sync.Pool{
+	New: func() any {
+		return make(map[string]any)
+	},
+}
+
 func (rest *Rest) Get(
 	ctx context.Context,
 	request fiber.Map,
@@ -64,47 +78,29 @@ func (rest *Rest) Get(
 	}
 
 	for _, h := range headers {
-		for key, value := range h {
-			header[key] = value
-		}
+		maps.Copy(header, h)
 	}
 
-	response, err := rest.client.Get(strings.Join([]string{
+	response := responsePool.Get().(*client.Response)
+	defer responsePool.Put(response)
+
+	if response, rest.err = rest.client.Get(strings.Join([]string{
 		string(rest.endpoint), params.Encode(),
 	}, "?"), client.Config{
 		Ctx:     rest.ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
-	})
-
-	if err != nil {
-		rest.err = err
-
-		return rest.err
+	}); rest.err != nil {
+		return errnie.Error(rest.err)
 	}
 
-	resp := response
+	defer response.Close()
 
-	if resp == nil {
-		rest.err = fmt.Errorf("kraken public rest: empty response")
+	envelope := envelopePool.Get().(map[string]any)
+	defer envelopePool.Put(envelope)
 
-		return rest.err
-	}
-
-	defer resp.Close()
-
-	envelope := Response{Result: model}
-
-	if err := sonic.Unmarshal(resp.Body(), &envelope); err != nil {
-		rest.err = errnie.Error(err)
-
-		return rest.err
-	}
-
-	if len(envelope.Error) > 0 && envelope.Error[0] != "" {
-		rest.err = fmt.Errorf("%s", strings.Join(envelope.Error, ", "))
-
-		return rest.err
+	if rest.err = sonic.Unmarshal(response.Body(), envelope); rest.err != nil {
+		return errnie.Error(rest.err)
 	}
 
 	return nil
@@ -124,46 +120,27 @@ func (rest *Rest) Post(
 	}
 
 	for _, h := range headers {
-		for key, value := range h {
-			header[key] = value
-		}
+		maps.Copy(header, h)
 	}
 
-	response, err := rest.client.Post(string(rest.endpoint), client.Config{
+	response := responsePool.Get().(*client.Response)
+	defer responsePool.Put(response)
+
+	if response, rest.err = rest.client.Post(string(rest.endpoint), client.Config{
 		Ctx:     rest.ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
-		Body:    request,
-	})
-
-	if err != nil {
-		rest.err = err
-
-		return rest.err
+		Body:    request}); rest.err != nil {
+		return errnie.Error(rest.err)
 	}
 
-	resp := response
+	defer response.Close()
 
-	if resp == nil {
-		rest.err = fmt.Errorf("kraken public rest: empty response")
+	envelope := envelopePool.Get().(map[string]any)
+	defer envelopePool.Put(envelope)
 
-		return rest.err
-	}
-
-	defer resp.Close()
-
-	envelope := Response{Result: model}
-
-	if err := sonic.Unmarshal(resp.Body(), &envelope); err != nil {
-		rest.err = errnie.Error(err)
-
-		return rest.err
-	}
-
-	if len(envelope.Error) > 0 && envelope.Error[0] != "" {
-		rest.err = fmt.Errorf("%s", strings.Join(envelope.Error, ", "))
-
-		return rest.err
+	if rest.err = sonic.Unmarshal(response.Body(), envelope); rest.err != nil {
+		return errnie.Error(rest.err)
 	}
 
 	return nil

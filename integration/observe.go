@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market/perspectives"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -97,24 +97,22 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 			tape.actions = append(tape.actions, action)
 		}
 
-		envelope, envelopeOK := message.Value.(public.SocketMessage)
+		envelope, envelopeOK := message.Value.(map[string]any)
 
-		if envelopeOK && envelope.Channel == public.ExecutionsChannel {
-			executions, err := user.DecodeExecutions(&envelope)
+		if envelopeOK && envelope["channel"].(string) == public.ExecutionsChannel {
+			executions := signalpool.GetExecutions(envelope)
 
-			if err == nil {
-				for _, execution := range executions {
-					if execution.Symbol == "" || execution.LastQty <= 0 {
-						continue
-					}
-
-					tape.fills = append(tape.fills, FillEvent{
-						Symbol: execution.Symbol,
-						Side:   execution.Side,
-						Qty:    execution.LastQty,
-						Price:  execution.LastPrice,
-					})
+			for _, execution := range executions {
+				if execution.Symbol == "" || execution.LastQty <= 0 {
+					continue
 				}
+
+				tape.fills = append(tape.fills, FillEvent{
+					Symbol: execution.Symbol,
+					Side:   execution.Side,
+					Qty:    execution.LastQty,
+					Price:  execution.LastPrice,
+				})
 			}
 		}
 
@@ -231,6 +229,23 @@ func (snapshot TapeSnapshot) latestBySource(source perspectives.SourceType) pers
 	return latest
 }
 
+func (snapshot TapeSnapshot) latestBySourceSymbol(
+	source perspectives.SourceType,
+	symbol string,
+) perspectives.Measurement {
+	var latest perspectives.Measurement
+
+	for _, reading := range snapshot.Measurements {
+		if reading.Source != source || reading.Symbol != symbol {
+			continue
+		}
+
+		latest = reading
+	}
+
+	return latest
+}
+
 func (snapshot TapeSnapshot) countBySource(source perspectives.SourceType) int {
 	count := 0
 
@@ -290,6 +305,16 @@ func (snapshot TapeSnapshot) hasCategory(
 	}
 
 	return false
+}
+
+func (snapshot TapeSnapshot) initialWalletBalance() float64 {
+	if len(snapshot.Wallets) == 0 {
+		return 0
+	}
+
+	balance, _ := snapshot.Wallets[0]["Balance"].(float64)
+
+	return balance
 }
 
 func (snapshot TapeSnapshot) lastWalletBalance() float64 {

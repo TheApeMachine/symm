@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -131,13 +132,13 @@ func (instrument *Instrument) Tick() error {
 				continue
 			}
 
-			envelope, envelopeOK := message.Value.(public.SocketMessage)
+			envelope, envelopeOK := message.Value.(map[string]any)
 
 			if !envelopeOK {
 				continue
 			}
 
-			if envelope.Channel != public.InstrumentsChannel {
+			if envelope["channel"].(string) != public.InstrumentsChannel {
 				continue
 			}
 
@@ -148,11 +149,11 @@ func (instrument *Instrument) Tick() error {
 
 func (instrument *Instrument) applyCatalogUpdate(
 	publicBroadcast *qpool.BroadcastGroup,
-	envelope public.SocketMessage,
+	envelope map[string]any,
 ) {
 	var update InstrumentUpdate
 
-	if err := sonic.Unmarshal(envelope.Data, &update); err != nil {
+	if err := sonic.Unmarshal(envelope["data"].(json.RawMessage), &update); err != nil {
 		errnie.Error(err)
 		return
 	}

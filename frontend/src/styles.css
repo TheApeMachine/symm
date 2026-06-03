@@ -1,8 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
-@plugin '@tailwindcss/typography';
-
 @import 'tw-animate-css';
+@plugin '@tailwindcss/typography';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -260,6 +259,18 @@ body {
 .dashboard-trade-panel > .flex-1 > * {
   height: 100%;
   min-height: 0;
+}
+
+.dashboard-trade-chart-row {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 128px);
+  gap: 0.5rem;
+}
+
+.dashboard-gauge-strip {
+  min-width: 96px;
+  max-width: 128px;
 }
 
 .dashboard-panel-header {

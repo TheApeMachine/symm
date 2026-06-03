@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -49,8 +50,10 @@ func TestOrdersMatchRestingLimit(t *testing.T) {
 			},
 		})
 
+		data, _ := open["data"].(json.RawMessage)
+
 		convey.Convey("It should fill when the ask crosses the limit after queue depletion", func() {
-			convey.So(string(open.Data), convey.ShouldContainSubstring, `"order_status":"open"`)
+			convey.So(string(data), convey.ShouldContainSubstring, `"order_status":"open"`)
 
 			resting, found := orders.orderByClOrdID("resting-buy")
 			convey.So(found, convey.ShouldBeTrue)

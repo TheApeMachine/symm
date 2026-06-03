@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 func (crypto *Crypto) ensureBalanceSnapshot() error {
@@ -46,7 +47,7 @@ func (crypto *Crypto) handleRaw(message *qpool.QValue[any]) error {
 		return crypto.handleAction(action)
 	}
 
-	envelope, ok := message.Value.(public.SocketMessage)
+	envelope, ok := message.Value.(map[string]any)
 
 	if !ok {
 		return nil
@@ -58,15 +59,11 @@ func (crypto *Crypto) handleRaw(message *qpool.QValue[any]) error {
 		return fmt.Errorf("trader/crypto: %w", err)
 	}
 
-	switch envelope.Channel {
+	switch envelope["channel"].(string) {
 	case public.ExecutionsChannel:
 		activate.Once("trader/crypto:executions-channel")
 
-		executions, err := user.DecodeExecutions(&envelope)
-
-		if err != nil {
-			return fmt.Errorf("trader/crypto: decode executions: %w", err)
-		}
+		executions := signalpool.GetExecutions(envelope)
 
 		for _, execution := range executions {
 			if execution.ExecType == "rejected" || execution.OrderStatus == "rejected" {
@@ -85,11 +82,7 @@ func (crypto *Crypto) handleRaw(message *qpool.QValue[any]) error {
 		activate.Once("trader/crypto:balances-channel")
 		trading.MarkDeskReady()
 
-		balances, err := user.DecodeBalances(&envelope)
-
-		if err != nil {
-			return fmt.Errorf("trader/crypto: decode balances: %w", err)
-		}
+		balances := signalpool.GetBalances(envelope)
 
 		for _, balance := range balances {
 			if isQuoteAsset(balance.Asset, quote) {

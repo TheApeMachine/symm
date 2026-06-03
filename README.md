@@ -475,6 +475,7 @@ symm tune
 
 | Event            | Source        | Contents                                                  |
 |------------------|---------------|-----------------------------------------------------------|
+| `layout`         | ui.Hub        | dashboard schema: gauge sources, labels, panel wiring     |
 | `confidence`     | view.Gauges   | per-source SNR gauge value                                |
 | `wallet`         | Crypto        | balance, inventory, marks                                 |
 | `audit`          | Crypto        | decision detail: conviction, edge, playbook, perspectives |
@@ -484,6 +485,12 @@ symm tune
 | fill events      | Crypto        | order fill payload                                        |
 
 `kraken/market/instrument` subscribes to every pair Kraken lists on the instrument channel; newly listed markets are picked up on the next catalog update. Signals such as `pumpdump`, `fluid`, and `leadlag` consume the shared `raw` bus and do not depend on config symbol lists. `default_symbols` and `anchor_symbol` only choose the dashboard anchor chart. Chart candles use Kraken's [`ohlc` WebSocket channel](https://docs.kraken.com/api/docs/websocket-v2/ohlc) subscribed only for the anchor symbol and open positions; `candle_bar` frames carry `interval_begin`, OHLC, and volume so the frontend updates the forming bar in place.
+
+**Schema-driven layout:** on WebSocket connect the hub sends a `layout` document built from `perspectives.TelemetryRegistry`. Sources register when measurements arrive; the hub rebroadcasts an updated `layout` when the manifest grows. The React dashboard renders gauges from that manifest only — no hard-coded signal union in the frontend.
+
+**Execution gates:** `broker.Desk` ingests toxicity, fluid, and sentiment measurements into a stress cache. Entry orders tighten slippage under hostile regimes, enter a post-only restricted mode during fluid turbulence, and can be blocked on decisive toxic bluff readings. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters.
+
+**Fluid surface:** the 3D grid uses turbulence-inversely scaled spatial smoothing (sharp peaks in turbulent cells, gentle blending elsewhere), volume-weighted temporal EMA decay, and SNR-driven highlight/hardness on the SciChart surface so anomalies scream through color without turning the mesh into noise.
 
 ## Numeric layer
 
@@ -540,7 +547,7 @@ make build          # → bin/symm
 make run            # build + run (paper defaults)
 make audit          # like run, plus JSONL desk audit log (off by default)
 make test-go        # full test suite
-make test-e2e       # replay-backed integration harness → runs/e2e-report.json
+make test-e2e       # replay-backed integration harness → runs/e2e-report.json (needs -timeout 180s; IDE uses .vscode go.testTimeout)
 make test-frontend  # TypeScript check (src/lib/symm) + Vitest
 make test-cover     # coverage report → runs/coverage.out
 make bench          # package benchmarks
@@ -582,7 +589,7 @@ make profile-replay REPLAY_FILE=runs/capture.jsonl
 
 ### Integration harness (`integration/`)
 
-`make test-e2e` runs a replay-backed end-to-end harness: synthetic JSONL market data is played through `kraken/replay`, forwarded onto the shared `raw` bus, and exercised by the same signal → story → paper-trader stack used in production. Scenarios cover every measurement source (CVD, fluid, hawkes, depthflow, sentiment, correlation, causal, leadlag, liquidity, exhaust, pumpdump, toxicity), playbook entry/exit audits, paper fill inventory updates, and black-swan crash recovery. Granular pass/fail output is written to `runs/e2e-report.json` and echoed in the test log.
+`make test-e2e` runs a replay-backed end-to-end harness: synthetic JSONL market data is played through `kraken/replay`, forwarded onto the shared `raw` bus, and exercised by the same signal → story → paper-trader stack used in production. **Signal validation** uses one scenario per `(source, category)` pair: each replays a dedicated synthetic fixture and requires the **exact** category on the probe symbol (not “any of” the source labels). Playbook, execution, and black-swan scenarios use a **stable fixture playbook** (`market.perspectives.fixture_playbook`) — not `cfg/perspectives.yaml`, which the optimizer rewrites. Granular pass/fail output is written to `runs/e2e-report.json` and echoed in the test log; many signal category rows are expected to fail until their synthetic tapes are tuned.
 
 > [!WARNING]
 > Bare `go test ./...` without the linkname flag fails at link time. Either use `make test-go`, or run once per shell:
@@ -794,7 +801,7 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 | `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                               |
 | `kraken/private/`      | Authenticated REST client                                                            |
 | `kraken/public/`       | Public REST + WebSocket channels                                                     |
-| `broker/`              | Paper and live order execution (`Buy`, `Sell`, `Quote`, preflight gates)             |
+| `broker/`              | Paper and live order execution; stress-aware preflight and restricted desk mode      |
 | `wallet/`              | Balance, inventory, position bindings                                                |
 | `focus/`               | Lock-free open-position symbol set (copy-on-write)                                   |
 | `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                             |
@@ -817,4 +824,4 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 | `DECISION.md`          | Category semantics and signal design rationale                                       |
 | `AGENTS.md`            | Agent contract: tests, benchmarks, style                                             |
 
-**Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.
+**Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Measurements auto-register the source in `TelemetryRegistry` and appear on the dashboard without frontend changes. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.

@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
 	defaultLayoutDocument,
+	gaugeGridLayout,
 	gaugeSourcesFor,
+	hasGaugeSources,
 	isLayoutDocument,
+	mergedGaugePanel,
 } from "#/lib/symm/layout-schema";
 import {
 	createStreamDataProvider,
@@ -24,6 +27,43 @@ describe("layout schema", () => {
 				sources: ["fluid", "hawkes"],
 			}),
 		).toEqual(["fluid", "hawkes"]);
+	});
+
+	it("returns an empty gauge list until the backend manifest arrives", () => {
+		expect(gaugeSourcesFor({ type: "gauge_grid" })).toEqual([]);
+		expect(hasGaugeSources({ type: "gauge_grid" })).toBe(false);
+		expect(hasGaugeSources({ type: "gauge_grid", sources: ["fluid"] })).toBe(
+			true,
+		);
+	});
+
+	it("sizes the gauge grid from source count", () => {
+		expect(gaugeGridLayout(["a", "b", "c", "d", "e"])).toEqual({
+			columns: 4,
+			rows: 2,
+		});
+	});
+
+	it("merges grid and strip panels for heatmaps", () => {
+		const layout = defaultLayoutDocument();
+		layout.panels = [
+			{
+				type: "gauge_grid",
+				sources: ["hawkes", "fluid"],
+				labels: { hawkes: "Hawkes", fluid: "Fluid" },
+			},
+			{
+				type: "gauge_strip",
+				sources: ["toxicity"],
+				labels: { toxicity: "Toxic" },
+			},
+		];
+
+		expect(mergedGaugePanel(layout)?.sources).toEqual([
+			"hawkes",
+			"fluid",
+			"toxicity",
+		]);
 	});
 
 	it("accepts layout payloads with anchor_symbol", () => {

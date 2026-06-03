@@ -12,7 +12,14 @@ LayoutDocument builds the dashboard schema the frontend parses on connect.
 */
 func LayoutDocument() map[string]any {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	if len(perspectives.DashboardGaugeNames()) == 0 {
+		perspectives.BootstrapTelemetryManifest()
+	}
+
 	sources := perspectives.DashboardGaugeNames()
+	gridSources, stripSources := perspectives.SplitDashboardGaugeSources(sources)
+	labels := perspectives.DashboardGaugeLabelMap()
 
 	return map[string]any{
 		"event":         "layout",
@@ -25,8 +32,13 @@ func LayoutDocument() map[string]any {
 			},
 			{
 				"type":    "gauge_grid",
-				"sources": sources,
-				"labels":  perspectives.DashboardGaugeLabelMap(),
+				"sources": gridSources,
+				"labels":  labels,
+			},
+			{
+				"type":    "gauge_strip",
+				"sources": stripSources,
+				"labels":  labels,
 			},
 			{
 				"type":         "trade_grid",

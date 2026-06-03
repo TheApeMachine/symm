@@ -1,43 +1,37 @@
-
-import {
-	AuditDataProvider,
-	createAuditDataProvider,
-} from "#/components/symm/audit-data-provider";
 import {
 	ConfidenceDataProvider,
 	createConfidenceDataProvider,
-} from "#/components/symm/confidence-data-provider";
-import {
-	createDecisionsDataProvider,
-	DecisionsDataProvider,
-} from "#/components/symm/decisions-data-provider";
+} from "#/components/charts/confidence/confidence-data-provider";
 import {
 	createFluidDataProvider,
 	FluidDataProvider,
-} from "#/components/symm/fluid-data-provider";
-import {
-	createOhlcDataProvider,
-	OhlcDataProvider,
-} from "#/components/symm/ohlc-data-provider";
+} from "#/components/charts/fluid/fluid-data-provider";
 import {
 	createPredictionsDataProvider,
 	PredictionsDataProvider,
-} from "#/components/symm/predictions-data-provider";
+} from "#/components/charts/prediction/predictions-data-provider";
+import {
+	AuditDataProvider,
+	createAuditDataProvider,
+} from "#/components/panels/data/audit-data-provider";
+import {
+	createDecisionsDataProvider,
+	DecisionsDataProvider,
+} from "#/components/panels/data/decisions-data-provider";
 import {
 	createTradesDataProvider,
 	TradesDataProvider,
-} from "#/components/symm/trades-data-provider";
+} from "#/components/panels/data/trades-data-provider";
 import {
 	createWalletDataProvider,
 	WalletDataProvider,
-} from "#/components/symm/wallet-data-provider";
+} from "#/components/panels/data/wallet-data-provider";
 
 export type SymmTelemetryStores = {
 	predictions: ReturnType<typeof createPredictionsDataProvider>;
 	audit: ReturnType<typeof createAuditDataProvider>;
 	trades: ReturnType<typeof createTradesDataProvider>;
 	wallet: ReturnType<typeof createWalletDataProvider>;
-	ohlc: ReturnType<typeof createOhlcDataProvider>;
 	fluid: ReturnType<typeof createFluidDataProvider>;
 	confidence: ReturnType<typeof createConfidenceDataProvider>;
 	decisions: ReturnType<typeof createDecisionsDataProvider>;
@@ -48,7 +42,6 @@ export const createSymmTelemetryStores = (): SymmTelemetryStores => ({
 	audit: createAuditDataProvider(),
 	trades: createTradesDataProvider(),
 	wallet: createWalletDataProvider(),
-	ohlc: createOhlcDataProvider(),
 	fluid: createFluidDataProvider(),
 	confidence: createConfidenceDataProvider(),
 	decisions: createDecisionsDataProvider(),
@@ -59,9 +52,7 @@ export const defaultSymmTelemetryStores: SymmTelemetryStores = {
 	audit: AuditDataProvider,
 	trades: TradesDataProvider,
 	wallet: WalletDataProvider,
-	ohlc: OhlcDataProvider,
 	fluid: FluidDataProvider,
 	confidence: ConfidenceDataProvider,
 	decisions: DecisionsDataProvider,
 };
-

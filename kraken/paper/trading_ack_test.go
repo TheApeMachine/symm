@@ -2,6 +2,7 @@ package paper
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
@@ -79,8 +79,10 @@ func TestTradingClientLimitAck(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				select {
 				case frame := <-rawSub.Incoming:
-					if envelope, ok := frame.Value.(public.SocketMessage); ok {
-						t.Logf("late raw channel=%s data=%s", envelope.Channel, string(envelope.Data))
+					if envelope, ok := frame.Value.(map[string]any); ok {
+						channel, _ := envelope["channel"].(string)
+						data, _ := envelope["data"].(json.RawMessage)
+						t.Logf("late raw channel=%s data=%s", channel, string(data))
 					}
 				default:
 					t.Log("no raw frame after timeout")

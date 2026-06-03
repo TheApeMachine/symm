@@ -32,8 +32,7 @@ func TestStoryPlaybookWalkAudit(t *testing.T) {
 		defer viper.Set("market.quote_currency", "")
 		defer trading.ResetDeskReady()
 
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 
 		done := make(chan struct{})
 

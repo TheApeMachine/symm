@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	signalpool "github.com/theapemachine/symm/signal"
 )
 
 // pumpWindow is the recent-volume horizon the lift is measured over — short, because
@@ -143,20 +144,15 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(public.SocketMessage)
+			envelope, ok := message.Value.(map[string]any)
 
 			if !ok {
 				continue
 			}
 
-			switch envelope.Channel {
+			switch envelope["channel"].(string) {
 			case public.TradesChannel:
-				trades, err := market.DecodeTrades(&envelope)
-
-				if err != nil {
-					errnie.Error(err, "pumpdump: decode trades")
-					continue
-				}
+				trades := signalpool.GetTrades(envelope)
 
 				for _, trade := range trades {
 					if err := signal.observe(trade); err != nil {

@@ -31,8 +31,7 @@ func TestNewStory(t *testing.T) {
 
 		sentiment.NewSignal(ctx, pool)
 
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 
 		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
 		convey.So(story.subscribers["measurements"].ID, convey.ShouldEqual, storyMeasurementsSubscriberID)
@@ -68,8 +67,7 @@ func TestStoryGaugeMeanConfidence(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 
 		uiSubscriber := story.ui.Subscribe("test:story:gauge", 8)
 		done := make(chan struct{})
@@ -91,7 +89,7 @@ func TestStoryGaugeMeanConfidence(t *testing.T) {
 			Confidence: 0.2,
 		}})
 
-		convey.		Convey("It should flush gauge clarity for each ingested measurement", func() {
+		convey.Convey("It should flush gauge clarity for each ingested measurement", func() {
 			var last map[string]any
 			deadline := time.After(500 * time.Millisecond)
 
@@ -127,8 +125,7 @@ func TestStoryGaugeTracksLatestMeasurement(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 
 		uiSubscriber := story.ui.Subscribe("test:story:gauge-latest", 8)
 		done := make(chan struct{})
@@ -185,8 +182,7 @@ func TestStoryTickSurvivesBadMeasurement(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ(ctx, 1, 4, nil)
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 
 		uiSubscriber := story.ui.Subscribe("test:story:bad-measurement", 8)
 		done := make(chan struct{})
@@ -237,14 +233,16 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 
 		viper.Set("trading.record.file", recordPath)
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.perspectives.fixture_playbook", true)
 		viper.Set("market.quote_currency", "EUR")
 		trading.MarkDeskReady()
 		defer viper.Set("trading.record.file", "")
 		defer viper.Set("trading.paper.wallet_eur", 0)
+		defer viper.Set("market.perspectives.fixture_playbook", false)
+		defer viper.Set("market.quote_currency", "")
 		defer trading.ResetDeskReady()
 
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 		subscriber := story.raw.Subscribe("test:story:raw", 4)
 
 		done := make(chan struct{})
@@ -254,18 +252,9 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 			close(done)
 		}()
 
-		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategorySystemicSlump,
-			SNR:      1.0,
-			Last:     50_000,
-		}})
-		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryVolumeStarvation,
-			SNR:      1.0,
-			Last:     50_000,
-		}})
+		for _, row := range perspectives.FixturePlaybookEntryMeasurements("BTC/EUR", 50_000) {
+			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: row})
+		}
 
 		convey.Convey("It should publish a perspectives.Action on raw", func() {
 			select {
@@ -296,12 +285,13 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		defer trading.ResetDeskReady()
 
 		viper.Set("trading.paper.wallet_eur", 200.0)
+		viper.Set("market.perspectives.fixture_playbook", true)
 		viper.Set("market.quote_currency", "EUR")
 		defer viper.Set("trading.paper.wallet_eur", 0)
+		defer viper.Set("market.perspectives.fixture_playbook", false)
 		defer viper.Set("market.quote_currency", "")
 
-		story, storyErr := NewStory(ctx, pool, focus.NewSet())
-		convey.So(storyErr, convey.ShouldBeNil)
+		story := NewStory(ctx, pool, focus.NewSet())
 		subscriber := story.raw.Subscribe("test:story:ready", 4)
 
 		done := make(chan struct{})
@@ -312,24 +302,10 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 		}()
 
 		measurements := story.broadcasts["measurements"]
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryVolumeStarvation,
-			SNR:      1.0,
-			Last:     50_000,
-		}})
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
-			SNR:      1.011867,
-			Last:     50_000,
-		}})
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
-			SNR:      1.0,
-			Last:     50_000,
-		}})
+
+		for _, row := range perspectives.FixturePlaybookEntryMeasurements("BTC/EUR", 50_000) {
+			measurements.Send(&qpool.QValue[any]{Value: row})
+		}
 
 		time.Sleep(50 * time.Millisecond)
 
@@ -343,24 +319,9 @@ func TestStoryEntryWaitsForDeskReady(t *testing.T) {
 
 		trading.MarkDeskReady()
 
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "ETH/EUR",
-			Category: perspectives.CategoryVolumeStarvation,
-			SNR:      1.0,
-			Last:     3_000,
-		}})
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "ETH/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
-			SNR:      1.011867,
-			Last:     3_000,
-		}})
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "ETH/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
-			SNR:      1.0,
-			Last:     3_000,
-		}})
+		for _, row := range perspectives.FixturePlaybookEntryMeasurements("ETH/EUR", 3_000) {
+			measurements.Send(&qpool.QValue[any]{Value: row})
+		}
 
 		convey.Convey("It should publish once the desk is ready", func() {
 			select {

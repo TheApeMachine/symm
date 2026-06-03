@@ -3,101 +3,22 @@ package perspectives
 const GaugeFullSigma = 4.0
 
 /*
-DashboardGaugeSources lists signal sources rendered on the gauge grid and signal
-heatmap. Order is stable for layout documents and frontend row indexing.
-*/
-var DashboardGaugeSources = []SourceType{
-	SourceHawkes,
-	SourceFluid,
-	SourcePumpDump,
-	SourceCausal,
-	SourceDepthFlow,
-	SourceLeadLag,
-	SourceLiquidity,
-	SourceSentiment,
-}
-
-var dashboardGaugeLabels = map[SourceType]string{
-	SourceHawkes:    "Hawkes",
-	SourceFluid:     "Fluid",
-	SourcePumpDump:  "Pump",
-	SourceCausal:    "Causal",
-	SourceDepthFlow: "Depth",
-	SourceLeadLag:   "L-Lag",
-	SourceLiquidity: "Liquidity",
-	SourceSentiment: "Sent",
-}
-
-/*
-DashboardGaugeNames returns canonical dashboard source names in layout order.
+DashboardGaugeNames returns registered telemetry sources for layout payloads.
 */
 func DashboardGaugeNames() []string {
-	names := make([]string, 0, len(DashboardGaugeSources))
-
-	for _, source := range DashboardGaugeSources {
-		name := source.String()
-
-		if name == "" {
-			continue
-		}
-
-		names = append(names, name)
-	}
-
-	return names
+	return DefaultTelemetryRegistry().Names()
 }
 
 /*
 DashboardGaugeLabel returns the short UI label for a dashboard source name.
 */
 func DashboardGaugeLabel(name string) string {
-	for _, source := range DashboardGaugeSources {
-		if source.String() == name {
-			if label, ok := dashboardGaugeLabels[source]; ok {
-				return label
-			}
-
-			return name
-		}
-	}
-
-	return name
+	return DefaultTelemetryRegistry().Label(name)
 }
 
 /*
 DashboardGaugeLabelMap returns source-name to label entries for layout payloads.
 */
 func DashboardGaugeLabelMap() map[string]string {
-	labels := make(map[string]string, len(DashboardGaugeSources))
-
-	for _, source := range DashboardGaugeSources {
-		name := source.String()
-
-		if name == "" {
-			continue
-		}
-
-		if label, ok := dashboardGaugeLabels[source]; ok {
-			labels[name] = label
-
-			continue
-		}
-
-		labels[name] = name
-	}
-
-	return labels
-}
-
-/*
-DashboardGaugeSource reports whether name is rendered on the dashboard gauge grid.
-*/
-func DashboardGaugeSource(name string) bool {
-	for _, source := range DashboardGaugeSources {
-		if source.String() == name {
-			return true
-		}
-	}
-
-	return false
+	return DefaultTelemetryRegistry().LabelMap()
 }

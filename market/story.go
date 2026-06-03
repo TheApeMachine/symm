@@ -22,7 +22,6 @@ import (
 
 const (
 	storyMeasurementsSubscriberID = "market:story"
-	storyUIInterval               = 100 * time.Millisecond
 )
 
 /*
@@ -47,7 +46,7 @@ type Story struct {
 	pulseSeq    atomic.Int64
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, error) {
+func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -71,7 +70,8 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, e
 
 		if err != nil {
 			cancel()
-			return nil, fmt.Errorf("story: record file %q: %w", recordPath, err)
+			errnie.Error(fmt.Errorf("story: record file %q: %w", recordPath, err), "story")
+			return nil
 		}
 
 		story.recordFile = fh
@@ -82,7 +82,8 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, e
 
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("story: audit writer: %w", err)
+		errnie.Error(fmt.Errorf("story: audit writer: %w", err), "story")
+		return nil
 	}
 
 	story.auditWriter = auditWriter
@@ -96,9 +97,11 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) (*Story, e
 		storyMeasurementsSubscriberID, 1024,
 	)
 
+	perspectives.BootstrapTelemetryManifest()
+
 	activate.Boot("market/story ready")
 
-	return story, nil
+	return story
 }
 
 /*
@@ -145,10 +148,6 @@ func (story *Story) Tick() error {
 			}
 
 			for source := range latest.bySource {
-				if !perspectives.DashboardGaugeSource(source) {
-					continue
-				}
-
 				clarity, count := latest.meanClarity(source)
 
 				if count == 0 {
@@ -205,9 +204,11 @@ func (story *Story) ingestMeasurement(
 
 	story.ringWindow = AppendRingMeasurement(story.ringWindow, measurement)
 
+	perspectives.DefaultTelemetryRegistry().ObserveMeasurement(measurement)
+
 	source := measurement.Source.String()
 
-	if source != "" && perspectives.DashboardGaugeSource(source) {
+	if source != "" {
 		latest.record(source, measurement.Symbol, measurement.Confidence, measurement.SNR)
 	}
 
@@ -216,7 +217,7 @@ func (story *Story) ingestMeasurement(
 	}
 
 	if story.tree == nil {
-		tree, err := perspectives.NewTree(story.ctx, []perspectives.Measurement{})
+		tree, err := story.loadPlaybookTree()
 
 		if err != nil {
 			return fmt.Errorf("playbook tree: %w", err)
@@ -382,4 +383,12 @@ func (story *Story) Close() error {
 	}
 
 	return closeErr
+}
+
+func (story *Story) loadPlaybookTree() (*perspectives.Tree, error) {
+	if viper.GetBool("market.perspectives.fixture_playbook") {
+		return perspectives.NewTreeFromBranches(story.ctx, perspectives.FixturePlaybookBranches())
+	}
+
+	return perspectives.NewTree(story.ctx, []perspectives.Measurement{})
 }

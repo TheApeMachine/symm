@@ -1,6 +1,8 @@
 package paper
 
 import (
+	"encoding/json"
+
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
@@ -24,7 +26,7 @@ func clOrdIDFromOrder(value any) string {
 	return params.ClOrdID
 }
 
-func rejectedExecution(clOrdID, reason string) public.SocketMessage {
+func rejectedExecution(clOrdID, reason string) map[string]any {
 	payload, err := sonic.Marshal([]user.Execution{{
 		ClOrdID:     clOrdID,
 		ExecType:    "rejected",
@@ -32,24 +34,26 @@ func rejectedExecution(clOrdID, reason string) public.SocketMessage {
 	}})
 
 	if err != nil {
-		return public.SocketMessage{}
+		return nil
 	}
 
-	return public.SocketMessage{
-		Channel: public.ExecutionsChannel,
-		Type:    "update",
-		Data:    payload,
+	return map[string]any{
+		"channel": public.ExecutionsChannel,
+		"type":    "update",
+		"data":    json.RawMessage(payload),
 	}
 }
 
 func (ws *WebSocket) publishOrderAck(
-	message *qpool.QValue[any], out public.SocketMessage,
+	message *qpool.QValue[any], out map[string]any,
 ) {
 	if message == nil || message.Type != public.OrdersChannel {
 		return
 	}
 
-	if out.Channel != "" {
+	channel, _ := out["channel"].(string)
+
+	if channel != "" {
 		trading.PublishLedgerAck(ws.pool, out)
 
 		return

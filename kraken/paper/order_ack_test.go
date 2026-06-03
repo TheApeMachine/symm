@@ -1,6 +1,7 @@
 package paper
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -11,9 +12,12 @@ func TestRejectedExecution(t *testing.T) {
 		message := rejectedExecution("cl-123", "insufficient funds")
 
 		Convey("It should emit an executions update frame", func() {
-			So(message.Channel, ShouldEqual, "executions")
-			So(string(message.Data), ShouldContainSubstring, `"cl_ord_id":"cl-123"`)
-			So(string(message.Data), ShouldContainSubstring, `"exec_type":"rejected"`)
+			channel, _ := message["channel"].(string)
+			data, _ := message["data"].(json.RawMessage)
+
+			So(channel, ShouldEqual, "executions")
+			So(string(data), ShouldContainSubstring, `"cl_ord_id":"cl-123"`)
+			So(string(data), ShouldContainSubstring, `"exec_type":"rejected"`)
 		})
 	})
 }
