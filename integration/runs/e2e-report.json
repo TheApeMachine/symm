@@ -1,22 +1,22 @@
 {
   "pass": false,
-  "started_at": "2026-06-03T00:23:13.300744+02:00",
-  "elapsed": 41055956292,
+  "started_at": "2026-06-03T02:32:28.090969+02:00",
+  "elapsed": 50619864208,
   "scenarios": [
     {
       "id": "infra.replay_raw_bus",
       "name": "Replay websocket feeds the raw bus",
       "pass": true,
-      "started_at": "2026-06-03T00:23:13.301247+02:00",
-      "elapsed": 552407584,
+      "started_at": "2026-06-03T02:32:28.091236+02:00",
+      "elapsed": 855215375,
       "checks": [
         {
           "id": "raw.frames",
           "name": "Raw bus received replay frames",
           "pass": true,
-          "detail": "raw_frames=7",
+          "detail": "raw_frames=5",
           "context": {
-            "raw_frames": 7
+            "raw_frames": 5
           }
         },
         {
@@ -28,29 +28,29 @@
       ]
     },
     {
-      "id": "infra.all_signals_manifest",
-      "name": "Full baseline tape activates every measurement source",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:13.854748+02:00",
-      "elapsed": 11157481416,
+      "id": "infra.fast_signals_manifest",
+      "name": "Baseline replay activates fast-path measurement sources",
+      "pass": true,
+      "started_at": "2026-06-03T02:32:28.947155+02:00",
+      "elapsed": 2450820250,
       "checks": [
         {
           "id": "signals.manifest",
-          "name": "Every signal source published at least one measurement",
-          "pass": false,
-          "detail": "missing=[correlation leadlag]",
+          "name": "Fast-path sources published at least one measurement",
+          "pass": true,
+          "detail": "missing=[]",
           "context": {
             "counts": {
               "causal": 1,
-              "cvd": 345,
-              "depthflow": 361,
-              "exhaustion": 185,
-              "fluid": 419,
-              "hawkes": 34,
-              "liquidity": 59,
-              "pumpdump": 345,
-              "sentiment": 63,
-              "toxicity": 45
+              "cvd": 225,
+              "depthflow": 242,
+              "exhaustion": 216,
+              "fluid": 259,
+              "hawkes": 1,
+              "liquidity": 12,
+              "pumpdump": 225,
+              "sentiment": 16,
+              "toxicity": 26
             }
           }
         }
@@ -60,8 +60,8 @@
       "id": "signal.cvd_flow",
       "name": "CVD publishes executed-flow measurement from synthetic tape",
       "pass": true,
-      "started_at": "2026-06-03T00:23:25.013061+02:00",
-      "elapsed": 752825708,
+      "started_at": "2026-06-03T02:32:31.398701+02:00",
+      "elapsed": 1058249708,
       "checks": [
         {
           "id": "cvd.source",
@@ -93,8 +93,8 @@
       "id": "signal.fluid_mechanics",
       "name": "Fluid publishes mechanical perspective from synthetic book",
       "pass": true,
-      "started_at": "2026-06-03T00:23:25.766527+02:00",
-      "elapsed": 750427667,
+      "started_at": "2026-06-03T02:32:32.457547+02:00",
+      "elapsed": 1058203167,
       "checks": [
         {
           "id": "fluid.source",
@@ -124,8 +124,8 @@
       "id": "signal.hawkes_burst",
       "name": "Hawkes fits a clustered trade burst",
       "pass": true,
-      "started_at": "2026-06-03T00:23:26.517342+02:00",
-      "elapsed": 953009042,
+      "started_at": "2026-06-03T02:32:33.516588+02:00",
+      "elapsed": 1334319958,
       "checks": [
         {
           "id": "hawkes.source",
@@ -155,8 +155,8 @@
       "id": "signal.depthflow_imbalance",
       "name": "Depthflow publishes depth-pressure reading",
       "pass": true,
-      "started_at": "2026-06-03T00:23:27.470932+02:00",
-      "elapsed": 751642125,
+      "started_at": "2026-06-03T02:32:34.851395+02:00",
+      "elapsed": 1050759584,
       "checks": [
         {
           "id": "depthflow.source",
@@ -186,8 +186,8 @@
       "id": "signal.sentiment_slump",
       "name": "Sentiment classifies systemic slump under weak breadth",
       "pass": true,
-      "started_at": "2026-06-03T00:23:28.222928+02:00",
-      "elapsed": 750637916,
+      "started_at": "2026-06-03T02:32:35.902785+02:00",
+      "elapsed": 1050583417,
       "checks": [
         {
           "id": "sentiment.category",
@@ -205,8 +205,8 @@
       "id": "signal.liquidity_robust",
       "name": "Liquidity ranks symbol versus peer quote volume",
       "pass": true,
-      "started_at": "2026-06-03T00:23:28.973808+02:00",
-      "elapsed": 752280250,
+      "started_at": "2026-06-03T02:32:36.954432+02:00",
+      "elapsed": 1051029500,
       "checks": [
         {
           "id": "liquidity.category",
@@ -227,8 +227,8 @@
       "id": "signal.pumpdump_lift",
       "name": "Pumpdump detects developing lift from rising buy tape",
       "pass": true,
-      "started_at": "2026-06-03T00:23:29.726599+02:00",
-      "elapsed": 852609958,
+      "started_at": "2026-06-03T02:32:38.006088+02:00",
+      "elapsed": 1154699583,
       "checks": [
         {
           "id": "pumpdump.source",
@@ -261,18 +261,19 @@
     {
       "id": "signal.exhaust_thinning",
       "name": "Exhaust detects spread widening and depth thinning",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:30.579579+02:00",
-      "elapsed": 851519666,
+      "pass": true,
+      "started_at": "2026-06-03T02:32:39.161347+02:00",
+      "elapsed": 1151884708,
       "checks": [
         {
           "id": "exhaust.source",
           "name": "Exhaust measurement observed",
-          "pass": false,
+          "pass": true,
           "detail": "source=exhaustion symbol=SYN/EUR last=0.0000",
           "context": {
             "categories": [
-              "fragile_expansion"
+              "fragile_expansion",
+              "mechanical_collapse"
             ]
           }
         },
@@ -280,10 +281,11 @@
           "id": "exhaust.category",
           "name": "Exhaust assigns a decay category",
           "pass": true,
-          "detail": "matched fragile_expansion",
+          "detail": "matched mechanical_collapse",
           "context": {
             "categories": [
-              "fragile_expansion"
+              "fragile_expansion",
+              "mechanical_collapse"
             ]
           }
         }
@@ -293,8 +295,8 @@
       "id": "signal.causal_structure",
       "name": "Causal publishes structural reading across the cross-section",
       "pass": true,
-      "started_at": "2026-06-03T00:23:31.431625+02:00",
-      "elapsed": 1352285584,
+      "started_at": "2026-06-03T02:32:40.314025+02:00",
+      "elapsed": 1654432542,
       "checks": [
         {
           "id": "causal.source",
@@ -323,22 +325,18 @@
     {
       "id": "signal.leadlag_stall",
       "name": "Leadlag publishes anchor stall when anchor is flat",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:32.784542+02:00",
-      "elapsed": 1051956875,
+      "pass": true,
+      "started_at": "2026-06-03T02:32:41.969196+02:00",
+      "elapsed": 8117605083,
       "checks": [
         {
           "id": "leadlag.category",
           "name": "Leadlag assigns anchor stall on flat anchor",
-          "pass": false,
-          "detail": "no expected category observed",
+          "pass": true,
+          "detail": "matched anchor_stall",
           "context": {
-            "categories": [],
-            "expected": [
-              "anchor_stall",
-              "inefficient_lag",
-              "synchronized_drift",
-              "decoupled_move"
+            "categories": [
+              "anchor_stall"
             ]
           }
         }
@@ -347,22 +345,18 @@
     {
       "id": "signal.correlation_herd",
       "name": "Correlation classifies coordinated cross-section movement",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:33.837289+02:00",
-      "elapsed": 10151089042,
+      "pass": true,
+      "started_at": "2026-06-03T02:32:50.087516+02:00",
+      "elapsed": 10718178458,
       "checks": [
         {
           "id": "correlation.category",
           "name": "Correlation assigns herd or stress category",
-          "pass": false,
-          "detail": "no expected category observed",
+          "pass": true,
+          "detail": "matched systemic_herd",
           "context": {
-            "categories": [],
-            "expected": [
-              "systemic_herd",
-              "decoupled_alpha",
-              "stochastic_noise",
-              "divergent_stress"
+            "categories": [
+              "systemic_herd"
             ]
           }
         }
@@ -372,8 +366,8 @@
       "id": "signal.toxicity_bluff",
       "name": "Toxicity flags near-touch cancel-heavy book updates",
       "pass": true,
-      "started_at": "2026-06-03T00:23:43.988999+02:00",
-      "elapsed": 851365291,
+      "started_at": "2026-06-03T02:33:00.806192+02:00",
+      "elapsed": 1150948583,
       "checks": [
         {
           "id": "toxicity.source",
@@ -402,9 +396,9 @@
     {
       "id": "playbook.limit_entry",
       "name": "Perspective tree publishes limit entry on raw",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:44.841256+02:00",
-      "elapsed": 752433000,
+      "pass": true,
+      "started_at": "2026-06-03T02:33:01.957782+02:00",
+      "elapsed": 1060879625,
       "checks": [
         {
           "id": "playbook.action",
@@ -415,10 +409,10 @@
         {
           "id": "playbook.audit",
           "name": "Playbook walk audit records limit verdict",
-          "pass": false,
-          "detail": "playbook walk audit row not found",
+          "pass": true,
+          "detail": "audit verdict=limit",
           "context": {
-            "audit_rows": 0
+            "block_reason": ""
           }
         }
       ]
@@ -426,9 +420,9 @@
     {
       "id": "playbook.settle_holding",
       "name": "Holding observation routes to settle_position",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:45.594199+02:00",
-      "elapsed": 751226416,
+      "pass": true,
+      "started_at": "2026-06-03T02:33:03.019263+02:00",
+      "elapsed": 1055691541,
       "checks": [
         {
           "id": "playbook.exit",
@@ -439,10 +433,10 @@
         {
           "id": "playbook.exit_audit",
           "name": "Playbook walk audit records settle verdict",
-          "pass": false,
-          "detail": "playbook walk audit row not found",
+          "pass": true,
+          "detail": "audit verdict=settle_position",
           "context": {
-            "audit_rows": 0
+            "block_reason": ""
           }
         }
       ]
@@ -451,9 +445,15 @@
       "id": "execution.limit_fill_inventory",
       "name": "Limit entry fills through paper matcher and updates inventory",
       "pass": false,
-      "started_at": "2026-06-03T00:23:46.345716+02:00",
-      "elapsed": 2651719125,
+      "started_at": "2026-06-03T02:33:04.075555+02:00",
+      "elapsed": 7862553250,
       "checks": [
+        {
+          "id": "execution.engine",
+          "name": "Trader did not fail before scenario cancel",
+          "pass": true,
+          "detail": "ok"
+        },
         {
           "id": "execution.action",
           "name": "Limit entry action observed on raw",
@@ -463,28 +463,27 @@
         {
           "id": "execution.fill",
           "name": "Trader publishes fill frame",
-          "pass": false,
-          "detail": "no fill ui event for symbol",
-          "context": {
-            "fills": 0
-          }
+          "pass": true,
+          "detail": "qty=2.00000000 price=100.0000"
         },
         {
           "id": "execution.inventory",
           "name": "Paper wallet holds SYN base inventory",
-          "pass": false,
-          "detail": "SYN=0.00000000",
+          "pass": true,
+          "detail": "SYN=2.00000000",
           "context": {
-            "inventory": {}
+            "inventory": {
+              "SYN": 2
+            }
           }
         },
         {
           "id": "execution.cash",
           "name": "Cash balance decreases after entry fill",
           "pass": false,
-          "detail": "balance=200.0000",
+          "detail": "balance=-0.5000",
           "context": {
-            "balance": 200
+            "balance": -0.5
           }
         }
       ]
@@ -493,8 +492,8 @@
       "id": "execution.settle_reduces_inventory",
       "name": "Settle action exits held inventory through paper desk",
       "pass": true,
-      "started_at": "2026-06-03T00:23:48.997699+02:00",
-      "elapsed": 2653129667,
+      "started_at": "2026-06-03T02:33:11.93876+02:00",
+      "elapsed": 3457327917,
       "checks": [
         {
           "id": "execution.exit",
@@ -508,8 +507,8 @@
       "id": "black_swan.crash_recovery",
       "name": "System continues measuring through crash and wide spread",
       "pass": true,
-      "started_at": "2026-06-03T00:23:51.651198+02:00",
-      "elapsed": 1352854375,
+      "started_at": "2026-06-03T02:33:15.39697+02:00",
+      "elapsed": 1651431209,
       "checks": [
         {
           "id": "black_swan.desk",
@@ -525,8 +524,8 @@
           "context": {
             "categories": [
               "laminar",
-              "viscous",
-              "turbulent"
+              "turbulent",
+              "viscous"
             ]
           }
         },
@@ -558,16 +557,16 @@
           "id": "black_swan.spread",
           "name": "Wide-spread book frames were ingested",
           "pass": true,
-          "detail": "raw_frames=18"
+          "detail": "raw_frames=16"
         }
       ]
     },
     {
       "id": "black_swan.post_crash_entry_gate",
       "name": "Playbook still evaluates entries after crash without tripping halt",
-      "pass": false,
-      "started_at": "2026-06-03T00:23:53.004613+02:00",
-      "elapsed": 1352713625,
+      "pass": true,
+      "started_at": "2026-06-03T02:33:17.048949+02:00",
+      "elapsed": 1661382834,
       "checks": [
         {
           "id": "black_swan.halt",
@@ -578,10 +577,11 @@
         {
           "id": "black_swan.playbook_audit",
           "name": "Playbook walk audit emitted after crash",
-          "pass": false,
-          "detail": "no playbook_walk audit after crash",
+          "pass": true,
+          "detail": "playbook_walk logged",
           "context": {
-            "audit_rows": 0
+            "block_reason": "",
+            "verdict": null
           }
         }
       ]

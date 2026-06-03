@@ -105,7 +105,7 @@ func TestSelectWalkForwardBest(t *testing.T) {
 			{AdjustedScore: 0.1, Branches: strong},
 		}
 
-		selected := SelectWalkForwardBest(guard, rows, candidates)
+		selected := SelectWalkForwardBest(guard, rows, candidates, nil)
 
 		convey.Convey("It should prefer the stronger holdout tree over higher IS score", func() {
 			convey.So(len(selected), convey.ShouldBeGreaterThan, 0)

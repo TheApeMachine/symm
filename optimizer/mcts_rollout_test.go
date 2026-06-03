@@ -35,6 +35,7 @@ func TestScoreBranches(t *testing.T) {
 			GuardOptions{},
 			nil,
 			MCTSOptions{Iterations: 1},
+			nil,
 		)
 
 		branches := perspectives.BranchList{{

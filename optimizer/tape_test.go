@@ -116,7 +116,7 @@ func TestTreeSearchApplyMoveNestsGates(t *testing.T) {
 
 		search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{
 			MaxReasoningSteps: 8,
-		})
+		}, nil)
 		entry := perspectives.BranchList{{
 			Category:    perspectives.CategoryLaminar,
 			Observation: perspectives.ObservationNotHolding,

@@ -3,6 +3,7 @@ package paper
 import (
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/public"
@@ -10,6 +11,12 @@ import (
 )
 
 func (ws *WebSocket) scheduleExchangeDelivery(delivery func()) {
+	if viper.GetString("trading.model") == "paper" {
+		delivery()
+
+		return
+	}
+
 	ws.scheduleAfter(public.SharedNetworkLatency().ExchangeRoundTrip(), delivery)
 }
 

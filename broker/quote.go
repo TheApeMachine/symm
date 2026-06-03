@@ -33,6 +33,7 @@ QuoteCache ingests public ticker and book frames from the raw bus.
 */
 type QuoteCache struct {
 	ctx            context.Context
+	cancel         context.CancelFunc
 	mu             sync.RWMutex
 	quotes         map[string]Quote
 	books          map[string]market.Book
@@ -41,25 +42,52 @@ type QuoteCache struct {
 }
 
 var (
-	quoteCacheOnce sync.Once
-	sharedQuotes   *QuoteCache
+	quoteCacheMu sync.Mutex
+	sharedQuotes *QuoteCache
 )
 
 /*
-EnsureQuoteCache returns the process-wide quote cache, starting ingestion once.
+EnsureQuoteCache returns the process-wide quote cache bound to a live context.
 */
 func EnsureQuoteCache(ctx context.Context, pool *qpool.Q) *QuoteCache {
-	quoteCacheOnce.Do(func() {
-		sharedQuotes = NewQuoteCache(ctx, pool)
-		go sharedQuotes.run(pool)
-	})
+	quoteCacheMu.Lock()
+	defer quoteCacheMu.Unlock()
+
+	if sharedQuotes != nil && sharedQuotes.ctx.Err() == nil {
+		return sharedQuotes
+	}
+
+	if sharedQuotes != nil {
+		sharedQuotes.cancel()
+	}
+
+	sharedQuotes = NewQuoteCache(ctx, pool)
+	go sharedQuotes.run(pool)
 
 	return sharedQuotes
 }
 
+/*
+ResetQuoteCacheForTest tears down the shared cache between isolated harness runs.
+*/
+func ResetQuoteCacheForTest() {
+	quoteCacheMu.Lock()
+	defer quoteCacheMu.Unlock()
+
+	if sharedQuotes == nil {
+		return
+	}
+
+	sharedQuotes.cancel()
+	sharedQuotes = nil
+}
+
 func NewQuoteCache(ctx context.Context, _ *qpool.Q) *QuoteCache {
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &QuoteCache{
 		ctx:    ctx,
+		cancel: cancel,
 		quotes: make(map[string]Quote),
 		books:  make(map[string]market.Book),
 	}

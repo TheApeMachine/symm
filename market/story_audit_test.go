@@ -45,19 +45,13 @@ func TestStoryPlaybookWalkAudit(t *testing.T) {
 		measurements := story.broadcasts["measurements"]
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryVolumeStarvation,
+			Category: perspectives.CategorySystemicSlump,
 			SNR:      1.0,
 			Last:     50_000,
 		}})
 		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
 			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
-			SNR:      1.011867,
-			Last:     50_000,
-		}})
-		measurements.Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryLiquidityVacuum,
+			Category: perspectives.CategoryVolumeStarvation,
 			SNR:      1.0,
 			Last:     50_000,
 		}})

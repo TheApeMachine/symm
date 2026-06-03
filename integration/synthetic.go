@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	testSymbolPrimary   = "SYN/EUR"
-	testSymbolSecondary = "LAG/EUR"
-	testSymbolLeader    = "LEAD/EUR"
+	testSymbolPrimary          = "SYN/EUR"
+	testSymbolSecondary        = "LAG/EUR"
+	testSymbolLeader           = "LEAD/EUR"
+	correlationWarmupBatches   = 33
 )
 
 /*
@@ -300,45 +301,47 @@ func (builder *CaptureBuilder) AppendCausalCrossSection() {
 }
 
 func (builder *CaptureBuilder) AppendLeadLagStall() {
-	for index := range 20 {
-		at := builder.origin.Add(time.Duration(index) * 5 * time.Minute)
+	start := time.Now().UTC().Add(-90 * time.Minute)
+
+	for index := range 16 {
+		at := start.Add(time.Duration(index) * 5 * time.Minute)
 		builder.AppendTickerAt(testSymbolLeader, 100, 99, 101, 0, at)
 		builder.AppendTickerAt(testSymbolPrimary, 100.01, 99, 101, 0.5, at)
 	}
 }
 
-func correlationPostReplayTrades() []market.TradeUpdate {
+func correlationPostReplayTradeBatches() [][]market.TradeUpdate {
 	prices := map[string]float64{
 		testSymbolPrimary:   100,
 		testSymbolSecondary: 50,
 		testSymbolLeader:    75,
 	}
-	origin := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
-	trades := make([]market.TradeUpdate, 0, 40*3)
+	batches := make([][]market.TradeUpdate, 0, correlationWarmupBatches)
 
-	for batch := range 33 {
-		at := origin.Add(time.Duration(batch) * 260 * time.Millisecond)
+	for range correlationWarmupBatches {
+		batch := make([]market.TradeUpdate, 0, len(prices))
 
 		for symbol, price := range prices {
-			trades = append(trades, market.TradeUpdate{
-				Symbol:    symbol,
-				Side:      "buy",
-				Price:     price,
-				Qty:       1,
-				Timestamp: at,
+			batch = append(batch, market.TradeUpdate{
+				Symbol: symbol,
+				Side:   "buy",
+				Price:  price,
+				Qty:    1,
 			})
 			prices[symbol] = price * 1.02
 		}
+
+		batches = append(batches, batch)
 	}
 
-	return trades
+	return batches
 }
 
 func leadLagPostReplayTickers() []market.TickerUpdate {
-	origin := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
-	tickers := make([]market.TickerUpdate, 0, 40)
+	origin := time.Now().UTC().Add(-75 * time.Minute)
+	tickers := make([]market.TickerUpdate, 0, 28)
 
-	for index := range 20 {
+	for index := range 14 {
 		at := origin.Add(time.Duration(index) * 5 * time.Minute)
 		tickers = append(tickers, market.TickerUpdate{
 			Symbol: testSymbolLeader, Last: 100, Bid: 99, Ask: 101,

@@ -180,9 +180,20 @@ func (client *Client) Halted() bool {
 send publishes an order frame on the private broadcast.
 */
 func (client *Client) send(payload fiber.Map) error {
+	frame := map[string]any{
+		"method": payload["method"],
+	}
+
+	switch params := payload["params"].(type) {
+	case AddParams:
+		frame["params"] = params
+	default:
+		frame["params"] = payload["params"]
+	}
+
 	client.orders.Send(&qpool.QValue[any]{
 		Type:  public.OrdersChannel,
-		Value: payload,
+		Value: frame,
 	})
 
 	return nil

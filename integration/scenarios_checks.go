@@ -205,9 +205,8 @@ func playbookLiquidityVacuumMeasurements(
 	last float64,
 ) []perspectives.Measurement {
 	return []perspectives.Measurement{
+		{Symbol: symbol, Category: perspectives.CategorySystemicSlump, SNR: 1.0, Last: last},
 		{Symbol: symbol, Category: perspectives.CategoryVolumeStarvation, SNR: 1.0, Last: last},
-		{Symbol: symbol, Category: perspectives.CategoryLiquidityVacuum, SNR: 1.011867, Last: last},
-		{Symbol: symbol, Category: perspectives.CategoryLiquidityVacuum, SNR: 1.0, Last: last},
 	}
 }
 
@@ -216,6 +215,6 @@ func playbookMedianDepthExitMeasurements(
 	last float64,
 ) []perspectives.Measurement {
 	return []perspectives.Measurement{
-		{Symbol: symbol, Category: perspectives.CategoryMedianDepth, SNR: 1.5, Last: last},
+		{Symbol: symbol, Category: perspectives.CategorySystemicBeta, SNR: 1.5, Last: last},
 	}
 }

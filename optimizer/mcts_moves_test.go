@@ -27,6 +27,7 @@ func TestGenerateAllMoves(t *testing.T) {
 			GuardOptions{},
 			nil,
 			MCTSOptions{Iterations: 1},
+			nil,
 		)
 
 		moves := search.generateAllMoves()
@@ -48,6 +49,7 @@ func TestApplyMove(t *testing.T) {
 			GuardOptions{},
 			nil,
 			MCTSOptions{Iterations: 1},
+			nil,
 		)
 
 		start := perspectives.BranchList{{

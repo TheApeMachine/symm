@@ -27,6 +27,7 @@ func TestSampleAdversarialMove(t *testing.T) {
 			GuardOptions{},
 			nil,
 			MCTSOptions{Iterations: 1},
+			nil,
 		)
 
 		moves := search.allMoves()

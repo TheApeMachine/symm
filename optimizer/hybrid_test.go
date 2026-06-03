@@ -140,7 +140,7 @@ func TestHybridTreeSearchSeeds(t *testing.T) {
 		search := NewHybridTreeSearch(ctx, &profile, rows, GuardOptions{}, seeds, MCTSOptions{
 			Iterations:        8,
 			MaxReasoningSteps: 4,
-		})
+		}, nil)
 
 		convey.Convey("It should pre-populate the MCTS root with seeds", func() {
 			convey.So(len(search.root.children), convey.ShouldEqual, 1)

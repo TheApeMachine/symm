@@ -20,7 +20,10 @@ func TestIntegrationE2E(t *testing.T) {
 		ConfigureViper(filepath.Join(auditDir, "suite-audit.jsonl"))
 
 		reportPath := filepath.Join("runs", "e2e-report.json")
-		report := RunSuite(context.Background(), auditDir, allScenarios())
+		suiteCtx, suiteCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer suiteCancel()
+
+		report := RunSuite(suiteCtx, auditDir, allScenarios())
 
 		_ = os.MkdirAll(filepath.Dir(reportPath), 0o755)
 		writeErr := report.WriteJSON(reportPath)
@@ -57,12 +60,19 @@ func RunSuite(parent context.Context, auditDir string, scenarios []Scenario) *Su
 		ConfigureViper(scenarioAudit)
 
 		builder := buildCapture(scenario)
-		ctx, cancel := context.WithCancel(parent)
 
-		harness, err := NewHarness(ctx, builder.Reader(), scenarioAudit)
+		runTimeout := scenario.RunTimeout
+
+		if runTimeout <= 0 {
+			runTimeout = 6 * time.Second
+		}
+
+		scenarioCtx, scenarioCancel := context.WithTimeout(parent, runTimeout)
+
+		harness, err := NewHarness(scenarioCtx, builder.Reader(), scenarioAudit)
 
 		if err != nil {
-			cancel()
+			scenarioCancel()
 			suite.Scenarios = append(suite.Scenarios, ScenarioReport{
 				ID:   scenario.ID,
 				Name: scenario.Name,
@@ -80,7 +90,7 @@ func RunSuite(parent context.Context, auditDir string, scenarios []Scenario) *Su
 
 		suite.Scenarios = append(suite.Scenarios, harness.RunScenario(scenario))
 		harness.Close()
-		cancel()
+		scenarioCancel()
 		resetTradingReady()
 	}
 

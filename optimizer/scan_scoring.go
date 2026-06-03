@@ -1,8 +1,11 @@
 package optimizer
 
 import (
+	"context"
+	"errors"
 	"sync"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -47,6 +50,58 @@ func (search *ScanSearch) topScoresClone() []CandidateScore {
 func (search *ScanSearch) score(
 	generate func(send func(scanCandidate) bool),
 ) {
+	if search.pool != nil {
+		search.scoreWithPool(generate)
+
+		return
+	}
+
+	search.scoreWithWorkers(generate)
+}
+
+func (search *ScanSearch) scoreWithPool(
+	generate func(send func(scanCandidate) bool),
+) {
+	tasks := make([]chan *qpool.QValue[any], 0, search.options.Workers*2)
+
+	generate(func(candidate scanCandidate) bool {
+		index, ok := search.reserveCandidate()
+
+		if !ok {
+			return false
+		}
+
+		candidate.index = index
+		tasks = append(tasks, search.pool.ScheduleFast(search.ctx, func(context.Context) (any, error) {
+			return search.scoreCandidate(candidate), nil
+		}))
+
+		return true
+	})
+
+	var err error
+
+	for _, task := range tasks {
+		value := <-task
+		err = errors.Join(err, value.Error)
+
+		if value.Error != nil {
+			continue
+		}
+
+		result, ok := value.Value.(scanResult)
+
+		if !ok {
+			continue
+		}
+
+		search.accept(result)
+	}
+}
+
+func (search *ScanSearch) scoreWithWorkers(
+	generate func(send func(scanCandidate) bool),
+) {
 	candidates := make(chan scanCandidate, search.options.Workers*2)
 	results := make(chan scanResult, search.options.Workers*2)
 	var workers sync.WaitGroup
@@ -57,21 +112,7 @@ func (search *ScanSearch) score(
 			defer workers.Done()
 
 			for candidate := range candidates {
-				canonical := perspectives.CanonicalPlaybookBranches(
-					candidate.branches,
-				)
-				replay := NewReplaySimulationWithTape(
-					search.ctx, canonical, search.tape,
-				).Result()
-				rawScore := replay.Score
-
-				results <- scanResult{
-					candidate:     candidate,
-					branches:      canonical,
-					rawScore:      rawScore,
-					adjustedScore: search.guard.AdjustedScore(rawScore, canonical),
-					closedTrades:  replay.ClosedTrades,
-				}
+				results <- search.scoreCandidate(candidate)
 			}
 		}()
 	}
@@ -96,6 +137,21 @@ func (search *ScanSearch) score(
 
 	for result := range results {
 		search.accept(result)
+	}
+}
+
+func (search *ScanSearch) scoreCandidate(candidate scanCandidate) scanResult {
+	canonical := perspectives.CanonicalPlaybookBranches(candidate.branches)
+	replay := NewReplaySimulationWithTape(
+		search.ctx, canonical, search.tape,
+	).Result()
+
+	return scanResult{
+		candidate:     candidate,
+		branches:      canonical,
+		rawScore:      replay.Score,
+		adjustedScore: search.guard.AdjustedScore(replay.Score, canonical),
+		closedTrades:  replay.ClosedTrades,
 	}
 }
 

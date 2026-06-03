@@ -3,6 +3,7 @@ package optimizer
 import (
 	"context"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -97,6 +98,9 @@ func TuneMeasurements(
 
 	TuneLog("precompiling replay tape")
 
+	pool := qpool.NewQ(ctx, 1, options.Workers, qpool.NewConfig())
+	defer pool.Close()
+
 	tape := PrecompileTape(rows)
 	budget := DeriveSearchBudget(&tuner.profile, tape, options.Workers)
 
@@ -155,6 +159,7 @@ func TuneMeasurements(
 		MaxReasoningSteps: options.MaxReasoningSteps,
 		Guard:             options.Guard,
 		Budget:            budget,
+		Pool:              pool,
 	}
 
 	var stats ScanStats
@@ -201,6 +206,7 @@ func TuneMeasurements(
 				guard,
 				rows,
 				search.walkForwardFinalists(),
+				pool,
 			)
 		}
 	}

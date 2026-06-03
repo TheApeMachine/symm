@@ -129,3 +129,26 @@ func TestEnsureQuoteCache(t *testing.T) {
 		})
 	})
 }
+
+func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
+	Convey("Given a canceled quote-cache context", t, func() {
+		firstCtx, firstCancel := context.WithCancel(context.Background())
+		firstPool := qpool.NewQ(firstCtx, 1, 4, nil)
+
+		first := EnsureQuoteCache(firstCtx, firstPool)
+		firstCancel()
+		ResetQuoteCacheForTest()
+
+		secondCtx, secondCancel := context.WithCancel(context.Background())
+		defer secondCancel()
+
+		secondPool := qpool.NewQ(secondCtx, 1, 4, nil)
+		defer secondPool.Close()
+
+		second := EnsureQuoteCache(secondCtx, secondPool)
+
+		Convey("It should construct a new cache instance", func() {
+			So(second, ShouldNotEqual, first)
+		})
+	})
+}

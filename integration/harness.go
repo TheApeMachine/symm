@@ -10,10 +10,11 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/private"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/replay"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
@@ -120,7 +121,6 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		toxicity.NewToxicity(ctx, pool),
 		story,
 		crypto,
-		private.NewWebSocket(ctx, pool, "", ""),
 	); err != nil {
 		cancel()
 		pool.Close()
@@ -172,13 +172,11 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		close(engineDone)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	harness.sleep(150 * time.Millisecond)
 
 	for _, symbol := range scenario.HoldingSymbols {
 		harness.streams.Add(symbol)
 	}
-
-	harness.publishDirectMeasurements(scenario.DirectMeasurements)
 
 	replayDone := make(chan error, 1)
 
@@ -213,13 +211,15 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		})
 	}
 
+	reloadIntegrationLatencyProfile()
+
 	postDelay := scenario.PostReplayDelay
 
 	if postDelay <= 0 {
 		postDelay = 300 * time.Millisecond
 	}
 
-	time.Sleep(postDelay)
+	harness.sleep(postDelay)
 
 	pace := scenario.PostReplayPace
 
@@ -227,14 +227,59 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		pace = 50 * time.Millisecond
 	}
 
-	for _, trade := range scenario.PostReplayTrades {
-		harness.InjectTrade(trade)
-		time.Sleep(pace)
-	}
-
 	for _, ticker := range scenario.PostReplayTickers {
 		harness.InjectTicker(ticker)
-		time.Sleep(pace)
+		harness.sleep(pace)
+	}
+
+	if len(scenario.DirectMeasurements) > 0 {
+		for _, ticker := range scenario.PreDirectTickers {
+			harness.InjectTicker(ticker)
+			harness.sleep(pace)
+		}
+
+		for _, book := range scenario.PreDirectBooks {
+			harness.InjectBook(book)
+			harness.sleep(pace)
+		}
+
+		harness.waitDeskReady(3 * time.Second)
+		harness.publishDirectMeasurements(scenario.DirectMeasurements)
+
+		postOrderDelay := scenario.PostOrderDelay
+
+		if postOrderDelay <= 0 {
+			postOrderDelay = 500 * time.Millisecond
+		}
+
+		if len(scenario.PostReplayTrades) > 0 ||
+			len(scenario.PostReplayTradeBatches) > 0 ||
+			len(scenario.PostOrderTickers) > 0 {
+			harness.sleep(postOrderDelay)
+		}
+	}
+
+	for _, batch := range scenario.PostReplayTradeBatches {
+		for _, trade := range batch {
+			harness.InjectTrade(trade)
+		}
+
+		harness.sleep(pace)
+	}
+
+	for _, book := range scenario.PostOrderBooks {
+		harness.InjectBook(book)
+		harness.sleep(pace)
+	}
+
+	for _, ticker := range scenario.PostOrderTickers {
+		harness.InjectTicker(ticker)
+		harness.sleep(pace)
+	}
+
+	for _, trade := range scenario.PostReplayTrades {
+		harness.InjectTrade(trade)
+		harness.sleep(pace)
 	}
 
 	settleDelay := scenario.SettleDelay
@@ -243,7 +288,7 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 		settleDelay = 400 * time.Millisecond
 	}
 
-	time.Sleep(settleDelay)
+	harness.sleep(settleDelay)
 	harness.cancel()
 	<-engineDone
 
@@ -276,13 +321,57 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 func (harness *Harness) publishDirectMeasurements(rows []perspectives.Measurement) {
 	for _, row := range rows {
 		harness.measureBus.Send(&qpool.QValue[any]{Value: row})
+		harness.sleep(5 * time.Millisecond)
+	}
+}
+
+func (harness *Harness) sleep(duration time.Duration) {
+	if duration <= 0 {
+		return
+	}
+
+	select {
+	case <-harness.ctx.Done():
+	case <-time.After(duration):
+	}
+}
+
+func (harness *Harness) waitDeskReady(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for !trading.DeskReady() {
+		if time.Now().After(deadline) {
+			return
+		}
+
+		harness.sleep(10 * time.Millisecond)
 	}
 }
 
 /*
 ConfigureViper sets paper/replay-friendly defaults for integration runs.
 */
+func integrationLatencyProfile() public.LatencyProfile {
+	return public.LatencyProfile{
+		RTTNS:     (2 * time.Millisecond).Nanoseconds(),
+		OneWayNS:  time.Millisecond.Nanoseconds(),
+		Samples:   1,
+		UpdatedAt: time.Now().UTC(),
+	}
+}
+
+func reloadIntegrationLatencyProfile() {
+	public.SharedNetworkLatency().Reset()
+	public.SharedNetworkLatency().LoadProfile(integrationLatencyProfile())
+}
+
 func ConfigureViper(auditPath string) {
+	profilePath := filepath.Join(os.TempDir(), "symm-integration-latency.json")
+	viper.Set("trading.paper.latency_profile", profilePath)
+
+	_ = public.SaveLatencyProfile(integrationLatencyProfile())
+	reloadIntegrationLatencyProfile()
+
 	viper.Set("trading.model", "paper")
 	viper.Set("trading.record.file", "")
 	viper.Set("trading.paper.wallet_eur", 200.0)
@@ -297,11 +386,12 @@ func ConfigureViper(auditPath string) {
 	viper.Set("market.default_symbols", []string{testSymbolLeader})
 	viper.Set("trading.audit.file", auditPath)
 	viper.Set("trading.audit.gate_cooldown", time.Nanosecond)
-	viper.Set("trading.paper.default_one_way_latency", time.Millisecond)
-	viper.Set("trading.paper.latency_profile", filepath.Join(os.TempDir(), "symm-integration-no-latency.json"))
+	viper.Set("trading.paper.default_one_way_latency", time.Nanosecond)
 	viper.Set("trading.order_ack_timeout", 5*time.Second)
 }
 
 func resetTradingReady() {
 	trading.ResetDeskReady()
+	public.SharedNetworkLatency().Reset()
+	broker.ResetQuoteCacheForTest()
 }

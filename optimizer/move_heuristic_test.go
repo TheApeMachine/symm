@@ -25,7 +25,7 @@ func TestMoveReachable(t *testing.T) {
 
 		search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{
 			Iterations: 1,
-		})
+		}, nil)
 
 		reachable := search.moveReachable(Move{
 			category:    perspectives.CategoryLaminar,
@@ -80,7 +80,7 @@ func TestSampleRolloutMoveWeighting(t *testing.T) {
 
 		search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{
 			Iterations: 1,
-		})
+		}, nil)
 
 		heavy := Move{
 			category:    perspectives.CategoryLaminar,
@@ -146,7 +146,7 @@ func BenchmarkSampleRolloutMove(b *testing.B) {
 		})
 	}
 
-	search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{})
+	search := NewHybridTreeSearch(ctx, &profile, profile.Rows(), GuardOptions{}, nil, MCTSOptions{}, nil)
 	moves := search.allMoves()
 	branches := perspectives.BranchList{}
 

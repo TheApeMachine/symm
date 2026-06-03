@@ -25,8 +25,14 @@ type Scenario struct {
 	BuildCapture       func(*CaptureBuilder)
 	DirectMeasurements []perspectives.Measurement
 	HoldingSymbols     []string
-	PostReplayTrades   []market.TradeUpdate
-	PostReplayTickers  []market.TickerUpdate
+	PostReplayTrades       []market.TradeUpdate
+	PostReplayTradeBatches [][]market.TradeUpdate
+	PostReplayTickers      []market.TickerUpdate
+	PreDirectTickers       []market.TickerUpdate
+	PreDirectBooks         []market.Book
+	PostOrderTickers       []market.TickerUpdate
+	PostOrderBooks         []market.Book
+	PostOrderDelay         time.Duration
 	PostReplayDelay    time.Duration
 	PostReplayPace     time.Duration
 	SettleDelay        time.Duration

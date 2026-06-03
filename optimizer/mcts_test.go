@@ -45,6 +45,7 @@ func TestTreeSearchCachesMoves(t *testing.T) {
 			GuardOptions{},
 			nil,
 			MCTSOptions{Iterations: 1},
+			nil,
 		)
 
 		convey.Convey("It should reuse the pre-generated move list", func() {

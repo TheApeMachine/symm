@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"runtime"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -38,6 +39,7 @@ TreeSearch runs MCTS over perspective branch registries.
 */
 type TreeSearch struct {
 	ctx               context.Context
+	pool              *qpool.Q
 	profile           *Profile
 	rows              []perspectives.Measurement
 	tape              ReplayTape
@@ -86,9 +88,10 @@ func NewHybridTreeSearch(
 	guardOptions GuardOptions,
 	seeds []CandidateScore,
 	options MCTSOptions,
+	pool *qpool.Q,
 ) *TreeSearch {
 	return NewHybridTreeSearchWithTape(
-		ctx, profile, rows, ReplayTape{}, guardOptions, seeds, options,
+		ctx, profile, rows, ReplayTape{}, guardOptions, seeds, options, pool,
 	)
 }
 
@@ -103,6 +106,7 @@ func NewHybridTreeSearchWithTape(
 	guardOptions GuardOptions,
 	seeds []CandidateScore,
 	options MCTSOptions,
+	pool *qpool.Q,
 ) *TreeSearch {
 	workers := runtime.NumCPU()
 	options = normalizeMCTSOptions(options, profile, tape, workers)
@@ -122,6 +126,7 @@ func NewHybridTreeSearchWithTape(
 
 	search := &TreeSearch{
 		ctx:               ctx,
+		pool:              pool,
 		profile:           profile,
 		rows:              rows,
 		tape:              tape,
@@ -150,42 +155,114 @@ func NewHybridTreeSearchWithTape(
 }
 
 func (search *TreeSearch) seedRoot(seeds []CandidateScore, priorVisits int) {
-	for _, seed := range seeds {
-		score := search.evaluate(seed.Branches)
+	if search.pool != nil && len(seeds) > 1 {
+		search.seedRootWithPool(seeds, priorVisits)
 
-		if perspectives.HasInvalidTopLevelDenySiblings(seed.Branches) {
+		return
+	}
+
+	for _, seed := range seeds {
+		search.applySeed(seed, priorVisits)
+	}
+
+	if len(search.root.children) == 0 {
+		search.root.untried = search.moves(search.root.branches)
+	}
+}
+
+type seedRootResult struct {
+	child        *Node
+	priorVisits  int
+	score        float64
+	closedTrades int
+	canonical    perspectives.BranchList
+}
+
+func (search *TreeSearch) seedRootWithPool(seeds []CandidateScore, priorVisits int) {
+	tasks := make([]chan *qpool.QValue[any], 0, len(seeds))
+
+	for _, seed := range seeds {
+		tasks = append(tasks, search.pool.ScheduleFast(search.ctx, func(context.Context) (any, error) {
+			return search.scoreSeed(seed, priorVisits), nil
+		}))
+	}
+
+	for _, task := range tasks {
+		value := <-task
+
+		if value.Error != nil {
 			continue
 		}
 
-		canonical := perspectives.CanonicalPlaybookBranches(seed.Branches)
-		reward := search.normalizeMCTSReward(score)
+		result, ok := value.Value.(seedRootResult)
 
-		child := &Node{
-			branches: canonical.Clone(),
-			parent:   search.root,
-			visits:   priorVisits,
-			value:    reward * float64(priorVisits),
-			untried:  search.moves(canonical),
+		if !ok || result.child == nil {
+			continue
 		}
-		search.root.children = append(search.root.children, child)
-		search.root.visits += priorVisits
 
-		replay := NewReplaySimulationWithTape(
-			search.ctx, canonical, search.tape,
-		).Result()
+		search.root.children = append(search.root.children, result.child)
+		search.root.visits += result.priorVisits
 
 		if search.guard.ImprovesPersistedBest(
-			score, replay.ClosedTrades, search.bestScore, search.bestClosedTrades,
-		) && search.guard.PersistCandidate(canonical) {
-			search.bestScore = score
-			search.bestClosedTrades = replay.ClosedTrades
-			search.best = canonical.Clone()
-			search.emitBest(0, canonical, score)
+			result.score, result.closedTrades, search.bestScore, search.bestClosedTrades,
+		) && search.guard.PersistCandidate(result.canonical) {
+			search.bestScore = result.score
+			search.bestClosedTrades = result.closedTrades
+			search.best = result.canonical.Clone()
+			search.emitBest(0, result.canonical, result.score)
 		}
 	}
 
 	if len(search.root.children) == 0 {
 		search.root.untried = search.moves(search.root.branches)
+	}
+}
+
+func (search *TreeSearch) applySeed(seed CandidateScore, priorVisits int) {
+	result := search.scoreSeed(seed, priorVisits)
+
+	if result.child == nil {
+		return
+	}
+
+	search.root.children = append(search.root.children, result.child)
+	search.root.visits += result.priorVisits
+
+	if search.guard.ImprovesPersistedBest(
+		result.score, result.closedTrades, search.bestScore, search.bestClosedTrades,
+	) && search.guard.PersistCandidate(result.canonical) {
+		search.bestScore = result.score
+		search.bestClosedTrades = result.closedTrades
+		search.best = result.canonical.Clone()
+		search.emitBest(0, result.canonical, result.score)
+	}
+}
+
+func (search *TreeSearch) scoreSeed(seed CandidateScore, priorVisits int) seedRootResult {
+	score := search.evaluate(seed.Branches)
+
+	if perspectives.HasInvalidTopLevelDenySiblings(seed.Branches) {
+		return seedRootResult{}
+	}
+
+	canonical := perspectives.CanonicalPlaybookBranches(seed.Branches)
+	reward := search.normalizeMCTSReward(score)
+	replay := NewReplaySimulationWithTape(
+		search.ctx, canonical, search.tape,
+	).Result()
+
+	return seedRootResult{
+		child: &Node{
+			branches: canonical.Clone(),
+			parent:   search.root,
+			visits:   priorVisits,
+			value:    reward * float64(priorVisits),
+			untried:  search.moves(canonical),
+		},
+		priorVisits:  priorVisits,
+		score:        score,
+		closedTrades: replay.ClosedTrades,
+		canonical:    canonical,
 	}
 }
 

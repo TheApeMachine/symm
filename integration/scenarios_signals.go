@@ -157,10 +157,12 @@ func signalScenarios() []Scenario {
 			Name: "Leadlag publishes anchor stall when anchor is flat",
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
+				builder.AppendLeadLagStall()
 			},
 			PostReplayTickers: leadLagPostReplayTickers(),
-			PostReplayPace:    50 * time.Millisecond,
-			SettleDelay:       3 * time.Second,
+			PostReplayPace:    220 * time.Millisecond,
+			RunTimeout:        12 * time.Second,
+			SettleDelay:       1500 * time.Millisecond,
 			Checks: []ScenarioCheck{
 				checkCategoryObserved("leadlag.category", "Leadlag assigns anchor stall on flat anchor", perspectives.SourceLeadLag,
 					perspectives.CategoryAnchorStall, perspectives.CategoryInefficientLag,
@@ -174,10 +176,10 @@ func signalScenarios() []Scenario {
 			BuildCapture: func(builder *CaptureBuilder) {
 				builder.AppendInstrumentCatalog()
 			},
-			PostReplayTrades: correlationPostReplayTrades(),
-			PostReplayPace:   260 * time.Millisecond,
-			RunTimeout:       12 * time.Second,
-			SettleDelay:      11 * time.Second,
+			PostReplayTradeBatches: correlationPostReplayTradeBatches(),
+			PostReplayPace:         250 * time.Millisecond,
+			RunTimeout:             15 * time.Second,
+			SettleDelay:            2 * time.Second,
 			Checks: []ScenarioCheck{
 				checkCategoryObserved("correlation.category", "Correlation assigns herd or stress category", perspectives.SourceCorrelation,
 					perspectives.CategorySystemicHerd, perspectives.CategoryDecoupledAlpha,

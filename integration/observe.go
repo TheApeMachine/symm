@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -93,6 +95,27 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 
 		if action, ok := message.Value.(perspectives.Action); ok {
 			tape.actions = append(tape.actions, action)
+		}
+
+		envelope, envelopeOK := message.Value.(public.SocketMessage)
+
+		if envelopeOK && envelope.Channel == public.ExecutionsChannel {
+			executions, err := user.DecodeExecutions(&envelope)
+
+			if err == nil {
+				for _, execution := range executions {
+					if execution.Symbol == "" || execution.LastQty <= 0 {
+						continue
+					}
+
+					tape.fills = append(tape.fills, FillEvent{
+						Symbol: execution.Symbol,
+						Side:   execution.Side,
+						Qty:    execution.LastQty,
+						Price:  execution.LastPrice,
+					})
+				}
+			}
 		}
 
 		tape.mu.Unlock()

@@ -9,12 +9,12 @@ branches:
           value_set: true
           action:
             type: limit
-      category: liquidity_vacuum
+      category: systemic_slump
       condition: '>='
       unit: snr
-      value: 0.3699086224945151
+      value: 0
       value_set: true
-    - category: median_depth
+    - category: systemic_beta
       observation: holding
       condition: '>='
       unit: snr

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -28,6 +29,7 @@ type ScanOptions struct {
 	MaxReasoningSteps int
 	Guard             GuardOptions
 	Budget            SearchBudget
+	Pool              *qpool.Q
 }
 
 /*
@@ -57,6 +59,7 @@ ScanSearch scores a bounded beam of candidate branch trees.
 */
 type ScanSearch struct {
 	ctx                   context.Context
+	pool                  *qpool.Q
 	profile               *Profile
 	rows                  []perspectives.Measurement
 	tape                  ReplayTape
@@ -118,6 +121,7 @@ func NewScanSearchWithTape(
 
 	return &ScanSearch{
 		ctx:          ctx,
+		pool:         options.Pool,
 		profile:      profile,
 		rows:         rows,
 		tape:         tape,

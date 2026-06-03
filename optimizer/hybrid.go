@@ -62,6 +62,7 @@ func RunHybridSearch(
 
 	mcts := NewHybridTreeSearchWithTape(
 		ctx, profile, rows, tape, options.Guard, seeds, options.MCTSOptions,
+		options.ScanOptions.Pool,
 	)
 	mcts.SetStagnationWindow(options.ScanOptions.BeamWidth)
 	mcts.onBest = options.OnBest
@@ -76,6 +77,7 @@ func RunHybridSearch(
 			guard,
 			rows,
 			mcts.walkForwardFinalists(seeds),
+			options.ScanOptions.Pool,
 		)
 	}
 

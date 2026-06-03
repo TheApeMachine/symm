@@ -167,6 +167,7 @@ func (tuner *Tuner) Finish() {
 			ScanOptions: ScanOptions{
 				Workers: runtime.NumCPU(),
 				Budget:  budget,
+				Pool:    tuner.pool,
 			},
 			MCTSOptions: MCTSOptions{
 				Budget: budget,
