@@ -26,27 +26,19 @@ var tuneCmd = &cobra.Command{
 		options.OutputPath = tunePerspectivesPath()
 		options.CandidateReportPath = tuneCandidateReportPath(cmd)
 
-		total, countSkipped, err := optimizer.CountMeasurementLines(path)
-
-		if err != nil {
-			return err
-		}
-
-		sampleCap := optimizer.DeriveMeasurementSampleCap(total, options.Workers)
-
 		optimizer.TuneLog("loading measurements from %s", path)
 
-		rows, skipped, err := optimizer.LoadMeasurements(path, sampleCap)
+		rows, skipped, err := optimizer.LoadMeasurements(path)
 
 		if err != nil {
 			return err
 		}
 
-		if skipped > 0 || countSkipped > 0 {
+		if skipped > 0 {
 			fmt.Fprintf(
 				os.Stderr,
 				"symm tune: skipped %d malformed measurement lines in %s\n",
-				skipped+countSkipped,
+				skipped,
 				path,
 			)
 		}

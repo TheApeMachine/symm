@@ -1,7 +1,6 @@
 package io
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,31 +26,6 @@ func TestCountMeasurementLines(t *testing.T) {
 	})
 }
 
-func TestLoadMeasurementsSubsampling(t *testing.T) {
-	convey.Convey("Given more rows than the sample cap", t, func() {
-		path := filepath.Join(t.TempDir(), "large.jsonl")
-		lines := make([]byte, 0)
-
-		for index := range 20 {
-			line := fmt.Sprintf(
-				`{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":%d,"Last":100}`+"\n",
-				index+1,
-			)
-			lines = append(lines, []byte(line)...)
-		}
-
-		writeErr := os.WriteFile(path, lines, 0o644)
-		rows, skipped, err := LoadMeasurements(path, 5)
-
-		convey.Convey("It should subsample evenly spaced rows", func() {
-			convey.So(writeErr, convey.ShouldBeNil)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(skipped, convey.ShouldEqual, 0)
-			convey.So(len(rows), convey.ShouldEqual, 5)
-		})
-	})
-}
-
 func TestLoadMeasurementsMalformedLine(t *testing.T) {
 	convey.Convey("Given a malformed JSONL line", t, func() {
 		path := filepath.Join(t.TempDir(), "broken.jsonl")
@@ -59,7 +33,7 @@ func TestLoadMeasurementsMalformedLine(t *testing.T) {
 		raw += `{not-json}` + "\n"
 
 		writeErr := os.WriteFile(path, []byte(raw), 0o644)
-		rows, skipped, err := LoadMeasurements(path, 0)
+		rows, skipped, err := LoadMeasurements(path)
 
 		convey.Convey("It should skip malformed lines and continue", func() {
 			convey.So(writeErr, convey.ShouldBeNil)

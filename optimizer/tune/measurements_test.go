@@ -23,7 +23,7 @@ func TestLoadMeasurements(t *testing.T) {
 
 		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
 
-		rows, skipped, err := io.LoadMeasurements(path, 0)
+		rows, skipped, err := io.LoadMeasurements(path)
 
 		convey.Convey("It should decode each measurement row", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -43,7 +43,7 @@ func TestLoadMeasurements(t *testing.T) {
 
 		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
 
-		rows, skipped, err := io.LoadMeasurements(path, 0)
+		rows, skipped, err := io.LoadMeasurements(path)
 
 		convey.Convey("It should load valid rows and skip the tail fragment", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -119,20 +119,3 @@ func TestTuneMeasurements(t *testing.T) {
 	})
 }
 
-func TestSubsampleMeasurements(t *testing.T) {
-	convey.Convey("Given a long measurement tape", t, func() {
-		rows := make([]perspectives.Measurement, 1000)
-
-		for index := range rows {
-			rows[index] = perspectives.Measurement{Symbol: "BTC/EUR", Last: float64(index)}
-		}
-
-		convey.Convey("It should cap the replay rows evenly", func() {
-			sampled := io.SubsampleMeasurements(rows, 100)
-
-			convey.So(len(sampled), convey.ShouldEqual, 100)
-			convey.So(sampled[0].Last, convey.ShouldEqual, 0)
-			convey.So(sampled[len(sampled)-1].Last, convey.ShouldEqual, 999)
-		})
-	})
-}

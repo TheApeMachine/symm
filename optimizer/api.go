@@ -17,12 +17,11 @@ type (
 )
 
 var (
-	TuneLog                    = log.TuneLog
-	DefaultTuneOptions         = budget.DefaultTuneOptions
-	DeriveMeasurementSampleCap = budget.DeriveMeasurementSampleCap
-	CountMeasurementLines      = io.CountMeasurementLines
-	LoadMeasurements           = io.LoadMeasurements
-	TuneMeasurements           = tune.TuneMeasurements
+	TuneLog               = log.TuneLog
+	DefaultTuneOptions    = budget.DefaultTuneOptions
+	CountMeasurementLines = io.CountMeasurementLines
+	LoadMeasurements      = io.LoadMeasurements
+	TuneMeasurements      = tune.TuneMeasurements
 )
 
 // WriteThoughts persists a reasoning forest to a playbook file.

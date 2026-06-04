@@ -13,7 +13,6 @@ TUNE_WORKERS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.nc
 TUNE_MAX_THRESHOLDS ?= 128
 TUNE_BEAM_WIDTH ?= 256
 TUNE_CANDIDATE_LIMIT ?= 2000
-TUNE_MAX_MEASUREMENTS ?= 500000
 
 RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
