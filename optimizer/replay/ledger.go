@@ -3,6 +3,7 @@ package replay
 import (
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,16 +98,19 @@ func sortedMeasurementsBySource(
 }
 
 type replayPosition struct {
-	entryPrice  float64
-	quantity    float64
-	peak        float64                 // running max price since entry (drives trailing stops)
-	triggerType perspectives.ActionType // ActionNone until an exit gate arms a resting protective order
+	entryPrice    float64
+	quantity      float64
+	cost          float64                 // total cash deployed (entry notional + entry fee)
+	peak          float64                 // running max price since entry (drives trailing stops)
+	entryAt       time.Time               // when the position opened (drives the elapsed subject + lifecycle)
+	triggerType   perspectives.ActionType // ActionNone until an exit gate arms a resting protective order
+	triggerOffset float64                 // per-node offset for the armed trigger (0 = use the global cost default)
 }
 
 type pendingReplayAction struct {
 	executeAt   time.Time
 	executeTick int
-	action      perspectives.ActionType
+	act         perspectives.Act
 	measurement perspectives.Measurement
 	snapshots   []perspectives.Measurement
 }
@@ -114,6 +118,7 @@ type pendingReplayAction struct {
 type replayLedger struct {
 	costs               ReplayCosts
 	positions           map[string]replayPosition
+	cash                float64
 	reentryTickCooldown int
 	ticksSinceClose     map[string]int
 	realized            float64
@@ -126,10 +131,30 @@ type replayLedger struct {
 	executionLatency    time.Duration
 }
 
+// effectiveCapital and effectiveFraction let any ReplayCosts — including the bare
+// structs built in tests — drive a working account, falling back to the defaults
+// when the wallet fields are unset.
+func effectiveCapital(costs ReplayCosts) float64 {
+	if costs.StartingCapital <= 0 {
+		return DefaultStartingCapital
+	}
+
+	return costs.StartingCapital
+}
+
+func effectiveFraction(costs ReplayCosts) float64 {
+	if costs.PositionFraction <= 0 || costs.PositionFraction > 1 {
+		return DefaultPositionFraction
+	}
+
+	return costs.PositionFraction
+}
+
 func newReplayLedger(costs ReplayCosts) *replayLedger {
 	return &replayLedger{
 		costs:               costs,
 		positions:           make(map[string]replayPosition),
+		cash:                effectiveCapital(costs),
 		reentryTickCooldown: 1,
 		ticksSinceClose:     make(map[string]int),
 		observationScratch:  make(map[perspectives.ObservationType]float64, 1),
@@ -139,6 +164,7 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 
 func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.costs = costs
+	ledger.cash = effectiveCapital(costs)
 	ledger.reentryTickCooldown = 1
 	ledger.realized = 0
 	ledger.closedTrades = 0
@@ -189,11 +215,11 @@ func (ledger *replayLedger) flushPending(
 
 		// A resting maker entry that the price ran away from never fills — drop
 		// it rather than applying a phantom fill.
-		if makerEntryMissed(item.action, item.measurement.Last, fillRow.Last) {
+		if makerEntryMissed(item.act.Type, item.measurement.Last, fillRow.Last) {
 			continue
 		}
 
-		ledger.applyStressed(item.action, fillRow, item.snapshots)
+		ledger.applyStressed(item.act, fillRow, item.snapshots)
 	}
 
 	ledger.pending = remaining
@@ -255,6 +281,29 @@ func (ledger *replayLedger) executionReady(
 	return item.executeTick <= ledger.tickIndex
 }
 
+/*
+positionState projects the ledger's open position for a symbol into the view the
+Thought language reasons over (holding, entry, peak, current price, the clock).
+*/
+func (ledger *replayLedger) positionState(
+	row perspectives.Measurement,
+) perspectives.PositionState {
+	position, open := ledger.positions[row.Symbol]
+
+	if !open {
+		return perspectives.PositionState{Holding: false, Last: row.Last, Now: row.At}
+	}
+
+	return perspectives.PositionState{
+		Holding:    true,
+		EntryPrice: position.entryPrice,
+		Peak:       position.peak,
+		Last:       row.Last,
+		EntryAt:    position.entryAt,
+		Now:        row.At,
+	}
+}
+
 func (ledger *replayLedger) onTick(symbol string) {
 	if symbol == "" || ledger.holding(symbol) {
 		return
@@ -266,18 +315,18 @@ func (ledger *replayLedger) onTick(symbol string) {
 }
 
 func (ledger *replayLedger) apply(
-	actionType perspectives.ActionType, measurement perspectives.Measurement,
+	act perspectives.Act, measurement perspectives.Measurement,
 ) {
-	ledger.applyStressed(actionType, measurement, nil)
+	ledger.applyStressed(act, measurement, nil)
 }
 
 func (ledger *replayLedger) queueAction(
-	actionType perspectives.ActionType,
+	act perspectives.Act,
 	measurement perspectives.Measurement,
 	snapshots []perspectives.Measurement,
 ) {
 	if ledger.executionLatency <= 0 {
-		ledger.applyStressed(actionType, measurement, snapshots)
+		ledger.applyStressed(act, measurement, snapshots)
 
 		return
 	}
@@ -287,14 +336,14 @@ func (ledger *replayLedger) queueAction(
 	ledger.pending = append(ledger.pending, pendingReplayAction{
 		executeAt:   measurement.At.Add(ledger.executionLatency),
 		executeTick: ledger.tickIndex + latencyTicks,
-		action:      actionType,
+		act:         act,
 		measurement: measurement,
 		snapshots:   snapshots,
 	})
 }
 
 func (ledger *replayLedger) applyStressed(
-	actionType perspectives.ActionType,
+	act perspectives.Act,
 	measurement perspectives.Measurement,
 	snapshots []perspectives.Measurement,
 ) {
@@ -304,18 +353,18 @@ func (ledger *replayLedger) applyStressed(
 
 	slippagePct := executionSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
 
-	if perspectives.IsMakerAction(actionType) && ledger.costs.ExecutionStressEnabled {
+	if perspectives.IsMakerAction(act.Type) && ledger.costs.ExecutionStressEnabled {
 		slippagePct += broker.ReplayMakerAdverseSlippagePct(
 			measurement.SpreadBPS,
 			executionStressMultiplier(snapshots),
 		)
 	}
 
-	feePct := ledger.costs.feePct(actionType)
+	feePct := ledger.costs.feePct(act.Type)
 
-	switch actionType {
+	switch act.Type {
 	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
-		ledger.openLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
+		ledger.openLong(measurement.Symbol, measurement.Last, feePct, slippagePct, measurement.At)
 	case perspectives.ActionSettlePosition:
 		// Discretionary exit: cross the book now at the current price.
 		ledger.closeLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
@@ -327,7 +376,7 @@ func (ledger *replayLedger) applyStressed(
 		perspectives.ActionTrailingStopLimit:
 		// Protective exit: rest the order; it fills only when the price path
 		// breaches its trigger (checked each tick in checkTriggers).
-		ledger.armTrigger(measurement.Symbol, actionType)
+		ledger.armTrigger(measurement.Symbol, act)
 	case perspectives.ActionNone:
 		return
 	}
@@ -336,10 +385,11 @@ func (ledger *replayLedger) applyStressed(
 /*
 armTrigger attaches a resting protective exit to an open position. The most
 recent exit gate wins, so a strategy can revise its protection (e.g. tighten a
-stop) on later ticks. No-ops when flat.
+stop) on later ticks. The act's Offset overrides the global trigger distance for
+this position. No-ops when flat.
 */
 func (ledger *replayLedger) armTrigger(
-	symbol string, actionType perspectives.ActionType,
+	symbol string, act perspectives.Act,
 ) {
 	position, open := ledger.positions[symbol]
 
@@ -347,7 +397,8 @@ func (ledger *replayLedger) armTrigger(
 		return
 	}
 
-	position.triggerType = actionType
+	position.triggerType = act.Type
+	position.triggerOffset = act.Offset
 	ledger.positions[symbol] = position
 }
 
@@ -395,20 +446,32 @@ func triggerLevel(
 ) (level float64, breached bool) {
 	switch position.triggerType {
 	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
-		level = position.entryPrice * (1 - costs.StopLossPct)
+		level = position.entryPrice * (1 - triggerOffset(position.triggerOffset, costs.StopLossPct))
 
 		return level, price <= level
 	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
-		level = position.entryPrice * (1 + costs.TakeProfitPct)
+		level = position.entryPrice * (1 + triggerOffset(position.triggerOffset, costs.TakeProfitPct))
 
 		return level, price >= level
 	case perspectives.ActionTrailingStop, perspectives.ActionTrailingStopLimit:
-		level = position.peak * (1 - costs.TrailingPct)
+		level = position.peak * (1 - triggerOffset(position.triggerOffset, costs.TrailingPct))
 
 		return level, price <= level
 	default:
 		return 0, false
 	}
+}
+
+// triggerOffset prefers the per-node offset the playbook armed, falling back to
+// the global cost default when the node did not specify one or specified a
+// nonsensical fraction (<=0 or >=1 — e.g. a stop "below" entry by 150% would arm
+// above entry). The optimizer will generate offsets, so this clamps bad ones.
+func triggerOffset(perNode, global float64) float64 {
+	if perNode > 0 && perNode < 1 {
+		return perNode
+	}
+
+	return global
 }
 
 func exitRestsAsLimit(actionType perspectives.ActionType) bool {
@@ -460,19 +523,23 @@ func (ledger *replayLedger) closeAtTrigger(
 		feePct = ledger.costs.TakerFeePct
 	}
 
-	gross := (exitFill - position.entryPrice) / position.entryPrice
-
-	ledger.realized += gross - feePct
-	ledger.closedTrades++
-	delete(ledger.positions, symbol)
-	ledger.ticksSinceClose[symbol] = 0
+	ledger.settle(symbol, exitFill, feePct)
 }
 
+/*
+openLong sizes an entry from available account cash. It is the funding gate that
+makes the replay match a real €200 account: an entry is taken only when the
+wallet holds the pair's quote currency and has cash free, and it deploys
+PositionFraction of that cash. A strategy that wants to be in many positions at
+once therefore only books the trades it could actually pay for — the rest are
+skipped exactly as live rejects them for insufficient funds.
+*/
 func (ledger *replayLedger) openLong(
 	symbol string,
 	price float64,
 	feePct float64,
 	slippagePct float64,
+	at time.Time,
 ) {
 	if _, open := ledger.positions[symbol]; open {
 		return
@@ -483,17 +550,82 @@ func (ledger *replayLedger) openLong(
 		return
 	}
 
+	if !ledger.fundableSymbol(symbol) {
+		return
+	}
+
+	spendable := effectiveFraction(ledger.costs) * ledger.cash
+
+	if spendable <= 0 {
+		return
+	}
+
 	entryFill := price * (1 + slippagePct)
+
+	if entryFill <= 0 {
+		return
+	}
+
+	// spendable buys quantity units and pays the entry fee on that notional:
+	// quantity*entryFill*(1+feePct) == spendable.
+	quantity := spendable / (entryFill * (1 + feePct))
+
+	if quantity <= 0 {
+		return
+	}
+
+	ledger.cash -= spendable
 
 	ledger.positions[symbol] = replayPosition{
 		entryPrice:  entryFill,
-		quantity:    1,
+		quantity:    quantity,
+		cost:        spendable,
 		peak:        entryFill,
+		entryAt:     at,
 		triggerType: perspectives.ActionNone,
 	}
 
-	ledger.realized -= feePct
 	delete(ledger.ticksSinceClose, symbol)
+}
+
+/*
+fundableSymbol reports whether the wallet can pay for the pair: a buy spends the
+pair's quote currency, so only pairs quoted in WalletCurrency are tradeable. An
+empty WalletCurrency or an unparseable symbol falls back to fundable so plain
+single-symbol replays are unaffected.
+*/
+func (ledger *replayLedger) fundableSymbol(symbol string) bool {
+	if ledger.costs.WalletCurrency == "" {
+		return true
+	}
+
+	slash := strings.LastIndex(symbol, "/")
+
+	if slash < 0 {
+		return true
+	}
+
+	return symbol[slash+1:] == ledger.costs.WalletCurrency
+}
+
+/*
+settle closes a position back to cash and books the realized P&L in account
+currency. exitFill is the per-unit fill price and feePct the exit fee fraction.
+*/
+func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64) {
+	position, open := ledger.positions[symbol]
+
+	if !open {
+		return
+	}
+
+	netProceeds := position.quantity * exitFill * (1 - feePct)
+
+	ledger.cash += netProceeds
+	ledger.realized += netProceeds - position.cost
+	ledger.closedTrades++
+	delete(ledger.positions, symbol)
+	ledger.ticksSinceClose[symbol] = 0
 }
 
 func (ledger *replayLedger) previewClosePnL(
@@ -526,12 +658,8 @@ func (ledger *replayLedger) closeLong(
 	}
 
 	exitFill := price * (1 - slippagePct)
-	gross := (exitFill - position.entryPrice) / position.entryPrice
 
-	ledger.realized += gross - feePct
-	ledger.closedTrades++
-	delete(ledger.positions, symbol)
-	ledger.ticksSinceClose[symbol] = 0
+	ledger.settle(symbol, exitFill, feePct)
 }
 
 func (ledger *replayLedger) observations(
@@ -576,8 +704,13 @@ func (ledger *replayLedger) holding(symbol string) bool {
 	return open
 }
 
+/*
+realizedReturn is the account's realized P&L as a fraction of starting capital,
+so the score is a return on the real €200 — not a capital-free sum of per-trade
+percentages that silently assumed unlimited money.
+*/
 func (ledger *replayLedger) realizedReturn() float64 {
-	return ledger.realized
+	return ledger.realized / effectiveCapital(ledger.costs)
 }
 
 func HoldoutDecay(trainPerTrade float64, testPerTrade float64) float64 {

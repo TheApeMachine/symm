@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
@@ -39,9 +39,7 @@ func (engine *Engine) Start() (err error) {
 
 	for _, system := range engine.systems {
 		wg.Go(func() {
-			if err = errors.Join(err, system.Tick()); err != nil {
-				return
-			}
+			errnie.Error(err, system.Tick())
 		})
 	}
 

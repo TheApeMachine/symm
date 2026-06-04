@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -20,11 +21,21 @@ const (
 	DefaultStopLossPctPercent   = 2.0
 	DefaultTakeProfitPctPercent = 3.0
 	DefaultTrailingPctPercent   = 1.5
+	// DefaultStartingCapital is the account size when no paper wallet is configured.
+	DefaultStartingCapital = 200.0
+	// DefaultPositionFraction deploys the whole available balance per entry — the
+	// realistic model for a small single-currency account.
+	DefaultPositionFraction = 1.0
 )
 
 /*
-ReplayCosts models per-side execution drag for offline replay scoring.
-Fees and trigger offsets are stored as fractions (0.004 = 0.40%).
+ReplayCosts models per-side execution drag and the account the strategy trades
+within. Fees and trigger offsets are fractions (0.004 = 0.40%).
+
+The account fields make funding a first-class constraint: entries are sized from
+available cash in WalletCurrency, so a strategy that wants to be in ten positions
+at once on a single small wallet is scored on only the trades it could actually
+fund — exactly as live.
 */
 type ReplayCosts struct {
 	MakerFeePct            float64
@@ -33,6 +44,9 @@ type ReplayCosts struct {
 	StopLossPct            float64 // long exits if price falls this fraction below entry
 	TakeProfitPct          float64 // long exits if price rises this fraction above entry
 	TrailingPct            float64 // long exits if price falls this fraction below the peak
+	StartingCapital        float64 // account balance the replay starts with
+	PositionFraction       float64 // fraction of available cash deployed per entry
+	WalletCurrency         string  // quote currency the wallet holds; only matching pairs are fundable
 	ExecutionLatency       time.Duration
 	ExecutionStressEnabled bool
 }
@@ -79,6 +93,20 @@ func ReplayCostsFromViper() ReplayCosts {
 		slippageBps = DefaultSlippageBps
 	}
 
+	walletCurrency := strings.ToUpper(config.GetString("market.quote_currency"))
+
+	startingCapital := config.GetFloat64("trading.paper.wallet_" + strings.ToLower(walletCurrency))
+
+	if startingCapital <= 0 {
+		startingCapital = DefaultStartingCapital
+	}
+
+	positionFraction := config.GetFloat64("trading.position_fraction")
+
+	if positionFraction <= 0 || positionFraction > 1 {
+		positionFraction = DefaultPositionFraction
+	}
+
 	return ReplayCosts{
 		MakerFeePct:            makerPct / 100.0,
 		TakerFeePct:            takerPct / 100.0,
@@ -86,6 +114,9 @@ func ReplayCostsFromViper() ReplayCosts {
 		StopLossPct:            exitOffsetPctFromViper("trading.exit.stop_loss_pct", DefaultStopLossPctPercent),
 		TakeProfitPct:          exitOffsetPctFromViper("trading.exit.take_profit_pct", DefaultTakeProfitPctPercent),
 		TrailingPct:            exitOffsetPctFromViper("trading.exit.trailing_pct", DefaultTrailingPctPercent),
+		StartingCapital:        startingCapital,
+		PositionFraction:       positionFraction,
+		WalletCurrency:         walletCurrency,
 		ExecutionLatency:       replayExecutionLatencyFromViper(),
 		ExecutionStressEnabled: replayExecutionStressEnabledFromViper(),
 	}

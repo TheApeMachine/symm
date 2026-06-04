@@ -40,6 +40,26 @@ func TestDeriveReentryTickCooldownFromTape(t *testing.T) {
 	})
 }
 
+func TestDeriveMinRoundTrips(t *testing.T) {
+	convey.Convey("Given the minimum-round-trips significance floor", t, func() {
+		convey.Convey("It floors small tapes so single-trade flukes can't win", func() {
+			convey.So(deriveMinRoundTrips(100), convey.ShouldEqual, minRoundTripFloor)
+		})
+
+		convey.Convey("It caps large tapes instead of demanding ever more trades", func() {
+			// sqrt(30467)/3 ~= 59, which without the cap would force the search
+			// toward the busiest, most friction-heavy strategies.
+			convey.So(deriveMinRoundTrips(30467), convey.ShouldEqual, minRoundTripCeil)
+			convey.So(deriveMinRoundTrips(1_000_000), convey.ShouldEqual, minRoundTripCeil)
+		})
+
+		convey.Convey("It scales within the band for mid-size tapes", func() {
+			trips := deriveMinRoundTrips(6090) // sqrt/3 ~= 26
+			convey.So(trips, convey.ShouldBeBetweenOrEqual, minRoundTripFloor, minRoundTripCeil)
+		})
+	})
+}
+
 func TestDeriveMeasurementSampleCapFromFile(t *testing.T) {
 	convey.Convey("Given row count and workers", t, func() {
 		cap := deriveMeasurementSampleCap(10000, 8)

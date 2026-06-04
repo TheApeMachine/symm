@@ -3,10 +3,12 @@ package trader
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
@@ -15,7 +17,10 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
-const cryptoRawSubscriberID = "trader/crypto:raw"
+const (
+	cryptoRawSubscriberID    = "trader/crypto:raw"
+	cryptoWalletSubscriberID = "trader/crypto:wallet"
+)
 
 /*
 Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames.
@@ -32,11 +37,14 @@ type Crypto struct {
 	pendingOrders sync.Map
 	auditSeq      atomic.Int64
 	balanceOnce   sync.Once
-	cash          float64
-	inventory     map[string]float64
-	avgEntry      map[string]float64
-	marks         map[string]float64
-	pending       map[string]struct{}
+	inventory      map[string]float64
+	avgEntry       map[string]float64
+	marks          map[string]float64
+	pending        map[string]perspectives.Action
+	lastDecision   map[string]string
+	walletCurrency string
+	walletMu       sync.RWMutex
+	availableQuote float64 // latest wallet balance the API (balances.go) published
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
@@ -59,10 +67,11 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		subscribers: make(map[string]*qpool.Subscriber),
 		streams:     streams,
 		desk:        desk,
-		inventory:   make(map[string]float64),
-		avgEntry:    make(map[string]float64),
-		marks:       make(map[string]float64),
-		pending:     make(map[string]struct{}),
+		inventory:    make(map[string]float64),
+		avgEntry:     make(map[string]float64),
+		marks:        make(map[string]float64),
+		pending:      make(map[string]perspectives.Action),
+		lastDecision: make(map[string]string),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -70,8 +79,18 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 
-	errnie.Info("trader/crypto ready", "trader/crypto")
+	crypto.walletCurrency = strings.ToUpper(viper.GetString("market.quote_currency"))
+	// Seed with the configured opening balance balances.go starts from; every
+	// subsequent value is read from the wallet snapshots it publishes — crypto
+	// never recomputes its own balance.
+	crypto.availableQuote = viper.GetFloat64(
+		"trading.paper.wallet_" + strings.ToLower(crypto.walletCurrency),
+	)
+	crypto.subscribers["ui"] = crypto.ui.Subscribe(cryptoWalletSubscriberID, 256)
 
+	go crypto.watchWallet()
+
+	errnie.Info("trader/crypto ready", "trader/crypto")
 	return crypto
 }
 
@@ -117,17 +136,40 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 	}
 
 	if _, inFlight := crypto.pending[action.Symbol]; inFlight {
+		crypto.publishDecision(action, "rejected", "order still resolving")
 		return
 	}
 
 	held := crypto.inventory[action.Symbol]
 
-	if perspectives.IsEntryAction(action.Type) && held > 0 {
-		return
+	if perspectives.IsEntryAction(action.Type) {
+		if held > 0 {
+			crypto.publishDecision(action, "rejected", "already holding")
+			return
+		}
+
+		if !crypto.fundableSymbol(action.Symbol) {
+			crypto.publishDecision(
+				action, "rejected", "wallet holds no "+quoteCurrency(action.Symbol),
+			)
+			return
+		}
+
+		// Size the order against the wallet balance the API published, never a
+		// locally tracked figure. balances.ApplyFill remains the final gate.
+		quantity := crypto.sizeEntry(action.Price)
+
+		if quantity <= 0 {
+			crypto.publishDecision(action, "rejected", "insufficient funds")
+			return
+		}
+
+		action.Quantity = quantity
 	}
 
 	if perspectives.IsExitAction(action.Type) {
 		if held <= 0 {
+			crypto.publishDecision(action, "rejected", "not holding")
 			return
 		}
 
@@ -136,10 +178,141 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 
 	// A desk rejection is the gate working as intended, not an in-flight order.
 	if err := crypto.desk.AddOrder(action); err != nil {
+		crypto.publishDecision(action, "rejected", cleanReason(err.Error()))
 		return
 	}
 
-	crypto.pending[action.Symbol] = struct{}{}
+	crypto.publishDecision(action, "submitted", "")
+	crypto.pending[action.Symbol] = action
+}
+
+/*
+publishDecision emits one decision card to the dashboard explaining what happened
+to a verdict — submitted, filled, or rejected with the precise reason. It dedupes
+per symbol so a signal that fires every tick against the same gate does not flood
+the panel; only a change of verdict or reason re-emits.
+*/
+func (crypto *Crypto) publishDecision(
+	action perspectives.Action, verdict, reason string,
+) {
+	if crypto.ui == nil {
+		return
+	}
+
+	key := verdict + "|" + reason
+
+	if crypto.lastDecision[action.Symbol] == key {
+		return
+	}
+
+	crypto.lastDecision[action.Symbol] = key
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":   "decision",
+		"type":    action.Type.String(),
+		"symbol":  action.Symbol,
+		"side":    string(action.Side),
+		"verdict": verdict,
+		"reason":  reason,
+	}})
+}
+
+// cleanReason strips the internal prefixes and trailing "for SYMBOL" suffix from
+// a gate/fill error so the dashboard shows a tight human reason (the card already
+// carries the symbol separately).
+func cleanReason(reason string) string {
+	for _, prefix := range []string{"preflight: ", "paper fill: ", "paper balances: "} {
+		reason = strings.TrimPrefix(reason, prefix)
+	}
+
+	if index := strings.Index(reason, " for "); index >= 0 {
+		reason = reason[:index]
+	}
+
+	return reason
+}
+
+/*
+watchWallet keeps availableQuote in step with the wallet balance balances.go
+publishes on the ui bus. It only ever reflects the API's authoritative figure —
+crypto never derives a balance of its own — so there is a single source of truth.
+*/
+func (crypto *Crypto) watchWallet() {
+	incoming := crypto.subscribers["ui"].Incoming
+
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		case message := <-incoming:
+			if message == nil {
+				continue
+			}
+
+			frame, ok := message.Value.(map[string]any)
+
+			if !ok || frame["event"] != "wallet" {
+				continue
+			}
+
+			balance, _ := frame["balance"].(float64)
+
+			crypto.walletMu.Lock()
+			crypto.availableQuote = balance
+			crypto.walletMu.Unlock()
+		}
+	}
+}
+
+func (crypto *Crypto) availableCash() float64 {
+	crypto.walletMu.RLock()
+	defer crypto.walletMu.RUnlock()
+
+	return crypto.availableQuote
+}
+
+// fundableSymbol reports whether the wallet can pay for the pair: a buy spends the
+// pair's quote currency, so only pairs quoted in walletCurrency are tradeable.
+func (crypto *Crypto) fundableSymbol(symbol string) bool {
+	if crypto.walletCurrency == "" {
+		return true
+	}
+
+	return quoteCurrency(symbol) == crypto.walletCurrency
+}
+
+/*
+sizeEntry sizes a buy from the published wallet balance: deploy position_fraction
+of available cash, leaving room for the entry fee so the order clears ApplyFill.
+*/
+func (crypto *Crypto) sizeEntry(price float64) float64 {
+	if price <= 0 {
+		return 0
+	}
+
+	fraction := viper.GetFloat64("trading.position_fraction")
+
+	if fraction <= 0 || fraction > 1 {
+		fraction = 1.0
+	}
+
+	spendable := fraction * crypto.availableCash()
+
+	if spendable <= 0 {
+		return 0
+	}
+
+	makerFee := viper.GetFloat64("trading.paper.maker_fee_pct") / 100
+
+	return spendable / (price * (1 + makerFee))
+}
+
+func quoteCurrency(symbol string) string {
+	if slash := strings.LastIndex(symbol, "/"); slash >= 0 {
+		return symbol[slash+1:]
+	}
+
+	return symbol
 }
 
 /*
@@ -158,6 +331,8 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		return
 	}
 
+	submitted := crypto.pending[symbol]
+	submitted.Symbol = symbol
 	delete(crypto.pending, symbol)
 
 	side, _ := envelope["side"].(string)
@@ -165,8 +340,17 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 	price, _ := envelope["price"].(float64)
 
 	if qty <= 0 {
+		reason, _ := envelope["reason"].(string)
+
+		if reason == "" {
+			reason = "no fill"
+		}
+
+		crypto.publishDecision(submitted, "rejected", cleanReason(reason))
 		return
 	}
+
+	crypto.publishDecision(submitted, "filled", "")
 
 	if side == string(trading.Buy) {
 		crypto.openPosition(symbol, qty, price)

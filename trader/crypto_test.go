@@ -14,7 +14,8 @@ func newTestCrypto() *Crypto {
 		streams:   focus.NewSet(),
 		inventory: map[string]float64{},
 		avgEntry:  map[string]float64{},
-		pending:   map[string]struct{}{},
+		pending:      map[string]perspectives.Action{},
+		lastDecision: map[string]string{},
 	}
 }
 
@@ -32,10 +33,69 @@ func sellExec(symbol string, qty float64) map[string]any {
 	}
 }
 
+func TestCleanReason(t *testing.T) {
+	Convey("cleanReason strips internal prefixes and the symbol suffix", t, func() {
+		So(cleanReason("preflight: no quote for BTC/EUR"), ShouldEqual, "no quote")
+		So(cleanReason("paper balances: insufficient funds"), ShouldEqual, "insufficient funds")
+		So(cleanReason("paper fill: no quote for ETH/GBP"), ShouldEqual, "no quote")
+		So(
+			cleanReason("preflight: toxic regime blocks discretionary entry for AUD/USD"),
+			ShouldEqual,
+			"toxic regime blocks discretionary entry",
+		)
+		So(cleanReason("order still resolving"), ShouldEqual, "order still resolving")
+	})
+}
+
+func TestQuoteCurrency(t *testing.T) {
+	Convey("quoteCurrency reads the part after the slash", t, func() {
+		So(quoteCurrency("BTC/EUR"), ShouldEqual, "EUR")
+		So(quoteCurrency("ETH/BTC"), ShouldEqual, "BTC")
+		So(quoteCurrency("BTCEUR"), ShouldEqual, "BTCEUR")
+	})
+}
+
+func TestFundableSymbol(t *testing.T) {
+	Convey("Given an EUR wallet", t, func() {
+		crypto := newTestCrypto()
+		crypto.walletCurrency = "EUR"
+
+		So(crypto.fundableSymbol("BTC/EUR"), ShouldBeTrue)
+		So(crypto.fundableSymbol("ETH/BTC"), ShouldBeFalse)
+		So(crypto.fundableSymbol("AUD/USD"), ShouldBeFalse)
+
+		Convey("An unset wallet currency funds anything (test default)", func() {
+			crypto.walletCurrency = ""
+			So(crypto.fundableSymbol("ETH/BTC"), ShouldBeTrue)
+		})
+	})
+}
+
+func TestSizeEntry(t *testing.T) {
+	Convey("Given the wallet balance the API published", t, func() {
+		crypto := newTestCrypto()
+
+		Convey("It deploys the available cash (no fees configured in test)", func() {
+			crypto.availableQuote = 200
+			So(crypto.sizeEntry(100), ShouldAlmostEqual, 2, 1e-9)
+		})
+
+		Convey("It sizes nothing when the wallet is empty", func() {
+			crypto.availableQuote = 0
+			So(crypto.sizeEntry(100), ShouldEqual, 0)
+		})
+
+		Convey("It sizes nothing for a non-positive price", func() {
+			crypto.availableQuote = 200
+			So(crypto.sizeEntry(0), ShouldEqual, 0)
+		})
+	})
+}
+
 func TestObserveExecution(t *testing.T) {
 	Convey("Given a flat trader", t, func() {
 		crypto := newTestCrypto()
-		crypto.pending["BTC/EUR"] = struct{}{}
+		crypto.pending["BTC/EUR"] = perspectives.Action{}
 
 		Convey("A buy fill opens the position and marks it held", func() {
 			crypto.observeExecution(buyExec("BTC/EUR", 0.5, 100))
@@ -89,7 +149,7 @@ func TestSubmitGate(t *testing.T) {
 		})
 
 		Convey("An entry is skipped while an order is in flight", func() {
-			crypto.pending["BTC/EUR"] = struct{}{}
+			crypto.pending["BTC/EUR"] = perspectives.Action{}
 
 			crypto.submit(entry)
 

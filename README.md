@@ -24,6 +24,8 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 - [Configuration reference](#configuration-reference)
 - [Repository map](#repository-map)
 
+![Infographic of the S.Y.M.M. architecture](overview.png)
+
 ## Architecture
 
 ```

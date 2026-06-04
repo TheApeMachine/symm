@@ -4,51 +4,30 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestActionFromMeasurement(t *testing.T) {
-	convey.Convey("Given a configured paper wallet", t, func() {
-		viper.Set("trading.paper.wallet_eur", 200.0)
-		viper.Set("market.quote_currency", "EUR")
-		defer viper.Set("trading.paper.wallet_eur", 0)
-		defer viper.Set("market.quote_currency", "")
-
+	convey.Convey("Given a measurement", t, func() {
 		measurement := Measurement{
 			Symbol: "BTC/EUR",
 			Last:   50_000,
 		}
 
-		convey.Convey("When building an entry action", func() {
+		convey.Convey("An entry buys without a preset quantity (the trader sizes it)", func() {
 			action := ActionFromMeasurement(ActionLimit, measurement)
 
-			convey.Convey("It should buy with fee-aware wallet-notional sizing", func() {
-				wantQty := entrySpendableNotional(200, entryDefaultMakerFeePct) / 50_000
-
-				convey.So(action.Side, convey.ShouldEqual, trading.Buy)
-				convey.So(action.Quantity, convey.ShouldAlmostEqual, wantQty, 0.0000001)
-			})
+			convey.So(action.Side, convey.ShouldEqual, trading.Buy)
+			convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
+			convey.So(action.Price, convey.ShouldEqual, 50_000)
+			convey.So(action.Quantity, convey.ShouldEqual, 0)
 		})
 
-		convey.Convey("When building an exit action", func() {
+		convey.Convey("An exit sells without a preset quantity", func() {
 			action := ActionFromMeasurement(ActionStopLoss, measurement)
 
-			convey.Convey("It should sell without preset quantity", func() {
-				convey.So(action.Side, convey.ShouldEqual, trading.Sell)
-				convey.So(action.Quantity, convey.ShouldEqual, 0)
-			})
-		})
-	})
-}
-
-func TestEntrySpendableNotional(t *testing.T) {
-	convey.Convey("Given wallet notional and maker fee percent", t, func() {
-		spendable := entrySpendableNotional(200, entryDefaultMakerFeePct)
-
-		convey.Convey("It should leave headroom for maker fees on the full notional", func() {
-			fee := spendable * entryDefaultMakerFeePct / 100
-			convey.So(spendable+fee, convey.ShouldAlmostEqual, 200, 0.0001)
+			convey.So(action.Side, convey.ShouldEqual, trading.Sell)
+			convey.So(action.Quantity, convey.ShouldEqual, 0)
 		})
 	})
 }

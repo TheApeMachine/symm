@@ -1,5 +1,15 @@
-import { ArrowDownRightIcon, ArrowUpRightIcon } from "lucide-react";
-import { type ActionEvent, useWsStatus } from "#/providers/ws-status";
+import {
+	ArrowDownRightIcon,
+	ArrowUpRightIcon,
+	BanIcon,
+	CheckCircle2Icon,
+	LoaderIcon,
+} from "lucide-react";
+import {
+	type ActionEvent,
+	type ActionVerdict,
+	useWsStatus,
+} from "#/providers/ws-status";
 
 const ACTION_LABELS: Record<string, string> = {
 	limit: "Limit",
@@ -34,25 +44,46 @@ const relativeTime = (ts: number) => {
 	return `${Math.round(seconds / 60)}m ago`;
 };
 
+const VERDICT_META: Record<
+	ActionVerdict,
+	{ Icon: typeof BanIcon; tone: string; label: string }
+> = {
+	filled: { Icon: CheckCircle2Icon, tone: "text-emerald-400", label: "filled" },
+	submitted: { Icon: LoaderIcon, tone: "text-sky-400", label: "submitted" },
+	rejected: { Icon: BanIcon, tone: "text-rose-400", label: "blocked" },
+};
+
 const ActionCard = ({ action }: { action: ActionEvent }) => {
 	const isExit = EXIT_TYPES.has(action.type);
-	const Icon = isExit ? ArrowDownRightIcon : ArrowUpRightIcon;
-	const tone = isExit ? "text-amber-400" : "text-emerald-400";
+	const DirectionIcon = isExit ? ArrowDownRightIcon : ArrowUpRightIcon;
+	const verdict = VERDICT_META[action.verdict] ?? VERDICT_META.rejected;
 
 	return (
-		<div className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
-			<Icon className={`size-4 shrink-0 ${tone}`} aria-hidden="true" />
-			<div className="flex min-w-0 flex-1 flex-col">
+		<div className="flex items-start gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
+			<verdict.Icon
+				className={`mt-0.5 size-4 shrink-0 ${verdict.tone}`}
+				aria-hidden="true"
+			/>
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex items-center justify-between gap-2">
-					<span className="font-medium text-xs">
+					<span className="flex items-center gap-1 font-medium text-xs">
+						<DirectionIcon
+							className="size-3 shrink-0 text-muted-foreground"
+							aria-hidden="true"
+						/>
 						{ACTION_LABELS[action.type] ?? action.type}
 					</span>
 					<span className="truncate font-mono text-[11px] text-muted-foreground">
 						{action.symbol}
 					</span>
 				</div>
+				{action.reason ? (
+					<span className={`truncate text-[11px] ${verdict.tone}`}>
+						{action.reason}
+					</span>
+				) : null}
 				<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-					{isExit ? "exit" : "entry"} · {relativeTime(action.ts)}
+					{isExit ? "exit" : "entry"} · {verdict.label} · {relativeTime(action.ts)}
 				</span>
 			</div>
 		</div>
@@ -71,7 +102,7 @@ export const Navigation = () => {
 				<p className="px-1 text-xs text-muted-foreground">No decisions yet</p>
 			) : (
 				actions.map((action) => (
-					<ActionCard key={action.ts} action={action} />
+					<ActionCard key={action.symbol} action={action} />
 				))
 			)}
 		</div>

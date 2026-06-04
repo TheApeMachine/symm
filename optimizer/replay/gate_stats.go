@@ -291,7 +291,7 @@ func (simulation *ReplaySimulation) collectGateStats(
 			}
 		}
 
-		ledger.apply(*actionType, tick.Row)
+		ledger.apply(perspectives.Act{Type: *actionType}, tick.Row)
 		ledger.onTick(tick.Row.Symbol)
 	}
 }

@@ -13,9 +13,30 @@ ReplaySimulation walks a candidate tree across collected replay measurements.
 type ReplaySimulation struct {
 	ctx      context.Context
 	branches perspectives.BranchList
+	thoughts []perspectives.Thought
 	rows     []perspectives.Measurement
 	tape     ReplayTape
 	costs    ReplayCosts
+}
+
+/*
+NewThoughtSimulation scores a reasoning-language playbook (the new Thought trees)
+against a tape, reusing the same cash + trigger ledger. When thoughts are present
+the ledger is driven by perspectives.Evaluate over a WindowReason instead of the
+legacy BranchEvaluator, so per-node offsets and the lifecycle subjects take effect.
+*/
+func NewThoughtSimulation(
+	ctx context.Context,
+	thoughts []perspectives.Thought,
+	tape ReplayTape,
+	costs ReplayCosts,
+) *ReplaySimulation {
+	return &ReplaySimulation{
+		ctx:      ctx,
+		thoughts: thoughts,
+		tape:     tape,
+		costs:    costs,
+	}
 }
 
 func NewReplaySimulation(
@@ -237,6 +258,11 @@ func (simulation *ReplaySimulation) applyEvaluator(
 	row perspectives.Measurement,
 	snapshots []perspectives.Measurement,
 ) {
+	if len(simulation.thoughts) > 0 {
+		simulation.applyThoughts(ledger, row, snapshots)
+		return
+	}
+
 	evaluator := perspectives.NewBranchEvaluator(branchContext)
 	actionType := evaluator.Action(simulation.branches)
 
@@ -248,7 +274,29 @@ func (simulation *ReplaySimulation) applyEvaluator(
 		return
 	}
 
-	ledger.queueAction(*actionType, row, snapshots)
+	ledger.queueAction(perspectives.Act{Type: *actionType}, row, snapshots)
+}
+
+/*
+applyThoughts drives the ledger from the reasoning language: build the per-tick
+context (window + regime + open position), evaluate the thoughts, and queue the
+chosen act (carrying its per-node trigger offset).
+*/
+func (simulation *ReplaySimulation) applyThoughts(
+	ledger *replayLedger,
+	row perspectives.Measurement,
+	snapshots []perspectives.Measurement,
+) {
+	regime := perspectives.ClassifyRegime(snapshots).Regime
+	context := perspectives.NewWindowReason(snapshots, regime, ledger.positionState(row))
+
+	act, found := perspectives.Evaluate(simulation.thoughts, context)
+
+	if !found || act.Type == perspectives.ActionNone {
+		return
+	}
+
+	ledger.queueAction(act, row, snapshots)
 }
 
 func (simulation *ReplaySimulation) branchContext(

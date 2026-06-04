@@ -41,7 +41,7 @@ import {
 	CardPanel,
 } from "#/components/ui/card";
 import { Flex } from "#/components/ui/flex";
-import { useWsStatus } from "#/providers/ws-status";
+import { type ActionVerdict, useWsStatus } from "#/providers/ws-status";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -136,11 +136,13 @@ const DashboardLayout = () => {
 					return;
 				}
 
-				if (raw.event === "action") {
+				if (raw.event === "decision") {
 					pushAction({
 						type: raw.type as string,
 						symbol: raw.symbol as string,
 						ts: Date.now(),
+						verdict: (raw.verdict as ActionVerdict) ?? "rejected",
+						reason: (raw.reason as string) ?? "",
 					});
 					return;
 				}

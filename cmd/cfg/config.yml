@@ -24,6 +24,10 @@ trading:
     # Derive 50–200ms latency from tape when unset; set explicitly to override.
     execution_latency_ms: 0
     execution_stress_enabled: true
+  # Fraction of available account cash deployed per entry. 1.0 = full deployment
+  # (one position at a time on a small wallet); lower allows concurrent positions.
+  # The optimizer replay sizes entries the same way, so funding contention is real.
+  position_fraction: 1.0
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.

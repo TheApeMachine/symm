@@ -7,10 +7,14 @@ import {
 	useState,
 } from "react";
 
+export type ActionVerdict = "submitted" | "filled" | "rejected";
+
 export type ActionEvent = {
 	type: string;
 	symbol: string;
 	ts: number;
+	verdict: ActionVerdict;
+	reason: string;
 };
 
 export type Position = {
@@ -59,8 +63,16 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		setMarks((prev) => (prev[symbol] === price ? prev : { ...prev, [symbol]: price }));
 	}, []);
 
+	// One card per symbol: the latest verdict replaces any prior card for that
+	// symbol and moves to the top, so the panel reads as live per-symbol status
+	// ("why is this not trading") instead of an unbounded flood of repeats.
 	const pushAction = useCallback((action: ActionEvent) => {
-		setActions((prev) => [action, ...prev].slice(0, 50));
+		setActions((prev) =>
+			[action, ...prev.filter((entry) => entry.symbol !== action.symbol)].slice(
+				0,
+				50,
+			),
+		);
 	}, []);
 
 	const positionViews = useMemo<PositionView[]>(

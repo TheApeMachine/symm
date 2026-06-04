@@ -39,6 +39,8 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".go",
     ".ts",
     ".tsx",
+    ".yaml",
+    ".yml",
 )
 
 

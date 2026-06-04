@@ -72,8 +72,9 @@ func (orders *Orders) fill(params trading.AddParams) {
 
 	if err != nil {
 		errnie.Error(err)
-		// Emit a no-fill execution so the trader clears its in-flight marker.
-		orders.emit(params.Symbol, string(params.Side), 0, 0, 0)
+		// Emit a no-fill execution so the trader clears its in-flight marker and
+		// the dashboard can report why the order never filled.
+		orders.emit(params.Symbol, string(params.Side), 0, 0, 0, err.Error())
 
 		return
 	}
@@ -83,17 +84,17 @@ func (orders *Orders) fill(params trading.AddParams) {
 			params.Symbol, string(params.Side), params.OrderQty, price, fee, params.ClOrdID,
 		); err != nil {
 			// Insufficient funds: the exchange rejects, nothing changes.
-			// Emit a no-fill so the trader clears its in-flight marker.
-			orders.emit(params.Symbol, string(params.Side), 0, 0, 0)
+			// Emit a no-fill carrying the reason so the dashboard can show it.
+			orders.emit(params.Symbol, string(params.Side), 0, 0, 0, err.Error())
 
 			return
 		}
 	}
 
-	orders.emit(params.Symbol, string(params.Side), params.OrderQty, price, fee)
+	orders.emit(params.Symbol, string(params.Side), params.OrderQty, price, fee, "")
 }
 
-func (orders *Orders) emit(symbol, side string, qty, price, fee float64) {
+func (orders *Orders) emit(symbol, side string, qty, price, fee float64, reason string) {
 	orders.raw.Send(&qpool.QValue[any]{Value: map[string]any{
 		"channel": "executions",
 		"symbol":  symbol,
@@ -101,6 +102,7 @@ func (orders *Orders) emit(symbol, side string, qty, price, fee float64) {
 		"qty":     qty,
 		"price":   price,
 		"fee":     fee,
+		"reason":  reason,
 	}})
 }
 

@@ -12,12 +12,12 @@ import (
 SymbolStress holds the latest stress-regime readings used by execution gates.
 */
 type SymbolStress struct {
-	ToxicityCategory   perspectives.CategoryType
-	ToxicitySNR        float64
-	FluidCategory      perspectives.CategoryType
-	FluidSNR           float64
-	SentimentCategory  perspectives.CategoryType
-	SentimentSNR       float64
+	ToxicityCategory  perspectives.CategoryType
+	ToxicitySNR       float64
+	FluidCategory     perspectives.CategoryType
+	FluidSNR          float64
+	SentimentCategory perspectives.CategoryType
+	SentimentSNR      float64
 }
 
 /*
@@ -34,9 +34,9 @@ const (
 StressCache ingests perspective measurements and exposes per-symbol stress snapshots.
 */
 type StressCache struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.RWMutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	mu       sync.RWMutex
 	bySymbol map[string]SymbolStress
 }
 

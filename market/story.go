@@ -215,15 +215,9 @@ func (story *Story) ingestMeasurement(
 
 	action := perspectives.ActionFromMeasurement(actionType, measurement)
 
+	// The trader publishes the decision card (with the accept/reject reason) once
+	// the action clears or fails its gates; the story only forwards the verdict.
 	story.raw.Send(&qpool.QValue[any]{Value: action})
-
-	if actionType != perspectives.ActionNone {
-		story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":  "action",
-			"type":   action.Type.String(),
-			"symbol": action.Symbol,
-		}})
-	}
 
 	return nil
 }

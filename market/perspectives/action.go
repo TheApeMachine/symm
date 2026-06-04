@@ -2,14 +2,9 @@ package perspectives
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
 )
-
-// entryDefaultMakerFeePct matches kraken/paper.DefaultMakerFeePct (cannot import paper: import cycle).
-const entryDefaultMakerFeePct = 0.25
 
 type UnitType uint8
 
@@ -45,6 +40,14 @@ const (
 	ConditionIsLessThan
 	ConditionIsGreaterThanOrEqual
 	ConditionIsLessThanOrEqual
+)
+
+type ConditionBooleanType uint8
+
+const (
+	ConditionBooleanNone ConditionBooleanType = iota
+	ConditionBooleanAnd
+	ConditionBooleanOr
 )
 
 type ActionType uint8
@@ -102,8 +105,9 @@ func IsExitAction(actionType ActionType) bool {
 }
 
 /*
-ActionFromMeasurement builds a live desk order from a tree verdict and row.
-Entry quantity is sized from the configured paper wallet notional.
+ActionFromMeasurement builds a desk order from a tree verdict and row. Quantity is
+left to the trader, which sizes entries against the live wallet balance the
+exchange publishes and settles exits against the position it currently holds.
 */
 func ActionFromMeasurement(
 	actionType ActionType, measurement Measurement,
@@ -116,7 +120,6 @@ func ActionFromMeasurement(
 
 	if IsEntryAction(actionType) {
 		action.Side = trading.Buy
-		action.Quantity = entryNotionalQuantity(measurement.Last)
 	}
 
 	if IsExitAction(actionType) {
@@ -164,48 +167,4 @@ func OrderTypeFromActionType(actionType ActionType) (trading.OrderType, error) {
 	default:
 		return "", fmt.Errorf("unsupported actionType: %v", actionType)
 	}
-}
-
-func entryNotionalQuantity(price float64) float64 {
-	if price <= 0 {
-		return 0
-	}
-
-	quote := strings.ToLower(viper.GetString("market.quote_currency"))
-
-	if quote == "" {
-		return 0
-	}
-
-	notional := viper.GetFloat64("trading.paper.wallet_" + quote)
-
-	if notional <= 0 {
-		return 0
-	}
-
-	spendable := entrySpendableNotional(notional, entryMakerFeePercent())
-
-	return spendable / price
-}
-
-func entryMakerFeePercent() float64 {
-	feePct := viper.GetFloat64("trading.paper.maker_fee_pct")
-
-	if feePct <= 0 {
-		return entryDefaultMakerFeePct
-	}
-
-	return feePct
-}
-
-func entrySpendableNotional(notional, feePct float64) float64 {
-	if notional <= 0 {
-		return 0
-	}
-
-	if feePct <= 0 {
-		return notional
-	}
-
-	return notional / (1 + feePct/100)
 }

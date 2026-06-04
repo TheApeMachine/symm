@@ -98,13 +98,25 @@ func DeriveMinChainSupport(tickCount int) int {
 	return support
 }
 
+const (
+	// minRoundTripFloor rules out single-trade flukes — a credible mean return
+	// needs a sample, not one lucky round trip.
+	minRoundTripFloor = 20
+	// minRoundTripCeil caps the requirement. Statistical credibility of the mean
+	// needs a roughly fixed sample size, NOT one that grows with the tape: an
+	// unbounded floor (e.g. 333 trades on a 1M-tick tape) only forces the search
+	// toward high-frequency strategies, which on a friction-dominated tape are the
+	// ones that lose the most — so the "best" becomes the busiest money-loser while
+	// calmer, less-negative strategies are filtered out for "too few trades".
+	minRoundTripCeil = 30
+)
+
 /*
 deriveMinRoundTrips sets the minimum closed trades a candidate needs before it is
-eligible as "best". A single lucky round trip is statistical noise — letting it
-win (the old hardcoded floor of 1) is the optimizer fooling itself — so the floor
-scales gently with the tape. It stays well below DeriveMinChainSupport so real
-multi-trade strategies still qualify; if nothing clears the bar, that honestly
-means the tape carries no credible edge rather than surfacing a fluke.
+eligible as "best", bounded to [minRoundTripFloor, minRoundTripCeil]. It rules out
+flukes without demanding ever more trades on longer tapes; if nothing clears the
+bar, that honestly means the tape carries no credible edge rather than surfacing
+a fluke.
 */
 func deriveMinRoundTrips(tickCount int) int {
 	if tickCount <= 0 {
@@ -113,8 +125,12 @@ func deriveMinRoundTrips(tickCount int) int {
 
 	trips := int(math.Ceil(math.Sqrt(float64(tickCount)) / 3))
 
-	if trips < 20 {
-		return 20
+	if trips < minRoundTripFloor {
+		return minRoundTripFloor
+	}
+
+	if trips > minRoundTripCeil {
+		return minRoundTripCeil
 	}
 
 	return trips
