@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
 )
 
@@ -15,15 +16,16 @@ const exitHistoryCap = 24
 symbolHistory holds rolling microstructure samples for exit scoring.
 */
 type symbolHistory struct {
-	bidDepths  ring.FloatRing
-	askDepths  ring.FloatRing
-	densities  ring.FloatRing
-	spreads    ring.FloatRing
-	pressures  ring.FloatRing
-	imbalances ring.FloatRing
-	lastPrice  float64
-	hasLast    bool
-	tracked    *perspectives.Category
+	bidDepths   ring.FloatRing
+	askDepths   ring.FloatRing
+	densities   ring.FloatRing
+	spreads     ring.FloatRing
+	pressures   ring.FloatRing
+	pressureEMA *adaptive.EMA
+	imbalances  ring.FloatRing
+	lastPrice   float64
+	hasLast     bool
+	tracked     *perspectives.Category
 }
 
 /*
@@ -70,7 +72,15 @@ func (store *historyStore) observe(
 	}
 
 	if buyPressure != 0 {
-		history.pressures.Push(buyPressure)
+		// buyPressure arrives as the raw trade sign (±1). Storing that directly made
+		// the pressures ring binary, so pressureFade read (priorPeak − recent)/peak =
+		// (1 − −1)/1 = 2 on every sell-after-buy — a degenerate constant that always
+		// won the exit vote. Smooth the signed flow into a continuous net-pressure
+		// trajectory (the EMA derives its own rate from the flow's volatility) so the
+		// ring captures buy pressure genuinely building and fading.
+		smoothed, _ := history.pressureEMA.Next(0, buyPressure)
+
+		history.pressures.Push(smoothed)
 	}
 
 	if imbalance != 0 {
@@ -104,13 +114,14 @@ func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 	}
 
 	history = &symbolHistory{
-		bidDepths:  ring.NewFloatRing(exitHistoryCap),
-		askDepths:  ring.NewFloatRing(exitHistoryCap),
-		densities:  ring.NewFloatRing(exitHistoryCap),
-		spreads:    ring.NewFloatRing(exitHistoryCap),
-		pressures:  ring.NewFloatRing(exitHistoryCap),
-		imbalances: ring.NewFloatRing(exitHistoryCap),
-		tracked:    perspectives.NewCategory(perspectives.CategoryTypeNone),
+		bidDepths:   ring.NewFloatRing(exitHistoryCap),
+		askDepths:   ring.NewFloatRing(exitHistoryCap),
+		densities:   ring.NewFloatRing(exitHistoryCap),
+		spreads:     ring.NewFloatRing(exitHistoryCap),
+		pressures:   ring.NewFloatRing(exitHistoryCap),
+		pressureEMA: adaptive.NewEMA(0),
+		imbalances:  ring.NewFloatRing(exitHistoryCap),
+		tracked:     perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 	store.bySymbol[symbol] = history
 
