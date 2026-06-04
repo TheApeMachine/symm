@@ -80,17 +80,3 @@ func (readings gaugeReadings) meanSNR(source string) float64 {
 
 	return sum / float64(len(entry.snr))
 }
-
-func (readings gaugeReadings) sourceSNRMeans() map[string]float64 {
-	means := make(map[string]float64, len(readings.bySource))
-
-	for source := range readings.bySource {
-		mean := readings.meanSNR(source)
-
-		if mean > 0 {
-			means[source] = mean
-		}
-	}
-
-	return means
-}

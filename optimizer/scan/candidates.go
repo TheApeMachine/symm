@@ -6,7 +6,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/optimizer/beam"
 	"github.com/theapemachine/symm/optimizer/budget"
-	"github.com/theapemachine/symm/optimizer/cooccurrence"
 )
 
 func (search *ScanSearch) rankedEntryBranchers() []perspectives.Branch {
@@ -193,6 +192,12 @@ func (search *ScanSearch) branches(
 
 			for _, condition := range searchConditions {
 				for _, value := range values {
+					// Skip vacuous gates (e.g. snr >= 0) that fire on every or
+					// no reading of the category — they carry no signal.
+					if !search.profile.IsInformativeGate(category, unit, condition, value) {
+						continue
+					}
+
 					branches = append(branches, perspectives.Branch{
 						Category:    category,
 						Observation: observation,
@@ -207,47 +212,6 @@ func (search *ScanSearch) branches(
 	}
 
 	return branches
-}
-
-func (search *ScanSearch) emitSiblingBranches(
-	send func(scanCandidate) bool,
-	actions []scanCandidate,
-	maxPairs int,
-) {
-	entries := search.groupCandidates(actions, actionGroupEntry)
-	exits := search.groupCandidates(actions, actionGroupExit)
-	emitted := 0
-
-	for _, entry := range entries {
-		entryCategory := primaryEntryCategory(entry.branches)
-		rankedExits := rankExitsByAffinity(search.pairAffinity, entryCategory, exits)
-
-		for _, exit := range rankedExits {
-			if maxPairs > 0 && emitted >= maxPairs {
-				return
-			}
-
-			if search.coOccurrence != nil {
-				if !cooccurrence.EntryExitPairReachable(
-					search.coOccurrence, entry.branches, exit.branches,
-				) {
-					continue
-				}
-			}
-
-			branches := entry.branches.Clone()
-			branches = append(branches, exit.branches.Clone()...)
-
-			if !send(scanCandidate{
-				branches: branches,
-				group:    actionGroupEntry,
-			}) {
-				return
-			}
-
-			emitted++
-		}
-	}
 }
 
 func (search *ScanSearch) groupCandidates(

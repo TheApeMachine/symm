@@ -7,49 +7,60 @@ CanonicalPlaybookBranches rewrites a branch registry into sequential gate form:
 pre-entry deny gates are nested under the entry root; exit branches stay top-level
 siblings. Replay scoring and live Walk must use the same shape so the optimizer
 objective matches deployment.
+
+Multiple entry roots are preserved as siblings: a combined playbook holds several
+distinct strategies, each its own gated entry subtree, evaluated independently by
+BranchEvaluator (deepest reachable action wins per tick). A single entry collapses
+to the legacy shape, so this is backward compatible.
 */
 func CanonicalPlaybookBranches(branches BranchList) BranchList {
-	entryIndex := FindEntryIndex(branches)
+	entryIndices := FindAllEntryIndices(branches)
 
-	if entryIndex < 0 {
+	if len(entryIndices) == 0 {
 		return branches.Clone()
 	}
 
+	isEntry := make(map[int]struct{}, len(entryIndices))
+
+	for _, index := range entryIndices {
+		isEntry[index] = struct{}{}
+	}
+
+	entries := make(BranchList, 0, len(entryIndices))
 	denies := make(BranchList, 0)
 	exits := make(BranchList, 0)
-	entry := branches[entryIndex]
 
 	for index, branch := range branches {
-		if index == entryIndex {
+		if _, ok := isEntry[index]; ok {
+			entries = append(entries, branch.Clone())
+
 			continue
 		}
 
 		if branch.Observation == ObservationHolding {
-			exits = append(exits, branch)
+			exits = append(exits, branch.Clone())
 
 			continue
 		}
 
 		if IsTopLevelDenyGate(branch) {
-			denies = append(denies, branch)
+			denies = append(denies, branch.Clone())
 
 			continue
 		}
 
-		exits = append(exits, branch)
+		exits = append(exits, branch.Clone())
 	}
 
-	if len(denies) == 0 {
-		next := make(BranchList, 0, 1+len(exits))
-		next = append(next, entry)
-		next = append(next, exits...)
-
-		return next
+	// Legacy flat construction leaves deny gates as top-level siblings; nest them
+	// under the first entry so live Walk and replay see one gated path. Combined
+	// trees already carry their denies nested per strategy, so denies is empty.
+	if len(denies) > 0 {
+		entries[0] = NestDenyGatesAroundEntry(entries[0], denies)
 	}
 
-	wrappedEntry := NestDenyGatesAroundEntry(entry, denies)
-	next := make(BranchList, 0, 1+len(exits))
-	next = append(next, wrappedEntry)
+	next := make(BranchList, 0, len(entries)+len(exits))
+	next = append(next, entries...)
 	next = append(next, exits...)
 
 	return next
@@ -74,17 +85,25 @@ func HasTradablePlaybook(branches BranchList) bool {
 }
 
 /*
-HasInvalidTopLevelDenySiblings reports flat deny gates beside the entry root.
+HasInvalidTopLevelDenySiblings reports flat deny gates beside the entry roots.
+Every entry subtree is skipped (a deny gate that wraps an entry is a legitimate
+strategy root, not a stray sibling), so only true ungated denies are flagged.
 */
 func HasInvalidTopLevelDenySiblings(branches BranchList) bool {
-	entryIndex := FindEntryIndex(branches)
+	entryIndices := FindAllEntryIndices(branches)
 
-	if entryIndex < 0 {
+	if len(entryIndices) == 0 {
 		return false
 	}
 
+	isEntry := make(map[int]struct{}, len(entryIndices))
+
+	for _, index := range entryIndices {
+		isEntry[index] = struct{}{}
+	}
+
 	for index, branch := range branches {
-		if index == entryIndex {
+		if _, ok := isEntry[index]; ok {
 			continue
 		}
 
@@ -123,6 +142,24 @@ func FindEntryIndex(branches BranchList) int {
 	}
 
 	return -1
+}
+
+/*
+FindAllEntryIndices returns every top-level entry root: a not-holding branch or
+any branch whose subtree reaches an entry leaf (a deny gate wrapping an entry).
+Used to keep multiple distinct strategies as siblings during canonicalization.
+*/
+func FindAllEntryIndices(branches BranchList) []int {
+	indices := make([]int, 0)
+
+	for index := range branches {
+		if branches[index].Observation == ObservationNotHolding ||
+			BranchContainsEntryLeaf(branches[index]) {
+			indices = append(indices, index)
+		}
+	}
+
+	return indices
 }
 
 func FindExitIndex(branches BranchList) int {

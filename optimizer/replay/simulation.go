@@ -259,6 +259,7 @@ func (simulation *ReplaySimulation) branchContext(
 	return perspectives.BranchContext{
 		Measurements: measurements,
 		Observations: ledger.observations(row.Symbol),
+		Regime:       perspectives.ClassifyRegime(measurements).Regime,
 		Metrics:      ledger.metrics(row),
 	}
 }

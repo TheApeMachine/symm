@@ -35,8 +35,23 @@ trading:
     file: runs/audit.jsonl
 
 optimizer:
+  search:
+    # Explore "in regime X do Y" branches. When off, the regime axis collapses to
+    # RegimeNone (legacy behaviour) and the MCTS move set shrinks ~6x.
+    regime_aware: true
   tune:
     candidate_report: ""
+
+# Price-action regime classification (market/perspectives.ClassifyRegime).
+# Computed identically on the live and replay paths from the recent distinct-price
+# path, so a regime edge the optimizer discovers reproduces when traded live.
+regime:
+  window: 256          # most-recent measurements to classify over
+  min_samples: 16      # price-bearing measurements required before a regime is claimed
+  dead_vol: 0.0005     # realized-vol floor; below it a non-trending market reads as Dead
+  trend_threshold: 1.5 # trend t-stat for RegimeTrending
+  strong_trend: 3.0    # trend t-stat for signed RegimeBullish / RegimeBearish
+  vol_scale: 0.01      # dashboard radar volatility full-scale normalization
 
 signals:
   spoof_weighted_threshold: 0.5

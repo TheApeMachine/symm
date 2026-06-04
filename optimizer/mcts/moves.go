@@ -47,7 +47,7 @@ func (moves *Moves) Generate() []Move {
 		for _, observation := range searchObservations {
 			actions := moves.actions(observation)
 
-			for _, regime := range searchRegimes {
+			for _, regime := range regimeSearchSpace() {
 				for _, unit := range searchUnits {
 					values := moves.profile.AdaptiveValues(
 						category,
@@ -57,6 +57,13 @@ func (moves *Moves) Generate() []Move {
 
 					for _, condition := range searchConditions {
 						for _, value := range values {
+							// Skip vacuous gates (e.g. snr >= 0) that fire on every
+							// or no reading of the category — they carry no signal and
+							// only bloat the tree and waste search budget.
+							if !moves.profile.IsInformativeGate(category, unit, condition, value) {
+								continue
+							}
+
 							for _, action := range actions {
 								generated = append(generated, Move{
 									category:    category,

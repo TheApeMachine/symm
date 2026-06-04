@@ -198,12 +198,15 @@ func (story *Story) ingestMeasurement(
 	}
 
 	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)
+	regime := perspectives.ClassifyRegime(snapshots)
+	story.publishRegime(measurement.Symbol, regime)
 	story.tree.ResetWalk()
 
 	actionType := story.tree.WalkContext(
 		perspectives.BranchContext{
 			Measurements: snapshots,
 			Observations: story.observations(measurement.Symbol),
+			Regime:       regime.Regime,
 			Metrics: map[string]float64{
 				"last": measurement.Last,
 			},
@@ -224,6 +227,26 @@ func (story *Story) ingestMeasurement(
 	}
 
 	return nil
+}
+
+/*
+publishRegime sends the current price-action regime and its radar axes to the
+dashboard. The same classification feeds BranchContext.Regime, so what the radar
+shows is exactly what the decision tree branches on.
+*/
+func (story *Story) publishRegime(symbol string, regime perspectives.RegimeFeatures) {
+	axes := regime.Radar()
+
+	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"chart":      "regime",
+		"symbol":     symbol,
+		"regime":     regime.Regime.String(),
+		"volatility": axes["volatility"],
+		"trend":      axes["trend"],
+		"bullish":    axes["bullish"],
+		"bearish":    axes["bearish"],
+		"choppiness": axes["choppiness"],
+	}})
 }
 
 func (story *Story) observations(symbol string) map[perspectives.ObservationType]float64 {

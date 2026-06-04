@@ -60,14 +60,6 @@ func (search *ScanSearch) runBeamPhase(
 	)
 }
 
-func (search *ScanSearch) emitBootstrapPlaybooks(
-	send func(scanCandidate) bool,
-	actionBranches []scanCandidate,
-) {
-	search.emitDecisionSeeds(send)
-	search.emitSiblingBranches(send, actionBranches, search.budget.BeamWidth)
-}
-
 func (search *ScanSearch) emitDeepeningExpansions(
 	send func(scanCandidate) bool,
 	survivors []types.CandidateScore,

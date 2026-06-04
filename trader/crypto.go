@@ -185,12 +185,43 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 	crypto.inventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
 	crypto.streams.Add(symbol)
+	crypto.publishPositions()
 }
 
 func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.inventory, symbol)
 	delete(crypto.avgEntry, symbol)
 	crypto.streams.Remove(symbol)
+	crypto.publishPositions()
+}
+
+/*
+publishPositions ships the open book to the dashboard so it can mark each
+position against the live price stream and show real-time unrealized P&L.
+*/
+func (crypto *Crypto) publishPositions() {
+	if crypto.ui == nil {
+		return
+	}
+
+	positions := make([]map[string]any, 0, len(crypto.inventory))
+
+	for symbol, qty := range crypto.inventory {
+		if qty <= 0 {
+			continue
+		}
+
+		positions = append(positions, map[string]any{
+			"symbol":    symbol,
+			"qty":       qty,
+			"avg_entry": crypto.avgEntry[symbol],
+		})
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":     "positions",
+		"positions": positions,
+	}})
 }
 
 func (crypto *Crypto) Close() error {

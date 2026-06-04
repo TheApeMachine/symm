@@ -16,7 +16,7 @@ import type {
 	PredictionReading,
 	PredictionSeriesKind,
 } from "#/components/charts/prediction/predictions-data-provider";
-import { ensureSciChartWasm } from "#/lib/symm/scichart-setup";
+import { ensureSciChartWasm } from "#/lib/utils";
 
 const SERIES_STYLE: Record<
 	PredictionSeriesKind,
@@ -28,7 +28,7 @@ const SERIES_STYLE: Record<
 	}
 > = {
 	average: {
-		name: "Realized cross-section multiple",
+		name: "Prediction confidence",
 		stroke: "#4EC385",
 		strokeThickness: 2,
 	},

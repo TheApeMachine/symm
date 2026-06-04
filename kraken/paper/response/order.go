@@ -105,35 +105,42 @@ func (orders *Orders) emit(symbol, side string, qty, price, fee float64) {
 }
 
 /*
-priceAndFee derives the fill price and fee from configured paper costs. Limit
-orders rest and fill at their own price as makers; market orders cross the touch
-plus slippage as takers.
+priceAndFee derives the fill price and fee from the single live quote, faithful
+to maker/taker mechanics so no phantom edge is manufactured from a stale price
+source. A maker (limit) order joins the touch on its own side — a buy fills at
+the bid, a sell at the ask — and pays the maker fee. A taker (market) order
+crosses the spread plus slippage and pays the taker fee. A maker-in/taker-out
+round trip therefore loses the spread plus fees on a flat market and only profits
+when the price genuinely moves while the position is held.
 */
 func (orders *Orders) priceAndFee(params trading.AddParams) (price, fee float64, err error) {
-	slipBps := viper.GetFloat64("trading.paper.slippage_bps")
-
-	if params.OrderType == trading.Limit {
-		makerPct := viper.GetFloat64("trading.paper.maker_fee_pct")
-		notional := params.OrderQty * params.LimitPrice
-
-		return params.LimitPrice, notional * makerPct / 100, nil
-	}
-
 	quote, ok := orders.quotes.Snapshot(params.Symbol)
 
 	if !ok {
 		return 0, 0, fmt.Errorf("paper fill: no quote for %s", params.Symbol)
 	}
 
-	price = quote.Ask * (1 + slipBps/10000)
+	slip := viper.GetFloat64("trading.paper.slippage_bps") / 10000
+	maker := params.OrderType == trading.Limit
 
-	if params.Side == trading.Sell {
-		price = quote.Bid * (1 - slipBps/10000)
+	switch {
+	case params.Side == trading.Buy && maker:
+		price = quote.Bid
+	case params.Side == trading.Buy:
+		price = quote.Ask * (1 + slip)
+	case maker:
+		price = quote.Ask
+	default:
+		price = quote.Bid * (1 - slip)
 	}
 
-	takerPct := viper.GetFloat64("trading.paper.taker_fee_pct")
+	feePct := viper.GetFloat64("trading.paper.taker_fee_pct")
 
-	return price, params.OrderQty * price * takerPct / 100, nil
+	if maker {
+		feePct = viper.GetFloat64("trading.paper.maker_fee_pct")
+	}
+
+	return price, params.OrderQty * price * feePct / 100, nil
 }
 
 func (orders *Orders) Observe(socket types.Socket) {

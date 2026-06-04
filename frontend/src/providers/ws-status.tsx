@@ -13,12 +13,29 @@ export type ActionEvent = {
 	ts: number;
 };
 
+export type Position = {
+	symbol: string;
+	qty: number;
+	avgEntry: number;
+};
+
+export type PositionView = Position & {
+	mark: number;
+	unrealized: number;
+	unrealizedPct: number;
+};
+
 type WsStatusContextValue = {
 	online: boolean;
 	setOnline: (online: boolean) => void;
 	balance: number;
 	openPositions: number;
 	setWallet: (balance: number, openPositions: number) => void;
+	positions: Position[];
+	setPositions: (positions: Position[]) => void;
+	marks: Record<string, number>;
+	setMark: (symbol: string, price: number) => void;
+	positionViews: PositionView[];
 	actions: ActionEvent[];
 	pushAction: (action: ActionEvent) => void;
 };
@@ -29,6 +46,8 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [online, setOnline] = useState(false);
 	const [balance, setBalance] = useState(0);
 	const [openPositions, setOpenPositions] = useState(0);
+	const [positions, setPositions] = useState<Position[]>([]);
+	const [marks, setMarks] = useState<Record<string, number>>({});
 	const [actions, setActions] = useState<ActionEvent[]>([]);
 
 	const setWallet = useCallback((nextBalance: number, nextOpen: number) => {
@@ -36,9 +55,30 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		setOpenPositions(nextOpen);
 	}, []);
 
+	const setMark = useCallback((symbol: string, price: number) => {
+		setMarks((prev) => (prev[symbol] === price ? prev : { ...prev, [symbol]: price }));
+	}, []);
+
 	const pushAction = useCallback((action: ActionEvent) => {
 		setActions((prev) => [action, ...prev].slice(0, 50));
 	}, []);
+
+	const positionViews = useMemo<PositionView[]>(
+		() =>
+			positions.map((position) => {
+				const mark = marks[position.symbol] ?? position.avgEntry;
+				const unrealized = (mark - position.avgEntry) * position.qty;
+				const cost = position.avgEntry * position.qty;
+
+				return {
+					...position,
+					mark,
+					unrealized,
+					unrealizedPct: cost > 0 ? (unrealized / cost) * 100 : 0,
+				};
+			}),
+		[positions, marks],
+	);
 
 	const value = useMemo(
 		() => ({
@@ -47,10 +87,26 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			balance,
 			openPositions,
 			setWallet,
+			positions,
+			setPositions,
+			marks,
+			setMark,
+			positionViews,
 			actions,
 			pushAction,
 		}),
-		[online, balance, openPositions, setWallet, actions, pushAction],
+		[
+			online,
+			balance,
+			openPositions,
+			setWallet,
+			positions,
+			marks,
+			setMark,
+			positionViews,
+			actions,
+			pushAction,
+		],
 	);
 
 	return (

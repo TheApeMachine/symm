@@ -2,13 +2,7 @@ import { CircleAlertIcon } from "lucide-react";
 import { type MutableRefObject, useCallback } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 import { drawSignalGauge } from "#/components/charts/confidence/draw-signal-gauge";
-import {
-	Card,
-	CardDescription,
-	CardHeader,
-	CardPanel,
-	CardTitle,
-} from "#/components/ui/card";
+import { Card, CardPanel } from "#/components/ui/card";
 import { Frame, FrameFooter } from "#/components/ui/frame";
 
 export type SignalGaugeBridge = {
@@ -56,7 +50,7 @@ export const SignalGauge = ({
 					/>
 				</CardPanel>
 			</Card>
-			<FrameFooter>
+			<FrameFooter className="py-1">
 				<div className="flex gap-1 text-muted-foreground text-xs">
 					<CircleAlertIcon className="size-3 h-lh shrink-0" />
 					<p>{label}</p>

@@ -7,26 +7,72 @@ branches:
                   observation: not_holding
                   condition: '>='
                   unit: snr
-                  value: 0
+                  value: 0.363678504972261
                   value_set: true
                   action:
                     type: limit
-              category: faded_exhaustion
+              category: systemic_slump
               condition: '>='
               unit: snr
-              value: 0.5870026674758658
+              value: 0
               value_set: true
-          category: dense_neutrality
-          condition: <=
+          category: liquidity_vacuum
+          condition: <
           unit: confidence
-          value: 0.3452772883959511
+          value: 0.9999999999574637
           value_set: true
-      category: dense_neutrality
+      category: liquidity_vacuum
+      regime: choppy
+      condition: <=
+      unit: confidence
+      value: 0.9999997325551132
+      value_set: true
+    - category: toxic_bluff
+      observation: not_holding
+      regime: bullish
+      condition: '>='
+      unit: snr
+      value: 0.5428641826632884
+      value_set: true
+      action:
+        type: market
+    - category: liquidity_vacuum
+      observation: not_holding
+      regime: trending
+      condition: <
+      unit: snr
+      value: 1.1540768340978502e-11
+      value_set: true
+      action:
+        type: limit
+    - category: liquidity_vacuum
+      observation: not_holding
+      regime: bullish
       condition: '>='
       unit: confidence
-      value: 0.34455228277072425
+      value: 0.9999783358379164
       value_set: true
-    - category: stochastic_balance
+      action:
+        type: limit
+    - category: laminar
+      observation: not_holding
+      regime: bullish
+      condition: '>'
+      unit: confidence
+      value: 0.36173032481331086
+      value_set: true
+      action:
+        type: iceberg
+    - category: liquidity_vacuum
+      observation: not_holding
+      regime: bearish
+      condition: <=
+      unit: confidence
+      value: 0.9999586568530768
+      value_set: true
+      action:
+        type: limit
+    - category: laminar
       observation: holding
       condition: '>='
       unit: snr
@@ -34,3 +80,149 @@ branches:
       value_set: true
       action:
         type: settle_position
+    - category: liquidity_vacuum
+      observation: holding
+      regime: bearish
+      condition: <
+      unit: snr
+      value: 1.0359491030519279e-10
+      value_set: true
+      action:
+        type: take_profit_limit
+    - category: toxic_bluff
+      observation: holding
+      regime: bearish
+      condition: <
+      unit: snr
+      value: 5.9785509873126274e-12
+      value_set: true
+      action:
+        type: take_profit_limit
+    - category: turbulent
+      observation: holding
+      regime: choppy
+      condition: '>='
+      unit: snr
+      value: 9.525802331353333e-06
+      value_set: true
+      action:
+        type: trailing_stop_limit
+    - category: liquidity_vacuum
+      observation: holding
+      regime: trending
+      condition: '>'
+      unit: confidence
+      value: 0.9999998549681817
+      value_set: true
+      action:
+        type: trailing_stop
+    - category: liquidity_vacuum
+      observation: holding
+      condition: <
+      unit: confidence
+      value: 0.9999995989836568
+      value_set: true
+      action:
+        type: take_profit_limit
+    - category: laminar
+      observation: holding
+      regime: bearish
+      condition: '>='
+      unit: confidence
+      value: 0.4012178082422674
+      value_set: true
+      action:
+        type: stop_loss_limit
+    - category: turbulent
+      observation: holding
+      regime: bullish
+      condition: '>='
+      unit: snr
+      value: 1.3322676295462271e-13
+      value_set: true
+      action:
+        type: stop_loss
+    - category: liquidity_vacuum
+      observation: holding
+      regime: trending
+      condition: '>'
+      unit: snr
+      value: 8.445134425045015e-07
+      value_set: true
+      action:
+        type: trailing_stop
+    - category: liquidity_vacuum
+      observation: holding
+      regime: trending
+      condition: '>='
+      unit: confidence
+      value: 0.9999290935502573
+      value_set: true
+      action:
+        type: stop_loss_limit
+    - category: laminar
+      observation: holding
+      regime: trending
+      condition: <=
+      unit: confidence
+      value: 0.45047635245900625
+      value_set: true
+      action:
+        type: stop_loss
+    - category: laminar
+      observation: holding
+      condition: '>'
+      unit: confidence
+      value: 0.3193411005703157
+      value_set: true
+      action:
+        type: settle_position
+    - category: liquidity_vacuum
+      observation: holding
+      condition: <
+      unit: snr
+      value: 8.359979375427429e-12
+      value_set: true
+      action:
+        type: settle_position
+    - category: liquidity_vacuum
+      observation: holding
+      regime: choppy
+      condition: '>'
+      unit: snr
+      value: 7.071565555349935e-11
+      value_set: true
+    - category: liquidity_vacuum
+      observation: holding
+      regime: bearish
+      condition: '>='
+      unit: confidence
+      value: 0.9999999949809095
+      value_set: true
+      action:
+        type: take_profit
+    - category: liquidity_vacuum
+      observation: holding
+      regime: dead
+      condition: <
+      unit: snr
+      value: 6.12206169092477e-07
+      value_set: true
+    - category: laminar
+      observation: holding
+      regime: choppy
+      condition: <=
+      unit: confidence
+      value: 0.3478969756272039
+      value_set: true
+      action:
+        type: stop_loss_limit
+    - category: liquidity_vacuum
+      observation: holding
+      regime: dead
+      condition: '>='
+      unit: confidence
+      value: 0.9999996213238291
+      value_set: true
+      action:
+        type: take_profit

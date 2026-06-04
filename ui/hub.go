@@ -55,8 +55,9 @@ type Hub struct {
 	subscribers map[string]*qpool.Subscriber
 	clients     *sync.Map
 	server      *http.Server
-	nextConnID  uint64
-	lastWallet  atomic.Pointer[map[string]any]
+	nextConnID    uint64
+	lastWallet    atomic.Pointer[map[string]any]
+	lastPositions atomic.Pointer[map[string]any]
 }
 
 /*
@@ -159,6 +160,10 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		_ = conn.WriteJSON(*w)
 	}
 
+	if positions := hub.lastPositions.Load(); positions != nil {
+		_ = conn.WriteJSON(*positions)
+	}
+
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, conn)
 }
@@ -192,6 +197,10 @@ func (hub *Hub) Tick() error {
 
 			if out["event"] == "wallet" {
 				hub.lastWallet.Store(&out)
+			}
+
+			if out["event"] == "positions" {
+				hub.lastPositions.Store(&out)
 			}
 
 			hub.clients.Range(func(key, value any) bool {

@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/optimizer/beam"
 	"github.com/theapemachine/symm/optimizer/budget"
+	"github.com/theapemachine/symm/optimizer/combine"
 	"github.com/theapemachine/symm/optimizer/guard"
 	"github.com/theapemachine/symm/optimizer/log"
 	"github.com/theapemachine/symm/optimizer/profile"
@@ -75,6 +76,8 @@ func RunHybridSearch(
 
 	branches := mctsSearch.Run()
 
+	branches = combineStrategies(mctsSearch, seeds, branches)
+
 	if options.Guard.WalkForward.Enabled {
 		log.TuneLog("walk-forward validation")
 
@@ -94,4 +97,53 @@ func RunHybridSearch(
 	}
 
 	return branches, stats, nil
+}
+
+/*
+combineStrategies runs the second search round: it composes the distinct
+strategies discovered across the finalists into one multi-entry playbook and
+adopts it only when its complexity-adjusted joint score beats the single best
+tree. scoreBranches applies the overfit complexity penalty, so a combined tree
+that merely adds gates without earning joint return is rejected.
+*/
+func combineStrategies(
+	search *TreeSearch,
+	seeds []types.CandidateScore,
+	best perspectives.BranchList,
+) perspectives.BranchList {
+	finalists := search.WalkForwardFinalists(seeds)
+
+	if len(finalists) < 2 {
+		return best
+	}
+
+	pool := make([]combine.Scored, 0, len(finalists))
+
+	for _, candidate := range finalists {
+		pool = append(pool, combine.Scored{
+			Branches: candidate.Branches,
+			Score:    candidate.AdjustedScore,
+		})
+	}
+
+	combined := combine.Greedy(pool, search.scoreBranches)
+
+	if len(combined) == 0 {
+		return best
+	}
+
+	if len(perspectives.FindAllEntryIndices(combined)) < 2 {
+		return best
+	}
+
+	if search.scoreBranches(combined) <= search.scoreBranches(best) {
+		return best
+	}
+
+	log.TuneLog(
+		"combination round: %d strategies merged",
+		len(perspectives.FindAllEntryIndices(combined)),
+	)
+
+	return combined
 }

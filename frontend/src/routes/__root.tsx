@@ -4,7 +4,8 @@ import {
 	HeadContent,
 	Scripts,
 } from "@tanstack/react-router";
-import { ChevronRightIcon } from "lucide-react";
+import { useState } from "react";
+import { PositionsPanel } from "#/components/panels/positions";
 import { Page } from "#/components/layout/page";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -33,17 +34,29 @@ const ConnectionBadge = () => {
 
 const PageHeader = () => {
 	const { balance, openPositions } = useWsStatus();
+	const [showPositions, setShowPositions] = useState(false);
 
 	return (
 		<Page.Header>
-			<Button className="h-auto! gap-4 px-4 py-3 text-left" variant="outline">
-				<div className="flex flex-col gap-0.5">
-					<h3>€{balance.toFixed(2)}</h3>
-					<p className="whitespace-break-spaces font-normal text-muted-foreground">
-						{openPositions} open position{openPositions === 1 ? "" : "s"}
-					</p>
-				</div>
-			</Button>
+			<div className="relative">
+				<Button
+					className="h-auto! gap-4 px-4 py-3 text-left"
+					variant="outline"
+					onClick={() => setShowPositions((open) => !open)}
+				>
+					<div className="flex flex-col gap-0.5">
+						<h3>€{balance.toFixed(2)}</h3>
+						<p className="whitespace-break-spaces font-normal text-muted-foreground">
+							{openPositions} open position{openPositions === 1 ? "" : "s"}
+						</p>
+					</div>
+				</Button>
+				{showPositions ? (
+					<div className="absolute left-0 top-full z-50 mt-2">
+						<PositionsPanel />
+					</div>
+				) : null}
+			</div>
 			<ConnectionBadge />
 		</Page.Header>
 	);

@@ -37,7 +37,7 @@ export const FluidFieldSurfaceChart = ({
 		>
 			initChart={initFluidSurfaceChart}
 			onInit={onInit}
-			style={{ height: "100%", width: "50%" }}
+			style={{ height: "100%", width: "100%" }}
 		/>
 	);
 };

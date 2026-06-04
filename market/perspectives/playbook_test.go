@@ -48,6 +48,60 @@ func TestCanonicalPlaybookBranches(t *testing.T) {
 	})
 }
 
+func TestCanonicalPlaybookMultipleEntries(t *testing.T) {
+	convey.Convey("Given two distinct strategies combined as sibling entries", t, func() {
+		strategyA := CanonicalPlaybookBranches(BranchList{
+			{Category: CategoryToxicBluff, Observation: ObservationNone, ValueSet: true},
+			{
+				Category: CategoryLaminar, Observation: ObservationNotHolding,
+				Condition: ConditionIsGreaterThanOrEqual, Unit: UnitSNR, Value: 1, ValueSet: true,
+				Action: Action{Type: ActionLimit},
+			},
+			{
+				Category: CategoryActiveReversal, Observation: ObservationHolding,
+				Condition: ConditionIsGreaterThanOrEqual, Unit: UnitSNR, Value: 1, ValueSet: true,
+				Action: Action{Type: ActionSettlePosition},
+			},
+		})
+		entryB := Branch{
+			Category: CategoryExhaustion, Observation: ObservationNotHolding,
+			Condition: ConditionIsGreaterThanOrEqual, Unit: UnitSNR, Value: 1, ValueSet: true,
+			Action: Action{Type: ActionLimit},
+		}
+
+		combined := make(BranchList, 0)
+		combined = append(combined, strategyA[0]) // gated entry A (deny>entry)
+		combined = append(combined, entryB)       // entry B
+		combined = append(combined, strategyA[1]) // shared exit
+
+		canonical := CanonicalPlaybookBranches(combined)
+
+		convey.Convey("Both entry roots survive and the tree is canonical", func() {
+			convey.So(len(FindAllEntryIndices(canonical)), convey.ShouldEqual, 2)
+			convey.So(IsCanonicalPlaybook(canonical), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("The evaluator can enter via either strategy", func() {
+			viaA := NewBranchEvaluator(BranchContext{
+				Measurements: []Measurement{
+					{Category: CategoryToxicBluff, SNR: 2, Last: 1},
+					{Category: CategoryLaminar, SNR: 2, Last: 1},
+				},
+				Observations: map[ObservationType]float64{ObservationNotHolding: 1},
+			}).Action(canonical)
+			viaB := NewBranchEvaluator(BranchContext{
+				Measurements: []Measurement{{Category: CategoryExhaustion, SNR: 2, Last: 1}},
+				Observations: map[ObservationType]float64{ObservationNotHolding: 1},
+			}).Action(canonical)
+
+			convey.So(viaA, convey.ShouldNotBeNil)
+			convey.So(IsEntryAction(*viaA), convey.ShouldBeTrue)
+			convey.So(viaB, convey.ShouldNotBeNil)
+			convey.So(IsEntryAction(*viaB), convey.ShouldBeTrue)
+		})
+	})
+}
+
 func TestIsCanonicalPlaybook(t *testing.T) {
 	convey.Convey("Given top-level deny siblings beside entry and exit", t, func() {
 		branches := BranchList{
