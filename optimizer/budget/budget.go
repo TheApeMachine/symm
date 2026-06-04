@@ -88,7 +88,7 @@ func DeriveSearchBudget(
 		MaxGatesPerSurvivor:        categoryCount,
 		MaxWidensPerSurvivor:       categoryCount,
 		ReentryTickCooldown:        deriveReentryTickCooldown(tickCount, categoryCount),
-		MinRoundTrips:              1,
+		MinRoundTrips:              deriveMinRoundTrips(tickCount),
 		ComplexityPenalty:          deriveComplexityPenalty(profile, tape, maxReasoningSteps),
 		ExplorationWeight:          math.Sqrt(2),
 		MCTSRewardScale:            rewardScale,

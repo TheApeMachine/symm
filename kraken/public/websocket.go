@@ -16,7 +16,6 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 )
@@ -87,7 +86,7 @@ func NewWebSocket(
 			},
 		}})
 
-		activate.Boot("kraken/public websocket ready")
+		errnie.Info("kraken/public websocket ready", "kraken/public websocket ready")
 
 		if conns[0] == nil {
 			socket.Connect(WebSocketURL, "kraken:public", 0)

@@ -92,7 +92,33 @@ var (
 		perspectives.CategoryFragileExpansion,
 		perspectives.CategoryAnchorStall,
 	}
+
+	// Protective exits are price-triggered, not signal-gated, so each seeds an
+	// unconditional bracket armed on entry. Seeding one per type gives the search
+	// real starting diversity instead of a settle-only monoculture.
+	decisionProtectiveExits = []perspectives.ActionType{
+		perspectives.ActionStopLoss,
+		perspectives.ActionTakeProfit,
+		perspectives.ActionTrailingStop,
+	}
 )
+
+/*
+protectiveExitSeed pairs an entry root with a single unconditional protective
+exit (armed whenever holding). The replay ledger rests the trigger and fills it
+on the price path, so no signal-category gate is needed.
+*/
+func protectiveExitSeed(
+	entryWrapped perspectives.Branch, actionType perspectives.ActionType,
+) perspectives.BranchList {
+	return perspectives.BranchList{
+		entryWrapped,
+		perspectives.Branch{
+			Observation: perspectives.ObservationHolding,
+			Action:      perspectives.Action{Type: actionType},
+		},
+	}
+}
 
 /*
 BuildDecisionSeedPlaybooks materializes DECISION.md templates that are reachable
@@ -134,6 +160,13 @@ func BuildDecisionSeedPlaybooks(
 				playbook := append(perspectives.BranchList{entryWrapped}, exit)
 				playbooks = append(playbooks, playbook)
 			}
+
+			for _, protective := range decisionProtectiveExits {
+				entryWrapped := perspectives.NestDenyGatesAroundEntry(
+					entryRoot, decisionDenyPlaybook(profile, index),
+				)
+				playbooks = append(playbooks, protectiveExitSeed(entryWrapped, protective))
+			}
 		}
 	}
 
@@ -165,12 +198,15 @@ func BuildProfileNestedSeedPlaybooks(
 	seen := make(map[string]struct{})
 
 	for _, pair := range pairs {
+		outerValue, _ := profile.InformativeGreaterEqualThreshold(
+			pair.outer, perspectives.UnitSNR, 0.5,
+		)
 		entryRoot := perspectives.Branch{
 			Category:    pair.outer,
 			Observation: perspectives.ObservationNone,
 			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
 			Unit:        perspectives.UnitSNR,
-			Value:       profile.Quantile(pair.outer, perspectives.UnitSNR, 0.5),
+			Value:       outerValue,
 			ValueSet:    true,
 			Branches: []perspectives.Branch{
 				gateBranch(
@@ -188,6 +224,18 @@ func BuildProfileNestedSeedPlaybooks(
 				profile, exitCategory, perspectives.ObservationHolding, perspectives.ActionSettlePosition,
 			)
 			playbook := append(perspectives.BranchList{entryRoot}, exit)
+			key := branchListKey(playbook)
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			playbooks = append(playbooks, playbook)
+		}
+
+		for _, protective := range decisionProtectiveExits {
+			playbook := protectiveExitSeed(entryRoot, protective)
 			key := branchListKey(playbook)
 
 			if _, ok := seen[key]; ok {
@@ -302,12 +350,15 @@ func branchFromCategoryChain(
 	leaf := gateBranch(profile, chain[len(chain)-1], observation, action)
 
 	for index := len(chain) - 2; index >= 0; index-- {
+		gateValue, _ := profile.InformativeGreaterEqualThreshold(
+			chain[index], perspectives.UnitSNR, 0.5,
+		)
 		leaf = perspectives.Branch{
 			Category:    chain[index],
 			Observation: perspectives.ObservationNone,
 			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
 			Unit:        perspectives.UnitSNR,
-			Value:       profile.Quantile(chain[index], perspectives.UnitSNR, 0.5),
+			Value:       gateValue,
 			ValueSet:    true,
 			Branches:    []perspectives.Branch{leaf},
 		}
@@ -322,12 +373,14 @@ func gateBranch(
 	observation perspectives.ObservationType,
 	action perspectives.ActionType,
 ) perspectives.Branch {
+	value, _ := profile.InformativeGreaterEqualThreshold(category, perspectives.UnitSNR, 0.5)
+
 	return perspectives.Branch{
 		Category:    category,
 		Observation: observation,
 		Condition:   perspectives.ConditionIsGreaterThanOrEqual,
 		Unit:        perspectives.UnitSNR,
-		Value:       profile.Quantile(category, perspectives.UnitSNR, 0.5),
+		Value:       value,
 		ValueSet:    true,
 		Action:      perspectives.Action{Type: action},
 	}

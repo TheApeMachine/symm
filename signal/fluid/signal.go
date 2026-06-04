@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -57,7 +56,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 	signal.ui = bus.Group(pool, "ui", 10*time.Millisecond)
 
-	activate.Boot("signal/fluid ready")
+	errnie.Info("signal/fluid ready", "signal/fluid")
 
 	return signal
 }
@@ -184,7 +183,7 @@ func (signal *Signal) emit(symbol string) error {
 			return err
 		}
 
-		activate.Once("signal/fluid:measurement")
+		errnie.Info("signal/fluid:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 		if signal.ui != nil {
 			signal.ui.Send(&qpool.QValue[any]{

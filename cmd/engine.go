@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
-	"reflect"
 	"sync"
 
 	"github.com/theapemachine/qpool"
@@ -36,41 +34,23 @@ func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
 	return engine, nil
 }
 
-func (engine *Engine) Start() error {
+func (engine *Engine) Start() (err error) {
 	var wg sync.WaitGroup
-	var errMu sync.Mutex
-	tickErrors := make([]error, 0)
 
 	for _, system := range engine.systems {
-		system := system
-
 		wg.Go(func() {
-			if err := system.Tick(); err != nil {
-				errMu.Lock()
-				tickErrors = append(tickErrors, err)
-				errMu.Unlock()
-
+			if err = errors.Join(err, system.Tick()); err != nil {
 				return
 			}
 		})
 	}
 
 	wg.Wait()
-
-	engine.err = errors.Join(tickErrors...)
-
-	return engine.err
+	return err
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
-	for _, s := range systems {
-		if s == nil || reflect.ValueOf(s).IsNil() {
-			return fmt.Errorf("nil system passed to AddSystems")
-		}
-	}
-
 	engine.systems = append(engine.systems, systems...)
-
 	return nil
 }
 

@@ -1,6 +1,9 @@
 package mcts
 
 import (
+	"encoding/binary"
+	"hash/fnv"
+	"io"
 	"math"
 
 	"github.com/theapemachine/symm/market/perspectives"
@@ -104,17 +107,56 @@ func (tree *Tree) UCT(parent, child *Node) float64 {
 func (tree *Tree) bestChild(node *Node) *Node {
 	best := node.children[0]
 	bestScore := tree.UCT(node, best)
+	bestKey := nodeFingerprint(best)
 
 	for _, child := range node.children[1:] {
 		score := tree.UCT(node, child)
 
-		if score > bestScore {
-			best = child
-			bestScore = score
+		switch {
+		case score > bestScore:
+			best, bestScore, bestKey = child, score, nodeFingerprint(child)
+		case score == bestScore:
+			// UCT ties — notably all unvisited children at +Inf — would otherwise
+			// fall to append order, which mirrors searchEntryActions and pins
+			// selection to the first-listed action (ActionLimit). Break the tie on
+			// a stable branch fingerprint instead, so no action is systematically
+			// favoured.
+			if key := nodeFingerprint(child); key < bestKey {
+				best, bestKey = child, key
+			}
 		}
 	}
 
 	return best
+}
+
+/*
+nodeFingerprint is a stable, order-independent hash of a node's branches used to
+break UCT ties deterministically without favouring move-enumeration order.
+*/
+func nodeFingerprint(node *Node) uint64 {
+	hash := fnv.New64a()
+	writeBranchListFingerprint(hash, node.branches)
+
+	return hash.Sum64()
+}
+
+func writeBranchListFingerprint(writer io.Writer, branches perspectives.BranchList) {
+	var scratch [8]byte
+
+	for _, branch := range branches {
+		_, _ = writer.Write([]byte(branch.Category))
+		_, _ = writer.Write([]byte{
+			byte(branch.Observation),
+			byte(branch.Regime),
+			byte(branch.Condition),
+			byte(branch.Unit),
+			byte(branch.Action.Type),
+		})
+		binary.LittleEndian.PutUint64(scratch[:], math.Float64bits(branch.Value))
+		_, _ = writer.Write(scratch[:])
+		writeBranchListFingerprint(writer, branch.Branches)
+	}
 }
 
 func (node *Node) ChildCount() int {

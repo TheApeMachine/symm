@@ -1,8 +1,8 @@
 package leadlag
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -84,7 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	activate.Boot("signal/leadlag ready")
+	errnie.Info("signal/leadlag ready", "signal/leadlag")
 
 	return signal
 }
@@ -262,7 +261,7 @@ func (signal *Signal) sendMeasurement(
 		return err
 	}
 
-	activate.Once("signal/leadlag:measurement")
+	errnie.Info("signal/leadlag:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: *measurement})
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})

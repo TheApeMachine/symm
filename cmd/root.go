@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/focus"
 	kraken "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/private"
@@ -49,7 +49,6 @@ var (
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pool := qpool.NewQ(cmd.Context(), 1, 4, nil)
-
 			engine, err := NewEngine(cmd.Context(), pool)
 
 			if err != nil {
@@ -57,7 +56,10 @@ var (
 			}
 
 			streams := focus.NewSet()
-			activate.Boot("engine registering systems trading.model=" + viper.GetString("trading.model"))
+			errnie.Info(
+				"engine registering systems trading.model="+viper.GetString("trading.model"),
+				"engine",
+			)
 
 			if err := engine.AddSystems(
 				ui.NewHub(cmd.Context(), pool),
@@ -87,8 +89,7 @@ var (
 				return err
 			}
 
-			activate.Boot("engine.Start")
-
+			errnie.Info("engine.Start", "engine")
 			return engine.Start()
 		},
 	}

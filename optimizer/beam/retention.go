@@ -38,7 +38,12 @@ func compareBeamCandidates(left, right types.CandidateScore) bool {
 		return left.AdjustedScore > right.AdjustedScore
 	}
 
-	return left.Candidate < right.Candidate
+	// Break score ties on a structural fingerprint rather than candidate ID.
+	// Candidate IDs follow generation order, which mirrors searchEntryActions and
+	// otherwise pins ties to the first-listed action (limit). The fingerprint is
+	// only computed here, on an exact score tie, so it costs nothing on the common
+	// distinct-score path.
+	return branchListKey(left.Branches) < branchListKey(right.Branches)
 }
 
 /*

@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/public"
@@ -84,7 +83,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		errnie.Error(err)
 	}
 
-	activate.Boot("kraken/paper websocket ready")
+	errnie.Info("kraken/paper websocket ready", "kraken/paper websocket")
 
 	return ws
 }

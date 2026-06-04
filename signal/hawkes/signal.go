@@ -1,15 +1,14 @@
 package hawkes
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -97,7 +96,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	activate.Boot("signal/hawkes ready")
+	errnie.Info("signal/hawkes ready", "signal/hawkes")
 
 	return signal
 }
@@ -194,7 +193,7 @@ func (signal *Signal) publishTouches(touches []tradeTouch) error {
 				return nil, err
 			}
 
-			activate.Once("signal/hawkes:measurement")
+			errnie.Info("signal/hawkes:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})

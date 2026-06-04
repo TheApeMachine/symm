@@ -116,11 +116,3 @@ func (catalog *PairCatalog) quoteAsset(symbol string) string {
 
 	return "USD"
 }
-
-func (catalog *PairCatalog) baseAsset(symbol string) string {
-	if index := strings.IndexByte(symbol, '/'); index >= 0 {
-		return symbol[:index]
-	}
-
-	return symbol
-}

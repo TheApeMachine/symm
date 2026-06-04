@@ -1,15 +1,14 @@
 package pumpdump
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -83,7 +82,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	activate.Boot("signal/pumpdump ready")
+	errnie.Info("signal/pumpdump ready", "signal/pumpdump")
 
 	return signal
 }
@@ -217,7 +216,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		return err
 	}
 
-	activate.Once("signal/pumpdump:measurement")
+	errnie.Info("signal/pumpdump:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(

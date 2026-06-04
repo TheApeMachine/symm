@@ -97,8 +97,10 @@ func sortedMeasurementsBySource(
 }
 
 type replayPosition struct {
-	entryPrice float64
-	quantity   float64
+	entryPrice  float64
+	quantity    float64
+	peak        float64                 // running max price since entry (drives trailing stops)
+	triggerType perspectives.ActionType // ActionNone until an exit gate arms a resting protective order
 }
 
 type pendingReplayAction struct {
@@ -164,6 +166,7 @@ func (ledger *replayLedger) onTickStart(
 	row perspectives.Measurement,
 ) {
 	ledger.flushPending(at, row)
+	ledger.checkTriggers(row)
 }
 
 func (ledger *replayLedger) flushPending(
@@ -177,19 +180,45 @@ func (ledger *replayLedger) flushPending(
 	remaining := ledger.pending[:0]
 
 	for _, item := range ledger.pending {
-		if ledger.executionReady(item, at) {
-			ledger.applyStressed(
-				item.action,
-				executionFillMeasurement(item.measurement, currentRow),
-				item.snapshots,
-			)
+		if !ledger.executionReady(item, at) {
+			remaining = append(remaining, item)
 			continue
 		}
 
-		remaining = append(remaining, item)
+		fillRow := executionFillMeasurement(item.measurement, currentRow)
+
+		// A resting maker entry that the price ran away from never fills — drop
+		// it rather than applying a phantom fill.
+		if makerEntryMissed(item.action, item.measurement.Last, fillRow.Last) {
+			continue
+		}
+
+		ledger.applyStressed(item.action, fillRow, item.snapshots)
 	}
 
 	ledger.pending = remaining
+}
+
+/*
+makerEntryMissed reports whether a resting maker (limit/iceberg) buy entry failed
+to fill because the price ran above the posted level during the execution-latency
+window. Passive entries miss fast up-moves — the cost of not crossing the spread —
+so modelling it removes the "a limit always fills" optimism that made limit
+strictly dominate market in replay. Price reachability stands in for true queue
+depletion, which the replay tape lacks the book depth to model.
+*/
+func makerEntryMissed(
+	actionType perspectives.ActionType, postPrice, fillPrice float64,
+) bool {
+	if !perspectives.IsEntryAction(actionType) || !perspectives.IsMakerAction(actionType) {
+		return false
+	}
+
+	if postPrice <= 0 || fillPrice <= 0 {
+		return false
+	}
+
+	return fillPrice > postPrice
 }
 
 func executionFillMeasurement(
@@ -287,17 +316,156 @@ func (ledger *replayLedger) applyStressed(
 	switch actionType {
 	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
 		ledger.openLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
-	case perspectives.ActionSettlePosition,
-		perspectives.ActionStopLoss,
+	case perspectives.ActionSettlePosition:
+		// Discretionary exit: cross the book now at the current price.
+		ledger.closeLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
+	case perspectives.ActionStopLoss,
 		perspectives.ActionStopLossLimit,
 		perspectives.ActionTakeProfit,
 		perspectives.ActionTakeProfitLimit,
 		perspectives.ActionTrailingStop,
 		perspectives.ActionTrailingStopLimit:
-		ledger.closeLong(measurement.Symbol, measurement.Last, feePct, slippagePct)
+		// Protective exit: rest the order; it fills only when the price path
+		// breaches its trigger (checked each tick in checkTriggers).
+		ledger.armTrigger(measurement.Symbol, actionType)
 	case perspectives.ActionNone:
 		return
 	}
+}
+
+/*
+armTrigger attaches a resting protective exit to an open position. The most
+recent exit gate wins, so a strategy can revise its protection (e.g. tighten a
+stop) on later ticks. No-ops when flat.
+*/
+func (ledger *replayLedger) armTrigger(
+	symbol string, actionType perspectives.ActionType,
+) {
+	position, open := ledger.positions[symbol]
+
+	if !open {
+		return
+	}
+
+	position.triggerType = actionType
+	ledger.positions[symbol] = position
+}
+
+/*
+checkTriggers advances the running peak and closes the position when the price
+path breaches an armed protective trigger. Stops and trailing stops cross the
+book on breach (eating any gap-through and slippage); the -limit variants rest
+as maker orders and fill at their trigger level. Called once per tick.
+*/
+func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
+	if row.Symbol == "" || row.Last <= 0 {
+		return
+	}
+
+	position, open := ledger.positions[row.Symbol]
+
+	if !open || position.entryPrice <= 0 {
+		return
+	}
+
+	if row.Last > position.peak {
+		position.peak = row.Last
+		ledger.positions[row.Symbol] = position
+	}
+
+	if position.triggerType == perspectives.ActionNone {
+		return
+	}
+
+	level, breached := triggerLevel(ledger.costs, position, row.Last)
+
+	if !breached {
+		return
+	}
+
+	ledger.closeAtTrigger(row.Symbol, position.triggerType, level, row.Last, row.SpreadBPS)
+}
+
+/*
+triggerLevel returns the protective trigger price for the armed exit and whether
+the current price has breached it. Long positions only.
+*/
+func triggerLevel(
+	costs ReplayCosts, position replayPosition, price float64,
+) (level float64, breached bool) {
+	switch position.triggerType {
+	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
+		level = position.entryPrice * (1 - costs.StopLossPct)
+
+		return level, price <= level
+	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
+		level = position.entryPrice * (1 + costs.TakeProfitPct)
+
+		return level, price >= level
+	case perspectives.ActionTrailingStop, perspectives.ActionTrailingStopLimit:
+		level = position.peak * (1 - costs.TrailingPct)
+
+		return level, price <= level
+	default:
+		return 0, false
+	}
+}
+
+func exitRestsAsLimit(actionType perspectives.ActionType) bool {
+	switch actionType {
+	case perspectives.ActionStopLossLimit,
+		perspectives.ActionTakeProfitLimit,
+		perspectives.ActionTrailingStopLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+/*
+closeAtTrigger realizes a protective exit. Market-style triggers (stop, take,
+trailing) cross the book: a stop or trail fills at the worse of the trigger and
+the current price (gap-through), paying taker fee and slippage. The -limit
+variants rest as maker orders and fill at their trigger level with the maker fee
+and no crossing slippage.
+*/
+func (ledger *replayLedger) closeAtTrigger(
+	symbol string,
+	actionType perspectives.ActionType,
+	level float64,
+	price float64,
+	spreadBPS float64,
+) {
+	position, open := ledger.positions[symbol]
+
+	if !open || position.entryPrice <= 0 {
+		return
+	}
+
+	var exitFill, feePct float64
+
+	if exitRestsAsLimit(actionType) {
+		exitFill = level
+		feePct = ledger.costs.MakerFeePct
+	} else {
+		fill := level
+
+		// A market stop/trail eats a downside gap-through; a market take-profit
+		// does not assume a favourable upside gap.
+		if actionType != perspectives.ActionTakeProfit && price < level {
+			fill = price
+		}
+
+		exitFill = fill * (1 - halfSpreadSlippagePct(ledger.costs, spreadBPS))
+		feePct = ledger.costs.TakerFeePct
+	}
+
+	gross := (exitFill - position.entryPrice) / position.entryPrice
+
+	ledger.realized += gross - feePct
+	ledger.closedTrades++
+	delete(ledger.positions, symbol)
+	ledger.ticksSinceClose[symbol] = 0
 }
 
 func (ledger *replayLedger) openLong(
@@ -318,8 +486,10 @@ func (ledger *replayLedger) openLong(
 	entryFill := price * (1 + slippagePct)
 
 	ledger.positions[symbol] = replayPosition{
-		entryPrice: entryFill,
-		quantity:   1,
+		entryPrice:  entryFill,
+		quantity:    1,
+		peak:        entryFill,
+		triggerType: perspectives.ActionNone,
 	}
 
 	ledger.realized -= feePct

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"math/bits"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -240,9 +240,11 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}
 
-			activate.Once("signal/correlation:measurement")
+			errnie.Info("signal/correlation:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-			if ui := signal.broadcasts["ui"]; ui != nil { ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}}) }
+			if ui := signal.broadcasts["ui"]; ui != nil {
+				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+			}
 
 			return nil, nil
 		}))

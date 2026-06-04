@@ -1,8 +1,8 @@
 package liquidity
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -69,7 +68,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	activate.Boot("signal/liquidity ready")
+	errnie.Info("signal/liquidity ready", "signal/liquidity")
 
 	return signal
 }
@@ -147,7 +146,7 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				return nil, err
 			}
 
-			activate.Once("signal/liquidity:measurement")
+			errnie.Info("signal/liquidity:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})

@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -95,7 +94,7 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		storyMeasurementsSubscriberID, 1024,
 	)
 
-	activate.Boot("market/story ready")
+	errnie.Info("market/story ready", "market/story")
 
 	return story
 }
@@ -152,7 +151,7 @@ func (story *Story) ingestMeasurement(
 	measurement perspectives.Measurement,
 	latest gaugeReadings,
 ) error {
-	activate.Once("market/story:measurement source=" + measurement.Source.String())
+	errnie.Info("market/story:measurement source=" + measurement.Source.String())
 
 	if story.recorder != nil {
 		recorded := measurement
@@ -167,7 +166,7 @@ func (story *Story) ingestMeasurement(
 			return fmt.Errorf("marshal measurement: %w", err)
 		}
 
-		activate.Once("market/story:recording")
+		errnie.Info("market/story:recording")
 
 		if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
 			return fmt.Errorf("write measurement record: %w", writeErr)
@@ -194,7 +193,7 @@ func (story *Story) ingestMeasurement(
 		}
 
 		story.tree = tree
-		activate.Once("market/story:playbook-tree")
+		errnie.Info("market/story:playbook-tree")
 	}
 
 	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)

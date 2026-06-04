@@ -1,8 +1,8 @@
 package causal
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -80,7 +79,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
-	activate.Boot("signal/causal ready")
+	errnie.Info("signal/causal ready", "signal/causal")
 
 	return signal
 }
@@ -207,10 +206,16 @@ func (signal *Signal) publish() error {
 				return nil, fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
 			}
 
-			activate.Once("signal/causal:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
 			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+				ui.Send(&qpool.QValue[any]{
+					Value: map[string]any{
+						"chart":      "gauge",
+						"source":     measurement.Source.String(),
+						"confidence": measurement.Confidence,
+						"snr":        measurement.SNR},
+				})
 			}
 
 			return nil, nil

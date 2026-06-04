@@ -14,16 +14,25 @@ const (
 	DefaultMakerFeePctPercent = 0.25
 	// DefaultSlippageBps is half-spread crossing per side when tape SpreadBPS is zero.
 	DefaultSlippageBps = 5.0
+	// Default protective-exit trigger offsets (percent of entry / peak). These make
+	// stop-loss, take-profit and trailing-stop exits economically distinct from a
+	// discretionary settle, so the optimizer can actually choose between them.
+	DefaultStopLossPctPercent   = 2.0
+	DefaultTakeProfitPctPercent = 3.0
+	DefaultTrailingPctPercent   = 1.5
 )
 
 /*
 ReplayCosts models per-side execution drag for offline replay scoring.
-Fees are stored as fractions (0.004 = 0.40%).
+Fees and trigger offsets are stored as fractions (0.004 = 0.40%).
 */
 type ReplayCosts struct {
 	MakerFeePct            float64
 	TakerFeePct            float64
 	SlippagePct            float64
+	StopLossPct            float64 // long exits if price falls this fraction below entry
+	TakeProfitPct          float64 // long exits if price rises this fraction above entry
+	TrailingPct            float64 // long exits if price falls this fraction below the peak
 	ExecutionLatency       time.Duration
 	ExecutionStressEnabled bool
 }
@@ -74,9 +83,22 @@ func ReplayCostsFromViper() ReplayCosts {
 		MakerFeePct:            makerPct / 100.0,
 		TakerFeePct:            takerPct / 100.0,
 		SlippagePct:            slippageBps / 10000.0,
+		StopLossPct:            exitOffsetPctFromViper("trading.exit.stop_loss_pct", DefaultStopLossPctPercent),
+		TakeProfitPct:          exitOffsetPctFromViper("trading.exit.take_profit_pct", DefaultTakeProfitPctPercent),
+		TrailingPct:            exitOffsetPctFromViper("trading.exit.trailing_pct", DefaultTrailingPctPercent),
 		ExecutionLatency:       replayExecutionLatencyFromViper(),
 		ExecutionStressEnabled: replayExecutionStressEnabledFromViper(),
 	}
+}
+
+func exitOffsetPctFromViper(key string, fallbackPercent float64) float64 {
+	percent := viper.GetViper().GetFloat64(key)
+
+	if percent <= 0 {
+		percent = fallbackPercent
+	}
+
+	return percent / 100.0
 }
 
 func (costs ReplayCosts) feePct(actionType perspectives.ActionType) float64 {

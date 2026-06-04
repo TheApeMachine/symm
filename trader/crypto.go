@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -71,7 +70,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 
-	activate.Boot("trader/crypto ready")
+	errnie.Info("trader/crypto ready", "trader/crypto")
 
 	return crypto
 }

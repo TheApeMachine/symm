@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -49,7 +48,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
 	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
 
-	activate.Boot("toxicity ready l3=" + fmt.Sprint(tox.l3Active))
+	errnie.Info("toxicity ready l3="+fmt.Sprint(tox.l3Active), "toxicity")
 
 	return tox
 }
@@ -197,7 +196,7 @@ func (tox *Toxicity) publishMeasurement(symbol string) error {
 
 	measurement.Symbol = symbol
 
-	activate.Once("toxicity:measurement")
+	errnie.Info("toxicity:measurement", "toxicity")
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 
 	return nil

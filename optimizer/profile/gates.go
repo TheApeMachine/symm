@@ -26,6 +26,36 @@ func (profile *Profile) CategoryCount(category perspectives.CategoryType) int {
 }
 
 /*
+InformativeGreaterEqualThreshold returns a `>= value` SNR/confidence threshold
+that actually discriminates: the value at targetQuantile if that gate already
+splits the category, otherwise the smallest observed value whose `>=` gate is
+informative. Seeds use this so they never emit a vacuous `>= 0` gate just because
+a category's median reading sits on the clamped-zero floor. The bool is false
+when no informative threshold exists (the value is then the plain quantile).
+*/
+func (profile *Profile) InformativeGreaterEqualThreshold(
+	category perspectives.CategoryType,
+	unit perspectives.UnitType,
+	targetQuantile float64,
+) (float64, bool) {
+	profile.PrepareCache()
+
+	target := profile.Quantile(category, unit, targetQuantile)
+
+	if profile.IsInformativeGate(category, unit, perspectives.ConditionIsGreaterThanOrEqual, target) {
+		return target, true
+	}
+
+	for _, value := range uniqueSortedValues(profile.sortedValues[profileValueKey(category, unit)]) {
+		if profile.IsInformativeGate(category, unit, perspectives.ConditionIsGreaterThanOrEqual, value) {
+			return value, true
+		}
+	}
+
+	return target, false
+}
+
+/*
 IsInformativeGate reports whether a threshold gate fires on a strict subset of
 its category's readings — neither always (e.g. `snr >= 0`, vacuous because SNR is
 clamped at 0) nor never. Only informative gates can discriminate, so the search

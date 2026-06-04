@@ -98,6 +98,28 @@ func DeriveMinChainSupport(tickCount int) int {
 	return support
 }
 
+/*
+deriveMinRoundTrips sets the minimum closed trades a candidate needs before it is
+eligible as "best". A single lucky round trip is statistical noise — letting it
+win (the old hardcoded floor of 1) is the optimizer fooling itself — so the floor
+scales gently with the tape. It stays well below DeriveMinChainSupport so real
+multi-trade strategies still qualify; if nothing clears the bar, that honestly
+means the tape carries no credible edge rather than surfacing a fluke.
+*/
+func deriveMinRoundTrips(tickCount int) int {
+	if tickCount <= 0 {
+		return 1
+	}
+
+	trips := int(math.Ceil(math.Sqrt(float64(tickCount)) / 3))
+
+	if trips < 20 {
+		return 20
+	}
+
+	return trips
+}
+
 func deriveMinChainSupport(tickCount int) int {
 	return DeriveMinChainSupport(tickCount)
 }

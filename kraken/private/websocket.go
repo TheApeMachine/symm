@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/activate"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
@@ -33,11 +32,11 @@ func NewWebSocket(
 	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
 ) public.WebSocketClient {
 	if viper.GetViper().GetString("trading.model") == "paper" {
-		activate.Boot("kraken/private paper websocket")
+		errnie.Info("kraken/private paper websocket", "kraken/private paper websocket")
 		return paper.NewWebSocket(ctx, pool)
 	}
 
-	activate.Boot("kraken/private live websocket")
+	errnie.Info("kraken/private live websocket", "kraken/private live websocket")
 	provider, err := NewTokenProvider(ctx, apiKey, apiSecret)
 
 	if err != nil {
@@ -90,7 +89,7 @@ func (ws *WebSocket) Connect(
 	}
 
 	public.AppendConn(ws.conns[0])
-	activate.Boot("kraken/private websocket connected")
+	errnie.Info("kraken/private websocket connected", "kraken/private websocket connected")
 
 	return nil
 }

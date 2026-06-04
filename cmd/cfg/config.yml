@@ -31,6 +31,14 @@ trading:
     maker_fee_pct: 0.16
     slippage_bps: 5
     latency_profile: runs/network_latency.json
+  # Protective-exit trigger offsets (percent). A long exits when price falls
+  # stop_loss_pct below entry, rises take_profit_pct above entry, or falls
+  # trailing_pct below its peak since entry. These make stop/take/trailing exits
+  # economically distinct from a discretionary settle in both replay and live.
+  exit:
+    stop_loss_pct: 2.0
+    take_profit_pct: 3.0
+    trailing_pct: 1.5
   audit:
     file: runs/audit.jsonl
 
