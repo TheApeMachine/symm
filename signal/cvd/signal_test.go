@@ -40,17 +40,51 @@ func TestMeasureFusedConfidence(t *testing.T) {
 			So(classifier.Confidence(6), ShouldBeGreaterThan, 0.1)
 		})
 
-		Convey("It should read zero confidence on a quartile boundary", func() {
-			So(classifier.Confidence(5.5), ShouldEqual, 0)
+		Convey("It should read a near-floor — not zero — confidence on a quartile boundary", func() {
+			near := classifier.Confidence(5.5)
+			So(near, ShouldBeGreaterThan, 0) // exact 0 is a clamping artifact
+			So(near, ShouldBeLessThan, 0.1)
 		})
 	})
 
 	Convey("Given a cold fused history", t, func() {
-		Convey("It should return zero confidence before warm-up completes", func() {
+		Convey("It should emit no category before warm-up completes", func() {
 			cold := newCVDState()
-			_, clarity, _ := cold.measureFused(1)
+			category, clarity, _ := cold.measureFused(1)
 
+			So(category, ShouldEqual, perspectives.CategoryTypeNone)
 			So(clarity, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a warmed fused history spanning a real range", t, func() {
+		state := newCVDState()
+
+		// Warm past minCVDFusedSamples with a spread so the quartile bands mean
+		// something. Before the fix, the SigmaClamp was fed 0, so every banded
+		// value was 0 and every reading collapsed to volume_starvation regardless.
+		for sample := 1; sample <= 20; sample++ {
+			state.measureFused(float64(sample))
+		}
+
+		Convey("A strong absorption burst lands in an upper band, not the floor", func() {
+			category, clarity, standout := state.measureFused(40)
+
+			So(category, ShouldBeIn, []perspectives.CategoryType{
+				perspectives.CategoryHiddenAbsorption,
+				perspectives.CategoryAggressiveDrive,
+			})
+			So(clarity, ShouldBeGreaterThan, 0)
+			So(standout, ShouldBeGreaterThan, 0.9) // raw strength, uncapped
+		})
+
+		Convey("A faint reading lands in the bottom band, and the two differ", func() {
+			high, _, highStandout := state.measureFused(40)
+			low, _, lowStandout := state.measureFused(0.2)
+
+			So(low, ShouldEqual, perspectives.CategoryVolumeStarvation)
+			So(high, ShouldNotEqual, low)              // the old bug made everything equal
+			So(highStandout, ShouldBeGreaterThan, lowStandout) // standout tracks raw strength
 		})
 	})
 }

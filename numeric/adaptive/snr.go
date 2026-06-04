@@ -21,6 +21,11 @@ const (
 	defaultSNRMinStd = 0.02
 	// snrEpsilon guards against a degenerate historical std in the clamp path.
 	snrEpsilon = 1e-12
+	// confidenceFloor keeps band-clarity confidence inside the open interval
+	// (floor, 1-floor): a boundary observation is maximally uncertain, not "zero
+	// confidence", and a deep one is near-certain, not a saturated 1. Exact 0 / 1
+	// readings are clamping artifacts, never a genuine category-selection certainty.
+	confidenceFloor = 0.02
 )
 
 /*

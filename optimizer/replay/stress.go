@@ -13,7 +13,11 @@ import (
 
 /*
 executionStressMultiplier scales replay slippage when the tick snapshot shows
-high-vorticity flow or liquidity/contagion stress categories.
+high-vorticity flow or liquidity/contagion stress categories, and ANCHORS that
+hostility to the structural price-action regime: a bearish/panic regime hunts stops
+and fills worse than a calm one. Modelling a flat hostility across every market
+state lets the optimizer overrate fragile strategies in turbulence; tying it to the
+regime forces the search to evolve tighter protective stops to survive a panic.
 */
 func executionStressMultiplier(
 	snapshots []perspectives.Measurement,
@@ -37,14 +41,29 @@ func executionStressMultiplier(
 		}
 	}
 
-	if stressReadings == 0 || stressSNR <= 0 {
-		return 1
+	categoryFactor := 1.0
+
+	if stressReadings > 0 && stressSNR > 0 {
+		coverage := float64(stressReadings) / float64(len(snapshots))
+		strength := stressSNR / (stressSNR + 1)
+		categoryFactor = 1 + coverage*strength
 	}
 
-	coverage := float64(stressReadings) / float64(len(snapshots))
-	strength := stressSNR / (stressSNR + 1)
+	return categoryFactor * regimeHostility(perspectives.ClassifyRegime(snapshots).Regime)
+}
 
-	return 1 + coverage*strength
+// regimeHostility is the structural-regime adverse-selection multiplier: a
+// liquidation/bearish regime is the most hostile to fills, choppy whipsaw next, and
+// trending/calm regimes neutral.
+func regimeHostility(regime perspectives.Regime) float64 {
+	switch regime {
+	case perspectives.RegimeBearish:
+		return 1.5
+	case perspectives.RegimeChoppy:
+		return 1.25
+	default:
+		return 1
+	}
 }
 
 func executionStressCategory(category perspectives.CategoryType) bool {

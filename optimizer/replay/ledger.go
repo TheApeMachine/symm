@@ -123,6 +123,7 @@ type replayLedger struct {
 	ticksSinceClose     map[string]int
 	realized            float64
 	closedTrades        int
+	fundBlocked         int
 	observationScratch  map[perspectives.ObservationType]float64
 	metricsScratch      map[string]float64
 	reasonStates        map[string]*perspectives.ReasonState
@@ -184,6 +185,7 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.reentryTickCooldown = 1
 	ledger.realized = 0
 	ledger.closedTrades = 0
+	ledger.fundBlocked = 0
 	ledger.tickIndex = 0
 	ledger.medianInterval = 0
 	ledger.executionLatency = 0
@@ -461,44 +463,24 @@ the current price has breached it. Long positions only.
 func triggerLevel(
 	costs ReplayCosts, position replayPosition, price float64,
 ) (level float64, breached bool) {
-	switch position.triggerType {
+	offset := perspectives.TriggerOffset(position.triggerOffset, globalOffsetFor(position.triggerType, costs))
+	level = perspectives.ProtectiveLevel(position.triggerType, position.entryPrice, position.peak, offset)
+
+	return level, perspectives.ProtectiveBreached(position.triggerType, level, price)
+}
+
+// globalOffsetFor is the account-default trigger distance for an exit type, used
+// when a playbook node does not carry its own per-node offset.
+func globalOffsetFor(action perspectives.ActionType, costs ReplayCosts) float64 {
+	switch action {
 	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
-		level = position.entryPrice * (1 - triggerOffset(position.triggerOffset, costs.StopLossPct))
-
-		return level, price <= level
+		return costs.StopLossPct
 	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
-		level = position.entryPrice * (1 + triggerOffset(position.triggerOffset, costs.TakeProfitPct))
-
-		return level, price >= level
+		return costs.TakeProfitPct
 	case perspectives.ActionTrailingStop, perspectives.ActionTrailingStopLimit:
-		level = position.peak * (1 - triggerOffset(position.triggerOffset, costs.TrailingPct))
-
-		return level, price <= level
+		return costs.TrailingPct
 	default:
-		return 0, false
-	}
-}
-
-// triggerOffset prefers the per-node offset the playbook armed, falling back to
-// the global cost default when the node did not specify one or specified a
-// nonsensical fraction (<=0 or >=1 — e.g. a stop "below" entry by 150% would arm
-// above entry). The optimizer will generate offsets, so this clamps bad ones.
-func triggerOffset(perNode, global float64) float64 {
-	if perNode > 0 && perNode < 1 {
-		return perNode
-	}
-
-	return global
-}
-
-func exitRestsAsLimit(actionType perspectives.ActionType) bool {
-	switch actionType {
-	case perspectives.ActionStopLossLimit,
-		perspectives.ActionTakeProfitLimit,
-		perspectives.ActionTrailingStopLimit:
-		return true
-	default:
-		return false
+		return 0
 	}
 }
 
@@ -524,7 +506,7 @@ func (ledger *replayLedger) closeAtTrigger(
 
 	var exitFill, feePct float64
 
-	if exitRestsAsLimit(actionType) {
+	if perspectives.ExitRestsAsLimit(actionType) {
 		exitFill = level
 		feePct = ledger.costs.MakerFeePct
 	} else {
@@ -574,6 +556,11 @@ func (ledger *replayLedger) openLong(
 	spendable := effectiveFraction(ledger.costs) * ledger.cash
 
 	if spendable <= 0 {
+		// The strategy wanted this entry and the pair is fundable, but the wallet
+		// is locked in another open position — alpha its own camp is denying. Count
+		// it so the optimizer can price the opportunity cost of tying up capital.
+		ledger.fundBlocked++
+
 		return
 	}
 

@@ -8,6 +8,11 @@ import (
 	"github.com/theapemachine/symm/optimizer/replay"
 )
 
+// capitalBlockWeight is how hard the score discounts a profitable forest for tying
+// up the wallet: at most this fraction is shaved when every tick blocks a wanting
+// entry. It prices the opportunity cost of capital without overriding genuine edge.
+const capitalBlockWeight = 0.5
+
 /*
 SearchConfig tunes the beam search. Zero fields fall back to defaults, so a caller
 can set only what it cares about.
@@ -84,8 +89,26 @@ func Search(
 		result := replay.NewThoughtSimulation(ctx, forest, tape, costs).Result()
 
 		credited := result.Score
-		if credited > 0 && config.MinRoundTrips > 0 && result.ClosedTrades < config.MinRoundTrips {
-			credited *= float64(result.ClosedTrades) / float64(config.MinRoundTrips)
+
+		if credited > 0 {
+			if config.MinRoundTrips > 0 && result.ClosedTrades < config.MinRoundTrips {
+				credited *= float64(result.ClosedTrades) / float64(config.MinRoundTrips)
+			}
+
+			// Capital opportunity cost: a forest that camps in one position blocks
+			// entries its other branches wanted. Discount the profit by how often
+			// the wallet was too locked to fund a wanting entry — rewarding yield per
+			// unit of capital, not absolute return, so the search prefers strategies
+			// that keep the account working over ones that tie it up.
+			if tape.Len() > 0 && result.FundBlocked > 0 {
+				blockRate := float64(result.FundBlocked) / float64(tape.Len())
+
+				if blockRate > 1 {
+					blockRate = 1
+				}
+
+				credited *= 1 - capitalBlockWeight*blockRate
+			}
 		}
 
 		return Candidate{

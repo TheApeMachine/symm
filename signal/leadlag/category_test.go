@@ -9,28 +9,32 @@ import (
 
 func TestLeadlagReading(t *testing.T) {
 	Convey("Given a stalled anchor with unit stall margin", t, func() {
-		category, evidence := leadlagReading(false, 0.8, 0, 0)
+		category, clarity, strength := leadlagReading(false, 0.8, 0, 0)
 
-		Convey("It should classify anchor stall", func() {
+		Convey("It should classify anchor stall with no phenomenon strength", func() {
 			So(category, ShouldEqual, perspectives.CategoryAnchorStall)
-			So(evidence, ShouldEqual, 0.8)
+			So(clarity, ShouldEqual, 0.8)
+			So(strength, ShouldEqual, 0) // a stall is the absence of a lead-lag signal
 		})
 	})
 
 	Convey("Given a stalled anchor with zero margin", t, func() {
-		category, evidence := leadlagReading(false, 0, 0, 0)
+		category, clarity, strength := leadlagReading(false, 0, 0, 0)
 
-		Convey("It should emit zero stall evidence", func() {
+		Convey("It should emit zero stall clarity and strength", func() {
 			So(category, ShouldEqual, perspectives.CategoryAnchorStall)
-			So(evidence, ShouldEqual, 0)
+			So(clarity, ShouldEqual, 0)
+			So(strength, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given synchronized drift", t, func() {
-		category, _ := leadlagReading(true, 0, 0.8, 0)
+		category, clarity, strength := leadlagReading(true, 0, 0.8, 0)
 
-		Convey("It should classify synchronized drift", func() {
+		Convey("It should classify synchronized drift, strength = the correlation", func() {
 			So(category, ShouldEqual, perspectives.CategorySynchronizedDrift)
+			So(strength, ShouldEqual, 0.8) // standout carries the correlation magnitude, not the threshold margin
+			So(clarity, ShouldNotEqual, strength) // clarity (boundary margin) is a different quantity
 		})
 	})
 }

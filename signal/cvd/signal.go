@@ -39,8 +39,8 @@ is self-scaling: each axis is read as value / EMA(value), so "high", "low" and
 
 fused = activity · conviction · (1 + drift), self-scaling, then SigmaClamp,
 then banded into the four absorption categories. Confidence is classification
-clarity — margin to the nearest quartile boundary; SNR is how surprising that
-clarity is versus the symbol's own recent baseline, not raw strength.
+clarity — how decisively the reading lands in its quartile band; SNR is how far
+the raw absorption strength stands out above the symbol's own quiet baseline.
 
 | Category           | Net Volume | Price Drift | Market "Feel"           |
 |:-------------------|:-----------|:------------|:------------------------|
@@ -131,7 +131,11 @@ symbol's own fused history quartiles, and returns the category plus clarity
 (classification confidence from the quartile boundaries).
 */
 func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, float64, float64) {
-	clamped, err := state.sigma.Next(0, fused)
+	// The SigmaClamp's value to winsorise is the sole argument; it ignores any
+	// trailing variadic. Passing 0 here clamped 0 every time, so the banded value
+	// was always 0 — collapsing every reading into volume_starvation at zero
+	// clarity, regardless of the real absorption strength.
+	clamped, err := state.sigma.Next(fused)
 
 	if err != nil {
 		clamped = fused
@@ -140,8 +144,16 @@ func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, f
 	state.fusedHist.Push(clamped)
 	samples := state.fusedHist.Ordered()
 
+	// standout for SNR is the raw absorption strength itself, NOT a cross-band
+	// margin: how strongly executed flow is being absorbed, scored against this
+	// symbol's own quiet baseline. It is left uncapped (a smooth s/(s+1) squash,
+	// not a hard clamp) so a genuine flow burst surfaces instead of being flattened.
+	standout := perspectives.UnitMagnitudeMargin(fused)
+
 	if len(samples) < minCVDFusedSamples {
-		return perspectives.CategoryStochasticBalance, 0, 0
+		// Not enough history to band yet — emit nothing rather than a degenerate
+		// zero-clarity reading; the caller skips a CategoryTypeNone.
+		return perspectives.CategoryTypeNone, 0, standout
 	}
 
 	sorted := numeric.CopySorted(samples)
@@ -154,7 +166,6 @@ func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, f
 		cvdBandLabels,
 	)
 	clarity := classifier.Confidence(clamped)
-	standout := classifier.Standout(clamped)
 
 	switch {
 	case clamped <= q1:
@@ -251,6 +262,10 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 	fused := activity * conviction * (1 + drift)
 	category, clarity, standout := state.measureFused(fused)
+
+	if category == perspectives.CategoryTypeNone {
+		return nil
+	}
 
 	measurement := perspectives.Measurement{
 		Symbol:     trade.Symbol,

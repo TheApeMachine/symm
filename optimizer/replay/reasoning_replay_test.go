@@ -87,6 +87,29 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 	})
 }
 
+func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
+	Convey("Given a €100 wallet that one position fully deploys", t, func() {
+		base := time.Unix(1_700_000_000, 0)
+
+		// Enter on an ignition; no exit, so the first fill camps and ties up the cash.
+		thoughts := []perspectives.Thought{
+			{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+		}
+
+		rows := []perspectives.Measurement{
+			ignite(100, base), // BTC/EUR enters, spends the whole €100
+			{Symbol: "ETH/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 50, At: base.Add(time.Second)},
+			{Symbol: "ETH/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 51, At: base.Add(2 * time.Second)},
+		}
+
+		result := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts()).Result()
+
+		Convey("ETH entries are wanted but blocked for want of free capital, and counted", func() {
+			So(result.FundBlocked, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 	Convey("Given the same reasoning tree scored with and without fees", t, func() {
 		base := time.Unix(1_700_000_000, 0)

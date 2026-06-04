@@ -26,6 +26,7 @@ type Vocabulary struct {
 	Lookbacks  []int                       // `ago` lookbacks for temporal steps
 	PriceMoves []float64                   // rose_by/fell_by percentages
 	Offsets    []float64                   // protective stop/take/trail fractions
+	Durations  []float64                   // time-stop deadlines, in minutes
 	Entries    []perspectives.ActionType   // entry actions to seed/try
 	Protective []perspectives.ActionType   // protective exits a node may arm
 }
@@ -77,6 +78,7 @@ func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
 		Lookbacks:  []int{3, 5, 8},
 		PriceMoves: []float64{0.5, 1.0, 2.0},
 		Offsets:    []float64{0.01, 0.02, 0.05},
+		Durations:  []float64{5, 15, 30},
 		Entries:    []perspectives.ActionType{perspectives.ActionMarket, perspectives.ActionIceberg},
 		Protective: []perspectives.ActionType{
 			perspectives.ActionTrailingStop, perspectives.ActionStopLoss, perspectives.ActionTakeProfit,
@@ -121,6 +123,32 @@ func signalCrossedUp(category perspectives.CategoryType, threshold float64, ago 
 
 func lifecycleIs(state perspectives.ObservationType) perspectives.Predicate {
 	return perspectives.Predicate{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: state}
+}
+
+// signalAboveSignal is a metric-to-metric gate: one signal must be stronger than
+// another right now (e.g. ignition dominating compression).
+func signalAboveSignal(category, versus perspectives.CategoryType) perspectives.Predicate {
+	return perspectives.Predicate{
+		Subject: perspectives.SubjectSignal, Category: category, Unit: perspectives.UnitSNR,
+		Op:     perspectives.ComparisonAbove,
+		Versus: &perspectives.Operand{Subject: perspectives.SubjectSignal, Category: versus, Unit: perspectives.UnitSNR},
+	}
+}
+
+// notSignal negates a signal: hold off while this category is firing (e.g. avoid a
+// toxic regime).
+func notSignal(category perspectives.CategoryType, threshold float64) perspectives.Predicate {
+	inner := signalAtLeast(category, threshold)
+
+	return perspectives.Predicate{Not: &inner}
+}
+
+// elapsedAtLeast gates on time held in the position — the basis of a time-stop.
+func elapsedAtLeast(minutes float64) perspectives.Predicate {
+	return perspectives.Predicate{
+		Subject: perspectives.SubjectElapsed, Unit: perspectives.UnitTimeMinutes,
+		Op: perspectives.ComparisonAtLeast, Value: minutes,
+	}
 }
 
 func allOf(operands ...perspectives.Predicate) perspectives.Predicate {

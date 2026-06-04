@@ -128,6 +128,40 @@ func TestNeighborsIncludeCrossedUpAndLifecycleExit(t *testing.T) {
 	})
 }
 
+func TestNeighborsIncludeVersusNotAndTimeStop(t *testing.T) {
+	Convey("Given a seed and a two-signal vocabulary", t, func() {
+		rows := []perspectives.Measurement{
+			{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 100},
+			{Symbol: "BTC/EUR", Category: perspectives.CategoryCoiledCompression, SNR: 1.2, Last: 101},
+		}
+		vocab := DeriveVocabulary(rows)
+		seed := Seeds(vocab)[0]
+		neighbors := Neighbors(seed, vocab)
+
+		hasVersus := false
+		hasNot := false
+		hasTimeStop := false
+
+		for _, neighbor := range neighbors {
+			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Versus != nil }) {
+				hasVersus = true
+			}
+			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Not != nil }) {
+				hasNot = true
+			}
+			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Subject == perspectives.SubjectElapsed }) {
+				hasTimeStop = true
+			}
+		}
+
+		Convey("It can express metric-to-metric, negation, and a time-stop", func() {
+			So(hasVersus, ShouldBeTrue)    // signal-above-signal
+			So(hasNot, ShouldBeTrue)       // avoid another signal
+			So(hasTimeStop, ShouldBeTrue)  // settle after elapsed minutes
+		})
+	})
+}
+
 func TestMinRoundTripsDiscountAppliesWhenSet(t *testing.T) {
 	Convey("Given a profitable but low-trade tape and a high MinRoundTrips floor", t, func() {
 		rows := rallyTape()

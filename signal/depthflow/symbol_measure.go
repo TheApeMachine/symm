@@ -70,7 +70,11 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 				reasonDepthImbalance, imbalance, flatImbalance, flatOK, 0,
 			)
 
-			standout := evidence
+			// evidence is how cleanly the book lands in its structural category;
+			// standout is the strength of the imbalance itself, scored by SNR
+			// against this symbol's own history. Different questions, different
+			// numbers.
+			standout := perspectives.UnitMagnitudeMargin(raw)
 			confidence, err := state.tracked.Observe(category, evidence, standout)
 
 			if err != nil {
@@ -93,7 +97,7 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 	category, evidence := depthflowReading(
 		reasonDepthSkeptic, imbalance, flatImbalance, flatOK, 0,
 	)
-	standout := evidence
+	standout := perspectives.UnitMagnitudeMargin(raw)
 
 	confidence, err := state.tracked.Observe(category, evidence, standout)
 
@@ -124,7 +128,7 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 	}
 
 	category, evidence := depthflowReading("trade_pressure", 0, 0, false, flow)
-	standout := evidence
+	standout := perspectives.UnitMagnitudeMargin(flow)
 
 	confidence, err := state.tracked.Observe(category, evidence, standout)
 

@@ -169,3 +169,27 @@ func OrderTypeFromActionType(actionType ActionType) (trading.OrderType, error) {
 		return "", fmt.Errorf("unsupported actionType: %v", actionType)
 	}
 }
+
+/*
+ActionFromOrderType maps a Kraken order_type string back to a playbook action — the
+inverse the paper websocket uses to tell a resting protective trigger (stop / take /
+trailing) apart from an immediate fill. Returns ActionNone for unknown types.
+*/
+func ActionFromOrderType(orderType trading.OrderType) ActionType {
+	switch orderType {
+	case trading.StopLoss:
+		return ActionStopLoss
+	case trading.StopLossLimit:
+		return ActionStopLossLimit
+	case trading.TakeProfit:
+		return ActionTakeProfit
+	case trading.TakeProfitLimit:
+		return ActionTakeProfitLimit
+	case trading.TrailingStop:
+		return ActionTrailingStop
+	case trading.TrailingStopLimit:
+		return ActionTrailingStopLimit
+	default:
+		return ActionNone
+	}
+}

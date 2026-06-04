@@ -18,12 +18,56 @@ func Neighbors(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives
 
 	neighbors = append(neighbors, tuneEntryThreshold(forest, vocab)...)
 	neighbors = append(neighbors, tightenEntry(forest, vocab)...)
+	neighbors = append(neighbors, tightenWithVersus(forest, vocab)...)
+	neighbors = append(neighbors, avoidSignal(forest, vocab)...)
 	neighbors = append(neighbors, temporalizeEntry(forest, vocab)...)
 	neighbors = append(neighbors, tuneManagement(forest, vocab)...)
 	neighbors = append(neighbors, addLifecycleExit(forest, vocab)...)
+	neighbors = append(neighbors, addTimeStop(forest, vocab)...)
 	neighbors = append(neighbors, addStrategyRoot(forest, vocab)...)
 
 	return neighbors
+}
+
+// forestHasPredicate reports whether any predicate in the forest matches.
+func forestHasPredicate(forest []perspectives.Thought, match func(perspectives.Predicate) bool) bool {
+	var inPredicate func(predicate perspectives.Predicate) bool
+	inPredicate = func(predicate perspectives.Predicate) bool {
+		if match(predicate) {
+			return true
+		}
+
+		for _, operand := range predicate.All {
+			if inPredicate(operand) {
+				return true
+			}
+		}
+
+		for _, operand := range predicate.Any {
+			if inPredicate(operand) {
+				return true
+			}
+		}
+
+		return predicate.Not != nil && inPredicate(*predicate.Not)
+	}
+
+	var walk func(nodes []perspectives.Thought) bool
+	walk = func(nodes []perspectives.Thought) bool {
+		for index := range nodes {
+			if inPredicate(nodes[index].When) {
+				return true
+			}
+
+			if walk(nodes[index].Then) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	return walk(forest)
 }
 
 // ---- navigation -----------------------------------------------------------------
@@ -296,6 +340,99 @@ func addLifecycleExit(forest []perspectives.Thought, vocab Vocabulary) [][]persp
 	})
 
 	return [][]perspectives.Thought{clone}
+}
+
+// tightenWithVersus adds a metric-to-metric confirmation to each branch's gate: the
+// entry signal must be stronger than another signal (e.g. the breakout dominates the
+// background).
+func tightenWithVersus(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+	neighbors := make([][]perspectives.Thought, 0)
+
+	for _, root := range entryRootIndices(forest) {
+		gate := forest[root].When
+		if gate.All == nil {
+			continue
+		}
+
+		gateCategory, ok := gateSignalCategory(gate)
+		if !ok {
+			continue
+		}
+
+		added := 0
+
+		for _, other := range vocab.Categories {
+			if other == gateCategory {
+				continue
+			}
+
+			clone := cloneForest(forest)
+			clone[root].When.All = append(clone[root].When.All, signalAboveSignal(gateCategory, other))
+			neighbors = append(neighbors, clone)
+
+			added++
+			if added >= 2 {
+				break
+			}
+		}
+	}
+
+	return neighbors
+}
+
+// avoidSignal adds a negation to each branch's gate: enter only while another
+// signal is absent. Which negations actually help is left to the replay score.
+func avoidSignal(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+	neighbors := make([][]perspectives.Thought, 0)
+	used := usedEntryCategories(forest)
+
+	threshold := 1.0
+	if len(vocab.Thresholds) > 0 {
+		threshold = vocab.Thresholds[0]
+	}
+
+	for _, root := range entryRootIndices(forest) {
+		if forest[root].When.All == nil {
+			continue
+		}
+
+		for _, other := range vocab.Categories {
+			if used[other] {
+				continue
+			}
+
+			clone := cloneForest(forest)
+			clone[root].When.All = append(clone[root].When.All, notSignal(other, threshold))
+			neighbors = append(neighbors, clone)
+
+			break // one negation per step keeps the branching bounded
+		}
+	}
+
+	return neighbors
+}
+
+// addTimeStop adds a holding time-stop: settle once the position has been open past
+// a deadline, so a thesis that has not paid off is cut loose.
+func addTimeStop(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+	if forestHasPredicate(forest, func(predicate perspectives.Predicate) bool {
+		return predicate.Subject == perspectives.SubjectElapsed
+	}) {
+		return nil
+	}
+
+	neighbors := make([][]perspectives.Thought, 0, len(vocab.Durations))
+
+	for _, minutes := range vocab.Durations {
+		clone := cloneForest(forest)
+		clone = append(clone, perspectives.Thought{
+			When: allOf(holding(), elapsedAtLeast(minutes)),
+			Do:   perspectives.Act{Type: perspectives.ActionSettlePosition},
+		})
+		neighbors = append(neighbors, clone)
+	}
+
+	return neighbors
 }
 
 // addStrategyRoot grows the forest sideways: a fresh entry branch on a signal not

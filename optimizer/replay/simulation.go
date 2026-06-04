@@ -42,6 +42,10 @@ ReplayResult holds realized PnL and round-trip activity from one replay pass.
 type ReplayResult struct {
 	Score        float64
 	ClosedTrades int
+	// FundBlocked is how many times an entry was wanted on a fundable pair but the
+	// wallet was already locked in another position — the opportunity cost of
+	// tying up capital, surfaced so the optimizer can price it.
+	FundBlocked int
 }
 
 /*
@@ -110,6 +114,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	return ReplayResult{
 		Score:        ledger.realizedReturn(),
 		ClosedTrades: ledger.closedTrades,
+		FundBlocked:  ledger.fundBlocked,
 	}
 }
 

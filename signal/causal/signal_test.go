@@ -133,8 +133,8 @@ func TestThrottle(t *testing.T) {
 	Convey("Given a recently published signal", t, func() {
 		signal := &Signal{lastPublish: time.Now()}
 
-		Convey("It should reject an immediate refit", func() {
-			So(signal.throttle(), ShouldBeFalse)
+		Convey("It should reject an immediate refit on a calm market", func() {
+			So(signal.throttle(time.Now(), 0), ShouldBeFalse)
 		})
 	})
 
@@ -144,7 +144,7 @@ func TestThrottle(t *testing.T) {
 		}
 
 		Convey("It should allow another fit", func() {
-			So(signal.throttle(), ShouldBeTrue)
+			So(signal.throttle(time.Now(), 0), ShouldBeTrue)
 		})
 	})
 }

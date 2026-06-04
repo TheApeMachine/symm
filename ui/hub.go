@@ -97,6 +97,16 @@ func NewHub(
 		Handler: mux,
 	}
 
+	if listener == nil {
+		// The UI port could not be bound — almost always a stale instance still
+		// holding it. The dashboard is non-essential to trading, so degrade to
+		// headless rather than handing a nil listener to Serve, which panics and
+		// takes the whole trading process down with it.
+		errnie.Error(errors.New("ui: dashboard disabled — could not bind " + addr + " (running headless)"))
+
+		return hub
+	}
+
 	go func() {
 		serveErr := hub.server.Serve(listener)
 

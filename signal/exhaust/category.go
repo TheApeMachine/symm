@@ -14,8 +14,10 @@ const (
 )
 
 /*
-exhaustReading picks the dominant exit mode and returns shift evidence — margin
-over the runner-up component score.
+exhaustReading picks the dominant exit mode and returns the confidence in that
+selection: the mode's purity (margin over the runner-up) scaled by its intensity
+(magnitude on the unit-fractional scale), so a faint lone mode is not falsely
+certain. The aggregate urgency carries the SNR strength separately.
 */
 func exhaustReading(
 	thinning, widen, fade, flip float64,
@@ -48,7 +50,16 @@ func exhaustReading(
 		return exhaustCategory(reason), 0
 	}
 
-	return exhaustCategory(reason), margin / math.Max(winner, 1e-12)
+	// Confidence is the dominant mode's PURITY (how cleanly it leads the runner-up)
+	// scaled by its INTENSITY (how strongly it fires on the unit-fractional scale).
+	// Purity alone saturates to 1 whenever a single mode is active — which is the
+	// norm here, since spreadWiden/pressureFade/imbalanceFlip read exactly 0 when
+	// their condition is unmet — so a 2% thinning flicker looked as certain as a
+	// violent collapse. Folding in intensity makes a faint lone mode honestly
+	// low-confidence without capping anything.
+	dominance := margin / math.Max(winner, 1e-12)
+
+	return exhaustCategory(reason), dominance * perspectives.UnitMagnitudeMargin(winner)
 }
 
 func dominantExitReason(thinning, widen, fade, flip float64) string {

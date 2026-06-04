@@ -212,13 +212,20 @@ func (signal *Signal) measureFromSnapshot(
 	change float64,
 	snapshot sentimentSnapshot,
 ) (perspectives.Measurement, float64, error) {
-	category, evidence := sentimentReading(
+	category, clarity := sentimentReading(
 		snapshot.breadth,
 		change,
 		snapshot.surgeThreshold,
 		math.Abs(change) >= snapshot.leaderThreshold && change != 0,
 	)
-	standout := evidence
+
+	// clarity is which category the breadth selects and how decisively; standout is
+	// the strength of the cross-sectional sentiment itself — how far breadth swings
+	// from a balanced 0.5 — which SNR scores against this symbol's own history. They
+	// are different questions: a lopsided tape can still sit cleanly inside one band,
+	// and a near-balanced one can sit right on a boundary. Neutral breadth (0.5) is
+	// genuinely no signal, so its standout is 0.
+	standout := math.Min(1, math.Abs(snapshot.breadth-0.5)*2)
 
 	trackedRaw, _ := signal.tracked.LoadOrStore(
 		symbol,
@@ -226,7 +233,7 @@ func (signal *Signal) measureFromSnapshot(
 	)
 	tracked := trackedRaw.(*perspectives.Category)
 
-	confidence, err := tracked.Observe(category, evidence, standout)
+	confidence, err := tracked.Observe(category, clarity, standout)
 
 	if err != nil {
 		return perspectives.Measurement{}, 0, err

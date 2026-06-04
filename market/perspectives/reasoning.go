@@ -1,15 +1,9 @@
 package perspectives
 
 /*
-This file is the PROPOSED tree language — a ground-up redesign of Branch so the
-playbook can express a thought process, not a one-step reflex. It is intentionally
-parallel to (and unused by) the current Branch/evaluator: we agree the shape here
-first, then migrate the interpreter, optimizer, and encoding onto it.
-
-It folds the three condition types that were being sketched into one:
-  - ConditionBooleanType (And/Or)              -> Predicate.All / Predicate.Any / Predicate.Not
-  - Observed{ObservedType, Values, ...}        -> Predicate leaf (Subject + Ago + Op + Value)
-  - Observation{ObservationType, ..., Branch}  -> Thought.When (subject: position) + Thought.Then
+This file is the tree language — a playbook that expresses a thought process, not a
+one-step reflex. It is the one decision language: the live story, the replay scorer,
+and the optimizer all read and write it.
 
 A Thought is one node in the reasoning:
 

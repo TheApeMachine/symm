@@ -31,3 +31,24 @@ func TestExecutionStressMultiplier(t *testing.T) {
 		})
 	})
 }
+
+func TestRegimeHostility(t *testing.T) {
+	convey.Convey("Adverse selection is anchored to the structural regime", t, func() {
+		convey.So(regimeHostility(perspectives.RegimeBearish), convey.ShouldBeGreaterThan, 1)
+		convey.So(regimeHostility(perspectives.RegimeChoppy), convey.ShouldBeGreaterThan, 1)
+
+		convey.Convey("A liquidation/bearish regime is the most hostile", func() {
+			convey.So(
+				regimeHostility(perspectives.RegimeBearish),
+				convey.ShouldBeGreaterThan,
+				regimeHostility(perspectives.RegimeChoppy),
+			)
+		})
+
+		convey.Convey("Calm and trending regimes are neutral", func() {
+			convey.So(regimeHostility(perspectives.RegimeTrending), convey.ShouldEqual, 1)
+			convey.So(regimeHostility(perspectives.RegimeBullish), convey.ShouldEqual, 1)
+			convey.So(regimeHostility(perspectives.RegimeDead), convey.ShouldEqual, 1)
+		})
+	})
+}

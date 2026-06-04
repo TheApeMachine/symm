@@ -105,7 +105,6 @@ func (story *Story) Tick() error {
 	}
 
 	incoming := story.subscribers["measurements"].Incoming
-	latest := newGaugeReadings()
 
 	for {
 		select {
@@ -128,19 +127,16 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			if err := story.ingestMeasurement(measurement, latest); err != nil {
+			if err := story.ingestMeasurement(measurement); err != nil {
 				errnie.Error(err, "story: ingest %s", measurement.Symbol)
 				continue
 			}
-
-			latest = newGaugeReadings()
 		}
 	}
 }
 
 func (story *Story) ingestMeasurement(
 	measurement perspectives.Measurement,
-	latest gaugeReadings,
 ) error {
 	if story.recorder != nil {
 		recorded := measurement
@@ -161,12 +157,6 @@ func (story *Story) ingestMeasurement(
 	}
 
 	story.ringWindow = AppendRingMeasurement(story.ringWindow, measurement)
-
-	source := measurement.Source.String()
-
-	if source != "" {
-		latest.record(source, measurement.Symbol, measurement.Confidence, measurement.SNR)
-	}
 
 	if measurement.Symbol == "" || measurement.Last <= 0 {
 		return nil
@@ -265,8 +255,8 @@ func (story *Story) reasonState(symbol string) *perspectives.ReasonState {
 
 /*
 publishRegime sends the current price-action regime and its radar axes to the
-dashboard. The same classification feeds BranchContext.Regime, so what the radar
-shows is exactly what the decision tree branches on.
+dashboard. The same classification feeds the reasoning context's regime, so what the
+radar shows is exactly what the playbook reasons over.
 */
 func (story *Story) publishRegime(symbol string, regime perspectives.RegimeFeatures) {
 	axes := regime.Radar()

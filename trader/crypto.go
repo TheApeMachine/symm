@@ -25,6 +25,14 @@ const (
 /*
 Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames.
 */
+// armRecord is the protective trigger currently resting on the exchange for a
+// symbol, so the trader places it once and does not re-submit an identical one each
+// tick (the exchange holds it). A changed type/offset re-arms.
+type armRecord struct {
+	action perspectives.ActionType
+	offset float64
+}
+
 type Crypto struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -39,7 +47,7 @@ type Crypto struct {
 	balanceOnce   sync.Once
 	inventory      map[string]float64
 	avgEntry       map[string]float64
-	marks          map[string]float64
+	armed          map[string]armRecord
 	pending        map[string]perspectives.Action
 	lastDecision   map[string]string
 	walletCurrency string
@@ -69,7 +77,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		desk:        desk,
 		inventory:    make(map[string]float64),
 		avgEntry:     make(map[string]float64),
-		marks:        make(map[string]float64),
+		armed:        make(map[string]armRecord),
 		pending:      make(map[string]perspectives.Action),
 		lastDecision: make(map[string]string),
 	}
@@ -176,6 +184,28 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 		action.Quantity = held
 	}
 
+	protective := perspectives.IsProtectiveExit(action.Type)
+
+	if protective {
+		// The same protective trigger fires every tick the management gate holds;
+		// the exchange already rests one, so only (re)place it when it changes.
+		if crypto.armed[action.Symbol] == (armRecord{action.Type, action.Offset}) {
+			return
+		}
+
+		// Stop/take levels are measured from the entry price the position holds.
+		// Refuse to arm at a zero level if the entry price is somehow unknown,
+		// rather than rest a trigger that could never fire.
+		entry := crypto.avgEntry[action.Symbol]
+
+		if entry <= 0 {
+			crypto.publishDecision(action, "rejected", "no entry price to anchor the protective trigger")
+			return
+		}
+
+		action.Price = entry
+	}
+
 	// A desk rejection is the gate working as intended, not an in-flight order.
 	if err := crypto.desk.AddOrder(action); err != nil {
 		crypto.publishDecision(action, "rejected", cleanReason(err.Error()))
@@ -183,6 +213,14 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 	}
 
 	crypto.publishDecision(action, "submitted", "")
+
+	// A protective trigger rests on the exchange — it has no immediate fill, so it
+	// does not block the symbol; record it so identical re-arms are skipped.
+	if protective {
+		crypto.armed[action.Symbol] = armRecord{action.Type, action.Offset}
+		return
+	}
+
 	crypto.pending[action.Symbol] = action
 }
 
@@ -374,6 +412,7 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.inventory, symbol)
 	delete(crypto.avgEntry, symbol)
+	delete(crypto.armed, symbol)
 	crypto.streams.Remove(symbol)
 	crypto.publishPositions()
 }

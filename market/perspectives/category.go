@@ -182,10 +182,32 @@ func NewCategory(categoryType CategoryType) *Category {
 	}
 }
 
+// confidenceFloor keeps emitted confidence inside the open interval (floor,
+// 1-floor). A reading right on a band boundary is maximally uncertain, not "zero
+// confidence", and one deep in a band is near-certain, not a saturated 1 — exact 0
+// or 1 are clamping artifacts of a misbehaving signal, never a genuine
+// category-selection certainty. Every signal routes its confidence through Observe,
+// so clamping here covers them all (it is a no-op for the classifier-based signals,
+// whose clarity is already inside the interval).
+const confidenceFloor = 0.02
+
+func clampConfidence(clarity float64) float64 {
+	if clarity < confidenceFloor {
+		return confidenceFloor
+	}
+
+	if clarity > 1-confidenceFloor {
+		return 1 - confidenceFloor
+	}
+
+	return clarity
+}
+
 /*
 Observe updates Type and charges the accumulator when the category shifts.
-It returns clarity — instantaneous band margin for this reading. The accumulator
-is charged with standout (winner margin over alternatives), not clarity.
+It returns clarity — instantaneous band margin for this reading, clamped away from
+exactly 0/1. The accumulator is charged with standout (winner margin over
+alternatives), not clarity.
 */
 func (category *Category) Observe(
 	next CategoryType,
@@ -212,7 +234,7 @@ func (category *Category) Observe(
 		}
 	}
 
-	return clarity, nil
+	return clampConfidence(clarity), nil
 }
 
 func validateUnitMargin(name string, value float64) error {

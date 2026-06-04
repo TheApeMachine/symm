@@ -27,6 +27,7 @@ type WebSocket struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	sockets     map[string]types.Socket
+	orders      *response.Orders
 	latencies   *ring.Ring
 }
 
@@ -58,6 +59,7 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	}
 
 	balances := response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond))
+	orders := response.NewOrders(ctx, pool, balances)
 
 	ws := &WebSocket{
 		ctx:         ctx,
@@ -67,8 +69,9 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 		subscribers: make(map[string]*qpool.Subscriber),
 		sockets: map[string]types.Socket{
 			"balances": balances,
-			"orders":   response.NewOrders(ctx, pool, balances),
+			"orders":   orders,
 		},
+		orders:    orders,
 		latencies: ring,
 	}
 
@@ -114,6 +117,9 @@ func (ws *WebSocket) Tick() (err error) {
 				Value: ws.sockets[message.Type].Send(message),
 			})
 		case <-ticker.C:
+			// Poll resting protective orders against the latest quote — the paper
+			// emulation of Kraken's server-side trigger engine.
+			ws.orders.CheckTriggers()
 			time.Sleep(ws.latencies.Value.(time.Duration))
 			ws.latencies.Next()
 		}

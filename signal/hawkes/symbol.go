@@ -131,9 +131,15 @@ func (sym *HawkesSymbol) Measure(
 		raw = intensity / mu
 	}
 
+	// clarity is how decisively the fitted state lands in its category (the
+	// boundary margin); standout is the strength of the self-exciting process
+	// itself — the intensity ratio above baseline — which SNR scores against this
+	// symbol's own history. They are different questions, so they are different
+	// numbers: a weak excitation can still land cleanly in a category, and a violent
+	// one can sit right on a boundary.
 	category, evidence := hawkesReading(fit, asymmetry, sellSide)
-	standout := evidence
 	clarity := evidence
+	standout := perspectives.UnitMagnitudeMargin(raw)
 
 	confidence, err := sym.tracked.Observe(category, clarity, standout)
 

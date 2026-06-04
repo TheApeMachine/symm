@@ -40,7 +40,10 @@ func causalCategory(reason string) perspectives.CategoryType {
 }
 
 /*
-causalEvidence returns shift evidence for the assigned category.
+causalEvidence returns the category-selection clarity for the assigned category —
+how decisively the ladder (or association) read separates it from the neighbouring
+categories. It is distinct from the SNR standout, which carries the raw magnitude of
+the causal effect.
 */
 func causalEvidence(
 	category perspectives.CategoryType,

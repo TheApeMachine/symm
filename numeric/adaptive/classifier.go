@@ -85,22 +85,27 @@ func (classifier *Classifier) Confidence(observation float64) float64 {
 
 	classIndex := classifier.classIndex(observation)
 	inBandMargin := classifier.margin(observation, classIndex)
-
-	if inBandMargin <= 0 {
-		return 0
-	}
-
 	halfWidth := classifier.localHalfWidth(classIndex)
 
 	if halfWidth <= snrEpsilon {
-		return 0
+		return confidenceFloor
 	}
 
-	if inBandMargin > halfWidth {
-		return inBandMargin / (inBandMargin + halfWidth)
+	// Continuous, monotonic clarity in [0, 1): 0 right on the band boundary, ~0.86
+	// a half-width inside (a closed band's centre), saturating toward (but never
+	// reaching) 1 deeper into an open-ended band. Replaces the old branch that
+	// jumped discontinuously from 1 down to 0.5 as the margin crossed the half-width
+	// and that capped closed-band centres far too low.
+	clarity := 0.0
+
+	if inBandMargin > 0 {
+		clarity = 1 - math.Exp(-2*inBandMargin/halfWidth)
 	}
 
-	return inBandMargin / halfWidth
+	// Map into the OPEN interval (floor, 1-floor): a boundary observation is
+	// maximally uncertain, not "zero confidence", and a deep one is near-certain,
+	// not a saturated 1 — exact 0 / 1 are clamping artifacts, never a real reading.
+	return confidenceFloor + clarity*(1-2*confidenceFloor)
 }
 
 /*

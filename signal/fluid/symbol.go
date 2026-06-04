@@ -284,9 +284,13 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
 	divergence, _ := row["div"].(float64)
 	turbulence, _ := row["turb_fd"].(float64)
 	viscosity, _ := row["visc"].(float64)
+	// clarity is how cleanly the flow lands in its regime band (the boundary
+	// margin); standout is the intensity of the flow field itself — the Reynolds
+	// number — which SNR scores against this symbol's own history. A laminar book
+	// classified with high certainty still has a low standout.
 	category, evidence := fluidReading(divergence, turbulence, viscosity, re)
-	standout := evidence
 	clarity := evidence
+	standout := perspectives.UnitMagnitudeMargin(re)
 
 	if clarity <= 0 {
 		activity := math.Max(

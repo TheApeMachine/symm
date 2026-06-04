@@ -157,12 +157,16 @@ func (state *CausalSymbol) Measure(
 
 		if outcome.raw > 0 {
 			category := causalCategory(outcome.reason)
-			evidence := causalEvidence(
+			// clarity is how decisively the Pearl-ladder read lands in its structural
+			// category (the intervention/inversion margin); standout is the magnitude
+			// of the causal effect itself, which SNR scores against this symbol's own
+			// history. A clean read of a faint effect has high clarity, low standout.
+			clarity := causalEvidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
-			standout := evidence
+			standout := perspectives.UnitMagnitudeMargin(outcome.raw)
 
-			confidence, err := state.tracked.Observe(category, evidence, standout)
+			confidence, err := state.tracked.Observe(category, clarity, standout)
 
 			if err != nil {
 				return perspectives.Measurement{}, 0, err
@@ -190,12 +194,14 @@ func (state *CausalSymbol) Measure(
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
-	evidence := causalEvidence(
+	// clarity is how decisively the association beats the alternative; standout is
+	// the magnitude of the macro/flow move itself, scored by SNR against history.
+	clarity := causalEvidence(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
-	standout := evidence
+	standout := perspectives.UnitMagnitudeMargin(fallbackRaw)
 
-	confidence, err := state.tracked.Observe(category, evidence, standout)
+	confidence, err := state.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
 		return perspectives.Measurement{}, 0, err

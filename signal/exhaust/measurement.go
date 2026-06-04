@@ -20,7 +20,11 @@ func exhaustMeasurement(
 		return perspectives.Measurement{}, 0, nil
 	}
 
-	standout := evidence
+	// evidence is how decisively the dominant exit mode beat its runner-up (the
+	// category-selection certainty); standout is the aggregate exhaustion intensity
+	// itself — urgency — which SNR scores against this symbol's own history. A
+	// clear-cut but mild exhaustion has high evidence and low standout.
+	standout := urgency
 	confidence, err := tracked.Observe(category, evidence, standout)
 
 	if err != nil {

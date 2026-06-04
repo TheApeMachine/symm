@@ -8,7 +8,9 @@ import (
 )
 
 /*
-sentimentReading classifies cross-section sentiment and returns shift evidence.
+sentimentReading classifies cross-section sentiment and returns the category plus
+its clarity — how decisively the breadth lands in the selected band. The phenomenon
+strength (the standout fed to SNR) is computed separately by the caller from breadth.
 */
 func sentimentReading(
 	breadth, change, surgeThreshold float64,

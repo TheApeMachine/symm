@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
@@ -39,18 +41,32 @@ change meaningfully faster than this.
 const (
 	causalPublishInterval = 500 * time.Millisecond
 	rawSubscriberID       = "signal/causal:raw"
+
+	// contagionCheckInterval bounds how often the cheap Hayashi-Yoshida contagion
+	// tripwire is recomputed — far faster than the heavy fit, but not every tick.
+	contagionCheckInterval = 100 * time.Millisecond
+	// causalEmergencyBackoffBase/Max bound the escalating circuit breaker after a
+	// velocity-triggered refit, so a violent contagion ramp cannot refit every tick
+	// and drive the core into a death spiral.
+	causalEmergencyBackoffBase = 100 * time.Millisecond
+	causalEmergencyBackoffMax  = 2 * time.Second
 )
 
 type Signal struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	pool           *qpool.Q
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	symbols        sync.Map
-	lastPublish    time.Time
-	publishScratch []publishEntry
-	floor          *adaptive.SNRField
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.Subscriber
+	symbols          sync.Map
+	lastPublish      time.Time
+	contagionAt      time.Time
+	cachedContagion  float64
+	fitContagion     float64
+	emergencyBackoff time.Duration
+	backoffUntil     time.Time
+	publishScratch   []publishEntry
+	floor            *adaptive.SNRField
 }
 
 type publishEntry struct {
@@ -161,26 +177,89 @@ func (signal *Signal) Tick() error {
 	}
 }
 
-// throttle reports whether enough time has passed to rerun the O(symbols²) fit.
-func (signal *Signal) throttle() bool {
-	if time.Since(signal.lastPublish) < causalPublishInterval {
-		return false
+// causalContagionShift is how far cross-asset contagion must move since the last
+// fit to bypass the time gate. A liquidation cascade flips the causal structure in
+// milliseconds — faster than a rigid timer would catch.
+func causalContagionShift() float64 {
+	shift := viper.GetViper().GetFloat64("signals.causal.contagion_shift")
+
+	if shift > 0 {
+		return shift
 	}
 
-	signal.lastPublish = time.Now()
+	return 0.2
+}
 
-	return true
+/*
+throttle decides whether to rerun the O(symbols²) causal fit. It fires on the time
+gate as before, OR immediately when contagion has broken away since the last fit
+(the Hayashi-Yoshida liquidation signature) — velocity-aware, not blindly
+time-based, so the structural model is not navigating on a stale snapshot during a
+flash crash. An exponential backoff then caps how often the emergency refit can
+re-fire: the freshly computed panic DAG is relied on for an escalating window so a
+sustained spike cannot saturate the core. now is passed in so the gate is testable.
+*/
+func (signal *Signal) throttle(now time.Time, contagion float64) bool {
+	if now.Sub(signal.lastPublish) >= causalPublishInterval {
+		signal.commitFit(now, contagion, false)
+
+		return true
+	}
+
+	shift := math.Abs(contagion - signal.fitContagion)
+
+	if shift >= causalContagionShift() && !now.Before(signal.backoffUntil) {
+		signal.commitFit(now, contagion, true)
+
+		return true
+	}
+
+	return false
+}
+
+// commitFit records a fit and, for a velocity-triggered emergency, escalates the
+// backoff circuit breaker; a normal time-gated fit means the storm (if any) has
+// passed, so the backoff resets.
+func (signal *Signal) commitFit(now time.Time, contagion float64, emergency bool) {
+	signal.lastPublish = now
+	signal.fitContagion = contagion
+
+	if !emergency {
+		signal.emergencyBackoff = 0
+
+		return
+	}
+
+	if signal.emergencyBackoff == 0 {
+		signal.emergencyBackoff = causalEmergencyBackoffBase
+	} else {
+		signal.emergencyBackoff *= 2
+
+		if signal.emergencyBackoff > causalEmergencyBackoffMax {
+			signal.emergencyBackoff = causalEmergencyBackoffMax
+		}
+	}
+
+	signal.backoffUntil = now.Add(signal.emergencyBackoff)
 }
 
 // publish runs the causal fit for every symbol against the current cross-asset
 // macro momentum and contagion, emitting one structural reading each.
 func (signal *Signal) publish() error {
-	if !signal.throttle() {
+	now := time.Now()
+
+	// Recompute the cheap Hayashi-Yoshida contagion tripwire at a fast cadence —
+	// far quicker than the heavy O(symbols²) fit, but not on every single tick.
+	if now.Sub(signal.contagionAt) >= contagionCheckInterval {
+		signal.cachedContagion = signal.contagion()
+		signal.contagionAt = now
+	}
+
+	if !signal.throttle(now, signal.cachedContagion) {
 		return nil
 	}
 
-	now := time.Now()
-	contagion := signal.contagion()
+	contagion := signal.cachedContagion
 	entries := signal.snapshotEntries()
 	macros := macroMedians(entries)
 

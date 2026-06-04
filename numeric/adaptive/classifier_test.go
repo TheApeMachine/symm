@@ -46,12 +46,16 @@ func TestClassifierConfidence(t *testing.T) {
 			[]string{"divergent_stress", "stochastic_noise", "decoupled_alpha", "systemic_herd"},
 		)
 
-		Convey("It should read high confidence deep inside a band", func() {
-			So(classifier.Confidence(0.05), ShouldAlmostEqual, 1.0, 0.01)
+		Convey("It should read high — but never clamped — confidence deep inside a band", func() {
+			deep := classifier.Confidence(0.05)
+			So(deep, ShouldBeGreaterThan, 0.8)
+			So(deep, ShouldBeLessThan, 1.0) // exact 1 is a clamping artifact, never real
 		})
 
-		Convey("It should read low confidence near a boundary", func() {
-			So(classifier.Confidence(0.39), ShouldBeLessThan, 0.1)
+		Convey("It should read low — but never zero — confidence near a boundary", func() {
+			near := classifier.Confidence(0.39)
+			So(near, ShouldBeLessThan, 0.1)
+			So(near, ShouldBeGreaterThan, 0.0) // exact 0 is a clamping artifact, never real
 		})
 
 		Convey("It should stay category-agnostic for quiet noise", func() {

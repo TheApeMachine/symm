@@ -296,10 +296,9 @@ func (signal *Signal) measureAnchorStall(
 	anchor *symbolState,
 	stallMargin float64,
 ) (perspectives.Measurement, float64, error) {
-	category, evidence := leadlagReading(false, stallMargin, 0, 0)
-	standout := evidence
+	category, clarity, standout := leadlagReading(false, stallMargin, 0, 0)
 
-	confidence, err := anchor.tracked.Observe(category, evidence, standout)
+	confidence, err := anchor.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
 		return perspectives.Measurement{}, 0, err
@@ -319,10 +318,9 @@ func (signal *Signal) measureFollower(
 	state *symbolState,
 ) (perspectives.Measurement, float64, error) {
 	if bars, corr, ok := state.crossLag(anchor); ok {
-		category, evidence := leadlagReading(true, 0, corr, bars)
-		standout := evidence
+		category, clarity, standout := leadlagReading(true, 0, corr, bars)
 
-		confidence, err := state.tracked.Observe(category, evidence, standout)
+		confidence, err := state.tracked.Observe(category, clarity, standout)
 
 		if err != nil {
 			return perspectives.Measurement{}, 0, err
@@ -342,10 +340,9 @@ func (signal *Signal) measureFollower(
 		return perspectives.Measurement{}, 0, nil
 	}
 
-	category, evidence := leadlagReading(true, 0, corr, 0)
-	standout := evidence
+	category, clarity, standout := leadlagReading(true, 0, corr, 0)
 
-	confidence, err := state.tracked.Observe(category, evidence, standout)
+	confidence, err := state.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
 		return perspectives.Measurement{}, 0, err
