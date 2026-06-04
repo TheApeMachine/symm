@@ -70,3 +70,34 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		})
 	})
 }
+
+func TestMarshalThoughtsRoundTrips(t *testing.T) {
+	Convey("Given the hand-written multi-horizon playbook", t, func() {
+		raw, err := os.ReadFile("cfg/perspectives.yaml")
+		So(err, ShouldBeNil)
+
+		original, err := ParseThoughts(raw)
+		So(err, ShouldBeNil)
+
+		Convey("Marshalling and re-parsing reproduces the forest exactly", func() {
+			encoded, err := MarshalThoughts(original, 2)
+			So(err, ShouldBeNil)
+
+			reparsed, err := ParseThoughts(encoded)
+			So(err, ShouldBeNil)
+
+			// The whole forest — booleans, versus operands, lifecycle, nested then,
+			// and per-node offsets — survives the write/read cycle untouched.
+			So(reparsed, ShouldResemble, original)
+		})
+
+		Convey("A no-offset action writes as a bare scalar, an offset action as an object", func() {
+			encoded, err := MarshalThoughts(original, 2)
+			So(err, ShouldBeNil)
+
+			text := string(encoded)
+			So(text, ShouldContainSubstring, "do: iceberg") // bare form (Offset 0)
+			So(text, ShouldContainSubstring, "offset:")      // object form (leashed stops)
+		})
+	})
+}

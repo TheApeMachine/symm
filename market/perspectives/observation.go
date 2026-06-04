@@ -28,8 +28,3 @@ const (
 	ObservationNotHolding
 )
 
-type Observation struct {
-	ObservationType ObservationType
-	Value           float64
-	Branch          *map[ObservationType]*Tree
-}

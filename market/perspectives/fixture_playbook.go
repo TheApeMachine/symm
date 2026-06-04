@@ -1,44 +1,8 @@
 package perspectives
 
 /*
-FixturePlaybookBranches is the stable branch registry for unit and integration tests.
-
-Production Story loads cfg/perspectives.yaml, which the optimizer rewrites. Tests must
-use this fixture (via market.perspectives.fixture_playbook) and explicit measurement
-rows — not the embedded file or EntryPassMeasurements against it.
-*/
-func FixturePlaybookBranches() BranchList {
-	return BranchList{
-		{
-			Category:  CategorySystemicSlump,
-			Condition: ConditionIsGreaterThanOrEqual,
-			Unit:      UnitSNR,
-			Value:     0,
-			ValueSet:  true,
-			Branches: BranchList{{
-				Category:    CategoryVolumeStarvation,
-				Observation: ObservationNotHolding,
-				Condition:   ConditionIsGreaterThanOrEqual,
-				Unit:        UnitSNR,
-				Value:       0,
-				ValueSet:    true,
-				Action:      Action{Type: ActionLimit},
-			}},
-		},
-		{
-			Category:    CategorySystemicBeta,
-			Observation: ObservationHolding,
-			Condition:   ConditionIsGreaterThanOrEqual,
-			Unit:        UnitSNR,
-			Value:       1,
-			ValueSet:    true,
-			Action:      Action{Type: ActionSettlePosition},
-		},
-	}
-}
-
-/*
-FixturePlaybookEntryMeasurements are explicit rows that satisfy FixturePlaybookBranches.
+FixturePlaybookEntryMeasurements are explicit signal rows integration scenarios feed
+the system to provoke an entry.
 */
 func FixturePlaybookEntryMeasurements(symbol string, last float64) []Measurement {
 	return []Measurement{
@@ -48,7 +12,7 @@ func FixturePlaybookEntryMeasurements(symbol string, last float64) []Measurement
 }
 
 /*
-FixturePlaybookExitMeasurements are explicit rows for the fixture holding exit branch.
+FixturePlaybookExitMeasurements are explicit rows for provoking a holding exit.
 */
 func FixturePlaybookExitMeasurements(symbol string, last float64) []Measurement {
 	return []Measurement{

@@ -8,22 +8,19 @@ import (
 )
 
 /*
-ReplaySimulation walks a candidate tree across collected replay measurements.
+ReplaySimulation scores a reasoning forest (Thought trees) against a precompiled
+measurement tape, driving the shared cash + trigger ledger from EvaluateStateful so
+per-node offsets, lifecycle subjects, and the latched temporal walk all take effect.
 */
 type ReplaySimulation struct {
 	ctx      context.Context
-	branches perspectives.BranchList
 	thoughts []perspectives.Thought
-	rows     []perspectives.Measurement
 	tape     ReplayTape
 	costs    ReplayCosts
 }
 
 /*
-NewThoughtSimulation scores a reasoning-language playbook (the new Thought trees)
-against a tape, reusing the same cash + trigger ledger. When thoughts are present
-the ledger is driven by perspectives.Evaluate over a WindowReason instead of the
-legacy BranchEvaluator, so per-node offsets and the lifecycle subjects take effect.
+NewThoughtSimulation scores a reasoning-language playbook against a tape.
 */
 func NewThoughtSimulation(
 	ctx context.Context,
@@ -34,60 +31,6 @@ func NewThoughtSimulation(
 	return &ReplaySimulation{
 		ctx:      ctx,
 		thoughts: thoughts,
-		tape:     tape,
-		costs:    costs,
-	}
-}
-
-func NewReplaySimulation(
-	ctx context.Context,
-	branches perspectives.BranchList,
-	rows []perspectives.Measurement,
-) *ReplaySimulation {
-	return NewReplaySimulationWithTapeAndCosts(
-		ctx, branches, PrecompileTape(rows), DefaultReplayCosts(),
-	)
-}
-
-/*
-NewReplaySimulationWithTape replays against a shared precompiled measurement tape.
-*/
-func NewReplaySimulationWithTape(
-	ctx context.Context,
-	branches perspectives.BranchList,
-	tape ReplayTape,
-) *ReplaySimulation {
-	return NewReplaySimulationWithTapeAndCosts(
-		ctx, branches, tape, DefaultReplayCosts(),
-	)
-}
-
-/*
-NewReplaySimulationWithCosts replays with explicit fee and slippage assumptions.
-*/
-func NewReplaySimulationWithCosts(
-	ctx context.Context,
-	branches perspectives.BranchList,
-	rows []perspectives.Measurement,
-	costs ReplayCosts,
-) *ReplaySimulation {
-	return NewReplaySimulationWithTapeAndCosts(
-		ctx, branches, PrecompileTape(rows), costs,
-	)
-}
-
-/*
-NewReplaySimulationWithTapeAndCosts replays a shared tape with explicit costs.
-*/
-func NewReplaySimulationWithTapeAndCosts(
-	ctx context.Context,
-	branches perspectives.BranchList,
-	tape ReplayTape,
-	costs ReplayCosts,
-) *ReplaySimulation {
-	return &ReplaySimulation{
-		ctx:      ctx,
-		branches: perspectives.CanonicalPlaybookBranches(branches),
 		tape:     tape,
 		costs:    costs,
 	}
@@ -113,76 +56,20 @@ func (result ReplayResult) ReturnPerTrade() float64 {
 }
 
 /*
-Score replays measurements and returns realized PnL from closed round trips.
+Score replays the tape and returns realized PnL from closed round trips.
 */
 func (simulation *ReplaySimulation) Score() float64 {
 	return simulation.Result().Score
 }
 
 /*
-Result replays measurements and returns PnL with trade activity.
+Result replays the tape and returns PnL with trade activity.
 */
 func (simulation *ReplaySimulation) Result() ReplayResult {
-	if simulation.tape.Len() > 0 {
-		return simulation.resultFromTape()
-	}
-
-	if len(simulation.rows) == 0 {
+	if simulation.tape.Len() == 0 {
 		return ReplayResult{}
 	}
 
-	measurements := acquireReplayMeasurements()
-	ledger := acquireReplayLedger(simulation.costs)
-
-	defer releaseReplayMeasurements(measurements)
-	defer releaseReplayLedger(ledger)
-
-	ledger.reentryTickCooldown = reentryCooldownForRows(simulation.rows)
-	medianInterval := medianMeasurementInterval(simulation.rows)
-	ledger.configureExecutionStress(
-		simulation.costs.effectiveExecutionLatency(simulation.rows, simulation.tape),
-		medianInterval,
-	)
-
-	lastAt := time.Time{}
-	lastRow := perspectives.Measurement{}
-
-	for tickIndex, row := range simulation.rows {
-		ledger.tickIndex = tickIndex
-		ledger.onTickStart(row.At, row)
-		measurements.Add(row)
-
-		if row.Symbol == "" {
-			continue
-		}
-
-		snapshotBuffer := acquireReplaySnapshotBuffer()
-		snapshotBuffer = append(snapshotBuffer, measurements.Snapshot(row.Symbol)...)
-
-		branchContext := simulation.branchContext(
-			row,
-			snapshotBuffer,
-			ledger,
-		)
-		simulation.applyEvaluator(ledger, branchContext, row, snapshotBuffer)
-		releaseReplaySnapshotBuffer(snapshotBuffer)
-		ledger.onTick(row.Symbol)
-
-		if !row.At.IsZero() {
-			lastAt = row.At
-			lastRow = row
-		}
-	}
-
-	ledger.flushPending(lastAt, lastRow)
-
-	return ReplayResult{
-		Score:        ledger.realizedReturn(),
-		ClosedTrades: ledger.closedTrades,
-	}
-}
-
-func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 	ledger := acquireReplayLedger(simulation.costs)
 
 	defer releaseReplayLedger(ledger)
@@ -193,10 +80,9 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 		ledger.reentryTickCooldown = 1
 	}
 
-	medianInterval := simulation.tape.MedianInterval
 	ledger.configureExecutionStress(
 		simulation.costs.effectiveExecutionLatency(nil, simulation.tape),
-		medianInterval,
+		simulation.tape.MedianInterval,
 	)
 
 	lastAt := time.Time{}
@@ -210,12 +96,7 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 			continue
 		}
 
-		branchContext := simulation.branchContext(
-			tick.Row,
-			tick.Snapshots,
-			ledger,
-		)
-		simulation.applyEvaluator(ledger, branchContext, tick.Row, tick.Snapshots)
+		simulation.applyThoughts(ledger, tick.Row, tick.Snapshots)
 		ledger.onTick(tick.Row.Symbol)
 
 		if !tick.Row.At.IsZero() {
@@ -232,55 +113,10 @@ func (simulation *ReplaySimulation) resultFromTape() ReplayResult {
 	}
 }
 
-func reentryCooldownForRows(rows []perspectives.Measurement) int {
-	categories := make(map[perspectives.CategoryType]struct{})
-
-	for _, row := range rows {
-		if row.Category == perspectives.CategoryTypeNone {
-			continue
-		}
-
-		categories[row.Category] = struct{}{}
-	}
-
-	categoryCount := len(categories)
-
-	if categoryCount <= 0 {
-		categoryCount = 1
-	}
-
-	return deriveReentryTickCooldown(len(rows), categoryCount)
-}
-
-func (simulation *ReplaySimulation) applyEvaluator(
-	ledger *replayLedger,
-	branchContext perspectives.BranchContext,
-	row perspectives.Measurement,
-	snapshots []perspectives.Measurement,
-) {
-	if len(simulation.thoughts) > 0 {
-		simulation.applyThoughts(ledger, row, snapshots)
-		return
-	}
-
-	evaluator := perspectives.NewBranchEvaluator(branchContext)
-	actionType := evaluator.Action(simulation.branches)
-
-	if evaluator.Err() != nil {
-		return
-	}
-
-	if actionType == nil {
-		return
-	}
-
-	ledger.queueAction(perspectives.Act{Type: *actionType}, row, snapshots)
-}
-
 /*
 applyThoughts drives the ledger from the reasoning language: build the per-tick
-context (window + regime + open position), evaluate the thoughts, and queue the
-chosen act (carrying its per-node trigger offset).
+context (window + regime + open position), evaluate the thoughts with the symbol's
+cross-tick state, and queue the chosen act (carrying its per-node trigger offset).
 */
 func (simulation *ReplaySimulation) applyThoughts(
 	ledger *replayLedger,
@@ -290,24 +126,13 @@ func (simulation *ReplaySimulation) applyThoughts(
 	regime := perspectives.ClassifyRegime(snapshots).Regime
 	context := perspectives.NewWindowReason(snapshots, regime, ledger.positionState(row))
 
-	act, found := perspectives.Evaluate(simulation.thoughts, context)
+	act, found := perspectives.EvaluateStateful(
+		simulation.thoughts, context, ledger.reasonState(row.Symbol),
+	)
 
 	if !found || act.Type == perspectives.ActionNone {
 		return
 	}
 
 	ledger.queueAction(act, row, snapshots)
-}
-
-func (simulation *ReplaySimulation) branchContext(
-	row perspectives.Measurement,
-	measurements []perspectives.Measurement,
-	ledger *replayLedger,
-) perspectives.BranchContext {
-	return perspectives.BranchContext{
-		Measurements: measurements,
-		Observations: ledger.observations(row.Symbol),
-		Regime:       perspectives.ClassifyRegime(measurements).Regime,
-		Metrics:      ledger.metrics(row),
-	}
 }

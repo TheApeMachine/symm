@@ -1,19 +1,17 @@
 package types
 
-import (
-	"github.com/theapemachine/symm/market/perspectives"
-	"github.com/theapemachine/symm/optimizer/playbook"
-)
+import "github.com/theapemachine/symm/market/perspectives"
 
 /*
-CandidateScore is one scored candidate tree emitted by the scanner.
+CandidateScore is one scored reasoning forest emitted by the search.
 */
 type CandidateScore struct {
-	Candidate     int
-	Score         float64
-	AdjustedScore float64
-	ClosedTrades  int
-	Branches      perspectives.BranchList
+	Candidate    int
+	Score        float64
+	ClosedTrades int
+	Depth        int
+	Strategies   int
+	Thoughts     []perspectives.Thought
 }
 
 func (candidate CandidateScore) ProfitLoss() float64 {
@@ -32,25 +30,12 @@ func (candidate CandidateScore) ReturnPct() float64 {
 	return candidate.ReturnPerTrade() * 100
 }
 
-func (candidate CandidateScore) BranchCount() int {
-	return countBranches(candidate.Branches)
-}
-
-func (candidate CandidateScore) RegistryWidth() int {
-	return len(candidate.Branches)
-}
-
+// ReasoningDepth is the deepest Then-chain in the forest (its temporal depth).
 func (candidate CandidateScore) ReasoningDepth() int {
-	return playbook.ReasoningDepth(candidate.Branches)
+	return candidate.Depth
 }
 
-func countBranches(branches perspectives.BranchList) int {
-	count := 0
-
-	for _, branch := range branches {
-		count++
-		count += countBranches(perspectives.BranchList(branch.Branches))
-	}
-
-	return count
+// RegistryWidth is the number of parallel strategy branches.
+func (candidate CandidateScore) RegistryWidth() int {
+	return candidate.Strategies
 }

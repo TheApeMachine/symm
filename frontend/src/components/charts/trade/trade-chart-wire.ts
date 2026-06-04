@@ -31,6 +31,7 @@ type OhlcHubRow = {
 type BarSink = (bar: OhlcBar) => void;
 
 const chartSinks = new Map<string, BarSink>();
+const pendingBars = new Map<string, OhlcBar[]>();
 
 const isCandleBarEvent = (raw: unknown): raw is CandleBarEvent => {
 	if (typeof raw !== "object" || raw === null) {
@@ -115,6 +116,20 @@ export const parseCandleWire = (
 	};
 };
 
+const flushPending = (symbol: string, sink: BarSink): void => {
+	const queued = pendingBars.get(symbol);
+
+	if (!queued) {
+		return;
+	}
+
+	for (const bar of queued) {
+		sink(bar);
+	}
+
+	pendingBars.delete(symbol);
+};
+
 /*
 registerTradeChart connects a mounted chart appendBar to candle_bar websocket frames.
 ingestCandleWire parses hub payloads and forwards them to the registered sink only.
@@ -124,6 +139,7 @@ export const registerTradeChart = (
 	appendBar: BarSink,
 ): (() => void) => {
 	chartSinks.set(symbol, appendBar);
+	flushPending(symbol, appendBar);
 
 	return () => {
 		if (chartSinks.get(symbol) === appendBar) {
@@ -139,5 +155,14 @@ export const ingestCandleWire = (raw: unknown): void => {
 		return;
 	}
 
-	chartSinks.get(parsed.symbol)?.(parsed.bar);
+	const sink = chartSinks.get(parsed.symbol);
+
+	if (sink) {
+		sink(parsed.bar);
+		return;
+	}
+
+	const queued = pendingBars.get(parsed.symbol) ?? [];
+	queued.push(parsed.bar);
+	pendingBars.set(parsed.symbol, queued);
 };

@@ -125,6 +125,7 @@ type replayLedger struct {
 	closedTrades        int
 	observationScratch  map[perspectives.ObservationType]float64
 	metricsScratch      map[string]float64
+	reasonStates        map[string]*perspectives.ReasonState
 	pending             []pendingReplayAction
 	tickIndex           int
 	medianInterval      time.Duration
@@ -159,7 +160,22 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 		ticksSinceClose:     make(map[string]int),
 		observationScratch:  make(map[perspectives.ObservationType]float64, 1),
 		metricsScratch:      make(map[string]float64, 2),
+		reasonStates:        make(map[string]*perspectives.ReasonState),
 	}
+}
+
+// reasonState returns the symbol's cross-tick reasoning memory, creating it on
+// first use. One per symbol, threaded through EvaluateStateful each tick so the
+// Thought tree's Then chains stay armed across the ticks of an episode.
+func (ledger *replayLedger) reasonState(symbol string) *perspectives.ReasonState {
+	state, ok := ledger.reasonStates[symbol]
+
+	if !ok {
+		state = perspectives.NewReasonState()
+		ledger.reasonStates[symbol] = state
+	}
+
+	return state
 }
 
 func (ledger *replayLedger) reset(costs ReplayCosts) {
@@ -177,6 +193,7 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	clear(ledger.ticksSinceClose)
 	clear(ledger.observationScratch)
 	clear(ledger.metricsScratch)
+	clear(ledger.reasonStates)
 }
 
 func (ledger *replayLedger) configureExecutionStress(

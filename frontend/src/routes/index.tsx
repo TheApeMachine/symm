@@ -7,12 +7,13 @@ import {
 	TrendingUpDownIcon,
 	WavesIcon,
 } from "lucide-react";
-import { useRef } from "react";
+import { type RefObject, useRef } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
 	SignalGauge,
 	type SignalGaugeBridge,
 } from "#/components/charts/confidence/Gauges";
+import { gaugeWirePayload } from "#/components/charts/confidence/gauge-payload";
 import {
 	SignalHeatmap,
 	type SignalHeatmapBridge,
@@ -21,6 +22,10 @@ import {
 	SignalSurpriseHeatmap,
 	type SignalSurpriseHeatmapBridge,
 } from "#/components/charts/confidence/SignalSurpriseHeatmap";
+import {
+	deliverFluidWire,
+	type FluidPushBridge,
+} from "#/components/charts/fluid/fluid-push-bridge";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
 import {
 	type PredictionBridge,
@@ -41,16 +46,11 @@ import {
 	CardPanel,
 } from "#/components/ui/card";
 import { Flex } from "#/components/ui/flex";
-import { type ActionVerdict, useWsStatus } from "#/providers/ws-status";
+import { wsDispatchRef } from "#/providers/ws-dispatch";
+import type { ActionVerdict } from "#/providers/ws-status";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
-
-export type FluidPushBridge = {
-	push: (raw: unknown) => void;
-	ready: boolean;
-	pending: unknown[];
-};
 
 const SOURCES: Record<string, string> = {
 	hawkes: "Hawkes",
@@ -70,8 +70,6 @@ const SOURCES: Record<string, string> = {
 
 const ALL_SOURCES = Object.keys(SOURCES);
 
-// Axes of the regime radar — the price-action feature vector the backend
-// classifier (market/perspectives.ClassifyRegime) emits on {chart:"regime"}.
 const REGIME_AXES: Record<string, string> = {
 	volatility: "Vol",
 	trend: "Trend",
@@ -90,7 +88,131 @@ const emptyGaugeBridge = (): SignalGaugeBridge => ({
 	update: () => {},
 	ready: false,
 	pending: [],
+	latest: {},
 });
+
+const WsFeed = ({
+	fluidRef,
+	gaugeRefs,
+	heatmapRef,
+	surpriseRef,
+	spiderRef,
+	predictionRef,
+}: {
+	fluidRef: RefObject<FluidPushBridge>;
+	gaugeRefs: RefObject<Record<string, SignalGaugeBridge>>;
+	heatmapRef: RefObject<SignalHeatmapBridge>;
+	surpriseRef: RefObject<SignalSurpriseHeatmapBridge>;
+	spiderRef: RefObject<SpiderBridge>;
+	predictionRef: RefObject<PredictionBridge>;
+}) => {
+	useWebSocket(socketUrl, {
+		shouldReconnect: () => true,
+		onOpen: () => wsDispatchRef.current?.setOnline(true),
+		onClose: () => wsDispatchRef.current?.setOnline(false),
+		onError: () => wsDispatchRef.current?.setOnline(false),
+		onMessage: (event) => {
+			const dispatch = wsDispatchRef.current;
+
+			if (!dispatch) {
+				return;
+			}
+
+			try {
+				const raw = JSON.parse(event.data) as Record<string, unknown>;
+
+				if (raw.event === "wallet") {
+					dispatch.setWallet(
+						(raw.balance as number) ?? 0,
+						(raw.open as number) ?? 0,
+					);
+					return;
+				}
+
+				if (raw.event === "decision") {
+					dispatch.pushAction({
+						type: raw.type as string,
+						symbol: raw.symbol as string,
+						ts: Date.now(),
+						verdict: (raw.verdict as ActionVerdict) ?? "rejected",
+						reason: (raw.reason as string) ?? "",
+					});
+					return;
+				}
+
+				if (raw.event === "positions") {
+					const rows = (raw.positions as Record<string, unknown>[]) ?? [];
+					dispatch.setPositions(
+						rows.map((row) => ({
+							symbol: row.symbol as string,
+							qty: row.qty as number,
+							avgEntry: row.avg_entry as number,
+						})),
+					);
+					return;
+				}
+
+				if (raw.chart === "regime") {
+					for (const axis of REGIME_AXIS_KEYS) {
+						spiderRef.current?.set(axis, (raw[axis] as number) ?? 0);
+					}
+					return;
+				}
+
+				if (raw.chart === "gauge") {
+					const source = raw.source as string;
+					const confidence = (raw.confidence as number) ?? 0;
+					const snr = (raw.snr as number) ?? 0;
+					const payload = gaugeWirePayload(raw);
+					const bridge = gaugeRefs.current?.[source];
+
+					if (bridge) {
+						if (bridge.ready) {
+							bridge.update(payload);
+						} else {
+							bridge.pending.push(payload);
+						}
+					}
+
+					heatmapRef.current?.set(source, confidence);
+					surpriseRef.current?.set(source, snr);
+
+					if (source === "prediction") {
+						const tsSec = Date.now() / 1000;
+						const prediction = predictionRef.current;
+
+						if (prediction?.ready) {
+							prediction.append(tsSec, confidence);
+						} else if (prediction) {
+							prediction.pending.push([tsSec, confidence]);
+						}
+					}
+
+					return;
+				}
+
+				if (typeof raw.symbol === "string" && typeof raw.open === "number") {
+					if (typeof raw.close === "number") {
+						dispatch.setMark(raw.symbol, raw.close);
+					}
+
+					ingestCandleWire(raw);
+					return;
+				}
+
+				const fluid = fluidRef.current;
+
+				if (fluid) {
+					deliverFluidWire(fluid, raw);
+				}
+			} catch {
+				return;
+			}
+		},
+	});
+
+	return null;
+};
 
 const DashboardLayout = () => {
 	const fluidRef = useRef<FluidPushBridge>({
@@ -101,7 +223,7 @@ const DashboardLayout = () => {
 
 	const gaugeRefs = useRef<Record<string, SignalGaugeBridge>>(
 		Object.fromEntries(
-			Object.keys(SOURCES).map((s) => [s, emptyGaugeBridge()]),
+			Object.keys(SOURCES).map((source) => [source, emptyGaugeBridge()]),
 		),
 	);
 
@@ -117,120 +239,40 @@ const DashboardLayout = () => {
 	const predictionRef = useRef<PredictionBridge>({
 		append: () => {},
 		ready: false,
+		pending: [],
 	});
-
-	const { setOnline, setWallet, pushAction, setPositions, setMark } =
-		useWsStatus();
-
-	useWebSocket(socketUrl, {
-		shouldReconnect: () => true,
-		onOpen: () => setOnline(true),
-		onClose: () => setOnline(false),
-		onError: () => setOnline(false),
-		onMessage: (event) => {
-			try {
-				const raw = JSON.parse(event.data) as Record<string, unknown>;
-
-				if (raw.event === "wallet") {
-					setWallet((raw.balance as number) ?? 0, (raw.open as number) ?? 0);
-					return;
-				}
-
-				if (raw.event === "decision") {
-					pushAction({
-						type: raw.type as string,
-						symbol: raw.symbol as string,
-						ts: Date.now(),
-						verdict: (raw.verdict as ActionVerdict) ?? "rejected",
-						reason: (raw.reason as string) ?? "",
-					});
-					return;
-				}
-
-				if (raw.event === "positions") {
-					const rows = (raw.positions as Record<string, unknown>[]) ?? [];
-					setPositions(
-						rows.map((row) => ({
-							symbol: row.symbol as string,
-							qty: row.qty as number,
-							avgEntry: row.avg_entry as number,
-						})),
-					);
-					return;
-				}
-
-				if (raw.chart === "regime") {
-					for (const axis of REGIME_AXIS_KEYS) {
-						spiderRef.current.set(axis, (raw[axis] as number) ?? 0);
-					}
-					return;
-				}
-
-				if (raw.chart === "gauge") {
-					const source = raw.source as string;
-					const confidence = (raw.confidence as number) ?? 0;
-					const snr = (raw.snr as number) ?? 0;
-					const bridge = gaugeRefs.current[source];
-
-					if (bridge) {
-						if (bridge.ready) {
-							bridge.update(confidence);
-						} else {
-							bridge.pending.push(confidence);
-						}
-					}
-
-					heatmapRef.current.set(source, confidence);
-					surpriseRef.current.set(source, snr);
-
-					if (source === "prediction") {
-						predictionRef.current.append(Date.now() / 1000, confidence);
-					}
-
-					return;
-				}
-
-				// ohlc candle data — route to trade chart and mark open positions
-				if (typeof raw.symbol === "string" && typeof raw.open === "number") {
-					if (typeof raw.close === "number") {
-						setMark(raw.symbol, raw.close);
-					}
-					ingestCandleWire(raw);
-					return;
-				}
-
-				const fluid = fluidRef.current;
-
-				if (fluid.ready) {
-					fluid.push(raw);
-				} else {
-					fluid.pending.push(raw);
-				}
-			} catch {
-				return;
-			}
-		},
-	});
-
-	const gauge = (source: string) => (
-		<SignalGauge
-			key={source}
-			bridgeRef={{ current: gaugeRefs.current[source] }}
-			label={SOURCES[source] ?? source}
-		/>
-	);
 
 	return (
 		<Flex.Column gap={2} fullWidth fullHeight>
+			<WsFeed
+				fluidRef={fluidRef}
+				gaugeRefs={gaugeRefs}
+				heatmapRef={heatmapRef}
+				surpriseRef={surpriseRef}
+				spiderRef={spiderRef}
+				predictionRef={predictionRef}
+			/>
 			<div className="flex w-full shrink-0 gap-2" style={{ height: "180px" }}>
-				{TOP.map(gauge)}
+				{TOP.map((source) => (
+					<SignalGauge
+						key={source}
+						bridge={gaugeRefs.current[source]}
+						label={SOURCES[source] ?? source}
+					/>
+				))}
 			</div>
 			<Flex.Row gap={2} fullWidth fullHeight>
 				<div
 					className="flex flex-col h-full gap-2 shrink-0"
 					style={{ width: "180px" }}
 				>
-					{LEFT.map(gauge)}
+					{LEFT.map((source) => (
+						<SignalGauge
+							key={source}
+							bridge={gaugeRefs.current[source]}
+							label={SOURCES[source] ?? source}
+						/>
+					))}
 				</div>
 				<CardFrame className="w-full h-full">
 					<CardFrameHeader className="w-full">
@@ -337,7 +379,13 @@ const DashboardLayout = () => {
 					className="flex flex-col h-full gap-2 shrink-0"
 					style={{ width: "180px" }}
 				>
-					{RIGHT.map(gauge)}
+					{RIGHT.map((source) => (
+						<SignalGauge
+							key={source}
+							bridge={gaugeRefs.current[source]}
+							label={SOURCES[source] ?? source}
+						/>
+					))}
 				</div>
 			</Flex.Row>
 		</Flex.Column>

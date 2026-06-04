@@ -3,170 +3,125 @@ package tune
 import (
 	"context"
 
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
-	"github.com/theapemachine/symm/optimizer/budget"
-	"github.com/theapemachine/symm/optimizer/guard"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/log"
-	"github.com/theapemachine/symm/optimizer/mcts"
-	"github.com/theapemachine/symm/optimizer/profile"
+	"github.com/theapemachine/symm/optimizer/reasoning"
 	"github.com/theapemachine/symm/optimizer/replay"
-	"github.com/theapemachine/symm/optimizer/scan"
 	"github.com/theapemachine/symm/optimizer/types"
 )
 
 /*
-TuneMeasurements searches trees against a recorded measurement tape.
+TuneMeasurements grows reasoning forests from a recorded measurement tape and writes
+the best one it finds to the playbook. Realized round-trip PnL on the replay is the
+only objective; the tree's depth and breadth are discovered, not preset.
 */
 func TuneMeasurements(
 	ctx context.Context,
 	rows []perspectives.Measurement,
 	options types.TuneOptions,
 ) (types.SessionSummary, error) {
-	log.TuneLog("building profile (%d rows)", len(rows))
+	log.TuneLog("searching reasoning forests over %d rows", len(rows))
 
-	tuner := &Tuner{
-		ctx:     ctx,
-		profile: *profile.NewProfile(ctx),
+	costs := replay.DefaultReplayCosts()
+	config := reasoning.SearchConfig{
+		BeamWidth:     options.BeamWidth,
+		MaxRounds:     options.MaxRounds,
+		MaxNodes:      options.MaxNodes,
+		MinRoundTrips: options.MinRoundTrips,
 	}
 
-	for _, row := range rows {
-		tuner.profile.Add(row)
+	result := reasoning.Search(ctx, rows, costs, config)
+	best := result.Best
+
+	strategies := strategyCount(best.Forest)
+	depth := forestDepth(best.Forest)
+
+	if options.OnCandidate != nil {
+		options.OnCandidate(types.CandidateScore{
+			Candidate:    result.Evaluated,
+			Score:        best.Return,
+			ClosedTrades: best.Trades,
+			Depth:        depth,
+			Strategies:   strategies,
+			Thoughts:     best.Forest,
+		})
 	}
 
-	tuner.profile.PrepareCache()
-
-	log.TuneLog("precompiling replay tape")
-
-	pool := qpool.NewQ(ctx, 1, options.Workers, qpool.NewConfig())
-	defer pool.Close()
-
-	tape := replay.PrecompileTape(rows)
-	searchBudget := budget.DeriveSearchBudget(&tuner.profile, tape, options.Workers)
-
-	budget.ApplyBudgetToTuneOptions(&options, searchBudget)
-
-	log.TuneLog(
-		"search budget: beam=%d candidates=%d thresholds=%d depth=%d mcts=%d",
-		searchBudget.BeamWidth,
-		searchBudget.CandidateLimit,
-		searchBudget.MaxThresholds,
-		searchBudget.MaxReasoningSteps,
-		searchBudget.MCTSIterations,
-	)
-
-	reporter, err := io.NewCandidateReporter(options.CandidateReportPath)
-
-	if err != nil {
-		return types.SessionSummary{}, err
+	if options.OnBest != nil {
+		options.OnBest(types.BestTree{
+			Iteration: result.Evaluated,
+			Score:     best.Score,
+			Return:    best.Return,
+			Trades:    best.Trades,
+			Nodes:     best.Nodes,
+			Thoughts:  best.Forest,
+		})
 	}
 
-	var writeErr error
-	onBest := func(best types.BestTree) {
-		if options.OutputPath != "" {
-			if err := io.WriteBranches(options.OutputPath, best.Branches); err != nil {
-				writeErr = err
+	if options.OutputPath != "" && len(best.Forest) > 0 {
+		if err := io.WriteThoughts(options.OutputPath, best.Forest); err != nil {
+			return types.SessionSummary{}, err
+		}
+	}
 
-				return
+	return types.SessionSummary{
+		MeasurementCount: len(rows),
+		Strategies:       strategies,
+		Nodes:            best.Nodes,
+		Trades:           best.Trades,
+		Evaluated:        result.Evaluated,
+		BestReturn:       best.Return,
+		BestScore:        best.Score,
+	}, nil
+}
+
+// forestDepth is the deepest Then-chain in the forest.
+func forestDepth(forest []perspectives.Thought) int {
+	deepest := 0
+
+	var walk func(thought perspectives.Thought, depth int)
+	walk = func(thought perspectives.Thought, depth int) {
+		if depth > deepest {
+			deepest = depth
+		}
+
+		for _, child := range thought.Then {
+			walk(child, depth+1)
+		}
+	}
+
+	for _, thought := range forest {
+		walk(thought, 1)
+	}
+
+	return deepest
+}
+
+// strategyCount is the number of root branches that reach an entry.
+func strategyCount(forest []perspectives.Thought) int {
+	var reachesEntry func(thought perspectives.Thought) bool
+	reachesEntry = func(thought perspectives.Thought) bool {
+		if perspectives.IsEntryAction(thought.Do.Type) {
+			return true
+		}
+
+		for _, child := range thought.Then {
+			if reachesEntry(child) {
+				return true
 			}
 		}
 
-		if options.OnBest != nil {
-			options.OnBest(best)
-		}
+		return false
 	}
-	onCandidate := func(candidate types.CandidateScore) {
-		if options.OnCandidate != nil {
-			options.OnCandidate(candidate)
-		}
 
-		if reporter == nil || writeErr != nil {
-			return
-		}
+	count := 0
 
-		if err := reporter.Write(candidate); err != nil {
-			writeErr = err
+	for _, thought := range forest {
+		if reachesEntry(thought) {
+			count++
 		}
 	}
 
-	log.TuneLog("compiled %d decision ticks", tape.Len())
-
-	scanOptions := types.ScanOptions{
-		Workers:           options.Workers,
-		MaxThresholds:     options.MaxThresholds,
-		BeamWidth:         options.BeamWidth,
-		CandidateLimit:    options.CandidateLimit,
-		MaxReasoningSteps: options.MaxReasoningSteps,
-		Guard:             options.Guard,
-		Budget:            searchBudget,
-		Pool:              pool,
-	}
-
-	var stats types.ScanStats
-	var hybridStats mcts.HybridStats
-
-	if options.Hybrid {
-		tuner.branches, hybridStats, err = mcts.RunHybridSearch(
-			ctx,
-			&tuner.profile,
-			rows,
-			tape,
-			mcts.HybridOptions{
-				ScanOptions: scanOptions,
-				MCTSOptions: mcts.Options{
-					Iterations:        options.MCTSIterations,
-					MaxReasoningSteps: options.MaxReasoningSteps,
-					MaxThresholds:     options.MaxThresholds,
-					Budget:            searchBudget,
-				},
-				SeedCount:   options.HybridSeedCount,
-				Guard:       options.Guard,
-				OnBest:      onBest,
-				OnCandidate: onCandidate,
-			},
-		)
-
-		if err != nil {
-			return types.SessionSummary{}, err
-		}
-
-		stats = hybridStats.Scan
-	} else {
-		search := scan.NewScanSearchWithTape(ctx, &tuner.profile, rows, tape, scanOptions)
-		search.OnBest = onBest
-		search.OnCandidate = onCandidate
-
-		tuner.branches, stats = search.Run()
-
-		if options.Guard.WalkForward.Enabled {
-			log.TuneLog("walk-forward validation")
-
-			overfitGuard := guard.NewOverfitGuard(ctx, options.Guard, tape, &tuner.profile)
-			tuner.branches = guard.SelectWalkForwardBest(
-				overfitGuard,
-				rows,
-				search.WalkForwardFinalists(),
-				pool,
-			)
-		}
-	}
-
-	if reporter != nil {
-		if err := reporter.Close(); err != nil && writeErr == nil {
-			writeErr = err
-		}
-	}
-
-	if writeErr != nil {
-		return types.SessionSummary{}, writeErr
-	}
-
-	summary := tuner.Summary()
-	summary.Candidates = stats.Candidates
-	summary.Workers = stats.Workers
-	summary.HybridSeeds = hybridStats.SeedCount
-	summary.MCTSRounds = hybridStats.MCTSRounds
-
-	return summary, nil
+	return count
 }

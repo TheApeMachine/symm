@@ -73,14 +73,16 @@ profile-report:
 
 profile-tune: build
 	@mkdir -p $(PROFILE_DIR)
-	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
+	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it, then 'make tune'." && exit 1)
 	@echo "=== profile tune ==="
 	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
 	SYMM_PPROF=1 ./$(SYMM_BIN) tune --config $(CONFIG)
 
 run: build
-	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) --config $(CONFIG)
+	@mkdir -p $(LOG_DIR)
+	@echo "symm running — collecting run data → runs/capture.jsonl  (Ctrl+C to stop)"
+	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	./$(SYMM_BIN) --config $(CONFIG) --record
 
 audit: build
 	@mkdir -p $(LOG_DIR)
@@ -94,7 +96,7 @@ run-profile: build
 	SYMM_PPROF=1 ./$(SYMM_BIN) --config $(CONFIG)
 
 tune: build
-	@test -f runs/capture.jsonl || (echo "Missing runs/capture.jsonl. Set trading.model: record in $(CONFIG), run make run, then make tune" && exit 1)
+	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it (Ctrl+C when you have enough), then 'make tune'." && exit 1)
 	./$(SYMM_BIN) tune --config $(CONFIG)
 
 dump:

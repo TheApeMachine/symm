@@ -10,12 +10,6 @@ export type SpiderBridge = {
 	ready: boolean;
 };
 
-const SCROLL_MS = 250;
-
-/*
-SpiderChart shows the live signal landscape as a radar: one petal per signal,
-radius is its confidence (0-100), refreshed on a fixed cadence.
-*/
 export const SpiderChart = ({
 	sources,
 	labels,
@@ -36,19 +30,19 @@ export const SpiderChart = ({
 
 	const onInit = useCallback(
 		(result: TResolvedReturnType<typeof drawSignalSpider>) => {
-			const current = new Map<string, number>(sources.map((s) => [s, 0]));
+			const current = new Map<string, number>(
+				sources.map((source) => [source, 0]),
+			);
 			const bridge = bridgeRef.current;
+			const controls = result.controls as SpiderControls;
 
-			bridge.set = (source, value) => current.set(source, value);
+			bridge.set = (source, value) => {
+				current.set(source, value);
+				controls.update(sources.map((axis) => (current.get(axis) ?? 0) * 100));
+			};
 			bridge.ready = true;
 
-			const controls = result.controls as SpiderControls;
-			const interval = setInterval(() => {
-				controls.update(sources.map((s) => (current.get(s) ?? 0) * 100));
-			}, SCROLL_MS);
-
 			return () => {
-				clearInterval(interval);
 				bridge.set = () => {};
 				bridge.ready = false;
 			};

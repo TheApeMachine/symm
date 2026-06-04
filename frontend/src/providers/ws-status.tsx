@@ -3,9 +3,11 @@ import {
 	type ReactNode,
 	useCallback,
 	useContext,
+	useLayoutEffect,
 	useMemo,
 	useState,
 } from "react";
+import { wsDispatchRef } from "#/providers/ws-dispatch";
 
 export type ActionVerdict = "submitted" | "filled" | "rejected";
 
@@ -60,7 +62,9 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	}, []);
 
 	const setMark = useCallback((symbol: string, price: number) => {
-		setMarks((prev) => (prev[symbol] === price ? prev : { ...prev, [symbol]: price }));
+		setMarks((prev) =>
+			prev[symbol] === price ? prev : { ...prev, [symbol]: price },
+		);
 	}, []);
 
 	// One card per symbol: the latest verdict replaces any prior card for that
@@ -91,6 +95,16 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			}),
 		[positions, marks],
 	);
+
+	useLayoutEffect(() => {
+		wsDispatchRef.current = {
+			setOnline,
+			setWallet,
+			setPositions,
+			setMark,
+			pushAction,
+		};
+	});
 
 	const value = useMemo(
 		() => ({

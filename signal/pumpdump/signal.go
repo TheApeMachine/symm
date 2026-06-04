@@ -216,8 +216,8 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		return err
 	}
 
-	errnie.Info("signal/pumpdump:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(
 			&qpool.QValue[any]{

@@ -175,10 +175,17 @@ func (signal *Signal) emit(symbol string) error {
 		return err
 	}
 
-	errnie.Info("signal/exhaust:measurement")
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
 	if ui := signal.broadcasts["ui"]; ui != nil {
-		ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+		ui.Send(&qpool.QValue[any]{
+			Value: map[string]any{
+				"chart":      "gauge",
+				"source":     measurement.Source.String(),
+				"confidence": measurement.Confidence,
+				"snr":        measurement.SNR,
+			},
+		})
 	}
 
 	return nil

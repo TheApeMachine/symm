@@ -1,12 +1,10 @@
 package replay
 
 import (
-	"context"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
 )
 
 func TestReplayCostsFromViper(t *testing.T) {
@@ -40,65 +38,6 @@ func TestReplayCostsFromViper(t *testing.T) {
 
 		convey.Convey("It should treat fee_pct as the taker rate", func() {
 			convey.So(costs.TakerFeePct, convey.ShouldAlmostEqual, 0.0020, 0.0000001)
-		})
-	})
-}
-
-func TestReplaySimulationMakerEntryFees(t *testing.T) {
-	convey.Convey("Given a flat round trip with explicit maker/taker costs", t, func() {
-		ctx := context.Background()
-		rows := []perspectives.Measurement{
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
-				SNR:      2, Last: 100,
-			},
-			{
-				Symbol: "BTC/EUR", Source: perspectives.SourceExhaustion,
-				Category: perspectives.CategoryExhaustion,
-				SNR:      2, Last: 100,
-			},
-		}
-		branches := perspectives.BranchList{
-			{
-				Category:    perspectives.CategoryLaminar,
-				Observation: perspectives.ObservationNotHolding,
-				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-				Unit:        perspectives.UnitSNR,
-				Value:       1, ValueSet: true,
-				Action: perspectives.Action{Type: perspectives.ActionLimit},
-			},
-			{
-				Category:    perspectives.CategoryExhaustion,
-				Observation: perspectives.ObservationHolding,
-				Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-				Unit:        perspectives.UnitSNR,
-				Value:       1, ValueSet: true,
-				Action: perspectives.Action{Type: perspectives.ActionSettlePosition},
-			},
-		}
-		makerEntry := ReplayCosts{
-			MakerFeePct: 0.0016,
-			TakerFeePct: 0.0026,
-			SlippagePct: 0.0005,
-		}
-		allTaker := ReplayCosts{
-			MakerFeePct: 0.0026,
-			TakerFeePct: 0.0026,
-			SlippagePct: 0.0005,
-		}
-
-		makerScore := NewReplaySimulationWithCosts(ctx, branches, rows, makerEntry).Score()
-		takerScore := NewReplaySimulationWithCosts(ctx, branches, rows, allTaker).Score()
-
-		convey.Convey("It should charge less drag on limit entry plus taker exit", func() {
-			convey.So(makerScore, convey.ShouldBeGreaterThan, takerScore)
-			convey.So(
-				makerScore-takerScore,
-				convey.ShouldAlmostEqual,
-				0.0010,
-				0.0001,
-			)
 		})
 	})
 }

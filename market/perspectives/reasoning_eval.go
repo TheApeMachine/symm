@@ -1,19 +1,21 @@
 package perspectives
 
-/*
-This is the evaluator for the proposed Thought/Predicate language — the heart that
-replay, live, and the optimizer will all call. It is deliberately decoupled from
-where the data comes from: a ReasonContext answers "what is X right now / N ago",
-and the evaluator does only the logic (boolean composition, level/temporal/edge
-comparisons, metric-to-metric). The temporal state (entry time, peak, lifecycle,
-the ring window for lookbacks) lives in whoever builds the ReasonContext, so this
-function stays pure and testable.
+import "strconv"
 
-NOTE — the Thought walk below is the single-tick v1: it returns the deepest
-reachable decision given the current context. The fully temporal "then =
-monitored over the ticks that follow" semantics (a position carries the active
-reasoning path) is the next design step; the predicate logic here is the part
-that does not change.
+/*
+This is the evaluator for the Thought/Predicate language — the heart that replay,
+live, and the optimizer all call. It is deliberately decoupled from where the data
+comes from: a ReasonContext answers "what is X right now / N ago", and the evaluator
+does only the logic (boolean composition, level/temporal/edge comparisons,
+metric-to-metric). The temporal state (entry time, peak, lifecycle, the ring window
+for lookbacks) lives in whoever builds the ReasonContext, so the logic stays pure.
+
+The Thought walk has two modes over the SAME predicate logic. Evaluate is the
+stateless single-tick walk: it returns the deepest reachable decision for the
+current context, reading a tree as "all of this true right now". EvaluateStateful
+threads a ReasonState so a node's Then children stay watched on the ticks that
+FOLLOW the node firing — "see X, then later when Y, do Z" — which is what makes tree
+depth express a sequence over time. holds/levelOp/temporalOp are identical for both.
 */
 
 // ReasonContext supplies the live values a predicate reads. Implementations build
@@ -33,31 +35,95 @@ type ReasonContext interface {
 }
 
 /*
+ReasonState is the per-symbol memory EvaluateStateful threads across ticks: the set
+of thought nodes that have fired ("latched") within the current episode, keyed by
+their path in the tree. A node that fired on an earlier tick keeps its Then children
+reachable until the episode resets, which is what turns tree depth into a sequence
+over time rather than a set of conditions that must all hold at once. The latch set
+is cleared whenever the holding state flips (an entry filled, or a position closed),
+so each flat stretch and each held stretch reasons from a clean frontier. Reuse one
+ReasonState per symbol across ticks; a fresh one yields the single-tick semantics.
+*/
+type ReasonState struct {
+	active      map[string]bool
+	lastHolding bool
+	primed      bool
+}
+
+// NewReasonState returns an empty, ready-to-thread state.
+func NewReasonState() *ReasonState {
+	return &ReasonState{active: make(map[string]bool)}
+}
+
+/*
 Evaluate walks the thoughts against the context and returns the decision at the
-deepest reachable, satisfied node (deeper = more specific reasoning). The bool is
-false when no thought resolves to an action.
+deepest reachable, satisfied node (deeper = more specific reasoning); ties at the
+same depth resolve to the first sibling in tree order. It is the stateless
+single-tick walk — EvaluateStateful over a throwaway state — so the tree is read as
+"all of this true right now". The bool is false when nothing resolves to an action.
 */
 func Evaluate(thoughts []Thought, ctx ReasonContext) (Act, bool) {
+	return EvaluateStateful(thoughts, ctx, NewReasonState())
+}
+
+/*
+EvaluateStateful is Evaluate with cross-tick memory. A node's Then children become
+reachable once the node has fired and STAY reachable (latched) until the episode
+resets, so an ordered chain advances over the ticks instead of needing everything
+true on one tick. The action returned is still the deepest node whose own When holds
+THIS tick, so with a fresh state (no prior latch) it is identical to Evaluate.
+*/
+func EvaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState) (Act, bool) {
+	if state == nil {
+		state = NewReasonState()
+	}
+
+	// Episode boundary: when holding flips, the chain that drove the decision has
+	// done its job — start the next stretch with a clean frontier so it can re-arm.
+	holding := ctx.Lifecycle(ObservationHolding)
+
+	if state.primed && holding != state.lastHolding {
+		clear(state.active)
+	}
+
+	state.lastHolding = holding
+	state.primed = true
+
+	next := make(map[string]bool, len(state.active))
 	best := Act{}
 	bestDepth := -1
 	found := false
 
-	var visit func(nodes []Thought, depth int)
-	visit = func(nodes []Thought, depth int) {
-		for _, node := range nodes {
-			if !holds(node.When, ctx) {
+	var visit func(nodes []Thought, depth int, prefix string, parentOpen bool)
+	visit = func(nodes []Thought, depth int, prefix string, parentOpen bool) {
+		for index := range nodes {
+			node := nodes[index]
+			key := prefix + strconv.Itoa(index)
+			latched := state.active[key]
+
+			// A node is reachable when its parent is open this tick, or when it
+			// already latched on an earlier tick of this episode.
+			if !parentOpen && !latched {
 				continue
 			}
 
-			if node.Do.Type != ActionNone && depth > bestDepth {
+			firesNow := holds(node.When, ctx)
+
+			if firesNow || latched {
+				next[key] = true
+			}
+
+			if firesNow && node.Do.Type != ActionNone && depth > bestDepth {
 				best, bestDepth, found = node.Do, depth, true
 			}
 
-			visit(node.Then, depth+1)
+			visit(node.Then, depth+1, key+".", firesNow || latched)
 		}
 	}
 
-	visit(thoughts, 0)
+	visit(thoughts, 0, "", true)
+
+	state.active = next
 
 	return best, found
 }

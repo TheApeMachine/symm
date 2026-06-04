@@ -1,30 +1,30 @@
-import { type MutableRefObject, useCallback } from "react";
+import { type RefObject, useCallback } from "react";
 import type { SciChart3DSurface } from "scichart";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
+import {
+	attachFluidPush,
+	detachFluidPush,
+	type FluidPushBridge,
+} from "#/components/charts/fluid/fluid-push-bridge";
 import { initFluidSurfaceChart } from "#/components/charts/fluid/init-fluid-surface-chart";
-import type { FluidPushBridge } from "#/routes/index";
 
 export const FluidFieldSurfaceChart = ({
 	bridgeRef,
 }: {
-	bridgeRef: MutableRefObject<FluidPushBridge>;
+	bridgeRef: RefObject<FluidPushBridge>;
 }) => {
 	const onInit = useCallback(
 		(result: TResolvedReturnType<typeof initFluidSurfaceChart>) => {
 			const bridge = bridgeRef.current;
-			bridge.push = result.controls.push;
-			bridge.ready = true;
 
-			for (const frame of bridge.pending) {
-				bridge.push(frame);
+			if (!bridge) {
+				return;
 			}
 
-			bridge.pending = [];
+			attachFluidPush(bridge, result.controls.push);
 
 			return () => {
-				bridge.push = () => {};
-				bridge.ready = false;
-				bridge.pending = [];
+				detachFluidPush(bridge);
 			};
 		},
 		[bridgeRef],

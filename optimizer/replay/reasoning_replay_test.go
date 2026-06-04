@@ -32,6 +32,98 @@ func notHolding(category perspectives.CategoryType) perspectives.Predicate {
 	}}
 }
 
+func priceRow(last float64, at time.Time) perspectives.Measurement {
+	return perspectives.Measurement{Symbol: "BTC/EUR", Last: last, At: at}
+}
+
+func priceCrossedUp(level float64) perspectives.Predicate {
+	return perspectives.Predicate{
+		Subject: perspectives.SubjectPrice, Unit: perspectives.UnitNone,
+		Ago: 1, Op: perspectives.ComparisonCrossedUp, Value: level,
+	}
+}
+
+// TestThoughtSimulationArmsAcrossTicks proves the stateful walk threads through the
+// real ledger + window: a transient parent edge (price crosses 101) fires on one
+// tick and LATCHES, so a later child edge (price crosses 103) — on a tick where the
+// parent edge no longer holds — still reaches the entry. A single-tick walk could
+// never enter here, because the parent gate is shut by the time the child triggers.
+func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
+	Convey("Given a frictionless €100 wallet and a price path that crosses two levels on different ticks", t, func() {
+		base := time.Unix(1_700_000_000, 0)
+
+		thoughts := []perspectives.Thought{
+			{
+				When: perspectives.Predicate{All: []perspectives.Predicate{
+					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationNotHolding},
+					priceCrossedUp(101), // transient: true only on the tick price crosses 101
+				}},
+				Then: []perspectives.Thought{{
+					When: priceCrossedUp(103), // fires a tick later, once the parent has latched
+					Do:   perspectives.Act{Type: perspectives.ActionMarket},
+				}},
+			},
+			{
+				When: perspectives.Predicate{All: []perspectives.Predicate{
+					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
+					{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryActiveReversal, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+				}},
+				Do: perspectives.Act{Type: perspectives.ActionSettlePosition},
+			},
+		}
+
+		rows := []perspectives.Measurement{
+			priceRow(100, base),                  // no cross yet
+			priceRow(102, base.Add(time.Second)), // crosses 101 -> parent latches; 102<103 so child holds off
+			priceRow(104, base.Add(2*time.Second)), // parent edge gone; crosses 103 -> child enters at 104
+			{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
+		}
+
+		sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
+		result := sim.Result()
+
+		So(result.ClosedTrades, ShouldEqual, 1)          // it did enter, only because the parent latched
+		So(result.Score, ShouldBeGreaterThan, 0)         // entered 104, settled 108
+	})
+}
+
+func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
+	Convey("Given the same reasoning tree scored with and without fees", t, func() {
+		base := time.Unix(1_700_000_000, 0)
+
+		thoughts := []perspectives.Thought{
+			{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+			{
+				When: perspectives.Predicate{All: []perspectives.Predicate{
+					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
+					{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryActiveReversal, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+				}},
+				Do: perspectives.Act{Type: perspectives.ActionSettlePosition},
+			},
+		}
+
+		rows := []perspectives.Measurement{
+			ignite(100, base),
+			ignite(110, base.Add(time.Second)),
+			{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 110, At: base.Add(2 * time.Second)},
+		}
+
+		tape := PrecompileTape(rows)
+
+		free := NewThoughtSimulation(context.Background(), thoughts, tape, frictionlessCosts()).Result()
+
+		costs := frictionlessCosts()
+		costs.TakerFeePct = 0.005 // 0.5% per side
+		taxed := NewThoughtSimulation(context.Background(), thoughts, tape, costs).Result()
+
+		Convey("Both trade once, but fees eat into the realized return", func() {
+			So(free.ClosedTrades, ShouldEqual, 1)
+			So(taxed.ClosedTrades, ShouldEqual, 1)
+			So(taxed.Score, ShouldBeLessThan, free.Score)
+		})
+	})
+}
+
 func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 	Convey("Given a frictionless €100 wallet and a tape", t, func() {
 		base := time.Unix(1_700_000_000, 0)

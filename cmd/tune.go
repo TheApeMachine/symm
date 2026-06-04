@@ -54,9 +54,10 @@ var tuneCmd = &cobra.Command{
 		options.OnBest = func(best optimizer.BestTree) {
 			fmt.Fprintf(
 				os.Stderr,
-				"symm tune: best candidate=%d branches=%d score=%.6f -> %s\n",
-				best.Iteration,
-				len(best.Branches),
+				"symm tune: best strategies=%d nodes=%d trades=%d score=%.6f -> %s\n",
+				len(best.Thoughts),
+				best.Nodes,
+				best.Trades,
 				best.Score,
 				options.OutputPath,
 			)
@@ -68,8 +69,7 @@ var tuneCmd = &cobra.Command{
 
 			fmt.Fprintf(
 				os.Stderr,
-				"symm tune: candidate=%d depth=%d registry=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
-				candidate.Candidate,
+				"symm tune: candidate depth=%d strategies=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
 				candidate.ReasoningDepth(),
 				candidate.RegistryWidth(),
 				candidate.ClosedTrades,
@@ -122,11 +122,13 @@ func tuneMeasurementPath() (string, error) {
 
 	path = strings.TrimSpace(viper.GetString("trading.replay.file"))
 
-	if path == "" {
-		return "", fmt.Errorf("tune: trading.record.file or trading.replay.file is required")
+	if path != "" {
+		return path, nil
 	}
 
-	return path, nil
+	// Fall back to the capture file `make run --record` writes, so the two
+	// commands agree even with a bare config.
+	return defaultCapturePath, nil
 }
 
 func tunePerspectivesPath() string {

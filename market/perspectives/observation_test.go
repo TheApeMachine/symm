@@ -15,16 +15,3 @@ func TestObservationTypeConstants(t *testing.T) {
 	})
 }
 
-func TestObservationStruct(t *testing.T) {
-	Convey("Given an observation node", t, func() {
-		observation := Observation{
-			ObservationType: ObservationHolding,
-			Value:           0.75,
-		}
-
-		Convey("It should retain type and value", func() {
-			So(observation.ObservationType, ShouldEqual, ObservationHolding)
-			So(observation.Value, ShouldEqual, 0.75)
-		})
-	})
-}

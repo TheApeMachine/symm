@@ -183,8 +183,8 @@ func (signal *Signal) emit(symbol string) error {
 			return err
 		}
 
-		errnie.Info("signal/fluid:measurement")
 		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
 		if signal.ui != nil {
 			signal.ui.Send(&qpool.QValue[any]{
 				Value: map[string]any{

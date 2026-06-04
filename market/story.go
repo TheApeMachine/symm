@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -30,17 +29,18 @@ type Story struct {
 	pool        *qpool.Q
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
-	ui          *qpool.BroadcastGroup
-	raw         *qpool.BroadcastGroup
-	streams     *focus.Set
-	tree        *perspectives.Tree
-	ringWindow  []perspectives.Measurement
-	lastGauge   map[string]time.Time
-	recordFile  *os.File
-	recorder    *bufio.Writer
-	auditWriter *audit.Writer
-	auditDedup  playbookWalkDedup
-	pulseSeq    atomic.Int64
+	ui           *qpool.BroadcastGroup
+	raw          *qpool.BroadcastGroup
+	streams      *focus.Set
+	thoughts     []perspectives.Thought
+	playbookLoaded bool
+	reasonStates map[string]*perspectives.ReasonState
+	positions    map[string]*perspectives.PositionState
+	ringWindow   []perspectives.Measurement
+	lastGauge    map[string]time.Time
+	recordFile *os.File
+	recorder   *bufio.Writer
+	pulseSeq   atomic.Int64
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
@@ -52,9 +52,11 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		streams:     streams,
-		ringWindow:  make([]perspectives.Measurement, 0, StoryRingCapacity),
-		lastGauge:   make(map[string]time.Time),
+		streams:      streams,
+		reasonStates: make(map[string]*perspectives.ReasonState),
+		positions:    make(map[string]*perspectives.PositionState),
+		ringWindow:   make([]perspectives.Measurement, 0, StoryRingCapacity),
+		lastGauge:    make(map[string]time.Time),
 	}
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
@@ -74,17 +76,6 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		story.recordFile = fh
 		story.recorder = bufio.NewWriter(fh)
 	}
-
-	auditWriter, err := audit.OpenWriter()
-
-	if err != nil {
-		cancel()
-		errnie.Error(fmt.Errorf("story: audit writer: %w", err), "story")
-		return nil
-	}
-
-	story.auditWriter = auditWriter
-	story.auditDedup = newPlaybookWalkDedup()
 
 	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
@@ -151,8 +142,6 @@ func (story *Story) ingestMeasurement(
 	measurement perspectives.Measurement,
 	latest gaugeReadings,
 ) error {
-	errnie.Info("market/story:measurement source=" + measurement.Source.String())
-
 	if story.recorder != nil {
 		recorded := measurement
 
@@ -165,8 +154,6 @@ func (story *Story) ingestMeasurement(
 		if err != nil {
 			return fmt.Errorf("marshal measurement: %w", err)
 		}
-
-		errnie.Info("market/story:recording")
 
 		if _, writeErr := story.recorder.Write(append(raw, '\n')); writeErr != nil {
 			return fmt.Errorf("write measurement record: %w", writeErr)
@@ -185,41 +172,95 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
-	if story.tree == nil {
-		tree, err := story.loadPlaybookTree()
+	if !story.playbookLoaded {
+		thoughts, err := story.loadThoughts()
 
 		if err != nil {
-			return fmt.Errorf("playbook tree: %w", err)
+			return fmt.Errorf("playbook: %w", err)
 		}
 
-		story.tree = tree
-		errnie.Info("market/story:playbook-tree")
+		story.thoughts = thoughts
+		story.playbookLoaded = true
 	}
 
 	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)
 	regime := perspectives.ClassifyRegime(snapshots)
 	story.publishRegime(measurement.Symbol, regime)
-	story.tree.ResetWalk()
 
-	actionType := story.tree.WalkContext(
-		perspectives.BranchContext{
-			Measurements: snapshots,
-			Observations: story.observations(measurement.Symbol),
-			Regime:       regime.Regime,
-			Metrics: map[string]float64{
-				"last": measurement.Last,
-			},
-		},
-		story.tree.Branches()...,
+	if len(story.thoughts) == 0 {
+		return nil
+	}
+
+	context := perspectives.NewWindowReason(
+		snapshots, regime.Regime, story.positionState(measurement),
 	)
 
-	action := perspectives.ActionFromMeasurement(actionType, measurement)
+	act, found := perspectives.EvaluateStateful(
+		story.thoughts, context, story.reasonState(measurement.Symbol),
+	)
+
+	if !found || act.Type == perspectives.ActionNone {
+		return nil
+	}
 
 	// The trader publishes the decision card (with the accept/reject reason) once
 	// the action clears or fails its gates; the story only forwards the verdict.
-	story.raw.Send(&qpool.QValue[any]{Value: action})
+	story.raw.Send(&qpool.QValue[any]{Value: perspectives.ActionFromAct(act, measurement)})
 
 	return nil
+}
+
+// positionState projects what the story knows about the open position into the
+// view the reasoning language reasons over. Holding is the fill-sourced focus set;
+// entry, peak, and elapsed are derived from the prices observed since the position
+// opened. (The exact fill price arrives with the execution events Stage 6 will wire
+// from the paper/live socket.)
+func (story *Story) positionState(measurement perspectives.Measurement) perspectives.PositionState {
+	symbol := measurement.Symbol
+	holding := story.streams != nil && story.streams.Has(symbol)
+
+	now := measurement.At
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	if !holding {
+		delete(story.positions, symbol)
+
+		return perspectives.PositionState{Holding: false, Last: measurement.Last, Now: now}
+	}
+
+	state, ok := story.positions[symbol]
+
+	if !ok {
+		state = &perspectives.PositionState{
+			Holding: true, EntryPrice: measurement.Last, Peak: measurement.Last, EntryAt: now,
+		}
+		story.positions[symbol] = state
+	}
+
+	state.Holding = true
+	state.Last = measurement.Last
+	state.Now = now
+
+	if measurement.Last > state.Peak {
+		state.Peak = measurement.Last
+	}
+
+	return *state
+}
+
+// reasonState returns the symbol's cross-tick reasoning memory, created on first
+// use — the same per-symbol latch the replay ledger threads, so live matches replay.
+func (story *Story) reasonState(symbol string) *perspectives.ReasonState {
+	state, ok := story.reasonStates[symbol]
+
+	if !ok {
+		state = perspectives.NewReasonState()
+		story.reasonStates[symbol] = state
+	}
+
+	return state
 }
 
 /*
@@ -242,18 +283,34 @@ func (story *Story) publishRegime(symbol string, regime perspectives.RegimeFeatu
 	}})
 }
 
-func (story *Story) observations(symbol string) map[perspectives.ObservationType]float64 {
-	observations := make(map[perspectives.ObservationType]float64, 1)
+// loadThoughts reads the reasoning playbook the optimizer writes. A missing file
+// is not fatal: the story simply does not act until a playbook is tuned.
+func (story *Story) loadThoughts() ([]perspectives.Thought, error) {
+	path := playbookPath()
 
-	if story.streams != nil && story.streams.Has(symbol) {
-		observations[perspectives.ObservationHolding] = 1
+	raw, err := os.ReadFile(path)
 
-		return observations
+	if err != nil {
+		errnie.Info("no playbook at "+path+" — story idle until one is tuned", "market/story")
+
+		return nil, nil
 	}
 
-	observations[perspectives.ObservationNotHolding] = 1
+	return perspectives.ParseThoughts(raw)
+}
 
-	return observations
+// playbookPath resolves where the reasoning playbook lives — the same file the
+// optimizer (make tune) writes, so a fresh tune feeds the next run.
+func playbookPath() string {
+	if path := os.Getenv("SYMM_PERSPECTIVES_FILE"); path != "" {
+		return path
+	}
+
+	if path := viper.GetString("market.perspectives.file"); path != "" {
+		return path
+	}
+
+	return "market/perspectives/cfg/perspectives.yaml"
 }
 
 /*
@@ -286,21 +343,6 @@ func (story *Story) Close() error {
 		story.recordFile = nil
 	}
 
-	if story.auditWriter != nil {
-		if auditErr := story.auditWriter.Close(); auditErr != nil && closeErr == nil {
-			closeErr = auditErr
-		}
-
-		story.auditWriter = nil
-	}
-
 	return closeErr
 }
 
-func (story *Story) loadPlaybookTree() (*perspectives.Tree, error) {
-	if viper.GetBool("market.perspectives.fixture_playbook") {
-		return perspectives.NewTreeFromBranches(story.ctx, perspectives.FixturePlaybookBranches())
-	}
-
-	return perspectives.NewTree(story.ctx, []perspectives.Measurement{})
-}

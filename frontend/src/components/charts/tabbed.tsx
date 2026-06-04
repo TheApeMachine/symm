@@ -10,8 +10,13 @@ interface TabbedChartProps {
 }
 
 export const TabbedChart = ({ tabs }: TabbedChartProps) => {
+	const defaultTab = tabs[0]?.label ?? "";
+
 	return (
-		<Tabs className="w-full h-full items-center p-0 gap-0" defaultValue="tab-1">
+		<Tabs
+			className="w-full h-full items-center p-0 gap-0"
+			defaultValue={defaultTab}
+		>
 			<div className="border-b w-full">
 				<Tabs.List variant="underline" className="gap-2">
 					{tabs.map((tab) => (

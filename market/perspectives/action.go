@@ -72,6 +72,7 @@ type Action struct {
 	Symbol   string
 	Price    float64
 	Quantity float64
+	Offset   float64 // per-node trigger fraction (stop/take/trail); 0 = use the global default
 }
 
 /*
@@ -105,24 +106,24 @@ func IsExitAction(actionType ActionType) bool {
 }
 
 /*
-ActionFromMeasurement builds a desk order from a tree verdict and row. Quantity is
-left to the trader, which sizes entries against the live wallet balance the
-exchange publishes and settles exits against the position it currently holds.
+ActionFromAct builds a desk order from a reasoning decision and the current row,
+carrying the per-node trigger offset through to execution. Quantity is left to the
+trader, which sizes entries against the live wallet balance the exchange publishes
+and settles exits against the position it currently holds.
 */
-func ActionFromMeasurement(
-	actionType ActionType, measurement Measurement,
-) Action {
+func ActionFromAct(act Act, measurement Measurement) Action {
 	action := Action{
-		Type:   actionType,
+		Type:   act.Type,
 		Symbol: measurement.Symbol,
 		Price:  measurement.Last,
+		Offset: act.Offset,
 	}
 
-	if IsEntryAction(actionType) {
+	if IsEntryAction(act.Type) {
 		action.Side = trading.Buy
 	}
 
-	if IsExitAction(actionType) {
+	if IsExitAction(act.Type) {
 		action.Side = trading.Sell
 	}
 

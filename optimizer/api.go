@@ -12,10 +12,6 @@ import (
 type (
 	BestTree       = types.BestTree
 	CandidateScore = types.CandidateScore
-	GuardOptions   = types.GuardOptions
-	ScanOptions    = types.ScanOptions
-	ScanStats      = types.ScanStats
-	SearchBudget   = types.SearchBudget
 	SessionSummary = types.SessionSummary
 	TuneOptions    = types.TuneOptions
 )
@@ -29,6 +25,7 @@ var (
 	TuneMeasurements           = tune.TuneMeasurements
 )
 
-func WriteBranches(path string, branches perspectives.BranchList) error {
-	return io.WriteBranches(path, branches)
+// WriteThoughts persists a reasoning forest to a playbook file.
+func WriteThoughts(path string, thoughts []perspectives.Thought) error {
+	return io.WriteThoughts(path, thoughts)
 }

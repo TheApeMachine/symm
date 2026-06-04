@@ -145,7 +145,7 @@ export type SignalGaugeControls = {
 	dispose: () => void;
 };
 
-export const drawSignalGauge = async (rootElement: HTMLDivElement) => {
+export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
 
 	const { sciChartSurface, wasmContext } = await SciChartPolarSurface.create(

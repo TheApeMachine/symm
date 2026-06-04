@@ -1,4 +1,4 @@
-import { type RefObject, memo, useCallback } from "react";
+import { memo, type RefObject, useCallback } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -28,8 +28,8 @@ const initSignalHeatmap = async (
 
 	const { sciChartSurface, wasmContext } =
 		await SciChartSurface.create(rootElement);
-	const nRows = sources.length;
-	const zValues = zeroArray2D([nRows, TIME_COLS]);
+	const rowCount = sources.length;
+	const zValues = zeroArray2D([rowCount, TIME_COLS]);
 
 	sciChartSurface.xAxes.add(
 		new NumericAxis(wasmContext, {
@@ -44,7 +44,7 @@ const initSignalHeatmap = async (
 			axisAlignment: EAxisAlignment.Left,
 			isVisible: false,
 			autoRange: EAutoRange.Never,
-			visibleRange: new NumberRange(-0.5, nRows - 0.5),
+			visibleRange: new NumberRange(-0.5, rowCount - 0.5),
 		}),
 	);
 
@@ -74,12 +74,12 @@ const initSignalHeatmap = async (
 		}),
 	);
 
-	for (let i = 0; i < sources.length; i++) {
+	for (let rowIndex = 0; rowIndex < sources.length; rowIndex += 1) {
 		sciChartSurface.annotations.add(
 			new TextAnnotation({
-				text: labels[sources[i]] ?? sources[i],
+				text: labels[sources[rowIndex]] ?? sources[rowIndex],
 				x1: 1,
-				y1: i,
+				y1: rowIndex,
 				xCoordinateMode: ECoordinateMode.DataValue,
 				yCoordinateMode: ECoordinateMode.DataValue,
 				horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
@@ -93,33 +93,35 @@ const initSignalHeatmap = async (
 
 	sciChartSurface.background = "transparent";
 
-	const push = (values: number[]) => {
-		for (let row = 0; row < nRows; row++) {
-			for (let col = 0; col < TIME_COLS - 1; col++) {
-				zValues[row][col] = zValues[row][col + 1];
-			}
-			zValues[row][TIME_COLS - 1] = values[row] ?? 0;
+	const sourceIndex = new Map(sources.map((source, index) => [source, index]));
+
+	const pushRow = (source: string, value: number) => {
+		const rowIndex = sourceIndex.get(source);
+
+		if (rowIndex === undefined) {
+			return;
 		}
+
+		const row = zValues[rowIndex];
+
+		for (let col = 0; col < TIME_COLS - 1; col += 1) {
+			row[col] = row[col + 1];
+		}
+
+		row[TIME_COLS - 1] = value;
 		dataSeries.setZValues(zValues);
 		sciChartSurface.invalidateElement();
 	};
 
-	return { sciChartSurface, wasmContext, controls: { push } };
+	return { sciChartSurface, wasmContext, controls: { pushRow } };
 };
 
-type Controls = { push: (values: number[]) => void };
+type Controls = { pushRow: (source: string, value: number) => void };
 
-/*
-SignalHeatmapBridge feeds live per-signal values into the scrolling heatmap. The
-chart owns a fixed-cadence scroll so the time axis stays even regardless of how
-often signals tick.
-*/
 export type SignalHeatmapBridge = {
 	set: (source: string, value: number) => void;
 	ready: boolean;
 };
-
-const SCROLL_MS = 300;
 
 const heatmapValue = (confidence: number): number =>
 	Math.min(4, Math.max(0, confidence) * 4);
@@ -141,23 +143,19 @@ export const SignalHeatmap = memo(function SignalHeatmap({
 
 	const onInit = useCallback(
 		(result: { controls: Controls }) => {
-			const current = new Map<string, number>(sources.map((s) => [s, 0]));
 			const bridge = bridgeRef.current;
 
-			bridge.set = (source, value) => current.set(source, value);
+			bridge.set = (source, value) => {
+				result.controls.pushRow(source, heatmapValue(value));
+			};
 			bridge.ready = true;
 
-			const interval = setInterval(() => {
-				result.controls.push(sources.map((s) => heatmapValue(current.get(s) ?? 0)));
-			}, SCROLL_MS);
-
 			return () => {
-				clearInterval(interval);
 				bridge.set = () => {};
 				bridge.ready = false;
 			};
 		},
-		[sources, bridgeRef],
+		[bridgeRef],
 	);
 
 	return (

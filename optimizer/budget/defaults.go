@@ -17,7 +17,5 @@ func DefaultTuneOptions(workers int) types.TuneOptions {
 
 	return types.TuneOptions{
 		Workers: workers,
-		Hybrid:  true,
-		Guard:   types.GuardOptions{},
 	}
 }

@@ -66,6 +66,22 @@ func (act *Act) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+/*
+MarshalYAML is the inverse of the reader above: a bare action ("do: iceberg") when
+there is no per-node offset, and the object form ("do: { type: stop_loss, offset:
+0.015 }") when there is, so a written playbook reads back identically.
+*/
+func (act Act) MarshalYAML() (any, error) {
+	if act.Offset == 0 {
+		return act.Type, nil
+	}
+
+	return struct {
+		Type   ActionType `yaml:"type"`
+		Offset float64    `yaml:"offset"`
+	}{Type: act.Type, Offset: act.Offset}, nil
+}
+
 type reasoningDocument struct {
 	Version  int       `yaml:"version"`
 	Branches []Thought `yaml:"branches"`
@@ -82,4 +98,13 @@ func ParseThoughts(raw []byte) ([]Thought, error) {
 	}
 
 	return document.Branches, nil
+}
+
+/*
+MarshalThoughts encodes a reasoning forest back into a playbook document — the
+inverse of ParseThoughts. The optimizer writes the trees it discovers this way, and
+a hand-written playbook round-trips through it unchanged.
+*/
+func MarshalThoughts(thoughts []Thought, version int) ([]byte, error) {
+	return yaml.Marshal(reasoningDocument{Version: version, Branches: thoughts})
 }

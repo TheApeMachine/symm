@@ -91,7 +91,7 @@ describe("ingestCandleWire", () => {
 		unregister();
 	});
 
-	it("does not buffer bars before a chart registers", () => {
+	it("buffers bars until a chart registers", () => {
 		ingestCandleWire({
 			event: "candle_bar",
 			symbol: "BTC/EUR",
@@ -108,7 +108,7 @@ describe("ingestCandleWire", () => {
 			received.push(bar.close);
 		});
 
-		expect(received).toEqual([]);
+		expect(received).toEqual([1.5]);
 		unregister();
 	});
 });

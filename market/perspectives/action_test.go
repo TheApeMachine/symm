@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
-func TestActionFromMeasurement(t *testing.T) {
+func TestActionFromAct(t *testing.T) {
 	convey.Convey("Given a measurement", t, func() {
 		measurement := Measurement{
 			Symbol: "BTC/EUR",
@@ -15,7 +15,7 @@ func TestActionFromMeasurement(t *testing.T) {
 		}
 
 		convey.Convey("An entry buys without a preset quantity (the trader sizes it)", func() {
-			action := ActionFromMeasurement(ActionLimit, measurement)
+			action := ActionFromAct(Act{Type: ActionLimit}, measurement)
 
 			convey.So(action.Side, convey.ShouldEqual, trading.Buy)
 			convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
@@ -23,11 +23,12 @@ func TestActionFromMeasurement(t *testing.T) {
 			convey.So(action.Quantity, convey.ShouldEqual, 0)
 		})
 
-		convey.Convey("An exit sells without a preset quantity", func() {
-			action := ActionFromMeasurement(ActionStopLoss, measurement)
+		convey.Convey("An exit sells and carries the per-node trigger offset", func() {
+			action := ActionFromAct(Act{Type: ActionTrailingStop, Offset: 0.02}, measurement)
 
 			convey.So(action.Side, convey.ShouldEqual, trading.Sell)
 			convey.So(action.Quantity, convey.ShouldEqual, 0)
+			convey.So(action.Offset, convey.ShouldEqual, 0.02)
 		})
 	})
 }

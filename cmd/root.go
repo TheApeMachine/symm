@@ -40,14 +40,26 @@ which allows a developer to easily override the config file.
 //go:embed cfg/config.yml
 var embedded embed.FS
 
+// defaultCapturePath is where `make run --record` writes measurements and where
+// `make tune` reads them back — the single capture file the two commands share.
+const defaultCapturePath = "runs/capture.jsonl"
+
 var (
-	cfgFile string
+	cfgFile   string
+	recordRun bool
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --record guarantees the run collects data for the optimizer, without
+			// depending on trading.record.file being set in the config.
+			if recordRun {
+				viper.Set("trading.record.file", defaultCapturePath)
+				errnie.Info("recording run measurements to "+defaultCapturePath+" (feeds `make tune`)", "engine")
+			}
+
 			pool := qpool.NewQ(cmd.Context(), 1, 4, nil)
 			engine, err := NewEngine(cmd.Context(), pool)
 
@@ -111,6 +123,13 @@ func init() {
 		"config",
 		"",
 		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&recordRun,
+		"record",
+		false,
+		"record run measurements to "+defaultCapturePath+" so `make tune` can optimize on them",
 	)
 }
 

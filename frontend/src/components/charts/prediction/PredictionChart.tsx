@@ -5,12 +5,9 @@ import { drawExample } from "#/components/charts/prediction/init-predictions-cha
 export type PredictionBridge = {
 	append: (tsSec: number, confidence: number) => void;
 	ready: boolean;
+	pending: [number, number][];
 };
 
-/*
-PredictionChart plots the live "prediction" signal's confidence as a time series.
-The websocket feeds samples through the bridge; the chart owns its scrolling axis.
-*/
 export const PredictionChart = memo(function PredictionChart({
 	bridgeRef,
 }: {
@@ -21,13 +18,21 @@ export const PredictionChart = memo(function PredictionChart({
 			const bridge = bridgeRef.current;
 			const { appendReading } = result.controls;
 
-			bridge.append = (tsSec, confidence) =>
+			bridge.append = (tsSec, confidence) => {
 				appendReading({ kind: "average", x: tsSec, value: confidence });
+			};
 			bridge.ready = true;
+
+			for (const [tsSec, confidence] of bridge.pending) {
+				bridge.append(tsSec, confidence);
+			}
+
+			bridge.pending = [];
 
 			return () => {
 				bridge.append = () => {};
 				bridge.ready = false;
+				bridge.pending = [];
 			};
 		},
 		[bridgeRef],

@@ -196,7 +196,6 @@ func (tox *Toxicity) publishMeasurement(symbol string) error {
 
 	measurement.Symbol = symbol
 
-	errnie.Info("toxicity:measurement", "toxicity")
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 
 	return nil

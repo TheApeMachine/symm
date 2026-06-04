@@ -13,7 +13,6 @@ func TestDefaultTuneOptions(t *testing.T) {
 
 		Convey("It should default workers to CPU count", func() {
 			So(options.Workers, ShouldEqual, runtime.NumCPU())
-			So(options.Hybrid, ShouldBeTrue)
 		})
 	})
 

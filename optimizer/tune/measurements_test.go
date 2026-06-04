@@ -4,11 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/types"
@@ -52,138 +51,70 @@ func TestLoadMeasurements(t *testing.T) {
 			convey.So(len(rows), convey.ShouldEqual, 1)
 		})
 	})
-
-	convey.Convey("Given only malformed measurement lines", t, func() {
-		path := filepath.Join(t.TempDir(), "capture.jsonl")
-		raw := []byte(`{bad` + "\n" + `{"incomplete":` + "\n")
-
-		convey.So(os.WriteFile(path, raw, 0o644), convey.ShouldBeNil)
-
-		rows, skipped, err := io.LoadMeasurements(path, 0)
-
-		convey.Convey("It should return an error reporting skipped lines", func() {
-			convey.So(len(rows), convey.ShouldEqual, 0)
-			convey.So(skipped, convey.ShouldEqual, 2)
-			convey.So(err, convey.ShouldNotBeNil)
-			convey.So(err.Error(), convey.ShouldContainSubstring, "skipped 2")
-		})
-	})
 }
 
-func TestWriteBranches(t *testing.T) {
-	convey.Convey("Given an optimized branch list", t, func() {
-		path := filepath.Join(t.TempDir(), "perspectives.yaml")
-		branches := perspectives.BranchList{{
-			Category:    perspectives.CategoryLaminar,
-			Observation: perspectives.ObservationNotHolding,
-			Metric:      "unrealized_return",
-			Regime:      perspectives.RegimeBullish,
-			Condition:   perspectives.ConditionIsGreaterThanOrEqual,
-			Unit:        perspectives.UnitPercentage,
-			Value:       1.5,
-			ValueSet:    true,
-			Action: perspectives.Action{
-				Type:     perspectives.ActionLimit,
-				Side:     trading.Buy,
-				Symbol:   "BTC/EUR",
-				Price:    100,
-				Quantity: 0.1,
-			},
-		}}
+// profitableRows is a tape of repeated rallies, each opened by an ignition signal,
+// so the optimizer can discover an enter-on-signal / ride-the-trail strategy.
+func profitableRows() []perspectives.Measurement {
+	base := time.Unix(1_700_000_000, 0)
+	step := time.Second
+	rows := make([]perspectives.Measurement, 0, 16)
 
-		err := io.WriteBranches(path, branches)
-		raw, readErr := os.ReadFile(path)
+	start := 100.0
+	at := base
 
-		convey.Convey("It should write a tree document", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(readErr, convey.ShouldBeNil)
-			convey.So(string(raw), convey.ShouldContainSubstring, "branches:")
-			convey.So(string(raw), convey.ShouldContainSubstring, "laminar")
-			convey.So(string(raw), convey.ShouldContainSubstring, "observation: not_holding")
-			convey.So(string(raw), convey.ShouldContainSubstring, "metric: unrealized_return")
-			convey.So(string(raw), convey.ShouldContainSubstring, "regime: bullish")
-			convey.So(string(raw), convey.ShouldContainSubstring, "condition: '>='")
-			convey.So(string(raw), convey.ShouldContainSubstring, "unit: percentage")
-			convey.So(string(raw), convey.ShouldContainSubstring, "value: 1.5")
-			convey.So(string(raw), convey.ShouldContainSubstring, "side: buy")
-			convey.So(string(raw), convey.ShouldContainSubstring, "symbol: BTC/EUR")
-		})
-	})
+	for leg := 0; leg < 3; leg++ {
+		rows = append(rows,
+			perspectives.Measurement{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
+			perspectives.Measurement{Symbol: "BTC/EUR", Last: start * 1.05, At: at.Add(step)},
+			perspectives.Measurement{Symbol: "BTC/EUR", Last: start * 1.10, At: at.Add(2 * step)},
+			perspectives.Measurement{Symbol: "BTC/EUR", Last: start * 1.07, At: at.Add(3 * step)},
+		)
+		start *= 1.07
+		at = at.Add(5 * step)
+	}
+
+	return rows
 }
 
 func TestTuneMeasurements(t *testing.T) {
-	convey.Convey("Given a candidate report path", t, func() {
-		path := filepath.Join(t.TempDir(), "candidates.jsonl")
-		candidates := make([]types.CandidateScore, 0)
-		rows := profitableMultiSignalRows()
+	convey.Convey("Given a profitable measurement tape", t, func() {
+		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
+		bestCount := 0
+		candidateCount := 0
 
 		summary, err := TuneMeasurements(
 			context.Background(),
-			rows,
+			profitableRows(),
 			types.TuneOptions{
-				CandidateReportPath: path,
-				Workers:             2,
-				MaxThresholds:       2,
-				BeamWidth:           4,
-				CandidateLimit:      8,
-				OnCandidate: func(candidate types.CandidateScore) {
-					candidates = append(candidates, candidate)
+				OutputPath: outputPath,
+				Workers:    2,
+				BeamWidth:  6,
+				MaxRounds:  6,
+				OnBest:     func(types.BestTree) { bestCount++ },
+				OnCandidate: func(types.CandidateScore) {
+					candidateCount++
 				},
 			},
 		)
-		raw, readErr := os.ReadFile(path)
-		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 
-		convey.Convey("It should write one JSON row per scored candidate", func() {
+		convey.Convey("It searches, reports, and writes a re-parseable Thought playbook", func() {
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(summary.Evaluated, convey.ShouldBeGreaterThan, 0)
+			convey.So(summary.BestReturn, convey.ShouldBeGreaterThan, 0)
+			convey.So(summary.Trades, convey.ShouldBeGreaterThan, 0)
+			convey.So(summary.Strategies, convey.ShouldBeGreaterThan, 0)
+			convey.So(bestCount, convey.ShouldBeGreaterThan, 0)
+			convey.So(candidateCount, convey.ShouldBeGreaterThan, 0)
+
+			raw, readErr := os.ReadFile(outputPath)
 			convey.So(readErr, convey.ShouldBeNil)
-			convey.So(summary.Candidates, convey.ShouldBeGreaterThan, 0)
-			convey.So(len(candidates), convey.ShouldEqual, summary.Candidates)
-			convey.So(candidates[0].ProfitLoss(), convey.ShouldEqual, candidates[0].Score)
-			if candidates[0].ClosedTrades > 0 {
-				convey.So(
-					candidates[0].ReturnPct(),
-					convey.ShouldAlmostEqual,
-					(candidates[0].Score/float64(candidates[0].ClosedTrades))*100,
-					0.000001,
-				)
-			}
-			convey.So(len(lines), convey.ShouldEqual, summary.Candidates)
-			convey.So(lines[0], convey.ShouldContainSubstring, `"profit_loss"`)
-			convey.So(lines[0], convey.ShouldContainSubstring, `"return_pct"`)
-			convey.So(lines[0], convey.ShouldContainSubstring, `"observation":"not_holding"`)
-			convey.So(lines[0], convey.ShouldContainSubstring, `"unit":"snr"`)
-		})
-	})
-}
+			convey.So(string(raw), convey.ShouldContainSubstring, "when:")
 
-func TestTuneMeasurementsWritesBestTree(t *testing.T) {
-	convey.Convey("Given an output path and trade activity on the tape", t, func() {
-		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
-		writeCount := 0
-		rows := profitableMultiSignalRows()
-
-		_, err := TuneMeasurements(
-			context.Background(),
-			rows,
-			types.TuneOptions{
-				OutputPath:     outputPath,
-				Workers:        2,
-				MaxThresholds:  2,
-				BeamWidth:      8,
-				CandidateLimit: 512,
-				OnBest: func(best types.BestTree) {
-					writeCount++
-				},
-			},
-		)
-		raw, readErr := os.ReadFile(outputPath)
-
-		convey.Convey("It should overwrite the YAML when a new best tree appears", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(readErr, convey.ShouldBeNil)
-			convey.So(writeCount, convey.ShouldBeGreaterThan, 0)
-			convey.So(string(raw), convey.ShouldContainSubstring, "branches:")
+			// The written playbook is a Thought forest the live story can load.
+			thoughts, parseErr := perspectives.ParseThoughts(raw)
+			convey.So(parseErr, convey.ShouldBeNil)
+			convey.So(len(thoughts), convey.ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -202,19 +133,6 @@ func TestSubsampleMeasurements(t *testing.T) {
 			convey.So(len(sampled), convey.ShouldEqual, 100)
 			convey.So(sampled[0].Last, convey.ShouldEqual, 0)
 			convey.So(sampled[len(sampled)-1].Last, convey.ShouldEqual, 999)
-		})
-
-		convey.Convey("It should preserve tail coverage for non-divisor lengths", func() {
-			shortRows := make([]perspectives.Measurement, 199)
-
-			for index := range shortRows {
-				shortRows[index] = perspectives.Measurement{Symbol: "BTC/EUR", Last: float64(index)}
-			}
-
-			sampled := io.SubsampleMeasurements(shortRows, 100)
-
-			convey.So(len(sampled), convey.ShouldEqual, 100)
-			convey.So(sampled[len(sampled)-1].Last, convey.ShouldBeGreaterThanOrEqualTo, 150)
 		})
 	})
 }

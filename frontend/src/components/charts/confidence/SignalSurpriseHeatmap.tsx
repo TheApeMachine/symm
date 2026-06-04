@@ -1,4 +1,4 @@
-import { type RefObject, memo, useCallback } from "react";
+import { memo, type RefObject, useCallback } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -76,12 +76,12 @@ const initSignalSurpriseHeatmap = async (
 		}),
 	);
 
-	for (let i = 0; i < sources.length; i += 1) {
+	for (let rowIndex = 0; rowIndex < sources.length; rowIndex += 1) {
 		sciChartSurface.annotations.add(
 			new TextAnnotation({
-				text: labels[sources[i]] ?? sources[i],
+				text: labels[sources[rowIndex]] ?? sources[rowIndex],
 				x1: 1,
-				y1: i,
+				y1: rowIndex,
 				xCoordinateMode: ECoordinateMode.DataValue,
 				yCoordinateMode: ECoordinateMode.DataValue,
 				horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
@@ -95,35 +95,41 @@ const initSignalSurpriseHeatmap = async (
 
 	sciChartSurface.background = "transparent";
 
-	const push = (values: number[]) => {
-		for (let row = 0; row < rowCount; row += 1) {
-			for (let col = 0; col < TIME_COLS - 1; col += 1) {
-				zValues[row][col] = zValues[row][col + 1];
-			}
-			zValues[row][TIME_COLS - 1] = values[row] ?? 0;
+	const sourceIndex = new Map(sources.map((source, index) => [source, index]));
+
+	const pushRow = (source: string, value: number) => {
+		const rowIndex = sourceIndex.get(source);
+
+		if (rowIndex === undefined) {
+			return;
 		}
+
+		const row = zValues[rowIndex];
+
+		for (let col = 0; col < TIME_COLS - 1; col += 1) {
+			row[col] = row[col + 1];
+		}
+
+		row[TIME_COLS - 1] = value;
 		dataSeries.setZValues(zValues);
 		sciChartSurface.invalidateElement();
 	};
 
-	return { sciChartSurface, wasmContext, controls: { push } };
+	return { sciChartSurface, wasmContext, controls: { pushRow } };
 };
 
-type Controls = { push: (values: number[]) => void };
+type Controls = { pushRow: (source: string, value: number) => void };
 
-/*
-SignalSurpriseHeatmapBridge feeds live per-signal SNR (temporal surprise) into
-the scrolling heatmap at a fixed cadence.
-*/
 export type SignalSurpriseHeatmapBridge = {
 	set: (source: string, snr: number) => void;
 	ready: boolean;
 };
 
-const SCROLL_MS = 300;
+const heatmapValue = (snr: number): number => {
+	if (snr <= 0) {
+		return 0;
+	}
 
-const heatmapValue = (snr: number | undefined): number => {
-	if (snr === undefined || snr <= 0) return 0;
 	return Math.min(4, (snr / GAUGE_FULL_SIGMA) * 4);
 };
 
@@ -144,23 +150,19 @@ export const SignalSurpriseHeatmap = memo(function SignalSurpriseHeatmap({
 
 	const onInit = useCallback(
 		(result: { controls: Controls }) => {
-			const current = new Map<string, number>(sources.map((s) => [s, 0]));
 			const bridge = bridgeRef.current;
 
-			bridge.set = (source, snr) => current.set(source, snr);
+			bridge.set = (source, snr) => {
+				result.controls.pushRow(source, heatmapValue(snr));
+			};
 			bridge.ready = true;
 
-			const interval = setInterval(() => {
-				result.controls.push(sources.map((s) => heatmapValue(current.get(s))));
-			}, SCROLL_MS);
-
 			return () => {
-				clearInterval(interval);
 				bridge.set = () => {};
 				bridge.ready = false;
 			};
 		},
-		[sources, bridgeRef],
+		[bridgeRef],
 	);
 
 	return (

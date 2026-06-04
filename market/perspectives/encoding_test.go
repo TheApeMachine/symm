@@ -8,28 +8,25 @@ import (
 )
 
 func TestUnitTypeUnmarshalYAML(t *testing.T) {
-	convey.Convey("Given a branch encoded with enum names", t, func() {
+	convey.Convey("Given a predicate encoded with enum names", t, func() {
 		raw := []byte(`
+subject: signal
 category: laminar
-observation: not_holding
 regime: bullish
-condition: ">="
+op: at_least
 unit: snr
-action:
-  type: limit
 `)
-		branch := Branch{}
+		predicate := Predicate{}
 
-		err := yaml.Unmarshal(raw, &branch)
+		err := yaml.Unmarshal(raw, &predicate)
 
-		convey.Convey("It should decode the branch fields", func() {
+		convey.Convey("It should decode the enum-named fields", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(branch.Category, convey.ShouldEqual, CategoryLaminar)
-			convey.So(branch.Observation, convey.ShouldEqual, ObservationNotHolding)
-			convey.So(branch.Regime, convey.ShouldEqual, RegimeBullish)
-			convey.So(branch.Condition, convey.ShouldEqual, ConditionIsGreaterThanOrEqual)
-			convey.So(branch.Unit, convey.ShouldEqual, UnitSNR)
-			convey.So(branch.Action.Type, convey.ShouldEqual, ActionLimit)
+			convey.So(predicate.Subject, convey.ShouldEqual, SubjectSignal)
+			convey.So(predicate.Category, convey.ShouldEqual, CategoryLaminar)
+			convey.So(predicate.Regime, convey.ShouldEqual, RegimeBullish)
+			convey.So(predicate.Op, convey.ShouldEqual, ComparisonAtLeast)
+			convey.So(predicate.Unit, convey.ShouldEqual, UnitSNR)
 		})
 	})
 }
@@ -70,23 +67,21 @@ func TestUnitTypeUnmarshalJSON(t *testing.T) {
 
 func TestUnitTypeMarshalYAML(t *testing.T) {
 	convey.Convey("Given enum values", t, func() {
-		branch := Branch{
-			Observation: ObservationHolding,
-			Regime:      RegimeBearish,
-			Condition:   ConditionIsLessThan,
-			Unit:        UnitConfidence,
-			Action:      Action{Type: ActionSettlePosition},
+		predicate := Predicate{
+			Subject: SubjectRegime,
+			Regime:  RegimeBearish,
+			Op:      ComparisonBelow,
+			Unit:    UnitConfidence,
 		}
 
-		raw, err := yaml.Marshal(branch)
+		raw, err := yaml.Marshal(predicate)
 
 		convey.Convey("It should encode readable names", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(string(raw), convey.ShouldContainSubstring, "observation: holding")
+			convey.So(string(raw), convey.ShouldContainSubstring, "subject: regime")
 			convey.So(string(raw), convey.ShouldContainSubstring, "regime: bearish")
-			convey.So(string(raw), convey.ShouldContainSubstring, "condition: <")
+			convey.So(string(raw), convey.ShouldContainSubstring, "op: below")
 			convey.So(string(raw), convey.ShouldContainSubstring, "unit: confidence")
-			convey.So(string(raw), convey.ShouldContainSubstring, "type: settle_position")
 		})
 	})
 }
