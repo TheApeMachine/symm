@@ -36,7 +36,7 @@ type WsStatusContextValue = {
 	setOnline: (online: boolean) => void;
 	balance: number;
 	openPositions: number;
-	setWallet: (balance: number, openPositions: number) => void;
+	setWallet: (balance: number) => void;
 	positions: Position[];
 	setPositions: (positions: Position[]) => void;
 	marks: Record<string, number>;
@@ -51,14 +51,16 @@ const WsStatusContext = createContext<WsStatusContextValue | null>(null);
 export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [online, setOnline] = useState(false);
 	const [balance, setBalance] = useState(0);
-	const [openPositions, setOpenPositions] = useState(0);
 	const [positions, setPositions] = useState<Position[]>([]);
 	const [marks, setMarks] = useState<Record<string, number>>({});
 	const [actions, setActions] = useState<ActionEvent[]>([]);
 
-	const setWallet = useCallback((nextBalance: number, nextOpen: number) => {
+	// The wallet frame carries cash only; the open-position count is derived from the
+	// trader's positions list (published in both paper and live) rather than a count
+	// the paper balance frame happens to add but the live one does not — so it stays
+	// consistent the moment the paper connection is swapped for the live one.
+	const setWallet = useCallback((nextBalance: number) => {
 		setBalance(nextBalance);
-		setOpenPositions(nextOpen);
 	}, []);
 
 	const setMark = useCallback((symbol: string, price: number) => {
@@ -111,7 +113,7 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			online,
 			setOnline,
 			balance,
-			openPositions,
+			openPositions: positions.length,
 			setWallet,
 			positions,
 			setPositions,
@@ -124,7 +126,6 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		[
 			online,
 			balance,
-			openPositions,
 			setWallet,
 			positions,
 			marks,

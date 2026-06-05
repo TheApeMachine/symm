@@ -1,3 +1,4 @@
+import { Flex } from "#/components/ui/flex";
 import { useWsStatus } from "#/providers/ws-status";
 
 const eur = (value: number) =>
@@ -14,7 +15,7 @@ export const PositionsPanel = () => {
 	const { positionViews } = useWsStatus();
 
 	return (
-		<div className="flex w-80 flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-lg">
+		<Flex.Column gap={2}>
 			<p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
 				Open positions
 			</p>
@@ -59,6 +60,6 @@ export const PositionsPanel = () => {
 					);
 				})
 			)}
-		</div>
+		</Flex.Column>
 	);
 };

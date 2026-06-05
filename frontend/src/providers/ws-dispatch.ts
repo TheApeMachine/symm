@@ -2,7 +2,7 @@ import type { ActionEvent, Position } from "#/providers/ws-status";
 
 export type WsDispatch = {
 	setOnline: (online: boolean) => void;
-	setWallet: (balance: number, openPositions: number) => void;
+	setWallet: (balance: number) => void;
 	setPositions: (positions: Position[]) => void;
 	setMark: (symbol: string, price: number) => void;
 	pushAction: (action: ActionEvent) => void;

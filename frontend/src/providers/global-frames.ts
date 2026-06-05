@@ -32,7 +32,7 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 	}
 
 	if (raw.event === "wallet") {
-		dispatch.setWallet((raw.balance as number) ?? 0, (raw.open as number) ?? 0);
+		dispatch.setWallet((raw.balance as number) ?? 0);
 		return true;
 	}
 

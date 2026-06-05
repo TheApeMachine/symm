@@ -27,7 +27,7 @@ trading:
   # Fraction of available account cash deployed per entry. 1.0 = full deployment
   # (one position at a time on a small wallet); lower allows concurrent positions.
   # The optimizer replay sizes entries the same way, so funding contention is real.
-  position_fraction: 1.0
+  position_fraction: 0.1
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.

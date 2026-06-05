@@ -5,10 +5,11 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { useState } from "react";
-import { PositionsPanel } from "#/components/panels/positions";
 import { Page } from "#/components/layout/page";
+import { PositionsPanel } from "#/components/panels/positions";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "#/components/ui/popover";
 import { ToastProvider } from "#/components/ui/toast";
 import { cn } from "#/lib/utils";
 import { ThemeProvider } from "#/providers/theme";
@@ -39,23 +40,27 @@ const PageHeader = () => {
 	return (
 		<Page.Header>
 			<div className="relative">
-				<Button
-					className="h-auto! gap-4 px-4 py-3 text-left"
-					variant="outline"
-					onClick={() => setShowPositions((open) => !open)}
-				>
-					<div className="flex flex-col gap-0.5">
-						<h3>€{balance.toFixed(2)}</h3>
-						<p className="whitespace-break-spaces font-normal text-muted-foreground">
-							{openPositions} open position{openPositions === 1 ? "" : "s"}
-						</p>
-					</div>
-				</Button>
-				{showPositions ? (
-					<div className="absolute left-0 top-full z-50 mt-2">
+				<Popover>
+					<PopoverTrigger
+						render={
+							<Button
+								className="h-auto! gap-4 px-4 py-3 text-left"
+								variant="outline"
+								onClick={() => setShowPositions((open) => !open)}
+							/>
+						}
+					>
+						<div className="flex flex-col gap-0.5">
+							<h3>€{balance.toFixed(2)}</h3>
+							<p className="whitespace-break-spaces font-normal text-muted-foreground">
+								{openPositions} open position{openPositions === 1 ? "" : "s"}
+							</p>
+						</div>
+					</PopoverTrigger>
+					<PopoverPopup className="w-80">
 						<PositionsPanel />
-					</div>
-				) : null}
+					</PopoverPopup>
+				</Popover>
 			</div>
 			<ConnectionBadge />
 		</Page.Header>
