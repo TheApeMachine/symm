@@ -1,0 +1,4 @@
+{"symbol":"SOL/EUR","category":"systemic_beta","strength":1.4,"confidence":0.98,"snr":0,"standout":0.5833333333333334,"last":120,"spread_bps":0}
+{"symbol":"ETH/EUR","category":"systemic_beta","strength":1.2,"confidence":0.98,"snr":0,"standout":0.5454545454545454,"last":110,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1.2999999999999998,"confidence":0.98,"snr":0,"standout":0.5652173913043478,"last":100,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1,"confidence":0.98,"snr":0,"standout":0.5,"last":100,"spread_bps":0}

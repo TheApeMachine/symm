@@ -128,6 +128,74 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 	})
 }
 
+func TestStoryPublishRegimeAnchorOnly(t *testing.T) {
+	convey.Convey("Given the story UI bus", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+		viper.Set("market.default_symbols", []string{"BTC/EUR", "ETH/EUR"})
+		defer viper.Set("market.anchor_symbol", "")
+		defer viper.Set("market.default_symbols", nil)
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		story := NewStory(ctx, pool, focus.NewSet())
+		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		subscriber := ui.Subscribe("test:story:regime", 8)
+
+		done := make(chan struct{})
+
+		go func() {
+			_ = story.Tick()
+			close(done)
+		}()
+
+		for range 20 {
+			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+				Symbol: "ETH/EUR",
+				Last:   3_000,
+			}})
+		}
+
+		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
+			Symbol: "BTC/EUR",
+			Last:   50_000,
+		}})
+
+		convey.Convey("It should publish regime radar frames only for the anchor symbol", func() {
+			var frames []map[string]any
+
+			deadline := time.After(500 * time.Millisecond)
+
+		collect:
+			for {
+				select {
+				case frame := <-subscriber.Incoming:
+					payload, ok := frame.Value.(map[string]any)
+
+					convey.So(ok, convey.ShouldBeTrue)
+
+					if payload["chart"] == "regime" {
+						frames = append(frames, payload)
+					}
+				case <-deadline:
+					break collect
+				}
+			}
+
+			convey.So(len(frames), convey.ShouldBeGreaterThan, 0)
+
+			for _, payload := range frames {
+				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
+			}
+
+			cancel()
+			<-done
+			convey.So(story.Close(), convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestStoryFixturePlaybook(t *testing.T) {
 	convey.Convey("Given fixture playbook mode", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())

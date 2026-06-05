@@ -84,6 +84,19 @@ describe("parseCandleWire", () => {
 			parseCandleWire({ event: "hello", ts: "2026-05-23T12:00:00Z" }),
 		).toBeUndefined();
 	});
+
+	it("rejects hub ohlc rows without interval_begin", () => {
+		expect(
+			parseCandleWire({
+				symbol: "BTC/EUR",
+				open: 1,
+				high: 2,
+				low: 0.5,
+				close: 1.5,
+				volume: 3,
+			}),
+		).toBeUndefined();
+	});
 });
 
 describe("ingestCandleWire", () => {

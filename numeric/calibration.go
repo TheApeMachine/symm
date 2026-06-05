@@ -111,6 +111,27 @@ func (signalCalibrator *SignalCalibrator) AdjustStandout(standout float64, share
 }
 
 /*
+ObserveGaugeTelemetry feeds one observation into the pooled calibrator, snapshots
+dashboard telemetry, and scales standout by category-mix entropy trust.
+*/
+func ObserveGaugeTelemetry(
+	calibrator *BandCalibrator,
+	classifier *adaptive.Classifier,
+	observation float64,
+	standout float64,
+) (Telemetry, float64) {
+	if calibrator == nil || classifier == nil {
+		return Telemetry{Observation: observation}, standout
+	}
+
+	calibrator.Observe(observation, classifier)
+	telemetry := calibrator.Snapshot(classifier)
+	telemetry.Observation = observation
+
+	return telemetry, EntropyTrustFromShares(telemetry.Shares) * standout
+}
+
+/*
 GaugePayload builds the dashboard gauge wire frame for a self-calibrating signal.
 */
 func GaugePayload(

@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
@@ -23,6 +24,8 @@ const (
 	publishInterval = 200 * time.Millisecond
 	rawSubscriberID = "signal/leadlag:raw"
 )
+
+var leadlagDefaultBandEdges = []float64{0.25, 0.55, 0.75}
 
 /*
 Signal detects altcoins lagging a moving anchor pair (BTC/EUR) and maps the
@@ -60,11 +63,22 @@ type Signal struct {
 	lastPublishMu   sync.Mutex
 	lastPublish     time.Time
 	floor           *adaptive.SNRField
+	classifier      *adaptive.Classifier
+	calibrator      *numeric.BandCalibrator
 	rawDump         *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		leadlagDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
+		[]float64{0.25, 0.30, 0.30, 0.15},
+		numeric.DefaultCalibratorConfig("strength"),
+		"leadlag",
+	)
 
 	signal := &Signal{
 		ctx:            ctx,
@@ -74,6 +88,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers:    make(map[string]*qpool.Subscriber),
 		anchorBaseline: *newMoveBaseline(),
 		floor:          adaptive.NewSNRField(),
+		classifier:     pooledCalibrator.Classifier,
+		calibrator:     pooledCalibrator.Calibrator,
 		rawDump:        rawdump.Open("leadlag"),
 	}
 
@@ -296,6 +312,13 @@ func (signal *Signal) sendMeasurement(
 	measurement *perspectives.Measurement,
 	standout float64,
 ) error {
+	telemetry, standout := numeric.ObserveGaugeTelemetry(
+		signal.calibrator,
+		signal.classifier,
+		measurement.Strength,
+		standout,
+	)
+
 	if err := perspectives.AssignCategorySNR(
 		measurement, signal.floor, standout,
 	); err != nil {
@@ -320,12 +343,13 @@ func (signal *Signal) sendMeasurement(
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"chart":      "gauge",
-				"source":     measurement.Source.String(),
-				"confidence": measurement.Confidence,
-				"snr":        measurement.SNR,
-			},
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				*measurement,
+				telemetry,
+			),
 		})
 	}
 

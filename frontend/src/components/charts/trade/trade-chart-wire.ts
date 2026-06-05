@@ -108,9 +108,12 @@ export const parseIntervalBeginSec = (
 	return Math.floor(parsed / 1000);
 };
 
-const hubRowToBar = (row: OhlcHubRow): OhlcBar => {
-	const parsedSec = parseIntervalBeginSec(row.interval_begin);
-	const sec = parsedSec ?? Math.floor(Date.now() / 1000);
+const hubRowToBar = (row: OhlcHubRow): OhlcBar | null => {
+	const sec = parseIntervalBeginSec(row.interval_begin);
+
+	if (sec === null) {
+		return null;
+	}
 
 	return {
 		sec,
@@ -143,9 +146,15 @@ export const parseCandleWire = (
 		return undefined;
 	}
 
+	const bar = hubRowToBar(raw);
+
+	if (bar === null) {
+		return undefined;
+	}
+
 	return {
 		symbol: raw.symbol,
-		bar: hubRowToBar(raw),
+		bar,
 	};
 };
 

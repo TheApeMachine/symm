@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
@@ -23,6 +24,8 @@ via the shared toxicity tracker before distance-decay weighting.
 */
 const rawSubscriberID = "signal/depthflow:raw"
 
+var depthflowDefaultBandEdges = []float64{0.5, 1.5, 2.5}
+
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -31,11 +34,22 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
 	floor       *adaptive.SNRField
+	classifier  *adaptive.Classifier
+	calibrator  *numeric.BandCalibrator
 	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		depthflowDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"dense_neutrality", "loaded_imbalance", "book_thinning", "spoof_trap"},
+		[]float64{0.40, 0.30, 0.20, 0.10},
+		numeric.DefaultCalibratorConfig("strength"),
+		"depthflow",
+	)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -44,6 +58,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
+		classifier:  pooledCalibrator.Classifier,
+		calibrator:  pooledCalibrator.Calibrator,
 		rawDump:     rawdump.Open("depthflow"),
 	}
 
@@ -178,6 +194,14 @@ func (signal *Signal) emit(symbol string, at time.Time) error {
 	}
 
 	measurement.Symbol = symbol
+
+	telemetry, standout := numeric.ObserveGaugeTelemetry(
+		signal.calibrator,
+		signal.classifier,
+		measurement.Strength,
+		standout,
+	)
+
 	if err := perspectives.AssignCategorySNR(
 		&measurement, signal.floor, standout,
 	); err != nil {
@@ -202,12 +226,13 @@ func (signal *Signal) emit(symbol string, at time.Time) error {
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"chart":      "gauge",
-				"source":     measurement.Source.String(),
-				"confidence": measurement.Confidence,
-				"snr":        measurement.SNR,
-			},
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				measurement,
+				telemetry,
+			),
 		})
 	}
 

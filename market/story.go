@@ -215,7 +215,10 @@ func (story *Story) ingestMeasurement(
 
 	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)
 	regime := perspectives.ClassifyRegime(snapshots)
-	story.publishRegime(measurement.Symbol, regime)
+
+	if measurement.Symbol == focus.AnchorSymbol() {
+		story.publishRegime(measurement.Symbol, regime)
+	}
 
 	if len(story.thoughts) == 0 {
 		return nil

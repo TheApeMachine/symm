@@ -12,9 +12,13 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/settings"
+	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
+
+var toxicityDefaultBandEdges = []float64{0.5, 1.5}
 
 /*
 Toxicity tracks executed-flow book quality and publishes toxicity perspective
@@ -27,6 +31,9 @@ type Toxicity struct {
 	subscribers  map[string]*qpool.Subscriber
 	tracker      *Tracker
 	measurements *qpool.BroadcastGroup
+	ui           *qpool.BroadcastGroup
+	classifier   *adaptive.Classifier
+	calibrator   *numeric.BandCalibrator
 	l3Active     bool
 	rawDump      *rawdump.Writer
 }
@@ -34,14 +41,26 @@ type Toxicity struct {
 func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	ctx, cancel := context.WithCancel(ctx)
 
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		toxicityDefaultBandEdges,
+		[]float64{0, 1, 2},
+		[]string{"hard_support", "liquidity_vacuum", "toxic_bluff"},
+		[]float64{0.40, 0.35, 0.25},
+		numeric.DefaultCalibratorConfig("strength"),
+		"toxicity",
+	)
+
 	tox := &Toxicity{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		tracker:  Default(),
-		l3Active: settings.L3Enabled(),
+		ctx:        ctx,
+		cancel:     cancel,
+		pool:       pool,
+		tracker:    Default(),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
+		l3Active:   settings.L3Enabled(),
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	tox.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 	tox.rawDump = rawdump.Open("toxicity")
 
@@ -288,6 +307,24 @@ func (tox *Toxicity) publishMeasurementAt(symbol string, at time.Time) error {
 	}
 
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
+
+	if tox.ui != nil {
+		telemetry, _ := numeric.ObserveGaugeTelemetry(
+			tox.calibrator,
+			tox.classifier,
+			measurement.Strength,
+			measurement.SNR,
+		)
+		tox.ui.Send(&qpool.QValue[any]{
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				measurement,
+				telemetry,
+			),
+		})
+	}
 
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
@@ -22,6 +23,8 @@ publishes the classified reading.
 */
 const rawSubscriberID = "signal/exhaust:raw"
 
+var exhaustDefaultBandEdges = []float64{0.5, 1.5, 2.5}
+
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -30,11 +33,22 @@ type Signal struct {
 	subscribers map[string]*qpool.Subscriber
 	history     *historyStore
 	floor       *adaptive.SNRField
+	classifier  *adaptive.Classifier
+	calibrator  *numeric.BandCalibrator
 	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		exhaustDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"thermal_exhaustion", "fragile_expansion", "mechanical_collapse", "active_reversal"},
+		[]float64{0.40, 0.30, 0.20, 0.10},
+		numeric.DefaultCalibratorConfig("strength"),
+		"exhaust",
+	)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -44,6 +58,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers: make(map[string]*qpool.Subscriber),
 		history:     newHistoryStore(),
 		floor:       adaptive.NewSNRField(),
+		classifier:  pooledCalibrator.Classifier,
+		calibrator:  pooledCalibrator.Calibrator,
 		rawDump:     rawdump.Open("exhaust"),
 	}
 
@@ -169,6 +185,14 @@ func (signal *Signal) emit(symbol string) error {
 	}
 
 	measurement.Symbol = symbol
+
+	telemetry, standout := numeric.ObserveGaugeTelemetry(
+		signal.calibrator,
+		signal.classifier,
+		measurement.Strength,
+		standout,
+	)
+
 	if err := perspectives.AssignCategorySNR(&measurement, signal.floor, standout); err != nil {
 		return err
 	}
@@ -191,12 +215,13 @@ func (signal *Signal) emit(symbol string) error {
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"chart":      "gauge",
-				"source":     measurement.Source.String(),
-				"confidence": measurement.Confidence,
-				"snr":        measurement.SNR,
-			},
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				measurement,
+				telemetry,
+			),
 		})
 	}
 

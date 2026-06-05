@@ -68,7 +68,10 @@ export const drawSignalSpider = async (
 	sciChartSurface.xAxes.add(angularXAxis);
 
 	// +1 closes the loop so the first and last petal join without overlap.
-	const xValues = Array.from({ length: labels.length + 1 }, (_, index) => index);
+	const xValues = Array.from(
+		{ length: labels.length + 1 },
+		(_, index) => index,
+	);
 	const dataSeries = new XyDataSeries(wasmContext, {
 		xValues,
 		yValues: new Array(labels.length + 1).fill(0),
@@ -96,9 +99,12 @@ export const drawSignalSpider = async (
 				}
 
 				const closed = [...values, values[0] ?? 0];
+				const nativeY = dataSeries.getNativeYValues();
 
-				dataSeries.clear();
-				dataSeries.appendRange(xValues, closed);
+				for (let index = 0; index < closed.length; index++) {
+					nativeY.set(index, closed[index]);
+				}
+
 				sciChartSurface.invalidateElement();
 			},
 		} satisfies SpiderControls,

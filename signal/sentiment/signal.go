@@ -24,6 +24,8 @@ const (
 	rawSubscriberID         = "signal/sentiment:raw"
 )
 
+var sentimentDefaultBandEdges = []float64{-0.10, 0.10}
+
 /*
 Signal measures cross-section bullish breadth from ticker change percentages and
 maps it onto the sentiment perspective. It is cross-asset: the verdict for one
@@ -47,11 +49,22 @@ type Signal struct {
 	tracked     sync.Map // symbol -> *perspectives.Category
 	breadthHist ring.FloatRing
 	floor       *adaptive.SNRField
+	classifier  *adaptive.Classifier
+	calibrator  *numeric.BandCalibrator
 	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		sentimentDefaultBandEdges,
+		[]float64{0, 1, 2},
+		[]string{"systemic_slump", "divergent_move", "risk_on_surge"},
+		[]float64{0.25, 0.35, 0.40},
+		numeric.DefaultCalibratorConfig("strength"),
+		"sentiment",
+	)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -61,6 +74,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers: make(map[string]*qpool.Subscriber),
 		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
 		floor:       adaptive.NewSNRField(),
+		classifier:  pooledCalibrator.Classifier,
+		calibrator:  pooledCalibrator.Calibrator,
 		rawDump:     rawdump.Open("sentiment"),
 	}
 
@@ -159,6 +174,13 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 			measurement.Symbol = row.Symbol
 			measurement.Last = row.Last
 
+			telemetry, standout := numeric.ObserveGaugeTelemetry(
+				signal.calibrator,
+				signal.classifier,
+				measurement.Strength,
+				standout,
+			)
+
 			if err := perspectives.AssignCategorySNR(
 				&measurement, signal.floor, standout,
 			); err != nil {
@@ -182,12 +204,13 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{
-					Value: map[string]any{
-						"chart":      "gauge",
-						"source":     measurement.Source.String(),
-						"confidence": measurement.Confidence,
-						"snr":        measurement.SNR,
-					},
+					Value: numeric.GaugePayload(
+						measurement.Source.String(),
+						measurement.Symbol,
+						measurement.Category,
+						measurement,
+						telemetry,
+					),
 				})
 			}
 

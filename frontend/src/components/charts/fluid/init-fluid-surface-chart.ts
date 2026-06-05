@@ -16,14 +16,22 @@ import {
 import {
 	buildFluidGrid,
 	FLUID_GRID_SIZE,
+	projectFluidGridToHeightmap,
+	resetFluidHeightSmoothing,
 } from "#/components/charts/fluid/fluid-grid";
-import { ensureSciChartWasm } from "#/lib/utils";
 import { appTheme } from "#/components/charts/fluid/theme";
 import type { FluidSymbolRow } from "#/components/charts/fluid/types";
+import { ensureSciChartWasm } from "#/lib/utils";
+
+const FLUID_SURFACE_Y_MIN = -0.3;
+const FLUID_SURFACE_Y_MAX = 0.5;
+const FLUID_SURFACE_MIN_Y_SPAN = 0.08;
 
 export const initFluidSurfaceChart = async (
 	rootElement: string | HTMLDivElement,
 ) => {
+	resetFluidHeightSmoothing();
+
 	await ensureSciChartWasm();
 
 	const { sciChart3DSurface, wasmContext } = await SciChart3DSurface.create(
@@ -47,7 +55,7 @@ export const initFluidSurfaceChart = async (
 	});
 	sciChart3DSurface.yAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "Y Axis",
-		visibleRange: new NumberRange(-0.3, 0.3),
+		visibleRange: new NumberRange(FLUID_SURFACE_Y_MIN, FLUID_SURFACE_Y_MAX),
 	});
 	sciChart3DSurface.zAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "Z Axis",
@@ -124,7 +132,16 @@ export const initFluidSurfaceChart = async (
 		}
 
 		const grid = buildFluidGrid(symbols);
-		const heights = grid.heights;
+		const projected = projectFluidGridToHeightmap(
+			grid,
+			gridSize,
+			gridSize,
+			FLUID_SURFACE_Y_MIN,
+			FLUID_SURFACE_Y_MAX,
+		);
+		const heights = projected.display;
+		let heightMin = Number.POSITIVE_INFINITY;
+		let heightMax = Number.NEGATIVE_INFINITY;
 
 		for (let zIndex = 0; zIndex < gridSize; zIndex++) {
 			const heightRow = heights[zIndex];
@@ -135,15 +152,35 @@ export const initFluidSurfaceChart = async (
 
 			for (let xIndex = 0; xIndex < gridSize; xIndex++) {
 				const value = heightRow[xIndex];
-				heightmapArray[zIndex][xIndex] =
+				const finite =
 					typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+				heightmapArray[zIndex][xIndex] = finite;
+				heightMin = Math.min(heightMin, finite);
+				heightMax = Math.max(heightMax, finite);
 			}
 		}
 
+		if (!Number.isFinite(heightMin) || !Number.isFinite(heightMax)) {
+			heightMin = FLUID_SURFACE_Y_MIN;
+			heightMax = FLUID_SURFACE_Y_MAX;
+		}
+
+		const heightSpan = Math.max(
+			heightMax - heightMin,
+			FLUID_SURFACE_MIN_Y_SPAN,
+		);
+		const colorMin = heightMin;
+		const colorMax = heightMin + heightSpan;
+		const axisPad = heightSpan * 0.12;
+
 		dataSeries.setYValues(heightmapArray);
-		series.minimum = grid.min;
-		series.maximum = grid.max;
-		sciChart3DSurface.yAxis.visibleRange = new NumberRange(grid.min, grid.max);
+		series.minimum = colorMin;
+		series.maximum = colorMax;
+		sciChart3DSurface.yAxis.visibleRange = new NumberRange(
+			heightMin - axisPad,
+			heightMax + axisPad,
+		);
 	};
 
 	return {

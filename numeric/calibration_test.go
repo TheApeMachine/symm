@@ -46,6 +46,32 @@ func TestNormalizeShares(t *testing.T) {
 	})
 }
 
+func TestObserveGaugeTelemetry(t *testing.T) {
+	Convey("Given a pooled calibrator", t, func() {
+		pooled := NewSignalCalibrator(
+			[]float64{0.5, 1.0, 1.5},
+			[]float64{0, 1, 2, 3},
+			[]string{"a", "b", "c", "d"},
+			[]float64{0.40, 0.30, 0.20, 0.10},
+			DefaultCalibratorConfig("strength"),
+			"",
+		)
+
+		Convey("It should return telemetry with the observation attached", func() {
+			telemetry, standout := ObserveGaugeTelemetry(
+				pooled.Calibrator,
+				pooled.Classifier,
+				1.25,
+				2.0,
+			)
+
+			So(telemetry.Observation, ShouldEqual, 1.25)
+			So(len(telemetry.Labels), ShouldEqual, 4)
+			So(standout, ShouldEqual, 2.0)
+		})
+	})
+}
+
 func TestEntropyTrustFromShares(t *testing.T) {
 	Convey("Given category share mixes", t, func() {
 		Convey("A dominant category yields high trust", func() {

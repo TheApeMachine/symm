@@ -183,11 +183,6 @@ export const createFinancialChart = async (
 		);
 	}
 
-	if (xValues.length === 0) {
-		const nowSec = Math.floor(Date.now() / 1000);
-		xAxis.visibleRange = new NumberRange(nowSec - 60, nowSec);
-	}
-
 	const candleDataSeries = new OhlcDataSeries(wasmContext, {
 		xValues,
 		openValues,
@@ -291,20 +286,20 @@ export const initTradeChart = async (
 	let suppressViewportTracking = false;
 	let userControlsViewport = false;
 	let lastProgrammaticRange: NumberRange | null = null;
+	let followVisibleRange: NumberRange | undefined;
 
 	const setXVisibleRange = (range: NumberRange) => {
-		// setXVisibleRange sets suppressViewportTracking so the synchronous
-		// xAxis.visibleRange handler does not treat this programmatic range change
-		// as user interaction. lastProgrammaticRange records the intended range,
-		// and queueMicrotask defers clearing suppressViewportTracking until the
-		// current stack and synchronous visibleRangeChanged callbacks have run.
+		// SciChart applies visibleRange asynchronously; followVisibleRange is
+		// updated synchronously so back-to-back candle appends never read a stale
+		// wall-clock or pre-follow span from xAxis.visibleRange.
 		suppressViewportTracking = true;
 		lastProgrammaticRange = range;
+		followVisibleRange = range;
 
 		try {
 			xAxis.visibleRange = range;
 		} finally {
-			queueMicrotask(() => {
+			requestAnimationFrame(() => {
 				suppressViewportTracking = false;
 			});
 		}
@@ -337,7 +332,7 @@ export const initTradeChart = async (
 		const nextRange = resolveFollowVisibleRange(
 			ohlcDataSeries,
 			mode,
-			xAxis.visibleRange,
+			followVisibleRange ?? xAxis.visibleRange,
 		);
 
 		if (nextRange === null) {

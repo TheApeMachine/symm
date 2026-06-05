@@ -4,11 +4,14 @@ import {
 	drawSignalSpider,
 	type SpiderControls,
 } from "#/components/charts/spider/init";
+import {
+	attachSpiderBridge,
+	detachSpiderBridge,
+	type SpiderBridge,
+	scaleSpiderRadarValues,
+} from "#/components/charts/spider/spider-bridge";
 
-export type SpiderBridge = {
-	set: (source: string, value: number) => void;
-	ready: boolean;
-};
+export type { SpiderBridge } from "#/components/charts/spider/spider-bridge";
 
 export const SpiderChart = ({
 	sources,
@@ -30,21 +33,18 @@ export const SpiderChart = ({
 
 	const onInit = useCallback(
 		(result: TResolvedReturnType<typeof drawSignalSpider>) => {
-			const current = new Map<string, number>(
-				sources.map((source) => [source, 0]),
-			);
 			const bridge = bridgeRef.current;
 			const controls = result.controls as SpiderControls;
 
-			bridge.set = (source, value) => {
-				current.set(source, value);
-				controls.update(sources.map((axis) => (current.get(axis) ?? 0) * 100));
+			const applyValues = (values: Record<string, number>) => {
+				Object.assign(bridge.latest, values);
+				controls.update(scaleSpiderRadarValues(sources, bridge.latest));
 			};
-			bridge.ready = true;
+
+			attachSpiderBridge(bridge, applyValues);
 
 			return () => {
-				bridge.set = () => {};
-				bridge.ready = false;
+				detachSpiderBridge(bridge);
 			};
 		},
 		[sources, bridgeRef],

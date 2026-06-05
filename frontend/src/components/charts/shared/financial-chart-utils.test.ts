@@ -27,6 +27,21 @@ describe("shiftTrailingVisibleRange", () => {
 		expect(shifted.max - shifted.min).toBe(60);
 		expect(shifted.max).toBeGreaterThan(1200);
 	});
+
+	it("keeps earlier bars visible when the prior span was padded for one bar", () => {
+		const firstBarX = 1_780_627_020;
+		const secondBarX = firstBarX + 60;
+		const initialRange = candleChartXExtents(firstBarX, firstBarX, 1);
+		const shifted = shiftTrailingVisibleRange(
+			initialRange.min,
+			initialRange.max,
+			secondBarX,
+			60,
+		);
+
+		expect(shifted.min).toBeLessThanOrEqual(firstBarX);
+		expect(shifted.max).toBeGreaterThanOrEqual(secondBarX);
+	});
 });
 
 describe("isViewportFollowingLiveEdge", () => {

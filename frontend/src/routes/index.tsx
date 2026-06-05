@@ -31,10 +31,13 @@ import {
 	type PredictionBridge,
 	PredictionChart,
 } from "#/components/charts/prediction/PredictionChart";
+import { SpiderChart } from "#/components/charts/spider/spider";
 import {
+	createSpiderBridge,
+	deliverRegimeWire,
+	parseRegimeWire,
 	type SpiderBridge,
-	SpiderChart,
-} from "#/components/charts/spider/spider";
+} from "#/components/charts/spider/spider-bridge";
 import { TabbedChart } from "#/components/charts/tabbed";
 import { TradeChartGrid } from "#/components/charts/trade/TradeChart";
 import { ingestCandleWire } from "#/components/charts/trade/trade-chart-wire";
@@ -118,10 +121,10 @@ const WsFeed = ({
 					return;
 				}
 
-				if (raw.chart === "regime") {
-					for (const axis of REGIME_AXIS_KEYS) {
-						spiderRef.current?.set(axis, (raw[axis] as number) ?? 0);
-					}
+				const regimeValues = parseRegimeWire(raw, REGIME_AXIS_KEYS);
+
+				if (regimeValues !== null) {
+					deliverRegimeWire(spiderRef.current, regimeValues);
 					return;
 				}
 
@@ -203,7 +206,7 @@ const DashboardLayout = () => {
 		set: () => {},
 		ready: false,
 	});
-	const spiderRef = useRef<SpiderBridge>({ set: () => {}, ready: false });
+	const spiderRef = useRef<SpiderBridge>(createSpiderBridge());
 	const predictionRef = useRef<PredictionBridge>({
 		append: () => {},
 		ready: false,
