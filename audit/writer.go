@@ -24,12 +24,17 @@ Writer appends desk audit frames as JSONL when trading.audit.file is configured.
 */
 type Writer struct {
 	path        string
-	file        *os.File
-	writer      *bufio.Writer
 	seq         atomic.Int64
-	mu          sync.Mutex
 	maxBytes    int64
 	backupCount int
+	queue       *writerQueue
+	done        chan struct{}
+	closeOnce   sync.Once
+	err         atomic.Pointer[writerFailure]
+}
+
+type writerFailure struct {
+	err error
 }
 
 /*
@@ -52,10 +57,24 @@ func OpenWriter() (*Writer, error) {
 		return nil, fmt.Errorf("audit: open %q: %w", path, err)
 	}
 
-	maxMegabytes := viper.GetInt64("trading.audit.max_mb")
+	info, err := file.Stat()
 
-	if maxMegabytes <= 0 {
-		maxMegabytes = defaultMaxMegabytes
+	if err != nil {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("audit: stat %q: %w", path, err)
+	}
+
+	maxBytes := viper.GetInt64("trading.audit.max_bytes")
+
+	if maxBytes <= 0 {
+		maxMegabytes := viper.GetInt64("trading.audit.max_mb")
+
+		if maxMegabytes <= 0 {
+			maxMegabytes = defaultMaxMegabytes
+		}
+
+		maxBytes = maxMegabytes * 1024 * 1024
 	}
 
 	backupCount := viper.GetInt("trading.audit.backup_count")
@@ -66,11 +85,13 @@ func OpenWriter() (*Writer, error) {
 
 	writer := &Writer{
 		path:        path,
-		file:        file,
-		writer:      bufio.NewWriter(file),
-		maxBytes:    maxMegabytes * 1024 * 1024,
+		maxBytes:    maxBytes,
 		backupCount: backupCount,
+		queue:       newWriterQueue(),
+		done:        make(chan struct{}),
 	}
+
+	go writer.run(file, bufio.NewWriter(file), info.Size())
 
 	return writer, nil
 }
@@ -83,28 +104,21 @@ func (writer *Writer) Write(frame map[string]any) error {
 		return nil
 	}
 
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-
-	frame["event"] = "audit"
-	frame["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	frame["seq"] = writer.seq.Add(1)
-
-	raw, err := sonic.Marshal(frame)
-
-	if err != nil {
-		return fmt.Errorf("audit: marshal: %w", err)
+	if err := writer.Err(); err != nil {
+		return err
 	}
 
-	if _, err := writer.writer.Write(append(raw, '\n')); err != nil {
-		return fmt.Errorf("audit: write: %w", err)
+	next := make(map[string]any, len(frame)+3)
+
+	for key, value := range frame {
+		next[key] = value
 	}
 
-	if err := writer.writer.Flush(); err != nil {
-		return fmt.Errorf("audit: flush: %w", err)
-	}
+	next["event"] = "audit"
+	next["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
+	next["seq"] = writer.seq.Add(1)
 
-	return writer.rotateIfNeeded()
+	return writer.queue.Push(next)
 }
 
 /*
@@ -115,25 +129,37 @@ func (writer *Writer) Close() error {
 		return nil
 	}
 
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
+	writer.closeOnce.Do(func() {
+		writer.queue.Close()
+		<-writer.done
+	})
 
-	var closeErr error
+	return writer.Err()
+}
 
-	if writer.writer != nil {
-		closeErr = writer.writer.Flush()
-		writer.writer = nil
+/*
+Err returns the first asynchronous writer failure, if one has occurred.
+*/
+func (writer *Writer) Err() error {
+	if writer == nil {
+		return nil
 	}
 
-	if writer.file != nil {
-		if err := writer.file.Close(); err != nil && closeErr == nil {
-			closeErr = err
-		}
+	failure := writer.err.Load()
 
-		writer.file = nil
+	if failure == nil {
+		return nil
 	}
 
-	return closeErr
+	return failure.err
+}
+
+func (writer *Writer) fail(err error) {
+	if err == nil {
+		return
+	}
+
+	writer.err.CompareAndSwap(nil, &writerFailure{err: err})
 }
 
 func auditPath() string {
@@ -146,35 +172,108 @@ func auditPath() string {
 	return strings.TrimSpace(os.Getenv("SYMM_AUDIT_FILE"))
 }
 
-func (writer *Writer) rotateIfNeeded() error {
-	info, err := writer.file.Stat()
+type fileWriter struct {
+	path        string
+	file        *os.File
+	writer      *bufio.Writer
+	bytes       int64
+	maxBytes    int64
+	backupCount int
+}
 
-	if err != nil {
-		return fmt.Errorf("audit: stat: %w", err)
+func (writer *Writer) run(file *os.File, buffered *bufio.Writer, bytesWritten int64) {
+	defer close(writer.done)
+
+	fileWriter := &fileWriter{
+		path:        writer.path,
+		file:        file,
+		writer:      buffered,
+		bytes:       bytesWritten,
+		maxBytes:    writer.maxBytes,
+		backupCount: writer.backupCount,
 	}
 
-	if info.Size() < writer.maxBytes {
+	for {
+		frame, ok := writer.queue.Pop()
+
+		if !ok {
+			break
+		}
+
+		if err := fileWriter.Write(frame); err != nil {
+			writer.fail(err)
+
+			break
+		}
+	}
+
+	writer.fail(fileWriter.Close())
+}
+
+func (fileWriter *fileWriter) Write(frame map[string]any) error {
+	raw, err := sonic.Marshal(frame)
+
+	if err != nil {
+		return fmt.Errorf("audit: marshal: %w", err)
+	}
+
+	line := append(raw, '\n')
+
+	if _, err := fileWriter.writer.Write(line); err != nil {
+		return fmt.Errorf("audit: write: %w", err)
+	}
+
+	fileWriter.bytes += int64(len(line))
+
+	return fileWriter.rotateIfNeeded()
+}
+
+func (fileWriter *fileWriter) Close() error {
+	var closeErr error
+
+	if fileWriter.writer != nil {
+		closeErr = fileWriter.writer.Flush()
+		fileWriter.writer = nil
+	}
+
+	if fileWriter.file != nil {
+		if err := fileWriter.file.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
+
+		fileWriter.file = nil
+	}
+
+	return closeErr
+}
+
+func (fileWriter *fileWriter) rotateIfNeeded() error {
+	if fileWriter.bytes < fileWriter.maxBytes {
 		return nil
 	}
 
-	if err := writer.writer.Flush(); err != nil {
+	if err := fileWriter.writer.Flush(); err != nil {
 		return fmt.Errorf("audit: rotate flush: %w", err)
 	}
 
-	if err := writer.file.Close(); err != nil {
+	if err := fileWriter.file.Close(); err != nil {
 		return fmt.Errorf("audit: rotate close: %w", err)
 	}
 
-	for index := writer.backupCount; index >= 1; index-- {
-		from := rotatedPath(writer.path, index-1)
-		to := rotatedPath(writer.path, index)
+	for index := fileWriter.backupCount; index >= 1; index-- {
+		from := rotatedPath(fileWriter.path, index-1)
+		to := rotatedPath(fileWriter.path, index)
 
 		if index == 1 {
-			from = writer.path
+			from = fileWriter.path
 		}
 
 		if _, statErr := os.Stat(from); statErr != nil {
-			continue
+			if os.IsNotExist(statErr) {
+				continue
+			}
+
+			return fmt.Errorf("audit: rotate stat %q: %w", from, statErr)
 		}
 
 		if err := os.Rename(from, to); err != nil {
@@ -182,14 +281,15 @@ func (writer *Writer) rotateIfNeeded() error {
 		}
 	}
 
-	file, err := os.OpenFile(writer.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(fileWriter.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 
 	if err != nil {
 		return fmt.Errorf("audit: rotate open: %w", err)
 	}
 
-	writer.file = file
-	writer.writer = bufio.NewWriter(file)
+	fileWriter.file = file
+	fileWriter.writer = bufio.NewWriter(file)
+	fileWriter.bytes = 0
 
 	return nil
 }

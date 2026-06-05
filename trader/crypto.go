@@ -58,9 +58,28 @@ type Crypto struct {
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
+	return NewCryptoWithCaches(
+		ctx,
+		pool,
+		streams,
+		broker.EnsureQuoteCache(ctx, pool),
+		broker.EnsureStressCache(ctx, pool),
+	)
+}
+
+/*
+NewCryptoWithCaches builds the trader against explicit broker state caches.
+*/
+func NewCryptoWithCaches(
+	ctx context.Context,
+	pool *qpool.Q,
+	streams *focus.Set,
+	quotes *broker.QuoteCache,
+	stress *broker.StressCache,
+) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
-	desk, err := broker.NewDesk(ctx, pool)
+	desk, err := broker.NewDeskWithCaches(ctx, pool, quotes, stress)
 
 	if err != nil {
 		cancel()
@@ -198,12 +217,6 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 	protective := perspectives.IsProtectiveExit(action.Type)
 
 	if protective {
-		// The same protective trigger fires every tick the management gate holds;
-		// the exchange already rests one, so only (re)place it when it changes.
-		if crypto.armed[action.Symbol] == (armRecord{action.Type, action.Offset}) {
-			return
-		}
-
 		// Stop/take levels are measured from the entry price the position holds.
 		// Refuse to arm at a zero level if the entry price is somehow unknown,
 		// rather than rest a trigger that could never fire.
@@ -215,14 +228,33 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 		}
 
 		action.Price = entry
+
+		resolved, err := crypto.desk.ResolveAction(action)
+
+		if err != nil {
+			crypto.publishDecision(resolved, "rejected", cleanReason(err.Error()))
+			return
+		}
+
+		action = resolved
+
+		// The same protective trigger fires every tick the management gate holds;
+		// the exchange already rests one, so only (re)place it when it changes.
+		if crypto.armed[action.Symbol] == (armRecord{action.Type, action.Offset}) {
+			return
+		}
 	}
 
 	// A desk rejection is the gate working as intended, not an in-flight order.
-	if err := crypto.desk.AddOrder(action); err != nil {
+	accepted, err := crypto.desk.AddOrder(action)
+
+	if err != nil {
+		action = accepted
 		crypto.publishDecision(action, "rejected", cleanReason(err.Error()))
 		return
 	}
 
+	action = accepted
 	crypto.publishDecision(action, "submitted", "")
 
 	// A protective trigger rests on the exchange — it has no immediate fill, so it

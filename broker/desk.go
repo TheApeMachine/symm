@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -21,14 +21,34 @@ type Desk struct {
 }
 
 func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
+	return NewDeskWithCaches(ctx, pool, EnsureQuoteCache(ctx, pool), EnsureStressCache(ctx, pool))
+}
+
+/*
+NewDeskWithCaches builds a desk with explicit quote and stress dependencies.
+*/
+func NewDeskWithCaches(
+	ctx context.Context,
+	pool *qpool.Q,
+	quotes *QuoteCache,
+	stress *StressCache,
+) (*Desk, error) {
+	if quotes == nil {
+		return nil, fmt.Errorf("broker desk: quote cache is required")
+	}
+
+	if stress == nil {
+		return nil, fmt.Errorf("broker desk: stress cache is required")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk := &Desk{
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
-		quotes: EnsureQuoteCache(ctx, pool),
-		stress: EnsureStressCache(ctx, pool),
+		quotes: quotes,
+		stress: stress,
 	}
 
 	return desk, nil
@@ -38,48 +58,28 @@ func (desk *Desk) Halted() bool {
 	return false
 }
 
-func (desk *Desk) AddOrder(action perspectives.Action) error {
+func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, error) {
 	if desk.Halted() {
-		return fmt.Errorf("order circuit breaker tripped")
+		return action, fmt.Errorf("order circuit breaker tripped")
 	}
 
 	orderType, err := perspectives.OrderTypeFromActionType(action.Type)
 
 	if err != nil {
-		return err
+		return action, err
 	}
 
 	quote, ok := desk.quotes.Snapshot(action.Symbol)
 
 	if !ok {
-		return fmt.Errorf("preflight: no quote for %s", action.Symbol)
+		return action, fmt.Errorf("preflight: no quote for %s", action.Symbol)
 	}
 
 	stress := desk.stress.Snapshot(action.Symbol)
+	action, err = resolveAction(action, quote, stress)
 
-	if perspectives.IsEntryAction(action.Type) {
-		if stress.RejectsDiscretionaryEntry() {
-			return fmt.Errorf(
-				"preflight: toxic regime blocks discretionary entry for %s",
-				action.Symbol,
-			)
-		}
-
-		if stress.DeskRegimeForStress() == DeskRegimeRestricted {
-			if orderType != trading.Limit {
-				return fmt.Errorf(
-					"preflight: restricted desk rejects aggressive entry during turbulence for %s",
-					action.Symbol,
-				)
-			}
-
-			if !perspectives.IsMakerAction(action.Type) {
-				return fmt.Errorf(
-					"preflight: restricted desk requires post-only limits for %s",
-					action.Symbol,
-				)
-			}
-		}
+	if err != nil {
+		return action, err
 	}
 
 	request := PreflightRequest{
@@ -92,12 +92,12 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 	}
 
 	if err := PreflightGates(request); err != nil {
-		return err
+		return action, err
 	}
 
 	if orderType == trading.Limit && perspectives.IsMakerAction(action.Type) {
 		if WouldCrossPostOnly(quote, action.Side, action.Price) {
-			return fmt.Errorf(
+			return action, fmt.Errorf(
 				"preflight: post-only limit would cross for %s",
 				action.Symbol,
 			)
@@ -105,6 +105,11 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 	}
 
 	clOrdID := desk.NextClOrdID()
+	triggers, err := desk.triggersFor(action, quote)
+
+	if err != nil {
+		return action, err
+	}
 
 	addParams := trading.AddParams{
 		OrderType: orderType,
@@ -112,7 +117,7 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 		Symbol:    action.Symbol,
 		OrderQty:  action.Quantity,
 		ClOrdID:   clOrdID,
-		Triggers:  triggersFor(action),
+		Triggers:  triggers,
 	}
 
 	// A protective exit rests at the level carried in Triggers; a plain entry/exit
@@ -126,10 +131,47 @@ func (desk *Desk) AddOrder(action perspectives.Action) error {
 	}
 
 	if addErr := trading.NewOrderClient(desk.ctx, desk.pool).AddOrder(addParams); addErr != nil {
-		return addErr
+		return action, addErr
 	}
 
-	return nil
+	return action, nil
+}
+
+/*
+ResolveAction applies live quote and stress data to an action before submission.
+*/
+func (desk *Desk) ResolveAction(action perspectives.Action) (perspectives.Action, error) {
+	quote, ok := desk.quotes.Snapshot(action.Symbol)
+
+	if !ok {
+		return action, fmt.Errorf("preflight: no quote for %s", action.Symbol)
+	}
+
+	return resolveAction(action, quote, desk.stress.Snapshot(action.Symbol))
+}
+
+func resolveAction(
+	action perspectives.Action,
+	quote Quote,
+	stress SymbolStress,
+) (perspectives.Action, error) {
+	if perspectives.IsEntryAction(action.Type) {
+		action.Quantity = stress.EntryQuantity(action.Quantity)
+	}
+
+	if !perspectives.IsProtectiveExit(action.Type) {
+		return action, nil
+	}
+
+	offset, err := triggerOffset(action, quote)
+
+	if err != nil {
+		return action, err
+	}
+
+	action.Offset = offset
+
+	return action, nil
 }
 
 /*
@@ -139,46 +181,74 @@ ordinary order. Stop/take rest at a fixed level measured from the entry price
 paper emulator) trails it from the market price at placement. The per-node offset
 overrides the account default. Returns nil for entries and immediate settles.
 */
-func triggersFor(action perspectives.Action) *trading.Triggers {
+func (desk *Desk) triggersFor(
+	action perspectives.Action,
+	quote Quote,
+) (*trading.Triggers, error) {
 	if !perspectives.IsProtectiveExit(action.Type) {
-		return nil
+		return nil, nil
 	}
 
-	offset := perspectives.TriggerOffset(action.Offset, globalTriggerOffset(action.Type))
+	offset, err := triggerOffset(action, quote)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if perspectives.IsTrailingExit(action.Type) {
-		return &trading.Triggers{Reference: "last", PriceType: "pct", Price: -offset * 100}
+		return &trading.Triggers{Reference: "last", PriceType: "pct", Price: -offset * 100}, nil
 	}
 
 	return &trading.Triggers{
 		Reference: "last",
 		Price:     perspectives.ProtectiveLevel(action.Type, action.Price, 0, offset),
-	}
+	}, nil
 }
 
-// globalTriggerOffset is the account-default trigger distance for an exit type,
-// read from config (percent) when a playbook node carries no per-node offset.
-func globalTriggerOffset(action perspectives.ActionType) float64 {
-	switch action {
+func triggerOffset(action perspectives.Action, quote Quote) (float64, error) {
+	if action.Offset > 0 && action.Offset < 1 {
+		return action.Offset, nil
+	}
+
+	if perspectives.IsTrailingExit(action.Type) {
+		return dynamicTrailingOffset(quote)
+	}
+
+	switch action.Type {
 	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
-		return viperPercentDefault("trading.exit.stop_loss_pct", 2.0)
+		return requiredPercent("trading.exit.stop_loss_pct")
 	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
-		return viperPercentDefault("trading.exit.take_profit_pct", 3.0)
-	case perspectives.ActionTrailingStop, perspectives.ActionTrailingStopLimit:
-		return viperPercentDefault("trading.exit.trailing_pct", 1.5)
+		return requiredPercent("trading.exit.take_profit_pct")
 	default:
-		return 0
+		return 0, nil
 	}
 }
 
-func viperPercentDefault(key string, fallbackPercent float64) float64 {
-	percent := viper.GetFloat64(key)
+func dynamicTrailingOffset(quote Quote) (float64, error) {
+	multiple, err := market.RequiredFloat("trading.exit.trailing_volatility_multiple")
 
-	if percent <= 0 {
-		percent = fallbackPercent
+	if err != nil {
+		return 0, fmt.Errorf("preflight: %w", err)
 	}
 
-	return percent / 100
+	if quote.Volatility <= 0 {
+		return 0, fmt.Errorf(
+			"preflight: trailing stop needs realized volatility for %s",
+			quote.Symbol,
+		)
+	}
+
+	return quote.Volatility * multiple, nil
+}
+
+func requiredPercent(key string) (float64, error) {
+	percent, err := market.RequiredFloat(key)
+
+	if err != nil {
+		return 0, fmt.Errorf("preflight: %w", err)
+	}
+
+	return percent / 100, nil
 }
 
 var clOrdCounter atomic.Uint64

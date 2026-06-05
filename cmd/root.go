@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	kraken "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/private"
@@ -69,6 +70,11 @@ var (
 
 			systemCtx := engine.Context()
 			streams := focus.NewSet()
+			quotes := broker.NewQuoteCache(systemCtx, pool)
+			stress := broker.NewStressCache(systemCtx, pool)
+			quotes.Start(pool)
+			stress.Start(pool)
+
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),
 				"engine",
@@ -77,11 +83,12 @@ var (
 			if err := engine.AddSystems(
 				ui.NewHub(systemCtx, pool),
 				public.NewWebSocket(systemCtx, pool, streams),
-				private.NewWebSocket(
+				private.NewWebSocketWithQuoteCache(
 					systemCtx,
 					pool,
 					os.Getenv("SYMM_KRAKEN_API_KEY"),
 					os.Getenv("SYMM_KRAKEN_API_SECRET"),
+					quotes,
 				),
 				kraken.NewInstrument(systemCtx, pool),
 				causal.NewSignal(systemCtx, pool),
@@ -97,7 +104,7 @@ var (
 				sentiment.NewSignal(systemCtx, pool),
 				toxicity.NewToxicity(systemCtx, pool),
 				market.NewStory(systemCtx, pool, streams),
-				trader.NewCrypto(systemCtx, pool, streams),
+				trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress),
 			); err != nil {
 				return err
 			}

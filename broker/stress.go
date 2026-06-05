@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -18,26 +19,18 @@ type SymbolStress struct {
 	FluidSNR          float64
 	SentimentCategory perspectives.CategoryType
 	SentimentSNR      float64
+	HawkesCategory    perspectives.CategoryType
+	HawkesSNR         float64
 }
-
-/*
-DeskRegime reports how aggressively the desk may open new positions.
-*/
-type DeskRegime int
-
-const (
-	DeskRegimeNormal DeskRegime = iota
-	DeskRegimeRestricted
-)
 
 /*
 StressCache ingests perspective measurements and exposes per-symbol stress snapshots.
 */
 type StressCache struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.RWMutex
-	bySymbol map[string]SymbolStress
+	ctx     context.Context
+	cancel  context.CancelFunc
+	slots   sync.Map
+	started atomic.Bool
 }
 
 var (
@@ -61,7 +54,7 @@ func EnsureStressCache(ctx context.Context, pool *qpool.Q) *StressCache {
 	}
 
 	sharedStress = NewStressCache(ctx, pool)
-	go sharedStress.run(pool)
+	sharedStress.Start(pool)
 
 	return sharedStress
 }
@@ -85,10 +78,20 @@ func NewStressCache(ctx context.Context, _ *qpool.Q) *StressCache {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &StressCache{
-		ctx:      ctx,
-		cancel:   cancel,
-		bySymbol: make(map[string]SymbolStress),
+		ctx:    ctx,
+		cancel: cancel,
 	}
+}
+
+/*
+Start begins ingesting measurement frames into the cache.
+*/
+func (cache *StressCache) Start(pool *qpool.Q) {
+	if cache == nil || !cache.started.CompareAndSwap(false, true) {
+		return
+	}
+
+	go cache.run(pool)
 }
 
 func (cache *StressCache) run(pool *qpool.Q) {
@@ -132,10 +135,9 @@ func (cache *StressCache) ingestMeasurement(measurement perspectives.Measurement
 		return
 	}
 
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-
-	stress := cache.bySymbol[measurement.Symbol]
+	slot := cache.slotFor(measurement.Symbol)
+	slot.mu.Lock()
+	stress, _ := slot.value()
 
 	switch measurement.Source {
 	case perspectives.SourceToxicity:
@@ -147,11 +149,16 @@ func (cache *StressCache) ingestMeasurement(measurement perspectives.Measurement
 	case perspectives.SourceSentiment:
 		stress.SentimentCategory = measurement.Category
 		stress.SentimentSNR = measurement.SNR
+	case perspectives.SourceHawkes:
+		stress.HawkesCategory = measurement.Category
+		stress.HawkesSNR = measurement.SNR
 	default:
+		slot.mu.Unlock()
 		return
 	}
 
-	cache.bySymbol[measurement.Symbol] = stress
+	slot.store(stress)
+	slot.mu.Unlock()
 }
 
 /*
@@ -162,10 +169,15 @@ func (cache *StressCache) Snapshot(symbol string) SymbolStress {
 		return SymbolStress{}
 	}
 
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
+	slot, ok := cache.slots.Load(symbol)
 
-	return cache.bySymbol[symbol]
+	if !ok {
+		return SymbolStress{}
+	}
+
+	stress, _ := slot.(*stressSlot).value()
+
+	return stress
 }
 
 /*
@@ -176,7 +188,8 @@ func (cache *StressCache) InstallStressForTest(symbol string, stress SymbolStres
 		return
 	}
 
-	cache.mu.Lock()
-	cache.bySymbol[symbol] = stress
-	cache.mu.Unlock()
+	slot := cache.slotFor(symbol)
+	slot.mu.Lock()
+	slot.store(stress)
+	slot.mu.Unlock()
 }

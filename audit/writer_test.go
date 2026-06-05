@@ -44,14 +44,13 @@ func TestWriterRotate(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "audit-rotate.jsonl")
 
 		viper.Set("trading.audit.file", path)
-		viper.Set("trading.audit.max_mb", 0)
+		viper.Set("trading.audit.max_bytes", 128)
 		defer viper.Set("trading.audit.file", "")
-		defer viper.Set("trading.audit.max_mb", 0)
+		defer viper.Set("trading.audit.max_bytes", 0)
 
 		writer, err := OpenWriter()
 
 		convey.So(err, convey.ShouldBeNil)
-		writer.maxBytes = 128
 
 		for range 8 {
 			convey.So(writer.Write(map[string]any{
@@ -78,6 +77,39 @@ func TestWriterMissingPath(t *testing.T) {
 		convey.Convey("It should not install a writer", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(writer, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestWriterClose(t *testing.T) {
+	convey.Convey("Given an async audit writer", t, func() {
+		path := filepath.Join(t.TempDir(), "audit-close.jsonl")
+
+		viper.Set("trading.audit.file", path)
+		defer viper.Set("trading.audit.file", "")
+
+		writer, err := OpenWriter()
+
+		convey.So(err, convey.ShouldBeNil)
+
+		for index := range 16 {
+			convey.So(writer.Write(map[string]any{
+				"audit_event": "playbook_walk",
+				"index":       index,
+			}), convey.ShouldBeNil)
+		}
+
+		convey.So(writer.Close(), convey.ShouldBeNil)
+
+		convey.Convey("It should drain queued frames before returning", func() {
+			raw, readErr := os.ReadFile(path)
+
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(strings.Count(string(raw), "\n"), convey.ShouldEqual, 16)
+		})
+
+		convey.Convey("It should reject writes after close", func() {
+			convey.So(writer.Write(map[string]any{}), convey.ShouldNotBeNil)
 		})
 	})
 }

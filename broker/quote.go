@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/qpool"
@@ -18,12 +19,13 @@ const bookDepthLevels = 10
 Quote is the cached top-of-book and L2 depth used for preflight and fill simulation.
 */
 type Quote struct {
-	Symbol    string
-	Bid       float64
-	Ask       float64
-	Last      float64
-	UpdatedAt time.Time
-	Book      market.Book
+	Symbol     string
+	Bid        float64
+	Ask        float64
+	Last       float64
+	UpdatedAt  time.Time
+	Book       market.Book
+	Volatility float64
 }
 
 type quoteListener func(symbol string, quote Quote)
@@ -36,11 +38,12 @@ QuoteCache ingests public ticker and book frames from the raw bus.
 type QuoteCache struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	mu             sync.RWMutex
-	quotes         map[string]Quote
-	books          map[string]market.Book
-	listeners      []quoteListener
-	tradeListeners []tradeListener
+	slots          sync.Map
+	listenerMu     sync.Mutex
+	listeners      atomic.Pointer[[]quoteListener]
+	tradeMu        sync.Mutex
+	tradeListeners atomic.Pointer[[]tradeListener]
+	started        atomic.Bool
 }
 
 var (
@@ -64,7 +67,7 @@ func EnsureQuoteCache(ctx context.Context, pool *qpool.Q) *QuoteCache {
 	}
 
 	sharedQuotes = NewQuoteCache(ctx, pool)
-	go sharedQuotes.run(pool)
+	sharedQuotes.Start(pool)
 
 	return sharedQuotes
 }
@@ -86,13 +89,28 @@ func ResetQuoteCacheForTest() {
 
 func NewQuoteCache(ctx context.Context, _ *qpool.Q) *QuoteCache {
 	ctx, cancel := context.WithCancel(ctx)
-
-	return &QuoteCache{
+	cache := &QuoteCache{
 		ctx:    ctx,
 		cancel: cancel,
-		quotes: make(map[string]Quote),
-		books:  make(map[string]market.Book),
 	}
+
+	listeners := make([]quoteListener, 0)
+	tradeListeners := make([]tradeListener, 0)
+	cache.listeners.Store(&listeners)
+	cache.tradeListeners.Store(&tradeListeners)
+
+	return cache
+}
+
+/*
+Start begins ingesting raw Kraken quote frames into the cache.
+*/
+func (cache *QuoteCache) Start(pool *qpool.Q) {
+	if cache == nil || !cache.started.CompareAndSwap(false, true) {
+		return
+	}
+
+	go cache.run(pool)
 }
 
 func (cache *QuoteCache) Subscribe(listener quoteListener) {
@@ -100,9 +118,13 @@ func (cache *QuoteCache) Subscribe(listener quoteListener) {
 		return
 	}
 
-	cache.mu.Lock()
-	cache.listeners = append(cache.listeners, listener)
-	cache.mu.Unlock()
+	cache.listenerMu.Lock()
+	defer cache.listenerMu.Unlock()
+
+	current := cache.listeners.Load()
+	next := append([]quoteListener(nil), (*current)...)
+	next = append(next, listener)
+	cache.listeners.Store(&next)
 }
 
 func (cache *QuoteCache) SubscribeTrades(listener tradeListener) {
@@ -110,9 +132,13 @@ func (cache *QuoteCache) SubscribeTrades(listener tradeListener) {
 		return
 	}
 
-	cache.mu.Lock()
-	cache.tradeListeners = append(cache.tradeListeners, listener)
-	cache.mu.Unlock()
+	cache.tradeMu.Lock()
+	defer cache.tradeMu.Unlock()
+
+	current := cache.tradeListeners.Load()
+	next := append([]tradeListener(nil), (*current)...)
+	next = append(next, listener)
+	cache.tradeListeners.Store(&next)
 }
 
 func (cache *QuoteCache) run(pool *qpool.Q) {
@@ -183,10 +209,10 @@ func (cache *QuoteCache) ingestBooks(envelope *public.SocketMessage) {
 }
 
 func (cache *QuoteCache) updateTicker(row market.TickerUpdate) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+	slot := cache.slotFor(row.Symbol)
 
-	quote := cache.quotes[row.Symbol]
+	slot.mu.Lock()
+	quote, _ := slot.quoteValue()
 	quote.Symbol = row.Symbol
 
 	if row.Bid > 0 {
@@ -202,21 +228,27 @@ func (cache *QuoteCache) updateTicker(row market.TickerUpdate) {
 	}
 
 	quote.UpdatedAt = time.Now().UTC()
-	quote.Book = cache.books[row.Symbol]
-	cache.quotes[row.Symbol] = quote
 
-	cache.notifyLocked(row.Symbol, quote)
+	if book, ok := slot.bookValue(); ok {
+		quote.Book = book
+	}
+
+	quote.Volatility = slot.observeVolatility(quote.Last)
+	slot.storeQuote(quote)
+	slot.mu.Unlock()
+
+	cache.notify(row.Symbol, quote)
 }
 
 func (cache *QuoteCache) updateBook(row market.Book) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+	slot := cache.slotFor(row.Symbol)
 
-	book := cache.books[row.Symbol]
+	slot.mu.Lock()
+	book, _ := slot.bookValue()
 	book.Fold(row, bookDepthLevels)
-	cache.books[row.Symbol] = book
+	slot.storeBook(book)
 
-	quote := cache.quotes[row.Symbol]
+	quote, _ := slot.quoteValue()
 	quote.Symbol = row.Symbol
 	quote.Book = book
 
@@ -233,9 +265,11 @@ func (cache *QuoteCache) updateBook(row market.Book) {
 	}
 
 	quote.UpdatedAt = time.Now().UTC()
-	cache.quotes[row.Symbol] = quote
+	quote.Volatility = slot.observeVolatility(quote.Last)
+	slot.storeQuote(quote)
+	slot.mu.Unlock()
 
-	cache.notifyLocked(row.Symbol, quote)
+	cache.notify(row.Symbol, quote)
 }
 
 func (cache *QuoteCache) ingestTrades(envelope *public.SocketMessage) {
@@ -249,17 +283,17 @@ func (cache *QuoteCache) ingestTrades(envelope *public.SocketMessage) {
 }
 
 func (cache *QuoteCache) notifyTradeLocked(trade market.TradeUpdate) {
-	listeners := append([]tradeListener(nil), cache.tradeListeners...)
+	listeners := cache.tradeListeners.Load()
 
-	for _, listener := range listeners {
+	for _, listener := range *listeners {
 		listener(trade.Symbol, trade)
 	}
 }
 
-func (cache *QuoteCache) notifyLocked(symbol string, quote Quote) {
-	listeners := append([]quoteListener(nil), cache.listeners...)
+func (cache *QuoteCache) notify(symbol string, quote Quote) {
+	listeners := cache.listeners.Load()
 
-	for _, listener := range listeners {
+	for _, listener := range *listeners {
 		listener(symbol, quote)
 	}
 }
@@ -268,12 +302,17 @@ func (cache *QuoteCache) notifyLocked(symbol string, quote Quote) {
 Snapshot returns the latest quote for one symbol.
 */
 func (cache *QuoteCache) Snapshot(symbol string) (Quote, bool) {
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
+	if cache == nil {
+		return Quote{}, false
+	}
 
-	quote, ok := cache.quotes[symbol]
+	slot, ok := cache.slots.Load(symbol)
 
-	return quote, ok
+	if !ok {
+		return Quote{}, false
+	}
+
+	return slot.(*quoteSlot).quoteValue()
 }
 
 /*
@@ -301,7 +340,23 @@ func (cache *QuoteCache) InstallQuoteForTest(quote Quote) {
 		quote.UpdatedAt = time.Now().UTC()
 	}
 
-	cache.mu.Lock()
-	cache.quotes[quote.Symbol] = quote
-	cache.mu.Unlock()
+	slot := cache.slotFor(quote.Symbol)
+	slot.mu.Lock()
+
+	if quote.Book.Symbol == "" {
+		quote.Book.Symbol = quote.Symbol
+	}
+
+	if quote.Book.Symbol == quote.Symbol {
+		slot.storeBook(quote.Book)
+	}
+
+	observedVolatility := slot.observeVolatility(quote.Last)
+
+	if quote.Volatility <= 0 {
+		quote.Volatility = observedVolatility
+	}
+
+	slot.storeQuote(quote)
+	slot.mu.Unlock()
 }

@@ -9,15 +9,15 @@ import (
 )
 
 // triggerTestCosts strips fees and slippage so realized P&L equals the raw
-// trigger arithmetic, with fixed protective offsets.
+// trigger arithmetic.
 func triggerTestCosts() ReplayCosts {
 	return ReplayCosts{
-		StopLossPct:      0.02,  // exit 2% below entry
-		TakeProfitPct:    0.03,  // exit 3% above entry
-		TrailingPct:      0.015, // exit 1.5% below peak
-		StartingCapital:  100,   // €100 account so realizedReturn is P&L / 100
-		PositionFraction: 1,     // deploy the whole balance per entry
-		WalletCurrency:   "EUR", // BTC/EUR is fundable
+		StopLossPct:                0.02, // exit 2% below entry
+		TakeProfitPct:              0.03, // exit 3% above entry
+		TrailingVolatilityMultiple: 3,
+		StartingCapital:            100, // €100 account so realizedReturn is P&L / 100
+		PositionFraction:           1,   // deploy the whole balance per entry
+		WalletCurrency:             "EUR",
 	}
 }
 
@@ -79,14 +79,15 @@ func TestReplayTriggerExits(t *testing.T) {
 		Convey("A trailing stop ratchets with the peak and locks in the run-up", func() {
 			ledger := newReplayLedger(triggerTestCosts())
 			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
-			ledger.armTrigger("BTC/EUR", perspectives.Act{Type: perspectives.ActionTrailingStop})
 
-			ledger.checkTriggers(btcRow(110)) // peak 110, trail at 108.35 — stays open
+			ledger.checkTriggers(btcRow(101))
+			ledger.checkTriggers(btcRow(102))
+			ledger.armTrigger("BTC/EUR", perspectives.Act{Type: perspectives.ActionTrailingStop})
 			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
 
-			ledger.checkTriggers(btcRow(108)) // falls below 108.35 — exits up +8%
+			ledger.checkTriggers(btcRow(101.9))
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.08, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.019, 1e-9)
 		})
 
 		Convey("settle_position still closes immediately at the current price", func() {

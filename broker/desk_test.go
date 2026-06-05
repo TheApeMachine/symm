@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives"
 )
 
 func TestDesk_NextClOrdID(t *testing.T) {
@@ -39,4 +42,90 @@ func BenchmarkDesk_NextClOrdID(b *testing.B) {
 	for b.Loop() {
 		_ = desk.NextClOrdID()
 	}
+}
+
+func TestDeskTriggersFor(t *testing.T) {
+	testconfig.Load(t)
+
+	convey.Convey("Given a trailing stop without a playbook offset", t, func() {
+		desk := &Desk{}
+		action := perspectives.Action{
+			Type:   perspectives.ActionTrailingStop,
+			Symbol: "BTC/EUR",
+			Side:   trading.Sell,
+		}
+
+		convey.Convey("It should derive the Kraken percent from realized volatility", func() {
+			triggers, err := desk.triggersFor(action, Quote{
+				Symbol:     "BTC/EUR",
+				Volatility: 0.001,
+			})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(triggers.PriceType, convey.ShouldEqual, "pct")
+			convey.So(triggers.Price, convey.ShouldAlmostEqual, -0.3, 1e-9)
+		})
+
+		convey.Convey("It should reject a dynamic trail without realized volatility", func() {
+			triggers, err := desk.triggersFor(action, Quote{Symbol: "BTC/EUR"})
+
+			convey.So(triggers, convey.ShouldBeNil)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "realized volatility")
+		})
+
+		convey.Convey("It should honor an explicit playbook offset", func() {
+			action.Offset = 0.02
+			triggers, err := desk.triggersFor(action, Quote{Symbol: "BTC/EUR"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(triggers.Price, convey.ShouldAlmostEqual, -2, 1e-9)
+		})
+	})
+}
+
+func TestDeskResolveAction(t *testing.T) {
+	testconfig.Load(t)
+
+	convey.Convey("Given a desk with quote and stress caches", t, func() {
+		quotes := NewQuoteCache(t.Context(), nil)
+		quotes.InstallQuoteForTest(Quote{
+			Symbol:     "BTC/EUR",
+			Bid:        99,
+			Ask:        100,
+			Last:       100,
+			Volatility: 0.001,
+		})
+
+		stress := NewStressCache(t.Context(), nil)
+		stress.InstallStressForTest("BTC/EUR", SymbolStress{
+			HawkesCategory: perspectives.CategorySaturation,
+			HawkesSNR:      1,
+		})
+
+		desk := &Desk{quotes: quotes, stress: stress}
+
+		convey.Convey("It should scale entry quantity from hostile stress", func() {
+			action, err := desk.ResolveAction(perspectives.Action{
+				Type:     perspectives.ActionMarket,
+				Symbol:   "BTC/EUR",
+				Side:     trading.Buy,
+				Quantity: 10,
+			})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(action.Quantity, convey.ShouldAlmostEqual, 5, 1e-9)
+		})
+
+		convey.Convey("It should resolve dynamic trailing offsets before submission", func() {
+			action, err := desk.ResolveAction(perspectives.Action{
+				Type:   perspectives.ActionTrailingStop,
+				Symbol: "BTC/EUR",
+				Side:   trading.Sell,
+			})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(action.Offset, convey.ShouldAlmostEqual, 0.003, 1e-9)
+		})
+	})
 }

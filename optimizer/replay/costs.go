@@ -18,9 +18,9 @@ const (
 	// Default protective-exit trigger offsets (percent of entry / peak). These make
 	// stop-loss, take-profit and trailing-stop exits economically distinct from a
 	// discretionary settle, so the optimizer can actually choose between them.
-	DefaultStopLossPctPercent   = 2.0
-	DefaultTakeProfitPctPercent = 3.0
-	DefaultTrailingPctPercent   = 1.5
+	DefaultStopLossPctPercent         = 2.0
+	DefaultTakeProfitPctPercent       = 3.0
+	DefaultTrailingVolatilityMultiple = 3.0
 	// DefaultStartingCapital is the account size when no paper wallet is configured.
 	DefaultStartingCapital = 200.0
 	// DefaultPositionFraction deploys the whole available balance per entry — the
@@ -38,17 +38,17 @@ at once on a single small wallet is scored on only the trades it could actually
 fund — exactly as live.
 */
 type ReplayCosts struct {
-	MakerFeePct            float64
-	TakerFeePct            float64
-	SlippagePct            float64
-	StopLossPct            float64 // long exits if price falls this fraction below entry
-	TakeProfitPct          float64 // long exits if price rises this fraction above entry
-	TrailingPct            float64 // long exits if price falls this fraction below the peak
-	StartingCapital        float64 // account balance the replay starts with
-	PositionFraction       float64 // fraction of available cash deployed per entry
-	WalletCurrency         string  // quote currency the wallet holds; only matching pairs are fundable
-	ExecutionLatency       time.Duration
-	ExecutionStressEnabled bool
+	MakerFeePct                float64
+	TakerFeePct                float64
+	SlippagePct                float64
+	StopLossPct                float64 // long exits if price falls this fraction below entry
+	TakeProfitPct              float64 // long exits if price rises this fraction above entry
+	TrailingVolatilityMultiple float64
+	StartingCapital            float64 // account balance the replay starts with
+	PositionFraction           float64 // fraction of available cash deployed per entry
+	WalletCurrency             string  // quote currency the wallet holds; only matching pairs are fundable
+	ExecutionLatency           time.Duration
+	ExecutionStressEnabled     bool
 }
 
 /*
@@ -108,18 +108,28 @@ func ReplayCostsFromViper() ReplayCosts {
 	}
 
 	return ReplayCosts{
-		MakerFeePct:            makerPct / 100.0,
-		TakerFeePct:            takerPct / 100.0,
-		SlippagePct:            slippageBps / 10000.0,
-		StopLossPct:            exitOffsetPctFromViper("trading.exit.stop_loss_pct", DefaultStopLossPctPercent),
-		TakeProfitPct:          exitOffsetPctFromViper("trading.exit.take_profit_pct", DefaultTakeProfitPctPercent),
-		TrailingPct:            exitOffsetPctFromViper("trading.exit.trailing_pct", DefaultTrailingPctPercent),
-		StartingCapital:        startingCapital,
-		PositionFraction:       positionFraction,
-		WalletCurrency:         walletCurrency,
-		ExecutionLatency:       replayExecutionLatencyFromViper(),
-		ExecutionStressEnabled: replayExecutionStressEnabledFromViper(),
+		MakerFeePct:                makerPct / 100.0,
+		TakerFeePct:                takerPct / 100.0,
+		SlippagePct:                slippageBps / 10000.0,
+		StopLossPct:                exitOffsetPctFromViper("trading.exit.stop_loss_pct", DefaultStopLossPctPercent),
+		TakeProfitPct:              exitOffsetPctFromViper("trading.exit.take_profit_pct", DefaultTakeProfitPctPercent),
+		TrailingVolatilityMultiple: trailingVolatilityMultipleFromViper(),
+		StartingCapital:            startingCapital,
+		PositionFraction:           positionFraction,
+		WalletCurrency:             walletCurrency,
+		ExecutionLatency:           replayExecutionLatencyFromViper(),
+		ExecutionStressEnabled:     replayExecutionStressEnabledFromViper(),
 	}
+}
+
+func trailingVolatilityMultipleFromViper() float64 {
+	multiple := viper.GetViper().GetFloat64("trading.exit.trailing_volatility_multiple")
+
+	if multiple <= 0 {
+		return DefaultTrailingVolatilityMultiple
+	}
+
+	return multiple
 }
 
 func exitOffsetPctFromViper(key string, fallbackPercent float64) float64 {

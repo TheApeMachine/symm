@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -138,6 +139,7 @@ func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
 		first := EnsureQuoteCache(firstCtx, firstPool)
 		firstCancel()
 		ResetQuoteCacheForTest()
+		firstPool.Close()
 
 		secondCtx, secondCancel := context.WithCancel(context.Background())
 		defer secondCancel()
@@ -148,7 +150,7 @@ func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
 		second := EnsureQuoteCache(secondCtx, secondPool)
 
 		Convey("It should construct a new cache instance", func() {
-			So(second, ShouldNotEqual, first)
+			So(fmt.Sprintf("%p", second), ShouldNotEqual, fmt.Sprintf("%p", first))
 		})
 	})
 }

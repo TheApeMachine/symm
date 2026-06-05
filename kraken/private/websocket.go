@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
@@ -44,9 +45,29 @@ NewWebSocket returns paper simulation or a live authenticated connection holder.
 func NewWebSocket(
 	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
 ) public.WebSocketClient {
+	return NewWebSocketWithQuoteCache(
+		ctx,
+		pool,
+		apiKey,
+		apiSecret,
+		broker.EnsureQuoteCache(ctx, pool),
+	)
+}
+
+/*
+NewWebSocketWithQuoteCache returns paper or live private websocket with explicit
+quote state for the paper exchange emulator.
+*/
+func NewWebSocketWithQuoteCache(
+	ctx context.Context,
+	pool *qpool.Q,
+	apiKey string,
+	apiSecret string,
+	quotes *broker.QuoteCache,
+) public.WebSocketClient {
 	if viper.GetViper().GetString("trading.model") == "paper" {
 		errnie.Info("kraken/private paper websocket", "kraken/private paper websocket")
-		return paper.NewWebSocket(ctx, pool)
+		return paper.NewWebSocketWithQuoteCache(ctx, pool, quotes)
 	}
 
 	errnie.Info("kraken/private live websocket", "kraken/private live websocket")

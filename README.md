@@ -122,6 +122,7 @@ cmd.Execute()
        ├─ create qpool (1 producer, NumCPU×4 workers; `SYMM_ENGINE_WORKERS` override)
        ├─ market.DiscoverSymbols(QuoteCurrency) → config.System.Symbols
        ├─ focus.NewSet()  (shared open-position symbol set)
+       ├─ broker.NewQuoteCache / NewStressCache; start raw + measurement feeds
        ├─ instantiate all systems (ordered)
        └─ Booter.Boot()
             ├─ start ui.Hub on config.UIAddr (:8765)
@@ -339,7 +340,7 @@ For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run 
 
 ### Paper / live parity
 
-Paper fills use the shared `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping p95 RTT (persisted to `runs/network_latency.json` for optimizer replay). Taker fills snapshot the quote only after one-way latency from submission — the book the order could actually reach — not the quote visible at click time. Post-only limits rest on the simulated book with L2 queue position ahead of the order (matched by tick index, not float equality), become active after p95 one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
+Paper fills use the boot-injected `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Quote and stress snapshots are atomic per symbol, so execution readers do not take cache-wide read locks. Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping p95 RTT (persisted to `runs/network_latency.json` for optimizer replay). Taker fills snapshot the quote only after one-way latency from submission — the book the order could actually reach — not the quote visible at click time. Post-only limits rest on the simulated book with L2 queue position ahead of the order (matched by tick index, not float equality), become active after p95 one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
 
 Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`kraken/paper/catalog.go`). The trader marks a symbol as holding only after an execution fill (not on open ack), publishes `AvgEntry` and `Marks` on wallet frames for the frontend Trades panel, and keeps entry pending locks until fill or reject.
 
@@ -490,7 +491,7 @@ symm tune
 
 **Schema-driven layout:** on WebSocket connect the hub sends a `layout` document built from `perspectives.TelemetryRegistry`. Sources register when measurements arrive; the hub rebroadcasts an updated `layout` when the manifest grows. The React dashboard renders gauges from that manifest only — no hard-coded signal union in the frontend.
 
-**Execution gates:** `broker.Desk` ingests toxicity, fluid, and sentiment measurements into a stress cache. Entry orders tighten slippage under hostile regimes, enter a post-only restricted mode during fluid turbulence, and can be blocked on decisive toxic bluff readings. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters.
+**Execution gates:** `broker.Desk` ingests toxicity, fluid, sentiment, and Hawkes measurements into a stress cache. Entry orders scale quantity and slippage tolerance continuously as hostile SNR rises; there is no turbulence-only restricted-mode cliff. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters. Trailing-stop defaults are derived from the quote cache's rolling distinct-price realized volatility (`trading.exit.trailing_volatility_multiple`) unless the playbook node carries an explicit offset.
 
 **Fluid surface:** the 3D grid uses turbulence-inversely scaled spatial smoothing (sharp peaks in turbulent cells, gentle blending elsewhere), volume-weighted temporal EMA decay, and SNR-driven highlight/hardness on the SciChart surface so anomalies scream through color without turning the mesh into noise.
 
@@ -637,7 +638,7 @@ make audit                                    # → runs/audit-<timestamp>.jsonl
 make audit AUDIT_FILE=runs/my-audit.jsonl
 ```
 
-Gate rejects are deduplicated (default 60s per symbol/playbook/reason). Files rotate at 32MB with three backups. The dashboard audit panel still shows entry/exit fills only.
+Audit frames enqueue into an elastic in-memory queue and a background worker owns JSON encoding, flush, and rotation. No frames are dropped; `Close` drains the queue and reports the first worker error. Files rotate at 32MB with three backups. The dashboard audit panel still shows entry/exit fills only.
 
 **Frontend (separate terminal):**
 
@@ -803,7 +804,7 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 | `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                               |
 | `kraken/private/`      | Authenticated REST client                                                            |
 | `kraken/public/`       | Public REST + WebSocket channels                                                     |
-| `broker/`              | Paper and live order execution; stress-aware preflight and restricted desk mode      |
+| `broker/`              | Paper and live order execution; atomic quote/stress snapshots and continuous preflight |
 | `wallet/`              | Balance, inventory, position bindings                                                |
 | `focus/`               | Lock-free open-position symbol set (copy-on-write)                                   |
 | `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                             |

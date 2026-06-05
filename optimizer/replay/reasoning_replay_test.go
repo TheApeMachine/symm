@@ -73,8 +73,8 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 		}
 
 		rows := []perspectives.Measurement{
-			priceRow(100, base),                  // no cross yet
-			priceRow(102, base.Add(time.Second)), // crosses 101 -> parent latches; 102<103 so child holds off
+			priceRow(100, base),                    // no cross yet
+			priceRow(102, base.Add(time.Second)),   // crosses 101 -> parent latches; 102<103 so child holds off
 			priceRow(104, base.Add(2*time.Second)), // parent edge gone; crosses 103 -> child enters at 104
 			{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
 		}
@@ -82,8 +82,8 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 		sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
 		result := sim.Result()
 
-		So(result.ClosedTrades, ShouldEqual, 1)          // it did enter, only because the parent latched
-		So(result.Score, ShouldBeGreaterThan, 0)         // entered 104, settled 108
+		So(result.ClosedTrades, ShouldEqual, 1)  // it did enter, only because the parent latched
+		So(result.Score, ShouldBeGreaterThan, 0) // entered 104, settled 108
 	})
 }
 
@@ -177,7 +177,7 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 			So(result.Score, ShouldAlmostEqual, 0.04, 1e-9) // entered 100, settled 104, on €100
 		})
 
-		Convey("A per-node trailing offset overrides the global default", func() {
+		Convey("A per-node trailing offset overrides the dynamic default", func() {
 			thoughts := []perspectives.Thought{
 				{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
 				{
@@ -188,14 +188,11 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 
 			rows := []perspectives.Measurement{
 				ignite(100, base),
-				ignite(110, base.Add(time.Second)),  // peak 110
+				ignite(110, base.Add(time.Second)),   // peak 110
 				ignite(107, base.Add(2*time.Second)), // 2.7% off the peak — breaches a 2% trail
 			}
 
-			costs := frictionlessCosts()
-			costs.TrailingPct = 0.10 // a loose global trail that would NOT have fired at 107
-
-			sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), costs)
+			sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
 			result := sim.Result()
 
 			So(result.ClosedTrades, ShouldEqual, 1)

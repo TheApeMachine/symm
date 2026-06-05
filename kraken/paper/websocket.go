@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/public"
@@ -33,12 +34,23 @@ type WebSocket struct {
 }
 
 func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
+	return NewWebSocketWithQuoteCache(ctx, pool, broker.EnsureQuoteCache(ctx, pool))
+}
+
+/*
+NewWebSocketWithQuoteCache builds the paper socket with explicit quote state.
+*/
+func NewWebSocketWithQuoteCache(
+	ctx context.Context,
+	pool *qpool.Q,
+	quotes *broker.QuoteCache,
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	latencies, latencyErr := loadLatencyProfile()
 
 	balances := response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond))
-	orders := response.NewOrders(ctx, pool, balances)
+	orders := response.NewOrdersWithQuoteCache(ctx, pool, balances, quotes)
 
 	ws := &WebSocket{
 		ctx:         ctx,

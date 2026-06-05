@@ -7,28 +7,6 @@ import (
 )
 
 /*
-DeskRegimeForStress reports whether entries must stay post-only during turbulence.
-*/
-func (stress SymbolStress) DeskRegimeForStress() DeskRegime {
-	if stress.FluidCategory == perspectives.CategoryTurbulent && stress.FluidSNR > 0 {
-		return DeskRegimeRestricted
-	}
-
-	return DeskRegimeNormal
-}
-
-/*
-RejectsDiscretionaryEntry reports whether toxicity blocks new discretionary entries.
-*/
-func (stress SymbolStress) RejectsDiscretionaryEntry() bool {
-	if stress.ToxicityCategory != perspectives.CategoryToxicBluff {
-		return false
-	}
-
-	return stress.ToxicitySNR >= 1
-}
-
-/*
 EntrySlippageCapBps tightens the configured slippage ceiling under hostile regimes.
 */
 func (stress SymbolStress) EntrySlippageCapBps(baseBps float64) float64 {
@@ -45,6 +23,30 @@ func (stress SymbolStress) EntrySlippageCapBps(baseBps float64) float64 {
 	return baseBps / (1 + hostile)
 }
 
+/*
+EntryExposureScale returns the fraction of normal entry size allowed by stress.
+*/
+func (stress SymbolStress) EntryExposureScale() float64 {
+	hostile := stress.hostileStress()
+
+	if hostile <= 0 {
+		return 1
+	}
+
+	return 1 / (1 + hostile)
+}
+
+/*
+EntryQuantity scales a requested entry quantity by live hostile-flow stress.
+*/
+func (stress SymbolStress) EntryQuantity(quantity float64) float64 {
+	if quantity <= 0 {
+		return quantity
+	}
+
+	return quantity * stress.EntryExposureScale()
+}
+
 func (stress SymbolStress) hostileStress() float64 {
 	var peak float64
 
@@ -59,6 +61,11 @@ func (stress SymbolStress) hostileStress() float64 {
 
 	if stress.FluidCategory == perspectives.CategoryTurbulent {
 		peak = math.Max(peak, stress.FluidSNR)
+	}
+
+	if stress.HawkesCategory == perspectives.CategoryFrenzy ||
+		stress.HawkesCategory == perspectives.CategorySaturation {
+		peak = math.Max(peak, stress.HawkesSNR)
 	}
 
 	return peak

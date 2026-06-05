@@ -46,10 +46,22 @@ type restingTrigger struct {
 }
 
 func NewOrders(ctx context.Context, pool *qpool.Q, balances *Balances) *Orders {
+	return NewOrdersWithQuoteCache(ctx, pool, balances, broker.EnsureQuoteCache(ctx, pool))
+}
+
+/*
+NewOrdersWithQuoteCache builds the paper order emulator against explicit quotes.
+*/
+func NewOrdersWithQuoteCache(
+	ctx context.Context,
+	pool *qpool.Q,
+	balances *Balances,
+	quotes *broker.QuoteCache,
+) *Orders {
 	return &Orders{
 		ctx:      ctx,
 		pool:     pool,
-		quotes:   broker.EnsureQuoteCache(ctx, pool),
+		quotes:   quotes,
 		balances: balances,
 		raw:      pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
 		triggers: make(map[string]*restingTrigger),

@@ -143,5 +143,13 @@ func TestClassifyRegime(t *testing.T) {
 			convey.So(math.IsNaN(features.TrendStrength), convey.ShouldBeFalse)
 			convey.So(math.IsInf(features.TrendStrength, 0), convey.ShouldBeFalse)
 		})
+
+		convey.Convey("DistinctPriceVolatility collapses repeated prices", func() {
+			repeated := DistinctPriceVolatility([]float64{100, 100, 101, 101, 102})
+			distinct := DistinctPriceVolatility([]float64{100, 101, 102})
+
+			convey.So(repeated, convey.ShouldAlmostEqual, distinct, 1e-12)
+			convey.So(repeated, convey.ShouldBeGreaterThan, 0)
+		})
 	})
 }

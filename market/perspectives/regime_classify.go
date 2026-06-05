@@ -56,6 +56,14 @@ func loadRegimeConfig() regimeConfig {
 	}
 }
 
+/*
+RegimeWindow returns the configured price-action window used by live and replay
+components that need the same recent distinct-price horizon as ClassifyRegime.
+*/
+func RegimeWindow() int {
+	return loadRegimeConfig().window
+}
+
 func viperFloatDefault(key string, fallback float64) float64 {
 	if value := viper.GetFloat64(key); value > 0 {
 		return value
@@ -119,12 +127,7 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 		return features
 	}
 
-	returns := make([]float64, len(prices)-1)
-
-	for index := 1; index < len(prices); index++ {
-		returns[index-1] = math.Log(prices[index] / prices[index-1])
-	}
-
+	returns := distinctPriceReturns(prices)
 	mean := meanFloat(returns)
 	vol := stdevFloat(returns, mean)
 	drift := math.Log(prices[len(prices)-1] / prices[0])
@@ -192,6 +195,47 @@ func (features RegimeFeatures) Radar() map[string]float64 {
 		"bearish":    bearish,
 		"choppiness": features.Choppiness,
 	}
+}
+
+/*
+DistinctPriceVolatility reports the realized volatility of the distinct price path.
+Repeated prices are collapsed before log returns are measured, matching the regime
+classifier so quote-cache, live desk, and replay trigger math share one definition.
+*/
+func DistinctPriceVolatility(prices []float64) float64 {
+	returns := distinctPriceReturns(prices)
+
+	if len(returns) == 0 {
+		return 0
+	}
+
+	return stdevFloat(returns, meanFloat(returns))
+}
+
+func distinctPriceReturns(prices []float64) []float64 {
+	distinct := make([]float64, 0, len(prices))
+
+	for _, price := range prices {
+		if price <= 0 {
+			continue
+		}
+
+		if len(distinct) == 0 || price != distinct[len(distinct)-1] {
+			distinct = append(distinct, price)
+		}
+	}
+
+	if len(distinct) < 2 {
+		return nil
+	}
+
+	returns := make([]float64, len(distinct)-1)
+
+	for index := 1; index < len(distinct); index++ {
+		returns[index-1] = math.Log(distinct[index] / distinct[index-1])
+	}
+
+	return returns
 }
 
 func meanFloat(values []float64) float64 {
