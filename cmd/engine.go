@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -34,25 +36,90 @@ func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
 	return engine, nil
 }
 
+func (engine *Engine) Context() context.Context {
+	return engine.ctx
+}
+
 func (engine *Engine) Start() (err error) {
 	var wg sync.WaitGroup
+	errs := make(chan error, len(engine.systems))
 
 	for _, system := range engine.systems {
+		system := system
+
 		wg.Go(func() {
-			errnie.Error(err, system.Tick())
+			errs <- system.Tick()
 		})
 	}
 
+	go func() {
+		wg.Wait()
+		close(errs)
+	}()
+
+	closing := false
+
+	for tickErr := range errs {
+		if tickErr == nil {
+			continue
+		}
+
+		if engine.ctx.Err() != nil && errors.Is(tickErr, engine.ctx.Err()) {
+			if !closing {
+				closing = true
+				if closeErr := engine.Close(); closeErr != nil {
+					engine.err = errors.Join(engine.err, closeErr)
+				}
+			}
+
+			continue
+		}
+
+		if engine.err == nil {
+			engine.err = tickErr
+			errnie.Error(tickErr)
+		}
+
+		if closing {
+			continue
+		}
+
+		closing = true
+		if closeErr := engine.Close(); closeErr != nil && !errors.Is(closeErr, tickErr) {
+			engine.err = errors.Join(engine.err, closeErr)
+		}
+	}
+
 	wg.Wait()
-	return err
+
+	return engine.err
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
+	for _, system := range systems {
+		if system == nil {
+			return fmt.Errorf("engine: nil system")
+		}
+	}
+
 	engine.systems = append(engine.systems, systems...)
 	return nil
 }
 
 func (engine *Engine) Close() error {
 	engine.cancel()
-	return engine.err
+
+	var closeErr error
+
+	for _, system := range engine.systems {
+		if system == nil {
+			continue
+		}
+
+		if err := system.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("%T: %w", system, err))
+		}
+	}
+
+	return errors.Join(engine.err, closeErr)
 }

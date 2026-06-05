@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -37,6 +38,10 @@ InjectTicker publishes one ticker frame onto the shared raw bus after replay.
 func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
 	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 
+	if ticker.Timestamp == "" {
+		ticker.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
 	rawData, err := sonic.Marshal([]market.TickerUpdate{ticker})
 
 	if err != nil {
@@ -48,7 +53,7 @@ func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
 		Value: map[string]any{
 			"channel": public.TickerChannel,
 			"type":    "update",
-			"data":    rawData,
+			"data":    json.RawMessage(rawData),
 		},
 	})
 }
@@ -76,7 +81,7 @@ func (harness *Harness) InjectBook(book market.Book) {
 		Value: map[string]any{
 			"channel": public.BookChannel,
 			"type":    market.BookSnapshot,
-			"data":    rawData,
+			"data":    json.RawMessage(rawData),
 		},
 	})
 }
@@ -91,6 +96,6 @@ func marketTradeEnvelope(trade market.TradeUpdate) (map[string]any, error) {
 	return map[string]any{
 		"channel": public.TradesChannel,
 		"type":    "update",
-		"data":    raw,
+		"data":    json.RawMessage(raw),
 	}, nil
 }

@@ -3,6 +3,7 @@ package private
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -14,6 +15,7 @@ import (
 func TestNewWebSocketPaperMode(t *testing.T) {
 	testconfig.Load(t)
 	viper.Set("trading.model", "paper")
+	viper.Set("trading.paper.default_one_way_latency", time.Nanosecond)
 
 	Convey("Given paper trading model", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())

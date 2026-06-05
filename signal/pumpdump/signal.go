@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sync"
 	"time"
@@ -99,6 +98,7 @@ type pumpState struct {
 	moveBase *adaptive.EMA
 	pipe     *numeric.Classed
 	last     float64
+	lastRVol float64
 }
 
 func newPumpState() *pumpState {
@@ -146,17 +146,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
@@ -180,6 +176,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newPumpState())
 	state := stored.(*pumpState)
+	previous := state.last
 
 	nanos := float64(trade.Timestamp.UnixNano())
 	state.volume.Next(0, nanos, trade.Qty, trade.Price) // anchor = window opening price
@@ -201,17 +198,28 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	}
 
 	ignition := math.Max(0, (rvol-1)*(1+precursor))
+	category := signal.categories[state.pipe.Label(code)]
+	confidence := state.pipe.Confidence()
+	standout := state.pipe.Standout()
+
+	if trade.Side == "sell" && previous > 0 && trade.Price < previous && rvol < state.lastRVol {
+		category = perspectives.CategoryFadedExhaustion
+		confidence = perspectives.UnitCompetitionMargin(state.lastRVol-rvol, state.lastRVol)
+		standout = confidence
+	}
+
+	state.lastRVol = rvol
 
 	measurement := perspectives.Measurement{
 		Symbol:     trade.Symbol,
 		Source:     perspectives.SourcePumpDump,
-		Category:   signal.categories[state.pipe.Label(code)],
+		Category:   category,
 		Last:       trade.Price,
 		Strength:   ignition,
-		Confidence: state.pipe.Confidence(),
+		Confidence: confidence,
 	}
 	if err := perspectives.AssignCategorySNR(
-		&measurement, signal.floor, state.pipe.Standout(),
+		&measurement, signal.floor, standout,
 	); err != nil {
 		return err
 	}

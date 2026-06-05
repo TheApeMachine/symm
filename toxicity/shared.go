@@ -14,6 +14,10 @@ func Default() *Tracker {
 	return defaultTracker
 }
 
+func ResetDefault() {
+	defaultTracker = NewTracker()
+}
+
 // IsToxic reports whether the shared tracker has flagged a resting level at the
 // given price as toxic: a large, young, near-touch block that was cancelled
 // rather than filled. Safe to call before the signal has produced any data (an

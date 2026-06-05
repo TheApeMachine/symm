@@ -69,6 +69,16 @@ func (builder *CaptureBuilder) timestampRFC3339() string {
 	return builder.timestamp().UTC().Format(time.RFC3339Nano)
 }
 
+func (builder *CaptureBuilder) Advance(duration time.Duration) {
+	steps := int(duration / builder.step)
+
+	if steps <= 0 {
+		steps = 1
+	}
+
+	builder.tick += steps
+}
+
 func (builder *CaptureBuilder) AppendInstrumentCatalog() {
 	builder.appendFrame(public.InstrumentsChannel, market.BookSnapshot, market.InstrumentUpdate{
 		Pairs: []market.InstrumentPair{
@@ -115,11 +125,23 @@ func (builder *CaptureBuilder) AppendInstrumentCatalog() {
 func (builder *CaptureBuilder) AppendTicker(
 	symbol string, last, bid, ask, changePct float64,
 ) {
-	builder.AppendTickerAt(symbol, last, bid, ask, changePct, builder.timestamp())
+	builder.AppendTickerAtVolume(symbol, last, bid, ask, changePct, 1000, builder.timestamp())
 }
 
 func (builder *CaptureBuilder) AppendTickerAt(
 	symbol string, last, bid, ask, changePct float64, at time.Time,
+) {
+	builder.AppendTickerAtVolume(symbol, last, bid, ask, changePct, 1000, at)
+}
+
+func (builder *CaptureBuilder) AppendTickerVolume(
+	symbol string, last, bid, ask, changePct, volume float64,
+) {
+	builder.AppendTickerAtVolume(symbol, last, bid, ask, changePct, volume, builder.timestamp())
+}
+
+func (builder *CaptureBuilder) AppendTickerAtVolume(
+	symbol string, last, bid, ask, changePct, volume float64, at time.Time,
 ) {
 	builder.appendFrame(public.TickerChannel, "update", []market.TickerUpdate{{
 		Symbol:    symbol,
@@ -129,33 +151,108 @@ func (builder *CaptureBuilder) AppendTickerAt(
 		BidQty:    10,
 		AskQty:    10,
 		ChangePct: changePct,
-		Volume:    1000,
+		Volume:    volume,
 		Timestamp: at.UTC().Format(time.RFC3339Nano),
 	}})
+}
+
+func (builder *CaptureBuilder) AppendTickerBatch(rows []market.TickerUpdate) {
+	for rowIndex := range rows {
+		if rows[rowIndex].Timestamp != "" {
+			continue
+		}
+
+		rows[rowIndex].Timestamp = builder.timestampRFC3339()
+	}
+
+	builder.appendFrame(public.TickerChannel, "update", rows)
 }
 
 func (builder *CaptureBuilder) AppendBookSnapshot(
 	symbol string, bidPrice, bidQty, askPrice, askQty float64,
 ) {
+	builder.AppendBookSnapshotAt(
+		symbol, bidPrice, bidQty, askPrice, askQty, builder.timestamp(),
+	)
+}
+
+func (builder *CaptureBuilder) AppendBookSnapshotAt(
+	symbol string,
+	bidPrice float64,
+	bidQty float64,
+	askPrice float64,
+	askQty float64,
+	at time.Time,
+) {
+	builder.AppendBookSnapshotLevelsAt(
+		symbol,
+		[]market.BookLevel{{Price: bidPrice, Qty: bidQty}},
+		[]market.BookLevel{{Price: askPrice, Qty: askQty}},
+		at,
+	)
+}
+
+func (builder *CaptureBuilder) AppendBookSnapshotLevels(
+	symbol string,
+	bids []market.BookLevel,
+	asks []market.BookLevel,
+) {
+	builder.AppendBookSnapshotLevelsAt(symbol, bids, asks, builder.timestamp())
+}
+
+func (builder *CaptureBuilder) AppendBookSnapshotLevelsAt(
+	symbol string,
+	bids []market.BookLevel,
+	asks []market.BookLevel,
+	at time.Time,
+) {
 	book := market.Book{
 		Symbol:    symbol,
-		Bids:      []market.BookLevel{{Price: bidPrice, Qty: bidQty}},
-		Asks:      []market.BookLevel{{Price: askPrice, Qty: askQty}},
-		Timestamp: builder.timestampRFC3339(),
+		Bids:      bids,
+		Asks:      asks,
+		Timestamp: at.UTC().Format(time.RFC3339Nano),
 	}
 	book.SetEnvelopeType(market.BookSnapshot)
 
 	builder.appendFrame(public.BookChannel, market.BookSnapshot, []market.Book{book})
 }
 
+func (builder *CaptureBuilder) AppendTradeAt(
+	symbol string,
+	side string,
+	price float64,
+	qty float64,
+	at time.Time,
+) {
+	builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
+		Symbol:    symbol,
+		Side:      side,
+		Price:     price,
+		Qty:       qty,
+		OrdType:   "market",
+		TradeID:   int64(builder.tick * 1000),
+		Timestamp: at,
+	}})
+}
+
 func (builder *CaptureBuilder) AppendBuyTrades(symbol string, count int, startPrice, qty float64) {
+	builder.AppendBuyTradeRamp(symbol, count, startPrice, 0.01, qty)
+}
+
+func (builder *CaptureBuilder) AppendBuyTradeRamp(
+	symbol string,
+	count int,
+	startPrice float64,
+	priceStep float64,
+	qty float64,
+) {
 	trades := make([]market.TradeUpdate, 0, count)
 
 	for index := range count {
 		trades = append(trades, market.TradeUpdate{
 			Symbol:    symbol,
 			Side:      "buy",
-			Price:     startPrice + float64(index)*0.01,
+			Price:     startPrice + float64(index)*priceStep,
 			Qty:       qty,
 			OrdType:   "market",
 			TradeID:   int64(builder.tick*1000 + index),
@@ -176,6 +273,24 @@ func (builder *CaptureBuilder) AppendSellTrade(symbol string, price, qty float64
 		TradeID:   int64(builder.tick * 1000),
 		Timestamp: builder.timestamp(),
 	}})
+}
+
+func (builder *CaptureBuilder) AppendSellTrades(symbol string, count int, startPrice, qty float64) {
+	trades := make([]market.TradeUpdate, 0, count)
+
+	for index := range count {
+		trades = append(trades, market.TradeUpdate{
+			Symbol:    symbol,
+			Side:      "sell",
+			Price:     startPrice - float64(index)*0.01,
+			Qty:       qty,
+			OrdType:   "market",
+			TradeID:   int64(builder.tick*1000 + index),
+			Timestamp: builder.timestamp().Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+
+	builder.appendFrame(public.TradesChannel, "update", trades)
 }
 
 func (builder *CaptureBuilder) AppendBaselineMarket() {
@@ -301,7 +416,7 @@ func (builder *CaptureBuilder) AppendCausalCrossSection() {
 }
 
 func (builder *CaptureBuilder) AppendLeadLagStall() {
-	start := time.Now().UTC().Add(-90 * time.Minute)
+	start := builder.origin.Add(-90 * time.Minute)
 
 	for index := range 16 {
 		at := start.Add(time.Duration(index) * 5 * time.Minute)
@@ -337,50 +452,117 @@ func correlationPostReplayTradeBatches() [][]market.TradeUpdate {
 	return batches
 }
 
-func leadLagInefficientLagTickers() []market.TickerUpdate {
-	origin := time.Now().UTC().Add(-90 * time.Minute)
-	tickers := make([]market.TickerUpdate, 0, 28)
+func causalNoisePostReplayTickers() []market.TickerUpdate {
+	origin := causalNoisePostOrigin()
 
-	for index := range 14 {
+	return []market.TickerUpdate{{
+		Symbol:    testSymbolPrimary,
+		Last:      100,
+		Bid:       99.5,
+		Ask:       100.5,
+		ChangePct: 0,
+		Volume:    1000,
+		Timestamp: origin.UTC().Format(time.RFC3339Nano),
+	}}
+}
+
+func causalNoisePostReplayTrades() []market.TradeUpdate {
+	origin := causalNoisePostOrigin()
+	trades := make([]market.TradeUpdate, 0, 8)
+
+	for index := range 8 {
+		trades = append(trades, market.TradeUpdate{
+			Symbol:    testSymbolPrimary,
+			Side:      "buy",
+			Price:     100,
+			Qty:       2,
+			OrdType:   "market",
+			TradeID:   int64(90_000 + index),
+			Timestamp: origin.Add(time.Duration(index+1) * 600 * time.Millisecond),
+		})
+	}
+
+	return trades
+}
+
+func causalNoisePostOrigin() time.Time {
+	return time.Date(2026, 6, 3, 12, 20, 0, 0, time.UTC)
+}
+
+func leadLagInefficientLagTickers() []market.TickerUpdate {
+	origin := leadLagPostOrigin()
+	anchor := leadLagPatternPrices(18, 100, 0.45)
+	tickers := make([]market.TickerUpdate, 0, len(anchor)*2)
+	lagBars := 5
+
+	for index := range anchor {
 		at := origin.Add(time.Duration(index) * 5 * time.Minute)
+		followerIndex := index - lagBars
+		follower := anchor[0]
+
+		if followerIndex >= 0 {
+			follower = anchor[followerIndex]
+		}
+
 		tickers = append(tickers, market.TickerUpdate{
-			Symbol: testSymbolLeader, Last: 100, Bid: 99, Ask: 101,
+			Symbol: testSymbolLeader, Last: anchor[index], Bid: 99, Ask: 101,
 			Timestamp: at.UTC().Format(time.RFC3339Nano),
 		})
 		tickers = append(tickers, market.TickerUpdate{
-			Symbol: testSymbolPrimary, Last: 100 + float64(index)*0.4, Bid: 99, Ask: 101,
+			Symbol: testSymbolPrimary, Last: follower, Bid: 99, Ask: 101,
 			Timestamp: at.UTC().Format(time.RFC3339Nano),
 		})
 	}
+
+	finalAt := origin.Add(time.Duration(len(anchor)) * 5 * time.Minute)
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolLeader, Last: anchor[len(anchor)-1] + 8, Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolPrimary, Last: anchor[len(anchor)-lagBars], Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
 
 	return tickers
 }
 
 func leadLagSynchronizedDriftTickers() []market.TickerUpdate {
-	origin := time.Now().UTC().Add(-90 * time.Minute)
-	tickers := make([]market.TickerUpdate, 0, 28)
+	origin := leadLagPostOrigin()
+	anchor := leadLagPatternPrices(18, 100, 0.35)
+	tickers := make([]market.TickerUpdate, 0, len(anchor)*2)
 
-	for index := range 14 {
+	for index := range anchor {
 		at := origin.Add(time.Duration(index) * 5 * time.Minute)
-		move := float64(index) * 0.2
 		tickers = append(tickers, market.TickerUpdate{
-			Symbol: testSymbolLeader, Last: 100 + move, Bid: 99, Ask: 101,
+			Symbol: testSymbolLeader, Last: anchor[index], Bid: 99, Ask: 101,
 			Timestamp: at.UTC().Format(time.RFC3339Nano),
 		})
 		tickers = append(tickers, market.TickerUpdate{
-			Symbol: testSymbolPrimary, Last: 100 + move + 0.05, Bid: 99, Ask: 101,
+			Symbol: testSymbolPrimary, Last: anchor[index] + 0.02, Bid: 99, Ask: 101,
 			Timestamp: at.UTC().Format(time.RFC3339Nano),
 		})
 	}
+
+	finalAt := origin.Add(time.Duration(len(anchor)) * 5 * time.Minute)
+	finalPrice := anchor[len(anchor)-1] + 8
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolLeader, Last: finalPrice, Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolPrimary, Last: finalPrice + 0.02, Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
 
 	return tickers
 }
 
 func leadLagDecoupledMoveTickers() []market.TickerUpdate {
-	origin := time.Now().UTC().Add(-90 * time.Minute)
-	tickers := make([]market.TickerUpdate, 0, 28)
+	origin := leadLagPostOrigin()
+	tickers := make([]market.TickerUpdate, 0, 38)
 
-	for index := range 14 {
+	for index := range 18 {
 		at := origin.Add(time.Duration(index) * 5 * time.Minute)
 		tickers = append(tickers, market.TickerUpdate{
 			Symbol: testSymbolLeader, Last: 100 + float64(index)*0.3, Bid: 99, Ask: 101,
@@ -392,6 +574,16 @@ func leadLagDecoupledMoveTickers() []market.TickerUpdate {
 		})
 	}
 
+	finalAt := origin.Add(18 * 5 * time.Minute)
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolLeader, Last: 116, Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
+	tickers = append(tickers, market.TickerUpdate{
+		Symbol: testSymbolPrimary, Last: 93.5, Bid: 99, Ask: 101,
+		Timestamp: finalAt.UTC().Format(time.RFC3339Nano),
+	})
+
 	return tickers
 }
 
@@ -401,17 +593,14 @@ func correlationDecoupledTradeBatches() [][]market.TradeUpdate {
 		testSymbolSecondary: 50,
 		testSymbolLeader:    75,
 	}
+	primaryMoves := []float64{1.025, 0.992, 1.018, 0.985, 1.012, 1.006, 0.996, 1.021}
 	batches := make([][]market.TradeUpdate, 0, correlationWarmupBatches)
 
-	for range correlationWarmupBatches {
+	for batchIndex := range correlationWarmupBatches {
 		batch := make([]market.TradeUpdate, 0, len(prices))
 
 		for symbol, price := range prices {
 			side := "buy"
-
-			if symbol == testSymbolPrimary {
-				side = "sell"
-			}
 
 			batch = append(batch, market.TradeUpdate{
 				Symbol: symbol,
@@ -421,10 +610,43 @@ func correlationDecoupledTradeBatches() [][]market.TradeUpdate {
 			})
 
 			if symbol == testSymbolPrimary {
-				prices[symbol] = price * 0.98
+				prices[symbol] = price * primaryMoves[batchIndex%len(primaryMoves)]
 			} else {
 				prices[symbol] = price * 1.02
 			}
+		}
+
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
+func correlationNoiseTradeBatches() [][]market.TradeUpdate {
+	prices := map[string]float64{
+		testSymbolPrimary:   100,
+		testSymbolSecondary: 50,
+		testSymbolLeader:    75,
+	}
+	moves := map[string][]float64{
+		testSymbolPrimary:   {1.0001, 0.9999, 1.0001, 0.9999},
+		testSymbolSecondary: {1.0120, 0.9910, 1.0100, 0.9920},
+		testSymbolLeader:    {1.0110, 0.9900, 1.0090, 0.9910},
+	}
+	batches := make([][]market.TradeUpdate, 0, correlationWarmupBatches)
+
+	for batchIndex := range correlationWarmupBatches {
+		batch := make([]market.TradeUpdate, 0, len(prices))
+
+		for symbol, price := range prices {
+			batch = append(batch, market.TradeUpdate{
+				Symbol: symbol,
+				Side:   "buy",
+				Price:  price,
+				Qty:    0.01,
+			})
+			series := moves[symbol]
+			prices[symbol] = price * series[batchIndex%len(series)]
 		}
 
 		batches = append(batches, batch)
@@ -469,7 +691,7 @@ func correlationDivergentStressTradeBatches() [][]market.TradeUpdate {
 }
 
 func leadLagPostReplayTickers() []market.TickerUpdate {
-	origin := time.Now().UTC().Add(-75 * time.Minute)
+	origin := leadLagPostOrigin()
 	tickers := make([]market.TickerUpdate, 0, 28)
 
 	for index := range 14 {
@@ -485,6 +707,26 @@ func leadLagPostReplayTickers() []market.TickerUpdate {
 	}
 
 	return tickers
+}
+
+func leadLagPostOrigin() time.Time {
+	return time.Date(2026, 6, 3, 11, 50, 0, 0, time.UTC)
+}
+
+func leadLagPatternPrices(count int, start float64, scale float64) []float64 {
+	moves := []float64{1, -0.4, 1.3, -0.7, 0.9, -0.2, 1.1, -0.6}
+	prices := make([]float64, count)
+	price := start
+
+	for index := range count {
+		if index > 0 {
+			price += moves[index%len(moves)] * scale
+		}
+
+		prices[index] = price
+	}
+
+	return prices
 }
 
 func (builder *CaptureBuilder) AppendCorrelationHerd() {
@@ -515,11 +757,13 @@ func (builder *CaptureBuilder) AppendBlackSwanCrash() {
 	builder.AppendTicker(testSymbolSecondary, 80, 79, 81, -4)
 	builder.AppendTicker(testSymbolPrimary, 100, 99, 101, -0.5)
 	builder.AppendBookSnapshot(testSymbolPrimary, 99, 5, 101, 5)
+	builder.AppendBuyTrades(testSymbolPrimary, 24, 100, 1)
+	builder.Advance(20 * time.Minute)
 	builder.AppendTicker(testSymbolPrimary, 55, 50, 60, -12)
 	builder.AppendTicker(testSymbolLeader, 70, 69, 71, -25)
 	builder.AppendTicker(testSymbolSecondary, 40, 39, 41, -50)
 	builder.AppendBookSnapshot(testSymbolPrimary, 50, 1, 60, 1)
-	builder.AppendSellTrade(testSymbolPrimary, 52, 25)
+	builder.AppendSellTrades(testSymbolPrimary, 8, 52, 25)
 	builder.AppendTicker(testSymbolPrimary, 58, 54, 62, -11)
 	builder.AppendBookSnapshot(testSymbolPrimary, 54, 8, 62, 8)
 	builder.AppendSentimentSlumpCrossSection()

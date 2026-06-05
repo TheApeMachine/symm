@@ -3,16 +3,18 @@ package market
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/market/quote"
+	"github.com/theapemachine/symm/market/settings"
 )
 
 const instrumentSubscriberID = "market:instrument"
@@ -109,9 +111,25 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 func (instrument *Instrument) Tick() error {
 	incoming := instrument.subscribers["raw"].Incoming
 	publicBroadcast := instrument.broadcasts["kraken:public"]
-	bookDepth := viper.GetInt("market.book_depth_levels")
-	scanCap := viper.GetInt("market.max_scan_symbols")
-	pace := viper.GetDuration("market.subscribe_pace")
+	bookDepth, err := settings.RequiredBookDepthLevels()
+
+	if err != nil {
+		return err
+	}
+
+	currency, err := settings.RequiredQuoteCurrency()
+
+	if err != nil {
+		return err
+	}
+
+	pace, err := settings.RequiredDuration("market.subscribe_pace")
+
+	if err != nil {
+		return err
+	}
+
+	scanCap := settings.ScanSymbolCap()
 
 	for {
 		select {
@@ -126,29 +144,29 @@ func (instrument *Instrument) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := instrument.socketMessage(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-
-			if channel != public.InstrumentsChannel {
+			if sm.Channel != public.InstrumentsChannel {
 				continue
 			}
 
-			data, _ := envelope["data"].(json.RawMessage)
-
 			var update InstrumentUpdate
 
-			if err := sonic.Unmarshal(data, &update); err != nil {
-				continue
+			if err := sonic.Unmarshal(sm.Data, &update); err != nil {
+				return fmt.Errorf("instrument: decode snapshot: %w", err)
 			}
 
 			for _, pair := range update.Pairs {
 				if scanCap > 0 && len(instrument.Pairs) >= scanCap {
 					break
+				}
+
+				if !instrument.tradableQuotePair(pair, currency) {
+					continue
 				}
 
 				if slices.Contains(instrument.Pairs, pair.Symbol) {
@@ -176,7 +194,6 @@ func (instrument *Instrument) Tick() error {
 					},
 				}})
 
-
 				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
 					"method": "subscribe",
 					"params": map[string]any{
@@ -200,6 +217,60 @@ func (instrument *Instrument) Tick() error {
 			}
 		}
 	}
+}
+
+func (instrument *Instrument) socketMessage(value any) (*public.SocketMessage, bool) {
+	switch typed := value.(type) {
+	case *public.SocketMessage:
+		return typed, typed != nil
+	case map[string]any:
+		channel, _ := typed["channel"].(string)
+
+		if channel == "" {
+			return nil, false
+		}
+
+		data, ok := instrument.rawData(typed["data"])
+
+		if !ok {
+			return nil, false
+		}
+
+		return &public.SocketMessage{Channel: channel, Data: data}, true
+	default:
+		return nil, false
+	}
+}
+
+func (instrument *Instrument) rawData(value any) (json.RawMessage, bool) {
+	switch typed := value.(type) {
+	case json.RawMessage:
+		return typed, true
+	case []byte:
+		return json.RawMessage(typed), true
+	case string:
+		return json.RawMessage(typed), true
+	default:
+		return nil, false
+	}
+}
+
+func (instrument *Instrument) tradableQuotePair(pair InstrumentPair, currency string) bool {
+	if pair.Symbol == "" {
+		return false
+	}
+
+	if pair.Status != "online" {
+		return false
+	}
+
+	pairQuote := quote.NormalizeCurrency(pair.Quote)
+
+	if pairQuote != "" {
+		return pairQuote == currency
+	}
+
+	return quote.SymbolMatchesCurrency(pair.Symbol, currency)
 }
 
 func (instrument *Instrument) Close() error {

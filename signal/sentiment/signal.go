@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"sync"
@@ -85,17 +84,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TickerChannel:
 				tickers := signalpool.GetTickers(sm)
 

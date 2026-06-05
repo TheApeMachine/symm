@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/quote"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/log"
 	"github.com/theapemachine/symm/optimizer/reasoning"
@@ -21,14 +22,31 @@ func TuneMeasurements(
 	rows []perspectives.Measurement,
 	options types.TuneOptions,
 ) (types.SessionSummary, error) {
+	costs := replay.DefaultReplayCosts()
+	measurementCount := len(rows)
+	rows = fundableRows(rows, costs.WalletCurrency)
+	minRoundTrips := options.MinRoundTrips
+
+	if minRoundTrips <= 0 {
+		minRoundTrips = fundableSymbolCount(rows, costs.WalletCurrency)
+	}
+
+	if len(rows) != measurementCount {
+		log.TuneLog(
+			"filtered measurements to %d fundable %s rows from %d total",
+			len(rows),
+			costs.WalletCurrency,
+			measurementCount,
+		)
+	}
+
 	log.TuneLog("searching reasoning forests over %d rows", len(rows))
 
-	costs := replay.DefaultReplayCosts()
 	config := reasoning.SearchConfig{
 		BeamWidth:     options.BeamWidth,
 		MaxRounds:     options.MaxRounds,
 		MaxNodes:      options.MaxNodes,
-		MinRoundTrips: options.MinRoundTrips,
+		MinRoundTrips: minRoundTrips,
 	}
 
 	result := reasoning.Search(ctx, rows, costs, config)
@@ -59,21 +77,98 @@ func TuneMeasurements(
 		})
 	}
 
-	if options.OutputPath != "" && len(best.Forest) > 0 {
+	if options.OutputPath != "" && shouldWrite(best, minRoundTrips) {
 		if err := io.WriteThoughts(options.OutputPath, best.Forest); err != nil {
 			return types.SessionSummary{}, err
 		}
 	}
 
 	return types.SessionSummary{
-		MeasurementCount: len(rows),
-		Strategies:       strategies,
-		Nodes:            best.Nodes,
-		Trades:           best.Trades,
-		Evaluated:        result.Evaluated,
-		BestReturn:       best.Return,
-		BestScore:        best.Score,
+		MeasurementCount:     measurementCount,
+		FundableMeasurements: len(rows),
+		MinRoundTrips:        minRoundTrips,
+		Strategies:           strategies,
+		Nodes:                best.Nodes,
+		Trades:               best.Trades,
+		Evaluated:            result.Evaluated,
+		BestReturn:           best.Return,
+		BestScore:            best.Score,
 	}, nil
+}
+
+func shouldWrite(best reasoning.Candidate, minRoundTrips int) bool {
+	if len(best.Forest) == 0 {
+		return false
+	}
+
+	if best.Score <= 0 || best.Return <= 0 {
+		return false
+	}
+
+	if minRoundTrips > 0 && best.Trades < minRoundTrips {
+		log.TuneLog(
+			"not writing candidate: trades=%d min_round_trips=%d score=%.6f",
+			best.Trades,
+			minRoundTrips,
+			best.Score,
+		)
+
+		return false
+	}
+
+	return true
+}
+
+func fundableRows(
+	rows []perspectives.Measurement,
+	walletCurrency string,
+) []perspectives.Measurement {
+	currency := quote.NormalizeCurrency(walletCurrency)
+
+	if currency == "" {
+		return rows
+	}
+
+	filtered := make([]perspectives.Measurement, 0, len(rows))
+
+	for _, row := range rows {
+		if row.Symbol == "" {
+			filtered = append(filtered, row)
+
+			continue
+		}
+
+		if quote.SymbolMatchesCurrency(row.Symbol, currency) {
+			filtered = append(filtered, row)
+		}
+	}
+
+	return filtered
+}
+
+func fundableSymbolCount(
+	rows []perspectives.Measurement,
+	walletCurrency string,
+) int {
+	currency := quote.NormalizeCurrency(walletCurrency)
+
+	if currency == "" {
+		return 0
+	}
+
+	symbols := make(map[string]bool)
+
+	for _, row := range rows {
+		if row.Symbol == "" {
+			continue
+		}
+
+		if quote.SymbolMatchesCurrency(row.Symbol, currency) {
+			symbols[row.Symbol] = true
+		}
+	}
+
+	return len(symbols)
 }
 
 // forestDepth is the deepest Then-chain in the forest.

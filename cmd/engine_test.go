@@ -48,6 +48,15 @@ func TestNewEngine(t *testing.T) {
 
 			So(engine.Start(), ShouldNotBeNil)
 		})
+
+		Convey("It should treat engine context cancellation as clean shutdown", func() {
+			cancel()
+			stub := &stubSystem{tickErr: context.Canceled}
+			engine.systems = append(engine.systems, stub)
+
+			So(engine.Start(), ShouldBeNil)
+			So(stub.closed, ShouldBeTrue)
+		})
 	})
 }
 

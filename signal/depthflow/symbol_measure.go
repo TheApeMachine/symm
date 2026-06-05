@@ -37,11 +37,32 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 	imbalance, ok := state.weightedImbalanceLocked(bids, asks, mid)
 	level1, levelOK := state.level1ImbalanceLocked(bids, asks)
 
-	if !ok || imbalance == 0 || !levelOK {
+	if !ok || !levelOK {
 		return state.measureTradePressureLocked()
 	}
 
 	flatImbalance, flatOK := state.flatImbalanceLocked(bids, asks)
+
+	if imbalance == 0 {
+		category, evidence := depthflowReading("", imbalance, flatImbalance, flatOK, 0)
+		standout := perspectives.UnitMagnitudeMargin(0)
+		confidence, err := state.tracked.Observe(category, evidence, standout)
+
+		if err != nil {
+			return perspectives.Measurement{}, 0, err
+		}
+
+		return perspectives.Measurement{
+			Symbol:     state.symbol,
+			Source:     perspectives.SourceDepthFlow,
+			Category:   category,
+			Last:       state.last,
+			SpreadBPS:  state.spreadBPSLocked(),
+			Strength:   0,
+			Confidence: confidence,
+		}, standout, nil
+	}
+
 	spoofed := state.isSpoofSkewLocked(imbalance, level1)
 
 	if flatOK {

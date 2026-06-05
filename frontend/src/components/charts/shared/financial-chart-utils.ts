@@ -21,18 +21,18 @@ import {
 	parseColorToUIntArgb,
 	registerType,
 	SciChartSurface,
-	type TPaletteProviderDefinition,
 	Thickness,
+	type TPaletteProviderDefinition,
+	type TSciChart,
 	XyDataSeries,
 	ZoomExtentsModifier,
-	type TSciChart,
 } from "scichart";
 import { SciTraderDarkTheme } from "scichart-financial-tools";
 
 export const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 export const VISIBLE_CANDLE_COUNT = 300;
-const DEFAULT_BAR_STEP_MS = 60_000;
-const DEFAULT_PAD_MS = 60_000;
+const DEFAULT_BAR_STEP_SEC = 60;
+const DEFAULT_PAD_SEC = 60;
 
 export const candleChartXExtents = (
 	firstX: number,
@@ -45,8 +45,8 @@ export const candleChartXExtents = (
 			? (lastX - firstX) / (barCountInWindow - 1)
 			: priorBarX !== undefined
 				? lastX - priorBarX
-				: DEFAULT_BAR_STEP_MS;
-	const pad = Math.max(barStep * 2, DEFAULT_PAD_MS);
+				: DEFAULT_BAR_STEP_SEC;
+	const pad = Math.max(barStep * 2, DEFAULT_PAD_SEC);
 
 	return { min: firstX - pad, max: lastX + pad };
 };
@@ -57,12 +57,33 @@ export const shiftTrailingVisibleRange = (
 	lastX: number,
 	barStep: number,
 ): { min: number; max: number } => {
-	const followTolerance = Math.max(barStep * 2, DEFAULT_PAD_MS);
+	const followTolerance = Math.max(barStep * 2, DEFAULT_PAD_SEC);
 	const span = visibleMax - visibleMin;
 	const pad = followTolerance / 2;
 
 	return { min: lastX + pad - span, max: lastX + pad };
 };
+
+export const liveFollowToleranceSec = (barStep: number): number =>
+	Math.max(barStep * 2, DEFAULT_PAD_SEC);
+
+export const isViewportFollowingLiveEdge = (
+	currentRange: NumberRange,
+	priorLastX: number,
+	barStep: number,
+): boolean => {
+	const followTolerance = liveFollowToleranceSec(barStep);
+
+	return currentRange.max >= priorLastX - followTolerance;
+};
+
+export const visibleRangesMatch = (
+	left: NumberRange,
+	right: NumberRange,
+	epsilon = 1,
+): boolean =>
+	Math.abs(left.min - right.min) <= epsilon &&
+	Math.abs(left.max - right.max) <= epsilon;
 
 export const resolveFollowVisibleRange = (
 	ohlc: OhlcDataSeries,
@@ -79,9 +100,18 @@ export const resolveFollowVisibleRange = (
 	const lastIndex = barCount - 1;
 	const lastX = nativeX.get(lastIndex);
 	const barStep =
-		lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : DEFAULT_BAR_STEP_MS;
+		lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : DEFAULT_BAR_STEP_SEC;
 
 	if (mode === "live" && currentRange !== undefined) {
+		const priorLastX = lastIndex > 0 ? nativeX.get(lastIndex - 1) : lastX;
+
+		if (
+			lastIndex > 0 &&
+			!isViewportFollowingLiveEdge(currentRange, priorLastX, barStep)
+		) {
+			return null;
+		}
+
 		const shifted = shiftTrailingVisibleRange(
 			currentRange.min,
 			currentRange.max,

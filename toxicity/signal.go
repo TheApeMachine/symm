@@ -83,17 +83,13 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(map[string]any)
+	frame, ok := signalpool.SocketMessageFromValue(message.Value)
 
 	if !ok {
 		return nil
 	}
 
-	channel, _ := envelope["channel"].(string)
-	rawData, _ := envelope["data"].(json.RawMessage)
-	frame := &public.SocketMessage{Channel: channel, Data: rawData}
-
-	switch channel {
+	switch frame.Channel {
 	case public.TradesChannel:
 		trades := signalpool.GetTrades(frame)
 
@@ -104,10 +100,16 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		tickers := signalpool.GetTickers(frame)
 
 		for _, ticker := range tickers {
+			at, err := toxicityTickerTime(ticker)
+
+			if err != nil {
+				return err
+			}
+
 			tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
 			tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
 
-			if err := tox.publishMeasurement(ticker.Symbol); err != nil {
+			if err := tox.publishMeasurementAt(ticker.Symbol, at); err != nil {
 				return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
 			}
 		}
@@ -119,9 +121,13 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 		books := signalpool.GetBooks(frame)
 
 		for _, update := range books {
-			tox.observeBook(update)
+			at, err := tox.observeBook(update)
 
-			if err := tox.publishMeasurement(update.Symbol); err != nil {
+			if err != nil {
+				return err
+			}
+
+			if err := tox.publishMeasurementAt(update.Symbol, at); err != nil {
 				return fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err)
 			}
 		}
@@ -135,33 +141,94 @@ func (tox *Toxicity) handleLevel3(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	envelope, ok := message.Value.(*public.SocketMessage)
+	envelope, ok := signalpool.SocketMessageFromValue(message.Value)
 
 	if !ok {
 		return nil
 	}
 
-	switch envelope.Type {
-	case "orders":
-		orders := signalpool.GetOrders(envelope)
-		for _, order := range orders {
-			fmt.Println(order)
-		}
-	}
-
-	ch := envelope.Channel
-	if ch != public.Level3Channel {
+	if envelope.Channel != public.Level3Channel {
 		return nil
 	}
 
 	tox.l3Active = true
 
-	orders := signalpool.GetOrders(envelope)
-
-	for _, order := range orders {
-		fmt.Println(order)
-		//tox.observeLevel3(&order)
+	if len(envelope.Data) == 0 {
+		return nil
 	}
+
+	var updates []level3Update
+
+	if err := json.Unmarshal(envelope.Data, &updates); err != nil {
+		return fmt.Errorf("toxicity: level3 decode: %w", err)
+	}
+
+	now := time.Now()
+
+	for _, update := range updates {
+		if err := tox.observeLevel3Update(update, now); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type level3Update struct {
+	Symbol string        `json:"symbol"`
+	Bids   []level3Order `json:"bids"`
+	Asks   []level3Order `json:"asks"`
+}
+
+type level3Order struct {
+	Event      string    `json:"event"`
+	OrderID    string    `json:"order_id"`
+	LimitPrice float64   `json:"limit_price"`
+	OrderQty   float64   `json:"order_qty"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+func (tox *Toxicity) observeLevel3Update(update level3Update, now time.Time) error {
+	if update.Symbol == "" {
+		return fmt.Errorf("toxicity: level3 symbol is required")
+	}
+
+	for _, order := range update.Bids {
+		if err := tox.observeLevel3Order(update.Symbol, SideBid, order, now); err != nil {
+			return err
+		}
+	}
+
+	for _, order := range update.Asks {
+		if err := tox.observeLevel3Order(update.Symbol, SideAsk, order, now); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (tox *Toxicity) observeLevel3Order(
+	symbol string,
+	side byte,
+	order level3Order,
+	now time.Time,
+) error {
+	if order.Timestamp.IsZero() {
+		return fmt.Errorf("toxicity: level3 %s timestamp is required", symbol)
+	}
+
+	tox.tracker.ApplyOrder(
+		symbol,
+		market.Pair{},
+		order.Event,
+		order.OrderID,
+		side,
+		order.LimitPrice,
+		order.OrderQty,
+		order.Timestamp,
+		now,
+	)
 
 	return nil
 }
@@ -170,8 +237,12 @@ func (tox *Toxicity) observeTrade(trade market.TradeUpdate) {
 	tox.tracker.ObserveTrade(trade.Symbol, market.Pair{}, trade.Price, trade.Qty, trade.Timestamp)
 }
 
-func (tox *Toxicity) observeBook(update market.Book) {
-	now := time.Now()
+func (tox *Toxicity) observeBook(update market.Book) (time.Time, error) {
+	now, err := time.Parse(time.RFC3339Nano, update.Timestamp)
+
+	if err != nil {
+		return time.Time{}, fmt.Errorf("toxicity: book timestamp %s: %w", update.Symbol, err)
+	}
 
 	for _, level := range update.Bids {
 		tox.tracker.ApplyBookLevel(update.Symbol, market.Pair{}, SideBid, level.Price, level.Qty, now)
@@ -180,11 +251,16 @@ func (tox *Toxicity) observeBook(update market.Book) {
 	for _, level := range update.Asks {
 		tox.tracker.ApplyBookLevel(update.Symbol, market.Pair{}, SideAsk, level.Price, level.Qty, now)
 	}
+
+	return now, nil
 }
 
 func (tox *Toxicity) publishMeasurement(symbol string) error {
-	now := time.Now()
-	measurement, err := tox.tracker.Measure(symbol, now)
+	return tox.publishMeasurementAt(symbol, time.Now())
+}
+
+func (tox *Toxicity) publishMeasurementAt(symbol string, at time.Time) error {
+	measurement, err := tox.tracker.Measure(symbol, at)
 
 	if err != nil {
 		return err
@@ -212,4 +288,18 @@ func midOf(row market.TickerUpdate) float64 {
 	}
 
 	return row.Last
+}
+
+func toxicityTickerTime(row market.TickerUpdate) (time.Time, error) {
+	if row.Timestamp == "" {
+		return time.Time{}, fmt.Errorf("toxicity: ticker timestamp is required for %s", row.Symbol)
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
+		if at, err := time.Parse(layout, row.Timestamp); err == nil {
+			return at, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("toxicity: ticker timestamp %s is invalid for %s", row.Timestamp, row.Symbol)
 }

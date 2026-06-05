@@ -1,9 +1,14 @@
 package trader
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -11,9 +16,9 @@ import (
 
 func newTestCrypto() *Crypto {
 	return &Crypto{
-		streams:   focus.NewSet(),
-		inventory: map[string]float64{},
-		avgEntry:  map[string]float64{},
+		streams:      focus.NewSet(),
+		inventory:    map[string]float64{},
+		avgEntry:     map[string]float64{},
 		pending:      map[string]perspectives.Action{},
 		lastDecision: map[string]string{},
 	}
@@ -165,6 +170,39 @@ func TestSubmitGate(t *testing.T) {
 
 			_, stillPending := crypto.pending["BTC/EUR"]
 			So(stillPending, ShouldBeFalse)
+		})
+	})
+}
+
+func TestPublishDecisionAudit(t *testing.T) {
+	Convey("Given a trader without a UI subscriber", t, func() {
+		path := filepath.Join(t.TempDir(), "audit.jsonl")
+		viper.Set("trading.audit.file", path)
+		defer viper.Set("trading.audit.file", "")
+
+		writer, err := audit.OpenWriter()
+		So(err, ShouldBeNil)
+
+		crypto := newTestCrypto()
+		crypto.audit = writer
+		action := perspectives.Action{
+			Type:   perspectives.ActionLimit,
+			Symbol: "BTC/EUR",
+			Side:   trading.Buy,
+			Price:  100,
+		}
+
+		crypto.publishDecision(action, "rejected", "not holding")
+		crypto.publishDecision(action, "rejected", "not holding")
+		So(writer.Close(), ShouldBeNil)
+
+		Convey("It should write one deduped trade decision audit row", func() {
+			raw, readErr := os.ReadFile(path)
+
+			So(readErr, ShouldBeNil)
+			So(strings.Count(string(raw), "\n"), ShouldEqual, 1)
+			So(string(raw), ShouldContainSubstring, `"audit_event":"trade_decision"`)
+			So(string(raw), ShouldContainSubstring, `"block_reason":"not holding"`)
 		})
 	})
 }

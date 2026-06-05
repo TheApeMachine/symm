@@ -60,12 +60,13 @@ func leadlagReading(
 
 	if corr < leadlagMinimumLagCorrelation {
 		margin := leadlagMinimumLagCorrelation - corr
+		span := 1 + leadlagMinimumLagCorrelation
 
-		if margin <= 0 {
+		if margin <= 0 || span <= 0 {
 			return perspectives.CategoryDecoupledMove, 0, corrStrength
 		}
 
-		return perspectives.CategoryDecoupledMove, margin / leadlagMinimumLagCorrelation, corrStrength
+		return perspectives.CategoryDecoupledMove, margin / span, corrStrength
 	}
 
 	margin := corr - leadlagMinimumLagCorrelation

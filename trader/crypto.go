@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -34,17 +35,18 @@ type armRecord struct {
 }
 
 type Crypto struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q
-	ui            *qpool.BroadcastGroup
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
-	desk          *broker.Desk
-	streams       *focus.Set
-	pendingOrders sync.Map
-	auditSeq      atomic.Int64
-	balanceOnce   sync.Once
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *qpool.Q
+	ui             *qpool.BroadcastGroup
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	desk           *broker.Desk
+	streams        *focus.Set
+	audit          *audit.Writer
+	pendingOrders  sync.Map
+	auditSeq       atomic.Int64
+	balanceOnce    sync.Once
 	inventory      map[string]float64
 	avgEntry       map[string]float64
 	armed          map[string]armRecord
@@ -66,15 +68,24 @@ func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
 		return nil
 	}
 
+	auditWriter, err := audit.OpenWriter()
+
+	if err != nil {
+		cancel()
+		errnie.Error(fmt.Errorf("trader/crypto: audit: %w", err), "trader/crypto")
+		return nil
+	}
+
 	crypto := &Crypto{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		ui:          pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		streams:     streams,
-		desk:        desk,
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		ui:           pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
+		broadcasts:   make(map[string]*qpool.BroadcastGroup),
+		subscribers:  make(map[string]*qpool.Subscriber),
+		streams:      streams,
+		desk:         desk,
+		audit:        auditWriter,
 		inventory:    make(map[string]float64),
 		avgEntry:     make(map[string]float64),
 		armed:        make(map[string]armRecord),
@@ -233,10 +244,6 @@ the panel; only a change of verdict or reason re-emits.
 func (crypto *Crypto) publishDecision(
 	action perspectives.Action, verdict, reason string,
 ) {
-	if crypto.ui == nil {
-		return
-	}
-
 	key := verdict + "|" + reason
 
 	if crypto.lastDecision[action.Symbol] == key {
@@ -244,6 +251,14 @@ func (crypto *Crypto) publishDecision(
 	}
 
 	crypto.lastDecision[action.Symbol] = key
+
+	if err := crypto.writeDecisionAudit(action, verdict, reason); err != nil {
+		errnie.Error(err)
+	}
+
+	if crypto.ui == nil {
+		return
+	}
 
 	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"event":   "decision",
@@ -253,6 +268,24 @@ func (crypto *Crypto) publishDecision(
 		"verdict": verdict,
 		"reason":  reason,
 	}})
+}
+
+func (crypto *Crypto) writeDecisionAudit(
+	action perspectives.Action,
+	verdict string,
+	reason string,
+) error {
+	return crypto.audit.Write(map[string]any{
+		"audit_event":  "trade_decision",
+		"symbol":       action.Symbol,
+		"type":         action.Type.String(),
+		"side":         string(action.Side),
+		"verdict":      verdict,
+		"block_reason": reason,
+		"price":        action.Price,
+		"quantity":     action.Quantity,
+		"offset":       action.Offset,
+	})
 }
 
 // cleanReason strips the internal prefixes and trailing "for SYMBOL" suffix from
@@ -447,7 +480,16 @@ func (crypto *Crypto) publishPositions() {
 }
 
 func (crypto *Crypto) Close() error {
-	crypto.cancel()
+	if crypto.cancel != nil {
+		crypto.cancel()
+	}
 
-	return nil
+	if crypto.audit == nil {
+		return nil
+	}
+
+	closeErr := crypto.audit.Close()
+	crypto.audit = nil
+
+	return closeErr
 }

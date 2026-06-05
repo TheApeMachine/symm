@@ -60,6 +60,44 @@ func TestMeasureFollower(t *testing.T) {
 				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
 			})
 		})
+
+		Convey("When a warmed anchor moves independently from the follower", func() {
+			signal.anchorBaseline = *newMoveBaseline()
+			start := time.Date(2026, 6, 3, 10, 30, 0, 0, time.UTC)
+
+			for index := range minLagSamples {
+				at := start.Add(time.Duration(index) * barInterval)
+				anchor.observeTicker(100, at)
+				follower.observeTicker(100.01, at)
+			}
+
+			for range anchorMoveMinObs {
+				signal.anchorMoveStatus(anchor)
+			}
+
+			origin := start.Add(time.Duration(minLagSamples) * barInterval)
+
+			for index := range 18 {
+				at := origin.Add(time.Duration(index) * barInterval)
+				anchor.observeTicker(100+float64(index)*0.3, at)
+				follower.observeTicker(100-float64(index)*0.35, at)
+				signal.anchorMoveStatus(anchor)
+			}
+
+			finalAt := origin.Add(18 * barInterval)
+			anchor.observeTicker(116, finalAt)
+			follower.observeTicker(93.5, finalAt)
+			move := signal.anchorMoveStatus(anchor)
+			measurement, _, err := signal.measureFollower(anchor, follower)
+
+			Convey("It should clear the anchor move gate and classify decoupling", func() {
+				So(err, ShouldBeNil)
+				So(move.ready, ShouldBeTrue)
+				So(move.moved, ShouldBeTrue)
+				So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
+				So(measurement.Category, ShouldEqual, perspectives.CategoryDecoupledMove)
+			})
+		})
 	})
 }
 

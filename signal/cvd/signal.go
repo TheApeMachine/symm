@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sync"
 	"time"
@@ -54,10 +53,16 @@ type cvdState struct {
 	gross     *adaptive.Window // absolute volume
 	count     *adaptive.Window // trade count
 	convBase  *adaptive.EMA    // self-scaling baseline for conviction
+	volBase   *adaptive.EMA    // self-scaling baseline for executed volume
 	actBase   *adaptive.EMA    // self-scaling baseline for activity
 	driftBase *adaptive.EMA    // self-scaling baseline for drift
 	sigma     *adaptive.SigmaClamp
 	fusedHist ring.FloatRing
+	convHist  ring.FloatRing
+	actHist   ring.FloatRing
+	volHist   ring.FloatRing
+	cntHist   ring.FloatRing
+	driftHist ring.FloatRing
 	last      float64
 }
 
@@ -109,10 +114,16 @@ func newCVDState() *cvdState {
 		gross:     adaptive.NewWindow(cvdWindow),
 		count:     adaptive.NewWindow(cvdWindow),
 		convBase:  adaptive.NewEMA(0),
+		volBase:   adaptive.NewEMA(0),
 		actBase:   adaptive.NewEMA(0),
 		driftBase: adaptive.NewEMA(0),
 		sigma:     adaptive.NewSigmaClamp(3, 8, 0.0625),
 		fusedHist: ring.NewFloatRing(cvdFusedHistorySize),
+		convHist:  ring.NewFloatRing(cvdFusedHistorySize),
+		actHist:   ring.NewFloatRing(cvdFusedHistorySize),
+		volHist:   ring.NewFloatRing(cvdFusedHistorySize),
+		cntHist:   ring.NewFloatRing(cvdFusedHistorySize),
+		driftHist: ring.NewFloatRing(cvdFusedHistorySize),
 	}
 }
 
@@ -179,6 +190,80 @@ func (state *cvdState) measureFused(fused float64) (perspectives.CategoryType, f
 	}
 }
 
+func (state *cvdState) measureComponents(
+	conviction float64,
+	activity float64,
+	gross float64,
+	count float64,
+	drift float64,
+	fused float64,
+) (perspectives.CategoryType, float64, float64) {
+	clamped, err := state.sigma.Next(fused)
+
+	if err != nil {
+		clamped = fused
+	}
+
+	state.fusedHist.Push(clamped)
+	state.convHist.Push(conviction)
+	state.actHist.Push(activity)
+	state.volHist.Push(gross)
+	state.cntHist.Push(count)
+	state.driftHist.Push(drift)
+
+	if len(state.fusedHist.Ordered()) < minCVDFusedSamples {
+		return perspectives.CategoryTypeNone, 0, perspectives.UnitMagnitudeMargin(fused)
+	}
+
+	activityFloor := percentile(state.actHist, 0.25)
+	volumeFloor := percentile(state.volHist, 0.25)
+	countFloor := percentile(state.cntHist, 0.25)
+	convictionFloor := percentile(state.convHist, 0.25)
+	driftMid := percentile(state.driftHist, 0.50)
+	fusedFloor := percentile(state.fusedHist, 0.25)
+	standout := perspectives.UnitMagnitudeMargin(fused)
+
+	if activity < activityFloor && gross < volumeFloor && count < countFloor && clamped < fusedFloor {
+		return perspectives.CategoryVolumeStarvation,
+			math.Min(
+				lowerTailConfidence(activityFloor, activity),
+				math.Min(
+					lowerTailConfidence(volumeFloor, gross),
+					lowerTailConfidence(countFloor, count),
+				),
+			),
+			standout
+	}
+
+	if conviction < convictionFloor {
+		return perspectives.CategoryStochasticBalance,
+			lowerTailConfidence(convictionFloor, conviction),
+			standout
+	}
+
+	if drift <= driftMid {
+		return perspectives.CategoryHiddenAbsorption,
+			lowerTailConfidence(driftMid, drift),
+			standout
+	}
+
+	return perspectives.CategoryAggressiveDrive,
+		upperTailConfidence(driftMid, drift),
+		standout
+}
+
+func percentile(history ring.FloatRing, quantile float64) float64 {
+	return numeric.PercentileSorted(numeric.CopySorted(history.Ordered()), quantile)
+}
+
+func lowerTailConfidence(boundary float64, value float64) float64 {
+	return perspectives.UnitCompetitionMargin(boundary-value, math.Abs(boundary))
+}
+
+func upperTailConfidence(boundary float64, value float64) float64 {
+	return perspectives.UnitCompetitionMargin(value-boundary, math.Abs(boundary))
+}
+
 // scale reads a value relative to its own running norm — the dimensionless,
 // constant-free pivot (1.0 means "exactly normal").
 func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
@@ -202,17 +287,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
@@ -257,11 +338,15 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	}
 
 	conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
-	activity := state.scale(state.count.Sum(), state.actBase)
+	tempo := state.scale(state.count.Sum(), state.actBase)
+	volume := state.scale(gross, state.volBase)
+	activity := math.Sqrt(tempo * volume)
 	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 
 	fused := activity * conviction * (1 + drift)
-	category, clarity, standout := state.measureFused(fused)
+	category, clarity, standout := state.measureComponents(
+		conviction, activity, gross, state.count.Sum(), drift, fused,
+	)
 
 	if category == perspectives.CategoryTypeNone {
 		return nil

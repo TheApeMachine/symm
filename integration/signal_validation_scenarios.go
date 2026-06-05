@@ -78,6 +78,17 @@ func signalValidationSettleDelay(source perspectives.SourceType) time.Duration {
 	}
 }
 
+func causalNoiseScenario(probe SignalCategoryProbe) Scenario {
+	scenario := defaultSignalValidationScenario(probe)
+	scenario.PostReplayTickers = causalNoisePostReplayTickers()
+	scenario.PostReplayTrades = causalNoisePostReplayTrades()
+	scenario.PostReplayPace = 150 * time.Millisecond
+	scenario.RunTimeout = 8 * time.Second
+	scenario.SettleDelay = 2 * time.Second
+
+	return scenario
+}
+
 func leadlagAnchorStallScenario(probe SignalCategoryProbe) Scenario {
 	scenario := defaultSignalValidationScenario(probe)
 	scenario.PostReplayTickers = leadLagPostReplayTickers()
@@ -143,7 +154,10 @@ func correlationDecoupledScenario(probe SignalCategoryProbe) Scenario {
 
 func correlationNoiseScenario(probe SignalCategoryProbe) Scenario {
 	scenario := defaultSignalValidationScenario(probe)
-	scenario.SettleDelay = 1200 * time.Millisecond
+	scenario.PostReplayTradeBatches = correlationNoiseTradeBatches()
+	scenario.PostReplayPace = 250 * time.Millisecond
+	scenario.RunTimeout = 15 * time.Second
+	scenario.SettleDelay = 2 * time.Second
 
 	return scenario
 }

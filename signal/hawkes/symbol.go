@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
@@ -25,6 +26,7 @@ type HawkesSymbol struct {
 	lastFitTime     time.Time
 	fitCooldown     time.Duration
 	minFitEvents    int
+	rawBase         *adaptive.EMA
 	tracked         *perspectives.Category
 }
 
@@ -46,6 +48,7 @@ func NewHawkesSymbol() *HawkesSymbol {
 	return &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  hawkesFitCooldown(),
+		rawBase:      adaptive.NewEMA(0),
 		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
@@ -107,7 +110,17 @@ func (sym *HawkesSymbol) Measure(
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
 	if !ok || !context.EnoughEvents(stream) {
-		return perspectives.Measurement{}, 0, nil
+		if !sym.hasFit {
+			return perspectives.Measurement{}, 0, nil
+		}
+
+		stream = ArrivalStreamFromTicks(ticks, time.Time{}, now)
+
+		if len(stream.Marked()) == 0 {
+			return perspectives.Measurement{}, 0, nil
+		}
+
+		return sym.measureFit(sym.fit.WithIntensitiesAt(stream, now))
 	}
 
 	fit, ok := sym.fitForEvents(stream, now)
@@ -116,6 +129,10 @@ func (sym *HawkesSymbol) Measure(
 		return perspectives.Measurement{}, 0, nil
 	}
 
+	return sym.measureFit(fit)
+}
+
+func (sym *HawkesSymbol) measureFit(fit BivariateFit) (perspectives.Measurement, float64, error) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
 
@@ -138,6 +155,29 @@ func (sym *HawkesSymbol) Measure(
 	// numbers: a weak excitation can still land cleanly in a category, and a violent
 	// one can sit right on a boundary.
 	category, evidence := hawkesReading(fit, asymmetry, sellSide)
+	rawNorm := sym.rawBase.Value()
+	_, _ = sym.rawBase.Next(0, raw)
+
+	if rawNorm > 0 {
+		saturationEvidence := perspectives.UnitCompetitionMargin(raw-rawNorm, rawNorm) *
+			(1 - asymmetry)
+
+		if saturationEvidence > evidence {
+			category = perspectives.CategorySaturation
+			evidence = saturationEvidence
+		}
+	}
+
+	if sym.tracked.Type == perspectives.CategoryFrenzy ||
+		sym.tracked.Type == perspectives.CategorySaturation {
+		exhaustionEvidence := perspectives.UnitCompetitionMargin(rawNorm-raw, rawNorm)
+
+		if exhaustionEvidence > 0 {
+			category = perspectives.CategoryExhaustion
+			evidence = exhaustionEvidence
+		}
+	}
+
 	clarity := evidence
 	standout := perspectives.UnitMagnitudeMargin(raw)
 

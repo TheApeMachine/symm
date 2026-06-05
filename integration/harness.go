@@ -1,7 +1,10 @@
 package integration
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,6 +46,7 @@ type Harness struct {
 	engine     *cmd.Engine
 	replay     *paper.WebSocket
 	relay      *RawRelay
+	capture    io.Reader
 	tape       *Tape
 	streams    *focus.Set
 	measureBus *qpool.BroadcastGroup
@@ -54,16 +58,6 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 
 	pool := qpool.NewQ(ctx, 2, 8, qpool.NewConfig())
 
-	replaySocket := paper.NewWebSocket(ctx, pool)
-	relay := NewRawRelay(ctx, pool)
-
-	if relay == nil {
-		cancel()
-		pool.Close()
-
-		return nil, fmt.Errorf("integration harness: raw relay")
-	}
-
 	engine, err := cmd.NewEngine(ctx, pool)
 
 	if err != nil {
@@ -73,26 +67,39 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		return nil, fmt.Errorf("integration harness: engine: %w", err)
 	}
 
+	systemCtx := engine.Context()
+	toxicity.ResetDefault()
+
+	replaySocket := paper.NewWebSocket(systemCtx, pool)
+	relay := NewRawRelay(systemCtx, pool)
+
+	if relay == nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: raw relay")
+	}
+
 	streams := focus.NewSet()
-	story := market.NewStory(ctx, pool, streams)
-	crypto := trader.NewCrypto(ctx, pool, streams)
+	story := market.NewStory(systemCtx, pool, streams)
+	crypto := trader.NewCrypto(systemCtx, pool, streams)
 
 	if err := engine.AddSystems(
 		relay,
 		replaySocket,
-		krakenmarket.NewInstrument(ctx, pool),
-		causal.NewSignal(ctx, pool),
-		correlation.NewSignal(ctx, pool),
-		cvd.NewSignal(ctx, pool),
-		depthflow.NewSignal(ctx, pool),
-		exhaust.NewSignal(ctx, pool),
-		fluid.NewSignal(ctx, pool),
-		hawkes.NewSignal(ctx, pool),
-		leadlag.NewSignal(ctx, pool),
-		liquidity.NewSignal(ctx, pool),
-		pumpdump.NewSignal(ctx, pool),
-		sentiment.NewSignal(ctx, pool),
-		toxicity.NewToxicity(ctx, pool),
+		krakenmarket.NewInstrument(systemCtx, pool),
+		causal.NewSignal(systemCtx, pool),
+		correlation.NewSignal(systemCtx, pool),
+		cvd.NewSignal(systemCtx, pool),
+		depthflow.NewSignal(systemCtx, pool),
+		exhaust.NewSignal(systemCtx, pool),
+		fluid.NewSignal(systemCtx, pool),
+		hawkes.NewSignal(systemCtx, pool),
+		leadlag.NewSignal(systemCtx, pool),
+		liquidity.NewSignal(systemCtx, pool),
+		pumpdump.NewSignal(systemCtx, pool),
+		sentiment.NewSignal(systemCtx, pool),
+		toxicity.NewToxicity(systemCtx, pool),
 		story,
 		crypto,
 	); err != nil {
@@ -112,6 +119,7 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		engine:     engine,
 		replay:     replaySocket,
 		relay:      relay,
+		capture:    capture,
 		tape:       tape,
 		streams:    streams,
 		measureBus: pool.CreateBroadcastGroup("measurements", 10*time.Millisecond),
@@ -155,7 +163,7 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	replayDone := make(chan error, 1)
 
 	go func() {
-		replayDone <- harness.replay.Tick()
+		replayDone <- harness.playCapture()
 	}()
 
 	runTimeout := scenarioRunTimeout
@@ -261,8 +269,28 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	}
 
 	harness.sleep(settleDelay)
+	closeErr := harness.engine.Close()
 	harness.cancel()
-	<-engineDone
+
+	select {
+	case <-engineDone:
+	case <-time.After(2 * time.Second):
+		report.Checks = append(report.Checks, CheckResult{
+			ID:     "engine.shutdown",
+			Name:   "Engine stops after scenario cancel",
+			Pass:   false,
+			Detail: "timed out waiting for engine shutdown",
+		})
+	}
+
+	if closeErr != nil {
+		report.Checks = append(report.Checks, CheckResult{
+			ID:     "engine.close",
+			Name:   "Engine close completed without non-context errors",
+			Pass:   false,
+			Detail: closeErr.Error(),
+		})
+	}
 
 	snapshot := harness.tape.Snapshot(harness.auditPath)
 
@@ -288,6 +316,97 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	report.Elapsed = time.Since(started)
 
 	return report
+}
+
+type captureFrame struct {
+	Channel string
+	Type    string
+	Data    json.RawMessage
+}
+
+func (harness *Harness) playCapture() error {
+	reader := bufio.NewReader(harness.capture)
+
+	for {
+		line, readErr := reader.ReadBytes('\n')
+
+		if len(line) > 0 {
+			frame, err := decodeCaptureFrame(line)
+
+			if err != nil {
+				return err
+			}
+
+			group := harness.pool.CreateBroadcastGroup(frame.Channel, 10*time.Millisecond)
+			group.Send(&qpool.QValue[any]{
+				Type: frame.Channel,
+				Value: map[string]any{
+					"channel": frame.Channel,
+					"type":    frame.Type,
+					"data":    frame.Data,
+				},
+			})
+			harness.sleep(2 * time.Millisecond)
+		}
+
+		if readErr == nil {
+			continue
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+
+		return fmt.Errorf("integration capture: read: %w", readErr)
+	}
+
+	return nil
+}
+
+func decodeCaptureFrame(line []byte) (captureFrame, error) {
+	raw := make(map[string]json.RawMessage)
+
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return captureFrame{}, fmt.Errorf("integration capture: decode frame: %w", err)
+	}
+
+	frame := captureFrame{}
+
+	if err := json.Unmarshal(raw["channel"], &frame.Channel); err != nil {
+		return captureFrame{}, fmt.Errorf("integration capture: channel: %w", err)
+	}
+
+	if err := json.Unmarshal(raw["type"], &frame.Type); err != nil {
+		return captureFrame{}, fmt.Errorf("integration capture: type: %w", err)
+	}
+
+	data, err := decodeCaptureData(raw["data"])
+
+	if err != nil {
+		return captureFrame{}, err
+	}
+
+	frame.Data = data
+
+	return frame, nil
+}
+
+func decodeCaptureData(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("integration capture: data is required")
+	}
+
+	if raw[0] != '"' {
+		return append(json.RawMessage(nil), raw...), nil
+	}
+
+	var decoded []byte
+
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, fmt.Errorf("integration capture: data bytes: %w", err)
+	}
+
+	return json.RawMessage(decoded), nil
 }
 
 func (harness *Harness) publishDirectMeasurements(rows []perspectives.Measurement) {

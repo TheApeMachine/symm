@@ -50,7 +50,12 @@ func (state *DepthSymbol) weightedImbalanceLocked(
 		return 0, false
 	}
 
-	lambda := state.decayLambda
+	spread := asks[0].Price - bids[0].Price
+
+	if spread <= 0 {
+		return 0, false
+	}
+
 	weightedBid := 0.0
 	weightedAsk := 0.0
 
@@ -59,7 +64,7 @@ func (state *DepthSymbol) weightedImbalanceLocked(
 			continue
 		}
 
-		weight := math.Exp(-lambda * math.Abs(level.Price-mid) / mid)
+		weight := math.Exp(-math.Abs(level.Price-mid) / spread)
 		weightedBid += level.Qty * weight
 	}
 
@@ -68,7 +73,7 @@ func (state *DepthSymbol) weightedImbalanceLocked(
 			continue
 		}
 
-		weight := math.Exp(-lambda * math.Abs(level.Price-mid) / mid)
+		weight := math.Exp(-math.Abs(level.Price-mid) / spread)
 		weightedAsk += level.Qty * weight
 	}
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/bits"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -111,6 +110,7 @@ O(symbols) per batch, not per trade.
 */
 func (signal *Signal) process(latest map[string]float64) error {
 	active := signal.activeScratch[:0]
+	filled := make([]live, 0, len(latest))
 	meanEnergy := 0.0
 
 	// Slow market-energy from prior batches; 0 on cold start.
@@ -139,27 +139,33 @@ func (signal *Signal) process(latest map[string]float64) error {
 			return fmt.Errorf("correlation: energy %s: %w", symbol, err)
 		}
 
-		if state.filled < gridBars || energy <= base*energyFloor {
+		if state.filled < gridBars {
 			continue
 		}
 
-		active = append(active, live{
+		coin := live{
 			symbol: symbol,
 			price:  price,
 			state:  state,
 			sig:    signal.fingerprint(state),
-		})
-
+		}
+		filled = append(filled, coin)
 		meanEnergy += energy
+
+		if energy <= base*energyFloor {
+			continue
+		}
+
+		active = append(active, coin)
 	}
 
 	signal.activeScratch = active
 
-	if len(active) == 0 {
+	if len(filled) == 0 {
 		return nil
 	}
 
-	meanEnergy /= float64(len(active))
+	meanEnergy /= float64(len(filled))
 
 	baseline, err := signal.marketEnergy.Next(0, meanEnergy)
 
@@ -171,7 +177,13 @@ func (signal *Signal) process(latest map[string]float64) error {
 		return fmt.Errorf("correlation: non-positive market energy baseline")
 	}
 
-	return signal.emitActive(active, signal.marketMode(active), baseline)
+	modeSource := active
+
+	if len(modeSource) == 0 {
+		modeSource = filled
+	}
+
+	return signal.emitActive(filled, signal.marketMode(modeSource), baseline)
 }
 
 /*
@@ -240,10 +252,17 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}
 
-			errnie.Info("signal/correlation:measurement")
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
 			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{Value: map[string]any{"chart": "gauge", "source": measurement.Source.String(), "confidence": measurement.Confidence, "snr": measurement.SNR}})
+				ui.Send(&qpool.QValue[any]{
+					Value: map[string]any{
+						"chart":      "gauge",
+						"source":     measurement.Source.String(),
+						"confidence": measurement.Confidence,
+						"snr":        measurement.SNR,
+					},
+				})
 			}
 
 			return nil, nil

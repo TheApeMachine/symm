@@ -3,8 +3,25 @@ import { describe, expect, it } from "vitest";
 import {
 	ingestCandleWire,
 	parseCandleWire,
+	parseIntervalBeginSec,
 	registerTradeChart,
 } from "#/components/charts/trade/trade-chart-wire";
+
+describe("parseIntervalBeginSec", () => {
+	it("parses RFC3339 interval_begin strings", () => {
+		expect(parseIntervalBeginSec("2026-06-05T02:37:00Z")).toBe(
+			Math.floor(Date.parse("2026-06-05T02:37:00Z") / 1000),
+		);
+	});
+
+	it("accepts unix seconds sent as numbers", () => {
+		expect(parseIntervalBeginSec(1_780_627_020)).toBe(1_780_627_020);
+	});
+
+	it("accepts unix milliseconds sent as numbers", () => {
+		expect(parseIntervalBeginSec(1_780_627_020_000)).toBe(1_780_627_020);
+	});
+});
 
 describe("parseCandleWire", () => {
 	it("accepts candle_bar ui events", () => {

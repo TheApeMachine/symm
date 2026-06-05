@@ -39,12 +39,14 @@ const postTradeFixture = `{
 
 func TestNewPostTrade(t *testing.T) {
 	convey.Convey("Given a Kraken post-trade payload", t, func() {
-		posttrade := &PostTrade{}
+		var envelope struct {
+			Result PostTrade `json:"result"`
+		}
 
 		convey.Convey("It should unmarshal trade transparency fields", func() {
-			convey.So(json.Unmarshal([]byte(postTradeFixture), &map[string]any{
-				"result": posttrade,
-			}), convey.ShouldBeNil)
+			convey.So(json.Unmarshal([]byte(postTradeFixture), &envelope), convey.ShouldBeNil)
+			posttrade := envelope.Result
+
 			convey.So(posttrade.Count, convey.ShouldEqual, 1)
 			convey.So(len(posttrade.Trades), convey.ShouldEqual, 1)
 			convey.So(posttrade.Trades[0].TradeID, convey.ShouldEqual, "OUTNLW-YR5DF-JVWGII")
@@ -63,8 +65,11 @@ func BenchmarkNewPostTrade(b *testing.B) {
 	payload := []byte(postTradeFixture)
 
 	for b.Loop() {
-		posttrade := &PostTrade{}
-		if err := json.Unmarshal(payload, &map[string]any{"result": posttrade}); err != nil {
+		var envelope struct {
+			Result PostTrade `json:"result"`
+		}
+
+		if err := json.Unmarshal(payload, &envelope); err != nil {
 			b.Fatal(err)
 		}
 	}

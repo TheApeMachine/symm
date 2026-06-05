@@ -40,26 +40,46 @@ func TestIntegrationE2E(t *testing.T) {
 		suiteCtx, suiteCancel := context.WithTimeout(context.Background(), integrationE2ESuiteTimeout)
 		defer suiteCancel()
 
-		report := RunSuite(suiteCtx, auditDir, allScenarios())
+		scenarios := selectedScenarios(allScenarios())
+
+		if len(scenarios) == 0 {
+			t.Fatalf("SYMM_E2E_SCENARIO did not match any scenario")
+		}
+
+		report := RunSuite(suiteCtx, auditDir, scenarios)
 
 		_ = os.MkdirAll(filepath.Dir(reportPath), 0o755)
 		writeErr := report.WriteJSON(reportPath)
 
-		Convey("It should write a JSON report artifact", func() {
+		Convey("It should write the report and pass every scenario", func() {
 			So(writeErr, ShouldBeNil)
 
 			_, statErr := os.Stat(reportPath)
 			So(statErr, ShouldBeNil)
-		})
 
-		Convey("It should print a granular pass/fail report", func() {
 			t.Log("\n" + report.FormatText())
-		})
 
-		Convey("Every scenario check should pass", func() {
 			So(report.Pass, ShouldBeTrue)
 		})
 	})
+}
+
+func selectedScenarios(scenarios []Scenario) []Scenario {
+	filter := os.Getenv("SYMM_E2E_SCENARIO")
+
+	if filter == "" {
+		return scenarios
+	}
+
+	selected := make([]Scenario, 0, 1)
+
+	for _, scenario := range scenarios {
+		if scenario.ID == filter {
+			selected = append(selected, scenario)
+		}
+	}
+
+	return selected
 }
 
 /*

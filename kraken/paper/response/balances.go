@@ -50,7 +50,7 @@ func NewBalances(ui *qpool.BroadcastGroup) *Balances {
 		},
 	}
 
-	b.publishUI()
+	b.PublishUI()
 
 	return b
 }
@@ -73,6 +73,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) map[string]any {
 	switch frame["method"] {
 	case "subscribe":
 		out["result"] = balances.model
+		balances.PublishUI()
 	}
 
 	for _, observer := range balances.observers {
@@ -130,7 +131,7 @@ func (balances *Balances) ApplyFill(symbol, side string, qty, price, fee float64
 		})
 	}
 
-	balances.publishUI()
+	balances.PublishUI()
 
 	return nil
 }
@@ -171,13 +172,14 @@ func (balances *Balances) adjust(asset string, delta float64) {
 	})
 }
 
-func (balances *Balances) publishUI() {
+func (balances *Balances) PublishUI() {
 	if balances.ui == nil {
 		return
 	}
 
 	cash := 0.0
 	open := 0
+	inventory := make(map[string]float64)
 
 	for _, asset := range balances.model.Asset {
 		if asset.Asset == balances.quote {
@@ -187,13 +189,16 @@ func (balances *Balances) publishUI() {
 
 		if asset.Balance > 0 {
 			open++
+			inventory[asset.Asset] = asset.Balance
 		}
 	}
 
 	balances.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-		"event":   "wallet",
-		"balance": cash,
-		"open":    open,
+		"event":     "wallet",
+		"balance":   cash,
+		"open":      open,
+		"Balance":   cash,
+		"Inventory": inventory,
 	}})
 }
 

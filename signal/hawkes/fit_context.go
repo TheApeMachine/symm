@@ -166,6 +166,11 @@ func (context FitContext) EnoughEvents(stream ArrivalStream) bool {
 		return false
 	}
 
+	if stream.buy.Len() == 0 || stream.sell.Len() == 0 {
+		return stream.buy.Len() >= context.MinFitEvents ||
+			stream.sell.Len() >= context.MinFitEvents
+	}
+
 	if stream.buy.Len() < context.MinPerSide {
 		return false
 	}

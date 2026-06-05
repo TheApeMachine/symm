@@ -2,8 +2,8 @@ package hawkes
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -111,26 +111,58 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
 				if err := signal.observeTrades(trades); err != nil {
 					errnie.Error(err, "hawkes: observe trades")
 				}
+			case public.TickerChannel:
+				tickers := signalpool.GetTickers(sm)
+
+				if err := signal.observeTickers(tickers); err != nil {
+					errnie.Error(err, "hawkes: observe tickers")
+				}
 			}
 		}
 	}
+}
+
+func (signal *Signal) observeTickers(tickers []market.TickerUpdate) error {
+	var err error
+
+	for _, ticker := range tickers {
+		if ticker.Last <= 0 {
+			continue
+		}
+
+		raw, ok := signal.symbols.Load(ticker.Symbol)
+
+		if !ok {
+			continue
+		}
+
+		at, parseErr := hawkesTickerTime(ticker)
+
+		if parseErr != nil {
+			err = errors.Join(err, parseErr)
+			continue
+		}
+
+		err = errors.Join(
+			err,
+			signal.publishMeasurement(ticker.Symbol, raw.(*symbolState), ticker.Last, at),
+		)
+	}
+
+	return err
 }
 
 func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
@@ -174,39 +206,7 @@ func (signal *Signal) publishTouches(touches []tradeTouch) error {
 	for _, touch := range touches {
 		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
 			now := touchLastTime(touch.state)
-			measurement, standout, err := touch.state.measure(now)
-
-			if err != nil {
-				return nil, err
-			}
-
-			if measurement.Source == perspectives.SourceNone {
-				return nil, nil
-			}
-
-			measurement.Symbol = touch.symbol
-			measurement.Last = touch.last
-
-			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, standout,
-			); err != nil {
-				return nil, err
-			}
-
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
-
-			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{
-					Value: map[string]any{
-						"chart":      "gauge",
-						"source":     measurement.Source.String(),
-						"confidence": measurement.Confidence,
-						"snr":        measurement.SNR,
-					},
-				})
-			}
-
-			return nil, nil
+			return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
 		}))
 	}
 
@@ -218,6 +218,57 @@ func (signal *Signal) publishTouches(touches []tradeTouch) error {
 	}
 
 	return err
+}
+
+func (signal *Signal) publishMeasurement(
+	symbol string,
+	state *symbolState,
+	last float64,
+	at time.Time,
+) error {
+	measurement, standout, err := state.measure(at)
+
+	if err != nil {
+		return err
+	}
+
+	if measurement.Source == perspectives.SourceNone {
+		return nil
+	}
+
+	measurement.Symbol = symbol
+	measurement.Last = last
+
+	if err := perspectives.AssignCategorySNR(
+		&measurement, signal.floor, standout,
+	); err != nil {
+		return err
+	}
+
+	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+
+	if ui := signal.broadcasts["ui"]; ui != nil {
+		ui.Send(&qpool.QValue[any]{
+			Value: map[string]any{
+				"chart":      "gauge",
+				"source":     measurement.Source.String(),
+				"confidence": measurement.Confidence,
+				"snr":        measurement.SNR,
+			},
+		})
+	}
+
+	return nil
+}
+
+func hawkesTickerTime(ticker market.TickerUpdate) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
+		if at, err := time.Parse(layout, ticker.Timestamp); err == nil {
+			return at, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("hawkes: ticker timestamp is required for %s", ticker.Symbol)
 }
 
 func touchLastTime(state *symbolState) time.Time {

@@ -2,8 +2,9 @@ package public
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
@@ -26,23 +27,49 @@ func TestNewRest(t *testing.T) {
 }
 
 func TestRestGet(t *testing.T) {
-	Convey("Given a REST client", t, func() {
+	Convey("Given a Kraken REST envelope", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {"XXBTZEUR": {"c": ["65000.0", "1.0"]}}
+			}`))
+		}))
+		defer server.Close()
+
 		ctx := context.Background()
+		rest := NewRest(ctx, EndpointType(server.URL))
+		defer rest.Close()
 
-		rest := NewRest(ctx, EndpointTypeTicker)
-
-		Convey("It should get a response", func() {
-			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-
+		Convey("It should decode result into the model", func() {
 			var response map[string]any
-			err := rest.Get(requestCtx, fiber.Map{"pair": "BTC/USD"}, &response)
+			err := rest.Get(ctx, fiber.Map{"pair": "BTC/EUR"}, &response)
 
-			if err != nil || response["result"] == nil {
-				t.Skipf("live Kraken REST unavailable: err=%v result=%v", err, response["result"])
-			}
+			So(err, ShouldBeNil)
+			So(response["XXBTZEUR"], ShouldNotBeNil)
+		})
+	})
+}
 
-			So(rest.Close(), ShouldBeNil)
+func TestRestGetKrakenError(t *testing.T) {
+	Convey("Given a Kraken REST error envelope", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(`{
+				"error": ["EGeneral:Invalid arguments"],
+				"result": null
+			}`))
+		}))
+		defer server.Close()
+
+		ctx := context.Background()
+		rest := NewRest(ctx, EndpointType(server.URL))
+		defer rest.Close()
+
+		Convey("It should return the exchange error", func() {
+			var response map[string]any
+			err := rest.Get(ctx, fiber.Map{"pair": "BTC/EUR"}, &response)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "EGeneral:Invalid arguments")
 		})
 	})
 }

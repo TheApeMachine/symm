@@ -15,6 +15,8 @@ type bookQualitySnapshot struct {
 	fillBid            float64
 	cancelAsk          float64
 	fillAsk            float64
+	bidDepth           float64
+	askDepth           float64
 	toxicNear          bool
 	toxicBluffStrength float64
 }
@@ -88,10 +90,13 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 		fillBid:   state.fillBid,
 		cancelAsk: state.cancelAsk,
 		fillAsk:   state.fillAsk,
+		bidDepth:  state.bidTotal,
+		askDepth:  state.askTotal,
 	}
 
 	for price, expiry := range state.toxic {
 		if at.After(expiry) {
+			delete(state.toxic, price)
 			delete(state.toxicChurn, price)
 
 			continue
@@ -129,13 +134,21 @@ func classifyBookQuality(
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
 	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
+	maxRatio := math.Max(bidRatio, askRatio)
+
+	if snapshot.bidDepth > 0 && snapshot.askDepth > 0 && maxRatio == 0 {
+		depthBalance := math.Min(snapshot.bidDepth, snapshot.askDepth) /
+			math.Max(snapshot.bidDepth, snapshot.askDepth)
+
+		return perspectives.CategoryHardSupport, depthBalance, depthBalance
+	}
+
 	threshold := tracker.fillToCancelThreshold()
 
 	if threshold <= 0 {
 		return perspectives.CategoryTypeNone, 0, 0
 	}
 
-	maxRatio := math.Max(bidRatio, askRatio)
 	bidVacuum := bidRatio >= threshold && snapshot.fillBid > 0
 	askVacuum := askRatio >= threshold && snapshot.fillAsk > 0
 

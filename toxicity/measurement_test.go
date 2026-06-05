@@ -153,3 +153,25 @@ func TestTrackerMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 		})
 	})
 }
+
+func TestTrackerMeasureHardSupport(t *testing.T) {
+	convey.Convey("Given balanced visible depth without toxic cancels", t, func() {
+		tracker := NewTracker()
+		now := time.Now()
+		symbol := "BTC/EUR"
+
+		tracker.ObserveMid(symbol, market.Pair{}, 100)
+		tracker.ObserveLast(symbol, market.Pair{}, 100)
+		tracker.ApplyBookLevel(symbol, market.Pair{}, SideBid, 99.5, 80, now)
+		tracker.ApplyBookLevel(symbol, market.Pair{}, SideAsk, 100.5, 80, now)
+
+		measurement, err := tracker.Measure(symbol, now)
+
+		convey.Convey("It should classify hard support", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(measurement.Source, convey.ShouldEqual, perspectives.SourceToxicity)
+			convey.So(measurement.Category, convey.ShouldEqual, perspectives.CategoryHardSupport)
+			convey.So(measurement.Strength, convey.ShouldEqual, 1)
+		})
+	})
+}

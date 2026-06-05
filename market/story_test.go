@@ -83,6 +83,10 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		convey.So(os.WriteFile(path, encoded, 0o644), convey.ShouldBeNil)
 		t.Setenv("SYMM_PERSPECTIVES_FILE", path)
 
+		auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+		viper.Set("trading.audit.file", auditPath)
+		defer viper.Set("trading.audit.file", "")
+
 		story := NewStory(ctx, pool, focus.NewSet())
 		subscriber := story.raw.Subscribe("test:story:raw", 4)
 
@@ -110,6 +114,53 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 				convey.So(action.Type, convey.ShouldEqual, perspectives.ActionMarket)
 			case <-time.After(500 * time.Millisecond):
 				convey.So("raw action", convey.ShouldBeBlank)
+			}
+
+			cancel()
+			<-done
+			convey.So(story.Close(), convey.ShouldBeNil)
+
+			raw, readErr := os.ReadFile(auditPath)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldContainSubstring, `"audit_event":"playbook_walk"`)
+			convey.So(string(raw), convey.ShouldContainSubstring, `"verdict":"market"`)
+		})
+	})
+}
+
+func TestStoryFixturePlaybook(t *testing.T) {
+	convey.Convey("Given fixture playbook mode", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		viper.Set("market.perspectives.fixture_playbook", true)
+		defer viper.Set("market.perspectives.fixture_playbook", false)
+
+		pool := qpool.NewQ(ctx, 1, 4, nil)
+		story := NewStory(ctx, pool, focus.NewSet())
+		subscriber := story.raw.Subscribe("test:story:fixture:raw", 4)
+
+		done := make(chan struct{})
+
+		go func() {
+			_ = story.Tick()
+			close(done)
+		}()
+
+		for _, measurement := range perspectives.FixturePlaybookEntryMeasurements("BTC/EUR", 50_000) {
+			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		}
+
+		convey.Convey("It should publish the fixture limit entry", func() {
+			select {
+			case frame := <-subscriber.Incoming:
+				action, ok := frame.Value.(perspectives.Action)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
+				convey.So(action.Type, convey.ShouldEqual, perspectives.ActionLimit)
+			case <-time.After(500 * time.Millisecond):
+				convey.So("fixture action", convey.ShouldBeBlank)
 			}
 
 			cancel()

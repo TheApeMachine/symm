@@ -2,6 +2,10 @@ package user
 
 import (
 	"context"
+	"time"
+
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
@@ -23,6 +27,14 @@ type ExecutionParams struct {
 	RateCounter bool   `json:"ratecounter,omitempty"`
 	Rebased     bool   `json:"rebased,omitempty"`
 	Users       string `json:"users,omitempty"`
+}
+
+/*
+ExecutionSubscribeFrame is the Kraken WebSocket v2 subscribe request for executions.
+*/
+type ExecutionSubscribeFrame struct {
+	Method string          `json:"method"`
+	Params ExecutionParams `json:"params"`
 }
 
 /*
@@ -61,4 +73,35 @@ type Execution struct {
 	FeeCcyPref   string         `json:"fee_ccy_pref,omitempty"`
 	Fees         []ExecutionFee `json:"fees,omitempty"`
 	Timestamp    string         `json:"timestamp,omitempty"`
+}
+
+func NewExecution(pool *qpool.Q, tokenSource ExecutionTokenSource) error {
+	params := ExecutionParams{
+		Channel:     public.ExecutionsChannel,
+		SnapOrders:  true,
+		SnapTrades:  true,
+		OrderStatus: true,
+	}
+
+	if tokenSource != nil {
+		token, err := tokenSource.Token(context.Background())
+
+		if err != nil {
+			return err
+		}
+
+		params.Token = token
+	}
+
+	pool.CreateBroadcastGroup(
+		"kraken:private", 10*time.Millisecond,
+	).Send(&qpool.QValue[any]{
+		Type: "executions",
+		Value: ExecutionSubscribeFrame{
+			Method: "subscribe",
+			Params: params,
+		},
+	})
+
+	return nil
 }

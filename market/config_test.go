@@ -45,6 +45,19 @@ func TestRequiredBookDepthLevels(t *testing.T) {
 	})
 }
 
+func TestSymbolMatchesQuote(t *testing.T) {
+	Convey("Given a slash-delimited market symbol", t, func() {
+		Convey("It should match the normalized quote currency", func() {
+			So(SymbolMatchesQuote("BTC/EUR", "eur"), ShouldBeTrue)
+			So(SymbolMatchesQuote("ETH/BTC", "EUR"), ShouldBeFalse)
+		})
+
+		Convey("It should reject symbols without an explicit quote", func() {
+			So(SymbolMatchesQuote("BTCEUR", "EUR"), ShouldBeFalse)
+		})
+	})
+}
+
 func TestRequiredDuration(t *testing.T) {
 	Convey("Given trading.max_quote_age", t, func() {
 		viper.Set("trading.max_quote_age", 5*time.Second)

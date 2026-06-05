@@ -44,7 +44,10 @@ import {
 	StopLossTakeProfitAnnotation,
 	type TMultiPointLabelFormatter,
 } from "scichart-financial-tools";
-import { resolveFollowVisibleRange } from "#/components/charts/shared/financial-chart-utils";
+import {
+	resolveFollowVisibleRange,
+	visibleRangesMatch,
+} from "#/components/charts/shared/financial-chart-utils";
 import { appTheme } from "#/components/charts/shared/theme";
 import type { OhlcBar } from "#/components/charts/trade/trade-chart-wire";
 import { ensureSciChartWasm } from "#/lib/utils";
@@ -181,8 +184,8 @@ export const createFinancialChart = async (
 	}
 
 	if (xValues.length === 0) {
-		const nowMs = Date.now();
-		xAxis.visibleRange = new NumberRange(nowMs - 60_000, nowMs);
+		const nowSec = Math.floor(Date.now() / 1000);
+		xAxis.visibleRange = new NumberRange(nowSec - 60, nowSec);
 	}
 
 	const candleDataSeries = new OhlcDataSeries(wasmContext, {
@@ -282,23 +285,37 @@ export const initTradeChart = async (
 	const ohlcDataSeries = ctx.candlestickSeries.dataSeries as OhlcDataSeries;
 	const volumeSeries = ctx.sciChartSurface.renderableSeries.get(1);
 	const volumeDataSeries = volumeSeries?.dataSeries as XyDataSeries | undefined;
+	const sciChartSurface = ctx.sciChartSurface;
 	const xAxis = ctx.xAxis;
 	let hasInitialRange = false;
 	let suppressViewportTracking = false;
 	let userControlsViewport = false;
+	let lastProgrammaticRange: NumberRange | null = null;
 
 	const setXVisibleRange = (range: NumberRange) => {
 		suppressViewportTracking = true;
+		lastProgrammaticRange = range;
 
 		try {
 			xAxis.visibleRange = range;
 		} finally {
-			suppressViewportTracking = false;
+			queueMicrotask(() => {
+				suppressViewportTracking = false;
+			});
 		}
 	};
 
 	const onVisibleRangeChanged = () => {
 		if (suppressViewportTracking) {
+			return;
+		}
+
+		const currentRange = xAxis.visibleRange;
+
+		if (
+			lastProgrammaticRange !== null &&
+			visibleRangesMatch(currentRange, lastProgrammaticRange)
+		) {
 			return;
 		}
 
@@ -326,29 +343,32 @@ export const initTradeChart = async (
 	};
 
 	const appendBar = (bar: OhlcBar) => {
-		const xMs = bar.sec * 1000;
+		const xSec = bar.sec;
 		const lastIndex = ohlcDataSeries.count() - 1;
 		const lastX =
 			lastIndex >= 0
 				? (ohlcDataSeries.getNativeXValues().get(lastIndex) as number)
 				: null;
-		const isNewBar = lastX !== xMs;
+		const isNewBar = lastX !== xSec;
 
-		if (lastX === xMs) {
+		if (lastX === xSec) {
 			ohlcDataSeries.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
 
 			if (volumeDataSeries !== undefined) {
 				volumeDataSeries.update(lastIndex, bar.volume);
 			}
 
+			sciChartSurface.invalidateElement();
 			return;
 		}
 
-		ohlcDataSeries.append(xMs, bar.open, bar.high, bar.low, bar.close);
+		ohlcDataSeries.append(xSec, bar.open, bar.high, bar.low, bar.close);
 
 		if (volumeDataSeries !== undefined) {
-			volumeDataSeries.append(xMs, bar.volume);
+			volumeDataSeries.append(xSec, bar.volume);
 		}
+
+		sciChartSurface.invalidateElement();
 
 		if (!hasInitialRange) {
 			applyFollowRange("initial");

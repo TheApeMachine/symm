@@ -146,8 +146,8 @@ func causalCategoryProbes() []SignalCategoryProbe {
 			"macro association drives beta read"),
 		probe(perspectives.SourceCausal, perspectives.CategoryLiquidityShock, FixtureCausalLiquidityShock,
 			"regime inversion shock on the ladder"),
-		probe(perspectives.SourceCausal, perspectives.CategoryCausalNoise, FixtureCausalCausalNoise,
-			"buy pressure without price change (noise)"),
+		probeWithScenario(perspectives.SourceCausal, perspectives.CategoryCausalNoise, FixtureCausalCausalNoise,
+			"buy pressure without price change (noise)", causalNoiseScenario),
 	}
 }
 

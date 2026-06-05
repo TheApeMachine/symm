@@ -2,7 +2,6 @@ package causal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
@@ -125,50 +125,96 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
+				publishAt := time.Time{}
 
 				for _, trade := range trades {
+					if trade.Timestamp.IsZero() {
+						errnie.Error(
+							fmt.Errorf("causal: trade timestamp is required"),
+							"causal: feed trade %s",
+							trade.Symbol,
+						)
+						continue
+					}
+
 					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
 						errnie.Error(err, "causal: feed trade %s", trade.Symbol)
 						continue
 					}
+
+					if trade.Timestamp.After(publishAt) {
+						publishAt = trade.Timestamp
+					}
 				}
 
-				if err := signal.publish(); err != nil {
+				if publishAt.IsZero() {
+					continue
+				}
+
+				if err := signal.publishAt(publishAt); err != nil {
 					errnie.Error(err, "causal: publish")
 					continue
 				}
-			case "tickers":
+			case public.TickerChannel:
 				tickers := signalpool.GetTickers(sm)
+				publishAt := time.Time{}
 
 				for _, ticker := range tickers {
+					at, err := causalTickerTime(ticker)
+
+					if err != nil {
+						errnie.Error(err, "causal: feed ticker %s", ticker.Symbol)
+						continue
+					}
+
 					signal.state(ticker.Symbol).FeedTicker(ticker)
+
+					if at.After(publishAt) {
+						publishAt = at
+					}
 				}
 
-				if err := signal.publish(); err != nil {
+				if publishAt.IsZero() {
+					continue
+				}
+
+				if err := signal.publishAt(publishAt); err != nil {
 					errnie.Error(err, "causal: publish")
 					continue
 				}
-			case "books":
+			case public.BookChannel:
 				books := signalpool.GetBooks(sm)
+				publishAt := time.Time{}
 
 				for _, delta := range books {
+					at, err := causalBookTime(delta)
+
+					if err != nil {
+						errnie.Error(err, "causal: feed book %s", delta.Symbol)
+						continue
+					}
+
 					signal.state(delta.Symbol).FeedBook(delta)
+
+					if at.After(publishAt) {
+						publishAt = at
+					}
 				}
 
-				if err := signal.publish(); err != nil {
+				if publishAt.IsZero() {
+					continue
+				}
+
+				if err := signal.publishAt(publishAt); err != nil {
 					errnie.Error(err, "causal: publish")
 					continue
 				}
@@ -246,7 +292,10 @@ func (signal *Signal) commitFit(now time.Time, contagion float64, emergency bool
 // publish runs the causal fit for every symbol against the current cross-asset
 // macro momentum and contagion, emitting one structural reading each.
 func (signal *Signal) publish() error {
-	now := time.Now()
+	return signal.publishAt(time.Now())
+}
+
+func (signal *Signal) publishAt(now time.Time) error {
 
 	// Recompute the cheap Hayashi-Yoshida contagion tripwire at a fast cadence —
 	// far quicker than the heavy O(symbols²) fit, but not on every single tick.
@@ -309,6 +358,34 @@ func (signal *Signal) publish() error {
 	}
 
 	return err
+}
+
+func causalTickerTime(row market.TickerUpdate) (time.Time, error) {
+	if row.Timestamp == "" {
+		return time.Time{}, fmt.Errorf("causal: ticker timestamp is required for %s", row.Symbol)
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
+		if at, err := time.Parse(layout, row.Timestamp); err == nil {
+			return at, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("causal: ticker timestamp %s is invalid for %s", row.Timestamp, row.Symbol)
+}
+
+func causalBookTime(row market.Book) (time.Time, error) {
+	if row.Timestamp == "" {
+		return time.Time{}, fmt.Errorf("causal: book timestamp is required for %s", row.Symbol)
+	}
+
+	at, err := time.Parse(time.RFC3339Nano, row.Timestamp)
+
+	if err != nil {
+		return time.Time{}, fmt.Errorf("causal: book timestamp %s is invalid for %s: %w", row.Timestamp, row.Symbol, err)
+	}
+
+	return at, nil
 }
 
 func (signal *Signal) snapshotEntries() []publishEntry {

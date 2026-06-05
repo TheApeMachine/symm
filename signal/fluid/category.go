@@ -53,7 +53,8 @@ func fluidReading(
 			return perspectives.CategoryInertial, 0
 		}
 
-		return perspectives.CategoryInertial, margin / fluidInertialThreshold
+		return perspectives.CategoryInertial,
+			perspectives.UnitCompetitionMargin(margin, fluidInertialThreshold)
 	default:
 		headroom := math.MaxFloat64
 

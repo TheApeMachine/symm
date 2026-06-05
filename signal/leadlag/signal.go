@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -98,17 +97,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TickerChannel:
 				tickers := signalpool.GetTickers(sm)
 
@@ -119,8 +114,15 @@ func (signal *Signal) Tick() error {
 						continue
 					}
 
+					at, err := signal.timestamp(ticker)
+
+					if err != nil {
+						errnie.Error(err, "leadlag: timestamp %s", ticker.Symbol)
+						continue
+					}
+
 					stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
-					stored.(*symbolState).observeTicker(ticker.Last, signal.timestamp(ticker))
+					stored.(*symbolState).observeTicker(ticker.Last, at)
 					ingested = true
 				}
 
@@ -136,15 +138,15 @@ func (signal *Signal) Tick() error {
 	}
 }
 
-// timestamp parses the ticker's wire timestamp, falling back to now.
-func (signal *Signal) timestamp(row market.TickerUpdate) time.Time {
+// timestamp parses the ticker's wire timestamp.
+func (signal *Signal) timestamp(row market.TickerUpdate) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
 		if at, err := time.Parse(layout, row.Timestamp); err == nil {
-			return at
+			return at, nil
 		}
 	}
 
-	return time.Now()
+	return time.Time{}, fmt.Errorf("ticker timestamp is required for %s", row.Symbol)
 }
 
 // publish recomputes lead-lag against the anchor for every follower, throttled.
@@ -239,6 +241,20 @@ func (signal *Signal) publishAnchorStall(
 	anchor *symbolState,
 	stallMargin float64,
 ) error {
+	var joined error
+	followers := signal.followerScratch[:0]
+
+	signal.symbols.Range(func(key, value any) bool {
+		symbol := key.(string)
+
+		if symbol != anchorName {
+			followers = append(followers, symbol)
+		}
+
+		return true
+	})
+
+	signal.followerScratch = followers
 	measurement, standout, err := signal.measureAnchorStall(anchor, stallMargin)
 
 	if err != nil {
@@ -248,7 +264,29 @@ func (signal *Signal) publishAnchorStall(
 	measurement.Symbol = anchorName
 	measurement.Last = anchor.lastPrice()
 
-	return signal.sendMeasurement(&measurement, standout)
+	joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
+
+	for _, symbolName := range followers {
+		raw, ok := signal.symbols.Load(symbolName)
+
+		if !ok {
+			continue
+		}
+
+		follower := raw.(*symbolState)
+		measurement, standout, err := signal.measureAnchorStall(follower, stallMargin)
+
+		if err != nil {
+			joined = errors.Join(joined, fmt.Errorf("leadlag: measure follower stall %s: %w", symbolName, err))
+			continue
+		}
+
+		measurement.Symbol = symbolName
+		measurement.Last = follower.lastPrice()
+		joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
+	}
+
+	return joined
 }
 
 func (signal *Signal) sendMeasurement(

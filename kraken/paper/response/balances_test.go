@@ -88,6 +88,34 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 			So(frame["event"], ShouldEqual, "wallet")
 			So(frame["open"], ShouldEqual, 1)
 			So(frame["balance"], ShouldAlmostEqual, 200-50-0.13, 1e-9)
+			So(frame["Balance"], ShouldAlmostEqual, 200-50-0.13, 1e-9)
+
+			inventory, ok := frame["Inventory"].(map[string]float64)
+			So(ok, ShouldBeTrue)
+			So(inventory["BTC"], ShouldAlmostEqual, 0.001, 1e-12)
+		})
+	})
+}
+
+func TestBalancesSend(t *testing.T) {
+	configurePaperWallet()
+
+	Convey("Given a wallet wired to a ui broadcast group after startup", t, func() {
+		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		balances := NewBalances(ui)
+		sub := ui.Subscribe("test:ui:subscribe", 16)
+
+		Convey("A subscribe request republishes the current wallet", func() {
+			out := balances.Send(&qpool.QValue[any]{
+				Value: map[string]any{"method": "subscribe"},
+			})
+			frame := drainWallet(sub)
+
+			So(out["success"], ShouldBeTrue)
+			So(frame["event"], ShouldEqual, "wallet")
+			So(frame["balance"], ShouldEqual, 200.0)
+			So(frame["Balance"], ShouldEqual, 200.0)
 		})
 	})
 }

@@ -14,7 +14,7 @@ func TestDecodeExecutions(t *testing.T) {
 		message := map[string]any{
 			"channel": public.ExecutionsChannel,
 			"type":    "snapshot",
-			"data":    []byte(`[]`),
+			"data":    json.RawMessage(`[]`),
 		}
 
 		Convey("It should decode zero rows", func() {

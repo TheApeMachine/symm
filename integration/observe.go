@@ -115,6 +115,21 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 			}
 		}
 
+		if envelope, ok := message.Value.(map[string]any); ok {
+			fill := FillEvent{
+				Symbol: stringFromAny(envelope["symbol"]),
+				Side:   stringFromAny(envelope["side"]),
+				Qty:    floatFromAny(envelope["qty"]),
+				Price:  floatFromAny(envelope["price"]),
+			}
+
+			if envelope["channel"] == public.ExecutionsChannel &&
+				fill.Symbol != "" &&
+				fill.Qty > 0 {
+				tape.fills = append(tape.fills, fill)
+			}
+		}
+
 		tape.mu.Unlock()
 	}
 }
@@ -197,6 +212,7 @@ func (tape *Tape) Snapshot(auditPath string) TapeSnapshot {
 		Fills:        fills,
 		AuditRows:    auditRows,
 		RawFrames:    tape.rawFrames,
+		DeskReady:    len(wallets) > 0,
 	}
 }
 
@@ -310,7 +326,7 @@ func (snapshot TapeSnapshot) initialWalletBalance() float64 {
 		return 0
 	}
 
-	balance, _ := snapshot.Wallets[0]["Balance"].(float64)
+	balance := walletBalance(snapshot.Wallets[0])
 
 	return balance
 }
@@ -321,7 +337,7 @@ func (snapshot TapeSnapshot) lastWalletBalance() float64 {
 	}
 
 	last := snapshot.Wallets[len(snapshot.Wallets)-1]
-	balance, _ := last["Balance"].(float64)
+	balance := walletBalance(last)
 
 	return balance
 }
@@ -335,6 +351,16 @@ func (snapshot TapeSnapshot) lastInventoryMap() map[string]float64 {
 	inventory, _ := last["Inventory"].(map[string]float64)
 
 	return inventory
+}
+
+func walletBalance(frame map[string]any) float64 {
+	balance, ok := frame["Balance"].(float64)
+
+	if ok {
+		return balance
+	}
+
+	return floatFromAny(frame["balance"])
 }
 
 func (snapshot TapeSnapshot) lastInventory(baseAsset string) float64 {

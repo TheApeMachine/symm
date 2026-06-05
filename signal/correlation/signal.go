@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"encoding/json"
 	"math/rand"
 	"sync"
 	"time"
@@ -132,17 +131,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 

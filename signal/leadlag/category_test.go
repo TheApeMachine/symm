@@ -33,8 +33,19 @@ func TestLeadlagReading(t *testing.T) {
 
 		Convey("It should classify synchronized drift, strength = the correlation", func() {
 			So(category, ShouldEqual, perspectives.CategorySynchronizedDrift)
-			So(strength, ShouldEqual, 0.8) // standout carries the correlation magnitude, not the threshold margin
+			So(strength, ShouldEqual, 0.8)        // standout carries the correlation magnitude, not the threshold margin
 			So(clarity, ShouldNotEqual, strength) // clarity (boundary margin) is a different quantity
+		})
+	})
+
+	Convey("Given inverse contemporaneous movement", t, func() {
+		category, clarity, strength := leadlagReading(true, 0, -0.9, 0)
+
+		Convey("It should classify decoupling with unit-band clarity", func() {
+			So(category, ShouldEqual, perspectives.CategoryDecoupledMove)
+			So(clarity, ShouldBeGreaterThan, 0)
+			So(clarity, ShouldBeLessThanOrEqualTo, 1)
+			So(strength, ShouldEqual, 0)
 		})
 	})
 }

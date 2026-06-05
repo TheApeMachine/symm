@@ -67,6 +67,7 @@ var (
 				return err
 			}
 
+			systemCtx := engine.ctx
 			streams := focus.NewSet()
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),
@@ -74,29 +75,29 @@ var (
 			)
 
 			if err := engine.AddSystems(
-				ui.NewHub(cmd.Context(), pool),
-				public.NewWebSocket(cmd.Context(), pool, streams),
+				ui.NewHub(systemCtx, pool),
+				public.NewWebSocket(systemCtx, pool, streams),
 				private.NewWebSocket(
-					cmd.Context(),
+					systemCtx,
 					pool,
 					os.Getenv("SYMM_KRAKEN_API_KEY"),
 					os.Getenv("SYMM_KRAKEN_API_SECRET"),
 				),
-				kraken.NewInstrument(cmd.Context(), pool),
-				causal.NewSignal(cmd.Context(), pool),
-				correlation.NewSignal(cmd.Context(), pool),
-				cvd.NewSignal(cmd.Context(), pool),
-				depthflow.NewSignal(cmd.Context(), pool),
-				exhaust.NewSignal(cmd.Context(), pool),
-				fluid.NewSignal(cmd.Context(), pool),
-				hawkes.NewSignal(cmd.Context(), pool),
-				leadlag.NewSignal(cmd.Context(), pool),
-				liquidity.NewSignal(cmd.Context(), pool),
-				pumpdump.NewSignal(cmd.Context(), pool),
-				sentiment.NewSignal(cmd.Context(), pool),
-				toxicity.NewToxicity(cmd.Context(), pool),
-				market.NewStory(cmd.Context(), pool, streams),
-				trader.NewCrypto(cmd.Context(), pool, streams),
+				kraken.NewInstrument(systemCtx, pool),
+				causal.NewSignal(systemCtx, pool),
+				correlation.NewSignal(systemCtx, pool),
+				cvd.NewSignal(systemCtx, pool),
+				depthflow.NewSignal(systemCtx, pool),
+				exhaust.NewSignal(systemCtx, pool),
+				fluid.NewSignal(systemCtx, pool),
+				hawkes.NewSignal(systemCtx, pool),
+				leadlag.NewSignal(systemCtx, pool),
+				liquidity.NewSignal(systemCtx, pool),
+				pumpdump.NewSignal(systemCtx, pool),
+				sentiment.NewSignal(systemCtx, pool),
+				toxicity.NewToxicity(systemCtx, pool),
+				market.NewStory(systemCtx, pool, streams),
+				trader.NewCrypto(systemCtx, pool, streams),
 			); err != nil {
 				return err
 			}

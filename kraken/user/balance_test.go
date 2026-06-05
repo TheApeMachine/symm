@@ -14,7 +14,7 @@ func TestDecodeBalances(t *testing.T) {
 		message := map[string]any{
 			"channel": public.BalancesChannel,
 			"type":    BalanceSnapshot,
-			"data": []byte(`[
+			"data": json.RawMessage(`[
 				{
 					"asset":"EUR",
 					"asset_class":"currency",

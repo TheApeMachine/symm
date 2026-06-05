@@ -2,7 +2,6 @@ package exhaust
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -68,17 +67,13 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 			if !ok {
 				continue
 			}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			sm := &public.SocketMessage{Channel: channel, Data: rawData}
-
-			switch channel {
+			switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
@@ -96,7 +91,7 @@ func (signal *Signal) Tick() error {
 						continue
 					}
 				}
-			case "tickers":
+			case public.TickerChannel:
 				tickers := signalpool.GetTickers(sm)
 
 				for _, ticker := range tickers {
@@ -107,7 +102,7 @@ func (signal *Signal) Tick() error {
 						continue
 					}
 				}
-			case "books":
+			case public.BookChannel:
 				books := signalpool.GetBooks(sm)
 
 				for _, delta := range books {

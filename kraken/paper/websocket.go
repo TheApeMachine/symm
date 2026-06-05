@@ -4,10 +4,10 @@ import (
 	"container/ring"
 	"context"
 	"fmt"
-	"math/rand"
 	"os"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/paper/response"
@@ -27,6 +27,7 @@ type WebSocket struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	sockets     map[string]types.Socket
+	balances    *response.Balances
 	orders      *response.Orders
 	latencies   *ring.Ring
 }
@@ -34,29 +35,7 @@ type WebSocket struct {
 func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
-	// Load the latency ring from the file.
-	latencyFile, err := os.OpenFile("runs/network_latency.json", os.O_RDONLY, 0644)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err)
-		return nil
-	}
-
-	defer latencyFile.Close()
-	ring := ring.New(64)
-
-	for {
-		var value time.Duration
-		_, err = fmt.Fscanf(latencyFile, "%d\n", &value)
-
-		ring.Value = time.Duration(value)
-		ring.Next()
-
-		if err != nil {
-			break
-		}
-	}
+	latencies, latencyErr := loadLatencyProfile()
 
 	balances := response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond))
 	orders := response.NewOrders(ctx, pool, balances)
@@ -71,8 +50,10 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 			"balances": balances,
 			"orders":   orders,
 		},
+		balances:  balances,
 		orders:    orders,
-		latencies: ring,
+		latencies: latencies,
+		err:       latencyErr,
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
@@ -94,12 +75,16 @@ func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
 func (ws *WebSocket) Connect(
 	endpoint public.EndpointType, channel string, n uint64,
 ) error {
-	rndConnDelay := rand.Intn(100)
-	time.Sleep(time.Duration(rndConnDelay) * time.Millisecond)
-	return nil
+	return ws.err
 }
 
 func (ws *WebSocket) Tick() (err error) {
+	if ws.err != nil {
+		return ws.err
+	}
+
+	ws.balances.PublishUI()
+
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -124,6 +109,55 @@ func (ws *WebSocket) Tick() (err error) {
 			ws.latencies.Next()
 		}
 	}
+}
+
+func loadLatencyProfile() (*ring.Ring, error) {
+	latencies := ring.New(64)
+
+	for range 64 {
+		latencies.Value = time.Duration(0)
+		latencies = latencies.Next()
+	}
+
+	defaultLatency := viper.GetDuration("trading.paper.default_one_way_latency")
+
+	if defaultLatency > 0 {
+		for range 64 {
+			latencies.Value = defaultLatency
+			latencies = latencies.Next()
+		}
+	}
+
+	path := viper.GetString("trading.paper.latency_profile")
+
+	if path == "" {
+		path = "runs/network_latency.json"
+	}
+
+	latencyFile, err := os.OpenFile(path, os.O_RDONLY, 0644)
+
+	if err != nil {
+		if defaultLatency > 0 {
+			return latencies, nil
+		}
+
+		return latencies, fmt.Errorf("paper websocket latency profile %q: %w", path, err)
+	}
+
+	defer latencyFile.Close()
+
+	for {
+		var value time.Duration
+
+		if _, err = fmt.Fscanf(latencyFile, "%d\n", &value); err != nil {
+			break
+		}
+
+		latencies.Value = value
+		latencies = latencies.Next()
+	}
+
+	return latencies, nil
 }
 
 func (ws *WebSocket) Close() error {

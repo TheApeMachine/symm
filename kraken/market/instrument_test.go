@@ -18,6 +18,13 @@ func TestInstrumentTick(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		viper.Set("market.quote_currency", "EUR")
+		viper.Set("market.max_scan_symbols", 8)
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("market.subscribe_pace", time.Millisecond)
+		viper.Set("market.default_symbols", []string{"BTC/EUR"})
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 		defer pool.Close()
 
@@ -35,18 +42,32 @@ func TestInstrumentTick(t *testing.T) {
 		}()
 
 		payload, err := json.Marshal(InstrumentUpdate{
-			Pairs: []InstrumentPair{{
-				Symbol:         "BTC/EUR",
-				Base:           "BTC",
-				Quote:          "EUR",
-				Status:         "online",
-				QtyPrecision:   8,
-				QtyIncrement:   0.00000001,
-				PricePrecision: 1,
-				CostPrecision:  5,
-				PriceIncrement: 0.1,
-				QtyMin:         0.00005,
-			}},
+			Pairs: []InstrumentPair{
+				{
+					Symbol:         "BTC/EUR",
+					Base:           "BTC",
+					Quote:          "EUR",
+					Status:         "online",
+					QtyPrecision:   8,
+					QtyIncrement:   0.00000001,
+					PricePrecision: 1,
+					CostPrecision:  5,
+					PriceIncrement: 0.1,
+					QtyMin:         0.00005,
+				},
+				{
+					Symbol: "ETH/USD",
+					Base:   "ETH",
+					Quote:  "USD",
+					Status: "online",
+				},
+				{
+					Symbol: "XRP/EUR",
+					Base:   "XRP",
+					Quote:  "EUR",
+					Status: "cancel_only",
+				},
+			},
 		})
 
 		So(err, ShouldBeNil)
@@ -59,12 +80,7 @@ func TestInstrumentTick(t *testing.T) {
 			},
 		})
 
-		viper.Set("market.max_scan_symbols", 8)
-		viper.Set("market.book_depth_levels", 10)
-		viper.Set("market.default_symbols", []string{"BTC/EUR"})
-		viper.Set("market.anchor_symbol", "BTC/EUR")
-
-		Convey("It should emit book subscribe on kraken:public", func() {
+		Convey("It should emit book subscribe only for tradable EUR pairs", func() {
 			deadline := time.After(2 * time.Second)
 			var bookSubscribe bool
 
@@ -89,6 +105,8 @@ func TestInstrumentTick(t *testing.T) {
 			}
 
 			So(bookSubscribe, ShouldBeTrue)
+			time.Sleep(20 * time.Millisecond)
+			So(instrument.Pairs, ShouldResemble, []string{"BTC/EUR"})
 		})
 
 		cancel()

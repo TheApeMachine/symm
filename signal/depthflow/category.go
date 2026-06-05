@@ -84,13 +84,13 @@ func depthflowCategory(
 		return perspectives.CategoryBookThinning
 	}
 
-	if reason == reasonDepthImbalance {
-		return perspectives.CategoryLoadedImbalance
-	}
-
 	if flatOK && math.Abs(weightedImbalance) > 0 &&
 		math.Abs(flatImbalance) < math.Abs(weightedImbalance)*bookThinningFlatFraction {
 		return perspectives.CategoryBookThinning
+	}
+
+	if reason == reasonDepthImbalance {
+		return perspectives.CategoryLoadedImbalance
 	}
 
 	return perspectives.CategoryDenseNeutrality

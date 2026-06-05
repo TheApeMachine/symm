@@ -71,13 +71,43 @@ const isOhlcHubRow = (raw: unknown): raw is OhlcHubRow => {
 	);
 };
 
+export const parseIntervalBeginSec = (
+	intervalBegin: unknown,
+): number | null => {
+	if (typeof intervalBegin === "number" && Number.isFinite(intervalBegin)) {
+		if (intervalBegin > 1_000_000_000_000) {
+			return Math.floor(intervalBegin / 1000);
+		}
+
+		if (intervalBegin > 0) {
+			return Math.floor(intervalBegin);
+		}
+
+		return null;
+	}
+
+	if (typeof intervalBegin !== "string") {
+		return null;
+	}
+
+	const trimmed = intervalBegin.trim();
+
+	if (trimmed.length === 0) {
+		return null;
+	}
+
+	const parsed = Date.parse(trimmed);
+
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return null;
+	}
+
+	return Math.floor(parsed / 1000);
+};
+
 const hubRowToBar = (row: OhlcHubRow): OhlcBar => {
-	const intervalBegin = row.interval_begin ?? "";
-	const parsed = Date.parse(intervalBegin);
-	const sec =
-		Number.isFinite(parsed) && parsed > 0
-			? Math.floor(parsed / 1000)
-			: Math.floor(Date.now() / 1000);
+	const parsedSec = parseIntervalBeginSec(row.interval_begin);
+	const sec = parsedSec ?? Math.floor(Date.now() / 1000);
 
 	return {
 		sec,

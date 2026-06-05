@@ -23,19 +23,23 @@ type TuneOptions struct {
 SessionSummary is the optimizer output for one search.
 */
 type SessionSummary struct {
-	MeasurementCount int     `json:"measurement_count"`
-	Strategies       int     `json:"strategies"`
-	Nodes            int     `json:"nodes"`
-	Trades           int     `json:"trades"`
-	Evaluated        int     `json:"evaluated"`
-	BestReturn       float64 `json:"best_return"`
-	BestScore        float64 `json:"best_score"`
+	MeasurementCount     int     `json:"measurement_count"`
+	FundableMeasurements int     `json:"fundable_measurements"`
+	MinRoundTrips        int     `json:"min_round_trips"`
+	Strategies           int     `json:"strategies"`
+	Nodes                int     `json:"nodes"`
+	Trades               int     `json:"trades"`
+	Evaluated            int     `json:"evaluated"`
+	BestReturn           float64 `json:"best_return"`
+	BestScore            float64 `json:"best_score"`
 }
 
 func (summary SessionSummary) String() string {
 	return fmt.Sprintf(
-		"measurements=%d strategies=%d nodes=%d trades=%d evaluated=%d return=%.6f score=%.6f",
+		"measurements=%d fundable_measurements=%d min_round_trips=%d strategies=%d nodes=%d trades=%d evaluated=%d return=%.6f score=%.6f",
 		summary.MeasurementCount,
+		summary.FundableMeasurements,
+		summary.MinRoundTrips,
 		summary.Strategies,
 		summary.Nodes,
 		summary.Trades,

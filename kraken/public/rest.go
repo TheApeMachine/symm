@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/url"
@@ -53,10 +54,9 @@ var responsePool = sync.Pool{
 	},
 }
 
-var envelopePool = sync.Pool{
-	New: func() any {
-		return make(map[string]any)
-	},
+type restEnvelope struct {
+	Error  []string        `json:"error"`
+	Result json.RawMessage `json:"result"`
 }
 
 func (rest *Rest) Get(
@@ -87,7 +87,7 @@ func (rest *Rest) Get(
 	if response, rest.err = rest.client.Get(strings.Join([]string{
 		string(rest.endpoint), params.Encode(),
 	}, "?"), client.Config{
-		Ctx:     rest.ctx,
+		Ctx:     ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
 	}); rest.err != nil {
@@ -96,14 +96,8 @@ func (rest *Rest) Get(
 
 	defer response.Close()
 
-	envelope := envelopePool.Get().(map[string]any)
-	defer envelopePool.Put(envelope)
-
-	if rest.err = sonic.Unmarshal(response.Body(), envelope); rest.err != nil {
-		return errnie.Error(rest.err)
-	}
-
-	return nil
+	rest.err = decodeKrakenEnvelope(response.Body(), model)
+	return errnie.Error(rest.err)
 }
 
 func (rest *Rest) Post(
@@ -127,7 +121,7 @@ func (rest *Rest) Post(
 	defer responsePool.Put(response)
 
 	if response, rest.err = rest.client.Post(string(rest.endpoint), client.Config{
-		Ctx:     rest.ctx,
+		Ctx:     ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
 		Body:    request}); rest.err != nil {
@@ -136,11 +130,31 @@ func (rest *Rest) Post(
 
 	defer response.Close()
 
-	envelope := envelopePool.Get().(map[string]any)
-	defer envelopePool.Put(envelope)
+	rest.err = decodeKrakenEnvelope(response.Body(), model)
+	return errnie.Error(rest.err)
+}
 
-	if rest.err = sonic.Unmarshal(response.Body(), envelope); rest.err != nil {
-		return errnie.Error(rest.err)
+func decodeKrakenEnvelope(body []byte, model any) error {
+	envelope := restEnvelope{}
+
+	if err := sonic.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("kraken rest envelope: %w", err)
+	}
+
+	if len(envelope.Error) > 0 {
+		return fmt.Errorf("kraken rest: %s", strings.Join(envelope.Error, "; "))
+	}
+
+	if model == nil {
+		return nil
+	}
+
+	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+		return fmt.Errorf("kraken rest: missing result")
+	}
+
+	if err := sonic.Unmarshal(envelope.Result, model); err != nil {
+		return fmt.Errorf("kraken rest result: %w", err)
 	}
 
 	return nil

@@ -3,6 +3,7 @@ package market
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -24,34 +26,35 @@ const (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	ui           *qpool.BroadcastGroup
-	raw          *qpool.BroadcastGroup
-	streams      *focus.Set
-	thoughts     []perspectives.Thought
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *qpool.Q
+	broadcasts     map[string]*qpool.BroadcastGroup
+	subscribers    map[string]*qpool.Subscriber
+	ui             *qpool.BroadcastGroup
+	raw            *qpool.BroadcastGroup
+	streams        *focus.Set
+	thoughts       []perspectives.Thought
 	playbookLoaded bool
-	reasonStates map[string]*perspectives.ReasonState
-	positions    map[string]*perspectives.PositionState
-	ringWindow   []perspectives.Measurement
-	lastGauge    map[string]time.Time
-	recordFile *os.File
-	recorder   *bufio.Writer
-	pulseSeq   atomic.Int64
+	reasonStates   map[string]*perspectives.ReasonState
+	positions      map[string]*perspectives.PositionState
+	ringWindow     []perspectives.Measurement
+	lastGauge      map[string]time.Time
+	recordFile     *os.File
+	recorder       *bufio.Writer
+	audit          *audit.Writer
+	pulseSeq       atomic.Int64
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		broadcasts:   make(map[string]*qpool.BroadcastGroup),
+		subscribers:  make(map[string]*qpool.Subscriber),
 		streams:      streams,
 		reasonStates: make(map[string]*perspectives.ReasonState),
 		positions:    make(map[string]*perspectives.PositionState),
@@ -76,6 +79,21 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		story.recordFile = fh
 		story.recorder = bufio.NewWriter(fh)
 	}
+
+	auditWriter, err := audit.OpenWriter()
+
+	if err != nil {
+		cancel()
+
+		if story.recordFile != nil {
+			_ = story.recordFile.Close()
+		}
+
+		errnie.Error(fmt.Errorf("story: audit: %w", err), "story")
+		return nil
+	}
+
+	story.audit = auditWriter
 
 	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", 10*time.Millisecond,
@@ -193,11 +211,32 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
-	// The trader publishes the decision card (with the accept/reject reason) once
-	// the action clears or fails its gates; the story only forwards the verdict.
-	story.raw.Send(&qpool.QValue[any]{Value: perspectives.ActionFromAct(act, measurement)})
+	action := perspectives.ActionFromAct(act, measurement)
+
+	if err := story.writePlaybookAudit(measurement, regime, action); err != nil {
+		return err
+	}
+
+	story.raw.Send(&qpool.QValue[any]{Value: action})
 
 	return nil
+}
+
+func (story *Story) writePlaybookAudit(
+	measurement perspectives.Measurement,
+	regime perspectives.RegimeFeatures,
+	action perspectives.Action,
+) error {
+	return story.audit.Write(map[string]any{
+		"audit_event": "playbook_walk",
+		"symbol":      measurement.Symbol,
+		"source":      measurement.Source.String(),
+		"category":    string(measurement.Category),
+		"snr":         measurement.SNR,
+		"price":       measurement.Last,
+		"regime":      regime.Regime.String(),
+		"verdict":     action.Type.String(),
+	})
 }
 
 // positionState projects what the story knows about the open position into the
@@ -276,6 +315,10 @@ func (story *Story) publishRegime(symbol string, regime perspectives.RegimeFeatu
 // loadThoughts reads the reasoning playbook the optimizer writes. A missing file
 // is not fatal: the story simply does not act until a playbook is tuned.
 func (story *Story) loadThoughts() ([]perspectives.Thought, error) {
+	if viper.GetBool("market.perspectives.fixture_playbook") {
+		return perspectives.FixturePlaybook(), nil
+	}
+
 	path := playbookPath()
 
 	raw, err := os.ReadFile(path)
@@ -333,6 +376,10 @@ func (story *Story) Close() error {
 		story.recordFile = nil
 	}
 
+	if story.audit != nil {
+		closeErr = errors.Join(closeErr, story.audit.Close())
+		story.audit = nil
+	}
+
 	return closeErr
 }
-

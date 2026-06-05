@@ -27,7 +27,6 @@ type DepthSymbol struct {
 	bookReady              bool
 	bookDiverged           bool
 	bookDepth              int
-	decayLambda            float64
 	spoofWeightedThreshold float64
 	spoofLevel1Reject      float64
 	last                   float64
@@ -49,7 +48,6 @@ func NewDepthSymbol(symbol string) (*DepthSymbol, error) {
 	return &DepthSymbol{
 		symbol:                 symbol,
 		bookDepth:              depth,
-		decayLambda:            viper.GetFloat64("signals.book_depth_decay_lambda"),
 		spoofWeightedThreshold: viper.GetFloat64("signals.spoof_weighted_threshold"),
 		spoofLevel1Reject:      viper.GetFloat64("signals.spoof_level1_reject"),
 		pressure:               adaptive.NewEMA(0),
