@@ -53,6 +53,19 @@ func TestAcquireReplayLedger(t *testing.T) {
 	})
 }
 
+func BenchmarkReplayMeasurementsSnapshot(b *testing.B) {
+	measurements := newReplayMeasurements()
+	measurements.Add(perspectives.Measurement{Source: perspectives.SourceSentiment})
+	measurements.Add(perspectives.Measurement{
+		Symbol: "BTC/EUR",
+		Source: perspectives.SourceHawkes,
+	})
+
+	for b.Loop() {
+		_ = measurements.Snapshot("BTC/EUR")
+	}
+}
+
 func BenchmarkReplayMeasurementsAdd(b *testing.B) {
 	measurements := newReplayMeasurements()
 	row := perspectives.Measurement{Source: perspectives.SourceFluid, Symbol: "BTC/EUR", SNR: 1}

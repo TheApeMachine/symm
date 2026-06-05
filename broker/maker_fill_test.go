@@ -34,6 +34,52 @@ func TestMakerQueueState(t *testing.T) {
 	})
 }
 
+func TestTradeDepletesMakerQueue(t *testing.T) {
+	Convey("Given a resting buy limit at 100", t, func() {
+		Convey("It should deplete on sell aggression at or below the limit", func() {
+			qty, ok := TradeDepletesMakerQueue(
+				trading.Buy,
+				100,
+				market.TradeUpdate{Side: "sell", Price: 100, Qty: 0.5},
+			)
+
+			So(ok, ShouldBeTrue)
+			So(qty, ShouldEqual, 0.5)
+		})
+
+		Convey("It should ignore trades above the buy limit", func() {
+			_, ok := TradeDepletesMakerQueue(
+				trading.Buy,
+				100,
+				market.TradeUpdate{Side: "sell", Price: 100.5, Qty: 1},
+			)
+
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("It should deplete a resting sell on buy aggression at or above the limit", func() {
+			qty, ok := TradeDepletesMakerQueue(
+				trading.Sell,
+				100,
+				market.TradeUpdate{Side: "buy", Price: 100, Qty: 1.25},
+			)
+
+			So(ok, ShouldBeTrue)
+			So(qty, ShouldEqual, 1.25)
+		})
+
+		Convey("It should ignore invalid trade prints", func() {
+			_, ok := TradeDepletesMakerQueue(
+				trading.Buy,
+				100,
+				market.TradeUpdate{Side: "sell", Price: 0, Qty: 1},
+			)
+
+			So(ok, ShouldBeFalse)
+		})
+	})
+}
+
 func TestMakerRestingFillPrice(t *testing.T) {
 	Convey("Given a sell-aggressor trade lifting a resting bid", t, func() {
 		quote := Quote{
@@ -92,5 +138,13 @@ func BenchmarkMakerRestingFillPrice(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = MakerRestingFillPrice(trading.Buy, 100, quote, trade, 0.01)
+	}
+}
+
+func BenchmarkTradeDepletesMakerQueue(b *testing.B) {
+	trade := market.TradeUpdate{Side: "sell", Price: 100, Qty: 1}
+
+	for b.Loop() {
+		_, _ = TradeDepletesMakerQueue(trading.Buy, 100, trade)
 	}
 }

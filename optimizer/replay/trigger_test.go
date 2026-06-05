@@ -134,3 +134,14 @@ func TestMakerEntryMissed(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkCheckTriggers(b *testing.B) {
+	ledger := newReplayLedger(triggerTestCosts())
+	ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
+	ledger.armTrigger("BTC/EUR", perspectives.Act{Type: perspectives.ActionStopLoss})
+	row := btcRow(99)
+
+	for b.Loop() {
+		ledger.checkTriggers(row)
+	}
+}

@@ -39,3 +39,39 @@ func TestWriterQueueClose(t *testing.T) {
 		})
 	})
 }
+
+func TestWriterQueueCompact(t *testing.T) {
+	convey.Convey("Given many consumed frames", t, func() {
+		queue := newWriterQueue()
+
+		for index := range 64 {
+			convey.So(queue.Push(map[string]any{"seq": index}), convey.ShouldBeNil)
+		}
+
+		for range 40 {
+			_, ok := queue.Pop()
+			convey.So(ok, convey.ShouldBeTrue)
+		}
+
+		convey.Convey("It should still deliver the remaining frames", func() {
+			frame, ok := queue.Pop()
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(frame["seq"], convey.ShouldEqual, 40)
+		})
+	})
+}
+
+func BenchmarkWriterQueuePushPop(b *testing.B) {
+	queue := newWriterQueue()
+	frame := map[string]any{"audit_event": "playbook_walk", "symbol": "BTC/EUR"}
+
+	for b.Loop() {
+		if err := queue.Push(frame); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, ok := queue.Pop(); !ok {
+			b.Fatal("pop failed")
+		}
+	}
+}

@@ -35,6 +35,30 @@ func TestSlippageFillWalksBook(t *testing.T) {
 	})
 }
 
+func TestSlippageFillHalfSpread(t *testing.T) {
+	convey.Convey("Given a quote without book depth", t, func() {
+		quote := Quote{
+			Symbol: "BTC/EUR",
+			Bid:    99,
+			Ask:    101,
+			Last:   100,
+		}
+
+		convey.Convey("It should cross half the spread for buys and sells", func() {
+			buyFill, err := SlippageFill(quote, trading.Buy, 1)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(buyFill.Price, convey.ShouldAlmostEqual, 101, 1e-9)
+			convey.So(buyFill.SlippageBps, convey.ShouldAlmostEqual, 100, 1e-9)
+
+			sellFill, err := SlippageFill(quote, trading.Sell, 1)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sellFill.Price, convey.ShouldAlmostEqual, 99, 1e-9)
+		})
+	})
+}
+
 func TestWouldCrossPostOnly(t *testing.T) {
 	convey.Convey("Given a live quote", t, func() {
 		quote := Quote{Bid: 99, Ask: 100}

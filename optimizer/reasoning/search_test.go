@@ -32,7 +32,7 @@ func rallyTape() []perspectives.Measurement {
 
 	for leg := 0; leg < 3; leg++ {
 		rows = append(rows, upLeg(start, at, step)...)
-		start *= 1.07          // next leg opens near the last exit
+		start *= 1.07         // next leg opens near the last exit
 		at = at.Add(5 * step) // a spacer tick of slack between legs
 	}
 
@@ -89,4 +89,17 @@ func TestSearchFindsAProfitableStrategy(t *testing.T) {
 			So(result.Best.Return, ShouldBeGreaterThanOrEqualTo, seedBest)
 		})
 	})
+}
+
+func BenchmarkSearch(b *testing.B) {
+	rows := rallyTape()
+	config := SearchConfig{
+		BeamWidth: 4,
+		MaxRounds: 3,
+		Patience:  2,
+	}
+
+	for b.Loop() {
+		_ = Search(context.Background(), rows, frictionlessCosts(), config)
+	}
 }

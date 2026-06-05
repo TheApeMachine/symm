@@ -30,3 +30,27 @@ func TestPrecompileTapeRingWindow(t *testing.T) {
 		})
 	})
 }
+
+func benchmarkTapeRows(count int) []perspectives.Measurement {
+	rows := make([]perspectives.Measurement, 0, count)
+
+	for index := range count {
+		rows = append(rows, perspectives.Measurement{
+			Symbol:   "BTC/EUR",
+			Source:   perspectives.SourceFluid,
+			Category: perspectives.CategoryLaminar,
+			SNR:      float64(index),
+			Last:     100 + float64(index),
+		})
+	}
+
+	return rows
+}
+
+func BenchmarkPrecompileTape(b *testing.B) {
+	rows := benchmarkTapeRows(StoryRingCapacity + 10)
+
+	for b.Loop() {
+		_ = PrecompileTape(rows)
+	}
+}

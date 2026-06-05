@@ -129,3 +129,68 @@ func TestDeskResolveAction(t *testing.T) {
 		})
 	})
 }
+
+func TestNewDeskWithCaches(t *testing.T) {
+	convey.Convey("Given desk dependencies", t, func() {
+		ctx := t.Context()
+		quotes := NewQuoteCache(ctx, nil)
+		stress := NewStressCache(ctx, nil)
+
+		convey.Convey("It should reject missing caches", func() {
+			_, err := NewDeskWithCaches(ctx, nil, nil, stress)
+
+			convey.So(err, convey.ShouldNotBeNil)
+
+			_, err = NewDeskWithCaches(ctx, nil, quotes, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+		})
+
+		convey.Convey("It should construct a desk with explicit caches", func() {
+			desk, err := NewDeskWithCaches(ctx, nil, quotes, stress)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(desk, convey.ShouldNotBeNil)
+			convey.So(desk.Halted(), convey.ShouldBeFalse)
+			convey.So(desk.Close(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestDeskTriggerOffset(t *testing.T) {
+	testconfig.Load(t)
+
+	convey.Convey("Given configured exit offsets", t, func() {
+		quote := Quote{Symbol: "BTC/EUR", Volatility: 0.001}
+
+		convey.Convey("It should resolve stop-loss from config", func() {
+			offset, err := triggerOffset(
+				perspectives.Action{Type: perspectives.ActionStopLoss},
+				quote,
+			)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(offset, convey.ShouldBeGreaterThan, 0)
+		})
+
+		convey.Convey("It should resolve take-profit from config", func() {
+			offset, err := triggerOffset(
+				perspectives.Action{Type: perspectives.ActionTakeProfit},
+				quote,
+			)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(offset, convey.ShouldBeGreaterThan, 0)
+		})
+
+		convey.Convey("It should honor an explicit playbook offset", func() {
+			offset, err := triggerOffset(
+				perspectives.Action{Type: perspectives.ActionStopLoss, Offset: 0.015},
+				quote,
+			)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(offset, convey.ShouldAlmostEqual, 0.015, 1e-9)
+		})
+	})
+}

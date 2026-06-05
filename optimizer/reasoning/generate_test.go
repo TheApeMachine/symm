@@ -123,3 +123,35 @@ func TestNeighborsAreDistinctAndValid(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkDeriveVocabulary(b *testing.B) {
+	rows := ignitionRows()
+
+	for b.Loop() {
+		_ = DeriveVocabulary(rows)
+	}
+}
+
+func BenchmarkSeeds(b *testing.B) {
+	vocab := DeriveVocabulary(ignitionRows())
+
+	for b.Loop() {
+		_ = Seeds(vocab)
+	}
+}
+
+func BenchmarkKeyOf(b *testing.B) {
+	forest := Seeds(DeriveVocabulary(ignitionRows()))[0]
+
+	for b.Loop() {
+		_ = keyOf(forest)
+	}
+}
+
+func BenchmarkCloneForest(b *testing.B) {
+	forest := Seeds(DeriveVocabulary(ignitionRows()))[0]
+
+	for b.Loop() {
+		_ = cloneForest(forest)
+	}
+}

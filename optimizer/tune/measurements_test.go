@@ -209,3 +209,30 @@ func TestTuneMeasurementsDoesNotWriteSparseCandidate(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkFundableRows(b *testing.B) {
+	rows := append(profitableRowsFor("BTC/EUR", 2), profitableRowsFor("ETH/BTC", 2)...)
+
+	for b.Loop() {
+		_ = fundableRows(rows, "EUR")
+	}
+}
+
+func BenchmarkTuneMeasurements(b *testing.B) {
+	rows := profitableRows()
+
+	for b.Loop() {
+		_, err := TuneMeasurements(
+			context.Background(),
+			rows,
+			types.TuneOptions{
+				BeamWidth: 4,
+				MaxRounds: 2,
+			},
+		)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

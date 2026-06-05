@@ -31,3 +31,23 @@ func TestTuneLog(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkTuneLog(b *testing.B) {
+	original := os.Stderr
+	devNull, err := os.Open(os.DevNull)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	os.Stderr = devNull
+
+	defer func() {
+		os.Stderr = original
+		devNull.Close()
+	}()
+
+	for b.Loop() {
+		TuneLog("phase %s", "bootstrap")
+	}
+}

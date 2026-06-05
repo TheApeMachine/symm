@@ -44,3 +44,42 @@ func TestLoadMeasurementsMalformedLine(t *testing.T) {
 		})
 	})
 }
+
+func benchmarkMeasurementJSONL(b *testing.B) string {
+	b.Helper()
+
+	path := filepath.Join(b.TempDir(), "measurements.jsonl")
+	raw := `{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":1,"Last":100}` + "\n"
+	raw += `{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":2,"Last":101}` + "\n"
+	raw += `{"Symbol":"ETH/EUR","Source":12,"Category":"aggressive_drive","SNR":3,"Last":50}` + "\n"
+
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	return path
+}
+
+func BenchmarkLoadMeasurements(b *testing.B) {
+	path := benchmarkMeasurementJSONL(b)
+
+	for b.Loop() {
+		_, _, err := LoadMeasurements(path)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCountMeasurementLines(b *testing.B) {
+	path := benchmarkMeasurementJSONL(b)
+
+	for b.Loop() {
+		_, _, err := CountMeasurementLines(path)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

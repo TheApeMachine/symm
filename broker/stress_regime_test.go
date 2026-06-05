@@ -30,9 +30,30 @@ func TestSymbolStressEntryExposureScale(t *testing.T) {
 			So(stress.EntryQuantity(3), ShouldEqual, 3)
 		})
 	})
+
+	Convey("Given zero requested quantity", t, func() {
+		stress := SymbolStress{
+			FluidCategory: perspectives.CategoryTurbulent,
+			FluidSNR:      0.8,
+		}
+
+		Convey("It should leave zero quantity untouched", func() {
+			So(stress.EntryQuantity(0), ShouldEqual, 0)
+		})
+	})
 }
 
 func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
+	Convey("Given calm stress readings", t, func() {
+		stress := SymbolStress{
+			FluidCategory: perspectives.CategoryLaminar,
+		}
+
+		Convey("It should leave the configured slippage ceiling unchanged", func() {
+			So(stress.EntrySlippageCapBps(50), ShouldEqual, 50)
+		})
+	})
+
 	Convey("Given hostile toxicity stress", t, func() {
 		stress := SymbolStress{
 			ToxicityCategory: perspectives.CategoryToxicBluff,

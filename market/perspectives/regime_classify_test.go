@@ -153,3 +153,11 @@ func TestClassifyRegime(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkClassifyRegime(b *testing.B) {
+	snapshots := priceSeries("BTC/EUR", 2, ramp(100, 0.002, 40)...)
+
+	for b.Loop() {
+		_ = ClassifyRegime(snapshots)
+	}
+}

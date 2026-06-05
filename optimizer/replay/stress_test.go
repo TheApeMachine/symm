@@ -52,3 +52,20 @@ func TestRegimeHostility(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkExecutionStressMultiplier(b *testing.B) {
+	snapshots := []perspectives.Measurement{
+		{Category: perspectives.CategoryTurbulent, SNR: 2},
+		{Category: perspectives.CategoryLaminar, SNR: 0.5},
+	}
+
+	for b.Loop() {
+		_ = executionStressMultiplier(snapshots)
+	}
+}
+
+func BenchmarkRegimeHostility(b *testing.B) {
+	for b.Loop() {
+		_ = regimeHostility(perspectives.RegimeBearish)
+	}
+}

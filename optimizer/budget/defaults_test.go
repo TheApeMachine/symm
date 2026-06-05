@@ -24,3 +24,9 @@ func TestDefaultTuneOptions(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkDefaultTuneOptions(b *testing.B) {
+	for b.Loop() {
+		_ = DefaultTuneOptions(4)
+	}
+}

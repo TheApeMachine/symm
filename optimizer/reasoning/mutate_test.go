@@ -155,9 +155,9 @@ func TestNeighborsIncludeVersusNotAndTimeStop(t *testing.T) {
 		}
 
 		Convey("It can express metric-to-metric, negation, and a time-stop", func() {
-			So(hasVersus, ShouldBeTrue)    // signal-above-signal
-			So(hasNot, ShouldBeTrue)       // avoid another signal
-			So(hasTimeStop, ShouldBeTrue)  // settle after elapsed minutes
+			So(hasVersus, ShouldBeTrue)   // signal-above-signal
+			So(hasNot, ShouldBeTrue)      // avoid another signal
+			So(hasTimeStop, ShouldBeTrue) // settle after elapsed minutes
 		})
 	})
 }
@@ -184,4 +184,22 @@ func TestMinRoundTripsDiscountAppliesWhenSet(t *testing.T) {
 			So(result.Best.Score, ShouldBeLessThan, result.Best.Return)
 		})
 	})
+}
+
+func BenchmarkNeighbors(b *testing.B) {
+	vocab := DeriveVocabulary(ignitionRows())
+	forest := Seeds(vocab)[0]
+
+	for b.Loop() {
+		_ = Neighbors(forest, vocab)
+	}
+}
+
+func BenchmarkTemporalizeEntry(b *testing.B) {
+	vocab := DeriveVocabulary(ignitionRows())
+	forest := Seeds(vocab)[0]
+
+	for b.Loop() {
+		_ = temporalizeEntry(forest, vocab)
+	}
 }
