@@ -21,8 +21,8 @@ type Level3Params struct {
 Level3SubscribeFrame subscribes to per-order L3 book updates on ws-l3.
 */
 type Level3SubscribeFrame struct {
-	Method string        `json:"method"`
-	Params Level3Params  `json:"params"`
+	Method string       `json:"method"`
+	Params Level3Params `json:"params"`
 }
 
 /*
