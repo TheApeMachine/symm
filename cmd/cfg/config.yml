@@ -5,6 +5,9 @@ market:
     - BTC/EUR
   max_scan_symbols: 128
   book_depth_levels: 10
+  # Live authenticated L3 feed while trading.model is paper (needs API credentials).
+  l3_enabled: true
+  l3_depth: 10
   subscribe_pace: 50ms
   ws_reconnect_initial: 1s
   ws_reconnect_max: 2m
@@ -86,7 +89,7 @@ signals:
     contagion_window_slow: 128
     contagion_adaptive_sigma: 2
     contagion_volatility_reset_sigma: 5
-    raw_dump: false
+    raw_dump: true
 
   # Raw diagnostic dumps. When enabled, a signal writes its richest
   # pre-classification record to <dir>/<name>_raw.jsonl, which the Signal Insight
@@ -109,27 +112,27 @@ signals:
 
   # Per-signal overrides (win over the global default in either direction):
   pumpdump:
-    raw_dump: false
+    raw_dump: true
   exhaust:
-    raw_dump: false
+    raw_dump: true
   cvd:
-    raw_dump: false
+    raw_dump: true
   depthflow:
-    raw_dump: false
+    raw_dump: true
   hawkes:
-    raw_dump: false
+    raw_dump: true
   fluid:
-    raw_dump: false
+    raw_dump: true
   leadlag:
-    raw_dump: false
+    raw_dump: true
   liquidity:
-    raw_dump: false
+    raw_dump: true
   sentiment:
-    raw_dump: false
+    raw_dump: true
   correlation:
-    raw_dump: false
+    raw_dump: true
   toxicity:
-    raw_dump: false
+    raw_dump: true
 
 ui:
   addr: 127.0.0.1:8765

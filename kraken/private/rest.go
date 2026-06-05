@@ -38,6 +38,39 @@ func NewRest(
 	apiKey, apiSecret string,
 	endpoint public.EndpointType,
 ) (*Rest, error) {
+	client, err := restClientForModel(ctx, endpoint)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return newSignedRest(ctx, apiKey, apiSecret, endpoint, client)
+}
+
+/*
+NewLiveRest builds a signed client that always talks to Kraken, even when
+trading.model is paper. Used for L3 auth tokens while execution stays simulated.
+*/
+func NewLiveRest(
+	ctx context.Context,
+	apiKey, apiSecret string,
+	endpoint public.EndpointType,
+) (*Rest, error) {
+	return newSignedRest(
+		ctx,
+		apiKey,
+		apiSecret,
+		endpoint,
+		public.NewRest(ctx, endpoint),
+	)
+}
+
+func newSignedRest(
+	ctx context.Context,
+	apiKey, apiSecret string,
+	endpoint public.EndpointType,
+	client public.RestClient,
+) (*Rest, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf("kraken api key and secret are required")
 	}
@@ -48,20 +81,6 @@ func NewRest(
 		return nil, fmt.Errorf("decode kraken api secret: %w", err)
 	}
 
-	var client public.RestClient
-
-	if viper.GetViper().GetString("trading.model") == "paper" {
-		paperRest, paperErr := paper.NewRest(ctx)
-
-		if paperErr != nil {
-			return nil, fmt.Errorf("kraken/private: paper rest: %w", paperErr)
-		}
-
-		client = paperRest
-	} else {
-		client = public.NewRest(ctx, endpoint)
-	}
-
 	return &Rest{
 		ctx:      ctx,
 		client:   client,
@@ -69,6 +88,23 @@ func NewRest(
 		apiKey:   apiKey,
 		secret:   secret,
 	}, nil
+}
+
+func restClientForModel(
+	ctx context.Context,
+	endpoint public.EndpointType,
+) (public.RestClient, error) {
+	if viper.GetViper().GetString("trading.model") == "paper" {
+		paperRest, paperErr := paper.NewRest(ctx)
+
+		if paperErr != nil {
+			return nil, fmt.Errorf("kraken/private: paper rest: %w", paperErr)
+		}
+
+		return paperRest, nil
+	}
+
+	return public.NewRest(ctx, endpoint), nil
 }
 
 /*

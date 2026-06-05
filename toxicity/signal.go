@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/settings"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
@@ -39,7 +39,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 		cancel:   cancel,
 		pool:     pool,
 		tracker:  Default(),
-		l3Active: viper.GetBool("trading.level3.enabled"),
+		l3Active: settings.L3Enabled(),
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)

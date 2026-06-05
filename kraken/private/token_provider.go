@@ -27,9 +27,34 @@ type TokenProvider struct {
 NewTokenProvider builds a token cache from API credentials.
 */
 func NewTokenProvider(ctx context.Context, apiKey, apiSecret string) (*TokenProvider, error) {
+	return newTokenProvider(ctx, apiKey, apiSecret, false)
+}
+
+/*
+NewLiveTokenProvider caches tokens against the live Kraken REST API even when
+trading.model is paper.
+*/
+func NewLiveTokenProvider(ctx context.Context, apiKey, apiSecret string) (*TokenProvider, error) {
+	return newTokenProvider(ctx, apiKey, apiSecret, true)
+}
+
+func newTokenProvider(
+	ctx context.Context,
+	apiKey, apiSecret string,
+	liveREST bool,
+) (*TokenProvider, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	rest, err := NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+	var (
+		rest *Rest
+		err  error
+	)
+
+	if liveREST {
+		rest, err = NewLiveRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+	} else {
+		rest, err = NewRest(ctx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+	}
 
 	if err != nil {
 		cancel()

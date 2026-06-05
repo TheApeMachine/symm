@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/market/settings"
 )
 
 const privateSubscriberID = "kraken/private:private"
@@ -26,19 +27,23 @@ const privateSubscriberID = "kraken/private:private"
 WebSocket maintains the authenticated Kraken WebSocket for public.WebSocket conns.
 */
 type WebSocket struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	provider   *TokenProvider
-	pool       *qpool.Q
-	raw        *qpool.BroadcastGroup
-	ui         *qpool.BroadcastGroup
-	private    *qpool.BroadcastGroup
-	subscriber *qpool.Subscriber
-	conn       *websocket.Conn
-	dialer     websocket.Dialer
-	outboundMu sync.Mutex
-	outbound   map[string]outboundOrder
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	provider      *TokenProvider
+	pool          *qpool.Q
+	raw           *qpool.BroadcastGroup
+	ui            *qpool.BroadcastGroup
+	private       *qpool.BroadcastGroup
+	level3        *qpool.BroadcastGroup
+	subscriber    *qpool.Subscriber
+	rawSubscriber *qpool.Subscriber
+	conn          *websocket.Conn
+	dialer        websocket.Dialer
+	outboundMu    sync.Mutex
+	outbound      map[string]outboundOrder
+	dataOnly      bool
+	l3Symbols     map[string]struct{}
 }
 
 /*
@@ -67,7 +72,19 @@ func NewWebSocketWithQuoteCache(
 	apiSecret string,
 	quotes *broker.QuoteCache,
 ) public.WebSocketClient {
-	if viper.GetViper().GetString("trading.model") == "paper" {
+	paperMode := viper.GetViper().GetString("trading.model") == "paper"
+
+	if paperMode && settings.L3Enabled() {
+		return newHybridWebSocket(
+			ctx,
+			pool,
+			apiKey,
+			apiSecret,
+			paper.NewWebSocketWithQuoteCache(ctx, pool, quotes),
+		)
+	}
+
+	if paperMode {
 		errnie.Info("kraken/private paper websocket", "kraken/private paper websocket")
 		return paper.NewWebSocketWithQuoteCache(ctx, pool, quotes)
 	}
@@ -111,6 +128,10 @@ Connect dials the authenticated endpoint and registers the conn on public.WebSoc
 func (websocketClient *WebSocket) Connect(
 	endpoint public.EndpointType, channel string, n uint64,
 ) error {
+	if websocketClient.dataOnly {
+		endpoint = public.WebSocketL3URL
+	}
+
 	if endpoint == "" {
 		endpoint = public.WebSocketAuthURL
 	}
@@ -136,8 +157,19 @@ func (websocketClient *WebSocket) Tick() error {
 		return websocketClient.err
 	}
 
-	if err := websocketClient.Connect(public.WebSocketAuthURL, "kraken:private", 0); err != nil {
+	endpoint := public.WebSocketAuthURL
+
+	if websocketClient.dataOnly {
+		endpoint = public.WebSocketL3URL
+	}
+
+	if err := websocketClient.Connect(endpoint, "kraken:private", 0); err != nil {
 		return err
+	}
+
+	if websocketClient.dataOnly {
+		websocketClient.seedLevel3Symbols()
+		websocketClient.watchInstrumentCatalog()
 	}
 
 	readErrs := make(chan error, 1)
@@ -145,6 +177,16 @@ func (websocketClient *WebSocket) Tick() error {
 	go func() {
 		readErrs <- websocketClient.readLoop()
 	}()
+
+	if websocketClient.dataOnly {
+		select {
+		case <-websocketClient.ctx.Done():
+			return websocketClient.ctx.Err()
+		case err := <-readErrs:
+			websocketClient.err = err
+			return err
+		}
+	}
 
 	for {
 		select {
@@ -178,6 +220,10 @@ func (websocketClient *WebSocket) Close() error {
 
 	if websocketClient.private != nil && websocketClient.subscriber != nil {
 		websocketClient.private.Unsubscribe(websocketClient.subscriber.ID)
+	}
+
+	if websocketClient.raw != nil && websocketClient.rawSubscriber != nil {
+		websocketClient.raw.Unsubscribe(websocketClient.rawSubscriber.ID)
 	}
 
 	if websocketClient.conn == nil {
@@ -244,6 +290,16 @@ func (websocketClient *WebSocket) readLoop() error {
 }
 
 func (websocketClient *WebSocket) publishRaw(frame authFrame) {
+	if websocketClient.dataOnly {
+		if frame.Channel != public.Level3Channel {
+			return
+		}
+
+		websocketClient.publishLevel3(frame)
+
+		return
+	}
+
 	user.PublishRaw(
 		websocketClient.raw,
 		frame.Channel,
@@ -253,6 +309,10 @@ func (websocketClient *WebSocket) publishRaw(frame authFrame) {
 }
 
 func (websocketClient *WebSocket) publishDerived(frame authFrame) {
+	if websocketClient.dataOnly {
+		return
+	}
+
 	switch frame.Channel {
 	case public.BalancesChannel:
 		var rows []user.Balance

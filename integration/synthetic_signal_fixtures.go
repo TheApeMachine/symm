@@ -710,7 +710,8 @@ func (builder *CaptureBuilder) appendCorrelationDivergentStress() {
 
 func (builder *CaptureBuilder) appendToxicityToxicBluff() {
 	builder.AppendInstrumentCatalog()
-	builder.AppendToxicityCancelWall(testSymbolPrimary, 100)
+	builder.AppendTicker(testSymbolPrimary, 100, 99.5, 100.5, 0)
+	builder.AppendLevel3NearTouchChurn(testSymbolPrimary, 99.5)
 }
 
 func (builder *CaptureBuilder) appendToxicityLiquidityVacuum() {

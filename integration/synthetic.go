@@ -375,6 +375,35 @@ func (builder *CaptureBuilder) AppendToxicityCancelWall(symbol string, mid float
 	builder.AppendBookLevelShrink(symbol, mid-0.5, 5, 0)
 }
 
+/*
+AppendLevel3NearTouchChurn emits per-order add/delete churn on the level3 channel so
+integration harnesses can exercise the toxicity L3 path before live credentials exist.
+*/
+func (builder *CaptureBuilder) AppendLevel3NearTouchChurn(symbol string, price float64) {
+	timestamp := builder.timestampRFC3339()
+
+	builder.appendFrame(public.Level3Channel, "update", []map[string]any{{
+		"symbol": symbol,
+		"bids": []map[string]any{
+			{
+				"event":        "add",
+				"order_id":     "l3-churn",
+				"limit_price":  price,
+				"order_qty":    100,
+				"timestamp":    timestamp,
+			},
+			{
+				"event":        "delete",
+				"order_id":     "l3-churn",
+				"limit_price":  price,
+				"order_qty":    100,
+				"timestamp":    timestamp,
+			},
+		},
+		"asks": []map[string]any{},
+	}})
+}
+
 func (builder *CaptureBuilder) AppendLiquidityCrossSection() {
 	builder.AppendTicker(testSymbolPrimary, 10, 9.9, 10.1, 1)
 	builder.AppendTicker(testSymbolSecondary, 8, 7.9, 8.1, 0.5)

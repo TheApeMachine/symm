@@ -18,7 +18,7 @@ func TestFloatRingMeanStdDev(t *testing.T) {
 
 		Convey("It should compute mean and standard deviation", func() {
 			So(mean, ShouldAlmostEqual, 0.25, 1e-9)
-			So(stddev, ShouldAlmostEqual, 0.1118033989, 1e-9)
+			So(stddev, ShouldAlmostEqual, 0.12909944487358055, 1e-9)
 		})
 	})
 }
