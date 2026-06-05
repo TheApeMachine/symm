@@ -67,7 +67,7 @@ var (
 				return err
 			}
 
-			systemCtx := engine.ctx
+			systemCtx := engine.Context()
 			streams := focus.NewSet()
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),

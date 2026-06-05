@@ -8,6 +8,8 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
+const executionTokenTimeout = 5 * time.Second
+
 /*
 ExecutionTokenSource supplies short-lived authenticated WebSocket tokens.
 */
@@ -84,7 +86,10 @@ func NewExecution(pool *qpool.Q, tokenSource ExecutionTokenSource) error {
 	}
 
 	if tokenSource != nil {
-		token, err := tokenSource.Token(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), executionTokenTimeout)
+		defer cancel()
+
+		token, err := tokenSource.Token(ctx)
 
 		if err != nil {
 			return err

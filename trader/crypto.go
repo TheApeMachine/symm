@@ -275,6 +275,10 @@ func (crypto *Crypto) writeDecisionAudit(
 	verdict string,
 	reason string,
 ) error {
+	if crypto.audit == nil {
+		return nil
+	}
+
 	return crypto.audit.Write(map[string]any{
 		"audit_event":  "trade_decision",
 		"symbol":       action.Symbol,

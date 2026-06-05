@@ -80,7 +80,13 @@ func TestHarnessRunScenarioLimitFill(t *testing.T) {
 		auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
 		ConfigureViper(auditPath)
 
-		scenario := executionScenarios()[0]
+		scenarios := executionScenarios()
+
+		if len(scenarios) == 0 {
+			t.Fatal("executionScenarios returned no scenarios")
+		}
+
+		scenario := scenarios[0]
 		builder := buildCapture(scenario)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()

@@ -75,6 +75,7 @@ func NewWebSocket(
 
 	if executionErr := user.NewExecution(pool, provider); executionErr != nil {
 		errnie.Error(executionErr)
+		websocketClient.err = executionErr
 	}
 
 	return websocketClient
@@ -226,10 +227,10 @@ func (websocketClient *WebSocket) publishWallet(data json.RawMessage) {
 		return
 	}
 
-	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
+	quote := viper.GetString("market.quote_currency")
 
 	for _, row := range rows {
-		if strings.ToUpper(row.Asset) != quote {
+		if !strings.EqualFold(row.Asset, quote) {
 			continue
 		}
 

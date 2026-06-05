@@ -50,7 +50,9 @@ var balancesPool = sync.Pool{
 
 func GetTrades(data *public.SocketMessage) []market.TradeUpdate {
 	trades := tradesPool.Get().([]market.TradeUpdate)[:0]
-	defer tradesPool.Put(trades[:0])
+	defer func() {
+		tradesPool.Put(trades[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &trades); err != nil {
 		errnie.Error(err)
@@ -62,7 +64,9 @@ func GetTrades(data *public.SocketMessage) []market.TradeUpdate {
 
 func GetTickers(data *public.SocketMessage) []market.TickerUpdate {
 	tickers := tickersPool.Get().([]market.TickerUpdate)[:0]
-	defer tickersPool.Put(tickers[:0])
+	defer func() {
+		tickersPool.Put(tickers[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &tickers); err != nil {
 		errnie.Error(err)
@@ -74,7 +78,9 @@ func GetTickers(data *public.SocketMessage) []market.TickerUpdate {
 
 func GetBooks(data *public.SocketMessage) []market.Book {
 	books := booksPool.Get().([]market.Book)[:0]
-	defer booksPool.Put(books[:0])
+	defer func() {
+		booksPool.Put(books[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &books); err != nil {
 		errnie.Error(err)
@@ -90,7 +96,9 @@ func GetBooks(data *public.SocketMessage) []market.Book {
 
 func GetOrders(data *public.SocketMessage) []trading.OrderUpdate {
 	orders := ordersPool.Get().([]trading.OrderUpdate)[:0]
-	defer ordersPool.Put(orders[:0])
+	defer func() {
+		ordersPool.Put(orders[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &orders); err != nil {
 		errnie.Error(err)
@@ -102,7 +110,9 @@ func GetOrders(data *public.SocketMessage) []trading.OrderUpdate {
 
 func GetExecutions(data *public.SocketMessage) []user.Execution {
 	executions := executionsPool.Get().([]user.Execution)[:0]
-	defer executionsPool.Put(executions[:0])
+	defer func() {
+		executionsPool.Put(executions[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &executions); err != nil {
 		errnie.Error(err)
@@ -114,7 +124,9 @@ func GetExecutions(data *public.SocketMessage) []user.Execution {
 
 func GetBalances(data *public.SocketMessage) []user.Balance {
 	balances := balancesPool.Get().([]user.Balance)[:0]
-	defer balancesPool.Put(balances[:0])
+	defer func() {
+		balancesPool.Put(balances[:0])
+	}()
 
 	if err := sonic.Unmarshal(data.Data, &balances); err != nil {
 		errnie.Error(err)

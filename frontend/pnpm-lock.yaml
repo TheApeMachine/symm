@@ -50,6 +50,9 @@ importers:
       '@tanstack/router-plugin':
         specifier: ^1.132.0
         version: 1.168.9(@tanstack/react-router@1.170.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0))
+      '@tanstack/store':
+        specifier: ^0.11.0
+        version: 0.11.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

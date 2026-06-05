@@ -50,6 +50,10 @@ func (state *DepthSymbol) weightedImbalanceLocked(
 		return 0, false
 	}
 
+	if len(bids) == 0 || len(asks) == 0 {
+		return 0, false
+	}
+
 	spread := asks[0].Price - bids[0].Price
 
 	if spread <= 0 {

@@ -83,10 +83,10 @@ func (ws *WebSocket) Tick() (err error) {
 		return ws.err
 	}
 
-	ws.balances.PublishUI()
-
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+
+	publishedInitialWallet := false
 
 	for {
 		select {
@@ -104,6 +104,11 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ticker.C:
 			// Poll resting protective orders against the latest quote — the paper
 			// emulation of Kraken's server-side trigger engine.
+			if !publishedInitialWallet {
+				ws.balances.PublishUI()
+				publishedInitialWallet = true
+			}
+
 			ws.orders.CheckTriggers()
 			time.Sleep(ws.latencies.Value.(time.Duration))
 			ws.latencies.Next()

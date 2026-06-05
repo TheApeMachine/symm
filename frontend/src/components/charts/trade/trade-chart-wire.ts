@@ -30,6 +30,9 @@ type OhlcHubRow = {
 
 type BarSink = (bar: OhlcBar) => void;
 
+// Threshold used to identify millisecond timestamps: 1e12 ms is approximately Sep 2001.
+const MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000;
+
 const chartSinks = new Map<string, BarSink>();
 const pendingBars = new Map<string, OhlcBar[]>();
 
@@ -75,7 +78,7 @@ export const parseIntervalBeginSec = (
 	intervalBegin: unknown,
 ): number | null => {
 	if (typeof intervalBegin === "number" && Number.isFinite(intervalBegin)) {
-		if (intervalBegin > 1_000_000_000_000) {
+		if (intervalBegin > MILLISECOND_TIMESTAMP_THRESHOLD) {
 			return Math.floor(intervalBegin / 1000);
 		}
 

@@ -33,6 +33,7 @@ export const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 export const VISIBLE_CANDLE_COUNT = 300;
 const DEFAULT_BAR_STEP_SEC = 60;
 const DEFAULT_PAD_SEC = 60;
+export const DEFAULT_RANGE_MATCH_EPSILON_SEC = 1;
 
 export const candleChartXExtents = (
 	firstX: number,
@@ -64,9 +65,23 @@ export const shiftTrailingVisibleRange = (
 	return { min: lastX + pad - span, max: lastX + pad };
 };
 
+/**
+ * Returns the live-follow tolerance in seconds.
+ *
+ * @param barStep Bar spacing in seconds.
+ * @returns The greater of barStep * 2 and DEFAULT_PAD_SEC, in seconds.
+ */
 export const liveFollowToleranceSec = (barStep: number): number =>
 	Math.max(barStep * 2, DEFAULT_PAD_SEC);
 
+/**
+ * Reports whether the current viewport is still tracking the live edge.
+ *
+ * @param currentRange Visible x-axis range in seconds; currentRange.max is the visible right edge.
+ * @param priorLastX Previous final bar x value in seconds.
+ * @param barStep Bar spacing in seconds.
+ * @returns True when currentRange.max is within liveFollowToleranceSec(barStep) of priorLastX.
+ */
 export const isViewportFollowingLiveEdge = (
 	currentRange: NumberRange,
 	priorLastX: number,
@@ -80,7 +95,7 @@ export const isViewportFollowingLiveEdge = (
 export const visibleRangesMatch = (
 	left: NumberRange,
 	right: NumberRange,
-	epsilon = 1,
+	epsilon = DEFAULT_RANGE_MATCH_EPSILON_SEC,
 ): boolean =>
 	Math.abs(left.min - right.min) <= epsilon &&
 	Math.abs(left.max - right.max) <= epsilon;

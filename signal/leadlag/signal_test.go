@@ -32,7 +32,7 @@ func TestMeasureAnchorStall(t *testing.T) {
 		signal := &Signal{}
 		anchor := newSymbolState()
 
-		measurement, _, err := signal.measureAnchorStall(anchor, 0.6)
+		measurement, _, err := signal.measureStall(anchor, 0.6)
 
 		Convey("It should classify an anchor stall on the unit interval", func() {
 			So(err, ShouldBeNil)

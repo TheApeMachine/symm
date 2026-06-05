@@ -255,7 +255,7 @@ func (signal *Signal) publishAnchorStall(
 	})
 
 	signal.followerScratch = followers
-	measurement, standout, err := signal.measureAnchorStall(anchor, stallMargin)
+	measurement, standout, err := signal.measureStall(anchor, stallMargin)
 
 	if err != nil {
 		return fmt.Errorf("leadlag: measure anchor stall: %w", err)
@@ -274,7 +274,7 @@ func (signal *Signal) publishAnchorStall(
 		}
 
 		follower := raw.(*symbolState)
-		measurement, standout, err := signal.measureAnchorStall(follower, stallMargin)
+		measurement, standout, err := signal.measureStall(follower, stallMargin)
 
 		if err != nil {
 			joined = errors.Join(joined, fmt.Errorf("leadlag: measure follower stall %s: %w", symbolName, err))
@@ -330,13 +330,13 @@ func (signal *Signal) throttle() bool {
 	return true
 }
 
-func (signal *Signal) measureAnchorStall(
-	anchor *symbolState,
+func (signal *Signal) measureStall(
+	symbol *symbolState,
 	stallMargin float64,
 ) (perspectives.Measurement, float64, error) {
 	category, clarity, standout := leadlagReading(false, stallMargin, 0, 0)
 
-	confidence, err := anchor.tracked.Observe(category, clarity, standout)
+	confidence, err := symbol.tracked.Observe(category, clarity, standout)
 
 	if err != nil {
 		return perspectives.Measurement{}, 0, err

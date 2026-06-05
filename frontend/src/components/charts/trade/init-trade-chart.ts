@@ -293,6 +293,11 @@ export const initTradeChart = async (
 	let lastProgrammaticRange: NumberRange | null = null;
 
 	const setXVisibleRange = (range: NumberRange) => {
+		// setXVisibleRange sets suppressViewportTracking so the synchronous
+		// xAxis.visibleRange handler does not treat this programmatic range change
+		// as user interaction. lastProgrammaticRange records the intended range,
+		// and queueMicrotask defers clearing suppressViewportTracking until the
+		// current stack and synchronous visibleRangeChanged callbacks have run.
 		suppressViewportTracking = true;
 		lastProgrammaticRange = range;
 

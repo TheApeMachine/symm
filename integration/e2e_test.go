@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,10 +41,15 @@ func TestIntegrationE2E(t *testing.T) {
 		suiteCtx, suiteCancel := context.WithTimeout(context.Background(), integrationE2ESuiteTimeout)
 		defer suiteCancel()
 
-		scenarios := selectedScenarios(allScenarios())
+		availableScenarios := allScenarios()
+		scenarios := selectedScenarios(availableScenarios)
 
 		if len(scenarios) == 0 {
-			t.Fatalf("SYMM_E2E_SCENARIO did not match any scenario")
+			t.Fatalf(
+				"SYMM_E2E_SCENARIO=%q did not match any scenario; available: %s",
+				os.Getenv("SYMM_E2E_SCENARIO"),
+				strings.Join(scenarioIDs(availableScenarios), ", "),
+			)
 		}
 
 		report := RunSuite(suiteCtx, auditDir, scenarios)
@@ -80,6 +86,16 @@ func selectedScenarios(scenarios []Scenario) []Scenario {
 	}
 
 	return selected
+}
+
+func scenarioIDs(scenarios []Scenario) []string {
+	ids := make([]string, 0, len(scenarios))
+
+	for _, scenario := range scenarios {
+		ids = append(ids, scenario.ID)
+	}
+
+	return ids
 }
 
 /*

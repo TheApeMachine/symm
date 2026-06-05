@@ -98,10 +98,26 @@ func TuneMeasurements(
 
 func shouldWrite(best reasoning.Candidate, minRoundTrips int) bool {
 	if len(best.Forest) == 0 {
+		log.TuneLog(
+			"not writing candidate: empty forest strategies=%d nodes=%d trades=%d score=%.6f return=%.6f",
+			len(best.Forest),
+			best.Nodes,
+			best.Trades,
+			best.Score,
+			best.Return,
+		)
+
 		return false
 	}
 
 	if best.Score <= 0 || best.Return <= 0 {
+		log.TuneLog(
+			"not writing candidate: non-positive score/return score=%.6f return=%.6f trades=%d",
+			best.Score,
+			best.Return,
+			best.Trades,
+		)
+
 		return false
 	}
 

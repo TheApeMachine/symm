@@ -46,10 +46,12 @@ func (engine *Engine) Start() (err error) {
 
 	for _, system := range engine.systems {
 		system := system
+		wg.Add(1)
 
-		wg.Go(func() {
+		go func() {
+			defer wg.Done()
 			errs <- system.Tick()
-		})
+		}()
 	}
 
 	go func() {
@@ -90,8 +92,6 @@ func (engine *Engine) Start() (err error) {
 		}
 	}
 
-	wg.Wait()
-
 	return engine.err
 }
 
@@ -112,10 +112,6 @@ func (engine *Engine) Close() error {
 	var closeErr error
 
 	for _, system := range engine.systems {
-		if system == nil {
-			continue
-		}
-
 		if err := system.Close(); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("%T: %w", system, err))
 		}
