@@ -1,5 +1,7 @@
 package ring
 
+import "math"
+
 /*
 FloatRing is a fixed-capacity circular buffer for rolling float64 windows.
 Push overwrites the oldest entry without heap allocation in the hot path.
@@ -39,6 +41,13 @@ Len returns the number of stored samples.
 */
 func (ring FloatRing) Len() int {
 	return ring.count
+}
+
+/*
+Cap returns the ring's fixed capacity.
+*/
+func (ring FloatRing) Cap() int {
+	return len(ring.values)
 }
 
 /*
@@ -88,4 +97,34 @@ func (ring FloatRing) startIndex() int {
 	}
 
 	return ring.head
+}
+
+/*
+MeanStdDev returns the sample mean and standard deviation of stored values.
+*/
+func (ring FloatRing) MeanStdDev() (mean float64, stddev float64) {
+	if ring.count == 0 {
+		return 0, 0
+	}
+
+	sum := 0.0
+
+	for index := 0; index < ring.count; index++ {
+		sum += ring.At(index)
+	}
+
+	mean = sum / float64(ring.count)
+
+	if ring.count < 2 {
+		return mean, 0
+	}
+
+	variance := 0.0
+
+	for index := 0; index < ring.count; index++ {
+		delta := ring.At(index) - mean
+		variance += delta * delta
+	}
+
+	return mean, math.Sqrt(variance / float64(ring.count-1))
 }

@@ -67,9 +67,14 @@ type Measurement struct {
 	Symbol     string
 	Source     SourceType
 	Category   CategoryType
-	Strength   float64 // raw fused strength for dashboards only
-	Confidence float64 // cross-sectional band margin; 0 on a boundary
-	SNR        float64 // temporal surprise: sigma above this symbol's own recent standout floor
-	Last       float64 // last traded price, carried for the trader's sizing/fill
-	SpreadBPS  float64 // quoted spread in basis points when bid/ask are known; 0 falls back to static replay slippage
+	Strength   float64     // raw fused strength for dashboards only
+	Confidence float64     // cross-sectional band margin; 0 on a boundary
+	SNR        float64     // temporal surprise: sigma above this symbol's own recent standout floor
+	Last       float64     // last traded price, carried for the trader's sizing/fill
+	Volume     float64     // quote-currency notional volume when known (ticker volume × last)
+	SpreadBPS  float64     // quoted spread in basis points when bid/ask are known; 0 falls back to static replay slippage
+	Bid        float64     `json:"bid,omitempty"`
+	Ask        float64     `json:"ask,omitempty"`
+	BookBids   []BookLevel `json:"book_bids,omitempty"` // L2 bid depth at capture time for replay fills
+	BookAsks   []BookLevel `json:"book_asks,omitempty"` // L2 ask depth at capture time for replay fills
 }

@@ -44,9 +44,10 @@ type ReplayCosts struct {
 	StopLossPct                float64 // long exits if price falls this fraction below entry
 	TakeProfitPct              float64 // long exits if price rises this fraction above entry
 	TrailingVolatilityMultiple float64
-	StartingCapital            float64 // account balance the replay starts with
-	PositionFraction           float64 // fraction of available cash deployed per entry
-	WalletCurrency             string  // quote currency the wallet holds; only matching pairs are fundable
+	StartingCapital            float64            // account balance when WalletBalances is unset
+	PositionFraction           float64            // fraction of available cash deployed per entry
+	WalletCurrency             string             // primary quote currency; backward compatible
+	WalletBalances             map[string]float64 // quote currency -> starting cash for multi-wallet replay
 	ExecutionLatency           time.Duration
 	ExecutionStressEnabled     bool
 }
@@ -117,9 +118,51 @@ func ReplayCostsFromViper() ReplayCosts {
 		StartingCapital:            startingCapital,
 		PositionFraction:           positionFraction,
 		WalletCurrency:             walletCurrency,
+		WalletBalances:             walletBalancesFromViper(walletCurrency, startingCapital),
 		ExecutionLatency:           replayExecutionLatencyFromViper(),
 		ExecutionStressEnabled:     replayExecutionStressEnabledFromViper(),
 	}
+}
+
+func walletBalancesFromViper(primary string, primaryBalance float64) map[string]float64 {
+	config := viper.GetViper()
+	balances := make(map[string]float64)
+
+	for _, key := range config.AllKeys() {
+		if !strings.HasPrefix(key, "trading.paper.wallet_") {
+			continue
+		}
+
+		currency := strings.ToUpper(strings.TrimPrefix(key, "trading.paper.wallet_"))
+		balance := config.GetFloat64(key)
+
+		if balance > 0 {
+			balances[currency] = balance
+		}
+	}
+
+	if len(balances) == 0 && primary != "" && primaryBalance > 0 {
+		balances[strings.ToUpper(primary)] = primaryBalance
+	}
+
+	return balances
+}
+
+/*
+WalletBalance returns the starting cash for one quote currency.
+*/
+func (costs ReplayCosts) WalletBalance(currency string) float64 {
+	currency = strings.ToUpper(currency)
+
+	if len(costs.WalletBalances) > 0 {
+		return costs.WalletBalances[currency]
+	}
+
+	if currency == strings.ToUpper(costs.WalletCurrency) {
+		return effectiveCapital(costs)
+	}
+
+	return 0
 }
 
 func trailingVolatilityMultipleFromViper() float64 {

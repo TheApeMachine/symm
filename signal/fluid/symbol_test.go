@@ -7,7 +7,25 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric/adaptive"
 )
+
+func fluidTestCategories() map[string]perspectives.CategoryType {
+	return map[string]perspectives.CategoryType{
+		"laminar":   perspectives.CategoryLaminar,
+		"inertial":  perspectives.CategoryInertial,
+		"viscous":   perspectives.CategoryViscous,
+		"turbulent": perspectives.CategoryTurbulent,
+	}
+}
+
+func fluidTestClassifier() *adaptive.Classifier {
+	return adaptive.NewClassifier(
+		fluidDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"laminar", "inertial", "viscous", "turbulent"},
+	)
+}
 
 type symbolBookFixture struct {
 	symbol string
@@ -34,7 +52,7 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 	Convey("Given a fluid symbol fed a delta before any snapshot", t, func() {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
-		state, err := NewFluidSymbol(symbol)
+		state, err := NewFluidSymbol(symbol, fluidTestClassifier())
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
@@ -47,7 +65,7 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		})
 
 		Convey("It should report Measure as not ready", func() {
-			measurement, _, err := state.Measure()
+			measurement, _, err := state.Measure(fluidTestCategories())
 
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
@@ -59,7 +77,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 	Convey("Given a fluid symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
-		state, err := NewFluidSymbol(symbol)
+		state, err := NewFluidSymbol(symbol, fluidTestClassifier())
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
@@ -68,7 +86,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 		})
 		state.FeedBook(fixture.snapshot(99, 10, 101, 6))
 
-		measurement, _, err := state.Measure()
+		measurement, _, err := state.Measure(fluidTestCategories())
 
 		Convey("It should publish a field reading", func() {
 			So(err, ShouldBeNil)
@@ -81,7 +99,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta.Checksum = 1
 			state.FeedBook(badDelta)
 
-			measurement, _, err := state.Measure()
+			measurement, _, err := state.Measure(fluidTestCategories())
 
 			Convey("It should suppress field emission", func() {
 				So(err, ShouldBeNil)
@@ -99,7 +117,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 	Convey("Given a balanced book with no Reynolds activity", t, func() {
 		symbol := "BTC/EUR"
 		viper.Set("market.book_depth_levels", 10)
-		state, err := NewFluidSymbol(symbol)
+		state, err := NewFluidSymbol(symbol, fluidTestClassifier())
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
@@ -108,7 +126,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		})
 		state.FeedBook(fixture.snapshot(100, 5, 100, 5))
 
-		measurement, _, err := state.Measure()
+		measurement, _, err := state.Measure(fluidTestCategories())
 
 		Convey("It should still publish a laminar reading", func() {
 			So(err, ShouldBeNil)
@@ -121,7 +139,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 func BenchmarkFluidSymbolMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
 	viper.Set("market.book_depth_levels", 10)
-	state, err := NewFluidSymbol(symbol)
+	state, err := NewFluidSymbol(symbol, fluidTestClassifier())
 
 	if err != nil {
 		b.Fatal(err)
@@ -136,6 +154,6 @@ func BenchmarkFluidSymbolMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = state.Measure()
+		_, _, _ = state.Measure(fluidTestCategories())
 	}
 }

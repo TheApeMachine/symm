@@ -24,7 +24,7 @@ type CausalSymbol struct {
 	mu             sync.RWMutex
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
-	hy             *hyReturns
+	hy             *hyWindowSet
 	regime         regimeTracker
 	lastPrice      float64
 	bid            float64
@@ -44,7 +44,7 @@ func NewCausalSymbol() *CausalSymbol {
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
 		pressure:     adaptive.NewEMA(0),
-		hy:           newHYReturns(contagionWindow()),
+		hy:           newHYWindowSet(),
 		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
 	}
 }
@@ -82,6 +82,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 
 	if tick.Price > 0 {
 		state.hy.Observe(tick.Timestamp.UnixNano(), tick.Price)
+		state.maybeResetHYOnShock()
 	}
 
 	sign := -1.0
@@ -232,7 +233,46 @@ func (state *CausalSymbol) HYSnapshot() *hyReturns {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
+	if state.hy == nil {
+		return nil
+	}
+
+	return state.hy.medium.clone()
+}
+
+func (state *CausalSymbol) HYWindowSnapshot() *hyWindowSet {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
 	return state.hy.clone()
+}
+
+func (state *CausalSymbol) maybeResetHYOnShock() {
+	if state.hy == nil {
+		return
+	}
+
+	lastMove := state.hy.fast.lastReturnMagnitude()
+	baseline := state.hy.slow.realizedVolatilityExcludingLast()
+
+	if baseline <= 0 {
+		return
+	}
+
+	if lastMove < baseline*contagionVolatilityResetSigma() {
+		return
+	}
+
+	keep := contagionMinSamples()
+	fastKeep := keep / 4
+
+	if fastKeep < 4 {
+		fastKeep = 4
+	}
+
+	state.hy.fast.trim(fastKeep)
+	state.hy.medium.trim(keep)
+	state.hy.slow.trim(keep * 2)
 }
 
 func (state *CausalSymbol) evaluate(current causalSample, contagion float64) causalOutcome {

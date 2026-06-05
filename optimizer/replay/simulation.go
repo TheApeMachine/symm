@@ -85,7 +85,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	}
 
 	ledger.configureExecutionStress(
-		simulation.costs.effectiveExecutionLatency(nil, simulation.tape),
+		simulation.costs.effectiveExecutionLatency(),
 		simulation.tape.MedianInterval,
 	)
 

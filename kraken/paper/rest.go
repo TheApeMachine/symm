@@ -2,14 +2,16 @@ package paper
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 )
 
 /*
-Rest is a fake REST client for paper trading, that acts exactly
-like the real Kraken REST client, but instead of making actual API
-calls, it just returns an accurately simulated response.
+Rest is a fake REST client for paper trading that simulates Kraken private REST
+responses used by token bootstrap and reconciliation paths.
 */
 type Rest struct {
 	ctx    context.Context
@@ -33,7 +35,7 @@ func (rest *Rest) Get(
 	model any,
 	headers ...map[string]string,
 ) error {
-	return nil
+	return fmt.Errorf("paper rest: GET not supported")
 }
 
 /*
@@ -45,13 +47,35 @@ func (rest *Rest) Post(
 	model any,
 	headers ...map[string]string,
 ) error {
-	return nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return rest.webSocketsToken(model)
+}
+
+func (rest *Rest) webSocketsToken(model any) error {
+	if model == nil {
+		return nil
+	}
+
+	payload, err := sonic.Marshal(map[string]any{
+		"token":   fmt.Sprintf("paper-%d", time.Now().UnixNano()),
+		"expires": int((15 * time.Minute).Seconds()),
+	})
+
+	if err != nil {
+		return fmt.Errorf("paper rest: encode token: %w", err)
+	}
+
+	return sonic.Unmarshal(payload, model)
 }
 
 /*
 Close closes the REST client.
 */
 func (rest *Rest) Close() error {
+	rest.cancel()
 	return nil
 }
 

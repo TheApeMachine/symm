@@ -1,6 +1,10 @@
 package perspectives
 
-import "go.yaml.in/yaml/v3"
+import (
+	"go.yaml.in/yaml/v3"
+
+	"github.com/theapemachine/symm/kraken/trading"
+)
 
 var subjectNames = map[Subject]string{
 	SubjectNone:     "none",
@@ -52,8 +56,10 @@ func (act *Act) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	var raw struct {
-		Type   ActionType `yaml:"type"`
-		Offset float64    `yaml:"offset"`
+		Type     ActionType   `yaml:"type"`
+		Side     trading.Side `yaml:"side,omitempty"`
+		Offset   float64      `yaml:"offset"`
+		Fraction float64      `yaml:"fraction"`
 	}
 
 	if err := node.Decode(&raw); err != nil {
@@ -61,25 +67,33 @@ func (act *Act) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	act.Type = raw.Type
+	act.Side = raw.Side
 	act.Offset = raw.Offset
+	act.Fraction = raw.Fraction
 
 	return nil
 }
 
 /*
 MarshalYAML is the inverse of the reader above: a bare action ("do: iceberg") when
-there is no per-node offset, and the object form ("do: { type: stop_loss, offset:
-0.015 }") when there is, so a written playbook reads back identically.
+there is no per-node offset or side, and the object form when there is.
 */
 func (act Act) MarshalYAML() (any, error) {
-	if act.Offset == 0 {
+	if act.Offset == 0 && act.Side == "" && act.Fraction == 0 {
 		return act.Type, nil
 	}
 
 	return struct {
-		Type   ActionType `yaml:"type"`
-		Offset float64    `yaml:"offset"`
-	}{Type: act.Type, Offset: act.Offset}, nil
+		Type     ActionType   `yaml:"type"`
+		Side     trading.Side `yaml:"side,omitempty"`
+		Offset   float64      `yaml:"offset,omitempty"`
+		Fraction float64      `yaml:"fraction,omitempty"`
+	}{
+		Type:     act.Type,
+		Side:     act.Side,
+		Offset:   act.Offset,
+		Fraction: act.Fraction,
+	}, nil
 }
 
 type reasoningDocument struct {

@@ -26,6 +26,7 @@ type Vocabulary struct {
 	Lookbacks  []int                       // `ago` lookbacks for temporal steps
 	PriceMoves []float64                   // rose_by/fell_by percentages
 	Offsets    []float64                   // protective stop/take/trail fractions
+	Fractions  []float64                   // entry capital multipliers on trading.position_fraction
 	Durations  []float64                   // time-stop deadlines, in minutes
 	Entries    []perspectives.ActionType   // entry actions to seed/try
 	Protective []perspectives.ActionType   // protective exits a node may arm
@@ -34,6 +35,32 @@ type Vocabulary struct {
 // maxSeedCategories caps how many distinct signals seed their own strategy branch,
 // so a noisy tape with dozens of categories does not explode the initial beam.
 const maxSeedCategories = 6
+
+/*
+derivePositionFractions builds capital-deployment multipliers from the tape's SNR
+distribution so the search grid tracks how strong signals actually read on data.
+*/
+func derivePositionFractions(rows []perspectives.Measurement) []float64 {
+	peakSNR := 0.0
+
+	for _, row := range rows {
+		if row.SNR > peakSNR {
+			peakSNR = row.SNR
+		}
+	}
+
+	if peakSNR <= 0 {
+		return []float64{0.5, 1.0, 1.5, 2.0}
+	}
+
+	step := peakSNR / 4
+
+	if step < 0.25 {
+		step = 0.25
+	}
+
+	return []float64{step, step * 2, step * 3, step * 4}
+}
 
 /*
 DeriveVocabulary reads the categories that actually occur on the tape (by
@@ -69,6 +96,8 @@ func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
 		categories = categories[:maxSeedCategories]
 	}
 
+	fractions := derivePositionFractions(rows)
+
 	return Vocabulary{
 		Categories: categories,
 		Regimes: []perspectives.Regime{
@@ -78,6 +107,7 @@ func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
 		Lookbacks:  []int{3, 5, 8},
 		PriceMoves: []float64{0.5, 1.0, 2.0},
 		Offsets:    []float64{0.01, 0.02, 0.05},
+		Fractions:  fractions,
 		Durations:  []float64{5, 15, 30},
 		Entries:    []perspectives.ActionType{perspectives.ActionMarket, perspectives.ActionIceberg},
 		Protective: []perspectives.ActionType{

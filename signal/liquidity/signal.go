@@ -247,6 +247,7 @@ func (signal *Signal) measureFromVolumes(
 		Source:     perspectives.SourceLiquidity,
 		Category:   category,
 		Last:       row.Last,
+		Volume:     quoteVol,
 		Strength:   raw,
 		Confidence: confidence,
 	}, standout, nil
@@ -274,32 +275,6 @@ func (signal *Signal) strength(ratio float64) float64 {
 	}
 
 	return ratio
-}
-
-/*
-crossSection returns the symbol's own quote volume and the peer volumes.
-*/
-func (signal *Signal) crossSection(symbol string) (own float64, peers []float64) {
-	peers = make([]float64, 0)
-
-	signal.symbols.Range(func(key, value any) bool {
-		volume := value.(float64)
-
-		if volume <= 0 {
-			return true
-		}
-
-		if key.(string) == symbol {
-			own = volume
-			return true
-		}
-
-		peers = append(peers, volume)
-
-		return true
-	})
-
-	return own, peers
 }
 
 func (signal *Signal) Close() error {

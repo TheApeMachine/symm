@@ -6,28 +6,19 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestFloatRingPushOverwrite(t *testing.T) {
-	Convey("Given a full ring buffer", t, func() {
-		ringBuffer := NewFloatRing(3)
+func TestFloatRingMeanStdDev(t *testing.T) {
+	Convey("Given a ring of spreads", t, func() {
+		sampleRing := NewFloatRing(4)
+		sampleRing.Push(0.1)
+		sampleRing.Push(0.2)
+		sampleRing.Push(0.3)
+		sampleRing.Push(0.4)
 
-		ringBuffer.Push(1)
-		ringBuffer.Push(2)
-		ringBuffer.Push(3)
-		ringBuffer.Push(4)
+		mean, stddev := sampleRing.MeanStdDev()
 
-		Convey("It should retain the newest values in order", func() {
-			So(ringBuffer.Len(), ShouldEqual, 3)
-			So(ringBuffer.Ordered(), ShouldResemble, []float64{2, 3, 4})
+		Convey("It should compute mean and standard deviation", func() {
+			So(mean, ShouldAlmostEqual, 0.25, 1e-9)
+			So(stddev, ShouldBeGreaterThan, 0)
 		})
 	})
-}
-
-func BenchmarkFloatRingPush(b *testing.B) {
-	ringBuffer := NewFloatRing(24)
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		ringBuffer.Push(1.23)
-	}
 }

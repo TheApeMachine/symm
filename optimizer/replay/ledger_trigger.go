@@ -1,12 +1,20 @@
 package replay
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives"
+)
+
+func positionSide(position replayPosition) trading.Side {
+	if position.side == trading.Sell {
+		return trading.Sell
+	}
+
+	return trading.Buy
+}
 
 /*
-armTrigger attaches a resting protective exit to an open position. The most
-recent exit gate wins, so a strategy can revise its protection (e.g. tighten a
-stop) on later ticks. The act's Offset overrides the dynamic trigger distance for
-this position. No-ops when flat.
+armTrigger attaches a resting protective exit to an open position.
 */
 func (ledger *replayLedger) armTrigger(
 	symbol string, act perspectives.Act,
@@ -56,12 +64,6 @@ func (ledger *replayLedger) armOffset(
 	}
 }
 
-/*
-checkTriggers advances the running peak and closes the position when the price
-path breaches an armed protective trigger. Stops and trailing stops cross the
-book on breach (eating any gap-through and slippage); the -limit variants rest
-as maker orders and fill at their trigger level. Called once per tick.
-*/
 func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
 	ledger.observePrice(row)
 
@@ -75,7 +77,14 @@ func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
 		return
 	}
 
-	if row.Last > position.peak {
+	side := positionSide(position)
+
+	if side == trading.Sell {
+		if position.trough == 0 || row.Last < position.trough {
+			position.trough = row.Last
+			ledger.positions[row.Symbol] = position
+		}
+	} else if row.Last > position.peak {
 		position.peak = row.Last
 		ledger.positions[row.Symbol] = position
 	}
@@ -84,32 +93,39 @@ func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
 		return
 	}
 
-	level, breached := triggerLevel(position, row.Last)
+	extremum := position.peak
+
+	if side == trading.Sell {
+		extremum = position.trough
+	}
+
+	level, breached := triggerLevel(position, side, extremum, row.Last)
 
 	if !breached {
 		return
 	}
 
-	ledger.closeAtTrigger(row.Symbol, position.triggerType, level, row.Last, row.SpreadBPS)
+	ledger.closeAtTrigger(row.Symbol, side, position.triggerType, level, row, nil)
 }
 
-/*
-triggerLevel returns the protective trigger price for the armed exit and whether
-the current price has breached it. Long positions only.
-*/
-func triggerLevel(position replayPosition, price float64) (level float64, breached bool) {
+func triggerLevel(
+	position replayPosition,
+	side trading.Side,
+	extremum, price float64,
+) (level float64, breached bool) {
 	if perspectives.IsTrailingExit(position.triggerType) && position.triggerOffset <= 0 {
 		return 0, false
 	}
 
-	level = perspectives.ProtectiveLevel(
+	level = perspectives.ProtectiveLevelForSide(
+		side,
 		position.triggerType,
 		position.entryPrice,
-		position.peak,
+		extremum,
 		position.triggerOffset,
 	)
 
-	return level, perspectives.ProtectiveBreached(position.triggerType, level, price)
+	return level, perspectives.ProtectiveBreachedForSide(side, position.triggerType, level, price)
 }
 
 func trailingVolatilityMultiple(costs ReplayCosts) float64 {
@@ -120,19 +136,13 @@ func trailingVolatilityMultiple(costs ReplayCosts) float64 {
 	return DefaultTrailingVolatilityMultiple
 }
 
-/*
-closeAtTrigger realizes a protective exit. Market-style triggers (stop, take,
-trailing) cross the book: a stop or trail fills at the worse of the trigger and
-the current price (gap-through), paying taker fee and slippage. The -limit
-variants rest as maker orders and fill at their trigger level with the maker fee
-and no crossing slippage.
-*/
 func (ledger *replayLedger) closeAtTrigger(
 	symbol string,
+	side trading.Side,
 	actionType perspectives.ActionType,
 	level float64,
-	price float64,
-	spreadBPS float64,
+	row perspectives.Measurement,
+	snapshots []perspectives.Measurement,
 ) {
 	position, open := ledger.positions[symbol]
 
@@ -146,15 +156,19 @@ func (ledger *replayLedger) closeAtTrigger(
 		exitFill = level
 		feePct = ledger.costs.MakerFeePct
 	} else {
+		fillRow := row
 		fill := level
 
-		// A market stop/trail eats a downside gap-through; a market take-profit
-		// does not assume a favourable upside gap.
-		if actionType != perspectives.ActionTakeProfit && price < level {
-			fill = price
+		if side == trading.Sell {
+			if actionType != perspectives.ActionTakeProfit && row.Last > level {
+				fill = row.Last
+			}
+		} else if actionType != perspectives.ActionTakeProfit && row.Last < level {
+			fill = row.Last
 		}
 
-		exitFill = fill * (1 - halfSpreadSlippagePct(ledger.costs, spreadBPS))
+		fillRow.Last = fill
+		exitFill = ledger.resolveExitFill(side, fillRow, snapshots, position.quantity)
 		feePct = ledger.costs.TakerFeePct
 	}
 

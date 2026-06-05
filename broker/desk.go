@@ -242,7 +242,7 @@ func (desk *Desk) triggersFor(
 
 	return &trading.Triggers{
 		Reference: "last",
-		Price:     perspectives.ProtectiveLevel(action.Type, action.Price, 0, offset),
+		Price:     perspectives.ProtectiveLevelForSide(action.Side, action.Type, action.Price, 0, offset),
 	}, nil
 }
 

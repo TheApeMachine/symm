@@ -32,6 +32,7 @@ const TELEMETRY_KEYS = new Set([
 	"calibrated",
 	"samples",
 	"min_samples",
+	"entropy_trust",
 	"confidence",
 	"snr",
 ]);
@@ -57,16 +58,19 @@ const SignalGaugeTooltip = ({
 	const labels = stringArray(payload.band_labels);
 	const shares = numberArray(payload.shares);
 	const bands = numberArray(payload.bands);
-	const category = typeof payload.category === "string" ? payload.category : null;
+	const category =
+		typeof payload.category === "string" ? payload.category : null;
 	const confidence = finiteNumber(payload.confidence);
 	const snr = finiteNumber(payload.snr);
 	const observation = finiteNumber(payload.observation);
 	const samples = finiteNumber(payload.samples);
 	const minSamples = finiteNumber(payload.min_samples);
+	const entropyTrust = finiteNumber(payload.entropy_trust);
 	const calibrating = payload.calibrating === true;
 	const calibrated = payload.calibrated === true;
 
-	const hasMix = labels !== null && shares !== null && labels.length === shares.length;
+	const hasMix =
+		labels !== null && shares !== null && labels.length === shares.length;
 	const generic = gaugePayloadEntries(payload).filter(
 		([key]) => !TELEMETRY_KEYS.has(key),
 	);
@@ -75,7 +79,9 @@ const SignalGaugeTooltip = ({
 		<div className="flex flex-col gap-1.5 font-mono leading-tight">
 			{category !== null || calibrating ? (
 				<div className="flex items-center justify-between gap-2">
-					<span className="font-semibold text-foreground">{category ?? "—"}</span>
+					<span className="font-semibold text-foreground">
+						{category ?? "—"}
+					</span>
 					{calibrated ? (
 						<span className="rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-400">
 							self-calibrating
@@ -88,11 +94,21 @@ const SignalGaugeTooltip = ({
 				</div>
 			) : null}
 
-			{confidence !== null || snr !== null || observation !== null ? (
+			{confidence !== null ||
+			snr !== null ||
+			observation !== null ||
+			entropyTrust !== null ? (
 				<div className="flex gap-3 text-[11px] text-muted-foreground">
-					{confidence !== null ? <span>conf {confidence.toFixed(2)}</span> : null}
+					{confidence !== null ? (
+						<span>conf {confidence.toFixed(2)}</span>
+					) : null}
 					{snr !== null ? <span>snr {snr.toFixed(2)}</span> : null}
-					{observation !== null ? <span>obs {observation.toFixed(3)}</span> : null}
+					{observation !== null ? (
+						<span>obs {observation.toFixed(3)}</span>
+					) : null}
+					{entropyTrust !== null ? (
+						<span>trust {entropyTrust.toFixed(2)}</span>
+					) : null}
 				</div>
 			) : null}
 

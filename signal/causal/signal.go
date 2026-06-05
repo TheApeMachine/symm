@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
+	"github.com/theapemachine/symm/ring"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -63,6 +64,7 @@ type Signal struct {
 	lastPublish      time.Time
 	contagionAt      time.Time
 	cachedContagion  float64
+	contagionSpread  ring.FloatRing
 	fitContagion     float64
 	emergencyBackoff time.Duration
 	backoffUntil     time.Time
@@ -81,13 +83,14 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
-		rawDump:     rawdump.Open("causal"),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		broadcasts:      make(map[string]*qpool.BroadcastGroup),
+		subscribers:     make(map[string]*qpool.Subscriber),
+		floor:           adaptive.NewSNRField(),
+		contagionSpread: ring.NewFloatRing(64),
+		rawDump:         rawdump.Open("causal"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -239,6 +242,20 @@ func causalContagionShift() float64 {
 	return 0.2
 }
 
+// causalPublishIntervalForRegime shortens the fit cadence in calm regimes and
+// lengthens it during hostile price action so O(symbols²) work concentrates when
+// the structural picture is stable.
+func causalPublishIntervalForRegime(regime perspectives.Regime) time.Duration {
+	switch regime {
+	case perspectives.RegimeDead, perspectives.RegimeTrending, perspectives.RegimeBullish:
+		return causalPublishInterval / 2
+	case perspectives.RegimeChoppy, perspectives.RegimeBearish:
+		return causalPublishInterval * 2
+	default:
+		return causalPublishInterval
+	}
+}
+
 /*
 throttle decides whether to rerun the O(symbols²) causal fit. It fires on the time
 gate as before, OR immediately when contagion has broken away since the last fit
@@ -249,7 +266,9 @@ re-fire: the freshly computed panic DAG is relied on for an escalating window so
 sustained spike cannot saturate the core. now is passed in so the gate is testable.
 */
 func (signal *Signal) throttle(now time.Time, contagion float64) bool {
-	if now.Sub(signal.lastPublish) >= causalPublishInterval {
+	interval := causalPublishIntervalForRegime(perspectives.CurrentRegime())
+
+	if now.Sub(signal.lastPublish) >= interval {
 		signal.commitFit(now, contagion, false)
 
 		return true

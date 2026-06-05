@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestProtectiveTriggerMath(t *testing.T) {
@@ -26,6 +27,16 @@ func TestProtectiveTriggerMath(t *testing.T) {
 			level := ProtectiveLevel(ActionTrailingStop, 0, 120, 0.02)
 			So(level, ShouldAlmostEqual, 117.6, 1e-9)
 			So(ProtectiveBreached(ActionTrailingStop, level, 117.5), ShouldBeTrue)
+		})
+
+		Convey("Short protective triggers invert long levels", func() {
+			stop := ProtectiveLevelForSide(trading.Sell, ActionStopLoss, 100, 0, 0.02)
+			So(stop, ShouldAlmostEqual, 102, 1e-9)
+			So(ProtectiveBreachedForSide(trading.Sell, ActionStopLoss, stop, 102.1), ShouldBeTrue)
+
+			take := ProtectiveLevelForSide(trading.Sell, ActionTakeProfit, 100, 0, 0.03)
+			So(take, ShouldAlmostEqual, 97, 1e-9)
+			So(ProtectiveBreachedForSide(trading.Sell, ActionTakeProfit, take, 96.9), ShouldBeTrue)
 		})
 
 		Convey("The per-node offset overrides the global, but nonsensical fractions fall back", func() {

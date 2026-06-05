@@ -30,6 +30,19 @@ func TestExecutionStressMultiplier(t *testing.T) {
 			convey.So(executionStressMultiplier(snapshots), convey.ShouldEqual, 1)
 		})
 	})
+
+	convey.Convey("Given toxic microstructure readings", t, func() {
+		snapshots := []perspectives.Measurement{
+			{Category: perspectives.CategoryToxicBluff, SNR: 3},
+			{Category: perspectives.CategoryLaminar, SNR: 0.5},
+		}
+
+		multiplier := executionStressMultiplier(snapshots)
+
+		convey.Convey("It should expand slippage from toxicity stress", func() {
+			convey.So(multiplier, convey.ShouldBeGreaterThan, 1)
+		})
+	})
 }
 
 func TestRegimeHostility(t *testing.T) {

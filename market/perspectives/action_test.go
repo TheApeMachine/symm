@@ -23,6 +23,13 @@ func TestActionFromAct(t *testing.T) {
 			convey.So(action.Quantity, convey.ShouldEqual, 0)
 		})
 
+		convey.Convey("A short entry sells without a preset quantity", func() {
+			action := ActionFromAct(Act{Type: ActionLimit, Side: trading.Sell}, measurement)
+
+			convey.So(action.Side, convey.ShouldEqual, trading.Sell)
+			convey.So(IsShortEntry(action), convey.ShouldBeTrue)
+		})
+
 		convey.Convey("An exit sells and carries the per-node trigger offset", func() {
 			action := ActionFromAct(Act{Type: ActionTrailingStop, Offset: 0.02}, measurement)
 

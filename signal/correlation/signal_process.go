@@ -229,6 +229,9 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			}
 
 			raw := energy * (1 + 2*corr) / baseline
+			telemetry := signal.calibrator.Snapshot(signal.classifier)
+			telemetry.Observation = coin.state.pipe.Observation()
+			standout := numeric.EntropyTrustFromShares(telemetry.Shares) * coin.state.pipe.Standout()
 
 			measurement := perspectives.Measurement{
 				Symbol:     coin.symbol,
@@ -240,7 +243,7 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			}
 
 			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, coin.state.pipe.Standout(),
+				&measurement, signal.floor, standout,
 			); err != nil {
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}
@@ -261,28 +264,14 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
-				// Snapshot reads the shared classifier/calibrator; safe here because
-				// the only writer (Observe, below) runs after this concurrent pass.
-				telemetry := signal.calibrator.Snapshot(signal.classifier)
-				telemetry.Observation = coin.state.pipe.Observation()
-
 				ui.Send(&qpool.QValue[any]{
-					Value: map[string]any{
-						"chart":       "gauge",
-						"source":      measurement.Source.String(),
-						"confidence":  measurement.Confidence,
-						"snr":         measurement.SNR,
-						"symbol":      measurement.Symbol,
-						"category":    measurement.Category,
-						"observation": telemetry.Observation,
-						"bands":       telemetry.Edges,
-						"band_labels": telemetry.Labels,
-						"shares":      telemetry.Shares,
-						"calibrating": telemetry.Calibrating,
-						"calibrated":  telemetry.Calibrated,
-						"samples":     telemetry.Samples,
-						"min_samples": telemetry.MinSamples,
-					},
+					Value: numeric.GaugePayload(
+						measurement.Source.String(),
+						measurement.Symbol,
+						measurement.Category,
+						measurement,
+						telemetry,
+					),
 				})
 			}
 

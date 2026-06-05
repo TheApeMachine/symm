@@ -77,6 +77,27 @@ func TestWindowReason(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(snr, ShouldEqual, 1.2)
 		})
+
+		Convey("Volume reads distinct notional changes newest-first", func() {
+			volumeSnapshots := []Measurement{
+				{Volume: 100, Last: 10},
+				{Volume: 110, Last: 10},
+				{Volume: 130, Last: 10},
+			}
+			volumeCtx := NewWindowReason(volumeSnapshots, RegimeBullish, PositionState{})
+
+			now, okNow := volumeCtx.Scalar(SubjectVolume, UnitNone, 0)
+			then, okThen := volumeCtx.Scalar(SubjectVolume, UnitNone, 2)
+
+			So(okNow, ShouldBeTrue)
+			So(okThen, ShouldBeTrue)
+			So(now, ShouldEqual, 130)
+			So(then, ShouldEqual, 100)
+
+			So(holds(Predicate{
+				Subject: SubjectVolume, Unit: UnitPercentage, Ago: 2, Op: ComparisonRoseBy, Value: 30.0,
+			}, volumeCtx), ShouldBeTrue)
+		})
 	})
 }
 

@@ -72,6 +72,9 @@ func executionStressCategory(category perspectives.CategoryType) bool {
 		perspectives.CategoryFrenzy,
 		perspectives.CategoryLiquidityVacuum,
 		perspectives.CategoryLiquidityShock,
+		perspectives.CategoryToxicBluff,
+		perspectives.CategorySpoofTrap,
+		perspectives.CategoryBookThinning,
 		perspectives.CategorySystemicHerd,
 		perspectives.CategoryMechanicalCollapse,
 		perspectives.CategoryDivergentStress,
@@ -203,10 +206,7 @@ func executionLatencyTicks(
 	return ticks
 }
 
-func (costs ReplayCosts) effectiveExecutionLatency(
-	rows []perspectives.Measurement,
-	tape ReplayTape,
-) time.Duration {
+func (costs ReplayCosts) effectiveExecutionLatency() time.Duration {
 	if costs.ExecutionLatency > 0 {
 		return costs.ExecutionLatency
 	}

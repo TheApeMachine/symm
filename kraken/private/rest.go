@@ -13,6 +13,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -46,9 +48,23 @@ func NewRest(
 		return nil, fmt.Errorf("decode kraken api secret: %w", err)
 	}
 
+	var client public.RestClient
+
+	if viper.GetViper().GetString("trading.model") == "paper" {
+		paperRest, paperErr := paper.NewRest(ctx)
+
+		if paperErr != nil {
+			return nil, fmt.Errorf("kraken/private: paper rest: %w", paperErr)
+		}
+
+		client = paperRest
+	} else {
+		client = public.NewRest(ctx, endpoint)
+	}
+
 	return &Rest{
 		ctx:      ctx,
-		client:   public.NewRest(ctx, endpoint),
+		client:   client,
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		secret:   secret,
@@ -59,9 +75,29 @@ func NewRest(
 ForEndpoint returns a client with the same credentials on another endpoint.
 */
 func (rest *Rest) ForEndpoint(endpoint public.EndpointType) *Rest {
+	var client public.RestClient
+
+	if viper.GetViper().GetString("trading.model") == "paper" {
+		paperRest, err := paper.NewRest(rest.ctx)
+
+		if err != nil {
+			return &Rest{
+				ctx:      rest.ctx,
+				client:   public.NewRest(rest.ctx, endpoint),
+				endpoint: endpoint,
+				apiKey:   rest.apiKey,
+				secret:   rest.secret,
+			}
+		}
+
+		client = paperRest
+	} else {
+		client = public.NewRest(rest.ctx, endpoint)
+	}
+
 	return &Rest{
 		ctx:      rest.ctx,
-		client:   public.NewRest(rest.ctx, endpoint),
+		client:   client,
 		endpoint: endpoint,
 		apiKey:   rest.apiKey,
 		secret:   rest.secret,

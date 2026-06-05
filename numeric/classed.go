@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
 )
@@ -73,14 +74,15 @@ BandCalibrator.Snapshot — pool a signal's symbols into one shared calibrator a
 read this once per emit (see signal/pumpdump and signal/correlation).
 */
 type Telemetry struct {
-	Edges       []float64 `json:"bands"`
-	Labels      []string  `json:"labels"`
-	Shares      []float64 `json:"shares"`
-	Observation float64   `json:"observation"`
-	Calibrating bool      `json:"calibrating"`
-	Calibrated  bool      `json:"calibrated"`
-	Samples     int       `json:"samples"`
-	MinSamples  int       `json:"min_samples"`
+	Edges        []float64 `json:"bands"`
+	Labels       []string  `json:"labels"`
+	Shares       []float64 `json:"shares"`
+	Observation  float64   `json:"observation"`
+	Calibrating  bool      `json:"calibrating"`
+	Calibrated   bool      `json:"calibrated"`
+	Samples      int       `json:"samples"`
+	MinSamples   int       `json:"min_samples"`
+	EntropyTrust float64   `json:"entropy_trust"`
 }
 
 func (classed *Classed) Reset() error {
@@ -129,10 +131,12 @@ func NewBandCalibrator(shares []float64, window, every, minSamples int, blend fl
 	}
 
 	return &BandCalibrator{
+		baseShares: append([]float64(nil), shares...),
 		shares:     append([]float64(nil), shares...),
 		window:     ring.NewFloatRing(window),
 		every:      every,
 		minN:       minSamples,
+		baseBlend:  blend,
 		blend:      blend,
 		shareEvery: shareEvery,
 	}
@@ -157,6 +161,7 @@ func (calibrator *BandCalibrator) Snapshot(classifier *adaptive.Classifier) Tele
 	telemetry.Samples = calibrator.window.Len()
 	telemetry.MinSamples = calibrator.minN
 	telemetry.Shares = append([]float64(nil), calibrator.recentShares...)
+	telemetry.EntropyTrust = EntropyTrustFromShares(telemetry.Shares)
 
 	return telemetry
 }
@@ -164,10 +169,12 @@ func (calibrator *BandCalibrator) Snapshot(classifier *adaptive.Classifier) Tele
 // BandCalibrator keeps a rolling window of recent observations and refits the
 // classifier's band edges to canonical target-share quantiles on a cadence.
 type BandCalibrator struct {
+	baseShares   []float64
 	shares       []float64
 	window       ring.FloatRing
 	every        int
 	minN         int
+	baseBlend    float64
 	blend        float64
 	seen         int
 	refits       int
@@ -175,9 +182,78 @@ type BandCalibrator struct {
 	recentShares []float64
 }
 
+/*
+WindowCap returns the rolling observation capacity.
+*/
+func (calibrator *BandCalibrator) WindowCap() int {
+	if calibrator == nil {
+		return 0
+	}
+
+	return calibrator.window.Cap()
+}
+
+func (calibrator *BandCalibrator) activeShares() []float64 {
+	regime := perspectives.CurrentRegime()
+
+	return RegimeTargetShares(calibrator.baseShares, regime)
+}
+
+func (calibrator *BandCalibrator) activeBlend() float64 {
+	regime := perspectives.CurrentRegime()
+
+	return RegimeBlend(calibrator.baseBlend, regime)
+}
+
+/*
+SeedFromObservations preloads the rolling window and performs one refit when enough
+prior observations exist. Used to warm-start from raw JSONL dumps at boot.
+*/
+func (calibrator *BandCalibrator) SeedFromObservations(
+	classifier *adaptive.Classifier,
+	observations []float64,
+) {
+	if calibrator == nil || classifier == nil || len(observations) == 0 {
+		return
+	}
+
+	for _, observation := range observations {
+		calibrator.window.Push(observation)
+		calibrator.seen++
+	}
+
+	if calibrator.window.Len() < calibrator.minN {
+		calibrator.recentShares = bandShares(calibrator.window.Ordered(), classifier.Upper())
+
+		return
+	}
+
+	sorted := append([]float64(nil), calibrator.window.Ordered()...)
+	sort.Float64s(sorted)
+
+	fit := quantileBands(sorted, calibrator.activeShares())
+
+	if len(fit) == 0 {
+		return
+	}
+
+	if calibrator.activeBlend() > 0 {
+		fit = blendEdges(classifier.Upper(), fit, calibrator.activeBlend())
+	}
+
+	classifier.SetUpper(fit)
+	calibrator.refits++
+	calibrator.shares = calibrator.activeShares()
+	calibrator.blend = calibrator.activeBlend()
+	calibrator.recentShares = bandShares(sorted, fit)
+}
+
 func (calibrator *BandCalibrator) Observe(observation float64, classifier *adaptive.Classifier) {
 	calibrator.window.Push(observation)
 	calibrator.seen++
+
+	calibrator.shares = calibrator.activeShares()
+	calibrator.blend = calibrator.activeBlend()
 
 	// Refresh the live category mix under the CURRENT edges often, so the
 	// dashboard always shows the real distribution — including during warm-up,

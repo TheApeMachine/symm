@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"os"
@@ -103,7 +104,7 @@ var (
 				pumpdump.NewSignal(systemCtx, pool),
 				sentiment.NewSignal(systemCtx, pool),
 				toxicity.NewToxicity(systemCtx, pool),
-				market.NewStory(systemCtx, pool, streams),
+				newStoryWithBookCapture(systemCtx, pool, streams),
 				trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress),
 			); err != nil {
 				return err
@@ -195,6 +196,17 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
+}
+
+func newStoryWithBookCapture(
+	ctx context.Context,
+	pool *qpool.Q,
+	streams *focus.Set,
+) *market.Story {
+	story := market.NewStory(ctx, pool, streams)
+	story.SetBookEnricher(broker.MeasurementBookEnricher(ctx, pool))
+
+	return story
 }
 
 const rootLong = `

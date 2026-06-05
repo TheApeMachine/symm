@@ -70,15 +70,18 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	// bands reflect the whole signal's pooled distribution with a single sample
 	// count — instead of fragmenting into a per-symbol state that resets each time
 	// a different symbol ticks.
-	classifier := adaptive.NewClassifier(
-		pumpDefaultBandEdges, // seed: faded | organic | coiled | ignition
+	// One classifier and one calibrator shared by every symbol, so the ignition
+	// bands reflect the whole signal's pooled distribution with a single sample
+	// count — instead of fragmenting into a per-symbol state that resets each time
+	// a different symbol ticks.
+	calibrator := numeric.NewSignalCalibrator(
+		pumpDefaultBandEdges,
 		[]float64{0, 1, 2, 3},
 		[]string{"faded_exhaustion", "organic_trend", "coiled_compression", "vertical_ignition"},
+		[]float64{0.50, 0.30, 0.15, 0.05},
+		numeric.DefaultCalibratorConfig("observation"),
+		"pumpdump",
 	)
-
-	// ignition the rare top 5%, faded the quiet majority; window 8192 pooled obs,
-	// refit every 256 after a 512-sample warm-up, blend 0.3 so edges visibly track.
-	calibrator := numeric.NewBandCalibrator([]float64{0.50, 0.30, 0.15, 0.05}, 8192, 256, 512, 0.3)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -94,8 +97,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		},
 		floor:      adaptive.NewSNRField(),
 		rawDump:    rawdump.Open("pumpdump"),
-		classifier: classifier,
-		calibrator: calibrator,
+		classifier: calibrator.Classifier,
+		calibrator: calibrator.Calibrator,
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -255,6 +258,10 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 	state.lastRVol = rvol
 
+	telemetry := signal.calibrator.Snapshot(signal.classifier)
+	telemetry.Observation = state.pipe.Observation()
+	standout = numeric.EntropyTrustFromShares(telemetry.Shares) * standout
+
 	measurement := perspectives.Measurement{
 		Symbol:     trade.Symbol,
 		Source:     perspectives.SourcePumpDump,
@@ -272,29 +279,15 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
-		telemetry := signal.calibrator.Snapshot(signal.classifier)
-		telemetry.Observation = state.pipe.Observation()
-
-		ui.Send(
-			&qpool.QValue[any]{
-				Value: map[string]any{
-					"chart":       "gauge",
-					"source":      measurement.Source.String(),
-					"confidence":  measurement.Confidence,
-					"snr":         measurement.SNR,
-					"symbol":      measurement.Symbol,
-					"category":    measurement.Category,
-					"observation": telemetry.Observation,
-					"bands":       telemetry.Edges,
-					"band_labels": telemetry.Labels,
-					"shares":      telemetry.Shares,
-					"calibrating": telemetry.Calibrating,
-					"calibrated":  telemetry.Calibrated,
-					"samples":     telemetry.Samples,
-					"min_samples": telemetry.MinSamples,
-				},
-			},
-		)
+		ui.Send(&qpool.QValue[any]{
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				measurement,
+				telemetry,
+			),
+		})
 	}
 
 	return nil

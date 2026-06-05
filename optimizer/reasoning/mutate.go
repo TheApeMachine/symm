@@ -17,12 +17,13 @@ func Neighbors(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives
 	neighbors := make([][]perspectives.Thought, 0, 64)
 
 	neighbors = append(neighbors, tuneEntryThreshold(forest, vocab)...)
+	neighbors = append(neighbors, tunePositionSize(forest, vocab)...)
 	neighbors = append(neighbors, tightenEntry(forest, vocab)...)
 	neighbors = append(neighbors, tightenWithVersus(forest, vocab)...)
 	neighbors = append(neighbors, avoidSignal(forest, vocab)...)
 	neighbors = append(neighbors, temporalizeEntry(forest, vocab)...)
 	neighbors = append(neighbors, tuneManagement(forest, vocab)...)
-	neighbors = append(neighbors, addLifecycleExit(forest, vocab)...)
+	neighbors = append(neighbors, addLifecycleExit(forest)...)
 	neighbors = append(neighbors, addTimeStop(forest, vocab)...)
 	neighbors = append(neighbors, addStrategyRoot(forest, vocab)...)
 
@@ -181,6 +182,39 @@ func applyToManagement(
 
 // ---- mutations (clone, then edit the clone — parents are never aliased) ----------
 
+// tunePositionSize sweeps each branch's capital-deployment multiplier across the grid.
+func tunePositionSize(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+	neighbors := make([][]perspectives.Thought, 0)
+
+	for _, root := range entryRootIndices(forest) {
+		node := entryNodeWithin(&forest[root])
+
+		if node == nil {
+			continue
+		}
+
+		current := node.Do.Fraction
+
+		for _, fraction := range vocab.Fractions {
+			if fraction == current {
+				continue
+			}
+
+			clone := cloneForest(forest)
+			entry := entryNodeWithin(&clone[root])
+
+			if entry == nil {
+				continue
+			}
+
+			entry.Do.Fraction = fraction
+			neighbors = append(neighbors, clone)
+		}
+	}
+
+	return neighbors
+}
+
 // tuneEntryThreshold sweeps each branch's entry-signal SNR level across the grid.
 func tuneEntryThreshold(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
 	neighbors := make([][]perspectives.Thought, 0)
@@ -328,7 +362,7 @@ func tuneManagement(forest []perspectives.Thought, vocab Vocabulary) [][]perspec
 // addLifecycleExit adds a trajectory-aware exit: settle once the held move has
 // ended (peak rolled over), complementing the protective stop. This is the
 // lifecycle management the hand-written playbook leans on.
-func addLifecycleExit(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+func addLifecycleExit(forest []perspectives.Thought) [][]perspectives.Thought {
 	if hasSettleExit(forest) {
 		return nil
 	}

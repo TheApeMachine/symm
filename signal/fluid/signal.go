@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
@@ -33,11 +34,23 @@ type Signal struct {
 	fieldScratch []*FluidSymbol
 	ui           *qpool.BroadcastGroup
 	floor        *adaptive.SNRField
+	classifier   *adaptive.Classifier
+	calibrator   *numeric.BandCalibrator
+	categories   map[string]perspectives.CategoryType
 	rawDump      *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		fluidDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"laminar", "inertial", "viscous", "turbulent"},
+		[]float64{0.40, 0.30, 0.20, 0.10},
+		numeric.DefaultCalibratorConfig("strength"),
+		"fluid",
+	)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -46,7 +59,15 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
-		rawDump:     rawdump.Open("fluid"),
+		classifier:  pooledCalibrator.Classifier,
+		calibrator:  pooledCalibrator.Calibrator,
+		categories: map[string]perspectives.CategoryType{
+			"laminar":   perspectives.CategoryLaminar,
+			"inertial":  perspectives.CategoryInertial,
+			"viscous":   perspectives.CategoryViscous,
+			"turbulent": perspectives.CategoryTurbulent,
+		},
+		rawDump: rawdump.Open("fluid"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -68,7 +89,7 @@ func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
 		return stored.(*FluidSymbol), nil
 	}
 
-	created, err := NewFluidSymbol(symbol)
+	created, err := NewFluidSymbol(symbol, signal.classifier)
 
 	if err != nil {
 		return nil, err
@@ -168,13 +189,19 @@ func (signal *Signal) emit(symbol string) error {
 	}
 
 	state := raw.(*FluidSymbol)
-	measurement, standout, err := state.Measure()
+	measurement, standout, err := state.Measure(signal.categories)
 
 	if err != nil {
 		return err
 	}
 
 	if measurement.Source != perspectives.SourceNone {
+		signal.calibrator.Observe(measurement.Strength, signal.classifier)
+
+		telemetry := signal.calibrator.Snapshot(signal.classifier)
+		telemetry.Observation = measurement.Strength
+		standout = numeric.EntropyTrustFromShares(telemetry.Shares) * standout
+
 		if err := perspectives.AssignCategorySNR(
 			&measurement, signal.floor, standout,
 		); err != nil {
@@ -199,12 +226,13 @@ func (signal *Signal) emit(symbol string) error {
 
 		if signal.ui != nil {
 			signal.ui.Send(&qpool.QValue[any]{
-				Value: map[string]any{
-					"chart":      "gauge",
-					"source":     measurement.Source.String(),
-					"confidence": measurement.Confidence,
-					"snr":        measurement.SNR,
-				},
+				Value: numeric.GaugePayload(
+					measurement.Source.String(),
+					measurement.Symbol,
+					measurement.Category,
+					measurement,
+					telemetry,
+				),
 			})
 		}
 	}

@@ -50,7 +50,7 @@ func TestNewSignal(t *testing.T) {
 
 func TestMeasure(t *testing.T) {
 	Convey("Given a Hawkes symbol with a clustered buy burst", t, func() {
-		symbol := NewHawkesSymbol()
+		symbol := NewHawkesSymbol(nil, hawkesTestCategories())
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		ticks := tradeBurst("ALT/EUR", base, 128)
 		now := base.Add(128 * 100 * time.Millisecond)
@@ -142,7 +142,7 @@ func BenchmarkObserveTrades(b *testing.B) {
 }
 
 func BenchmarkMeasure(b *testing.B) {
-	symbol := NewHawkesSymbol()
+	symbol := NewHawkesSymbol(nil, hawkesTestCategories())
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	ticks := tradeBurst("ALT/EUR", base, 128)
 	now := base.Add(128 * 100 * time.Millisecond)

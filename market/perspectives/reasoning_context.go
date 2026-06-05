@@ -3,6 +3,8 @@ package perspectives
 import (
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/kraken/trading"
 )
 
 /*
@@ -13,8 +15,10 @@ ended, or barely started.
 */
 type PositionState struct {
 	Holding    bool
+	Side       trading.Side // Buy = long, Sell = short
 	EntryPrice float64
 	Peak       float64
+	Trough     float64
 	Last       float64
 	EntryAt    time.Time
 	Now        time.Time
@@ -40,6 +44,7 @@ type WindowReason struct {
 	endedPct     float64
 	signal       map[CategoryType][]Measurement
 	price        []float64
+	volume       []float64
 	spread       []float64
 }
 
@@ -88,9 +93,11 @@ func (reason *WindowReason) Reset(
 	}
 
 	reason.price = reason.price[:0]
+	reason.volume = reason.volume[:0]
 	reason.spread = reason.spread[:0]
 
 	var lastPrice float64
+	var lastVolume float64
 
 	for index := len(snapshots) - 1; index >= 0; index-- {
 		measurement := snapshots[index]
@@ -104,6 +111,11 @@ func (reason *WindowReason) Reset(
 		if measurement.Last > 0 && measurement.Last != lastPrice {
 			reason.price = append(reason.price, measurement.Last)
 			lastPrice = measurement.Last
+		}
+
+		if measurement.Volume > 0 && measurement.Volume != lastVolume {
+			reason.volume = append(reason.volume, measurement.Volume)
+			lastVolume = measurement.Volume
 		}
 
 		reason.spread = append(reason.spread, measurement.SpreadBPS)
@@ -146,8 +158,16 @@ func (reason *WindowReason) Lifecycle(state ObservationType) bool {
 	case ObservationHasContinued:
 		return position.Holding && reason.moveContinued()
 	case ObservationHasEnded:
-		return position.Holding &&
-			position.Peak > 0 &&
+		if !position.Holding {
+			return false
+		}
+
+		if position.Side == trading.Sell {
+			return position.Trough > 0 &&
+				position.Last >= position.Trough*(1+reason.endedPct)
+		}
+
+		return position.Peak > 0 &&
 			position.Last <= position.Peak*(1-reason.endedPct)
 	case ObservationHasStarted:
 		// Fresh: holding, but the move has not yet confirmed it is running.
@@ -159,6 +179,12 @@ func (reason *WindowReason) Lifecycle(state ObservationType) bool {
 
 func (reason *WindowReason) moveContinued() bool {
 	position := reason.position
+
+	if position.Side == trading.Sell {
+		return position.EntryPrice > 0 &&
+			position.Trough > 0 &&
+			position.Trough <= position.EntryPrice*(1-reason.continuedPct)
+	}
 
 	return position.EntryPrice > 0 &&
 		position.Peak >= position.EntryPrice*(1+reason.continuedPct)
@@ -189,6 +215,12 @@ func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (flo
 		}
 
 		return reason.price[ago], true
+	case SubjectVolume:
+		if ago < 0 || ago >= len(reason.volume) {
+			return 0, false
+		}
+
+		return reason.volume[ago], true
 	case SubjectSpread:
 		if ago < 0 || ago >= len(reason.spread) {
 			return 0, false
@@ -209,7 +241,6 @@ func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (flo
 			return elapsed.Seconds(), true
 		}
 	default:
-		// SubjectVolume has no measurement source yet; honestly report absence.
 		return 0, false
 	}
 }

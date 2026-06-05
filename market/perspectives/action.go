@@ -121,13 +121,36 @@ func ActionFromAct(act Act, measurement Measurement) Action {
 
 	if IsEntryAction(act.Type) {
 		action.Side = trading.Buy
+
+		if act.Side == trading.Sell {
+			action.Side = trading.Sell
+		}
 	}
 
 	if IsExitAction(act.Type) {
-		action.Side = trading.Sell
+		action.Side = exitSideForEntry(act.Side)
 	}
 
 	return action
+}
+
+/*
+exitSideForEntry returns the closing side for an exit action. Short entries close
+with a buy; long entries close with a sell.
+*/
+func exitSideForEntry(entrySide trading.Side) trading.Side {
+	if entrySide == trading.Sell {
+		return trading.Buy
+	}
+
+	return trading.Sell
+}
+
+/*
+IsShortEntry reports whether action opens a short position.
+*/
+func IsShortEntry(action Action) bool {
+	return IsEntryAction(action.Type) && action.Side == trading.Sell
 }
 
 /*

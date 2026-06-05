@@ -1,10 +1,12 @@
 package perspectives
 
+import "github.com/theapemachine/symm/kraken/trading"
+
 /*
 The protective-trigger math, shared by every layer that arms or fills a stop /
 take-profit / trailing-stop so they cannot drift: the replay ledger scores against
 it, the desk encodes Kraken trigger prices from it, and the paper websocket fills
-against it. Long positions only.
+against it. Long and short positions use the same actions with inverted levels.
 */
 
 // TriggerOffset prefers the per-node offset the playbook armed, falling back to the
@@ -18,24 +20,70 @@ func TriggerOffset(perNode, global float64) float64 {
 	return global
 }
 
-// ProtectiveLevel is the trigger price for a long protective exit: stop and take
-// measure from the entry, a trailing stop from the running peak.
+// ProtectiveLevel is the trigger price for a long protective exit.
 func ProtectiveLevel(action ActionType, entry, peak, offset float64) float64 {
+	return ProtectiveLevelForSide(trading.Buy, action, entry, peak, offset)
+}
+
+/*
+ProtectiveLevelForSide returns the trigger price for a protective exit. For longs,
+extremum is the running peak; for shorts it is the running trough.
+*/
+func ProtectiveLevelForSide(
+	side trading.Side,
+	action ActionType,
+	entry, extremum, offset float64,
+) float64 {
+	if side == trading.Sell {
+		switch action {
+		case ActionStopLoss, ActionStopLossLimit:
+			return entry * (1 + offset)
+		case ActionTakeProfit, ActionTakeProfitLimit:
+			return entry * (1 - offset)
+		case ActionTrailingStop, ActionTrailingStopLimit:
+			return extremum * (1 + offset)
+		default:
+			return 0
+		}
+	}
+
 	switch action {
 	case ActionStopLoss, ActionStopLossLimit:
 		return entry * (1 - offset)
 	case ActionTakeProfit, ActionTakeProfitLimit:
 		return entry * (1 + offset)
 	case ActionTrailingStop, ActionTrailingStopLimit:
-		return peak * (1 - offset)
+		return extremum * (1 - offset)
 	default:
 		return 0
 	}
 }
 
-// ProtectiveBreached reports whether price has crossed the trigger: a take-profit
-// fires on the way up, every stop variant on the way down.
+// ProtectiveBreached reports whether price has crossed the trigger for a long.
 func ProtectiveBreached(action ActionType, level, price float64) bool {
+	return ProtectiveBreachedForSide(trading.Buy, action, level, price)
+}
+
+/*
+ProtectiveBreachedForSide reports whether price has crossed the trigger for the
+position side.
+*/
+func ProtectiveBreachedForSide(
+	side trading.Side,
+	action ActionType,
+	level, price float64,
+) bool {
+	if side == trading.Sell {
+		switch action {
+		case ActionTakeProfit, ActionTakeProfitLimit:
+			return price <= level
+		case ActionStopLoss, ActionStopLossLimit, ActionTrailingStop, ActionTrailingStopLimit:
+			return price >= level
+		default:
+			return false
+		}
+	}
+
 	switch action {
 	case ActionTakeProfit, ActionTakeProfitLimit:
 		return price >= level

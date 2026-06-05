@@ -9,6 +9,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -45,20 +46,23 @@ type FluidSymbol struct {
 	fracScale    adaptive.AlphaEMA
 	fracReturn   float64
 	tracked      *perspectives.Category
+	pipe         *numeric.Classed
 }
+
+var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
 
 // fracScaleAlpha smooths the running magnitude of the fractional price return,
 // the baseline against which turbulence is measured as an excess over the norm.
 const fracScaleAlpha = 0.05
 
-func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
+func NewFluidSymbol(symbol string, classifier *adaptive.Classifier) (*FluidSymbol, error) {
 	depth, err := symmarket.RequiredBookDepthLevels()
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &FluidSymbol{
+	state := &FluidSymbol{
 		symbol:    symbol,
 		bookDepth: depth,
 		pressure:  adaptive.NewEMA(0),
@@ -68,7 +72,13 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 			viper.GetViper().GetInt("signals.fractional_diff_width"),
 		),
 		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
-	}, nil
+	}
+
+	if classifier != nil {
+		state.pipe = numeric.NewClassed(classifier)
+	}
+
+	return state, nil
 }
 
 func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) {
@@ -261,7 +271,9 @@ func (state *FluidSymbol) Row() map[string]any {
 	return state.wireRowLocked()
 }
 
-func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
+func (state *FluidSymbol) Measure(
+	categories map[string]perspectives.CategoryType,
+) (perspectives.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -277,26 +289,24 @@ func (state *FluidSymbol) Measure() (perspectives.Measurement, float64, error) {
 
 	re, ok := row["re"].(float64)
 
-	if !ok {
+	if !ok || state.pipe == nil {
 		return perspectives.Measurement{}, 0, nil
 	}
 
-	divergence, _ := row["div"].(float64)
-	turbulence, _ := row["turb_fd"].(float64)
-	viscosity, _ := row["visc"].(float64)
-	// clarity is how cleanly the flow lands in its regime band (the boundary
-	// margin); standout is the intensity of the flow field itself — the Reynolds
-	// number — which SNR scores against this symbol's own history. A laminar book
-	// classified with high certainty still has a low standout.
-	category, evidence := fluidReading(divergence, turbulence, viscosity, re)
-	clarity := evidence
+	code, err := state.pipe.Push(re)
+
+	if err != nil {
+		return perspectives.Measurement{}, 0, err
+	}
+
+	category := categories[state.pipe.Label(code)]
+	clarity := state.pipe.Confidence()
 	standout := perspectives.UnitMagnitudeMargin(re)
 
 	if clarity <= 0 {
-		activity := math.Max(
-			math.Abs(divergence),
-			math.Max(turbulence, re),
-		)
+		divergence, _ := row["div"].(float64)
+		turbulence, _ := row["turb_fd"].(float64)
+		activity := math.Max(math.Abs(divergence), math.Max(turbulence, re))
 
 		if activity > 0 {
 			clarity = perspectives.UnitMagnitudeMargin(activity)

@@ -162,6 +162,52 @@ func TestReasonStateReset(t *testing.T) {
 	})
 }
 
+func TestEvaluateStatefulUniversalPositionManager(t *testing.T) {
+	Convey("Given the universal position manager branch", t, func() {
+		manager := []Thought{{
+			When: Predicate{Subject: SubjectPosition, Op: ComparisonEquals, Lifecycle: ObservationHolding},
+			Then: []Thought{
+				{
+					When: Predicate{Subject: SubjectPosition, Op: ComparisonEquals, Lifecycle: ObservationHasStarted},
+					Do:   Act{Type: ActionStopLoss, Offset: 0.010},
+				},
+				{
+					When: Predicate{
+						Subject: SubjectSignal, Category: CategoryActiveReversal,
+						Unit: UnitSNR, Ago: 3, Op: ComparisonCrossedUp, Value: 1.0,
+					},
+					Do: Act{Type: ActionSettlePosition},
+				},
+			},
+		}}
+
+		Convey("It arms protection on has_started and exits on reversal while holding", func() {
+			state := NewReasonState()
+			started := mockReason{
+				lifecycle: map[ObservationType]bool{
+					ObservationHolding:    true,
+					ObservationHasStarted: true,
+				},
+			}
+
+			stop, foundStop := EvaluateStateful(manager, started, state)
+			So(foundStop, ShouldBeTrue)
+			So(stop.Type, ShouldEqual, ActionStopLoss)
+
+			reversal := mockReason{
+				lifecycle: map[ObservationType]bool{ObservationHolding: true},
+				signal: map[CategoryType][]float64{
+					CategoryActiveReversal: {2.0, 1.0, 0.5, 0.2},
+				},
+			}
+
+			exit, foundExit := EvaluateStateful(manager, reversal, state)
+			So(foundExit, ShouldBeTrue)
+			So(exit.Type, ShouldEqual, ActionSettlePosition)
+		})
+	})
+}
+
 func BenchmarkEvaluateStateful(benchmark *testing.B) {
 	tree := []Thought{{
 		When: notHoldingAnd(sig(CategoryCoiledCompression, 1.0)),

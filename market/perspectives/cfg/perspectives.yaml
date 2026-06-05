@@ -1,197 +1,310 @@
 version: 2
 
 # ─────────────────────────────────────────────────────────────────────────────
-# A DECISION TREE AS A THOUGHT PROCESS
+# PRODUCTION PLAYBOOK — Version 2 Thought Tree
 #
-# This is a ground-up redesign of the tree language (the current interpreter does
-# NOT read this yet — we adapt the code once we agree the language can express
-# what it needs to). Every node is a "thought":
+# Evaluated with EvaluateStateful. Entries default to buy; `side: sell` opens short.
 #
-#   when:  the condition that makes this thought relevant
-#   then:  the reasoning that follows once `when` holds — MONITORED OVER TIME, so
-#          `then` means "and then, on the ticks that follow, watch for ..."
-#   do:    the decision taken at this point (an action), if any. A node may both
-#          `do` and `then` — "act, and keep thinking" (enter, then manage).
+# ORDERING CONTRACT (load-bearing)
+#   • Exit managers are listed FIRST. Among siblings at the same depth, the
+#     evaluator keeps the first firing action — so managers run most-specific → fallback.
+#   • Within each manager, children run emergency exit → take profit → trail → stop → time.
+#   • Entry branches follow, ordered most-specific → general.
+#   • Nested exits under entries are omitted — they orphan on the holding flip.
+#   • volume = quote notional (ticker volume × last), distinct-change indexed like price.
 #
-# A `when` predicate is either a single comparison or a boolean of predicates:
-#   all: [...]   every sub-predicate holds            (AND)
-#   any: [...]   at least one holds                    (OR)
-#   not: {...}   the sub-predicate does not hold       (NOT)
-#
-# A leaf comparison reads a SUBJECT, optionally COMPARED TO `ago` MEASUREMENTS
-# AGO (temporal), against a target:
-#   subject: signal    a microstructure category's strength  (+ category, unit: snr|confidence)
-#   subject: regime    the price-action regime               (+ regime)
-#   subject: position  the trade's own lifecycle             (+ lifecycle: not_holding|holding|
-#                                                              has_started|has_continued|has_ended)
-#   subject: price     last traded price                     (unit: percentage for relative)
-#   subject: volume    traded volume
-#   subject: elapsed   time in the position                  (unit: time_minutes|time_seconds)
-#
-#   op:  at_least(>=) at_most(<=) above(>) below(<) equals(==)
-#        rose_by / fell_by      change over `ago` window crosses `value` (Unit = abs or %)
-#        crossed_up / crossed_down   the value crossed `value` within `ago` (an EDGE — "becomes")
-#   ago: 0 = now; N = compared to N measurements ago
-#
-# Three horizons, each a complete thought (spot the setup -> confirm it over time
-# -> commit -> manage as it plays out), long-only because entries are buys.
+# UNIT POLICY (load-bearing — see measurement.go)
+#   • confidence — cross-sectional band clarity: "how decisively does this reading
+#     sit inside its assigned category right now?" Use for structural states, book
+#     quality, fluid viscosity, liquidity depth, toxicity denies, and level gates
+#     where band margin matters more than historical surprise.
+#   • snr — temporal surprise: "how unusual is this category win vs this symbol's
+#     recent baseline?" Use for crossed_up edges, causal alpha/drive momentum,
+#     pump ignition arcs, macro sentiment shifts, and versus comparisons.
+#   • Both can appear on one branch when thesis needs clear band occupancy AND
+#     a fresh edge (e.g. hidden_absorption confidence + loaded_imbalance crossed_up).
 # ─────────────────────────────────────────────────────────────────────────────
 
 branches:
 
-  # ═══════════════ SHORT — flash-pump scalp ═══════════════
-  # "If I see coiled compression AND the regime is trending, THEN WHEN the
-  #  vertical ignition fires (snr crosses up) OR price jumps >1% vs 5 ago,
-  #  strike fast — then ride it and bail the moment it rolls over."
-  - when:
-      all:
-        - { subject: regime, op: equals, regime: trending }
-        - { subject: signal, category: coiled_compression, unit: snr, op: at_least, value: 1.0 }
-    then:
-      # then WHEN the ignition fires AND it has overtaken the compression
-      # (metric-to-metric: the breakout now dominates the coil it came from):
-      - when:
-          all:
-            - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.5 }
-            - { subject: signal, category: vertical_ignition, unit: snr, op: above,
-                versus: { subject: signal, category: coiled_compression, unit: snr } }
-        do: iceberg
-        then:
-          # entered — now the thought continues as position management. A scalp
-          # rides a TIGHT leash (per-node offsets override the global defaults):
-          - when: { subject: position, op: equals, lifecycle: has_started }
-            do: { type: stop_loss, offset: 0.010 }    # 1.0% protective floor, once
-          - when: { subject: position, op: equals, lifecycle: has_continued }
-            do: { type: trailing_stop, offset: 0.008 } # 0.8% trail — pump still pumping, ratchet
-          - when:
-              any:
-                - { subject: position, op: equals, lifecycle: has_ended }
-                - { subject: signal, category: active_reversal, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
-            do: settle_position      # it rolled over / reversed — get out ahead of the dump
-
-  # ═══════════════ MEDIUM — momentum trend ═══════════════
-  # "If the regime is bullish AND I see real endogenous alpha AND aggressive
-  #  drive AND volume has risen >30% vs 20 ago (genuine participation), enter
-  #  patiently with a limit — trail the trend, take profit when it overheats,
-  #  and time-stop out if it never continues."
-  - when:
-      all:
-        - { subject: regime, op: equals, regime: bullish }
-        - { subject: signal, category: endogenous_alpha, unit: snr, op: at_least, value: 1.0 }
-        - { subject: signal, category: aggressive_drive, unit: snr, op: at_least, value: 1.0 }
-        - { subject: volume, unit: percentage, ago: 20, op: rose_by, value: 30.0 }
-    then:
-      - when: { subject: position, op: equals, lifecycle: not_holding }
-        do: limit
-        then:
-          - when: { subject: position, op: equals, lifecycle: has_started }
-            do: stop_loss_limit
-          - when: { subject: position, op: equals, lifecycle: has_continued }
-            do: trailing_stop
-          - when: { subject: signal, category: thermal_exhaustion, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-            do: take_profit_limit    # the trend is overheating — lock it in
-          - when:
-              all:
-                - { subject: position, op: equals, lifecycle: holding }
-                - { subject: elapsed, unit: time_minutes, op: at_least, value: 30.0 }
-                - not: { subject: position, op: equals, lifecycle: has_continued }
-            do: settle_position      # time-stop: held 30 min and the move never continued
-
-  # ═══════════════ LONG — accumulation on absorption ═══════════════
-  # "If the regime is bullish AND I see clear hidden absorption over hard
-  #  support AND there is NO toxic bluff, THEN WHEN the book imbalance loads
-  #  long, accumulate with a limit — hold it on a wide trailing stop and only
-  #  let go on a market slump or a confirmed reversal."
-  - when:
-      all:
-        - { subject: regime, op: equals, regime: bullish }
-        - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.6 }
-        - { subject: signal, category: hard_support, unit: snr, op: at_least, value: 1.0 }
-        - not: { subject: signal, category: toxic_bluff, unit: snr, op: above, value: 0.0 }
-    then:
-      - when: { subject: signal, category: loaded_imbalance, unit: snr, ago: 10, op: crossed_up, value: 1.0 }
-        do: limit
-        then:
-          # accumulation rides a WIDE leash — give the thesis room to breathe:
-          - when: { subject: position, op: equals, lifecycle: has_started }
-            do: { type: trailing_stop, offset: 0.050 }   # 5% trail, set once
-          - when:
-              any:
-                - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-                - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-            do: settle_position
-
   # ═══════════════════════════════════════════════════════════════════════════
-  # WARM-UP STRATEGIES — deliberately loose, so the desk actually trades and you
-  # can get a feel for the flow. Each of these only ENTERS; the universal position
-  # manager at the very bottom handles every exit. Long-only (entries are buys).
+  # EXIT MANAGERS (most-specific first)
   # ═══════════════════════════════════════════════════════════════════════════
 
-  # ── QUICK — momentum pop (the workhorse; fires often on purpose) ──
-  # "Price ticked up ~0.5% over the last 10 measurements in a non-choppy regime
-  #  and the book isn't screaming toxic — take a quick long with a market order."
+  # ── Scalp / ignition — tight leash while pump signatures are still live ──
   - when:
       all:
-        - { subject: price, unit: percentage, ago: 10, op: rose_by, value: 0.5 }
-        - not: { subject: regime, op: equals, regime: choppy }
-        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.7 }
+        - { subject: position, op: equals, lifecycle: holding }
+        - { subject: signal, category: vertical_ignition, unit: snr, op: at_least, value: 1.5 }
+        - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.5 }
     then:
-      - when: { subject: position, op: equals, lifecycle: not_holding }
-        do: market
-
-  # ── FLOW — hidden-absorption accumulation ──
-  # "Hidden buying is absorbing supply with some conviction — accumulate patiently."
-  - when:
-      all:
-        - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.5 }
-        - { subject: signal, category: aggressive_drive, unit: confidence, op: at_least, value: 0.3 }
-    then:
-      - when: { subject: position, op: equals, lifecycle: not_holding }
-        do: limit
-
-  # ── FLOOR — hard-support reclaim ──
-  # "Resting on hard support with no liquidity vacuum underneath — buy the floor."
-  - when:
-      all:
-        - { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.8 }
-        - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
-    then:
-      - when: { subject: position, op: equals, lifecycle: not_holding }
-        do: limit
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # UNIVERSAL POSITION MANAGER — the exit path every entry above relies on.
-  #
-  # It is TOP-LEVEL and gated on `holding`, so it is reachable on its own the moment
-  # ANY position is open — independent of which strategy entered — and it fires
-  # afresh on every held tick, surviving the clean frontier the evaluator starts
-  # each held stretch from. Exits nested under an entry (the SHORT/MEDIUM/LONG
-  # branches above) are orphaned the instant you hold: the entry's `not_holding` /
-  # edge gate is no longer true and the latch reset on the holding flip clears it,
-  # so the child exits can never be reached. The warm-up strategies have no exits at
-  # all. Without this branch, every position that opens can never close — which is
-  # exactly the "runway-only exit" failure (a full wallet deployed and stuck).
-  #
-  # settle_position is a market exit, so a position can always close even if a
-  # rested stop/trail trigger never fills; the stops are the faster path when they do.
-  - when: { subject: position, op: equals, lifecycle: holding }
-    then:
-      # Arm a protective floor the instant the position starts.
-      - when: { subject: position, op: equals, lifecycle: has_started }
-        do: { type: stop_loss, offset: 0.010 }       # 1.0% protective floor, once
-      # Once the move is running, ratchet a trailing stop behind it.
-      - when: { subject: position, op: equals, lifecycle: has_continued }
-        do: { type: trailing_stop, offset: 0.010 }   # 1.0% trail
-      # Get out on a confirmed pullback from the peak, or a reversal / slump signal.
       - when:
           any:
             - { subject: position, op: equals, lifecycle: has_ended }
             - { subject: signal, category: active_reversal, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
-            - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: faded_exhaustion, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.55 }
+            - { subject: signal, category: toxic_bluff, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
         do: settle_position
-      # Hard time-stop: never hold a stalled position indefinitely.
+      - when:
+          subject: signal
+          category: thermal_exhaustion
+          unit: snr
+          ago: 5
+          op: crossed_up
+          value: 1.0
+        do: take_profit_limit
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.006 }
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss, offset: 0.008 }
+      - when:
+          all:
+            - { subject: elapsed, unit: time_minutes, op: at_least, value: 8.0 }
+            - not: { subject: position, op: equals, lifecycle: has_continued }
+        do: settle_position
+
+  # ── Trend / drive — medium leash while alpha + flow persist ──
+  - when:
+      all:
+        - { subject: position, op: equals, lifecycle: holding }
+        - any:
+            - { subject: signal, category: endogenous_alpha, unit: snr, op: at_least, value: 1.0 }
+            - { subject: signal, category: aggressive_drive, unit: snr, op: at_least, value: 1.0 }
+        - any:
+            - { subject: signal, category: laminar, unit: confidence, op: at_least, value: 0.5 }
+            - { subject: signal, category: inertial, unit: confidence, op: at_least, value: 0.5 }
+        - not:
+            subject: signal
+            category: vertical_ignition
+            unit: snr
+            op: above
+            value: 2.0
+    then:
+      - when:
+          any:
+            - { subject: position, op: equals, lifecycle: has_ended }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: liquidity_shock, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.6 }
+        do: settle_position
+      - when:
+          any:
+            - { subject: signal, category: thermal_exhaustion, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: exhaustion, unit: confidence, op: at_least, value: 0.65 }
+        do: take_profit_limit
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.012 }
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss_limit, offset: 0.012 }
+      - when:
+          all:
+            - { subject: elapsed, unit: time_minutes, op: at_least, value: 45.0 }
+            - not: { subject: position, op: equals, lifecycle: has_continued }
+        do: settle_position
+
+  # ── Accumulation — wide leash while absorption thesis holds ──
+  - when:
+      all:
+        - { subject: position, op: equals, lifecycle: holding }
+        - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.6 }
+        - { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.5 }
+    then:
+      - when:
+          any:
+            - { subject: position, op: equals, lifecycle: has_ended }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: book_thinning, unit: confidence, op: at_least, value: 0.55 }
+            - { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.5 }
+        do: settle_position
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.030 }
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss, offset: 0.020 }
+      - when:
+          all:
+            - { subject: elapsed, unit: time_minutes, op: at_least, value: 120.0 }
+            - not: { subject: position, op: equals, lifecycle: has_continued }
+        do: settle_position
+
+  # ── Short book — cover on squeeze / regime repair ──
+  - when:
+      all:
+        - { subject: position, op: equals, lifecycle: holding }
+        - any:
+            - { subject: regime, op: equals, regime: bullish }
+            - { subject: signal, category: risk_on_surge, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.5 }
+            - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.6 }
+    then:
+      - when:
+          any:
+            - { subject: position, op: equals, lifecycle: has_ended }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
+        do: settle_position
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.010 }
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss, offset: 0.012 }
       - when:
           all:
             - { subject: elapsed, unit: time_minutes, op: at_least, value: 30.0 }
             - not: { subject: position, op: equals, lifecycle: has_continued }
         do: settle_position
+
+  # ── Universal fallback — any open position ──
+  - when: { subject: position, op: equals, lifecycle: holding }
+    then:
+      - when:
+          any:
+            - { subject: position, op: equals, lifecycle: has_ended }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.55 }
+            - { subject: signal, category: liquidity_shock, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+        do: settle_position
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.010 }
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss, offset: 0.010 }
+      - when:
+          all:
+            - { subject: elapsed, unit: time_minutes, op: at_least, value: 30.0 }
+            - not: { subject: position, op: equals, lifecycle: has_continued }
+        do: settle_position
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ENTRY STRATEGIES (most-specific first; flat only at confirmation)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # 1 — Flash pump scalp: coil → ignition edge → iceberg
+  - when:
+      all:
+        - { subject: regime, op: equals, regime: trending }
+        - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.55 }
+        - not: { subject: regime, op: equals, regime: choppy }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+        - not: { subject: signal, category: saturation, unit: confidence, op: at_least, value: 0.55 }
+        - not: { subject: signal, category: turbulent, unit: confidence, op: at_least, value: 0.5 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.5 }
+            - { subject: signal, category: vertical_ignition, unit: snr, op: above,
+                versus: { subject: signal, category: coiled_compression, unit: snr } }
+            - { subject: price, unit: percentage, ago: 8, op: rose_by, value: 0.8 }
+        do: iceberg
+
+  # 2 — Momentum trend: causal alpha + CVD drive + rising participation
+  - when:
+      all:
+        - any:
+            - { subject: regime, op: equals, regime: bullish }
+            - { subject: regime, op: equals, regime: trending }
+        - { subject: signal, category: endogenous_alpha, unit: snr, op: at_least, value: 1.2 }
+        - { subject: signal, category: aggressive_drive, unit: snr, op: at_least, value: 1.0 }
+        - any:
+            - { subject: signal, category: laminar, unit: confidence, op: at_least, value: 0.55 }
+            - { subject: signal, category: inertial, unit: confidence, op: at_least, value: 0.55 }
+        - not: { subject: regime, op: equals, regime: choppy }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+        - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: liquidity_shock, unit: snr, op: above, value: 1.0 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: volume, unit: percentage, ago: 20, op: rose_by, value: 25.0 }
+            - { subject: price, unit: percentage, ago: 15, op: rose_by, value: 1.0 }
+        do: limit
+
+  # 3 — Absorption accumulation: hidden bid + support → imbalance edge
+  - when:
+      all:
+        - { subject: regime, op: equals, regime: bullish }
+        - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.65 }
+        - { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.55 }
+        - any:
+            - { subject: signal, category: robust_liquidity, unit: confidence, op: at_least, value: 0.5 }
+            - { subject: signal, category: median_depth, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.4 }
+        - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: spoof_trap, unit: confidence, op: at_least, value: 0.45 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: signal, category: loaded_imbalance, unit: snr, ago: 10, op: crossed_up, value: 1.0 }
+        do: limit
+
+  # 4 — Scarcity squeeze: thin book + coil → ignition
+  - when:
+      all:
+        - { subject: signal, category: extreme_scarcity, unit: confidence, op: at_least, value: 0.55 }
+        - any:
+            - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.5 }
+            - { subject: signal, category: organic_trend, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: regime, op: equals, regime: bearish }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.2 }
+        do: iceberg
+
+  # 5 — Lead-lag catch-up: inefficient lag + decoupled alpha in a broad move
+  - when:
+      all:
+        - any:
+            - { subject: regime, op: equals, regime: trending }
+            - { subject: regime, op: equals, regime: bullish }
+        - { subject: signal, category: inefficient_lag, unit: confidence, op: at_least, value: 0.55 }
+        - { subject: signal, category: decoupled_alpha, unit: snr, op: at_least, value: 1.0 }
+        - { subject: signal, category: synchronized_drift, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: systemic_herd, unit: confidence, op: at_least, value: 0.65 }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: signal, category: decoupled_move, unit: snr, ago: 8, op: crossed_up, value: 1.0 }
+        do: limit
+
+  # 6 — Bearish breakdown short: structural slump / collapse
+  - when:
+      all:
+        - { subject: regime, op: equals, regime: bearish }
+        - not: { subject: regime, op: equals, regime: choppy }
+        - not: { subject: signal, category: fragile_expansion, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - any:
+                - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+                - { subject: signal, category: mechanical_collapse, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+                - { subject: signal, category: divergent_stress, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+        do: { type: limit, side: sell }
+
+  # 7 — Crowded-herd fade short: exhaustion of synchronized panic bid
+  - when:
+      all:
+        - any:
+            - { subject: regime, op: equals, regime: bearish }
+            - { subject: regime, op: equals, regime: choppy }
+        - { subject: signal, category: systemic_herd, unit: confidence, op: at_least, value: 0.6 }
+        - any:
+            - { subject: signal, category: saturation, unit: confidence, op: at_least, value: 0.55 }
+            - { subject: signal, category: frenzy, unit: confidence, op: at_least, value: 0.55 }
+        - not: { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.6 }
+    then:
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: not_holding }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+        do: { type: limit, side: sell }

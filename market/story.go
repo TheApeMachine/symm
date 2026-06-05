@@ -44,6 +44,8 @@ type Story struct {
 	recordFile     *os.File
 	recorder       *bufio.Writer
 	audit          *audit.Writer
+	tickerVolume   map[string]float64
+	bookEnricher   func(perspectives.Measurement) perspectives.Measurement
 	pulseSeq       atomic.Int64
 
 	decisionTree    []perspectives.TreeNode
@@ -72,6 +74,7 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		nodeReached:  make(map[string]int),
 		nodeHeld:     make(map[string]int),
 		condHeld:     make(map[string][]int),
+		tickerVolume: make(map[string]float64),
 	}
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
@@ -168,9 +171,15 @@ func (story *Story) Tick() error {
 func (story *Story) ingestMeasurement(
 	measurement perspectives.Measurement,
 ) error {
-	if story.recorder != nil {
-		recorded := measurement
+	if measurement.Volume > 0 {
+		story.tickerVolume[measurement.Symbol] = measurement.Volume
+	} else if cached, ok := story.tickerVolume[measurement.Symbol]; ok {
+		measurement.Volume = cached
+	}
 
+	recorded := story.enrichMeasurementBook(measurement)
+
+	if story.recorder != nil {
 		if recorded.At.IsZero() {
 			recorded.At = time.Now().UTC()
 		}
@@ -424,6 +433,7 @@ radar shows is exactly what the playbook reasons over.
 */
 func (story *Story) publishRegime(symbol string, regime perspectives.RegimeFeatures) {
 	axes := regime.Radar()
+	perspectives.PublishRegime(regime.Regime)
 
 	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"chart":      "regime",
@@ -469,6 +479,27 @@ func playbookPath() string {
 	}
 
 	return "market/perspectives/cfg/perspectives.yaml"
+}
+
+/*
+SetBookEnricher wires L2 depth attachment for capture recording. The enricher is
+installed from cmd startup where the quote cache lives, avoiding an import cycle
+between market and broker.
+*/
+func (story *Story) SetBookEnricher(
+	enricher func(perspectives.Measurement) perspectives.Measurement,
+) {
+	story.bookEnricher = enricher
+}
+
+func (story *Story) enrichMeasurementBook(
+	measurement perspectives.Measurement,
+) perspectives.Measurement {
+	if story.bookEnricher == nil {
+		return measurement
+	}
+
+	return story.bookEnricher(measurement)
 }
 
 /*

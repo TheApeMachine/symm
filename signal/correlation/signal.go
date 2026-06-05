@@ -120,8 +120,9 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	// One classifier and one calibrator shared by every coin, so the herd bands
 	// reflect the whole universe's pooled fused-score distribution with a single
 	// sample count, instead of fragmenting into a per-coin state.
-	classifier := adaptive.NewClassifier(
-		correlationBandEdges, // seed: divergent | noise | decoupled | herd
+	calibratorWindow, calibratorRefitInterval, calibratorWarmup, calibratorBlend := calibratorConfig()
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		correlationBandEdges,
 		[]float64{0, 1, 2, 3},
 		[]string{
 			"divergent_stress",
@@ -129,8 +130,16 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha",
 			"systemic_herd",
 		},
+		[]float64{0.15, 0.45, 0.25, 0.15},
+		numeric.CalibratorConfig{
+			Window:     calibratorWindow,
+			RefitEvery: calibratorRefitInterval,
+			MinSamples: calibratorWarmup,
+			Blend:      calibratorBlend,
+			SeedField:  "strength",
+		},
+		"correlation",
 	)
-	calibratorWindow, calibratorRefitInterval, calibratorWarmup, calibratorBlend := calibratorConfig()
 
 	signal := &Signal{
 		ctx:          ctx,
@@ -146,15 +155,9 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"systemic_herd":    perspectives.CategorySystemicHerd,
 		},
 		floor:      adaptive.NewSNRField(),
-		classifier: classifier,
-		calibrator: numeric.NewBandCalibrator(
-			[]float64{0.15, 0.45, 0.25, 0.15},
-			calibratorWindow,
-			calibratorRefitInterval,
-			calibratorWarmup,
-			calibratorBlend,
-		),
-		rawDump: rawdump.Open("correlation"),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
+		rawDump:    rawdump.Open("correlation"),
 	}
 
 	// Fixed seed: one shared projection for the whole universe.

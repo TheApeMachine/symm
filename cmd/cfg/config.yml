@@ -24,6 +24,12 @@ trading:
     # Derive 50–200ms latency from tape when unset; set explicitly to override.
     execution_latency_ms: 0
     execution_stress_enabled: true
+    # L2 depth replay: require full book coverage before opening; shortfall books a penalty.
+    min_depth_coverage: 1.0
+    depth_shortfall_stress: 8
+    # Scale entry fraction down in hostile structural regimes during optimizer replay.
+    choppy_size_scale: 0.5
+    bearish_size_scale: 0.35
   # Fraction of available account cash deployed per entry. 1.0 = full deployment
   # (one position at a time on a small wallet); lower allows concurrent positions.
   # The optimizer replay sizes entries the same way, so funding contention is real.
@@ -72,6 +78,12 @@ signals:
   causal:
     contagion_break: 0.8
     condition_switch: 1000
+    contagion_window: 128
+    contagion_window_fast: 16
+    contagion_window_medium: 64
+    contagion_window_slow: 128
+    contagion_adaptive_sigma: 2
+    contagion_volatility_reset_sigma: 5
     raw_dump: false
 
   # Raw diagnostic dumps. When enabled, a signal writes its richest
@@ -88,10 +100,10 @@ signals:
   # raw_dump_max_bytes: 0   # exact rotation size in bytes; overrides raw_dump_max_mb when > 0
   # Per signal you may also set signals.<name>.raw_dump_file to redirect its dump.
 
-  # Online self-calibration: pumpdump and correlation pool every symbol into one
-  # shared BandCalibrator that retunes their classifier band edges to the live
-  # distribution each tick (no offline step). Other signals do not self-calibrate.
-  # The dumps + Signal Insight page are how you observe it working.
+  # Online self-calibration: pumpdump, correlation, cvd, fluid, and hawkes pool every
+  # symbol into one shared BandCalibrator that retunes classifier band edges to the
+  # live distribution each tick. Target shares shift with the price-action regime;
+  # edge blending tightens in choppy regimes; cold-start reads prior raw JSONL dumps.
 
   # Per-signal overrides (win over the global default in either direction):
   pumpdump:

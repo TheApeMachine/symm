@@ -50,6 +50,7 @@ type Crypto struct {
 	auditSeq         atomic.Int64
 	balanceOnce      sync.Once
 	inventory        map[string]float64
+	shortInventory   map[string]float64
 	avgEntry         map[string]float64
 	armed            map[string]armRecord
 	pending          map[string]perspectives.Action
@@ -114,21 +115,22 @@ func NewCryptoWithCaches(
 	}
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		ui:           pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
-		broadcasts:   make(map[string]*qpool.BroadcastGroup),
-		subscribers:  make(map[string]*qpool.Subscriber),
-		streams:      streams,
-		desk:         desk,
-		quotes:       quotes,
-		audit:        auditWriter,
-		inventory:    make(map[string]float64),
-		avgEntry:     make(map[string]float64),
-		armed:        make(map[string]armRecord),
-		pending:      make(map[string]perspectives.Action),
-		lastDecision: make(map[string]string),
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		ui:             pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
+		broadcasts:     make(map[string]*qpool.BroadcastGroup),
+		subscribers:    make(map[string]*qpool.Subscriber),
+		streams:        streams,
+		desk:           desk,
+		quotes:         quotes,
+		audit:          auditWriter,
+		inventory:      make(map[string]float64),
+		shortInventory: make(map[string]float64),
+		avgEntry:       make(map[string]float64),
+		armed:          make(map[string]armRecord),
+		pending:        make(map[string]perspectives.Action),
+		lastDecision:   make(map[string]string),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -213,7 +215,12 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 
 	if perspectives.IsEntryAction(action.Type) {
 		if held > 0 {
-			crypto.publishDecision(action, "rejected", "already holding")
+			crypto.publishDecision(action, "rejected", "already holding long")
+			return
+		}
+
+		if crypto.shortInventory[action.Symbol] > 0 {
+			crypto.publishDecision(action, "rejected", "already holding short")
 			return
 		}
 
@@ -237,12 +244,16 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 	}
 
 	if perspectives.IsExitAction(action.Type) {
-		if held <= 0 {
+		if crypto.shortInventory[action.Symbol] > 0 {
+			action.Side = trading.Buy
+			action.Quantity = crypto.shortInventory[action.Symbol]
+		} else if held > 0 {
+			action.Side = trading.Sell
+			action.Quantity = held
+		} else {
 			crypto.publishDecision(action, "rejected", "not holding")
 			return
 		}
-
-		action.Quantity = held
 	}
 
 	protective := perspectives.IsProtectiveExit(action.Type)
@@ -525,8 +536,28 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 
 	crypto.publishDecision(submitted, "filled", "")
 
+	if submitted.Type == perspectives.ActionNone {
+		if side == string(trading.Buy) {
+			crypto.openPosition(symbol, qty, price)
+		} else {
+			crypto.closePosition(symbol)
+		}
+
+		return
+	}
+
 	if side == string(trading.Buy) {
-		crypto.openPosition(symbol, qty, price)
+		if perspectives.IsEntryAction(submitted.Type) {
+			crypto.openPosition(symbol, qty, price)
+		} else {
+			crypto.closeShort(symbol)
+		}
+
+		return
+	}
+
+	if perspectives.IsEntryAction(submitted.Type) {
+		crypto.openShort(symbol, qty, price)
 		return
 	}
 
@@ -541,6 +572,21 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 	crypto.inventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
 	crypto.streams.Add(symbol)
+	crypto.publishPositions()
+}
+
+func (crypto *Crypto) openShort(symbol string, qty, price float64) {
+	crypto.shortInventory[symbol] = qty
+	crypto.avgEntry[symbol] = price
+	crypto.streams.Add(symbol)
+	crypto.publishPositions()
+}
+
+func (crypto *Crypto) closeShort(symbol string) {
+	delete(crypto.shortInventory, symbol)
+	delete(crypto.avgEntry, symbol)
+	delete(crypto.armed, symbol)
+	crypto.streams.Remove(symbol)
 	crypto.publishPositions()
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -116,21 +117,21 @@ func TestReplayTriggerExits(t *testing.T) {
 func TestMakerEntryMissed(t *testing.T) {
 	Convey("Given a pending entry awaiting its execution tick", t, func() {
 		Convey("A maker (limit) buy misses when price runs above the posted level", func() {
-			So(makerEntryMissed(perspectives.ActionLimit, 100, 100.5), ShouldBeTrue)
+			So(makerEntryMissed(perspectives.ActionLimit, trading.Buy, 100, 100.5), ShouldBeTrue)
 		})
 
 		Convey("A maker (limit) buy fills when price comes back to the post", func() {
-			So(makerEntryMissed(perspectives.ActionLimit, 100, 99.8), ShouldBeFalse)
-			So(makerEntryMissed(perspectives.ActionLimit, 100, 100), ShouldBeFalse)
+			So(makerEntryMissed(perspectives.ActionLimit, trading.Buy, 100, 99.8), ShouldBeFalse)
+			So(makerEntryMissed(perspectives.ActionLimit, trading.Buy, 100, 100), ShouldBeFalse)
 		})
 
 		Convey("A taker (market) buy always fills regardless of drift", func() {
-			So(makerEntryMissed(perspectives.ActionMarket, 100, 105), ShouldBeFalse)
+			So(makerEntryMissed(perspectives.ActionMarket, trading.Buy, 100, 105), ShouldBeFalse)
 		})
 
 		Convey("Exit actions are never treated as maker-entry misses", func() {
-			So(makerEntryMissed(perspectives.ActionSettlePosition, 100, 105), ShouldBeFalse)
-			So(makerEntryMissed(perspectives.ActionStopLoss, 100, 105), ShouldBeFalse)
+			So(makerEntryMissed(perspectives.ActionSettlePosition, trading.Buy, 100, 105), ShouldBeFalse)
+			So(makerEntryMissed(perspectives.ActionStopLoss, trading.Buy, 100, 105), ShouldBeFalse)
 		})
 	})
 }

@@ -122,6 +122,7 @@ func (key *thoughtKey) writeAct(act perspectives.Act) {
 	key.writeByte('D')
 	key.writeInt(int(act.Type))
 	key.writeFloat(act.Offset)
+	key.writeFloat(act.Fraction)
 }
 
 func (key *thoughtKey) writeString(value string) {

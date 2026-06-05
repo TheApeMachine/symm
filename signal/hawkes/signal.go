@@ -12,10 +12,13 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
+
+var hawkesDefaultBandEdges = []float64{0.5, 1.0, 1.5}
 
 const (
 	tickCapacity    = 4096
@@ -37,6 +40,9 @@ type Signal struct {
 	symbols      sync.Map
 	tradeScratch []tradeTouch
 	floor        *adaptive.SNRField
+	classifier   *adaptive.Classifier
+	calibrator   *numeric.BandCalibrator
+	categories   map[string]perspectives.CategoryType
 	rawDump      *rawdump.Writer
 }
 
@@ -55,8 +61,8 @@ type symbolState struct {
 	ticks  []market.TradeUpdate
 }
 
-func newSymbolState() *symbolState {
-	return &symbolState{hawkes: NewHawkesSymbol()}
+func newSymbolState(categories map[string]perspectives.CategoryType, classifier *adaptive.Classifier) *symbolState {
+	return &symbolState{hawkes: NewHawkesSymbol(classifier, categories)}
 }
 
 func (state *symbolState) append(trade market.TradeUpdate) {
@@ -81,6 +87,22 @@ func (state *symbolState) measure(now time.Time) (perspectives.Measurement, floa
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	pooledCalibrator := numeric.NewSignalCalibrator(
+		hawkesDefaultBandEdges,
+		[]float64{0, 1, 2, 3},
+		[]string{"organic", "frenzy", "saturation", "exhaustion"},
+		[]float64{0.40, 0.30, 0.20, 0.10},
+		numeric.DefaultCalibratorConfig("strength"),
+		"hawkes",
+	)
+
+	categories := map[string]perspectives.CategoryType{
+		"organic":    perspectives.CategoryOrganic,
+		"frenzy":     perspectives.CategoryFrenzy,
+		"saturation": perspectives.CategorySaturation,
+		"exhaustion": perspectives.CategoryExhaustion,
+	}
+
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -88,6 +110,9 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
+		classifier:  pooledCalibrator.Classifier,
+		calibrator:  pooledCalibrator.Calibrator,
+		categories:  categories,
 		rawDump:     rawdump.Open("hawkes"),
 	}
 
@@ -177,7 +202,7 @@ func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
 			continue
 		}
 
-		stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState())
+		stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState(signal.categories, signal.classifier))
 		state := stored.(*symbolState)
 		state.append(trade)
 
@@ -242,6 +267,12 @@ func (signal *Signal) publishMeasurement(
 	measurement.Symbol = symbol
 	measurement.Last = last
 
+	signal.calibrator.Observe(measurement.Strength, signal.classifier)
+
+	telemetry := signal.calibrator.Snapshot(signal.classifier)
+	telemetry.Observation = measurement.Strength
+	standout = numeric.EntropyTrustFromShares(telemetry.Shares) * standout
+
 	if err := perspectives.AssignCategorySNR(
 		&measurement, signal.floor, standout,
 	); err != nil {
@@ -266,12 +297,13 @@ func (signal *Signal) publishMeasurement(
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{
-			Value: map[string]any{
-				"chart":      "gauge",
-				"source":     measurement.Source.String(),
-				"confidence": measurement.Confidence,
-				"snr":        measurement.SNR,
-			},
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				measurement,
+				telemetry,
+			),
 		})
 	}
 

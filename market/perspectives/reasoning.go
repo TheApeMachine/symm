@@ -1,5 +1,7 @@
 package perspectives
 
+import "github.com/theapemachine/symm/kraken/trading"
+
 /*
 This file is the tree language — a playbook that expresses a thought process, not a
 one-step reflex. It is the one decision language: the live story, the replay scorer,
@@ -7,13 +9,13 @@ and the optimizer all read and write it.
 
 A Thought is one node in the reasoning:
 
-    when: <predicate>   the condition that makes this thought relevant
-    then: [<thought>]   the reasoning that follows ONCE `when` holds — these are
-                        monitored on the ticks that FOLLOW, so `then` reads as
-                        "and then, over time, watch for ...". This is what makes
-                        depth a temporal sequence instead of a snapshot conjunction.
-    do:   <action>      the decision taken here, if any. A node may both `do` and
-                        `then` — "act, and keep thinking" (enter, then manage).
+	when: <predicate>   the condition that makes this thought relevant
+	then: [<thought>]   the reasoning that follows ONCE `when` holds — these are
+	                    monitored on the ticks that FOLLOW, so `then` reads as
+	                    "and then, over time, watch for ...". This is what makes
+	                    depth a temporal sequence instead of a snapshot conjunction.
+	do:   <action>      the decision taken here, if any. A node may both `do` and
+	                    `then` — "act, and keep thinking" (enter, then manage).
 */
 type Thought struct {
 	When Predicate `yaml:"when"`
@@ -30,8 +32,10 @@ The YAML accepts a bare action for the no-parameter case ("do: iceberg") or the
 object form ("do: { type: stop_loss, offset: 0.015 }").
 */
 type Act struct {
-	Type   ActionType `yaml:"type"`
-	Offset float64    `yaml:"offset,omitempty"` // overrides the global stop/take/trail fraction for this node (0 = use global)
+	Type     ActionType   `yaml:"type"`
+	Side     trading.Side `yaml:"side,omitempty"`     // sell opens a short entry; buy is the default for entries
+	Offset   float64      `yaml:"offset,omitempty"`   // overrides the global stop/take/trail fraction for this node (0 = use global)
+	Fraction float64      `yaml:"fraction,omitempty"` // multiplier on trading.position_fraction for this entry (0 = deploy the global fraction)
 }
 
 /*

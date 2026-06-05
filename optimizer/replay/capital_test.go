@@ -18,6 +18,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			StartingCapital:  200,
 			PositionFraction: 1, // deploy the whole balance per entry
 			WalletCurrency:   "EUR",
+			WalletBalances:   map[string]float64{"EUR": 200},
 		}
 
 		Convey("Full deployment funds one position; a concurrent entry is unfunded", func() {
@@ -36,7 +37,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			ledger.openLong("ETH/BTC", 100, 0, 0, time.Time{}) // quote is BTC; the EUR wallet can't fund it
 
 			So(ledger.holding("ETH/BTC"), ShouldBeFalse)
-			So(ledger.cash, ShouldEqual, 200) // untouched
+			So(ledger.walletCash("EUR"), ShouldEqual, 200) // untouched
 		})
 
 		Convey("A fractional position size lets capital fund several entries", func() {
@@ -56,7 +57,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			fractional.PositionFraction = 0.1
 			fractional.StartingCapital = 200
 			ledger := newReplayLedger(fractional)
-			ledger.cash = 1000 // abundant cash must not inflate slot size
+			ledger.cash["EUR"] = 1000 // abundant cash must not inflate slot size
 
 			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
 
@@ -73,7 +74,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 
 			// +10% price move on a fully-deployed account => +10% on capital.
 			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-9)
-			So(ledger.cash, ShouldAlmostEqual, 220, 1e-9)
+			So(ledger.walletCash("EUR"), ShouldAlmostEqual, 220, 1e-9)
 		})
 
 		Convey("Freeing capital on exit lets the next entry fund again", func() {

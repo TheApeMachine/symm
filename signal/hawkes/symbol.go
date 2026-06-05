@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -28,6 +29,8 @@ type HawkesSymbol struct {
 	minFitEvents    int
 	rawBase         *adaptive.EMA
 	tracked         *perspectives.Category
+	pipe            *numeric.Classed
+	categories      map[string]perspectives.CategoryType
 }
 
 func hawkesFitCooldown() time.Duration {
@@ -44,13 +47,23 @@ func hawkesFitCooldown() time.Duration {
 	return viper.GetDuration("signals.hawkes_fit_cooldown")
 }
 
-func NewHawkesSymbol() *HawkesSymbol {
-	return &HawkesSymbol{
+func NewHawkesSymbol(
+	classifier *adaptive.Classifier,
+	categories map[string]perspectives.CategoryType,
+) *HawkesSymbol {
+	symbol := &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  hawkesFitCooldown(),
 		rawBase:      adaptive.NewEMA(0),
 		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
+		categories:   categories,
 	}
+
+	if classifier != nil {
+		symbol.pipe = numeric.NewClassed(classifier)
+	}
+
+	return symbol
 }
 
 func (sym *HawkesSymbol) FitBivariate(stream ArrivalStream, horizon time.Time) BivariateFit {
@@ -154,7 +167,21 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (perspectives.Measurement,
 	// symbol's own history. They are different questions, so they are different
 	// numbers: a weak excitation can still land cleanly in a category, and a violent
 	// one can sit right on a boundary.
-	category, evidence := hawkesReading(fit, asymmetry, sellSide)
+	category := perspectives.CategoryOrganic
+	evidence := 0.0
+
+	if sym.pipe != nil && sym.categories != nil {
+		code, err := sym.pipe.Push(raw)
+
+		if err == nil {
+			category = sym.categories[sym.pipe.Label(code)]
+			evidence = sym.pipe.Confidence()
+		}
+	}
+
+	if sym.pipe == nil {
+		category, evidence = hawkesReading(fit, asymmetry, sellSide)
+	}
 	rawNorm := sym.rawBase.Value()
 	_, _ = sym.rawBase.Next(0, raw)
 

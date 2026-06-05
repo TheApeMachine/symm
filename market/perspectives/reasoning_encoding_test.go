@@ -5,74 +5,69 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestParseThoughtsPlaybook(t *testing.T) {
-	Convey("Given the hand-written multi-horizon playbook", t, func() {
+	Convey("Given the production playbook", t, func() {
 		raw, err := os.ReadFile("cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
-		Convey("It parses the playbook thoughts", func() {
-			So(len(thoughts), ShouldEqual, 7)
+		Convey("It parses five exit managers and seven entry strategies", func() {
+			So(len(thoughts), ShouldEqual, 12)
 		})
 
-		Convey("The short horizon is a regime + signal conjunction", func() {
-			short := thoughts[0]
-			So(len(short.When.All), ShouldEqual, 2)
-			So(short.When.All[0].Subject, ShouldEqual, SubjectRegime)
-			So(short.When.All[0].Regime, ShouldEqual, RegimeTrending)
-			So(short.When.All[1].Subject, ShouldEqual, SubjectSignal)
-			So(short.When.All[1].Category, ShouldEqual, CategoryCoiledCompression)
+		Convey("Exit managers precede entries and the scalp manager is tightest", func() {
+			scalpExit := thoughts[0]
+			So(scalpExit.When.All[0].Lifecycle, ShouldEqual, ObservationHolding)
+			So(scalpExit.When.All[1].Category, ShouldEqual, CategoryVerticalIgnition)
+			So(scalpExit.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
 		})
 
-		Convey("Its confirmation carries a metric-to-metric (versus) and enters iceberg", func() {
-			confirm := thoughts[0].Then[0]
+		Convey("The flash-pump entry confirms an ignition edge before iceberg", func() {
+			scalpEntry := thoughts[5]
+			confirm := scalpEntry.Then[0]
 			So(confirm.Do.Type, ShouldEqual, ActionIceberg)
-			So(len(confirm.When.All), ShouldEqual, 2)
-
-			crossed := confirm.When.All[0]
-			So(crossed.Op, ShouldEqual, ComparisonCrossedUp)
-			So(crossed.Ago, ShouldEqual, 5)
-
-			versus := confirm.When.All[1]
-			So(versus.Op, ShouldEqual, ComparisonAbove)
-			So(versus.Versus, ShouldNotBeNil)
-			So(versus.Versus.Category, ShouldEqual, CategoryCoiledCompression)
+			So(confirm.When.All[0].Lifecycle, ShouldEqual, ObservationNotHolding)
+			So(confirm.When.All[1].Op, ShouldEqual, ComparisonCrossedUp)
 		})
 
-		Convey("Its management carries per-node offsets (tight scalp leash)", func() {
-			management := thoughts[0].Then[0].Then
-			So(len(management), ShouldBeGreaterThanOrEqualTo, 2)
+		Convey("The momentum entry requires rising quote volume at confirmation", func() {
+			trendEntry := thoughts[6]
+			confirm := trendEntry.Then[0]
+			So(confirm.Do.Type, ShouldEqual, ActionLimit)
 
-			var stop Act
-			for _, node := range management {
-				if node.Do.Type == ActionStopLoss {
-					stop = node.Do
+			hasVolume := false
+
+			for _, operand := range confirm.When.All {
+				if operand.Subject == SubjectVolume {
+					hasVolume = true
 				}
 			}
-			So(stop.Type, ShouldEqual, ActionStopLoss)
-			So(stop.Offset, ShouldAlmostEqual, 0.010, 1e-9)
+
+			So(hasVolume, ShouldBeTrue)
 		})
 
-		Convey("The long horizon uses a NOT (avoid toxic) and a wide trailing offset", func() {
-			long := thoughts[2]
-			hasNot := false
-			for _, operand := range long.When.All {
-				if operand.Not != nil {
-					hasNot = true
-					So(operand.Not.Category, ShouldEqual, CategoryToxicBluff)
-				}
-			}
-			So(hasNot, ShouldBeTrue)
+		Convey("Bearish and herd-fade entries sell to open", func() {
+			breakdown := thoughts[10]
+			fade := thoughts[11]
+			So(breakdown.Then[0].Do.Side, ShouldEqual, trading.Sell)
+			So(fade.Then[0].Do.Side, ShouldEqual, trading.Sell)
+		})
+
+		Convey("The universal fallback manager is the last branch", func() {
+			fallback := thoughts[4]
+			So(fallback.When.Lifecycle, ShouldEqual, ObservationHolding)
+			So(fallback.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
 		})
 	})
 }
 
 func TestMarshalThoughtsRoundTrips(t *testing.T) {
-	Convey("Given the hand-written multi-horizon playbook", t, func() {
+	Convey("Given the production playbook", t, func() {
 		raw, err := os.ReadFile("cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
@@ -86,18 +81,7 @@ func TestMarshalThoughtsRoundTrips(t *testing.T) {
 			reparsed, err := ParseThoughts(encoded)
 			So(err, ShouldBeNil)
 
-			// The whole forest — booleans, versus operands, lifecycle, nested then,
-			// and per-node offsets — survives the write/read cycle untouched.
 			So(reparsed, ShouldResemble, original)
-		})
-
-		Convey("A no-offset action writes as a bare scalar, an offset action as an object", func() {
-			encoded, err := MarshalThoughts(original, 2)
-			So(err, ShouldBeNil)
-
-			text := string(encoded)
-			So(text, ShouldContainSubstring, "do: iceberg") // bare form (Offset 0)
-			So(text, ShouldContainSubstring, "offset:")     // object form (leashed stops)
 		})
 	})
 }

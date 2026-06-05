@@ -10,11 +10,20 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func hawkesTestCategories() map[string]perspectives.CategoryType {
+	return map[string]perspectives.CategoryType{
+		"organic":    perspectives.CategoryOrganic,
+		"frenzy":     perspectives.CategoryFrenzy,
+		"saturation": perspectives.CategorySaturation,
+		"exhaustion": perspectives.CategoryExhaustion,
+	}
+}
+
 func TestNewHawkesSymbol(t *testing.T) {
 	testconfig.Load(t)
 
 	Convey("Given a Hawkes symbol state", t, func() {
-		symbol := NewHawkesSymbol()
+		symbol := NewHawkesSymbol(nil, hawkesTestCategories())
 
 		Convey("It should initialize cooldown from config", func() {
 			So(symbol.fitCooldown, ShouldBeGreaterThan, 0)
@@ -27,7 +36,7 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 	testconfig.Load(t)
 
 	Convey("Given trade ticks", t, func() {
-		symbol := NewHawkesSymbol()
+		symbol := NewHawkesSymbol(nil, hawkesTestCategories())
 		now := time.Now()
 		ticks := make([]market.TradeUpdate, 0, 20)
 

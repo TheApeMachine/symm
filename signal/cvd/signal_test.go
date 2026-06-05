@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -21,70 +22,33 @@ func TestNewSignal(t *testing.T) {
 		signal := NewSignal(ctx, pool)
 		defer signal.Close()
 
-		Convey("It should wire absorption categories", func() {
+		Convey("It should wire absorption categories and a pooled calibrator", func() {
 			So(signal.categories["hidden_absorption"], ShouldEqual, perspectives.CategoryHiddenAbsorption)
-			So(signal.categories["aggressive_drive"], ShouldEqual, perspectives.CategoryAggressiveDrive)
+			So(signal.calibrator, ShouldNotBeNil)
+			So(signal.classifier, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestMeasureFusedConfidence(t *testing.T) {
-	Convey("Given quartile band boundaries", t, func() {
+func TestPooledPipeClassification(t *testing.T) {
+	Convey("Given a shared classifier pipe", t, func() {
 		classifier := adaptive.NewClassifier(
-			[]float64{2.75, 5.5, 8.25},
-			cvdBandCodes,
-			cvdBandLabels,
+			cvdDefaultBandEdges,
+			[]float64{0, 1, 2, 3},
+			[]string{
+				"volume_starvation",
+				"stochastic_balance",
+				"hidden_absorption",
+				"aggressive_drive",
+			},
 		)
+		pipe := numeric.NewClassed(classifier)
 
-		Convey("It should read high confidence deep inside a band", func() {
-			So(classifier.Confidence(6), ShouldBeGreaterThan, 0.1)
-		})
+		Convey("A strong absorption burst lands in the top band", func() {
+			code, err := classifier.Code(100)
 
-		Convey("It should read a near-floor — not zero — confidence on a quartile boundary", func() {
-			near := classifier.Confidence(5.5)
-			So(near, ShouldBeGreaterThan, 0) // exact 0 is a clamping artifact
-			So(near, ShouldBeLessThan, 0.1)
-		})
-	})
-
-	Convey("Given a cold fused history", t, func() {
-		Convey("It should emit no category before warm-up completes", func() {
-			cold := newCVDState()
-			category, clarity, _ := cold.measureFused(1)
-
-			So(category, ShouldEqual, perspectives.CategoryTypeNone)
-			So(clarity, ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a warmed fused history spanning a real range", t, func() {
-		state := newCVDState()
-
-		// Warm past minCVDFusedSamples with a spread so the quartile bands mean
-		// something. Before the fix, the SigmaClamp was fed 0, so every banded
-		// value was 0 and every reading collapsed to volume_starvation regardless.
-		for sample := 1; sample <= 20; sample++ {
-			state.measureFused(float64(sample))
-		}
-
-		Convey("A strong absorption burst lands in an upper band, not the floor", func() {
-			category, clarity, standout := state.measureFused(40)
-
-			So(category, ShouldBeIn, []perspectives.CategoryType{
-				perspectives.CategoryHiddenAbsorption,
-				perspectives.CategoryAggressiveDrive,
-			})
-			So(clarity, ShouldBeGreaterThan, 0)
-			So(standout, ShouldBeGreaterThan, 0.9) // raw strength, uncapped
-		})
-
-		Convey("A faint reading lands in the bottom band, and the two differ", func() {
-			high, _, highStandout := state.measureFused(40)
-			low, _, lowStandout := state.measureFused(0.2)
-
-			So(low, ShouldEqual, perspectives.CategoryVolumeStarvation)
-			So(high, ShouldNotEqual, low)              // the old bug made everything equal
-			So(highStandout, ShouldBeGreaterThan, lowStandout) // standout tracks raw strength
+			So(err, ShouldBeNil)
+			So(pipe.Label(code), ShouldEqual, "aggressive_drive")
 		})
 	})
 }

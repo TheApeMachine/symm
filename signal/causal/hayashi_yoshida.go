@@ -78,6 +78,78 @@ func (series *hyReturns) len() int {
 }
 
 /*
+trim keeps only the most recent keep intervals, dropping stale history after a
+volatility shock so contagion can recover once the market stabilizes.
+*/
+func (series *hyReturns) trim(keep int) {
+	if series == nil {
+		return
+	}
+
+	if keep <= 0 {
+		series.intervals = series.intervals[:0]
+
+		return
+	}
+
+	if len(series.intervals) <= keep {
+		return
+	}
+
+	series.intervals = series.intervals[len(series.intervals)-keep:]
+}
+
+/*
+lastReturnMagnitude is the absolute log return of the most recent interval.
+*/
+func (series *hyReturns) lastReturnMagnitude() float64 {
+	if series == nil || len(series.intervals) == 0 {
+		return 0
+	}
+
+	last := series.intervals[len(series.intervals)-1]
+
+	if last.ret >= 0 {
+		return last.ret
+	}
+
+	return -last.ret
+}
+
+/*
+realizedVolatility is the root mean square of interval log returns.
+*/
+func (series *hyReturns) realizedVolatility() float64 {
+	if series == nil || len(series.intervals) == 0 {
+		return 0
+	}
+
+	total := series.realisedVariance()
+
+	return math.Sqrt(total / float64(len(series.intervals)))
+}
+
+/*
+realizedVolatilityExcludingLast estimates vol before the most recent print so a
+macro shock is not measured against a baseline it just contaminated.
+*/
+func (series *hyReturns) realizedVolatilityExcludingLast() float64 {
+	if series == nil || len(series.intervals) <= 1 {
+		return series.realizedVolatility()
+	}
+
+	total := 0.0
+	count := len(series.intervals) - 1
+
+	for index := 0; index < count; index++ {
+		ret := series.intervals[index].ret
+		total += ret * ret
+	}
+
+	return math.Sqrt(total / float64(count))
+}
+
+/*
 clone returns an independent snapshot so cross-asset correlation can be computed outside the
 owning symbol's lock without racing further trade prints.
 */
