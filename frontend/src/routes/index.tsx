@@ -50,7 +50,6 @@ import {
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
-import { wsDispatchRef } from "#/providers/ws-dispatch";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -112,12 +111,6 @@ const WsFeed = ({
 	useWebSocket(socketUrl, {
 		...statusSocketHandlers,
 		onMessage: (event) => {
-			const dispatch = wsDispatchRef.current;
-
-			if (!dispatch) {
-				return;
-			}
-
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
@@ -165,10 +158,12 @@ const WsFeed = ({
 				}
 
 				if (typeof raw.symbol === "string" && typeof raw.open === "number") {
-					if (typeof raw.close === "number") {
-						dispatch.setMark(raw.symbol, raw.close);
-					}
-
+					// Candles drive the chart only. They MUST NOT write the marks map:
+					// the OHLC stream always carries the chart-anchor (BTC/EUR), and
+					// writing it into the shared, symbol-keyed marks map leaks a
+					// foreign price onto a position (the €52k "ETH" mark). Positions
+					// are marked solely by the backend per-position "mark" frame
+					// (global-frames.ts), which is the exact symbol's authoritative bid.
 					ingestCandleWire(raw);
 					return;
 				}

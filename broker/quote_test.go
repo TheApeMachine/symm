@@ -40,6 +40,34 @@ func TestQuoteCacheSnapshot(t *testing.T) {
 	})
 }
 
+func TestQuoteCacheSnapshotFailsClosedOnForeignSymbol(t *testing.T) {
+	Convey("Given an ETH/EUR slot corrupted with a BTC/EUR quote (a cross-symbol write)", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		cache := NewQuoteCache(ctx, nil)
+		cache.slotFor("ETH/EUR").storeQuote(Quote{
+			Symbol: "BTC/EUR", Bid: 52000, Ask: 52001, Last: 52000,
+		})
+
+		Convey("Snapshot fails closed instead of pricing ETH with the BTC quote", func() {
+			_, ok := cache.Snapshot("ETH/EUR")
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("A correctly-keyed quote is still returned", func() {
+			cache.slotFor("XRP/EUR").storeQuote(Quote{
+				Symbol: "XRP/EUR", Bid: 0.95, Ask: 0.96, Last: 0.955,
+			})
+
+			quote, ok := cache.Snapshot("XRP/EUR")
+
+			So(ok, ShouldBeTrue)
+			So(quote.Bid, ShouldEqual, 0.95)
+		})
+	})
+}
+
 func TestQuoteCacheUpdateBook(t *testing.T) {
 	Convey("Given a quote cache", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())

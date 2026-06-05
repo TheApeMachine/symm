@@ -316,7 +316,18 @@ func (cache *QuoteCache) Snapshot(symbol string) (Quote, bool) {
 	quoteSlot.mu.Lock()
 	defer quoteSlot.mu.Unlock()
 
-	return quoteSlot.quoteValue()
+	quote, present := quoteSlot.quoteValue()
+
+	// Fail closed if the slot ever holds another symbol's quote. updateTicker /
+	// updateBook stamp quote.Symbol with the key they wrote under, so a mismatch
+	// means a cross-symbol write corrupted this slot. The money paths (equity
+	// projection, fills) call Snapshot — they must price a lot with that lot's own
+	// quote or none, never a foreign one.
+	if present && quote.Symbol != symbol {
+		return Quote{}, false
+	}
+
+	return quote, present
 }
 
 /*

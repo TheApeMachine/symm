@@ -19,11 +19,13 @@ var ErrInsufficientFunds = errors.New("paper balances: insufficient funds")
 Balances simulates the Kraken balances channel on the shared raw bus.
 */
 type Balances struct {
-	quote string
-	model user.Balances
-	raw   *qpool.BroadcastGroup
-	ui    *qpool.BroadcastGroup
-	ids   *Identifier
+	quote     string
+	model     user.Balances
+	raw       *qpool.BroadcastGroup
+	ui        *qpool.BroadcastGroup
+	ids       *Identifier
+	costBasis map[string]float64 // fee-inclusive average cost per base asset
+	realized  float64            // running net realized P&L over the session
 }
 
 func NewBalances(raw, ui *qpool.BroadcastGroup, ids *Identifier) *Balances {
@@ -31,10 +33,11 @@ func NewBalances(raw, ui *qpool.BroadcastGroup, ids *Identifier) *Balances {
 	balance := viper.GetViper().GetFloat64("trading.paper.wallet_" + strings.ToLower(quote))
 
 	balances := &Balances{
-		quote: quote,
-		raw:   raw,
-		ui:    ui,
-		ids:   ids,
+		quote:     quote,
+		raw:       raw,
+		ui:        ui,
+		ids:       ids,
+		costBasis: make(map[string]float64),
 		model: user.Balances{
 			Asset: []user.Balance{
 				{
@@ -130,6 +133,9 @@ func (balances *Balances) ApplyFill(
 			return ErrInsufficientFunds
 		}
 
+		// Fold the lot into the fee-inclusive average cost before crediting it, so a
+		// later sell can realise the true round-trip P&L.
+		balances.foldCostBasis(base, balances.available(base), qty, cost+fee)
 		balances.adjust(quote, -(cost + fee))
 		balances.adjust(base, qty)
 
@@ -142,8 +148,16 @@ func (balances *Balances) ApplyFill(
 			return ErrInsufficientFunds
 		}
 
+		// Realise P&L for the sold quantity against its average cost: proceeds net of
+		// the sell fee, minus the fee-inclusive cost it was bought at.
+		balances.realized += (cost - fee) - qty*balances.costBasis[base]
+
 		balances.adjust(base, -qty)
 		balances.adjust(quote, cost-fee)
+
+		if balances.available(base) <= 0 {
+			delete(balances.costBasis, base) // position flat — drop its basis
+		}
 
 		ledgerRows = []user.Balance{
 			balances.ledgerRow(base, -qty, 0, refID, stamp),
@@ -179,6 +193,18 @@ func (balances *Balances) ledgerRow(
 		WalletType: "spot",
 		WalletID:   "main",
 	}
+}
+
+// foldCostBasis updates the fee-inclusive average cost of base after buying qty for
+// spent (cost + fee), weighting the prior holding (prevQty) against the new lot.
+func (balances *Balances) foldCostBasis(base string, prevQty, qty, spent float64) {
+	newQty := prevQty + qty
+
+	if newQty <= 0 {
+		return
+	}
+
+	balances.costBasis[base] = (prevQty*balances.costBasis[base] + spent) / newQty
 }
 
 func (balances *Balances) available(asset string) float64 {
@@ -243,6 +269,7 @@ func (balances *Balances) PublishUI() {
 		"event":     "wallet",
 		"balance":   cash,
 		"open":      open,
+		"realized":  balances.realized,
 		"Balance":   cash,
 		"Inventory": inventory,
 	}})

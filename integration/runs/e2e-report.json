@@ -1,14 +1,14 @@
 {
   "pass": true,
-  "started_at": "2026-06-05T21:59:58.034333+02:00",
-  "elapsed": 154455053333,
+  "started_at": "2026-06-05T23:14:45.492765+02:00",
+  "elapsed": 154447029208,
   "scenarios": [
     {
       "id": "infra.replay_raw_bus",
       "name": "Replay websocket feeds the raw bus",
       "pass": true,
-      "started_at": "2026-06-05T21:59:58.036769+02:00",
-      "elapsed": 859982209,
+      "started_at": "2026-06-05T23:14:45.496415+02:00",
+      "elapsed": 860445625,
       "checks": [
         {
           "id": "raw.frames",
@@ -31,8 +31,8 @@
       "id": "infra.fast_signals_manifest",
       "name": "Baseline replay activates fast-path measurement sources",
       "pass": true,
-      "started_at": "2026-06-05T21:59:58.898575+02:00",
-      "elapsed": 2603157042,
+      "started_at": "2026-06-05T23:14:46.358304+02:00",
+      "elapsed": 2606163917,
       "checks": [
         {
           "id": "signals.manifest",
@@ -60,8 +60,8 @@
       "id": "signal.validate.cvd.aggressive_drive",
       "name": "cvd → aggressive_drive when sustained one-sided buy aggression on the tape",
       "pass": true,
-      "started_at": "2026-06-05T22:00:01.502579+02:00",
-      "elapsed": 1162067459,
+      "started_at": "2026-06-05T23:14:48.9652+02:00",
+      "elapsed": 1161036292,
       "checks": [
         {
           "id": "signal.category",
@@ -87,8 +87,8 @@
       "id": "signal.validate.cvd.hidden_absorption",
       "name": "cvd → hidden_absorption when high volume with muted price progress (absorption)",
       "pass": true,
-      "started_at": "2026-06-05T22:00:02.665872+02:00",
-      "elapsed": 1331922917,
+      "started_at": "2026-06-05T23:14:50.12806+02:00",
+      "elapsed": 1333977500,
       "checks": [
         {
           "id": "signal.category",
@@ -113,8 +113,8 @@
       "id": "signal.validate.cvd.stochastic_balance",
       "name": "cvd → stochastic_balance when balanced two-sided flow around the local mean",
       "pass": true,
-      "started_at": "2026-06-05T22:00:03.998347+02:00",
-      "elapsed": 1201336459,
+      "started_at": "2026-06-05T23:14:51.462466+02:00",
+      "elapsed": 1205347125,
       "checks": [
         {
           "id": "signal.category",
@@ -141,8 +141,8 @@
       "id": "signal.validate.cvd.volume_starvation",
       "name": "cvd → volume_starvation when negligible executed volume relative to history",
       "pass": true,
-      "started_at": "2026-06-05T22:00:05.200891+02:00",
-      "elapsed": 1161606500,
+      "started_at": "2026-06-05T23:14:52.66821+02:00",
+      "elapsed": 1161051083,
       "checks": [
         {
           "id": "signal.category",
@@ -168,8 +168,8 @@
       "id": "signal.validate.fluid.laminar",
       "name": "fluid → laminar when calm book with low divergence and Reynolds number",
       "pass": true,
-      "started_at": "2026-06-05T22:00:06.362874+02:00",
-      "elapsed": 1157374417,
+      "started_at": "2026-06-05T23:14:53.829624+02:00",
+      "elapsed": 1156982625,
       "checks": [
         {
           "id": "signal.category",
@@ -194,8 +194,8 @@
       "id": "signal.validate.fluid.turbulent",
       "name": "fluid → turbulent when turbulence dominates divergence",
       "pass": true,
-      "started_at": "2026-06-05T22:00:07.520792+02:00",
-      "elapsed": 1193358250,
+      "started_at": "2026-06-05T23:14:54.986986+02:00",
+      "elapsed": 1191852458,
       "checks": [
         {
           "id": "signal.category",
@@ -221,8 +221,8 @@
       "id": "signal.validate.fluid.inertial",
       "name": "fluid → inertial when strong divergence with inertial Reynolds read",
       "pass": true,
-      "started_at": "2026-06-05T22:00:08.714654+02:00",
-      "elapsed": 1156748417,
+      "started_at": "2026-06-05T23:14:56.179638+02:00",
+      "elapsed": 1157668917,
       "checks": [
         {
           "id": "signal.category",
@@ -248,8 +248,8 @@
       "id": "signal.validate.fluid.viscous",
       "name": "fluid → viscous when high viscosity read below the viscous threshold",
       "pass": true,
-      "started_at": "2026-06-05T22:00:09.8718+02:00",
-      "elapsed": 1157635750,
+      "started_at": "2026-06-05T23:14:57.337899+02:00",
+      "elapsed": 1159019208,
       "checks": [
         {
           "id": "signal.category",
@@ -275,8 +275,8 @@
       "id": "signal.validate.hawkes.frenzy",
       "name": "hawkes → frenzy when asymmetric buy-side Hawkes intensity",
       "pass": true,
-      "started_at": "2026-06-05T22:00:11.030929+02:00",
-      "elapsed": 1357915041,
+      "started_at": "2026-06-05T23:14:58.49863+02:00",
+      "elapsed": 1357202250,
       "checks": [
         {
           "id": "signal.category",
@@ -301,8 +301,8 @@
       "id": "signal.validate.hawkes.saturation",
       "name": "hawkes → saturation when near-critical spectral radius from clustered prints",
       "pass": true,
-      "started_at": "2026-06-05T22:00:12.389715+02:00",
-      "elapsed": 1376621292,
+      "started_at": "2026-06-05T23:14:59.856493+02:00",
+      "elapsed": 1375324458,
       "checks": [
         {
           "id": "signal.category",
@@ -328,8 +328,8 @@
       "id": "signal.validate.hawkes.organic",
       "name": "hawkes → organic when low clustering with organic baseline intensity",
       "pass": true,
-      "started_at": "2026-06-05T22:00:13.766879+02:00",
-      "elapsed": 1406770084,
+      "started_at": "2026-06-05T23:15:01.232609+02:00",
+      "elapsed": 1408329292,
       "checks": [
         {
           "id": "signal.category",
@@ -354,8 +354,8 @@
       "id": "signal.validate.hawkes.exhaustion",
       "name": "hawkes → exhaustion when intensity collapse after a burst",
       "pass": true,
-      "started_at": "2026-06-05T22:00:15.174283+02:00",
-      "elapsed": 1382031792,
+      "started_at": "2026-06-05T23:15:02.641552+02:00",
+      "elapsed": 1376943625,
       "checks": [
         {
           "id": "signal.category",
@@ -382,8 +382,8 @@
       "id": "signal.validate.depthflow.loaded_imbalance",
       "name": "depthflow → loaded_imbalance when persistent bid-heavy book without spoof pathology",
       "pass": true,
-      "started_at": "2026-06-05T22:00:16.556699+02:00",
-      "elapsed": 1158259125,
+      "started_at": "2026-06-05T23:15:04.01929+02:00",
+      "elapsed": 1157682625,
       "checks": [
         {
           "id": "signal.category",
@@ -408,8 +408,8 @@
       "id": "signal.validate.depthflow.spoof_trap",
       "name": "depthflow → spoof_trap when pathological near-touch imbalance (spoof trap)",
       "pass": true,
-      "started_at": "2026-06-05T22:00:17.715575+02:00",
-      "elapsed": 1157240625,
+      "started_at": "2026-06-05T23:15:05.177604+02:00",
+      "elapsed": 1158903791,
       "checks": [
         {
           "id": "signal.category",
@@ -434,8 +434,8 @@
       "id": "signal.validate.depthflow.book_thinning",
       "name": "depthflow → book_thinning when depth pulls away from the touch",
       "pass": true,
-      "started_at": "2026-06-05T22:00:18.873207+02:00",
-      "elapsed": 1157210708,
+      "started_at": "2026-06-05T23:15:06.337076+02:00",
+      "elapsed": 1157686667,
       "checks": [
         {
           "id": "signal.category",
@@ -460,8 +460,8 @@
       "id": "signal.validate.depthflow.dense_neutrality",
       "name": "depthflow → dense_neutrality when flat, balanced book at the touch",
       "pass": true,
-      "started_at": "2026-06-05T22:00:20.030918+02:00",
-      "elapsed": 1157079167,
+      "started_at": "2026-06-05T23:15:07.496265+02:00",
+      "elapsed": 1157189250,
       "checks": [
         {
           "id": "signal.category",
@@ -486,8 +486,8 @@
       "id": "signal.validate.sentiment.systemic_slump",
       "name": "sentiment → systemic_slump when weak cross-section breadth with negative changes",
       "pass": true,
-      "started_at": "2026-06-05T22:00:21.18868+02:00",
-      "elapsed": 1155582667,
+      "started_at": "2026-06-05T23:15:08.653826+02:00",
+      "elapsed": 1155280834,
       "checks": [
         {
           "id": "signal.category",
@@ -513,8 +513,8 @@
       "id": "signal.validate.sentiment.risk_on_surge",
       "name": "sentiment → risk_on_surge when broad positive breadth above the surge threshold",
       "pass": true,
-      "started_at": "2026-06-05T22:00:22.344724+02:00",
-      "elapsed": 1155018750,
+      "started_at": "2026-06-05T23:15:09.809769+02:00",
+      "elapsed": 1156029500,
       "checks": [
         {
           "id": "signal.category",
@@ -539,8 +539,8 @@
       "id": "signal.validate.sentiment.divergent_move",
       "name": "sentiment → divergent_move when leader symbol moves against the broad tape",
       "pass": true,
-      "started_at": "2026-06-05T22:00:23.50048+02:00",
-      "elapsed": 1154900208,
+      "started_at": "2026-06-05T23:15:10.966838+02:00",
+      "elapsed": 1155162292,
       "checks": [
         {
           "id": "signal.category",
@@ -566,8 +566,8 @@
       "id": "signal.validate.liquidity.robust_liquidity",
       "name": "liquidity → robust_liquidity when primary symbol quote volume in the top peer quartile",
       "pass": true,
-      "started_at": "2026-06-05T22:00:24.655797+02:00",
-      "elapsed": 1155178417,
+      "started_at": "2026-06-05T23:15:12.122729+02:00",
+      "elapsed": 1154801750,
       "checks": [
         {
           "id": "signal.category",
@@ -593,8 +593,8 @@
       "id": "signal.validate.liquidity.median_depth",
       "name": "liquidity → median_depth when primary symbol quote volume between peer quartiles",
       "pass": true,
-      "started_at": "2026-06-05T22:00:25.811753+02:00",
-      "elapsed": 1155572959,
+      "started_at": "2026-06-05T23:15:13.277943+02:00",
+      "elapsed": 1155056333,
       "checks": [
         {
           "id": "signal.category",
@@ -621,8 +621,8 @@
       "id": "signal.validate.liquidity.extreme_scarcity",
       "name": "liquidity → extreme_scarcity when primary symbol quote volume in the bottom peer quartile",
       "pass": true,
-      "started_at": "2026-06-05T22:00:26.968762+02:00",
-      "elapsed": 1155269709,
+      "started_at": "2026-06-05T23:15:14.433998+02:00",
+      "elapsed": 1155014458,
       "checks": [
         {
           "id": "signal.category",
@@ -649,8 +649,8 @@
       "id": "signal.validate.pumpdump.vertical_ignition",
       "name": "pumpdump → vertical_ignition when accelerating buy tape with rising lift scores",
       "pass": true,
-      "started_at": "2026-06-05T22:00:28.124448+02:00",
-      "elapsed": 1212390333,
+      "started_at": "2026-06-05T23:15:15.589815+02:00",
+      "elapsed": 1215383375,
       "checks": [
         {
           "id": "signal.category",
@@ -677,8 +677,8 @@
       "id": "signal.validate.pumpdump.coiled_compression",
       "name": "pumpdump → coiled_compression when tight range with coiled volume precursor",
       "pass": true,
-      "started_at": "2026-06-05T22:00:29.337304+02:00",
-      "elapsed": 1200227125,
+      "started_at": "2026-06-05T23:15:16.805985+02:00",
+      "elapsed": 1200390625,
       "checks": [
         {
           "id": "signal.category",
@@ -705,8 +705,8 @@
       "id": "signal.validate.pumpdump.organic_trend",
       "name": "pumpdump → organic_trend when steady organic drift without ignition",
       "pass": true,
-      "started_at": "2026-06-05T22:00:30.539067+02:00",
-      "elapsed": 1156778208,
+      "started_at": "2026-06-05T23:15:18.006838+02:00",
+      "elapsed": 1157639042,
       "checks": [
         {
           "id": "signal.category",
@@ -731,8 +731,8 @@
       "id": "signal.validate.pumpdump.faded_exhaustion",
       "name": "pumpdump → faded_exhaustion when lift fades after an impulse",
       "pass": true,
-      "started_at": "2026-06-05T22:00:31.696295+02:00",
-      "elapsed": 1249621125,
+      "started_at": "2026-06-05T23:15:19.165248+02:00",
+      "elapsed": 1254077750,
       "checks": [
         {
           "id": "signal.category",
@@ -760,8 +760,8 @@
       "id": "signal.validate.exhaustion.mechanical_collapse",
       "name": "exhaustion → mechanical_collapse when book thinning dominates exit score",
       "pass": true,
-      "started_at": "2026-06-05T22:00:32.946903+02:00",
-      "elapsed": 1175044334,
+      "started_at": "2026-06-05T23:15:20.420308+02:00",
+      "elapsed": 1171836208,
       "checks": [
         {
           "id": "signal.category",
@@ -786,8 +786,8 @@
       "id": "signal.validate.exhaustion.fragile_expansion",
       "name": "exhaustion → fragile_expansion when spread widening dominates exit score",
       "pass": true,
-      "started_at": "2026-06-05T22:00:34.122799+02:00",
-      "elapsed": 1186664959,
+      "started_at": "2026-06-05T23:15:21.592677+02:00",
+      "elapsed": 1187344333,
       "checks": [
         {
           "id": "signal.category",
@@ -812,8 +812,8 @@
       "id": "signal.validate.exhaustion.thermal_exhaustion",
       "name": "exhaustion → thermal_exhaustion when pressure fade dominates exit score",
       "pass": true,
-      "started_at": "2026-06-05T22:00:35.309993+02:00",
-      "elapsed": 1160167209,
+      "started_at": "2026-06-05T23:15:22.780724+02:00",
+      "elapsed": 1159822791,
       "checks": [
         {
           "id": "signal.category",
@@ -838,8 +838,8 @@
       "id": "signal.validate.exhaustion.active_reversal",
       "name": "exhaustion → active_reversal when imbalance flip dominates exit score",
       "pass": true,
-      "started_at": "2026-06-05T22:00:36.471193+02:00",
-      "elapsed": 1161655959,
+      "started_at": "2026-06-05T23:15:23.941454+02:00",
+      "elapsed": 1161052459,
       "checks": [
         {
           "id": "signal.category",
@@ -864,8 +864,8 @@
       "id": "signal.validate.causal.endogenous_alpha",
       "name": "causal → endogenous_alpha when intervention ladder read with endogenous alpha",
       "pass": true,
-      "started_at": "2026-06-05T22:00:37.634062+02:00",
-      "elapsed": 2806845625,
+      "started_at": "2026-06-05T23:15:25.103426+02:00",
+      "elapsed": 2813271625,
       "checks": [
         {
           "id": "signal.category",
@@ -892,8 +892,8 @@
       "id": "signal.validate.causal.systemic_beta",
       "name": "causal → systemic_beta when macro association drives beta read",
       "pass": true,
-      "started_at": "2026-06-05T22:00:40.441388+02:00",
-      "elapsed": 2471901250,
+      "started_at": "2026-06-05T23:15:27.9176+02:00",
+      "elapsed": 2470508708,
       "checks": [
         {
           "id": "signal.category",
@@ -918,8 +918,8 @@
       "id": "signal.validate.causal.liquidity_shock",
       "name": "causal → liquidity_shock when regime inversion shock on the ladder",
       "pass": true,
-      "started_at": "2026-06-05T22:00:42.915307+02:00",
-      "elapsed": 2857490542,
+      "started_at": "2026-06-05T23:15:30.389338+02:00",
+      "elapsed": 2853336000,
       "checks": [
         {
           "id": "signal.category",
@@ -946,8 +946,8 @@
       "id": "signal.validate.causal.causal_noise",
       "name": "causal → causal_noise when buy pressure without price change (noise)",
       "pass": true,
-      "started_at": "2026-06-05T22:00:45.773225+02:00",
-      "elapsed": 3813521750,
+      "started_at": "2026-06-05T23:15:33.244094+02:00",
+      "elapsed": 3811667667,
       "checks": [
         {
           "id": "signal.category",
@@ -961,7 +961,7 @@
             "observed": [
               "causal_noise"
             ],
-            "publish_n": 9,
+            "publish_n": 10,
             "source": 7,
             "symbol": "SYN/EUR"
           }
@@ -972,8 +972,8 @@
       "id": "signal.validate.leadlag.anchor_stall",
       "name": "leadlag → anchor_stall when flat anchor with follower drift",
       "pass": true,
-      "started_at": "2026-06-05T22:00:49.588261+02:00",
-      "elapsed": 8194948042,
+      "started_at": "2026-06-05T23:15:37.056449+02:00",
+      "elapsed": 8189748625,
       "checks": [
         {
           "id": "signal.category",
@@ -998,8 +998,8 @@
       "id": "signal.validate.leadlag.inefficient_lag",
       "name": "leadlag → inefficient_lag when follower lags anchor beyond min lag fraction",
       "pass": true,
-      "started_at": "2026-06-05T22:00:57.784032+02:00",
-      "elapsed": 10390492875,
+      "started_at": "2026-06-05T23:15:45.247526+02:00",
+      "elapsed": 10395602666,
       "checks": [
         {
           "id": "signal.category",
@@ -1027,8 +1027,8 @@
       "id": "signal.validate.leadlag.synchronized_drift",
       "name": "leadlag → synchronized_drift when anchor and follower move together",
       "pass": true,
-      "started_at": "2026-06-05T22:01:08.175374+02:00",
-      "elapsed": 10399919667,
+      "started_at": "2026-06-05T23:15:55.644328+02:00",
+      "elapsed": 10393992583,
       "checks": [
         {
           "id": "signal.category",
@@ -1054,8 +1054,8 @@
       "id": "signal.validate.leadlag.decoupled_move",
       "name": "leadlag → decoupled_move when low correlation between anchor and follower",
       "pass": true,
-      "started_at": "2026-06-05T22:01:18.575947+02:00",
-      "elapsed": 10387239708,
+      "started_at": "2026-06-05T23:16:06.039495+02:00",
+      "elapsed": 10395490792,
       "checks": [
         {
           "id": "signal.category",
@@ -1081,8 +1081,8 @@
       "id": "signal.validate.correlation.systemic_herd",
       "name": "correlation → systemic_herd when coordinated cross-section buy drift",
       "pass": true,
-      "started_at": "2026-06-05T22:01:28.964006+02:00",
-      "elapsed": 10972845959,
+      "started_at": "2026-06-05T23:16:16.436099+02:00",
+      "elapsed": 10975278166,
       "checks": [
         {
           "id": "signal.category",
@@ -1107,8 +1107,8 @@
       "id": "signal.validate.correlation.decoupled_alpha",
       "name": "correlation → decoupled_alpha when one symbol diverges from the herd fingerprint",
       "pass": true,
-      "started_at": "2026-06-05T22:01:39.945284+02:00",
-      "elapsed": 10709341375,
+      "started_at": "2026-06-05T23:16:27.412029+02:00",
+      "elapsed": 10710564625,
       "checks": [
         {
           "id": "signal.category",
@@ -1134,8 +1134,8 @@
       "id": "signal.validate.correlation.stochastic_noise",
       "name": "correlation → stochastic_noise when quiet uncorrelated movement",
       "pass": true,
-      "started_at": "2026-06-05T22:01:50.656379+02:00",
-      "elapsed": 10717062167,
+      "started_at": "2026-06-05T23:16:38.123776+02:00",
+      "elapsed": 10714543208,
       "checks": [
         {
           "id": "signal.category",
@@ -1161,8 +1161,8 @@
       "id": "signal.validate.correlation.divergent_stress",
       "name": "correlation → divergent_stress when contrarian symbol against the majority fingerprint",
       "pass": true,
-      "started_at": "2026-06-05T22:02:01.374912+02:00",
-      "elapsed": 10718556542,
+      "started_at": "2026-06-05T23:16:48.839445+02:00",
+      "elapsed": 10710522375,
       "checks": [
         {
           "id": "signal.category",
@@ -1188,8 +1188,8 @@
       "id": "signal.validate.toxicity.toxic_bluff",
       "name": "toxicity → toxic_bluff when near-touch cancel-heavy book updates",
       "pass": true,
-      "started_at": "2026-06-05T22:02:12.094322+02:00",
-      "elapsed": 1162759625,
+      "started_at": "2026-06-05T23:16:59.55068+02:00",
+      "elapsed": 1161678250,
       "checks": [
         {
           "id": "signal.category",
@@ -1204,7 +1204,7 @@
               "hard_support",
               "toxic_bluff"
             ],
-            "publish_n": 2,
+            "publish_n": 3,
             "source": 13,
             "symbol": "SYN/EUR"
           }
@@ -1215,8 +1215,8 @@
       "id": "signal.validate.toxicity.liquidity_vacuum",
       "name": "toxicity → liquidity_vacuum when vacuum after liquidity pulls from the touch",
       "pass": true,
-      "started_at": "2026-06-05T22:02:13.258105+02:00",
-      "elapsed": 1165172209,
+      "started_at": "2026-06-05T23:17:00.713019+02:00",
+      "elapsed": 1165618041,
       "checks": [
         {
           "id": "signal.category",
@@ -1242,8 +1242,8 @@
       "id": "signal.validate.toxicity.hard_support",
       "name": "toxicity → hard_support when stable size at the touch without bluff cancels",
       "pass": true,
-      "started_at": "2026-06-05T22:02:14.423645+02:00",
-      "elapsed": 1157261375,
+      "started_at": "2026-06-05T23:17:01.879555+02:00",
+      "elapsed": 1157551750,
       "checks": [
         {
           "id": "signal.category",
@@ -1268,8 +1268,8 @@
       "id": "playbook.limit_entry",
       "name": "Perspective tree publishes limit entry on raw",
       "pass": true,
-      "started_at": "2026-06-05T22:02:15.581404+02:00",
-      "elapsed": 1081536208,
+      "started_at": "2026-06-05T23:17:03.037664+02:00",
+      "elapsed": 1078625417,
       "checks": [
         {
           "id": "playbook.action",
@@ -1292,8 +1292,8 @@
       "id": "playbook.settle_holding",
       "name": "Holding observation routes to settle_position",
       "pass": true,
-      "started_at": "2026-06-05T22:02:16.665954+02:00",
-      "elapsed": 1073187209,
+      "started_at": "2026-06-05T23:17:04.117193+02:00",
+      "elapsed": 1073015750,
       "checks": [
         {
           "id": "playbook.exit",
@@ -1316,8 +1316,8 @@
       "id": "execution.limit_fill_inventory",
       "name": "Limit entry fills through paper matcher and updates inventory",
       "pass": true,
-      "started_at": "2026-06-05T22:02:17.739645+02:00",
-      "elapsed": 7879162667,
+      "started_at": "2026-06-05T23:17:05.191112+02:00",
+      "elapsed": 7878788375,
       "checks": [
         {
           "id": "execution.engine",
@@ -1366,8 +1366,8 @@
       "id": "execution.settle_reduces_inventory",
       "name": "Settle action exits held inventory through paper desk",
       "pass": true,
-      "started_at": "2026-06-05T22:02:25.620292+02:00",
-      "elapsed": 3474251417,
+      "started_at": "2026-06-05T23:17:13.070446+02:00",
+      "elapsed": 3475515334,
       "checks": [
         {
           "id": "execution.exit",
@@ -1381,8 +1381,8 @@
       "id": "black_swan.crash_recovery",
       "name": "System continues measuring through crash and wide spread",
       "pass": true,
-      "started_at": "2026-06-05T22:02:29.095103+02:00",
-      "elapsed": 1686326042,
+      "started_at": "2026-06-05T23:17:16.546379+02:00",
+      "elapsed": 1685591166,
       "checks": [
         {
           "id": "black_swan.desk",
@@ -1439,8 +1439,8 @@
       "id": "black_swan.post_crash_entry_gate",
       "name": "Playbook still evaluates entries after crash without tripping halt",
       "pass": true,
-      "started_at": "2026-06-05T22:02:30.781991+02:00",
-      "elapsed": 1711229917,
+      "started_at": "2026-06-05T23:17:18.23242+02:00",
+      "elapsed": 1710282666,
       "checks": [
         {
           "id": "black_swan.halt",
