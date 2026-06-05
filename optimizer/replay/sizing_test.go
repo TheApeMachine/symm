@@ -10,8 +10,10 @@ import (
 
 func TestEntryDeployFraction(t *testing.T) {
 	Convey("Given a node multiplier and choppy regime", t, func() {
-		viper.Set("trading.replay.choppy_size_scale", 0.5)
-		defer viper.Set("trading.replay.choppy_size_scale", 0)
+		key := "trading.replay.choppy_size_scale"
+		original := viper.Get(key)
+		viper.Set(key, 0.5)
+		defer viper.Set(key, original)
 
 		costs := ReplayCosts{PositionFraction: 0.1}
 		act := perspectives.Act{Fraction: 2}

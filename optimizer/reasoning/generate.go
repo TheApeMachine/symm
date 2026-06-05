@@ -59,6 +59,12 @@ func derivePositionFractions(rows []perspectives.Measurement) []float64 {
 		step = 0.25
 	}
 
+	const maxStep = 2.0
+
+	if step > maxStep {
+		step = maxStep
+	}
+
 	return []float64{step, step * 2, step * 3, step * 4}
 }
 

@@ -149,6 +149,32 @@ func (cache *InstrumentRulesCache) pair(symbol string) (market.InstrumentPair, b
 }
 
 /*
+PrepareOrder rounds quantity and limit price to exchange increments, then validates
+minimums on the aligned values. Submit only the returned quantity and price.
+*/
+func (cache *InstrumentRulesCache) PrepareOrder(
+	symbol string,
+	quantity float64,
+	price float64,
+	orderType trading.OrderType,
+) (float64, float64, error) {
+	alignedQty, alignedPrice := cache.AlignOrder(symbol, quantity, price, orderType)
+
+	if alignedQty <= 0 {
+		return alignedQty, alignedPrice, fmt.Errorf(
+			"preflight: quantity rounds to zero below increment for %s",
+			symbol,
+		)
+	}
+
+	if err := cache.ValidateOrder(symbol, alignedQty, alignedPrice, orderType); err != nil {
+		return alignedQty, alignedPrice, err
+	}
+
+	return alignedQty, alignedPrice, nil
+}
+
+/*
 ValidateOrder rejects quantities and prices that violate Kraken instrument rules.
 */
 func (cache *InstrumentRulesCache) ValidateOrder(
@@ -247,10 +273,16 @@ func isAligned(value, increment float64) bool {
 		return true
 	}
 
-	quotient := value / increment
-	rounded := math.Round(quotient)
+	steps := orderStepsDown(value, increment)
+	aligned := quantityFromSteps(steps, increment)
 
-	return math.Abs(quotient-rounded) <= 1e-9
+	if math.Abs(value-aligned) <= increment*1e-6 {
+		return true
+	}
+
+	next := quantityFromSteps(steps+1, increment)
+
+	return math.Abs(value-next) <= increment*1e-6
 }
 
 func roundDownToIncrement(value, increment float64) float64 {
@@ -258,5 +290,13 @@ func roundDownToIncrement(value, increment float64) float64 {
 		return value
 	}
 
-	return math.Floor(value/increment+1e-12) * increment
+	return quantityFromSteps(orderStepsDown(value, increment), increment)
+}
+
+func orderStepsDown(value, increment float64) float64 {
+	return math.Floor(value/increment + 1e-12)
+}
+
+func quantityFromSteps(steps, increment float64) float64 {
+	return steps * increment
 }

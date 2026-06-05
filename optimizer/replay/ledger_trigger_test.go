@@ -11,7 +11,7 @@ import (
 func TestReplayLedgerArmOffset(t *testing.T) {
 	convey.Convey("Given a replay ledger with an open long", t, func() {
 		ledger := newReplayLedger(triggerTestCosts())
-		ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
+		ledger.openLong("BTC/EUR", 100, 0, time.Time{})
 
 		convey.Convey("It should not arm a dynamic trailing stop without volatility", func() {
 			offset, ok := ledger.armOffset(

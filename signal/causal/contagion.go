@@ -89,7 +89,17 @@ func (signal *Signal) contagionTiers() contagionTier {
 			slowSnapshots = append(slowSnapshots, snapshot)
 		}
 
-		return len(slowSnapshots) < contagionSymbolCap
+		minCount := len(fastSnapshots)
+
+		if len(mediumSnapshots) < minCount {
+			minCount = len(mediumSnapshots)
+		}
+
+		if len(slowSnapshots) < minCount {
+			minCount = len(slowSnapshots)
+		}
+
+		return minCount < contagionSymbolCap
 	})
 
 	return contagionTier{

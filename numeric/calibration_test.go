@@ -34,6 +34,18 @@ func TestRegimeBlend(t *testing.T) {
 	})
 }
 
+func TestNormalizeShares(t *testing.T) {
+	Convey("Given target shares", t, func() {
+		Convey("It should not mutate the input slice", func() {
+			input := []float64{0.40, 0.30, 0.20, 0.10}
+			normalized := normalizeShares(input)
+			input[0] = 0.99
+
+			So(normalized[0], ShouldAlmostEqual, 0.40, 1e-9)
+		})
+	})
+}
+
 func TestEntropyTrustFromShares(t *testing.T) {
 	Convey("Given category share mixes", t, func() {
 		Convey("A dominant category yields high trust", func() {
@@ -56,7 +68,14 @@ func TestBandCalibratorSeedFromObservations(t *testing.T) {
 			[]float64{0, 1, 2, 3},
 			[]string{"a", "b", "c", "d"},
 		)
-		calibrator := NewBandCalibrator([]float64{0.25, 0.25, 0.25, 0.25}, 2000, 500, 100, 0)
+		calibrator := NewBandCalibrator(
+			[]float64{0.25, 0.25, 0.25, 0.25},
+			2000,
+			500,
+			100,
+			0,
+			perspectives.CurrentRegime,
+		)
 
 		observations := make([]float64, 0, 120)
 

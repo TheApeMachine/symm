@@ -1,6 +1,10 @@
 package perspectives
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/theapemachine/symm/kraken/trading"
+)
 
 /*
 This is the evaluator for the Thought/Predicate language — the heart that replay,
@@ -26,6 +30,8 @@ type ReasonContext interface {
 	// Lifecycle reports whether the position is in the given state
 	// (not_holding / holding / has_started / has_continued / has_ended).
 	Lifecycle(state ObservationType) bool
+	// PositionSide is the open position's entry side (buy = long, sell = short).
+	PositionSide() trading.Side
 	// Signal returns a category's strength in the given unit (snr/confidence),
 	// ago measurements ago (0 = now); ok is false when the category is absent.
 	Signal(category CategoryType, unit UnitType, ago int) (value float64, ok bool)
@@ -262,6 +268,10 @@ func holds(pred Predicate, ctx ReasonContext) bool {
 	case SubjectRegime:
 		return ctx.Regime() == pred.Regime
 	case SubjectPosition:
+		if pred.Side != "" {
+			return ctx.PositionSide() == pred.Side
+		}
+
 		return ctx.Lifecycle(pred.Lifecycle)
 	default:
 		return holdsNumeric(pred, ctx)

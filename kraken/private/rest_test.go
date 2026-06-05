@@ -52,7 +52,9 @@ func TestRestForEndpoint(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 
-		cancelRest := rest.ForEndpoint(public.EndpointCancelOrder)
+		cancelRest, endpointErr := rest.ForEndpoint(public.EndpointCancelOrder)
+
+		convey.So(endpointErr, convey.ShouldBeNil)
 
 		convey.Convey("It should share credentials on another endpoint", func() {
 			convey.So(cancelRest.apiKey, convey.ShouldEqual, rest.apiKey)

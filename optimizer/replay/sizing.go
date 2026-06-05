@@ -2,6 +2,7 @@ package replay
 
 import (
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
@@ -42,9 +43,25 @@ func regimeSizeScale(regime perspectives.Regime) float64 {
 
 	switch regime {
 	case perspectives.RegimeChoppy:
-		return config.GetFloat64("trading.replay.choppy_size_scale")
+		key := "trading.replay.choppy_size_scale"
+
+		if !config.IsSet(key) {
+			errnie.Error(nil, "replay: missing %s, using scale 1.0", key)
+
+			return 1
+		}
+
+		return config.GetFloat64(key)
 	case perspectives.RegimeBearish:
-		return config.GetFloat64("trading.replay.bearish_size_scale")
+		key := "trading.replay.bearish_size_scale"
+
+		if !config.IsSet(key) {
+			errnie.Error(nil, "replay: missing %s, using scale 1.0", key)
+
+			return 1
+		}
+
+		return config.GetFloat64(key)
 	default:
 		return 1
 	}

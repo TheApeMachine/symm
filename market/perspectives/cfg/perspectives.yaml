@@ -165,10 +165,26 @@ branches:
             - { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.55 }
             - { subject: signal, category: liquidity_shock, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
         do: settle_position
-      - when: { subject: position, op: equals, lifecycle: has_continued }
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: has_continued }
+            - { subject: position, side: buy }
         do: { type: trailing_stop, offset: 0.010 }
-      - when: { subject: position, op: equals, lifecycle: has_started }
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: has_continued }
+            - { subject: position, side: sell }
+        do: { type: trailing_stop, offset: 0.012 }
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: has_started }
+            - { subject: position, side: buy }
         do: { type: stop_loss, offset: 0.010 }
+      - when:
+          all:
+            - { subject: position, op: equals, lifecycle: has_started }
+            - { subject: position, side: sell }
+        do: { type: stop_loss, offset: 0.012 }
       - when:
           all:
             - { subject: elapsed, unit: time_minutes, op: at_least, value: 30.0 }

@@ -105,6 +105,12 @@ func (ledger *replayLedger) advanceMakerQueues(row perspectives.Measurement) {
 	ledger.pendingMakers = remaining
 }
 
+// makerQueueDepletion estimates how much resting maker liquidity is consumed as
+// price trades through the queue. It returns 0.01% of last (row.Last * 0.0001):
+// a conservative, price-proportional fill increment — larger on expensive pairs,
+// smaller on cheap alts. The replay does not model full L2 queue position, so this
+// proxy advances maker fills gradually rather than instantaneously. Tune upward for
+// more aggressive maker fills in fast markets; downward for thin books.
 func makerQueueDepletion(row perspectives.Measurement) float64 {
 	if row.Last <= 0 {
 		return 0

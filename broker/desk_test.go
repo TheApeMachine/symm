@@ -6,6 +6,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
@@ -168,6 +169,60 @@ func TestNewDeskWithCaches(t *testing.T) {
 			convey.So(desk.Halted(), convey.ShouldBeTrue)
 			desk.TripHalt()
 			convey.So(desk.Halted(), convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestDeskPrepareInstrumentOrder(t *testing.T) {
+	convey.Convey("Given a desk with instrument rules", t, func() {
+		rules := NewInstrumentRulesCache(t.Context())
+		rules.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "LTC/EUR",
+			QtyIncrement: 0.00000001,
+			QtyMin:       0.00000001,
+			CostMin:      0.01,
+		})
+
+		symbolStress := SymbolStress{
+			HawkesCategory: perspectives.CategorySaturation,
+			HawkesSNR:      1,
+		}
+
+		desk := &Desk{rules: rules}
+
+		convey.Convey("It should round stress-sized quantity before instrument validation", func() {
+			action := perspectives.Action{
+				Type:     perspectives.ActionLimit,
+				Symbol:   "LTC/EUR",
+				Quantity: 50.0 / 94.523,
+			}
+
+			resolved, err := resolveAction(action, Quote{Symbol: "LTC/EUR"}, symbolStress)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(
+				isAligned(resolved.Quantity, 0.00000001),
+				convey.ShouldBeFalse,
+			)
+
+			err = rules.ValidateOrder(
+				resolved.Symbol,
+				resolved.Quantity,
+				resolved.Price,
+				trading.Limit,
+			)
+
+			convey.So(err, convey.ShouldNotBeNil)
+
+			alignedQty, _, err := desk.rules.PrepareOrder(
+				resolved.Symbol,
+				resolved.Quantity,
+				resolved.Price,
+				trading.Limit,
+			)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(isAligned(alignedQty, 0.00000001), convey.ShouldBeTrue)
 		})
 	})
 }

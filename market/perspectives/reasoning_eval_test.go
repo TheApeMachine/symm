@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/trading"
 )
 
 // mockReason answers predicate queries from ago-indexed series (index 0 = now).
@@ -16,7 +17,8 @@ type mockReason struct {
 	elapsed   float64
 }
 
-func (m mockReason) Regime() Regime                  { return m.regime }
+func (m mockReason) Regime() Regime                   { return m.regime }
+func (m mockReason) PositionSide() trading.Side     { return "" }
 func (m mockReason) Lifecycle(s ObservationType) bool { return m.lifecycle[s] }
 
 func (m mockReason) Signal(c CategoryType, _ UnitType, ago int) (float64, bool) {

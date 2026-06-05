@@ -58,6 +58,7 @@ func NewSignalCalibrator(
 		config.RefitEvery,
 		config.MinSamples,
 		config.Blend,
+		perspectives.CurrentRegime,
 	)
 
 	if calibrator == nil {
@@ -91,7 +92,7 @@ func (signalCalibrator *SignalCalibrator) Observe(observation float64) {
 Telemetry returns the live calibration snapshot for dashboard gauges.
 */
 func (signalCalibrator *SignalCalibrator) Telemetry(observation float64) Telemetry {
-	if signalCalibrator == nil {
+	if signalCalibrator == nil || signalCalibrator.Calibrator == nil {
 		return Telemetry{}
 	}
 
@@ -240,19 +241,24 @@ func EntropyTrustFromShares(shares []float64) float64 {
 }
 
 func normalizeShares(shares []float64) []float64 {
+	if len(shares) == 0 {
+		return nil
+	}
+
+	out := append([]float64(nil), shares...)
 	total := 0.0
 
-	for _, share := range shares {
+	for _, share := range out {
 		total += share
 	}
 
 	if total <= 0 {
-		return shares
+		return out
 	}
 
-	for index := range shares {
-		shares[index] /= total
+	for index := range out {
+		out[index] /= total
 	}
 
-	return shares
+	return out
 }

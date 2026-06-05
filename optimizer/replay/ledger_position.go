@@ -128,13 +128,7 @@ func (ledger *replayLedger) openEntry(
 		return
 	}
 
-	if side == trading.Sell {
-		if !ledger.debitWallet(quote, slot) {
-			ledger.fundBlocked++
-
-			return
-		}
-	} else if !ledger.debitWallet(quote, slot) {
+	if !ledger.debitWallet(quote, slot) {
 		ledger.fundBlocked++
 
 		return
@@ -295,11 +289,8 @@ func (ledger *replayLedger) openLong(
 	symbol string,
 	price float64,
 	feePct float64,
-	slippagePct float64,
 	at time.Time,
 ) {
-	_ = slippagePct
-
 	ledger.openEntry(
 		symbol,
 		trading.Buy,
@@ -315,11 +306,8 @@ func (ledger *replayLedger) openShort(
 	symbol string,
 	price float64,
 	feePct float64,
-	slippagePct float64,
 	at time.Time,
 ) {
-	_ = slippagePct
-
 	ledger.openEntry(
 		symbol,
 		trading.Sell,

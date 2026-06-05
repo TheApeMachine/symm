@@ -20,7 +20,7 @@ func TestReplayShortEntry(t *testing.T) {
 		ledger := newReplayLedger(costs)
 
 		Convey("A short entry profits when price falls", func() {
-			ledger.openShort("BTC/EUR", 100, 0, 0, time.Time{})
+			ledger.openShort("BTC/EUR", 100, 0, time.Time{})
 			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
 			So(ledger.positions["BTC/EUR"].side, ShouldEqual, trading.Sell)
 
@@ -47,8 +47,8 @@ func TestReplayMultiCurrencyWallets(t *testing.T) {
 		}
 		ledger := newReplayLedger(costs)
 
-		ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
-		ledger.openLong("ETH/USD", 50, 0, 0, time.Time{})
+		ledger.openLong("BTC/EUR", 100, 0, time.Time{})
+		ledger.openLong("ETH/USD", 50, 0, time.Time{})
 
 		So(ledger.holding("BTC/EUR"), ShouldBeTrue)
 		So(ledger.holding("ETH/USD"), ShouldBeTrue)

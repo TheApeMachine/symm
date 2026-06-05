@@ -117,6 +117,17 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 		return action, err
 	}
 
+	action.Quantity, action.Price, err = desk.rules.PrepareOrder(
+		action.Symbol,
+		action.Quantity,
+		action.Price,
+		orderType,
+	)
+
+	if err != nil {
+		return action, err
+	}
+
 	request := PreflightRequest{
 		Quote:      quote,
 		Side:       action.Side,
@@ -129,12 +140,6 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 	if err := PreflightGates(request); err != nil {
 		return action, err
 	}
-
-	if err := desk.rules.ValidateOrder(action.Symbol, action.Quantity, action.Price, orderType); err != nil {
-		return action, err
-	}
-
-	action.Quantity, action.Price = desk.rules.AlignOrder(action.Symbol, action.Quantity, action.Price, orderType)
 
 	if orderType == trading.Limit && perspectives.IsMakerAction(action.Type) {
 		if WouldCrossPostOnly(quote, action.Side, action.Price) {

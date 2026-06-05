@@ -1,6 +1,10 @@
 package perspectives
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/theapemachine/symm/kraken/trading"
+)
 
 type fakeReasonContext struct {
 	regime  Regime
@@ -9,6 +13,8 @@ type fakeReasonContext struct {
 }
 
 func (ctx fakeReasonContext) Regime() Regime { return ctx.regime }
+
+func (ctx fakeReasonContext) PositionSide() trading.Side { return "" }
 
 func (ctx fakeReasonContext) Lifecycle(state ObservationType) bool {
 	switch state {

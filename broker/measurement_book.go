@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/settings"
@@ -20,6 +21,11 @@ func MeasurementBookEnricher(
 	depth, err := settings.RequiredBookDepthLevels()
 
 	if err != nil {
+		errnie.Error(
+			err,
+			"broker: settings.RequiredBookDepthLevels failed, returning no-op measurement enricher",
+		)
+
 		return func(measurement perspectives.Measurement) perspectives.Measurement {
 			return measurement
 		}

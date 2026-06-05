@@ -147,6 +147,14 @@ func (reason *WindowReason) Regime() Regime {
 	return reason.regime
 }
 
+func (reason *WindowReason) PositionSide() trading.Side {
+	if !reason.position.Holding {
+		return ""
+	}
+
+	return reason.position.Side
+}
+
 func (reason *WindowReason) Lifecycle(state ObservationType) bool {
 	position := reason.position
 

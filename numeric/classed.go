@@ -116,7 +116,17 @@ dashboard's view of them — reflect one coherent distribution with one sample
 count, instead of fragmenting into a separate, constantly-resetting state per
 symbol. Returns nil for invalid parameters.
 */
-func NewBandCalibrator(shares []float64, window, every, minSamples int, blend float64) *BandCalibrator {
+/*
+RegimeProvider supplies the price-action regime for band-edge retuning.
+*/
+type RegimeProvider func() perspectives.Regime
+
+func NewBandCalibrator(
+	shares []float64,
+	window, every, minSamples int,
+	blend float64,
+	regimeProvider RegimeProvider,
+) *BandCalibrator {
 	if window <= 0 || every <= 0 || len(shares) < 2 {
 		return nil
 	}
@@ -131,14 +141,15 @@ func NewBandCalibrator(shares []float64, window, every, minSamples int, blend fl
 	}
 
 	return &BandCalibrator{
-		baseShares: append([]float64(nil), shares...),
-		shares:     append([]float64(nil), shares...),
-		window:     ring.NewFloatRing(window),
-		every:      every,
-		minN:       minSamples,
-		baseBlend:  blend,
-		blend:      blend,
-		shareEvery: shareEvery,
+		baseShares:     append([]float64(nil), shares...),
+		shares:         append([]float64(nil), shares...),
+		window:         ring.NewFloatRing(window),
+		every:          every,
+		minN:           minSamples,
+		baseBlend:      blend,
+		blend:          blend,
+		shareEvery:     shareEvery,
+		regimeProvider: regimeProvider,
 	}
 }
 
@@ -169,17 +180,18 @@ func (calibrator *BandCalibrator) Snapshot(classifier *adaptive.Classifier) Tele
 // BandCalibrator keeps a rolling window of recent observations and refits the
 // classifier's band edges to canonical target-share quantiles on a cadence.
 type BandCalibrator struct {
-	baseShares   []float64
-	shares       []float64
-	window       ring.FloatRing
-	every        int
-	minN         int
-	baseBlend    float64
-	blend        float64
-	seen         int
-	refits       int
-	shareEvery   int
-	recentShares []float64
+	baseShares     []float64
+	shares         []float64
+	window         ring.FloatRing
+	every          int
+	minN           int
+	baseBlend      float64
+	blend          float64
+	seen           int
+	refits         int
+	shareEvery     int
+	recentShares   []float64
+	regimeProvider RegimeProvider
 }
 
 /*
@@ -193,16 +205,20 @@ func (calibrator *BandCalibrator) WindowCap() int {
 	return calibrator.window.Cap()
 }
 
-func (calibrator *BandCalibrator) activeShares() []float64 {
-	regime := perspectives.CurrentRegime()
+func (calibrator *BandCalibrator) activeRegime() perspectives.Regime {
+	if calibrator == nil || calibrator.regimeProvider == nil {
+		return perspectives.RegimeNone
+	}
 
-	return RegimeTargetShares(calibrator.baseShares, regime)
+	return calibrator.regimeProvider()
+}
+
+func (calibrator *BandCalibrator) activeShares() []float64 {
+	return RegimeTargetShares(calibrator.baseShares, calibrator.activeRegime())
 }
 
 func (calibrator *BandCalibrator) activeBlend() float64 {
-	regime := perspectives.CurrentRegime()
-
-	return RegimeBlend(calibrator.baseBlend, regime)
+	return RegimeBlend(calibrator.baseBlend, calibrator.activeRegime())
 }
 
 /*

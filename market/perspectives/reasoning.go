@@ -57,6 +57,7 @@ type Predicate struct {
 	Category  CategoryType    `yaml:"category,omitempty"`  // Subject == SubjectSignal
 	Regime    Regime          `yaml:"regime,omitempty"`    // Subject == SubjectRegime (target state)
 	Lifecycle ObservationType `yaml:"lifecycle,omitempty"` // Subject == SubjectPosition (target state)
+	Side      trading.Side    `yaml:"side,omitempty"`      // Subject == SubjectPosition (buy = long, sell = short)
 	Unit      UnitType        `yaml:"unit,omitempty"`      // how Value reads: snr / confidence / percentage / time_*
 	Ago       int             `yaml:"ago,omitempty"`       // 0 = now; N = compared to N measurements ago
 	Op        Comparison      `yaml:"op,omitempty"`

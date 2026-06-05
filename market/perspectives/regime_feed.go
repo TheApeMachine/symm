@@ -18,3 +18,10 @@ CurrentRegime returns the regime Story last published, or RegimeNone before the 
 func CurrentRegime() Regime {
 	return Regime(currentRegime.Load())
 }
+
+/*
+ResetRegimeForTest clears the published regime between isolated tests.
+*/
+func ResetRegimeForTest() {
+	currentRegime.Store(uint32(RegimeNone))
+}

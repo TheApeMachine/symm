@@ -17,7 +17,14 @@ func TestSelfCalibrationAdaptsBands(t *testing.T) {
 		[]string{"a", "b", "c", "d"},
 	)
 
-	calibrator := NewBandCalibrator([]float64{0.25, 0.25, 0.25, 0.25}, 2000, 500, 1000, 0.0)
+	calibrator := NewBandCalibrator(
+		[]float64{0.25, 0.25, 0.25, 0.25},
+		2000,
+		500,
+		1000,
+		0.0,
+		nil,
+	)
 
 	// Feed observations uniformly in [0, 0.4): degenerate under the seed edges. The
 	// pooled calibrator is driven directly against the shared classifier, exactly as

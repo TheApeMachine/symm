@@ -109,7 +109,7 @@ func halfSpreadBookFill(
 
 	if measurement.Bid > 0 && measurement.Ask > 0 && measurement.Ask >= measurement.Bid {
 		mid = (measurement.Bid + measurement.Ask) / 2
-		spreadBps = (measurement.Ask - measurement.Bid) / mid * 10_000 / 2
+		spreadBps = ((measurement.Ask - measurement.Bid) / mid * 10_000) / 2
 	}
 
 	price := mid

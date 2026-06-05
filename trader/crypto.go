@@ -576,8 +576,16 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 }
 
 func (crypto *Crypto) openShort(symbol string, qty, price float64) {
-	crypto.shortInventory[symbol] = qty
-	crypto.avgEntry[symbol] = price
+	if qty <= 0 {
+		return
+	}
+
+	prevQty := crypto.shortInventory[symbol]
+	prevCost := prevQty * crypto.avgEntry[symbol]
+	newQty := prevQty + qty
+
+	crypto.shortInventory[symbol] = newQty
+	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
 	crypto.streams.Add(symbol)
 	crypto.publishPositions()
 }

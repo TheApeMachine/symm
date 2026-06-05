@@ -24,8 +24,8 @@ func TestReplayCapitalConstraint(t *testing.T) {
 		Convey("Full deployment funds one position; a concurrent entry is unfunded", func() {
 			ledger := newReplayLedger(costs)
 
-			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{}) // spends the whole €200
-			ledger.openLong("ETH/EUR", 50, 0, 0, time.Time{})  // no cash left — skipped, exactly as live
+			ledger.openLong("BTC/EUR", 100, 0, time.Time{}) // spends the whole €200
+			ledger.openLong("ETH/EUR", 50, 0, time.Time{})  // no cash left — skipped, exactly as live
 
 			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
 			So(ledger.holding("ETH/EUR"), ShouldBeFalse)
@@ -34,7 +34,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 		Convey("A pair quoted in another currency the wallet cannot pay is never opened", func() {
 			ledger := newReplayLedger(costs)
 
-			ledger.openLong("ETH/BTC", 100, 0, 0, time.Time{}) // quote is BTC; the EUR wallet can't fund it
+			ledger.openLong("ETH/BTC", 100, 0, time.Time{}) // quote is BTC; the EUR wallet can't fund it
 
 			So(ledger.holding("ETH/BTC"), ShouldBeFalse)
 			So(ledger.walletCash("EUR"), ShouldEqual, 200) // untouched
@@ -45,8 +45,8 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			half.PositionFraction = 0.5
 			ledger := newReplayLedger(half)
 
-			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{}) // €100 deployed, €100 left
-			ledger.openLong("ETH/EUR", 50, 0, 0, time.Time{})  // €100 deployed, €0 left
+			ledger.openLong("BTC/EUR", 100, 0, time.Time{}) // €100 deployed, €100 left
+			ledger.openLong("ETH/EUR", 50, 0, time.Time{})  // €100 deployed, €0 left
 
 			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
 			So(ledger.holding("ETH/EUR"), ShouldBeTrue)
@@ -59,7 +59,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			ledger := newReplayLedger(fractional)
 			ledger.cash["EUR"] = 1000 // abundant cash must not inflate slot size
 
-			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
+			ledger.openLong("BTC/EUR", 100, 0, time.Time{})
 
 			position := ledger.positions["BTC/EUR"]
 			So(position.cost, ShouldAlmostEqual, 20, 1e-9) // 0.1 * 200 base
@@ -69,7 +69,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 		Convey("realizedReturn is P&L as a fraction of the €200 account", func() {
 			ledger := newReplayLedger(costs)
 
-			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{}) // qty 2, cost €200
+			ledger.openLong("BTC/EUR", 100, 0, time.Time{}) // qty 2, cost €200
 			ledger.applyStressed(perspectives.Act{Type: perspectives.ActionSettlePosition}, eurRow("BTC/EUR", 110), nil)
 
 			// +10% price move on a fully-deployed account => +10% on capital.
@@ -81,12 +81,12 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			ledger := newReplayLedger(costs)
 			ledger.reentryTickCooldown = 0
 
-			ledger.openLong("BTC/EUR", 100, 0, 0, time.Time{})
-			ledger.openLong("ETH/EUR", 50, 0, 0, time.Time{}) // unfunded while BTC/EUR holds
+			ledger.openLong("BTC/EUR", 100, 0, time.Time{})
+			ledger.openLong("ETH/EUR", 50, 0, time.Time{}) // unfunded while BTC/EUR holds
 			So(ledger.holding("ETH/EUR"), ShouldBeFalse)
 
 			ledger.applyStressed(perspectives.Act{Type: perspectives.ActionSettlePosition}, eurRow("BTC/EUR", 100), nil)
-			ledger.openLong("ETH/EUR", 50, 0, 0, time.Time{}) // cash freed — now it funds
+			ledger.openLong("ETH/EUR", 50, 0, time.Time{}) // cash freed — now it funds
 			So(ledger.holding("ETH/EUR"), ShouldBeTrue)
 		})
 	})

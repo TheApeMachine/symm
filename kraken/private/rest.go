@@ -74,20 +74,14 @@ func NewRest(
 /*
 ForEndpoint returns a client with the same credentials on another endpoint.
 */
-func (rest *Rest) ForEndpoint(endpoint public.EndpointType) *Rest {
+func (rest *Rest) ForEndpoint(endpoint public.EndpointType) (*Rest, error) {
 	var client public.RestClient
 
 	if viper.GetViper().GetString("trading.model") == "paper" {
 		paperRest, err := paper.NewRest(rest.ctx)
 
 		if err != nil {
-			return &Rest{
-				ctx:      rest.ctx,
-				client:   public.NewRest(rest.ctx, endpoint),
-				endpoint: endpoint,
-				apiKey:   rest.apiKey,
-				secret:   rest.secret,
-			}
+			return nil, fmt.Errorf("kraken/private: paper rest for %s: %w", endpoint, err)
 		}
 
 		client = paperRest
@@ -101,7 +95,7 @@ func (rest *Rest) ForEndpoint(endpoint public.EndpointType) *Rest {
 		endpoint: endpoint,
 		apiKey:   rest.apiKey,
 		secret:   rest.secret,
-	}
+	}, nil
 }
 
 /*
@@ -158,7 +152,13 @@ func (rest *Rest) WebSocketToken(ctx context.Context) (token string, expires tim
 	tokenRest := rest
 
 	if rest.endpoint != public.EndpointWebSocketsToken {
-		tokenRest = rest.ForEndpoint(public.EndpointWebSocketsToken)
+		var endpointErr error
+
+		tokenRest, endpointErr = rest.ForEndpoint(public.EndpointWebSocketsToken)
+
+		if endpointErr != nil {
+			return "", 0, endpointErr
+		}
 	}
 
 	if err := tokenRest.Post(ctx, fiber.Map{}, &result); err != nil {
