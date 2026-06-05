@@ -108,5 +108,13 @@ func preflightMarketSlippage(request PreflightRequest) error {
 		)
 	}
 
+	if fill.DepthCoverage < 1 {
+		return fmt.Errorf(
+			"preflight: insufficient book depth for %s (coverage %.2f)",
+			request.Quote.Symbol,
+			fill.DepthCoverage,
+		)
+	}
+
 	return nil
 }

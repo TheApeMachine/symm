@@ -17,6 +17,8 @@ type Desk struct {
 	pool   *qpool.Q
 	quotes *QuoteCache
 	stress *StressCache
+	rules  *InstrumentRulesCache
+	halted atomic.Bool
 	err    error
 }
 
@@ -33,12 +35,29 @@ func NewDeskWithCaches(
 	quotes *QuoteCache,
 	stress *StressCache,
 ) (*Desk, error) {
+	return NewDeskWithAllCaches(ctx, pool, quotes, stress, EnsureInstrumentRulesCache(ctx, pool))
+}
+
+/*
+NewDeskWithAllCaches builds a desk with explicit quote, stress, and instrument caches.
+*/
+func NewDeskWithAllCaches(
+	ctx context.Context,
+	pool *qpool.Q,
+	quotes *QuoteCache,
+	stress *StressCache,
+	rules *InstrumentRulesCache,
+) (*Desk, error) {
 	if quotes == nil {
 		return nil, fmt.Errorf("broker desk: quote cache is required")
 	}
 
 	if stress == nil {
 		return nil, fmt.Errorf("broker desk: stress cache is required")
+	}
+
+	if rules == nil {
+		return nil, fmt.Errorf("broker desk: instrument rules cache is required")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -49,13 +68,29 @@ func NewDeskWithCaches(
 		pool:   pool,
 		quotes: quotes,
 		stress: stress,
+		rules:  rules,
 	}
 
 	return desk, nil
 }
 
 func (desk *Desk) Halted() bool {
-	return false
+	return desk.halted.Load()
+}
+
+/*
+TripHalt trips the order circuit breaker and cancels all resting exchange orders.
+*/
+func (desk *Desk) TripHalt() {
+	if !desk.halted.CompareAndSwap(false, true) {
+		return
+	}
+
+	if desk.pool == nil {
+		return
+	}
+
+	_ = trading.NewOrderClient(desk.ctx, desk.pool).CancelAll(trading.CancelAllParams{})
 }
 
 func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, error) {
@@ -94,6 +129,12 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 	if err := PreflightGates(request); err != nil {
 		return action, err
 	}
+
+	if err := desk.rules.ValidateOrder(action.Symbol, action.Quantity, action.Price, orderType); err != nil {
+		return action, err
+	}
+
+	action.Quantity, action.Price = desk.rules.AlignOrder(action.Symbol, action.Quantity, action.Price, orderType)
 
 	if orderType == trading.Limit && perspectives.IsMakerAction(action.Type) {
 		if WouldCrossPostOnly(quote, action.Side, action.Price) {

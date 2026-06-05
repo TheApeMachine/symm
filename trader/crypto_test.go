@@ -87,7 +87,7 @@ func TestSizeEntry(t *testing.T) {
 	Convey("Given a trader sizing entries from a known capital base", t, func() {
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
-		crypto.availableQuote = 200
+		crypto.availableQuote = 1000 // abundant, so slot sizing is not cash-bounded here
 
 		Convey("It refuses to size without a capital base — no substitute for unknown capital", func() {
 			crypto.capitalBase = 0
@@ -103,16 +103,26 @@ func TestSizeEntry(t *testing.T) {
 			So(crypto.sizeEntry(100), ShouldEqual, 0)
 		})
 
-		Convey("At full deployment (fraction 1.0) one entry takes a whole slot of the base", func() {
+		Convey("At full deployment (fraction 1.0) one entry deploys a whole slot of the base", func() {
 			crypto.positionFraction = 1.0
-
 			So(crypto.sizeEntry(100), ShouldAlmostEqual, 2, 1e-9) // (1.0*200)/100
 		})
 
-		Convey("At fraction 0.1 each entry takes a tenth of the base", func() {
+		Convey("At fraction 0.1 each entry deploys a tenth of the BASE, not of the remaining cash", func() {
 			crypto.positionFraction = 0.1
+			// a tenth of the 200 base = 0.2 qty; a tenth of the 1000 cash would be 1.0
+			So(crypto.sizeEntry(100), ShouldAlmostEqual, 0.2, 1e-9)
+		})
 
-			So(crypto.sizeEntry(100), ShouldAlmostEqual, 0.2, 1e-9) // (0.1*200)/100
+		Convey("It never commits more than the wallet can fund, fee included", func() {
+			crypto.capitalBase = 10000 // a full slot would dwarf the wallet
+			crypto.availableQuote = 200
+			crypto.positionFraction = 1.0
+
+			fee := broker.MakerFeePctFromViper() / 100
+			cost := crypto.sizeEntry(100) * 100 * (1 + fee)
+
+			So(cost, ShouldAlmostEqual, 200, 1e-6) // spends the wallet, never more
 		})
 	})
 }

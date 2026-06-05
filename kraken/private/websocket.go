@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -36,6 +37,8 @@ type WebSocket struct {
 	subscriber *qpool.Subscriber
 	conn       *websocket.Conn
 	dialer     websocket.Dialer
+	outboundMu sync.Mutex
+	outbound   map[string]outboundOrder
 }
 
 /*
@@ -86,6 +89,7 @@ func NewWebSocketWithQuoteCache(
 		ui:       bus.Group(pool, "ui", 10*time.Millisecond),
 		private:  bus.Group(pool, "kraken:private", 10*time.Millisecond),
 		dialer:   *websocket.DefaultDialer,
+		outbound: make(map[string]outboundOrder),
 	}
 	websocketClient.subscriber = websocketClient.private.Subscribe(privateSubscriberID, 1024)
 
@@ -204,14 +208,34 @@ func (websocketClient *WebSocket) readLoop() error {
 		default:
 		}
 
-		frame := authFrame{}
+		var raw json.RawMessage
 
-		if err := websocketClient.conn.ReadJSON(&frame); err != nil {
+		if err := websocketClient.conn.ReadJSON(&raw); err != nil {
 			return err
 		}
 
-		if frame.Channel == "" {
+		var probe struct {
+			Channel string `json:"channel"`
+			Method  string `json:"method"`
+		}
+
+		if err := sonic.Unmarshal(raw, &probe); err != nil {
+			return err
+		}
+
+		if probe.Method != "" && probe.Channel == "" {
+			websocketClient.handleMethodResponse(raw)
 			continue
+		}
+
+		if probe.Channel == "" {
+			continue
+		}
+
+		frame := authFrame{}
+
+		if err := sonic.Unmarshal(raw, &frame); err != nil {
+			return err
 		}
 
 		websocketClient.publishRaw(frame)
@@ -265,6 +289,8 @@ func (websocketClient *WebSocket) publishDerived(frame authFrame) {
 }
 
 func (websocketClient *WebSocket) writePrivate(value any) error {
+	websocketClient.trackOutbound(value)
+
 	frame, err := websocketClient.authorize(value)
 
 	if err != nil {

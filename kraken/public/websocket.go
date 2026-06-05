@@ -127,10 +127,16 @@ func (ws *WebSocket) Connect(
 			)) / math.Sqrt(5)),
 		)
 
-		// Wait for the next retry.
-		time.Sleep(time.Duration(n) * time.Second)
+		timer := time.NewTimer(time.Duration(n) * time.Second)
+		defer timer.Stop()
 
-		return ws.Connect(endpoint, channel, n)
+		select {
+		case <-ws.ctx.Done():
+			return ws.ctx.Err()
+		case <-timer.C:
+		}
+
+		return ws.Connect(endpoint, channel, n+1)
 	}
 
 	errnie.Info("kraken/public websocket connected")
@@ -217,6 +223,8 @@ func (ws *WebSocket) Tick() (err error) {
 func (ws *WebSocket) readFrame() (err error) {
 	message := sockMsgPool.Get().(*SocketMessage)
 	defer sockMsgPool.Put(message)
+
+	*message = SocketMessage{}
 
 	if err = ws.conns[0].ReadJSON(message); err != nil {
 		return err

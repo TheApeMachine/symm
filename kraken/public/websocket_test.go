@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -28,6 +29,27 @@ func TestNewWebSocketSingleton(t *testing.T) {
 		Convey("It should return the process-wide socket", func() {
 			So(first, ShouldEqual, second)
 			So(first.latencies, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestSocketMessagePoolReset(t *testing.T) {
+	Convey("Given a recycled socket message with stale channel data", t, func() {
+		message := &SocketMessage{
+			Channel: "ticker",
+			Type:    "update",
+			Data:    json.RawMessage(`{"symbol":"BTC/EUR"}`),
+		}
+
+		Convey("Zeroing before ReadJSON prevents stale fields from leaking", func() {
+			*message = SocketMessage{}
+
+			err := json.Unmarshal([]byte(`{"method":"pong"}`), message)
+
+			So(err, ShouldBeNil)
+			So(message.Channel, ShouldEqual, "")
+			So(message.Type, ShouldEqual, "")
+			So(len(message.Data), ShouldEqual, 0)
 		})
 	})
 }

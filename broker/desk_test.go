@@ -135,24 +135,39 @@ func TestNewDeskWithCaches(t *testing.T) {
 		ctx := t.Context()
 		quotes := NewQuoteCache(ctx, nil)
 		stress := NewStressCache(ctx, nil)
+		rules := NewInstrumentRulesCache(ctx)
 
 		convey.Convey("It should reject missing caches", func() {
-			_, err := NewDeskWithCaches(ctx, nil, nil, stress)
+			_, err := NewDeskWithAllCaches(ctx, nil, nil, stress, rules)
 
 			convey.So(err, convey.ShouldNotBeNil)
 
-			_, err = NewDeskWithCaches(ctx, nil, quotes, nil)
+			_, err = NewDeskWithAllCaches(ctx, nil, quotes, nil, rules)
+
+			convey.So(err, convey.ShouldNotBeNil)
+
+			_, err = NewDeskWithAllCaches(ctx, nil, quotes, stress, nil)
 
 			convey.So(err, convey.ShouldNotBeNil)
 		})
 
 		convey.Convey("It should construct a desk with explicit caches", func() {
-			desk, err := NewDeskWithCaches(ctx, nil, quotes, stress)
+			desk, err := NewDeskWithAllCaches(ctx, nil, quotes, stress, rules)
 
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(desk, convey.ShouldNotBeNil)
 			convey.So(desk.Halted(), convey.ShouldBeFalse)
 			convey.So(desk.Close(), convey.ShouldBeNil)
+		})
+
+		convey.Convey("TripHalt should latch the circuit breaker", func() {
+			desk, err := NewDeskWithAllCaches(ctx, nil, quotes, stress, rules)
+
+			convey.So(err, convey.ShouldBeNil)
+			desk.TripHalt()
+			convey.So(desk.Halted(), convey.ShouldBeTrue)
+			desk.TripHalt()
+			convey.So(desk.Halted(), convey.ShouldBeTrue)
 		})
 	})
 }

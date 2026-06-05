@@ -100,6 +100,22 @@ func TestPreflightGates(t *testing.T) {
 
 			So(PreflightGates(request), ShouldNotBeNil)
 		})
+
+		Convey("It should reject market orders when book depth cannot cover size", func() {
+			shallowBook := quote
+			shallowBook.Book.Asks = []market.BookLevel{{Price: 100, Qty: 0.001}}
+			request := PreflightRequest{
+				Quote:      shallowBook,
+				Side:       trading.Buy,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: perspectives.ActionMarket,
+			}
+
+			err := PreflightGates(request)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "insufficient book depth")
+		})
 	})
 }
 

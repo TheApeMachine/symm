@@ -458,10 +458,12 @@ func (crypto *Crypto) sizeEntry(price float64) float64 {
 	}
 
 	makerFee := broker.MakerFeePctFromViper() / 100
+
+	// One position deploys position_fraction of the capital base in notional, bounded
+	// by the notional the wallet can fund once the fee is added on top (cost =
+	// notional * (1 + fee) <= cash). The bound is a funding limit, not a substitute.
 	slot := crypto.positionFraction * capital
 
-	// Deploy one slot, bounded by the cash the wallet can actually fund with fee
-	// headroom — a funding limit, not a substitute price.
 	if affordable := crypto.availableCash() / (1 + makerFee); slot > affordable {
 		slot = affordable
 	}
@@ -470,7 +472,7 @@ func (crypto *Crypto) sizeEntry(price float64) float64 {
 		return 0
 	}
 
-	return slot / (price * (1 + makerFee))
+	return slot / price
 }
 
 func quoteCurrency(symbol string) string {
@@ -513,6 +515,11 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		}
 
 		crypto.publishDecision(submitted, "rejected", cleanReason(reason))
+
+		if crypto.desk != nil {
+			crypto.desk.TripHalt()
+		}
+
 		return
 	}
 

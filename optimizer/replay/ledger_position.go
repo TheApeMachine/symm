@@ -9,12 +9,9 @@ import (
 )
 
 /*
-openLong sizes an entry from available account cash. It is the funding gate that
-makes the replay match a real €200 account: an entry is taken only when the
-wallet holds the pair's quote currency and has cash free, and it deploys
-PositionFraction of that cash. A strategy that wants to be in many positions at
-once therefore only books the trades it could actually pay for — the rest are
-skipped exactly as live rejects them for insufficient funds.
+openLong sizes an entry from the fixed capital base and open-position cap, matching
+trader/crypto.sizeEntry. Each slot deploys PositionFraction of StartingCapital, bounded
+by remaining cash including fees, and at most round(1/fraction) positions may be open.
 */
 func (ledger *replayLedger) openLong(
 	symbol string,
@@ -36,12 +33,23 @@ func (ledger *replayLedger) openLong(
 		return
 	}
 
-	spendable := effectiveFraction(ledger.costs) * ledger.cash
+	fraction := effectiveFraction(ledger.costs)
+	capacity := int(math.Round(1 / fraction))
 
-	if spendable <= 0 {
-		// The strategy wanted this entry and the pair is fundable, but the wallet
-		// is locked in another open position — alpha its own camp is denying. Count
-		// it so the optimizer can price the opportunity cost of tying up capital.
+	if len(ledger.positions) >= capacity {
+		ledger.fundBlocked++
+
+		return
+	}
+
+	capital := effectiveCapital(ledger.costs)
+	slot := fraction * capital
+
+	if affordable := ledger.cash / (1 + feePct); slot > affordable {
+		slot = affordable
+	}
+
+	if slot <= 0 {
 		ledger.fundBlocked++
 
 		return
@@ -55,20 +63,18 @@ func (ledger *replayLedger) openLong(
 
 	ledger.observeSymbolPrice(symbol, entryFill)
 
-	// spendable buys quantity units and pays the entry fee on that notional:
-	// quantity*entryFill*(1+feePct) == spendable.
-	quantity := spendable / (entryFill * (1 + feePct))
+	quantity := slot / (entryFill * (1 + feePct))
 
 	if quantity <= 0 {
 		return
 	}
 
-	ledger.cash -= spendable
+	ledger.cash -= slot
 
 	ledger.positions[symbol] = replayPosition{
 		entryPrice:  entryFill,
 		quantity:    quantity,
-		cost:        spendable,
+		cost:        slot,
 		peak:        entryFill,
 		entryAt:     at,
 		triggerType: perspectives.ActionNone,

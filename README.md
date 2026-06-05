@@ -154,7 +154,7 @@ There is no separate public-client system. Kraken connectivity lives in `kraken/
 
 `market.DiscoverSymbols` replaces the symbol list with every online pair in the configured quote currency at boot, so signals watch the full tradable universe rather than a fixed watch list.
 
-Paper mode starts a private dispatch goroutine at websocket construction so the balance subscribe is processed before `engine.Start` fans out measurements. `trading.DeskReady()` gates story entry actions until that snapshot is published. A single `order_ack_timeout` rejects only that order in paper mode; the ledger trips the cancel-all circuit breaker on explicit exchange rejection in live mode only.
+Paper mode starts a private dispatch goroutine at websocket construction so the balance subscribe is processed before `engine.Start` fans out measurements. `trading.DeskReady()` gates story entry actions until that snapshot is published. A single `order_ack_timeout` rejects only that order; an explicit exchange rejection trips the cancel-all circuit breaker in both paper and live.
 
 ## Core types
 
