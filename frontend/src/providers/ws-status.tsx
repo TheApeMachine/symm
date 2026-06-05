@@ -35,8 +35,11 @@ type WsStatusContextValue = {
 	online: boolean;
 	setOnline: (online: boolean) => void;
 	balance: number;
+	exitBalance: number | null;
+	capitalBase: number;
 	openPositions: number;
 	setWallet: (balance: number) => void;
+	setEquity: (exitBalance: number, capitalBase: number) => void;
 	positions: Position[];
 	setPositions: (positions: Position[]) => void;
 	marks: Record<string, number>;
@@ -51,6 +54,8 @@ const WsStatusContext = createContext<WsStatusContextValue | null>(null);
 export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [online, setOnline] = useState(false);
 	const [balance, setBalance] = useState(0);
+	const [exitBalance, setExitBalance] = useState<number | null>(null);
+	const [capitalBase, setCapitalBase] = useState(0);
 	const [positions, setPositions] = useState<Position[]>([]);
 	const [marks, setMarks] = useState<Record<string, number>>({});
 	const [actions, setActions] = useState<ActionEvent[]>([]);
@@ -62,6 +67,14 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const setWallet = useCallback((nextBalance: number) => {
 		setBalance(nextBalance);
 	}, []);
+
+	const setEquity = useCallback(
+		(nextExitBalance: number, nextCapitalBase: number) => {
+			setExitBalance(nextExitBalance);
+			setCapitalBase(nextCapitalBase);
+		},
+		[],
+	);
 
 	const setMark = useCallback((symbol: string, price: number) => {
 		setMarks((prev) =>
@@ -102,6 +115,7 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		wsDispatchRef.current = {
 			setOnline,
 			setWallet,
+			setEquity,
 			setPositions,
 			setMark,
 			pushAction,
@@ -113,8 +127,11 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			online,
 			setOnline,
 			balance,
+			exitBalance,
+			capitalBase,
 			openPositions: positions.length,
 			setWallet,
+			setEquity,
 			positions,
 			setPositions,
 			marks,
@@ -126,7 +143,10 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		[
 			online,
 			balance,
+			exitBalance,
+			capitalBase,
 			setWallet,
+			setEquity,
 			positions,
 			marks,
 			setMark,

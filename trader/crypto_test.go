@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,18 +10,24 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 )
 
+func holdingsFrame(holdings ...map[string]any) map[string]any {
+	return map[string]any{"channel": "holdings", "holdings": holdings}
+}
+
 func newTestCrypto() *Crypto {
 	return &Crypto{
-		streams:      focus.NewSet(),
-		inventory:    map[string]float64{},
-		avgEntry:     map[string]float64{},
-		pending:      map[string]perspectives.Action{},
-		lastDecision: map[string]string{},
+		streams:          focus.NewSet(),
+		inventory:        map[string]float64{},
+		avgEntry:         map[string]float64{},
+		pending:          map[string]perspectives.Action{},
+		lastDecision:     map[string]string{},
+		positionFraction: 1.0,
 	}
 }
 
@@ -77,22 +84,66 @@ func TestFundableSymbol(t *testing.T) {
 }
 
 func TestSizeEntry(t *testing.T) {
-	Convey("Given the wallet balance the API published", t, func() {
+	Convey("Given a trader sizing entries from a known capital base", t, func() {
 		crypto := newTestCrypto()
+		crypto.capitalBase = 200
+		crypto.availableQuote = 200
 
-		Convey("It deploys the available cash (no fees configured in test)", func() {
-			crypto.availableQuote = 200
-			So(crypto.sizeEntry(100), ShouldAlmostEqual, 2, 1e-9)
-		})
-
-		Convey("It sizes nothing when the wallet is empty", func() {
-			crypto.availableQuote = 0
+		Convey("It refuses to size without a capital base — no substitute for unknown capital", func() {
+			crypto.capitalBase = 0
 			So(crypto.sizeEntry(100), ShouldEqual, 0)
 		})
 
 		Convey("It sizes nothing for a non-positive price", func() {
-			crypto.availableQuote = 200
 			So(crypto.sizeEntry(0), ShouldEqual, 0)
+		})
+
+		Convey("It sizes nothing when the wallet cannot fund anything", func() {
+			crypto.availableQuote = 0
+			So(crypto.sizeEntry(100), ShouldEqual, 0)
+		})
+
+		Convey("At full deployment (fraction 1.0) one entry takes a whole slot of the base", func() {
+			crypto.positionFraction = 1.0
+
+			So(crypto.sizeEntry(100), ShouldAlmostEqual, 2, 1e-9) // (1.0*200)/100
+		})
+
+		Convey("At fraction 0.1 each entry takes a tenth of the base", func() {
+			crypto.positionFraction = 0.1
+
+			So(crypto.sizeEntry(100), ShouldAlmostEqual, 0.2, 1e-9) // (0.1*200)/100
+		})
+	})
+}
+
+func TestSizeEntryConcurrentCap(t *testing.T) {
+	Convey("position_fraction caps concurrent positions at round(1/fraction)", t, func() {
+		crypto := newTestCrypto()
+		crypto.capitalBase = 200
+		crypto.availableQuote = 200
+
+		Convey("At fraction 1.0 a second entry is refused while one position is held", func() {
+			crypto.positionFraction = 1.0
+			crypto.inventory["BTC/EUR"] = 2 // the single allowed slot is taken
+
+			So(crypto.sizeEntry(100), ShouldEqual, 0)
+		})
+
+		Convey("An in-flight entry counts toward capacity (no over-commit before the fill)", func() {
+			crypto.positionFraction = 1.0
+			crypto.pending["BTC/EUR"] = perspectives.Action{} // order placed, not yet filled
+
+			So(crypto.sizeEntry(100), ShouldEqual, 0)
+		})
+
+		Convey("At fraction 0.1 the eleventh position is refused (ten already committed)", func() {
+			crypto.positionFraction = 0.1
+			for i := 0; i < 10; i++ {
+				crypto.inventory[fmt.Sprintf("C%d/EUR", i)] = 1
+			}
+
+			So(crypto.sizeEntry(100), ShouldEqual, 0)
 		})
 	})
 }
@@ -170,6 +221,93 @@ func TestSubmitGate(t *testing.T) {
 
 			_, stillPending := crypto.pending["BTC/EUR"]
 			So(stillPending, ShouldBeFalse)
+		})
+	})
+}
+
+func TestReconcilePositions(t *testing.T) {
+	Convey("Given a trader reconciling against an exchange balance snapshot", t, func() {
+		crypto := newTestCrypto()
+
+		Convey("It adopts a holding it is not already tracking", func() {
+			crypto.observeBalances(holdingsFrame(
+				map[string]any{"symbol": "ETC/EUR", "qty": 5.0},
+			))
+
+			So(crypto.inventory["ETC/EUR"], ShouldEqual, 5.0)
+			So(crypto.streams.Has("ETC/EUR"), ShouldBeTrue)
+		})
+
+		Convey("It leaves a tracked position untouched (no entry-price clobber on reconnect)", func() {
+			crypto.inventory["BTC/EUR"] = 0.5
+			crypto.avgEntry["BTC/EUR"] = 100
+			crypto.streams.Add("BTC/EUR")
+
+			crypto.observeBalances(holdingsFrame(
+				map[string]any{"symbol": "BTC/EUR", "qty": 0.5},
+			))
+
+			So(crypto.inventory["BTC/EUR"], ShouldEqual, 0.5)
+			So(crypto.avgEntry["BTC/EUR"], ShouldEqual, 100)
+		})
+
+		Convey("It closes a tracked position the exchange no longer shows", func() {
+			crypto.inventory["BTC/EUR"] = 0.5
+			crypto.avgEntry["BTC/EUR"] = 100
+			crypto.streams.Add("BTC/EUR")
+
+			crypto.observeBalances(holdingsFrame()) // empty snapshot: nothing held
+
+			_, held := crypto.inventory["BTC/EUR"]
+			So(held, ShouldBeFalse)
+			So(crypto.streams.Has("BTC/EUR"), ShouldBeFalse)
+		})
+
+		Convey("An empty snapshot on a flat trader changes nothing (paper fresh-start)", func() {
+			crypto.observeBalances(holdingsFrame())
+			So(len(crypto.inventory), ShouldEqual, 0)
+		})
+
+		Convey("A holdings snapshot does not double-count a position the fill already opened", func() {
+			crypto.pending["ETC/EUR"] = perspectives.Action{}
+			crypto.observeExecution(buyExec("ETC/EUR", 5, 36.0)) // session fill: 5 @ 36
+			crypto.observeBalances(holdingsFrame(                // snapshot agrees: 5 held
+				map[string]any{"symbol": "ETC/EUR", "qty": 5.0},
+			))
+
+			So(crypto.inventory["ETC/EUR"], ShouldEqual, 5.0) // not 10
+			So(crypto.avgEntry["ETC/EUR"], ShouldEqual, 36.0) // fill entry kept, not re-marked
+		})
+	})
+}
+
+func TestAdoptPositionMarksAtBid(t *testing.T) {
+	Convey("Given a trader with a live quote for the symbol", t, func() {
+		quotes := broker.NewQuoteCache(t.Context(), nil)
+		quotes.InstallQuoteForTest(broker.Quote{
+			Symbol: "ETC/EUR", Bid: 36.97, Ask: 37.00, Last: 36.99,
+		})
+
+		crypto := newTestCrypto()
+		crypto.quotes = quotes
+
+		Convey("Adopting an unknown-entry holding marks its basis at the bid (the exit price)", func() {
+			crypto.observeBalances(holdingsFrame(
+				map[string]any{"symbol": "ETC/EUR", "qty": 5.0},
+			))
+
+			So(crypto.inventory["ETC/EUR"], ShouldEqual, 5.0)
+			So(crypto.avgEntry["ETC/EUR"], ShouldEqual, 36.97)
+		})
+
+		Convey("A holding adopted before its quote was ready backfills its basis from the mark", func() {
+			crypto.inventory["XLM/EUR"] = 100 // adopted with no quote yet: avg_entry 0
+			crypto.avgEntry["XLM/EUR"] = 0
+			quotes.InstallQuoteForTest(broker.Quote{Symbol: "XLM/EUR", Bid: 0.17, Ask: 0.172})
+
+			crypto.publishMarks()
+
+			So(crypto.avgEntry["XLM/EUR"], ShouldEqual, 0.17)
 		})
 	})
 }

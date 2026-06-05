@@ -239,6 +239,13 @@ func (websocketClient *WebSocket) publishDerived(frame authFrame) {
 		}
 
 		user.PublishWalletFromBalances(websocketClient.ui, rows)
+
+		// On a snapshot, hand the trader the full held set so it can reconcile
+		// positions it did not open this session (e.g. across a reconnect). Updates
+		// are this session's own fills, owned by the executions path.
+		if frame.Type == user.BalanceSnapshot {
+			user.PublishHoldingsDerived(websocketClient.raw, rows)
+		}
 	case public.ExecutionsChannel:
 		var rows []user.Execution
 

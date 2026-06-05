@@ -97,6 +97,7 @@ func (balances *Balances) subscribeAckMap(frame map[string]any) map[string]any {
 
 func (balances *Balances) publishSnapshot() {
 	user.PublishBalancesRaw(balances.raw, user.BalanceSnapshot, balances.model.Asset)
+	user.PublishHoldingsDerived(balances.raw, balances.model.Asset)
 	balances.PublishUI()
 }
 

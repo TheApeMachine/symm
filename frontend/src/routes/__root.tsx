@@ -34,8 +34,10 @@ const ConnectionBadge = () => {
 };
 
 const PageHeader = () => {
-	const { balance, openPositions } = useWsStatus();
+	const { balance, openPositions, exitBalance, capitalBase } = useWsStatus();
 	const [showPositions, setShowPositions] = useState(false);
+	const inProfit =
+		exitBalance !== null && capitalBase > 0 && exitBalance >= capitalBase;
 
 	return (
 		<Page.Header>
@@ -51,7 +53,30 @@ const PageHeader = () => {
 						}
 					>
 						<div className="flex flex-col gap-0.5">
-							<h3>€{balance.toFixed(2)}</h3>
+							<h3 className="flex flex-wrap items-baseline gap-x-1.5">
+								<span>€{balance.toFixed(2)}</span>
+								{openPositions > 0 && exitBalance !== null ? (
+									<span
+										className={cn(
+											"text-base font-normal",
+											inProfit ? "text-emerald-400" : "text-red-400",
+										)}
+									>
+										(€{exitBalance.toFixed(2)})
+									</span>
+								) : null}
+								{openPositions > 0 && exitBalance !== null ? (
+									inProfit ? (
+										<img
+											src="/lambo.png"
+											alt="Lambo"
+											className="size-4 drop-shadow-[0_0_8px_rgba(239,68,68,1)]"
+										/>
+									) : (
+										<span>💀</span>
+									)
+								) : null}
+							</h3>
 							<p className="whitespace-break-spaces font-normal text-muted-foreground">
 								{openPositions} open position{openPositions === 1 ? "" : "s"}
 							</p>

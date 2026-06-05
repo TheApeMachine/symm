@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,35 +36,30 @@ type armRecord struct {
 }
 
 type Crypto struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	pool           *qpool.Q
-	ui             *qpool.BroadcastGroup
-	broadcasts     map[string]*qpool.BroadcastGroup
-	subscribers    map[string]*qpool.Subscriber
-	desk           *broker.Desk
-	quotes         *broker.QuoteCache
-	streams        *focus.Set
-	audit          *audit.Writer
-	pendingOrders  sync.Map
-	auditSeq       atomic.Int64
-	balanceOnce    sync.Once
-	inventory      map[string]float64
-	avgEntry       map[string]float64
-	armed          map[string]armRecord
-	pending        map[string]perspectives.Action
-	lastDecision   map[string]string
-	walletCurrency string
-	capitalBase    float64 // opening capital; one position targets position_fraction of this
-	walletMu       sync.RWMutex
-	availableQuote float64 // latest wallet balance the API (balances.go) published
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q
+	ui               *qpool.BroadcastGroup
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.Subscriber
+	desk             *broker.Desk
+	quotes           *broker.QuoteCache
+	streams          *focus.Set
+	audit            *audit.Writer
+	pendingOrders    sync.Map
+	auditSeq         atomic.Int64
+	balanceOnce      sync.Once
+	inventory        map[string]float64
+	avgEntry         map[string]float64
+	armed            map[string]armRecord
+	pending          map[string]perspectives.Action
+	lastDecision     map[string]string
+	walletCurrency   string
+	positionFraction float64 // validated share of capital per position; in (0, 1]
+	capitalBase      float64 // opening capital; one position targets position_fraction of this
+	walletMu         sync.RWMutex
+	availableQuote   float64 // latest wallet balance the API (balances.go) published
 }
-
-// minSlotFillFraction is the smallest share of a target position slot an entry may
-// fund and still be placed. Below it the entry is rejected rather than deployed,
-// which caps concurrent positions at ~1/position_fraction and stops a fully
-// deployed wallet from cascading its leftover dust into ever-smaller positions.
-const minSlotFillFraction = 0.5
 
 // markInterval is how often the trader publishes the live mark price of each held
 // symbol, so the dashboard shows real-time unrealized P&L on open positions.
@@ -90,6 +86,16 @@ func NewCryptoWithCaches(
 	stress *broker.StressCache,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
+
+	fraction := viper.GetFloat64("trading.position_fraction")
+
+	if fraction <= 0 || fraction > 1 {
+		cancel()
+		errnie.Error(fmt.Errorf(
+			"trader/crypto: trading.position_fraction must be in (0, 1], got %v", fraction,
+		), "trader/crypto")
+		return nil
+	}
 
 	desk, err := broker.NewDeskWithCaches(ctx, pool, quotes, stress)
 
@@ -130,6 +136,7 @@ func NewCryptoWithCaches(
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 
+	crypto.positionFraction = fraction
 	crypto.walletCurrency = strings.ToUpper(viper.GetString("market.quote_currency"))
 	// Seed with the configured opening balance balances.go starts from; every
 	// subsequent value is read from the wallet snapshots it publishes — crypto
@@ -166,6 +173,7 @@ func (crypto *Crypto) Tick() error {
 		case <-marks.C:
 			// Same goroutine that mutates inventory, so the read is race-free.
 			crypto.publishMarks()
+			crypto.publishEquity()
 		case message := <-incoming:
 			if message == nil || message.Value == nil {
 				continue
@@ -178,6 +186,7 @@ func (crypto *Crypto) Tick() error {
 
 			if envelope, ok := message.Value.(map[string]any); ok {
 				crypto.observeExecution(envelope)
+				crypto.observeBalances(envelope)
 			}
 		}
 	}
@@ -424,50 +433,44 @@ func (crypto *Crypto) fundableSymbol(symbol string) bool {
 }
 
 /*
-sizeEntry sizes a buy as one position slot — position_fraction of the capital base
-— funded from the published wallet balance, leaving room for the entry fee so the
-order clears ApplyFill. An entry that cannot fund at least minSlotFillFraction of a
-slot returns 0 (rejected), so position_fraction caps concurrent positions at
-~1/fraction (1.0 = one at a time) instead of deploying 100% of whatever cash is
-left on every symbol — the cascade that drained the wallet into dust.
+sizeEntry sizes a buy as one position slot — position_fraction of the capital base.
+position_fraction is the share of capital committed per position, so the desk holds
+at most round(1/fraction) positions at once: once that many are committed (held plus
+in flight) a new entry is refused, instead of splitting the remaining cash into
+ever-smaller positions. A position cannot be sized against capital we do not yet know,
+so it returns 0 until a capital base exists rather than substituting the live cash.
 */
 func (crypto *Crypto) sizeEntry(price float64) float64 {
 	if price <= 0 {
 		return 0
 	}
 
-	fraction := viper.GetFloat64("trading.position_fraction")
+	capital := crypto.capitalBaseValue()
 
-	if fraction <= 0 || fraction > 1 {
-		fraction = 1.0
-	}
-
-	makerFee := viper.GetFloat64("trading.paper.maker_fee_pct") / 100
-	cash := crypto.availableCash()
-
-	// A position targets a fixed slot of the capital base. Fall back to available
-	// cash only when no capital base is known yet (no opening balance, no wallet
-	// frame seen).
-	slot := fraction * crypto.capitalBaseValue()
-
-	if slot <= 0 {
-		slot = cash
-	}
-
-	// Spend one slot, but never more than the wallet can fund with fee headroom.
-	spend := slot
-
-	if affordable := cash / (1 + makerFee); spend > affordable {
-		spend = affordable
-	}
-
-	// Reject entries that cannot fund a meaningful share of a slot. This is the gate
-	// that enforces the concurrent-position cap and kills the dust cascade.
-	if spend <= 0 || spend < slot*minSlotFillFraction {
+	if capital <= 0 {
 		return 0
 	}
 
-	return spend / (price * (1 + makerFee))
+	// At most round(1/fraction) positions run at once. Count held positions and
+	// in-flight entries; at capacity, refuse rather than open another.
+	if len(crypto.inventory)+len(crypto.pending) >= int(math.Round(1/crypto.positionFraction)) {
+		return 0
+	}
+
+	makerFee := broker.MakerFeePctFromViper() / 100
+	slot := crypto.positionFraction * capital
+
+	// Deploy one slot, bounded by the cash the wallet can actually fund with fee
+	// headroom — a funding limit, not a substitute price.
+	if affordable := crypto.availableCash() / (1 + makerFee); slot > affordable {
+		slot = affordable
+	}
+
+	if slot <= 0 {
+		return 0
+	}
+
+	return slot / (price * (1 + makerFee))
 }
 
 func quoteCurrency(symbol string) string {
@@ -543,6 +546,95 @@ func (crypto *Crypto) closePosition(symbol string) {
 }
 
 /*
+observeBalances reconciles the trader's positions against an exchange balance SNAPSHOT
+(the holdings frame the account stream emits on connect/reconnect in both paper and
+live). It is how the trader recovers positions it did not open this session — opened
+earlier, or held across a reconnect — instead of believing it is flat and re-deploying.
+*/
+func (crypto *Crypto) observeBalances(envelope map[string]any) {
+	if envelope["channel"] != "holdings" {
+		return
+	}
+
+	rows, ok := envelope["holdings"].([]map[string]any)
+
+	if !ok {
+		return
+	}
+
+	held := make(map[string]float64, len(rows))
+
+	for _, row := range rows {
+		symbol, _ := row["symbol"].(string)
+		qty, _ := row["qty"].(float64)
+
+		if symbol == "" || qty <= 0 {
+			continue
+		}
+
+		held[symbol] = qty
+	}
+
+	crypto.reconcilePositions(held)
+}
+
+/*
+reconcilePositions makes the tracked positions agree with the exchange's held
+holdings: it adopts any holding it is not already tracking and closes any tracked
+position the exchange no longer shows. Positions it already tracks are left untouched,
+so a reconnect snapshot never overwrites a known entry price with the current mark.
+*/
+func (crypto *Crypto) reconcilePositions(held map[string]float64) {
+	for symbol, qty := range held {
+		if _, tracked := crypto.inventory[symbol]; !tracked {
+			crypto.adoptPosition(symbol, qty)
+		}
+	}
+
+	stale := make([]string, 0)
+
+	for symbol := range crypto.inventory {
+		if _, stillHeld := held[symbol]; !stillHeld {
+			stale = append(stale, symbol)
+		}
+	}
+
+	for _, symbol := range stale {
+		crypto.closePosition(symbol)
+	}
+}
+
+/*
+adoptPosition takes ownership of a holding found on the exchange that the trader was
+not tracking. The true entry price is unknowable from a balance snapshot, so the cost
+basis is adopted at the current mark (backfilled by publishMarks if no quote is ready
+yet); the position then reads ~breakeven and is managed from here by the universal
+position manager.
+*/
+func (crypto *Crypto) adoptPosition(symbol string, qty float64) {
+	crypto.inventory[symbol] = qty
+	crypto.avgEntry[symbol] = crypto.markFor(symbol)
+	crypto.streams.Add(symbol)
+	crypto.publishPositions()
+}
+
+// markFor returns the current mark price for a symbol from the quote cache, or 0 when
+// no quote is available yet.
+func (crypto *Crypto) markFor(symbol string) float64 {
+	if crypto.quotes == nil {
+		return 0
+	}
+
+	quote, ok := crypto.quotes.Snapshot(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	return markPrice(quote)
+}
+
+/*
 publishPositions ships the open book to the dashboard so it can mark each
 position against the live price stream and show real-time unrealized P&L.
 */
@@ -569,6 +661,8 @@ func (crypto *Crypto) publishPositions() {
 		"event":     "positions",
 		"positions": positions,
 	}})
+
+	crypto.publishEquity()
 }
 
 /*
@@ -579,7 +673,7 @@ at its own entry and reads a flat €0.00. Runs on the Tick goroutine, so the in
 read is race-free.
 */
 func (crypto *Crypto) publishMarks() {
-	if crypto.ui == nil || crypto.quotes == nil || len(crypto.inventory) == 0 {
+	if crypto.quotes == nil || len(crypto.inventory) == 0 {
 		return
 	}
 
@@ -596,6 +690,20 @@ func (crypto *Crypto) publishMarks() {
 			continue
 		}
 
+		// An adopted holding's cost basis is, by definition, the first market price we
+		// can observe for it — its true entry is unrecoverable from a balance
+		// snapshot. Set it here on that first mark (filled positions always carry a
+		// real fill price, so this only ever initialises an adopted one). It also
+		// anchors the protective triggers, so it is not gated on the UI.
+		if crypto.avgEntry[symbol] <= 0 {
+			crypto.avgEntry[symbol] = price
+			crypto.publishPositions()
+		}
+
+		if crypto.ui == nil {
+			continue
+		}
+
 		crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 			"event":  "mark",
 			"symbol": symbol,
@@ -604,22 +712,45 @@ func (crypto *Crypto) publishMarks() {
 	}
 }
 
-// markPrice values an open long at the price it could actually be sold into right
-// now — the bid. Entries are buys that fill at the ask (crossing the spread up), and
-// an exit (settle_position) sells into the bid, so marking at the bid makes a fresh
-// position open down the round-trip spread (realistic) rather than showing a phantom
-// profit from a higher last/mid reference. Falls back to the last trade, then the
-// ask, only when no bid is available.
+/*
+publishEquity ships the realistic all-cash balance after market-selling every held
+lot through the L2 book (SlippageFill) and paying the configured taker fee on each
+leg. The dashboard shows this beside the wallet cash balance as "if I exit now".
+*/
+func (crypto *Crypto) publishEquity() {
+	if crypto.ui == nil {
+		return
+	}
+
+	cash := crypto.availableCash()
+	capitalBase := crypto.capitalBaseValue()
+	exitBalance, err := broker.ProjectExitBalance(
+		cash,
+		crypto.inventory,
+		crypto.quotes,
+		broker.TakerFeePctFromViper(),
+	)
+
+	if err != nil {
+		return
+	}
+
+	crypto.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"event":        "equity",
+		"cash":         cash,
+		"exit_balance": exitBalance,
+		"capital_base": capitalBase,
+	}})
+}
+
+// markPrice values an open long at the bid — the price it could actually be sold into
+// right now, and exactly where settle_position fills. Entries are buys that fill at
+// the ask, so marking at the bid makes a fresh position open down the round-trip
+// spread (realistic) instead of showing a phantom profit from a higher last/mid. When
+// there is no bid the position cannot be honestly marked, so this returns a
+// non-positive value and callers skip it — never a substitute price.
 func markPrice(quote broker.Quote) float64 {
-	if quote.Bid > 0 {
-		return quote.Bid
-	}
-
-	if quote.Last > 0 {
-		return quote.Last
-	}
-
-	return quote.Ask
+	return quote.Bid
 }
 
 func (crypto *Crypto) Close() error {

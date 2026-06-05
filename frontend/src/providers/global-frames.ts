@@ -36,6 +36,14 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		return true;
 	}
 
+	if (raw.event === "equity") {
+		dispatch.setEquity(
+			(raw.exit_balance as number) ?? 0,
+			(raw.capital_base as number) ?? 0,
+		);
+		return true;
+	}
+
 	if (raw.event === "mark") {
 		dispatch.setMark(raw.symbol as string, (raw.price as number) ?? 0);
 		return true;

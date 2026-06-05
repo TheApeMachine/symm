@@ -157,3 +157,44 @@ func PublishWalletFromBalances(ui *qpool.BroadcastGroup, rows []Balance) {
 		return
 	}
 }
+
+/*
+PublishHoldingsDerived publishes the trader's reconciliation view of a balances
+SNAPSHOT: one entry per non-quote asset actually held, keyed by its trading pair. The
+trader adopts holdings it is not already tracking (a position opened before this
+session, or recovered across a reconnect) and drops tracked positions the exchange no
+longer shows. Emit it on SNAPSHOTS only — balance updates are the trader's own fills,
+which the executions path already owns, and reconciling on those would race it.
+*/
+func PublishHoldingsDerived(raw *qpool.BroadcastGroup, rows []Balance) {
+	if raw == nil {
+		return
+	}
+
+	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
+
+	raw.Send(&qpool.QValue[any]{Value: map[string]any{
+		"channel":  "holdings",
+		"holdings": holdingsFromBalances(rows, quote),
+	}})
+}
+
+// holdingsFromBalances maps balance rows to the trading pairs actually held, skipping
+// the quote currency (that is cash, not a position) and any non-positive balance. It
+// is pure so the mapping can be validated directly.
+func holdingsFromBalances(rows []Balance, quote string) []map[string]any {
+	holdings := make([]map[string]any, 0, len(rows))
+
+	for _, row := range rows {
+		if row.Balance <= 0 || strings.EqualFold(row.Asset, quote) {
+			continue
+		}
+
+		holdings = append(holdings, map[string]any{
+			"symbol": strings.ToUpper(row.Asset) + "/" + strings.ToUpper(quote),
+			"qty":    row.Balance,
+		})
+	}
+
+	return holdings
+}

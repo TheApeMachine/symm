@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import useWebSocket from "react-use-websocket";
+import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
 	applyGlobalFrame,
 	statusSocketHandlers,
