@@ -91,6 +91,12 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 
 	lastAt := time.Time{}
 	lastRow := perspectives.Measurement{}
+	reason := &ledger.windowReason
+	snapshots := ledger.snapshotScratch[:0]
+
+	defer func() {
+		ledger.snapshotScratch = snapshots[:0]
+	}()
 
 	for tickIndex, tick := range simulation.tape.Ticks {
 		ledger.tickIndex = tickIndex
@@ -100,7 +106,8 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 			continue
 		}
 
-		simulation.applyThoughts(ledger, tick.Row, tick.Snapshots)
+		snapshots = simulation.tape.AppendSnapshot(tickIndex, snapshots)
+		simulation.applyThoughts(ledger, tick.Row, snapshots, reason)
 		ledger.onTick(tick.Row.Symbol)
 
 		if !tick.Row.At.IsZero() {
@@ -127,12 +134,13 @@ func (simulation *ReplaySimulation) applyThoughts(
 	ledger *replayLedger,
 	row perspectives.Measurement,
 	snapshots []perspectives.Measurement,
+	reason *perspectives.WindowReason,
 ) {
 	regime := perspectives.ClassifyRegime(snapshots).Regime
-	context := perspectives.NewWindowReason(snapshots, regime, ledger.positionState(row))
+	reason.Reset(snapshots, regime, ledger.positionState(row))
 
 	act, found := perspectives.EvaluateStateful(
-		simulation.thoughts, context, ledger.reasonState(row.Symbol),
+		simulation.thoughts, reason, ledger.reasonState(row.Symbol),
 	)
 
 	if !found || act.Type == perspectives.ActionNone {

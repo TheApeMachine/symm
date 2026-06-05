@@ -28,7 +28,13 @@ func (slot *quoteSlot) quoteValue() (Quote, bool) {
 		return Quote{}, false
 	}
 
-	return *current, true
+	quote := *current
+
+	if book, ok := slot.bookValue(); ok {
+		quote.Book = book
+	}
+
+	return quote, true
 }
 
 func (slot *quoteSlot) bookValue() (market.Book, bool) {

@@ -63,6 +63,8 @@ type replayLedger struct {
 	observationScratch  map[perspectives.ObservationType]float64
 	metricsScratch      map[string]float64
 	reasonStates        map[string]*perspectives.ReasonState
+	windowReason        perspectives.WindowReason
+	snapshotScratch     []perspectives.Measurement
 	pricePaths          map[string][]float64
 	pending             []pendingReplayAction
 	tickIndex           int
@@ -133,7 +135,10 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	clear(ledger.ticksSinceClose)
 	clear(ledger.observationScratch)
 	clear(ledger.metricsScratch)
-	clear(ledger.reasonStates)
+	for _, state := range ledger.reasonStates {
+		state.Reset()
+	}
+
 	clear(ledger.pricePaths)
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	"github.com/theapemachine/symm/ring"
 	signalpool "github.com/theapemachine/symm/signal"
 )
@@ -46,6 +47,7 @@ type Signal struct {
 	tracked     sync.Map // symbol -> *perspectives.Category
 	breadthHist ring.FloatRing
 	floor       *adaptive.SNRField
+	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -59,6 +61,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers: make(map[string]*qpool.Subscriber),
 		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
 		floor:       adaptive.NewSNRField(),
+		rawDump:     rawdump.Open("sentiment"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -159,6 +162,19 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 			if err := perspectives.AssignCategorySNR(
 				&measurement, signal.floor, standout,
 			); err != nil {
+				return nil, err
+			}
+
+			if err := signal.rawDump.Write(rawRecord{
+				Symbol:     measurement.Symbol,
+				Category:   measurement.Category,
+				Strength:   measurement.Strength,
+				Confidence: measurement.Confidence,
+				SNR:        measurement.SNR,
+				Standout:   standout,
+				Last:       measurement.Last,
+				SpreadBPS:  measurement.SpreadBPS,
+			}); err != nil {
 				return nil, err
 			}
 
@@ -365,5 +381,5 @@ func (signal *Signal) breadthOdds(breadth float64) float64 {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

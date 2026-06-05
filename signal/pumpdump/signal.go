@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -53,10 +54,31 @@ type Signal struct {
 	symbols     sync.Map
 	categories  map[string]perspectives.CategoryType
 	floor       *adaptive.SNRField
+	rawDump     *rawdump.Writer
+	classifier  *adaptive.Classifier
+	calibrator  *numeric.BandCalibrator
 }
+
+// pumpDefaultBandEdges seed the ignition bands; self-calibration adapts them to
+// the live distribution from there: faded | organic | coiled | ignition.
+var pumpDefaultBandEdges = []float64{-0.10, 0.50, 2.00}
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	// One classifier and one calibrator shared by every symbol, so the ignition
+	// bands reflect the whole signal's pooled distribution with a single sample
+	// count — instead of fragmenting into a per-symbol state that resets each time
+	// a different symbol ticks.
+	classifier := adaptive.NewClassifier(
+		pumpDefaultBandEdges, // seed: faded | organic | coiled | ignition
+		[]float64{0, 1, 2, 3},
+		[]string{"faded_exhaustion", "organic_trend", "coiled_compression", "vertical_ignition"},
+	)
+
+	// ignition the rare top 5%, faded the quiet majority; window 8192 pooled obs,
+	// refit every 256 after a 512-sample warm-up, blend 0.3 so edges visibly track.
+	calibrator := numeric.NewBandCalibrator([]float64{0.50, 0.30, 0.15, 0.05}, 8192, 256, 512, 0.3)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -70,7 +92,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"coiled_compression": perspectives.CategoryCoiledCompression,
 			"vertical_ignition":  perspectives.CategoryVerticalIgnition,
 		},
-		floor: adaptive.NewSNRField(),
+		floor:      adaptive.NewSNRField(),
+		rawDump:    rawdump.Open("pumpdump"),
+		classifier: classifier,
+		calibrator: calibrator,
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -101,24 +126,25 @@ type pumpState struct {
 	lastRVol float64
 }
 
-func newPumpState() *pumpState {
+func newPumpState(classifier *adaptive.Classifier) *pumpState {
+	// Every symbol shares the signal's classifier, so they all band against the
+	// same pooled, self-calibrated edges. The projection, EMA and clamp stay
+	// per-symbol, so each symbol is still scaled against its own norm.
+	pipe := numeric.NewClassed(
+		classifier,
+
+		numeric.NewProjectScalar(func(_ float64, values []float64) float64 {
+			return (values[0] - 1) * (1 + values[1])
+		}),
+		adaptive.NewEMA(0),
+		adaptive.NewSigmaClamp(3, 8, 0.0625),
+	)
+
 	return &pumpState{
 		volume:   adaptive.NewWindow(pumpWindow),
 		volBase:  adaptive.NewEMA(0),
 		moveBase: adaptive.NewEMA(0),
-		pipe: numeric.NewClassed(
-			adaptive.NewClassifier(
-				[]float64{-0.10, 0.50, 2.00}, // faded | organic | coiled | ignition
-				[]float64{0, 1, 2, 3},
-				[]string{"faded_exhaustion", "organic_trend", "coiled_compression", "vertical_ignition"},
-			),
-
-			numeric.NewProjectScalar(func(_ float64, values []float64) float64 {
-				return (values[0] - 1) * (1 + values[1])
-			}),
-			adaptive.NewEMA(0),
-			adaptive.NewSigmaClamp(3, 8, 0.0625),
-		),
+		pipe:     pipe,
 	}
 }
 
@@ -174,7 +200,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		return nil
 	}
 
-	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newPumpState())
+	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newPumpState(signal.classifier))
 	state := stored.(*pumpState)
 	previous := state.last
 
@@ -188,7 +214,8 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		return nil
 	}
 
-	rvol := state.scale(state.volume.Sum(), state.volBase)
+	volumeSum := state.volume.Sum()
+	rvol := state.scale(volumeSum, state.volBase)
 	precursor := state.scale(math.Max(0, (state.last-anchor)/anchor), state.moveBase)
 
 	code, err := state.pipe.Push(rvol, precursor)
@@ -201,6 +228,24 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	category := signal.categories[state.pipe.Label(code)]
 	confidence := state.pipe.Confidence()
 	standout := state.pipe.Standout()
+
+	if err := signal.rawDump.Write(rawRecord{
+		TimestampUnixNano: trade.Timestamp.UnixNano(),
+		Symbol:            trade.Symbol,
+		Price:             trade.Price,
+		Qty:               trade.Qty,
+		Side:              trade.Side,
+		Anchor:            anchor,
+		VolumeSum:         volumeSum,
+		RVOL:              rvol,
+		Precursor:         precursor,
+		Observation:       state.pipe.Observation(),
+	}); err != nil {
+		return err
+	}
+
+	// Feed the pooled calibrator; it retunes the shared band edges for next ticks.
+	signal.calibrator.Observe(state.pipe.Observation(), signal.classifier)
 
 	if trade.Side == "sell" && previous > 0 && trade.Price < previous && rvol < state.lastRVol {
 		category = perspectives.CategoryFadedExhaustion
@@ -227,14 +272,26 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
+		telemetry := signal.calibrator.Snapshot(signal.classifier)
+		telemetry.Observation = state.pipe.Observation()
+
 		ui.Send(
 			&qpool.QValue[any]{
 				Value: map[string]any{
-					"chart":      "gauge",
-					"source":     measurement.Source.String(),
-					"confidence": measurement.Confidence,
-					"snr":        measurement.SNR,
-					"symbol":     measurement.Symbol,
+					"chart":       "gauge",
+					"source":      measurement.Source.String(),
+					"confidence":  measurement.Confidence,
+					"snr":         measurement.SNR,
+					"symbol":      measurement.Symbol,
+					"category":    measurement.Category,
+					"observation": telemetry.Observation,
+					"bands":       telemetry.Edges,
+					"band_labels": telemetry.Labels,
+					"shares":      telemetry.Shares,
+					"calibrating": telemetry.Calibrating,
+					"calibrated":  telemetry.Calibrated,
+					"samples":     telemetry.Samples,
+					"min_samples": telemetry.MinSamples,
 				},
 			},
 		)
@@ -245,5 +302,6 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+
+	return signal.rawDump.Close()
 }

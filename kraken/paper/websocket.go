@@ -30,6 +30,7 @@ type WebSocket struct {
 	sockets     map[string]types.Socket
 	balances    *response.Balances
 	orders      *response.Orders
+	executions  *response.Executions
 	latencies   *ring.Ring
 }
 
@@ -49,8 +50,19 @@ func NewWebSocketWithQuoteCache(
 
 	latencies, latencyErr := loadLatencyProfile()
 
-	balances := response.NewBalances(pool.CreateBroadcastGroup("ui", 10*time.Millisecond))
-	orders := response.NewOrdersWithQuoteCache(ctx, pool, balances, quotes)
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	ids := response.NewIdentifier()
+	catalog := response.NewPairCatalog(ctx)
+
+	balances := response.NewBalances(raw, ui, ids)
+	executions := response.NewExecutions(raw, balances, ids)
+	orders := response.NewOrdersWithQuoteCache(
+		ctx, pool, balances, ids, quotes, catalog, newRingLatency(latencies),
+	)
+	orders.Observe(executions)
+
+	go catalog.Load()
 
 	ws := &WebSocket{
 		ctx:         ctx,
@@ -59,13 +71,15 @@ func NewWebSocketWithQuoteCache(
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		sockets: map[string]types.Socket{
-			"balances": balances,
-			"orders":   orders,
+			"balances":   balances,
+			"orders":     orders,
+			"executions": executions,
 		},
-		balances:  balances,
-		orders:    orders,
-		latencies: latencies,
-		err:       latencyErr,
+		balances:   balances,
+		orders:     orders,
+		executions: executions,
+		latencies:  latencies,
+		err:        latencyErr,
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
@@ -76,6 +90,10 @@ func NewWebSocketWithQuoteCache(
 	}
 
 	if err := user.NewBalance(pool, nil); err != nil {
+		errnie.Error(err)
+	}
+
+	if err := user.NewExecution(pool, nil); err != nil {
 		errnie.Error(err)
 	}
 
@@ -109,18 +127,23 @@ func (ws *WebSocket) Tick() (err error) {
 				return ws.ctx.Err()
 			}
 
+			socket, ok := ws.sockets[message.Type]
+
+			if !ok {
+				continue
+			}
+
 			ws.broadcasts["raw"].Send(&qpool.QValue[any]{
 				Type:  message.Type,
-				Value: ws.sockets[message.Type].Send(message),
+				Value: socket.Send(message),
 			})
 		case <-ticker.C:
-			// Poll resting protective orders against the latest quote — the paper
-			// emulation of Kraken's server-side trigger engine.
 			if !publishedInitialWallet {
 				ws.balances.PublishUI()
 				publishedInitialWallet = true
 			}
 
+			ws.orders.CheckPending()
 			ws.orders.CheckTriggers()
 			time.Sleep(ws.latencies.Value.(time.Duration))
 			ws.latencies.Next()

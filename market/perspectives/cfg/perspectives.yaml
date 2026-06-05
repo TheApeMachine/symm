@@ -120,3 +120,40 @@ branches:
                 - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
                 - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
             do: settle_position
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # WARM-UP STRATEGIES — deliberately loose, so the desk actually trades and you
+  # can get a feel for the flow. Each of these only ENTERS; the universal position
+  # manager at the very bottom handles every exit. Long-only (entries are buys).
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ── QUICK — momentum pop (the workhorse; fires often on purpose) ──
+  # "Price ticked up ~0.25% over the last 10 measurements and the book isn't
+  #  screaming toxic — take a quick long with a market order so it fills now."
+  - when:
+      all:
+        - { subject: price, unit: percentage, ago: 10, op: rose_by, value: 0.25 }
+        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.7 }
+    then:
+      - when: { subject: position, op: equals, lifecycle: not_holding }
+        do: market
+
+  # ── FLOW — hidden-absorption accumulation ──
+  # "Hidden buying is absorbing supply with some conviction — accumulate patiently."
+  - when:
+      all:
+        - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.5 }
+        - { subject: signal, category: aggressive_drive, unit: confidence, op: at_least, value: 0.3 }
+    then:
+      - when: { subject: position, op: equals, lifecycle: not_holding }
+        do: limit
+
+  # ── FLOOR — hard-support reclaim ──
+  # "Resting on hard support with no liquidity vacuum underneath — buy the floor."
+  - when:
+      all:
+        - { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.8 }
+        - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
+    then:
+      - when: { subject: position, op: equals, lifecycle: not_holding }
+        do: limit

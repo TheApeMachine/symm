@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -27,6 +28,7 @@ type Toxicity struct {
 	tracker      *Tracker
 	measurements *qpool.BroadcastGroup
 	l3Active     bool
+	rawDump      *rawdump.Writer
 }
 
 func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
@@ -41,6 +43,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	}
 	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
+	tox.rawDump = rawdump.Open("toxicity")
 
 	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
@@ -272,6 +275,18 @@ func (tox *Toxicity) publishMeasurementAt(symbol string, at time.Time) error {
 
 	measurement.Symbol = symbol
 
+	if err := tox.rawDump.Write(rawRecord{
+		Symbol:     measurement.Symbol,
+		Category:   measurement.Category,
+		Strength:   measurement.Strength,
+		Confidence: measurement.Confidence,
+		SNR:        measurement.SNR,
+		Last:       measurement.Last,
+		SpreadBPS:  measurement.SpreadBPS,
+	}); err != nil {
+		return err
+	}
+
 	tox.measurements.Send(&qpool.QValue[any]{Value: measurement})
 
 	return nil
@@ -279,7 +294,7 @@ func (tox *Toxicity) publishMeasurementAt(symbol string, at time.Time) error {
 
 func (tox *Toxicity) Close() error {
 	tox.cancel()
-	return nil
+	return tox.rawDump.Close()
 }
 
 func midOf(row market.TickerUpdate) float64 {

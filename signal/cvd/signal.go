@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	"github.com/theapemachine/symm/ring"
 	signalpool "github.com/theapemachine/symm/signal"
 )
@@ -75,6 +76,7 @@ type Signal struct {
 	symbols     sync.Map
 	categories  map[string]perspectives.CategoryType
 	floor       *adaptive.SNRField
+	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -92,7 +94,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"hidden_absorption":  perspectives.CategoryHiddenAbsorption,
 			"aggressive_drive":   perspectives.CategoryAggressiveDrive,
 		},
-		floor: adaptive.NewSNRField(),
+		floor:   adaptive.NewSNRField(),
+		rawDump: rawdump.Open("cvd"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -364,6 +367,27 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		return err
 	}
 
+	if err := signal.rawDump.Write(rawRecord{
+		TimestampUnixNano: trade.Timestamp.UnixNano(),
+		Symbol:            trade.Symbol,
+		Price:             trade.Price,
+		Category:          measurement.Category,
+		Signed:            state.signed.Sum(),
+		Gross:             gross,
+		Count:             state.count.Sum(),
+		Conviction:        conviction,
+		Tempo:             tempo,
+		Volume:            volume,
+		Activity:          activity,
+		Drift:             drift,
+		Fused:             fused,
+		Standout:          standout,
+		Confidence:        clarity,
+		SNR:               measurement.SNR,
+	}); err != nil {
+		return err
+	}
+
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
@@ -382,5 +406,5 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

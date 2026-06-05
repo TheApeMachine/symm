@@ -24,6 +24,16 @@ func TestPriceSampleRingPush(t *testing.T) {
 			So(ordered[0].Price, ShouldEqual, 101)
 			So(ordered[2].Price, ShouldEqual, 103)
 		})
+
+		Convey("AppendOrdered should reuse caller storage", func() {
+			buffer := make([]PriceSample, 0, 3)
+			ordered := ring.AppendOrdered(buffer)
+
+			So(len(ordered), ShouldEqual, 3)
+			So(cap(ordered), ShouldEqual, cap(buffer))
+			So(ordered[0].Price, ShouldEqual, 101)
+			So(ordered[2].Price, ShouldEqual, 103)
+		})
 	})
 }
 
@@ -91,5 +101,20 @@ func BenchmarkPriceSampleRingPush(b *testing.B) {
 
 	for b.Loop() {
 		ring.Push(now, 100)
+	}
+}
+
+func BenchmarkPriceSampleRingAppendOrdered(benchmark *testing.B) {
+	ring := NewPriceSampleRing(128)
+	now := time.Now()
+
+	for index := range 128 {
+		ring.Push(now.Add(time.Duration(index)*time.Second), 100+float64(index))
+	}
+
+	buffer := make([]PriceSample, 0, 128)
+
+	for benchmark.Loop() {
+		_ = ring.AppendOrdered(buffer)
 	}
 }

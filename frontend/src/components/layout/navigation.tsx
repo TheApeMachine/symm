@@ -1,15 +1,25 @@
+import { Link } from "@tanstack/react-router";
 import {
+	ActivityIcon,
 	ArrowDownRightIcon,
 	ArrowUpRightIcon,
 	BanIcon,
 	CheckCircle2Icon,
+	HomeIcon,
 	LoaderIcon,
+	NetworkIcon,
 } from "lucide-react";
 import {
 	type ActionEvent,
 	type ActionVerdict,
 	useWsStatus,
 } from "#/providers/ws-status";
+
+const PAGES: { to: string; label: string; Icon: typeof HomeIcon }[] = [
+	{ to: "/", label: "Dashboard", Icon: HomeIcon },
+	{ to: "/diagnostics", label: "Signal Insight", Icon: ActivityIcon },
+	{ to: "/decisions", label: "Decision Tree", Icon: NetworkIcon },
+];
 
 const ACTION_LABELS: Record<string, string> = {
 	limit: "Limit",
@@ -90,12 +100,30 @@ const ActionCard = ({ action }: { action: ActionEvent }) => {
 	);
 };
 
-export const Navigation = () => {
+export const Navigation = ({
+	onNavigate,
+}: {
+	onNavigate?: () => void;
+}) => {
 	const { actions } = useWsStatus();
 
 	return (
 		<div className="flex flex-col gap-1.5 p-2">
 			<p className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+				Pages
+			</p>
+			{PAGES.map((page) => (
+				<Link
+					key={page.to}
+					to={page.to}
+					onClick={onNavigate}
+					className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 text-sm hover:bg-muted [&.active]:border-sky-500/50 [&.active]:bg-sky-500/10"
+				>
+					<page.Icon className="size-4 shrink-0 text-muted-foreground" />
+					{page.label}
+				</Link>
+			))}
+			<p className="mt-2 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
 				Decisions
 			</p>
 			{actions.length === 0 ? (

@@ -3,6 +3,7 @@ package reasoning
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/optimizer/replay"
@@ -23,6 +24,9 @@ type SearchConfig struct {
 	Patience      int // stop after this many rounds with no new best
 	MaxNodes      int // forests larger than this are not explored (bounds runaway depth)
 	MinRoundTrips int // a profitable forest closing fewer trades than this is discounted toward 0
+	Workers       int // parallel candidate scoring workers; 0 uses runtime.NumCPU()
+	OnProgress    func(SearchProgress)
+	OnNewBest     func(Candidate)
 }
 
 func (config SearchConfig) withDefaults() SearchConfig {
@@ -79,92 +83,115 @@ func Search(
 	config SearchConfig,
 ) Result {
 	config = config.withDefaults()
+	started := time.Now()
+	rowCount := len(rows)
+
+	config.reportProgress(SearchProgress{
+		Phase:         "config",
+		BeamSize:      config.BeamWidth,
+		MaxRounds:     config.MaxRounds,
+		MaxNodes:      config.MaxNodes,
+		Patience:      config.Patience,
+		MinRoundTrips: config.MinRoundTrips,
+		Workers:       config.workerCount(),
+	})
+
 	vocab := DeriveVocabulary(rows)
-	tape := replay.PrecompileTape(rows)
+	config.reportProgress(SearchProgress{
+		Phase:         "vocabulary",
+		RowCount:      rowCount,
+		CategoryCount: len(vocab.Categories),
+	})
+
+	config.reportProgress(SearchProgress{
+		Phase:    "precompile_start",
+		RowCount: rowCount,
+	})
+
+	precompileStarted := time.Now()
+	tape := replay.PrecompileTapeWorkers(rows, config.workerCount())
+
+	config.reportProgress(SearchProgress{
+		Phase:         "precompile_done",
+		RowCount:      tape.Len(),
+		CategoryCount: len(vocab.Categories),
+		Elapsed:       time.Since(precompileStarted),
+	})
 
 	evaluated := 0
-	seen := make(map[string]bool)
+	seen := newForestDedup()
 
-	score := func(forest []perspectives.Thought, nodes int) Candidate {
-		result := replay.NewThoughtSimulation(ctx, forest, tape, costs).Result()
+	queueTasks := func(forests [][]perspectives.Thought) []scoreTask {
+		tasks := make([]scoreTask, 0, len(forests))
 
-		credited := result.Score
+		for _, forest := range forests {
+			nodes := countNodes(forest)
 
-		if credited > 0 {
-			if config.MinRoundTrips > 0 && result.ClosedTrades < config.MinRoundTrips {
-				credited *= float64(result.ClosedTrades) / float64(config.MinRoundTrips)
+			if nodes > config.MaxNodes {
+				continue
 			}
 
-			// Capital opportunity cost: a forest that camps in one position blocks
-			// entries its other branches wanted. Discount the profit by how often
-			// the wallet was too locked to fund a wanting entry — rewarding yield per
-			// unit of capital, not absolute return, so the search prefers strategies
-			// that keep the account working over ones that tie it up.
-			if tape.Len() > 0 && result.FundBlocked > 0 {
-				blockRate := float64(result.FundBlocked) / float64(tape.Len())
-
-				if blockRate > 1 {
-					blockRate = 1
-				}
-
-				credited *= 1 - capitalBlockWeight*blockRate
+			if seen.insert(forest) {
+				continue
 			}
+
+			evaluated++
+			tasks = append(tasks, scoreTask{forest: forest, nodes: nodes})
 		}
 
-		return Candidate{
-			Forest: forest,
-			Score:  credited,
-			Return: result.Score,
-			Trades: result.ClosedTrades,
-			Nodes:  nodes,
-		}
+		return tasks
 	}
 
-	consider := func(forest []perspectives.Thought) (Candidate, bool) {
-		nodes := countNodes(forest)
-		if nodes > config.MaxNodes {
-			return Candidate{}, false // past the size cap; do not explore further
-		}
-
-		key := keyOf(forest)
-		if seen[key] {
-			return Candidate{}, false
-		}
-
-		seen[key] = true
-		evaluated++
-
-		return score(forest, nodes), true
+	scoreTasks := func(tasks []scoreTask) []Candidate {
+		return evaluateCandidates(ctx, tasks, tape, costs, config)
 	}
 
 	beam := make([]Candidate, 0, config.BeamWidth)
+	seeds := Seeds(vocab)
 
-	for _, seed := range Seeds(vocab) {
-		if candidate, fresh := consider(seed); fresh {
-			beam = append(beam, candidate)
-		}
+	config.reportProgress(SearchProgress{
+		Phase:     "seeds_start",
+		SeedCount: len(seeds),
+	})
+
+	for _, candidate := range scoreTasks(queueTasks(seeds)) {
+		beam = append(beam, candidate)
 	}
 
 	beam = topCandidates(beam, config.BeamWidth)
 
 	if len(beam) == 0 {
+		config.reportProgress(SearchProgress{
+			Phase:     "done",
+			Evaluated: evaluated,
+			Elapsed:   time.Since(started),
+		})
+
 		return Result{Evaluated: evaluated}
 	}
 
 	best := beam[0]
 
+	config.reportProgress(SearchProgress{
+		Phase:      "seeds_done",
+		Evaluated:  evaluated,
+		BestScore:  best.Score,
+		BestReturn: best.Return,
+		BestTrades: best.Trades,
+		Elapsed:    time.Since(started),
+	})
+
 	stagnation := 0
 
 	for round := 0; round < config.MaxRounds; round++ {
-		grown := make([]Candidate, 0, len(beam)*16)
+		roundEvaluated := evaluated
+		neighbors := make([][]perspectives.Thought, 0, len(beam)*16)
 
 		for _, member := range beam {
-			for _, neighbor := range Neighbors(member.Forest, vocab) {
-				if candidate, fresh := consider(neighbor); fresh {
-					grown = append(grown, candidate)
-				}
-			}
+			neighbors = append(neighbors, Neighbors(member.Forest, vocab)...)
 		}
+
+		grown := scoreTasks(queueTasks(neighbors))
 
 		if len(grown) == 0 {
 			break
@@ -176,14 +203,58 @@ func Search(
 			best = beam[0]
 			stagnation = 0
 
+			if config.OnNewBest != nil {
+				config.OnNewBest(best)
+			}
+
+			config.reportProgress(SearchProgress{
+				Phase:      "round",
+				Round:      round + 1,
+				MaxRounds:  config.MaxRounds,
+				Evaluated:  evaluated,
+				RoundAdded: evaluated - roundEvaluated,
+				BeamSize:   len(beam),
+				BestScore:  best.Score,
+				BestReturn: best.Return,
+				BestTrades: best.Trades,
+				Stagnation: stagnation,
+				Patience:   config.Patience,
+				Elapsed:    time.Since(started),
+			})
+
 			continue
 		}
 
 		stagnation++
+
+		config.reportProgress(SearchProgress{
+			Phase:      "round",
+			Round:      round + 1,
+			MaxRounds:  config.MaxRounds,
+			Evaluated:  evaluated,
+			RoundAdded: evaluated - roundEvaluated,
+			BeamSize:   len(beam),
+			BestScore:  best.Score,
+			BestReturn: best.Return,
+			BestTrades: best.Trades,
+			Stagnation: stagnation,
+			Patience:   config.Patience,
+			Elapsed:    time.Since(started),
+		})
+
 		if stagnation >= config.Patience {
 			break
 		}
 	}
+
+	config.reportProgress(SearchProgress{
+		Phase:      "done",
+		Evaluated:  evaluated,
+		BestScore:  best.Score,
+		BestReturn: best.Return,
+		BestTrades: best.Trades,
+		Elapsed:    time.Since(started),
+	})
 
 	return Result{Best: best, Evaluated: evaluated}
 }
@@ -220,15 +291,4 @@ func countNodes(forest []perspectives.Thought) int {
 	walk(forest)
 
 	return total
-}
-
-// keyOf is the dedup identity of a forest: its serialized playbook. Two forests
-// that write the same YAML are the same candidate and are scored once.
-func keyOf(forest []perspectives.Thought) string {
-	encoded, err := perspectives.MarshalThoughts(forest, 2)
-	if err != nil {
-		return ""
-	}
-
-	return string(encoded)
 }

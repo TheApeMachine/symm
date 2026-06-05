@@ -1,9 +1,11 @@
 package perspectives
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -71,14 +73,14 @@ thresholds; categories lists the bands low-to-high.
 */
 func NewCategories(upper []float64, categories []CategoryType) (Categories, error) {
 	if len(categories) == 0 {
-		return Categories{}, fmt.Errorf("perspectives: NewCategories needs at least one category")
+		return Categories{}, errnie.Error(errors.New("perspectives: NewCategories needs at least one category"))
 	}
 
 	if len(upper) != len(categories)-1 {
-		return Categories{}, fmt.Errorf(
+		return Categories{}, errnie.Error(fmt.Errorf(
 			"perspectives: NewCategories needs len(upper) == len(categories)-1, got %d and %d",
 			len(upper), len(categories),
-		)
+		))
 	}
 
 	codes := make([]float64, len(categories))
@@ -105,7 +107,7 @@ func (categories Categories) Classify(observation float64) (CategoryType, error)
 	code, err := categories.classifier().Code(observation)
 
 	if err != nil {
-		return CategoryTypeNone, err
+		return CategoryTypeNone, errnie.Error(err)
 	}
 
 	return CategoryType(categories.classifier().Label(code)), nil
@@ -134,15 +136,15 @@ and returns sigma above that baseline. Standout must be a unit band margin in
 */
 func ScoreCategorySNR(floor *adaptive.SNRField, symbol string, standout float64) (float64, error) {
 	if floor == nil {
-		return 0, fmt.Errorf("perspectives: ScoreCategorySNR nil floor")
+		return 0, errnie.Error(errors.New("perspectives: ScoreCategorySNR nil floor"))
 	}
 
 	if symbol == "" {
-		return 0, fmt.Errorf("perspectives: ScoreCategorySNR empty symbol")
+		return 0, errnie.Error(errors.New("perspectives: ScoreCategorySNR empty symbol"))
 	}
 
 	if err := validateUnitMargin("standout", standout); err != nil {
-		return 0, err
+		return 0, errnie.Error(err)
 	}
 
 	return floor.Score(symbol, standout)
@@ -159,7 +161,7 @@ func AssignCategorySNR(
 	snr, err := ScoreCategorySNR(floor, measurement.Symbol, standout)
 
 	if err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
 	measurement.SNR = snr
@@ -215,22 +217,22 @@ func (category *Category) Observe(
 	standout float64,
 ) (float64, error) {
 	if category == nil || category.Confidence == nil {
-		return 0, fmt.Errorf("perspectives: Category.Observe nil receiver")
+		return 0, errnie.Error(errors.New("perspectives: Category.Observe nil receiver"))
 	}
 
 	if err := validateUnitMargin("clarity", clarity); err != nil {
-		return 0, err
+		return 0, errnie.Error(err)
 	}
 
 	if err := validateUnitMargin("standout", standout); err != nil {
-		return 0, err
+		return 0, errnie.Error(err)
 	}
 
 	if next != category.Type {
 		category.Type = next
 
 		if _, err := category.Confidence.Next(0, standout); err != nil {
-			return 0, err
+			return 0, errnie.Error(err)
 		}
 	}
 
@@ -239,11 +241,11 @@ func (category *Category) Observe(
 
 func validateUnitMargin(name string, value float64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return fmt.Errorf("perspectives: Category.Observe invalid %s", name)
+		return errnie.Error(fmt.Errorf("perspectives: Category.Observe invalid %s", name))
 	}
 
 	if value > 1 {
-		return fmt.Errorf("perspectives: Category.Observe %s above unit band: %v", name, value)
+		return errnie.Error(fmt.Errorf("perspectives: Category.Observe %s above unit band: %v", name, value))
 	}
 
 	return nil

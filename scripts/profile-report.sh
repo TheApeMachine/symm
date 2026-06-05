@@ -13,7 +13,9 @@ echo
 
 run_bench_profile() {
   local name="$1"
-  shift
+  local package="$2"
+  local bench="$3"
+  local benchtime="$4"
   local cpu="$PROFILE_DIR/${name}-cpu.prof"
   local mem="$PROFILE_DIR/${name}-mem.prof"
 
@@ -22,7 +24,10 @@ run_bench_profile() {
     -cpuprofile="$cpu" \
     -memprofile="$mem" \
     -benchmem \
-    "$@" || return 1
+    -run='^$' \
+    -bench="$bench" \
+    -benchtime="$benchtime" \
+    "$package" || return 1
 
   echo
   echo "[$name cpu top]"
@@ -38,15 +43,50 @@ run_bench_profile() {
 
 cd "$ROOT"
 
-run_bench_profile stack \
-  -bench=BenchmarkProfileStack \
-  -benchtime=15s \
-  ./profile/...
+run_bench_profile optimizer-reasoning \
+  ./optimizer/reasoning \
+  'Benchmark(Search|Neighbors|TemporalizeEntry|KeyOf|CloneForest)' \
+  10s
 
-run_bench_profile hotpath \
-  -bench='Benchmark(Bivariate|LeadLag|DepthFlow|Hayashi|CryptoEngine|Fluid|ParseTop|ParseTrades|Instrument)' \
-  -benchtime=5s \
-  ./hawkes/... ./leadlag/... ./depthflow/... ./correlation/... ./trader/... ./fluid/... ./kraken/market/...
+run_bench_profile optimizer-replay \
+  ./optimizer/replay \
+  'Benchmark(PrecompileTape|ThoughtSimulationResult|CheckTriggers|ReplayLedger|ReplayMeasurements)' \
+  5s
+
+run_bench_profile market-perspectives \
+  ./market/perspectives \
+  'Benchmark(ClassifyRegime|WindowReasonReset|EvaluateStateful|CategoriesClassify)' \
+  5s
+
+run_bench_profile signal-hawkes \
+  ./signal/hawkes \
+  'Benchmark(ObserveTrades|Measure|Bivariate)' \
+  5s
+
+run_bench_profile signal-leadlag \
+  ./signal/leadlag \
+  'BenchmarkMeasureFollower' \
+  5s
+
+run_bench_profile signal-depthflow \
+  ./signal/depthflow \
+  'Benchmark(ObserveTrade|DepthSymbolMeasure)' \
+  5s
+
+run_bench_profile signal-fluid \
+  ./signal/fluid \
+  'Benchmark(PublishField|Emit|FluidSymbolMeasure|FluxAccumulatorAddTrade)' \
+  5s
+
+run_bench_profile broker \
+  ./broker \
+  'Benchmark(QuoteCacheSnapshot|StressCache|PreflightGates|SlippageFill|Maker)' \
+  5s
+
+run_bench_profile kraken-market \
+  ./kraken/market \
+  'Benchmark(BookFold|Instrument|Parse|Trade|Ticker)' \
+  5s
 
 echo "profiles written under $PROFILE_DIR"
-echo "inspect: go tool pprof -http=:0 $PROFILE_DIR/stack-cpu.prof"
+echo "inspect: go tool pprof -http=:0 $PROFILE_DIR/optimizer-reasoning-cpu.prof"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -221,92 +220,41 @@ func (websocketClient *WebSocket) readLoop() error {
 }
 
 func (websocketClient *WebSocket) publishRaw(frame authFrame) {
-	websocketClient.raw.Send(&qpool.QValue[any]{
-		Type: frame.Channel,
-		Value: map[string]any{
-			"channel": frame.Channel,
-			"type":    frame.Type,
-			"data":    append(json.RawMessage(nil), frame.Data...),
-		},
-	})
+	user.PublishRaw(
+		websocketClient.raw,
+		frame.Channel,
+		frame.Type,
+		append(json.RawMessage(nil), frame.Data...),
+	)
 }
 
 func (websocketClient *WebSocket) publishDerived(frame authFrame) {
 	switch frame.Channel {
 	case public.BalancesChannel:
-		websocketClient.publishWallet(frame.Data)
+		var rows []user.Balance
+
+		if err := sonic.Unmarshal(frame.Data, &rows); err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		user.PublishWalletFromBalances(websocketClient.ui, rows)
 	case public.ExecutionsChannel:
-		websocketClient.publishExecutions(frame.Data)
-	}
-}
+		var rows []user.Execution
 
-func (websocketClient *WebSocket) publishWallet(data json.RawMessage) {
-	var rows []user.Balance
-
-	if err := sonic.Unmarshal(data, &rows); err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	quote := viper.GetString("market.quote_currency")
-
-	for _, row := range rows {
-		if !strings.EqualFold(row.Asset, quote) {
-			continue
+		if err := sonic.Unmarshal(frame.Data, &rows); err != nil {
+			errnie.Error(err)
+			return
 		}
 
-		websocketClient.ui.Send(&qpool.QValue[any]{Value: map[string]any{
-			"event":   "wallet",
-			"balance": row.Balance,
-		}})
+		for _, execution := range rows {
+			if execution.Symbol == "" || execution.ExecType != "trade" {
+				continue
+			}
 
-		return
-	}
-}
-
-func (websocketClient *WebSocket) publishExecutions(data json.RawMessage) {
-	var rows []user.Execution
-
-	if err := sonic.Unmarshal(data, &rows); err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	for _, execution := range rows {
-		if execution.Symbol == "" {
-			continue
+			user.PublishExecutionDerived(websocketClient.raw, execution)
 		}
-
-		websocketClient.raw.Send(&qpool.QValue[any]{Value: executionEnvelope(execution)})
 	}
-}
-
-func executionEnvelope(execution user.Execution) map[string]any {
-	price := execution.LastPrice
-
-	if price <= 0 {
-		price = execution.AvgPrice
-	}
-
-	return map[string]any{
-		"channel": "executions",
-		"symbol":  execution.Symbol,
-		"side":    execution.Side,
-		"qty":     execution.LastQty,
-		"price":   price,
-		"fee":     executionFee(execution),
-		"reason":  execution.OrderStatus,
-	}
-}
-
-func executionFee(execution user.Execution) float64 {
-	fee := 0.0
-
-	for _, row := range execution.Fees {
-		fee += row.Qty
-	}
-
-	return fee
 }
 
 func (websocketClient *WebSocket) writePrivate(value any) error {

@@ -19,7 +19,7 @@ func TestBalances(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a fresh paper balances wallet", t, func() {
-		balances := NewBalances(nil)
+		balances := NewBalances(nil, nil, NewIdentifier())
 
 		Convey("It funds the configured quote currency", func() {
 			So(balances.model.Asset[0].Asset, ShouldEqual, "EUR")
@@ -33,26 +33,25 @@ func TestApplyFill(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a paper wallet funded with 200 EUR", t, func() {
-		balances := NewBalances(nil)
+		balances := NewBalances(nil, nil, NewIdentifier())
 
 		Convey("A buy debits quote (cost+fee) and credits base", func() {
-			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "ord-1")
+			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "exec-1")
 
 			So(balanceOf(balances, "EUR"), ShouldAlmostEqual, 200-50-0.13, 1e-9)
 			So(balanceOf(balances, "BTC"), ShouldAlmostEqual, 0.001, 1e-12)
 		})
 
 		Convey("A round trip leaves only the paid fees out of quote", func() {
-			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "ord-1")
-			balances.ApplyFill("BTC/EUR", "sell", 0.001, 50000, 0.13, "ord-2")
+			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "exec-1")
+			balances.ApplyFill("BTC/EUR", "sell", 0.001, 50000, 0.13, "exec-2")
 
 			So(balanceOf(balances, "EUR"), ShouldAlmostEqual, 200-0.26, 1e-9)
 			So(balanceOf(balances, "BTC"), ShouldAlmostEqual, 0, 1e-12)
 		})
 
 		Convey("A buy in a quote currency we do not hold is rejected", func() {
-			// EUR/AUD spends AUD, which the wallet has none of.
-			err := balances.ApplyFill("EUR/AUD", "buy", 100, 1.6, 0.4, "ord-1")
+			err := balances.ApplyFill("EUR/AUD", "buy", 100, 1.6, 0.4, "exec-1")
 
 			So(err, ShouldEqual, ErrInsufficientFunds)
 			So(balanceOf(balances, "EUR"), ShouldEqual, 200)
@@ -60,7 +59,7 @@ func TestApplyFill(t *testing.T) {
 		})
 
 		Convey("A buy exceeding available quote is rejected, wallet untouched", func() {
-			err := balances.ApplyFill("BTC/EUR", "buy", 1, 50000, 0.13, "ord-1")
+			err := balances.ApplyFill("BTC/EUR", "buy", 1, 50000, 0.13, "exec-1")
 
 			So(err, ShouldEqual, ErrInsufficientFunds)
 			So(balanceOf(balances, "EUR"), ShouldEqual, 200)
@@ -77,12 +76,11 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 		sub := ui.Subscribe("test:ui", 16)
 
-		// Drain the snapshot publish from construction.
-		balances := NewBalances(ui)
+		balances := NewBalances(nil, ui, NewIdentifier())
 		drainWallet(sub)
 
 		Convey("A buy publishes balance and a non-zero open count", func() {
-			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "ord-1")
+			balances.ApplyFill("BTC/EUR", "buy", 0.001, 50000, 0.13, "exec-1")
 			frame := drainWallet(sub)
 
 			So(frame["event"], ShouldEqual, "wallet")
@@ -100,22 +98,28 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 func TestBalancesSend(t *testing.T) {
 	configurePaperWallet()
 
-	Convey("Given a wallet wired to a ui broadcast group after startup", t, func() {
+	Convey("Given a wallet wired to raw and ui groups", t, func() {
 		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-		balances := NewBalances(ui)
-		sub := ui.Subscribe("test:ui:subscribe", 16)
+		balances := NewBalances(raw, ui, NewIdentifier())
+		uiSub := ui.Subscribe("test:ui:subscribe", 16)
+		rawSub := raw.Subscribe("test:raw:subscribe", 16)
 
-		Convey("A subscribe request republishes the current wallet", func() {
+		drainWallet(uiSub)
+
+		Convey("A subscribe request republishes the current wallet and snapshot", func() {
 			out := balances.Send(&qpool.QValue[any]{
 				Value: map[string]any{"method": "subscribe"},
 			})
-			frame := drainWallet(sub)
+			frame := drainWallet(uiSub)
+			rawFrame := drainRawBalances(rawSub)
 
 			So(out["success"], ShouldBeTrue)
 			So(frame["event"], ShouldEqual, "wallet")
 			So(frame["balance"], ShouldEqual, 200.0)
-			So(frame["Balance"], ShouldEqual, 200.0)
+			So(rawFrame["channel"], ShouldEqual, "balances")
+			So(rawFrame["type"], ShouldEqual, "snapshot")
 		})
 	})
 }
@@ -144,5 +148,17 @@ func drainWallet(sub *qpool.Subscriber) map[string]any {
 		case <-timeout:
 			return nil
 		}
+	}
+}
+
+func drainRawBalances(sub *qpool.Subscriber) map[string]any {
+	timeout := time.After(2 * time.Second)
+
+	select {
+	case msg := <-sub.Incoming:
+		frame, _ := msg.Value.(map[string]any)
+		return frame
+	case <-timeout:
+		return nil
 	}
 }

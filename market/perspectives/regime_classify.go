@@ -2,6 +2,7 @@ package perspectives
 
 import (
 	"math"
+	"sync"
 
 	"github.com/spf13/viper"
 )
@@ -28,9 +29,9 @@ type RegimeFeatures struct {
 }
 
 /*
-regimeConfig holds the classifier thresholds. They are read from viper on each
-call (mirroring causalStructuralRegime) but fall back to defaults so the
-classifier is correct even with no regime block in config.
+regimeConfig holds the classifier thresholds. They are read from viper once and
+then treated as immutable for the process lifetime; live boot loads config before
+systems start, and replay/tune should not pay Viper lookup cost on every tick.
 
 The thresholds are cadence-relative: realized volatility and the trend t-stat
 are measured per price change, not per unit time. Live and replay share the same
@@ -46,7 +47,20 @@ type regimeConfig struct {
 	strongTrend float64 // trend t-stat for signed RegimeBullish/RegimeBearish
 }
 
+var (
+	cachedRegimeConfig regimeConfig
+	regimeConfigOnce   sync.Once
+)
+
 func loadRegimeConfig() regimeConfig {
+	regimeConfigOnce.Do(func() {
+		cachedRegimeConfig = readRegimeConfig()
+	})
+
+	return cachedRegimeConfig
+}
+
+func readRegimeConfig() regimeConfig {
 	return regimeConfig{
 		window:      viperIntDefault("regime.window", 256),
 		minSamples:  viperIntDefault("regime.min_samples", 16),
@@ -96,8 +110,8 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 		snapshots = snapshots[len(snapshots)-cfg.window:]
 	}
 
-	prices := make([]float64, 0, len(snapshots))
 	samples := 0
+	stats := distinctReturnStats{}
 
 	for _, measurement := range snapshots {
 		if measurement.Last <= 0 {
@@ -105,10 +119,7 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 		}
 
 		samples++
-
-		if len(prices) == 0 || measurement.Last != prices[len(prices)-1] {
-			prices = append(prices, measurement.Last)
-		}
+		stats.observe(measurement.Last)
 	}
 
 	features := RegimeFeatures{Samples: samples}
@@ -121,16 +132,14 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 	}
 
 	// Enough activity observed but the price never moved: a dead, flat market.
-	if len(prices) < 2 {
+	if stats.returns == 0 {
 		features.Regime = RegimeDead
 
 		return features
 	}
 
-	returns := distinctPriceReturns(prices)
-	mean := meanFloat(returns)
-	vol := stdevFloat(returns, mean)
-	drift := math.Log(prices[len(prices)-1] / prices[0])
+	vol := stats.volatility()
+	drift := stats.drift()
 
 	features.Volatility = vol
 	features.Drift = drift
@@ -138,7 +147,7 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 	switch {
 	case vol > 0:
 		// How many standard errors the mean step return sits from zero.
-		features.TrendStrength = math.Abs(mean) * math.Sqrt(float64(len(returns))) / vol
+		features.TrendStrength = math.Abs(stats.mean) * math.Sqrt(float64(stats.returns)) / vol
 	case drift != 0:
 		// Perfectly steady geometric move: zero return variance, maximal trend.
 		features.TrendStrength = cfg.strongTrend
@@ -203,66 +212,63 @@ Repeated prices are collapsed before log returns are measured, matching the regi
 classifier so quote-cache, live desk, and replay trigger math share one definition.
 */
 func DistinctPriceVolatility(prices []float64) float64 {
-	returns := distinctPriceReturns(prices)
-
-	if len(returns) == 0 {
-		return 0
-	}
-
-	return stdevFloat(returns, meanFloat(returns))
-}
-
-func distinctPriceReturns(prices []float64) []float64 {
-	distinct := make([]float64, 0, len(prices))
+	stats := distinctReturnStats{}
 
 	for _, price := range prices {
-		if price <= 0 {
-			continue
-		}
-
-		if len(distinct) == 0 || price != distinct[len(distinct)-1] {
-			distinct = append(distinct, price)
-		}
+		stats.observe(price)
 	}
 
-	if len(distinct) < 2 {
-		return nil
-	}
-
-	returns := make([]float64, len(distinct)-1)
-
-	for index := 1; index < len(distinct); index++ {
-		returns[index-1] = math.Log(distinct[index] / distinct[index-1])
-	}
-
-	return returns
+	return stats.volatility()
 }
 
-func meanFloat(values []float64) float64 {
-	if len(values) == 0 {
+type distinctReturnStats struct {
+	firstPrice    float64
+	lastPrice     float64
+	previousPrice float64
+	mean          float64
+	sumSquares    float64
+	returns       int
+}
+
+func (stats *distinctReturnStats) observe(price float64) {
+	if price <= 0 {
+		return
+	}
+
+	if stats.previousPrice == 0 {
+		stats.firstPrice = price
+		stats.lastPrice = price
+		stats.previousPrice = price
+
+		return
+	}
+
+	if price == stats.previousPrice {
+		return
+	}
+
+	logReturn := math.Log(price / stats.previousPrice)
+	stats.returns++
+
+	delta := logReturn - stats.mean
+	stats.mean += delta / float64(stats.returns)
+	stats.sumSquares += delta * (logReturn - stats.mean)
+	stats.lastPrice = price
+	stats.previousPrice = price
+}
+
+func (stats distinctReturnStats) volatility() float64 {
+	if stats.returns < 2 {
 		return 0
 	}
 
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
+	return math.Sqrt(stats.sumSquares / float64(stats.returns-1))
 }
 
-func stdevFloat(values []float64, mean float64) float64 {
-	if len(values) < 2 {
+func (stats distinctReturnStats) drift() float64 {
+	if stats.firstPrice <= 0 || stats.lastPrice <= 0 {
 		return 0
 	}
 
-	sumSquares := 0.0
-
-	for _, value := range values {
-		delta := value - mean
-		sumSquares += delta * delta
-	}
-
-	return math.Sqrt(sumSquares / float64(len(values)-1))
+	return math.Log(stats.lastPrice / stats.firstPrice)
 }

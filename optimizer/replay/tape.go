@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"sort"
 	"time"
 
 	"github.com/theapemachine/symm/market"
@@ -14,11 +15,13 @@ decision sees at most this many recent measurements — the live search space.
 const StoryRingCapacity = market.StoryRingCapacity
 
 /*
-PrecompiledTick holds one replay row and the ring-window snapshot at that moment.
+PrecompiledTick holds one replay row and the tick indices that form its decision
+snapshot window. Indices are resolved once during precompilation so simulation does
+not repeat binary searches and merge passes on every candidate replay.
 */
 type PrecompiledTick struct {
-	Row       perspectives.Measurement
-	Snapshots []perspectives.Measurement
+	Row             perspectives.Measurement
+	SnapshotIndices []int
 }
 
 /*
@@ -36,45 +39,98 @@ func (tape ReplayTape) Len() int {
 }
 
 /*
-PrecompileTape builds per-tick ring snapshots matching market.Story decision context.
+AppendSnapshot appends the exact live-story ring snapshot for tickIndex into
+destination. It returns chronological rows from the last StoryRingCapacity ticks
+whose symbol is either global or the tick symbol.
 */
-func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
-	ring := make([]perspectives.Measurement, 0, StoryRingCapacity)
-	ticks := make([]PrecompiledTick, len(rows))
-	lastPrices := make(map[string]float64)
-	categories := make(map[perspectives.CategoryType]struct{})
+func (tape ReplayTape) AppendSnapshot(
+	tickIndex int,
+	destination []perspectives.Measurement,
+) []perspectives.Measurement {
+	if tickIndex < 0 || tickIndex >= len(tape.Ticks) {
+		return destination[:0]
+	}
 
-	for index, row := range rows {
-		ring = market.AppendRingMeasurement(ring, row)
+	indices := tape.Ticks[tickIndex].SnapshotIndices
+	destination = destination[:0]
 
-		if row.Category != perspectives.CategoryTypeNone {
-			categories[row.Category] = struct{}{}
-		}
+	for _, index := range indices {
+		destination = append(destination, tape.Ticks[index].Row)
+	}
 
-		if row.Symbol == "" {
+	return destination
+}
+
+func indicesInWindow(indices []int, startIndex, endIndex int) []int {
+	if len(indices) == 0 {
+		return nil
+	}
+
+	start := sort.SearchInts(indices, startIndex)
+	end := sort.Search(len(indices), func(index int) bool {
+		return indices[index] > endIndex
+	})
+
+	return indices[start:end]
+}
+
+func mergeSnapshotIndices(
+	ticks []PrecompiledTick,
+	symbolIndices map[string][]int,
+	globalIndices []int,
+	tickIndex int,
+) []int {
+	symbol := ticks[tickIndex].Row.Symbol
+
+	if symbol == "" {
+		return nil
+	}
+
+	startIndex := tickIndex - StoryRingCapacity + 1
+
+	if startIndex < 0 {
+		startIndex = 0
+	}
+
+	symbolWindow := indicesInWindow(symbolIndices[symbol], startIndex, tickIndex)
+	globalWindow := indicesInWindow(globalIndices, startIndex, tickIndex)
+	merged := make([]int, 0, len(symbolWindow)+len(globalWindow))
+
+	symbolCursor := 0
+	globalCursor := 0
+
+	for symbolCursor < len(symbolWindow) || globalCursor < len(globalWindow) {
+		if globalCursor >= len(globalWindow) {
+			merged = append(merged, symbolWindow[symbolCursor])
+			symbolCursor++
+
 			continue
 		}
 
-		if row.Last > 0 {
-			lastPrices[row.Symbol] = row.Last
+		if symbolCursor >= len(symbolWindow) {
+			merged = append(merged, globalWindow[globalCursor])
+			globalCursor++
+
+			continue
 		}
 
-		ticks[index] = PrecompiledTick{
-			Row:       row,
-			Snapshots: market.RingSnapshot(ring, row.Symbol),
+		if globalWindow[globalCursor] < symbolWindow[symbolCursor] {
+			merged = append(merged, globalWindow[globalCursor])
+			globalCursor++
+
+			continue
 		}
+
+		merged = append(merged, symbolWindow[symbolCursor])
+		symbolCursor++
 	}
 
-	categoryCount := len(categories)
+	return merged
+}
 
-	if categoryCount <= 0 {
-		categoryCount = 1
-	}
-
-	return ReplayTape{
-		Ticks:               ticks,
-		LastPrices:          lastPrices,
-		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
-		MedianInterval:      medianMeasurementInterval(rows),
-	}
+/*
+PrecompileTape builds compact replay state matching market.Story decision context.
+*/
+func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
+	return PrecompileTapeWorkers(rows, 0)
 }

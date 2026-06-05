@@ -47,6 +47,24 @@ func TuneMeasurements(
 		MaxRounds:     options.MaxRounds,
 		MaxNodes:      options.MaxNodes,
 		MinRoundTrips: minRoundTrips,
+		Workers:       options.Workers,
+		OnProgress: func(progress reasoning.SearchProgress) {
+			log.TuneLog("%s", progress.Message())
+		},
+		OnNewBest: func(candidate reasoning.Candidate) {
+			if options.OnCandidate == nil || candidate.Trades <= 0 {
+				return
+			}
+
+			options.OnCandidate(types.CandidateScore{
+				Candidate:    0,
+				Score:        candidate.Return,
+				ClosedTrades: candidate.Trades,
+				Depth:        forestDepth(candidate.Forest),
+				Strategies:   strategyCount(candidate.Forest),
+				Thoughts:     candidate.Forest,
+			})
+		},
 	}
 
 	result := reasoning.Search(ctx, rows, costs, config)
@@ -145,7 +163,7 @@ func fundableRows(
 		return rows
 	}
 
-	filtered := make([]perspectives.Measurement, 0, len(rows))
+	filtered := rows[:0]
 
 	for _, row := range rows {
 		if row.Symbol == "" {

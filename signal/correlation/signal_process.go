@@ -43,20 +43,13 @@ func correlationFuse(_ float64, values []float64) float64 {
 	return values[1] * (1 + 2*values[0]) / values[2]
 }
 
-func newSymbolState() *symbolState {
+func newSymbolState(classifier *adaptive.Classifier) *symbolState {
+	// Every coin shares the signal's classifier, so they all band against the same
+	// pooled, self-calibrated edges; only the projection, EMA and clamp are per-coin.
 	return &symbolState{
 		energy: adaptive.NewEMA(0),
 		pipe: numeric.NewClassed(
-			adaptive.NewClassifier(
-				[]float64{-0.30, 0.40, 2.00},
-				[]float64{0, 1, 2, 3},
-				[]string{
-					"divergent_stress",
-					"stochastic_noise",
-					"decoupled_alpha",
-					"systemic_herd",
-				},
-			),
+			classifier,
 			numeric.NewProjectScalar(correlationFuse),
 			adaptive.NewEMA(0),
 			adaptive.NewSigmaClamp(3, 8, 0.0625),
@@ -69,7 +62,7 @@ func (signal *Signal) state(symbol string) *symbolState {
 		return stored.(*symbolState)
 	}
 
-	created := newSymbolState()
+	created := newSymbolState(signal.classifier)
 	stored, loaded := signal.symbols.LoadOrStore(symbol, created)
 
 	if loaded {
@@ -252,20 +245,48 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}
 
+			if err := signal.rawDump.Write(rawRecord{
+				Symbol:     measurement.Symbol,
+				Category:   measurement.Category,
+				Strength:   measurement.Strength,
+				Confidence: measurement.Confidence,
+				SNR:        measurement.SNR,
+				Standout:   coin.state.pipe.Standout(),
+				Last:       measurement.Last,
+				SpreadBPS:  measurement.SpreadBPS,
+			}); err != nil {
+				return nil, err
+			}
+
 			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
+				// Snapshot reads the shared classifier/calibrator; safe here because
+				// the only writer (Observe, below) runs after this concurrent pass.
+				telemetry := signal.calibrator.Snapshot(signal.classifier)
+				telemetry.Observation = coin.state.pipe.Observation()
+
 				ui.Send(&qpool.QValue[any]{
 					Value: map[string]any{
-						"chart":      "gauge",
-						"source":     measurement.Source.String(),
-						"confidence": measurement.Confidence,
-						"snr":        measurement.SNR,
+						"chart":       "gauge",
+						"source":      measurement.Source.String(),
+						"confidence":  measurement.Confidence,
+						"snr":         measurement.SNR,
+						"symbol":      measurement.Symbol,
+						"category":    measurement.Category,
+						"observation": telemetry.Observation,
+						"bands":       telemetry.Edges,
+						"band_labels": telemetry.Labels,
+						"shares":      telemetry.Shares,
+						"calibrating": telemetry.Calibrating,
+						"calibrated":  telemetry.Calibrated,
+						"samples":     telemetry.Samples,
+						"min_samples": telemetry.MinSamples,
 					},
 				})
 			}
 
-			return nil, nil
+			return coin.state.pipe.Observation(), nil
 		}))
 	}
 
@@ -274,6 +295,13 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 	for _, task := range tasks {
 		value := <-task
 		err = errors.Join(err, value.Error)
+
+		// Feed the pooled calibrator sequentially, after the concurrent emit pass, so
+		// the shared classifier is only ever written from this single goroutine while
+		// the parallel Push/Snapshot reads above stay race-free.
+		if observation, ok := value.Value.(float64); ok {
+			signal.calibrator.Observe(observation, signal.classifier)
+		}
 	}
 
 	return err

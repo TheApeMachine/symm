@@ -2,11 +2,9 @@ package response
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"time"
 
-	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/paper/types"
@@ -15,22 +13,24 @@ import (
 )
 
 /*
-Orders simulates Kraken private order methods. Ordinary orders (entries, market
-exits) fill immediately against the live quote cache. Protective orders (stop /
-take-profit / trailing-stop) instead REST: they are held in a per-symbol trigger
-book and filled only when a later quote breaches their level — exactly what the live
-Kraken exchange does server-side, so the desk/trader path is identical and switching
-to the authenticated socket is a no-op. The breach math is perspectives.* so paper,
-the replay scorer, and the desk cannot drift.
+Orders simulates Kraken private order methods. Taker orders fill through
+broker.SlippageFill after one-way latency; post-only limits rest with L2 queue
+position and fill when aggressor trades deplete queue ahead via broker.MakerQueueState.
+Protective orders REST until price breaches, then use the same fill helpers.
 */
 type Orders struct {
-	ctx       context.Context
-	pool      *qpool.Q
-	quotes    *broker.QuoteCache
-	balances  *Balances
-	raw       *qpool.BroadcastGroup
-	triggers  map[string]*restingTrigger
-	observers []types.Socket
+	ctx           context.Context
+	pool          *qpool.Q
+	quotes        *broker.QuoteCache
+	balances      *Balances
+	catalog       *PairCatalog
+	latency       LatencySampler
+	ids           *Identifier
+	triggers      map[string]*restingTrigger
+	makers        map[string]*restingMaker
+	pendingTakers []pendingTaker
+	observers     []types.Socket
+	mu            sync.Mutex
 }
 
 // restingTrigger is a protective order the exchange (here, the emulator) holds until
@@ -43,10 +43,14 @@ type restingTrigger struct {
 	offset  float64
 	peak    float64
 	clOrdID string
+	orderID string
+	params  trading.AddParams
 }
 
-func NewOrders(ctx context.Context, pool *qpool.Q, balances *Balances) *Orders {
-	return NewOrdersWithQuoteCache(ctx, pool, balances, broker.EnsureQuoteCache(ctx, pool))
+func NewOrders(ctx context.Context, pool *qpool.Q, balances *Balances, ids *Identifier) *Orders {
+	return NewOrdersWithQuoteCache(
+		ctx, pool, balances, ids, broker.EnsureQuoteCache(ctx, pool), nil, ZeroLatency(),
+	)
 }
 
 /*
@@ -56,16 +60,32 @@ func NewOrdersWithQuoteCache(
 	ctx context.Context,
 	pool *qpool.Q,
 	balances *Balances,
+	ids *Identifier,
 	quotes *broker.QuoteCache,
+	catalog *PairCatalog,
+	latency LatencySampler,
 ) *Orders {
-	return &Orders{
+	if latency == nil {
+		latency = ZeroLatency()
+	}
+
+	orders := &Orders{
 		ctx:      ctx,
 		pool:     pool,
 		quotes:   quotes,
 		balances: balances,
-		raw:      pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
+		catalog:  catalog,
+		latency:  latency,
+		ids:      ids,
 		triggers: make(map[string]*restingTrigger),
+		makers:   make(map[string]*restingMaker),
 	}
+
+	if quotes != nil {
+		quotes.SubscribeTrades(orders.onTrade)
+	}
+
+	return orders
 }
 
 func (orders *Orders) Send(message *qpool.QValue[any]) map[string]any {
@@ -83,19 +103,41 @@ func (orders *Orders) Send(message *qpool.QValue[any]) map[string]any {
 		"time_out": time.Now(),
 	}
 
-	if frame["method"] == trading.MethodAddOrder {
-		if params, ok := frame["params"].(trading.AddParams); ok {
-			if action := perspectives.ActionFromOrderType(params.OrderType); perspectives.IsProtectiveExit(action) {
-				orders.armTrigger(params, action)
-			} else {
-				orders.fill(params)
-			}
-
-			out["result"] = params
-		}
+	if frame["method"] != trading.MethodAddOrder {
+		return out
 	}
 
+	params, ok := frame["params"].(trading.AddParams)
+
+	if !ok {
+		return out
+	}
+
+	orderID := orders.ids.OrderID()
+	out["result"] = map[string]any{
+		"order_id":  orderID,
+		"cl_ord_id": params.ClOrdID,
+	}
+
+	action := perspectives.ActionFromOrderType(params.OrderType)
+
+	if perspectives.IsProtectiveExit(action) {
+		orders.armTrigger(params, action, orderID)
+		return out
+	}
+
+	orders.routeFill(params, orderID)
+
 	return out
+}
+
+func (orders *Orders) routeFill(params trading.AddParams, orderID string) {
+	if params.OrderType == trading.Limit && params.PostOnly {
+		orders.armMaker(params, orderID)
+		return
+	}
+
+	orders.scheduleTaker(params, orderID)
 }
 
 /*
@@ -104,17 +146,21 @@ trigger per symbol — the most recent protective gate wins, matching the replay
 ledger so a strategy can tighten its stop on a later tick. No wallet is debited until
 the trigger fires (the exchange holds the order, it has not executed).
 */
-func (orders *Orders) armTrigger(params trading.AddParams, action perspectives.ActionType) {
+func (orders *Orders) armTrigger(
+	params trading.AddParams,
+	action perspectives.ActionType,
+	orderID string,
+) {
 	trigger := &restingTrigger{
 		action:  action,
 		qty:     params.OrderQty,
 		clOrdID: params.ClOrdID,
+		orderID: orderID,
+		params:  params,
 	}
 
 	if params.Triggers != nil {
 		if perspectives.IsTrailingExit(action) {
-			// The desk sends a negative-percent offset; Kraken (and we) trail from
-			// the market price at placement.
 			trigger.offset = -params.Triggers.Price / 100
 
 			if quote, ok := orders.quotes.Snapshot(params.Symbol); ok {
@@ -125,7 +171,11 @@ func (orders *Orders) armTrigger(params trading.AddParams, action perspectives.A
 		}
 	}
 
+	orders.mu.Lock()
 	orders.triggers[params.Symbol] = trigger
+	orders.mu.Unlock()
+
+	orders.notifyArm(params, orderID)
 }
 
 /*
@@ -134,9 +184,26 @@ advancing the trailing peak and filling when price breaches the level. The webso
 calls it each tick — the paper emulation of Kraken's server-side trigger engine.
 */
 func (orders *Orders) CheckTriggers() {
+	orders.mu.Lock()
+	symbols := make([]string, 0, len(orders.triggers))
+
+	for symbol := range orders.triggers {
+		symbols = append(symbols, symbol)
+	}
+
+	orders.mu.Unlock()
+
 	var breached []string
 
-	for symbol, trigger := range orders.triggers {
+	for _, symbol := range symbols {
+		orders.mu.Lock()
+		trigger := orders.triggers[symbol]
+		orders.mu.Unlock()
+
+		if trigger == nil {
+			continue
+		}
+
 		quote, ok := orders.quotes.Snapshot(symbol)
 
 		if !ok || quote.Last <= 0 {
@@ -146,8 +213,6 @@ func (orders *Orders) CheckTriggers() {
 		level := trigger.level
 
 		if perspectives.IsTrailingExit(trigger.action) {
-			// Peak bootstraps from the first real quote (zero never fires), then
-			// ratchets up — Kraken trails from the market price at placement.
 			if quote.Last > trigger.peak {
 				trigger.peak = quote.Last
 			}
@@ -161,136 +226,86 @@ func (orders *Orders) CheckTriggers() {
 		}
 	}
 
+	if len(breached) == 0 {
+		return
+	}
+
+	orders.mu.Lock()
+
 	for _, symbol := range breached {
 		delete(orders.triggers, symbol)
 	}
+
+	orders.mu.Unlock()
 }
 
 /*
 closeAtTrigger realizes a breached protective exit. The -limit variants rest as
 maker orders and fill at their trigger level (maker fee, no crossing slippage); the
-market variants cross the book — a stop or trail eats a downside gap-through — paying
-the taker fee and slippage. Mirrors optimizer/replay/ledger.go closeAtTrigger.
+market variants cross the book via broker.SlippageFill — a stop or trail eats a
+downside gap-through — paying the taker fee. Mirrors optimizer/replay/ledger.go.
 */
-func (orders *Orders) closeAtTrigger(symbol string, trigger *restingTrigger, level, last float64) {
-	var fill, feePct float64
+func (orders *Orders) closeAtTrigger(
+	symbol string,
+	trigger *restingTrigger,
+	level, last float64,
+) {
+	maker := perspectives.ExitRestsAsLimit(trigger.action)
 
-	if perspectives.ExitRestsAsLimit(trigger.action) {
-		fill = level
-		feePct = viper.GetFloat64("trading.paper.maker_fee_pct")
-	} else {
-		crossed := level
-
-		if trigger.action != perspectives.ActionTakeProfit && last < level {
-			crossed = last
-		}
-
-		slip := viper.GetFloat64("trading.paper.slippage_bps") / 10000
-		fill = crossed * (1 - slip)
-		feePct = viper.GetFloat64("trading.paper.taker_fee_pct")
-	}
-
-	fee := trigger.qty * fill * feePct / 100
-
-	if orders.balances != nil {
-		if err := orders.balances.ApplyFill(
-			symbol, string(trading.Sell), trigger.qty, fill, fee, trigger.clOrdID,
-		); err != nil {
-			orders.emit(symbol, string(trading.Sell), 0, 0, 0, err.Error())
-
-			return
-		}
-	}
-
-	orders.emit(symbol, string(trading.Sell), trigger.qty, fill, fee, "trigger")
-}
-
-/*
-fill prices an accepted order, settles it against the paper wallet, and emits the
-resulting execution on raw.
-*/
-func (orders *Orders) fill(params trading.AddParams) {
-	price, fee, err := orders.priceAndFee(params)
-
-	if err != nil {
-		errnie.Error(err)
-		// Emit a no-fill execution so the trader clears its in-flight marker and
-		// the dashboard can report why the order never filled.
-		orders.emit(params.Symbol, string(params.Side), 0, 0, 0, err.Error())
+	if maker {
+		fee := orders.feeAmount(symbol, trigger.qty, level, true)
+		orders.notifyFill(FillNotice{
+			Params:       trigger.params,
+			OrderID:      trigger.orderID,
+			Price:        level,
+			Fee:          fee,
+			LiquidityInd: "m",
+			Maker:        true,
+		})
 
 		return
 	}
 
-	if orders.balances != nil {
-		if err := orders.balances.ApplyFill(
-			params.Symbol, string(params.Side), params.OrderQty, price, fee, params.ClOrdID,
-		); err != nil {
-			// Insufficient funds: the exchange rejects, nothing changes.
-			// Emit a no-fill carrying the reason so the dashboard can show it.
-			orders.emit(params.Symbol, string(params.Side), 0, 0, 0, err.Error())
+	price, err := orders.takerFillPrice(
+		symbol, trading.Sell, trigger.qty, level, trigger.action,
+	)
 
-			return
-		}
+	if err != nil {
+		orders.notifyFill(FillNotice{
+			Params: trigger.params, OrderID: trigger.orderID, Reason: err.Error(),
+		})
+
+		return
 	}
 
-	// A discretionary/market exit closes the position; cancel any resting protective
-	// trigger so it cannot fire later on a phantom position.
-	if params.Side == trading.Sell {
-		delete(orders.triggers, params.Symbol)
-	}
+	fee := orders.feeAmount(symbol, trigger.qty, price, false)
 
-	orders.emit(params.Symbol, string(params.Side), params.OrderQty, price, fee, "")
+	orders.notifyFill(FillNotice{
+		Params:       trigger.params,
+		OrderID:      trigger.orderID,
+		Price:        price,
+		Fee:          fee,
+		LiquidityInd: "t",
+		Maker:        false,
+	})
 }
 
-func (orders *Orders) emit(symbol, side string, qty, price, fee float64, reason string) {
-	orders.raw.Send(&qpool.QValue[any]{Value: map[string]any{
-		"channel": "executions",
-		"symbol":  symbol,
-		"side":    side,
-		"qty":     qty,
-		"price":   price,
-		"fee":     fee,
-		"reason":  reason,
-	}})
+func (orders *Orders) notifyFill(notice FillNotice) {
+	for _, observer := range orders.observers {
+		observer.Send(&qpool.QValue[any]{Type: noticeFill, Value: notice})
+	}
 }
 
-/*
-priceAndFee derives the fill price and fee from the single live quote, faithful
-to maker/taker mechanics so no phantom edge is manufactured from a stale price
-source. A maker (limit) order joins the touch on its own side — a buy fills at
-the bid, a sell at the ask — and pays the maker fee. A taker (market) order
-crosses the spread plus slippage and pays the taker fee. A maker-in/taker-out
-round trip therefore loses the spread plus fees on a flat market and only profits
-when the price genuinely moves while the position is held.
-*/
-func (orders *Orders) priceAndFee(params trading.AddParams) (price, fee float64, err error) {
-	quote, ok := orders.quotes.Snapshot(params.Symbol)
-
-	if !ok {
-		return 0, 0, fmt.Errorf("paper fill: no quote for %s", params.Symbol)
+func (orders *Orders) notifyArm(params trading.AddParams, orderID string) {
+	for _, observer := range orders.observers {
+		observer.Send(&qpool.QValue[any]{
+			Type: noticeArm,
+			Value: ArmNotice{
+				Params:  params,
+				OrderID: orderID,
+			},
+		})
 	}
-
-	slip := viper.GetFloat64("trading.paper.slippage_bps") / 10000
-	maker := params.OrderType == trading.Limit
-
-	switch {
-	case params.Side == trading.Buy && maker:
-		price = quote.Bid
-	case params.Side == trading.Buy:
-		price = quote.Ask * (1 + slip)
-	case maker:
-		price = quote.Ask
-	default:
-		price = quote.Bid * (1 - slip)
-	}
-
-	feePct := viper.GetFloat64("trading.paper.taker_fee_pct")
-
-	if maker {
-		feePct = viper.GetFloat64("trading.paper.maker_fee_pct")
-	}
-
-	return price, params.OrderQty * price * feePct / 100, nil
 }
 
 func (orders *Orders) Observe(socket types.Socket) {

@@ -133,3 +133,54 @@ func TestEvaluateStatefulMatchesSingleTickWhenSimultaneous(t *testing.T) {
 		So(single.Type, ShouldEqual, stateful.Type)
 	})
 }
+
+func TestReasonStateReset(t *testing.T) {
+	Convey("Given a primed ReasonState", t, func() {
+		state := NewReasonState()
+		state.active["0"] = true
+		state.next["1"] = true
+		state.lastHolding = true
+		state.primed = true
+
+		Convey("Reset clears state without replacing the backing maps", func() {
+			active := state.active
+			next := state.next
+
+			state.Reset()
+
+			So(len(state.active), ShouldEqual, 0)
+			So(len(state.next), ShouldEqual, 0)
+			So(state.primed, ShouldBeFalse)
+			So(state.lastHolding, ShouldBeFalse)
+
+			state.active["2"] = true
+			state.next["3"] = true
+
+			So(active["2"], ShouldBeTrue)
+			So(next["3"], ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkEvaluateStateful(benchmark *testing.B) {
+	tree := []Thought{{
+		When: notHoldingAnd(sig(CategoryCoiledCompression, 1.0)),
+		Then: []Thought{{
+			When: sig(CategoryVerticalIgnition, 1.0),
+			Do:   Act{Type: ActionIceberg},
+		}},
+	}}
+	context := mockReason{
+		lifecycle: map[ObservationType]bool{ObservationNotHolding: true},
+		signal: map[CategoryType][]float64{
+			CategoryCoiledCompression: {1.2},
+			CategoryVerticalIgnition:  {1.5},
+		},
+	}
+	state := NewReasonState()
+
+	for benchmark.Loop() {
+		state.Reset()
+		_, _ = EvaluateStateful(tree, context, state)
+	}
+}

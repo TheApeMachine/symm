@@ -72,6 +72,50 @@ signals:
   causal:
     contagion_break: 0.8
     condition_switch: 1000
+    raw_dump: false
+
+  # Raw diagnostic dumps. When enabled, a signal writes its richest
+  # pre-classification record to <dir>/<name>_raw.jsonl, which the Signal Insight
+  # page (and `go test ./analyze`) reads to certify the signal behaves sensibly.
+  # These files grow fast — a deliberate diagnostic mode. `raw_dump` here is the
+  # default for any signal that does not set its own; a per-signal raw_dump below
+  # wins in BOTH directions (false silences a signal even when this is true). As
+  # shipped every signal sets false, so nothing dumps until you flip one on.
+  raw_dump: true            # default for signals with no per-signal override
+  raw_dump_max_mb: 64       # rotate each dump after this many megabytes
+  raw_dump_backup_count: 3  # how many rotated files to keep (<name>_raw.jsonl.1 ...)
+  # raw_dump_dir: runs      # directory for dumps; the writer and Signal Insight share it
+  # raw_dump_max_bytes: 0   # exact rotation size in bytes; overrides raw_dump_max_mb when > 0
+  # Per signal you may also set signals.<name>.raw_dump_file to redirect its dump.
+
+  # Online self-calibration: pumpdump and correlation pool every symbol into one
+  # shared BandCalibrator that retunes their classifier band edges to the live
+  # distribution each tick (no offline step). Other signals do not self-calibrate.
+  # The dumps + Signal Insight page are how you observe it working.
+
+  # Per-signal overrides (win over the global default in either direction):
+  pumpdump:
+    raw_dump: false
+  exhaust:
+    raw_dump: false
+  cvd:
+    raw_dump: false
+  depthflow:
+    raw_dump: false
+  hawkes:
+    raw_dump: false
+  fluid:
+    raw_dump: false
+  leadlag:
+    raw_dump: false
+  liquidity:
+    raw_dump: false
+  sentiment:
+    raw_dump: false
+  correlation:
+    raw_dump: false
+  toxicity:
+    raw_dump: false
 
 ui:
   addr: 127.0.0.1:8765

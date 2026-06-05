@@ -65,5 +65,46 @@ func TestWindowReason(t *testing.T) {
 				Ago: 1, Op: ComparisonCrossedUp, Value: 1.5,
 			}, ctx), ShouldBeTrue)
 		})
+
+		Convey("Reset clears categories that disappear from the next window", func() {
+			ctx.Reset([]Measurement{{Category: CategoryCoiledCompression, SNR: 1.2, Last: 106}},
+				RegimeChoppy, holding)
+
+			_, ok := ctx.Signal(CategoryVerticalIgnition, UnitSNR, 0)
+			So(ok, ShouldBeFalse)
+
+			snr, ok := ctx.Signal(CategoryCoiledCompression, UnitSNR, 0)
+			So(ok, ShouldBeTrue)
+			So(snr, ShouldEqual, 1.2)
+		})
 	})
+}
+
+func BenchmarkNewWindowReason(b *testing.B) {
+	snapshots := []Measurement{
+		{Category: CategoryCoiledCompression, SNR: 1.0, Last: 100},
+		{Category: CategoryCoiledCompression, SNR: 1.1, Last: 101},
+		{Category: CategoryVerticalIgnition, SNR: 0.5, Last: 102},
+		{Category: CategoryVerticalIgnition, SNR: 2.0, Last: 105},
+	}
+	holding := PositionState{Holding: true, EntryPrice: 100, Peak: 105, Last: 105}
+
+	for b.Loop() {
+		_ = NewWindowReason(snapshots, RegimeTrending, holding)
+	}
+}
+
+func BenchmarkWindowReasonReset(b *testing.B) {
+	snapshots := []Measurement{
+		{Category: CategoryCoiledCompression, SNR: 1.0, Last: 100},
+		{Category: CategoryCoiledCompression, SNR: 1.1, Last: 101},
+		{Category: CategoryVerticalIgnition, SNR: 0.5, Last: 102},
+		{Category: CategoryVerticalIgnition, SNR: 2.0, Last: 105},
+	}
+	holding := PositionState{Holding: true, EntryPrice: 100, Peak: 105, Last: 105}
+	reason := &WindowReason{}
+
+	for b.Loop() {
+		_ = reason.Reset(snapshots, RegimeTrending, holding)
+	}
 }

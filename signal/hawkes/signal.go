@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -36,6 +37,7 @@ type Signal struct {
 	symbols      sync.Map
 	tradeScratch []tradeTouch
 	floor        *adaptive.SNRField
+	rawDump      *rawdump.Writer
 }
 
 type tradeTouch struct {
@@ -86,6 +88,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
+		rawDump:     rawdump.Open("hawkes"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -245,6 +248,19 @@ func (signal *Signal) publishMeasurement(
 		return err
 	}
 
+	if err := signal.rawDump.Write(rawRecord{
+		Symbol:     measurement.Symbol,
+		Category:   measurement.Category,
+		Strength:   measurement.Strength,
+		Confidence: measurement.Confidence,
+		SNR:        measurement.SNR,
+		Standout:   standout,
+		Last:       measurement.Last,
+		SpreadBPS:  measurement.SpreadBPS,
+	}); err != nil {
+		return err
+	}
+
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
@@ -284,5 +300,5 @@ func touchLastTime(state *symbolState) time.Time {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

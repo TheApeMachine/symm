@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -45,6 +46,7 @@ type Signal struct {
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
 	tracked     sync.Map // symbol -> *perspectives.Category
 	floor       *adaptive.SNRField
+	rawDump     *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -57,6 +59,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		floor:       adaptive.NewSNRField(),
+		rawDump:     rawdump.Open("liquidity"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -138,6 +141,19 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 			if err := perspectives.AssignCategorySNR(
 				&measurement, signal.floor, standout,
 			); err != nil {
+				return nil, err
+			}
+
+			if err := signal.rawDump.Write(rawRecord{
+				Symbol:     measurement.Symbol,
+				Category:   measurement.Category,
+				Strength:   measurement.Strength,
+				Confidence: measurement.Confidence,
+				SNR:        measurement.SNR,
+				Standout:   standout,
+				Last:       measurement.Last,
+				SpreadBPS:  measurement.SpreadBPS,
+			}); err != nil {
 				return nil, err
 			}
 
@@ -287,5 +303,5 @@ func (signal *Signal) crossSection(symbol string) (own float64, peers []float64)
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

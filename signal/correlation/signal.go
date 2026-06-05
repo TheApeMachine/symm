@@ -10,7 +10,9 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -28,6 +30,11 @@ const (
 	energyFloor     = 0.0625
 	rawSubscriberID = "signal/correlation:raw"
 )
+
+// correlationBandEdges seed the herd bands; self-calibration adapts them to the
+// live pooled distribution from there: divergent_stress | stochastic_noise |
+// decoupled_alpha | systemic_herd.
+var correlationBandEdges = []float64{-0.30, 0.40, 2.00}
 
 /*
 Signal measuring cross-asset "herd behavior" via the dominant eigenmode of the
@@ -63,6 +70,9 @@ type Signal struct {
 	categories    map[string]perspectives.CategoryType
 	activeScratch []live
 	floor         *adaptive.SNRField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	rawDump       *rawdump.Writer
 }
 
 /*
@@ -72,6 +82,20 @@ projection — otherwise bit agreement would be meaningless.
 */
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	// One classifier and one calibrator shared by every coin, so the herd bands
+	// reflect the whole universe's pooled fused-score distribution with a single
+	// sample count, instead of fragmenting into a per-coin state.
+	classifier := adaptive.NewClassifier(
+		correlationBandEdges, // seed: divergent | noise | decoupled | herd
+		[]float64{0, 1, 2, 3},
+		[]string{
+			"divergent_stress",
+			"stochastic_noise",
+			"decoupled_alpha",
+			"systemic_herd",
+		},
+	)
 
 	signal := &Signal{
 		ctx:          ctx,
@@ -86,7 +110,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  perspectives.CategoryDecoupledAlpha,
 			"systemic_herd":    perspectives.CategorySystemicHerd,
 		},
-		floor: adaptive.NewSNRField(),
+		floor:      adaptive.NewSNRField(),
+		classifier: classifier,
+		// stochastic_noise the quiet plurality, systemic_herd the rare extreme;
+		// window 8192 pooled obs, refit every 256 after a 512 warm-up, blend 0.3.
+		calibrator: numeric.NewBandCalibrator([]float64{0.15, 0.45, 0.25, 0.15}, 8192, 256, 512, 0.3),
+		rawDump:    rawdump.Open("correlation"),
 	}
 
 	// Fixed seed: one shared projection for the whole universe.
@@ -164,5 +193,5 @@ func (signal *Signal) Tick() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

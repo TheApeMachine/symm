@@ -48,13 +48,13 @@ open position at the source, so the hub does no filtering — it only buffers
 per client; the frontend never sends frames.
 */
 type Hub struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	clients     *sync.Map
-	server      *http.Server
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	clients       *sync.Map
+	server        *http.Server
 	nextConnID    uint64
 	lastWallet    atomic.Pointer[map[string]any]
 	lastPositions atomic.Pointer[map[string]any]
@@ -86,6 +86,8 @@ func NewHub(
 	addr := viper.GetViper().GetString("ui.addr")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)
+	mux.HandleFunc("/api/dumps", hub.handleListDumps)
+	mux.HandleFunc("/api/analyze", hub.handleAnalyze)
 
 	listener := errnie.Does(func() (net.Listener, error) {
 		return net.Listen("tcp", addr)

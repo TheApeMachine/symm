@@ -144,6 +144,35 @@ func (classifier *Classifier) Standout(observation float64) float64 {
 	return margin
 }
 
+/*
+Upper returns a copy of the band edges (ascending). SetUpper replaces them in
+place, used by online self-calibration to retune the bands to the live
+distribution; a length mismatch is ignored so the classifier never breaks.
+*/
+func (classifier *Classifier) Labels() []string {
+	if classifier == nil {
+		return nil
+	}
+
+	return append([]string(nil), classifier.labels...)
+}
+
+func (classifier *Classifier) Upper() []float64 {
+	if classifier == nil {
+		return nil
+	}
+
+	return append([]float64(nil), classifier.upper...)
+}
+
+func (classifier *Classifier) SetUpper(upper []float64) {
+	if classifier == nil || len(upper) != len(classifier.codes)-1 {
+		return
+	}
+
+	classifier.upper = append([]float64(nil), upper...)
+}
+
 func (classifier *Classifier) classIndex(observation float64) int {
 	for index, bound := range classifier.upper {
 		if observation <= bound {

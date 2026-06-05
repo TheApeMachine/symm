@@ -1,6 +1,9 @@
 package perspectives
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 /*
 PositionState is the open trade's view, the way the tree reasons about its own
@@ -25,8 +28,9 @@ bridge: build one of these each tick and hand it to Evaluate.
 Indexing of `ago`:
   - signals  -> the Nth most recent reading OF THAT CATEGORY (occurrences back)
   - price    -> the Nth most recent DISTINCT price (price-changes back, so a
-                quiet market doesn't make "10 ago" mean "10 duplicate quotes ago")
+    quiet market doesn't make "10 ago" mean "10 duplicate quotes ago")
   - spread   -> the Nth most recent reading
+
 These are first-pass conventions; the optimizer tunes the thresholds around them.
 */
 type WindowReason struct {
@@ -37,6 +41,75 @@ type WindowReason struct {
 	signal       map[CategoryType][]Measurement
 	price        []float64
 	spread       []float64
+}
+
+type reasoningConfig struct {
+	continuedPct float64
+	endedPct     float64
+}
+
+var (
+	cachedReasoningConfig reasoningConfig
+	reasoningConfigOnce   sync.Once
+)
+
+func loadReasoningConfig() reasoningConfig {
+	reasoningConfigOnce.Do(func() {
+		cachedReasoningConfig = reasoningConfig{
+			continuedPct: viperFloatDefault("reasoning.continued_pct", 1.0) / 100,
+			endedPct:     viperFloatDefault("reasoning.ended_pct", 1.0) / 100,
+		}
+	})
+
+	return cachedReasoningConfig
+}
+
+/*
+Reset rebuilds reason in-place from the latest chronological snapshot. The zero
+value is valid; replay and live story reuse one instance per event loop to keep
+predicate evaluation off the allocator hot path.
+*/
+func (reason *WindowReason) Reset(
+	snapshots []Measurement, regime Regime, position PositionState,
+) *WindowReason {
+	config := loadReasoningConfig()
+
+	reason.regime = regime
+	reason.position = position
+	reason.continuedPct = config.continuedPct
+	reason.endedPct = config.endedPct
+
+	if reason.signal == nil {
+		reason.signal = make(map[CategoryType][]Measurement)
+	}
+
+	for category, series := range reason.signal {
+		reason.signal[category] = series[:0]
+	}
+
+	reason.price = reason.price[:0]
+	reason.spread = reason.spread[:0]
+
+	var lastPrice float64
+
+	for index := len(snapshots) - 1; index >= 0; index-- {
+		measurement := snapshots[index]
+
+		if measurement.Category != CategoryTypeNone {
+			reason.signal[measurement.Category] = append(
+				reason.signal[measurement.Category], measurement,
+			)
+		}
+
+		if measurement.Last > 0 && measurement.Last != lastPrice {
+			reason.price = append(reason.price, measurement.Last)
+			lastPrice = measurement.Last
+		}
+
+		reason.spread = append(reason.spread, measurement.SpreadBPS)
+	}
+
+	return reason
 }
 
 /*
@@ -55,32 +128,7 @@ the tape (RingSnapshot) exactly so this holds.
 func NewWindowReason(
 	snapshots []Measurement, regime Regime, position PositionState,
 ) *WindowReason {
-	reason := &WindowReason{
-		regime:       regime,
-		position:     position,
-		continuedPct: viperFloatDefault("reasoning.continued_pct", 1.0) / 100,
-		endedPct:     viperFloatDefault("reasoning.ended_pct", 1.0) / 100,
-		signal:       make(map[CategoryType][]Measurement),
-	}
-
-	var lastPrice float64
-
-	for index := len(snapshots) - 1; index >= 0; index-- {
-		measurement := snapshots[index]
-
-		if measurement.Category != CategoryTypeNone {
-			reason.signal[measurement.Category] = append(reason.signal[measurement.Category], measurement)
-		}
-
-		if measurement.Last > 0 && measurement.Last != lastPrice {
-			reason.price = append(reason.price, measurement.Last)
-			lastPrice = measurement.Last
-		}
-
-		reason.spread = append(reason.spread, measurement.SpreadBPS)
-	}
-
-	return reason
+	return (&WindowReason{}).Reset(snapshots, regime, position)
 }
 
 func (reason *WindowReason) Regime() Regime {

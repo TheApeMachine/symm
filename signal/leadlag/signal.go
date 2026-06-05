@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -59,6 +60,7 @@ type Signal struct {
 	lastPublishMu   sync.Mutex
 	lastPublish     time.Time
 	floor           *adaptive.SNRField
+	rawDump         *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -72,6 +74,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers:    make(map[string]*qpool.Subscriber),
 		anchorBaseline: *newMoveBaseline(),
 		floor:          adaptive.NewSNRField(),
+		rawDump:        rawdump.Open("leadlag"),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -299,6 +302,19 @@ func (signal *Signal) sendMeasurement(
 		return err
 	}
 
+	if err := signal.rawDump.Write(rawRecord{
+		Symbol:     measurement.Symbol,
+		Category:   measurement.Category,
+		Strength:   measurement.Strength,
+		Confidence: measurement.Confidence,
+		SNR:        measurement.SNR,
+		Standout:   standout,
+		Last:       measurement.Last,
+		SpreadBPS:  measurement.SpreadBPS,
+	}); err != nil {
+		return err
+	}
+
 	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: *measurement})
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
@@ -396,5 +412,5 @@ func (signal *Signal) measureFollower(
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-	return nil
+	return signal.rawDump.Close()
 }

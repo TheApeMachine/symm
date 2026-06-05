@@ -65,10 +65,31 @@ func (sampleRing PriceSampleRing) Ordered() []PriceSample {
 	}
 
 	ordered := make([]PriceSample, sampleRing.count)
+	sampleRing.AppendOrdered(ordered[:0])
+
+	return ordered
+}
+
+/*
+AppendOrdered appends the window contents from oldest to newest into destination.
+Callers on hot paths can pass reusable storage to avoid per-read heap churn.
+*/
+func (sampleRing PriceSampleRing) AppendOrdered(destination []PriceSample) []PriceSample {
+	if sampleRing.count == 0 {
+		return destination[:0]
+	}
+
+	if cap(destination) < sampleRing.count {
+		destination = make([]PriceSample, 0, sampleRing.count)
+	}
+
+	ordered := destination[:0]
 	start := sampleRing.startIndex()
 
 	for index := 0; index < sampleRing.count; index++ {
-		ordered[index] = sampleRing.samples[(start+index)%len(sampleRing.samples)]
+		ordered = append(
+			ordered, sampleRing.samples[(start+index)%len(sampleRing.samples)],
+		)
 	}
 
 	return ordered
@@ -233,27 +254,6 @@ func validHYInterval(previous, current PriceSample) bool {
 	}
 
 	return current.At.Sub(previous.At) <= maxHayashiYoshidaInterval
-}
-
-/*
-ShiftPriceSamples moves timestamps by offset without changing prices. Lead-lag
-scoring uses this to test whether an anchor path explains a later follower path.
-*/
-func ShiftPriceSamples(samples []PriceSample, offset time.Duration) []PriceSample {
-	if len(samples) == 0 || offset == 0 {
-		return append([]PriceSample(nil), samples...)
-	}
-
-	shifted := make([]PriceSample, len(samples))
-
-	for index := range samples {
-		shifted[index] = PriceSample{
-			At:    samples[index].At.Add(offset),
-			Price: samples[index].Price,
-		}
-	}
-
-	return shifted
 }
 
 /*

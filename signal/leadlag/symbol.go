@@ -48,10 +48,16 @@ func (state *symbolState) observeTicker(last float64, at time.Time) {
 }
 
 func (state *symbolState) priceSamples() []numeric.PriceSample {
+	return state.priceSamplesInto(nil)
+}
+
+func (state *symbolState) priceSamplesInto(
+	destination []numeric.PriceSample,
+) []numeric.PriceSample {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	return state.prices.Ordered()
+	return state.prices.AppendOrdered(destination)
 }
 
 func (state *symbolState) lastPrice() float64 {
@@ -68,8 +74,12 @@ lagged correlation must dominate the contemporaneous baseline by an adaptive
 margin, otherwise the co-movement is beta, not lead. Returns (lagBars, corr, ok).
 */
 func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
-	anchorSeries := anchor.priceSamples()
-	stateSeries := state.priceSamples()
+	var anchorBuffer [priceHistoryCap]numeric.PriceSample
+	var stateBuffer [priceHistoryCap]numeric.PriceSample
+	var shiftBuffer [priceHistoryCap]numeric.PriceSample
+
+	anchorSeries := anchor.priceSamplesInto(anchorBuffer[:0])
+	stateSeries := state.priceSamplesInto(stateBuffer[:0])
 
 	if len(anchorSeries) < minLagSamples || len(stateSeries) < minLagSamples {
 		return 0, 0, false
@@ -86,7 +96,9 @@ func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
 	bestLag := 0
 
 	for lag := 1; lag <= maxLagBars; lag++ {
-		shifted := numeric.ShiftPriceSamples(anchorSeries, time.Duration(lag)*interval)
+		shifted := numeric.ShiftPriceSamplesInto(
+			shiftBuffer[:0], anchorSeries, time.Duration(lag)*interval,
+		)
 		corr, ok := numeric.HayashiYoshidaCorrelation(shifted, stateSeries)
 
 		if ok && corr > bestCorr {
@@ -123,8 +135,11 @@ contemporaneous returns the unlagged Hayashi-Yoshida correlation against the
 anchor when both series have enough overlap.
 */
 func (state *symbolState) contemporaneous(anchor *symbolState) (float64, bool) {
-	anchorSeries := anchor.priceSamples()
-	stateSeries := state.priceSamples()
+	var anchorBuffer [priceHistoryCap]numeric.PriceSample
+	var stateBuffer [priceHistoryCap]numeric.PriceSample
+
+	anchorSeries := anchor.priceSamplesInto(anchorBuffer[:0])
+	stateSeries := state.priceSamplesInto(stateBuffer[:0])
 
 	if len(anchorSeries) < minLagSamples || len(stateSeries) < minLagSamples {
 		return 0, false

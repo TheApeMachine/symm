@@ -39,11 +39,20 @@ type Story struct {
 	reasonStates   map[string]*perspectives.ReasonState
 	positions      map[string]*perspectives.PositionState
 	ringWindow     []perspectives.Measurement
+	windowReason   perspectives.WindowReason
 	lastGauge      map[string]time.Time
 	recordFile     *os.File
 	recorder       *bufio.Writer
 	audit          *audit.Writer
 	pulseSeq       atomic.Int64
+
+	decisionTree    []perspectives.TreeNode
+	nodeReached     map[string]int
+	nodeHeld        map[string]int
+	decisionEvals   int
+	recentDecisions []map[string]any
+	reasonTrace     perspectives.ReasonTrace
+	condHeld        map[string][]int
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
@@ -60,6 +69,9 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		positions:    make(map[string]*perspectives.PositionState),
 		ringWindow:   make([]perspectives.Measurement, 0, StoryRingCapacity),
 		lastGauge:    make(map[string]time.Time),
+		nodeReached:  make(map[string]int),
+		nodeHeld:     make(map[string]int),
+		condHeld:     make(map[string][]int),
 	}
 
 	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
@@ -189,6 +201,7 @@ func (story *Story) ingestMeasurement(
 
 		story.thoughts = thoughts
 		story.playbookLoaded = true
+		story.decisionTree = perspectives.BuildTree(thoughts)
 	}
 
 	snapshots := RingSnapshot(story.ringWindow, measurement.Symbol)
@@ -199,13 +212,17 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
-	context := perspectives.NewWindowReason(
+	context := story.windowReason.Reset(
 		snapshots, regime.Regime, story.positionState(measurement),
 	)
 
-	act, found := perspectives.EvaluateStateful(
-		story.thoughts, context, story.reasonState(measurement.Symbol),
+	story.reasonTrace.Nodes = story.reasonTrace.Nodes[:0]
+
+	act, found := perspectives.EvaluateStatefulTraced(
+		story.thoughts, context, story.reasonState(measurement.Symbol), &story.reasonTrace,
 	)
+
+	story.foldDecisionTrace(measurement.Symbol, act, found)
 
 	if !found || act.Type == perspectives.ActionNone {
 		return nil
@@ -220,6 +237,112 @@ func (story *Story) ingestMeasurement(
 	story.raw.Send(&qpool.QValue[any]{Value: action})
 
 	return nil
+}
+
+const decisionEmitEvery = 200
+
+/*
+foldDecisionTrace accumulates the per-node reachable/held counts from one
+evaluation and, on a cadence, publishes the live decision tree to the dashboard.
+*/
+func (story *Story) foldDecisionTrace(symbol string, act perspectives.Act, found bool) {
+	for index := range story.reasonTrace.Nodes {
+		node := story.reasonTrace.Nodes[index]
+
+		if node.Reachable {
+			story.nodeReached[node.Key]++
+
+			if len(node.Leaves) > 0 {
+				held := story.condHeld[node.Key]
+
+				if len(held) != len(node.Leaves) {
+					held = make([]int, len(node.Leaves))
+					story.condHeld[node.Key] = held
+				}
+
+				for leafIndex, leafHolds := range node.Leaves {
+					if leafHolds {
+						held[leafIndex]++
+					}
+				}
+			}
+		}
+
+		if node.Fires {
+			story.nodeHeld[node.Key]++
+		}
+	}
+
+	story.decisionEvals++
+
+	if found && act.Type != perspectives.ActionNone {
+		story.recentDecisions = append(story.recentDecisions, map[string]any{
+			"symbol": symbol,
+			"action": act.Type.String(),
+			"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+		})
+
+		if len(story.recentDecisions) > 20 {
+			story.recentDecisions = story.recentDecisions[len(story.recentDecisions)-20:]
+		}
+	}
+
+	if story.decisionEvals%decisionEmitEvery == 0 {
+		story.publishDecisionTree()
+	}
+}
+
+/*
+publishDecisionTree ships the playbook structure with each node's live
+reached/held counts to the dashboard, so the decision tree shows where
+evaluations travel and where they die.
+*/
+func (story *Story) publishDecisionTree() {
+	if story.ui == nil || len(story.decisionTree) == 0 {
+		return
+	}
+
+	nodes := make([]map[string]any, 0, len(story.decisionTree))
+
+	for index := range story.decisionTree {
+		node := story.decisionTree[index]
+
+		conditions := make([]map[string]any, 0, len(node.Conditions))
+		held := story.condHeld[node.Key]
+
+		for conditionIndex := range node.Conditions {
+			leafHeld := 0
+
+			if conditionIndex < len(held) {
+				leafHeld = held[conditionIndex]
+			}
+
+			conditions = append(conditions, map[string]any{
+				"label":   node.Conditions[conditionIndex].Label,
+				"negated": node.Conditions[conditionIndex].Negated,
+				"held":    leafHeld,
+			})
+		}
+
+		nodes = append(nodes, map[string]any{
+			"key":        node.Key,
+			"depth":      node.Depth,
+			"parent":     node.Parent,
+			"label":      node.Label,
+			"action":     node.Action,
+			"combinator": node.Combinator,
+			"reached":    story.nodeReached[node.Key],
+			"held":       story.nodeHeld[node.Key],
+			"conditions": conditions,
+		})
+	}
+
+	story.ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"chart":       "decision_tree",
+		"evaluations": story.decisionEvals,
+		"nodes":       nodes,
+		"recent":      story.recentDecisions,
+	}})
 }
 
 func (story *Story) writePlaybookAudit(

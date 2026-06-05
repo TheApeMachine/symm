@@ -46,13 +46,33 @@ ReasonState per symbol across ticks; a fresh one yields the single-tick semantic
 */
 type ReasonState struct {
 	active      map[string]bool
+	next        map[string]bool
 	lastHolding bool
 	primed      bool
 }
 
 // NewReasonState returns an empty, ready-to-thread state.
 func NewReasonState() *ReasonState {
-	return &ReasonState{active: make(map[string]bool)}
+	return &ReasonState{
+		active: make(map[string]bool),
+		next:   make(map[string]bool),
+	}
+}
+
+/*
+Reset clears the cross-tick frontier while keeping the backing maps. Replay reuses
+one ReasonState per symbol across candidate scores, so reset must not allocate.
+*/
+func (state *ReasonState) Reset() {
+	if state == nil {
+		return
+	}
+
+	clear(state.active)
+	clear(state.next)
+
+	state.lastHolding = false
+	state.primed = false
 }
 
 /*
@@ -73,7 +93,42 @@ resets, so an ordered chain advances over the ticks instead of needing everythin
 true on one tick. The action returned is still the deepest node whose own When holds
 THIS tick, so with a fresh state (no prior latch) it is identical to Evaluate.
 */
+/*
+NodeTrace is one node's outcome during a single evaluation: whether it was
+reachable this tick, whether its own When held (Fires), whether it was latched from
+an earlier tick, and whether its action was the one chosen (Fired).
+*/
+type NodeTrace struct {
+	Key       string `json:"key"`
+	Depth     int    `json:"depth"`
+	Reachable bool   `json:"reachable"`
+	Fires     bool   `json:"fires"`
+	Latched   bool   `json:"latched"`
+	Fired     bool   `json:"fired"`
+	Leaves    []bool `json:"-"` // per-leaf holds for multi-condition nodes (decision tree breakdown)
+}
+
+// ReasonTrace collects the per-node outcomes of one evaluation for the live
+// decision-tree view. The zero value is ready to use.
+type ReasonTrace struct {
+	Nodes []NodeTrace
+}
+
 func EvaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState) (Act, bool) {
+	return evaluateStateful(thoughts, ctx, state, nil)
+}
+
+/*
+EvaluateStatefulTraced is EvaluateStateful that also records, into trace, every
+node's outcome so the live decision tree can show where evaluations travel and
+where they die. The returned action is identical to EvaluateStateful — tracing has
+no effect on the decision.
+*/
+func EvaluateStatefulTraced(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, bool) {
+	return evaluateStateful(thoughts, ctx, state, trace)
+}
+
+func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, bool) {
 	if state == nil {
 		state = NewReasonState()
 	}
@@ -89,9 +144,16 @@ func EvaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState)
 	state.lastHolding = holding
 	state.primed = true
 
-	next := make(map[string]bool, len(state.active))
+	if state.next == nil {
+		state.next = make(map[string]bool, len(state.active))
+	}
+
+	clear(state.next)
+
+	next := state.next
 	best := Act{}
 	bestDepth := -1
+	bestKey := ""
 	found := false
 
 	var visit func(nodes []Thought, depth int, prefix string, parentOpen bool)
@@ -103,27 +165,72 @@ func EvaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState)
 
 			// A node is reachable when its parent is open this tick, or when it
 			// already latched on an earlier tick of this episode.
-			if !parentOpen && !latched {
-				continue
+			reachable := parentOpen || latched
+
+			firesNow := false
+
+			if reachable {
+				firesNow = holds(node.When, ctx)
+
+				if firesNow || latched {
+					next[key] = true
+				}
+
+				if firesNow && node.Do.Type != ActionNone && depth > bestDepth {
+					best, bestDepth, bestKey, found = node.Do, depth, key, true
+				}
 			}
 
-			firesNow := holds(node.When, ctx)
+			if trace != nil {
+				nodeTrace := NodeTrace{
+					Key:       key,
+					Depth:     depth,
+					Reachable: reachable,
+					Fires:     firesNow,
+					Latched:   latched,
+				}
 
-			if firesNow || latched {
-				next[key] = true
+				// For a reached compound node, record each leaf condition's own
+				// truth so the tree can show which sub-condition is the one failing.
+				if reachable {
+					if leaves := FlattenLeaves(node.When); len(leaves) > 0 {
+						holdsPerLeaf := make([]bool, len(leaves))
+
+						for leafIndex := range leaves {
+							holdsPerLeaf[leafIndex] = holds(leaves[leafIndex].Predicate, ctx)
+						}
+
+						nodeTrace.Leaves = holdsPerLeaf
+					}
+				}
+
+				trace.Nodes = append(trace.Nodes, nodeTrace)
 			}
 
-			if firesNow && node.Do.Type != ActionNone && depth > bestDepth {
-				best, bestDepth, found = node.Do, depth, true
+			if reachable {
+				visit(node.Then, depth+1, key+".", firesNow || latched)
+			} else if trace != nil {
+				// In trace mode, descend into the unreachable subtree too so the
+				// tree view shows the whole playbook with these branches marked
+				// never-reached. Untraced callers keep the original early exit.
+				visit(node.Then, depth+1, key+".", false)
 			}
-
-			visit(node.Then, depth+1, key+".", firesNow || latched)
 		}
 	}
 
 	visit(thoughts, 0, "", true)
 
-	state.active = next
+	state.active, state.next = state.next, state.active
+
+	if trace != nil && found {
+		for index := range trace.Nodes {
+			if trace.Nodes[index].Key == bestKey {
+				trace.Nodes[index].Fired = true
+
+				break
+			}
+		}
+	}
 
 	return best, found
 }
