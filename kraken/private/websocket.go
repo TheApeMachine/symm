@@ -224,7 +224,7 @@ func (websocketClient *WebSocket) publishRaw(frame authFrame) {
 		websocketClient.raw,
 		frame.Channel,
 		frame.Type,
-		append(json.RawMessage(nil), frame.Data...),
+		frame.Data,
 	)
 }
 

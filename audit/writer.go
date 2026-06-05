@@ -37,8 +37,24 @@ type writerFailure struct {
 	err error
 }
 
+// shared keeps one audit Writer per file path so every component (story, trader)
+// funnels frames through a single serialised queue. Two independent writers over
+// the same O_APPEND file flush unaligned buffers and interleave mid-line — which is
+// what tore the audit log; a per-path singleton with refcounting prevents that.
+var (
+	sharedMu sync.Mutex
+	shared   = map[string]*sharedWriter{}
+)
+
+type sharedWriter struct {
+	writer *Writer
+	refs   int
+}
+
 /*
-OpenWriter installs the process-wide audit writer when a path is configured.
+OpenWriter returns the process-wide audit writer for the configured path, creating
+it on first use and sharing it across callers so all audit frames serialise through
+one queue. Each successful OpenWriter must be balanced by one Close.
 */
 func OpenWriter() (*Writer, error) {
 	path := auditPath()
@@ -47,6 +63,27 @@ func OpenWriter() (*Writer, error) {
 		return nil, nil
 	}
 
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+
+	if existing := shared[path]; existing != nil {
+		existing.refs++
+
+		return existing.writer, nil
+	}
+
+	writer, err := openWriter(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	shared[path] = &sharedWriter{writer: writer, refs: 1}
+
+	return writer, nil
+}
+
+func openWriter(path string) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("audit: mkdir %q: %w", filepath.Dir(path), err)
 	}
@@ -128,6 +165,24 @@ func (writer *Writer) Close() error {
 	if writer == nil {
 		return nil
 	}
+
+	// Only the last holder of a shared writer actually shuts the queue down, so one
+	// component closing on shutdown does not silence audit for the others.
+	sharedMu.Lock()
+
+	if entry := shared[writer.path]; entry != nil && entry.writer == writer {
+		entry.refs--
+
+		if entry.refs > 0 {
+			sharedMu.Unlock()
+
+			return writer.Err()
+		}
+
+		delete(shared, writer.path)
+	}
+
+	sharedMu.Unlock()
 
 	writer.closeOnce.Do(func() {
 		writer.queue.Close()

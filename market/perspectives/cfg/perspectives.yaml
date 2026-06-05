@@ -128,11 +128,12 @@ branches:
   # ═══════════════════════════════════════════════════════════════════════════
 
   # ── QUICK — momentum pop (the workhorse; fires often on purpose) ──
-  # "Price ticked up ~0.25% over the last 10 measurements and the book isn't
-  #  screaming toxic — take a quick long with a market order so it fills now."
+  # "Price ticked up ~0.5% over the last 10 measurements in a non-choppy regime
+  #  and the book isn't screaming toxic — take a quick long with a market order."
   - when:
       all:
-        - { subject: price, unit: percentage, ago: 10, op: rose_by, value: 0.25 }
+        - { subject: price, unit: percentage, ago: 10, op: rose_by, value: 0.5 }
+        - not: { subject: regime, op: equals, regime: choppy }
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.7 }
     then:
       - when: { subject: position, op: equals, lifecycle: not_holding }
@@ -157,3 +158,40 @@ branches:
     then:
       - when: { subject: position, op: equals, lifecycle: not_holding }
         do: limit
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # UNIVERSAL POSITION MANAGER — the exit path every entry above relies on.
+  #
+  # It is TOP-LEVEL and gated on `holding`, so it is reachable on its own the moment
+  # ANY position is open — independent of which strategy entered — and it fires
+  # afresh on every held tick, surviving the clean frontier the evaluator starts
+  # each held stretch from. Exits nested under an entry (the SHORT/MEDIUM/LONG
+  # branches above) are orphaned the instant you hold: the entry's `not_holding` /
+  # edge gate is no longer true and the latch reset on the holding flip clears it,
+  # so the child exits can never be reached. The warm-up strategies have no exits at
+  # all. Without this branch, every position that opens can never close — which is
+  # exactly the "runway-only exit" failure (a full wallet deployed and stuck).
+  #
+  # settle_position is a market exit, so a position can always close even if a
+  # rested stop/trail trigger never fills; the stops are the faster path when they do.
+  - when: { subject: position, op: equals, lifecycle: holding }
+    then:
+      # Arm a protective floor the instant the position starts.
+      - when: { subject: position, op: equals, lifecycle: has_started }
+        do: { type: stop_loss, offset: 0.010 }       # 1.0% protective floor, once
+      # Once the move is running, ratchet a trailing stop behind it.
+      - when: { subject: position, op: equals, lifecycle: has_continued }
+        do: { type: trailing_stop, offset: 0.010 }   # 1.0% trail
+      # Get out on a confirmed pullback from the peak, or a reversal / slump signal.
+      - when:
+          any:
+            - { subject: position, op: equals, lifecycle: has_ended }
+            - { subject: signal, category: active_reversal, unit: snr, ago: 3, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
+        do: settle_position
+      # Hard time-stop: never hold a stalled position indefinitely.
+      - when:
+          all:
+            - { subject: elapsed, unit: time_minutes, op: at_least, value: 30.0 }
+            - not: { subject: position, op: equals, lifecycle: has_continued }
+        do: settle_position

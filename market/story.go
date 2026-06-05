@@ -283,7 +283,9 @@ func (story *Story) foldDecisionTrace(symbol string, act perspectives.Act, found
 		})
 
 		if len(story.recentDecisions) > 20 {
-			story.recentDecisions = story.recentDecisions[len(story.recentDecisions)-20:]
+			trimmed := make([]map[string]any, 20)
+			copy(trimmed, story.recentDecisions[len(story.recentDecisions)-20:])
+			story.recentDecisions = trimmed
 		}
 	}
 

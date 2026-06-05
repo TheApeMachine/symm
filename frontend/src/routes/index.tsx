@@ -46,8 +46,11 @@ import {
 	CardPanel,
 } from "#/components/ui/card";
 import { Flex } from "#/components/ui/flex";
+import {
+	applyGlobalFrame,
+	statusSocketHandlers,
+} from "#/providers/global-frames";
 import { wsDispatchRef } from "#/providers/ws-dispatch";
-import type { ActionVerdict } from "#/providers/ws-status";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -107,10 +110,7 @@ const WsFeed = ({
 	predictionRef: RefObject<PredictionBridge>;
 }) => {
 	useWebSocket(socketUrl, {
-		shouldReconnect: () => true,
-		onOpen: () => wsDispatchRef.current?.setOnline(true),
-		onClose: () => wsDispatchRef.current?.setOnline(false),
-		onError: () => wsDispatchRef.current?.setOnline(false),
+		...statusSocketHandlers,
 		onMessage: (event) => {
 			const dispatch = wsDispatchRef.current;
 
@@ -121,34 +121,7 @@ const WsFeed = ({
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
-				if (raw.event === "wallet") {
-					dispatch.setWallet(
-						(raw.balance as number) ?? 0,
-						(raw.open as number) ?? 0,
-					);
-					return;
-				}
-
-				if (raw.event === "decision") {
-					dispatch.pushAction({
-						type: raw.type as string,
-						symbol: raw.symbol as string,
-						ts: Date.now(),
-						verdict: (raw.verdict as ActionVerdict) ?? "rejected",
-						reason: (raw.reason as string) ?? "",
-					});
-					return;
-				}
-
-				if (raw.event === "positions") {
-					const rows = (raw.positions as Record<string, unknown>[]) ?? [];
-					dispatch.setPositions(
-						rows.map((row) => ({
-							symbol: row.symbol as string,
-							qty: row.qty as number,
-							avgEntry: row.avg_entry as number,
-						})),
-					);
+				if (applyGlobalFrame(raw)) {
 					return;
 				}
 

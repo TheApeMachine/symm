@@ -15,8 +15,8 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
-		Convey("It parses the three horizons", func() {
-			So(len(thoughts), ShouldEqual, 3)
+		Convey("It parses the playbook thoughts", func() {
+			So(len(thoughts), ShouldEqual, 7)
 		})
 
 		Convey("The short horizon is a regime + signal conjunction", func() {
@@ -97,7 +97,7 @@ func TestMarshalThoughtsRoundTrips(t *testing.T) {
 
 			text := string(encoded)
 			So(text, ShouldContainSubstring, "do: iceberg") // bare form (Offset 0)
-			So(text, ShouldContainSubstring, "offset:")      // object form (leashed stops)
+			So(text, ShouldContainSubstring, "offset:")     // object form (leashed stops)
 		})
 	})
 }

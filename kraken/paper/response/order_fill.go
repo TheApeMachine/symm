@@ -13,11 +13,13 @@ func (orders *Orders) pairMeta(symbol string) pairMeta {
 		return orders.catalog.Meta(symbol)
 	}
 
+	quote, _ := quoteAsset(symbol)
+
 	return pairMeta{
 		takerPct: defaultTakerFeePct,
-		makerPct: DefaultMakerFeePct,
+		makerPct: defaultMakerFeePct,
 		tickSize: defaultTickSize,
-		quote:    quoteAsset(symbol),
+		quote:    quote,
 	}
 }
 

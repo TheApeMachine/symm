@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
@@ -29,12 +30,45 @@ const (
 	// market-energy baseline — dead-flat and illiquid coins cannot vote as herd.
 	energyFloor     = 0.0625
 	rawSubscriberID = "signal/correlation:raw"
+
+	defaultCalibratorWindow        = 8192
+	defaultCalibratorRefitInterval = 256
+	defaultCalibratorWarmup        = 512
+	defaultCalibratorBlend         = 0.3
 )
 
 // correlationBandEdges seed the herd bands; self-calibration adapts them to the
 // live pooled distribution from there: divergent_stress | stochastic_noise |
 // decoupled_alpha | systemic_herd.
 var correlationBandEdges = []float64{-0.30, 0.40, 2.00}
+
+func calibratorConfig() (window, refitInterval, warmup int, blend float64) {
+	window = viper.GetInt("signals.correlation.calibrator.window")
+
+	if window <= 0 {
+		window = defaultCalibratorWindow
+	}
+
+	refitInterval = viper.GetInt("signals.correlation.calibrator.refit_interval")
+
+	if refitInterval <= 0 {
+		refitInterval = defaultCalibratorRefitInterval
+	}
+
+	warmup = viper.GetInt("signals.correlation.calibrator.warmup")
+
+	if warmup <= 0 {
+		warmup = defaultCalibratorWarmup
+	}
+
+	blend = viper.GetFloat64("signals.correlation.calibrator.blend")
+
+	if blend <= 0 {
+		blend = defaultCalibratorBlend
+	}
+
+	return window, refitInterval, warmup, blend
+}
 
 /*
 Signal measuring cross-asset "herd behavior" via the dominant eigenmode of the
@@ -96,6 +130,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"systemic_herd",
 		},
 	)
+	calibratorWindow, calibratorRefitInterval, calibratorWarmup, calibratorBlend := calibratorConfig()
 
 	signal := &Signal{
 		ctx:          ctx,
@@ -112,10 +147,14 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		},
 		floor:      adaptive.NewSNRField(),
 		classifier: classifier,
-		// stochastic_noise the quiet plurality, systemic_herd the rare extreme;
-		// window 8192 pooled obs, refit every 256 after a 512 warm-up, blend 0.3.
-		calibrator: numeric.NewBandCalibrator([]float64{0.15, 0.45, 0.25, 0.15}, 8192, 256, 512, 0.3),
-		rawDump:    rawdump.Open("correlation"),
+		calibrator: numeric.NewBandCalibrator(
+			[]float64{0.15, 0.45, 0.25, 0.15},
+			calibratorWindow,
+			calibratorRefitInterval,
+			calibratorWarmup,
+			calibratorBlend,
+		),
+		rawDump: rawdump.Open("correlation"),
 	}
 
 	// Fixed seed: one shared projection for the whole universe.

@@ -128,7 +128,7 @@ func (signal *Signal) Tick() error {
 
 					state.ApplyBook(delta)
 
-					if err := signal.emit(delta.Symbol); err != nil {
+					if err := signal.emit(delta.Symbol, time.Now().UTC()); err != nil {
 						errnie.Error(err, "depthflow: emit %s", delta.Symbol)
 						continue
 					}
@@ -157,10 +157,10 @@ func (signal *Signal) observeTrade(trade market.TradeUpdate) error {
 		return err
 	}
 
-	return signal.emit(trade.Symbol)
+	return signal.emit(trade.Symbol, trade.Timestamp)
 }
 
-func (signal *Signal) emit(symbol string) error {
+func (signal *Signal) emit(symbol string, at time.Time) error {
 	raw, ok := signal.symbols.Load(symbol)
 
 	if !ok {
@@ -185,14 +185,15 @@ func (signal *Signal) emit(symbol string) error {
 	}
 
 	if err := signal.rawDump.Write(rawRecord{
-		Symbol:     measurement.Symbol,
-		Category:   measurement.Category,
-		Strength:   measurement.Strength,
-		Confidence: measurement.Confidence,
-		SNR:        measurement.SNR,
-		Standout:   standout,
-		Last:       measurement.Last,
-		SpreadBPS:  measurement.SpreadBPS,
+		TimestampUnixNano: at.UnixNano(),
+		Symbol:            measurement.Symbol,
+		Category:          measurement.Category,
+		Strength:          measurement.Strength,
+		Confidence:        measurement.Confidence,
+		SNR:               measurement.SNR,
+		Standout:          standout,
+		Last:              measurement.Last,
+		SpreadBPS:         measurement.SpreadBPS,
 	}); err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,6 +43,7 @@ func (hub *Hub) handleListDumps(writer http.ResponseWriter, request *http.Reques
 	entries, err := os.ReadDir(dir)
 
 	if err != nil {
+		log.Printf("ui diagnostics: read raw dump dir %q: %v", dir, err)
 		writeDiagnosticsJSON(writer, http.StatusOK, map[string]any{"dumps": []dumpInfo{}})
 
 		return

@@ -312,7 +312,11 @@ func (cache *QuoteCache) Snapshot(symbol string) (Quote, bool) {
 		return Quote{}, false
 	}
 
-	return slot.(*quoteSlot).quoteValue()
+	quoteSlot := slot.(*quoteSlot)
+	quoteSlot.mu.Lock()
+	defer quoteSlot.mu.Unlock()
+
+	return quoteSlot.quoteValue()
 }
 
 /*

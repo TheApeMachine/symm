@@ -144,7 +144,7 @@ func ScoreCategorySNR(floor *adaptive.SNRField, symbol string, standout float64)
 	}
 
 	if err := validateUnitMargin("standout", standout); err != nil {
-		return 0, errnie.Error(err)
+		return 0, err
 	}
 
 	return floor.Score(symbol, standout)
@@ -161,7 +161,7 @@ func AssignCategorySNR(
 	snr, err := ScoreCategorySNR(floor, measurement.Symbol, standout)
 
 	if err != nil {
-		return errnie.Error(err)
+		return err
 	}
 
 	measurement.SNR = snr
@@ -221,11 +221,11 @@ func (category *Category) Observe(
 	}
 
 	if err := validateUnitMargin("clarity", clarity); err != nil {
-		return 0, errnie.Error(err)
+		return 0, err
 	}
 
 	if err := validateUnitMargin("standout", standout); err != nil {
-		return 0, errnie.Error(err)
+		return 0, err
 	}
 
 	if next != category.Type {

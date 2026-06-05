@@ -61,6 +61,9 @@ func (tape ReplayTape) AppendSnapshot(
 	return destination
 }
 
+// indicesInWindow returns the sub-slice of indices whose values fall in
+// [startIndex, endIndex]. indices must be sorted in ascending order (required
+// by sort.SearchInts and sort.Search); behavior is undefined if unsorted.
 func indicesInWindow(indices []int, startIndex, endIndex int) []int {
 	if len(indices) == 0 {
 		return nil

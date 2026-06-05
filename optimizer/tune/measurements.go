@@ -163,7 +163,7 @@ func fundableRows(
 		return rows
 	}
 
-	filtered := rows[:0]
+	filtered := make([]perspectives.Measurement, 0, len(rows))
 
 	for _, row := range rows {
 		if row.Symbol == "" {

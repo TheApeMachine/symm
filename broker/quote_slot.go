@@ -21,6 +21,10 @@ func (cache *QuoteCache) slotFor(symbol string) *quoteSlot {
 	return slot.(*quoteSlot)
 }
 
+// quoteValue returns the stored Quote with Book replaced by the latest book
+// atomic. Callers must hold slot.mu for a consistent Quote+Book pair; without
+// the lock, Book from storeBook may be fresher than the other Quote fields
+// loaded from current — intentional for readers that want the newest book overlay.
 func (slot *quoteSlot) quoteValue() (Quote, bool) {
 	current := slot.quote.Load()
 

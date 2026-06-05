@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -304,6 +305,8 @@ func (snapshot TapeSnapshot) categoriesForSource(source perspectives.SourceType)
 		seen[reading.Category] = struct{}{}
 		out = append(out, string(reading.Category))
 	}
+
+	sort.Strings(out)
 
 	return out
 }

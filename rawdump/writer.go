@@ -28,8 +28,8 @@ import (
 
 const (
 	defaultMaxMegabytes = 64
-	defaultBackupCount   = 3
-	writeBufferBytes     = 64 * 1024
+	defaultBackupCount  = 3
+	writeBufferBytes    = 64 * 1024
 )
 
 /*
@@ -37,15 +37,18 @@ Writer appends a signal's bespoke records as JSONL, rotating the file once it
 crosses the configured size. All methods are safe on a nil receiver.
 */
 type Writer struct {
-	mutex       sync.Mutex
-	path        string
-	file        *os.File
-	buffered    *bufio.Writer
-	bytes       int64
-	maxBytes    int64
-	backupCount int
-	opened      bool
-	failed      error
+	mutex            sync.Mutex
+	path             string
+	file             *os.File
+	buffered         *bufio.Writer
+	bytes            int64
+	maxBytes         int64
+	backupCount      int
+	opened           bool
+	failed           error
+	flushImmediately bool
+	flushEveryN      int
+	writeCount       int
 }
 
 /*
@@ -66,9 +69,11 @@ func Open(name string) *Writer {
 	}
 
 	return &Writer{
-		path:        path,
-		maxBytes:    resolveMaxBytes(),
-		backupCount: resolveBackupCount(),
+		path:             path,
+		maxBytes:         resolveMaxBytes(),
+		backupCount:      resolveBackupCount(),
+		flushImmediately: resolveFlushImmediately(),
+		flushEveryN:      resolveFlushEveryN(),
 	}
 }
 
@@ -125,6 +130,24 @@ func resolveBackupCount() int {
 	return backupCount
 }
 
+func resolveFlushImmediately() bool {
+	if viper.IsSet("signals.raw_dump_flush_immediately") {
+		return viper.GetBool("signals.raw_dump_flush_immediately")
+	}
+
+	return true
+}
+
+func resolveFlushEveryN() int {
+	flushEveryN := viper.GetInt("signals.raw_dump_flush_every_n")
+
+	if flushEveryN <= 0 {
+		return 1
+	}
+
+	return flushEveryN
+}
+
 /*
 Write appends one bespoke record as a JSONL line. record is any value sonic can
 marshal — typically a signal-specific struct. The first failure is latched and
@@ -164,14 +187,25 @@ func (writer *Writer) Write(record any) error {
 	}
 
 	writer.bytes += int64(len(line))
+	writer.writeCount++
 
-	if err := writer.buffered.Flush(); err != nil {
-		writer.failed = err
+	if writer.shouldFlush() {
+		if err := writer.buffered.Flush(); err != nil {
+			writer.failed = err
 
-		return fmt.Errorf("rawdump %s: flush: %w", writer.path, err)
+			return fmt.Errorf("rawdump %s: flush: %w", writer.path, err)
+		}
 	}
 
 	return writer.rotateIfNeeded()
+}
+
+func (writer *Writer) shouldFlush() bool {
+	if writer.flushImmediately {
+		return true
+	}
+
+	return writer.writeCount%writer.flushEveryN == 0
 }
 
 /*
@@ -258,6 +292,13 @@ func (writer *Writer) rotateIfNeeded() error {
 		return fmt.Errorf("rawdump %s: rotate close: %w", writer.path, err)
 	}
 
+	type rotateStep struct {
+		from string
+		to   string
+	}
+
+	steps := make([]rotateStep, 0, writer.backupCount)
+
 	for index := writer.backupCount; index >= 1; index-- {
 		from := rotatedPath(writer.path, index-1)
 		to := rotatedPath(writer.path, index)
@@ -274,8 +315,12 @@ func (writer *Writer) rotateIfNeeded() error {
 			return fmt.Errorf("rawdump %s: rotate stat %q: %w", writer.path, from, statErr)
 		}
 
-		if err := os.Rename(from, to); err != nil {
-			return fmt.Errorf("rawdump %s: rotate rename %q: %w", writer.path, from, err)
+		steps = append(steps, rotateStep{from: from, to: to})
+	}
+
+	for _, step := range steps {
+		if err := os.Rename(step.from, step.to); err != nil {
+			return fmt.Errorf("rawdump %s: rotate rename %q: %w", writer.path, step.from, err)
 		}
 	}
 

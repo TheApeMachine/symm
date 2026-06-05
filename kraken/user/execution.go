@@ -8,7 +8,11 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 )
 
-const executionTokenTimeout = 5 * time.Second
+const (
+	executionTokenTimeout = 5 * time.Second
+	ExecutionSnapshot     = "snapshot"
+	ExecutionUpdate       = "update"
+)
 
 /*
 ExecutionTokenSource supplies short-lived authenticated WebSocket tokens.

@@ -303,14 +303,15 @@ func (signal *Signal) sendMeasurement(
 	}
 
 	if err := signal.rawDump.Write(rawRecord{
-		Symbol:     measurement.Symbol,
-		Category:   measurement.Category,
-		Strength:   measurement.Strength,
-		Confidence: measurement.Confidence,
-		SNR:        measurement.SNR,
-		Standout:   standout,
-		Last:       measurement.Last,
-		SpreadBPS:  measurement.SpreadBPS,
+		TimestampUnixNano: time.Now().UTC().UnixNano(),
+		Symbol:            measurement.Symbol,
+		Category:          measurement.Category,
+		Strength:          measurement.Strength,
+		Confidence:        measurement.Confidence,
+		SNR:               measurement.SNR,
+		Standout:          standout,
+		Last:              measurement.Last,
+		SpreadBPS:         measurement.SpreadBPS,
 	}); err != nil {
 		return err
 	}

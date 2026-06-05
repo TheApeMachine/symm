@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
+import useWebSocket from "react-use-websocket";
+import {
+	applyGlobalFrame,
+	statusSocketHandlers,
+} from "#/providers/global-frames";
 
 /*
 Decision Tree — the live playbook. The story instruments every evaluation and
@@ -46,23 +50,69 @@ const NODE_H = 78;
 const ROW_H = 132;
 const PAD = 24;
 
+const BOTTLENECK_HOLD_RATE_THRESHOLD = 0.02;
+const FAILING_HOLD_RATE_THRESHOLD = 0.2;
+
 const pct = (value: number) => `${Math.round(value * 100)}%`;
+
+const isDecisionFrame = (value: unknown): value is DecisionFrame => {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+
+	const candidate = value as Record<string, unknown>;
+
+	if (candidate.chart !== "decision_tree") {
+		return false;
+	}
+
+	if (typeof candidate.evaluations !== "number") {
+		return false;
+	}
+
+	if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.recent)) {
+		return false;
+	}
+
+	return candidate.nodes.every((node) => {
+		if (typeof node !== "object" || node === null) {
+			return false;
+		}
+
+		const treeNode = node as Record<string, unknown>;
+
+		return (
+			typeof treeNode.key === "string" &&
+			typeof treeNode.depth === "number" &&
+			typeof treeNode.reached === "number" &&
+			typeof treeNode.held === "number"
+		);
+	});
+};
 
 const DecisionsPage = () => {
 	const [frame, setFrame] = useState<DecisionFrame | null>(null);
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
 	useWebSocket(socketUrl, {
-		shouldReconnect: () => true,
+		...statusSocketHandlers,
 		onMessage: (event) => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
-				if (raw.chart === "decision_tree") {
-					setFrame(raw as unknown as DecisionFrame);
+				if (applyGlobalFrame(raw)) {
+					return;
 				}
-			} catch {
-				return;
+
+				if (isDecisionFrame(raw)) {
+					setFrame(raw);
+				}
+			} catch (error) {
+				console.error(
+					"decision_tree frame parse/validation failed",
+					error,
+					event.data,
+				);
 			}
 		},
 	});
@@ -103,8 +153,30 @@ const DecisionsPage = () => {
 		return { width, height, pos };
 	}, [frame]);
 
+	// A node is only a bottleneck if evaluations die there. A latching gate's own
+	// condition can be true on barely any single tick (a rose_by edge), yet it keeps
+	// its children reachable for the whole episode, so trades still flow through it.
+	// Track each node's busiest child to tell "flow continues" from "flow dies".
+	const maxChildReach = useMemo(() => {
+		const byParent: Record<string, number> = {};
+
+		if (frame) {
+			for (const node of frame.nodes) {
+				if (node.parent) {
+					byParent[node.parent] = Math.max(
+						byParent[node.parent] ?? 0,
+						node.reached,
+					);
+				}
+			}
+		}
+
+		return byParent;
+	}, [frame]);
+
 	const evaluations = frame?.evaluations ?? 0;
 	const recent = frame?.recent ?? [];
+	const reversedRecent = useMemo(() => [...recent].reverse(), [recent]);
 
 	// Default the breakdown to the worst bottleneck: a compound node reached often
 	// but whose condition rarely holds — the one starving the desk of trades.
@@ -120,6 +192,12 @@ const DecisionsPage = () => {
 				continue;
 			}
 
+			// A gate that flow passes through (a latched entry) is selective by
+			// design, not the bottleneck starving the desk — skip it.
+			if ((maxChildReach[node.key] ?? 0) >= node.reached * 0.5) {
+				continue;
+			}
+
 			const rate = node.held / node.reached;
 
 			if (
@@ -132,7 +210,7 @@ const DecisionsPage = () => {
 		}
 
 		return best?.key ?? null;
-	}, [frame]);
+	}, [frame, maxChildReach]);
 
 	const activeKey = selectedKey ?? bottleneckKey;
 	const selectedNode =
@@ -207,7 +285,16 @@ const DecisionsPage = () => {
 								const holdRate =
 									node.reached > 0 ? node.held / node.reached : 0;
 								const dead = node.reached === 0;
-								const bottleneck = !dead && holdRate < 0.02;
+								// Flow continues past this node when a child is still reached on a
+								// healthy share of the evaluations that reached it (a latched gate
+								// whose child keeps firing). Such a node is not a bottleneck even
+								// when its own edge condition is rarely true tick-to-tick.
+								const flowsThrough =
+									(maxChildReach[node.key] ?? 0) >= node.reached * 0.5;
+								const bottleneck =
+									!dead &&
+									holdRate < BOTTLENECK_HOLD_RATE_THRESHOLD &&
+									!flowsThrough;
 
 								const tone = dead
 									? "border-zinc-700 bg-zinc-800/40 text-zinc-500"
@@ -286,7 +373,7 @@ const DecisionsPage = () => {
 										selectedNode.reached > 0
 											? cond.held / selectedNode.reached
 											: 0;
-									const failing = rate < 0.2;
+									const failing = rate < FAILING_HOLD_RATE_THRESHOLD;
 
 									return (
 										<div
@@ -325,8 +412,7 @@ const DecisionsPage = () => {
 							</div>
 						) : (
 							<p className="px-1 text-xs text-muted-foreground">
-								Click a node to see which of its conditions pass and which
-								fail.
+								Click a node to see which of its conditions pass and which fail.
 							</p>
 						)}
 					</div>
@@ -340,7 +426,7 @@ const DecisionsPage = () => {
 								No actions fired yet.
 							</p>
 						) : (
-							[...recent].reverse().map((decision, index) => (
+							reversedRecent.map((decision, index) => (
 								<div
 									key={`${decision.ts}-${index}`}
 									className="flex items-center justify-between rounded border border-border bg-card px-2 py-1 text-[11px]"

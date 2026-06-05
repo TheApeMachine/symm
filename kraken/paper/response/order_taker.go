@@ -39,8 +39,9 @@ func (orders *Orders) CheckPending() {
 
 	orders.mu.Lock()
 
-	var ready []pendingTaker
-	var remaining []pendingTaker
+	pendingCount := len(orders.pendingTakers)
+	ready := make([]pendingTaker, 0, pendingCount)
+	remaining := make([]pendingTaker, 0, pendingCount)
 
 	for _, pending := range orders.pendingTakers {
 		if !pending.due.After(now) {

@@ -8,12 +8,13 @@ import "github.com/theapemachine/symm/market/perspectives"
 // from. Written to runs/depthflow_raw.jsonl when signals.depthflow.raw_dump is
 // enabled.
 type rawRecord struct {
-	Symbol     string                    `json:"symbol"`
-	Category   perspectives.CategoryType `json:"category"`
-	Strength   float64                   `json:"strength"`
-	Confidence float64                   `json:"confidence"`
-	SNR        float64                   `json:"snr"`
-	Standout   float64                   `json:"standout"`
-	Last       float64                   `json:"last"`
-	SpreadBPS  float64                   `json:"spread_bps"`
+	TimestampUnixNano int64                     `json:"timestamp_unixnano"`
+	Symbol            string                    `json:"symbol"`
+	Category          perspectives.CategoryType `json:"category"`
+	Strength          float64                   `json:"strength"`
+	Confidence        float64                   `json:"confidence"`
+	SNR               float64                   `json:"snr"`
+	Standout          float64                   `json:"standout"`
+	Last              float64                   `json:"last"`
+	SpreadBPS         float64                   `json:"spread_bps"`
 }

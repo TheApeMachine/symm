@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultTakerFeePct = 0.40
-	DefaultMakerFeePct = 0.25
+	defaultMakerFeePct = 0.25
 	defaultTickSize    = 0.01
 )
 
@@ -69,7 +69,7 @@ func (catalog *PairCatalog) Load() {
 
 		meta := &pairMeta{
 			takerPct: defaultTakerFeePct,
-			makerPct: DefaultMakerFeePct,
+			makerPct: defaultMakerFeePct,
 			tickSize: defaultTickSize,
 			quote:    catalog.quoteAsset(pair.Wsname),
 		}
@@ -103,7 +103,7 @@ func (catalog *PairCatalog) Meta(symbol string) pairMeta {
 
 	return pairMeta{
 		takerPct: defaultTakerFeePct,
-		makerPct: DefaultMakerFeePct,
+		makerPct: defaultMakerFeePct,
 		tickSize: defaultTickSize,
 		quote:    catalog.quoteAsset(symbol),
 	}

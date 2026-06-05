@@ -1,6 +1,7 @@
 package response
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -96,7 +97,7 @@ func (executions *Executions) Send(message *qpool.QValue[any]) map[string]any {
 func (executions *Executions) Observe(_ types.Socket) {}
 
 func (executions *Executions) subscribeAck(frame user.ExecutionSubscribeFrame) map[string]any {
-	user.PublishExecutionsRaw(executions.raw, user.BalanceSnapshot, nil)
+	user.PublishExecutionsRaw(executions.raw, user.ExecutionSnapshot, nil)
 
 	return map[string]any{
 		"method":   frame.Method,
@@ -107,7 +108,7 @@ func (executions *Executions) subscribeAck(frame user.ExecutionSubscribeFrame) m
 }
 
 func (executions *Executions) subscribeAckMap(frame map[string]any) map[string]any {
-	user.PublishExecutionsRaw(executions.raw, user.BalanceSnapshot, nil)
+	user.PublishExecutionsRaw(executions.raw, user.ExecutionSnapshot, nil)
 
 	return map[string]any{
 		"method":   frame["method"],
@@ -179,7 +180,15 @@ func (executions *Executions) emitTrade(notice FillNotice, execID string) {
 	params := notice.Params
 	cost := params.OrderQty * notice.Price
 	tradeID := atomic.AddInt64(&executions.tradeID, 1)
-	feeAsset := quoteAsset(params.Symbol)
+	feeAsset, err := quoteAsset(params.Symbol)
+
+	if err != nil {
+		user.PublishExecutionRejectDerived(
+			executions.raw, params.Symbol, string(params.Side), err.Error(),
+		)
+
+		return
+	}
 
 	trade := user.Execution{
 		OrderID:      notice.OrderID,
@@ -210,10 +219,12 @@ func (executions *Executions) emitTrade(notice FillNotice, execID string) {
 	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{filled})
 }
 
-func quoteAsset(symbol string) string {
-	if slash := strings.IndexByte(symbol, '/'); slash >= 0 {
-		return symbol[slash+1:]
+func quoteAsset(symbol string) (string, error) {
+	slash := strings.IndexByte(symbol, '/')
+
+	if slash < 0 || slash >= len(symbol)-1 {
+		return "", fmt.Errorf("paper fill: malformed symbol %q", symbol)
 	}
 
-	return "USD"
+	return symbol[slash+1:], nil
 }

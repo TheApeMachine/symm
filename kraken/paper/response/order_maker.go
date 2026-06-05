@@ -54,31 +54,47 @@ func (orders *Orders) armMaker(params trading.AddParams, orderID string) {
 func (orders *Orders) onTrade(symbol string, trade market.TradeUpdate) {
 	orders.mu.Lock()
 	resting, ok := orders.makers[symbol]
-	orders.mu.Unlock()
 
 	if !ok || resting == nil {
+		orders.mu.Unlock()
+
 		return
 	}
 
 	if time.Now().UnixNano() < resting.queue.ActiveAt {
+		orders.mu.Unlock()
+
 		return
 	}
 
-	depletion, ok := broker.TradeDepletesMakerQueue(
+	depletion, depletes := broker.TradeDepletesMakerQueue(
 		resting.params.Side,
 		resting.limitPrice,
 		trade,
 	)
 
-	if !ok {
+	if !depletes {
+		orders.mu.Unlock()
+
 		return
 	}
 
 	resting.queue.Deplete(depletion)
 
 	if !resting.queue.Ready() {
+		orders.mu.Unlock()
+
 		return
 	}
+
+	delete(orders.makers, symbol)
+	params := resting.params
+	orderID := resting.orderID
+	tickSize := resting.tickSize
+	limitPrice := resting.limitPrice
+	side := resting.params.Side
+	qty := resting.params.OrderQty
+	orders.mu.Unlock()
 
 	quote, quoteOK := orders.quotes.Snapshot(symbol)
 
@@ -87,21 +103,22 @@ func (orders *Orders) onTrade(symbol string, trade market.TradeUpdate) {
 	}
 
 	fillPrice, _ := broker.MakerRestingFillPrice(
-		resting.params.Side,
-		resting.limitPrice,
+		side,
+		limitPrice,
 		quote,
 		trade,
-		resting.tickSize,
+		tickSize,
 	)
-	fee := orders.feeAmount(symbol, resting.params.OrderQty, fillPrice, true)
 
-	orders.mu.Lock()
-	delete(orders.makers, symbol)
-	orders.mu.Unlock()
+	if fillPrice <= 0 {
+		return
+	}
+
+	fee := orders.feeAmount(symbol, qty, fillPrice, true)
 
 	orders.notifyFill(FillNotice{
-		Params:       resting.params,
-		OrderID:      resting.orderID,
+		Params:       params,
+		OrderID:      orderID,
 		Price:        fillPrice,
 		Fee:          fee,
 		LiquidityInd: "m",

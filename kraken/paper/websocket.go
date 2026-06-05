@@ -146,7 +146,7 @@ func (ws *WebSocket) Tick() (err error) {
 			ws.orders.CheckPending()
 			ws.orders.CheckTriggers()
 			time.Sleep(ws.latencies.Value.(time.Duration))
-			ws.latencies.Next()
+			ws.latencies = ws.latencies.Next()
 		}
 	}
 }

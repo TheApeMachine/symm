@@ -196,6 +196,8 @@ func mergePrecompileChunks(chunks []precompileChunk) (
 			lastPrices[symbol] = price
 		}
 
+		// Each chunk.globalIndices is sorted ascending and chunks are merged in
+		// contiguous row order, so appending preserves chronological order in globalIndices.
 		globalIndices = append(globalIndices, chunk.globalIndices...)
 
 		for symbol, indices := range chunk.symbolIndices {
