@@ -61,6 +61,9 @@ type Crypto struct {
 	pending          map[string]reasoning.Action
 	coolDownUntil    sync.Map // symbol -> time.Time (per-symbol submission backoff)
 	lastDecision     map[string]string
+	entryBatch       entryBatch
+	preemptPlan      *preemptPlan
+	entryConviction  map[string]float64
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
 	capitalBase      float64 // opening capital; one position targets position_fraction of this
@@ -136,8 +139,9 @@ func NewCryptoWithCaches(
 		shortInventory: make(map[string]float64),
 		avgEntry:       make(map[string]float64),
 		armed:          make(map[string]armRecord),
-		pending:        make(map[string]reasoning.Action),
-		lastDecision:   make(map[string]string),
+		pending:         make(map[string]reasoning.Action),
+		lastDecision:    make(map[string]string),
+		entryConviction: make(map[string]float64),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -220,13 +224,21 @@ func (crypto *Crypto) Tick() error {
 			// Same goroutine that mutates inventory, so the read is race-free.
 			crypto.publishMarks()
 			crypto.publishEquity()
+			if crypto.entryBatchDue(time.Now()) {
+				crypto.flushEntryBatch()
+			}
 		case message := <-incoming:
 			if message == nil || message.Value == nil {
 				continue
 			}
 
 			if action, ok := message.Value.(reasoning.Action); ok {
-				crypto.submit(action)
+				crypto.routeAction(action)
+
+				if crypto.entryBatchDue(time.Now()) {
+					crypto.flushEntryBatch()
+				}
+
 				continue
 			}
 
@@ -720,20 +732,25 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 
 	if side == string(trading.Buy) {
 		if reasoning.IsEntryAction(submitted.Type) {
+			crypto.recordEntryConviction(symbol, submitted)
 			crypto.openPosition(symbol, qty, price)
 		} else {
 			crypto.closeShort(symbol)
+			crypto.tryFinishPreemption(symbol)
 		}
 
 		return
 	}
 
 	if reasoning.IsEntryAction(submitted.Type) {
+		crypto.recordEntryConviction(symbol, submitted)
 		crypto.openShort(symbol, qty, price)
+
 		return
 	}
 
 	crypto.closePosition(symbol)
+	crypto.tryFinishPreemption(symbol)
 }
 
 func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
@@ -769,6 +786,7 @@ func (crypto *Crypto) closeShort(symbol string) {
 	delete(crypto.avgEntry, symbol)
 	delete(crypto.armed, symbol+":"+string(trading.Buy))
 	delete(crypto.armed, symbol+":"+string(trading.Sell))
+	crypto.clearEntryConviction(symbol)
 	crypto.streams.Remove(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
@@ -779,6 +797,7 @@ func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.avgEntry, symbol)
 	delete(crypto.armed, symbol+":"+string(trading.Buy))
 	delete(crypto.armed, symbol+":"+string(trading.Sell))
+	crypto.clearEntryConviction(symbol)
 	crypto.streams.Remove(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()

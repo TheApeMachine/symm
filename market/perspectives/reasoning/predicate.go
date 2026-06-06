@@ -1,6 +1,8 @@
 package reasoning
 
 import (
+	"time"
+
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -27,6 +29,7 @@ type Predicate struct {
 	Side      trading.Side          `yaml:"side,omitempty"`      // Subject == SubjectPosition (buy = long, sell = short)
 	Unit      UnitType              `yaml:"unit,omitempty"`      // how Value reads: snr / confidence / percentage / time_*
 	Ago       int                   `yaml:"ago,omitempty"`       // 0 = now; N = compared to N measurements ago
+	Within    YAMLDuration          `yaml:"within,omitempty"`    // wall-clock lookback; takes precedence over Ago when > 0
 	Op        Comparison            `yaml:"op,omitempty"`
 
 	// Right-hand side of the comparison: a static Value, OR another live subject
@@ -45,6 +48,12 @@ type Operand struct {
 	Category types.CategoryType `yaml:"category,omitempty"`
 	Unit     UnitType           `yaml:"unit,omitempty"`
 	Ago      int                `yaml:"ago,omitempty"`
+	Within   YAMLDuration       `yaml:"within,omitempty"`
+}
+
+// WithinDuration returns the operand's wall-clock lookback, if any.
+func (operand Operand) WithinDuration() time.Duration {
+	return operand.Within.Duration()
 }
 
 /*

@@ -22,15 +22,15 @@ func (m mockReason) Regime() types.Regime                   { return m.regime }
 func (m mockReason) PositionSide() trading.Side             { return "" }
 func (m mockReason) Lifecycle(s types.ObservationType) bool { return m.lifecycle[s] }
 
-func (m mockReason) Signal(c types.CategoryType, _ UnitType, ago int) (float64, bool) {
+func (m mockReason) Signal(c types.CategoryType, _ UnitType, lookback Lookback) (float64, bool) {
 	series, ok := m.signal[c]
-	if !ok || ago < 0 || ago >= len(series) {
+	if !ok || lookback.Within > 0 || lookback.Ago < 0 || lookback.Ago >= len(series) {
 		return 0, false
 	}
-	return series[ago], true
+	return series[lookback.Ago], true
 }
 
-func (m mockReason) Scalar(subject Subject, _ UnitType, ago int) (float64, bool) {
+func (m mockReason) Scalar(subject Subject, _ UnitType, lookback Lookback) (float64, bool) {
 	var series []float64
 	switch subject {
 	case SubjectPrice:
@@ -42,10 +42,10 @@ func (m mockReason) Scalar(subject Subject, _ UnitType, ago int) (float64, bool)
 	default:
 		return 0, false
 	}
-	if ago < 0 || ago >= len(series) {
+	if lookback.Within > 0 || lookback.Ago < 0 || lookback.Ago >= len(series) {
 		return 0, false
 	}
-	return series[ago], true
+	return series[lookback.Ago], true
 }
 
 func sig(cat types.CategoryType, value float64) Predicate {

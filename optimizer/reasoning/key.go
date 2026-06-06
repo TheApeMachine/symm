@@ -87,6 +87,7 @@ func (key *thoughtKey) writePredicate(predicate reasoning.Predicate) {
 	key.writeInt(int(predicate.Lifecycle))
 	key.writeInt(int(predicate.Unit))
 	key.writeInt(predicate.Ago)
+	key.writeInt64(int64(predicate.Within.Duration()))
 	key.writeInt(int(predicate.Op))
 	key.writeFloat(predicate.Value)
 	key.writeOperand(predicate.Versus)
@@ -116,6 +117,7 @@ func (key *thoughtKey) writeOperand(operand *reasoning.Operand) {
 	key.writeString(string(operand.Category))
 	key.writeInt(int(operand.Unit))
 	key.writeInt(operand.Ago)
+	key.writeInt64(int64(operand.Within.Duration()))
 }
 
 func (key *thoughtKey) writeAct(act reasoning.Act) {
@@ -145,6 +147,11 @@ func (key *thoughtKey) writeFloat(value float64) {
 
 func (key *thoughtKey) writeInt(value int) {
 	key.buffer = strconv.AppendInt(key.buffer, int64(value), 10)
+	key.writeByte('|')
+}
+
+func (key *thoughtKey) writeInt64(value int64) {
+	key.buffer = strconv.AppendInt(key.buffer, value, 10)
 	key.writeByte('|')
 }
 

@@ -33,12 +33,12 @@ type ReasonContext interface {
 	Lifecycle(state types.ObservationType) bool
 	// PositionSide is the open position's entry side (buy = long, sell = short).
 	PositionSide() trading.Side
-	// Signal returns a category's strength in the given unit (snr/confidence),
-	// ago measurements ago (0 = now); ok is false when the category is absent.
-	Signal(category types.CategoryType, unit UnitType, ago int) (value float64, ok bool)
+	// Signal returns a category's strength in the given unit at the lookback;
+	// ok is false when the category is absent.
+	Signal(category types.CategoryType, unit UnitType, lookback Lookback) (value float64, ok bool)
 	// Scalar returns a scalar subject (price/volume/spread/elapsed) in the given
-	// unit, ago measurements ago; ok is false when it is unavailable.
-	Scalar(subject Subject, unit UnitType, ago int) (value float64, ok bool)
+	// unit at the lookback; ok is false when it is unavailable.
+	Scalar(subject Subject, unit UnitType, lookback Lookback) (value float64, ok bool)
 }
 
 /*
@@ -295,10 +295,13 @@ func holds(pred Predicate, ctx ReasonContext) bool {
 }
 
 func holdsNumeric(pred Predicate, ctx ReasonContext) bool {
+	nowLookback := Lookback{}
+	thenLookback := lookbackFromPredicate(pred)
+
 	switch pred.Op {
 	case ComparisonRoseBy, ComparisonFellBy, ComparisonCrossedUp, ComparisonCrossedDown:
-		now, okNow := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, 0)
-		then, okThen := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, pred.Ago)
+		now, okNow := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, nowLookback)
+		then, okThen := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, thenLookback)
 
 		if !okNow || !okThen {
 			return false
@@ -306,7 +309,7 @@ func holdsNumeric(pred Predicate, ctx ReasonContext) bool {
 
 		return temporalOp(pred.Op, now, then, pred.Value, pred.Unit)
 	default:
-		left, okLeft := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, pred.Ago)
+		left, okLeft := subjectValue(ctx, pred.Subject, pred.Category, pred.Unit, thenLookback)
 
 		if !okLeft {
 			return false
@@ -331,17 +334,21 @@ func rightHandSide(pred Predicate, ctx ReasonContext) (float64, bool) {
 
 	operand := pred.Versus
 
-	return subjectValue(ctx, operand.Subject, operand.Category, operand.Unit, operand.Ago)
+	return subjectValue(ctx, operand.Subject, operand.Category, operand.Unit, lookbackFromOperand(*operand))
 }
 
 func subjectValue(
-	ctx ReasonContext, subject Subject, category types.CategoryType, unit UnitType, ago int,
+	ctx ReasonContext,
+	subject Subject,
+	category types.CategoryType,
+	unit UnitType,
+	lookback Lookback,
 ) (float64, bool) {
 	switch subject {
 	case SubjectSignal:
-		return ctx.Signal(category, unit, ago)
+		return ctx.Signal(category, unit, lookback)
 	case SubjectPrice, SubjectVolume, SubjectSpread, SubjectElapsed:
-		return ctx.Scalar(subject, unit, ago)
+		return ctx.Scalar(subject, unit, lookback)
 	default:
 		return 0, false
 	}

@@ -21,16 +21,16 @@ func TestWindowReason(t *testing.T) {
 		ctx := NewWindowReason(snapshots, types.RegimeTrending, holding)
 
 		Convey("Signals read newest-first per category", func() {
-			snr, ok := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, 0)
+			snr, ok := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, Lookback{})
 			So(ok, ShouldBeTrue)
 			So(snr, ShouldEqual, 2.0)
-			prev, _ := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, 1)
+			prev, _ := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, Lookback{Ago: 1})
 			So(prev, ShouldEqual, 0.5)
 		})
 
 		Convey("Price reads distinct changes newest-first", func() {
-			now, _ := ctx.Scalar(SubjectPrice, UnitNone, 0)
-			then, _ := ctx.Scalar(SubjectPrice, UnitNone, 3)
+			now, _ := ctx.Scalar(SubjectPrice, UnitNone, Lookback{})
+			then, _ := ctx.Scalar(SubjectPrice, UnitNone, Lookback{Ago: 3})
 			So(now, ShouldEqual, 105)
 			So(then, ShouldEqual, 100) // +5% over the window
 		})
@@ -71,10 +71,10 @@ func TestWindowReason(t *testing.T) {
 			ctx.Reset([]types.Measurement{{Category: types.CategoryCoiledCompression, SNR: 1.2, Last: 106}},
 				types.RegimeChoppy, holding)
 
-			_, ok := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, 0)
+			_, ok := ctx.Signal(types.CategoryVerticalIgnition, UnitSNR, Lookback{})
 			So(ok, ShouldBeFalse)
 
-			snr, ok := ctx.Signal(types.CategoryCoiledCompression, UnitSNR, 0)
+			snr, ok := ctx.Signal(types.CategoryCoiledCompression, UnitSNR, Lookback{})
 			So(ok, ShouldBeTrue)
 			So(snr, ShouldEqual, 1.2)
 		})
@@ -87,8 +87,8 @@ func TestWindowReason(t *testing.T) {
 			}
 			volumeCtx := NewWindowReason(volumeSnapshots, types.RegimeBullish, PositionState{})
 
-			now, okNow := volumeCtx.Scalar(SubjectVolume, UnitNone, 0)
-			then, okThen := volumeCtx.Scalar(SubjectVolume, UnitNone, 2)
+			now, okNow := volumeCtx.Scalar(SubjectVolume, UnitNone, Lookback{})
+			then, okThen := volumeCtx.Scalar(SubjectVolume, UnitNone, Lookback{Ago: 2})
 
 			So(okNow, ShouldBeTrue)
 			So(okThen, ShouldBeTrue)

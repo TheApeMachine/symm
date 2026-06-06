@@ -126,11 +126,16 @@ type Report struct {
 
 type accumulator struct {
 	name    string
-	order   int
 	nums    []float64
 	strs    []string
 	numeric int
 	textual int
+}
+
+func sortFieldAccumulators(accumulators []*accumulator) {
+	sort.Slice(accumulators, func(i, j int) bool {
+		return accumulators[i].name < accumulators[j].name
+	})
 }
 
 /*
@@ -154,7 +159,6 @@ func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
 	accumulators := map[string]*accumulator{}
-	fieldOrder := 0
 	rows := 0
 	skipped := 0
 	truncated := false
@@ -186,8 +190,7 @@ func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
 			acc := accumulators[key]
 
 			if acc == nil {
-				acc = &accumulator{name: key, order: fieldOrder}
-				fieldOrder++
+				acc = &accumulator{name: key}
 				accumulators[key] = acc
 			}
 
@@ -205,9 +208,7 @@ func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
 		ordered = append(ordered, acc)
 	}
 
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].order < ordered[j].order
-	})
+	sortFieldAccumulators(ordered)
 
 	fields := make([]FieldReport, 0, len(ordered))
 

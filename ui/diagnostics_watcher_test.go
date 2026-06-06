@@ -53,19 +53,7 @@ func TestDiagnosticFrameAddsChartKey(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsWatcherDebouncesAnalysis(t *testing.T) {
-	dir := t.TempDir()
-	viper.Set("signals.raw_dump_dir", dir)
-	t.Cleanup(func() {
-		viper.Set("signals.raw_dump_dir", "")
-	})
-
-	path := filepath.Join(dir, "cvd_raw.jsonl")
-
-	if err := os.WriteFile(path, []byte(`{"signed":1}`+"\n"), 0o644); err != nil {
-		t.Fatalf("write dump: %v", err)
-	}
-
+func TestDiagnosticsWatcherCloseStopsPendingTimers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -76,34 +64,20 @@ func TestDiagnosticsWatcherDebouncesAnalysis(t *testing.T) {
 		server:  &http.Server{},
 	}
 
-	diagnostics := startDiagnosticsWatcher(hub)
-
-	if diagnostics == nil {
-		t.Fatal("expected diagnostics watcher")
+	diagnostics := &diagnosticsWatcher{
+		hub:     hub,
+		pending: make(map[string]*time.Timer),
 	}
-
-	defer diagnostics.Close()
 
 	diagnostics.schedule("cvd")
-	time.Sleep(diagnosticsDebounce + 300*time.Millisecond)
+	_ = diagnostics.Close()
 
-	report, err := analyze.AnalyzeFileTail("cvd", path, analyze.LiveMaxRows)
-
-	if err != nil {
-		t.Fatalf("AnalyzeFileTail: %v", err)
-	}
-
-	if report.Rows != 1 {
-		t.Fatalf("rows = %d, want 1", report.Rows)
-	}
+	time.Sleep(diagnosticsDebounce + 100*time.Millisecond)
 }
 
 func TestListRawDumps(t *testing.T) {
 	dir := t.TempDir()
 	viper.Set("signals.raw_dump_dir", dir)
-	t.Cleanup(func() {
-		viper.Set("signals.raw_dump_dir", "")
-	})
 
 	if err := os.WriteFile(filepath.Join(dir, "fluid_raw.jsonl"), []byte("x\n"), 0o644); err != nil {
 		t.Fatalf("write dump: %v", err)

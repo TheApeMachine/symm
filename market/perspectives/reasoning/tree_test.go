@@ -28,13 +28,13 @@ func (ctx fakeReasonContext) Lifecycle(state types.ObservationType) bool {
 	}
 }
 
-func (ctx fakeReasonContext) Signal(category types.CategoryType, _ UnitType, _ int) (float64, bool) {
+func (ctx fakeReasonContext) Signal(category types.CategoryType, _ UnitType, _ Lookback) (float64, bool) {
 	value, ok := ctx.signals[category]
 
 	return value, ok
 }
 
-func (ctx fakeReasonContext) Scalar(_ Subject, _ UnitType, _ int) (float64, bool) {
+func (ctx fakeReasonContext) Scalar(_ Subject, _ UnitType, _ Lookback) (float64, bool) {
 	return 0, false
 }
 

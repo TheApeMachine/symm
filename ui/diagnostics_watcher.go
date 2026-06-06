@@ -63,7 +63,20 @@ func startDiagnosticsWatcher(hub *Hub) *diagnosticsWatcher {
 }
 
 func (diagnostics *diagnosticsWatcher) Close() error {
-	if diagnostics == nil || diagnostics.watcher == nil {
+	if diagnostics == nil {
+		return nil
+	}
+
+	diagnostics.pendingMu.Lock()
+
+	for signal, timer := range diagnostics.pending {
+		timer.Stop()
+		delete(diagnostics.pending, signal)
+	}
+
+	diagnostics.pendingMu.Unlock()
+
+	if diagnostics.watcher == nil {
 		return nil
 	}
 
@@ -146,12 +159,19 @@ func (diagnostics *diagnosticsWatcher) schedule(signal string) {
 		delete(diagnostics.pending, signal)
 		diagnostics.pendingMu.Unlock()
 
+		if diagnostics.hub.ctx.Err() != nil {
+			return
+		}
+
 		diagnostics.publishSignal(signal)
 		diagnostics.publishDumpList()
 	})
 }
 
 func (diagnostics *diagnosticsWatcher) publishSignal(signal string) {
+	if diagnostics.hub.ctx.Err() != nil {
+		return
+	}
 	path := filepath.Join(rawdump.Dir(), signal+rawDumpSuffix)
 
 	report, err := analyze.AnalyzeFileTail(signal, path, analyze.LiveMaxRows)
@@ -174,6 +194,10 @@ func (diagnostics *diagnosticsWatcher) publishSignal(signal string) {
 }
 
 func (diagnostics *diagnosticsWatcher) publishDumpList() {
+	if diagnostics.hub.ctx.Err() != nil {
+		return
+	}
+
 	dumps, err := listRawDumps()
 
 	if err != nil {

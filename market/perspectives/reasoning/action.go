@@ -24,14 +24,16 @@ const (
 )
 
 type Action struct {
-	Type     ActionType
-	Side     trading.Side
-	Symbol   string
-	Price    float64
-	Quantity float64
-	Offset   float64      // per-node trigger fraction (stop/take/trail); 0 = use the global default
-	Fraction float64      // per-node entry-size multiplier; 0 = use the global position fraction
-	Regime   types.Regime // price-action regime observed when the action was emitted
+	Type       ActionType
+	Side       trading.Side
+	Symbol     string
+	Price      float64
+	Quantity   float64
+	Offset     float64      // per-node trigger fraction (stop/take/trail); 0 = use the global default
+	Fraction   float64      // per-node entry-size multiplier; 0 = use the global position fraction
+	Regime     types.Regime // price-action regime observed when the action was emitted
+	SNR        float64      // signal surprise at emission; drives conviction-ranked capital allocation
+	Confidence float64      // selection confidence at emission
 }
 
 /*
@@ -72,11 +74,13 @@ and settles exits against the position it currently holds.
 */
 func ActionFromAct(act Act, measurement types.Measurement) Action {
 	action := Action{
-		Type:     act.Type,
-		Symbol:   measurement.Symbol,
-		Price:    measurement.Last,
-		Offset:   act.Offset,
-		Fraction: act.Fraction,
+		Type:       act.Type,
+		Symbol:     measurement.Symbol,
+		Price:      measurement.Last,
+		Offset:     act.Offset,
+		Fraction:   act.Fraction,
+		SNR:        measurement.SNR,
+		Confidence: measurement.Confidence,
 	}
 
 	if IsEntryAction(act.Type) {

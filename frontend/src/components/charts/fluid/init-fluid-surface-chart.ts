@@ -25,7 +25,6 @@ import { ensureSciChartWasm } from "#/lib/utils";
 
 const FLUID_SURFACE_Y_MIN = -0.3;
 const FLUID_SURFACE_Y_MAX = 0.5;
-const FLUID_SURFACE_MIN_Y_SPAN = 0.08;
 
 export const initFluidSurfaceChart = async (
 	rootElement: string | HTMLDivElement,
@@ -140,8 +139,6 @@ export const initFluidSurfaceChart = async (
 			FLUID_SURFACE_Y_MAX,
 		);
 		const heights = projected.display;
-		let heightMin = Number.POSITIVE_INFINITY;
-		let heightMax = Number.NEGATIVE_INFINITY;
 
 		for (let zIndex = 0; zIndex < gridSize; zIndex++) {
 			const heightRow = heights[zIndex];
@@ -156,31 +153,17 @@ export const initFluidSurfaceChart = async (
 					typeof value === "number" && Number.isFinite(value) ? value : 0;
 
 				heightmapArray[zIndex][xIndex] = finite;
-				heightMin = Math.min(heightMin, finite);
-				heightMax = Math.max(heightMax, finite);
 			}
 		}
 
-		if (!Number.isFinite(heightMin) || !Number.isFinite(heightMax)) {
-			heightMin = FLUID_SURFACE_Y_MIN;
-			heightMax = FLUID_SURFACE_Y_MAX;
-		}
-
-		const heightSpan = Math.max(
-			heightMax - heightMin,
-			FLUID_SURFACE_MIN_Y_SPAN,
-		);
-		const colorMin = heightMin;
-		const colorMax = heightMin + heightSpan;
-		const axisPad = heightSpan * 0.12;
-
 		dataSeries.setYValues(heightmapArray);
-		series.minimum = colorMin;
-		series.maximum = colorMax;
+		series.minimum = FLUID_SURFACE_Y_MIN;
+		series.maximum = FLUID_SURFACE_Y_MAX;
 		sciChart3DSurface.yAxis.visibleRange = new NumberRange(
-			heightMin - axisPad,
-			heightMax + axisPad,
+			FLUID_SURFACE_Y_MIN,
+			FLUID_SURFACE_Y_MAX,
 		);
+		sciChart3DSurface.invalidateElement();
 	};
 
 	return {

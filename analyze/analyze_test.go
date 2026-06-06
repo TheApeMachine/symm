@@ -124,6 +124,45 @@ func TestNumericBatteryMatchesKnownSeries(t *testing.T) {
 	}
 }
 
+func TestFieldReportsAreAlphabetical(t *testing.T) {
+	rows := []map[string]any{
+		{"zebra": 1.0, "alpha": 2.0, "middle": 3.0},
+		{"alpha": 4.0, "zebra": 5.0, "middle": 6.0},
+	}
+
+	path := writeDump(t, rows)
+
+	report, err := AnalyzeFile("test", path, 0)
+
+	if err != nil {
+		t.Fatalf("AnalyzeFile: %v", err)
+	}
+
+	want := []string{"alpha", "middle", "zebra"}
+
+	if len(report.Fields) != len(want) {
+		t.Fatalf("fields = %d, want %d", len(report.Fields), len(want))
+	}
+
+	for index, name := range want {
+		if report.Fields[index].Name != name {
+			t.Fatalf("field[%d] = %q, want %q", index, report.Fields[index].Name, name)
+		}
+	}
+
+	tailReport, err := AnalyzeFileTail("test", path, 10)
+
+	if err != nil {
+		t.Fatalf("AnalyzeFileTail: %v", err)
+	}
+
+	for index, name := range want {
+		if tailReport.Fields[index].Name != name {
+			t.Fatalf("tail field[%d] = %q, want %q", index, tailReport.Fields[index].Name, name)
+		}
+	}
+}
+
 func TestEmptyFileIsHandled(t *testing.T) {
 	report, err := AnalyzeFile("test", writeDump(t, nil), 0)
 

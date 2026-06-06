@@ -3,6 +3,7 @@ package fluid
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -308,6 +309,13 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		left, _ := rows[i]["symbol"].(string)
+		right, _ := rows[j]["symbol"].(string)
+
+		return left < right
+	})
 
 	signal.ui.Send(&qpool.QValue[any]{Value: map[string]any{
 		"type":         "fluid",

@@ -151,10 +151,10 @@ func (hub *Hub) Close() error {
 	}
 
 	hub.clients.Range(func(key, value any) bool {
-		conn, ok := value.(*websocket.Conn)
+		client, ok := value.(*wsClient)
 
 		if ok {
-			if err := conn.Close(); err != nil {
+			if err := client.close(); err != nil {
 				errnie.Error(err)
 			}
 		}
@@ -177,39 +177,41 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	client := newWSClient(conn)
+
 	hello := map[string]any{
 		"event": "hello",
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	if err := conn.WriteJSON(hello); err != nil {
+	if err := client.writeJSON(hello); err != nil {
 		errnie.Error(err)
-		errnie.Error(conn.Close())
+		errnie.Error(client.close())
 		return
 	}
 
 	if w := hub.lastWallet.Load(); w != nil {
-		_ = conn.WriteJSON(*w)
+		_ = client.writeJSON(*w)
 	}
 
 	if positions := hub.lastPositions.Load(); positions != nil {
-		_ = conn.WriteJSON(*positions)
+		_ = client.writeJSON(*positions)
 	}
 
 	if equity := hub.lastEquity.Load(); equity != nil {
-		_ = conn.WriteJSON(*equity)
+		_ = client.writeJSON(*equity)
 	}
 
 	if decisionTree := hub.lastDecisionTree.Load(); decisionTree != nil {
-		_ = conn.WriteJSON(*decisionTree)
+		_ = client.writeJSON(*decisionTree)
 	}
 
 	if dumps := hub.lastDumps.Load(); dumps != nil {
-		_ = conn.WriteJSON(*dumps)
+		_ = client.writeJSON(*dumps)
 	}
 
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
-	hub.clients.Store(connID, conn)
+	hub.clients.Store(connID, client)
 }
 
 /*
@@ -262,7 +264,7 @@ func (hub *Hub) Tick() error {
 
 func (hub *Hub) broadcastJSON(out map[string]any) {
 	hub.clients.Range(func(key, value any) bool {
-		conn, ok := value.(*websocket.Conn)
+		client, ok := value.(*wsClient)
 
 		if !ok {
 			hub.clients.Delete(key)
@@ -270,9 +272,9 @@ func (hub *Hub) broadcastJSON(out map[string]any) {
 			return true
 		}
 
-		if err := conn.WriteJSON(out); err != nil {
+		if err := client.writeJSON(out); err != nil {
 			errnie.Error(err)
-			errnie.Error(conn.Close())
+			errnie.Error(client.close())
 			hub.clients.Delete(key)
 		}
 

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -61,7 +60,6 @@ func AnalyzeFileTail(signal, path string, maxRows int) (*Report, error) {
 	}
 
 	accumulators := map[string]*accumulator{}
-	fieldOrder := 0
 	rows := 0
 
 	for _, line := range window {
@@ -79,8 +77,7 @@ func AnalyzeFileTail(signal, path string, maxRows int) (*Report, error) {
 			acc := accumulators[key]
 
 			if acc == nil {
-				acc = &accumulator{name: key, order: fieldOrder}
-				fieldOrder++
+				acc = &accumulator{name: key}
 				accumulators[key] = acc
 			}
 
@@ -94,9 +91,7 @@ func AnalyzeFileTail(signal, path string, maxRows int) (*Report, error) {
 		ordered = append(ordered, acc)
 	}
 
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].order < ordered[j].order
-	})
+	sortFieldAccumulators(ordered)
 
 	fields := make([]FieldReport, 0, len(ordered))
 

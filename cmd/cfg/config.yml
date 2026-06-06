@@ -15,7 +15,7 @@ market:
   anchor_symbol: ""
   default_symbols:
     - BTC/EUR
-  max_scan_symbols: 128
+  max_scan_symbols: 1024
   book_depth_levels: 10
   # Live authenticated L3 feed while trading.model is paper (needs API credentials).
   l3_enabled: true
@@ -54,6 +54,12 @@ trading:
   # (one position at a time on a small wallet); lower allows concurrent positions.
   # The optimizer replay sizes entries the same way, so funding contention is real.
   position_fraction: 1.0
+  entry:
+    # Hold concurrent entry signals for this window, rank by SNR×confidence, then deploy.
+    # Defaults to market.subscribe_pace when unset.
+    batch_window: 50ms
+    # When capacity is full, exit the weakest open position if the new signal beats it.
+    preemption_enabled: true
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.

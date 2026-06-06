@@ -25,6 +25,7 @@ import {
 import {
 	deliverFluidWire,
 	type FluidPushBridge,
+	parseFluidWire,
 } from "#/components/charts/fluid/fluid-push-bridge";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
 import {
@@ -172,10 +173,11 @@ const WsFeed = ({
 					return;
 				}
 
-				const fluid = fluidRef.current;
+				const fluidFrame = parseFluidWire(raw);
 
-				if (fluid) {
-					deliverFluidWire(fluid, raw);
+				if (fluidFrame !== null) {
+					deliverFluidWire(fluidRef.current, fluidFrame);
+					return;
 				}
 			} catch {
 				return;
@@ -190,7 +192,7 @@ const DashboardLayout = () => {
 	const fluidRef = useRef<FluidPushBridge>({
 		push: () => {},
 		ready: false,
-		pending: [],
+		pending: null,
 	});
 
 	const gaugeRefs = useRef<Record<string, SignalGaugeBridge>>(

@@ -44,10 +44,16 @@ type WindowReason struct {
 	position     PositionState
 	continuedPct float64
 	endedPct     float64
+	now          time.Time
 	signal       map[types.CategoryType][]types.Measurement
+	signalTimes  map[types.CategoryType][]time.Time
 	price        []float64
+	priceAt      []time.Time
 	volume       []float64
+	volumeAt     []time.Time
 	spread       []float64
+	spreadAt     []time.Time
+	durationTails map[durationTailKey]int
 }
 
 type reasoningConfig struct {
@@ -93,18 +99,38 @@ func (reason *WindowReason) Reset(
 	reason.position = position
 	reason.continuedPct = config.continuedPct
 	reason.endedPct = config.endedPct
+	reason.now = position.Now
+
+	if reason.now.IsZero() && len(snapshots) > 0 {
+		reason.now = snapshots[len(snapshots)-1].At
+	}
+
+	if reason.durationTails != nil {
+		clear(reason.durationTails)
+	}
 
 	if reason.signal == nil {
 		reason.signal = make(map[types.CategoryType][]types.Measurement)
+	}
+
+	if reason.signalTimes == nil {
+		reason.signalTimes = make(map[types.CategoryType][]time.Time)
 	}
 
 	for category, series := range reason.signal {
 		reason.signal[category] = series[:0]
 	}
 
+	for category, series := range reason.signalTimes {
+		reason.signalTimes[category] = series[:0]
+	}
+
 	reason.price = reason.price[:0]
+	reason.priceAt = reason.priceAt[:0]
 	reason.volume = reason.volume[:0]
+	reason.volumeAt = reason.volumeAt[:0]
 	reason.spread = reason.spread[:0]
+	reason.spreadAt = reason.spreadAt[:0]
 
 	var lastPrice float64
 	var lastVolume float64
@@ -116,19 +142,25 @@ func (reason *WindowReason) Reset(
 			reason.signal[measurement.Category] = append(
 				reason.signal[measurement.Category], measurement,
 			)
+			reason.signalTimes[measurement.Category] = append(
+				reason.signalTimes[measurement.Category], measurement.At,
+			)
 		}
 
 		if measurement.Last > 0 && measurement.Last != lastPrice {
 			reason.price = append(reason.price, measurement.Last)
+			reason.priceAt = append(reason.priceAt, measurement.At)
 			lastPrice = measurement.Last
 		}
 
 		if measurement.Volume > 0 && measurement.Volume != lastVolume {
 			reason.volume = append(reason.volume, measurement.Volume)
+			reason.volumeAt = append(reason.volumeAt, measurement.At)
 			lastVolume = measurement.Volume
 		}
 
 		reason.spread = append(reason.spread, measurement.SpreadBPS)
+		reason.spreadAt = append(reason.spreadAt, measurement.At)
 	}
 
 	return reason
@@ -208,14 +240,17 @@ func (reason *WindowReason) moveContinued() bool {
 		position.Peak >= position.EntryPrice*(1+reason.continuedPct)
 }
 
-func (reason *WindowReason) Signal(category types.CategoryType, unit UnitType, ago int) (float64, bool) {
-	series, ok := reason.signal[category]
+func (reason *WindowReason) Signal(
+	category types.CategoryType, unit UnitType, lookback Lookback,
+) (float64, bool) {
+	index, ok := reason.resolveSignalIndex(category, lookback)
 
-	if !ok || ago < 0 || ago >= len(series) {
+	if !ok {
 		return 0, false
 	}
 
-	measurement := series[ago]
+	series := reason.signal[category]
+	measurement := series[index]
 
 	switch unit {
 	case UnitConfidence:
@@ -225,27 +260,10 @@ func (reason *WindowReason) Signal(category types.CategoryType, unit UnitType, a
 	}
 }
 
-func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (float64, bool) {
-	switch subject {
-	case SubjectPrice:
-		if ago < 0 || ago >= len(reason.price) {
-			return 0, false
-		}
-
-		return reason.price[ago], true
-	case SubjectVolume:
-		if ago < 0 || ago >= len(reason.volume) {
-			return 0, false
-		}
-
-		return reason.volume[ago], true
-	case SubjectSpread:
-		if ago < 0 || ago >= len(reason.spread) {
-			return 0, false
-		}
-
-		return reason.spread[ago], true
-	case SubjectElapsed:
+func (reason *WindowReason) Scalar(
+	subject Subject, unit UnitType, lookback Lookback,
+) (float64, bool) {
+	if subject == SubjectElapsed {
 		if !reason.position.Holding || reason.position.EntryAt.IsZero() {
 			return 0, false
 		}
@@ -258,6 +276,21 @@ func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (flo
 		default:
 			return elapsed.Seconds(), true
 		}
+	}
+
+	index, ok := reason.resolveScalarIndex(subject, lookback)
+
+	if !ok {
+		return 0, false
+	}
+
+	switch subject {
+	case SubjectPrice:
+		return reason.price[index], true
+	case SubjectVolume:
+		return reason.volume[index], true
+	case SubjectSpread:
+		return reason.spread[index], true
 	default:
 		return 0, false
 	}

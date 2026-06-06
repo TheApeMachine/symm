@@ -29,7 +29,8 @@ func newTestCrypto() *Crypto {
 		shortInventory:   map[string]float64{},
 		avgEntry:         map[string]float64{},
 		pending:          map[string]reasoning.Action{},
-		lastDecision:     map[string]string{},
+		lastDecision:     make(map[string]string),
+		entryConviction:  make(map[string]float64),
 		positionFraction: 1.0,
 	}
 	crypto.syncHeldSnapshot()
