@@ -153,12 +153,7 @@ func TestProductionPlaybookContract(testingObject *testing.T) {
 		})
 
 		Convey("A held position receives the tuned trailing stop", func() {
-			context := productionContext(
-				heldPosition(),
-				[]types.Measurement{
-					signalSnapshot(types.CategoryExtremeScarcity, 1.0, 100.5),
-				},
-			)
+			context := productionContext(heldPosition(), nil)
 
 			act, found := EvaluateStateful(playbook, context, NewReasonState())
 

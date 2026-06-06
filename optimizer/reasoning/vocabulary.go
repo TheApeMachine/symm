@@ -12,6 +12,8 @@ import (
 // so a noisy tape with dozens of categories does not explode the initial beam.
 const maxSeedCategories = 6
 
+const priceChangeEpsilon = 1e-9
+
 type categorySeedStats struct {
 	category            types.CategoryType
 	count               int
@@ -126,7 +128,7 @@ func categoryForwardStats(rows []types.Measurement) map[types.CategoryType]categ
 			symbols[row.Symbol] = state
 		}
 
-		if state.lastPrice != row.Last {
+		if math.Abs(state.lastPrice-row.Last) > priceChangeEpsilon {
 			scorePendingCategories(stats, state.pending, row.Last)
 			state.pending = state.pending[:0]
 			state.lastPrice = row.Last
@@ -140,6 +142,15 @@ func categoryForwardStats(rows []types.Measurement) map[types.CategoryType]categ
 			category: row.Category,
 			price:    row.Last,
 		})
+	}
+
+	for _, state := range symbols {
+		if len(state.pending) == 0 {
+			continue
+		}
+
+		scorePendingCategories(stats, state.pending, state.lastPrice)
+		state.pending = state.pending[:0]
 	}
 
 	return stats
