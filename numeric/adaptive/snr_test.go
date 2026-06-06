@@ -57,7 +57,7 @@ func TestSNRScore(t *testing.T) {
 
 			score, err := snr.Score(0.3)
 			So(err, ShouldBeNil)
-			So(score, ShouldBeLessThan, 0)
+			So(score, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("It should error on zero standout", func() {

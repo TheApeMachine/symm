@@ -380,6 +380,23 @@ func aggregateLeadlagReadings(
 	return leadlagGaugeReading{measurement: aggregate, standout: best.standout}, true
 }
 
+// mapCategoryToTelemetry maps the non-continuous logical lead-lag states onto
+// the 0..1 interval expected by the UI gauge, using the category's fixed band segment.
+func mapCategoryToTelemetry(category types.CategoryType, standout float64) float64 {
+	switch category {
+	case types.CategoryAnchorStall:
+		return 0.0 + 0.25*standout
+	case types.CategoryDecoupledMove:
+		return 0.25 + 0.30*standout
+	case types.CategorySynchronizedDrift:
+		return 0.55 + 0.20*standout
+	case types.CategoryInefficientLag:
+		return 0.75 + 0.25*standout
+	default:
+		return 0.0
+	}
+}
+
 func (signal *Signal) sendDashboardGauge(
 	measurement *types.Measurement,
 	standout float64,
@@ -393,7 +410,7 @@ func (signal *Signal) sendDashboardGauge(
 	}
 
 	telemetry := numeric.Telemetry{
-		Observation: measurement.Strength,
+		Observation:  mapCategoryToTelemetry(measurement.Category, standout),
 		Edges:       leadlagDefaultBandEdges,
 		Labels:      []string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
 		Calibrated:  true,

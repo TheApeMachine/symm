@@ -47,7 +47,8 @@ const socketUrl =
 
 const NODE_W = 210;
 const NODE_H = 78;
-const ROW_H = 132;
+const COL_W = 240;
+const SIBLING_GAP = 20;
 const PAD = 24;
 
 const BOTTLENECK_HOLD_RATE_THRESHOLD = 0.02;
@@ -128,9 +129,21 @@ const DecisionsPage = () => {
 			(byDepth[node.depth] ??= []).push(node);
 		}
 
-		const widest = Math.max(...byDepth.map((row) => (row ? row.length : 0)));
-		const width = widest * NODE_W + PAD * 2;
-		const height = byDepth.length * ROW_H + PAD * 2;
+		for (const row of byDepth) {
+			if (row) {
+				row.sort((left, right) => left.key.localeCompare(right.key));
+			}
+		}
+
+		const columnHeights = byDepth.map((row) => {
+			if (!row || row.length === 0) {
+				return 0;
+			}
+
+			return row.length * NODE_H + (row.length - 1) * SIBLING_GAP;
+		});
+		const height = Math.max(...columnHeights, NODE_H) + PAD * 2;
+		const width = byDepth.length * COL_W + PAD * 2;
 
 		const pos = new Map<string, { x: number; y: number }>();
 
@@ -139,13 +152,14 @@ const DecisionsPage = () => {
 				return;
 			}
 
-			const rowWidth = row.length * NODE_W;
-			const startX = (width - rowWidth) / 2 + NODE_W / 2;
+			const columnHeight = row.length * NODE_H + (row.length - 1) * SIBLING_GAP;
+			const startY = (height - columnHeight) / 2 + NODE_H / 2;
+			const centerX = PAD + depth * COL_W + COL_W / 2;
 
 			row.forEach((node, index) => {
 				pos.set(node.key, {
-					x: startX + index * NODE_W,
-					y: PAD + depth * ROW_H + NODE_H / 2,
+					x: centerX,
+					y: startY + index * (NODE_H + SIBLING_GAP),
 				});
 			});
 		});
@@ -242,8 +256,9 @@ const DecisionsPage = () => {
 						</div>
 					) : (
 						<svg
-							viewBox={`0 0 ${layout.width} ${layout.height}`}
-							className="h-full w-full"
+							width={layout.width}
+							height={layout.height}
+							className="block min-w-full"
 							role="img"
 							aria-label="decision tree"
 						>
@@ -262,10 +277,10 @@ const DecisionsPage = () => {
 								return (
 									<line
 										key={`edge-${node.key}`}
-										x1={parent.x}
-										y1={parent.y + NODE_H / 2}
-										x2={child.x}
-										y2={child.y - NODE_H / 2}
+										x1={parent.x + NODE_W / 2}
+										y1={parent.y}
+										x2={child.x - NODE_W / 2}
+										y2={child.y}
 										stroke="currentColor"
 										className="text-border"
 										strokeWidth={1.5}
@@ -307,9 +322,9 @@ const DecisionsPage = () => {
 								return (
 									<foreignObject
 										key={`node-${node.key}`}
-										x={point.x - NODE_W / 2 + 8}
+										x={point.x - NODE_W / 2}
 										y={point.y - NODE_H / 2}
-										width={NODE_W - 16}
+										width={NODE_W}
 										height={NODE_H}
 									>
 										<button

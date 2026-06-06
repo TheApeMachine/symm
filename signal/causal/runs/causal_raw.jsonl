@@ -54,3 +54,15 @@
 {"symbol":"SOL/EUR","category":"systemic_beta","strength":1.4,"confidence":1,"snr":29.166666666666668,"standout":0.5833333333333334,"last":120,"spread_bps":0}
 {"symbol":"BTC/EUR","category":"systemic_beta","strength":1.2999999999999998,"confidence":1,"snr":28.260869565217387,"standout":0.5652173913043478,"last":100,"spread_bps":0}
 {"symbol":"BTC/EUR","category":"systemic_beta","strength":1,"confidence":1,"snr":25,"standout":0.5,"last":100,"spread_bps":0}
+{"symbol":"SOL/EUR","category":"systemic_beta","strength":1.4,"confidence":1,"snr":29.166666666666668,"standout":0.5833333333333334,"last":120,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1.2999999999999998,"confidence":1,"snr":28.260869565217387,"standout":0.5652173913043478,"last":100,"spread_bps":0}
+{"symbol":"ETH/EUR","category":"systemic_beta","strength":1.2,"confidence":1,"snr":27.27272727272727,"standout":0.5454545454545454,"last":110,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1,"confidence":1,"snr":25,"standout":0.5,"last":100,"spread_bps":0}
+{"symbol":"ETH/EUR","category":"systemic_beta","strength":1.2,"confidence":1,"snr":27.27272727272727,"standout":0.5454545454545454,"last":110,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1.2999999999999998,"confidence":1,"snr":28.260869565217387,"standout":0.5652173913043478,"last":100,"spread_bps":0}
+{"symbol":"SOL/EUR","category":"systemic_beta","strength":1.4,"confidence":1,"snr":29.166666666666668,"standout":0.5833333333333334,"last":120,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1,"confidence":1,"snr":25,"standout":0.5,"last":100,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1.2999999999999998,"confidence":1,"snr":28.260869565217387,"standout":0.5652173913043478,"last":100,"spread_bps":0}
+{"symbol":"ETH/EUR","category":"systemic_beta","strength":1.2,"confidence":1,"snr":27.27272727272727,"standout":0.5454545454545454,"last":110,"spread_bps":0}
+{"symbol":"SOL/EUR","category":"systemic_beta","strength":1.4,"confidence":1,"snr":29.166666666666668,"standout":0.5833333333333334,"last":120,"spread_bps":0}
+{"symbol":"BTC/EUR","category":"systemic_beta","strength":1,"confidence":1,"snr":25,"standout":0.5,"last":100,"spread_bps":0}

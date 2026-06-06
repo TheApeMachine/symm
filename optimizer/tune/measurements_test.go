@@ -103,6 +103,7 @@ func TestTuneMeasurements(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
 
+		viper.Set("story.measurements.buffer", 1024)
 		viper.Set("market.quote_currency", "EUR")
 		viper.Set("trading.paper.wallet_eur", 200.0)
 
@@ -151,6 +152,7 @@ func TestTuneMeasurementsFiltersFundableRows(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
 
+		viper.Set("story.measurements.buffer", 1024)
 		viper.Set("market.quote_currency", "EUR")
 		viper.Set("trading.paper.wallet_eur", 200.0)
 
@@ -188,6 +190,7 @@ func TestTuneMeasurementsDoesNotWriteSparseCandidate(t *testing.T) {
 		viper.Reset()
 		defer viper.Reset()
 
+		viper.Set("story.measurements.buffer", 1024)
 		viper.Set("market.quote_currency", "EUR")
 		viper.Set("trading.paper.wallet_eur", 200.0)
 
@@ -229,6 +232,7 @@ func BenchmarkTuneMeasurements(b *testing.B) {
 	viper.Reset()
 	defer viper.Reset()
 
+	viper.Set("story.measurements.buffer", 1024)
 	viper.Set("market.quote_currency", "EUR")
 	viper.Set("trading.paper.wallet_eur", 200.0)
 

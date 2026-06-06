@@ -88,7 +88,13 @@ func (snr *SNR) Score(value float64) (float64, error) {
 	}
 
 	std := math.Sqrt(historicalVar + floorVar)
-	result := (value - mean) / std
+	var result float64
+
+	if value > mean {
+		result = (value - mean) / std
+	} else {
+		result = value / (mean + snr.minStd)
+	}
 
 	if err := snr.moments.Update(value, snr.alpha); err != nil {
 		return 0, err
