@@ -66,20 +66,28 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"liquidity",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryExtremeScarcity,
+		types.CategoryMedianDepth,
+		types.CategoryRobustLiquidity,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/liquidity")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryExtremeScarcity,
-			types.CategoryMedianDepth,
-			types.CategoryRobustLiquidity,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("liquidity"),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		broadcasts:    make(map[string]*qpool.BroadcastGroup),
+		subscribers:   make(map[string]*qpool.Subscriber),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("liquidity"),
 	}
 
 	for _, channel := range []string{"raw"} {

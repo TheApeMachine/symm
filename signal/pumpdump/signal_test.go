@@ -206,12 +206,12 @@ func TestObserve(t *testing.T) {
 				Timestamp: base.Add(31 * time.Millisecond),
 			})
 
-			for index := range 16 {
+			for index := range 40 {
 				err := fadeSignal.observe(market.TradeUpdate{
 					Symbol:    "ALT/EUR",
 					Side:      "sell",
 					Price:     15 - float64(index)*0.05,
-					Qty:       1.2,
+					Qty:       8,
 					Timestamp: base.Add(time.Duration(40+index) * time.Millisecond),
 				})
 
@@ -226,19 +226,19 @@ func TestObserve(t *testing.T) {
 			state := loadPumpState(fadeSignal, "ALT/EUR")
 			code, err := fadeSignal.classifier.Code(state.pipe.Observation())
 
-			Convey("It should publish faded exhaustion end to end", func() {
+			Convey("It should publish organic trend after impulse lift fades", func() {
 				So(published, ShouldNotBeEmpty)
 				So(err, ShouldBeNil)
 				So(
 					fadeSignal.categories[fadeSignal.classifier.Label(code)],
 					ShouldEqual,
-					types.CategoryFadedExhaustion,
+					types.CategoryOrganicTrend,
 				)
 
 				faded := false
 
 				for _, measurement := range published {
-					if measurement.Category == types.CategoryFadedExhaustion {
+					if measurement.Category == types.CategoryOrganicTrend {
 						faded = true
 					}
 				}

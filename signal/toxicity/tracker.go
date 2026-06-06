@@ -91,15 +91,21 @@ type Tracker struct {
 	minFillToCancelRatio float64
 }
 
-func NewTracker() *Tracker {
-	return &Tracker{
-		symbols: make(map[string]*symbolState),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryHardSupport,
-			types.CategoryLiquidityVacuum,
-			types.CategoryToxicBluff,
-		}, types.DefaultCategorySurpriseAlpha),
+func NewTracker() (*Tracker, error) {
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryHardSupport,
+		types.CategoryLiquidityVacuum,
+		types.CategoryToxicBluff,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		return nil, err
 	}
+
+	return &Tracker{
+		symbols:       make(map[string]*symbolState),
+		surpriseField: surpriseField,
+	}, nil
 }
 
 /*

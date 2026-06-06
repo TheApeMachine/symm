@@ -21,7 +21,17 @@ func priceKey(price float64, pair market.Pair) int64 {
 		return int64(math.Round(price * priceKeyScale))
 	}
 
-	return int64(math.Round(price / tickSize))
+	rounded := math.Round(price / tickSize)
+
+	if rounded > float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+
+	if rounded < float64(math.MinInt64) {
+		return math.MinInt64
+	}
+
+	return int64(rounded)
 }
 
 func priceFromKey(key int64, pair market.Pair) float64 {

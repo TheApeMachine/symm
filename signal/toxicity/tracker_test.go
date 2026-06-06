@@ -8,9 +8,21 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 )
 
+func newTestTracker(t testing.TB) *Tracker {
+	t.Helper()
+
+	tracker, err := NewTracker()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return tracker
+}
+
 func TestTrackerApplyOrderToxicCancel(t *testing.T) {
 	Convey("Given a large near-touch cancel", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "TEST/TOXIC"
 		price := 100.0
@@ -30,7 +42,7 @@ func TestTrackerApplyOrderToxicCancel(t *testing.T) {
 
 func TestTrackerFillToCancelThreshold(t *testing.T) {
 	Convey("Given a tracker without cached ratio", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 
 		Convey("It should lazily load threshold from viper", func() {
 			So(tracker.fillToCancelThreshold(), ShouldBeGreaterThanOrEqualTo, 0)
@@ -39,7 +51,7 @@ func TestTrackerFillToCancelThreshold(t *testing.T) {
 }
 
 func BenchmarkTrackerApplyOrder(b *testing.B) {
-	tracker := NewTracker()
+	tracker := newTestTracker(b)
 	now := time.Now()
 	symbol := "BTC/EUR"
 

@@ -2,6 +2,7 @@ package private
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -59,20 +60,26 @@ func (hybrid *hybridWebSocket) Tick() error {
 	}
 
 	errCh := make(chan error, 2)
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(2)
 
 	go func() {
+		defer waitGroup.Done()
 		errCh <- hybrid.paper.Tick()
 	}()
 
 	go func() {
+		defer waitGroup.Done()
 		errCh <- hybrid.l3.Tick()
 	}()
 
 	select {
 	case <-hybrid.ctx.Done():
+		waitGroup.Wait()
 		_ = hybrid.Close()
 		return hybrid.ctx.Err()
 	case err := <-errCh:
+		waitGroup.Wait()
 		_ = hybrid.Close()
 		return err
 	}

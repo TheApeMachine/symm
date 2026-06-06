@@ -430,7 +430,7 @@ func (harness *Harness) sleep(duration time.Duration) {
 }
 
 func (harness *Harness) waitDeskReady(timeout time.Duration) {
-	harness.sleep(timeout * time.Millisecond)
+	harness.sleep(timeout)
 }
 
 func ConfigureViper(auditPath string) {

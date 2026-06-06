@@ -63,8 +63,9 @@ func (ledger *replayLedger) openEntry(
 	snapshots []types.Measurement,
 	feePct float64,
 	at time.Time,
+	reservationCredit int,
 ) {
-	ledger.openEntryReserved(symbol, side, act, measurement, snapshots, feePct, at, 0)
+	ledger.openEntryReserved(symbol, side, act, measurement, snapshots, feePct, at, reservationCredit)
 }
 
 func (ledger *replayLedger) openEntryReserved(
@@ -199,10 +200,6 @@ func entryCapacity(fraction float64) int {
 	}
 
 	capacity := int(math.Floor(1/fraction + 1e-9))
-
-	if capacity < 1 {
-		capacity = 1
-	}
 
 	return capacity
 }
@@ -360,6 +357,7 @@ func (ledger *replayLedger) openLong(
 		nil,
 		feePct,
 		at,
+		0,
 	)
 }
 
@@ -377,5 +375,6 @@ func (ledger *replayLedger) openShort(
 		nil,
 		feePct,
 		at,
+		0,
 	)
 }

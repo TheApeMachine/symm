@@ -17,6 +17,14 @@ const (
 	minCategoryProb              = 1e-12
 )
 
+func validateCategorySurpriseAlpha(alpha float64) error {
+	if alpha <= 0 || alpha > 1 {
+		return errnie.Error(fmt.Errorf("perspectives: invalid category surprise alpha %v", alpha))
+	}
+
+	return nil
+}
+
 /*
 CategorySurpriseTracker tracks how unexpected each category selection is for one
 symbol using Shannon surprisal against a self-normalizing EWMA prior.
@@ -33,13 +41,13 @@ type CategorySurpriseTracker struct {
 NewCategorySurpriseTracker builds a tracker with a uniform prior over the allowed
 categories.
 */
-func NewCategorySurpriseTracker(categories []CategoryType, alpha float64) *CategorySurpriseTracker {
+func NewCategorySurpriseTracker(categories []CategoryType, alpha float64) (*CategorySurpriseTracker, error) {
 	if len(categories) == 0 {
-		return nil
+		return nil, errnie.Error(errors.New("perspectives: CategorySurpriseTracker requires categories"))
 	}
 
-	if alpha <= 0 || alpha > 1 {
-		alpha = DefaultCategorySurpriseAlpha
+	if err := validateCategorySurpriseAlpha(alpha); err != nil {
+		return nil, err
 	}
 
 	probs := make(map[CategoryType]float64, len(categories))
@@ -54,7 +62,7 @@ func NewCategorySurpriseTracker(categories []CategoryType, alpha float64) *Categ
 		snr:           adaptive.NewSurprisalSNR(),
 		alpha:         alpha,
 		numCategories: len(categories),
-	}
+	}, nil
 }
 
 /*
@@ -75,6 +83,12 @@ func (tracker *CategorySurpriseTracker) Score(selected CategoryType) (float64, e
 	prob, ok := tracker.probs[selected]
 
 	if !ok {
+		scale := float64(tracker.numCategories) / float64(tracker.numCategories+1)
+
+		for category := range tracker.probs {
+			tracker.probs[category] *= scale
+		}
+
 		prob = 1.0 / float64(tracker.numCategories+1)
 		tracker.probs[selected] = prob
 		tracker.numCategories++
@@ -117,16 +131,20 @@ type CategorySurpriseField struct {
 /*
 NewCategorySurpriseField builds an empty per-symbol surprise field.
 */
-func NewCategorySurpriseField(categories []CategoryType, alpha float64) *CategorySurpriseField {
-	if alpha <= 0 || alpha > 1 {
-		alpha = DefaultCategorySurpriseAlpha
+func NewCategorySurpriseField(categories []CategoryType, alpha float64) (*CategorySurpriseField, error) {
+	if len(categories) == 0 {
+		return nil, errnie.Error(errors.New("perspectives: CategorySurpriseField requires categories"))
+	}
+
+	if err := validateCategorySurpriseAlpha(alpha); err != nil {
+		return nil, err
 	}
 
 	return &CategorySurpriseField{
 		trackers:   make(map[string]*CategorySurpriseTracker),
 		categories: append([]CategoryType(nil), categories...),
 		alpha:      alpha,
-	}
+	}, nil
 }
 
 /*
@@ -149,7 +167,14 @@ func (field *CategorySurpriseField) Score(symbol string, selected CategoryType) 
 	tracker, ok := field.trackers[symbol]
 
 	if !ok {
-		tracker = NewCategorySurpriseTracker(field.categories, field.alpha)
+		var err error
+		tracker, err = NewCategorySurpriseTracker(field.categories, field.alpha)
+
+		if err != nil {
+			field.mu.Unlock()
+			return 0, err
+		}
+
 		field.trackers[symbol] = tracker
 	}
 

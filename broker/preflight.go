@@ -31,11 +31,15 @@ func PreflightGates(request PreflightRequest) error {
 	}
 
 	if reasoning.IsExitAction(request.ActionType) {
-		if usableExitReference(request.Quote) {
-			return nil
+		if !usableExitReference(request.Quote) {
+			return fmt.Errorf("preflight: incomplete quote for exit %s", request.Quote.Symbol)
 		}
 
-		return fmt.Errorf("preflight: incomplete quote for exit %s", request.Quote.Symbol)
+		if err := preflightQuoteQuality(request.Quote); err != nil {
+			return fmt.Errorf("preflight: stale last price for exit: %w", err)
+		}
+
+		return nil
 	}
 
 	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {

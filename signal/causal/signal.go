@@ -97,18 +97,26 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"causal",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryCausalNoise,
+		types.CategorySystemicBeta,
+		types.CategoryEndogenousAlpha,
+		types.CategoryLiquidityShock,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/causal")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryCausalNoise,
-			types.CategorySystemicBeta,
-			types.CategoryEndogenousAlpha,
-			types.CategoryLiquidityShock,
-		}, types.DefaultCategorySurpriseAlpha),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		broadcasts:      make(map[string]*qpool.BroadcastGroup),
+		subscribers:     make(map[string]*qpool.Subscriber),
+		surpriseField:   surpriseField,
 		classifier:      pooledCalibrator.Classifier,
 		calibrator:      pooledCalibrator.Calibrator,
 		contagionSpread: ring.NewFloatRing(64),

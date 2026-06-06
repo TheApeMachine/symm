@@ -73,27 +73,35 @@ type Story struct {
 func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
+	predictionSurpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryStochasticNoise,
+		types.CategoryStochasticBalance,
+		types.CategorySynchronizedDrift,
+		types.CategoryOrganicTrend,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "story")
+		return nil
+	}
+
 	story := &Story{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		broadcasts:     make(map[string]*qpool.BroadcastGroup),
-		subscribers:    make(map[string]*qpool.Subscriber),
-		reasonStates:   make(map[string]*reasoning.ReasonState),
-		positions:      make(map[string]*reasoning.PositionState),
-		regimeFeatures: make(map[string]perspectives.RegimeFeatures),
-		predictionSurpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryStochasticNoise,
-			types.CategoryStochasticBalance,
-			types.CategorySynchronizedDrift,
-			types.CategoryOrganicTrend,
-		}, types.DefaultCategorySurpriseAlpha),
-		ringWindow:      ring.New(storyMeasurementBuffer()),
-		lastGauge:       make(map[string]time.Time),
-		nodeReached:     make(map[string]int),
-		nodeHeld:        make(map[string]int),
-		condHeld:        make(map[string][]int),
-		quoteVolumeBase: make(map[string]float64),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		pool:                    pool,
+		broadcasts:              make(map[string]*qpool.BroadcastGroup),
+		subscribers:             make(map[string]*qpool.Subscriber),
+		reasonStates:            make(map[string]*reasoning.ReasonState),
+		positions:               make(map[string]*reasoning.PositionState),
+		regimeFeatures:          make(map[string]perspectives.RegimeFeatures),
+		predictionSurpriseField: predictionSurpriseField,
+		ringWindow:              ring.New(storyMeasurementBuffer()),
+		lastGauge:               make(map[string]time.Time),
+		nodeReached:             make(map[string]int),
+		nodeHeld:                make(map[string]int),
+		condHeld:                make(map[string][]int),
+		quoteVolumeBase:         make(map[string]float64),
 	}
 
 	story.ui = bus.Group(pool, "ui", 10*time.Millisecond)
@@ -137,7 +145,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
-		storyMeasurementsSubscriberID, viper.GetInt("system.queue.buffer"),
+		storyMeasurementsSubscriberID, storyMeasurementBuffer(),
 	)
 
 	errnie.Info("market/story ready", "market/story")

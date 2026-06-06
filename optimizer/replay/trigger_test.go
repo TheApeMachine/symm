@@ -95,7 +95,7 @@ func TestReplayTriggerExits(t *testing.T) {
 		Convey("settle_position still closes immediately at the current price", func() {
 			ledger := newReplayLedger(triggerTestCosts())
 			ledger.openLong("BTC/EUR", 100, 0, time.Time{})
-			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, btcRow(101), nil)
+			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, btcRow(101), nil, 0)
 
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
 			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.01, 1e-9)

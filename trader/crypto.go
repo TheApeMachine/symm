@@ -286,7 +286,12 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 
 		// Size the order against the wallet balance the API published, never a
 		// locally tracked figure. balances.ApplyFill remains the final gate.
-		quantity := crypto.sizeEntry(action)
+		quantity, err := crypto.sizeEntry(action)
+
+		if err != nil {
+			crypto.publishDecision(action, "rejected", err.Error())
+			return
+		}
 
 		if quantity <= 0 {
 			crypto.publishDecision(action, "rejected", "insufficient funds")
@@ -555,24 +560,27 @@ in flight) a new entry is refused, instead of splitting the remaining cash into
 ever-smaller positions. A position cannot be sized against capital we do not yet know,
 so it returns 0 until a capital base exists rather than substituting the live cash.
 */
-func (crypto *Crypto) sizeEntry(input any) float64 {
-	action := entrySizingAction(input)
+func (crypto *Crypto) sizeEntry(action reasoning.Action) (float64, error) {
 	price := action.Price
 
 	if price <= 0 {
-		return 0
+		return 0, fmt.Errorf("trader: entry price must be positive")
 	}
 
 	capital := crypto.capitalBaseValue()
 
 	if capital <= 0 {
-		return 0
+		return 0, nil
 	}
 
 	fraction := crypto.entryDeployFraction(action)
 
 	if fraction <= 0 {
-		return 0
+		return 0, nil
+	}
+
+	if fraction > 1 {
+		return 0, fmt.Errorf("trader: deploy fraction %.4f exceeds 1", fraction)
 	}
 
 	// At most floor(1/fraction) positions run at once. A 60% slot must not permit
@@ -581,11 +589,11 @@ func (crypto *Crypto) sizeEntry(input any) float64 {
 	capacity := int(math.Floor(1/fraction + 1e-9))
 
 	if capacity < 1 {
-		capacity = 1
+		return 0, fmt.Errorf("trader: deploy fraction %.4f exceeds concurrent capacity", fraction)
 	}
 
 	if crypto.openExposureCount() >= capacity {
-		return 0
+		return 0, nil
 	}
 
 	feeRate := crypto.entryFeeRate(action.Type)
@@ -601,23 +609,10 @@ func (crypto *Crypto) sizeEntry(input any) float64 {
 	}
 
 	if slot <= 0 {
-		return 0
+		return 0, nil
 	}
 
-	return slot / price
-}
-
-func entrySizingAction(input any) reasoning.Action {
-	switch typed := input.(type) {
-	case reasoning.Action:
-		return typed
-	case float64:
-		return reasoning.Action{Price: typed}
-	case int:
-		return reasoning.Action{Price: float64(typed)}
-	default:
-		return reasoning.Action{}
-	}
+	return slot / price, nil
 }
 
 func (crypto *Crypto) entryFeeRate(actionType reasoning.ActionType) float64 {
@@ -637,12 +632,8 @@ func (crypto *Crypto) entryDeployFraction(action reasoning.Action) float64 {
 
 	fraction *= liveRegimeSizeScale(action.Regime)
 
-	if fraction > 1 {
-		fraction = 1
-	}
-
 	if fraction < 0 {
-		fraction = 0
+		return 0
 	}
 
 	return fraction
@@ -651,19 +642,23 @@ func (crypto *Crypto) entryDeployFraction(action reasoning.Action) float64 {
 func liveRegimeSizeScale(regime types.Regime) float64 {
 	switch regime {
 	case types.RegimeChoppy:
-		return positiveScaleOrOne("trading.replay.choppy_size_scale")
+		return requiredRegimeSizeScale("trading.replay.choppy_size_scale")
 	case types.RegimeBearish:
-		return positiveScaleOrOne("trading.replay.bearish_size_scale")
+		return requiredRegimeSizeScale("trading.replay.bearish_size_scale")
 	default:
 		return 1
 	}
 }
 
-func positiveScaleOrOne(key string) float64 {
+func requiredRegimeSizeScale(key string) float64 {
+	if !viper.IsSet(key) {
+		return 0
+	}
+
 	value := viper.GetFloat64(key)
 
 	if value <= 0 {
-		return 1
+		return 0
 	}
 
 	return value

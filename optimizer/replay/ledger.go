@@ -208,7 +208,7 @@ func (ledger *replayLedger) flushPending(
 			continue
 		}
 
-		ledger.applyStressed(item.act, fillRow, item.snapshots)
+		ledger.applyStressed(item.act, fillRow, item.snapshots, 1)
 	}
 
 	ledger.pending = remaining
@@ -317,7 +317,7 @@ func (ledger *replayLedger) queueAction(
 	snapshots []types.Measurement,
 ) {
 	if ledger.executionLatency <= 0 {
-		ledger.applyStressed(act, measurement, snapshots)
+		ledger.applyStressed(act, measurement, snapshots, 0)
 
 		return
 	}
@@ -337,6 +337,7 @@ func (ledger *replayLedger) applyStressed(
 	act reasoning.Act,
 	measurement types.Measurement,
 	snapshots []types.Measurement,
+	reservationCredit int,
 ) {
 	if measurement.Last <= 0 {
 		return
@@ -389,6 +390,7 @@ func (ledger *replayLedger) applyStressed(
 			snapshots,
 			feePct,
 			measurement.At,
+			reservationCredit,
 		)
 	case reasoning.ActionSettlePosition:
 		ledger.closePosition(measurement.Symbol, measurement, snapshots, feePct)

@@ -52,21 +52,29 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"depthflow",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryDenseNeutrality,
+		types.CategoryLoadedImbalance,
+		types.CategoryBookThinning,
+		types.CategorySpoofTrap,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/depthflow")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryDenseNeutrality,
-			types.CategoryLoadedImbalance,
-			types.CategoryBookThinning,
-			types.CategorySpoofTrap,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("depthflow"),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		broadcasts:    make(map[string]*qpool.BroadcastGroup),
+		subscribers:   make(map[string]*qpool.Subscriber),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("depthflow"),
 	}
 
 	for _, channel := range []string{"raw"} {

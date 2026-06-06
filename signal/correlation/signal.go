@@ -142,6 +142,19 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"correlation",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryDivergentStress,
+		types.CategoryStochasticNoise,
+		types.CategoryDecoupledAlpha,
+		types.CategorySystemicHerd,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/correlation")
+		return nil
+	}
+
 	signal := &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
@@ -155,15 +168,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  types.CategoryDecoupledAlpha,
 			"systemic_herd":    types.CategorySystemicHerd,
 		},
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryDivergentStress,
-			types.CategoryStochasticNoise,
-			types.CategoryDecoupledAlpha,
-			types.CategorySystemicHerd,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("correlation"),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("correlation"),
 	}
 
 	// Fixed seed: one shared projection for the whole universe.

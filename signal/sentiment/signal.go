@@ -67,21 +67,29 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"sentiment",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategorySystemicSlump,
+		types.CategoryDivergentMove,
+		types.CategoryRiskOnSurge,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/sentiment")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategorySystemicSlump,
-			types.CategoryDivergentMove,
-			types.CategoryRiskOnSurge,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("sentiment"),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		broadcasts:    make(map[string]*qpool.BroadcastGroup),
+		subscribers:   make(map[string]*qpool.Subscriber),
+		breadthHist:   ring.NewFloatRing(sentimentBreadthHistory),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("sentiment"),
 	}
 
 	for _, channel := range []string{"raw"} {

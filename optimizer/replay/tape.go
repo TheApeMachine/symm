@@ -71,6 +71,18 @@ func indicesInWindow(indices []int, startIndex, endIndex int) []int {
 	return indices[start:end]
 }
 
+const defaultStoryMeasurementBuffer = 1024
+
+func storyMeasurementBuffer() int {
+	configured := viper.GetInt("story.measurements.buffer")
+
+	if configured > 0 {
+		return configured
+	}
+
+	return defaultStoryMeasurementBuffer
+}
+
 func mergeSnapshotIndices(
 	ticks []PrecompiledTick,
 	symbolIndices map[string][]int,
@@ -83,7 +95,7 @@ func mergeSnapshotIndices(
 		return nil
 	}
 
-	startIndex := tickIndex - viper.GetInt("story.measurements.buffer") + 1
+	startIndex := tickIndex - storyMeasurementBuffer() + 1
 
 	if startIndex < 0 {
 		startIndex = 0

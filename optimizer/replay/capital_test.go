@@ -71,7 +71,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			ledger := newReplayLedger(costs)
 
 			ledger.openLong("BTC/EUR", 100, 0, time.Time{}) // qty 2, cost €200
-			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, eurRow("BTC/EUR", 110), nil)
+			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, eurRow("BTC/EUR", 110), nil, 0)
 
 			// +10% price move on a fully-deployed account => +10% on capital.
 			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-9)
@@ -86,7 +86,7 @@ func TestReplayCapitalConstraint(t *testing.T) {
 			ledger.openLong("ETH/EUR", 50, 0, time.Time{}) // unfunded while BTC/EUR holds
 			So(ledger.holding("ETH/EUR"), ShouldBeFalse)
 
-			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, eurRow("BTC/EUR", 100), nil)
+			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, eurRow("BTC/EUR", 100), nil, 0)
 			ledger.openLong("ETH/EUR", 50, 0, time.Time{}) // cash freed — now it funds
 			So(ledger.holding("ETH/EUR"), ShouldBeTrue)
 		})

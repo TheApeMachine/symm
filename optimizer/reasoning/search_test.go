@@ -42,9 +42,10 @@ func rallyTape() []types.Measurement {
 
 func frictionlessCosts() replay.ReplayCosts {
 	return replay.ReplayCosts{
-		StartingCapital:  100,
-		PositionFraction: 1,
-		WalletCurrency:   "EUR",
+		StartingCapital:        100,
+		PositionFraction:       1,
+		WalletCurrency:         "EUR",
+		ExecutionStressEnabled: false,
 	}
 }
 

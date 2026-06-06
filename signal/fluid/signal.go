@@ -53,20 +53,28 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"fluid",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryLaminar,
+		types.CategoryInertial,
+		types.CategoryViscous,
+		types.CategoryTurbulent,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/fluid")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryLaminar,
-			types.CategoryInertial,
-			types.CategoryViscous,
-			types.CategoryTurbulent,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		broadcasts:    make(map[string]*qpool.BroadcastGroup),
+		subscribers:   make(map[string]*qpool.Subscriber),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
 		categories: map[string]types.CategoryType{
 			"laminar":   types.CategoryLaminar,
 			"inertial":  types.CategoryInertial,

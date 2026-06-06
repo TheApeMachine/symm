@@ -2,6 +2,8 @@ package reasoning
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -10,10 +12,21 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
+func productionPlaybookPath(t testing.TB) string {
+	t.Helper()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+
+	return filepath.Join(filepath.Dir(file), "..", "cfg", "perspectives.yaml")
+}
+
 func loadProductionPlaybook(t *testing.T) []Thought {
 	t.Helper()
 
-	raw, err := os.ReadFile("../cfg/perspectives.yaml")
+	raw, err := os.ReadFile(productionPlaybookPath(t))
 	if err != nil {
 		t.Fatalf("read production playbook: %v", err)
 	}
@@ -429,7 +442,7 @@ func TestProductionPlaybookContractExitOrdering(t *testing.T) {
 }
 
 func BenchmarkProductionPlaybookEvaluate(b *testing.B) {
-	raw, err := os.ReadFile("../cfg/perspectives.yaml")
+	raw, err := os.ReadFile(productionPlaybookPath(b))
 	if err != nil {
 		b.Fatal(err)
 	}

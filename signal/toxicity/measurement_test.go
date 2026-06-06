@@ -46,7 +46,7 @@ func warmTrackerSNR(t *testing.T, tracker *Tracker, symbol string) {
 
 func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 	convey.Convey("Given a near-touch toxic cancel with churn ratio", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "ETH/EUR"
 
@@ -73,7 +73,7 @@ func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 
 func TestTrackerMeasureToxicBluff(t *testing.T) {
 	convey.Convey("Given a near-touch toxic cancel flag", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "ETH/EUR"
 
@@ -99,7 +99,7 @@ func TestTrackerMeasureToxicBluff(t *testing.T) {
 
 func TestTrackerMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 	convey.Convey("Given cancel/fill asymmetry with observed fill flow", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "BTC/EUR"
 
@@ -132,7 +132,7 @@ func TestTrackerMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 
 func TestTrackerMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 	convey.Convey("Given cancel flow without matched fill", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "BTC/EUR"
 
@@ -155,7 +155,7 @@ func TestTrackerMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 
 func TestTrackerMeasureHardSupport(t *testing.T) {
 	convey.Convey("Given balanced visible depth without toxic cancels", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "BTC/EUR"
 

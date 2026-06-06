@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/bus"
@@ -76,6 +77,19 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"cvd",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryVolumeStarvation,
+		types.CategoryStochasticBalance,
+		types.CategoryHiddenAbsorption,
+		types.CategoryAggressiveDrive,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/cvd")
+		return nil
+	}
+
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -88,24 +102,19 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"hidden_absorption":  types.CategoryHiddenAbsorption,
 			"aggressive_drive":   types.CategoryAggressiveDrive,
 		},
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryVolumeStarvation,
-			types.CategoryStochasticBalance,
-			types.CategoryHiddenAbsorption,
-			types.CategoryAggressiveDrive,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("cvd"),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("cvd"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, viper.GetDuration("system.queue.ttl"))
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", viper.GetDuration("system.queue.ttl"))
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", viper.GetDuration("system.queue.ttl"))
 
 	errnie.Info("signal/cvd ready", "signal/cvd")
 

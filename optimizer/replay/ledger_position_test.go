@@ -28,6 +28,7 @@ func TestReplayShortEntry(t *testing.T) {
 				reasoning.Act{Type: reasoning.ActionSettlePosition},
 				eurRow("BTC/EUR", 90),
 				nil,
+				0,
 			)
 
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)

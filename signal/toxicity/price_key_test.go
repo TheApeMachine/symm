@@ -30,7 +30,7 @@ func TestPriceKey(t *testing.T) {
 
 func TestIsToxicPriceKeyLookup(t *testing.T) {
 	Convey("Given a toxic level stored at a rounded price", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		symbol := "ETH/EUR"
 		now := trackerNow()
 		pair := market.Pair{TickSize: "0.01"}

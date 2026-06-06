@@ -63,7 +63,23 @@ func TestPreflightGates(t *testing.T) {
 			So(PreflightGates(request), ShouldNotBeNil)
 		})
 
-		Convey("It should bypass stress and slippage gates for exits", func() {
+		Convey("It should bypass stress and slippage gates for fresh exits", func() {
+			exitRequest := PreflightRequest{
+				Quote:      quote,
+				Side:       trading.Sell,
+				Quantity:   0.01,
+				OrderType:  trading.Market,
+				ActionType: reasoning.ActionSettlePosition,
+				Stress: SymbolStress{
+					ToxicityCategory: types.CategoryToxicBluff,
+					ToxicitySNR:      4,
+				},
+			}
+
+			So(PreflightGates(exitRequest), ShouldBeNil)
+		})
+
+		Convey("It should reject stale quotes for exits", func() {
 			stale := quote
 			stale.UpdatedAt = time.Now().UTC().Add(-1 * time.Hour)
 			request := PreflightRequest{
@@ -78,7 +94,9 @@ func TestPreflightGates(t *testing.T) {
 				},
 			}
 
-			So(PreflightGates(request), ShouldBeNil)
+			err := PreflightGates(request)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "stale last price for exit")
 		})
 
 		Convey("It should tighten entry slippage under hostile stress", func() {

@@ -2,12 +2,22 @@ package toxicity
 
 import "time"
 
+func mustNewTracker() *Tracker {
+	tracker, err := NewTracker()
+
+	if err != nil {
+		panic(err)
+	}
+
+	return tracker
+}
+
 // defaultTracker is the process-wide tracker the toxicity signal feeds and that
 // the book-imbalance reader (§16.3) consults via the package-level IsToxic and
 // Measure helpers. There is exactly one toxicity component, so a single shared
 // instance avoids threading a *Tracker through the depthflow/fluid book readers
 // (which are independent engine components with no handle to the signal).
-var defaultTracker = NewTracker()
+var defaultTracker = mustNewTracker()
 
 // Default returns the process-wide tracker fed by the toxicity signal.
 func Default() *Tracker {
@@ -15,7 +25,7 @@ func Default() *Tracker {
 }
 
 func ResetDefault() {
-	defaultTracker = NewTracker()
+	defaultTracker = mustNewTracker()
 }
 
 // IsToxic reports whether the shared tracker has flagged a resting level at the

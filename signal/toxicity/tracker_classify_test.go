@@ -10,7 +10,7 @@ import (
 
 func TestClassifyRemovalLocked(t *testing.T) {
 	Convey("Given a large near-touch cancel", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "BTC/EUR"
 		price := 100.0

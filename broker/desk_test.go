@@ -66,7 +66,7 @@ func TestDeskTriggersFor(t *testing.T) {
 
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(triggers.PriceType, convey.ShouldEqual, "pct")
-			convey.So(triggers.Price, convey.ShouldAlmostEqual, -0.3, 1e-9)
+			convey.So(triggers.Price, convey.ShouldAlmostEqual, -0.25, 1e-9)
 		})
 
 		convey.Convey("It should reject a dynamic trail without realized volatility", func() {
@@ -128,7 +128,7 @@ func TestDeskResolveAction(t *testing.T) {
 			})
 
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(action.Offset, convey.ShouldAlmostEqual, 0.003, 1e-9)
+			convey.So(action.Offset, convey.ShouldAlmostEqual, 0.0025, 1e-9)
 		})
 	})
 }

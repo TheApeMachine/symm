@@ -10,7 +10,7 @@ import (
 
 func TestTrackerFlashChurnFlagsNearTouchLevel(t *testing.T) {
 	convey.Convey("Given rapid near-touch add/delete churn without fills", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 		symbol := "BTC/EUR"
 		price := 100.0
@@ -29,7 +29,7 @@ func TestTrackerFlashChurnFlagsNearTouchLevel(t *testing.T) {
 }
 
 func BenchmarkTrackerObserveLevelChurn(b *testing.B) {
-	tracker := NewTracker()
+	tracker := newTestTracker(b)
 	now := time.Now()
 	symbol := "BTC/EUR"
 

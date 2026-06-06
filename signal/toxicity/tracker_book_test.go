@@ -10,7 +10,7 @@ import (
 
 func TestTrackerBookSideDepth(t *testing.T) {
 	Convey("Given mid-price observations", t, func() {
-		tracker := NewTracker()
+		tracker := newTestTracker(t)
 		now := time.Now()
 
 		tracker.ObserveMid("BTC/EUR", market.Pair{}, 100)

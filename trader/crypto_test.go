@@ -101,41 +101,56 @@ func TestSizeEntry(t *testing.T) {
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
 		crypto.availableQuote = 1000 // abundant, so slot sizing is not cash-bounded here
+		entry := reasoning.Action{Price: 100}
 
 		Convey("It refuses to size without a capital base — no substitute for unknown capital", func() {
 			crypto.capitalBase = 0
-			So(crypto.sizeEntry(100), ShouldEqual, 0)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldEqual, 0)
 		})
 
 		Convey("It sizes nothing for a non-positive price", func() {
-			So(crypto.sizeEntry(0), ShouldEqual, 0)
+			_, err := crypto.sizeEntry(reasoning.Action{Price: 0})
+			So(err, ShouldNotBeNil)
 		})
 
 		Convey("It sizes nothing when the wallet cannot fund anything", func() {
 			crypto.availableQuote = 0
-			So(crypto.sizeEntry(100), ShouldEqual, 0)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldEqual, 0)
 		})
 
 		Convey("At full deployment (fraction 1.0) one entry deploys a whole slot of the base", func() {
 			crypto.positionFraction = 1.0
-			So(crypto.sizeEntry(100), ShouldAlmostEqual, 2, 1e-9) // (1.0*200)/100
+			fee := broker.TakerFeePctFromViper() / 100
+			slot := (1.0 * crypto.capitalBase) / (1 + fee)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldAlmostEqual, slot/100, 1e-9)
 		})
 
 		Convey("At fraction 0.1 each entry deploys a tenth of the BASE, not of the remaining cash", func() {
 			crypto.positionFraction = 0.1
-			// a tenth of the 200 base = 0.2 qty; a tenth of the 1000 cash would be 1.0
-			So(crypto.sizeEntry(100), ShouldAlmostEqual, 0.2, 1e-9)
+			fee := broker.TakerFeePctFromViper() / 100
+			slot := (0.1 * crypto.capitalBase) / (1 + fee)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldAlmostEqual, slot/100, 1e-9)
 		})
 
 		Convey("It never commits more than the wallet can fund, fee included", func() {
-			crypto.capitalBase = 10000 // a full slot would dwarf the wallet
+			crypto.capitalBase = 10000
 			crypto.availableQuote = 200
 			crypto.positionFraction = 1.0
 
-			fee := broker.MakerFeePctFromViper() / 100
-			cost := crypto.sizeEntry(100) * 100 * (1 + fee)
+			fee := broker.TakerFeePctFromViper() / 100
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			cost := qty * 100 * (1 + fee)
 
-			So(cost, ShouldAlmostEqual, 200, 1e-6) // spends the wallet, never more
+			So(cost, ShouldAlmostEqual, 200, 1e-6)
 		})
 	})
 }
@@ -145,19 +160,24 @@ func TestSizeEntryConcurrentCap(t *testing.T) {
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
 		crypto.availableQuote = 200
+		entry := reasoning.Action{Price: 100}
 
 		Convey("At fraction 1.0 a second entry is refused while one position is held", func() {
 			crypto.positionFraction = 1.0
 			crypto.inventory["BTC/EUR"] = 2 // the single allowed slot is taken
 
-			So(crypto.sizeEntry(100), ShouldEqual, 0)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldEqual, 0)
 		})
 
 		Convey("An in-flight entry counts toward capacity (no over-commit before the fill)", func() {
 			crypto.positionFraction = 1.0
-			crypto.pending["BTC/EUR"] = reasoning.Action{} // order placed, not yet filled
+			crypto.pending["BTC/EUR"] = reasoning.Action{Type: reasoning.ActionMarket}
 
-			So(crypto.sizeEntry(100), ShouldEqual, 0)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldEqual, 0)
 		})
 
 		Convey("At fraction 0.1 the eleventh position is refused (ten already committed)", func() {
@@ -166,7 +186,9 @@ func TestSizeEntryConcurrentCap(t *testing.T) {
 				crypto.inventory[fmt.Sprintf("C%d/EUR", i)] = 1
 			}
 
-			So(crypto.sizeEntry(100), ShouldEqual, 0)
+			qty, err := crypto.sizeEntry(entry)
+			So(err, ShouldBeNil)
+			So(qty, ShouldEqual, 0)
 		})
 	})
 }

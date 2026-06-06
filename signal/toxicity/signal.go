@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/bus"
@@ -60,15 +61,16 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 		calibrator: pooledCalibrator.Calibrator,
 		l3Active:   settings.L3Enabled(),
 	}
-	tox.measurements = bus.Group(pool, "measurements", 10*time.Millisecond)
-	tox.ui = bus.Group(pool, "ui", 10*time.Millisecond)
+	queueTTL := viper.GetDuration("system.queue.ttl")
+	tox.measurements = bus.Group(pool, "measurements", queueTTL)
+	tox.ui = bus.Group(pool, "ui", queueTTL)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 	tox.rawDump = rawdump.Open("toxicity")
 
-	raw := bus.Group(pool, "raw", 10*time.Millisecond)
+	raw := bus.Group(pool, "raw", queueTTL)
 	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
 
-	level3 := bus.Group(pool, "level3", 10*time.Millisecond)
+	level3 := bus.Group(pool, "level3", queueTTL)
 	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
 
 	errnie.Info("toxicity ready l3="+fmt.Sprint(tox.l3Active), "toxicity")

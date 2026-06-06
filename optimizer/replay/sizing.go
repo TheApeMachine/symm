@@ -2,7 +2,6 @@ package replay
 
 import (
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -37,12 +36,8 @@ func entryDeployFraction(
 		fraction *= scale
 	}
 
-	if fraction > 1 {
-		fraction = 1
-	}
-
 	if fraction < 0 {
-		fraction = 0
+		return 0
 	}
 
 	return fraction
@@ -56,22 +51,30 @@ func regimeSizeScale(regime types.Regime) float64 {
 		key := "trading.replay.choppy_size_scale"
 
 		if !config.IsSet(key) {
-			errnie.Error(nil, "replay: missing %s, using scale 1.0", key)
-
-			return 1
+			return 0
 		}
 
-		return config.GetFloat64(key)
+		value := config.GetFloat64(key)
+
+		if value <= 0 {
+			return 0
+		}
+
+		return value
 	case types.RegimeBearish:
 		key := "trading.replay.bearish_size_scale"
 
 		if !config.IsSet(key) {
-			errnie.Error(nil, "replay: missing %s, using scale 1.0", key)
-
-			return 1
+			return 0
 		}
 
-		return config.GetFloat64(key)
+		value := config.GetFloat64(key)
+
+		if value <= 0 {
+			return 0
+		}
+
+		return value
 	default:
 		return 1
 	}

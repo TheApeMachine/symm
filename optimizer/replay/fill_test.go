@@ -55,6 +55,7 @@ func TestTakerFillDepthShortfallPenalty(t *testing.T) {
 			nil,
 			0,
 			measurement.At,
+			0,
 		)
 
 		Convey("It should refuse the entry and book a depth penalty", func() {

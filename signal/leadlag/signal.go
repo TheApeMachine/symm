@@ -70,6 +70,19 @@ type Signal struct {
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryAnchorStall,
+		types.CategoryDecoupledMove,
+		types.CategorySynchronizedDrift,
+		types.CategoryInefficientLag,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/leadlag")
+		return nil
+	}
+
 	signal := &Signal{
 		ctx:            ctx,
 		cancel:         cancel,
@@ -77,13 +90,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:     make(map[string]*qpool.BroadcastGroup),
 		subscribers:    make(map[string]*qpool.Subscriber),
 		anchorBaseline: *newMoveBaseline(),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryAnchorStall,
-			types.CategoryDecoupledMove,
-			types.CategorySynchronizedDrift,
-			types.CategoryInefficientLag,
-		}, types.DefaultCategorySurpriseAlpha),
-		rawDump: rawdump.Open("leadlag"),
+		surpriseField:  surpriseField,
+		rawDump:        rawdump.Open("leadlag"),
 	}
 
 	for _, channel := range []string{"raw"} {

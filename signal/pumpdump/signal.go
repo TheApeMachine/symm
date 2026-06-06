@@ -64,6 +64,19 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"pumpdump",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryFadedExhaustion,
+		types.CategoryOrganicTrend,
+		types.CategoryCoiledCompression,
+		types.CategoryVerticalIgnition,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/pumpdump")
+		return nil
+	}
+
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -77,15 +90,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"coiled_compression": types.CategoryCoiledCompression,
 			"vertical_ignition":  types.CategoryVerticalIgnition,
 		},
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryFadedExhaustion,
-			types.CategoryOrganicTrend,
-			types.CategoryCoiledCompression,
-			types.CategoryVerticalIgnition,
-		}, types.DefaultCategorySurpriseAlpha),
-		rawDump:    rawdump.Open("pumpdump"),
-		classifier: calibrator.Classifier,
-		calibrator: calibrator.Calibrator,
+		surpriseField: surpriseField,
+		rawDump:       rawdump.Open("pumpdump"),
+		classifier:    calibrator.Classifier,
+		calibrator:    calibrator.Calibrator,
 	}
 
 	queueTTL := viper.GetDuration("system.queue.ttl")

@@ -51,22 +51,30 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"exhaust",
 	)
 
+	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
+		types.CategoryThermalExhaustion,
+		types.CategoryFragileExpansion,
+		types.CategoryMechanicalCollapse,
+		types.CategoryActiveReversal,
+	}, types.DefaultCategorySurpriseAlpha)
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "signal/exhaust")
+		return nil
+	}
+
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
-		history:     newHistoryStore(),
-		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
-			types.CategoryThermalExhaustion,
-			types.CategoryFragileExpansion,
-			types.CategoryMechanicalCollapse,
-			types.CategoryActiveReversal,
-		}, types.DefaultCategorySurpriseAlpha),
-		classifier: pooledCalibrator.Classifier,
-		calibrator: pooledCalibrator.Calibrator,
-		rawDump:    rawdump.Open("exhaust"),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		broadcasts:    make(map[string]*qpool.BroadcastGroup),
+		subscribers:   make(map[string]*qpool.Subscriber),
+		history:       newHistoryStore(),
+		surpriseField: surpriseField,
+		classifier:    pooledCalibrator.Classifier,
+		calibrator:    pooledCalibrator.Calibrator,
+		rawDump:       rawdump.Open("exhaust"),
 	}
 
 	for _, channel := range []string{"raw"} {
