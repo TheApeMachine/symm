@@ -40,8 +40,11 @@ trading:
     # L2 depth replay: require full book coverage before opening; shortfall books a penalty.
     min_depth_coverage: 1.0
     depth_shortfall_stress: 8
-    # Scale entry fraction down in hostile structural regimes during optimizer replay.
-    # Dead, Trending, and Bullish regimes use scale 1.0 (no key — full deployment).
+    # Scale entry fraction by structural regime during optimizer replay and live entries.
+    none_size_scale: 1.0
+    dead_size_scale: 1.0
+    trending_size_scale: 1.0
+    bullish_size_scale: 1.0
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
   # Fraction of available account cash deployed per entry. 1.0 = full deployment
@@ -110,7 +113,7 @@ signals:
   # default for any signal that does not set its own; a per-signal raw_dump below
   # wins in BOTH directions (false silences a signal even when this is true). As
   # shipped every signal sets false, so nothing dumps until you flip one on.
-  raw_dump: false           # default for signals with no per-signal override
+  raw_dump: true           # default for signals with no per-signal override
   raw_dump_max_mb: 64       # rotate each dump after this many megabytes
   raw_dump_backup_count: 3  # how many rotated files to keep (<name>_raw.jsonl.1 ...)
   # raw_dump_dir: runs      # directory for dumps; the writer and Signal Insight share it
@@ -124,28 +127,28 @@ signals:
 
   # Per-signal overrides (win over the global default in either direction):
   pumpdump:
-    raw_dump: false
+    raw_dump: true
     window: 1m
   exhaust:
-    raw_dump: false
+    raw_dump: true
   cvd:
-    raw_dump: false
+    raw_dump: true
   depthflow:
-    raw_dump: false
+    raw_dump: true
   hawkes:
-    raw_dump: false
+    raw_dump: true
   fluid:
-    raw_dump: false
+    raw_dump: true
   leadlag:
-    raw_dump: false
+    raw_dump: true
   liquidity:
-    raw_dump: false
+    raw_dump: true
   sentiment:
-    raw_dump: false
+    raw_dump: true
   correlation:
-    raw_dump: false
+    raw_dump: true
   toxicity:
-    raw_dump: false
+    raw_dump: true
 
 ui:
   addr: 127.0.0.1:8765

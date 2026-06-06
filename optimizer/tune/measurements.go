@@ -68,7 +68,12 @@ func TuneMeasurements(
 		},
 	}
 
-	result := reasoning.Search(ctx, rows, costs, config)
+	result, err := reasoning.Search(ctx, rows, costs, config)
+
+	if err != nil {
+		return types.SessionSummary{}, err
+	}
+
 	best := result.Best
 
 	strategies := strategyCount(best.Forest)

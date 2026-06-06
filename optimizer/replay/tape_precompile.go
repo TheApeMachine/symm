@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -30,11 +31,11 @@ func precompileWorkerCount(workers int) int {
 PrecompileTapeWorkers builds replay state with parallel index and snapshot passes.
 Pass one to force a fully sequential build.
 */
-func PrecompileTapeWorkers(rows []types.Measurement, workers int) ReplayTape {
+func PrecompileTapeWorkers(rows []types.Measurement, workers int) (ReplayTape, error) {
 	rowCount := len(rows)
 
 	if rowCount == 0 {
-		return ReplayTape{}
+		return ReplayTape{}, nil
 	}
 
 	workers = precompileWorkerCount(workers)
@@ -77,7 +78,10 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) ReplayTape {
 	passOne.Wait()
 
 	symbolIndices, globalIndices, categories, lastPrices := mergePrecompileChunks(chunks)
-	precompileSnapshotIndices(ticks, symbolIndices, globalIndices, workers)
+
+	if err := precompileSnapshotIndices(ticks, symbolIndices, globalIndices, workers); err != nil {
+		return ReplayTape{}, err
+	}
 
 	categoryCount := len(categories)
 
@@ -90,10 +94,10 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) ReplayTape {
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(rowCount, categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
-	}
+	}, nil
 }
 
-func precompileTapeSequential(rows []types.Measurement) ReplayTape {
+func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 	ticks := make([]PrecompiledTick, len(rows))
 	lastPrices := make(map[string]float64)
 	categories := make(map[types.CategoryType]struct{})
@@ -120,7 +124,9 @@ func precompileTapeSequential(rows []types.Measurement) ReplayTape {
 		symbolIndices[row.Symbol] = append(symbolIndices[row.Symbol], index)
 	}
 
-	precompileSnapshotIndices(ticks, symbolIndices, globalIndices, 1)
+	if err := precompileSnapshotIndices(ticks, symbolIndices, globalIndices, 1); err != nil {
+		return ReplayTape{}, err
+	}
 
 	categoryCount := len(categories)
 
@@ -133,7 +139,7 @@ func precompileTapeSequential(rows []types.Measurement) ReplayTape {
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
-	}
+	}, nil
 }
 
 func buildPrecompileChunk(
@@ -213,7 +219,13 @@ func precompileSnapshotIndices(
 	symbolIndices map[string][]int,
 	globalIndices []int,
 	workers int,
-) {
+) error {
+	measurementBuffer, err := market.MeasurementBuffer()
+
+	if err != nil {
+		return err
+	}
+
 	workers = precompileWorkerCount(workers)
 	rowCount := len(ticks)
 
@@ -228,10 +240,11 @@ func precompileSnapshotIndices(
 				symbolIndices,
 				globalIndices,
 				index,
+				measurementBuffer,
 			)
 		}
 
-		return
+		return nil
 	}
 
 	if workers > rowCount {
@@ -268,10 +281,13 @@ func precompileSnapshotIndices(
 					symbolIndices,
 					globalIndices,
 					index,
+					measurementBuffer,
 				)
 			}
 		}(startIndex, endIndex)
 	}
 
 	passTwo.Wait()
+
+	return nil
 }

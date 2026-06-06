@@ -95,7 +95,11 @@ func (tracker *CategorySurpriseTracker) Score(selected CategoryType) (float64, e
 	}
 
 	if prob < minCategoryProb {
-		prob = minCategoryProb
+		return 0, errnie.Error(fmt.Errorf(
+			"perspectives: category probability %v collapsed below %v",
+			prob,
+			minCategoryProb,
+		))
 	}
 
 	surprisal := -math.Log2(prob)

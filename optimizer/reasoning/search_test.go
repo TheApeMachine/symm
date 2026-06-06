@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/replay"
@@ -51,14 +52,17 @@ func frictionlessCosts() replay.ReplayCosts {
 
 func TestSearchFindsAProfitableStrategy(t *testing.T) {
 	Convey("Given a tape of repeated rallies and a frictionless €100 wallet", t, func() {
+		testconfig.Load(t)
+
 		rows := rallyTape()
 		vocab := DeriveVocabulary(rows)
 
-		result := Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
+		result, err := Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
 			BeamWidth: 6,
 			MaxRounds: 8,
 			Patience:  3,
 		})
+		So(err, ShouldBeNil)
 
 		Convey("It finds a strategy that makes money", func() {
 			So(result.Best.Return, ShouldBeGreaterThan, 0)
@@ -82,8 +86,11 @@ func TestSearchFindsAProfitableStrategy(t *testing.T) {
 
 		Convey("The search never regresses below the best seed", func() {
 			seedBest := 0.0
+			tape, err := replay.PrecompileTape(rows)
+			So(err, ShouldBeNil)
+
 			for _, seed := range Seeds(vocab) {
-				sim := replay.NewThoughtSimulation(context.Background(), seed, replay.PrecompileTape(rows), frictionlessCosts())
+				sim := replay.NewThoughtSimulation(context.Background(), seed, tape, frictionlessCosts())
 				if score := sim.Result().Score; score > seedBest {
 					seedBest = score
 				}
@@ -94,6 +101,7 @@ func TestSearchFindsAProfitableStrategy(t *testing.T) {
 }
 
 func BenchmarkSearch(b *testing.B) {
+	testconfig.MustLoad()
 	rows := rallyTape()
 	config := SearchConfig{
 		BeamWidth: 4,
@@ -102,6 +110,10 @@ func BenchmarkSearch(b *testing.B) {
 	}
 
 	for b.Loop() {
-		_ = Search(context.Background(), rows, frictionlessCosts(), config)
+		_, err := Search(context.Background(), rows, frictionlessCosts(), config)
+
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -165,14 +166,17 @@ func TestNeighborsIncludeVersusNotAndTimeStop(t *testing.T) {
 
 func TestMinRoundTripsDiscountAppliesWhenSet(t *testing.T) {
 	Convey("Given a profitable but low-trade tape and a high MinRoundTrips floor", t, func() {
+		testconfig.Load(t)
+
 		rows := rallyTape()
 
-		result := Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
+		result, err := Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
 			BeamWidth:     6,
 			MaxRounds:     6,
 			Patience:      3,
 			MinRoundTrips: 50, // far above what this short tape can trade
 		})
+		So(err, ShouldBeNil)
 
 		Convey("The winner is profitable but trades far fewer than the floor", func() {
 			So(result.Best.Return, ShouldBeGreaterThan, 0)

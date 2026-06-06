@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 )
 
 func TestSearchProgressMessage(t *testing.T) {
@@ -47,10 +48,12 @@ func TestSearchProgressMessage(t *testing.T) {
 
 func TestSearchReportsProgress(t *testing.T) {
 	Convey("Given a profitable tape and a progress hook", t, func() {
+		testconfig.Load(t)
+
 		rows := rallyTape()
 		phases := make([]string, 0, 8)
 
-		Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
+		_, err := Search(context.Background(), rows, frictionlessCosts(), SearchConfig{
 			BeamWidth: 4,
 			MaxRounds: 2,
 			Patience:  2,
@@ -58,6 +61,7 @@ func TestSearchReportsProgress(t *testing.T) {
 				phases = append(phases, progress.Phase)
 			},
 		})
+		So(err, ShouldBeNil)
 
 		Convey("It should emit the major search phases", func() {
 			So(phases, ShouldContain, "config")

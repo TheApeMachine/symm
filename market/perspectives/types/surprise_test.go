@@ -74,6 +74,19 @@ func TestCategorySurpriseTracker(t *testing.T) {
 
 			So(err, ShouldNotBeNil)
 		})
+
+		Convey("It should reject collapsed category probability", func() {
+			tracker, err := NewCategorySurpriseTracker([]CategoryType{
+				CategoryVolumeStarvation,
+				CategoryStochasticBalance,
+			}, DefaultCategorySurpriseAlpha)
+
+			So(err, ShouldBeNil)
+			tracker.probs[CategoryVolumeStarvation] = minCategoryProb / 10
+
+			_, err = tracker.Score(CategoryVolumeStarvation)
+			So(err, ShouldNotBeNil)
+		})
 	})
 }
 

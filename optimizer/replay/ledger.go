@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
@@ -354,7 +355,15 @@ func (ledger *replayLedger) applyStressed(
 		}
 
 		if reasoning.IsMakerAction(act.Type) && ledger.costs.ExecutionStressEnabled {
-			fraction := entryDeployFraction(ledger.costs, act, snapshots)
+			fraction, err := entryDeployFraction(ledger.costs, act, snapshots)
+
+			if err != nil {
+				errnie.Error(err, "replay: entry deploy fraction")
+				ledger.fundBlocked++
+
+				return
+			}
+
 			slot := fraction * ledger.costs.WalletBalance(quoteCurrency(measurement.Symbol))
 			entryNotional := slot / (1 + feePct)
 			quantity := entryNotional / measurement.Last

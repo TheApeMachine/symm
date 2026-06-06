@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	storyMeasurementsSubscriberID  = "market:story"
-	defaultStoryMeasurementBuffer  = 1024
+	storyMeasurementsSubscriberID = "market:story"
 	defaultStoryDecisionMinSamples = 1
 )
 
@@ -86,6 +85,14 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		return nil
 	}
 
+	measurementBuffer, err := MeasurementBuffer()
+
+	if err != nil {
+		cancel()
+		errnie.Error(err, "story")
+		return nil
+	}
+
 	story := &Story{
 		ctx:                     ctx,
 		cancel:                  cancel,
@@ -96,7 +103,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		positions:               make(map[string]*reasoning.PositionState),
 		regimeFeatures:          make(map[string]perspectives.RegimeFeatures),
 		predictionSurpriseField: predictionSurpriseField,
-		ringWindow:              ring.New(storyMeasurementBuffer()),
+		ringWindow:              ring.New(measurementBuffer),
 		lastGauge:               make(map[string]time.Time),
 		nodeReached:             make(map[string]int),
 		nodeHeld:                make(map[string]int),
@@ -145,7 +152,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
-		storyMeasurementsSubscriberID, storyMeasurementBuffer(),
+		storyMeasurementsSubscriberID, measurementBuffer,
 	)
 
 	errnie.Info("market/story ready", "market/story")
@@ -286,16 +293,6 @@ func (story *Story) ingestMeasurement(
 	}
 
 	return nil
-}
-
-func storyMeasurementBuffer() int {
-	configured := viper.GetInt("story.measurements.buffer")
-
-	if configured > 0 {
-		return configured
-	}
-
-	return defaultStoryMeasurementBuffer
 }
 
 func storyDecisionMinSamples() int {

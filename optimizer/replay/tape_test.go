@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	optimizerio "github.com/theapemachine/symm/optimizer/io"
 )
 
 func TestPrecompileTapeRingWindow(t *testing.T) {
 	convey.Convey("Given more than StoryRingCapacity measurements", t, func() {
-		viper.Set("story.measurements.buffer", 1024)
+		testconfig.Load(t)
 		rows := make([]types.Measurement, 0, 1024+10)
 
 		for index := range 1024 + 10 {
@@ -25,7 +25,7 @@ func TestPrecompileTapeRingWindow(t *testing.T) {
 			})
 		}
 
-		tape := PrecompileTape(rows)
+		tape := mustPrecompileTape(t, rows)
 		snapshots := tape.AppendSnapshot(len(rows)-1, nil)
 
 		convey.Convey("It should cap the decision snapshot to the story ring size", func() {
@@ -37,6 +37,7 @@ func TestPrecompileTapeRingWindow(t *testing.T) {
 
 func TestReplayTapeAppendSnapshot(t *testing.T) {
 	convey.Convey("Given interleaved symbol and global rows", t, func() {
+		testconfig.Load(t)
 		rows := []types.Measurement{
 			{Symbol: "BTC/EUR", SNR: 1, Last: 100},
 			{Symbol: "", Category: types.CategoryRiskOnSurge, SNR: 2},
@@ -44,7 +45,7 @@ func TestReplayTapeAppendSnapshot(t *testing.T) {
 			{Symbol: "BTC/EUR", SNR: 4, Last: 101},
 		}
 
-		tape := PrecompileTape(rows)
+		tape := mustPrecompileTape(t, rows)
 		snapshots := tape.AppendSnapshot(3, make([]types.Measurement, 0, 4))
 
 		convey.Convey("It should return chronological global and matching-symbol rows only", func() {
@@ -74,11 +75,15 @@ func benchmarkTapeRows(count int) []types.Measurement {
 
 func TestPrecompileTapeParallelMatchesSequential(t *testing.T) {
 	convey.Convey("Given a large interleaved tape", t, func() {
+		testconfig.Load(t)
 		rowCount := parallelPrecompileRowThreshold + 128
 		rows := mixedSymbolRows(rowCount)
 
-		sequential := precompileTapeSequential(rows)
-		parallel := PrecompileTapeWorkers(rows, 8)
+		sequential, err := precompileTapeSequential(rows)
+		convey.So(err, convey.ShouldBeNil)
+
+		parallel, err := PrecompileTapeWorkers(rows, 8)
+		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("It should build identical snapshot indices", func() {
 			assertMatchingTapes(sequential, parallel)
@@ -88,10 +93,12 @@ func TestPrecompileTapeParallelMatchesSequential(t *testing.T) {
 
 func TestPrecompileTapeParallelPassOneMatchesSequential(t *testing.T) {
 	convey.Convey("Given a large interleaved tape", t, func() {
+		testconfig.Load(t)
 		rowCount := parallelPrecompileRowThreshold + 128
 		rows := mixedSymbolRows(rowCount)
 
-		sequential := precompileTapeSequential(rows)
+		sequential, err := precompileTapeSequential(rows)
+		convey.So(err, convey.ShouldBeNil)
 		parallelTicks := make([]PrecompiledTick, rowCount)
 		chunks := make([]precompileChunk, 8)
 		chunkSize := (rowCount + 7) / 8
@@ -108,7 +115,8 @@ func TestPrecompileTapeParallelPassOneMatchesSequential(t *testing.T) {
 		}
 
 		symbolIndices, globalIndices, categories, lastPrices := mergePrecompileChunks(chunks)
-		precompileSnapshotIndices(parallelTicks, symbolIndices, globalIndices, 8)
+		err = precompileSnapshotIndices(parallelTicks, symbolIndices, globalIndices, 8)
+		convey.So(err, convey.ShouldBeNil)
 
 		parallel := ReplayTape{
 			Ticks:      parallelTicks,
@@ -187,7 +195,11 @@ func BenchmarkPrecompileTapeParallel(b *testing.B) {
 
 		b.Run(label, func(b *testing.B) {
 			for b.Loop() {
-				_ = PrecompileTapeWorkers(rows, workers)
+				_, err := PrecompileTapeWorkers(rows, workers)
+
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}
@@ -197,13 +209,17 @@ func BenchmarkPrecompileTape(b *testing.B) {
 	rows := benchmarkTapeRows(1024 + 10)
 
 	for b.Loop() {
-		_ = PrecompileTape(rows)
+		_, err := PrecompileTape(rows)
+
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkAppendSnapshot(b *testing.B) {
 	rows := benchmarkTapeRows(1024 * 64)
-	tape := PrecompileTape(rows)
+	tape := mustPrecompileTape(b, rows)
 	tickIndex := len(rows) - 1
 	scratch := make([]types.Measurement, 0, 1024)
 
@@ -233,7 +249,7 @@ func BenchmarkPrecompileTapeCapture(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		tape := PrecompileTape(rows)
+		tape := mustPrecompileTape(t, rows)
 
 		if tape.Len() != len(rows) {
 			b.Fatalf("expected %d ticks, got %d", len(rows), tape.Len())

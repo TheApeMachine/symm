@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -91,7 +92,14 @@ func (ledger *replayLedger) openEntryReserved(
 		return
 	}
 
-	fraction := entryDeployFraction(ledger.costs, act, snapshots)
+	fraction, err := entryDeployFraction(ledger.costs, act, snapshots)
+
+	if err != nil {
+		errnie.Error(err, "replay: entry deploy fraction")
+		ledger.fundBlocked++
+
+		return
+	}
 
 	if fraction <= 0 {
 		ledger.fundBlocked++

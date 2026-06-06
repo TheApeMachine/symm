@@ -55,7 +55,7 @@ func BenchmarkThoughtSimulationResult(b *testing.B) {
 		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 100, At: base},
 		{Symbol: "BTC/EUR", Last: 105, At: base.Add(time.Second)},
 	}
-	tape := PrecompileTape(rows)
+	tape := mustPrecompileTape(b, rows)
 	costs := frictionlessCosts()
 	simulation := NewThoughtSimulation(context.Background(), thoughts, tape, costs)
 

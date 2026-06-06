@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 )
 
 func TestForestDedup(t *testing.T) {
@@ -33,21 +34,26 @@ func TestForestDedup(t *testing.T) {
 
 func TestSearchParallelMatchesSequential(t *testing.T) {
 	Convey("Given a profitable tape", t, func() {
+		testconfig.Load(t)
+
 		rows := rallyTape()
 		costs := frictionlessCosts()
 
-		sequential := Search(context.Background(), rows, costs, SearchConfig{
+		sequential, err := Search(context.Background(), rows, costs, SearchConfig{
 			BeamWidth: 4,
 			MaxRounds: 3,
 			Patience:  2,
 			Workers:   1,
 		})
-		parallel := Search(context.Background(), rows, costs, SearchConfig{
+		So(err, ShouldBeNil)
+
+		parallel, err := Search(context.Background(), rows, costs, SearchConfig{
 			BeamWidth: 4,
 			MaxRounds: 3,
 			Patience:  2,
 			Workers:   4,
 		})
+		So(err, ShouldBeNil)
 
 		Convey("It should evaluate the same number of candidates", func() {
 			So(parallel.Evaluated, ShouldEqual, sequential.Evaluated)

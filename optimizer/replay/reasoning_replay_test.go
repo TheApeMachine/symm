@@ -6,14 +6,9 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
-
-func init() {
-	viper.Set("story.measurements.buffer", 1024)
-}
 
 // frictionless: zero fees + slippage, immediate execution, a €100 EUR wallet.
 func frictionlessCosts() ReplayCosts {
@@ -85,7 +80,7 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
 		}
 
-		sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
+		sim := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts())
 		result := sim.Result()
 
 		So(result.ClosedTrades, ShouldEqual, 1)  // it did enter, only because the parent latched
@@ -108,7 +103,7 @@ func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
 			{Symbol: "ETH/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 51, At: base.Add(2 * time.Second)},
 		}
 
-		result := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts()).Result()
+		result := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts()).Result()
 
 		Convey("ETH entries are wanted but blocked for want of free capital, and counted", func() {
 			So(result.FundBlocked, ShouldBeGreaterThan, 0)
@@ -137,7 +132,7 @@ func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 110, At: base.Add(2 * time.Second)},
 		}
 
-		tape := PrecompileTape(rows)
+		tape := mustPrecompileTape(t, rows)
 
 		free := NewThoughtSimulation(context.Background(), thoughts, tape, frictionlessCosts()).Result()
 
@@ -176,7 +171,7 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 				{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 104, At: base.Add(3 * time.Second)},
 			}
 
-			sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
+			sim := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts())
 			result := sim.Result()
 
 			So(result.ClosedTrades, ShouldEqual, 1)
@@ -198,7 +193,7 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 				ignite(107, base.Add(2*time.Second)), // 2.7% off the peak — breaches a 2% trail
 			}
 
-			sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
+			sim := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts())
 			result := sim.Result()
 
 			So(result.ClosedTrades, ShouldEqual, 1)

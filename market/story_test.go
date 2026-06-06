@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/bus"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
@@ -20,6 +21,8 @@ import (
 
 func TestNewStory(t *testing.T) {
 	convey.Convey("Given signals already registered on measurements", t, func() {
+		testconfig.Load(t)
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

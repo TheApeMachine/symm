@@ -1,7 +1,6 @@
 package replay
 
 import (
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -16,7 +15,7 @@ func entryDeployFraction(
 	costs ReplayCosts,
 	act reasoning.Act,
 	snapshots []types.Measurement,
-) float64 {
+) (float64, error) {
 	multiplier := 1.0
 
 	if act.Fraction > 0 {
@@ -26,56 +25,21 @@ func entryDeployFraction(
 	fraction := effectiveFraction(costs) * multiplier
 
 	if fraction <= 0 {
-		return 0
+		return 0, nil
 	}
 
 	regime := perspectives.ClassifyRegime(snapshots).Regime
-	scale := regimeSizeScale(regime)
+	scale, err := perspectives.RegimeSizeScale(regime)
 
-	if scale > 0 && scale != 1 {
-		fraction *= scale
+	if err != nil {
+		return 0, err
 	}
+
+	fraction *= scale
 
 	if fraction < 0 {
-		return 0
+		return 0, nil
 	}
 
-	return fraction
-}
-
-func regimeSizeScale(regime types.Regime) float64 {
-	config := viper.GetViper()
-
-	switch regime {
-	case types.RegimeChoppy:
-		key := "trading.replay.choppy_size_scale"
-
-		if !config.IsSet(key) {
-			return 0
-		}
-
-		value := config.GetFloat64(key)
-
-		if value <= 0 {
-			return 0
-		}
-
-		return value
-	case types.RegimeBearish:
-		key := "trading.replay.bearish_size_scale"
-
-		if !config.IsSet(key) {
-			return 0
-		}
-
-		value := config.GetFloat64(key)
-
-		if value <= 0 {
-			return 0
-		}
-
-		return value
-	default:
-		return 1
-	}
+	return fraction, nil
 }

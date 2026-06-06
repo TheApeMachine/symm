@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/replay"
@@ -85,7 +86,7 @@ func Search(
 	rows []types.Measurement,
 	costs replay.ReplayCosts,
 	config SearchConfig,
-) Result {
+) (Result, error) {
 	config = config.withDefaults()
 	started := time.Now()
 	rowCount := len(rows)
@@ -113,7 +114,11 @@ func Search(
 	})
 
 	precompileStarted := time.Now()
-	tape := replay.PrecompileTapeWorkers(rows, config.workerCount())
+	tape, err := replay.PrecompileTapeWorkers(rows, config.workerCount())
+
+	if err != nil {
+		return Result{}, errnie.Error(err, "optimizer/search: precompile")
+	}
 
 	config.reportProgress(SearchProgress{
 		Phase:         "precompile_done",
@@ -171,7 +176,7 @@ func Search(
 			Elapsed:   time.Since(started),
 		})
 
-		return Result{Evaluated: evaluated}
+		return Result{Evaluated: evaluated}, nil
 	}
 
 	best := beam[0]
@@ -260,7 +265,7 @@ func Search(
 		Elapsed:    time.Since(started),
 	})
 
-	return Result{Best: best, Evaluated: evaluated}
+	return Result{Best: best, Evaluated: evaluated}, nil
 }
 
 // topCandidates sorts by score (then simpler, then stable by encoding) and keeps the

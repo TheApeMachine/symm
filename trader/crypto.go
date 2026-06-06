@@ -17,8 +17,8 @@ import (
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
-	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const (
@@ -573,7 +573,11 @@ func (crypto *Crypto) sizeEntry(action reasoning.Action) (float64, error) {
 		return 0, nil
 	}
 
-	fraction := crypto.entryDeployFraction(action)
+	fraction, err := crypto.entryDeployFraction(action)
+
+	if err != nil {
+		return 0, err
+	}
 
 	if fraction <= 0 {
 		return 0, nil
@@ -623,45 +627,26 @@ func (crypto *Crypto) entryFeeRate(actionType reasoning.ActionType) float64 {
 	return broker.TakerFeePctFromViper() / 100
 }
 
-func (crypto *Crypto) entryDeployFraction(action reasoning.Action) float64 {
+func (crypto *Crypto) entryDeployFraction(action reasoning.Action) (float64, error) {
 	fraction := crypto.positionFraction
 
 	if action.Fraction > 0 {
 		fraction *= action.Fraction
 	}
 
-	fraction *= liveRegimeSizeScale(action.Regime)
+	scale, err := perspectives.RegimeSizeScale(action.Regime)
+
+	if err != nil {
+		return 0, err
+	}
+
+	fraction *= scale
 
 	if fraction < 0 {
-		return 0
+		return 0, nil
 	}
 
-	return fraction
-}
-
-func liveRegimeSizeScale(regime types.Regime) float64 {
-	switch regime {
-	case types.RegimeChoppy:
-		return requiredRegimeSizeScale("trading.replay.choppy_size_scale")
-	case types.RegimeBearish:
-		return requiredRegimeSizeScale("trading.replay.bearish_size_scale")
-	default:
-		return 1
-	}
-}
-
-func requiredRegimeSizeScale(key string) float64 {
-	if !viper.IsSet(key) {
-		return 0
-	}
-
-	value := viper.GetFloat64(key)
-
-	if value <= 0 {
-		return 0
-	}
-
-	return value
+	return fraction, nil
 }
 
 func (crypto *Crypto) openExposureCount() int {

@@ -4,7 +4,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -71,23 +70,12 @@ func indicesInWindow(indices []int, startIndex, endIndex int) []int {
 	return indices[start:end]
 }
 
-const defaultStoryMeasurementBuffer = 1024
-
-func storyMeasurementBuffer() int {
-	configured := viper.GetInt("story.measurements.buffer")
-
-	if configured > 0 {
-		return configured
-	}
-
-	return defaultStoryMeasurementBuffer
-}
-
 func mergeSnapshotIndices(
 	ticks []PrecompiledTick,
 	symbolIndices map[string][]int,
 	globalIndices []int,
 	tickIndex int,
+	measurementBuffer int,
 ) []int {
 	symbol := ticks[tickIndex].Row.Symbol
 
@@ -95,7 +83,7 @@ func mergeSnapshotIndices(
 		return nil
 	}
 
-	startIndex := tickIndex - storyMeasurementBuffer() + 1
+	startIndex := tickIndex - measurementBuffer + 1
 
 	if startIndex < 0 {
 		startIndex = 0
@@ -140,6 +128,6 @@ func mergeSnapshotIndices(
 /*
 PrecompileTape builds compact replay state matching market.Story decision context.
 */
-func PrecompileTape(rows []types.Measurement) ReplayTape {
+func PrecompileTape(rows []types.Measurement) (ReplayTape, error) {
 	return PrecompileTapeWorkers(rows, 0)
 }

@@ -4,17 +4,14 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestEntryDeployFraction(t *testing.T) {
 	Convey("Given a node multiplier and choppy regime", t, func() {
-		key := "trading.replay.choppy_size_scale"
-		original := viper.Get(key)
-		viper.Set(key, 0.5)
-		defer viper.Set(key, original)
+		testconfig.Load(t)
 
 		costs := ReplayCosts{PositionFraction: 0.1}
 		act := reasoning.Act{Fraction: 2}
@@ -22,9 +19,10 @@ func TestEntryDeployFraction(t *testing.T) {
 			{Category: types.CategoryTurbulent, SNR: 2},
 		}
 
-		fraction := entryDeployFraction(costs, act, snapshots)
+		fraction, err := entryDeployFraction(costs, act, snapshots)
+		So(err, ShouldBeNil)
 
-		Convey("It should scale the base fraction by the node multiplier", func() {
+		Convey("It should scale the base fraction by the node multiplier and regime scale", func() {
 			So(fraction, ShouldAlmostEqual, 0.2, 1e-9)
 		})
 	})
