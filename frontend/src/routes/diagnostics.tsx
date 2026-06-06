@@ -1,5 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
+import {
+	applyGlobalFrame,
+	statusSocketHandlers,
+} from "#/providers/global-frames";
 
 /*
 Signal Insight — reads the raw diagnostic dumps the signals write (runs/<name>_raw.jsonl)
@@ -7,6 +12,10 @@ through the backend's /api/dumps and /api/analyze endpoints, and renders the
 analyzer's plain-language verdict on whether each signal behaves sensibly: a steady
 baseline with real excursions (HEALTHY), smooth but inert (FLAT), flipping around
 its mean every tick (FLICKERING), or carrying no information (DEAD).
+
+Live updates arrive on the shared websocket as `chart: "diagnostic"` frames whenever
+a dump grows; dump inventory refreshes on `event: "dumps"`. Manual Refresh still runs
+a full-file analysis for the selected signal.
 
 It deliberately uses plain SVG/HTML rather than the SciChart pipeline so it stays
 dependency-light and cannot break the rest of the dashboard's build.
@@ -44,8 +53,10 @@ type Report = {
 	signal: string;
 	file: string;
 	rows: number;
+	total_rows?: number;
 	skipped: number;
 	truncated: boolean;
+	live?: boolean;
 	fields: FieldReport[];
 	headline: string;
 	generated_at: string;
@@ -57,6 +68,10 @@ type DumpInfo = {
 	bytes: number;
 	modified: string;
 };
+
+const socketUrl =
+	(import.meta.env.VITE_SYMM_WS_URL as string | undefined)?.trim() ||
+	"ws://127.0.0.1:8765/ws";
 
 // The backend serves the analyzer API on the same host/port as the websocket.
 const apiBase = (() => {
@@ -122,6 +137,32 @@ const fmtBytes = (bytes: number): string => {
 	}
 
 	return `${size.toFixed(1)} ${units[unit]}`;
+};
+
+const isDumpListFrame = (
+	value: unknown,
+): value is { event: "dumps"; dumps: DumpInfo[] } => {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+
+	const candidate = value as Record<string, unknown>;
+
+	return candidate.event === "dumps" && Array.isArray(candidate.dumps);
+};
+
+const isDiagnosticFrame = (value: unknown): value is Report => {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+
+	const candidate = value as Record<string, unknown>;
+
+	return (
+		candidate.chart === "diagnostic" &&
+		typeof candidate.signal === "string" &&
+		Array.isArray(candidate.fields)
+	);
 };
 
 const Histogram = ({ bins }: { bins: Bin[] }) => {
@@ -217,7 +258,9 @@ const FieldCard = ({ field }: { field: FieldReport }) => {
 			</div>
 
 			{field.notes && field.notes.length > 0 ? (
-				<p className="text-xs text-muted-foreground">{field.notes.join(" · ")}</p>
+				<p className="text-xs text-muted-foreground">
+					{field.notes.join(" · ")}
+				</p>
 			) : null}
 
 			{isNumeric ? (
@@ -230,10 +273,7 @@ const FieldCard = ({ field }: { field: FieldReport }) => {
 						<Metric label="max" value={fmt(field.max)} />
 						<Metric label="std" value={fmt(field.std)} />
 						<Metric label="autocorr" value={fmt(field.lag1_autocorr)} />
-						<Metric
-							label="flips/tick"
-							value={fmt(field.mean_crossing_rate)}
-						/>
+						<Metric label="flips/tick" value={fmt(field.mean_crossing_rate)} />
 						<Metric
 							label="at baseline"
 							value={`${Math.round(field.baseline_occupancy * 100)}%`}
@@ -245,10 +285,7 @@ const FieldCard = ({ field }: { field: FieldReport }) => {
 					<CategoryBars top={field.top ?? []} />
 					<div className="grid grid-cols-3 gap-2">
 						<Metric label="distinct" value={String(field.distinct)} />
-						<Metric
-							label="switches/tick"
-							value={fmt(field.switch_rate)}
-						/>
+						<Metric label="switches/tick" value={fmt(field.switch_rate)} />
 						<Metric label="count" value={String(field.count)} />
 					</div>
 				</>
@@ -263,6 +300,12 @@ const DiagnosticsPage = () => {
 	const [report, setReport] = useState<Report | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [live, setLive] = useState(false);
+	const selectedRef = useRef<string | null>(null);
+
+	useEffect(() => {
+		selectedRef.current = selected;
+	}, [selected]);
 
 	const loadDumps = useCallback(async () => {
 		setError(null);
@@ -302,6 +345,7 @@ const DiagnosticsPage = () => {
 			}
 
 			setReport(data);
+			setLive(false);
 		} catch (cause) {
 			setError(String(cause));
 		} finally {
@@ -309,15 +353,63 @@ const DiagnosticsPage = () => {
 		}
 	}, []);
 
+	useWebSocket(socketUrl, {
+		...statusSocketHandlers,
+		onMessage: (event) => {
+			try {
+				const raw = JSON.parse(event.data) as Record<string, unknown>;
+
+				if (applyGlobalFrame(raw)) {
+					return;
+				}
+
+				if (isDumpListFrame(raw)) {
+					setDumps(raw.dumps);
+					return;
+				}
+
+				if (!isDiagnosticFrame(raw)) {
+					return;
+				}
+
+				if (raw.signal !== selectedRef.current) {
+					return;
+				}
+
+				setReport(raw);
+				setLive(Boolean(raw.live));
+				setLoading(false);
+				setError(null);
+			} catch (cause) {
+				console.error("diagnostic frame parse failed", cause, event.data);
+			}
+		},
+	});
+
 	useEffect(() => {
 		void loadDumps();
 	}, [loadDumps]);
+
+	useEffect(() => {
+		if (selected !== null || dumps.length === 0) {
+			return;
+		}
+
+		void analyze(dumps[0].signal);
+	}, [analyze, dumps, selected]);
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-col gap-4">
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex flex-col">
-					<h1 className="text-lg font-semibold">Signal Insight</h1>
+					<div className="flex items-center gap-2">
+						<h1 className="text-lg font-semibold">Signal Insight</h1>
+						{live ? (
+							<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+								Live
+							</span>
+						) : null}
+					</div>
 					<p className="text-xs text-muted-foreground">
 						Raw signal diagnostics — does each signal actually make sense?
 					</p>
@@ -326,6 +418,7 @@ const DiagnosticsPage = () => {
 					type="button"
 					onClick={() => {
 						void loadDumps();
+
 						if (selected) {
 							void analyze(selected);
 						}
@@ -381,10 +474,18 @@ const DiagnosticsPage = () => {
 						<p className="text-sm font-medium">{report.headline}</p>
 						<p className="mt-1 text-xs text-muted-foreground">
 							{report.file}
-							{report.truncated
+							{report.live &&
+							report.total_rows &&
+							report.total_rows > report.rows
+								? ` · live tail of ${report.rows.toLocaleString()} rows`
+								: ""}
+							{report.truncated && !report.live
 								? ` · truncated to first ${report.rows.toLocaleString()} rows`
 								: ""}
 							{report.skipped > 0 ? ` · ${report.skipped} malformed lines` : ""}
+							{report.generated_at
+								? ` · updated ${new Date(report.generated_at).toLocaleTimeString()}`
+								: ""}
 						</p>
 					</div>
 

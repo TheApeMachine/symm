@@ -1,11 +1,12 @@
 import { memo, type RefObject, useCallback } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 import { drawExample } from "#/components/charts/prediction/init-predictions-chart";
+import type { PredictionReading } from "#/components/charts/prediction/predictions-data-provider";
 
 export type PredictionBridge = {
-	append: (tsSec: number, confidence: number) => void;
+	append: (reading: PredictionReading) => void;
 	ready: boolean;
-	pending: [number, number][];
+	pending: PredictionReading[];
 };
 
 export const PredictionChart = memo(function PredictionChart({
@@ -18,13 +19,11 @@ export const PredictionChart = memo(function PredictionChart({
 			const bridge = bridgeRef.current;
 			const { appendReading } = result.controls;
 
-			bridge.append = (tsSec, confidence) => {
-				appendReading({ kind: "average", x: tsSec, value: confidence });
-			};
+			bridge.append = appendReading;
 			bridge.ready = true;
 
-			for (const [tsSec, confidence] of bridge.pending) {
-				bridge.append(tsSec, confidence);
+			for (const reading of bridge.pending) {
+				bridge.append(reading);
 			}
 
 			bridge.pending = [];

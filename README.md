@@ -363,7 +363,7 @@ Entries require a complete top-of-book quote (bid and ask) before `PreflightGate
 
 Headless replay eval records any still-open position at the final replay mark as an exit performance label. Wallet fitness already marks open inventory to market; the final label keeps tune eligibility and reported trade performance on the same replay-end economic surface without changing live execution.
 
-`market.Story` also records per-signal forward feedback labels independent of fills. The `prediction` gauge is the live calibrated movement forecast; after `story.prediction.horizon` matures, the error between predicted intensity and realized normalized movement updates the source scale consumed upstream by signal feature scoring.
+`market.Story` also records per-signal forward feedback labels independent of fills. The `prediction` gauge is the live calibrated movement forecast. The prediction chart plots dashed orange forecast points at the future horizon, then writes green realized movement and red absolute error to the same target timestamp when price catches up. After `story.prediction.horizon` matures, the error between predicted intensity and realized normalized movement updates the source scale consumed upstream by signal feature scoring.
 
 ## Sizing
 
@@ -497,6 +497,8 @@ symm tune
 `kraken/market/instrument` subscribes to every pair Kraken lists on the instrument channel; newly listed markets are picked up on the next catalog update. Signals such as `pumpdump`, `fluid`, and `leadlag` consume the shared `raw` bus and do not depend on config symbol lists. `default_symbols` and `anchor_symbol` only choose the dashboard anchor chart. Chart candles use Kraken's [`ohlc` WebSocket channel](https://docs.kraken.com/api/docs/websocket-v2/ohlc) subscribed only for the anchor symbol and open positions; `candle_bar` frames carry `interval_begin`, OHLC, and volume so the frontend updates the forming bar in place.
 
 **Schema-driven layout:** on WebSocket connect the hub sends a `layout` document built from `perspectives.TelemetryRegistry`. Sources register when measurements arrive; the hub rebroadcasts an updated `layout` when the manifest grows. The React dashboard renders gauges from that manifest only — no hard-coded signal union in the frontend.
+
+**Signal Insight diagnostics:** when raw dumps are enabled, the hub watches `signals.raw_dump_dir` (default `runs/`) and pushes debounced tail analyses (`chart: "diagnostic"`, last 50k rows) plus an updated dump inventory (`event: "dumps"`) over the same websocket. REST endpoints `/api/dumps` and `/api/analyze` remain for the initial load and manual full-file refresh.
 
 **Execution gates:** `broker.Desk` ingests toxicity, fluid, sentiment, and Hawkes measurements into a stress cache. Entry orders scale quantity continuously as hostile SNR rises; configured spread, slippage, stale-quote, and depth gates remain explicit quote-quality limits. Entry quantities are then aligned to Kraken instrument rules and raised to the pair's dynamic minimum quantity/cost when the requested exposure is smaller than the exchange will accept; exits keep the conservative round-down path so liquidation never tries to sell more than is held. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters. Trailing-stop defaults are derived from the quote cache's rolling distinct-price realized volatility (`trading.exit.trailing_volatility_multiple`) unless the playbook node carries an explicit offset.
 

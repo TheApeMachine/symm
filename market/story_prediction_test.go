@@ -25,7 +25,7 @@ func TestForwardFeedbackObserve(t *testing.T) {
 		convey.Convey("It should sharpen a source that undercalled realized movement", func() {
 			feedback := newForwardFeedback(time.Second, 1)
 
-			err := feedback.Observe(types.Measurement{
+			points, err := feedback.Observe(types.Measurement{
 				At:         base,
 				Symbol:     "BTC/EUR",
 				Source:     types.SourceDepthFlow,
@@ -34,8 +34,12 @@ func TestForwardFeedbackObserve(t *testing.T) {
 				Last:       100,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(points), convey.ShouldEqual, 1)
+			convey.So(points[0].kind, convey.ShouldEqual, predictionChartForecast)
+			convey.So(points[0].at, convey.ShouldResemble, base.Add(time.Second))
+			convey.So(points[0].value, convey.ShouldEqual, 0.25)
 
-			err = feedback.Observe(types.Measurement{
+			points, err = feedback.Observe(types.Measurement{
 				At:         base.Add(2 * time.Second),
 				Symbol:     "BTC/EUR",
 				Source:     types.SourceDepthFlow,
@@ -44,6 +48,15 @@ func TestForwardFeedbackObserve(t *testing.T) {
 				Last:       200,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(points), convey.ShouldEqual, 3)
+			convey.So(points[0].kind, convey.ShouldEqual, predictionChartActual)
+			convey.So(points[0].at, convey.ShouldResemble, base.Add(time.Second))
+			convey.So(points[0].value, convey.ShouldAlmostEqual, 0.5, 1e-9)
+			convey.So(points[1].kind, convey.ShouldEqual, predictionChartError)
+			convey.So(points[1].at, convey.ShouldResemble, base.Add(time.Second))
+			convey.So(points[1].value, convey.ShouldAlmostEqual, 0.25, 1e-9)
+			convey.So(points[2].kind, convey.ShouldEqual, predictionChartForecast)
+			convey.So(points[2].at, convey.ShouldResemble, base.Add(3*time.Second))
 
 			sourceFeedback := types.CurrentSourceFeedback(types.SourceDepthFlow)
 			convey.So(sourceFeedback.Samples, convey.ShouldEqual, 1)
@@ -53,7 +66,7 @@ func TestForwardFeedbackObserve(t *testing.T) {
 		convey.Convey("It should soften a source that overcalled a flat horizon", func() {
 			feedback := newForwardFeedback(time.Second, 1)
 
-			err := feedback.Observe(types.Measurement{
+			_, err := feedback.Observe(types.Measurement{
 				At:         base,
 				Symbol:     "ETH/EUR",
 				Source:     types.SourceExhaustion,
@@ -63,7 +76,7 @@ func TestForwardFeedbackObserve(t *testing.T) {
 			})
 			convey.So(err, convey.ShouldBeNil)
 
-			err = feedback.Observe(types.Measurement{
+			points, err := feedback.Observe(types.Measurement{
 				At:         base.Add(2 * time.Second),
 				Symbol:     "ETH/EUR",
 				Source:     types.SourceExhaustion,
@@ -72,6 +85,11 @@ func TestForwardFeedbackObserve(t *testing.T) {
 				Last:       100,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(points), convey.ShouldEqual, 3)
+			convey.So(points[0].kind, convey.ShouldEqual, predictionChartActual)
+			convey.So(points[0].value, convey.ShouldEqual, 0)
+			convey.So(points[1].kind, convey.ShouldEqual, predictionChartError)
+			convey.So(points[1].value, convey.ShouldEqual, 0.8)
 
 			sourceFeedback := types.CurrentSourceFeedback(types.SourceExhaustion)
 			convey.So(sourceFeedback.Samples, convey.ShouldEqual, 1)
@@ -119,7 +137,10 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("It should publish a prediction gauge frame and record the measurement", func() {
+		convey.Convey("It should publish prediction gauge and chart frames", func() {
+			chartSeen := false
+			gaugeSeen := false
+
 			select {
 			case frame := <-subscriber.Incoming:
 				payload, ok := frame.Value.(map[string]any)
@@ -128,10 +149,28 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 				convey.So(payload["chart"], convey.ShouldEqual, "gauge")
 				convey.So(payload["source"], convey.ShouldEqual, "prediction")
 				convey.So(payload["confidence"], convey.ShouldBeGreaterThan, 0)
+				gaugeSeen = true
 			case <-time.After(500 * time.Millisecond):
 				convey.So("prediction gauge", convey.ShouldBeBlank)
 			}
 
+			select {
+			case frame := <-subscriber.Incoming:
+				payload, ok := frame.Value.(map[string]any)
+
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(payload["chart"], convey.ShouldEqual, "prediction")
+				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
+				convey.So(payload["kind"], convey.ShouldEqual, string(predictionChartForecast))
+				convey.So(payload["x"], convey.ShouldBeGreaterThan, float64(now.Unix()))
+				convey.So(payload["value"], convey.ShouldEqual, 0.5)
+				chartSeen = true
+			case <-time.After(500 * time.Millisecond):
+				convey.So("prediction chart", convey.ShouldBeBlank)
+			}
+
+			convey.So(gaugeSeen, convey.ShouldBeTrue)
+			convey.So(chartSeen, convey.ShouldBeTrue)
 			convey.So(story.recorder.Flush(), convey.ShouldBeNil)
 			raw, readErr := os.ReadFile(filepath.Join(tempDir, "capture.jsonl"))
 
@@ -154,7 +193,7 @@ func BenchmarkForwardFeedbackObserve(b *testing.B) {
 		index++
 		price := 100 + float64(index%1000)*0.001
 
-		_ = feedback.Observe(types.Measurement{
+		_, _ = feedback.Observe(types.Measurement{
 			At:         at,
 			Symbol:     "BTC/EUR",
 			Source:     types.SourceDepthFlow,

@@ -203,7 +203,7 @@ func (story *Story) ingestMeasurement(
 	recorded := story.enrichMeasurementBook(measurement)
 	story.recordMeasurement(recorded)
 
-	prediction, telemetry, predicted, err := story.observePredictionFeedback(measurement)
+	prediction, telemetry, chartPoints, predicted, err := story.observePredictionFeedback(measurement)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -214,6 +214,7 @@ func (story *Story) ingestMeasurement(
 		story.recordMeasurement(story.enrichMeasurementBook(prediction))
 		story.rememberMeasurement(prediction)
 		story.publishPredictionGauge(prediction, telemetry)
+		story.publishPredictionChart(measurement.Symbol, chartPoints)
 	}
 
 	if len(story.thoughts) == 0 {

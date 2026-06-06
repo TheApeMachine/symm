@@ -48,18 +48,20 @@ open position at the source, so the hub does no filtering — it only buffers
 per client; the frontend never sends frames.
 */
 type Hub struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	pool             *qpool.Q
-	broadcasts       map[string]*qpool.BroadcastGroup
-	subscribers      map[string]*qpool.Subscriber
-	clients          *sync.Map
-	server           *http.Server
-	nextConnID       uint64
-	lastWallet       atomic.Pointer[map[string]any]
-	lastPositions    atomic.Pointer[map[string]any]
-	lastEquity       atomic.Pointer[map[string]any]
-	lastDecisionTree atomic.Pointer[map[string]any]
+	ctx                context.Context
+	cancel             context.CancelFunc
+	pool               *qpool.Q
+	broadcasts         map[string]*qpool.BroadcastGroup
+	subscribers        map[string]*qpool.Subscriber
+	clients            *sync.Map
+	server             *http.Server
+	diagnosticsWatcher *diagnosticsWatcher
+	nextConnID         uint64
+	lastWallet         atomic.Pointer[map[string]any]
+	lastPositions      atomic.Pointer[map[string]any]
+	lastEquity         atomic.Pointer[map[string]any]
+	lastDecisionTree   atomic.Pointer[map[string]any]
+	lastDumps          atomic.Pointer[map[string]any]
 }
 
 /*
@@ -119,12 +121,28 @@ func NewHub(
 		}
 	}()
 
+	hub.diagnosticsWatcher = startDiagnosticsWatcher(hub)
+
+	if dumps, err := listRawDumps(); err == nil {
+		payload := map[string]any{
+			"event": "dumps",
+			"dumps": dumps,
+		}
+		hub.lastDumps.Store(&payload)
+	}
+
 	return hub
 }
 
 func (hub *Hub) Close() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
+
+	if hub.diagnosticsWatcher != nil {
+		if err := hub.diagnosticsWatcher.Close(); err != nil {
+			errnie.Error(err)
+		}
+	}
 
 	if hub.server != nil {
 		if err := hub.server.Shutdown(shutdownCtx); err != nil {
@@ -186,6 +204,10 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		_ = conn.WriteJSON(*decisionTree)
 	}
 
+	if dumps := hub.lastDumps.Load(); dumps != nil {
+		_ = conn.WriteJSON(*dumps)
+	}
+
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, conn)
 }
@@ -233,23 +255,27 @@ func (hub *Hub) Tick() error {
 				hub.lastDecisionTree.Store(&out)
 			}
 
-			hub.clients.Range(func(key, value any) bool {
-				conn, ok := value.(*websocket.Conn)
-
-				if !ok {
-					hub.clients.Delete(key)
-
-					return true
-				}
-
-				if err := conn.WriteJSON(out); err != nil {
-					errnie.Error(err)
-					errnie.Error(conn.Close())
-					hub.clients.Delete(key)
-				}
-
-				return true
-			})
+			hub.broadcastJSON(out)
 		}
 	}
+}
+
+func (hub *Hub) broadcastJSON(out map[string]any) {
+	hub.clients.Range(func(key, value any) bool {
+		conn, ok := value.(*websocket.Conn)
+
+		if !ok {
+			hub.clients.Delete(key)
+
+			return true
+		}
+
+		if err := conn.WriteJSON(out); err != nil {
+			errnie.Error(err)
+			errnie.Error(conn.Close())
+			hub.clients.Delete(key)
+		}
+
+		return true
+	})
 }

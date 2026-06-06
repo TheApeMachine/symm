@@ -39,14 +39,24 @@ func (hub *Hub) handleListDumps(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
+	dumps, err := listRawDumps()
+
+	if err != nil {
+		log.Printf("ui diagnostics: read raw dump dir %q: %v", rawdump.Dir(), err)
+		writeDiagnosticsJSON(writer, http.StatusOK, map[string]any{"dumps": []dumpInfo{}})
+
+		return
+	}
+
+	writeDiagnosticsJSON(writer, http.StatusOK, map[string]any{"dumps": dumps})
+}
+
+func listRawDumps() ([]dumpInfo, error) {
 	dir := rawdump.Dir()
 	entries, err := os.ReadDir(dir)
 
 	if err != nil {
-		log.Printf("ui diagnostics: read raw dump dir %q: %v", dir, err)
-		writeDiagnosticsJSON(writer, http.StatusOK, map[string]any{"dumps": []dumpInfo{}})
-
-		return
+		return nil, err
 	}
 
 	dumps := make([]dumpInfo, 0, len(entries))
@@ -76,7 +86,7 @@ func (hub *Hub) handleListDumps(writer http.ResponseWriter, request *http.Reques
 		return dumps[i].Signal < dumps[j].Signal
 	})
 
-	writeDiagnosticsJSON(writer, http.StatusOK, map[string]any{"dumps": dumps})
+	return dumps, nil
 }
 
 /*

@@ -115,8 +115,10 @@ type Report struct {
 	Signal      string        `json:"signal"`
 	File        string        `json:"file"`
 	Rows        int           `json:"rows"`
+	TotalRows   int           `json:"total_rows,omitempty"`
 	Skipped     int           `json:"skipped"`
 	Truncated   bool          `json:"truncated"`
+	Live        bool          `json:"live,omitempty"`
 	Fields      []FieldReport `json:"fields"`
 	Headline    string        `json:"headline"`
 	GeneratedAt string        `json:"generated_at"`
@@ -217,6 +219,7 @@ func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
 		Signal:      signal,
 		File:        path,
 		Rows:        rows,
+		TotalRows:   rows,
 		Skipped:     skipped,
 		Truncated:   truncated,
 		Fields:      fields,
@@ -640,9 +643,22 @@ func headline(report *Report) string {
 		counts[report.bucket(field.Verdict)]++
 	}
 
+	rowLabel := fmt.Sprintf("%d rows", report.Rows)
+
+	if report.Live && report.TotalRows > report.Rows {
+		rowLabel = fmt.Sprintf(
+			"%d rows (live window of %d total)",
+			report.Rows, report.TotalRows,
+		)
+	}
+
+	if report.Truncated && !report.Live {
+		rowLabel = fmt.Sprintf("%d rows (truncated)", report.Rows)
+	}
+
 	return fmt.Sprintf(
-		"%d rows, %d fields — %d healthy, %d flat, %d flickering, %d dead",
-		report.Rows, len(report.Fields),
+		"%s, %d fields — %d healthy, %d flat, %d flickering, %d dead",
+		rowLabel, len(report.Fields),
 		counts[verdictHealthy], counts[verdictFlat],
 		counts[verdictFlicker]+counts[verdictUnstable], counts[verdictDead]+counts[verdictConstant],
 	)

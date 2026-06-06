@@ -2,7 +2,9 @@
 
 The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header cash balance; `equity` frames add the realistic all-cash balance after market-selling every open lot through the L2 book with taker fees (shown beside cash when positions are open). Wallet snapshots also hydrate `gauge_confidence` so gauges recover immediately after reconnect. The trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. The right rail splits trades and audit 50/50. The audit half receives realtime entry/exit action events only (`trade_*_fill`, `trade_*_error`); skips, high-volume measurement lines, and perspective lines remain in the JSONL sidecar but do not stream to the dashboard. Trade charts consume candle rows only; raw mark ticks do not become synthetic candles.
 
-The prediction chart plots backend `prediction` gauge confidence. The backend treats each signal confidence as a forward movement-intensity forecast over `story.prediction.horizon`; when future price catches up, realized normalized movement updates a per-source scale that signals consume upstream while scoring feature values.
+The **Signal Insight** page (`/diagnostics`) lists `runs/<name>_raw.jsonl` dumps through `/api/dumps`, runs a full-file analysis on selection through `/api/analyze`, and then streams debounced tail analyses over the websocket as `chart: "diagnostic"` frames whenever a dump grows. Dump inventory refreshes on `event: "dumps"`. Refresh still forces a full-file re-read.
+
+The prediction chart consumes `chart: "prediction"` frames. Dashed orange `prediction` points are written at `measurement.at + story.prediction.horizon`; green `actual` and red `error` points are written to that same target time when future price catches up. The backend treats each signal confidence as a forward movement-intensity forecast over the horizon; settled error updates a per-source scale that signals consume upstream while scoring feature values.
 
 The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
 
@@ -16,7 +18,7 @@ src/
       shared/             # SciChart theme + financial chart helpers
       confidence/         # gauges, heatmaps, confidence wire adapter
       fluid/              # 3D surface chart + field_row wire adapter
-      prediction/         # engine pulse wire adapter
+      prediction/         # forward forecast/actual/error wire adapter
       trade/              # OHLC chart + trade-chart-wire adapter
     panels/
       data/               # audit, decisions, wallet, trades panel stores

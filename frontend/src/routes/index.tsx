@@ -31,6 +31,10 @@ import {
 	type PredictionBridge,
 	PredictionChart,
 } from "#/components/charts/prediction/PredictionChart";
+import {
+	deliverPredictionWire,
+	parsePredictionWire,
+} from "#/components/charts/prediction/prediction-wire";
 import { SpiderChart } from "#/components/charts/spider/spider";
 import {
 	createSpiderBridge,
@@ -146,16 +150,13 @@ const WsFeed = ({
 					heatmapRef.current?.set(source, confidence);
 					surpriseRef.current?.set(source, snr);
 
-					if (source === "prediction") {
-						const tsSec = Date.now() / 1000;
-						const prediction = predictionRef.current;
+					return;
+				}
 
-						if (prediction?.ready) {
-							prediction.append(tsSec, confidence);
-						} else if (prediction) {
-							prediction.pending.push([tsSec, confidence]);
-						}
-					}
+				const predictionReading = parsePredictionWire(raw);
+
+				if (predictionReading !== null) {
+					deliverPredictionWire(predictionRef.current, predictionReading);
 
 					return;
 				}
