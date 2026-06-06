@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 const (
@@ -68,8 +67,8 @@ type symbolState struct {
 	churn      map[l2Key]*levelChurnWindow
 	bidTotal   float64 // summed visible bid qty
 	askTotal   float64
-	toxic      map[float64]time.Time // price -> expiry
-	toxicChurn map[float64]float64   // price -> cancel/add ratio at flag time
+	toxic      map[int64]time.Time // discretized price -> expiry
+	toxicChurn map[int64]float64   // discretized price -> cancel/add ratio at flag time
 	trades     []tradePrint
 	mid        float64
 	lastPrice  float64
@@ -88,14 +87,18 @@ type symbolState struct {
 type Tracker struct {
 	mu                   sync.Mutex
 	symbols              map[string]*symbolState
-	floor                *adaptive.SNRField
+	surpriseField        *types.CategorySurpriseField
 	minFillToCancelRatio float64
 }
 
 func NewTracker() *Tracker {
 	return &Tracker{
 		symbols: make(map[string]*symbolState),
-		floor:   adaptive.NewSNRField(),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryHardSupport,
+			types.CategoryLiquidityVacuum,
+			types.CategoryToxicBluff,
+		}, types.DefaultCategorySurpriseAlpha),
 	}
 }
 
@@ -129,8 +132,8 @@ func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolStat
 			orders:     make(map[string]*orderState),
 			levels:     make(map[l2Key]*l2Level),
 			churn:      make(map[l2Key]*levelChurnWindow),
-			toxic:      make(map[float64]time.Time),
-			toxicChurn: make(map[float64]float64),
+			toxic:      make(map[int64]time.Time),
+			toxicChurn: make(map[int64]float64),
 			tracked:    types.NewCategory(types.CategoryTypeNone),
 		}
 		tracker.symbols[symbol] = state

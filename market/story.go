@@ -15,50 +15,51 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
 const (
-	storyMeasurementsSubscriberID = "market:story"
+	storyMeasurementsSubscriberID  = "market:story"
+	defaultStoryMeasurementBuffer  = 1024
+	defaultStoryDecisionMinSamples = 1
 )
 
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	err                  error
-	pool                 *qpool.Q
-	broadcasts           map[string]*qpool.BroadcastGroup
-	subscribers          map[string]*qpool.Subscriber
-	ui                   *qpool.BroadcastGroup
-	raw                  *qpool.BroadcastGroup
-	streams              *focus.Set
-	regimeFeatures       map[string]perspectives.RegimeFeatures
-	thoughts             []reasoning.Thought
-	predictionCalibrator *numeric.SignalCalibrator
-	predictionFloor      *adaptive.SNRField
-	playbookLoaded       bool
-	reasonStates         map[string]*reasoning.ReasonState
-	positions            map[string]*reasoning.PositionState
-	ringWindow           *ring.Ring
-	ringPtr              int
-	windowReason         reasoning.WindowReason
-	lastGauge            map[string]time.Time
-	recordFile           *os.File
-	recorder             *bufio.Writer
-	audit                *audit.Writer
-	tickerVolume         map[string]float64
-	bookEnricher         func(types.Measurement) types.Measurement
-	quoteReady           func(string) bool
-	pulseSeq             atomic.Int64
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	err                     error
+	pool                    *qpool.Q
+	broadcasts              map[string]*qpool.BroadcastGroup
+	subscribers             map[string]*qpool.Subscriber
+	ui                      *qpool.BroadcastGroup
+	raw                     *qpool.BroadcastGroup
+	regimeFeatures          map[string]perspectives.RegimeFeatures
+	thoughts                []reasoning.Thought
+	predictionCalibrator    *numeric.SignalCalibrator
+	predictionSurpriseField *types.CategorySurpriseField
+	playbookLoaded          bool
+	reasonStates            map[string]*reasoning.ReasonState
+	positions               map[string]*reasoning.PositionState
+	ringWindow              *ring.Ring
+	ringPtr                 int
+	windowReason            reasoning.WindowReason
+	lastGauge               map[string]time.Time
+	recordFile              *os.File
+	recorder                *bufio.Writer
+	audit                   *audit.Writer
+	quoteVolumeBase         map[string]float64 // 24h ticker volume in base units; notional = base × last
+	bookEnricher            func(types.Measurement) types.Measurement
+	quoteReady              func(string) bool
+	positionHeld            func(string) bool
+	pulseSeq                atomic.Int64
 
 	decisionTree    []reasoning.TreeNode
 	nodeReached     map[string]int
@@ -69,30 +70,34 @@ type Story struct {
 	condHeld        map[string][]int
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		broadcasts:      make(map[string]*qpool.BroadcastGroup),
-		subscribers:     make(map[string]*qpool.Subscriber),
-		streams:         streams,
-		reasonStates:    make(map[string]*reasoning.ReasonState),
-		positions:       make(map[string]*reasoning.PositionState),
-		regimeFeatures:  make(map[string]perspectives.RegimeFeatures),
-		predictionFloor: adaptive.NewSNRField(),
-		ringWindow:      ring.New(viper.GetInt("story.measurements.buffer")),
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		broadcasts:     make(map[string]*qpool.BroadcastGroup),
+		subscribers:    make(map[string]*qpool.Subscriber),
+		reasonStates:   make(map[string]*reasoning.ReasonState),
+		positions:      make(map[string]*reasoning.PositionState),
+		regimeFeatures: make(map[string]perspectives.RegimeFeatures),
+		predictionSurpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryStochasticNoise,
+			types.CategoryStochasticBalance,
+			types.CategorySynchronizedDrift,
+			types.CategoryOrganicTrend,
+		}, types.DefaultCategorySurpriseAlpha),
+		ringWindow:      ring.New(storyMeasurementBuffer()),
 		lastGauge:       make(map[string]time.Time),
 		nodeReached:     make(map[string]int),
 		nodeHeld:        make(map[string]int),
 		condHeld:        make(map[string][]int),
-		tickerVolume:    make(map[string]float64),
+		quoteVolumeBase: make(map[string]float64),
 	}
 
-	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-	story.raw = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	story.ui = bus.Group(pool, "ui", 10*time.Millisecond)
+	story.raw = bus.Group(pool, "raw", 10*time.Millisecond)
 
 	story.predictionCalibrator = numeric.NewSignalCalibrator(
 		predictionDefaultBandEdges,
@@ -127,8 +132,8 @@ func NewStory(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Story {
 		return nil
 	}
 
-	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
-		"measurements", viper.GetDuration("system.queue.ttl"),
+	story.broadcasts["measurements"] = bus.Group(
+		pool, "measurements", viper.GetDuration("system.queue.ttl"),
 	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
@@ -175,11 +180,11 @@ func (story *Story) Tick() error {
 func (story *Story) ingestMeasurement(
 	measurement types.Measurement,
 ) error {
-	if measurement.Volume > 0 {
-		story.tickerVolume[measurement.Symbol] = measurement.Volume
-	} else if cached, ok := story.tickerVolume[measurement.Symbol]; ok {
-		measurement.Volume = cached
+	if measurement.At.IsZero() {
+		measurement.At = time.Now().UTC()
 	}
+
+	measurement = story.stampQuoteNotional(measurement)
 
 	recorded := story.enrichMeasurementBook(measurement)
 
@@ -205,25 +210,21 @@ func (story *Story) ingestMeasurement(
 		}
 
 		story.decisionTree = reasoning.BuildTree(story.thoughts)
+		story.publishDecisionTree()
 	}
 
 	story.ringWindow.Value = measurement
-	story.ringWindow.Next()
+	story.ringWindow = story.ringWindow.Next()
 	story.ringPtr++
 
-	if story.ringPtr < story.ringWindow.Len() {
+	snapshots := story.ringSnapshot(measurement.Symbol)
+
+	if len(snapshots) < storyDecisionMinSamples() {
 		return nil
 	}
 
-	snapshots := make([]types.Measurement, 0, story.ringWindow.Len())
-
-	story.ringWindow.Do(func(value any) {
-		if measurement, ok := value.(types.Measurement); ok {
-			snapshots = append(snapshots, measurement)
-		}
-	})
-
-	story.regimeFeatures[measurement.Symbol] = perspectives.ClassifyRegime(snapshots)
+	features := perspectives.ClassifyRegime(snapshots)
+	story.regimeFeatures[measurement.Symbol] = features
 	story.publishMarketRegime()
 
 	if len(story.thoughts) == 0 {
@@ -232,7 +233,7 @@ func (story *Story) ingestMeasurement(
 
 	context := story.windowReason.Reset(
 		snapshots,
-		story.regimeFeatures[measurement.Symbol].Regime,
+		features.Regime,
 		story.positionState(measurement),
 	)
 
@@ -248,7 +249,12 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
+	if reasoning.IsShortAct(act) && !viper.GetBool("trading.margin_enabled") {
+		return nil
+	}
+
 	action := reasoning.ActionFromAct(act, measurement)
+	action.Regime = features.Regime
 
 	if story.quoteReady != nil && !story.quoteReady(measurement.Symbol) {
 		return nil
@@ -267,7 +273,52 @@ func (story *Story) ingestMeasurement(
 		Value: action,
 	})
 
+	if reasoning.IsEntryAction(act.Type) {
+		story.reasonState(measurement.Symbol).Reset()
+	}
+
 	return nil
+}
+
+func storyMeasurementBuffer() int {
+	configured := viper.GetInt("story.measurements.buffer")
+
+	if configured > 0 {
+		return configured
+	}
+
+	return defaultStoryMeasurementBuffer
+}
+
+func storyDecisionMinSamples() int {
+	configured := viper.GetInt("story.decision_min_samples")
+
+	if configured > 0 {
+		return configured
+	}
+
+	return defaultStoryDecisionMinSamples
+}
+
+func (story *Story) ringSnapshot(symbol string) []types.Measurement {
+	capacity := story.ringWindow.Len()
+	snapshots := make([]types.Measurement, 0, capacity)
+
+	story.ringWindow.Do(func(value any) {
+		measurement, ok := value.(types.Measurement)
+
+		if !ok {
+			return
+		}
+
+		if measurement.Symbol != "" && measurement.Symbol != symbol {
+			return
+		}
+
+		snapshots = append(snapshots, measurement)
+	})
+
+	return snapshots
 }
 
 /*
@@ -392,13 +443,13 @@ func (story *Story) writePlaybookAudit(
 }
 
 // positionState projects what the story knows about the open position into the
-// view the reasoning language reasons over. Holding is the fill-sourced focus set;
-// entry, peak, and elapsed are derived from the prices observed since the position
-// opened. (The exact fill price arrives with the execution events Stage 6 will wire
-// from the paper/live socket.)
+// view the reasoning language reasons over. Holding comes from the trader's
+// exchange-reconciled inventory (paper/live holdings snapshots and fills), not
+// the chart focus set. Entry, peak, and elapsed derive from prices observed
+// since the position opened.
 func (story *Story) positionState(measurement types.Measurement) reasoning.PositionState {
 	symbol := measurement.Symbol
-	holding := story.streams != nil && story.streams.Has(symbol)
+	holding := story.positionHeld != nil && story.positionHeld(symbol)
 
 	now := measurement.At
 	if now.IsZero() {
@@ -527,6 +578,45 @@ rejection on the dashboard.
 */
 func (story *Story) SetQuoteReady(ready func(string) bool) {
 	story.quoteReady = ready
+}
+
+/*
+SetPositionHeld wires the trader's exchange-reconciled inventory view so exit
+managers only arm when a symbol is actually held. The chart focus set is UI-only
+and must not drive lifecycle predicates.
+*/
+func (story *Story) SetPositionHeld(held func(string) bool) {
+	story.positionHeld = held
+}
+
+func (story *Story) stampQuoteNotional(measurement types.Measurement) types.Measurement {
+	return StampQuoteNotional(measurement, story.quoteVolumeBase)
+}
+
+/*
+StampQuoteNotional recomputes quote notional (24h base volume × last) on every
+measurement so volume rose_by predicates track price-linked participation instead
+of a stale cached notional copied from the last liquidity reading.
+*/
+func StampQuoteNotional(
+	measurement types.Measurement, quoteVolumeBase map[string]float64,
+) types.Measurement {
+	if measurement.Last <= 0 {
+		return measurement
+	}
+
+	if measurement.Volume > 0 {
+		quoteVolumeBase[measurement.Symbol] = measurement.Volume / measurement.Last
+	}
+
+	baseVolume, ok := quoteVolumeBase[measurement.Symbol]
+	if !ok || baseVolume <= 0 {
+		return measurement
+	}
+
+	measurement.Volume = baseVolume * measurement.Last
+
+	return measurement
 }
 
 func (story *Story) enrichMeasurementBook(

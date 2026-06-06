@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -26,16 +27,16 @@ const rawSubscriberID = "signal/exhaust:raw"
 var exhaustDefaultBandEdges = []float64{0.5, 1.5, 2.5}
 
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	history     *historyStore
-	floor       *adaptive.SNRField
-	classifier  *adaptive.Classifier
-	calibrator  *numeric.BandCalibrator
-	rawDump     *rawdump.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	history       *historyStore
+	surpriseField *types.CategorySurpriseField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	rawDump       *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -57,19 +58,24 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		history:     newHistoryStore(),
-		floor:       adaptive.NewSNRField(),
-		classifier:  pooledCalibrator.Classifier,
-		calibrator:  pooledCalibrator.Calibrator,
-		rawDump:     rawdump.Open("exhaust"),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryThermalExhaustion,
+			types.CategoryFragileExpansion,
+			types.CategoryMechanicalCollapse,
+			types.CategoryActiveReversal,
+		}, types.DefaultCategorySurpriseAlpha),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
+		rawDump:    rawdump.Open("exhaust"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/exhaust ready", "signal/exhaust")
 
@@ -189,8 +195,6 @@ func (signal *Signal) emit(symbol string) error {
 
 	measurement.Symbol = symbol
 
-	categoryStandout := standout
-
 	telemetry, _ := numeric.ObserveGaugeTelemetry(
 		signal.calibrator,
 		signal.classifier,
@@ -198,7 +202,7 @@ func (signal *Signal) emit(symbol string) error {
 		standout,
 	)
 
-	if err := types.AssignCategorySNR(&measurement, signal.floor, categoryStandout); err != nil {
+	if err := types.AssignCategorySurpriseSNR(&measurement, signal.surpriseField, measurement.Category); err != nil {
 		return err
 	}
 

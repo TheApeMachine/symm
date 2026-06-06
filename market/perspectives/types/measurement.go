@@ -63,12 +63,12 @@ it picked this category for this reading. Its honest floor is 1/N — a uniform 
 among the signal's N categories — and it is never clamped or fused with SNR. It says
 nothing about which category won; a confident StochasticNoise reads high.
 
-SNR is temporal surprise, orthogonal to confidence: how many standard deviations the
-current category standout — margin by which the assigned category beat its
-alternatives — stands above this symbol's running standout baseline. It answers "how
-surprising is it that this category was selected now," not how sure the signal is.
-A reading can pair low confidence with high SNR (surprising but unsure) — still low
-trust. Perspective branches gate on SNR (UnitSNR); UnitConfidence gates on the
+SNR is temporal surprise, orthogonal to confidence: how many standard deviations
+the Shannon surprisal of the selected category stands above this symbol's
+running surprisal baseline. It answers "how unexpected is this category selection
+compared to recent history," not how clearly the observation sits in its band.
+A reading can pair low confidence with high SNR (surprising but unsure) — still
+low trust. Perspective branches gate on SNR (UnitSNR); UnitConfidence gates on the
 selection confidence instead.
 */
 type Measurement struct {
@@ -78,7 +78,7 @@ type Measurement struct {
 	Category   CategoryType
 	Strength   float64     // raw fused strength for dashboards only
 	Confidence float64     // cross-sectional band margin; 0 on a boundary
-	SNR        float64     // temporal surprise: sigma above this symbol's own recent standout floor
+	SNR        float64     // temporal surprise: sigma above this symbol's own recent surprisal baseline
 	Last       float64     // last traded price, carried for the trader's sizing/fill
 	Volume     float64     // quote-currency notional volume when known (ticker volume × last)
 	SpreadBPS  float64     // quoted spread in basis points when bid/ask are known; 0 falls back to static replay slippage

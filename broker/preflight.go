@@ -30,12 +30,16 @@ func PreflightGates(request PreflightRequest) error {
 		return fmt.Errorf("preflight: quantity must be positive")
 	}
 
-	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {
-		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
+	if reasoning.IsExitAction(request.ActionType) {
+		if usableExitReference(request.Quote) {
+			return nil
+		}
+
+		return fmt.Errorf("preflight: incomplete quote for exit %s", request.Quote.Symbol)
 	}
 
-	if reasoning.IsExitAction(request.ActionType) {
-		return nil
+	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {
+		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
 	}
 
 	if err := preflightQuoteQuality(request.Quote); err != nil {
@@ -47,6 +51,14 @@ func PreflightGates(request PreflightRequest) error {
 	}
 
 	return preflightMarketSlippage(request)
+}
+
+func usableExitReference(quote Quote) bool {
+	if quote.Last > 0 {
+		return true
+	}
+
+	return quote.Bid > 0 && quote.Ask > 0
 }
 
 func preflightQuoteQuality(quote Quote) error {

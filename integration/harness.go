@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
@@ -81,8 +82,9 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	}
 
 	streams := focus.NewSet()
-	story := market.NewStory(systemCtx, pool, streams)
 	crypto := trader.NewCrypto(systemCtx, pool, streams)
+	story := market.NewStory(systemCtx, pool)
+	story.SetPositionHeld(crypto.SymbolHeld)
 
 	if err := engine.AddSystems(
 		relay,
@@ -122,7 +124,7 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		capture:    capture,
 		tape:       tape,
 		streams:    streams,
-		measureBus: pool.CreateBroadcastGroup("measurements", 10*time.Millisecond),
+		measureBus: bus.Group(pool, "measurements", 10*time.Millisecond),
 		auditPath:  auditPath,
 	}
 
@@ -337,7 +339,7 @@ func (harness *Harness) playCapture() error {
 				return err
 			}
 
-			group := harness.pool.CreateBroadcastGroup(frame.Channel, 10*time.Millisecond)
+			group := bus.Group(harness.pool, frame.Channel, 10*time.Millisecond)
 			group.Send(&qpool.QValue[any]{
 				Type: frame.Channel,
 				Value: map[string]any{
@@ -428,7 +430,7 @@ func (harness *Harness) sleep(duration time.Duration) {
 }
 
 func (harness *Harness) waitDeskReady(timeout time.Duration) {
-	harness.sleep(10 * time.Millisecond)
+	harness.sleep(timeout * time.Millisecond)
 }
 
 func ConfigureViper(auditPath string) {

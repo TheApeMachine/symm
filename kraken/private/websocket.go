@@ -74,7 +74,7 @@ func NewWebSocketWithQuoteCache(
 ) public.WebSocketClient {
 	paperMode := viper.GetViper().GetString("trading.model") == "paper"
 
-	if paperMode && settings.L3Enabled() {
+	if paperMode && settings.L3Enabled() && apiKey != "" && apiSecret != "" {
 		return newHybridWebSocket(
 			ctx,
 			pool,

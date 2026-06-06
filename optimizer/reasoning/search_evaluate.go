@@ -47,6 +47,16 @@ func scoreForest(
 
 			credited *= 1 - capitalBlockWeight*blockRate
 		}
+
+		if result.TotalTicks > 0 && result.ExposureTicks > 0 {
+			exposureRate := float64(result.ExposureTicks) / float64(result.TotalTicks)
+
+			if exposureRate > 1 {
+				exposureRate = 1
+			}
+
+			credited *= 1 - exposureTimeWeight*exposureRate
+		}
 	}
 
 	return Candidate{

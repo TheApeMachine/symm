@@ -20,6 +20,7 @@ func Neighbors(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thoug
 	neighbors := make([][]reasoning.Thought, 0, 64)
 
 	neighbors = append(neighbors, tuneEntryThreshold(forest, vocab)...)
+	neighbors = append(neighbors, tuneEntryType(forest, vocab)...)
 	neighbors = append(neighbors, tunePositionSize(forest, vocab)...)
 	neighbors = append(neighbors, tightenEntry(forest, vocab)...)
 	neighbors = append(neighbors, tightenWithVersus(forest, vocab)...)
@@ -184,6 +185,41 @@ func applyToManagement(
 }
 
 // ---- mutations (clone, then edit the clone — parents are never aliased) ----------
+
+// tuneEntryType lets the search choose whether a branch should cross immediately
+// or rest passively for maker economics. Without this operator the initial seed's
+// entry type is sticky for the whole search.
+func tuneEntryType(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
+
+	for _, root := range entryRootIndices(forest) {
+		node := entryNodeWithin(&forest[root])
+
+		if node == nil {
+			continue
+		}
+
+		current := node.Do.Type
+
+		for _, action := range vocab.Entries {
+			if action == current {
+				continue
+			}
+
+			clone := cloneForest(forest)
+			entry := entryNodeWithin(&clone[root])
+
+			if entry == nil {
+				continue
+			}
+
+			entry.Do.Type = action
+			neighbors = append(neighbors, clone)
+		}
+	}
+
+	return neighbors
+}
 
 // tunePositionSize sweeps each branch's capital-deployment multiplier across the grid.
 func tunePositionSize(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {

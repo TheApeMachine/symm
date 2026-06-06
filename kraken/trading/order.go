@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 )
 
 const (
@@ -152,7 +153,7 @@ func NewOrderClient(ctx context.Context, pool *qpool.Q) *OrderClient {
 	}
 
 	for _, channel := range []string{"kraken:private"} {
-		client.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		client.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		client.subscribers[channel] = client.broadcasts[channel].Subscribe(channel, 1024)
 	}
 
@@ -179,7 +180,7 @@ func (client *OrderClient) AddOrder(params AddParams) error {
 
 func (client *OrderClient) AmendOrder(params AmendParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodAmendOrder,
 			"params": params,
@@ -191,7 +192,7 @@ func (client *OrderClient) AmendOrder(params AmendParams) error {
 
 func (client *OrderClient) CancelOrder(params CancelParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodCancelOrder,
 			"params": params,
@@ -203,7 +204,7 @@ func (client *OrderClient) CancelOrder(params CancelParams) error {
 
 func (client *OrderClient) CancelAll(params CancelAllParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodCancelAll,
 			"params": params,
@@ -215,7 +216,7 @@ func (client *OrderClient) CancelAll(params CancelAllParams) error {
 
 func (client *OrderClient) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodCancelAllOrdersAfter,
 			"params": params,
@@ -227,7 +228,7 @@ func (client *OrderClient) CancelAllOrdersAfter(params CancelAllOrdersAfterParam
 
 func (client *OrderClient) BatchAdd(params BatchAddParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodBatchAdd,
 			"params": params,
@@ -239,7 +240,7 @@ func (client *OrderClient) BatchAdd(params BatchAddParams) error {
 
 func (client *OrderClient) BatchCancel(params BatchCancelParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodBatchCancel,
 			"params": params,
@@ -251,7 +252,7 @@ func (client *OrderClient) BatchCancel(params BatchCancelParams) error {
 
 func (client *OrderClient) EditOrder(params EditParams) error {
 	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "kraken:private",
+		Type: "orders",
 		Value: map[string]any{
 			"method": MethodEditOrder,
 			"params": params,

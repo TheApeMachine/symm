@@ -48,17 +48,18 @@ open position at the source, so the hub does no filtering — it only buffers
 per client; the frontend never sends frames.
 */
 type Hub struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
-	clients       *sync.Map
-	server        *http.Server
-	nextConnID    uint64
-	lastWallet    atomic.Pointer[map[string]any]
-	lastPositions atomic.Pointer[map[string]any]
-	lastEquity    atomic.Pointer[map[string]any]
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.Subscriber
+	clients          *sync.Map
+	server           *http.Server
+	nextConnID       uint64
+	lastWallet       atomic.Pointer[map[string]any]
+	lastPositions    atomic.Pointer[map[string]any]
+	lastEquity       atomic.Pointer[map[string]any]
+	lastDecisionTree atomic.Pointer[map[string]any]
 }
 
 /*
@@ -181,6 +182,10 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		_ = conn.WriteJSON(*equity)
 	}
 
+	if decisionTree := hub.lastDecisionTree.Load(); decisionTree != nil {
+		_ = conn.WriteJSON(*decisionTree)
+	}
+
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, conn)
 }
@@ -222,6 +227,10 @@ func (hub *Hub) Tick() error {
 
 			if out["event"] == "equity" {
 				hub.lastEquity.Store(&out)
+			}
+
+			if out["chart"] == "decision_tree" {
+				hub.lastDecisionTree.Store(&out)
 			}
 
 			hub.clients.Range(func(key, value any) bool {

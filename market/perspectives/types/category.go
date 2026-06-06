@@ -124,50 +124,11 @@ func (categories Categories) Clarity(observation float64) float64 {
 
 /*
 Standout is winner margin over the nearest competing category band — see
-adaptive.Classifier.Standout.
+adaptive.Classifier.Standout. It measures spatial band clarity, not temporal
+surprise; SNR is scored separately via CategorySurpriseField.
 */
 func (categories Categories) Standout(observation float64) float64 {
 	return categories.classifier().Standout(observation)
-}
-
-/*
-ScoreCategorySNR folds category standout into the symbol's running noise floor
-and returns sigma above that baseline. Standout must be a unit band margin in
-[0, 1]; invalid input or an immeasurable floor returns an error.
-*/
-func ScoreCategorySNR(floor *adaptive.SNRField, symbol string, standout float64) (float64, error) {
-	if floor == nil {
-		return 0, errnie.Error(errors.New("perspectives: ScoreCategorySNR nil floor"))
-	}
-
-	if symbol == "" {
-		return 0, errnie.Error(errors.New("perspectives: ScoreCategorySNR empty symbol"))
-	}
-
-	if err := validateUnitMargin("standout", standout); err != nil {
-		return 0, err
-	}
-
-	return floor.Score(symbol, standout)
-}
-
-/*
-AssignCategorySNR scores standout and writes the result onto measurement.SNR.
-*/
-func AssignCategorySNR(
-	measurement *Measurement,
-	floor *adaptive.SNRField,
-	standout float64,
-) error {
-	snr, err := ScoreCategorySNR(floor, measurement.Symbol, standout)
-
-	if err != nil {
-		return err
-	}
-
-	measurement.SNR = snr
-
-	return nil
 }
 
 /*
@@ -190,7 +151,8 @@ reports in that selection. Confidence is the signal's own measure of how decisiv
 it picked this category; it is returned unmodified by validation. There is no clamp:
 its honest floor is 1/N (a uniform guess among N categories) and that floor is the
 producing signal's responsibility, not a post-hoc bound here. SNR (temporal
-surprise) is scored separately from standout and has no bearing on this value.
+surprise from categorical Shannon surprisal) is scored separately and has no
+bearing on this value.
 */
 func (category *Category) Observe(next CategoryType, confidence float64) error {
 	if category == nil {

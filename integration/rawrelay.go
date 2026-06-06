@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -33,11 +34,11 @@ func NewRawRelay(ctx context.Context, pool *qpool.Q) *RawRelay {
 	relay := &RawRelay{
 		ctx:    ctx,
 		cancel: cancel,
-		raw:    pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
+		raw:    bus.Group(pool, "raw", 10*time.Millisecond),
 	}
 
 	for _, channel := range replayRelayChannels {
-		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		group := bus.Group(pool, channel, 10*time.Millisecond)
 		subscriber := group.Subscribe("integration/rawrelay:"+channel, 4096)
 
 		if subscriber == nil {

@@ -26,6 +26,10 @@ func entryDeployFraction(
 
 	fraction := effectiveFraction(costs) * multiplier
 
+	if fraction <= 0 {
+		return 0
+	}
+
 	regime := perspectives.ClassifyRegime(snapshots).Regime
 	scale := regimeSizeScale(regime)
 
@@ -35,6 +39,10 @@ func entryDeployFraction(
 
 	if fraction > 1 {
 		fraction = 1
+	}
+
+	if fraction < 0 {
+		fraction = 0
 	}
 
 	return fraction

@@ -16,3 +16,10 @@ type Act struct {
 	Offset   float64      `yaml:"offset,omitempty"`   // overrides the global stop/take/trail fraction for this node (0 = use global)
 	Fraction float64      `yaml:"fraction,omitempty"` // multiplier on trading.position_fraction for this entry (0 = deploy the global fraction)
 }
+
+/*
+IsShortAct reports whether act opens a short position.
+*/
+func IsShortAct(act Act) bool {
+	return IsEntryAction(act.Type) && act.Side == trading.Sell
+}

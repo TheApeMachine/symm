@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -45,13 +46,13 @@ func NewTape() *Tape {
 }
 
 func (tape *Tape) Subscribe(pool *qpool.Q) {
-	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	measurements := bus.Group(pool, "measurements", 10*time.Millisecond)
 	measurementSub := measurements.Subscribe("integration:tape:measurements", 4096)
 
-	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(pool, "raw", 10*time.Millisecond)
 	rawSub := raw.Subscribe("integration:tape:raw", 4096)
 
-	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	ui := bus.Group(pool, "ui", 10*time.Millisecond)
 	uiSub := ui.Subscribe("integration:tape:ui", 256)
 
 	go tape.drainMeasurements(measurementSub)

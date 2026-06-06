@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -51,12 +52,12 @@ func TestWebSocketPublishLevel3DataOnly(t *testing.T) {
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 		defer pool.Close()
 
-		level3 := pool.CreateBroadcastGroup("level3", 0)
+		level3 := bus.Group(pool, "level3", 0)
 		subscriber := level3.Subscribe("test:level3", 4)
 
 		websocketClient := &WebSocket{
 			ctx:      ctx,
-			raw:      pool.CreateBroadcastGroup("raw", 0),
+			raw:      bus.Group(pool, "raw", 0),
 			level3:   level3,
 			dataOnly: true,
 		}

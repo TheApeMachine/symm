@@ -96,6 +96,57 @@ func TestSNRScore(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(score, ShouldAlmostEqual, 0.5, 1e-9)
 		})
+
+		Convey("It should clamp baseline updates so one spike does not desensitize later spikes", func() {
+			for range defaultSNRMinObs + 50 {
+				_, err := snr.Score(0.5)
+				So(err, ShouldBeNil)
+			}
+
+			megaSpike, err := snr.Score(0.99)
+			So(err, ShouldBeNil)
+			So(megaSpike, ShouldBeGreaterThan, 3)
+
+			for range 20 {
+				_, err := snr.Score(0.5)
+				So(err, ShouldBeNil)
+			}
+
+			followUp, err := snr.Score(0.95)
+			So(err, ShouldBeNil)
+			So(followUp, ShouldBeGreaterThan, 3)
+		})
+	})
+}
+
+func TestSNRScoreSurprisal(t *testing.T) {
+	Convey("Given a surprisal SNR tracker", t, func() {
+		surprisalSNR := NewSurprisalSNR()
+
+		Convey("It should accept Shannon surprisal in bits", func() {
+			score, err := surprisalSNR.ScoreSurprisal(2.0)
+			So(err, ShouldBeNil)
+			So(score, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("It should spike on rare readings then decay as they become habitual", func() {
+			for range defaultSNRMinObs + 20 {
+				_, err := surprisalSNR.ScoreSurprisal(2.0)
+				So(err, ShouldBeNil)
+			}
+
+			rare, err := surprisalSNR.ScoreSurprisal(4.0)
+			So(err, ShouldBeNil)
+
+			for range 20 {
+				_, err := surprisalSNR.ScoreSurprisal(4.0)
+				So(err, ShouldBeNil)
+			}
+
+			habitual, err := surprisalSNR.ScoreSurprisal(4.0)
+			So(err, ShouldBeNil)
+			So(habitual, ShouldBeLessThan, rare)
+		})
 	})
 }
 

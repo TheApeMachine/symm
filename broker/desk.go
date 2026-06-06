@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -11,15 +12,19 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
+const defaultHaltCooldown = 5 * time.Minute
+
 type Desk struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q
-	quotes *QuoteCache
-	stress *StressCache
-	rules  *InstrumentRulesCache
-	halted atomic.Bool
-	err    error
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q
+	quotes       *QuoteCache
+	stress       *StressCache
+	rules        *InstrumentRulesCache
+	halted       atomic.Bool
+	haltedAt     atomic.Pointer[time.Time]
+	haltCooldown time.Duration
+	err          error
 }
 
 func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
@@ -63,19 +68,32 @@ func NewDeskWithAllCaches(
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk := &Desk{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		quotes: quotes,
-		stress: stress,
-		rules:  rules,
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		quotes:       quotes,
+		stress:       stress,
+		rules:        rules,
+		haltCooldown: defaultHaltCooldown,
 	}
 
 	return desk, nil
 }
 
 func (desk *Desk) Halted() bool {
-	return desk.halted.Load()
+	if !desk.halted.Load() {
+		return false
+	}
+
+	haltTime := desk.haltedAt.Load()
+
+	if haltTime != nil && desk.haltCooldown > 0 && time.Since(*haltTime) >= desk.haltCooldown {
+		desk.ResetHalt()
+
+		return false
+	}
+
+	return true
 }
 
 /*
@@ -86,11 +104,22 @@ func (desk *Desk) TripHalt() {
 		return
 	}
 
+	now := time.Now()
+	desk.haltedAt.Store(&now)
+
 	if desk.pool == nil {
 		return
 	}
 
 	_ = trading.NewOrderClient(desk.ctx, desk.pool).CancelAll(trading.CancelAllParams{})
+}
+
+/*
+ResetHalt clears the order circuit breaker so the desk accepts orders again.
+*/
+func (desk *Desk) ResetHalt() {
+	desk.halted.Store(false)
+	desk.haltedAt.Store(nil)
 }
 
 func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
@@ -166,10 +195,15 @@ func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
 		Triggers:  triggers,
 	}
 
-	// A protective exit rests at the level carried in Triggers; a plain entry/exit
-	// posts its limit/reference price.
+	// A protective market exit rests at the level carried in Triggers; a protective
+	// limit exit also needs a concrete limit price when the trigger fires. Plain
+	// entries/exits post their limit/reference price directly.
 	if !reasoning.IsProtectiveExit(action.Type) {
 		addParams.LimitPrice = action.Price
+	} else if reasoning.ExitRestsAsLimit(action.Type) &&
+		!reasoning.IsTrailingExit(action.Type) &&
+		triggers != nil {
+		addParams.LimitPrice = triggers.Price
 	}
 
 	if reasoning.IsMakerAction(action.Type) {

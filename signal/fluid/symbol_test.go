@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -46,6 +47,24 @@ func (fixture symbolBookFixture) snapshot(
 	update.SetEnvelopeType(market.BookSnapshot)
 
 	return update
+}
+
+func TestFluidSymbolIgnoresFluxBeforeVolumeClock(t *testing.T) {
+	Convey("Given book and trade updates before the volume clock is seeded", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		state, err := NewFluidSymbol(symbol, fluidTestClassifier())
+		So(err, ShouldBeNil)
+		fixture := symbolBookFixture{symbol: symbol}
+
+		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6)), ShouldBeNil)
+		So(state.FeedTradeSide(time.Now(), 1, "buy"), ShouldBeNil)
+
+		Convey("It should wait for ticker volume before folding flux", func() {
+			So(state.flux.hasTarget(), ShouldBeFalse)
+		})
+	})
 }
 
 func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {

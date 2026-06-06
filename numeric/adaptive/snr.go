@@ -19,6 +19,9 @@ const (
 	// defaultSNRMinStd is the regularized noise floor for unit-interval standout:
 	// a minimum expected spread of 2% of [0, 1].
 	defaultSNRMinStd = 0.02
+	// defaultSurprisalMinStd is the regularized noise floor for Shannon surprisal
+	// in bits (~10% of one bit).
+	defaultSurprisalMinStd = 0.1
 	// snrEpsilon guards against a degenerate historical std in the clamp path.
 	snrEpsilon = 1e-12
 	// standoutTieFloor is the minimum standout reported when the winning category
@@ -62,6 +65,18 @@ func NewSNR() *SNR {
 }
 
 /*
+NewSurprisalSNR builds an SNR tracker for Shannon surprisal series in bits.
+*/
+func NewSurprisalSNR() *SNR {
+	return &SNR{
+		minObs:     defaultSNRMinObs,
+		alpha:      defaultSNRAlpha,
+		clampSigma: defaultSNRClampSigma,
+		minStd:     defaultSurprisalMinStd,
+	}
+}
+
+/*
 Score folds value into the running baseline and returns positive temporal surprise
 for every valid standout. Before minObs the score is value / minStd; afterward a
 positive excess uses (value − mean) / std and a non-positive excess uses
@@ -73,6 +88,22 @@ func (snr *SNR) Score(value float64) (float64, error) {
 		return 0, err
 	}
 
+	return snr.score(value)
+}
+
+/*
+ScoreSurprisal folds Shannon surprisal in bits into the baseline and returns
+temporal surprise relative to recent history.
+*/
+func (snr *SNR) ScoreSurprisal(value float64) (float64, error) {
+	if err := validateSurprisal(value); err != nil {
+		return 0, err
+	}
+
+	return snr.score(value)
+}
+
+func (snr *SNR) score(value float64) (float64, error) {
 	floorVar := snr.minStd * snr.minStd
 	historicalVar := 0.0
 	mean := 0.0
@@ -96,11 +127,35 @@ func (snr *SNR) Score(value float64) (float64, error) {
 		result = value / (mean + snr.minStd)
 	}
 
-	if err := snr.moments.Update(value, snr.alpha); err != nil {
+	clampedValue := value
+
+	if snr.moments.Observations() >= snr.minObs && snr.clampSigma > 0 {
+		maxAllowed := mean + snr.clampSigma*std
+
+		if clampedValue > maxAllowed {
+			clampedValue = maxAllowed
+		}
+
+		minAllowed := mean - snr.clampSigma*std
+
+		if clampedValue < minAllowed {
+			clampedValue = minAllowed
+		}
+	}
+
+	if err := snr.moments.Update(clampedValue, snr.alpha); err != nil {
 		return 0, err
 	}
 
 	return result, nil
+}
+
+func validateSurprisal(value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return fmt.Errorf("adaptive: SNR invalid surprisal: %v", value)
+	}
+
+	return nil
 }
 
 func validateStandout(value float64) error {

@@ -39,12 +39,12 @@ func TestPublishMeasurement(t *testing.T) {
 		symbol := "ETH/EUR"
 		now := time.Now()
 
-		warmTrackerSNR(t, tox.tracker, symbol, now)
+		warmTrackerSNR(t, tox.tracker, symbol)
 
 		tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tox.tracker.stateLocked(symbol, market.Pair{})
-		state.toxic[100] = now.Add(time.Minute)
+		state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
 
 		Convey("When a toxic near-touch level is measured", func() {
 			tox.publishMeasurement(symbol)
@@ -106,7 +106,7 @@ func BenchmarkPublishMeasurement(b *testing.B) {
 	tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
 	tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
 	state := tox.tracker.stateLocked(symbol, market.Pair{})
-	state.toxic[100] = now.Add(time.Minute)
+	state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
 
 	b.ReportAllocs()
 

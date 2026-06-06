@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func warmTrackerSNR(t *testing.T, tracker *Tracker, symbol string, now time.Time) {
+func warmTrackerSNR(t *testing.T, tracker *Tracker, symbol string) {
 	t.Helper()
 
 	tracker.ObserveMid(symbol, market.Pair{}, 100)
@@ -37,7 +37,7 @@ func warmTrackerSNR(t *testing.T, tracker *Tracker, symbol string, now time.Time
 		)
 		convey.So(err, convey.ShouldBeNil)
 
-		_, err = types.ScoreCategorySNR(tracker.floor, symbol, evidence)
+		_, err = tracker.surpriseField.Score(symbol, types.CategoryLiquidityVacuum)
 		convey.So(err, convey.ShouldBeNil)
 	}
 
@@ -50,13 +50,13 @@ func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 		now := time.Now()
 		symbol := "ETH/EUR"
 
-		warmTrackerSNR(t, tracker, symbol, now)
+		warmTrackerSNR(t, tracker, symbol)
 
 		tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tracker.stateLocked(symbol, market.Pair{})
-		state.toxic[100] = now.Add(time.Minute)
-		state.toxicChurn[100] = 4.5
+		state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
+		state.toxicChurn[priceKey(100, market.Pair{})] = 4.5
 
 		measurement, err := tracker.Measure(symbol, now)
 
@@ -77,12 +77,12 @@ func TestTrackerMeasureToxicBluff(t *testing.T) {
 		now := time.Now()
 		symbol := "ETH/EUR"
 
-		warmTrackerSNR(t, tracker, symbol, now)
+		warmTrackerSNR(t, tracker, symbol)
 
 		tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tracker.ObserveLast(symbol, market.Pair{}, 100)
 		state := tracker.stateLocked(symbol, market.Pair{})
-		state.toxic[100] = now.Add(time.Minute)
+		state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
 
 		measurement, err := tracker.Measure(symbol, now)
 
@@ -107,7 +107,7 @@ func TestTrackerMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
 		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
 
-		warmTrackerSNR(t, tracker, symbol, now)
+		warmTrackerSNR(t, tracker, symbol)
 
 		state := tracker.stateLocked(symbol, market.Pair{})
 		state.cancelBid = 0.3

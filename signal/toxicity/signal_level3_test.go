@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -19,7 +20,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 
 		tox := NewToxicity(ctx, pool)
 		tox.l3Active = true
-		level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
+		level3 := bus.Group(pool, "level3", 10*time.Millisecond)
 		tox.subscribers["level3"] = level3.Subscribe("toxicity:test-level3", 16)
 
 		now := time.Now()
@@ -56,7 +57,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 		defer pool.Close()
 
 		tox := NewToxicity(ctx, pool)
-		level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
+		level3 := bus.Group(pool, "level3", 10*time.Millisecond)
 		tox.subscribers["level3"] = level3.Subscribe("toxicity:test-level3-empty", 16)
 
 		level3.Send(&qpool.QValue[any]{Value: map[string]any{

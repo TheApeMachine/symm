@@ -39,11 +39,10 @@ func AnchorSymbol() string {
 }
 
 /*
-Set is the shared set of symbols with an open position. The trader is its only
-writer (on entry and exit); producers read it to decide whether to publish a
-per-symbol UI frame, so the dashboard bus only carries data for symbols we are
-actually trading. Reads are lock-free; writes serialize and copy-on-write so a
-reader always sees a consistent snapshot.
+Set is the shared set of symbols whose per-symbol chart/UI frames are streamed.
+The trader adds symbols on fill so the dashboard tracks open positions; the public
+socket seeds the anchor pair for the main chart. Holding state for the playbook
+comes from the exchange-reconciled inventory, not this set.
 */
 type StreamNotifier func(symbol string, added bool)
 

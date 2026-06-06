@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -72,7 +73,7 @@ type Signal struct {
 	emergencyBackoff time.Duration
 	backoffUntil     time.Time
 	publishScratch   []publishEntry
-	floor            *adaptive.SNRField
+	surpriseField    *types.CategorySurpriseField
 	classifier       *adaptive.Classifier
 	calibrator       *numeric.BandCalibrator
 	rawDump          *rawdump.Writer
@@ -97,12 +98,17 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	)
 
 	signal := &Signal{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		broadcasts:      make(map[string]*qpool.BroadcastGroup),
-		subscribers:     make(map[string]*qpool.Subscriber),
-		floor:           adaptive.NewSNRField(),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  make(map[string]*qpool.BroadcastGroup),
+		subscribers: make(map[string]*qpool.Subscriber),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryCausalNoise,
+			types.CategorySystemicBeta,
+			types.CategoryEndogenousAlpha,
+			types.CategoryLiquidityShock,
+		}, types.DefaultCategorySurpriseAlpha),
 		classifier:      pooledCalibrator.Classifier,
 		calibrator:      pooledCalibrator.Calibrator,
 		contagionSpread: ring.NewFloatRing(64),
@@ -110,12 +116,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/causal ready", "signal/causal")
 
@@ -366,8 +372,6 @@ func (signal *Signal) publishAt(now time.Time) error {
 
 			measurement.Symbol = entry.symbol
 
-			categoryStandout := standout
-
 			telemetry, _ := numeric.ObserveGaugeTelemetry(
 				signal.calibrator,
 				signal.classifier,
@@ -375,8 +379,8 @@ func (signal *Signal) publishAt(now time.Time) error {
 				standout,
 			)
 
-			if err := types.AssignCategorySNR(
-				&measurement, signal.floor, categoryStandout,
+			if err := types.AssignCategorySurpriseSNR(
+				&measurement, signal.surpriseField, measurement.Category,
 			); err != nil {
 				return nil, fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
 			}

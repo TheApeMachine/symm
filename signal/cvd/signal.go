@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -45,17 +46,17 @@ type cvdState struct {
 }
 
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map
-	categories  map[string]types.CategoryType
-	floor       *adaptive.SNRField
-	classifier  *adaptive.Classifier
-	calibrator  *numeric.BandCalibrator
-	rawDump     *rawdump.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	categories    map[string]types.CategoryType
+	surpriseField *types.CategorySurpriseField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	rawDump       *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -87,19 +88,24 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"hidden_absorption":  types.CategoryHiddenAbsorption,
 			"aggressive_drive":   types.CategoryAggressiveDrive,
 		},
-		floor:      adaptive.NewSNRField(),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryVolumeStarvation,
+			types.CategoryStochasticBalance,
+			types.CategoryHiddenAbsorption,
+			types.CategoryAggressiveDrive,
+		}, types.DefaultCategorySurpriseAlpha),
 		classifier: pooledCalibrator.Classifier,
 		calibrator: pooledCalibrator.Calibrator,
 		rawDump:    rawdump.Open("cvd"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/cvd ready", "signal/cvd")
 
@@ -225,7 +231,7 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		Confidence: clarity,
 	}
 
-	if err := types.AssignCategorySNR(&measurement, signal.floor, categoryStandout); err != nil {
+	if err := types.AssignCategorySurpriseSNR(&measurement, signal.surpriseField, category); err != nil {
 		return err
 	}
 

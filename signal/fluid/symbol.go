@@ -159,7 +159,7 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book) error {
 
 	state.updateTouchLocked(state.book.Bids, state.book.Asks)
 
-	if flux <= 0 {
+	if flux <= 0 || !state.flux.hasTarget() {
 		return nil
 	}
 
@@ -212,7 +212,7 @@ func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if qty > 0 {
+	if qty > 0 && state.flux.hasTarget() {
 		if err := state.flux.addTrade(qty); err != nil {
 			return err
 		}

@@ -39,15 +39,19 @@ func TestFluxAccumulatorRejectsUnsetTarget(t *testing.T) {
 	})
 }
 
-func TestFluxAccumulatorIgnoresBookBeforeTradeVolume(t *testing.T) {
+func TestFluxAccumulatorAccumulatesBookBeforeTradeVolume(t *testing.T) {
 	Convey("Given book churn before the bar has trade volume", t, func() {
 		accumulator := newFluxAccumulator()
 		So(accumulator.setTarget(10), ShouldBeNil)
 		So(accumulator.addBook(5), ShouldBeNil)
+		So(accumulator.addTrade(10), ShouldBeNil)
 
-		Convey("It should not fabricate a completed bar", func() {
-			_, _, err := accumulator.completedBar()
-			So(err, ShouldNotBeNil)
+		Convey("It should include pre-trade book churn in the closed bar", func() {
+			bookFlux, tradeFlux, err := accumulator.completedBar()
+
+			So(err, ShouldBeNil)
+			So(tradeFlux, ShouldEqual, 10)
+			So(bookFlux, ShouldEqual, 5)
 		})
 	})
 }

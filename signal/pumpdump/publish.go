@@ -25,8 +25,8 @@ func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) err
 		Confidence: reading.confidence,
 	}
 
-	if err := types.AssignCategorySNR(
-		&measurement, signal.floor, reading.standout,
+	if err := types.AssignCategorySurpriseSNR(
+		&measurement, signal.surpriseField, category,
 	); err != nil {
 		return errnie.Error(err, "pumpdump: snr %s", trade.Symbol)
 	}

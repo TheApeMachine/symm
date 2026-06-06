@@ -80,14 +80,23 @@ func (book *Book) Fold(update Book, depth int) {
 		book.Symbol = update.Symbol
 		book.Bids = book.cloneLevels(update.Bids)
 		book.Asks = book.cloneLevels(update.Asks)
+		book.sortSides()
 		book.truncate(depth)
+		book.Checksum = update.Checksum
+		book.Timestamp = update.Timestamp
 
 		return
+	}
+
+	if update.Symbol != "" {
+		book.Symbol = update.Symbol
 	}
 
 	book.Bids = book.mergeBookSide(book.Bids, update.Bids, false)
 	book.Asks = book.mergeBookSide(book.Asks, update.Asks, true)
 	book.truncate(depth)
+	book.Checksum = update.Checksum
+	book.Timestamp = update.Timestamp
 }
 
 /*
@@ -118,6 +127,16 @@ func checksumField(raw string) string {
 	}
 
 	return raw
+}
+
+func (book *Book) sortSides() {
+	sort.Slice(book.Bids, func(left, right int) bool {
+		return book.Bids[left].Price > book.Bids[right].Price
+	})
+
+	sort.Slice(book.Asks, func(left, right int) bool {
+		return book.Asks[left].Price < book.Asks[right].Price
+	})
 }
 
 func (book *Book) truncate(depth int) {

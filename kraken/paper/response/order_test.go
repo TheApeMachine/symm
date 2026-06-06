@@ -8,6 +8,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
@@ -19,7 +20,7 @@ func paperOrders(ctx context.Context, pool *qpool.Q, cache *broker.QuoteCache) (
 		cache = broker.NewQuoteCache(ctx, pool)
 	}
 
-	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(pool, "raw", 10*time.Millisecond)
 	ids := NewIdentifier()
 	balances := NewBalances(raw, nil, ids)
 	executions := NewExecutions(raw, balances, ids)

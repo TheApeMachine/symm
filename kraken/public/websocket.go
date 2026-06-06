@@ -66,7 +66,7 @@ func NewWebSocket(
 			pool:        pool,
 			broadcasts:  make(map[string]*qpool.BroadcastGroup),
 			subscribers: make(map[string]*qpool.Subscriber),
-			latencies:   ring.New(64),
+			latencies:   newLatencyRing(64),
 			conns:       conns,
 			streams:     streams,
 		}
@@ -88,14 +88,22 @@ func NewWebSocket(
 
 		errnie.Info("kraken/public websocket ready", "kraken/public websocket ready")
 
-		if conns[0] == nil {
-			socket.Connect(WebSocketURL, "kraken:public", 0)
-		}
-
-		socket.streams.Add("BTC/EUR")
+		socket.streams.Add(focus.AnchorSymbol())
 	})
 
 	return socket
+}
+
+func newLatencyRing(size int) *ring.Ring {
+	latencies := ring.New(size)
+	cursor := latencies
+
+	for index := 0; index < size; index++ {
+		cursor.Value = time.Duration(0)
+		cursor = cursor.Next()
+	}
+
+	return latencies
 }
 
 /*
@@ -250,7 +258,7 @@ func (ws *WebSocket) readFrame() (err error) {
 
 	if message.Type == "pong" {
 		ws.latencies.Value = time.Since(message.TimeIn)
-		ws.latencies.Next()
+		ws.latencies = ws.latencies.Next()
 	}
 
 	if message.Channel == "ohlc" {
@@ -283,7 +291,8 @@ func (ws *WebSocket) recordLatency() {
 	defer latencyFile.Close()
 
 	ws.latencies.Do(func(value any) {
-		fmt.Fprintf(latencyFile, "%d\n", value)
+		duration, _ := value.(time.Duration)
+		fmt.Fprintf(latencyFile, "%d\n", duration)
 	})
 }
 
@@ -310,7 +319,10 @@ func (ws *WebSocket) publishOhlc(message json.RawMessage) {
 }
 
 func (ws *WebSocket) Close() error {
-	ws.conns[0].Close()
+	if len(ws.conns) > 0 && ws.conns[0] != nil {
+		_ = ws.conns[0].Close()
+	}
+
 	ws.cancel()
 	return nil
 }

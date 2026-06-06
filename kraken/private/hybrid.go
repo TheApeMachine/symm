@@ -68,15 +68,14 @@ func (hybrid *hybridWebSocket) Tick() error {
 		errCh <- hybrid.l3.Tick()
 	}()
 
-	var joined error
-
-	for range 2 {
-		if err := <-errCh; err != nil && joined == nil {
-			joined = err
-		}
+	select {
+	case <-hybrid.ctx.Done():
+		_ = hybrid.Close()
+		return hybrid.ctx.Err()
+	case err := <-errCh:
+		_ = hybrid.Close()
+		return err
 	}
-
-	return joined
 }
 
 func (hybrid *hybridWebSocket) Close() error {

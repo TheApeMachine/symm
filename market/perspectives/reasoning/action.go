@@ -29,7 +29,9 @@ type Action struct {
 	Symbol   string
 	Price    float64
 	Quantity float64
-	Offset   float64 // per-node trigger fraction (stop/take/trail); 0 = use the global default
+	Offset   float64      // per-node trigger fraction (stop/take/trail); 0 = use the global default
+	Fraction float64      // per-node entry-size multiplier; 0 = use the global position fraction
+	Regime   types.Regime // price-action regime observed when the action was emitted
 }
 
 /*
@@ -70,10 +72,11 @@ and settles exits against the position it currently holds.
 */
 func ActionFromAct(act Act, measurement types.Measurement) Action {
 	action := Action{
-		Type:   act.Type,
-		Symbol: measurement.Symbol,
-		Price:  measurement.Last,
-		Offset: act.Offset,
+		Type:     act.Type,
+		Symbol:   measurement.Symbol,
+		Price:    measurement.Last,
+		Offset:   act.Offset,
+		Fraction: act.Fraction,
 	}
 
 	if IsEntryAction(act.Type) {

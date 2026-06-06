@@ -14,14 +14,19 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const (
 	cryptoRawSubscriberID    = "trader/crypto:raw"
 	cryptoWalletSubscriberID = "trader/crypto:wallet"
+	// symbolSubmissionCooldown isolates a rejected symbol without affecting the rest
+	// of the portfolio or halting the desk.
+	symbolSubmissionCooldown = 10 * time.Second
 )
 
 /*
@@ -54,11 +59,13 @@ type Crypto struct {
 	avgEntry         map[string]float64
 	armed            map[string]armRecord
 	pending          map[string]reasoning.Action
+	coolDownUntil    sync.Map // symbol -> time.Time (per-symbol submission backoff)
 	lastDecision     map[string]string
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
 	capitalBase      float64 // opening capital; one position targets position_fraction of this
 	walletMu         sync.RWMutex
+	heldSnapshot     atomic.Pointer[map[string]struct{}]
 	availableQuote   float64 // latest wallet balance the API (balances.go) published
 }
 
@@ -118,7 +125,7 @@ func NewCryptoWithCaches(
 		ctx:            ctx,
 		cancel:         cancel,
 		pool:           pool,
-		ui:             pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
+		ui:             bus.Group(pool, "ui", 10*time.Millisecond),
 		broadcasts:     make(map[string]*qpool.BroadcastGroup),
 		subscribers:    make(map[string]*qpool.Subscriber),
 		streams:        streams,
@@ -134,7 +141,7 @@ func NewCryptoWithCaches(
 	}
 
 	for _, channel := range []string{"raw"} {
-		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		crypto.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 
@@ -151,11 +158,48 @@ func NewCryptoWithCaches(
 	// empties the wallet into the first symbol and dusts the rest.
 	crypto.capitalBase = crypto.availableQuote
 	crypto.subscribers["ui"] = crypto.ui.Subscribe(cryptoWalletSubscriberID, 256)
+	crypto.syncHeldSnapshot()
 
 	go crypto.watchWallet()
 
 	errnie.Info("trader/crypto ready", "trader/crypto")
 	return crypto
+}
+
+/*
+SymbolHeld reports whether the trader currently holds a long or short position in
+symbol according to the exchange-reconciled inventory (holdings snapshots and
+fills). Story uses this for playbook lifecycle predicates; the chart focus set is
+UI-only and is not consulted here.
+*/
+func (crypto *Crypto) SymbolHeld(symbol string) bool {
+	snapshot := crypto.heldSnapshot.Load()
+
+	if snapshot == nil {
+		return false
+	}
+
+	_, held := (*snapshot)[symbol]
+
+	return held
+}
+
+func (crypto *Crypto) syncHeldSnapshot() {
+	next := make(map[string]struct{})
+
+	for symbol, qty := range crypto.inventory {
+		if qty > 0 {
+			next[symbol] = struct{}{}
+		}
+	}
+
+	for symbol, qty := range crypto.shortInventory {
+		if qty > 0 {
+			next[symbol] = struct{}{}
+		}
+	}
+
+	crypto.heldSnapshot.Store(&next)
 }
 
 /*
@@ -206,6 +250,10 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 		return
 	}
 
+	if crypto.symbolCooling(action.Symbol) {
+		return
+	}
+
 	if _, inFlight := crypto.pending[action.Symbol]; inFlight {
 		crypto.publishDecision(action, "rejected", "order still resolving")
 		return
@@ -214,6 +262,11 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 	held := crypto.inventory[action.Symbol]
 
 	if reasoning.IsEntryAction(action.Type) {
+		if action.Side == trading.Sell && !viper.GetBool("trading.margin_enabled") {
+			crypto.publishDecision(action, "rejected", "short entries disabled")
+			return
+		}
+
 		if held > 0 {
 			crypto.publishDecision(action, "rejected", "already holding long")
 			return
@@ -233,7 +286,7 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 
 		// Size the order against the wallet balance the API published, never a
 		// locally tracked figure. balances.ApplyFill remains the final gate.
-		quantity := crypto.sizeEntry(action.Price)
+		quantity := crypto.sizeEntry(action)
 
 		if quantity <= 0 {
 			crypto.publishDecision(action, "rejected", "insufficient funds")
@@ -303,6 +356,8 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 		}
 
 		crypto.publishDecision(action, "rejected", cleanReason(err.Error()))
+		crypto.coolSymbol(action.Symbol)
+
 		return
 	}
 
@@ -318,6 +373,34 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 	}
 
 	crypto.pending[action.Symbol] = action
+}
+
+func (crypto *Crypto) symbolCooling(symbol string) bool {
+	untilRaw, cooling := crypto.coolDownUntil.Load(symbol)
+
+	if !cooling {
+		return false
+	}
+
+	until, ok := untilRaw.(time.Time)
+
+	if !ok {
+		crypto.coolDownUntil.Delete(symbol)
+
+		return false
+	}
+
+	if time.Now().Before(until) {
+		return true
+	}
+
+	crypto.coolDownUntil.Delete(symbol)
+
+	return false
+}
+
+func (crypto *Crypto) coolSymbol(symbol string) {
+	crypto.coolDownUntil.Store(symbol, time.Now().Add(symbolSubmissionCooldown))
 }
 
 /*
@@ -374,6 +457,8 @@ func (crypto *Crypto) writeDecisionAudit(
 		"price":        action.Price,
 		"quantity":     action.Quantity,
 		"offset":       action.Offset,
+		"fraction":     action.Fraction,
+		"regime":       action.Regime.String(),
 	})
 }
 
@@ -465,12 +550,15 @@ func (crypto *Crypto) fundableSymbol(symbol string) bool {
 /*
 sizeEntry sizes a buy as one position slot — position_fraction of the capital base.
 position_fraction is the share of capital committed per position, so the desk holds
-at most round(1/fraction) positions at once: once that many are committed (held plus
+at most floor(1/fraction) positions at once: once that many are committed (held plus
 in flight) a new entry is refused, instead of splitting the remaining cash into
 ever-smaller positions. A position cannot be sized against capital we do not yet know,
 so it returns 0 until a capital base exists rather than substituting the live cash.
 */
-func (crypto *Crypto) sizeEntry(price float64) float64 {
+func (crypto *Crypto) sizeEntry(input any) float64 {
+	action := entrySizingAction(input)
+	price := action.Price
+
 	if price <= 0 {
 		return 0
 	}
@@ -481,20 +569,34 @@ func (crypto *Crypto) sizeEntry(price float64) float64 {
 		return 0
 	}
 
-	// At most round(1/fraction) positions run at once. Count held positions and
-	// in-flight entries; at capacity, refuse rather than open another.
-	if len(crypto.inventory)+len(crypto.shortInventory)+len(crypto.pending) >= int(math.Round(1/crypto.positionFraction)) {
+	fraction := crypto.entryDeployFraction(action)
+
+	if fraction <= 0 {
 		return 0
 	}
 
-	makerFee := broker.MakerFeePctFromViper() / 100
+	// At most floor(1/fraction) positions run at once. A 60% slot must not permit
+	// two simultaneous positions; cash would shrink the second, silently changing the
+	// strategy the optimizer scored. Pending entry orders count too.
+	capacity := int(math.Floor(1/fraction + 1e-9))
 
-	// One position deploys position_fraction of the capital base in notional, bounded
-	// by the notional the wallet can fund once the fee is added on top (cost =
-	// notional * (1 + fee) <= cash). The bound is a funding limit, not a substitute.
-	slot := crypto.positionFraction * capital
+	if capacity < 1 {
+		capacity = 1
+	}
 
-	if affordable := crypto.availableCash() / (1 + makerFee); slot > affordable {
+	if crypto.openExposureCount() >= capacity {
+		return 0
+	}
+
+	feeRate := crypto.entryFeeRate(action.Type)
+
+	// One position deploys the selected fraction of the capital base in total
+	// spend. Convert that total spend to fee-aware notional, then bound it by what
+	// the wallet can fund right now. This keeps two 50% slots from exceeding the
+	// wallet by the entry fees.
+	slot := fraction * capital / (1 + feeRate)
+
+	if affordable := crypto.availableCash() / (1 + feeRate); slot > affordable {
 		slot = affordable
 	}
 
@@ -503,6 +605,80 @@ func (crypto *Crypto) sizeEntry(price float64) float64 {
 	}
 
 	return slot / price
+}
+
+func entrySizingAction(input any) reasoning.Action {
+	switch typed := input.(type) {
+	case reasoning.Action:
+		return typed
+	case float64:
+		return reasoning.Action{Price: typed}
+	case int:
+		return reasoning.Action{Price: float64(typed)}
+	default:
+		return reasoning.Action{}
+	}
+}
+
+func (crypto *Crypto) entryFeeRate(actionType reasoning.ActionType) float64 {
+	if reasoning.IsMakerAction(actionType) {
+		return broker.MakerFeePctFromViper() / 100
+	}
+
+	return broker.TakerFeePctFromViper() / 100
+}
+
+func (crypto *Crypto) entryDeployFraction(action reasoning.Action) float64 {
+	fraction := crypto.positionFraction
+
+	if action.Fraction > 0 {
+		fraction *= action.Fraction
+	}
+
+	fraction *= liveRegimeSizeScale(action.Regime)
+
+	if fraction > 1 {
+		fraction = 1
+	}
+
+	if fraction < 0 {
+		fraction = 0
+	}
+
+	return fraction
+}
+
+func liveRegimeSizeScale(regime types.Regime) float64 {
+	switch regime {
+	case types.RegimeChoppy:
+		return positiveScaleOrOne("trading.replay.choppy_size_scale")
+	case types.RegimeBearish:
+		return positiveScaleOrOne("trading.replay.bearish_size_scale")
+	default:
+		return 1
+	}
+}
+
+func positiveScaleOrOne(key string) float64 {
+	value := viper.GetFloat64(key)
+
+	if value <= 0 {
+		return 1
+	}
+
+	return value
+}
+
+func (crypto *Crypto) openExposureCount() int {
+	count := len(crypto.inventory) + len(crypto.shortInventory)
+
+	for _, pending := range crypto.pending {
+		if reasoning.IsEntryAction(pending.Type) {
+			count++
+		}
+	}
+
+	return count
 }
 
 func quoteCurrency(symbol string) string {
@@ -545,10 +721,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		}
 
 		crypto.publishDecision(submitted, "rejected", cleanReason(reason))
-
-		if crypto.desk != nil {
-			crypto.desk.TripHalt()
-		}
+		crypto.coolSymbol(symbol)
 
 		return
 	}
@@ -591,6 +764,7 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 	crypto.inventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
 	crypto.streams.Add(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 
@@ -606,6 +780,7 @@ func (crypto *Crypto) openShort(symbol string, qty, price float64) {
 	crypto.shortInventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
 	crypto.streams.Add(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 
@@ -615,6 +790,7 @@ func (crypto *Crypto) closeShort(symbol string) {
 	delete(crypto.armed, symbol+":"+string(trading.Buy))
 	delete(crypto.armed, symbol+":"+string(trading.Sell))
 	crypto.streams.Remove(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 
@@ -624,6 +800,7 @@ func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.armed, symbol+":"+string(trading.Buy))
 	delete(crypto.armed, symbol+":"+string(trading.Sell))
 	crypto.streams.Remove(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 

@@ -103,32 +103,117 @@ func (orders *Orders) Send(message *qpool.QValue[any]) map[string]any {
 		"time_out": time.Now(),
 	}
 
-	if frame["method"] != trading.MethodAddOrder {
-		return out
+	switch frame["method"] {
+	case trading.MethodAddOrder:
+		params, ok := frame["params"].(trading.AddParams)
+
+		if !ok {
+			return out
+		}
+
+		orderID := orders.ids.OrderID()
+		out["result"] = map[string]any{
+			"order_id":  orderID,
+			"cl_ord_id": params.ClOrdID,
+		}
+
+		action := reasoning.ActionFromOrderType(params.OrderType)
+
+		if reasoning.IsProtectiveExit(action) {
+			orders.armTrigger(params, action, orderID)
+			return out
+		}
+
+		orders.routeFill(params, orderID)
+	case trading.MethodCancelAll:
+		orders.cancelAll()
+		out["result"] = map[string]any{"count": "all"}
+	case trading.MethodCancelOrder:
+		params, ok := frame["params"].(trading.CancelParams)
+
+		if ok {
+			out["result"] = map[string]any{"count": orders.cancelMatching(params)}
+		}
+	case trading.MethodCancelAllOrdersAfter:
+		// Paper has no server timer; treat cancel-all-after as an immediate safety cancel.
+		orders.cancelAll()
+		out["result"] = map[string]any{"count": "all"}
 	}
-
-	params, ok := frame["params"].(trading.AddParams)
-
-	if !ok {
-		return out
-	}
-
-	orderID := orders.ids.OrderID()
-	out["result"] = map[string]any{
-		"order_id":  orderID,
-		"cl_ord_id": params.ClOrdID,
-	}
-
-	action := reasoning.ActionFromOrderType(params.OrderType)
-
-	if reasoning.IsProtectiveExit(action) {
-		orders.armTrigger(params, action, orderID)
-		return out
-	}
-
-	orders.routeFill(params, orderID)
 
 	return out
+}
+
+func (orders *Orders) cancelAll() {
+	orders.mu.Lock()
+	defer orders.mu.Unlock()
+
+	clear(orders.triggers)
+	clear(orders.makers)
+	orders.pendingTakers = nil
+}
+
+func (orders *Orders) cancelMatching(params trading.CancelParams) int {
+	orders.mu.Lock()
+	defer orders.mu.Unlock()
+
+	canceled := 0
+
+	for symbol, trigger := range orders.triggers {
+		if trigger == nil || !cancelParamsMatch(params, trigger.orderID, trigger.clOrdID) {
+			continue
+		}
+
+		delete(orders.triggers, symbol)
+		canceled++
+	}
+
+	for symbol, maker := range orders.makers {
+		if maker == nil || !cancelParamsMatch(params, maker.orderID, maker.params.ClOrdID) {
+			continue
+		}
+
+		delete(orders.makers, symbol)
+		canceled++
+	}
+
+	if len(orders.pendingTakers) > 0 {
+		remaining := orders.pendingTakers[:0]
+
+		for _, pending := range orders.pendingTakers {
+			if cancelParamsMatch(params, pending.orderID, pending.params.ClOrdID) {
+				canceled++
+				continue
+			}
+
+			remaining = append(remaining, pending)
+		}
+
+		orders.pendingTakers = remaining
+	}
+
+	return canceled
+}
+
+func cancelParamsMatch(params trading.CancelParams, orderID string, clOrdID string) bool {
+	if containsString(params.OrderID, orderID) {
+		return true
+	}
+
+	return containsString(params.ClOrdID, clOrdID)
+}
+
+func containsString(values []string, target string) bool {
+	if target == "" {
+		return false
+	}
+
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (orders *Orders) routeFill(params trading.AddParams, orderID string) {
@@ -274,7 +359,7 @@ func (orders *Orders) closeAtTrigger(
 	}
 
 	price, err := orders.takerFillPrice(
-		symbol, trading.Sell, trigger.qty, level, trigger.action,
+		symbol, trigger.params.Side, trigger.qty, level, trigger.action,
 	)
 
 	if err != nil {

@@ -50,23 +50,38 @@ func derivePositionFractions(rows []types.Measurement) []float64 {
 		}
 	}
 
-	if peakSNR <= 0 {
-		return []float64{0.5, 1.0, 1.5, 2.0}
+	fractions := []float64{0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+
+	if peakSNR > 0 {
+		step := peakSNR / 4
+
+		if step < 0.25 {
+			step = 0.25
+		}
+
+		if step > 2.0 {
+			step = 2.0
+		}
+
+		fractions = append(fractions, step, step*2, step*3, step*4)
 	}
 
-	step := peakSNR / 4
+	sort.Float64s(fractions)
+	unique := fractions[:0]
 
-	if step < 0.25 {
-		step = 0.25
+	for _, fraction := range fractions {
+		if fraction <= 0 {
+			continue
+		}
+
+		if len(unique) > 0 && unique[len(unique)-1] == fraction {
+			continue
+		}
+
+		unique = append(unique, fraction)
 	}
 
-	const maxStep = 2.0
-
-	if step > maxStep {
-		step = maxStep
-	}
-
-	return []float64{step, step * 2, step * 3, step * 4}
+	return unique
 }
 
 /*
@@ -116,7 +131,7 @@ func DeriveVocabulary(rows []types.Measurement) Vocabulary {
 		Offsets:    []float64{0.01, 0.02, 0.05},
 		Fractions:  fractions,
 		Durations:  []float64{5, 15, 30},
-		Entries:    []reasoning.ActionType{reasoning.ActionMarket, reasoning.ActionIceberg},
+		Entries:    []reasoning.ActionType{reasoning.ActionMarket, reasoning.ActionLimit},
 		Protective: []reasoning.ActionType{
 			reasoning.ActionTrailingStop, reasoning.ActionStopLoss, reasoning.ActionTakeProfit,
 		},

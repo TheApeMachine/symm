@@ -279,8 +279,38 @@ func (cache *QuoteCache) ingestTrades(envelope *public.SocketMessage) {
 			continue
 		}
 
+		cache.updateTrade(row)
 		cache.notifyTradeLocked(row)
 	}
+}
+
+func (cache *QuoteCache) updateTrade(row market.TradeUpdate) {
+	if row.Symbol == "" || row.Price <= 0 {
+		return
+	}
+
+	updatedAt := row.Timestamp.UTC()
+
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+
+	slot := cache.slotFor(row.Symbol)
+	slot.mu.Lock()
+	quote, _ := slot.quoteValue()
+	quote.Symbol = row.Symbol
+	quote.Last = row.Price
+	quote.UpdatedAt = updatedAt
+
+	if book, ok := slot.bookValue(); ok {
+		quote.Book = book
+	}
+
+	quote.Volatility = slot.observeVolatility(quote.Last)
+	slot.storeQuote(quote)
+	slot.mu.Unlock()
+
+	cache.notify(row.Symbol, quote)
 }
 
 func (cache *QuoteCache) notifyTradeLocked(trade market.TradeUpdate) {

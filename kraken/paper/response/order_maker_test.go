@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -86,7 +87,7 @@ func TestPostOnlyMakerRestsUntilTradeDepletesQueue(t *testing.T) {
 			},
 		})
 
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:maker", 32)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -134,7 +135,7 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{Symbol: "BTC/EUR", Bid: 99, Ask: 100, Last: 100})
 
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:reject", 8)
 		ids := NewIdentifier()
 		orders := NewOrdersWithQuoteCache(ctx, pool, NewBalances(raw, nil, ids), ids, cache, nil, ZeroLatency())
@@ -188,7 +189,7 @@ func TestTakerFillUsesSlippageFill(t *testing.T) {
 			},
 		})
 
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:taker", 16)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -225,7 +226,7 @@ func TestTakerFillDefersUntilLatencyElapses(t *testing.T) {
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:latency", 8)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)

@@ -1,6 +1,6 @@
 system:
   queue:
-    ttl: 1024
+    ttl: 10ms
     buffer: 1024
 
 story:
@@ -26,9 +26,10 @@ market:
 trading:
   order_ack_timeout: 500ms
   max_quote_age: 5s
-  max_spread_bps: 100
-  max_slippage_bps: 50
+  max_spread_bps: 60
+  max_slippage_bps: 35
   model: paper
+  margin_enabled: false
   record:
     file: runs/capture.jsonl
   replay:
@@ -46,7 +47,7 @@ trading:
   # Fraction of available account cash deployed per entry. 1.0 = full deployment
   # (one position at a time on a small wallet); lower allows concurrent positions.
   # The optimizer replay sizes entries the same way, so funding contention is real.
-  position_fraction: 0.1
+  position_fraction: 1.0
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.
@@ -59,9 +60,9 @@ trading:
   # trailing_volatility_multiple realized-volatility units below its peak since
   # entry. Explicit playbook offsets override the dynamic trailing distance.
   exit:
-    stop_loss_pct: 2.0
-    take_profit_pct: 3.0
-    trailing_volatility_multiple: 3.0
+    stop_loss_pct: 1.2
+    take_profit_pct: 2.4
+    trailing_volatility_multiple: 2.5
   audit:
     file: runs/audit.jsonl
 
@@ -80,8 +81,8 @@ regime:
   window: 256          # most-recent measurements to classify over
   min_samples: 16      # price-bearing measurements required before a regime is claimed
   dead_vol: 0.0005     # realized-vol floor; below it a non-trending market reads as Dead
-  trend_threshold: 1.5 # trend t-stat for RegimeTrending
-  strong_trend: 3.0    # trend t-stat for signed RegimeBullish / RegimeBearish
+  trend_threshold: 1.25 # trend t-stat for RegimeTrending
+  strong_trend: 2.5    # trend t-stat for signed RegimeBullish / RegimeBearish
   vol_scale: 0.01      # dashboard radar volatility full-scale normalization
 
 signals:
@@ -100,7 +101,7 @@ signals:
     contagion_window_slow: 128
     contagion_adaptive_sigma: 2
     contagion_volatility_reset_sigma: 5
-    raw_dump: true
+    raw_dump: false
 
   # Raw diagnostic dumps. When enabled, a signal writes its richest
   # pre-classification record to <dir>/<name>_raw.jsonl, which the Signal Insight
@@ -109,7 +110,7 @@ signals:
   # default for any signal that does not set its own; a per-signal raw_dump below
   # wins in BOTH directions (false silences a signal even when this is true). As
   # shipped every signal sets false, so nothing dumps until you flip one on.
-  raw_dump: true            # default for signals with no per-signal override
+  raw_dump: false           # default for signals with no per-signal override
   raw_dump_max_mb: 64       # rotate each dump after this many megabytes
   raw_dump_backup_count: 3  # how many rotated files to keep (<name>_raw.jsonl.1 ...)
   # raw_dump_dir: runs      # directory for dumps; the writer and Signal Insight share it
@@ -123,29 +124,31 @@ signals:
 
   # Per-signal overrides (win over the global default in either direction):
   pumpdump:
-    raw_dump: true
+    raw_dump: false
     window: 1m
   exhaust:
-    raw_dump: true
+    raw_dump: false
   cvd:
-    raw_dump: true
+    raw_dump: false
   depthflow:
-    raw_dump: true
+    raw_dump: false
   hawkes:
-    raw_dump: true
+    raw_dump: false
   fluid:
-    raw_dump: true
+    raw_dump: false
   leadlag:
-    raw_dump: true
+    raw_dump: false
   liquidity:
-    raw_dump: true
+    raw_dump: false
   sentiment:
-    raw_dump: true
+    raw_dump: false
   correlation:
-    raw_dump: true
+    raw_dump: false
   toxicity:
-    raw_dump: true
+    raw_dump: false
 
 ui:
   addr: 127.0.0.1:8765
   heartbeat_interval: 1s
+
+

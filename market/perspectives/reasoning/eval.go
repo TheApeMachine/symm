@@ -47,14 +47,16 @@ of thought nodes that have fired ("latched") within the current episode, keyed b
 their path in the tree. A node that fired on an earlier tick keeps its Then children
 reachable until the episode resets, which is what turns tree depth into a sequence
 over time rather than a set of conditions that must all hold at once. The latch set
-is cleared whenever the holding state flips (an entry filled, or a position closed),
-so each flat stretch and each held stretch reasons from a clean frontier. Reuse one
+is cleared whenever the holding state flips (an entry filled, or a position closed)
+or the price-action regime changes, so each flat stretch, each held stretch, and each
+regime episode reasons from a clean frontier. Reuse one
 ReasonState per symbol across ticks; a fresh one yields the single-tick semantics.
 */
 type ReasonState struct {
 	active      map[string]bool
 	next        map[string]bool
 	lastHolding bool
+	lastRegime  types.Regime
 	primed      bool
 }
 
@@ -79,6 +81,7 @@ func (state *ReasonState) Reset() {
 	clear(state.next)
 
 	state.lastHolding = false
+	state.lastRegime = types.RegimeNone
 	state.primed = false
 }
 
@@ -148,7 +151,14 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 		clear(state.active)
 	}
 
+	regime := ctx.Regime()
+
+	if state.primed && regime != state.lastRegime {
+		clear(state.active)
+	}
+
 	state.lastHolding = holding
+	state.lastRegime = regime
 	state.primed = true
 
 	if state.next == nil {
@@ -240,6 +250,11 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 	}
 
 	return best, found
+}
+
+// HoldsPredicate exposes predicate evaluation for capture replay tests.
+func HoldsPredicate(pred Predicate, ctx ReasonContext) bool {
+	return holds(pred, ctx)
 }
 
 // holds reports whether a predicate is satisfied in the context.

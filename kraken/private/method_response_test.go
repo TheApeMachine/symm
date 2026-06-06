@@ -6,13 +6,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestHandleMethodResponse(t *testing.T) {
 	Convey("Given a tracked outbound add_order", t, func() {
 		pool := qpool.NewQ(t.Context(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 0)
+		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:method-response", 8)
 
 		websocketClient := &WebSocket{

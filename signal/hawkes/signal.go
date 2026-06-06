@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -32,18 +33,18 @@ Saturation / Organic / Exhaustion). It consumes the executed trade tape; the
 per-symbol fit is cooldown-throttled inside HawkesSymbol.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	broadcasts   map[string]*qpool.BroadcastGroup
-	subscribers  map[string]*qpool.Subscriber
-	symbols      sync.Map
-	tradeScratch []tradeTouch
-	floor        *adaptive.SNRField
-	classifier   *adaptive.Classifier
-	calibrator   *numeric.BandCalibrator
-	categories   map[string]types.CategoryType
-	rawDump      *rawdump.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	tradeScratch  []tradeTouch
+	surpriseField *types.CategorySurpriseField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	categories    map[string]types.CategoryType
+	rawDump       *rawdump.Writer
 }
 
 type tradeTouch struct {
@@ -109,20 +110,25 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
-		classifier:  pooledCalibrator.Classifier,
-		calibrator:  pooledCalibrator.Calibrator,
-		categories:  categories,
-		rawDump:     rawdump.Open("hawkes"),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryOrganic,
+			types.CategoryFrenzy,
+			types.CategorySaturation,
+			types.CategoryExhaustion,
+		}, types.DefaultCategorySurpriseAlpha),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
+		categories: categories,
+		rawDump:    rawdump.Open("hawkes"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/hawkes ready", "signal/hawkes")
 
@@ -271,10 +277,8 @@ func (signal *Signal) publishMeasurement(
 
 	telemetry := signal.calibrator.Snapshot(signal.classifier)
 	telemetry.Observation = measurement.Strength
-	categoryStandout := standout
-
-	if err := types.AssignCategorySNR(
-		&measurement, signal.floor, categoryStandout,
+	if err := types.AssignCategorySurpriseSNR(
+		&measurement, signal.surpriseField, measurement.Category,
 	); err != nil {
 		return err
 	}

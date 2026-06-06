@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -91,8 +92,8 @@ func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {
 		params.Token = token
 	}
 
-	pool.CreateBroadcastGroup(
-		"kraken:private", 10*time.Millisecond,
+	bus.Group(
+		pool, "kraken:private", 10*time.Millisecond,
 	).Send(&qpool.QValue[any]{
 		Type: "balances",
 		Value: SubscribeFrame{

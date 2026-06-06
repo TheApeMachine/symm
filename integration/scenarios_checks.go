@@ -128,27 +128,6 @@ func checkCategoryObserved(
 	}
 }
 
-func checkCategoryExact(
-	id, name string,
-	source types.SourceType,
-	symbol string,
-	category types.CategoryType,
-) ScenarioCheck {
-	return ScenarioCheck{
-		ID:   id,
-		Name: name,
-		Evaluate: func(snapshot TapeSnapshot, _ error) (bool, string, map[string]any) {
-			reading := snapshot.latestBySource(source)
-			pass := reading.Symbol == symbol && reading.Category == category
-
-			return pass, fmt.Sprintf("category=%s", reading.Category), map[string]any{
-				"symbol": reading.Symbol,
-				"snr":    reading.SNR,
-			}
-		},
-	}
-}
-
 func checkActionType(
 	id, name string,
 	actionType reasoning.ActionType,

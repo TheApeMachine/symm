@@ -42,8 +42,10 @@ func NewThoughtSimulation(
 ReplayResult holds realized PnL and round-trip activity from one replay pass.
 */
 type ReplayResult struct {
-	Score        float64
-	ClosedTrades int
+	Score         float64
+	ClosedTrades  int
+	ExposureTicks int
+	TotalTicks    int
 	// FundBlocked is how many times an entry was wanted on a fundable pair but the
 	// wallet was already locked in another position — the opportunity cost of
 	// tying up capital, surfaced so the optimizer can price it.
@@ -102,6 +104,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 
 	for tickIndex, tick := range simulation.tape.Ticks {
 		ledger.tickIndex = tickIndex
+		ledger.exposureTicks += len(ledger.positions)
 		ledger.onTickStart(tick.Row.At, tick.Row)
 
 		if tick.Row.Symbol == "" {
@@ -121,9 +124,11 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	ledger.flushPending(lastAt, lastRow)
 
 	return ReplayResult{
-		Score:        ledger.realizedReturn(),
-		ClosedTrades: ledger.closedTrades,
-		FundBlocked:  ledger.fundBlocked,
+		Score:         ledger.realizedReturn(),
+		ClosedTrades:  ledger.closedTrades,
+		ExposureTicks: ledger.exposureTicks,
+		TotalTicks:    simulation.tape.Len(),
+		FundBlocked:   ledger.fundBlocked,
 	}
 }
 

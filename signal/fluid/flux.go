@@ -6,9 +6,8 @@ import "fmt"
 fluxAccumulator measures book churn and fill volume over volume-clocked bars.
 
 Bars close once a configured base-volume target has traded, so each bucket carries
-a consistent quantum of activity. Book churn is counted only while the open bar
-already has trade volume — quiet book wiggles outside an active volume bar are
-ignored rather than substituted with a wall-clock window.
+a consistent quantum of activity. Book churn accumulates continuously within the
+open bar and is paired with trade volume when the bar closes.
 */
 type fluxAccumulator struct {
 	target      float64
@@ -37,10 +36,12 @@ func (flux *fluxAccumulator) setTarget(target float64) error {
 	return nil
 }
 
+func (flux *fluxAccumulator) hasTarget() bool {
+	return flux.target > 0
+}
+
 /*
-addBook folds one book-churn reading into the open volume bar. Churn is ignored
-until the bar has trade volume, because a fill-to-cancel ratio without fills is
-undefined.
+addBook folds one book-churn reading into the open volume bar.
 */
 func (flux *fluxAccumulator) addBook(churn float64) error {
 	if churn <= 0 {
@@ -49,10 +50,6 @@ func (flux *fluxAccumulator) addBook(churn float64) error {
 
 	if flux.target <= 0 {
 		return fmt.Errorf("fluid: volume clock target is not set")
-	}
-
-	if flux.tradeOpen <= 0 {
-		return nil
 	}
 
 	flux.bookOpen += churn

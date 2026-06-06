@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -59,15 +60,15 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 		calibrator: pooledCalibrator.Calibrator,
 		l3Active:   settings.L3Enabled(),
 	}
-	tox.measurements = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	tox.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	tox.measurements = bus.Group(pool, "measurements", 10*time.Millisecond)
+	tox.ui = bus.Group(pool, "ui", 10*time.Millisecond)
 	tox.subscribers = make(map[string]*qpool.Subscriber)
 	tox.rawDump = rawdump.Open("toxicity")
 
-	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(pool, "raw", 10*time.Millisecond)
 	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
 
-	level3 := pool.CreateBroadcastGroup("level3", 10*time.Millisecond)
+	level3 := bus.Group(pool, "level3", 10*time.Millisecond)
 	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
 
 	errnie.Info("toxicity ready l3="+fmt.Sprint(tox.l3Active), "toxicity")

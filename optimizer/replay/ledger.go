@@ -65,6 +65,7 @@ type replayLedger struct {
 	closedTrades        int
 	fundBlocked         int
 	depthBlocked        int
+	exposureTicks       int
 	observationScratch  map[types.ObservationType]float64
 	metricsScratch      map[string]float64
 	reasonStates        map[string]*reasoning.ReasonState
@@ -147,6 +148,7 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.closedTrades = 0
 	ledger.fundBlocked = 0
 	ledger.depthBlocked = 0
+	ledger.exposureTicks = 0
 	ledger.tickIndex = 0
 	ledger.medianInterval = 0
 	ledger.executionLatency = 0
@@ -351,9 +353,10 @@ func (ledger *replayLedger) applyStressed(
 		}
 
 		if reasoning.IsMakerAction(act.Type) && ledger.costs.ExecutionStressEnabled {
-			slot := entryDeployFraction(ledger.costs, act, snapshots) *
-				ledger.costs.WalletBalance(quoteCurrency(measurement.Symbol))
-			quantity := slot / measurement.Last
+			fraction := entryDeployFraction(ledger.costs, act, snapshots)
+			slot := fraction * ledger.costs.WalletBalance(quoteCurrency(measurement.Symbol))
+			entryNotional := slot / (1 + feePct)
+			quantity := entryNotional / measurement.Last
 
 			if quantity > 0 {
 				slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
@@ -369,6 +372,7 @@ func (ledger *replayLedger) applyStressed(
 					quantity,
 					feePct,
 					slippagePct,
+					fraction,
 					measurement,
 					snapshots,
 				)

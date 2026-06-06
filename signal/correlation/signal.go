@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
@@ -103,7 +104,7 @@ type Signal struct {
 	marketEnergy  *adaptive.EMA
 	categories    map[string]types.CategoryType
 	activeScratch []live
-	floor         *adaptive.SNRField
+	surpriseField *types.CategorySurpriseField
 	classifier    *adaptive.Classifier
 	calibrator    *numeric.BandCalibrator
 	rawDump       *rawdump.Writer
@@ -154,7 +155,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"decoupled_alpha":  types.CategoryDecoupledAlpha,
 			"systemic_herd":    types.CategorySystemicHerd,
 		},
-		floor:      adaptive.NewSNRField(),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryDivergentStress,
+			types.CategoryStochasticNoise,
+			types.CategoryDecoupledAlpha,
+			types.CategorySystemicHerd,
+		}, types.DefaultCategorySurpriseAlpha),
 		classifier: pooledCalibrator.Classifier,
 		calibrator: pooledCalibrator.Calibrator,
 		rawDump:    rawdump.Open("correlation"),
@@ -170,12 +176,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/correlation ready", "signal/correlation")
 

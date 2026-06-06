@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 )
@@ -18,7 +19,7 @@ func (harness *Harness) InjectTrade(trade market.TradeUpdate) {
 		trade.Timestamp = time.Now().UTC()
 	}
 
-	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
 
 	envelope, err := marketTradeEnvelope(trade)
 
@@ -36,7 +37,7 @@ func (harness *Harness) InjectTrade(trade market.TradeUpdate) {
 InjectTicker publishes one ticker frame onto the shared raw bus after replay.
 */
 func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
-	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
 
 	if ticker.Timestamp == "" {
 		ticker.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
@@ -62,7 +63,7 @@ func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
 InjectBook publishes one book snapshot onto the shared raw bus.
 */
 func (harness *Harness) InjectBook(book market.Book) {
-	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
 
 	if book.Timestamp == "" {
 		book.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)

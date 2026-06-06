@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 )
 
 func configurePaperWallet() {
@@ -73,7 +74,7 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 
 	Convey("Given a wallet wired to a ui broadcast group", t, func() {
 		pool := qpool.NewQ(context.Background(), 1, 4, nil)
-		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		ui := bus.Group(pool, "ui", 10*time.Millisecond)
 		sub := ui.Subscribe("test:ui", 16)
 
 		balances := NewBalances(nil, ui, NewIdentifier())
@@ -100,8 +101,8 @@ func TestBalancesSend(t *testing.T) {
 
 	Convey("Given a wallet wired to raw and ui groups", t, func() {
 		pool := qpool.NewQ(context.Background(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		ui := bus.Group(pool, "ui", 10*time.Millisecond)
 		balances := NewBalances(raw, ui, NewIdentifier())
 		uiSub := ui.Subscribe("test:ui:subscribe", 16)
 		rawSub := raw.Subscribe("test:raw:subscribe", 16)

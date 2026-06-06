@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -102,8 +103,8 @@ func NewExecution(pool *qpool.Q, tokenSource ExecutionTokenSource) error {
 		params.Token = token
 	}
 
-	pool.CreateBroadcastGroup(
-		"kraken:private", 10*time.Millisecond,
+	bus.Group(
+		pool, "kraken:private", 10*time.Millisecond,
 	).Send(&qpool.QValue[any]{
 		Type: "executions",
 		Value: ExecutionSubscribeFrame{

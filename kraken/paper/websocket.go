@@ -3,14 +3,17 @@ package paper
 import (
 	"container/ring"
 	"context"
-	"fmt"
+	"encoding/json"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/public"
@@ -50,8 +53,8 @@ func NewWebSocketWithQuoteCache(
 
 	latencies, latencyErr := loadLatencyProfile()
 
-	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
-	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	raw := bus.Group(pool, "raw", 10*time.Millisecond)
+	ui := bus.Group(pool, "ui", 10*time.Millisecond)
 	ids := response.NewIdentifier()
 	catalog := response.NewPairCatalog(ctx)
 
@@ -83,7 +86,7 @@ func NewWebSocketWithQuoteCache(
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
-		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		ws.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
 			"kraken/paper:"+channel, 1024,
 		)
@@ -145,7 +148,12 @@ func (ws *WebSocket) Tick() (err error) {
 
 			ws.orders.CheckPending()
 			ws.orders.CheckTriggers()
-			time.Sleep(ws.latencies.Value.(time.Duration))
+
+			latency, _ := ws.latencies.Value.(time.Duration)
+			if latency > 0 {
+				time.Sleep(latency)
+			}
+
 			ws.latencies = ws.latencies.Next()
 		}
 	}
@@ -153,51 +161,83 @@ func (ws *WebSocket) Tick() (err error) {
 
 func loadLatencyProfile() (*ring.Ring, error) {
 	latencies := ring.New(64)
-
-	for range 64 {
-		latencies.Value = time.Duration(0)
-		latencies = latencies.Next()
-	}
+	fillLatencyRing(latencies, nil)
 
 	defaultLatency := viper.GetDuration("trading.paper.default_one_way_latency")
 
 	if defaultLatency > 0 {
-		for range 64 {
-			latencies.Value = defaultLatency
-			latencies = latencies.Next()
-		}
+		fillLatencyRing(latencies, []time.Duration{defaultLatency})
 	}
 
-	path := viper.GetString("trading.paper.latency_profile")
+	path := strings.TrimSpace(viper.GetString("trading.paper.latency_profile"))
 
 	if path == "" {
 		path = "runs/network_latency.json"
 	}
 
-	latencyFile, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	raw, err := os.ReadFile(path)
 
 	if err != nil {
-		if defaultLatency > 0 {
-			return latencies, nil
-		}
-
-		return latencies, fmt.Errorf("paper websocket latency profile %q: %w", path, err)
+		// The latency profile is observational, not a dependency of paper trading.
+		// Missing files should not prevent the simulator from booting.
+		return latencies, nil
 	}
 
-	defer latencyFile.Close()
+	profile := parseLatencyProfile(raw)
 
-	for {
-		var value time.Duration
-
-		if _, err = fmt.Fscanf(latencyFile, "%d\n", &value); err != nil {
-			break
-		}
-
-		latencies.Value = value
-		latencies = latencies.Next()
+	if len(profile) > 0 {
+		fillLatencyRing(latencies, profile)
 	}
 
 	return latencies, nil
+}
+
+func fillLatencyRing(latencies *ring.Ring, values []time.Duration) {
+	if latencies == nil {
+		return
+	}
+
+	if len(values) == 0 {
+		values = []time.Duration{0}
+	}
+
+	cursor := latencies
+
+	for index := 0; index < latencies.Len(); index++ {
+		cursor.Value = values[index%len(values)]
+		cursor = cursor.Next()
+	}
+}
+
+func parseLatencyProfile(raw []byte) []time.Duration {
+	var numeric []int64
+
+	if err := json.Unmarshal(raw, &numeric); err == nil && len(numeric) > 0 {
+		out := make([]time.Duration, 0, len(numeric))
+
+		for _, value := range numeric {
+			if value >= 0 {
+				out = append(out, time.Duration(value))
+			}
+		}
+
+		return out
+	}
+
+	fields := strings.Fields(string(raw))
+	out := make([]time.Duration, 0, len(fields))
+
+	for _, field := range fields {
+		value, err := strconv.ParseInt(field, 10, 64)
+
+		if err != nil || value < 0 {
+			continue
+		}
+
+		out = append(out, time.Duration(value))
+	}
+
+	return out
 }
 
 func (ws *WebSocket) Close() error {

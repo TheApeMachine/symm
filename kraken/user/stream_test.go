@@ -7,12 +7,13 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 )
 
 func TestPublishExecutionDerived(t *testing.T) {
 	Convey("Given a raw broadcast group", t, func() {
 		pool := qpool.NewQ(t.Context(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 0)
+		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:derived", 4)
 
 		Convey("Only trade rows produce derived envelopes", func() {
@@ -76,7 +77,7 @@ func TestPublishHoldingsDerived(t *testing.T) {
 		defer viper.Set("market.quote_currency", "")
 
 		pool := qpool.NewQ(t.Context(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 0)
+		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:holdings", 4)
 
 		PublishHoldingsDerived(raw, []Balance{

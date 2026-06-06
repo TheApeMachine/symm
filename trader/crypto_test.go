@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -21,14 +22,18 @@ func holdingsFrame(holdings ...map[string]any) map[string]any {
 }
 
 func newTestCrypto() *Crypto {
-	return &Crypto{
+	crypto := &Crypto{
 		streams:          focus.NewSet(),
 		inventory:        map[string]float64{},
+		shortInventory:   map[string]float64{},
 		avgEntry:         map[string]float64{},
 		pending:          map[string]reasoning.Action{},
 		lastDecision:     map[string]string{},
 		positionFraction: 1.0,
 	}
+	crypto.syncHeldSnapshot()
+
+	return crypto
 }
 
 func buyExec(symbol string, qty, price float64) map[string]any {
@@ -190,7 +195,7 @@ func TestObserveExecution(t *testing.T) {
 			So(crypto.streams.Has("BTC/EUR"), ShouldBeFalse)
 		})
 
-		Convey("A zero-quantity execution only clears the in-flight marker", func() {
+		Convey("A zero-quantity execution clears pending and cools the symbol", func() {
 			crypto.observeExecution(map[string]any{
 				"channel": "executions", "symbol": "BTC/EUR",
 				"side": string(trading.Buy), "qty": 0.0, "price": 0.0,
@@ -200,6 +205,28 @@ func TestObserveExecution(t *testing.T) {
 			So(held, ShouldBeFalse)
 			_, stillPending := crypto.pending["BTC/EUR"]
 			So(stillPending, ShouldBeFalse)
+			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
+		})
+	})
+}
+
+func TestSymbolSubmissionCooldown(t *testing.T) {
+	Convey("Given a trader with a per-symbol cooldown", t, func() {
+		crypto := newTestCrypto()
+
+		Convey("It should suppress re-submission until the cool-down expires", func() {
+			crypto.coolSymbol("BTC/EUR")
+			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
+
+			crypto.coolDownUntil.Store("BTC/EUR", time.Now().Add(-time.Millisecond))
+			So(crypto.symbolCooling("BTC/EUR"), ShouldBeFalse)
+			So(crypto.symbolCooling("BTC/EUR"), ShouldBeFalse)
+		})
+
+		Convey("A cooldown on one symbol must not block another", func() {
+			crypto.coolSymbol("BTC/EUR")
+			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
+			So(crypto.symbolCooling("AAVE/EUR"), ShouldBeFalse)
 		})
 	})
 }
@@ -361,4 +388,44 @@ func TestPublishDecisionAudit(t *testing.T) {
 			So(string(raw), ShouldContainSubstring, `"block_reason":"not holding"`)
 		})
 	})
+}
+
+func TestCryptoSymbolHeld(t *testing.T) {
+	Convey("Given a crypto trader with a reconciled inventory snapshot", t, func() {
+		crypto := newTestCrypto()
+
+		Convey("It should report flat before any fill or holdings adoption", func() {
+			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeFalse)
+		})
+
+		Convey("It should report held after a fill opens the position", func() {
+			crypto.openPosition("BTC/EUR", 0.5, 50_000)
+
+			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeTrue)
+		})
+
+		Convey("It should report flat again after the position closes", func() {
+			crypto.openPosition("BTC/EUR", 0.5, 50_000)
+			crypto.closePosition("BTC/EUR")
+
+			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeFalse)
+		})
+
+		Convey("It should treat chart focus separately from inventory", func() {
+			crypto.streams.Add("BTC/EUR")
+
+			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkCryptoSymbolHeld(b *testing.B) {
+	crypto := newTestCrypto()
+	crypto.openPosition("BTC/EUR", 0.5, 50_000)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = crypto.SymbolHeld("BTC/EUR")
+	}
 }

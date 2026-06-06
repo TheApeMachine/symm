@@ -115,7 +115,7 @@ func (classifier *Classifier) uniformConfidence() float64 {
 
 /*
 Standout is winner clarity minus the strongest adjacent-category clarity at the
-neighbor band boundary — a unit competition margin in [0, 1].
+current observation — a unit competition margin in [0, 1].
 */
 func (classifier *Classifier) Standout(observation float64) float64 {
 	if classifier == nil || len(classifier.upper) == 0 {
@@ -133,11 +133,11 @@ func (classifier *Classifier) Standout(observation float64) float64 {
 	upperCount := len(classifier.upper)
 
 	if winIndex > 0 {
-		runner = math.Max(runner, classifier.Confidence(classifier.upper[winIndex-1]))
+		runner = math.Max(runner, classifier.confidenceForClass(observation, winIndex-1))
 	}
 
 	if winIndex < upperCount {
-		runner = math.Max(runner, classifier.Confidence(classifier.upper[winIndex]))
+		runner = math.Max(runner, classifier.confidenceForClass(observation, winIndex+1))
 	}
 
 	margin := win - runner
@@ -147,6 +147,20 @@ func (classifier *Classifier) Standout(observation float64) float64 {
 	}
 
 	return margin
+}
+
+func (classifier *Classifier) confidenceForClass(observation float64, classIndex int) float64 {
+	floor := classifier.uniformConfidence()
+	inBandMargin := classifier.margin(observation, classIndex)
+	halfWidth := classifier.localHalfWidth(classIndex)
+
+	if halfWidth <= snrEpsilon || inBandMargin <= 0 {
+		return floor
+	}
+
+	depth := 1 - math.Exp(-2*inBandMargin/halfWidth)
+
+	return floor + depth*(1-floor)
 }
 
 /*

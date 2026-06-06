@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -16,7 +17,7 @@ func TestExecutionsPublishFill(t *testing.T) {
 
 	Convey("Given wired paper orders and executions", t, func() {
 		pool := qpool.NewQ(context.Background(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:executions", 32)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -88,7 +89,7 @@ func TestExecutionsPublishFill(t *testing.T) {
 func TestExecutionsSubscribe(t *testing.T) {
 	Convey("Given an executions socket", t, func() {
 		pool := qpool.NewQ(context.Background(), 1, 4, nil)
-		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:executions:snap", 8)
 		executions := NewExecutions(raw, nil, NewIdentifier())
 

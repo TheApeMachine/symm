@@ -71,10 +71,10 @@ var (
 
 			systemCtx := engine.Context()
 			streams := focus.NewSet()
-			quotes := broker.NewQuoteCache(systemCtx, pool)
-			stress := broker.NewStressCache(systemCtx, pool)
-			quotes.Start(pool)
-			stress.Start(pool)
+			quotes := broker.EnsureQuoteCache(systemCtx, pool)
+			stress := broker.EnsureStressCache(systemCtx, pool)
+			crypto := trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress)
+			story := newStoryWithBookCapture(systemCtx, pool, quotes, crypto)
 
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),
@@ -104,8 +104,8 @@ var (
 				pumpdump.NewSignal(systemCtx, pool),
 				sentiment.NewSignal(systemCtx, pool),
 				toxicity.NewToxicity(systemCtx, pool),
-				newStoryWithBookCapture(systemCtx, pool, streams, quotes),
-				trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress),
+				story,
+				crypto,
 			); err != nil {
 				return err
 			}
@@ -201,16 +201,17 @@ func initConfig() {
 func newStoryWithBookCapture(
 	ctx context.Context,
 	pool *qpool.Q,
-	streams *focus.Set,
 	quotes *broker.QuoteCache,
+	crypto *trader.Crypto,
 ) *market.Story {
-	story := market.NewStory(ctx, pool, streams)
+	story := market.NewStory(ctx, pool)
 	story.SetBookEnricher(broker.MeasurementBookEnricher(ctx, pool))
 	story.SetQuoteReady(func(symbol string) bool {
 		_, ok := quotes.Snapshot(symbol)
 
 		return ok
 	})
+	story.SetPositionHeld(crypto.SymbolHeld)
 
 	return story
 }

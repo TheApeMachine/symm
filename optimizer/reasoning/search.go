@@ -13,7 +13,10 @@ import (
 // capitalBlockWeight is how hard the score discounts a profitable forest for tying
 // up the wallet: at most this fraction is shaved when every tick blocks a wanting
 // entry. It prices the opportunity cost of capital without overriding genuine edge.
-const capitalBlockWeight = 0.5
+const (
+	capitalBlockWeight = 0.5
+	exposureTimeWeight = 0.25
+)
 
 /*
 SearchConfig tunes the beam search. Zero fields fall back to defaults, so a caller

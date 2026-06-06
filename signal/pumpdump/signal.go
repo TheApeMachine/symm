@@ -30,18 +30,18 @@ RVOL and signed price precursor off the window anchor, and tape skew. Ignition l
 categories by live quantile position. Strength is the banded lift observation.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	window      time.Duration
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map
-	categories  map[string]types.CategoryType
-	floor       *adaptive.SNRField
-	rawDump     *rawdump.Writer
-	classifier  *adaptive.Classifier
-	calibrator  *numeric.BandCalibrator
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	window        time.Duration
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	categories    map[string]types.CategoryType
+	surpriseField *types.CategorySurpriseField
+	rawDump       *rawdump.Writer
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
 }
 
 var pumpDefaultBandEdges = []float64{-0.10, 0.50, 2.00}
@@ -77,7 +77,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 			"coiled_compression": types.CategoryCoiledCompression,
 			"vertical_ignition":  types.CategoryVerticalIgnition,
 		},
-		floor:      adaptive.NewSNRField(),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryFadedExhaustion,
+			types.CategoryOrganicTrend,
+			types.CategoryCoiledCompression,
+			types.CategoryVerticalIgnition,
+		}, types.DefaultCategorySurpriseAlpha),
 		rawDump:    rawdump.Open("pumpdump"),
 		classifier: calibrator.Classifier,
 		calibrator: calibrator.Calibrator,

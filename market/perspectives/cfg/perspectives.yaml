@@ -23,6 +23,14 @@ version: 2
 #     pump ignition arcs, macro sentiment shifts, and versus comparisons.
 #   • Both can appear on one branch when thesis needs clear band occupancy AND
 #     a fresh edge (e.g. hidden_absorption confidence + loaded_imbalance crossed_up).
+#
+# SPOT ENTRY POLICY (load-bearing — matches trading.margin_enabled: false)
+#   • Short-opening branches are omitted. Margin shorts belong in a separate playbook
+#     when trading.margin_enabled is true.
+#   • No entries in dead or choppy regimes — flat/choppy markets do not deploy capital.
+#   • Entry confirmation pairs crossed_up (edge) with at_least on the same category
+#     (level) so a noisy threshold wiggle does not re-arm every tick.
+#   • Structural breakdown reads (mechanical_collapse, systemic_slump) deny long entries.
 # ─────────────────────────────────────────────────────────────────────────────
 
 branches:
@@ -195,24 +203,27 @@ branches:
   # ENTRY STRATEGIES (most-specific first; flat only at confirmation)
   # ═══════════════════════════════════════════════════════════════════════════
 
-  # 1 — Flash pump scalp: coil → ignition edge → iceberg
+  # 1 — Flash pump scalp: coil → ignition edge → passive limit
   - when:
       all:
         - { subject: regime, op: equals, regime: trending }
-        - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.55 }
+        - not: { subject: regime, op: equals, regime: dead }
         - not: { subject: regime, op: equals, regime: choppy }
+        - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.45 }
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
         - not: { subject: signal, category: saturation, unit: confidence, op: at_least, value: 0.55 }
         - not: { subject: signal, category: turbulent, unit: confidence, op: at_least, value: 0.5 }
+        - not: { subject: signal, category: mechanical_collapse, unit: snr, op: at_least, value: 1.0 }
+        - not: { subject: signal, category: systemic_slump, unit: snr, op: at_least, value: 1.0 }
     then:
       - when:
           all:
             - { subject: position, op: equals, lifecycle: not_holding }
-            - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.5 }
+            - { subject: signal, category: vertical_ignition, unit: snr, op: at_least, value: 1.0 }
             - { subject: signal, category: vertical_ignition, unit: snr, op: above,
                 versus: { subject: signal, category: coiled_compression, unit: snr } }
-            - { subject: price, unit: percentage, ago: 8, op: rose_by, value: 0.8 }
-        do: iceberg
+            - { subject: price, unit: percentage, ago: 8, op: rose_by, value: 0.2 }
+        do: limit
 
   # 2 — Momentum trend: causal alpha + CVD drive + rising participation
   - when:
@@ -220,27 +231,32 @@ branches:
         - any:
             - { subject: regime, op: equals, regime: bullish }
             - { subject: regime, op: equals, regime: trending }
-        - { subject: signal, category: endogenous_alpha, unit: snr, op: at_least, value: 1.2 }
+        - not: { subject: regime, op: equals, regime: dead }
+        - not: { subject: regime, op: equals, regime: choppy }
+        - { subject: signal, category: endogenous_alpha, unit: snr, op: at_least, value: 1.0 }
         - { subject: signal, category: aggressive_drive, unit: snr, op: at_least, value: 1.0 }
         - any:
             - { subject: signal, category: laminar, unit: confidence, op: at_least, value: 0.55 }
             - { subject: signal, category: inertial, unit: confidence, op: at_least, value: 0.55 }
-        - not: { subject: regime, op: equals, regime: choppy }
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
         - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
         - not: { subject: signal, category: liquidity_shock, unit: snr, op: above, value: 1.0 }
+        - not: { subject: signal, category: mechanical_collapse, unit: snr, op: at_least, value: 1.0 }
+        - not: { subject: signal, category: systemic_slump, unit: snr, op: at_least, value: 1.0 }
     then:
       - when:
           all:
             - { subject: position, op: equals, lifecycle: not_holding }
-            - { subject: volume, unit: percentage, ago: 20, op: rose_by, value: 25.0 }
-            - { subject: price, unit: percentage, ago: 15, op: rose_by, value: 1.0 }
+            - { subject: volume, unit: percentage, ago: 12, op: rose_by, value: 10.0 }
+            - { subject: price, unit: percentage, ago: 12, op: rose_by, value: 0.5 }
         do: limit
 
   # 3 — Absorption accumulation: hidden bid + support → imbalance edge
   - when:
       all:
         - { subject: regime, op: equals, regime: bullish }
+        - not: { subject: regime, op: equals, regime: dead }
+        - not: { subject: regime, op: equals, regime: choppy }
         - { subject: signal, category: hidden_absorption, unit: confidence, op: at_least, value: 0.65 }
         - { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.55 }
         - any:
@@ -249,28 +265,38 @@ branches:
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.4 }
         - not: { subject: signal, category: liquidity_vacuum, unit: confidence, op: at_least, value: 0.5 }
         - not: { subject: signal, category: spoof_trap, unit: confidence, op: at_least, value: 0.45 }
+        - not: { subject: signal, category: mechanical_collapse, unit: snr, op: at_least, value: 1.0 }
+        - not: { subject: signal, category: systemic_slump, unit: snr, op: at_least, value: 1.0 }
     then:
       - when:
           all:
             - { subject: position, op: equals, lifecycle: not_holding }
-            - { subject: signal, category: loaded_imbalance, unit: snr, ago: 10, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: loaded_imbalance, unit: snr, ago: 10, op: crossed_up, value: 1.2 }
+            - { subject: signal, category: loaded_imbalance, unit: snr, op: at_least, value: 1.2 }
         do: limit
 
   # 4 — Scarcity squeeze: thin book + coil → ignition
   - when:
       all:
+        - any:
+            - { subject: regime, op: equals, regime: trending }
+            - { subject: regime, op: equals, regime: bullish }
+        - not: { subject: regime, op: equals, regime: dead }
+        - not: { subject: regime, op: equals, regime: choppy }
         - { subject: signal, category: extreme_scarcity, unit: confidence, op: at_least, value: 0.55 }
         - any:
             - { subject: signal, category: coiled_compression, unit: confidence, op: at_least, value: 0.5 }
             - { subject: signal, category: organic_trend, unit: confidence, op: at_least, value: 0.5 }
-        - not: { subject: regime, op: equals, regime: bearish }
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+        - not: { subject: signal, category: mechanical_collapse, unit: snr, op: at_least, value: 1.0 }
+        - not: { subject: signal, category: systemic_slump, unit: snr, op: at_least, value: 1.0 }
     then:
       - when:
           all:
             - { subject: position, op: equals, lifecycle: not_holding }
             - { subject: signal, category: vertical_ignition, unit: snr, ago: 5, op: crossed_up, value: 1.2 }
-        do: iceberg
+            - { subject: signal, category: vertical_ignition, unit: snr, op: at_least, value: 1.2 }
+        do: limit
 
   # 5 — Lead-lag catch-up: inefficient lag + decoupled alpha in a broad move
   - when:
@@ -278,49 +304,19 @@ branches:
         - any:
             - { subject: regime, op: equals, regime: trending }
             - { subject: regime, op: equals, regime: bullish }
+        - not: { subject: regime, op: equals, regime: dead }
+        - not: { subject: regime, op: equals, regime: choppy }
         - { subject: signal, category: inefficient_lag, unit: confidence, op: at_least, value: 0.55 }
         - { subject: signal, category: decoupled_alpha, unit: snr, op: at_least, value: 1.0 }
         - { subject: signal, category: synchronized_drift, unit: confidence, op: at_least, value: 0.5 }
         - not: { subject: signal, category: systemic_herd, unit: confidence, op: at_least, value: 0.65 }
         - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
+        - not: { subject: signal, category: mechanical_collapse, unit: snr, op: at_least, value: 1.0 }
+        - not: { subject: signal, category: systemic_slump, unit: snr, op: at_least, value: 1.0 }
     then:
       - when:
           all:
             - { subject: position, op: equals, lifecycle: not_holding }
-            - { subject: signal, category: decoupled_move, unit: snr, ago: 8, op: crossed_up, value: 1.0 }
+            - { subject: signal, category: decoupled_move, unit: snr, ago: 8, op: crossed_up, value: 1.2 }
+            - { subject: signal, category: decoupled_move, unit: snr, op: at_least, value: 1.2 }
         do: limit
-
-  # 6 — Bearish breakdown short: structural slump / collapse
-  - when:
-      all:
-        - { subject: regime, op: equals, regime: bearish }
-        - not: { subject: regime, op: equals, regime: choppy }
-        - not: { subject: signal, category: fragile_expansion, unit: confidence, op: at_least, value: 0.5 }
-        - not: { subject: signal, category: toxic_bluff, unit: confidence, op: at_least, value: 0.45 }
-    then:
-      - when:
-          all:
-            - { subject: position, op: equals, lifecycle: not_holding }
-            - any:
-                - { subject: signal, category: systemic_slump, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-                - { subject: signal, category: mechanical_collapse, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-                - { subject: signal, category: divergent_stress, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-        do: { type: limit, side: sell }
-
-  # 7 — Crowded-herd fade short: exhaustion of synchronized panic bid
-  - when:
-      all:
-        - any:
-            - { subject: regime, op: equals, regime: bearish }
-            - { subject: regime, op: equals, regime: choppy }
-        - { subject: signal, category: systemic_herd, unit: confidence, op: at_least, value: 0.6 }
-        - any:
-            - { subject: signal, category: saturation, unit: confidence, op: at_least, value: 0.55 }
-            - { subject: signal, category: frenzy, unit: confidence, op: at_least, value: 0.55 }
-        - not: { subject: signal, category: hard_support, unit: confidence, op: at_least, value: 0.6 }
-    then:
-      - when:
-          all:
-            - { subject: position, op: equals, lifecycle: not_holding }
-            - { subject: signal, category: active_reversal, unit: snr, ago: 5, op: crossed_up, value: 1.0 }
-        do: { type: limit, side: sell }

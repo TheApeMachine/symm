@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 	signalpool "github.com/theapemachine/symm/signal"
 )
@@ -64,7 +63,7 @@ type Signal struct {
 	followerScratch []string
 	lastPublishMu   sync.Mutex
 	lastPublish     time.Time
-	floor           *adaptive.SNRField
+	surpriseField   *types.CategorySurpriseField
 	rawDump         *rawdump.Writer
 }
 
@@ -78,12 +77,17 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:     make(map[string]*qpool.BroadcastGroup),
 		subscribers:    make(map[string]*qpool.Subscriber),
 		anchorBaseline: *newMoveBaseline(),
-		floor:          adaptive.NewSNRField(),
-		rawDump:        rawdump.Open("leadlag"),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryAnchorStall,
+			types.CategoryDecoupledMove,
+			types.CategorySynchronizedDrift,
+			types.CategoryInefficientLag,
+		}, types.DefaultCategorySurpriseAlpha),
+		rawDump: rawdump.Open("leadlag"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
@@ -401,19 +405,17 @@ func (signal *Signal) sendDashboardGauge(
 	measurement *types.Measurement,
 	standout float64,
 ) error {
-	categoryStandout := standout
-
-	if err := types.AssignCategorySNR(
-		measurement, signal.floor, categoryStandout,
+	if err := types.AssignCategorySurpriseSNR(
+		measurement, signal.surpriseField, measurement.Category,
 	); err != nil {
 		return err
 	}
 
 	telemetry := numeric.Telemetry{
 		Observation:  mapCategoryToTelemetry(measurement.Category, standout),
-		Edges:       leadlagDefaultBandEdges,
-		Labels:      []string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
-		Calibrated:  true,
+		Edges:        leadlagDefaultBandEdges,
+		Labels:       []string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
+		Calibrated:   true,
 		EntropyTrust: 1.0,
 	}
 
@@ -436,10 +438,8 @@ func (signal *Signal) sendMeasurement(
 	measurement *types.Measurement,
 	standout float64,
 ) error {
-	categoryStandout := standout
-
-	if err := types.AssignCategorySNR(
-		measurement, signal.floor, categoryStandout,
+	if err := types.AssignCategorySurpriseSNR(
+		measurement, signal.surpriseField, measurement.Category,
 	); err != nil {
 		return err
 	}

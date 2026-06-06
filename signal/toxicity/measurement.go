@@ -24,7 +24,8 @@ type bookQualitySnapshot struct {
 /*
 Measure classifies book-quality into toxicity perspective categories. Strength
 holds the raw asymmetry; Confidence is band margin at the moment of selection;
-SNR is adaptive sigma of Confidence against this symbol's own history.
+SNR is the Z-scored Shannon surprisal of the selected category against this
+symbol's running categorical prior.
 */
 func (tracker *Tracker) Measure(symbol string, at time.Time) (types.Measurement, error) {
 	tracker.mu.Lock()
@@ -51,9 +52,7 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (types.Measurement,
 		return types.Measurement{}, err
 	}
 
-	standout := evidence
-
-	snr, err := types.ScoreCategorySNR(tracker.floor, symbol, standout)
+	snr, err := tracker.surpriseField.Score(symbol, category)
 
 	if err != nil {
 		return types.Measurement{}, err
@@ -84,17 +83,19 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 		askDepth:  state.askTotal,
 	}
 
-	for price, expiry := range state.toxic {
+	for key, expiry := range state.toxic {
 		if at.After(expiry) {
-			delete(state.toxic, price)
-			delete(state.toxicChurn, price)
+			delete(state.toxic, key)
+			delete(state.toxicChurn, key)
 
 			continue
 		}
 
+		price := priceFromKey(key, state.pair)
+
 		if state.mid > 0 && math.Abs(price-state.mid)/state.mid <= toxicProximityPct {
 			snapshot.toxicNear = true
-			snapshot.toxicBluffStrength = math.Max(snapshot.toxicBluffStrength, state.toxicChurn[price])
+			snapshot.toxicBluffStrength = math.Max(snapshot.toxicBluffStrength, state.toxicChurn[key])
 		}
 	}
 
@@ -106,10 +107,11 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 }
 
 func (tracker *Tracker) flagToxicLocked(state *symbolState, price float64, churnRatio float64, now time.Time) {
-	state.toxic[price] = now.Add(toxicCooldown)
+	key := priceKey(price, state.pair)
+	state.toxic[key] = now.Add(toxicCooldown)
 
 	if churnRatio > 0 {
-		state.toxicChurn[price] = churnRatio
+		state.toxicChurn[key] = churnRatio
 	}
 }
 

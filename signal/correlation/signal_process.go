@@ -230,7 +230,6 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			raw := energy * (1 + 2*corr) / baseline
 			telemetry := signal.calibrator.Snapshot(signal.classifier)
 			telemetry.Observation = coin.state.pipe.Observation()
-			categoryStandout := coin.state.pipe.Standout()
 
 			measurement := types.Measurement{
 				Symbol:     coin.symbol,
@@ -241,8 +240,8 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 				Confidence: coin.state.pipe.Confidence(),
 			}
 
-			if err := types.AssignCategorySNR(
-				&measurement, signal.floor, categoryStandout,
+			if err := types.AssignCategorySurpriseSNR(
+				&measurement, signal.surpriseField, measurement.Category,
 			); err != nil {
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}

@@ -132,16 +132,6 @@ func causalTableWithMin(samples []causalSample, minRows int) (dagNodeTable, erro
 	return newDAGNodeTable(rows, priceVelocityNode, minRows)
 }
 
-func extract(samples []causalSample, node int) []float64 {
-	values := make([]float64, len(samples))
-
-	for index := range samples {
-		values[index] = samples[index].value(node)
-	}
-
-	return values
-}
-
 func residualize(target []float64, controls ...[]float64) ([]float64, bool) {
 	if len(controls) == 0 {
 		return append([]float64(nil), target...), true

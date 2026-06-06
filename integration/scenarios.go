@@ -60,20 +60,3 @@ func buildCapture(scenario Scenario) *CaptureBuilder {
 
 	return builder
 }
-
-func allSignalSources() []types.SourceType {
-	return []types.SourceType{
-		types.SourceCVD,
-		types.SourceFluid,
-		types.SourceHawkes,
-		types.SourceDepthFlow,
-		types.SourceSentiment,
-		types.SourceCorrelation,
-		types.SourceCausal,
-		types.SourceLeadLag,
-		types.SourceLiquidity,
-		types.SourceExhaustion,
-		types.SourcePumpDump,
-		types.SourceToxicity,
-	}
-}

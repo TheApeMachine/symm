@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -17,8 +16,8 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
-		Convey("It parses five exit managers and seven entry strategies", func() {
-			So(len(thoughts), ShouldEqual, 12)
+		Convey("It parses five exit managers and five spot entry strategies", func() {
+			So(len(thoughts), ShouldEqual, 10)
 		})
 
 		Convey("Exit managers precede entries and the scalp manager is tightest", func() {
@@ -28,12 +27,14 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 			So(scalpExit.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
 		})
 
-		Convey("The flash-pump entry confirms an ignition edge before iceberg", func() {
+		Convey("The flash-pump entry confirms ignition level and price follow-through before limit", func() {
 			scalpEntry := thoughts[5]
 			confirm := scalpEntry.Then[0]
-			So(confirm.Do.Type, ShouldEqual, ActionIceberg)
+			So(confirm.Do.Type, ShouldEqual, ActionLimit)
 			So(confirm.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
-			So(confirm.When.All[1].Op, ShouldEqual, ComparisonCrossedUp)
+			So(confirm.When.All[1].Op, ShouldEqual, ComparisonAtLeast)
+			So(confirm.When.All[1].Category, ShouldEqual, types.CategoryVerticalIgnition)
+			So(confirm.When.All[3].Subject, ShouldEqual, SubjectPrice)
 		})
 
 		Convey("The momentum entry requires rising quote volume at confirmation", func() {
@@ -52,11 +53,29 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 			So(hasVolume, ShouldBeTrue)
 		})
 
-		Convey("Bearish and herd-fade entries sell to open", func() {
-			breakdown := thoughts[10]
-			fade := thoughts[11]
-			So(breakdown.Then[0].Do.Side, ShouldEqual, trading.Sell)
-			So(fade.Then[0].Do.Side, ShouldEqual, trading.Sell)
+		Convey("Every spot entry denies dead and choppy regimes", func() {
+			for index := 5; index < len(thoughts); index++ {
+				entry := thoughts[index]
+				hasDeadDeny := false
+				hasChoppyDeny := false
+
+				for _, operand := range entry.When.All {
+					if operand.Not == nil {
+						continue
+					}
+
+					if operand.Not.Subject == SubjectRegime && operand.Not.Regime == types.RegimeDead {
+						hasDeadDeny = true
+					}
+
+					if operand.Not.Subject == SubjectRegime && operand.Not.Regime == types.RegimeChoppy {
+						hasChoppyDeny = true
+					}
+				}
+
+				So(hasDeadDeny, ShouldBeTrue)
+				So(hasChoppyDeny, ShouldBeTrue)
+			}
 		})
 
 		Convey("The universal fallback manager is the last branch", func() {

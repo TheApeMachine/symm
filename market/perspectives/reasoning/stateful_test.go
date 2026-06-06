@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -107,6 +108,43 @@ func TestEvaluateStatefulResetsOnHoldingFlip(t *testing.T) {
 	})
 }
 
+func TestEvaluateStatefulResetsOnRegimeChange(t *testing.T) {
+	Convey("A latched entry gate is cleared when the price-action regime changes", t, func() {
+		tree := []Thought{{
+			When: Predicate{All: []Predicate{
+				{Subject: SubjectRegime, Op: ComparisonEquals, Regime: types.RegimeBearish},
+				{Subject: SubjectPosition, Op: ComparisonEquals, Lifecycle: types.ObservationNotHolding},
+			}},
+			Then: []Thought{{
+				When: sig(types.CategoryMechanicalCollapse, 1.0),
+				Do:   Act{Type: ActionLimit, Side: trading.Sell},
+			}},
+		}}
+
+		bearish := mockReason{
+			regime:    types.RegimeBearish,
+			lifecycle: map[types.ObservationType]bool{types.ObservationNotHolding: true},
+			signal:    map[types.CategoryType][]float64{types.CategoryMechanicalCollapse: {1.5}},
+		}
+		dead := mockReason{
+			regime:    types.RegimeDead,
+			lifecycle: map[types.ObservationType]bool{types.ObservationNotHolding: true},
+			signal:    map[types.CategoryType][]float64{types.CategoryMechanicalCollapse: {1.5}},
+		}
+
+		Convey("After the regime leaves bearish the latched short entry does not keep firing", func() {
+			state := NewReasonState()
+
+			act, found := EvaluateStateful(tree, bearish, state)
+			So(found, ShouldBeTrue)
+			So(act.Type, ShouldEqual, ActionLimit)
+
+			_, foundDead := EvaluateStateful(tree, dead, state)
+			So(foundDead, ShouldBeFalse)
+		})
+	})
+}
+
 func TestEvaluateStatefulMatchesSingleTickWhenSimultaneous(t *testing.T) {
 	Convey("A tree whose whole chain is true on one tick fires the deepest action, like the single-tick walk", t, func() {
 		tree := []Thought{{
@@ -152,6 +190,7 @@ func TestReasonStateReset(t *testing.T) {
 			So(len(state.active), ShouldEqual, 0)
 			So(len(state.next), ShouldEqual, 0)
 			So(state.primed, ShouldBeFalse)
+			So(state.lastRegime, ShouldEqual, types.RegimeNone)
 			So(state.lastHolding, ShouldBeFalse)
 
 			state.active["2"] = true

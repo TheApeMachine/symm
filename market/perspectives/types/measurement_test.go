@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 )
 
 func TestSourceTypeString(t *testing.T) {
@@ -69,7 +70,7 @@ func TestMeasurementSend(t *testing.T) {
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		subscriber := pool.CreateBroadcastGroup("measurements", 0).
+		subscriber := bus.Group(pool, "measurements", 0).
 			Subscribe("test:measurement-send", 4)
 
 		measurement := Measurement{

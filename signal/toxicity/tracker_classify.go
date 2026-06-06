@@ -115,14 +115,15 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 		return false
 	}
 
-	expiry, ok := state.toxic[price]
+	key := priceKey(price, state.pair)
+	expiry, ok := state.toxic[key]
 	if !ok {
 		return false
 	}
 
 	if at.After(expiry) {
-		delete(state.toxic, price)
-		delete(state.toxicChurn, price)
+		delete(state.toxic, key)
+		delete(state.toxicChurn, key)
 
 		return false
 	}

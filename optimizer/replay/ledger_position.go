@@ -64,6 +64,19 @@ func (ledger *replayLedger) openEntry(
 	feePct float64,
 	at time.Time,
 ) {
+	ledger.openEntryReserved(symbol, side, act, measurement, snapshots, feePct, at, 0)
+}
+
+func (ledger *replayLedger) openEntryReserved(
+	symbol string,
+	side trading.Side,
+	act reasoning.Act,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
+	feePct float64,
+	at time.Time,
+	reservationCredit int,
+) {
 	if _, open := ledger.positions[symbol]; open {
 		return
 	}
@@ -78,9 +91,13 @@ func (ledger *replayLedger) openEntry(
 	}
 
 	fraction := entryDeployFraction(ledger.costs, act, snapshots)
-	capacity := int(math.Round(1 / fraction))
 
-	if len(ledger.positions) >= capacity {
+	if fraction <= 0 {
+		ledger.fundBlocked++
+		return
+	}
+
+	if !ledger.canReserveEntry(fraction, reservationCredit) {
 		ledger.fundBlocked++
 
 		return
@@ -90,7 +107,7 @@ func (ledger *replayLedger) openEntry(
 	capital := ledger.costs.WalletBalance(quote)
 	slot := fraction * capital
 
-	if affordable := ledger.walletCash(quote) / (1 + feePct); slot > affordable {
+	if affordable := ledger.walletCash(quote); slot > affordable {
 		slot = affordable
 	}
 
@@ -100,7 +117,8 @@ func (ledger *replayLedger) openEntry(
 		return
 	}
 
-	quantity := slot / measurement.Last
+	entryNotional := slot / (1 + feePct)
+	quantity := entryNotional / measurement.Last
 
 	if quantity <= 0 {
 		return
@@ -123,7 +141,7 @@ func (ledger *replayLedger) openEntry(
 
 	ledger.observeSymbolPrice(symbol, entryFill)
 
-	quantity = slot / entryFill
+	quantity = entryNotional / entryFill
 
 	if quantity <= 0 {
 		return
@@ -173,6 +191,48 @@ func (ledger *replayLedger) resolveEntryFill(
 	slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
 
 	return executionFill{slippagePct: slippagePct}, fillPriceFromPct(side, measurement.Last, slippagePct), true
+}
+
+func entryCapacity(fraction float64) int {
+	if fraction <= 0 {
+		return 0
+	}
+
+	capacity := int(math.Floor(1/fraction + 1e-9))
+
+	if capacity < 1 {
+		capacity = 1
+	}
+
+	return capacity
+}
+
+func (ledger *replayLedger) canReserveEntry(fraction float64, reservationCredit int) bool {
+	capacity := entryCapacity(fraction)
+
+	if capacity <= 0 {
+		return false
+	}
+
+	reserved := ledger.reservedEntryCount() - reservationCredit
+
+	if reserved < 0 {
+		reserved = 0
+	}
+
+	return reserved < capacity
+}
+
+func (ledger *replayLedger) reservedEntryCount() int {
+	count := len(ledger.positions) + len(ledger.pendingMakers)
+
+	for _, pending := range ledger.pending {
+		if reasoning.IsEntryAction(pending.act.Type) {
+			count++
+		}
+	}
+
+	return count
 }
 
 /*

@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -40,18 +41,18 @@ surprising that clarity is versus the symbol's own recent baseline.
 | Systemic Slump  | breadth weak and this symbol is not a leader   |
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
-	symbols     sync.Map // symbol -> float64 (change percent)
-	tracked     sync.Map // symbol -> *types.Category
-	breadthHist ring.FloatRing
-	floor       *adaptive.SNRField
-	classifier  *adaptive.Classifier
-	calibrator  *numeric.BandCalibrator
-	rawDump     *rawdump.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map // symbol -> float64 (change percent)
+	tracked       sync.Map // symbol -> *types.Category
+	breadthHist   ring.FloatRing
+	surpriseField *types.CategorySurpriseField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	rawDump       *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -73,19 +74,23 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
 		breadthHist: ring.NewFloatRing(sentimentBreadthHistory),
-		floor:       adaptive.NewSNRField(),
-		classifier:  pooledCalibrator.Classifier,
-		calibrator:  pooledCalibrator.Calibrator,
-		rawDump:     rawdump.Open("sentiment"),
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategorySystemicSlump,
+			types.CategoryDivergentMove,
+			types.CategoryRiskOnSurge,
+		}, types.DefaultCategorySurpriseAlpha),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
+		rawDump:    rawdump.Open("sentiment"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/sentiment ready", "signal/sentiment")
 
@@ -174,8 +179,6 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 			measurement.Symbol = row.Symbol
 			measurement.Last = row.Last
 
-			categoryStandout := standout
-
 			telemetry, _ := numeric.ObserveGaugeTelemetry(
 				signal.calibrator,
 				signal.classifier,
@@ -183,8 +186,8 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				standout,
 			)
 
-			if err := types.AssignCategorySNR(
-				&measurement, signal.floor, categoryStandout,
+			if err := types.AssignCategorySurpriseSNR(
+				&measurement, signal.surpriseField, measurement.Category,
 			); err != nil {
 				return nil, err
 			}

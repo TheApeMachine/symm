@@ -46,9 +46,15 @@ func (ledger *replayLedger) queueMakerEntry(
 	symbol string,
 	side trading.Side,
 	limitPrice, quantity, feePct, slippagePct float64,
+	fraction float64,
 	measurement types.Measurement,
 	snapshots []types.Measurement,
 ) {
+	if !ledger.canReserveEntry(fraction, 0) {
+		ledger.fundBlocked++
+		return
+	}
+
 	stress := executionStressMultiplier(snapshots)
 
 	ledger.pendingMakers = append(ledger.pendingMakers, pendingMakerEntry{
@@ -92,7 +98,7 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 		fillRow := pending.at
 		fillRow.Last = pending.limitPrice
 
-		ledger.openEntry(
+		ledger.openEntryReserved(
 			pending.symbol,
 			pending.side,
 			reasoning.Act{Type: reasoning.ActionLimit, Side: pending.side},
@@ -100,6 +106,7 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 			nil,
 			pending.feePct,
 			pending.at.At,
+			1,
 		)
 	}
 

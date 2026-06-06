@@ -26,19 +26,19 @@ book, trades, and ticks; the field model lives in FluidSymbol.
 const rawSubscriberID = "signal/fluid:raw"
 
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q
-	broadcasts   map[string]*qpool.BroadcastGroup
-	subscribers  map[string]*qpool.Subscriber
-	symbols      sync.Map
-	fieldScratch []*FluidSymbol
-	ui           *qpool.BroadcastGroup
-	floor        *adaptive.SNRField
-	classifier   *adaptive.Classifier
-	calibrator   *numeric.BandCalibrator
-	categories   map[string]types.CategoryType
-	rawDump      *rawdump.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q
+	broadcasts    map[string]*qpool.BroadcastGroup
+	subscribers   map[string]*qpool.Subscriber
+	symbols       sync.Map
+	fieldScratch  []*FluidSymbol
+	ui            *qpool.BroadcastGroup
+	surpriseField *types.CategorySurpriseField
+	classifier    *adaptive.Classifier
+	calibrator    *numeric.BandCalibrator
+	categories    map[string]types.CategoryType
+	rawDump       *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
@@ -59,9 +59,14 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		floor:       adaptive.NewSNRField(),
-		classifier:  pooledCalibrator.Classifier,
-		calibrator:  pooledCalibrator.Calibrator,
+		surpriseField: types.NewCategorySurpriseField([]types.CategoryType{
+			types.CategoryLaminar,
+			types.CategoryInertial,
+			types.CategoryViscous,
+			types.CategoryTurbulent,
+		}, types.DefaultCategorySurpriseAlpha),
+		classifier: pooledCalibrator.Classifier,
+		calibrator: pooledCalibrator.Calibrator,
 		categories: map[string]types.CategoryType{
 			"laminar":   types.CategoryLaminar,
 			"inertial":  types.CategoryInertial,
@@ -193,10 +198,8 @@ func (signal *Signal) emit(symbol string) error {
 
 		telemetry := signal.calibrator.Snapshot(signal.classifier)
 		telemetry.Observation = measurement.Strength
-		categoryStandout := standout
-
-		if err := types.AssignCategorySNR(
-			&measurement, signal.floor, categoryStandout,
+		if err := types.AssignCategorySurpriseSNR(
+			&measurement, signal.surpriseField, measurement.Category,
 		); err != nil {
 			return err
 		}

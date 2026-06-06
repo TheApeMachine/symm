@@ -103,3 +103,4 @@ dump:
 
 strip-trailing-newlines:
 	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py
+

@@ -3,6 +3,7 @@ package broker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/internal/testconfig"
@@ -170,6 +171,27 @@ func TestNewDeskWithCaches(t *testing.T) {
 			convey.So(desk.Halted(), convey.ShouldBeTrue)
 			desk.TripHalt()
 			convey.So(desk.Halted(), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("ResetHalt should clear the circuit breaker", func() {
+			desk, err := NewDeskWithAllCaches(ctx, nil, quotes, stress, rules)
+
+			convey.So(err, convey.ShouldBeNil)
+			desk.TripHalt()
+			convey.So(desk.Halted(), convey.ShouldBeTrue)
+			desk.ResetHalt()
+			convey.So(desk.Halted(), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("Halted should auto-reset after the cool-down elapses", func() {
+			desk, err := NewDeskWithAllCaches(ctx, nil, quotes, stress, rules)
+
+			convey.So(err, convey.ShouldBeNil)
+			desk.haltCooldown = time.Millisecond
+			desk.TripHalt()
+			convey.So(desk.Halted(), convey.ShouldBeTrue)
+			time.Sleep(2 * time.Millisecond)
+			convey.So(desk.Halted(), convey.ShouldBeFalse)
 		})
 	})
 }
