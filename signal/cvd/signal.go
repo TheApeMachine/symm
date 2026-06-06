@@ -117,7 +117,6 @@ func newCVDState(classifier *adaptive.Classifier) *cvdState {
 		driftBase: adaptive.NewEMA(0),
 		pipe: numeric.NewClassed(
 			classifier,
-			adaptive.NewSigmaClamp(3, 8, 0.0625),
 		),
 	}
 }

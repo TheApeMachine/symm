@@ -16,6 +16,7 @@ import (
 func withPumpdumpConfig(t *testing.T) {
 	t.Helper()
 	viper.Set("signals.pumpdump.window", time.Minute)
+	viper.Set("signals.raw_dump_dir", "/Users/theapemachine/go/src/github.com/theapemachine/symm/runs")
 }
 
 func loadPumpState(signal *Signal, symbol string) *pumpState {

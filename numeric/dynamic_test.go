@@ -167,7 +167,7 @@ func BenchmarkDerivedNext(b *testing.B) {
 }
 
 func BenchmarkDerivedClone(b *testing.B) {
-	original := NewDerived(WithDynamics(adaptive.NewEMA(0.35), adaptive.NewSigmaClamp(2, 8, 0.1)))
+	original := NewDerived(WithDynamics(adaptive.NewEMA(0.35)))
 
 	_, _ = original.Push(1.5, 2.5, 3.5)
 

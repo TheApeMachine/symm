@@ -7,10 +7,16 @@ import (
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
+// uniformSentimentConfidence is the 1/N floor across the three sentiment categories
+// (risk-on surge, divergent move, systemic slump): a selection with no measurable
+// margin is no better than a uniform guess, and is never zero confidence.
+const uniformSentimentConfidence = 1.0 / 3.0
+
 /*
 sentimentReading classifies cross-section sentiment and returns the category plus
-its clarity — how decisively the breadth lands in the selected band. The phenomenon
-strength (the standout fed to SNR) is computed separately by the caller from breadth.
+its confidence — how decisively the breadth lands in the selected band. The
+phenomenon strength (the standout fed to SNR) is computed separately by the caller
+from breadth. A selection with no measurable margin floors at 1/N, never 0.
 */
 func sentimentReading(
 	breadth, change, surgeThreshold float64,
@@ -35,13 +41,13 @@ func sentimentReading(
 	margin := surgeThreshold - breadth
 
 	if leader || margin <= 0 {
-		return types.CategorySystemicSlump, 0
+		return types.CategorySystemicSlump, uniformSentimentConfidence
 	}
 
 	scale := math.Max(surgeThreshold, 1-surgeThreshold)
 
 	if scale <= 0 {
-		return types.CategorySystemicSlump, 0
+		return types.CategorySystemicSlump, uniformSentimentConfidence
 	}
 
 	return types.CategorySystemicSlump, margin / scale

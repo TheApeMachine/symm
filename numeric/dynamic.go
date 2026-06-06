@@ -178,8 +178,6 @@ func cloneDynamic(d Dynamic) Dynamic {
 	switch x := d.(type) {
 	case *adaptive.EMA:
 		return x.Clone()
-	case *adaptive.SigmaClamp:
-		return x.Clone()
 	case *adaptive.Peak:
 		return adaptive.NewPeak()
 	case *adaptive.RelativeMove:

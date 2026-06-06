@@ -10,7 +10,7 @@ import (
 
 func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) error {
 	if reading.observation == 0 {
-		return errnie.Error(errLiftUnobserved)
+		return signal.publishWarmup(trade)
 	}
 
 	category := signal.categories[signal.classifier.Label(reading.code)]
@@ -71,4 +71,23 @@ func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) err
 	}
 
 	return nil
+}
+
+/*
+publishWarmup emits a neutral reading before ignition lift is observable (warm-up,
+or a folded reading with no banded lift yet) so the signal always produces a
+Measurement. Confidence is 1/N — a uniform guess among the bands, the honest floor
+before there is any evidence — and there is no surprise yet, so SNR stays zero.
+*/
+func (signal *Signal) publishWarmup(trade market.TradeUpdate) error {
+	measurement := types.Measurement{
+		At:         trade.Timestamp,
+		Symbol:     trade.Symbol,
+		Source:     types.SourcePumpDump,
+		Category:   types.CategoryFadedExhaustion,
+		Last:       trade.Price,
+		Confidence: 1 / float64(len(signal.categories)),
+	}
+
+	return measurement.Send(signal.pool)
 }

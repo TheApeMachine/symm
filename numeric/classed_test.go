@@ -36,7 +36,6 @@ func BenchmarkProjectScalarPush(b *testing.B) {
 			return values[1] * (1 + 2*values[0]) / values[2]
 		}),
 		adaptive.NewEMA(0),
-		adaptive.NewSigmaClamp(3, 8, 0.0625),
 	)
 
 	b.ReportAllocs()
@@ -58,7 +57,6 @@ func BenchmarkProjectVectorPush(b *testing.B) {
 			return []float64{values[1] * (1 + 2*values[0]) / values[2]}
 		}),
 		adaptive.NewEMA(0),
-		adaptive.NewSigmaClamp(3, 8, 0.0625),
 	)
 
 	b.ReportAllocs()

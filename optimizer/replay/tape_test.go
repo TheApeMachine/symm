@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	optimizerio "github.com/theapemachine/symm/optimizer/io"
 )
 
 func TestPrecompileTapeRingWindow(t *testing.T) {
 	convey.Convey("Given more than StoryRingCapacity measurements", t, func() {
+		viper.Set("story.measurements.buffer", 1024)
 		rows := make([]types.Measurement, 0, 1024+10)
 
 		for index := range 1024 + 10 {

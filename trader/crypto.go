@@ -286,7 +286,8 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 
 		// The same protective trigger fires every tick the management gate holds;
 		// the exchange already rests one, so only (re)place it when it changes.
-		if crypto.armed[action.Symbol] == (armRecord{action.Type, action.Offset}) {
+		armKey := action.Symbol + ":" + string(action.Side)
+		if crypto.armed[armKey] == (armRecord{action.Type, action.Offset}) {
 			return
 		}
 	}
@@ -311,7 +312,8 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 	// A protective trigger rests on the exchange — it has no immediate fill, so it
 	// does not block the symbol; record it so identical re-arms are skipped.
 	if protective {
-		crypto.armed[action.Symbol] = armRecord{action.Type, action.Offset}
+		armKey := action.Symbol + ":" + string(action.Side)
+		crypto.armed[armKey] = armRecord{action.Type, action.Offset}
 		return
 	}
 
@@ -481,7 +483,7 @@ func (crypto *Crypto) sizeEntry(price float64) float64 {
 
 	// At most round(1/fraction) positions run at once. Count held positions and
 	// in-flight entries; at capacity, refuse rather than open another.
-	if len(crypto.inventory)+len(crypto.pending) >= int(math.Round(1/crypto.positionFraction)) {
+	if len(crypto.inventory)+len(crypto.shortInventory)+len(crypto.pending) >= int(math.Round(1/crypto.positionFraction)) {
 		return 0
 	}
 
@@ -610,7 +612,8 @@ func (crypto *Crypto) openShort(symbol string, qty, price float64) {
 func (crypto *Crypto) closeShort(symbol string) {
 	delete(crypto.shortInventory, symbol)
 	delete(crypto.avgEntry, symbol)
-	delete(crypto.armed, symbol)
+	delete(crypto.armed, symbol+":"+string(trading.Buy))
+	delete(crypto.armed, symbol+":"+string(trading.Sell))
 	crypto.streams.Remove(symbol)
 	crypto.publishPositions()
 }
@@ -618,7 +621,8 @@ func (crypto *Crypto) closeShort(symbol string) {
 func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.inventory, symbol)
 	delete(crypto.avgEntry, symbol)
-	delete(crypto.armed, symbol)
+	delete(crypto.armed, symbol+":"+string(trading.Buy))
+	delete(crypto.armed, symbol+":"+string(trading.Sell))
 	crypto.streams.Remove(symbol)
 	crypto.publishPositions()
 }
@@ -646,7 +650,7 @@ func (crypto *Crypto) observeBalances(envelope map[string]any) {
 		symbol, _ := row["symbol"].(string)
 		qty, _ := row["qty"].(float64)
 
-		if symbol == "" || qty <= 0 {
+		if symbol == "" || qty == 0 {
 			continue
 		}
 
@@ -664,21 +668,38 @@ so a reconnect snapshot never overwrites a known entry price with the current ma
 */
 func (crypto *Crypto) reconcilePositions(held map[string]float64) {
 	for symbol, qty := range held {
-		if _, tracked := crypto.inventory[symbol]; !tracked {
-			crypto.adoptPosition(symbol, qty)
+		if qty > 0 {
+			if _, tracked := crypto.inventory[symbol]; !tracked {
+				crypto.adoptPosition(symbol, qty)
+			}
+		} else if qty < 0 {
+			if _, tracked := crypto.shortInventory[symbol]; !tracked {
+				crypto.adoptShort(symbol, math.Abs(qty))
+			}
 		}
 	}
 
 	stale := make([]string, 0)
+	staleShorts := make([]string, 0)
 
 	for symbol := range crypto.inventory {
-		if _, stillHeld := held[symbol]; !stillHeld {
+		if qty, stillHeld := held[symbol]; !stillHeld || qty <= 0 {
 			stale = append(stale, symbol)
+		}
+	}
+
+	for symbol := range crypto.shortInventory {
+		if qty, stillHeld := held[symbol]; !stillHeld || qty >= 0 {
+			staleShorts = append(staleShorts, symbol)
 		}
 	}
 
 	for _, symbol := range stale {
 		crypto.closePosition(symbol)
+	}
+
+	for _, symbol := range staleShorts {
+		crypto.closeShort(symbol)
 	}
 }
 
@@ -690,7 +711,16 @@ yet); the position then reads ~breakeven and is managed from here by the univers
 position manager.
 */
 func (crypto *Crypto) adoptPosition(symbol string, qty float64) {
+	errnie.Debug(fmt.Sprintf("Adopting untracked position: %s, qty: %f", symbol, qty))
 	crypto.inventory[symbol] = qty
+	crypto.avgEntry[symbol] = crypto.markFor(symbol)
+	crypto.streams.Add(symbol)
+	crypto.publishPositions()
+}
+
+func (crypto *Crypto) adoptShort(symbol string, qty float64) {
+	errnie.Debug(fmt.Sprintf("Adopting untracked short: %s, qty: %f", symbol, qty))
+	crypto.shortInventory[symbol] = qty
 	crypto.avgEntry[symbol] = crypto.markFor(symbol)
 	crypto.streams.Add(symbol)
 	crypto.publishPositions()

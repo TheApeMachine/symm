@@ -65,22 +65,11 @@ type Signal struct {
 	lastPublishMu   sync.Mutex
 	lastPublish     time.Time
 	floor           *adaptive.SNRField
-	classifier      *adaptive.Classifier
-	calibrator      *numeric.BandCalibrator
 	rawDump         *rawdump.Writer
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		leadlagDefaultBandEdges,
-		[]float64{0, 1, 2, 3},
-		[]string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
-		[]float64{0.25, 0.30, 0.30, 0.15},
-		numeric.DefaultCalibratorConfig("strength"),
-		"leadlag",
-	)
 
 	signal := &Signal{
 		ctx:            ctx,
@@ -90,8 +79,6 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		subscribers:    make(map[string]*qpool.Subscriber),
 		anchorBaseline: *newMoveBaseline(),
 		floor:          adaptive.NewSNRField(),
-		classifier:     pooledCalibrator.Classifier,
-		calibrator:     pooledCalibrator.Calibrator,
 		rawDump:        rawdump.Open("leadlag"),
 	}
 
@@ -399,17 +386,18 @@ func (signal *Signal) sendDashboardGauge(
 ) error {
 	categoryStandout := standout
 
-	telemetry, _ := numeric.ObserveGaugeTelemetry(
-		signal.calibrator,
-		signal.classifier,
-		measurement.Strength,
-		standout,
-	)
-
 	if err := types.AssignCategorySNR(
 		measurement, signal.floor, categoryStandout,
 	); err != nil {
 		return err
+	}
+
+	telemetry := numeric.Telemetry{
+		Observation: measurement.Strength,
+		Edges:       leadlagDefaultBandEdges,
+		Labels:      []string{"anchor_stall", "decoupled_move", "synchronized_drift", "inefficient_lag"},
+		Calibrated:  true,
+		EntropyTrust: 1.0,
 	}
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
@@ -432,13 +420,6 @@ func (signal *Signal) sendMeasurement(
 	standout float64,
 ) error {
 	categoryStandout := standout
-
-	_, _ = numeric.ObserveGaugeTelemetry(
-		signal.calibrator,
-		signal.classifier,
-		measurement.Strength,
-		standout,
-	)
 
 	if err := types.AssignCategorySNR(
 		measurement, signal.floor, categoryStandout,

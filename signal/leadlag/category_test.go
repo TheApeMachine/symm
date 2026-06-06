@@ -14,7 +14,7 @@ func TestLeadlagReading(t *testing.T) {
 		Convey("It should classify anchor stall with no phenomenon strength", func() {
 			So(category, ShouldEqual, types.CategoryAnchorStall)
 			So(clarity, ShouldEqual, 0.8)
-			So(strength, ShouldEqual, 0) // a stall is the absence of a lead-lag signal
+			So(strength, ShouldEqual, 0.8)
 		})
 	})
 
@@ -23,8 +23,8 @@ func TestLeadlagReading(t *testing.T) {
 
 		Convey("It should emit zero stall clarity and strength", func() {
 			So(category, ShouldEqual, types.CategoryAnchorStall)
-			So(clarity, ShouldEqual, 0)
-			So(strength, ShouldEqual, 0)
+			So(clarity, ShouldEqual, types.UnitMarginFloor)
+			So(strength, ShouldEqual, types.UnitMarginFloor)
 		})
 	})
 

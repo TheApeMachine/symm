@@ -19,7 +19,6 @@ func TestClassedUnitMargins(t *testing.T) {
 				return (values[0] - 1) * (1 + values[1])
 			}),
 			adaptive.NewEMA(0),
-			adaptive.NewSigmaClamp(3, 8, 0.0625),
 		)
 
 		Convey("It should keep clarity and standout on the unit interval after an extreme push", func() {

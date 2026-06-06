@@ -76,7 +76,6 @@ func (snr *SNR) Score(value float64) (float64, error) {
 	floorVar := snr.minStd * snr.minStd
 	historicalVar := 0.0
 	mean := 0.0
-	folded := value
 
 	if snr.moments.Observations() >= snr.minObs {
 		mean = snr.moments.Mean()
@@ -86,30 +85,12 @@ func (snr *SNR) Score(value float64) (float64, error) {
 		if historicalVar < 0 {
 			historicalVar = 0
 		}
-
-		histStd := math.Sqrt(historicalVar)
-
-		if histStd < snrEpsilon {
-			histStd = snrEpsilon
-		}
-
-		std := math.Sqrt(historicalVar + floorVar)
-
-		if zScore := (value - mean) / std; zScore > 0 {
-			folded = clampToBand(value, mean, snr.clampSigma*histStd)
-		}
 	}
 
 	std := math.Sqrt(historicalVar + floorVar)
-	excess := value - mean
+	result := (value - mean) / std
 
-	result := excess / std
-
-	if excess <= 0 {
-		result = value / (mean + snr.minStd)
-	}
-
-	if err := snr.moments.Update(folded, snr.alpha); err != nil {
+	if err := snr.moments.Update(value, snr.alpha); err != nil {
 		return 0, err
 	}
 
@@ -138,19 +119,6 @@ func (snr *SNR) Next(out float64, _ ...float64) (float64, error) {
 	}
 
 	return snr.Score(out)
-}
-
-// clampToBand limits value to [center-radius, center+radius].
-func clampToBand(value, center, radius float64) float64 {
-	if value > center+radius {
-		return center + radius
-	}
-
-	if value < center-radius {
-		return center - radius
-	}
-
-	return value
 }
 
 /*

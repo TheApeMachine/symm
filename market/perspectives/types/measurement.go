@@ -109,16 +109,18 @@ func NewMeasurement(
 }
 
 func (measurement *Measurement) Send(pool *qpool.Q) error {
-	if err := errnie.Error(errnie.Require(map[string]any{
+	// strength and snr are intentionally NOT required: a warm-up / neutral reading
+	// legitimately carries strength 0 (no fused signal yet) and snr 0 (no surprise
+	// yet) while still being a valid, always-emitted Measurement. Identity, the
+	// selected category, the selection confidence, and the price must be present.
+	if err := errnie.Require(map[string]any{
 		"symbol":     measurement.Symbol,
 		"source":     measurement.Source,
 		"category":   measurement.Category,
-		"strength":   measurement.Strength,
 		"confidence": measurement.Confidence,
-		"snr":        measurement.SNR,
 		"last":       measurement.Last,
-	})); err != nil {
-		return err
+	}); err != nil {
+		return errnie.Error(err, "%s measurement for %q", measurement.Source.String(), measurement.Symbol)
 	}
 
 	bus.Group(

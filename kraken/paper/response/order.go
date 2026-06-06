@@ -212,15 +212,22 @@ func (orders *Orders) CheckTriggers() {
 
 		level := trigger.level
 
+		positionSide := trading.Buy
+		if trigger.params.Side == trading.Buy {
+			positionSide = trading.Sell
+		}
+
 		if reasoning.IsTrailingExit(trigger.action) {
-			if quote.Last > trigger.peak {
+			if positionSide == trading.Buy && quote.Last > trigger.peak {
+				trigger.peak = quote.Last
+			} else if positionSide == trading.Sell && quote.Last < trigger.peak {
 				trigger.peak = quote.Last
 			}
 
-			level = reasoning.ProtectiveLevel(trigger.action, 0, trigger.peak, trigger.offset)
+			level = reasoning.ProtectiveLevelForSide(positionSide, trigger.action, 0, trigger.peak, trigger.offset)
 		}
 
-		if reasoning.ProtectiveBreached(trigger.action, level, quote.Last) {
+		if reasoning.ProtectiveBreachedForSide(positionSide, trigger.action, level, quote.Last) {
 			orders.closeAtTrigger(symbol, trigger, level, quote.Last)
 			breached = append(breached, symbol)
 		}

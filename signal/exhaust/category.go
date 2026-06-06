@@ -13,6 +13,11 @@ const (
 	reasonImbalanceFlip = "imbalance_flip"
 )
 
+// uniformExhaustConfidence is the 1/N floor across the four exhaustion categories
+// (mechanical collapse, fragile expansion, thermal exhaustion, active reversal): a
+// selection with no margin over the runner-up is a uniform guess, never 0.
+const uniformExhaustConfidence = 1.0 / 4.0
+
 /*
 exhaustReading picks the dominant exit mode and returns the confidence in that
 selection: the mode's purity (margin over the runner-up) scaled by its intensity
@@ -47,7 +52,7 @@ func exhaustReading(
 	margin := winner - runnerUp
 
 	if margin <= 0 {
-		return exhaustCategory(reason), 0
+		return exhaustCategory(reason), uniformExhaustConfidence
 	}
 
 	// Confidence is the dominant mode's PURITY (how cleanly it leads the runner-up)

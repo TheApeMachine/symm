@@ -52,7 +52,6 @@ func newSymbolState(classifier *adaptive.Classifier) *symbolState {
 			classifier,
 			numeric.NewProjectScalar(correlationFuse),
 			adaptive.NewEMA(0),
-			adaptive.NewSigmaClamp(3, 8, 0.0625),
 		),
 	}
 }

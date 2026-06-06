@@ -245,9 +245,18 @@ func (desk *Desk) triggersFor(
 		return &trading.Triggers{Reference: "last", PriceType: "pct", Price: -offset * 100}, nil
 	}
 
+	positionSide := action.Side
+	if reasoning.IsExitAction(action.Type) {
+		if action.Side == trading.Buy {
+			positionSide = trading.Sell
+		} else {
+			positionSide = trading.Buy
+		}
+	}
+
 	return &trading.Triggers{
 		Reference: "last",
-		Price:     reasoning.ProtectiveLevelForSide(action.Side, action.Type, action.Price, 0, offset),
+		Price:     reasoning.ProtectiveLevelForSide(positionSide, action.Type, action.Price, 0, offset),
 	}, nil
 }
 

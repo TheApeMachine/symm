@@ -127,9 +127,10 @@ func (signal *Signal) Tick() error {
 			}
 
 			for _, trade := range signalpool.GetTrades(sm) {
-				if err := signal.observe(trade); err != nil {
+				err := signal.observe(trade)
+
+				if err != nil && !isWarmup(err) {
 					errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
-					continue
 				}
 			}
 		}
@@ -145,6 +146,10 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	reading, err := state.fold(trade)
 
 	if err != nil {
+		if isWarmup(err) {
+			return err
+		}
+
 		return errnie.Error(err, "pumpdump: fold %s", trade.Symbol)
 	}
 

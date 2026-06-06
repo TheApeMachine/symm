@@ -9,6 +9,11 @@ import (
 
 const confoundFraction = 0.25
 
+// uniformCausalConfidence is the 1/N floor across the four causal categories
+// (endogenous alpha, liquidity shock, systemic beta, causal noise): a read with no
+// separating margin is no better than a uniform guess, and is never zero confidence.
+const uniformCausalConfidence = 1.0 / 4.0
+
 /*
 causalOutcome is the Pearl-ladder read plus the margins that separate categories.
 */
@@ -51,11 +56,15 @@ func causalEvidence(
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
 ) float64 {
+	evidence := associationEvidence(category, macroMomentum, changePct, buyPressure)
+
 	if onLadder {
-		return ladderEvidence(category, outcome)
+		evidence = ladderEvidence(category, outcome)
 	}
 
-	return associationEvidence(category, macroMomentum, changePct, buyPressure)
+	// A causal read with no separating margin is no better than a uniform guess among
+	// the categories; confidence floors at 1/N, never 0.
+	return math.Max(evidence, uniformCausalConfidence)
 }
 
 func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 {

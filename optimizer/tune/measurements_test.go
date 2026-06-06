@@ -100,6 +100,12 @@ func flatRows(symbols ...string) []ptypes.Measurement {
 
 func TestTuneMeasurements(t *testing.T) {
 	convey.Convey("Given a profitable measurement tape", t, func() {
+		viper.Reset()
+		defer viper.Reset()
+
+		viper.Set("market.quote_currency", "EUR")
+		viper.Set("trading.paper.wallet_eur", 200.0)
+
 		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
 		bestCount := 0
 		candidateCount := 0
@@ -220,6 +226,12 @@ func BenchmarkFundableRows(b *testing.B) {
 }
 
 func BenchmarkTuneMeasurements(b *testing.B) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.Set("market.quote_currency", "EUR")
+	viper.Set("trading.paper.wallet_eur", 200.0)
+
 	rows := profitableRows()
 
 	for b.Loop() {

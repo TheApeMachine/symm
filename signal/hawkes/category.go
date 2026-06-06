@@ -9,6 +9,11 @@ const (
 	hawkesFrenzyAsymmetry  = 0.15
 )
 
+// uniformHawkesConfidence is the 1/N floor across the four hawkes categories
+// (saturation, exhaustion, frenzy, organic): a degenerate read with no margin is a
+// uniform guess, never 0. This fallback path runs only when no classifier is wired.
+const uniformHawkesConfidence = 1.0 / 4.0
+
 /*
 hawkesReading classifies the fitted Hawkes state and returns shift evidence.
 */
@@ -25,7 +30,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		span := 1 - hawkesSaturationRadius
 
 		if margin <= 0 || span <= 0 {
-			return types.CategorySaturation, 0
+			return types.CategorySaturation, uniformHawkesConfidence
 		}
 
 		return types.CategorySaturation, margin / span
@@ -33,7 +38,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		margin := baseline - intensity
 
 		if margin <= 0 {
-			return types.CategoryExhaustion, 0
+			return types.CategoryExhaustion, uniformHawkesConfidence
 		}
 
 		return types.CategoryExhaustion, margin / baseline
@@ -42,7 +47,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		span := 1 - hawkesFrenzyAsymmetry
 
 		if margin <= 0 || span <= 0 {
-			return types.CategoryFrenzy, 0
+			return types.CategoryFrenzy, uniformHawkesConfidence
 		}
 
 		return types.CategoryFrenzy, margin / span
@@ -75,7 +80,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		}
 
 		if headroom < 0 {
-			return types.CategoryOrganic, 0
+			return types.CategoryOrganic, uniformHawkesConfidence
 		}
 
 		return types.CategoryOrganic, headroom

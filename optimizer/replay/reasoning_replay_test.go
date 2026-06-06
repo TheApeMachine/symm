@@ -5,10 +5,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
+
+func init() {
+	viper.Set("story.measurements.buffer", 1024)
+}
 
 // frictionless: zero fees + slippage, immediate execution, a €100 EUR wallet.
 func frictionlessCosts() ReplayCosts {

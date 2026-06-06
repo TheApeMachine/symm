@@ -68,17 +68,22 @@ func (state *pumpState) ratioScale(value float64, base *adaptive.EMA) (float64, 
 			return 0, err
 		}
 
-		return 0, errnie.Error(errBaselineUnobserved)
+		// Cold start: the first observation only seeds the baseline. This is a normal
+		// warm-up handled by isWarmup at the call site, not an error to log per tick.
+		return 0, errBaselineUnobserved
 	}
 
 	norm := base.Value()
 
 	if norm <= 0 {
+		// A zero baseline means nothing has ever moved this metric (a flat price
+		// leaves the precursor baseline at 0). There is no reference to scale against,
+		// so the contribution is genuinely 0 — a real reading, not a per-tick error.
 		if _, err := base.Next(0, magnitude); err != nil {
 			return 0, err
 		}
 
-		return 0, errnie.Error(errors.New("pumpdump: baseline is zero"))
+		return 0, nil
 	}
 
 	scaled := value / norm
