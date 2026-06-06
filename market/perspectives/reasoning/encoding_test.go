@@ -11,7 +11,7 @@ import (
 
 func TestParseThoughtsPlaybook(t *testing.T) {
 	Convey("Given the production playbook", t, func() {
-		raw, err := os.ReadFile("cfg/perspectives.yaml")
+		raw, err := os.ReadFile("../cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
 		thoughts, err := ParseThoughts(raw)
@@ -69,7 +69,7 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 
 func TestMarshalThoughtsRoundTrips(t *testing.T) {
 	Convey("Given the production playbook", t, func() {
-		raw, err := os.ReadFile("cfg/perspectives.yaml")
+		raw, err := os.ReadFile("../cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
 		original, err := ParseThoughts(raw)

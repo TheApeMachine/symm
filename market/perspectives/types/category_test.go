@@ -34,9 +34,9 @@ func TestNewCategories(t *testing.T) {
 			So(high, ShouldEqual, CategoryRobustLiquidity)
 		})
 
-		Convey("It should read high clarity deep inside a band", func() {
+		Convey("It should read high clarity deep inside a band, 1/N at a boundary", func() {
 			So(categories.Clarity(10), ShouldBeGreaterThan, 0.5)
-			So(categories.Clarity(25), ShouldBeLessThan, 0.1)
+			So(categories.Clarity(25), ShouldAlmostEqual, 1.0/3.0, 0.02) // boundary = uniform floor (3 categories)
 		})
 	})
 

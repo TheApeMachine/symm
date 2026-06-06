@@ -18,16 +18,16 @@ regime: bullish
 op: at_least
 unit: snr
 `)
-		predicate := Predicate{}
+		predicate := reasoning.Predicate{}
 
 		err := yaml.Unmarshal(raw, &predicate)
 
 		convey.Convey("It should decode the enum-named fields", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(predicate.Subject, convey.ShouldEqual, SubjectSignal)
+			convey.So(predicate.Subject, convey.ShouldEqual, reasoning.SubjectSignal)
 			convey.So(predicate.Category, convey.ShouldEqual, types.CategoryLaminar)
 			convey.So(predicate.Regime, convey.ShouldEqual, types.RegimeBullish)
-			convey.So(predicate.Op, convey.ShouldEqual, ComparisonAtLeast)
+			convey.So(predicate.Op, convey.ShouldEqual, reasoning.ComparisonAtLeast)
 			convey.So(predicate.Unit, convey.ShouldEqual, reasoning.UnitSNR)
 		})
 	})
