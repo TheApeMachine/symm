@@ -13,6 +13,11 @@ func exitScoreLong(history symbolHistory) (urgency float64, category types.Categ
 	fade := exitComponentScore(pressureFade(history.pressures, 1))
 	flip := imbalanceFlip(history.imbalances, 1)
 	collapse := exitComponentScore(depthTrend(history.densities))
+	thinning = types.AdjustSourceValue(types.SourceExhaustion, thinning)
+	widen = types.AdjustSourceValue(types.SourceExhaustion, widen)
+	fade = types.AdjustSourceValue(types.SourceExhaustion, fade)
+	flip = types.AdjustSourceValue(types.SourceExhaustion, flip)
+	collapse = types.AdjustSourceValue(types.SourceExhaustion, collapse)
 
 	urgency = 0.30*thinning +
 		0.20*widen +
@@ -38,6 +43,11 @@ func exitScoreShort(history symbolHistory) (urgency float64, category types.Cate
 	fade := exitComponentScore(pressureFade(history.pressures, -1))
 	flip := imbalanceFlip(history.imbalances, -1)
 	collapse := exitComponentScore(depthTrend(history.densities))
+	thinning = types.AdjustSourceValue(types.SourceExhaustion, thinning)
+	widen = types.AdjustSourceValue(types.SourceExhaustion, widen)
+	fade = types.AdjustSourceValue(types.SourceExhaustion, fade)
+	flip = types.AdjustSourceValue(types.SourceExhaustion, flip)
+	collapse = types.AdjustSourceValue(types.SourceExhaustion, collapse)
 
 	urgency = 0.30*thinning +
 		0.20*widen +

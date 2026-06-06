@@ -73,3 +73,37 @@ func TestDepthSymbolMeasureTradePressureFallback(t *testing.T) {
 		})
 	})
 }
+
+func TestDepthSymbolMeasureUsesForwardFeedbackOnTradePressure(t *testing.T) {
+	Convey("Given learned depthflow feedback before trade-pressure measurement", t, func() {
+		types.ResetSourceFeedback()
+		defer types.ResetSourceFeedback()
+
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+
+		baseline, baselineErr := NewDepthSymbol(symbol)
+		So(baselineErr, ShouldBeNil)
+		_, pushErr := baseline.PushTradePressure(0.8)
+		So(pushErr, ShouldBeNil)
+		baseline.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+		rawMeasurement, _, rawErr := baseline.Measure()
+		So(rawErr, ShouldBeNil)
+
+		_, feedbackErr := types.UpdateSourceFeedback(types.SourceDepthFlow, 0.1, 0.5, 1)
+		So(feedbackErr, ShouldBeNil)
+
+		adjusted, adjustedErr := NewDepthSymbol(symbol)
+		So(adjustedErr, ShouldBeNil)
+		_, pushErr = adjusted.PushTradePressure(0.8)
+		So(pushErr, ShouldBeNil)
+		adjusted.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+		adjustedMeasurement, _, adjustedMeasureErr := adjusted.Measure()
+		So(adjustedMeasureErr, ShouldBeNil)
+
+		Convey("It should tune the upstream flow before confidence is derived", func() {
+			So(rawMeasurement.Strength, ShouldBeGreaterThan, adjustedMeasurement.Strength)
+			So(rawMeasurement.Confidence, ShouldBeGreaterThan, adjustedMeasurement.Confidence)
+		})
+	})
+}

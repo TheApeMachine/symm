@@ -6,6 +6,9 @@ system:
 story:
   measurements:
     buffer: 1024
+  prediction:
+    horizon: 60s
+    alpha: 0.1
 
 market:
   quote_currency: EUR
@@ -153,5 +156,4 @@ signals:
 ui:
   addr: 127.0.0.1:8765
   heartbeat_interval: 1s
-
 

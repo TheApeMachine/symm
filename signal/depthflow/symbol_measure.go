@@ -36,6 +36,12 @@ func (state *DepthSymbol) Measure() (types.Measurement, float64, error) {
 	}
 
 	flatImbalance, flatOK := state.flatImbalanceLocked(bids, asks)
+	imbalance = types.AdjustSourceValue(types.SourceDepthFlow, imbalance)
+	level1 = types.AdjustSourceValue(types.SourceDepthFlow, level1)
+
+	if flatOK {
+		flatImbalance = types.AdjustSourceValue(types.SourceDepthFlow, flatImbalance)
+	}
 
 	if imbalance == 0 {
 		category, evidence := depthflowReading("", imbalance, flatImbalance, flatOK, 0)
@@ -139,6 +145,8 @@ func (state *DepthSymbol) measureTradePressureLocked() (types.Measurement, float
 	if flow <= 0 {
 		flow = math.Abs(state.pressure.Value())
 	}
+
+	flow = types.AdjustSourceValue(types.SourceDepthFlow, flow)
 
 	if flow <= 0 {
 		return types.Measurement{}, 0, nil

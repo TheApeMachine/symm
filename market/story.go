@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -24,7 +22,7 @@ import (
 )
 
 const (
-	storyMeasurementsSubscriberID = "market:story"
+	storyMeasurementsSubscriberID  = "market:story"
 	defaultStoryDecisionMinSamples = 1
 )
 
@@ -44,6 +42,7 @@ type Story struct {
 	thoughts                []reasoning.Thought
 	predictionCalibrator    *numeric.SignalCalibrator
 	predictionSurpriseField *types.CategorySurpriseField
+	forwardFeedback         *forwardFeedback
 	playbookLoaded          bool
 	reasonStates            map[string]*reasoning.ReasonState
 	positions               map[string]*reasoning.PositionState
@@ -58,7 +57,6 @@ type Story struct {
 	bookEnricher            func(types.Measurement) types.Measurement
 	quoteReady              func(string) bool
 	positionHeld            func(string) bool
-	pulseSeq                atomic.Int64
 
 	decisionTree    []reasoning.TreeNode
 	nodeReached     map[string]int
@@ -103,6 +101,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		positions:               make(map[string]*reasoning.PositionState),
 		regimeFeatures:          make(map[string]perspectives.RegimeFeatures),
 		predictionSurpriseField: predictionSurpriseField,
+		forwardFeedback:         newForwardFeedbackFromConfig(),
 		ringWindow:              ring.New(measurementBuffer),
 		lastGauge:               make(map[string]time.Time),
 		nodeReached:             make(map[string]int),
@@ -202,21 +201,19 @@ func (story *Story) ingestMeasurement(
 	measurement = story.stampQuoteNotional(measurement)
 
 	recorded := story.enrichMeasurementBook(measurement)
+	story.recordMeasurement(recorded)
 
-	if story.recorder != nil {
-		if recorded.At.IsZero() {
-			recorded.At = time.Now().UTC()
-		}
+	prediction, telemetry, predicted, err := story.observePredictionFeedback(measurement)
 
-		raw, err := sonic.Marshal(recorded)
+	if err != nil {
+		return errnie.Error(err)
+	}
 
-		if err != nil {
-			errnie.Error(fmt.Errorf("marshal measurement: %w", err))
-		}
-
-		if _, err = story.recorder.Write(append(raw, '\n')); err != nil {
-			errnie.Error(fmt.Errorf("write measurement record: %w", err))
-		}
+	if predicted {
+		prediction = story.stampQuoteNotional(prediction)
+		story.recordMeasurement(story.enrichMeasurementBook(prediction))
+		story.rememberMeasurement(prediction)
+		story.publishPredictionGauge(prediction, telemetry)
 	}
 
 	if len(story.thoughts) == 0 {
@@ -228,9 +225,7 @@ func (story *Story) ingestMeasurement(
 		story.publishDecisionTree()
 	}
 
-	story.ringWindow.Value = measurement
-	story.ringWindow = story.ringWindow.Next()
-	story.ringPtr++
+	story.rememberMeasurement(measurement)
 
 	snapshots := story.ringSnapshot(measurement.Symbol)
 

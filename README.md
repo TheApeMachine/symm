@@ -91,13 +91,15 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, Confiden
                               wallet + ui audit
 ```
 
-**Three properties of this design:**
+**Four properties of this design:**
 
 1. **Signals never call each other.** They subscribe to shared Kraken feeds and publish to the `measurements` broadcast. The only coupling is through categorized readings on the bus.
 
 2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
 
 3. **Signal trust is computed before the trader.** Signals publish finite unit-band `Confidence` from instantaneous category evidence weighted by the category's recent stability. `Measurement.SNR` is temporal category surprise, scored in the signal against that symbol's own category history. Perspective tree branches compare `Measurement.SNR` or `Measurement.Confidence` to explicit YAML thresholds (`value:`). Documents without `value` on category or metric gates fail at load time.
+
+4. **Forward truth sharpens signal inputs.** `market.Story` treats each signal confidence as a forward movement-intensity forecast over `story.prediction.horizon`. When the future price arrives, the realized normalized log-return updates a per-source actual/predicted scale. Signals apply that scale to their own feature values before category evidence and confidence are derived: undercalled sources sharpen; overcalled sources soften.
 
 ## Everything is a `System`
 
@@ -360,6 +362,8 @@ Entries require a complete top-of-book quote (bid and ask) before `PreflightGate
 `trader/economics/` records post-fee net returns per playbook on every entry and exit. Forward labels are appended when the `ExecutionForwardWindow` matures. Audit frames include `quote_age_ms`, `depth_coverage`, and `playbook_econ_mean` so the decision log contains the live quote quality at the moment of each fill.
 
 Headless replay eval records any still-open position at the final replay mark as an exit performance label. Wallet fitness already marks open inventory to market; the final label keeps tune eligibility and reported trade performance on the same replay-end economic surface without changing live execution.
+
+`market.Story` also records per-signal forward feedback labels independent of fills. The `prediction` gauge is the live calibrated movement forecast; after `story.prediction.horizon` matures, the error between predicted intensity and realized normalized movement updates the source scale consumed upstream by signal feature scoring.
 
 ## Sizing
 
