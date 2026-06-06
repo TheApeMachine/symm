@@ -19,10 +19,22 @@ LoadMeasurements reads the JSONL measurement tape written by market.Story.
 Malformed, truncated, or unparsable JSONL lines increment skipped.
 */
 func LoadMeasurements(path string) ([]types.Measurement, int, error) {
-	return loadAllMeasurements(path)
+	return loadMeasurements(path, 0)
 }
 
-func loadAllMeasurements(path string) ([]types.Measurement, int, error) {
+/*
+LoadMeasurementsLimit reads at most max valid measurement rows from path.
+Malformed rows before the limit are still counted as skipped.
+*/
+func LoadMeasurementsLimit(path string, max int) ([]types.Measurement, int, error) {
+	if max < 0 {
+		return nil, 0, fmt.Errorf("optimizer: measurement limit must be non-negative, got %d", max)
+	}
+
+	return loadMeasurements(path, max)
+}
+
+func loadMeasurements(path string, max int) ([]types.Measurement, int, error) {
 	file, err := os.Open(path)
 
 	if err != nil {
@@ -52,6 +64,10 @@ func loadAllMeasurements(path string) ([]types.Measurement, int, error) {
 		}
 
 		rows = append(rows, measurement)
+
+		if max > 0 && len(rows) >= max {
+			break
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

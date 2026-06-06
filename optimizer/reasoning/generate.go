@@ -8,8 +8,6 @@ out through reasoning.MarshalThoughts.
 package reasoning
 
 import (
-	"sort"
-
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -31,111 +29,6 @@ type Vocabulary struct {
 	Durations  []float64              // time-stop deadlines, in minutes
 	Entries    []reasoning.ActionType // entry actions to seed/try
 	Protective []reasoning.ActionType // protective exits a node may arm
-}
-
-// maxSeedCategories caps how many distinct signals seed their own strategy branch,
-// so a noisy tape with dozens of categories does not explode the initial beam.
-const maxSeedCategories = 6
-
-/*
-derivePositionFractions builds capital-deployment multipliers from the tape's SNR
-distribution so the search grid tracks how strong signals actually read on data.
-*/
-func derivePositionFractions(rows []types.Measurement) []float64 {
-	peakSNR := 0.0
-
-	for _, row := range rows {
-		if row.SNR > peakSNR {
-			peakSNR = row.SNR
-		}
-	}
-
-	fractions := []float64{0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
-
-	if peakSNR > 0 {
-		step := peakSNR / 4
-
-		if step < 0.25 {
-			step = 0.25
-		}
-
-		if step > 2.0 {
-			step = 2.0
-		}
-
-		fractions = append(fractions, step, step*2, step*3, step*4)
-	}
-
-	sort.Float64s(fractions)
-	unique := fractions[:0]
-
-	for _, fraction := range fractions {
-		if fraction <= 0 {
-			continue
-		}
-
-		if len(unique) > 0 && unique[len(unique)-1] == fraction {
-			continue
-		}
-
-		unique = append(unique, fraction)
-	}
-
-	return unique
-}
-
-/*
-DeriveVocabulary reads the categories that actually occur on the tape (by
-frequency) and pairs them with sensible numeric grids. The search refines within
-these; the replay score is the judge of what survives.
-*/
-func DeriveVocabulary(rows []types.Measurement) Vocabulary {
-	counts := make(map[types.CategoryType]int)
-
-	for _, row := range rows {
-		if row.Category == types.CategoryTypeNone {
-			continue
-		}
-
-		counts[row.Category]++
-	}
-
-	categories := make([]types.CategoryType, 0, len(counts))
-
-	for category := range counts {
-		categories = append(categories, category)
-	}
-
-	sort.Slice(categories, func(i, j int) bool {
-		if counts[categories[i]] != counts[categories[j]] {
-			return counts[categories[i]] > counts[categories[j]]
-		}
-
-		return categories[i] < categories[j] // stable, deterministic tie-break
-	})
-
-	if len(categories) > maxSeedCategories {
-		categories = categories[:maxSeedCategories]
-	}
-
-	fractions := derivePositionFractions(rows)
-
-	return Vocabulary{
-		Categories: categories,
-		Regimes: []types.Regime{
-			types.RegimeTrending, types.RegimeBullish, types.RegimeChoppy,
-		},
-		Thresholds: []float64{1.0, 1.5, 2.0},
-		Lookbacks:  []int{3, 5, 8},
-		PriceMoves: []float64{0.5, 1.0, 2.0},
-		Offsets:    []float64{0.01, 0.02, 0.05},
-		Fractions:  fractions,
-		Durations:  []float64{5, 15, 30},
-		Entries:    []reasoning.ActionType{reasoning.ActionMarket, reasoning.ActionLimit},
-		Protective: []reasoning.ActionType{
-			reasoning.ActionTrailingStop, reasoning.ActionStopLoss, reasoning.ActionTakeProfit,
-		},
-	}
 }
 
 // ---- leaf and node constructors -------------------------------------------------

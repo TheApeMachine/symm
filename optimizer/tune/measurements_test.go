@@ -9,6 +9,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
 	ptypes "github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/io"
@@ -98,14 +99,18 @@ func flatRows(symbols ...string) []ptypes.Measurement {
 	return rows
 }
 
+func loadTuneTestConfig(t *testing.T) {
+	t.Helper()
+
+	viper.Reset()
+	testconfig.Load(t)
+	viper.Set("trading.replay.execution_stress_enabled", false)
+}
+
 func TestTuneMeasurements(t *testing.T) {
 	convey.Convey("Given a profitable measurement tape", t, func() {
-		viper.Reset()
+		loadTuneTestConfig(t)
 		defer viper.Reset()
-
-		viper.Set("story.measurements.buffer", 1024)
-		viper.Set("market.quote_currency", "EUR")
-		viper.Set("trading.paper.wallet_eur", 200.0)
 
 		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
 		bestCount := 0
@@ -149,12 +154,8 @@ func TestTuneMeasurements(t *testing.T) {
 
 func TestTuneMeasurementsFiltersFundableRows(t *testing.T) {
 	convey.Convey("Given a capture with EUR and non-EUR symbols", t, func() {
-		viper.Reset()
+		loadTuneTestConfig(t)
 		defer viper.Reset()
-
-		viper.Set("story.measurements.buffer", 1024)
-		viper.Set("market.quote_currency", "EUR")
-		viper.Set("trading.paper.wallet_eur", 200.0)
 
 		fundable := profitableRowsFor("BTC/EUR", 3)
 		unfundable := profitableRowsFor("ETH/BTC", 3)
@@ -185,14 +186,56 @@ func TestTuneMeasurementsFiltersFundableRows(t *testing.T) {
 	})
 }
 
-func TestTuneMeasurementsDoesNotWriteSparseCandidate(t *testing.T) {
-	convey.Convey("Given a sparse winner on a larger EUR universe", t, func() {
-		viper.Reset()
+func TestTuneMeasurementsMaxMeasurements(t *testing.T) {
+	convey.Convey("Given a capture longer than the requested tune limit", t, func() {
+		loadTuneTestConfig(t)
 		defer viper.Reset()
 
-		viper.Set("story.measurements.buffer", 1024)
-		viper.Set("market.quote_currency", "EUR")
-		viper.Set("trading.paper.wallet_eur", 200.0)
+		first := profitableRowsFor("BTC/EUR", 2)
+		rows := append(append([]ptypes.Measurement{}, first...), profitableRowsFor("ETH/EUR", 2)...)
+		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
+
+		summary, err := TuneMeasurements(
+			context.Background(),
+			rows,
+			types.TuneOptions{
+				OutputPath:      outputPath,
+				MaxMeasurements: len(first),
+				Workers:         2,
+				BeamWidth:       6,
+				MaxRounds:       6,
+			},
+		)
+
+		convey.Convey("It should search only the capped prefix", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(summary.MeasurementCount, convey.ShouldEqual, len(first))
+			convey.So(summary.FundableMeasurements, convey.ShouldEqual, len(first))
+			convey.So(summary.Trades, convey.ShouldBeGreaterThan, 0)
+
+			_, readErr := os.ReadFile(outputPath)
+			convey.So(readErr, convey.ShouldBeNil)
+		})
+	})
+
+	convey.Convey("Given a negative tune limit", t, func() {
+		summary, err := TuneMeasurements(
+			context.Background(),
+			profitableRows(),
+			types.TuneOptions{MaxMeasurements: -1},
+		)
+
+		convey.Convey("It should return an error", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(summary.MeasurementCount, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestTuneMeasurementsWritesDiscountedSparseCandidate(t *testing.T) {
+	convey.Convey("Given a sparse winner on a larger EUR universe", t, func() {
+		loadTuneTestConfig(t)
+		defer viper.Reset()
 
 		rows := profitableRowsFor("BTC/EUR", 2)
 		rows = append(rows, flatRows("ETH/EUR", "SOL/EUR")...)
@@ -209,13 +252,15 @@ func TestTuneMeasurementsDoesNotWriteSparseCandidate(t *testing.T) {
 			},
 		)
 
-		convey.Convey("It should preserve the existing playbook instead of writing", func() {
+		convey.Convey("It should write when the discounted sparse score remains positive", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(summary.MinRoundTrips, convey.ShouldEqual, 3)
 			convey.So(summary.Trades, convey.ShouldBeLessThan, summary.MinRoundTrips)
+			convey.So(summary.BestScore, convey.ShouldBeGreaterThan, 0)
 
-			_, statErr := os.Stat(outputPath)
-			convey.So(os.IsNotExist(statErr), convey.ShouldBeTrue)
+			raw, readErr := os.ReadFile(outputPath)
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(string(raw), convey.ShouldContainSubstring, "when:")
 		})
 	})
 }
@@ -230,11 +275,8 @@ func BenchmarkFundableRows(b *testing.B) {
 
 func BenchmarkTuneMeasurements(b *testing.B) {
 	viper.Reset()
-	defer viper.Reset()
-
-	viper.Set("story.measurements.buffer", 1024)
-	viper.Set("market.quote_currency", "EUR")
-	viper.Set("trading.paper.wallet_eur", 200.0)
+	testconfig.MustLoad()
+	viper.Set("trading.replay.execution_stress_enabled", false)
 
 	rows := profitableRows()
 

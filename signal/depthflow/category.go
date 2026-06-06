@@ -37,7 +37,7 @@ func depthflowReading(
 			return category, types.UnitMarginFloor
 		}
 
-		return category, margin / math.Max(boundary, 1e-12)
+		return category, types.UnitCompetitionMargin(margin, boundary)
 	case types.CategoryBookThinning:
 		if !flatOK {
 			return category, types.UnitMarginFloor
@@ -49,7 +49,7 @@ func depthflowReading(
 			return category, types.UnitMarginFloor
 		}
 
-		return category, margin / math.Max(math.Abs(flatImbalance), 1e-12)
+		return category, types.UnitCompetitionMargin(margin, math.Abs(flatImbalance))
 	case types.CategorySpoofTrap:
 		return category, types.UnitMagnitudeMargin(math.Abs(weightedImbalance))
 	default:
@@ -63,10 +63,7 @@ func depthflowReading(
 			return category, types.UnitMarginFloor
 		}
 
-		return category, types.UnitCompetitionMargin(
-			margin,
-			math.Max(math.Abs(weightedImbalance), 1e-12),
-		)
+		return category, types.UnitCompetitionMargin(margin, 1)
 	}
 }
 

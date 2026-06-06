@@ -8,6 +8,15 @@ import (
 )
 
 func TestDepthflowReading(t *testing.T) {
+	Convey("Given a perfectly balanced book", t, func() {
+		category, evidence := depthflowReading("", 0, 0, true, 0)
+
+		Convey("It should not turn a zero denominator into full confidence", func() {
+			So(category, ShouldEqual, types.CategoryDenseNeutrality)
+			So(evidence, ShouldAlmostEqual, 0.5, 1e-12)
+		})
+	})
+
 	Convey("Given pathological imbalance inputs", t, func() {
 		category, evidence := depthflowReading(
 			reasonDepthSkeptic,

@@ -62,6 +62,26 @@ func TestMeasurementRequire(t *testing.T) {
 			So(measurement.Send(pool), ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given a complete row with saturated finite confidence", t, func() {
+		measurement := Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     SourceFluid,
+			Category:   CategoryLaminar,
+			Strength:   0.8,
+			Confidence: 1,
+			SNR:        1.5,
+			Last:       50_000,
+		}
+
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		Convey("It should satisfy the ingest contract", func() {
+			So(measurement.Send(pool), ShouldBeNil)
+		})
+	})
 }
 
 func TestMeasurementSend(t *testing.T) {

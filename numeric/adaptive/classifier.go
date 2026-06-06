@@ -73,38 +73,20 @@ func (classifier *Classifier) Code(observation float64) (float64, error) {
 }
 
 /*
-Confidence returns selection confidence in [1/N, 1): 1/N — a uniform guess among the
-classifier's N categories — right on a band boundary, rising toward (but never
-reaching) full certainty deep inside a band. The floor is derived from the category
-count, not a hard-coded constant: a selection cannot be less certain than a coin
-flip among its options.
+Confidence returns selection confidence in [1/N, 1): 1/N — a uniform guess among
+the classifier's N categories — right on a band boundary. Confidence rises with
+log band depth, so finite tail observations add evidence without becoming
+practical certainty. The floor is derived from the category count, not a
+hard-coded constant.
 */
 func (classifier *Classifier) Confidence(observation float64) float64 {
 	if classifier == nil || len(classifier.upper) == 0 {
 		return 0
 	}
 
-	floor := classifier.uniformConfidence()
 	classIndex := classifier.classIndex(observation)
-	inBandMargin := classifier.margin(observation, classIndex)
-	halfWidth := classifier.localHalfWidth(classIndex)
 
-	if halfWidth <= snrEpsilon {
-		return floor
-	}
-
-	// Continuous, monotonic band depth in [0, 1): 0 right on the band boundary, ~0.86
-	// a half-width inside (a closed band's centre), saturating toward (but never
-	// reaching) 1 deeper into an open-ended band.
-	depth := 0.0
-
-	if inBandMargin > 0 {
-		depth = 1 - math.Exp(-2*inBandMargin/halfWidth)
-	}
-
-	// Map band depth [0, 1) onto [1/N, 1): a boundary reading is no more certain than
-	// a uniform guess among the N categories; deeper inside, certainty approaches 1.
-	return floor + depth*(1-floor)
+	return classifier.confidenceForClass(observation, classIndex)
 }
 
 // uniformConfidence is 1/N, the confidence of a uniform guess among the
@@ -158,9 +140,23 @@ func (classifier *Classifier) confidenceForClass(observation float64, classIndex
 		return floor
 	}
 
-	depth := 1 - math.Exp(-2*inBandMargin/halfWidth)
+	depth := classifier.bandDepth(inBandMargin / halfWidth)
 
 	return floor + depth*(1-floor)
+}
+
+func (classifier *Classifier) bandDepth(ratio float64) float64 {
+	if ratio <= 0 {
+		return 0
+	}
+
+	depth := math.Log1p(ratio)
+
+	if depth <= 0 {
+		return 0
+	}
+
+	return depth / (depth + 1)
 }
 
 /*

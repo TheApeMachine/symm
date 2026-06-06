@@ -40,6 +40,23 @@ func TestTrackerApplyOrderToxicCancel(t *testing.T) {
 	})
 }
 
+func TestTrackerApplyOrderCompleteWallCancel(t *testing.T) {
+	Convey("Given a near-touch wall fully removed from the L3 book", t, func() {
+		tracker := newTestTracker(t)
+		now := time.Now()
+		symbol := "TEST/TOXIC"
+		price := 100.0
+
+		tracker.ObserveMid(symbol, market.Pair{}, price)
+		tracker.ApplyOrder(symbol, market.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, market.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
+
+		Convey("It should classify the removed wall against pre-removal depth", func() {
+			So(tracker.IsToxic(symbol, price, now), ShouldBeTrue)
+		})
+	})
+}
+
 func TestTrackerFillToCancelThreshold(t *testing.T) {
 	Convey("Given a tracker without cached ratio", t, func() {
 		tracker := newTestTracker(t)

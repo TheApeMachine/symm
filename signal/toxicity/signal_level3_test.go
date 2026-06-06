@@ -40,8 +40,6 @@ func TestToxicityHandleLevel3(t *testing.T) {
 		}})
 
 		tox.tracker.ObserveMid("BTC/EUR", market.Pair{}, 100)
-		state := tox.tracker.stateLocked("BTC/EUR", market.Pair{})
-		state.bidTotal = 100
 
 		err := tox.handleLevel3(<-tox.subscribers["level3"].Incoming)
 

@@ -13,7 +13,7 @@ func TestLeadlagReading(t *testing.T) {
 
 		Convey("It should classify anchor stall with no phenomenon strength", func() {
 			So(category, ShouldEqual, types.CategoryAnchorStall)
-			So(clarity, ShouldEqual, 0.8)
+			So(clarity, ShouldAlmostEqual, 0.4444444444, 0.0001)
 			So(strength, ShouldEqual, 0.8)
 		})
 	})

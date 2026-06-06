@@ -99,11 +99,11 @@ func TestPreflightGates(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "stale last price for exit")
 		})
 
-		Convey("It should tighten entry slippage under hostile stress", func() {
+		Convey("It should not double-penalize hostile stress after quantity scaling", func() {
 			wideBook := quote
 			wideBook.Book.Asks = []market.BookLevel{
 				{Price: 100, Qty: 0.001},
-				{Price: 101, Qty: 0.02},
+				{Price: 100.20, Qty: 0.02},
 			}
 			request := PreflightRequest{
 				Quote:      wideBook,
@@ -113,11 +113,11 @@ func TestPreflightGates(t *testing.T) {
 				ActionType: reasoning.ActionMarket,
 				Stress: SymbolStress{
 					ToxicityCategory: types.CategoryToxicBluff,
-					ToxicitySNR:      1,
+					ToxicitySNR:      16,
 				},
 			}
 
-			So(PreflightGates(request), ShouldNotBeNil)
+			So(PreflightGates(request), ShouldBeNil)
 		})
 
 		Convey("It should reject market orders when book depth cannot cover size", func() {

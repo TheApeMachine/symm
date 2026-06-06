@@ -10,23 +10,25 @@ import (
 
 func TestCausalEvidence(t *testing.T) {
 	Convey("Given causal category evidence", t, func() {
-		Convey("It should read high for clear systemic beta association", func() {
+		Convey("It should read finite evidence for clear systemic beta association", func() {
 			evidence := associationEvidence(
 				types.CategorySystemicBeta,
 				2.0, 1.5, 0.5,
 			)
 
-			So(evidence, ShouldAlmostEqual, 1.0, 0.01)
+			So(evidence, ShouldBeGreaterThan, uniformCausalConfidence)
+			So(evidence, ShouldBeLessThan, 1)
 		})
 
 		Convey("It should read zero on the flow-pressure boundary for beta", func() {
 			So(betaEvidence(2.0, 0, 0.8), ShouldEqual, 0)
 		})
 
-		Convey("It should read high for clear flow-pressure noise", func() {
+		Convey("It should read finite evidence for clear flow-pressure noise", func() {
 			evidence := noiseEvidence(0.2, 0, 0.9)
 
-			So(evidence, ShouldBeGreaterThan, 0.8)
+			So(evidence, ShouldBeGreaterThan, uniformCausalConfidence)
+			So(evidence, ShouldBeLessThan, 1)
 		})
 
 		Convey("It should read low for endogenous alpha near contagion break", func() {
@@ -80,7 +82,8 @@ func TestCausalCategoryMapping(t *testing.T) {
 			)
 
 			So(ladder, ShouldBeGreaterThan, 0)
-			So(association, ShouldAlmostEqual, 1.0, 0.01)
+			So(association, ShouldBeGreaterThan, uniformCausalConfidence)
+			So(association, ShouldBeLessThan, 1)
 		})
 	})
 }

@@ -146,6 +146,71 @@ func TestInstrumentRulesCachePrepareOrder(t *testing.T) {
 	})
 }
 
+func TestInstrumentRulesCachePrepareEntryOrder(t *testing.T) {
+	Convey("Given an entry below Kraken quantity minimum", t, func() {
+		cache := NewInstrumentRulesCache(t.Context())
+		cache.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "FXS/EUR",
+			QtyIncrement: 0.00000001,
+			QtyMin:       12,
+			CostMin:      10,
+		})
+
+		alignedQty, _, err := cache.PrepareEntryOrder(
+			"FXS/EUR",
+			11.42752815,
+			4.36,
+			trading.Market,
+		)
+
+		Convey("It should raise the entry to the exact aligned minimum", func() {
+			So(err, ShouldBeNil)
+			So(alignedQty, ShouldEqual, 12)
+			So(isAligned(alignedQty, 0.00000001), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given an entry below Kraken cost minimum", t, func() {
+		cache := NewInstrumentRulesCache(t.Context())
+		cache.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "LOW/EUR",
+			QtyIncrement: 0.01,
+			QtyMin:       1,
+			CostMin:      25,
+		})
+
+		alignedQty, _, err := cache.PrepareEntryOrder(
+			"LOW/EUR",
+			1,
+			7,
+			trading.Market,
+		)
+
+		Convey("It should raise quantity enough to satisfy the minimum notional", func() {
+			So(err, ShouldBeNil)
+			So(alignedQty, ShouldEqual, 3.58)
+			So(alignedQty*7, ShouldBeGreaterThanOrEqualTo, 25)
+		})
+	})
+
+	Convey("Given an exit below Kraken quantity minimum", t, func() {
+		cache := NewInstrumentRulesCache(t.Context())
+		cache.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "FXS/EUR",
+			QtyIncrement: 0.00000001,
+			QtyMin:       12,
+			CostMin:      10,
+		})
+
+		_, _, err := cache.PrepareOrder("FXS/EUR", 11.42752815, 4.36, trading.Market)
+
+		Convey("It should still reject instead of increasing the exit quantity", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "below minimum")
+		})
+	})
+}
+
 func TestInstrumentRulesCacheIsAligned(t *testing.T) {
 	Convey("Given increment lattice values", t, func() {
 		increment := 0.00000001
@@ -153,6 +218,10 @@ func TestInstrumentRulesCacheIsAligned(t *testing.T) {
 		Convey("It treats float-stored lattice values as aligned", func() {
 			So(isAligned(0.52868094, increment), ShouldBeTrue)
 			So(isAligned(20.90759887, increment), ShouldBeTrue)
+			So(isAligned(1475.45376104, increment), ShouldBeTrue)
+			So(isAligned(15781.75225426, increment), ShouldBeTrue)
+			So(isAligned(625.72568536, increment), ShouldBeTrue)
+			So(isAligned(6202.77824918, increment), ShouldBeTrue)
 		})
 
 		Convey("It rejects off-lattice sizing products", func() {

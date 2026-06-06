@@ -37,8 +37,9 @@ func (tracker *Tracker) ApplyBookLevel(
 	case qty <= 0:
 		// Level cleared: the whole resting quantity was removed.
 		if prevQty > 0 {
-			state.addDepth(side, -prevQty)
+			tracker.observeLevelChurnLocked(state, side, price, 0, prevQty, now)
 			tracker.classifyRemovalLocked(state, side, price, prevQty, firstSeen, now)
+			state.addDepth(side, -prevQty)
 		}
 
 		delete(state.levels, key)
@@ -58,9 +59,9 @@ func (tracker *Tracker) ApplyBookLevel(
 
 	case qty < prevQty:
 		// Level shrank: classify the removed delta.
-		state.addDepth(side, qty-prevQty)
 		tracker.observeLevelChurnLocked(state, side, price, 0, prevQty-qty, now)
 		tracker.classifyRemovalLocked(state, side, price, prevQty-qty, firstSeen, now)
+		state.addDepth(side, qty-prevQty)
 		level.qty = qty
 	}
 }

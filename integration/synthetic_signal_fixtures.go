@@ -475,12 +475,18 @@ func (builder *CaptureBuilder) appendPumpdumpOrganicTrend() {
 	builder.AppendInstrumentCatalog()
 	builder.AppendTicker(testSymbolPrimary, 10, 9.9, 10.1, 0.5)
 
-	for index := range 1 {
+	for index := range 24 {
+		side := "buy"
+
+		if index%2 == 1 {
+			side = "sell"
+		}
+
 		builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
 			Symbol:    testSymbolPrimary,
-			Side:      "buy",
-			Price:     10 + float64(index)*0.005,
-			Qty:       0.01,
+			Side:      side,
+			Price:     10,
+			Qty:       0.2,
 			Timestamp: builder.timestamp(),
 		}})
 	}
@@ -488,13 +494,14 @@ func (builder *CaptureBuilder) appendPumpdumpOrganicTrend() {
 
 func (builder *CaptureBuilder) appendPumpdumpFadedExhaustion() {
 	builder.appendPumpdumpVerticalIgnition()
+	builder.Advance(70 * time.Second)
 
-	for index := range 16 {
+	for index := range 24 {
 		builder.appendFrame(public.TradesChannel, "update", []market.TradeUpdate{{
 			Symbol:    testSymbolPrimary,
 			Side:      "sell",
-			Price:     11 - float64(index)*0.05,
-			Qty:       1.2,
+			Price:     10 - float64(index)*0.001,
+			Qty:       0.05,
 			Timestamp: builder.timestamp(),
 		}})
 	}
@@ -712,6 +719,7 @@ func (builder *CaptureBuilder) appendToxicityToxicBluff() {
 	builder.AppendInstrumentCatalog()
 	builder.AppendTicker(testSymbolPrimary, 100, 99.5, 100.5, 0)
 	builder.AppendLevel3NearTouchChurn(testSymbolPrimary, 99.5)
+	builder.AppendTicker(testSymbolPrimary, 100, 99.5, 100.5, 0)
 }
 
 func (builder *CaptureBuilder) appendToxicityLiquidityVacuum() {

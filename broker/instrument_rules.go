@@ -176,6 +176,72 @@ func (cache *InstrumentRulesCache) PrepareOrder(
 }
 
 /*
+PrepareEntryOrder aligns an entry and raises it to the exchange minimum quantity
+or minimum cost when the requested exposure is smaller than Kraken will accept.
+*/
+func (cache *InstrumentRulesCache) PrepareEntryOrder(
+	symbol string,
+	quantity float64,
+	price float64,
+	orderType trading.OrderType,
+) (float64, float64, error) {
+	alignedQty, alignedPrice := cache.AlignOrder(symbol, quantity, price, orderType)
+	minimumQty, ok := cache.MinimumOrderQuantity(symbol, alignedPrice)
+
+	if ok && minimumQty > alignedQty {
+		alignedQty = minimumQty
+	}
+
+	if alignedQty <= 0 {
+		return alignedQty, alignedPrice, fmt.Errorf(
+			"preflight: quantity rounds to zero below increment for %s",
+			symbol,
+		)
+	}
+
+	if err := cache.ValidateOrder(symbol, alignedQty, alignedPrice, orderType); err != nil {
+		return alignedQty, alignedPrice, err
+	}
+
+	return alignedQty, alignedPrice, nil
+}
+
+/*
+MinimumOrderQuantity returns the smallest aligned quantity Kraken will accept for
+symbol at price, considering both quantity and cost minimums when they are known.
+*/
+func (cache *InstrumentRulesCache) MinimumOrderQuantity(
+	symbol string,
+	price float64,
+) (float64, bool) {
+	pair, ok := cache.pair(symbol)
+
+	if !ok {
+		return 0, false
+	}
+
+	minimumQty := pair.QtyMin
+
+	if pair.CostMin > 0 && price > 0 {
+		costQty := pair.CostMin / price
+
+		if costQty > minimumQty {
+			minimumQty = costQty
+		}
+	}
+
+	if minimumQty <= 0 {
+		return 0, true
+	}
+
+	if pair.QtyIncrement > 0 {
+		minimumQty = roundUpToIncrement(minimumQty, pair.QtyIncrement)
+	}
+
+	return minimumQty, true
+}
+
+/*
 ValidateOrder rejects quantities and prices that violate Kraken instrument rules.
 */
 func (cache *InstrumentRulesCache) ValidateOrder(
@@ -276,14 +342,15 @@ func isAligned(value, increment float64) bool {
 
 	steps := orderStepsDown(value, increment)
 	aligned := quantityFromSteps(steps, increment)
+	tolerance := alignmentTolerance(value, increment)
 
-	if math.Abs(value-aligned) <= increment*1e-6 {
+	if math.Abs(value-aligned) <= tolerance {
 		return true
 	}
 
 	next := quantityFromSteps(steps+1, increment)
 
-	return math.Abs(value-next) <= increment*1e-6
+	return math.Abs(value-next) <= tolerance
 }
 
 func roundDownToIncrement(value, increment float64) float64 {
@@ -294,10 +361,33 @@ func roundDownToIncrement(value, increment float64) float64 {
 	return quantityFromSteps(orderStepsDown(value, increment), increment)
 }
 
+func roundUpToIncrement(value, increment float64) float64 {
+	if increment <= 0 {
+		return value
+	}
+
+	return quantityFromSteps(orderStepsUp(value, increment), increment)
+}
+
 func orderStepsDown(value, increment float64) float64 {
 	return math.Floor(value/increment + 1e-12)
 }
 
+func orderStepsUp(value, increment float64) float64 {
+	return math.Ceil(value/increment - 1e-12)
+}
+
 func quantityFromSteps(steps, increment float64) float64 {
 	return steps * increment
+}
+
+func alignmentTolerance(value, increment float64) float64 {
+	tolerance := increment * 1e-6
+	ulp := math.Nextafter(math.Abs(value), math.Inf(1)) - math.Abs(value)
+
+	if floatingTolerance := ulp * 8; floatingTolerance > tolerance {
+		return floatingTolerance
+	}
+
+	return tolerance
 }

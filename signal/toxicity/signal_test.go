@@ -43,8 +43,8 @@ func TestPublishMeasurement(t *testing.T) {
 
 		tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
-		state := tox.tracker.stateLocked(symbol, market.Pair{})
-		state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
+		tox.tracker.ApplyOrder(symbol, market.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
+		tox.tracker.ApplyOrder(symbol, market.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
 
 		Convey("When a toxic near-touch level is measured", func() {
 			tox.publishMeasurement(symbol)
@@ -105,8 +105,8 @@ func BenchmarkPublishMeasurement(b *testing.B) {
 	now := time.Now()
 	tox.tracker.ObserveMid(symbol, market.Pair{}, 100)
 	tox.tracker.ObserveLast(symbol, market.Pair{}, 100)
-	state := tox.tracker.stateLocked(symbol, market.Pair{})
-	state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
+	tox.tracker.ApplyOrder(symbol, market.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
+	tox.tracker.ApplyOrder(symbol, market.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
 
 	b.ReportAllocs()
 

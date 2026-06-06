@@ -249,7 +249,7 @@ func BenchmarkPrecompileTapeCapture(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		tape := mustPrecompileTape(t, rows)
+		tape := mustPrecompileTape(b, rows)
 
 		if tape.Len() != len(rows) {
 			b.Fatalf("expected %d ticks, got %d", len(rows), tape.Len())

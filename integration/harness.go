@@ -46,7 +46,6 @@ type Harness struct {
 	pool       *qpool.Q
 	engine     *cmd.Engine
 	replay     *paper.WebSocket
-	relay      *RawRelay
 	capture    io.Reader
 	tape       *Tape
 	streams    *focus.Set
@@ -72,14 +71,6 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	toxicity.ResetDefault()
 
 	replaySocket := paper.NewWebSocket(systemCtx, pool)
-	relay := NewRawRelay(systemCtx, pool)
-
-	if relay == nil {
-		cancel()
-		pool.Close()
-
-		return nil, fmt.Errorf("integration harness: raw relay")
-	}
 
 	streams := focus.NewSet()
 	crypto := trader.NewCrypto(systemCtx, pool, streams)
@@ -87,7 +78,6 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	story.SetPositionHeld(crypto.SymbolHeld)
 
 	if err := engine.AddSystems(
-		relay,
 		replaySocket,
 		krakenmarket.NewInstrument(systemCtx, pool),
 		causal.NewSignal(systemCtx, pool),
@@ -120,7 +110,6 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		pool:       pool,
 		engine:     engine,
 		replay:     replaySocket,
-		relay:      relay,
 		capture:    capture,
 		tape:       tape,
 		streams:    streams,
@@ -161,6 +150,8 @@ func (harness *Harness) RunScenario(scenario Scenario) ScenarioReport {
 	for _, symbol := range scenario.HoldingSymbols {
 		harness.streams.Add(symbol)
 	}
+
+	harness.publishHeldPositions(scenario.HoldingSymbols)
 
 	replayDone := make(chan error, 1)
 
@@ -328,6 +319,7 @@ type captureFrame struct {
 
 func (harness *Harness) playCapture() error {
 	reader := bufio.NewReader(harness.capture)
+	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
 
 	for {
 		line, readErr := reader.ReadBytes('\n')
@@ -340,13 +332,19 @@ func (harness *Harness) playCapture() error {
 			}
 
 			group := bus.Group(harness.pool, frame.Channel, 10*time.Millisecond)
+			envelope := map[string]any{
+				"channel": frame.Channel,
+				"type":    frame.Type,
+				"data":    frame.Data,
+			}
+
 			group.Send(&qpool.QValue[any]{
-				Type: frame.Channel,
-				Value: map[string]any{
-					"channel": frame.Channel,
-					"type":    frame.Type,
-					"data":    frame.Data,
-				},
+				Type:  frame.Channel,
+				Value: envelope,
+			})
+			raw.Send(&qpool.QValue[any]{
+				Type:  frame.Channel,
+				Value: envelope,
 			})
 			harness.sleep(2 * time.Millisecond)
 		}
@@ -418,6 +416,31 @@ func (harness *Harness) publishDirectMeasurements(rows []types.Measurement) {
 	}
 }
 
+func (harness *Harness) publishHeldPositions(symbols []string) {
+	if len(symbols) == 0 {
+		return
+	}
+
+	holdings := make([]map[string]any, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		holdings = append(holdings, map[string]any{
+			"symbol": symbol,
+			"qty":    1.0,
+		})
+	}
+
+	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
+	raw.Send(&qpool.QValue[any]{
+		Type: "holdings",
+		Value: map[string]any{
+			"channel":  "holdings",
+			"holdings": holdings,
+		},
+	})
+	harness.sleep(50 * time.Millisecond)
+}
+
 func (harness *Harness) sleep(duration time.Duration) {
 	if duration <= 0 {
 		return
@@ -451,8 +474,10 @@ func ConfigureViper(auditPath string) {
 	})
 	viper.Set("market.anchor_symbol", testSymbolLeader)
 	viper.Set("market.default_symbols", []string{testSymbolLeader})
+	viper.Set("market.l3_enabled", false)
 	viper.Set("trading.audit.file", auditPath)
 	viper.Set("trading.audit.gate_cooldown", time.Nanosecond)
 	viper.Set("trading.paper.default_one_way_latency", time.Nanosecond)
 	viper.Set("trading.order_ack_timeout", 5*time.Second)
+	viper.Set("signals.raw_dump_dir", filepath.Dir(auditPath))
 }

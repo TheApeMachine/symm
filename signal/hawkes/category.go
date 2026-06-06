@@ -33,7 +33,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 			return types.CategorySaturation, uniformHawkesConfidence
 		}
 
-		return types.CategorySaturation, margin / span
+		return types.CategorySaturation, types.UnitCompetitionMargin(margin, span)
 	case baseline > 0 && intensity < baseline:
 		margin := baseline - intensity
 
@@ -41,7 +41,7 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 			return types.CategoryExhaustion, uniformHawkesConfidence
 		}
 
-		return types.CategoryExhaustion, margin / baseline
+		return types.CategoryExhaustion, types.UnitCompetitionMargin(margin, baseline)
 	case asymmetry >= hawkesFrenzyAsymmetry:
 		margin := asymmetry - hawkesFrenzyAsymmetry
 		span := 1 - hawkesFrenzyAsymmetry
@@ -50,15 +50,17 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 			return types.CategoryFrenzy, uniformHawkesConfidence
 		}
 
-		return types.CategoryFrenzy, margin / span
+		return types.CategoryFrenzy, types.UnitCompetitionMargin(margin, span)
 	default:
 		headroom := -1.0
 
 		if fit.SpectralRadius < hawkesSaturationRadius {
 			margin := hawkesSaturationRadius - fit.SpectralRadius
 
-			if margin/hawkesSaturationRadius > headroom {
-				headroom = margin / hawkesSaturationRadius
+			score := types.UnitCompetitionMargin(margin, hawkesSaturationRadius)
+
+			if score > headroom {
+				headroom = score
 			}
 		}
 
@@ -72,10 +74,11 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		}
 
 		if asymmetry < hawkesFrenzyAsymmetry {
-			margin := (hawkesFrenzyAsymmetry - asymmetry) / hawkesFrenzyAsymmetry
+			margin := hawkesFrenzyAsymmetry - asymmetry
+			score := types.UnitCompetitionMargin(margin, hawkesFrenzyAsymmetry)
 
-			if margin > headroom {
-				headroom = margin
+			if score > headroom {
+				headroom = score
 			}
 		}
 

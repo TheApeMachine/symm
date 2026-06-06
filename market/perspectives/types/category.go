@@ -147,12 +147,10 @@ func NewCategory(categoryType CategoryType) *Category {
 
 /*
 Observe records the signal's category selection and validates the confidence it
-reports in that selection. Confidence is the signal's own measure of how decisively
-it picked this category; it is returned unmodified by validation. There is no clamp:
-its honest floor is 1/N (a uniform guess among N categories) and that floor is the
-producing signal's responsibility, not a post-hoc bound here. SNR (temporal
-surprise from categorical Shannon surprisal) is scored separately and has no
-bearing on this value.
+reports in that selection. Confidence is the signal's finite unit-band evidence
+for a selection; zero is not publishable evidence, and values above one indicate
+invalid signal math. SNR (temporal surprise from categorical Shannon surprisal) is
+scored separately.
 */
 func (category *Category) Observe(next CategoryType, confidence float64) error {
 	if category == nil {
@@ -169,7 +167,7 @@ func (category *Category) Observe(next CategoryType, confidence float64) error {
 }
 
 func validateUnitMargin(name string, value float64) error {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return errnie.Error(fmt.Errorf("perspectives: invalid %s: %v", name, value))
 	}
 

@@ -37,9 +37,9 @@ func (tracker *Tracker) ApplyOrder(
 			return
 		}
 
-		state.addDepth(order.side, -order.qty)
 		tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
 		tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
+		state.addDepth(order.side, -order.qty)
 		delete(state.orders, orderID)
 
 	case "modify", "amend":
@@ -55,9 +55,9 @@ func (tracker *Tracker) ApplyOrder(
 		// A price change is remove+add; a quantity cut at the same price is a
 		// partial removal of the delta, joined to trades like any removal.
 		if price != order.price {
-			state.addDepth(order.side, -order.qty)
 			tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
 			tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
+			state.addDepth(order.side, -order.qty)
 			order.side, order.price, order.qty, order.addTs = side, price, qty, ts
 			state.addDepth(side, qty)
 			tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)

@@ -872,6 +872,7 @@ func (crypto *Crypto) adoptPosition(symbol string, qty float64) {
 	crypto.inventory[symbol] = qty
 	crypto.avgEntry[symbol] = crypto.markFor(symbol)
 	crypto.streams.Add(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 
@@ -880,6 +881,7 @@ func (crypto *Crypto) adoptShort(symbol string, qty float64) {
 	crypto.shortInventory[symbol] = qty
 	crypto.avgEntry[symbol] = crypto.markFor(symbol)
 	crypto.streams.Add(symbol)
+	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 

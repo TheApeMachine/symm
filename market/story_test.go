@@ -74,6 +74,8 @@ func TestNewStory(t *testing.T) {
 
 func TestStoryPublishActionOnRaw(t *testing.T) {
 	convey.Convey("Given a story with a Thought playbook", t, func() {
+		testconfig.Load(t)
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

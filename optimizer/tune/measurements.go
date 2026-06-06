@@ -2,6 +2,7 @@ package tune
 
 import (
 	"context"
+	"fmt"
 
 	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
 	ptypes "github.com/theapemachine/symm/market/perspectives/types"
@@ -23,6 +24,17 @@ func TuneMeasurements(
 	rows []ptypes.Measurement,
 	options types.TuneOptions,
 ) (types.SessionSummary, error) {
+	if options.MaxMeasurements < 0 {
+		return types.SessionSummary{}, fmt.Errorf(
+			"optimizer/tune: max measurements must be non-negative, got %d",
+			options.MaxMeasurements,
+		)
+	}
+
+	if options.MaxMeasurements > 0 && len(rows) > options.MaxMeasurements {
+		rows = rows[:options.MaxMeasurements]
+	}
+
 	costs := replay.DefaultReplayCosts()
 	measurementCount := len(rows)
 	rows = fundableRows(rows, costs.WalletCurrency)
@@ -101,7 +113,7 @@ func TuneMeasurements(
 		})
 	}
 
-	if options.OutputPath != "" && shouldWrite(best, minRoundTrips) {
+	if options.OutputPath != "" && shouldWrite(best) {
 		if err := io.WriteThoughts(options.OutputPath, best.Forest); err != nil {
 			return types.SessionSummary{}, err
 		}
@@ -120,7 +132,7 @@ func TuneMeasurements(
 	}, nil
 }
 
-func shouldWrite(best reasoning.Candidate, minRoundTrips int) bool {
+func shouldWrite(best reasoning.Candidate) bool {
 	if len(best.Forest) == 0 {
 		log.TuneLog(
 			"not writing candidate: empty forest strategies=%d nodes=%d trades=%d score=%.6f return=%.6f",
@@ -140,17 +152,6 @@ func shouldWrite(best reasoning.Candidate, minRoundTrips int) bool {
 			best.Score,
 			best.Return,
 			best.Trades,
-		)
-
-		return false
-	}
-
-	if minRoundTrips > 0 && best.Trades < minRoundTrips {
-		log.TuneLog(
-			"not writing candidate: trades=%d min_round_trips=%d score=%.6f",
-			best.Trades,
-			minRoundTrips,
-			best.Score,
 		)
 
 		return false

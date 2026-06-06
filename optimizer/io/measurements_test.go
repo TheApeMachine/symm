@@ -45,6 +45,37 @@ func TestLoadMeasurementsMalformedLine(t *testing.T) {
 	})
 }
 
+func TestLoadMeasurementsLimit(t *testing.T) {
+	convey.Convey("Given a measurement JSONL file with more valid rows than the limit", t, func() {
+		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		raw := `{"Symbol":"BTC/EUR","Source":1,"Category":"laminar","SNR":1,"Last":100}` + "\n"
+		raw += `{not-json}` + "\n"
+		raw += `{"Symbol":"ETH/EUR","Source":1,"Category":"laminar","SNR":2,"Last":101}` + "\n"
+		raw += `{"Symbol":"SOL/EUR","Source":1,"Category":"laminar","SNR":3,"Last":102}` + "\n"
+
+		writeErr := os.WriteFile(path, []byte(raw), 0o644)
+		rows, skipped, err := LoadMeasurementsLimit(path, 2)
+
+		convey.Convey("It should stop after the requested valid row count", func() {
+			convey.So(writeErr, convey.ShouldBeNil)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(skipped, convey.ShouldEqual, 1)
+			convey.So(len(rows), convey.ShouldEqual, 2)
+			convey.So(rows[1].Symbol, convey.ShouldEqual, "ETH/EUR")
+		})
+	})
+
+	convey.Convey("Given a negative measurement limit", t, func() {
+		rows, skipped, err := LoadMeasurementsLimit("unused.jsonl", -1)
+
+		convey.Convey("It should return an error", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(rows, convey.ShouldBeNil)
+			convey.So(skipped, convey.ShouldEqual, 0)
+		})
+	})
+}
+
 func benchmarkMeasurementJSONL(b *testing.B) string {
 	b.Helper()
 
@@ -65,6 +96,18 @@ func BenchmarkLoadMeasurements(b *testing.B) {
 
 	for b.Loop() {
 		_, _, err := LoadMeasurements(path)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLoadMeasurementsLimit(b *testing.B) {
+	path := benchmarkMeasurementJSONL(b)
+
+	for b.Loop() {
+		_, _, err := LoadMeasurementsLimit(path, 2)
 
 		if err != nil {
 			b.Fatal(err)

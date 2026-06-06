@@ -16,72 +16,25 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
-		Convey("It parses five exit managers and five spot entry strategies", func() {
-			So(len(thoughts), ShouldEqual, 10)
+		Convey("It parses the tuned entry and protective manager", func() {
+			So(len(thoughts), ShouldEqual, 2)
 		})
 
-		Convey("Exit managers precede entries and the scalp manager is tightest", func() {
-			scalpExit := thoughts[0]
-			So(scalpExit.When.All[0].Lifecycle, ShouldEqual, types.ObservationHolding)
-			So(scalpExit.When.All[1].Category, ShouldEqual, types.CategoryVerticalIgnition)
-			So(scalpExit.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
+		Convey("The entry watches extreme scarcity SNR while flat", func() {
+			entry := thoughts[0]
+			So(entry.Do.Type, ShouldEqual, ActionMarket)
+			So(entry.Do.Fraction, ShouldEqual, 0.25)
+			So(entry.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
+			So(entry.When.All[1].Category, ShouldEqual, types.CategoryExtremeScarcity)
+			So(entry.When.All[1].Unit, ShouldEqual, UnitSNR)
+			So(entry.When.All[1].Value, ShouldEqual, 1.0)
 		})
 
-		Convey("The flash-pump entry confirms ignition level and price follow-through before limit", func() {
-			scalpEntry := thoughts[5]
-			confirm := scalpEntry.Then[0]
-			So(confirm.Do.Type, ShouldEqual, ActionLimit)
-			So(confirm.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
-			So(confirm.When.All[1].Op, ShouldEqual, ComparisonAtLeast)
-			So(confirm.When.All[1].Category, ShouldEqual, types.CategoryVerticalIgnition)
-			So(confirm.When.All[3].Subject, ShouldEqual, SubjectPrice)
-		})
-
-		Convey("The momentum entry requires rising quote volume at confirmation", func() {
-			trendEntry := thoughts[6]
-			confirm := trendEntry.Then[0]
-			So(confirm.Do.Type, ShouldEqual, ActionLimit)
-
-			hasVolume := false
-
-			for _, operand := range confirm.When.All {
-				if operand.Subject == SubjectVolume {
-					hasVolume = true
-				}
-			}
-
-			So(hasVolume, ShouldBeTrue)
-		})
-
-		Convey("Every spot entry denies dead and choppy regimes", func() {
-			for index := 5; index < len(thoughts); index++ {
-				entry := thoughts[index]
-				hasDeadDeny := false
-				hasChoppyDeny := false
-
-				for _, operand := range entry.When.All {
-					if operand.Not == nil {
-						continue
-					}
-
-					if operand.Not.Subject == SubjectRegime && operand.Not.Regime == types.RegimeDead {
-						hasDeadDeny = true
-					}
-
-					if operand.Not.Subject == SubjectRegime && operand.Not.Regime == types.RegimeChoppy {
-						hasChoppyDeny = true
-					}
-				}
-
-				So(hasDeadDeny, ShouldBeTrue)
-				So(hasChoppyDeny, ShouldBeTrue)
-			}
-		})
-
-		Convey("The universal fallback manager is the last branch", func() {
-			fallback := thoughts[4]
-			So(fallback.When.Lifecycle, ShouldEqual, types.ObservationHolding)
-			So(fallback.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
+		Convey("The protective manager trails held positions", func() {
+			manager := thoughts[1]
+			So(manager.When.Lifecycle, ShouldEqual, types.ObservationHolding)
+			So(manager.Do.Type, ShouldEqual, ActionTrailingStop)
+			So(manager.Do.Offset, ShouldEqual, 0.01)
 		})
 	})
 }

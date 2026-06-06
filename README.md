@@ -2,7 +2,7 @@
 
 # S.Y.M.M. — Shake Your Money Maker
 
-A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic **category** and scoring it against its own adaptive noise floor as an **SNR** value. The trader holds the latest reading per source per symbol, consults YAML-loaded perspective playbooks encoded as decision trees, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
+A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic **category**, publishing finite category **confidence**, and scoring category surprise as an **SNR** value. The trader holds the latest reading per source per symbol, consults YAML-loaded perspective playbooks encoded as decision trees, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
 
 Category semantics and the design rationale behind each signal row live in [`DECISION.md`](DECISION.md).
 
@@ -41,7 +41,7 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 │  sentiment · correlation · fluid · causal · cvd · exhaust        │
 │  toxicity → shared book-quality service + measurements           │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  Measurement {Symbol, Source, Category, SNR, Last}
+               │  Measurement {Symbol, Source, Category, Confidence, SNR, Last}
                │  on the "measurements" broadcast
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
@@ -72,7 +72,7 @@ SYMM is not a single model. It is a **fleet of classifiers** — each signal is 
 This is the loop to understand. Everything else supports it.
 
 ```
-Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Last}
+Kraken feeds ──► Signals ──► Measurement {Source, Category, Confidence, SNR, Last}
                                     │
                                     ▼
                     trader: latest reading per (symbol, source)
@@ -97,7 +97,7 @@ Kraken feeds ──► Signals ──► Measurement {Source, Category, SNR, Las
 
 2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
 
-3. **SNR is computed in the signal, not the trader.** Classifier-based signals score how decisively the fused observation sits inside its assigned category band (`adaptive.Classifier.Confidence` via `numeric.Classed`). Perspective tree branches compare `Measurement.SNR` to an explicit per-branch threshold in YAML (`value:`). Documents without `value` on category or metric gates fail at load time.
+3. **Signal trust is computed before the trader.** Signals publish finite unit-band `Confidence` from instantaneous category evidence weighted by the category's recent stability. `Measurement.SNR` is temporal category surprise, scored in the signal against that symbol's own category history. Perspective tree branches compare `Measurement.SNR` or `Measurement.Confidence` to explicit YAML thresholds (`value:`). Documents without `value` on category or metric gates fail at load time.
 
 ## Everything is a `System`
 
@@ -168,13 +168,14 @@ type Measurement struct {
     Source   SourceType    // fluid, hawkes, pumpdump, cvd, …
     Category CategoryType  // semantic row from DECISION.md
     Strength float64       // raw fused strength (dashboard gauges)
-    SNR      float64       // classification confidence (playbook gating)
+    Confidence float64     // finite selection trust (evidence × stability)
+    SNR      float64       // temporal category surprise (playbook gating)
     Last     float64       // last traded price at emit time
 }
 ```
 
 > [!IMPORTANT]
-> `SNR` is not a historical win rate. It is category-band confidence: how far the fused score sits from the nearest classifier boundary, normalised by the local band width. A clear StochasticNoise can read high SNR; a borderline Herd/Alpha reads low. Perspective tree branches gate on `SNR > 1` — a unitless floor, not a price or percentage.
+> `Confidence` is finite category-selection trust in `(0, 1]`: exact `0` means no publishable evidence, exact `1` means saturated finite evidence, and values above `1` are rejected as invalid signal math. `SNR` is not a historical win rate and not band confidence. It is temporal surprise: how unexpected the selected category is against that symbol's recent category prior. Perspective tree branches usually gate on `SNR > 1` — a unitless floor, not a price or percentage — and can explicitly gate on `confidence` when the thesis needs selection trust instead of surprise.
 
 Each signal emits exactly one category at a time. Requiring a specific category in a perspective tree implicitly excludes that source's contradicting siblings — a CVD tree demanding `AggressiveDrive` will not see `StochasticBalance` from the same source simultaneously.
 
@@ -244,7 +245,7 @@ Full category names and per-signal mappings are in `market/perspectives/category
 Each signal:
 - Subscribes to the shared Kraken feeds it needs
 - Maintains per-symbol state
-- Fuses raw metrics through adaptive pipelines (EMA baselines, sigma clamps, SNR)
+- Fuses raw metrics through adaptive pipelines (EMA baselines, unit margins, SNR)
 - Emits `perspectives.Measurement` values on the `measurements` broadcast
 
 Signals classify into four-category families (details in DECISION.md):
@@ -310,7 +311,7 @@ Splits L2 liquidity removals into fills vs cancels by joining the book and trade
 
 ### 🚪 Exhaust
 
-Classifies microstructure decay modes rather than emitting a binary exit signal. Exit timing is decided by perspective tree leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel. `MechanicalCollapse` and `ThermalExhaustion` trigger `ActionStopLoss`; `ActiveReversal` and `FragileExpansion` trigger `ActionTakeProfit`. All soft exits respect `MinExhaustHold` after entry.
+Classifies microstructure decay modes rather than emitting a binary exit signal. Component decay ratios are converted to unit margins before fusion, and `Strength` is the fused unit urgency rather than odds or a reciprocal transform. Exit timing is decided by perspective tree leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel. `MechanicalCollapse` and `ThermalExhaustion` trigger `ActionStopLoss`; `ActiveReversal` and `FragileExpansion` trigger `ActionTakeProfit`. All soft exits respect `MinExhaustHold` after entry.
 
 ## Trader mechanics
 
@@ -385,9 +386,11 @@ Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 opti
 `symm tune` runs a replay-backed bounded parallel scan over perspective branch trees:
 
 - measurements are read from `trading.record.file` (or `trading.replay.file` when the record path is unset)
+- category seeds are ranked by realized forward movement on the tape, so rare entry signals are not capped out by common neutral/exit rows before replay scoring
 - the scan enumerates category/unit/condition/value predicates from observed measurement distributions
 - it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
 - each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
+- sparse winners are discounted by `MinRoundTrips` during search; a still-positive discounted winner is eligible to write
 - replay scoring applies optional execution stress: derived 50–200ms fill latency from tape cadence (`trading.replay.execution_latency_ms` to override) and expanded slippage when snapshot categories indicate turbulence or liquidity stress (`trading.replay.execution_stress_enabled`, default on)
 - measured Kraken ping RTT is persisted to `trading.paper.latency_profile` (`runs/network_latency.json`) with p95 one-way latency for activation and fill timing; optimizer replay uses that p95 RTT in scoring math without sleeping, while paper mode defers every simulated exchange response by the live p95 round-trip
 - limit (maker) replay entries also pay adverse-selection slippage derived from spread and stress context, matching the pessimistic paper matcher rather than filling at limit with zero drag
@@ -479,7 +482,7 @@ symm tune
 | Event            | Source        | Contents                                                  |
 |------------------|---------------|-----------------------------------------------------------|
 | `layout`         | ui.Hub        | dashboard schema: gauge sources, labels, panel wiring     |
-| `confidence`     | view.Gauges   | per-source SNR gauge value                                |
+| `confidence`     | view.Gauges   | per-source finite confidence and SNR telemetry            |
 | `wallet`         | Crypto        | balance, inventory, marks                                 |
 | `audit`          | Crypto        | decision detail: conviction, edge, playbook, perspectives |
 | `candle_bar`     | kraken/public | OHLC + volume for chart                                   |
@@ -491,7 +494,7 @@ symm tune
 
 **Schema-driven layout:** on WebSocket connect the hub sends a `layout` document built from `perspectives.TelemetryRegistry`. Sources register when measurements arrive; the hub rebroadcasts an updated `layout` when the manifest grows. The React dashboard renders gauges from that manifest only — no hard-coded signal union in the frontend.
 
-**Execution gates:** `broker.Desk` ingests toxicity, fluid, sentiment, and Hawkes measurements into a stress cache. Entry orders scale quantity and slippage tolerance continuously as hostile SNR rises; there is no turbulence-only restricted-mode cliff. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters. Trailing-stop defaults are derived from the quote cache's rolling distinct-price realized volatility (`trading.exit.trailing_volatility_multiple`) unless the playbook node carries an explicit offset.
+**Execution gates:** `broker.Desk` ingests toxicity, fluid, sentiment, and Hawkes measurements into a stress cache. Entry orders scale quantity continuously as hostile SNR rises; configured spread, slippage, stale-quote, and depth gates remain explicit quote-quality limits. Entry quantities are then aligned to Kraken instrument rules and raised to the pair's dynamic minimum quantity/cost when the requested exposure is smaller than the exchange will accept; exits keep the conservative round-down path so liquidation never tries to sell more than is held. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters. Trailing-stop defaults are derived from the quote cache's rolling distinct-price realized volatility (`trading.exit.trailing_volatility_multiple`) unless the playbook node carries an explicit offset.
 
 **Fluid surface:** the 3D grid uses turbulence-inversely scaled spatial smoothing (sharp peaks in turbulent cells, gentle blending elsewhere), volume-weighted temporal EMA decay, and SNR-driven highlight/hardness on the SciChart surface so anomalies scream through color without turning the mesh into noise.
 
@@ -807,7 +810,7 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 | `broker/`              | Paper and live order execution; atomic quote/stress snapshots and continuous preflight |
 | `wallet/`              | Balance, inventory, position bindings                                                |
 | `focus/`               | Lock-free open-position symbol set (copy-on-write)                                   |
-| `view/`                | Dashboard feeds: `Gauges` (SNR) and `OHLC` (candle bars)                             |
+| `view/`                | Dashboard feeds: `Gauges` (confidence/SNR telemetry) and `OHLC` (candle bars)         |
 | `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                                    |
 | `frontend/`            | React dashboard                                                                      |
 | `numeric/`             | Derived pipelines, adaptive filters, robust statistics                               |
@@ -827,4 +830,4 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 | `DECISION.md`          | Category semantics and signal design rationale                                       |
 | `AGENTS.md`            | Agent contract: tests, benchmarks, style                                             |
 
-**Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Measurements auto-register the source in `TelemetryRegistry` and appear on the dashboard without frontend changes. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.
+**Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, finite unit-band `Confidence`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Measurements auto-register the source in `TelemetryRegistry` and appear on the dashboard without frontend changes. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.

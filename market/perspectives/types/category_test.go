@@ -59,9 +59,13 @@ func TestCategoryObserve(t *testing.T) {
 			So(category.Type, ShouldEqual, CategoryTurbulent)
 		})
 
-		Convey("It should accept honest extreme confidence without clamping", func() {
-			So(category.Observe(CategoryLaminar, 0), ShouldBeNil)
-			So(category.Observe(CategoryLaminar, 1), ShouldBeNil)
+		Convey("It should accept saturated confidence", func() {
+			So(category.Observe(CategoryTurbulent, 1), ShouldBeNil)
+			So(category.Type, ShouldEqual, CategoryTurbulent)
+		})
+
+		Convey("It should reject missing confidence", func() {
+			So(category.Observe(CategoryLaminar, 0), ShouldNotBeNil)
 		})
 
 		Convey("It should reject out-of-band confidence", func() {

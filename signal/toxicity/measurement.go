@@ -52,7 +52,7 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (types.Measurement,
 		return types.Measurement{}, err
 	}
 
-	snr, err := tracker.surpriseField.Score(symbol, category)
+	score, err := tracker.surpriseField.ScoreState(symbol, category)
 
 	if err != nil {
 		return types.Measurement{}, err
@@ -67,8 +67,8 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (types.Measurement,
 		Source:     types.SourceToxicity,
 		Category:   category,
 		Strength:   strength,
-		Confidence: evidence,
-		SNR:        snr,
+		Confidence: score.StabilizeConfidence(evidence),
+		SNR:        score.SNR,
 		Last:       state.lastPrice,
 	}, nil
 }
@@ -87,6 +87,7 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 		if at.After(expiry) {
 			delete(state.toxic, key)
 			delete(state.toxicChurn, key)
+			delete(state.toxicEvidence, key)
 
 			continue
 		}
@@ -95,23 +96,32 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 
 		if state.mid > 0 && math.Abs(price-state.mid)/state.mid <= toxicProximityPct {
 			snapshot.toxicNear = true
-			snapshot.toxicBluffStrength = math.Max(snapshot.toxicBluffStrength, state.toxicChurn[key])
+			snapshot.toxicBluffStrength = math.Max(
+				snapshot.toxicBluffStrength,
+				math.Max(state.toxicChurn[key], state.toxicEvidence[key]),
+			)
 		}
-	}
-
-	if snapshot.toxicNear && snapshot.toxicBluffStrength <= 0 {
-		snapshot.toxicBluffStrength = 1
 	}
 
 	return snapshot
 }
 
-func (tracker *Tracker) flagToxicLocked(state *symbolState, price float64, churnRatio float64, now time.Time) {
+func (tracker *Tracker) flagToxicLocked(
+	state *symbolState,
+	price float64,
+	churnRatio float64,
+	evidence float64,
+	now time.Time,
+) {
 	key := priceKey(price, state.pair)
 	state.toxic[key] = now.Add(toxicCooldown)
 
 	if churnRatio > 0 {
 		state.toxicChurn[key] = churnRatio
+	}
+
+	if evidence > 0 {
+		state.toxicEvidence[key] = evidence
 	}
 }
 
@@ -131,8 +141,9 @@ func classifyBookQuality(
 	if snapshot.bidDepth > 0 && snapshot.askDepth > 0 && maxRatio == 0 {
 		depthBalance := math.Min(snapshot.bidDepth, snapshot.askDepth) /
 			math.Max(snapshot.bidDepth, snapshot.askDepth)
+		evidence := types.UnitMagnitudeMargin(depthBalance)
 
-		return types.CategoryHardSupport, depthBalance, depthBalance
+		return types.CategoryHardSupport, depthBalance, evidence
 	}
 
 	threshold := tracker.fillToCancelThreshold()
@@ -146,7 +157,7 @@ func classifyBookQuality(
 
 	if bidVacuum || askVacuum {
 		margin := maxRatio - threshold
-		evidence := margin / (margin + threshold)
+		evidence := types.UnitCompetitionMargin(margin, threshold)
 		strength := maxRatio / threshold
 
 		return types.CategoryLiquidityVacuum, strength, evidence
@@ -156,7 +167,7 @@ func classifyBookQuality(
 		bidRatio < threshold/2 && askRatio < threshold/2 {
 		half := threshold / 2
 		margin := half - maxRatio
-		evidence := margin / half
+		evidence := types.UnitCompetitionMargin(margin, half)
 		strength := evidence
 
 		return types.CategoryHardSupport, strength, evidence
@@ -166,14 +177,18 @@ func classifyBookQuality(
 }
 
 func toxicBluffEvidence(churnRatio float64) float64 {
+	if churnRatio <= 0 {
+		return 0
+	}
+
 	if churnRatio <= flashChurnRatioThreshold {
-		return 1
+		return types.UnitMagnitudeMargin(churnRatio)
 	}
 
 	margin := churnRatio - flashChurnRatioThreshold
 	span := 1 - flashChurnRatioThreshold
 
-	return margin / (margin + span)
+	return types.UnitCompetitionMargin(margin, span)
 }
 
 func cancelFillRatio(cancel, fill float64) float64 {

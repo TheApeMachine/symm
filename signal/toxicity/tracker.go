@@ -61,22 +61,23 @@ type levelChurnWindow struct {
 }
 
 type symbolState struct {
-	pair       market.Pair
-	orders     map[string]*orderState // order_id -> resting order (L3)
-	levels     map[l2Key]*l2Level     // (side, price) -> aggregate (L2 fallback)
-	churn      map[l2Key]*levelChurnWindow
-	bidTotal   float64 // summed visible bid qty
-	askTotal   float64
-	toxic      map[int64]time.Time // discretized price -> expiry
-	toxicChurn map[int64]float64   // discretized price -> cancel/add ratio at flag time
-	trades     []tradePrint
-	mid        float64
-	lastPrice  float64
-	tracked    *types.Category
-	cancelBid  float64
-	fillBid    float64
-	cancelAsk  float64
-	fillAsk    float64
+	pair          market.Pair
+	orders        map[string]*orderState // order_id -> resting order (L3)
+	levels        map[l2Key]*l2Level     // (side, price) -> aggregate (L2 fallback)
+	churn         map[l2Key]*levelChurnWindow
+	bidTotal      float64 // summed visible bid qty
+	askTotal      float64
+	toxic         map[int64]time.Time // discretized price -> expiry
+	toxicChurn    map[int64]float64   // discretized price -> cancel/add ratio at flag time
+	toxicEvidence map[int64]float64   // discretized price -> structural flag evidence
+	trades        []tradePrint
+	mid           float64
+	lastPrice     float64
+	tracked       *types.Category
+	cancelBid     float64
+	fillBid       float64
+	cancelAsk     float64
+	fillAsk       float64
 }
 
 // Tracker classifies book-liquidity removals into fill vs cancel by joining the
@@ -134,13 +135,14 @@ func (tracker *Tracker) stateLocked(symbol string, pair market.Pair) *symbolStat
 
 	if state == nil {
 		state = &symbolState{
-			pair:       pair,
-			orders:     make(map[string]*orderState),
-			levels:     make(map[l2Key]*l2Level),
-			churn:      make(map[l2Key]*levelChurnWindow),
-			toxic:      make(map[int64]time.Time),
-			toxicChurn: make(map[int64]float64),
-			tracked:    types.NewCategory(types.CategoryTypeNone),
+			pair:          pair,
+			orders:        make(map[string]*orderState),
+			levels:        make(map[l2Key]*l2Level),
+			churn:         make(map[l2Key]*levelChurnWindow),
+			toxic:         make(map[int64]time.Time),
+			toxicChurn:    make(map[int64]float64),
+			toxicEvidence: make(map[int64]float64),
+			tracked:       types.NewCategory(types.CategoryTypeNone),
 		}
 		tracker.symbols[symbol] = state
 	}

@@ -113,8 +113,6 @@ func preflightMarketSlippage(request PreflightRequest) error {
 		return fmt.Errorf("preflight: %w", err)
 	}
 
-	maxSlippageBps = request.Stress.EntrySlippageCapBps(maxSlippageBps)
-
 	if fill.SlippageBps > maxSlippageBps {
 		return fmt.Errorf(
 			"preflight: projected slippage %.2f bps exceeds limit %.2f for %s",

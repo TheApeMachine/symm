@@ -146,12 +146,21 @@ func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
 		return action, err
 	}
 
-	action.Quantity, action.Price, err = desk.rules.PrepareOrder(
-		action.Symbol,
-		action.Quantity,
-		action.Price,
-		orderType,
-	)
+	if reasoning.IsEntryAction(action.Type) {
+		action.Quantity, action.Price, err = desk.rules.PrepareEntryOrder(
+			action.Symbol,
+			action.Quantity,
+			action.Price,
+			orderType,
+		)
+	} else {
+		action.Quantity, action.Price, err = desk.rules.PrepareOrder(
+			action.Symbol,
+			action.Quantity,
+			action.Price,
+			orderType,
+		)
+	}
 
 	if err != nil {
 		return action, err

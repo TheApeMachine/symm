@@ -1,11 +1,14 @@
 package broker
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -246,6 +249,64 @@ func TestDeskPrepareInstrumentOrder(t *testing.T) {
 
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(isAligned(alignedQty, 0.00000001), convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
+	testconfig.Load(t)
+
+	convey.Convey("Given a desk entry below Kraken minimum quantity", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 1, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		private := bus.Group(pool, "kraken:private", 10*time.Millisecond).
+			Subscribe("test:desk-entry-minimum", 4)
+		quotes := NewQuoteCache(ctx, nil)
+		quotes.InstallQuoteForTest(Quote{
+			Symbol:    "FXS/EUR",
+			Bid:       4.35,
+			Ask:       4.36,
+			Last:      4.36,
+			UpdatedAt: time.Now(),
+		})
+
+		stress := NewStressCache(ctx, nil)
+		rules := NewInstrumentRulesCache(ctx)
+		rules.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "FXS/EUR",
+			QtyIncrement: 0.00000001,
+			QtyMin:       12,
+			CostMin:      10,
+		})
+
+		desk, err := NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
+		convey.So(err, convey.ShouldBeNil)
+		defer desk.Close()
+
+		resolved, err := desk.AddOrder(reasoning.Action{
+			Type:     reasoning.ActionLimit,
+			Symbol:   "FXS/EUR",
+			Side:     trading.Buy,
+			Quantity: 11.42752815,
+			Price:    4.34,
+		})
+
+		convey.Convey("It should submit the aligned exchange minimum", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(resolved.Quantity, convey.ShouldEqual, 12)
+
+			select {
+			case message := <-private.Incoming:
+				frame, ok := message.Value.(map[string]any)
+				convey.So(ok, convey.ShouldBeTrue)
+				params, ok := frame["params"].(trading.AddParams)
+				convey.So(ok, convey.ShouldBeTrue)
+				convey.So(params.OrderQty, convey.ShouldEqual, 12)
+			case <-time.After(time.Second):
+				t.Fatal("expected add_order frame")
+			}
 		})
 	})
 }

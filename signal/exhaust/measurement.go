@@ -36,7 +36,7 @@ func exhaustMeasurement(
 	return types.Measurement{
 		Source:     types.SourceExhaustion,
 		Category:   category,
-		Strength:   urgency / (1 - urgency),
+		Strength:   urgency,
 		Confidence: evidence,
 	}, standout, nil
 }

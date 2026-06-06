@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
@@ -98,6 +99,8 @@ func TestFundableSymbol(t *testing.T) {
 
 func TestSizeEntry(t *testing.T) {
 	Convey("Given a trader sizing entries from a known capital base", t, func() {
+		testconfig.Load(t)
+
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
 		crypto.availableQuote = 1000 // abundant, so slot sizing is not cash-bounded here
@@ -157,6 +160,8 @@ func TestSizeEntry(t *testing.T) {
 
 func TestSizeEntryConcurrentCap(t *testing.T) {
 	Convey("position_fraction caps concurrent positions at round(1/fraction)", t, func() {
+		testconfig.Load(t)
+
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
 		crypto.availableQuote = 200
@@ -422,6 +427,12 @@ func TestCryptoSymbolHeld(t *testing.T) {
 
 		Convey("It should report held after a fill opens the position", func() {
 			crypto.openPosition("BTC/EUR", 0.5, 50_000)
+
+			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeTrue)
+		})
+
+		Convey("It should report held after holdings adoption", func() {
+			crypto.reconcilePositions(map[string]float64{"BTC/EUR": 0.5})
 
 			So(crypto.SymbolHeld("BTC/EUR"), ShouldBeTrue)
 		})

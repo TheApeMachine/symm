@@ -27,7 +27,9 @@ func leadlagReading(
 			return types.CategoryAnchorStall, types.UnitMarginFloor, types.UnitMarginFloor
 		}
 
-		return types.CategoryAnchorStall, stallMargin, stallMargin
+		evidence := types.UnitMagnitudeMargin(stallMargin)
+
+		return types.CategoryAnchorStall, evidence, stallMargin
 	}
 
 	corrStrength := math.Max(0, math.Min(1, corr))
@@ -44,7 +46,7 @@ func leadlagReading(
 				return types.CategoryInefficientLag, types.UnitMarginFloor, lagStrength
 			}
 
-			return types.CategoryInefficientLag, margin / span, lagStrength
+			return types.CategoryInefficientLag, types.UnitCompetitionMargin(margin, span), lagStrength
 		}
 
 		margin := minLagFraction - lagFraction
@@ -53,7 +55,7 @@ func leadlagReading(
 			return types.CategorySynchronizedDrift, types.UnitMarginFloor, lagStrength
 		}
 
-		return types.CategorySynchronizedDrift, margin / minLagFraction, lagStrength
+		return types.CategorySynchronizedDrift, types.UnitCompetitionMargin(margin, minLagFraction), lagStrength
 	}
 
 	if corr < leadlagMinimumLagCorrelation {
@@ -64,7 +66,7 @@ func leadlagReading(
 			return types.CategoryDecoupledMove, types.UnitMarginFloor, corrStrength
 		}
 
-		return types.CategoryDecoupledMove, margin / span, corrStrength
+		return types.CategoryDecoupledMove, types.UnitCompetitionMargin(margin, span), corrStrength
 	}
 
 	margin := corr - leadlagMinimumLagCorrelation
@@ -74,5 +76,5 @@ func leadlagReading(
 		return types.CategorySynchronizedDrift, types.UnitMarginFloor, corrStrength
 	}
 
-	return types.CategorySynchronizedDrift, margin / span, corrStrength
+	return types.CategorySynchronizedDrift, types.UnitCompetitionMargin(margin, span), corrStrength
 }

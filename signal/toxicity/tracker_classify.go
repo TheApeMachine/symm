@@ -3,6 +3,8 @@ package toxicity
 import (
 	"math"
 	"time"
+
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 // classifyRemovalLocked splits a removed quantity into fill vs cancel by joining
@@ -37,11 +39,20 @@ func (tracker *Tracker) classifyRemovalLocked(
 	}
 
 	large := sideDepth > 0 && qty >= largeBlockFrac*sideDepth
-	near := state.mid > 0 && math.Abs(price-state.mid)/state.mid <= toxicProximityPct
-	young := now.Sub(addTs) <= toxicMaxAge
+	distancePct := math.Inf(1)
+
+	if state.mid > 0 {
+		distancePct = math.Abs(price-state.mid) / state.mid
+	}
+
+	near := distancePct <= toxicProximityPct
+	age := now.Sub(addTs)
+	young := age <= toxicMaxAge
 
 	if large && near && young {
-		tracker.flagToxicLocked(state, price, 0, now)
+		evidence := toxicCancelEvidence(qty, sideDepth, distancePct, age)
+
+		tracker.flagToxicLocked(state, price, 0, evidence, now)
 	}
 }
 
@@ -77,7 +88,13 @@ func (tracker *Tracker) observeLevelChurnLocked(
 		return
 	}
 
-	if state.mid <= 0 || math.Abs(price-state.mid)/state.mid > toxicProximityPct {
+	if state.mid <= 0 {
+		return
+	}
+
+	distancePct := math.Abs(price-state.mid) / state.mid
+
+	if distancePct > toxicProximityPct {
 		return
 	}
 
@@ -91,7 +108,76 @@ func (tracker *Tracker) observeLevelChurnLocked(
 		return
 	}
 
-	tracker.flagToxicLocked(state, price, ratio, now)
+	evidence := toxicChurnEvidence(ratio, window.addVol, sideDepth, distancePct)
+
+	tracker.flagToxicLocked(state, price, ratio, evidence, now)
+}
+
+func toxicCancelEvidence(
+	qty float64,
+	sideDepth float64,
+	distancePct float64,
+	age time.Duration,
+) float64 {
+	sizeThreshold := largeBlockFrac * sideDepth
+
+	if sizeThreshold <= 0 || qty < sizeThreshold {
+		return 0
+	}
+
+	if distancePct > toxicProximityPct || age > toxicMaxAge {
+		return 0
+	}
+
+	sizeEvidence := types.UnitCompetitionMargin(qty-sizeThreshold, sizeThreshold)
+	proximityEvidence := types.UnitCompetitionMargin(toxicProximityPct-distancePct, toxicProximityPct)
+	ageEvidence := types.UnitCompetitionMargin(float64(toxicMaxAge-age), float64(toxicMaxAge))
+
+	return evidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence)
+}
+
+func toxicChurnEvidence(
+	ratio float64,
+	addVol float64,
+	sideDepth float64,
+	distancePct float64,
+) float64 {
+	sizeThreshold := largeBlockFrac * sideDepth
+
+	if ratio <= flashChurnRatioThreshold || sizeThreshold <= 0 || addVol < sizeThreshold {
+		return 0
+	}
+
+	if distancePct > toxicProximityPct {
+		return 0
+	}
+
+	ratioEvidence := types.UnitCompetitionMargin(
+		ratio-flashChurnRatioThreshold,
+		flashChurnRatioThreshold,
+	)
+	sizeEvidence := types.UnitCompetitionMargin(addVol-sizeThreshold, sizeThreshold)
+	proximityEvidence := types.UnitCompetitionMargin(toxicProximityPct-distancePct, toxicProximityPct)
+
+	return evidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence)
+}
+
+func evidenceGeomean(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	product := 1.0
+
+	for _, value := range values {
+		if value <= 0 {
+			return 0
+		}
+
+		product *= value
+	}
+
+	return math.Pow(product, 1/float64(len(values)))
 }
 
 func (tracker *Tracker) addFlowLocked(state *symbolState, side byte, fill, cancel float64) {
@@ -124,6 +210,7 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 	if at.After(expiry) {
 		delete(state.toxic, key)
 		delete(state.toxicChurn, key)
+		delete(state.toxicEvidence, key)
 
 		return false
 	}

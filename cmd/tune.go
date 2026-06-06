@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	ptypes "github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer"
 )
 
@@ -22,13 +23,20 @@ var tuneCmd = &cobra.Command{
 			return err
 		}
 
+		maxMeasurements, err := tuneMaxMeasurements(cmd)
+
+		if err != nil {
+			return err
+		}
+
 		options := optimizer.DefaultTuneOptions(runtime.NumCPU())
 		options.OutputPath = tunePerspectivesPath()
 		options.CandidateReportPath = tuneCandidateReportPath(cmd)
+		options.MaxMeasurements = maxMeasurements
 
 		optimizer.TuneLog("loading measurements from %s", path)
 
-		rows, skipped, err := optimizer.LoadMeasurements(path)
+		rows, skipped, err := loadTuneMeasurements(path, maxMeasurements)
 
 		if err != nil {
 			return err
@@ -90,6 +98,11 @@ func init() {
 		"",
 		"optional JSONL path for every scored candidate (advanced)",
 	)
+	tuneCmd.Flags().Int(
+		tuneMaxMeasurementsFlag,
+		0,
+		"maximum valid measurement rows to load from the capture before tuning; 0 loads all rows",
+	)
 }
 
 const tuneLong = `
@@ -104,6 +117,7 @@ with closed round trips appears.
 
 const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"
 const tuneCandidateReportFlag = "candidate-report"
+const tuneMaxMeasurementsFlag = "max-measurements"
 
 func tuneMeasurementPath() (string, error) {
 	path := strings.TrimSpace(viper.GetString("trading.record.file"))
@@ -123,6 +137,14 @@ func tuneMeasurementPath() (string, error) {
 	return defaultCapturePath, nil
 }
 
+func loadTuneMeasurements(path string, maxMeasurements int) ([]ptypes.Measurement, int, error) {
+	if maxMeasurements > 0 {
+		return optimizer.LoadMeasurementsLimit(path, maxMeasurements)
+	}
+
+	return optimizer.LoadMeasurements(path)
+}
+
 func tunePerspectivesPath() string {
 	path := strings.TrimSpace(os.Getenv("SYMM_PERSPECTIVES_FILE"))
 
@@ -131,6 +153,20 @@ func tunePerspectivesPath() string {
 	}
 
 	return defaultPerspectivesOutputPath
+}
+
+func tuneMaxMeasurements(cmd *cobra.Command) (int, error) {
+	maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if maxMeasurements < 0 {
+		return 0, fmt.Errorf("symm tune: --%s must be non-negative", tuneMaxMeasurementsFlag)
+	}
+
+	return maxMeasurements, nil
 }
 
 func tuneCandidateReportPath(cmd *cobra.Command) string {

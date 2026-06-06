@@ -68,12 +68,7 @@ func causalEvidence(
 }
 
 func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 {
-	scale := math.Max(
-		math.Abs(outcome.intervention),
-		math.Max(math.Abs(outcome.association), 1e-12),
-	)
-
-	interventionMargin := outcome.intervention / scale
+	interventionMargin := ladderInterventionEvidence(outcome)
 
 	if interventionMargin <= 0 {
 		return 0
@@ -108,12 +103,22 @@ func betaEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 		return 0
 	}
 
-	scale := math.Max(
-		math.Abs(macroMomentum),
-		math.Max(math.Abs(changePct), 1e-12),
-	)
+	macro := math.Abs(macroMomentum)
+	change := math.Abs(changePct)
+	shared := math.Min(macro, change)
 
-	return math.Max(math.Abs(macroMomentum), math.Abs(changePct)) / scale
+	if shared <= 0 {
+		return 0
+	}
+
+	gap := math.Abs(macro - change)
+	alignment := 1.0
+
+	if gap > 0 {
+		alignment = shared / (shared + gap)
+	}
+
+	return alignment * types.UnitMagnitudeMargin(shared)
 }
 
 func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
@@ -121,12 +126,32 @@ func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 		return 0
 	}
 
-	scale := math.Max(
-		math.Abs(buyPressure),
-		math.Max(math.Abs(macroMomentum), 1e-12),
-	)
+	flow := math.Abs(buyPressure)
+	macro := math.Abs(macroMomentum)
+	alignment := 1.0
 
-	return math.Abs(buyPressure) / scale
+	if macro > 0 {
+		alignment = flow / (flow + macro)
+	}
+
+	return alignment * types.UnitMagnitudeMargin(flow)
+}
+
+func ladderInterventionEvidence(outcome causalOutcome) float64 {
+	intervention := math.Abs(outcome.intervention)
+
+	if intervention <= 0 {
+		return 0
+	}
+
+	runner := math.Max(math.Abs(outcome.association), math.Abs(outcome.uplift))
+	alignment := 1.0
+
+	if runner > 0 {
+		alignment = intervention / (intervention + runner)
+	}
+
+	return alignment * types.UnitMagnitudeMargin(intervention)
 }
 
 func inversionMarginBelow(outcome causalOutcome) float64 {
@@ -139,7 +164,7 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 		headroom := contagionBreak - outcome.contagion
 
 		if headroom < margin {
-			margin = headroom / contagionBreak
+			margin = types.UnitCompetitionMargin(headroom, contagionBreak)
 		}
 	}
 
@@ -153,13 +178,13 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 			if headroom <= 0 {
 				margin = 0
 			} else {
-				margin = headroom / (headroom + span)
+				margin = types.UnitCompetitionMargin(headroom, span)
 			}
 		}
 	}
 
 	if margin == math.MaxFloat64 {
-		return 1
+		return 0
 	}
 
 	if margin <= 0 {
@@ -181,7 +206,7 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 		span := 1 - contagionBreak
 
 		if span > 0 {
-			margin = math.Max(margin, excess/span)
+			margin = math.Max(margin, types.UnitCompetitionMargin(excess, span))
 		}
 	}
 
@@ -189,10 +214,10 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 		(math.IsInf(outcome.condition, 1) ||
 			outcome.condition >= conditionSwitch) {
 		if math.IsInf(outcome.condition, 1) {
-			margin = math.Max(margin, 1)
+			margin = math.Max(margin, types.UnitMagnitudeMargin(math.Abs(outcome.intervention)))
 		} else {
 			excess := outcome.condition - conditionSwitch
-			score := excess / (excess + conditionSwitch)
+			score := types.UnitCompetitionMargin(excess, conditionSwitch)
 
 			margin = math.Max(margin, score)
 		}

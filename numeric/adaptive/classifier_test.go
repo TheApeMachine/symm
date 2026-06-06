@@ -46,9 +46,9 @@ func TestClassifierConfidence(t *testing.T) {
 			[]string{"divergent_stress", "stochastic_noise", "decoupled_alpha", "systemic_herd"},
 		)
 
-		Convey("It should read high — but never saturated — confidence deep inside a band", func() {
+		Convey("It should read material but unsaturated confidence deep inside a band", func() {
 			deep := classifier.Confidence(0.05)
-			So(deep, ShouldBeGreaterThan, 0.8)
+			So(deep, ShouldBeGreaterThan, 0.5)
 			So(deep, ShouldBeLessThan, 1.0) // approaches but never reaches full certainty
 		})
 
@@ -79,9 +79,15 @@ func TestClassifierConfidence(t *testing.T) {
 			standout := classifier.Standout(131_996_665_001.92592)
 
 			So(clarity, ShouldBeGreaterThan, 0)
-			So(clarity, ShouldBeLessThanOrEqualTo, 1)
+			So(clarity, ShouldBeLessThan, 1)
 			So(standout, ShouldBeGreaterThanOrEqualTo, 0)
 			So(standout, ShouldBeLessThanOrEqualTo, 1)
+		})
+
+		Convey("It should not report full certainty for an open-ended tail", func() {
+			clarity := classifier.Confidence(95)
+
+			So(clarity, ShouldBeLessThan, 0.995)
 		})
 	})
 

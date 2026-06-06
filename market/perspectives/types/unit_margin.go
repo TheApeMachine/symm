@@ -5,8 +5,9 @@ package types
 const UnitMarginFloor = 0.02
 
 /*
-UnitCompetitionMargin maps a non-negative margin and scale onto (0, 1) without
-post-hoc capping: margin / (margin + scale).
+UnitCompetitionMargin maps a non-negative margin and scale onto the unit band
+without post-hoc capping: margin / (margin + scale). Large finite margins can
+saturate to 1 under floating-point arithmetic.
 */
 func UnitCompetitionMargin(margin, scale float64) float64 {
 	if margin <= 0 || scale <= 0 {
@@ -17,8 +18,9 @@ func UnitCompetitionMargin(margin, scale float64) float64 {
 }
 
 /*
-UnitMagnitudeMargin maps a non-negative magnitude onto (0, 1) using a unit scale
-of 1: magnitude / (magnitude + 1).
+UnitMagnitudeMargin maps a non-negative magnitude onto the unit band using a unit
+scale of 1: magnitude / (magnitude + 1). Large finite magnitudes can saturate to
+1 under floating-point arithmetic.
 */
 func UnitMagnitudeMargin(magnitude float64) float64 {
 	if magnitude <= 0 {

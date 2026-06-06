@@ -71,6 +71,32 @@ func TestTrackerMeasureToxicBluffChurnStrength(t *testing.T) {
 	})
 }
 
+func TestTrackerMeasureToxicBluffSaturatedEvidence(t *testing.T) {
+	convey.Convey("Given finite near-touch churn that saturates evidence", t, func() {
+		tracker := newTestTracker(t)
+		now := time.Now()
+		symbol := "DOGE/EUR"
+
+		warmTrackerSNR(t, tracker, symbol)
+
+		tracker.ObserveMid(symbol, market.Pair{}, 100)
+		tracker.ObserveLast(symbol, market.Pair{}, 100)
+		state := tracker.stateLocked(symbol, market.Pair{})
+		key := priceKey(100, market.Pair{})
+		state.toxic[key] = now.Add(time.Minute)
+		state.toxicChurn[key] = math.MaxFloat64
+
+		measurement, err := tracker.Measure(symbol, now)
+
+		convey.Convey("It should publish without rejecting unit-band confidence", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(measurement.Category, convey.ShouldEqual, types.CategoryToxicBluff)
+			convey.So(measurement.Confidence, convey.ShouldBeGreaterThan, 0)
+			convey.So(measurement.Confidence, convey.ShouldBeLessThanOrEqualTo, 1)
+		})
+	})
+}
+
 func TestTrackerMeasureToxicBluff(t *testing.T) {
 	convey.Convey("Given a near-touch toxic cancel flag", t, func() {
 		tracker := newTestTracker(t)
@@ -81,8 +107,8 @@ func TestTrackerMeasureToxicBluff(t *testing.T) {
 
 		tracker.ObserveMid(symbol, market.Pair{}, 100)
 		tracker.ObserveLast(symbol, market.Pair{}, 100)
-		state := tracker.stateLocked(symbol, market.Pair{})
-		state.toxic[priceKey(100, market.Pair{})] = now.Add(time.Minute)
+		tracker.ApplyOrder(symbol, market.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
+		tracker.ApplyOrder(symbol, market.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
 
 		measurement, err := tracker.Measure(symbol, now)
 

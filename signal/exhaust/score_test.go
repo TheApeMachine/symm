@@ -35,6 +35,7 @@ func TestExitScoreLong(t *testing.T) {
 
 		Convey("It should score positive exit urgency", func() {
 			So(urgency, ShouldBeGreaterThan, 0)
+			So(urgency, ShouldBeLessThan, 1)
 			So(category, ShouldNotEqual, types.CategoryTypeNone)
 			So(evidence, ShouldBeGreaterThanOrEqualTo, 0)
 		})

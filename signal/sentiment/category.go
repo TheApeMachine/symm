@@ -35,7 +35,7 @@ func sentimentReading(
 	if leader && change != 0 {
 		margin := math.Abs(change)
 
-		return types.CategoryDivergentMove, margin / (margin + 1)
+		return types.CategoryDivergentMove, types.UnitMagnitudeMargin(margin)
 	}
 
 	margin := surgeThreshold - breadth
@@ -50,5 +50,5 @@ func sentimentReading(
 		return types.CategorySystemicSlump, uniformSentimentConfidence
 	}
 
-	return types.CategorySystemicSlump, margin / scale
+	return types.CategorySystemicSlump, types.UnitCompetitionMargin(margin, scale)
 }

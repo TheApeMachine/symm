@@ -30,6 +30,28 @@ func TestDepthSymbolMeasureSpreadBPS(t *testing.T) {
 	})
 }
 
+func TestDepthSymbolMeasureBalancedBookConfidence(t *testing.T) {
+	Convey("Given a verified balanced book", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		state, err := NewDepthSymbol(symbol)
+		So(err, ShouldBeNil)
+
+		fixture := symbolBookFixture{symbol: symbol}
+		state.ApplyBook(fixture.snapshot(99, 5, 101, 5))
+		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+
+		measurement, standout, err := state.Measure()
+
+		Convey("It should publish neutral depth without saturated confidence", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, types.CategoryDenseNeutrality)
+			So(measurement.Confidence, ShouldAlmostEqual, 0.5, 1e-12)
+			So(standout, ShouldAlmostEqual, measurement.Confidence, 1e-12)
+		})
+	})
+}
+
 func TestDepthSymbolMeasureTradePressureFallback(t *testing.T) {
 	Convey("Given trade pressure without a ready book", t, func() {
 		symbol := "ETH/EUR"

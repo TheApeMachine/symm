@@ -56,7 +56,7 @@ func TestReplayCapturePlaybookFiringSample(t *testing.T) {
 	t.Logf("regimes=%v entry_actions=%v", regimeCounts, foundCounts)
 
 	if len(foundCounts) == 0 {
-		t.Skip("production playbook produced no entry actions on capture sample")
+		t.Fatal("production playbook produced no entry actions on capture sample")
 	}
 }
 
@@ -171,88 +171,4 @@ func replayCaptureSample(t *testing.T, maxLines int) (
 	}
 
 	return regimeCounts, foundCounts, parentHeld, childHeld
-}
-
-func TestReplayCaptureFlashPumpChildFailures(t *testing.T) {
-	viper.Set("regime.trend_threshold", 1.25)
-	viper.Set("regime.strong_trend", 2.5)
-
-	capturePath, playbookPath := storyCaptureReplayPaths(t)
-
-	file, err := os.Open(capturePath)
-	if err != nil {
-		t.Skip("no capture file")
-	}
-	defer file.Close()
-
-	raw, err := os.ReadFile(playbookPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	playbook, err := reasoning.ParseThoughts(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	flashPump := playbook[5]
-	child := flashPump.Then[0]
-	leafFail := make(map[int]int)
-	parentPasses := 0
-	perSymbol := make(map[string][]types.Measurement)
-	quoteVolumeBase := make(map[string]float64)
-	lineCount := 0
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
-		lineCount++
-
-		if lineCount > captureReplaySampleLines {
-			break
-		}
-
-		var measurement types.Measurement
-		if err := json.Unmarshal(scanner.Bytes(), &measurement); err != nil {
-			continue
-		}
-
-		if measurement.Symbol == "" || measurement.Last <= 0 {
-			continue
-		}
-
-		measurement = StampQuoteNotional(measurement, quoteVolumeBase)
-		window := append(perSymbol[measurement.Symbol], measurement)
-
-		if len(window) > 1024 {
-			window = window[len(window)-1024:]
-		}
-
-		perSymbol[measurement.Symbol] = window
-
-		if len(window) < 16 {
-			continue
-		}
-
-		features := perspectives.ClassifyRegime(window)
-		if features.Regime != types.RegimeTrending && features.Regime != types.RegimeBullish {
-			continue
-		}
-
-		context := reasoning.NewWindowReason(window, features.Regime, reasoning.PositionState{})
-		if !reasoning.HoldsPredicate(flashPump.When, context) {
-			continue
-		}
-
-		parentPasses++
-
-		for leafIndex, leaf := range reasoning.FlattenLeaves(child.When) {
-			if !reasoning.HoldsPredicate(leaf.Predicate, context) {
-				leafFail[leafIndex]++
-			}
-		}
-	}
-
-	t.Logf("parentPasses=%d leafFail=%v", parentPasses, leafFail)
 }

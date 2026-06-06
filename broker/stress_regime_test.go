@@ -43,47 +43,13 @@ func TestSymbolStressEntryExposureScale(t *testing.T) {
 	})
 }
 
-func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
-	Convey("Given calm stress readings", t, func() {
-		stress := SymbolStress{
-			FluidCategory: types.CategoryLaminar,
-		}
-
-		Convey("It should leave the configured slippage ceiling unchanged", func() {
-			So(stress.EntrySlippageCapBps(50), ShouldEqual, 50)
-		})
-	})
-
-	Convey("Given hostile toxicity stress", t, func() {
-		stress := SymbolStress{
-			ToxicityCategory: types.CategoryToxicBluff,
-			ToxicitySNR:      1,
-		}
-
-		Convey("It should tighten the configured slippage ceiling", func() {
-			So(stress.EntrySlippageCapBps(50), ShouldAlmostEqual, 25, 1e-9)
-		})
-	})
-
-	Convey("Given hostile Hawkes stress", t, func() {
-		stress := SymbolStress{
-			HawkesCategory: types.CategorySaturation,
-			HawkesSNR:      3,
-		}
-
-		Convey("It should tighten the configured slippage ceiling", func() {
-			So(stress.EntrySlippageCapBps(80), ShouldAlmostEqual, 20, 1e-9)
-		})
-	})
-}
-
-func BenchmarkSymbolStressEntrySlippageCapBps(b *testing.B) {
+func BenchmarkSymbolStressEntryExposureScale(b *testing.B) {
 	stress := SymbolStress{
 		ToxicityCategory: types.CategoryToxicBluff,
 		ToxicitySNR:      1,
 	}
 
 	for b.Loop() {
-		_ = stress.EntrySlippageCapBps(50)
+		_ = stress.EntryExposureScale()
 	}
 }

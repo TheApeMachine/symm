@@ -38,7 +38,7 @@ func TestMeasureAnchorStall(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, types.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, types.CategoryAnchorStall)
-			So(measurement.Confidence, ShouldEqual, 0.6)
+			So(measurement.Confidence, ShouldAlmostEqual, 0.375, 0.0001)
 		})
 	})
 }

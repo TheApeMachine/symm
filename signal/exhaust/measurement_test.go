@@ -39,6 +39,8 @@ func TestExhaustMeasurement(t *testing.T) {
 			So(measurement.Source, ShouldEqual, types.SourceExhaustion)
 			So(measurement.Category, ShouldNotEqual, types.CategoryTypeNone)
 			So(standout, ShouldBeGreaterThanOrEqualTo, 0)
+			So(measurement.Strength, ShouldAlmostEqual, standout, 1e-12)
+			So(measurement.Strength, ShouldBeLessThan, 1)
 		})
 	})
 }

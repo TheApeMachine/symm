@@ -21,6 +21,7 @@ var (
 	DefaultTuneOptions    = budget.DefaultTuneOptions
 	CountMeasurementLines = io.CountMeasurementLines
 	LoadMeasurements      = io.LoadMeasurements
+	LoadMeasurementsLimit = io.LoadMeasurementsLimit
 	TuneMeasurements      = tune.TuneMeasurements
 )
 

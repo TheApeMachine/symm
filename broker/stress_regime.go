@@ -7,23 +7,6 @@ import (
 )
 
 /*
-EntrySlippageCapBps tightens the configured slippage ceiling under hostile regimes.
-*/
-func (stress SymbolStress) EntrySlippageCapBps(baseBps float64) float64 {
-	if baseBps <= 0 {
-		return baseBps
-	}
-
-	hostile := stress.hostileStress()
-
-	if hostile <= 0 {
-		return baseBps
-	}
-
-	return baseBps / (1 + hostile)
-}
-
-/*
 EntryExposureScale returns the fraction of normal entry size allowed by stress.
 */
 func (stress SymbolStress) EntryExposureScale() float64 {
