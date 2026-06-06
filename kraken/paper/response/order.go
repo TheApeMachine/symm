@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 /*
@@ -37,7 +37,7 @@ type Orders struct {
 // price breaches it. level is the fixed price for stop/take; trailing stops carry an
 // offset fraction and advance peak from the market price at placement.
 type restingTrigger struct {
-	action  perspectives.ActionType
+	action  reasoning.ActionType
 	qty     float64
 	level   float64
 	offset  float64
@@ -119,9 +119,9 @@ func (orders *Orders) Send(message *qpool.QValue[any]) map[string]any {
 		"cl_ord_id": params.ClOrdID,
 	}
 
-	action := perspectives.ActionFromOrderType(params.OrderType)
+	action := reasoning.ActionFromOrderType(params.OrderType)
 
-	if perspectives.IsProtectiveExit(action) {
+	if reasoning.IsProtectiveExit(action) {
 		orders.armTrigger(params, action, orderID)
 		return out
 	}
@@ -148,7 +148,7 @@ the trigger fires (the exchange holds the order, it has not executed).
 */
 func (orders *Orders) armTrigger(
 	params trading.AddParams,
-	action perspectives.ActionType,
+	action reasoning.ActionType,
 	orderID string,
 ) {
 	trigger := &restingTrigger{
@@ -160,7 +160,7 @@ func (orders *Orders) armTrigger(
 	}
 
 	if params.Triggers != nil {
-		if perspectives.IsTrailingExit(action) {
+		if reasoning.IsTrailingExit(action) {
 			trigger.offset = -params.Triggers.Price / 100
 
 			if quote, ok := orders.quotes.Snapshot(params.Symbol); ok {
@@ -212,15 +212,15 @@ func (orders *Orders) CheckTriggers() {
 
 		level := trigger.level
 
-		if perspectives.IsTrailingExit(trigger.action) {
+		if reasoning.IsTrailingExit(trigger.action) {
 			if quote.Last > trigger.peak {
 				trigger.peak = quote.Last
 			}
 
-			level = perspectives.ProtectiveLevel(trigger.action, 0, trigger.peak, trigger.offset)
+			level = reasoning.ProtectiveLevel(trigger.action, 0, trigger.peak, trigger.offset)
 		}
 
-		if perspectives.ProtectiveBreached(trigger.action, level, quote.Last) {
+		if reasoning.ProtectiveBreached(trigger.action, level, quote.Last) {
 			orders.closeAtTrigger(symbol, trigger, level, quote.Last)
 			breached = append(breached, symbol)
 		}
@@ -250,7 +250,7 @@ func (orders *Orders) closeAtTrigger(
 	trigger *restingTrigger,
 	level, last float64,
 ) {
-	maker := perspectives.ExitRestsAsLimit(trigger.action)
+	maker := reasoning.ExitRestsAsLimit(trigger.action)
 
 	if maker {
 		fee := orders.feeAmount(symbol, trigger.qty, level, true)

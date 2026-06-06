@@ -27,4 +27,3 @@ func TestSignalProcessMeasurements(t *testing.T) {
 		})
 	})
 }
-

@@ -1,6 +1,8 @@
 package types
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+)
 
 /*
 CandidateScore is one scored reasoning forest emitted by the search.
@@ -11,7 +13,7 @@ type CandidateScore struct {
 	ClosedTrades int
 	Depth        int
 	Strategies   int
-	Thoughts     []perspectives.Thought
+	Thoughts     []reasoning.Thought
 }
 
 func (candidate CandidateScore) ProfitLoss() float64 {

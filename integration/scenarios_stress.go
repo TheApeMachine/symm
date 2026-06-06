@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func stressScenarios() []Scenario {
@@ -26,14 +26,14 @@ func stressScenarios() []Scenario {
 					},
 				},
 				checkMeasurementSource("black_swan.fluid", "Fluid still publishes after crash",
-					perspectives.SourceFluid, testSymbolPrimary),
+					types.SourceFluid, testSymbolPrimary),
 				checkMeasurementSource("black_swan.cvd", "CVD still publishes after crash",
-					perspectives.SourceCVD, testSymbolPrimary),
+					types.SourceCVD, testSymbolPrimary),
 				checkCategoryObserved("black_swan.sentiment", "Sentiment classifies stress after crash",
-					perspectives.SourceSentiment,
-					perspectives.CategorySystemicSlump,
-					perspectives.CategoryDivergentMove,
-					perspectives.CategoryRiskOnSurge,
+					types.SourceSentiment,
+					types.CategorySystemicSlump,
+					types.CategoryDivergentMove,
+					types.CategoryRiskOnSurge,
 				),
 				{
 					ID:   "black_swan.spread",

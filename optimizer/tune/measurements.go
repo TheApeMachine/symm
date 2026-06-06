@@ -3,7 +3,8 @@ package tune
 import (
 	"context"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
+	ptypes "github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/market/quote"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/log"
@@ -19,7 +20,7 @@ only objective; the tree's depth and breadth are discovered, not preset.
 */
 func TuneMeasurements(
 	ctx context.Context,
-	rows []perspectives.Measurement,
+	rows []ptypes.Measurement,
 	options types.TuneOptions,
 ) (types.SessionSummary, error) {
 	costs := replay.DefaultReplayCosts()
@@ -154,16 +155,16 @@ func shouldWrite(best reasoning.Candidate, minRoundTrips int) bool {
 }
 
 func fundableRows(
-	rows []perspectives.Measurement,
+	rows []ptypes.Measurement,
 	walletCurrency string,
-) []perspectives.Measurement {
+) []ptypes.Measurement {
 	currency := quote.NormalizeCurrency(walletCurrency)
 
 	if currency == "" {
 		return rows
 	}
 
-	filtered := make([]perspectives.Measurement, 0, len(rows))
+	filtered := make([]ptypes.Measurement, 0, len(rows))
 
 	for _, row := range rows {
 		if row.Symbol == "" {
@@ -181,7 +182,7 @@ func fundableRows(
 }
 
 func fundableSymbolCount(
-	rows []perspectives.Measurement,
+	rows []ptypes.Measurement,
 	walletCurrency string,
 ) int {
 	currency := quote.NormalizeCurrency(walletCurrency)
@@ -206,11 +207,11 @@ func fundableSymbolCount(
 }
 
 // forestDepth is the deepest Then-chain in the forest.
-func forestDepth(forest []perspectives.Thought) int {
+func forestDepth(forest []preasoning.Thought) int {
 	deepest := 0
 
-	var walk func(thought perspectives.Thought, depth int)
-	walk = func(thought perspectives.Thought, depth int) {
+	var walk func(thought preasoning.Thought, depth int)
+	walk = func(thought preasoning.Thought, depth int) {
 		if depth > deepest {
 			deepest = depth
 		}
@@ -228,10 +229,10 @@ func forestDepth(forest []perspectives.Thought) int {
 }
 
 // strategyCount is the number of root branches that reach an entry.
-func strategyCount(forest []perspectives.Thought) int {
-	var reachesEntry func(thought perspectives.Thought) bool
-	reachesEntry = func(thought perspectives.Thought) bool {
-		if perspectives.IsEntryAction(thought.Do.Type) {
+func strategyCount(forest []preasoning.Thought) int {
+	var reachesEntry func(thought preasoning.Thought) bool
+	reachesEntry = func(thought preasoning.Thought) bool {
+		if preasoning.IsEntryAction(thought.Do.Type) {
 			return true
 		}
 

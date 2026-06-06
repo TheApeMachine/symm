@@ -1,28 +1,17 @@
 package fluid
 
-import "time"
+import "fmt"
 
 /*
-fluxAccumulator measures book churn and fill volume over volume-clocked bars instead of
-chronological windows.
+fluxAccumulator measures book churn and fill volume over volume-clocked bars.
 
-A physical pipe has a constant diameter; an exchange's liquidity pool is a pipe made of vapour,
-and ten seconds of wall-clock time holds wildly different amounts of information on a dead Sunday
-night versus a frenzied sell-off. Sampling the fill-to-cancel ratio on a fixed clock therefore
-confuses an empty market with a viscous one. Here the bar instead closes once a target amount of
-base volume has actually traded, so every bar carries a consistent quantum of activity. A wall-clock
-maxAge still force-closes a bar so a long quiet stretch cannot accumulate unbounded churn, and when
-the per-symbol volume target is unknown the accumulator falls back to pure time bars — the previous
-behaviour.
-
-The last completed bar is what callers read, so the fill-to-cancel ratio is always measured over a
-whole, consistent bucket rather than whatever fraction has accrued since the last roll.
+Bars close once a configured base-volume target has traded, so each bucket carries
+a consistent quantum of activity. Book churn is counted only while the open bar
+already has trade volume — quiet book wiggles outside an active volume bar are
+ignored rather than substituted with a wall-clock window.
 */
 type fluxAccumulator struct {
-	maxAge      time.Duration
 	target      float64
-	start       time.Time
-	started     bool
 	progress    float64
 	bookOpen    float64
 	tradeOpen   float64
@@ -31,97 +20,89 @@ type fluxAccumulator struct {
 	haveClosed  bool
 }
 
-func newFluxAccumulator(maxAge time.Duration) *fluxAccumulator {
-	return &fluxAccumulator{maxAge: maxAge}
+func newFluxAccumulator() *fluxAccumulator {
+	return &fluxAccumulator{}
 }
 
 /*
-setTarget sets the base volume that closes one bar. A non-positive target disables volume rolling
-and the accumulator behaves as a pure time bar of width maxAge.
+setTarget sets the base volume that closes one bar.
 */
-func (flux *fluxAccumulator) setTarget(target float64) {
-	if target < 0 {
-		target = 0
+func (flux *fluxAccumulator) setTarget(target float64) error {
+	if target <= 0 {
+		return fmt.Errorf("fluid: volume clock bar target must be positive, got %v", target)
 	}
 
 	flux.target = target
+
+	return nil
 }
 
 /*
-addBook folds one book-churn reading into the open bar. Book updates carry no traded volume, so
-they can only trigger the wall-clock fallback roll.
+addBook folds one book-churn reading into the open volume bar. Churn is ignored
+until the bar has trade volume, because a fill-to-cancel ratio without fills is
+undefined.
 */
-func (flux *fluxAccumulator) addBook(at time.Time, churn float64) {
+func (flux *fluxAccumulator) addBook(churn float64) error {
 	if churn <= 0 {
-		return
+		return nil
 	}
 
-	flux.startOrAgeRoll(at)
+	if flux.target <= 0 {
+		return fmt.Errorf("fluid: volume clock target is not set")
+	}
+
+	if flux.tradeOpen <= 0 {
+		return nil
+	}
+
 	flux.bookOpen += churn
+
+	return nil
 }
 
 /*
-addTrade folds one fill into the open bar and advances the volume clock. The fill that crosses the
-target completes the current bar — it is counted in that bar — and a fresh, empty bar opens.
+addTrade folds one fill into the open bar and closes it once the volume target is met.
 */
-func (flux *fluxAccumulator) addTrade(at time.Time, qty float64) {
+func (flux *fluxAccumulator) addTrade(qty float64) error {
 	if qty <= 0 {
-		return
+		return nil
 	}
 
-	flux.startOrAgeRoll(at)
+	if flux.target <= 0 {
+		return fmt.Errorf("fluid: volume clock target is not set")
+	}
+
 	flux.tradeOpen += qty
 	flux.progress += qty
 
-	if flux.target > 0 && flux.progress >= flux.target {
-		flux.close(at)
+	if flux.progress >= flux.target {
+		flux.close()
 	}
+
+	return nil
 }
 
-// startOrAgeRoll seeds the first bar and force-closes a stale one on the wall-clock fallback
-// before the triggering event is folded — so an event arriving after the bar has aged out opens
-// the next bar rather than landing in the expired one.
-func (flux *fluxAccumulator) startOrAgeRoll(at time.Time) {
-	if !flux.started {
-		flux.started = true
-		flux.start = at
-
-		return
-	}
-
-	if flux.maxAge > 0 && at.Sub(flux.start) >= flux.maxAge {
-		flux.close(at)
-	}
-}
-
-func (flux *fluxAccumulator) close(at time.Time) {
+func (flux *fluxAccumulator) close() {
 	flux.bookClosed = flux.bookOpen
 	flux.tradeClosed = flux.tradeOpen
 	flux.haveClosed = true
 	flux.bookOpen = 0
 	flux.tradeOpen = 0
 	flux.progress = 0
-	flux.start = at
 }
 
 /*
-bookFlux returns the book churn of the last completed bar, or the open bar before any has closed.
+completedBar returns the last volume-closed bar. Open or partial bars are not
+substituted.
 */
-func (flux *fluxAccumulator) bookFlux() float64 {
-	if flux.haveClosed {
-		return flux.bookClosed
+func (flux *fluxAccumulator) completedBar() (bookFlux, tradeFlux float64, err error) {
+	if !flux.haveClosed {
+		return 0, 0, fmt.Errorf("fluid: flux bar has not completed")
 	}
 
-	return flux.bookOpen
-}
-
-/*
-tradeFlux returns the fill volume of the last completed bar, or the open bar before any has closed.
-*/
-func (flux *fluxAccumulator) tradeFlux() float64 {
-	if flux.haveClosed {
-		return flux.tradeClosed
+	if flux.tradeClosed <= 0 {
+		return 0, 0, fmt.Errorf("fluid: completed flux bar has no trade volume")
 	}
 
-	return flux.tradeOpen
+	return flux.bookClosed, flux.tradeClosed, nil
 }

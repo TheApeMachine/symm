@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestExecutionStressMultiplier(t *testing.T) {
 	convey.Convey("Given turbulent snapshot readings", t, func() {
-		snapshots := []perspectives.Measurement{
-			{Category: perspectives.CategoryTurbulent, SNR: 2},
-			{Category: perspectives.CategoryLaminar, SNR: 0.5},
+		snapshots := []types.Measurement{
+			{Category: types.CategoryTurbulent, SNR: 2},
+			{Category: types.CategoryLaminar, SNR: 0.5},
 		}
 
 		multiplier := executionStressMultiplier(snapshots)
@@ -22,8 +22,8 @@ func TestExecutionStressMultiplier(t *testing.T) {
 	})
 
 	convey.Convey("Given only laminar readings", t, func() {
-		snapshots := []perspectives.Measurement{
-			{Category: perspectives.CategoryLaminar, SNR: 2},
+		snapshots := []types.Measurement{
+			{Category: types.CategoryLaminar, SNR: 2},
 		}
 
 		convey.Convey("It should leave slippage unchanged", func() {
@@ -32,9 +32,9 @@ func TestExecutionStressMultiplier(t *testing.T) {
 	})
 
 	convey.Convey("Given toxic microstructure readings", t, func() {
-		snapshots := []perspectives.Measurement{
-			{Category: perspectives.CategoryToxicBluff, SNR: 3},
-			{Category: perspectives.CategoryLaminar, SNR: 0.5},
+		snapshots := []types.Measurement{
+			{Category: types.CategoryToxicBluff, SNR: 3},
+			{Category: types.CategoryLaminar, SNR: 0.5},
 		}
 
 		multiplier := executionStressMultiplier(snapshots)
@@ -47,29 +47,29 @@ func TestExecutionStressMultiplier(t *testing.T) {
 
 func TestRegimeHostility(t *testing.T) {
 	convey.Convey("Adverse selection is anchored to the structural regime", t, func() {
-		convey.So(regimeHostility(perspectives.RegimeBearish), convey.ShouldBeGreaterThan, 1)
-		convey.So(regimeHostility(perspectives.RegimeChoppy), convey.ShouldBeGreaterThan, 1)
+		convey.So(regimeHostility(types.RegimeBearish), convey.ShouldBeGreaterThan, 1)
+		convey.So(regimeHostility(types.RegimeChoppy), convey.ShouldBeGreaterThan, 1)
 
 		convey.Convey("A liquidation/bearish regime is the most hostile", func() {
 			convey.So(
-				regimeHostility(perspectives.RegimeBearish),
+				regimeHostility(types.RegimeBearish),
 				convey.ShouldBeGreaterThan,
-				regimeHostility(perspectives.RegimeChoppy),
+				regimeHostility(types.RegimeChoppy),
 			)
 		})
 
 		convey.Convey("Calm and trending regimes are neutral", func() {
-			convey.So(regimeHostility(perspectives.RegimeTrending), convey.ShouldEqual, 1)
-			convey.So(regimeHostility(perspectives.RegimeBullish), convey.ShouldEqual, 1)
-			convey.So(regimeHostility(perspectives.RegimeDead), convey.ShouldEqual, 1)
+			convey.So(regimeHostility(types.RegimeTrending), convey.ShouldEqual, 1)
+			convey.So(regimeHostility(types.RegimeBullish), convey.ShouldEqual, 1)
+			convey.So(regimeHostility(types.RegimeDead), convey.ShouldEqual, 1)
 		})
 	})
 }
 
 func BenchmarkExecutionStressMultiplier(b *testing.B) {
-	snapshots := []perspectives.Measurement{
-		{Category: perspectives.CategoryTurbulent, SNR: 2},
-		{Category: perspectives.CategoryLaminar, SNR: 0.5},
+	snapshots := []types.Measurement{
+		{Category: types.CategoryTurbulent, SNR: 2},
+		{Category: types.CategoryLaminar, SNR: 0.5},
 	}
 
 	for b.Loop() {
@@ -79,6 +79,6 @@ func BenchmarkExecutionStressMultiplier(b *testing.B) {
 
 func BenchmarkRegimeHostility(b *testing.B) {
 	for b.Loop() {
-		_ = regimeHostility(perspectives.RegimeBearish)
+		_ = regimeHostility(types.RegimeBearish)
 	}
 }

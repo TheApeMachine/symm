@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -20,12 +21,12 @@ in replay reproduces exactly when traded live.
 The continuous fields double as the dashboard's regime radar axes.
 */
 type RegimeFeatures struct {
-	Regime        Regime  // the discrete state branches gate on
-	Volatility    float64 // realized vol: stdev of the distinct-price log returns
-	Drift         float64 // net log return over the window (signed: >0 up, <0 down)
-	TrendStrength float64 // |t-stat| of the mean step return — drift signal vs. noise
-	Choppiness    float64 // 0..1 movement-without-direction score (0 when dead)
-	Samples       int     // price-bearing measurements observed in the window
+	Regime        types.Regime // the discrete state branches gate on
+	Volatility    float64      // realized vol: stdev of the distinct-price log returns
+	Drift         float64      // net log return over the window (signed: >0 up, <0 down)
+	TrendStrength float64      // |t-stat| of the mean step return — drift signal vs. noise
+	Choppiness    float64      // 0..1 movement-without-direction score (0 when dead)
+	Samples       int          // price-bearing measurements observed in the window
 }
 
 /*
@@ -103,7 +104,7 @@ the snapshot repeats each price many times between trades. We collapse it to the
 distinct price path before taking any return, so a market that is quoting but not
 trading reads as Dead rather than as low-but-nonzero noise.
 */
-func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
+func ClassifyRegime(snapshots []types.Measurement) RegimeFeatures {
 	cfg := loadRegimeConfig()
 
 	if len(snapshots) > cfg.window {
@@ -126,14 +127,14 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 
 	// Not enough observed price data to claim a regime honestly.
 	if samples < cfg.minSamples {
-		features.Regime = RegimeNone
+		features.Regime = types.RegimeNone
 
 		return features
 	}
 
 	// Enough activity observed but the price never moved: a dead, flat market.
 	if stats.returns == 0 {
-		features.Regime = RegimeDead
+		features.Regime = types.RegimeDead
 
 		return features
 	}
@@ -156,19 +157,19 @@ func ClassifyRegime(snapshots []Measurement) RegimeFeatures {
 	switch {
 	case features.TrendStrength >= cfg.strongTrend:
 		if drift >= 0 {
-			features.Regime = RegimeBullish
+			features.Regime = types.RegimeBullish
 		} else {
-			features.Regime = RegimeBearish
+			features.Regime = types.RegimeBearish
 		}
 	case features.TrendStrength >= cfg.trend:
-		features.Regime = RegimeTrending
+		features.Regime = types.RegimeTrending
 	case vol < cfg.deadVol:
-		features.Regime = RegimeDead
+		features.Regime = types.RegimeDead
 	default:
-		features.Regime = RegimeChoppy
+		features.Regime = types.RegimeChoppy
 	}
 
-	if features.Regime != RegimeDead {
+	if features.Regime != types.RegimeDead {
 		features.Choppiness = 1 - math.Min(1, features.TrendStrength/cfg.strongTrend)
 	}
 

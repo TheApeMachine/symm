@@ -5,18 +5,19 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestTakerFillWalksBook(t *testing.T) {
 	Convey("Given a tape row with two ask levels", t, func() {
 		costs := triggerTestCosts()
-		measurement := perspectives.Measurement{
+		measurement := types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 			Bid:    99,
 			Ask:    100,
-			BookAsks: []perspectives.BookLevel{
+			BookAsks: []types.BookLevel{
 				{Price: 100, Qty: 1},
 				{Price: 101, Qty: 1},
 			},
@@ -36,12 +37,12 @@ func TestTakerFillDepthShortfallPenalty(t *testing.T) {
 	Convey("Given a thin ask book", t, func() {
 		costs := triggerTestCosts()
 		ledger := newReplayLedger(costs)
-		measurement := perspectives.Measurement{
+		measurement := types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 			Bid:    99,
 			Ask:    100,
-			BookAsks: []perspectives.BookLevel{
+			BookAsks: []types.BookLevel{
 				{Price: 100, Qty: 0.1},
 			},
 		}
@@ -49,7 +50,7 @@ func TestTakerFillDepthShortfallPenalty(t *testing.T) {
 		ledger.openEntry(
 			"BTC/EUR",
 			trading.Buy,
-			perspectives.Act{},
+			reasoning.Act{},
 			measurement,
 			nil,
 			0,
@@ -66,12 +67,12 @@ func TestTakerFillDepthShortfallPenalty(t *testing.T) {
 
 func BenchmarkTakerFill(b *testing.B) {
 	costs := triggerTestCosts()
-	measurement := perspectives.Measurement{
+	measurement := types.Measurement{
 		Symbol: "BTC/EUR",
 		Last:   100,
 		Bid:    99,
 		Ask:    100,
-		BookAsks: []perspectives.BookLevel{
+		BookAsks: []types.BookLevel{
 			{Price: 100, Qty: 1},
 			{Price: 101, Qty: 1},
 		},

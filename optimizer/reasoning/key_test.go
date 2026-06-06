@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func TestKeyOf(t *testing.T) {
@@ -13,10 +13,10 @@ func TestKeyOf(t *testing.T) {
 		key := keyOf(forest)
 
 		Convey("It should preserve identity across a YAML round trip", func() {
-			encoded, err := perspectives.MarshalThoughts(forest, 2)
+			encoded, err := reasoning.MarshalThoughts(forest, 2)
 			So(err, ShouldBeNil)
 
-			decoded, err := perspectives.ParseThoughts(encoded)
+			decoded, err := reasoning.ParseThoughts(encoded)
 			So(err, ShouldBeNil)
 			So(keyOf(decoded), ShouldEqual, key)
 		})

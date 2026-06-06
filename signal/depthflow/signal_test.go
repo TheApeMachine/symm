@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
@@ -64,14 +64,14 @@ func TestObserveTrade(t *testing.T) {
 				Symbol: symbol, Side: "buy", Price: 100, Qty: 3, Timestamp: now,
 			})
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -83,7 +83,7 @@ func TestObserveTrade(t *testing.T) {
 			}
 
 			Convey("It publishes a depthflow reading", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceDepthFlow)
+				So(measurement.Source, ShouldEqual, types.SourceDepthFlow)
 				So(measurement.Symbol, ShouldEqual, symbol)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 			})

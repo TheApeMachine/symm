@@ -6,10 +6,11 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 var tradesPool = sync.Pool{
@@ -30,21 +31,9 @@ var booksPool = sync.Pool{
 	},
 }
 
-var ordersPool = sync.Pool{
-	New: func() any {
-		return make([]trading.OrderUpdate, 0)
-	},
-}
-
 var executionsPool = sync.Pool{
 	New: func() any {
 		return make([]user.Execution, 0)
-	},
-}
-
-var balancesPool = sync.Pool{
-	New: func() any {
-		return make([]user.Balance, 0)
 	},
 }
 
@@ -94,20 +83,6 @@ func GetBooks(data *public.SocketMessage) []market.Book {
 	return append([]market.Book(nil), books...)
 }
 
-func GetOrders(data *public.SocketMessage) []trading.OrderUpdate {
-	orders := ordersPool.Get().([]trading.OrderUpdate)[:0]
-	defer func() {
-		ordersPool.Put(orders[:0])
-	}()
-
-	if err := sonic.Unmarshal(data.Data, &orders); err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return append([]trading.OrderUpdate(nil), orders...)
-}
-
 func GetExecutions(data *public.SocketMessage) []user.Execution {
 	executions := executionsPool.Get().([]user.Execution)[:0]
 	defer func() {
@@ -120,20 +95,6 @@ func GetExecutions(data *public.SocketMessage) []user.Execution {
 	}
 
 	return append([]user.Execution(nil), executions...)
-}
-
-func GetBalances(data *public.SocketMessage) []user.Balance {
-	balances := balancesPool.Get().([]user.Balance)[:0]
-	defer func() {
-		balancesPool.Put(balances[:0])
-	}()
-
-	if err := sonic.Unmarshal(data.Data, &balances); err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return append([]user.Balance(nil), balances...)
 }
 
 func SocketMessageFromValue(value any) (*public.SocketMessage, bool) {
@@ -175,4 +136,17 @@ func rawMessage(value any) (json.RawMessage, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func GetMeasurement(data *qpool.QValue[any]) types.Measurement {
+	var (
+		ok          bool
+		measurement types.Measurement
+	)
+
+	if measurement, ok = data.Value.(types.Measurement); !ok {
+		return types.Measurement{}
+	}
+
+	return measurement
 }

@@ -5,7 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func (orders *Orders) pairMeta(symbol string) pairMeta {
@@ -47,7 +47,7 @@ func (orders *Orders) takerFillPrice(
 	side trading.Side,
 	qty float64,
 	capPrice float64,
-	action perspectives.ActionType,
+	action reasoning.ActionType,
 ) (price float64, err error) {
 	quote, ok := orders.quotes.Snapshot(symbol)
 
@@ -63,7 +63,7 @@ func (orders *Orders) takerFillPrice(
 
 	price = fill.Price
 
-	if action == perspectives.ActionTakeProfit && side == trading.Sell && capPrice > 0 && price > capPrice {
+	if action == reasoning.ActionTakeProfit && side == trading.Sell && capPrice > 0 && price > capPrice {
 		price = capPrice
 	}
 

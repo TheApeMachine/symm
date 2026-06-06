@@ -4,6 +4,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -13,8 +15,8 @@ search co-evolves sizing with liquidity conditions.
 */
 func entryDeployFraction(
 	costs ReplayCosts,
-	act perspectives.Act,
-	snapshots []perspectives.Measurement,
+	act reasoning.Act,
+	snapshots []types.Measurement,
 ) float64 {
 	multiplier := 1.0
 
@@ -38,11 +40,11 @@ func entryDeployFraction(
 	return fraction
 }
 
-func regimeSizeScale(regime perspectives.Regime) float64 {
+func regimeSizeScale(regime types.Regime) float64 {
 	config := viper.GetViper()
 
 	switch regime {
-	case perspectives.RegimeChoppy:
+	case types.RegimeChoppy:
 		key := "trading.replay.choppy_size_scale"
 
 		if !config.IsSet(key) {
@@ -52,7 +54,7 @@ func regimeSizeScale(regime perspectives.Regime) float64 {
 		}
 
 		return config.GetFloat64(key)
-	case perspectives.RegimeBearish:
+	case types.RegimeBearish:
 		key := "trading.replay.bearish_size_scale"
 
 		if !config.IsSet(key) {

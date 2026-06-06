@@ -6,7 +6,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 // frictionless: zero fees + slippage, immediate execution, a €100 EUR wallet.
@@ -19,27 +20,27 @@ func frictionlessCosts() ReplayCosts {
 	}
 }
 
-func ignite(last float64, at time.Time) perspectives.Measurement {
-	return perspectives.Measurement{
-		Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: last, At: at,
+func ignite(last float64, at time.Time) types.Measurement {
+	return types.Measurement{
+		Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: last, At: at,
 	}
 }
 
-func notHolding(category perspectives.CategoryType) perspectives.Predicate {
-	return perspectives.Predicate{All: []perspectives.Predicate{
-		{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationNotHolding},
-		{Subject: perspectives.SubjectSignal, Category: category, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+func notHolding(category types.CategoryType) reasoning.Predicate {
+	return reasoning.Predicate{All: []reasoning.Predicate{
+		{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationNotHolding},
+		{Subject: reasoning.SubjectSignal, Category: category, Unit: reasoning.UnitSNR, Op: reasoning.ComparisonAtLeast, Value: 1.0},
 	}}
 }
 
-func priceRow(last float64, at time.Time) perspectives.Measurement {
-	return perspectives.Measurement{Symbol: "BTC/EUR", Last: last, At: at}
+func priceRow(last float64, at time.Time) types.Measurement {
+	return types.Measurement{Symbol: "BTC/EUR", Last: last, At: at}
 }
 
-func priceCrossedUp(level float64) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectPrice, Unit: perspectives.UnitNone,
-		Ago: 1, Op: perspectives.ComparisonCrossedUp, Value: level,
+func priceCrossedUp(level float64) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectPrice, Unit: reasoning.UnitNone,
+		Ago: 1, Op: reasoning.ComparisonCrossedUp, Value: level,
 	}
 }
 
@@ -52,31 +53,31 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 	Convey("Given a frictionless €100 wallet and a price path that crosses two levels on different ticks", t, func() {
 		base := time.Unix(1_700_000_000, 0)
 
-		thoughts := []perspectives.Thought{
+		thoughts := []reasoning.Thought{
 			{
-				When: perspectives.Predicate{All: []perspectives.Predicate{
-					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationNotHolding},
+				When: reasoning.Predicate{All: []reasoning.Predicate{
+					{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationNotHolding},
 					priceCrossedUp(101), // transient: true only on the tick price crosses 101
 				}},
-				Then: []perspectives.Thought{{
+				Then: []reasoning.Thought{{
 					When: priceCrossedUp(103), // fires a tick later, once the parent has latched
-					Do:   perspectives.Act{Type: perspectives.ActionMarket},
+					Do:   reasoning.Act{Type: reasoning.ActionMarket},
 				}},
 			},
 			{
-				When: perspectives.Predicate{All: []perspectives.Predicate{
-					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
-					{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryActiveReversal, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+				When: reasoning.Predicate{All: []reasoning.Predicate{
+					{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationHolding},
+					{Subject: reasoning.SubjectSignal, Category: types.CategoryActiveReversal, Unit: reasoning.UnitSNR, Op: reasoning.ComparisonAtLeast, Value: 1.0},
 				}},
-				Do: perspectives.Act{Type: perspectives.ActionSettlePosition},
+				Do: reasoning.Act{Type: reasoning.ActionSettlePosition},
 			},
 		}
 
-		rows := []perspectives.Measurement{
+		rows := []types.Measurement{
 			priceRow(100, base),                    // no cross yet
 			priceRow(102, base.Add(time.Second)),   // crosses 101 -> parent latches; 102<103 so child holds off
 			priceRow(104, base.Add(2*time.Second)), // parent edge gone; crosses 103 -> child enters at 104
-			{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
+			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
 		}
 
 		sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
@@ -92,14 +93,14 @@ func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
 		base := time.Unix(1_700_000_000, 0)
 
 		// Enter on an ignition; no exit, so the first fill camps and ties up the cash.
-		thoughts := []perspectives.Thought{
-			{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+		thoughts := []reasoning.Thought{
+			{When: notHolding(types.CategoryVerticalIgnition), Do: reasoning.Act{Type: reasoning.ActionMarket}},
 		}
 
-		rows := []perspectives.Measurement{
+		rows := []types.Measurement{
 			ignite(100, base), // BTC/EUR enters, spends the whole €100
-			{Symbol: "ETH/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 50, At: base.Add(time.Second)},
-			{Symbol: "ETH/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 51, At: base.Add(2 * time.Second)},
+			{Symbol: "ETH/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 50, At: base.Add(time.Second)},
+			{Symbol: "ETH/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 51, At: base.Add(2 * time.Second)},
 		}
 
 		result := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts()).Result()
@@ -114,21 +115,21 @@ func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 	Convey("Given the same reasoning tree scored with and without fees", t, func() {
 		base := time.Unix(1_700_000_000, 0)
 
-		thoughts := []perspectives.Thought{
-			{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+		thoughts := []reasoning.Thought{
+			{When: notHolding(types.CategoryVerticalIgnition), Do: reasoning.Act{Type: reasoning.ActionMarket}},
 			{
-				When: perspectives.Predicate{All: []perspectives.Predicate{
-					{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
-					{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryActiveReversal, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+				When: reasoning.Predicate{All: []reasoning.Predicate{
+					{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationHolding},
+					{Subject: reasoning.SubjectSignal, Category: types.CategoryActiveReversal, Unit: reasoning.UnitSNR, Op: reasoning.ComparisonAtLeast, Value: 1.0},
 				}},
-				Do: perspectives.Act{Type: perspectives.ActionSettlePosition},
+				Do: reasoning.Act{Type: reasoning.ActionSettlePosition},
 			},
 		}
 
-		rows := []perspectives.Measurement{
+		rows := []types.Measurement{
 			ignite(100, base),
 			ignite(110, base.Add(time.Second)),
-			{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 110, At: base.Add(2 * time.Second)},
+			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 110, At: base.Add(2 * time.Second)},
 		}
 
 		tape := PrecompileTape(rows)
@@ -152,22 +153,22 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 		base := time.Unix(1_700_000_000, 0)
 
 		Convey("A reasoning tree (enter on ignition, settle on reversal) trades and profits", func() {
-			thoughts := []perspectives.Thought{
-				{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+			thoughts := []reasoning.Thought{
+				{When: notHolding(types.CategoryVerticalIgnition), Do: reasoning.Act{Type: reasoning.ActionMarket}},
 				{
-					When: perspectives.Predicate{All: []perspectives.Predicate{
-						{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
-						{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryActiveReversal, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+					When: reasoning.Predicate{All: []reasoning.Predicate{
+						{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationHolding},
+						{Subject: reasoning.SubjectSignal, Category: types.CategoryActiveReversal, Unit: reasoning.UnitSNR, Op: reasoning.ComparisonAtLeast, Value: 1.0},
 					}},
-					Do: perspectives.Act{Type: perspectives.ActionSettlePosition},
+					Do: reasoning.Act{Type: reasoning.ActionSettlePosition},
 				},
 			}
 
-			rows := []perspectives.Measurement{
+			rows := []types.Measurement{
 				ignite(100, base),
 				ignite(102, base.Add(time.Second)),
 				ignite(104, base.Add(2*time.Second)),
-				{Symbol: "BTC/EUR", Category: perspectives.CategoryActiveReversal, SNR: 1.5, Last: 104, At: base.Add(3 * time.Second)},
+				{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 104, At: base.Add(3 * time.Second)},
 			}
 
 			sim := NewThoughtSimulation(context.Background(), thoughts, PrecompileTape(rows), frictionlessCosts())
@@ -178,15 +179,15 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 		})
 
 		Convey("A per-node trailing offset overrides the dynamic default", func() {
-			thoughts := []perspectives.Thought{
-				{When: notHolding(perspectives.CategoryVerticalIgnition), Do: perspectives.Act{Type: perspectives.ActionMarket}},
+			thoughts := []reasoning.Thought{
+				{When: notHolding(types.CategoryVerticalIgnition), Do: reasoning.Act{Type: reasoning.ActionMarket}},
 				{
-					When: perspectives.Predicate{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding},
-					Do:   perspectives.Act{Type: perspectives.ActionTrailingStop, Offset: 0.02}, // tight 2% trail
+					When: reasoning.Predicate{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationHolding},
+					Do:   reasoning.Act{Type: reasoning.ActionTrailingStop, Offset: 0.02}, // tight 2% trail
 				},
 			}
 
-			rows := []perspectives.Measurement{
+			rows := []types.Measurement{
 				ignite(100, base),
 				ignite(110, base.Add(time.Second)),   // peak 110
 				ignite(107, base.Add(2*time.Second)), // 2.7% off the peak — breaches a 2% trail

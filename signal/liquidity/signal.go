@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -46,7 +46,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (daily quote volume)
-	tracked     sync.Map // symbol -> *perspectives.Category
+	tracked     sync.Map // symbol -> *types.Category
 	floor       *adaptive.SNRField
 	classifier  *adaptive.Classifier
 	calibrator  *numeric.BandCalibrator
@@ -153,15 +153,17 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				return nil, nil
 			}
 
-			telemetry, standout := numeric.ObserveGaugeTelemetry(
+			categoryStandout := standout
+
+			telemetry, _ := numeric.ObserveGaugeTelemetry(
 				signal.calibrator,
 				signal.classifier,
 				measurement.Strength,
 				standout,
 			)
 
-			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, standout,
+			if err := types.AssignCategorySNR(
+				&measurement, signal.floor, categoryStandout,
 			); err != nil {
 				return nil, err
 			}
@@ -180,7 +182,9 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				return nil, err
 			}
 
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := measurement.Send(signal.pool); err != nil {
+				return nil, err
+			}
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{
@@ -208,7 +212,7 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 	return err
 }
 
-func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement, float64, error) {
+func (signal *Signal) measure(row market.TickerUpdate) (types.Measurement, float64, error) {
 	signal.symbols.Store(row.Symbol, row.Volume*row.Last)
 
 	volumes := signal.volumeSnapshot()
@@ -219,7 +223,7 @@ func (signal *Signal) measure(row market.TickerUpdate) (perspectives.Measurement
 func (signal *Signal) measureFromVolumes(
 	row market.TickerUpdate,
 	volumes map[string]float64,
-) (perspectives.Measurement, float64, error) {
+) (types.Measurement, float64, error) {
 	quoteVol := volumes[row.Symbol]
 
 	peers := make([]float64, 0, len(volumes)-1)
@@ -233,13 +237,13 @@ func (signal *Signal) measureFromVolumes(
 	}
 
 	if quoteVol <= 0 || len(peers) < minLiquidityPeers {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	median := numeric.PercentileSorted(numeric.CopySorted(peers), 0.5)
 
 	if median <= 0 {
-		return perspectives.Measurement{}, 0, fmt.Errorf(
+		return types.Measurement{}, 0, fmt.Errorf(
 			"liquidity: non-positive peer median for %s",
 			row.Symbol,
 		)
@@ -247,27 +251,25 @@ func (signal *Signal) measureFromVolumes(
 
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
-	category, clarity, standout, err := liquidityReading(quoteVol, peers)
+	category, confidence, standout, err := liquidityReading(quoteVol, peers)
 
 	if err != nil {
-		return perspectives.Measurement{}, 0, err
+		return types.Measurement{}, 0, err
 	}
 
 	trackedRaw, _ := signal.tracked.LoadOrStore(
 		row.Symbol,
-		perspectives.NewCategory(perspectives.CategoryTypeNone),
+		types.NewCategory(types.CategoryTypeNone),
 	)
-	tracked := trackedRaw.(*perspectives.Category)
+	tracked := trackedRaw.(*types.Category)
 
-	confidence, err := tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
+	return types.Measurement{
 		Symbol:     row.Symbol,
-		Source:     perspectives.SourceLiquidity,
+		Source:     types.SourceLiquidity,
 		Category:   category,
 		Last:       row.Last,
 		Volume:     quoteVol,

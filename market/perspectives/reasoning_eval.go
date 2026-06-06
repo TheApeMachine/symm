@@ -4,6 +4,8 @@ import (
 	"strconv"
 
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -26,18 +28,18 @@ depth express a sequence over time. holds/levelOp/temporalOp are identical for b
 // it from the per-symbol measurement window, the regime, and the open position.
 type ReasonContext interface {
 	// Regime is the current price-action regime.
-	Regime() Regime
+	Regime() types.Regime
 	// Lifecycle reports whether the position is in the given state
 	// (not_holding / holding / has_started / has_continued / has_ended).
-	Lifecycle(state ObservationType) bool
+	Lifecycle(state types.ObservationType) bool
 	// PositionSide is the open position's entry side (buy = long, sell = short).
 	PositionSide() trading.Side
 	// Signal returns a category's strength in the given unit (snr/confidence),
 	// ago measurements ago (0 = now); ok is false when the category is absent.
-	Signal(category CategoryType, unit UnitType, ago int) (value float64, ok bool)
+	Signal(category types.CategoryType, unit reasoning.UnitType, ago int) (value float64, ok bool)
 	// Scalar returns a scalar subject (price/volume/spread/elapsed) in the given
 	// unit, ago measurements ago; ok is false when it is unavailable.
-	Scalar(subject Subject, unit UnitType, ago int) (value float64, ok bool)
+	Scalar(subject reasoning.Subject, unit reasoning.UnitType, ago int) (value float64, ok bool)
 }
 
 /*
@@ -141,7 +143,7 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 
 	// Episode boundary: when holding flips, the chain that drove the decision has
 	// done its job — start the next stretch with a clean frontier so it can re-arm.
-	holding := ctx.Lifecycle(ObservationHolding)
+	holding := ctx.Lifecycle(types.ObservationHolding)
 
 	if state.primed && holding != state.lastHolding {
 		clear(state.active)
@@ -182,13 +184,13 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 					next[key] = true
 				}
 
-				if firesNow && node.Do.Type != ActionNone && depth > bestDepth {
+				if firesNow && node.Do.Type != reasoning.ActionNone && depth > bestDepth {
 					best, bestDepth, bestKey, found = node.Do, depth, key, true
 				}
 			}
 
 			if trace != nil {
-				nodeTrace := NodeTrace{
+				nodeTrace := reasoning.NodeTrace{
 					Key:       key,
 					Depth:     depth,
 					Reachable: reachable,
@@ -199,7 +201,7 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 				// For a reached compound node, record each leaf condition's own
 				// truth so the tree can show which sub-condition is the one failing.
 				if reachable {
-					if leaves := FlattenLeaves(node.When); len(leaves) > 0 {
+					if leaves := reasoning.FlattenLeaves(node.When); len(leaves) > 0 {
 						holdsPerLeaf := make([]bool, len(leaves))
 
 						for leafIndex := range leaves {
@@ -319,12 +321,12 @@ func rightHandSide(pred Predicate, ctx ReasonContext) (float64, bool) {
 }
 
 func subjectValue(
-	ctx ReasonContext, subject Subject, category CategoryType, unit UnitType, ago int,
+	ctx ReasonContext, subject reasoning.Subject, category types.CategoryType, unit reasoning.UnitType, ago int,
 ) (float64, bool) {
 	switch subject {
-	case SubjectSignal:
+	case reasoning.SubjectSignal:
 		return ctx.Signal(category, unit, ago)
-	case SubjectPrice, SubjectVolume, SubjectSpread, SubjectElapsed:
+	case reasoning.SubjectPrice, reasoning.SubjectVolume, reasoning.SubjectSpread, reasoning.SubjectElapsed:
 		return ctx.Scalar(subject, unit, ago)
 	default:
 		return 0, false
@@ -350,23 +352,23 @@ func levelOp(op Comparison, left, right float64) bool {
 
 // temporalOp compares now against then over the lookback. When Unit is
 // percentage the change is relative; otherwise it is absolute.
-func temporalOp(op Comparison, now, then, target float64, unit UnitType) bool {
+func temporalOp(op reasoning.Comparison, now, then, target float64, unit reasoning.UnitType) bool {
 	switch op {
-	case ComparisonRoseBy:
+	case reasoning.ComparisonRoseBy:
 		return change(now, then, unit) >= target
-	case ComparisonFellBy:
+	case reasoning.ComparisonFellBy:
 		return change(then, now, unit) >= target
-	case ComparisonCrossedUp:
+	case reasoning.ComparisonCrossedUp:
 		return then < target && now >= target
-	case ComparisonCrossedDown:
+	case reasoning.ComparisonCrossedDown:
 		return then > target && now <= target
 	default:
 		return false
 	}
 }
 
-func change(to, from float64, unit UnitType) float64 {
-	if unit == UnitPercentage {
+func change(to, from float64, unit reasoning.UnitType) float64 {
+	if unit == reasoning.UnitPercentage {
 		if from == 0 {
 			return 0
 		}

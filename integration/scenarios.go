@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -23,7 +23,7 @@ type Scenario struct {
 	ID                     string
 	Name                   string
 	BuildCapture           func(*CaptureBuilder)
-	DirectMeasurements     []perspectives.Measurement
+	DirectMeasurements     []types.Measurement
 	HoldingSymbols         []string
 	PostReplayTrades       []market.TradeUpdate
 	PostReplayTradeBatches [][]market.TradeUpdate
@@ -61,19 +61,19 @@ func buildCapture(scenario Scenario) *CaptureBuilder {
 	return builder
 }
 
-func allSignalSources() []perspectives.SourceType {
-	return []perspectives.SourceType{
-		perspectives.SourceCVD,
-		perspectives.SourceFluid,
-		perspectives.SourceHawkes,
-		perspectives.SourceDepthFlow,
-		perspectives.SourceSentiment,
-		perspectives.SourceCorrelation,
-		perspectives.SourceCausal,
-		perspectives.SourceLeadLag,
-		perspectives.SourceLiquidity,
-		perspectives.SourceExhaustion,
-		perspectives.SourcePumpDump,
-		perspectives.SourceToxicity,
+func allSignalSources() []types.SourceType {
+	return []types.SourceType{
+		types.SourceCVD,
+		types.SourceFluid,
+		types.SourceHawkes,
+		types.SourceDepthFlow,
+		types.SourceSentiment,
+		types.SourceCorrelation,
+		types.SourceCausal,
+		types.SourceLeadLag,
+		types.SourceLiquidity,
+		types.SourceExhaustion,
+		types.SourcePumpDump,
+		types.SourceToxicity,
 	}
 }

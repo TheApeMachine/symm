@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func quoteCurrency(symbol string) string {
@@ -57,9 +58,9 @@ depth books a penalty and refuses the entry so MCTS cannot hallucinate liquidity
 func (ledger *replayLedger) openEntry(
 	symbol string,
 	side trading.Side,
-	act perspectives.Act,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	act reasoning.Act,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 	feePct float64,
 	at time.Time,
 ) {
@@ -140,7 +141,7 @@ func (ledger *replayLedger) openEntry(
 		quantity:    quantity,
 		cost:        slot,
 		entryAt:     at,
-		triggerType: perspectives.ActionNone,
+		triggerType: reasoning.ActionNone,
 	}
 
 	if side == trading.Sell {
@@ -155,8 +156,8 @@ func (ledger *replayLedger) openEntry(
 
 func (ledger *replayLedger) resolveEntryFill(
 	side trading.Side,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 	quantity float64,
 ) (executionFill, float64, bool) {
 	if measurement.HasBookDepth() {
@@ -217,8 +218,8 @@ func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64) {
 
 func (ledger *replayLedger) closePosition(
 	symbol string,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 	feePct float64,
 ) {
 	position, open := ledger.positions[symbol]
@@ -233,8 +234,8 @@ func (ledger *replayLedger) closePosition(
 
 func (ledger *replayLedger) resolveExitFill(
 	side trading.Side,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 	quantity float64,
 ) float64 {
 	if measurement.HasBookDepth() && quantity > 0 {
@@ -294,8 +295,8 @@ func (ledger *replayLedger) openLong(
 	ledger.openEntry(
 		symbol,
 		trading.Buy,
-		perspectives.Act{},
-		perspectives.Measurement{Symbol: symbol, Last: price},
+		reasoning.Act{},
+		types.Measurement{Symbol: symbol, Last: price},
 		nil,
 		feePct,
 		at,
@@ -311,8 +312,8 @@ func (ledger *replayLedger) openShort(
 	ledger.openEntry(
 		symbol,
 		trading.Sell,
-		perspectives.Act{},
-		perspectives.Measurement{Symbol: symbol, Last: price},
+		reasoning.Act{},
+		types.Measurement{Symbol: symbol, Last: price},
 		nil,
 		feePct,
 		at,

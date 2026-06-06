@@ -18,7 +18,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -30,7 +30,7 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/toxicity"
+	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/trader"
 )
 
@@ -409,7 +409,7 @@ func decodeCaptureData(raw json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(decoded), nil
 }
 
-func (harness *Harness) publishDirectMeasurements(rows []perspectives.Measurement) {
+func (harness *Harness) publishDirectMeasurements(rows []types.Measurement) {
 	for _, row := range rows {
 		harness.measureBus.Send(&qpool.QValue[any]{Value: row})
 		harness.sleep(5 * time.Millisecond)

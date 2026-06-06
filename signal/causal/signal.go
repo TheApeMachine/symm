@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -260,11 +261,11 @@ func causalContagionShift() float64 {
 // causalPublishIntervalForRegime shortens the fit cadence in calm regimes and
 // lengthens it during hostile price action so O(symbols²) work concentrates when
 // the structural picture is stable.
-func causalPublishIntervalForRegime(regime perspectives.Regime) time.Duration {
+func causalPublishIntervalForRegime(regime types.Regime) time.Duration {
 	switch regime {
-	case perspectives.RegimeDead, perspectives.RegimeTrending, perspectives.RegimeBullish:
+	case types.RegimeDead, types.RegimeTrending, types.RegimeBullish:
 		return causalPublishInterval / 2
-	case perspectives.RegimeChoppy, perspectives.RegimeBearish:
+	case types.RegimeChoppy, types.RegimeBearish:
 		return causalPublishInterval * 2
 	default:
 		return causalPublishInterval
@@ -359,21 +360,23 @@ func (signal *Signal) publishAt(now time.Time) error {
 				return nil, fmt.Errorf("causal: measure %s: %w", entry.symbol, err)
 			}
 
-			if measurement.Source == perspectives.SourceNone {
+			if measurement.Source == types.SourceNone {
 				return nil, nil
 			}
 
 			measurement.Symbol = entry.symbol
 
-			telemetry, standout := numeric.ObserveGaugeTelemetry(
+			categoryStandout := standout
+
+			telemetry, _ := numeric.ObserveGaugeTelemetry(
 				signal.calibrator,
 				signal.classifier,
 				measurement.Strength,
 				standout,
 			)
 
-			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, standout,
+			if err := types.AssignCategorySNR(
+				&measurement, signal.floor, categoryStandout,
 			); err != nil {
 				return nil, fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
 			}
@@ -391,7 +394,9 @@ func (signal *Signal) publishAt(now time.Time) error {
 				return nil, err
 			}
 
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := measurement.Send(signal.pool); err != nil {
+				return nil, err
+			}
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{

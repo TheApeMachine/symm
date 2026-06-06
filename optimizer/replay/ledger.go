@@ -6,7 +6,8 @@ import (
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 var replayLedgerPool = sync.Pool{
@@ -42,16 +43,16 @@ type replayPosition struct {
 	peak          float64 // running max price since entry (long trailing stops)
 	trough        float64 // running min price since entry (short trailing stops)
 	entryAt       time.Time
-	triggerType   perspectives.ActionType
+	triggerType   reasoning.ActionType
 	triggerOffset float64
 }
 
 type pendingReplayAction struct {
 	executeAt   time.Time
 	executeTick int
-	act         perspectives.Act
-	measurement perspectives.Measurement
-	snapshots   []perspectives.Measurement
+	act         reasoning.Act
+	measurement types.Measurement
+	snapshots   []types.Measurement
 }
 
 type replayLedger struct {
@@ -64,11 +65,11 @@ type replayLedger struct {
 	closedTrades        int
 	fundBlocked         int
 	depthBlocked        int
-	observationScratch  map[perspectives.ObservationType]float64
+	observationScratch  map[types.ObservationType]float64
 	metricsScratch      map[string]float64
-	reasonStates        map[string]*perspectives.ReasonState
-	windowReason        perspectives.WindowReason
-	snapshotScratch     []perspectives.Measurement
+	reasonStates        map[string]*reasoning.ReasonState
+	windowReason        reasoning.WindowReason
+	snapshotScratch     []types.Measurement
 	pricePaths          map[string][]float64
 	pending             []pendingReplayAction
 	pendingMakers       []pendingMakerEntry
@@ -103,9 +104,9 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 		cash:                cloneWalletBalances(costs),
 		reentryTickCooldown: 1,
 		ticksSinceClose:     make(map[string]int),
-		observationScratch:  make(map[perspectives.ObservationType]float64, 1),
+		observationScratch:  make(map[types.ObservationType]float64, 1),
 		metricsScratch:      make(map[string]float64, 2),
-		reasonStates:        make(map[string]*perspectives.ReasonState),
+		reasonStates:        make(map[string]*reasoning.ReasonState),
 		pricePaths:          make(map[string][]float64),
 	}
 }
@@ -127,11 +128,11 @@ func cloneWalletBalances(costs ReplayCosts) map[string]float64 {
 // reasonState returns the symbol's cross-tick reasoning memory, creating it on
 // first use. One per symbol, threaded through EvaluateStateful each tick so the
 // Thought tree's Then chains stay armed across the ticks of an episode.
-func (ledger *replayLedger) reasonState(symbol string) *perspectives.ReasonState {
+func (ledger *replayLedger) reasonState(symbol string) *reasoning.ReasonState {
 	state, ok := ledger.reasonStates[symbol]
 
 	if !ok {
-		state = perspectives.NewReasonState()
+		state = reasoning.NewReasonState()
 		ledger.reasonStates[symbol] = state
 	}
 
@@ -173,7 +174,7 @@ func (ledger *replayLedger) configureExecutionStress(
 
 func (ledger *replayLedger) onTickStart(
 	at time.Time,
-	row perspectives.Measurement,
+	row types.Measurement,
 ) {
 	ledger.observePrice(row)
 	ledger.advanceMakerQueues(row)
@@ -183,7 +184,7 @@ func (ledger *replayLedger) onTickStart(
 
 func (ledger *replayLedger) flushPending(
 	at time.Time,
-	currentRow perspectives.Measurement,
+	currentRow types.Measurement,
 ) {
 	if len(ledger.pending) == 0 {
 		return
@@ -220,11 +221,11 @@ strictly dominate market in replay. Price reachability stands in for true queue
 depletion, which the replay tape lacks the book depth to model.
 */
 func makerEntryMissed(
-	actionType perspectives.ActionType,
+	actionType reasoning.ActionType,
 	side trading.Side,
 	postPrice, fillPrice float64,
 ) bool {
-	if !perspectives.IsEntryAction(actionType) || !perspectives.IsMakerAction(actionType) {
+	if !reasoning.IsEntryAction(actionType) || !reasoning.IsMakerAction(actionType) {
 		return false
 	}
 
@@ -240,9 +241,9 @@ func makerEntryMissed(
 }
 
 func executionFillMeasurement(
-	signalRow perspectives.Measurement,
-	currentRow perspectives.Measurement,
-) perspectives.Measurement {
+	signalRow types.Measurement,
+	currentRow types.Measurement,
+) types.Measurement {
 	if currentRow.Symbol != signalRow.Symbol || currentRow.Last <= 0 {
 		return signalRow
 	}
@@ -278,15 +279,15 @@ positionState projects the ledger's open position for a symbol into the view the
 Thought language reasons over (holding, entry, peak, current price, the clock).
 */
 func (ledger *replayLedger) positionState(
-	row perspectives.Measurement,
-) perspectives.PositionState {
+	row types.Measurement,
+) reasoning.PositionState {
 	position, open := ledger.positions[row.Symbol]
 
 	if !open {
-		return perspectives.PositionState{Holding: false, Last: row.Last, Now: row.At}
+		return reasoning.PositionState{Holding: false, Last: row.Last, Now: row.At}
 	}
 
-	return perspectives.PositionState{
+	return reasoning.PositionState{
 		Holding:    true,
 		Side:       position.side,
 		EntryPrice: position.entryPrice,
@@ -309,9 +310,9 @@ func (ledger *replayLedger) onTick(symbol string) {
 }
 
 func (ledger *replayLedger) queueAction(
-	act perspectives.Act,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	act reasoning.Act,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 ) {
 	if ledger.executionLatency <= 0 {
 		ledger.applyStressed(act, measurement, snapshots)
@@ -331,9 +332,9 @@ func (ledger *replayLedger) queueAction(
 }
 
 func (ledger *replayLedger) applyStressed(
-	act perspectives.Act,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	act reasoning.Act,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 ) {
 	if measurement.Last <= 0 {
 		return
@@ -342,14 +343,14 @@ func (ledger *replayLedger) applyStressed(
 	feePct := ledger.costs.feePct(act.Type)
 
 	switch act.Type {
-	case perspectives.ActionLimit, perspectives.ActionMarket, perspectives.ActionIceberg:
+	case reasoning.ActionLimit, reasoning.ActionMarket, reasoning.ActionIceberg:
 		entrySide := trading.Buy
 
 		if act.Side == trading.Sell {
 			entrySide = trading.Sell
 		}
 
-		if perspectives.IsMakerAction(act.Type) && ledger.costs.ExecutionStressEnabled {
+		if reasoning.IsMakerAction(act.Type) && ledger.costs.ExecutionStressEnabled {
 			slot := entryDeployFraction(ledger.costs, act, snapshots) *
 				ledger.costs.WalletBalance(quoteCurrency(measurement.Symbol))
 			quantity := slot / measurement.Last
@@ -385,18 +386,18 @@ func (ledger *replayLedger) applyStressed(
 			feePct,
 			measurement.At,
 		)
-	case perspectives.ActionSettlePosition:
+	case reasoning.ActionSettlePosition:
 		ledger.closePosition(measurement.Symbol, measurement, snapshots, feePct)
-	case perspectives.ActionStopLoss,
-		perspectives.ActionStopLossLimit,
-		perspectives.ActionTakeProfit,
-		perspectives.ActionTakeProfitLimit,
-		perspectives.ActionTrailingStop,
-		perspectives.ActionTrailingStopLimit:
+	case reasoning.ActionStopLoss,
+		reasoning.ActionStopLossLimit,
+		reasoning.ActionTakeProfit,
+		reasoning.ActionTakeProfitLimit,
+		reasoning.ActionTrailingStop,
+		reasoning.ActionTrailingStopLimit:
 		// Protective exit: rest the order; it fills only when the price path
 		// breaches its trigger (checked each tick in checkTriggers).
 		ledger.armTrigger(measurement.Symbol, act)
-	case perspectives.ActionNone:
+	case reasoning.ActionNone:
 		return
 	}
 }

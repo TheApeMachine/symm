@@ -6,7 +6,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayResultReturnPerTrade(t *testing.T) {
@@ -40,18 +41,18 @@ func TestThoughtSimulationScoreEmptyTape(t *testing.T) {
 
 func BenchmarkThoughtSimulationResult(b *testing.B) {
 	base := time.Unix(1_700_000_000, 0)
-	thoughts := []perspectives.Thought{
+	thoughts := []reasoning.Thought{
 		{
-			When: perspectives.Predicate{
-				Subject:   perspectives.SubjectPosition,
-				Op:        perspectives.ComparisonEquals,
-				Lifecycle: perspectives.ObservationNotHolding,
+			When: reasoning.Predicate{
+				Subject:   reasoning.SubjectPosition,
+				Op:        reasoning.ComparisonEquals,
+				Lifecycle: types.ObservationNotHolding,
 			},
-			Do: perspectives.Act{Type: perspectives.ActionMarket},
+			Do: reasoning.Act{Type: reasoning.ActionMarket},
 		},
 	}
-	rows := []perspectives.Measurement{
-		{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 100, At: base},
+	rows := []types.Measurement{
+		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 100, At: base},
 		{Symbol: "BTC/EUR", Last: 105, At: base.Add(time.Second)},
 	}
 	tape := PrecompileTape(rows)

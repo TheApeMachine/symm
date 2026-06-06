@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestNewSignal(t *testing.T) {
@@ -20,8 +20,8 @@ func TestNewSignal(t *testing.T) {
 		defer signal.Close()
 
 		Convey("It should wire herd categories", func() {
-			So(signal.categories["systemic_herd"], ShouldEqual, perspectives.CategorySystemicHerd)
-			So(signal.categories["decoupled_alpha"], ShouldEqual, perspectives.CategoryDecoupledAlpha)
+			So(signal.categories["systemic_herd"], ShouldEqual, types.CategorySystemicHerd)
+			So(signal.categories["decoupled_alpha"], ShouldEqual, types.CategoryDecoupledAlpha)
 		})
 	})
 }
@@ -102,14 +102,14 @@ func TestProcess(t *testing.T) {
 				}
 			}
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -121,7 +121,7 @@ func TestProcess(t *testing.T) {
 			}
 
 			Convey("It publishes a herd-behavior reading", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceCorrelation)
+				So(measurement.Source, ShouldEqual, types.SourceCorrelation)
 				So(measurement.Symbol, ShouldNotBeEmpty)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 				So(measurement.Strength, ShouldBeGreaterThan, 0)

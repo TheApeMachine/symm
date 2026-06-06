@@ -2,34 +2,61 @@ package fluid
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestFluxAccumulatorRoll(t *testing.T) {
-	Convey("Given a flux accumulator", t, func() {
-		accumulator := newFluxAccumulator(time.Minute)
-		accumulator.setTarget(10)
-		now := time.Now()
+	Convey("Given a flux accumulator with a volume target", t, func() {
+		accumulator := newFluxAccumulator()
+		So(accumulator.setTarget(10), ShouldBeNil)
 
-		accumulator.addBook(now, 4)
-		accumulator.addTrade(now.Add(time.Second), 6)
-		accumulator.addTrade(now.Add(2*time.Second), 4)
+		So(accumulator.addTrade(6), ShouldBeNil)
+		So(accumulator.addBook(4), ShouldBeNil)
+		So(accumulator.addTrade(4), ShouldBeNil)
 
 		Convey("It should close a bar once target volume trades", func() {
-			So(accumulator.haveClosed, ShouldBeTrue)
-			So(accumulator.tradeFlux(), ShouldEqual, 10)
-			So(accumulator.bookFlux(), ShouldEqual, 4)
+			bookFlux, tradeFlux, err := accumulator.completedBar()
+
+			So(err, ShouldBeNil)
+			So(tradeFlux, ShouldEqual, 10)
+			So(bookFlux, ShouldEqual, 4)
+		})
+	})
+}
+
+func TestFluxAccumulatorRejectsUnsetTarget(t *testing.T) {
+	Convey("Given a flux accumulator without a volume target", t, func() {
+		accumulator := newFluxAccumulator()
+
+		Convey("It should reject trade folds", func() {
+			So(accumulator.addTrade(1), ShouldNotBeNil)
+		})
+
+		Convey("It should reject book folds without a target", func() {
+			So(accumulator.addBook(1), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestFluxAccumulatorIgnoresBookBeforeTradeVolume(t *testing.T) {
+	Convey("Given book churn before the bar has trade volume", t, func() {
+		accumulator := newFluxAccumulator()
+		So(accumulator.setTarget(10), ShouldBeNil)
+		So(accumulator.addBook(5), ShouldBeNil)
+
+		Convey("It should not fabricate a completed bar", func() {
+			_, _, err := accumulator.completedBar()
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkFluxAccumulatorAddTrade(b *testing.B) {
-	accumulator := newFluxAccumulator(time.Minute)
-	now := time.Now()
+	accumulator := newFluxAccumulator()
+	_ = accumulator.setTarget(10)
 
 	for b.Loop() {
-		accumulator.addTrade(now, 1)
+		_ = accumulator.addTrade(1)
 	}
 }

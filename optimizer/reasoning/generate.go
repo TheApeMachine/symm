@@ -3,14 +3,15 @@ Package reasoning is the optimizer for the Thought language: it grows candidate
 reasoning forests from the data and scores them on the replay tape, searching for
 the deep, multi-branch thought processes the playbook is meant to express. It is the
 one search — there is no Branch fallback — and everything it produces serializes back
-out through perspectives.MarshalThoughts.
+out through reasoning.MarshalThoughts.
 */
 package reasoning
 
 import (
 	"sort"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -20,16 +21,16 @@ occurs); the numeric grids are coarse starting points the search refines by tryi
 them and keeping what scores. Keeping the grids small bounds the branching factor.
 */
 type Vocabulary struct {
-	Categories []perspectives.CategoryType // signal categories present in the tape, most frequent first
-	Regimes    []perspectives.Regime       // regimes a gate may require
-	Thresholds []float64                   // signal SNR levels
-	Lookbacks  []int                       // `ago` lookbacks for temporal steps
-	PriceMoves []float64                   // rose_by/fell_by percentages
-	Offsets    []float64                   // protective stop/take/trail fractions
-	Fractions  []float64                   // entry capital multipliers on trading.position_fraction
-	Durations  []float64                   // time-stop deadlines, in minutes
-	Entries    []perspectives.ActionType   // entry actions to seed/try
-	Protective []perspectives.ActionType   // protective exits a node may arm
+	Categories []types.CategoryType   // signal categories present in the tape, most frequent first
+	Regimes    []types.Regime         // regimes a gate may require
+	Thresholds []float64              // signal SNR levels
+	Lookbacks  []int                  // `ago` lookbacks for temporal steps
+	PriceMoves []float64              // rose_by/fell_by percentages
+	Offsets    []float64              // protective stop/take/trail fractions
+	Fractions  []float64              // entry capital multipliers on trading.position_fraction
+	Durations  []float64              // time-stop deadlines, in minutes
+	Entries    []reasoning.ActionType // entry actions to seed/try
+	Protective []reasoning.ActionType // protective exits a node may arm
 }
 
 // maxSeedCategories caps how many distinct signals seed their own strategy branch,
@@ -40,7 +41,7 @@ const maxSeedCategories = 6
 derivePositionFractions builds capital-deployment multipliers from the tape's SNR
 distribution so the search grid tracks how strong signals actually read on data.
 */
-func derivePositionFractions(rows []perspectives.Measurement) []float64 {
+func derivePositionFractions(rows []types.Measurement) []float64 {
 	peakSNR := 0.0
 
 	for _, row := range rows {
@@ -73,18 +74,18 @@ DeriveVocabulary reads the categories that actually occur on the tape (by
 frequency) and pairs them with sensible numeric grids. The search refines within
 these; the replay score is the judge of what survives.
 */
-func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
-	counts := make(map[perspectives.CategoryType]int)
+func DeriveVocabulary(rows []types.Measurement) Vocabulary {
+	counts := make(map[types.CategoryType]int)
 
 	for _, row := range rows {
-		if row.Category == perspectives.CategoryTypeNone {
+		if row.Category == types.CategoryTypeNone {
 			continue
 		}
 
 		counts[row.Category]++
 	}
 
-	categories := make([]perspectives.CategoryType, 0, len(counts))
+	categories := make([]types.CategoryType, 0, len(counts))
 
 	for category := range counts {
 		categories = append(categories, category)
@@ -106,8 +107,8 @@ func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
 
 	return Vocabulary{
 		Categories: categories,
-		Regimes: []perspectives.Regime{
-			perspectives.RegimeTrending, perspectives.RegimeBullish, perspectives.RegimeChoppy,
+		Regimes: []types.Regime{
+			types.RegimeTrending, types.RegimeBullish, types.RegimeChoppy,
 		},
 		Thresholds: []float64{1.0, 1.5, 2.0},
 		Lookbacks:  []int{3, 5, 8},
@@ -115,96 +116,96 @@ func DeriveVocabulary(rows []perspectives.Measurement) Vocabulary {
 		Offsets:    []float64{0.01, 0.02, 0.05},
 		Fractions:  fractions,
 		Durations:  []float64{5, 15, 30},
-		Entries:    []perspectives.ActionType{perspectives.ActionMarket, perspectives.ActionIceberg},
-		Protective: []perspectives.ActionType{
-			perspectives.ActionTrailingStop, perspectives.ActionStopLoss, perspectives.ActionTakeProfit,
+		Entries:    []reasoning.ActionType{reasoning.ActionMarket, reasoning.ActionIceberg},
+		Protective: []reasoning.ActionType{
+			reasoning.ActionTrailingStop, reasoning.ActionStopLoss, reasoning.ActionTakeProfit,
 		},
 	}
 }
 
 // ---- leaf and node constructors -------------------------------------------------
 
-func notHolding() perspectives.Predicate {
-	return perspectives.Predicate{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationNotHolding}
+func notHolding() reasoning.Predicate {
+	return reasoning.Predicate{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationNotHolding}
 }
 
-func holding() perspectives.Predicate {
-	return perspectives.Predicate{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationHolding}
+func holding() reasoning.Predicate {
+	return reasoning.Predicate{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationHolding}
 }
 
-func signalAtLeast(category perspectives.CategoryType, threshold float64) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectSignal, Category: category, Unit: perspectives.UnitSNR,
-		Op: perspectives.ComparisonAtLeast, Value: threshold,
+func signalAtLeast(category types.CategoryType, threshold float64) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectSignal, Category: category, Unit: reasoning.UnitSNR,
+		Op: reasoning.ComparisonAtLeast, Value: threshold,
 	}
 }
 
-func regimeIs(regime perspectives.Regime) perspectives.Predicate {
-	return perspectives.Predicate{Subject: perspectives.SubjectRegime, Op: perspectives.ComparisonEquals, Regime: regime}
+func regimeIs(regime types.Regime) reasoning.Predicate {
+	return reasoning.Predicate{Subject: reasoning.SubjectRegime, Op: reasoning.ComparisonEquals, Regime: regime}
 }
 
-func priceRoseBy(move float64, ago int) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectPrice, Unit: perspectives.UnitPercentage,
-		Ago: ago, Op: perspectives.ComparisonRoseBy, Value: move,
+func priceRoseBy(move float64, ago int) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectPrice, Unit: reasoning.UnitPercentage,
+		Ago: ago, Op: reasoning.ComparisonRoseBy, Value: move,
 	}
 }
 
-func signalCrossedUp(category perspectives.CategoryType, threshold float64, ago int) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectSignal, Category: category, Unit: perspectives.UnitSNR,
-		Ago: ago, Op: perspectives.ComparisonCrossedUp, Value: threshold,
+func signalCrossedUp(category types.CategoryType, threshold float64, ago int) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectSignal, Category: category, Unit: reasoning.UnitSNR,
+		Ago: ago, Op: reasoning.ComparisonCrossedUp, Value: threshold,
 	}
 }
 
-func lifecycleIs(state perspectives.ObservationType) perspectives.Predicate {
-	return perspectives.Predicate{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: state}
+func lifecycleIs(state types.ObservationType) reasoning.Predicate {
+	return reasoning.Predicate{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: state}
 }
 
 // signalAboveSignal is a metric-to-metric gate: one signal must be stronger than
 // another right now (e.g. ignition dominating compression).
-func signalAboveSignal(category, versus perspectives.CategoryType) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectSignal, Category: category, Unit: perspectives.UnitSNR,
-		Op:     perspectives.ComparisonAbove,
-		Versus: &perspectives.Operand{Subject: perspectives.SubjectSignal, Category: versus, Unit: perspectives.UnitSNR},
+func signalAboveSignal(category, versus types.CategoryType) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectSignal, Category: category, Unit: reasoning.UnitSNR,
+		Op:     reasoning.ComparisonAbove,
+		Versus: &reasoning.Operand{Subject: reasoning.SubjectSignal, Category: versus, Unit: reasoning.UnitSNR},
 	}
 }
 
 // notSignal negates a signal: hold off while this category is firing (e.g. avoid a
 // toxic regime).
-func notSignal(category perspectives.CategoryType, threshold float64) perspectives.Predicate {
+func notSignal(category types.CategoryType, threshold float64) reasoning.Predicate {
 	inner := signalAtLeast(category, threshold)
 
-	return perspectives.Predicate{Not: &inner}
+	return reasoning.Predicate{Not: &inner}
 }
 
 // elapsedAtLeast gates on time held in the position — the basis of a time-stop.
-func elapsedAtLeast(minutes float64) perspectives.Predicate {
-	return perspectives.Predicate{
-		Subject: perspectives.SubjectElapsed, Unit: perspectives.UnitTimeMinutes,
-		Op: perspectives.ComparisonAtLeast, Value: minutes,
+func elapsedAtLeast(minutes float64) reasoning.Predicate {
+	return reasoning.Predicate{
+		Subject: reasoning.SubjectElapsed, Unit: reasoning.UnitTimeMinutes,
+		Op: reasoning.ComparisonAtLeast, Value: minutes,
 	}
 }
 
-func allOf(operands ...perspectives.Predicate) perspectives.Predicate {
-	return perspectives.Predicate{All: operands}
+func allOf(operands ...reasoning.Predicate) reasoning.Predicate {
+	return reasoning.Predicate{All: operands}
 }
 
 // ---- deep clone (mutations must never alias a parent forest) ---------------------
 
-func clonePredicate(predicate perspectives.Predicate) perspectives.Predicate {
+func clonePredicate(predicate reasoning.Predicate) reasoning.Predicate {
 	clone := predicate
 
 	if predicate.All != nil {
-		clone.All = make([]perspectives.Predicate, len(predicate.All))
+		clone.All = make([]reasoning.Predicate, len(predicate.All))
 		for index := range predicate.All {
 			clone.All[index] = clonePredicate(predicate.All[index])
 		}
 	}
 
 	if predicate.Any != nil {
-		clone.Any = make([]perspectives.Predicate, len(predicate.Any))
+		clone.Any = make([]reasoning.Predicate, len(predicate.Any))
 		for index := range predicate.Any {
 			clone.Any[index] = clonePredicate(predicate.Any[index])
 		}
@@ -223,11 +224,11 @@ func clonePredicate(predicate perspectives.Predicate) perspectives.Predicate {
 	return clone
 }
 
-func cloneThought(thought perspectives.Thought) perspectives.Thought {
-	clone := perspectives.Thought{When: clonePredicate(thought.When), Do: thought.Do}
+func cloneThought(thought reasoning.Thought) reasoning.Thought {
+	clone := reasoning.Thought{When: clonePredicate(thought.When), Do: thought.Do}
 
 	if thought.Then != nil {
-		clone.Then = make([]perspectives.Thought, len(thought.Then))
+		clone.Then = make([]reasoning.Thought, len(thought.Then))
 		for index := range thought.Then {
 			clone.Then[index] = cloneThought(thought.Then[index])
 		}
@@ -236,8 +237,8 @@ func cloneThought(thought perspectives.Thought) perspectives.Thought {
 	return clone
 }
 
-func cloneForest(forest []perspectives.Thought) []perspectives.Thought {
-	clone := make([]perspectives.Thought, len(forest))
+func cloneForest(forest []reasoning.Thought) []reasoning.Thought {
+	clone := make([]reasoning.Thought, len(forest))
 
 	for index := range forest {
 		clone[index] = cloneThought(forest[index])
@@ -250,8 +251,8 @@ func cloneForest(forest []perspectives.Thought) []perspectives.Thought {
 
 // seedStrategy is the minimal coherent playbook for one signal: enter when flat and
 // the signal is present, then ride a trailing stop. The search grows it from here.
-func seedStrategy(category perspectives.CategoryType, vocab Vocabulary) []perspectives.Thought {
-	entry := perspectives.ActionMarket
+func seedStrategy(category types.CategoryType, vocab Vocabulary) []reasoning.Thought {
+	entry := reasoning.ActionMarket
 	if len(vocab.Entries) > 0 {
 		entry = vocab.Entries[0]
 	}
@@ -266,22 +267,22 @@ func seedStrategy(category perspectives.CategoryType, vocab Vocabulary) []perspe
 		offset = vocab.Offsets[len(vocab.Offsets)/2]
 	}
 
-	return []perspectives.Thought{
-		{When: allOf(notHolding(), signalAtLeast(category, threshold)), Do: perspectives.Act{Type: entry}},
-		{When: holding(), Do: perspectives.Act{Type: perspectives.ActionTrailingStop, Offset: offset}},
+	return []reasoning.Thought{
+		{When: allOf(notHolding(), signalAtLeast(category, threshold)), Do: reasoning.Act{Type: entry}},
+		{When: holding(), Do: reasoning.Act{Type: reasoning.ActionTrailingStop, Offset: offset}},
 	}
 }
 
 // Seeds returns one minimal strategy per derived category — the starting beam.
-func Seeds(vocab Vocabulary) [][]perspectives.Thought {
-	seeds := make([][]perspectives.Thought, 0, len(vocab.Categories))
+func Seeds(vocab Vocabulary) [][]reasoning.Thought {
+	seeds := make([][]reasoning.Thought, 0, len(vocab.Categories))
 
 	for _, category := range vocab.Categories {
 		seeds = append(seeds, seedStrategy(category, vocab))
 	}
 
 	if len(seeds) == 0 { // a tape with no categorised signals still gets a price-only seed
-		seeds = append(seeds, seedStrategy(perspectives.CategoryTypeNone, vocab))
+		seeds = append(seeds, seedStrategy(types.CategoryTypeNone, vocab))
 	}
 
 	return seeds
@@ -292,11 +293,11 @@ func Seeds(vocab Vocabulary) [][]perspectives.Thought {
 // entryNode returns a pointer to the (first) node in the forest that carries an
 // entry action, plus whether one was found. Mutations that grow the entry reasoning
 // operate here.
-func entryNode(forest []perspectives.Thought) (*perspectives.Thought, bool) {
-	var found *perspectives.Thought
+func entryNode(forest []reasoning.Thought) (*reasoning.Thought, bool) {
+	var found *reasoning.Thought
 
-	var walk func(nodes []perspectives.Thought)
-	walk = func(nodes []perspectives.Thought) {
+	var walk func(nodes []reasoning.Thought)
+	walk = func(nodes []reasoning.Thought) {
 		for index := range nodes {
 			if found != nil {
 				return
@@ -316,9 +317,9 @@ func entryNode(forest []perspectives.Thought) (*perspectives.Thought, bool) {
 	return found, found != nil
 }
 
-func isEntry(action perspectives.ActionType) bool {
+func isEntry(action reasoning.ActionType) bool {
 	switch action {
-	case perspectives.ActionMarket, perspectives.ActionLimit, perspectives.ActionIceberg:
+	case reasoning.ActionMarket, reasoning.ActionLimit, reasoning.ActionIceberg:
 		return true
 	default:
 		return false
@@ -328,7 +329,7 @@ func isEntry(action perspectives.ActionType) bool {
 // entryNodeWithin finds the entry node inside ONE root's subtree (the deepest node
 // carrying the entry action), so a mutation can deepen a specific branch rather than
 // always the first one in the forest.
-func entryNodeWithin(root *perspectives.Thought) *perspectives.Thought {
+func entryNodeWithin(root *reasoning.Thought) *reasoning.Thought {
 	if isEntry(root.Do.Type) {
 		return root
 	}
@@ -343,10 +344,10 @@ func entryNodeWithin(root *perspectives.Thought) *perspectives.Thought {
 }
 
 // gateSignalCategory returns the signal category an All gate keys on, if any.
-func gateSignalCategory(gate perspectives.Predicate) (perspectives.CategoryType, bool) {
+func gateSignalCategory(gate reasoning.Predicate) (types.CategoryType, bool) {
 	index := signalOperandIndex(gate)
 	if index < 0 {
-		return perspectives.CategoryTypeNone, false
+		return types.CategoryTypeNone, false
 	}
 
 	return gate.All[index].Category, true
@@ -354,9 +355,9 @@ func gateSignalCategory(gate perspectives.Predicate) (perspectives.CategoryType,
 
 // managementNode returns the (first) node whose When watches the open position and
 // whose action is protective — the leg the management mutations tune.
-func managementNode(forest []perspectives.Thought) (*perspectives.Thought, bool) {
+func managementNode(forest []reasoning.Thought) (*reasoning.Thought, bool) {
 	for index := range forest {
-		if forest[index].Do.Type != perspectives.ActionNone && !isEntry(forest[index].Do.Type) {
+		if forest[index].Do.Type != reasoning.ActionNone && !isEntry(forest[index].Do.Type) {
 			return &forest[index], true
 		}
 	}

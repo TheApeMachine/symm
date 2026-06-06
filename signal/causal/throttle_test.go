@@ -5,7 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestCausalVelocityThrottle(t *testing.T) {
@@ -60,9 +60,9 @@ func TestCausalPublishIntervalForRegime(t *testing.T) {
 	Convey("Given the causal resource-aware scheduler", t, func() {
 		Convey("Calm regimes refit faster than hostile ones", func() {
 			So(
-				causalPublishIntervalForRegime(perspectives.RegimeTrending),
+				causalPublishIntervalForRegime(types.RegimeTrending),
 				ShouldBeLessThan,
-				causalPublishIntervalForRegime(perspectives.RegimeBearish),
+				causalPublishIntervalForRegime(types.RegimeBearish),
 			)
 		})
 	})

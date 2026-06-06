@@ -3,7 +3,7 @@ package exhaust
 import (
 	"math"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const (
@@ -21,7 +21,7 @@ certain. The aggregate urgency carries the SNR strength separately.
 */
 func exhaustReading(
 	thinning, widen, fade, flip float64,
-) (perspectives.CategoryType, float64) {
+) (types.CategoryType, float64) {
 	reason := dominantExitReason(thinning, widen, fade, flip)
 	winner := componentScore(thinning, widen, fade, flip, reason)
 	runnerUp := 0.0
@@ -59,7 +59,7 @@ func exhaustReading(
 	// low-confidence without capping anything.
 	dominance := margin / math.Max(winner, 1e-12)
 
-	return exhaustCategory(reason), dominance * perspectives.UnitMagnitudeMargin(winner)
+	return exhaustCategory(reason), dominance * types.UnitMagnitudeMargin(winner)
 }
 
 func dominantExitReason(thinning, widen, fade, flip float64) string {
@@ -83,18 +83,18 @@ func dominantExitReason(thinning, widen, fade, flip float64) string {
 	return reason
 }
 
-func exhaustCategory(reason string) perspectives.CategoryType {
+func exhaustCategory(reason string) types.CategoryType {
 	switch reason {
 	case reasonBookThinning:
-		return perspectives.CategoryMechanicalCollapse
+		return types.CategoryMechanicalCollapse
 	case reasonSpreadWiden:
-		return perspectives.CategoryFragileExpansion
+		return types.CategoryFragileExpansion
 	case reasonPressureFade:
-		return perspectives.CategoryThermalExhaustion
+		return types.CategoryThermalExhaustion
 	case reasonImbalanceFlip:
-		return perspectives.CategoryActiveReversal
+		return types.CategoryActiveReversal
 	default:
-		return perspectives.CategoryThermalExhaustion
+		return types.CategoryThermalExhaustion
 	}
 }
 

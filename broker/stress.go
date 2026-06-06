@@ -6,20 +6,20 @@ import (
 	"sync/atomic"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
 SymbolStress holds the latest stress-regime readings used by execution gates.
 */
 type SymbolStress struct {
-	ToxicityCategory  perspectives.CategoryType
+	ToxicityCategory  types.CategoryType
 	ToxicitySNR       float64
-	FluidCategory     perspectives.CategoryType
+	FluidCategory     types.CategoryType
 	FluidSNR          float64
-	SentimentCategory perspectives.CategoryType
+	SentimentCategory types.CategoryType
 	SentimentSNR      float64
-	HawkesCategory    perspectives.CategoryType
+	HawkesCategory    types.CategoryType
 	HawkesSNR         float64
 }
 
@@ -119,7 +119,7 @@ func (cache *StressCache) run(pool *qpool.Q) {
 				continue
 			}
 
-			measurement, typeOK := message.Value.(perspectives.Measurement)
+			measurement, typeOK := message.Value.(types.Measurement)
 
 			if !typeOK {
 				continue
@@ -130,7 +130,7 @@ func (cache *StressCache) run(pool *qpool.Q) {
 	}
 }
 
-func (cache *StressCache) ingestMeasurement(measurement perspectives.Measurement) {
+func (cache *StressCache) ingestMeasurement(measurement types.Measurement) {
 	if measurement.Symbol == "" {
 		return
 	}
@@ -140,16 +140,16 @@ func (cache *StressCache) ingestMeasurement(measurement perspectives.Measurement
 	stress, _ := slot.value()
 
 	switch measurement.Source {
-	case perspectives.SourceToxicity:
+	case types.SourceToxicity:
 		stress.ToxicityCategory = measurement.Category
 		stress.ToxicitySNR = measurement.SNR
-	case perspectives.SourceFluid:
+	case types.SourceFluid:
 		stress.FluidCategory = measurement.Category
 		stress.FluidSNR = measurement.SNR
-	case perspectives.SourceSentiment:
+	case types.SourceSentiment:
 		stress.SentimentCategory = measurement.Category
 		stress.SentimentSNR = measurement.SNR
-	case perspectives.SourceHawkes:
+	case types.SourceHawkes:
 		stress.HawkesCategory = measurement.Category
 		stress.HawkesSNR = measurement.SNR
 	default:

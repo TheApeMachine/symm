@@ -3,7 +3,7 @@ package depthflow
 import (
 	"math"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const (
@@ -21,49 +21,49 @@ func depthflowReading(
 	weightedImbalance, flatImbalance float64,
 	flatOK bool,
 	flow float64,
-) (perspectives.CategoryType, float64) {
+) (types.CategoryType, float64) {
 	category := depthflowCategory(reason, weightedImbalance, flatImbalance, flatOK)
 
 	switch category {
-	case perspectives.CategoryLoadedImbalance:
+	case types.CategoryLoadedImbalance:
 		if !flatOK {
-			return category, perspectives.UnitMagnitudeMargin(math.Abs(weightedImbalance))
+			return category, types.UnitMagnitudeMargin(math.Abs(weightedImbalance))
 		}
 
 		boundary := math.Abs(weightedImbalance) * bookThinningFlatFraction
 		margin := boundary - math.Abs(flatImbalance)
 
 		if margin <= 0 {
-			return category, 0
+			return category, types.UnitMarginFloor
 		}
 
 		return category, margin / math.Max(boundary, 1e-12)
-	case perspectives.CategoryBookThinning:
+	case types.CategoryBookThinning:
 		if !flatOK {
-			return category, 0
+			return category, types.UnitMarginFloor
 		}
 
 		margin := math.Abs(flatImbalance) - math.Abs(weightedImbalance)*bookThinningFlatFraction
 
 		if margin <= 0 {
-			return category, 0
+			return category, types.UnitMarginFloor
 		}
 
 		return category, margin / math.Max(math.Abs(flatImbalance), 1e-12)
-	case perspectives.CategorySpoofTrap:
-		return category, perspectives.UnitMagnitudeMargin(math.Abs(weightedImbalance))
+	case types.CategorySpoofTrap:
+		return category, types.UnitMagnitudeMargin(math.Abs(weightedImbalance))
 	default:
 		if flow > 0 {
-			return category, perspectives.UnitCompetitionMargin(flow, 1)
+			return category, types.UnitCompetitionMargin(flow, 1)
 		}
 
 		margin := 1 - math.Abs(weightedImbalance)
 
 		if margin <= 0 {
-			return category, 0
+			return category, types.UnitMarginFloor
 		}
 
-		return category, perspectives.UnitCompetitionMargin(
+		return category, types.UnitCompetitionMargin(
 			margin,
 			math.Max(math.Abs(weightedImbalance), 1e-12),
 		)
@@ -75,23 +75,23 @@ func depthflowCategory(
 	weightedImbalance float64,
 	flatImbalance float64,
 	flatOK bool,
-) perspectives.CategoryType {
+) types.CategoryType {
 	if reason == reasonDepthSkeptic {
-		return perspectives.CategorySpoofTrap
+		return types.CategorySpoofTrap
 	}
 
 	if reason == reasonBookThinning {
-		return perspectives.CategoryBookThinning
+		return types.CategoryBookThinning
 	}
 
 	if flatOK && math.Abs(weightedImbalance) > 0 &&
 		math.Abs(flatImbalance) < math.Abs(weightedImbalance)*bookThinningFlatFraction {
-		return perspectives.CategoryBookThinning
+		return types.CategoryBookThinning
 	}
 
 	if reason == reasonDepthImbalance {
-		return perspectives.CategoryLoadedImbalance
+		return types.CategoryLoadedImbalance
 	}
 
-	return perspectives.CategoryDenseNeutrality
+	return types.CategoryDenseNeutrality
 }

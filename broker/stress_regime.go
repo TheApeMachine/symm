@@ -3,7 +3,7 @@ package broker
 import (
 	"math"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -50,21 +50,21 @@ func (stress SymbolStress) EntryQuantity(quantity float64) float64 {
 func (stress SymbolStress) hostileStress() float64 {
 	var peak float64
 
-	if stress.ToxicityCategory == perspectives.CategoryToxicBluff ||
-		stress.ToxicityCategory == perspectives.CategoryLiquidityVacuum {
+	if stress.ToxicityCategory == types.CategoryToxicBluff ||
+		stress.ToxicityCategory == types.CategoryLiquidityVacuum {
 		peak = math.Max(peak, stress.ToxicitySNR)
 	}
 
-	if stress.SentimentCategory == perspectives.CategorySystemicSlump {
+	if stress.SentimentCategory == types.CategorySystemicSlump {
 		peak = math.Max(peak, stress.SentimentSNR)
 	}
 
-	if stress.FluidCategory == perspectives.CategoryTurbulent {
+	if stress.FluidCategory == types.CategoryTurbulent {
 		peak = math.Max(peak, stress.FluidSNR)
 	}
 
-	if stress.HawkesCategory == perspectives.CategoryFrenzy ||
-		stress.HawkesCategory == perspectives.CategorySaturation {
+	if stress.HawkesCategory == types.CategoryFrenzy ||
+		stress.HawkesCategory == types.CategorySaturation {
 		peak = math.Max(peak, stress.HawkesSNR)
 	}
 

@@ -6,7 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestDepthSymbolMeasureSpreadBPS(t *testing.T) {
@@ -46,7 +46,7 @@ func TestDepthSymbolMeasureTradePressureFallback(t *testing.T) {
 
 		Convey("It should fall back to trade-pressure measurement", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceDepthFlow)
+			So(measurement.Source, ShouldEqual, types.SourceDepthFlow)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 		})
 	})

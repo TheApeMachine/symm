@@ -8,7 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestStressCacheIngestMeasurement(t *testing.T) {
@@ -16,51 +16,51 @@ func TestStressCacheIngestMeasurement(t *testing.T) {
 		cache := NewStressCache(context.Background(), nil)
 
 		Convey("It should record toxicity readings", func() {
-			cache.ingestMeasurement(perspectives.Measurement{
+			cache.ingestMeasurement(types.Measurement{
 				Symbol:   "BTC/EUR",
-				Source:   perspectives.SourceToxicity,
-				Category: perspectives.CategoryToxicBluff,
+				Source:   types.SourceToxicity,
+				Category: types.CategoryToxicBluff,
 				SNR:      1.2,
 			})
 
 			stress := cache.Snapshot("BTC/EUR")
 
-			So(stress.ToxicityCategory, ShouldEqual, perspectives.CategoryToxicBluff)
+			So(stress.ToxicityCategory, ShouldEqual, types.CategoryToxicBluff)
 			So(stress.ToxicitySNR, ShouldAlmostEqual, 1.2, 1e-9)
 		})
 
 		Convey("It should record fluid readings", func() {
-			cache.ingestMeasurement(perspectives.Measurement{
+			cache.ingestMeasurement(types.Measurement{
 				Symbol:   "BTC/EUR",
-				Source:   perspectives.SourceFluid,
-				Category: perspectives.CategoryTurbulent,
+				Source:   types.SourceFluid,
+				Category: types.CategoryTurbulent,
 				SNR:      0.8,
 			})
 
 			stress := cache.Snapshot("BTC/EUR")
 
-			So(stress.FluidCategory, ShouldEqual, perspectives.CategoryTurbulent)
+			So(stress.FluidCategory, ShouldEqual, types.CategoryTurbulent)
 			So(stress.FluidSNR, ShouldAlmostEqual, 0.8, 1e-9)
 		})
 
 		Convey("It should record sentiment readings", func() {
-			cache.ingestMeasurement(perspectives.Measurement{
+			cache.ingestMeasurement(types.Measurement{
 				Symbol:   "BTC/EUR",
-				Source:   perspectives.SourceSentiment,
-				Category: perspectives.CategorySystemicSlump,
+				Source:   types.SourceSentiment,
+				Category: types.CategorySystemicSlump,
 				SNR:      2.1,
 			})
 
 			stress := cache.Snapshot("BTC/EUR")
 
-			So(stress.SentimentCategory, ShouldEqual, perspectives.CategorySystemicSlump)
+			So(stress.SentimentCategory, ShouldEqual, types.CategorySystemicSlump)
 			So(stress.SentimentSNR, ShouldAlmostEqual, 2.1, 1e-9)
 		})
 
 		Convey("It should ignore unknown sources", func() {
-			cache.ingestMeasurement(perspectives.Measurement{
+			cache.ingestMeasurement(types.Measurement{
 				Symbol: "ETH/EUR",
-				Source: perspectives.SourceExhaustion,
+				Source: types.SourceExhaustion,
 				SNR:    9,
 			})
 
@@ -68,8 +68,8 @@ func TestStressCacheIngestMeasurement(t *testing.T) {
 		})
 
 		Convey("It should ignore empty symbols", func() {
-			cache.ingestMeasurement(perspectives.Measurement{
-				Source: perspectives.SourceHawkes,
+			cache.ingestMeasurement(types.Measurement{
+				Source: types.SourceHawkes,
 				SNR:    1,
 			})
 
@@ -137,10 +137,10 @@ func TestStressCacheBroadcast(t *testing.T) {
 		cache.Start(pool)
 
 		group := pool.CreateBroadcastGroup("measurements", 0)
-		measurement := perspectives.Measurement{
+		measurement := types.Measurement{
 			Symbol:   "BTC/EUR",
-			Source:   perspectives.SourceToxicity,
-			Category: perspectives.CategoryToxicBluff,
+			Source:   types.SourceToxicity,
+			Category: types.CategoryToxicBluff,
 			SNR:      1.5,
 		}
 
@@ -151,7 +151,7 @@ func TestStressCacheBroadcast(t *testing.T) {
 			group.Send(&qpool.QValue[any]{Value: measurement})
 			stress = cache.Snapshot("BTC/EUR")
 
-			if stress.ToxicityCategory == perspectives.CategoryToxicBluff {
+			if stress.ToxicityCategory == types.CategoryToxicBluff {
 				break
 			}
 
@@ -159,7 +159,7 @@ func TestStressCacheBroadcast(t *testing.T) {
 		}
 
 		Convey("It should ingest broadcast measurements", func() {
-			So(stress.ToxicityCategory, ShouldEqual, perspectives.CategoryToxicBluff)
+			So(stress.ToxicityCategory, ShouldEqual, types.CategoryToxicBluff)
 			So(stress.ToxicitySNR, ShouldAlmostEqual, 1.5, 1e-9)
 		})
 	})
@@ -168,7 +168,7 @@ func TestStressCacheBroadcast(t *testing.T) {
 func BenchmarkStressCacheSnapshot(b *testing.B) {
 	cache := NewStressCache(context.Background(), nil)
 	cache.InstallStressForTest("BTC/EUR", SymbolStress{
-		ToxicityCategory: perspectives.CategoryToxicBluff,
+		ToxicityCategory: types.CategoryToxicBluff,
 		ToxicitySNR:      1,
 	})
 
@@ -179,10 +179,10 @@ func BenchmarkStressCacheSnapshot(b *testing.B) {
 
 func BenchmarkStressCacheIngestMeasurement(b *testing.B) {
 	cache := NewStressCache(context.Background(), nil)
-	measurement := perspectives.Measurement{
+	measurement := types.Measurement{
 		Symbol:   "BTC/EUR",
-		Source:   perspectives.SourceHawkes,
-		Category: perspectives.CategorySaturation,
+		Source:   types.SourceHawkes,
+		Category: types.CategorySaturation,
 		SNR:      2.5,
 	}
 

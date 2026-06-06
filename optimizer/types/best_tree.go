@@ -1,6 +1,8 @@
 package types
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+)
 
 /*
 BestTree is an improved reasoning forest found during a search.
@@ -11,5 +13,5 @@ type BestTree struct {
 	Return    float64
 	Trades    int
 	Nodes     int
-	Thoughts  []perspectives.Thought
+	Thoughts  []reasoning.Thought
 }

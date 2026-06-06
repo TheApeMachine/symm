@@ -5,7 +5,7 @@ import {
 	createSpiderBridge,
 	deliverRegimeWire,
 	parseRegimeWire,
-	REGIME_CHART_SYMBOL,
+	REGIME_MARKET_SYMBOL,
 	scaleSpiderRadarValues,
 } from "#/components/charts/spider/spider-bridge";
 
@@ -18,12 +18,12 @@ const REGIME_SOURCES = [
 ] as const;
 
 describe("parseRegimeWire", () => {
-	it("accepts regime frames for the anchor symbol only", () => {
+	it("accepts cross-section market regime frames", () => {
 		expect(
 			parseRegimeWire(
 				{
 					chart: "regime",
-					symbol: REGIME_CHART_SYMBOL,
+					symbol: REGIME_MARKET_SYMBOL,
 					volatility: 0.5,
 					trend: 0.25,
 					bullish: 0.25,
@@ -41,7 +41,7 @@ describe("parseRegimeWire", () => {
 		});
 	});
 
-	it("rejects regime frames for non-anchor symbols", () => {
+	it("rejects per-symbol regime frames", () => {
 		expect(
 			parseRegimeWire(
 				{

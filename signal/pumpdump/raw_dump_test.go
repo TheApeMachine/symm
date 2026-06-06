@@ -44,10 +44,12 @@ func readRawJSONLRecords(path string) ([]rawRecord, error) {
 func withPumpdumpRawDump(t *testing.T, path string) {
 	t.Helper()
 
+	viper.Set("signals.pumpdump.window", time.Minute)
 	viper.Set("signals.pumpdump.raw_dump", true)
 	viper.Set("signals.pumpdump.raw_dump_file", path)
 
 	t.Cleanup(func() {
+		viper.Set("signals.pumpdump.window", time.Duration(0))
 		viper.Set("signals.pumpdump.raw_dump", false)
 		viper.Set("signals.pumpdump.raw_dump_file", "")
 	})
@@ -70,7 +72,7 @@ func TestRawJSONLWriterWrite(t *testing.T) {
 				Qty:               1.25,
 				Side:              "buy",
 				Anchor:            10.0,
-				VolumeSum:         12.5,
+				GrossVolume:       12.5,
 				RVOL:              1.8,
 				Precursor:         0.05,
 			})
@@ -108,7 +110,7 @@ func TestObserveRawJSONL(t *testing.T) {
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-		Convey("When observe processes a trade", func() {
+		Convey("When observe fails during warmup", func() {
 			err := signal.observe(market.TradeUpdate{
 				Symbol:    "ALT/EUR",
 				Side:      "buy",
@@ -116,17 +118,14 @@ func TestObserveRawJSONL(t *testing.T) {
 				Qty:       1.5,
 				Timestamp: base,
 			})
-			So(err, ShouldBeNil)
+			So(err, ShouldNotBeNil)
 
 			err = signal.Close()
 			So(err, ShouldBeNil)
 
-			Convey("It should append the raw values before classification", func() {
-				records, err := readRawJSONLRecords(path)
-				So(err, ShouldBeNil)
-				So(records, ShouldHaveLength, 1)
-				So(records[0].TimestampUnixNano, ShouldEqual, base.UnixNano())
-				So(records[0].Symbol, ShouldEqual, "ALT/EUR")
+			Convey("It should not write a raw row before publish succeeds", func() {
+				_, err := os.Stat(path)
+				So(os.IsNotExist(err), ShouldBeTrue)
 			})
 		})
 	})

@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -51,7 +51,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map
-	categories  map[string]perspectives.CategoryType
+	categories  map[string]types.CategoryType
 	floor       *adaptive.SNRField
 	classifier  *adaptive.Classifier
 	calibrator  *numeric.BandCalibrator
@@ -81,11 +81,11 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
 		subscribers: make(map[string]*qpool.Subscriber),
-		categories: map[string]perspectives.CategoryType{
-			"volume_starvation":  perspectives.CategoryVolumeStarvation,
-			"stochastic_balance": perspectives.CategoryStochasticBalance,
-			"hidden_absorption":  perspectives.CategoryHiddenAbsorption,
-			"aggressive_drive":   perspectives.CategoryAggressiveDrive,
+		categories: map[string]types.CategoryType{
+			"volume_starvation":  types.CategoryVolumeStarvation,
+			"stochastic_balance": types.CategoryStochasticBalance,
+			"hidden_absorption":  types.CategoryHiddenAbsorption,
+			"aggressive_drive":   types.CategoryAggressiveDrive,
 		},
 		floor:      adaptive.NewSNRField(),
 		classifier: pooledCalibrator.Classifier,
@@ -215,19 +215,18 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 
 	category := signal.categories[state.pipe.Label(code)]
 	clarity := state.pipe.Confidence()
-	standout := numeric.EntropyTrustFromShares(telemetry.Shares) *
-		perspectives.UnitMagnitudeMargin(fused)
+	categoryStandout := state.pipe.Standout()
 
-	measurement := perspectives.Measurement{
+	measurement := types.Measurement{
 		Symbol:     trade.Symbol,
-		Source:     perspectives.SourceCVD,
+		Source:     types.SourceCVD,
 		Category:   category,
 		Last:       trade.Price,
 		Strength:   fused,
 		Confidence: clarity,
 	}
 
-	if err := perspectives.AssignCategorySNR(&measurement, signal.floor, standout); err != nil {
+	if err := types.AssignCategorySNR(&measurement, signal.floor, categoryStandout); err != nil {
 		return err
 	}
 
@@ -245,14 +244,16 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		Activity:          activity,
 		Drift:             drift,
 		Fused:             fused,
-		Standout:          standout,
+		Standout:          categoryStandout,
 		Confidence:        clarity,
 		SNR:               measurement.SNR,
 	}); err != nil {
 		return err
 	}
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if err := measurement.Send(signal.pool); err != nil {
+		return err
+	}
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{

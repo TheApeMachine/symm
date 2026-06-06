@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -29,13 +29,13 @@ type symbolState struct {
 	mu      sync.RWMutex
 	last    float64
 	prices  numeric.PriceSampleRing
-	tracked *perspectives.Category
+	tracked *types.Category
 }
 
 func newSymbolState() *symbolState {
 	return &symbolState{
 		prices:  numeric.NewPriceSampleRing(priceHistoryCap),
-		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked: types.NewCategory(types.CategoryTypeNone),
 	}
 }
 

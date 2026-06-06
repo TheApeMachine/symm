@@ -3,7 +3,7 @@ package integration
 import (
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func playbookScenarios() []Scenario {
@@ -20,9 +20,9 @@ func playbookScenarios() []Scenario {
 			SettleDelay:        600 * time.Millisecond,
 			Checks: []ScenarioCheck{
 				checkActionType("playbook.action", "Story publishes limit entry action",
-					perspectives.ActionLimit, testSymbolPrimary),
+					reasoning.ActionLimit, testSymbolPrimary),
 				checkAuditPlaybookWalk("playbook.audit", "Playbook walk audit records limit verdict",
-					testSymbolPrimary, perspectives.ActionLimit),
+					testSymbolPrimary, reasoning.ActionLimit),
 			},
 		},
 		{
@@ -38,9 +38,9 @@ func playbookScenarios() []Scenario {
 			SettleDelay:        600 * time.Millisecond,
 			Checks: []ScenarioCheck{
 				checkActionType("playbook.exit", "Story publishes settle_position while holding",
-					perspectives.ActionSettlePosition, testSymbolPrimary),
+					reasoning.ActionSettlePosition, testSymbolPrimary),
 				checkAuditPlaybookWalk("playbook.exit_audit", "Playbook walk audit records settle verdict",
-					testSymbolPrimary, perspectives.ActionSettlePosition),
+					testSymbolPrimary, reasoning.ActionSettlePosition),
 			},
 		},
 	}

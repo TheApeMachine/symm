@@ -5,7 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/replay"
 )
 
@@ -58,7 +59,7 @@ equals) and a hard MaxNodes cap to stop runaway bloat. This is what lets the sea
 explore the temporal chains the playbook is meant to express.
 */
 type Candidate struct {
-	Forest []perspectives.Thought
+	Forest []reasoning.Thought
 	Score  float64
 	Return float64 // raw realized return from the replay
 	Trades int
@@ -78,7 +79,7 @@ all generated in a fixed order, so the same rows and config yield the same fores
 */
 func Search(
 	ctx context.Context,
-	rows []perspectives.Measurement,
+	rows []types.Measurement,
 	costs replay.ReplayCosts,
 	config SearchConfig,
 ) Result {
@@ -121,7 +122,7 @@ func Search(
 	evaluated := 0
 	seen := newForestDedup()
 
-	queueTasks := func(forests [][]perspectives.Thought) []scoreTask {
+	queueTasks := func(forests [][]reasoning.Thought) []scoreTask {
 		tasks := make([]scoreTask, 0, len(forests))
 
 		for _, forest := range forests {
@@ -185,7 +186,7 @@ func Search(
 
 	for round := 0; round < config.MaxRounds; round++ {
 		roundEvaluated := evaluated
-		neighbors := make([][]perspectives.Thought, 0, len(beam)*16)
+		neighbors := make([][]reasoning.Thought, 0, len(beam)*16)
 
 		for _, member := range beam {
 			neighbors = append(neighbors, Neighbors(member.Forest, vocab)...)
@@ -277,11 +278,11 @@ func topCandidates(candidates []Candidate, width int) []Candidate {
 	return candidates
 }
 
-func countNodes(forest []perspectives.Thought) int {
+func countNodes(forest []reasoning.Thought) int {
 	total := 0
 
-	var walk func(nodes []perspectives.Thought)
-	walk = func(nodes []perspectives.Thought) {
+	var walk func(nodes []reasoning.Thought)
+	walk = func(nodes []reasoning.Thought) {
 		for index := range nodes {
 			total++
 			walk(nodes[index].Then)

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
 )
@@ -137,8 +138,8 @@ GaugePayload builds the dashboard gauge wire frame for a self-calibrating signal
 func GaugePayload(
 	source string,
 	symbol string,
-	category perspectives.CategoryType,
-	measurement perspectives.Measurement,
+	category types.CategoryType,
+	measurement types.Measurement,
 	telemetry Telemetry,
 ) map[string]any {
 	return map[string]any{
@@ -186,7 +187,7 @@ func SeedCalibratorFromDump(
 RegimeTargetShares shifts category occupancy targets with the price-action regime.
 Trending markets allow more top-tier categories; choppy markets flatten toward noise.
 */
-func RegimeTargetShares(base []float64, regime perspectives.Regime) []float64 {
+func RegimeTargetShares(base []float64, regime types.Regime) []float64 {
 	if len(base) < 2 {
 		return append([]float64(nil), base...)
 	}
@@ -194,13 +195,13 @@ func RegimeTargetShares(base []float64, regime perspectives.Regime) []float64 {
 	out := append([]float64(nil), base...)
 
 	switch regime {
-	case perspectives.RegimeBullish, perspectives.RegimeTrending:
+	case types.RegimeBullish, types.RegimeTrending:
 		if len(out) >= 2 {
 			shift := 0.05
 			out[len(out)-1] += shift
 			out[0] = math.Max(0, out[0]-shift)
 		}
-	case perspectives.RegimeChoppy:
+	case types.RegimeChoppy:
 		if len(out) >= 3 {
 			shift := 0.05
 			middle := len(out) / 2
@@ -208,7 +209,7 @@ func RegimeTargetShares(base []float64, regime perspectives.Regime) []float64 {
 			out[0] = math.Max(0, out[0]-shift/2)
 			out[len(out)-1] = math.Max(0, out[len(out)-1]-shift/2)
 		}
-	case perspectives.RegimeBearish:
+	case types.RegimeBearish:
 		if len(out) >= 2 {
 			shift := 0.04
 			out[0] += shift
@@ -222,11 +223,11 @@ func RegimeTargetShares(base []float64, regime perspectives.Regime) []float64 {
 /*
 RegimeBlend increases edge damping in choppy regimes to prevent category flicker.
 */
-func RegimeBlend(baseBlend float64, regime perspectives.Regime) float64 {
+func RegimeBlend(baseBlend float64, regime types.Regime) float64 {
 	switch regime {
-	case perspectives.RegimeChoppy:
+	case types.RegimeChoppy:
 		return math.Min(0.95, baseBlend+0.25)
-	case perspectives.RegimeDead:
+	case types.RegimeDead:
 		return math.Min(0.90, baseBlend+0.15)
 	default:
 		return baseBlend

@@ -1,4 +1,4 @@
-export const REGIME_CHART_SYMBOL = "BTC/EUR";
+export const REGIME_MARKET_SYMBOL = "market";
 
 export type SpiderBridge = {
 	setAll: (values: Record<string, number>) => void;
@@ -26,13 +26,13 @@ const regimeAxisValues = (
 	Object.fromEntries(axes.map((axis) => [axis, (raw[axis] as number) ?? 0]));
 
 /*
-parseRegimeWire accepts only anchor-symbol regime frames so the radar is not
-overwritten by every symbol's classification tick.
+parseRegimeWire accepts only the cross-section market regime frame so per-symbol
+classifications cannot overwrite the averaged radar shape.
 */
 export const parseRegimeWire = (
 	raw: Record<string, unknown>,
 	axes: readonly string[],
-	anchorSymbol = REGIME_CHART_SYMBOL,
+	marketSymbol = REGIME_MARKET_SYMBOL,
 ): Record<string, number> | null => {
 	if (raw.chart !== "regime") {
 		return null;
@@ -40,7 +40,7 @@ export const parseRegimeWire = (
 
 	const symbol = raw.symbol;
 
-	if (typeof symbol === "string" && symbol !== anchorSymbol) {
+	if (typeof symbol === "string" && symbol !== marketSymbol) {
 		return null;
 	}
 

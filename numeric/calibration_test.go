@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -13,13 +14,13 @@ func TestRegimeTargetShares(t *testing.T) {
 		base := []float64{0.40, 0.30, 0.20, 0.10}
 
 		Convey("Trending regimes increase the top-band target", func() {
-			shares := RegimeTargetShares(base, perspectives.RegimeTrending)
+			shares := RegimeTargetShares(base, types.RegimeTrending)
 
 			So(shares[len(shares)-1], ShouldBeGreaterThan, base[len(base)-1])
 		})
 
 		Convey("Choppy regimes increase the middle-band target", func() {
-			shares := RegimeTargetShares(base, perspectives.RegimeChoppy)
+			shares := RegimeTargetShares(base, types.RegimeChoppy)
 
 			So(shares[len(shares)/2], ShouldBeGreaterThan, base[len(base)/2])
 		})
@@ -29,7 +30,7 @@ func TestRegimeTargetShares(t *testing.T) {
 func TestRegimeBlend(t *testing.T) {
 	Convey("Given a base blend", t, func() {
 		Convey("Choppy regimes damp edge movement more", func() {
-			So(RegimeBlend(0.3, perspectives.RegimeChoppy), ShouldBeGreaterThan, 0.3)
+			So(RegimeBlend(0.3, types.RegimeChoppy), ShouldBeGreaterThan, 0.3)
 		})
 	})
 }

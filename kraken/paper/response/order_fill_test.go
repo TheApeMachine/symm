@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func TestTakerFillPriceWalksBook(t *testing.T) {
@@ -27,7 +27,7 @@ func TestTakerFillPriceWalksBook(t *testing.T) {
 		})
 
 		Convey("It prices through broker.SlippageFill", func() {
-			price, err := orders.takerFillPrice("BTC/EUR", trading.Buy, 2, 0, perspectives.ActionNone)
+			price, err := orders.takerFillPrice("BTC/EUR", trading.Buy, 2, 0, reasoning.ActionNone)
 			So(err, ShouldBeNil)
 			So(price, ShouldEqual, 101)
 		})
@@ -52,6 +52,6 @@ func BenchmarkTakerFillPrice(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = orders.takerFillPrice("BTC/EUR", trading.Buy, 1.5, 0, perspectives.ActionNone)
+		_, _ = orders.takerFillPrice("BTC/EUR", trading.Buy, 1.5, 0, reasoning.ActionNone)
 	}
 }

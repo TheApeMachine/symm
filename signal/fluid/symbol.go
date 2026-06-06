@@ -8,7 +8,8 @@ import (
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	symmarket "github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/theapemachine/symm/market/settings"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -45,7 +46,7 @@ type FluidSymbol struct {
 	priceFD      *adaptive.FracDiff
 	fracScale    adaptive.AlphaEMA
 	fracReturn   float64
-	tracked      *perspectives.Category
+	tracked      *types.Category
 	pipe         *numeric.Classed
 }
 
@@ -66,12 +67,12 @@ func NewFluidSymbol(symbol string, classifier *adaptive.Classifier) (*FluidSymbo
 		symbol:    symbol,
 		bookDepth: depth,
 		pressure:  adaptive.NewEMA(0),
-		flux:      newFluxAccumulator(viper.GetViper().GetDuration("signals.book_flux_window")),
+		flux:      newFluxAccumulator(),
 		priceFD: adaptive.NewFracDiff(
-			viper.GetViper().GetFloat64("signals.fractional_diff_order"),
-			viper.GetViper().GetInt("signals.fractional_diff_width"),
+			viper.GetFloat64("signals.fractional_diff_order"),
+			viper.GetInt("signals.fractional_diff_width"),
 		),
-		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked: types.NewCategory(types.CategoryTypeNone),
 	}
 
 	if classifier != nil {
@@ -81,17 +82,23 @@ func NewFluidSymbol(symbol string, classifier *adaptive.Classifier) (*FluidSymbo
 	return state, nil
 }
 
-func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) {
+func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	state.changePct = row.ChangePct
 	state.volume = row.Volume
 
-	barsPerDay := viper.GetFloat64("signals.volume_clock_bars_per_day")
+	if row.Volume > 0 {
+		barsPerDay, err := settings.RequiredFloat("signals.volume_clock_bars_per_day")
 
-	if row.Volume > 0 && barsPerDay > 0 {
-		state.flux.setTarget(row.Volume / barsPerDay)
+		if err != nil {
+			return err
+		}
+
+		if err := state.flux.setTarget(row.Volume / barsPerDay); err != nil {
+			return err
+		}
 	}
 
 	if row.Last > 0 {
@@ -106,6 +113,8 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) {
 	if row.Ask > 0 {
 		state.ask = row.Ask
 	}
+
+	return nil
 }
 
 func (state *FluidSymbol) observePriceLocked(price float64) {
@@ -123,19 +132,19 @@ func (state *FluidSymbol) observePriceLocked(price float64) {
 	_ = state.fracScale.Update(math.Abs(value), fracScaleAlpha)
 }
 
-func (state *FluidSymbol) FeedBook(update krakenmarket.Book) {
+func (state *FluidSymbol) FeedBook(update krakenmarket.Book) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.feedBookLocked(update)
+	return state.feedBookLocked(update)
 }
 
-func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book) {
+func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book) error {
 	if update.IsSnapshot() {
 		state.bookReady = true
 		state.bookDiverged = false
 	} else if !state.bookReady {
-		return
+		return nil
 	}
 
 	beforeBids := state.cloneBookLevels(state.book.Bids)
@@ -144,15 +153,17 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book) {
 	state.book.Fold(update, state.bookDepth)
 	state.verifyBookChecksumLocked(update.Checksum)
 
-	flux := state.sideChangeFlux(beforeBids, state.book.Bids) + state.sideChangeFlux(beforeAsks, state.book.Asks)
+	at := time.Now()
+	flux := state.trustedSideChangeFlux(beforeBids, state.book.Bids, at) +
+		state.trustedSideChangeFlux(beforeAsks, state.book.Asks, at)
 
 	state.updateTouchLocked(state.book.Bids, state.book.Asks)
 
 	if flux <= 0 {
-		return
+		return nil
 	}
 
-	state.flux.addBook(time.Now(), flux)
+	return state.flux.addBook(flux)
 }
 
 func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
@@ -197,38 +208,14 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel)
 	}
 }
 
-func (state *FluidSymbol) sideChangeFlux(previous, updated []krakenmarket.BookLevel) float64 {
-	previousByPrice := make(map[float64]float64, len(previous))
-
-	for _, level := range previous {
-		previousByPrice[level.Price] = level.Qty
-	}
-
-	flux := 0.0
-	seen := make(map[float64]bool, len(updated))
-
-	for _, level := range updated {
-		flux += math.Abs(level.Qty - previousByPrice[level.Price])
-		seen[level.Price] = true
-	}
-
-	for price, qty := range previousByPrice {
-		if seen[price] {
-			continue
-		}
-
-		flux += qty
-	}
-
-	return flux
-}
-
 func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if qty > 0 {
-		state.flux.addTrade(at, qty)
+		if err := state.flux.addTrade(qty); err != nil {
+			return err
+		}
 	}
 
 	sign := -1.0
@@ -272,56 +259,54 @@ func (state *FluidSymbol) Row() map[string]any {
 }
 
 func (state *FluidSymbol) Measure(
-	categories map[string]perspectives.CategoryType,
-) (perspectives.Measurement, float64, error) {
+	categories map[string]types.CategoryType,
+) (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if state.bookDiverged {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	row := state.wireRowLocked()
 
 	if row == nil {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	re, ok := row["re"].(float64)
 
 	if !ok || state.pipe == nil {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	code, err := state.pipe.Push(re)
 
 	if err != nil {
-		return perspectives.Measurement{}, 0, err
+		return types.Measurement{}, 0, err
 	}
 
 	category := categories[state.pipe.Label(code)]
-	clarity := state.pipe.Confidence()
-	standout := perspectives.UnitMagnitudeMargin(re)
+	confidence := state.pipe.Confidence()
+	standout := state.pipe.Standout()
 
-	if clarity <= 0 {
+	if confidence <= 0 {
 		divergence, _ := row["div"].(float64)
 		turbulence, _ := row["turb_fd"].(float64)
 		activity := math.Max(math.Abs(divergence), math.Max(turbulence, re))
 
 		if activity > 0 {
-			clarity = perspectives.UnitMagnitudeMargin(activity)
+			confidence = types.UnitMagnitudeMargin(activity)
 		}
 	}
 
-	confidence, err := state.tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := state.tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
+	return types.Measurement{
 		Symbol:     state.symbol,
-		Source:     perspectives.SourceFluid,
+		Source:     types.SourceFluid,
 		Category:   category,
 		Last:       state.last,
 		SpreadBPS:  state.spreadBPS,
@@ -331,40 +316,25 @@ func (state *FluidSymbol) Measure(
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {
+	if state.last <= 0 {
+		return nil
+	}
+
 	bids := state.book.Bids
 	asks := state.book.Asks
 	imbalance := 0.0
 	pressure := (state.buyPressure + 1) / 2
 	visc := 1 / (1 + state.spreadBPS/100)
 
-	if len(bids) > 0 && len(asks) > 0 {
-		bidVolume := 0.0
-		askVolume := 0.0
-
-		for _, level := range bids {
-			bidVolume += level.Qty
-		}
-
-		for _, level := range asks {
-			askVolume += level.Qty
-		}
-
-		total := bidVolume + askVolume
-
-		if total > 0 {
-			imbalance = (bidVolume - askVolume) / total
-		}
+	if trusted, ok := state.trustedImbalanceLocked(bids, asks, time.Now()); ok {
+		imbalance = trusted
 	}
 
 	if state.volume <= 0 && state.changePct == 0 && imbalance == 0 && pressure == 0.5 {
 		return nil
 	}
 
-	vort := state.buyPressure
-
-	if tradeVol := state.flux.tradeFlux(); tradeVol > 0 {
-		vort = state.buyPressure * (1 + state.flux.bookFlux()/tradeVol)
-	}
+	vort := state.vorticityLocked(time.Now())
 
 	turbulence := 0.0
 	fracScale := state.fracScale.Value()

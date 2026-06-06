@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func tradeBurst(symbol string, base time.Time, count int) []market.TradeUpdate {
@@ -60,7 +60,7 @@ func TestMeasure(t *testing.T) {
 
 			Convey("It should publish a thermal perspective reading", func() {
 				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
+				So(measurement.Source, ShouldEqual, types.SourceHawkes)
 				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})
@@ -85,14 +85,14 @@ func TestObserveTrades(t *testing.T) {
 
 			So(err, ShouldBeNil)
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -104,7 +104,7 @@ func TestObserveTrades(t *testing.T) {
 			}
 
 			Convey("It publishes one thermal reading for the symbol", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
+				So(measurement.Source, ShouldEqual, types.SourceHawkes)
 				So(measurement.Symbol, ShouldEqual, "ALT/EUR")
 				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})

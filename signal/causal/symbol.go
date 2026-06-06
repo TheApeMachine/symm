@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -16,9 +16,9 @@ const tradeWindow = 5 * time.Minute
 CausalSymbol holds per-symbol Pearl-ladder history and microstructure state.
 DAG: MacroMomentum → PriceVelocity ← LocalFlow, Liquidity backdoors macro/flow.
 
-Confidence is category clarity: how decisively the returned category wins over its
-neighbors on the ladder or fallback path; SNR is how surprising that clarity is
-versus the symbol's own recent baseline, not how large the strength is.
+Confidence is how decisively the returned category wins over its neighbors on the
+ladder or fallback path; SNR is how surprising that selection is versus the symbol's
+own recent baseline, not how large the strength is.
 */
 type CausalSymbol struct {
 	mu             sync.RWMutex
@@ -36,7 +36,7 @@ type CausalSymbol struct {
 	buyPressure    float64
 	volumeWindow   *adaptive.Window
 	pressure       *adaptive.EMA
-	tracked        *perspectives.Category
+	tracked        *types.Category
 }
 
 func NewCausalSymbol() *CausalSymbol {
@@ -45,7 +45,7 @@ func NewCausalSymbol() *CausalSymbol {
 		volumeWindow: adaptive.NewWindow(tradeWindow),
 		pressure:     adaptive.NewEMA(0),
 		hy:           newHYWindowSet(),
-		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked:      types.NewCategory(types.CategoryTypeNone),
 	}
 }
 
@@ -135,12 +135,12 @@ func (state *CausalSymbol) FeedBook(delta market.Book) {
 func (state *CausalSymbol) Measure(
 	macroMomentum, contagion float64,
 	now time.Time,
-) (perspectives.Measurement, float64, error) {
+) (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if state.lastPrice <= 0 {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	state.resolvePendingLocked(now)
@@ -158,23 +158,22 @@ func (state *CausalSymbol) Measure(
 
 		if outcome.raw > 0 {
 			category := causalCategory(outcome.reason)
-			// clarity is how decisively the Pearl-ladder read lands in its structural
-			// category (the intervention/inversion margin); standout is the magnitude
-			// of the causal effect itself, which SNR scores against this symbol's own
-			// history. A clean read of a faint effect has high clarity, low standout.
-			clarity := causalEvidence(
+			// confidence is how decisively the Pearl-ladder read lands in its
+			// structural category (the intervention/inversion margin); standout is the
+			// magnitude of the causal effect itself, which SNR scores against this
+			// symbol's own history. A clean read of a faint effect has high confidence,
+			// low standout.
+			confidence := causalEvidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
-			standout := perspectives.UnitMagnitudeMargin(outcome.raw)
+			standout := types.UnitMagnitudeMargin(outcome.raw)
 
-			confidence, err := state.tracked.Observe(category, clarity, standout)
-
-			if err != nil {
-				return perspectives.Measurement{}, 0, err
+			if err := state.tracked.Observe(category, confidence); err != nil {
+				return types.Measurement{}, 0, err
 			}
 
-			return perspectives.Measurement{
-				Source:     perspectives.SourceCausal,
+			return types.Measurement{
+				Source:     types.SourceCausal,
 				Category:   category,
 				Strength:   outcome.raw,
 				Confidence: confidence,
@@ -190,26 +189,24 @@ func (state *CausalSymbol) Measure(
 	}
 
 	if state.changePct == 0 && macroMomentum == 0 && state.buyPressure == 0 {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
-	// clarity is how decisively the association beats the alternative; standout is
+	// confidence is how decisively the association beats the alternative; standout is
 	// the magnitude of the macro/flow move itself, scored by SNR against history.
-	clarity := causalEvidence(
+	confidence := causalEvidence(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
-	standout := perspectives.UnitMagnitudeMargin(fallbackRaw)
+	standout := types.UnitMagnitudeMargin(fallbackRaw)
 
-	confidence, err := state.tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := state.tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceCausal,
+	return types.Measurement{
+		Source:     types.SourceCausal,
 		Category:   category,
 		Strength:   fallbackRaw,
 		Confidence: confidence,
@@ -340,24 +337,4 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) cau
 	outcome.raw = intervention
 
 	return outcome
-}
-
-func pairConditionNumber(samples []causalSample) float64 {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return 0
-	}
-
-	condition, err := nodeTable.PairConditionNumber(liquidityNode, localFlowNode)
-
-	if err != nil {
-		return 0
-	}
-
-	if math.IsInf(condition, -1) {
-		return 0
-	}
-
-	return condition
 }

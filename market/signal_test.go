@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type signalStub struct{}
 
-func (signalStub) Measure(_ perspectives.Feedback) perspectives.Measurement {
-	return perspectives.Measurement{Symbol: "BTC/EUR"}
+func (signalStub) Measure(_ perspectives.Feedback) types.Measurement {
+	return types.Measurement{Symbol: "BTC/EUR"}
 }
 
 type feedbackStub struct{}

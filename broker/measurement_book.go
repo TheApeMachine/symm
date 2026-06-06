@@ -5,7 +5,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/market/settings"
 )
 
@@ -16,7 +16,7 @@ measurements before they are written to the optimizer capture tape.
 func MeasurementBookEnricher(
 	ctx context.Context,
 	pool *qpool.Q,
-) func(perspectives.Measurement) perspectives.Measurement {
+) func(types.Measurement) types.Measurement {
 	quotes := EnsureQuoteCache(ctx, pool)
 	depth, err := settings.RequiredBookDepthLevels()
 
@@ -26,12 +26,12 @@ func MeasurementBookEnricher(
 			"broker: settings.RequiredBookDepthLevels failed, returning no-op measurement enricher",
 		)
 
-		return func(measurement perspectives.Measurement) perspectives.Measurement {
+		return func(measurement types.Measurement) types.Measurement {
 			return measurement
 		}
 	}
 
-	return func(measurement perspectives.Measurement) perspectives.Measurement {
+	return func(measurement types.Measurement) types.Measurement {
 		if measurement.Symbol == "" {
 			return measurement
 		}
@@ -42,7 +42,7 @@ func MeasurementBookEnricher(
 			return measurement
 		}
 
-		return perspectives.AttachBook(
+		return types.AttachBook(
 			measurement,
 			quote.Bid,
 			quote.Ask,

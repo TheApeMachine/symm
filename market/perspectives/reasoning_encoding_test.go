@@ -6,6 +6,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestParseThoughtsPlaybook(t *testing.T) {
@@ -13,7 +15,7 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		raw, err := os.ReadFile("cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
-		thoughts, err := ParseThoughts(raw)
+		thoughts, err := reasoning.ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
 		Convey("It parses five exit managers and seven entry strategies", func() {
@@ -22,28 +24,28 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 
 		Convey("Exit managers precede entries and the scalp manager is tightest", func() {
 			scalpExit := thoughts[0]
-			So(scalpExit.When.All[0].Lifecycle, ShouldEqual, ObservationHolding)
-			So(scalpExit.When.All[1].Category, ShouldEqual, CategoryVerticalIgnition)
-			So(scalpExit.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
+			So(scalpExit.When.All[0].Lifecycle, ShouldEqual, types.ObservationHolding)
+			So(scalpExit.When.All[1].Category, ShouldEqual, types.CategoryVerticalIgnition)
+			So(scalpExit.Then[0].Do.Type, ShouldEqual, reasoning.ActionSettlePosition)
 		})
 
 		Convey("The flash-pump entry confirms an ignition edge before iceberg", func() {
 			scalpEntry := thoughts[5]
 			confirm := scalpEntry.Then[0]
-			So(confirm.Do.Type, ShouldEqual, ActionIceberg)
-			So(confirm.When.All[0].Lifecycle, ShouldEqual, ObservationNotHolding)
+			So(confirm.Do.Type, ShouldEqual, reasoning.ActionIceberg)
+			So(confirm.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
 			So(confirm.When.All[1].Op, ShouldEqual, ComparisonCrossedUp)
 		})
 
 		Convey("The momentum entry requires rising quote volume at confirmation", func() {
 			trendEntry := thoughts[6]
 			confirm := trendEntry.Then[0]
-			So(confirm.Do.Type, ShouldEqual, ActionLimit)
+			So(confirm.Do.Type, ShouldEqual, reasoning.ActionLimit)
 
 			hasVolume := false
 
 			for _, operand := range confirm.When.All {
-				if operand.Subject == SubjectVolume {
+				if operand.Subject == reasoning.SubjectVolume {
 					hasVolume = true
 				}
 			}
@@ -60,8 +62,8 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 
 		Convey("The universal fallback manager is the last branch", func() {
 			fallback := thoughts[4]
-			So(fallback.When.Lifecycle, ShouldEqual, ObservationHolding)
-			So(fallback.Then[0].Do.Type, ShouldEqual, ActionSettlePosition)
+			So(fallback.When.Lifecycle, ShouldEqual, types.ObservationHolding)
+			So(fallback.Then[0].Do.Type, ShouldEqual, reasoning.ActionSettlePosition)
 		})
 	})
 }
@@ -71,14 +73,14 @@ func TestMarshalThoughtsRoundTrips(t *testing.T) {
 		raw, err := os.ReadFile("cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
-		original, err := ParseThoughts(raw)
+		original, err := reasoning.ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
 		Convey("Marshalling and re-parsing reproduces the forest exactly", func() {
-			encoded, err := MarshalThoughts(original, 2)
+			encoded, err := reasoning.MarshalThoughts(original, 2)
 			So(err, ShouldBeNil)
 
-			reparsed, err := ParseThoughts(encoded)
+			reparsed, err := reasoning.ParseThoughts(encoded)
 			So(err, ShouldBeNil)
 
 			So(reparsed, ShouldResemble, original)

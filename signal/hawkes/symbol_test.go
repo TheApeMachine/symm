@@ -7,15 +7,15 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func hawkesTestCategories() map[string]perspectives.CategoryType {
-	return map[string]perspectives.CategoryType{
-		"organic":    perspectives.CategoryOrganic,
-		"frenzy":     perspectives.CategoryFrenzy,
-		"saturation": perspectives.CategorySaturation,
-		"exhaustion": perspectives.CategoryExhaustion,
+func hawkesTestCategories() map[string]types.CategoryType {
+	return map[string]types.CategoryType{
+		"organic":    types.CategoryOrganic,
+		"frenzy":     types.CategoryFrenzy,
+		"saturation": types.CategorySaturation,
+		"exhaustion": types.CategoryExhaustion,
 	}
 }
 
@@ -60,7 +60,7 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 
 		Convey("It should emit a Hawkes measurement after enough events", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceHawkes)
+			So(measurement.Source, ShouldEqual, types.SourceHawkes)
 		})
 	})
 }

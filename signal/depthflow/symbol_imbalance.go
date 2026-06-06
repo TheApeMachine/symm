@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/toxicity"
+	"github.com/theapemachine/symm/signal/toxicity"
 )
 
 func (state *DepthSymbol) level1ImbalanceLocked(bids, asks []market.BookLevel) (float64, bool) {

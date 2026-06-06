@@ -7,7 +7,7 @@ import (
 	"math/bits"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -231,19 +231,19 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			raw := energy * (1 + 2*corr) / baseline
 			telemetry := signal.calibrator.Snapshot(signal.classifier)
 			telemetry.Observation = coin.state.pipe.Observation()
-			standout := numeric.EntropyTrustFromShares(telemetry.Shares) * coin.state.pipe.Standout()
+			categoryStandout := coin.state.pipe.Standout()
 
-			measurement := perspectives.Measurement{
+			measurement := types.Measurement{
 				Symbol:     coin.symbol,
-				Source:     perspectives.SourceCorrelation,
+				Source:     types.SourceCorrelation,
 				Category:   signal.categories[coin.state.pipe.Label(code)],
 				Last:       coin.price,
 				Strength:   raw,
 				Confidence: coin.state.pipe.Confidence(),
 			}
 
-			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, standout,
+			if err := types.AssignCategorySNR(
+				&measurement, signal.floor, categoryStandout,
 			); err != nil {
 				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
 			}
@@ -261,7 +261,9 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 				return nil, err
 			}
 
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := measurement.Send(signal.pool); err != nil {
+				return nil, err
+			}
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{

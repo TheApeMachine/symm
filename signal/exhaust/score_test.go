@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/ring"
 )
 
@@ -35,7 +35,7 @@ func TestExitScoreLong(t *testing.T) {
 
 		Convey("It should score positive exit urgency", func() {
 			So(urgency, ShouldBeGreaterThan, 0)
-			So(category, ShouldNotEqual, perspectives.CategoryTypeNone)
+			So(category, ShouldNotEqual, types.CategoryTypeNone)
 			So(evidence, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})

@@ -123,6 +123,13 @@ func (ema *EMA) Value() float64 {
 }
 
 /*
+Observed reports whether the EMA has absorbed at least one sample.
+*/
+func (ema *EMA) Observed() bool {
+	return ema.observed
+}
+
+/*
 Reset clears the EMA back to its unobserved state,
 ready to bootstrap from the next observation.
 */

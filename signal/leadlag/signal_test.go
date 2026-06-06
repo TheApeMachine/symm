@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestNewSignal(t *testing.T) {
@@ -36,8 +36,8 @@ func TestMeasureAnchorStall(t *testing.T) {
 
 		Convey("It should classify an anchor stall on the unit interval", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
-			So(measurement.Category, ShouldEqual, perspectives.CategoryAnchorStall)
+			So(measurement.Source, ShouldEqual, types.SourceLeadLag)
+			So(measurement.Category, ShouldEqual, types.CategoryAnchorStall)
 			So(measurement.Confidence, ShouldEqual, 0.6)
 		})
 	})
@@ -57,7 +57,7 @@ func TestMeasureFollower(t *testing.T) {
 
 			Convey("It should withhold the reading", func() {
 				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
+				So(measurement.Source, ShouldEqual, types.SourceNone)
 			})
 		})
 
@@ -94,8 +94,8 @@ func TestMeasureFollower(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(move.ready, ShouldBeTrue)
 				So(move.moved, ShouldBeTrue)
-				So(measurement.Source, ShouldEqual, perspectives.SourceLeadLag)
-				So(measurement.Category, ShouldEqual, perspectives.CategoryDecoupledMove)
+				So(measurement.Source, ShouldEqual, types.SourceLeadLag)
+				So(measurement.Category, ShouldEqual, types.CategoryDecoupledMove)
 			})
 		})
 	})
@@ -114,12 +114,41 @@ func TestPublishAnchorStall(t *testing.T) {
 		defer signal.Close()
 
 		anchor := newSymbolState()
+		anchor.observeTicker(100, time.Now())
 		signal.symbols.Store(focus.AnchorSymbol(), anchor)
 
 		err := signal.publishAnchorStall(focus.AnchorSymbol(), anchor, 0.5)
 
 		Convey("It should publish one anchor stall reading", func() {
 			So(err, ShouldBeNil)
+		})
+	})
+}
+
+func TestSendMeasurementSkipsWithoutLast(t *testing.T) {
+	Convey("Given a lead-lag reading without a last price", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		measurements := signal.broadcasts["measurements"].Subscribe("test:leadlag-no-last", 1)
+		measurement := types.Measurement{
+			Symbol: "ETH/EUR",
+			Source: types.SourceLeadLag,
+			Last:   0,
+		}
+
+		Convey("It should not publish to measurements", func() {
+			So(signal.sendMeasurement(&measurement, 0.5), ShouldNotBeNil)
+
+			select {
+			case <-measurements.Incoming:
+				t.Fatal("unexpected measurement without last price")
+			case <-time.After(50 * time.Millisecond):
+			}
 		})
 	})
 }

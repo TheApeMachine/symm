@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func executionScenarios() []Scenario {
@@ -73,7 +73,7 @@ func executionScenarios() []Scenario {
 					},
 				},
 				checkActionType("execution.action", "Limit entry action observed on raw",
-					perspectives.ActionLimit, testSymbolPrimary),
+					reasoning.ActionLimit, testSymbolPrimary),
 				checkFillEvent("execution.fill", "Trader publishes fill frame", testSymbolPrimary),
 				checkInventory("execution.inventory", "Paper wallet holds SYN base inventory", "SYN", 0.00001),
 				{
@@ -112,7 +112,7 @@ func executionScenarios() []Scenario {
 			SettleDelay:        3 * time.Second,
 			Checks: []ScenarioCheck{
 				checkActionType("execution.exit", "Settle action observed on raw",
-					perspectives.ActionSettlePosition, testSymbolPrimary),
+					reasoning.ActionSettlePosition, testSymbolPrimary),
 			},
 		},
 	}

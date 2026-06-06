@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -152,11 +152,12 @@ func (signal *Signal) observeBook(delta market.Book) {
 
 	spreadBPS := 0.0
 	imbalance := 0.0
+	mid := 0.0
 
 	if len(delta.Bids) > 0 && len(delta.Asks) > 0 {
 		bid := delta.Bids[0].Price
 		ask := delta.Asks[0].Price
-		mid := (bid + ask) / 2
+		mid = (bid + ask) / 2
 
 		if mid > 0 {
 			spreadBPS = (ask - bid) / mid * 10000
@@ -169,7 +170,9 @@ func (signal *Signal) observeBook(delta market.Book) {
 		}
 	}
 
-	signal.history.observe(delta.Symbol, bidDepth, askDepth, bidDepth+askDepth, spreadBPS, 0, imbalance, 0)
+	signal.history.observe(
+		delta.Symbol, bidDepth, askDepth, bidDepth+askDepth, spreadBPS, 0, imbalance, mid,
+	)
 }
 
 // emit publishes the exhaustion reading for the one symbol an event touched.
@@ -180,20 +183,22 @@ func (signal *Signal) emit(symbol string) error {
 		return err
 	}
 
-	if measurement.Source == perspectives.SourceNone {
+	if measurement.Source == types.SourceNone {
 		return nil
 	}
 
 	measurement.Symbol = symbol
 
-	telemetry, standout := numeric.ObserveGaugeTelemetry(
+	categoryStandout := standout
+
+	telemetry, _ := numeric.ObserveGaugeTelemetry(
 		signal.calibrator,
 		signal.classifier,
 		measurement.Strength,
 		standout,
 	)
 
-	if err := perspectives.AssignCategorySNR(&measurement, signal.floor, standout); err != nil {
+	if err := types.AssignCategorySNR(&measurement, signal.floor, categoryStandout); err != nil {
 		return err
 	}
 
@@ -211,7 +216,9 @@ func (signal *Signal) emit(symbol string) error {
 		return err
 	}
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if err := measurement.Send(signal.pool); err != nil {
+		return err
+	}
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{

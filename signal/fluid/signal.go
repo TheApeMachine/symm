@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -36,7 +37,7 @@ type Signal struct {
 	floor        *adaptive.SNRField
 	classifier   *adaptive.Classifier
 	calibrator   *numeric.BandCalibrator
-	categories   map[string]perspectives.CategoryType
+	categories   map[string]types.CategoryType
 	rawDump      *rawdump.Writer
 }
 
@@ -61,23 +62,28 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		floor:       adaptive.NewSNRField(),
 		classifier:  pooledCalibrator.Classifier,
 		calibrator:  pooledCalibrator.Calibrator,
-		categories: map[string]perspectives.CategoryType{
-			"laminar":   perspectives.CategoryLaminar,
-			"inertial":  perspectives.CategoryInertial,
-			"viscous":   perspectives.CategoryViscous,
-			"turbulent": perspectives.CategoryTurbulent,
+		categories: map[string]types.CategoryType{
+			"laminar":   types.CategoryLaminar,
+			"inertial":  types.CategoryInertial,
+			"viscous":   types.CategoryViscous,
+			"turbulent": types.CategoryTurbulent,
 		},
 		rawDump: rawdump.Open("fluid"),
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
+		signal.broadcasts[channel] = bus.Group(
+			pool, channel, viper.GetDuration("system.queue.ttl"),
+		)
+		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(
+			rawSubscriberID, viper.GetInt("system.queue.buffer"),
+		)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
-
-	signal.ui = bus.Group(pool, "ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(
+		pool, "measurements", viper.GetDuration("system.queue.ttl"),
+	)
+	signal.ui = bus.Group(pool, "ui", viper.GetDuration("system.queue.ttl"))
 
 	errnie.Info("signal/fluid ready", "signal/fluid")
 
@@ -100,7 +106,7 @@ func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
 	return stored.(*FluidSymbol), nil
 }
 
-func (signal *Signal) Tick() error {
+func (signal *Signal) Tick() (err error) {
 	for {
 		select {
 		case <-signal.ctx.Done():
@@ -116,63 +122,50 @@ func (signal *Signal) Tick() error {
 				continue
 			}
 
+			var state *FluidSymbol
+
 			switch sm.Channel {
 			case public.TradesChannel:
-				trades := signalpool.GetTrades(sm)
-
-				for _, trade := range trades {
-					state, err := signal.state(trade.Symbol)
-
-					if err != nil {
-						errnie.Error(err, "fluid: state %s", trade.Symbol)
+				for _, trade := range signalpool.GetTrades(sm) {
+					if state, err = signal.state(trade.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 
-					if err := state.FeedTradeSide(
+					if err = state.FeedTradeSide(
 						trade.Timestamp, trade.Qty, trade.Side,
-					); err != nil {
-						errnie.Error(err, "fluid: trade side %s", trade.Symbol)
+					); errnie.Error(err) != nil {
 						continue
 					}
 
-					if err := signal.emit(trade.Symbol); err != nil {
-						errnie.Error(err, "fluid: emit %s", trade.Symbol)
+					if err = signal.emit(trade.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 				}
 			case public.TickerChannel:
-				tickers := signalpool.GetTickers(sm)
-
-				for _, ticker := range tickers {
-					state, err := signal.state(ticker.Symbol)
-
-					if err != nil {
-						errnie.Error(err, "fluid: state %s", ticker.Symbol)
+				for _, ticker := range signalpool.GetTickers(sm) {
+					if state, err = signal.state(ticker.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 
-					state.FeedTicker(ticker)
+					if err = state.FeedTicker(ticker); errnie.Error(err) != nil {
+						continue
+					}
 
-					if err := signal.emit(ticker.Symbol); err != nil {
-						errnie.Error(err, "fluid: emit %s", ticker.Symbol)
+					if err = signal.emit(ticker.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 				}
 			case public.BookChannel:
-				books := signalpool.GetBooks(sm)
-
-				for _, delta := range books {
-					state, err := signal.state(delta.Symbol)
-
-					if err != nil {
-						errnie.Error(err, "fluid: state %s", delta.Symbol)
+				for _, delta := range signalpool.GetBooks(sm) {
+					if state, err = signal.state(delta.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 
-					state.FeedBook(delta)
+					if err = state.FeedBook(delta); errnie.Error(err) != nil {
+						continue
+					}
 
-					if err := signal.emit(delta.Symbol); err != nil {
-						errnie.Error(err, "fluid: emit %s", delta.Symbol)
+					if err = signal.emit(delta.Symbol); errnie.Error(err) != nil {
 						continue
 					}
 				}
@@ -195,15 +188,15 @@ func (signal *Signal) emit(symbol string) error {
 		return err
 	}
 
-	if measurement.Source != perspectives.SourceNone {
+	if measurement.Source != types.SourceNone {
 		signal.calibrator.Observe(measurement.Strength, signal.classifier)
 
 		telemetry := signal.calibrator.Snapshot(signal.classifier)
 		telemetry.Observation = measurement.Strength
-		standout = numeric.EntropyTrustFromShares(telemetry.Shares) * standout
+		categoryStandout := standout
 
-		if err := perspectives.AssignCategorySNR(
-			&measurement, signal.floor, standout,
+		if err := types.AssignCategorySNR(
+			&measurement, signal.floor, categoryStandout,
 		); err != nil {
 			return err
 		}
@@ -222,7 +215,9 @@ func (signal *Signal) emit(symbol string) error {
 			return err
 		}
 
-		signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+		if err := measurement.Send(signal.pool); err != nil {
+			return err
+		}
 
 		if signal.ui != nil {
 			signal.ui.Send(&qpool.QValue[any]{
@@ -276,7 +271,11 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 
 	for _, task := range tasks {
 		value := <-task
-		err = errors.Join(err, value.Error)
+
+		if value.Error != nil {
+			err = errors.Join(err, value.Error)
+			continue
+		}
 
 		if value.Value == nil {
 			continue

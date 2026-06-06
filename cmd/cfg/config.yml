@@ -1,3 +1,12 @@
+system:
+  queue:
+    ttl: 1024
+    buffer: 1024
+
+story:
+  measurements:
+    buffer: 1024
+
 market:
   quote_currency: EUR
   anchor_symbol: ""
@@ -76,6 +85,8 @@ regime:
   vol_scale: 0.01      # dashboard radar volatility full-scale normalization
 
 signals:
+  # 24h ticker volume / volume_clock_bars_per_day closes one fluid flux bar.
+  volume_clock_bars_per_day: 288
   spoof_weighted_threshold: 0.5
   min_fill_to_cancel_ratio: 0.1
   hawkes_fit_cooldown: 5
@@ -113,6 +124,7 @@ signals:
   # Per-signal overrides (win over the global default in either direction):
   pumpdump:
     raw_dump: true
+    window: 1m
   exhaust:
     raw_dump: true
   cvd:

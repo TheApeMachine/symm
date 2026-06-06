@@ -8,7 +8,8 @@ import (
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestDesk_NextClOrdID(t *testing.T) {
@@ -50,8 +51,8 @@ func TestDeskTriggersFor(t *testing.T) {
 
 	convey.Convey("Given a trailing stop without a playbook offset", t, func() {
 		desk := &Desk{}
-		action := perspectives.Action{
-			Type:   perspectives.ActionTrailingStop,
+		action := reasoning.Action{
+			Type:   reasoning.ActionTrailingStop,
 			Symbol: "BTC/EUR",
 			Side:   trading.Sell,
 		}
@@ -100,15 +101,15 @@ func TestDeskResolveAction(t *testing.T) {
 
 		stress := NewStressCache(t.Context(), nil)
 		stress.InstallStressForTest("BTC/EUR", SymbolStress{
-			HawkesCategory: perspectives.CategorySaturation,
-			HawkesSNR:      1,
+			HawkesCategory: types.CategorySaturation,
+			HawkesSNR:      1.0,
 		})
 
 		desk := &Desk{quotes: quotes, stress: stress}
 
 		convey.Convey("It should scale entry quantity from hostile stress", func() {
-			action, err := desk.ResolveAction(perspectives.Action{
-				Type:     perspectives.ActionMarket,
+			action, err := desk.ResolveAction(reasoning.Action{
+				Type:     reasoning.ActionMarket,
 				Symbol:   "BTC/EUR",
 				Side:     trading.Buy,
 				Quantity: 10,
@@ -119,8 +120,8 @@ func TestDeskResolveAction(t *testing.T) {
 		})
 
 		convey.Convey("It should resolve dynamic trailing offsets before submission", func() {
-			action, err := desk.ResolveAction(perspectives.Action{
-				Type:   perspectives.ActionTrailingStop,
+			action, err := desk.ResolveAction(reasoning.Action{
+				Type:   reasoning.ActionTrailingStop,
 				Symbol: "BTC/EUR",
 				Side:   trading.Sell,
 			})
@@ -184,15 +185,15 @@ func TestDeskPrepareInstrumentOrder(t *testing.T) {
 		})
 
 		symbolStress := SymbolStress{
-			HawkesCategory: perspectives.CategorySaturation,
+			HawkesCategory: types.CategorySaturation,
 			HawkesSNR:      1,
 		}
 
 		desk := &Desk{rules: rules}
 
 		convey.Convey("It should round stress-sized quantity before instrument validation", func() {
-			action := perspectives.Action{
-				Type:     perspectives.ActionLimit,
+			action := reasoning.Action{
+				Type:     reasoning.ActionLimit,
 				Symbol:   "LTC/EUR",
 				Quantity: 50.0 / 94.523,
 			}
@@ -235,7 +236,7 @@ func TestDeskTriggerOffset(t *testing.T) {
 
 		convey.Convey("It should resolve stop-loss from config", func() {
 			offset, err := triggerOffset(
-				perspectives.Action{Type: perspectives.ActionStopLoss},
+				reasoning.Action{Type: reasoning.ActionStopLoss},
 				quote,
 			)
 
@@ -245,7 +246,7 @@ func TestDeskTriggerOffset(t *testing.T) {
 
 		convey.Convey("It should resolve take-profit from config", func() {
 			offset, err := triggerOffset(
-				perspectives.Action{Type: perspectives.ActionTakeProfit},
+				reasoning.Action{Type: reasoning.ActionTakeProfit},
 				quote,
 			)
 
@@ -255,7 +256,7 @@ func TestDeskTriggerOffset(t *testing.T) {
 
 		convey.Convey("It should honor an explicit playbook offset", func() {
 			offset, err := triggerOffset(
-				perspectives.Action{Type: perspectives.ActionStopLoss, Offset: 0.015},
+				reasoning.Action{Type: reasoning.ActionStopLoss, Offset: 0.015},
 				quote,
 			)
 

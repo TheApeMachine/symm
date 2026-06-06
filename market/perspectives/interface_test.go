@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type stubPerspective struct {
 	walkCount int
 }
 
-func (perspective *stubPerspective) Walk(measurements []Measurement) Perspective {
+func (perspective *stubPerspective) Walk(measurements []types.Measurement) Perspective {
 	perspective.walkCount++
 
 	return perspective
@@ -22,7 +23,7 @@ func TestPerspectiveInterface(t *testing.T) {
 
 		Convey("It should accept measurements on Walk", func() {
 			var iface Perspective = perspective
-			result := iface.Walk([]Measurement{{Symbol: "BTC/EUR"}})
+			result := iface.Walk([]types.Measurement{{Symbol: "BTC/EUR"}})
 
 			So(result, ShouldEqual, perspective)
 			So(perspective.walkCount, ShouldEqual, 1)

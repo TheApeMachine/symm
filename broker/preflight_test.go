@@ -8,7 +8,8 @@ import (
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestPreflightGates(t *testing.T) {
@@ -29,7 +30,7 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Buy,
 				Quantity:   0.01,
 				OrderType:  trading.Limit,
-				ActionType: perspectives.ActionLimit,
+				ActionType: reasoning.ActionLimit,
 			}
 
 			So(PreflightGates(request), ShouldBeNil)
@@ -42,7 +43,7 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Buy,
 				Quantity:   0.01,
 				OrderType:  trading.Market,
-				ActionType: perspectives.ActionMarket,
+				ActionType: reasoning.ActionMarket,
 			}
 
 			So(PreflightGates(request), ShouldNotBeNil)
@@ -56,7 +57,7 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Buy,
 				Quantity:   0.01,
 				OrderType:  trading.Market,
-				ActionType: perspectives.ActionMarket,
+				ActionType: reasoning.ActionMarket,
 			}
 
 			So(PreflightGates(request), ShouldNotBeNil)
@@ -70,9 +71,9 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Sell,
 				Quantity:   0.01,
 				OrderType:  trading.Market,
-				ActionType: perspectives.ActionSettlePosition,
+				ActionType: reasoning.ActionSettlePosition,
 				Stress: SymbolStress{
-					ToxicityCategory: perspectives.CategoryToxicBluff,
+					ToxicityCategory: types.CategoryToxicBluff,
 					ToxicitySNR:      4,
 				},
 			}
@@ -91,9 +92,9 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Buy,
 				Quantity:   0.01,
 				OrderType:  trading.Market,
-				ActionType: perspectives.ActionMarket,
+				ActionType: reasoning.ActionMarket,
 				Stress: SymbolStress{
-					ToxicityCategory: perspectives.CategoryToxicBluff,
+					ToxicityCategory: types.CategoryToxicBluff,
 					ToxicitySNR:      1,
 				},
 			}
@@ -109,7 +110,7 @@ func TestPreflightGates(t *testing.T) {
 				Side:       trading.Buy,
 				Quantity:   0.01,
 				OrderType:  trading.Market,
-				ActionType: perspectives.ActionMarket,
+				ActionType: reasoning.ActionMarket,
 			}
 
 			err := PreflightGates(request)
@@ -135,7 +136,7 @@ func BenchmarkPreflightGates(b *testing.B) {
 		Side:       trading.Buy,
 		Quantity:   0.01,
 		OrderType:  trading.Limit,
-		ActionType: perspectives.ActionLimit,
+		ActionType: reasoning.ActionLimit,
 	}
 
 	for b.Loop() {

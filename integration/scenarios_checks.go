@@ -4,14 +4,16 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func auditVerdictMatches(row AuditRow, want perspectives.ActionType) bool {
+func auditVerdictMatches(row AuditRow, want reasoning.ActionType) bool {
 	switch typed := row.Verdict.(type) {
 	case string:
 		return typed == want.String()
 	case float64:
-		return perspectives.ActionType(typed) == want
+		return reasoning.ActionType(typed) == want
 	default:
 		return false
 	}
@@ -19,7 +21,7 @@ func auditVerdictMatches(row AuditRow, want perspectives.ActionType) bool {
 
 func checkMeasurementSource(
 	id, name string,
-	source perspectives.SourceType,
+	source types.SourceType,
 	symbol string,
 ) ScenarioCheck {
 	return checkMeasurementSourceAllowZeroLast(id, name, source, symbol, false)
@@ -27,7 +29,7 @@ func checkMeasurementSource(
 
 func checkMeasurementSourceAllowZeroLast(
 	id, name string,
-	source perspectives.SourceType,
+	source types.SourceType,
 	symbol string,
 	allowZeroLast bool,
 ) ScenarioCheck {
@@ -103,8 +105,8 @@ func checkSignalCategoryFixture(
 
 func checkCategoryObserved(
 	id, name string,
-	source perspectives.SourceType,
-	categories ...perspectives.CategoryType,
+	source types.SourceType,
+	categories ...types.CategoryType,
 ) ScenarioCheck {
 	return ScenarioCheck{
 		ID:   id,
@@ -128,9 +130,9 @@ func checkCategoryObserved(
 
 func checkCategoryExact(
 	id, name string,
-	source perspectives.SourceType,
+	source types.SourceType,
 	symbol string,
-	category perspectives.CategoryType,
+	category types.CategoryType,
 ) ScenarioCheck {
 	return ScenarioCheck{
 		ID:   id,
@@ -149,7 +151,7 @@ func checkCategoryExact(
 
 func checkActionType(
 	id, name string,
-	actionType perspectives.ActionType,
+	actionType reasoning.ActionType,
 	symbol string,
 ) ScenarioCheck {
 	return ScenarioCheck{
@@ -169,7 +171,7 @@ func checkActionType(
 	}
 }
 
-func checkSourcesObserved(id, name string, sources ...perspectives.SourceType) ScenarioCheck {
+func checkSourcesObserved(id, name string, sources ...types.SourceType) ScenarioCheck {
 	return ScenarioCheck{
 		ID:   id,
 		Name: name,
@@ -228,7 +230,7 @@ func checkFillEvent(id, name string, symbol string) ScenarioCheck {
 	}
 }
 
-func checkAuditPlaybookWalk(id, name string, symbol string, action perspectives.ActionType) ScenarioCheck {
+func checkAuditPlaybookWalk(id, name string, symbol string, action reasoning.ActionType) ScenarioCheck {
 	return ScenarioCheck{
 		ID:   id,
 		Name: name,
@@ -255,13 +257,13 @@ func checkAuditPlaybookWalk(id, name string, symbol string, action perspectives.
 func playbookLiquidityVacuumMeasurements(
 	symbol string,
 	last float64,
-) []perspectives.Measurement {
+) []types.Measurement {
 	return perspectives.FixturePlaybookEntryMeasurements(symbol, last)
 }
 
 func playbookMedianDepthExitMeasurements(
 	symbol string,
 	last float64,
-) []perspectives.Measurement {
+) []types.Measurement {
 	return perspectives.FixturePlaybookExitMeasurements(symbol, last)
 }

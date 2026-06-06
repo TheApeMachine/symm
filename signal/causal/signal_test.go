@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
@@ -75,14 +75,14 @@ func TestPublish(t *testing.T) {
 		Convey("When the cross-section fit runs", func() {
 			signal.publish()
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -94,7 +94,7 @@ func TestPublish(t *testing.T) {
 			}
 
 			Convey("It publishes a structural reading", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceCausal)
+				So(measurement.Source, ShouldEqual, types.SourceCausal)
 				So(measurement.Symbol, ShouldNotBeEmpty)
 				So(measurement.Category, ShouldNotBeEmpty)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)

@@ -6,26 +6,27 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/replay"
 )
 
 // upLeg is one rally: an ignition signal at the start, a run up to +10%, then a
 // pullback past a 2% trail off the peak — so entering on the signal and riding a
 // trailing stop locks in the run.
-func upLeg(start float64, at time.Time, step time.Duration) []perspectives.Measurement {
-	return []perspectives.Measurement{
-		{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
+func upLeg(start float64, at time.Time, step time.Duration) []types.Measurement {
+	return []types.Measurement{
+		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
 		{Symbol: "BTC/EUR", Last: start * 1.05, At: at.Add(step)},
 		{Symbol: "BTC/EUR", Last: start * 1.10, At: at.Add(2 * step)},
 		{Symbol: "BTC/EUR", Last: start * 1.07, At: at.Add(3 * step)}, // pulls back through the trail
 	}
 }
 
-func rallyTape() []perspectives.Measurement {
+func rallyTape() []types.Measurement {
 	base := time.Unix(1_700_000_000, 0)
 	step := time.Second
-	rows := make([]perspectives.Measurement, 0, 16)
+	rows := make([]types.Measurement, 0, 16)
 
 	start := 100.0
 	at := base
@@ -73,7 +74,7 @@ func TestSearchFindsAProfitableStrategy(t *testing.T) {
 			So(hasEntry, ShouldBeTrue)
 			So(hasManagement, ShouldBeTrue)
 
-			encoded, err := perspectives.MarshalThoughts(result.Best.Forest, 2)
+			encoded, err := reasoning.MarshalThoughts(result.Best.Forest, 2)
 			So(err, ShouldBeNil)
 			So(len(encoded), ShouldBeGreaterThan, 0)
 		})

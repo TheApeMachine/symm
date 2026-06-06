@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -42,7 +44,7 @@ type WindowReason struct {
 	position     PositionState
 	continuedPct float64
 	endedPct     float64
-	signal       map[CategoryType][]Measurement
+	signal       map[types.CategoryType][]types.Measurement
 	price        []float64
 	volume       []float64
 	spread       []float64
@@ -75,7 +77,7 @@ value is valid; replay and live story reuse one instance per event loop to keep
 predicate evaluation off the allocator hot path.
 */
 func (reason *WindowReason) Reset(
-	snapshots []Measurement, regime Regime, position PositionState,
+	snapshots []types.Measurement, regime types.Regime, position PositionState,
 ) *WindowReason {
 	config := loadReasoningConfig()
 
@@ -85,7 +87,7 @@ func (reason *WindowReason) Reset(
 	reason.endedPct = config.endedPct
 
 	if reason.signal == nil {
-		reason.signal = make(map[CategoryType][]Measurement)
+		reason.signal = make(map[types.CategoryType][]types.Measurement)
 	}
 
 	for category, series := range reason.signal {
@@ -102,7 +104,7 @@ func (reason *WindowReason) Reset(
 	for index := len(snapshots) - 1; index >= 0; index-- {
 		measurement := snapshots[index]
 
-		if measurement.Category != CategoryTypeNone {
+		if measurement.Category != types.CategoryTypeNone {
 			reason.signal[measurement.Category] = append(
 				reason.signal[measurement.Category], measurement,
 			)
@@ -138,12 +140,12 @@ sorted by source, NOT by time — it must never be fed here; the Thought path us
 the tape (RingSnapshot) exactly so this holds.
 */
 func NewWindowReason(
-	snapshots []Measurement, regime Regime, position PositionState,
+	snapshots []types.Measurement, regime types.Regime, position PositionState,
 ) *WindowReason {
 	return (&WindowReason{}).Reset(snapshots, regime, position)
 }
 
-func (reason *WindowReason) Regime() Regime {
+func (reason *WindowReason) Regime() types.Regime {
 	return reason.regime
 }
 
@@ -155,17 +157,17 @@ func (reason *WindowReason) PositionSide() trading.Side {
 	return reason.position.Side
 }
 
-func (reason *WindowReason) Lifecycle(state ObservationType) bool {
+func (reason *WindowReason) Lifecycle(state types.ObservationType) bool {
 	position := reason.position
 
 	switch state {
-	case ObservationNotHolding:
+	case types.ObservationNotHolding:
 		return !position.Holding
-	case ObservationHolding:
+	case types.ObservationHolding:
 		return position.Holding
-	case ObservationHasContinued:
+	case types.ObservationHasContinued:
 		return position.Holding && reason.moveContinued()
-	case ObservationHasEnded:
+	case types.ObservationHasEnded:
 		if !position.Holding {
 			return false
 		}
@@ -177,7 +179,7 @@ func (reason *WindowReason) Lifecycle(state ObservationType) bool {
 
 		return position.Peak > 0 &&
 			position.Last <= position.Peak*(1-reason.endedPct)
-	case ObservationHasStarted:
+	case types.ObservationHasStarted:
 		// Fresh: holding, but the move has not yet confirmed it is running.
 		return position.Holding && !reason.moveContinued()
 	default:
@@ -198,7 +200,7 @@ func (reason *WindowReason) moveContinued() bool {
 		position.Peak >= position.EntryPrice*(1+reason.continuedPct)
 }
 
-func (reason *WindowReason) Signal(category CategoryType, unit UnitType, ago int) (float64, bool) {
+func (reason *WindowReason) Signal(category types.CategoryType, unit reasoning.UnitType, ago int) (float64, bool) {
 	series, ok := reason.signal[category]
 
 	if !ok || ago < 0 || ago >= len(series) {
@@ -208,34 +210,34 @@ func (reason *WindowReason) Signal(category CategoryType, unit UnitType, ago int
 	measurement := series[ago]
 
 	switch unit {
-	case UnitConfidence:
+	case reasoning.UnitConfidence:
 		return measurement.Confidence, true
 	default:
 		return measurement.SNR, true
 	}
 }
 
-func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (float64, bool) {
+func (reason *WindowReason) Scalar(subject reasoning.Subject, unit reasoning.UnitType, ago int) (float64, bool) {
 	switch subject {
-	case SubjectPrice:
+	case reasoning.SubjectPrice:
 		if ago < 0 || ago >= len(reason.price) {
 			return 0, false
 		}
 
 		return reason.price[ago], true
-	case SubjectVolume:
+	case reasoning.SubjectVolume:
 		if ago < 0 || ago >= len(reason.volume) {
 			return 0, false
 		}
 
 		return reason.volume[ago], true
-	case SubjectSpread:
+	case reasoning.SubjectSpread:
 		if ago < 0 || ago >= len(reason.spread) {
 			return 0, false
 		}
 
 		return reason.spread[ago], true
-	case SubjectElapsed:
+	case reasoning.SubjectElapsed:
 		if !reason.position.Holding || reason.position.EntryAt.IsZero() {
 			return 0, false
 		}
@@ -243,7 +245,7 @@ func (reason *WindowReason) Scalar(subject Subject, unit UnitType, ago int) (flo
 		elapsed := reason.position.Now.Sub(reason.position.EntryAt)
 
 		switch unit {
-		case UnitTimeMinutes:
+		case reasoning.UnitTimeMinutes:
 			return elapsed.Minutes(), true
 		default:
 			return elapsed.Seconds(), true

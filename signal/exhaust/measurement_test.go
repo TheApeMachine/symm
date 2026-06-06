@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/ring"
 )
 
@@ -16,7 +16,7 @@ func TestExhaustMeasurement(t *testing.T) {
 			pressures:  ring.NewFloatRing(exitHistoryCap),
 			imbalances: ring.NewFloatRing(exitHistoryCap),
 			densities:  ring.NewFloatRing(exitHistoryCap),
-			tracked:    perspectives.NewCategory(perspectives.CategoryTypeNone),
+			tracked:    types.NewCategory(types.CategoryTypeNone),
 		}
 
 		for _, value := range []float64{10, 10, 10, 10, 8, 6, 4, 2} {
@@ -36,8 +36,8 @@ func TestExhaustMeasurement(t *testing.T) {
 
 		Convey("It should emit an exhaustion measurement", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceExhaustion)
-			So(measurement.Category, ShouldNotEqual, perspectives.CategoryTypeNone)
+			So(measurement.Source, ShouldEqual, types.SourceExhaustion)
+			So(measurement.Category, ShouldNotEqual, types.CategoryTypeNone)
 			So(standout, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})

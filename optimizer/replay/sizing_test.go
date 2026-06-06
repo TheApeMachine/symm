@@ -5,7 +5,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestEntryDeployFraction(t *testing.T) {
@@ -16,9 +17,9 @@ func TestEntryDeployFraction(t *testing.T) {
 		defer viper.Set(key, original)
 
 		costs := ReplayCosts{PositionFraction: 0.1}
-		act := perspectives.Act{Fraction: 2}
-		snapshots := []perspectives.Measurement{
-			{Category: perspectives.CategoryTurbulent, SNR: 2},
+		act := reasoning.Act{Fraction: 2}
+		snapshots := []types.Measurement{
+			{Category: types.CategoryTurbulent, SNR: 2},
 		}
 
 		fraction := entryDeployFraction(costs, act, snapshots)

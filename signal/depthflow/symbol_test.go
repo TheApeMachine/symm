@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type symbolBookFixture struct {
@@ -62,7 +62,7 @@ func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 			measurement, _, err := state.Measure()
 
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
+			So(measurement.Source, ShouldEqual, types.SourceNone)
 		})
 	})
 }
@@ -95,7 +95,7 @@ func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 
 			Convey("It should suppress book-derived emission", func() {
 				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, perspectives.SourceNone)
+				So(measurement.Source, ShouldEqual, types.SourceNone)
 			})
 		})
 	})

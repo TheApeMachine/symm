@@ -7,7 +7,8 @@ import (
 
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	signalpool "github.com/theapemachine/symm/signal"
 )
 
@@ -27,8 +28,8 @@ Tape collects measurements, actions, and wallet frames during a scenario.
 type Tape struct {
 	mu sync.Mutex
 
-	measurements []perspectives.Measurement
-	actions      []perspectives.Action
+	measurements []types.Measurement
+	actions      []reasoning.Action
 	wallets      []map[string]any
 	fills        []FillEvent
 	rawFrames    int
@@ -36,8 +37,8 @@ type Tape struct {
 
 func NewTape() *Tape {
 	return &Tape{
-		measurements: make([]perspectives.Measurement, 0, 256),
-		actions:      make([]perspectives.Action, 0, 16),
+		measurements: make([]types.Measurement, 0, 256),
+		actions:      make([]reasoning.Action, 0, 16),
 		wallets:      make([]map[string]any, 0, 16),
 		fills:        make([]FillEvent, 0, 8),
 	}
@@ -68,7 +69,7 @@ func (tape *Tape) drainMeasurements(subscriber *qpool.Subscriber) {
 			continue
 		}
 
-		reading, ok := message.Value.(perspectives.Measurement)
+		reading, ok := message.Value.(types.Measurement)
 
 		if !ok {
 			continue
@@ -93,7 +94,7 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 		tape.mu.Lock()
 		tape.rawFrames++
 
-		if action, ok := message.Value.(perspectives.Action); ok {
+		if action, ok := message.Value.(reasoning.Action); ok {
 			tape.actions = append(tape.actions, action)
 		}
 
@@ -199,8 +200,8 @@ func (tape *Tape) Snapshot(auditPath string) TapeSnapshot {
 	tape.mu.Lock()
 	defer tape.mu.Unlock()
 
-	measurements := append([]perspectives.Measurement(nil), tape.measurements...)
-	actions := append([]perspectives.Action(nil), tape.actions...)
+	measurements := append([]types.Measurement(nil), tape.measurements...)
+	actions := append([]reasoning.Action(nil), tape.actions...)
 	wallets := append([]map[string]any(nil), tape.wallets...)
 	fills := append([]FillEvent(nil), tape.fills...)
 
@@ -221,8 +222,8 @@ func (tape *Tape) Snapshot(auditPath string) TapeSnapshot {
 TapeSnapshot is a point-in-time view of collected scenario telemetry.
 */
 type TapeSnapshot struct {
-	Measurements []perspectives.Measurement
-	Actions      []perspectives.Action
+	Measurements []types.Measurement
+	Actions      []reasoning.Action
 	Wallets      []map[string]any
 	Fills        []FillEvent
 	AuditRows    []AuditRow
@@ -230,8 +231,8 @@ type TapeSnapshot struct {
 	DeskReady    bool
 }
 
-func (snapshot TapeSnapshot) latestBySource(source perspectives.SourceType) perspectives.Measurement {
-	var latest perspectives.Measurement
+func (snapshot TapeSnapshot) latestBySource(source types.SourceType) types.Measurement {
+	var latest types.Measurement
 
 	for _, reading := range snapshot.Measurements {
 		if reading.Source != source {
@@ -245,10 +246,10 @@ func (snapshot TapeSnapshot) latestBySource(source perspectives.SourceType) pers
 }
 
 func (snapshot TapeSnapshot) latestBySourceSymbol(
-	source perspectives.SourceType,
+	source types.SourceType,
 	symbol string,
-) perspectives.Measurement {
-	var latest perspectives.Measurement
+) types.Measurement {
+	var latest types.Measurement
 
 	for _, reading := range snapshot.Measurements {
 		if reading.Source != source || reading.Symbol != symbol {
@@ -261,7 +262,7 @@ func (snapshot TapeSnapshot) latestBySourceSymbol(
 	return latest
 }
 
-func (snapshot TapeSnapshot) countBySource(source perspectives.SourceType) int {
+func (snapshot TapeSnapshot) countBySource(source types.SourceType) int {
 	count := 0
 
 	for _, reading := range snapshot.Measurements {
@@ -289,8 +290,8 @@ func (snapshot TapeSnapshot) countsBySource() map[string]int {
 	return counts
 }
 
-func (snapshot TapeSnapshot) categoriesForSource(source perspectives.SourceType) []string {
-	seen := make(map[perspectives.CategoryType]struct{})
+func (snapshot TapeSnapshot) categoriesForSource(source types.SourceType) []string {
+	seen := make(map[types.CategoryType]struct{})
 	out := make([]string, 0)
 
 	for _, reading := range snapshot.Measurements {
@@ -312,8 +313,8 @@ func (snapshot TapeSnapshot) categoriesForSource(source perspectives.SourceType)
 }
 
 func (snapshot TapeSnapshot) hasCategory(
-	source perspectives.SourceType,
-	category perspectives.CategoryType,
+	source types.SourceType,
+	category types.CategoryType,
 ) bool {
 	for _, reading := range snapshot.Measurements {
 		if reading.Source == source && reading.Category == category {

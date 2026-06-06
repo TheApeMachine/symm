@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 const (
@@ -185,8 +185,8 @@ func exitOffsetPctFromViper(key string, fallbackPercent float64) float64 {
 	return percent / 100.0
 }
 
-func (costs ReplayCosts) feePct(actionType perspectives.ActionType) float64 {
-	if perspectives.IsMakerAction(actionType) {
+func (costs ReplayCosts) feePct(actionType reasoning.ActionType) float64 {
+	if reasoning.IsMakerAction(actionType) {
 		return costs.MakerFeePct
 	}
 

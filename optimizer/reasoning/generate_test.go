@@ -5,14 +5,15 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func forestDepth(forest []perspectives.Thought) int {
+func forestDepth(forest []reasoning.Thought) int {
 	deepest := 0
 
-	var walk func(thought perspectives.Thought, depth int)
-	walk = func(thought perspectives.Thought, depth int) {
+	var walk func(thought reasoning.Thought, depth int)
+	walk = func(thought reasoning.Thought, depth int) {
 		if depth > deepest {
 			deepest = depth
 		}
@@ -29,12 +30,12 @@ func forestDepth(forest []perspectives.Thought) int {
 	return deepest
 }
 
-func ignitionRows() []perspectives.Measurement {
+func ignitionRows() []types.Measurement {
 	base := time.Unix(1_700_000_000, 0)
 
-	return []perspectives.Measurement{
-		{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 100, At: base},
-		{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 101, At: base.Add(time.Second)},
+	return []types.Measurement{
+		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 100, At: base},
+		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 101, At: base.Add(time.Second)},
 		{Symbol: "BTC/EUR", Last: 102, At: base.Add(2 * time.Second)},
 	}
 }
@@ -44,7 +45,7 @@ func TestDeriveVocabularyAndSeeds(t *testing.T) {
 		vocab := DeriveVocabulary(ignitionRows())
 
 		Convey("The vocabulary derives the category from the data", func() {
-			So(vocab.Categories, ShouldContain, perspectives.CategoryVerticalIgnition)
+			So(vocab.Categories, ShouldContain, types.CategoryVerticalIgnition)
 		})
 
 		Convey("Seeds are one minimal, valid strategy per category", func() {
@@ -60,9 +61,9 @@ func TestDeriveVocabularyAndSeeds(t *testing.T) {
 			So(hasManagement, ShouldBeTrue)
 
 			// It round-trips through the playbook serializer (a real, writable tree).
-			encoded, err := perspectives.MarshalThoughts(seed, 2)
+			encoded, err := reasoning.MarshalThoughts(seed, 2)
 			So(err, ShouldBeNil)
-			reparsed, err := perspectives.ParseThoughts(encoded)
+			reparsed, err := reasoning.ParseThoughts(encoded)
 			So(err, ShouldBeNil)
 			So(reparsed, ShouldResemble, seed)
 		})

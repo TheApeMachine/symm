@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayLedgerObserveSymbolPrice(t *testing.T) {
@@ -59,7 +60,7 @@ func TestReplayLedgerObservePrice(t *testing.T) {
 	Convey("Given a measurement row", t, func() {
 		ledger := newReplayLedger(triggerTestCosts())
 
-		ledger.observePrice(perspectives.Measurement{
+		ledger.observePrice(types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 		})

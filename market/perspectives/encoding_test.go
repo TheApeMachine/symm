@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -23,17 +25,17 @@ unit: snr
 		convey.Convey("It should decode the enum-named fields", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(predicate.Subject, convey.ShouldEqual, SubjectSignal)
-			convey.So(predicate.Category, convey.ShouldEqual, CategoryLaminar)
-			convey.So(predicate.Regime, convey.ShouldEqual, RegimeBullish)
+			convey.So(predicate.Category, convey.ShouldEqual, types.CategoryLaminar)
+			convey.So(predicate.Regime, convey.ShouldEqual, types.RegimeBullish)
 			convey.So(predicate.Op, convey.ShouldEqual, ComparisonAtLeast)
-			convey.So(predicate.Unit, convey.ShouldEqual, UnitSNR)
+			convey.So(predicate.Unit, convey.ShouldEqual, reasoning.UnitSNR)
 		})
 	})
 }
 
 func TestUnitTypeMarshalJSON(t *testing.T) {
 	convey.Convey("Given enum values", t, func() {
-		raw, err := UnitSNR.MarshalJSON()
+		raw, err := reasoning.UnitSNR.MarshalJSON()
 
 		convey.Convey("It should encode readable names", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -44,18 +46,18 @@ func TestUnitTypeMarshalJSON(t *testing.T) {
 
 func TestUnitTypeUnmarshalJSON(t *testing.T) {
 	convey.Convey("Given a JSON enum name", t, func() {
-		unit := UnitType(0)
+		unit := reasoning.UnitType(0)
 
 		err := unit.UnmarshalJSON([]byte(`"snr"`))
 
 		convey.Convey("It should decode the enum value", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(unit, convey.ShouldEqual, UnitSNR)
+			convey.So(unit, convey.ShouldEqual, reasoning.UnitSNR)
 		})
 	})
 
 	convey.Convey("Given an unknown numeric enum value", t, func() {
-		unit := UnitType(0)
+		unit := reasoning.UnitType(0)
 
 		err := unit.UnmarshalJSON([]byte(`99`))
 
@@ -67,11 +69,11 @@ func TestUnitTypeUnmarshalJSON(t *testing.T) {
 
 func TestUnitTypeMarshalYAML(t *testing.T) {
 	convey.Convey("Given enum values", t, func() {
-		predicate := Predicate{
-			Subject: SubjectRegime,
-			Regime:  RegimeBearish,
-			Op:      ComparisonBelow,
-			Unit:    UnitConfidence,
+		predicate := reasoning.Predicate{
+			Subject: reasoning.SubjectRegime,
+			Regime:  types.RegimeBearish,
+			Op:      reasoning.ComparisonBelow,
+			Unit:    reasoning.UnitConfidence,
 		}
 
 		raw, err := yaml.Marshal(predicate)

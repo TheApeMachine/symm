@@ -5,7 +5,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 type pendingTaker struct {
@@ -18,7 +18,7 @@ func (orders *Orders) scheduleTaker(params trading.AddParams, orderID string) {
 	latency := orders.sampleLatency()
 
 	if latency <= 0 {
-		orders.executeTaker(params, orderID, perspectives.ActionNone)
+		orders.executeTaker(params, orderID, reasoning.ActionNone)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (orders *Orders) CheckPending() {
 		orders.executeTaker(
 			pending.params,
 			pending.orderID,
-			perspectives.ActionNone,
+			reasoning.ActionNone,
 		)
 	}
 }
@@ -67,7 +67,7 @@ func (orders *Orders) CheckPending() {
 func (orders *Orders) executeTaker(
 	params trading.AddParams,
 	orderID string,
-	action perspectives.ActionType,
+	action reasoning.ActionType,
 ) {
 	price, err := orders.takerFillPrice(params.Symbol, params.Side, params.OrderQty, 0, action)
 

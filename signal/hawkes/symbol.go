@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -28,9 +28,9 @@ type HawkesSymbol struct {
 	fitCooldown     time.Duration
 	minFitEvents    int
 	rawBase         *adaptive.EMA
-	tracked         *perspectives.Category
+	tracked         *types.Category
 	pipe            *numeric.Classed
-	categories      map[string]perspectives.CategoryType
+	categories      map[string]types.CategoryType
 }
 
 func hawkesFitCooldown() time.Duration {
@@ -49,13 +49,13 @@ func hawkesFitCooldown() time.Duration {
 
 func NewHawkesSymbol(
 	classifier *adaptive.Classifier,
-	categories map[string]perspectives.CategoryType,
+	categories map[string]types.CategoryType,
 ) *HawkesSymbol {
 	symbol := &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  hawkesFitCooldown(),
 		rawBase:      adaptive.NewEMA(0),
-		tracked:      perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked:      types.NewCategory(types.CategoryTypeNone),
 		categories:   categories,
 	}
 
@@ -119,18 +119,18 @@ category clarity — how decisively the fitted state lands in its assigned categ
 */
 func (sym *HawkesSymbol) Measure(
 	ticks []market.TradeUpdate, now time.Time,
-) (perspectives.Measurement, float64, error) {
+) (types.Measurement, float64, error) {
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
 	if !ok || !context.EnoughEvents(stream) {
 		if !sym.hasFit {
-			return perspectives.Measurement{}, 0, nil
+			return types.Measurement{}, 0, nil
 		}
 
 		stream = ArrivalStreamFromTicks(ticks, time.Time{}, now)
 
 		if len(stream.Marked()) == 0 {
-			return perspectives.Measurement{}, 0, nil
+			return types.Measurement{}, 0, nil
 		}
 
 		return sym.measureFit(sym.fit.WithIntensitiesAt(stream, now))
@@ -139,13 +139,13 @@ func (sym *HawkesSymbol) Measure(
 	fit, ok := sym.fitForEvents(stream, now)
 
 	if !ok {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	return sym.measureFit(fit)
 }
 
-func (sym *HawkesSymbol) measureFit(fit BivariateFit) (perspectives.Measurement, float64, error) {
+func (sym *HawkesSymbol) measureFit(fit BivariateFit) (types.Measurement, float64, error) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
 
@@ -161,13 +161,13 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (perspectives.Measurement,
 		raw = intensity / mu
 	}
 
-	// clarity is how decisively the fitted state lands in its category (the
-	// boundary margin); standout is the strength of the self-exciting process
+	// confidence (evidence) is how decisively the fitted state lands in its category
+	// (the boundary margin); standout is the strength of the self-exciting process
 	// itself — the intensity ratio above baseline — which SNR scores against this
 	// symbol's own history. They are different questions, so they are different
 	// numbers: a weak excitation can still land cleanly in a category, and a violent
 	// one can sit right on a boundary.
-	category := perspectives.CategoryOrganic
+	category := types.CategoryOrganic
 	evidence := 0.0
 
 	if sym.pipe != nil && sym.categories != nil {
@@ -186,38 +186,39 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (perspectives.Measurement,
 	_, _ = sym.rawBase.Next(0, raw)
 
 	if rawNorm > 0 {
-		saturationEvidence := perspectives.UnitCompetitionMargin(raw-rawNorm, rawNorm) *
+		saturationEvidence := types.UnitCompetitionMargin(raw-rawNorm, rawNorm) *
 			(1 - asymmetry)
 
 		if saturationEvidence > evidence {
-			category = perspectives.CategorySaturation
+			category = types.CategorySaturation
 			evidence = saturationEvidence
 		}
 	}
 
-	if sym.tracked.Type == perspectives.CategoryFrenzy ||
-		sym.tracked.Type == perspectives.CategorySaturation {
-		exhaustionEvidence := perspectives.UnitCompetitionMargin(rawNorm-raw, rawNorm)
+	if sym.tracked.Type == types.CategoryFrenzy ||
+		sym.tracked.Type == types.CategorySaturation {
+		exhaustionEvidence := types.UnitCompetitionMargin(rawNorm-raw, rawNorm)
 
 		if exhaustionEvidence > 0 {
-			category = perspectives.CategoryExhaustion
+			category = types.CategoryExhaustion
 			evidence = exhaustionEvidence
 		}
 	}
 
-	clarity := evidence
-	standout := perspectives.UnitMagnitudeMargin(raw)
+	standout := types.UnitMagnitudeMargin(raw)
 
-	confidence, err := sym.tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if sym.pipe != nil {
+		standout = sym.pipe.Standout()
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceHawkes,
+	if err := sym.tracked.Observe(category, evidence); err != nil {
+		return types.Measurement{}, 0, err
+	}
+
+	return types.Measurement{
+		Source:     types.SourceHawkes,
 		Category:   category,
 		Strength:   raw,
-		Confidence: confidence,
+		Confidence: evidence,
 	}, standout, nil
 }

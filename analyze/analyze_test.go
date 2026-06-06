@@ -53,11 +53,11 @@ func TestAnalyzeClassifiesFieldShapes(t *testing.T) {
 
 	for index := 0; index < count; index++ {
 		rows = append(rows, map[string]any{
-			"flat":    1.0,                                  // constant ⇒ DEAD
-			"flicker": float64(index % 2 * 2),               // 0,2,0,2 ⇒ FLICKERING
+			"flat":    1.0,                                       // constant ⇒ DEAD
+			"flicker": float64(index % 2 * 2),                    // 0,2,0,2 ⇒ FLICKERING
 			"smooth":  1 + 0.5*(1+math.Sin(float64(index)/50.0)), // smooth 1..2 ⇒ HEALTHY
-			"side":    "buy",                                // constant ⇒ CONSTANT
-			"flips":   pick(index%2 == 0, "a", "b"),         // alternating ⇒ UNSTABLE
+			"side":    "buy",                                     // constant ⇒ CONSTANT
+			"flips":   pick(index%2 == 0, "a", "b"),              // alternating ⇒ UNSTABLE
 		})
 	}
 

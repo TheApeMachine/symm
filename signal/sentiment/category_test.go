@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestSentimentReading(t *testing.T) {
@@ -12,7 +12,7 @@ func TestSentimentReading(t *testing.T) {
 		category, evidence := sentimentReading(0.8, 0.1, 0.6, false)
 
 		Convey("It should classify risk-on surge", func() {
-			So(category, ShouldEqual, perspectives.CategoryRiskOnSurge)
+			So(category, ShouldEqual, types.CategoryRiskOnSurge)
 			So(evidence, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -21,7 +21,7 @@ func TestSentimentReading(t *testing.T) {
 		category, evidence := sentimentReading(0.3, 0.2, 0.6, true)
 
 		Convey("It should classify divergent move", func() {
-			So(category, ShouldEqual, perspectives.CategoryDivergentMove)
+			So(category, ShouldEqual, types.CategoryDivergentMove)
 			So(evidence, ShouldBeGreaterThan, 0)
 		})
 	})

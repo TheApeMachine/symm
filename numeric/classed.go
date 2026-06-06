@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
 )
@@ -119,7 +119,7 @@ symbol. Returns nil for invalid parameters.
 /*
 RegimeProvider supplies the price-action regime for band-edge retuning.
 */
-type RegimeProvider func() perspectives.Regime
+type RegimeProvider func() types.Regime
 
 func NewBandCalibrator(
 	shares []float64,
@@ -135,10 +135,7 @@ func NewBandCalibrator(
 		minSamples = window
 	}
 
-	shareEvery := every
-	if shareEvery > 32 {
-		shareEvery = 32
-	}
+	shareEvery := min(every, 32)
 
 	return &BandCalibrator{
 		baseShares:     append([]float64(nil), shares...),
@@ -205,9 +202,9 @@ func (calibrator *BandCalibrator) WindowCap() int {
 	return calibrator.window.Cap()
 }
 
-func (calibrator *BandCalibrator) activeRegime() perspectives.Regime {
+func (calibrator *BandCalibrator) activeRegime() types.Regime {
 	if calibrator == nil || calibrator.regimeProvider == nil {
-		return perspectives.RegimeNone
+		return types.RegimeNone
 	}
 
 	return calibrator.regimeProvider()

@@ -1,6 +1,8 @@
 package integration
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives/types"
+)
 
 /*
 SignalCategoryProbe is one controlled market fixture and the exact category the
@@ -8,8 +10,8 @@ signal must publish for the probe symbol. Failures are expected until the synthe
 tape reliably produces that classification.
 */
 type SignalCategoryProbe struct {
-	Source    perspectives.SourceType
-	Category  perspectives.CategoryType
+	Source    types.SourceType
+	Category  types.CategoryType
 	Symbol    string
 	Condition string
 	Fixture   SignalFixtureKey
@@ -40,157 +42,157 @@ func signalCategoryProbes() []SignalCategoryProbe {
 
 func cvdCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceCVD, perspectives.CategoryAggressiveDrive, FixtureCVDAggressiveDrive,
+		probe(types.SourceCVD, types.CategoryAggressiveDrive, FixtureCVDAggressiveDrive,
 			"sustained one-sided buy aggression on the tape"),
-		probe(perspectives.SourceCVD, perspectives.CategoryHiddenAbsorption, FixtureCVDHiddenAbsorption,
+		probe(types.SourceCVD, types.CategoryHiddenAbsorption, FixtureCVDHiddenAbsorption,
 			"high volume with muted price progress (absorption)"),
-		probe(perspectives.SourceCVD, perspectives.CategoryStochasticBalance, FixtureCVDStochasticBalance,
+		probe(types.SourceCVD, types.CategoryStochasticBalance, FixtureCVDStochasticBalance,
 			"balanced two-sided flow around the local mean"),
-		probe(perspectives.SourceCVD, perspectives.CategoryVolumeStarvation, FixtureCVDVolumeStarvation,
+		probe(types.SourceCVD, types.CategoryVolumeStarvation, FixtureCVDVolumeStarvation,
 			"negligible executed volume relative to history"),
 	}
 }
 
 func fluidCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceFluid, perspectives.CategoryLaminar, FixtureFluidLaminar,
+		probe(types.SourceFluid, types.CategoryLaminar, FixtureFluidLaminar,
 			"calm book with low divergence and Reynolds number"),
-		probe(perspectives.SourceFluid, perspectives.CategoryTurbulent, FixtureFluidTurbulent,
+		probe(types.SourceFluid, types.CategoryTurbulent, FixtureFluidTurbulent,
 			"turbulence dominates divergence"),
-		probe(perspectives.SourceFluid, perspectives.CategoryInertial, FixtureFluidInertial,
+		probe(types.SourceFluid, types.CategoryInertial, FixtureFluidInertial,
 			"strong divergence with inertial Reynolds read"),
-		probe(perspectives.SourceFluid, perspectives.CategoryViscous, FixtureFluidViscous,
+		probe(types.SourceFluid, types.CategoryViscous, FixtureFluidViscous,
 			"high viscosity read below the viscous threshold"),
 	}
 }
 
 func hawkesCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceHawkes, perspectives.CategoryFrenzy, FixtureHawkesFrenzy,
+		probe(types.SourceHawkes, types.CategoryFrenzy, FixtureHawkesFrenzy,
 			"asymmetric buy-side Hawkes intensity"),
-		probe(perspectives.SourceHawkes, perspectives.CategorySaturation, FixtureHawkesSaturation,
+		probe(types.SourceHawkes, types.CategorySaturation, FixtureHawkesSaturation,
 			"near-critical spectral radius from clustered prints"),
-		probe(perspectives.SourceHawkes, perspectives.CategoryOrganic, FixtureHawkesOrganic,
+		probe(types.SourceHawkes, types.CategoryOrganic, FixtureHawkesOrganic,
 			"low clustering with organic baseline intensity"),
-		probe(perspectives.SourceHawkes, perspectives.CategoryExhaustion, FixtureHawkesExhaustion,
+		probe(types.SourceHawkes, types.CategoryExhaustion, FixtureHawkesExhaustion,
 			"intensity collapse after a burst"),
 	}
 }
 
 func depthflowCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceDepthFlow, perspectives.CategoryLoadedImbalance, FixtureDepthflowLoadedImbalance,
+		probe(types.SourceDepthFlow, types.CategoryLoadedImbalance, FixtureDepthflowLoadedImbalance,
 			"persistent bid-heavy book without spoof pathology"),
-		probe(perspectives.SourceDepthFlow, perspectives.CategorySpoofTrap, FixtureDepthflowSpoofTrap,
+		probe(types.SourceDepthFlow, types.CategorySpoofTrap, FixtureDepthflowSpoofTrap,
 			"pathological near-touch imbalance (spoof trap)"),
-		probe(perspectives.SourceDepthFlow, perspectives.CategoryBookThinning, FixtureDepthflowBookThinning,
+		probe(types.SourceDepthFlow, types.CategoryBookThinning, FixtureDepthflowBookThinning,
 			"depth pulls away from the touch"),
-		probe(perspectives.SourceDepthFlow, perspectives.CategoryDenseNeutrality, FixtureDepthflowDenseNeutrality,
+		probe(types.SourceDepthFlow, types.CategoryDenseNeutrality, FixtureDepthflowDenseNeutrality,
 			"flat, balanced book at the touch"),
 	}
 }
 
 func sentimentCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceSentiment, perspectives.CategorySystemicSlump, FixtureSentimentSystemicSlump,
+		probe(types.SourceSentiment, types.CategorySystemicSlump, FixtureSentimentSystemicSlump,
 			"weak cross-section breadth with negative changes"),
-		probe(perspectives.SourceSentiment, perspectives.CategoryRiskOnSurge, FixtureSentimentRiskOnSurge,
+		probe(types.SourceSentiment, types.CategoryRiskOnSurge, FixtureSentimentRiskOnSurge,
 			"broad positive breadth above the surge threshold"),
-		probe(perspectives.SourceSentiment, perspectives.CategoryDivergentMove, FixtureSentimentDivergentMove,
+		probe(types.SourceSentiment, types.CategoryDivergentMove, FixtureSentimentDivergentMove,
 			"leader symbol moves against the broad tape"),
 	}
 }
 
 func liquidityCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceLiquidity, perspectives.CategoryRobustLiquidity, FixtureLiquidityRobust,
+		probe(types.SourceLiquidity, types.CategoryRobustLiquidity, FixtureLiquidityRobust,
 			"primary symbol quote volume in the top peer quartile"),
-		probe(perspectives.SourceLiquidity, perspectives.CategoryMedianDepth, FixtureLiquidityMedianDepth,
+		probe(types.SourceLiquidity, types.CategoryMedianDepth, FixtureLiquidityMedianDepth,
 			"primary symbol quote volume between peer quartiles"),
-		probe(perspectives.SourceLiquidity, perspectives.CategoryExtremeScarcity, FixtureLiquidityExtremeScarcity,
+		probe(types.SourceLiquidity, types.CategoryExtremeScarcity, FixtureLiquidityExtremeScarcity,
 			"primary symbol quote volume in the bottom peer quartile"),
 	}
 }
 
 func pumpdumpCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourcePumpDump, perspectives.CategoryVerticalIgnition, FixturePumpdumpVerticalIgnition,
+		probe(types.SourcePumpDump, types.CategoryVerticalIgnition, FixturePumpdumpVerticalIgnition,
 			"accelerating buy tape with rising lift scores"),
-		probe(perspectives.SourcePumpDump, perspectives.CategoryCoiledCompression, FixturePumpdumpCoiledCompression,
+		probe(types.SourcePumpDump, types.CategoryCoiledCompression, FixturePumpdumpCoiledCompression,
 			"tight range with coiled volume precursor"),
-		probe(perspectives.SourcePumpDump, perspectives.CategoryOrganicTrend, FixturePumpdumpOrganicTrend,
+		probe(types.SourcePumpDump, types.CategoryOrganicTrend, FixturePumpdumpOrganicTrend,
 			"steady organic drift without ignition"),
-		probe(perspectives.SourcePumpDump, perspectives.CategoryFadedExhaustion, FixturePumpdumpFadedExhaustion,
+		probe(types.SourcePumpDump, types.CategoryFadedExhaustion, FixturePumpdumpFadedExhaustion,
 			"lift fades after an impulse"),
 	}
 }
 
 func exhaustCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceExhaustion, perspectives.CategoryMechanicalCollapse, FixtureExhaustMechanicalCollapse,
+		probe(types.SourceExhaustion, types.CategoryMechanicalCollapse, FixtureExhaustMechanicalCollapse,
 			"book thinning dominates exit score"),
-		probe(perspectives.SourceExhaustion, perspectives.CategoryFragileExpansion, FixtureExhaustFragileExpansion,
+		probe(types.SourceExhaustion, types.CategoryFragileExpansion, FixtureExhaustFragileExpansion,
 			"spread widening dominates exit score"),
-		probe(perspectives.SourceExhaustion, perspectives.CategoryThermalExhaustion, FixtureExhaustThermalExhaustion,
+		probe(types.SourceExhaustion, types.CategoryThermalExhaustion, FixtureExhaustThermalExhaustion,
 			"pressure fade dominates exit score"),
-		probe(perspectives.SourceExhaustion, perspectives.CategoryActiveReversal, FixtureExhaustActiveReversal,
+		probe(types.SourceExhaustion, types.CategoryActiveReversal, FixtureExhaustActiveReversal,
 			"imbalance flip dominates exit score"),
 	}
 }
 
 func causalCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceCausal, perspectives.CategoryEndogenousAlpha, FixtureCausalEndogenousAlpha,
+		probe(types.SourceCausal, types.CategoryEndogenousAlpha, FixtureCausalEndogenousAlpha,
 			"intervention ladder read with endogenous alpha"),
-		probe(perspectives.SourceCausal, perspectives.CategorySystemicBeta, FixtureCausalSystemicBeta,
+		probe(types.SourceCausal, types.CategorySystemicBeta, FixtureCausalSystemicBeta,
 			"macro association drives beta read"),
-		probe(perspectives.SourceCausal, perspectives.CategoryLiquidityShock, FixtureCausalLiquidityShock,
+		probe(types.SourceCausal, types.CategoryLiquidityShock, FixtureCausalLiquidityShock,
 			"regime inversion shock on the ladder"),
-		probeWithScenario(perspectives.SourceCausal, perspectives.CategoryCausalNoise, FixtureCausalCausalNoise,
+		probeWithScenario(types.SourceCausal, types.CategoryCausalNoise, FixtureCausalCausalNoise,
 			"buy pressure without price change (noise)", causalNoiseScenario),
 	}
 }
 
 func leadlagCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probeWithScenario(perspectives.SourceLeadLag, perspectives.CategoryAnchorStall, FixtureLeadlagAnchorStall,
+		probeWithScenario(types.SourceLeadLag, types.CategoryAnchorStall, FixtureLeadlagAnchorStall,
 			"flat anchor with follower drift", leadlagAnchorStallScenario),
-		probeWithScenario(perspectives.SourceLeadLag, perspectives.CategoryInefficientLag, FixtureLeadlagInefficientLag,
+		probeWithScenario(types.SourceLeadLag, types.CategoryInefficientLag, FixtureLeadlagInefficientLag,
 			"follower lags anchor beyond min lag fraction", leadlagInefficientLagScenario),
-		probeWithScenario(perspectives.SourceLeadLag, perspectives.CategorySynchronizedDrift, FixtureLeadlagSynchronizedDrift,
+		probeWithScenario(types.SourceLeadLag, types.CategorySynchronizedDrift, FixtureLeadlagSynchronizedDrift,
 			"anchor and follower move together", leadlagSynchronizedDriftScenario),
-		probeWithScenario(perspectives.SourceLeadLag, perspectives.CategoryDecoupledMove, FixtureLeadlagDecoupledMove,
+		probeWithScenario(types.SourceLeadLag, types.CategoryDecoupledMove, FixtureLeadlagDecoupledMove,
 			"low correlation between anchor and follower", leadlagDecoupledMoveScenario),
 	}
 }
 
 func correlationCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probeWithScenario(perspectives.SourceCorrelation, perspectives.CategorySystemicHerd, FixtureCorrelationSystemicHerd,
+		probeWithScenario(types.SourceCorrelation, types.CategorySystemicHerd, FixtureCorrelationSystemicHerd,
 			"coordinated cross-section buy drift", correlationHerdScenario),
-		probeWithScenario(perspectives.SourceCorrelation, perspectives.CategoryDecoupledAlpha, FixtureCorrelationDecoupledAlpha,
+		probeWithScenario(types.SourceCorrelation, types.CategoryDecoupledAlpha, FixtureCorrelationDecoupledAlpha,
 			"one symbol diverges from the herd fingerprint", correlationDecoupledScenario),
-		probeWithScenario(perspectives.SourceCorrelation, perspectives.CategoryStochasticNoise, FixtureCorrelationStochasticNoise,
+		probeWithScenario(types.SourceCorrelation, types.CategoryStochasticNoise, FixtureCorrelationStochasticNoise,
 			"quiet uncorrelated movement", correlationNoiseScenario),
-		probeWithScenario(perspectives.SourceCorrelation, perspectives.CategoryDivergentStress, FixtureCorrelationDivergentStress,
+		probeWithScenario(types.SourceCorrelation, types.CategoryDivergentStress, FixtureCorrelationDivergentStress,
 			"contrarian symbol against the majority fingerprint", correlationDivergentStressScenario),
 	}
 }
 
 func toxicityCategoryProbes() []SignalCategoryProbe {
 	return []SignalCategoryProbe{
-		probe(perspectives.SourceToxicity, perspectives.CategoryToxicBluff, FixtureToxicityToxicBluff,
+		probe(types.SourceToxicity, types.CategoryToxicBluff, FixtureToxicityToxicBluff,
 			"near-touch cancel-heavy book updates"),
-		probe(perspectives.SourceToxicity, perspectives.CategoryLiquidityVacuum, FixtureToxicityLiquidityVacuum,
+		probe(types.SourceToxicity, types.CategoryLiquidityVacuum, FixtureToxicityLiquidityVacuum,
 			"vacuum after liquidity pulls from the touch"),
-		probe(perspectives.SourceToxicity, perspectives.CategoryHardSupport, FixtureToxicityHardSupport,
+		probe(types.SourceToxicity, types.CategoryHardSupport, FixtureToxicityHardSupport,
 			"stable size at the touch without bluff cancels"),
 	}
 }
 
 func probe(
-	source perspectives.SourceType,
-	category perspectives.CategoryType,
+	source types.SourceType,
+	category types.CategoryType,
 	fixture SignalFixtureKey,
 	condition string,
 ) SignalCategoryProbe {
@@ -204,8 +206,8 @@ func probe(
 }
 
 func probeWithScenario(
-	source perspectives.SourceType,
-	category perspectives.CategoryType,
+	source types.SourceType,
+	category types.CategoryType,
 	fixture SignalFixtureKey,
 	condition string,
 	extend func(SignalCategoryProbe) Scenario,

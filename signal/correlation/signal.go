@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -101,7 +101,7 @@ type Signal struct {
 	symbols       sync.Map
 	planes        [hashBits][gridBars]float64
 	marketEnergy  *adaptive.EMA
-	categories    map[string]perspectives.CategoryType
+	categories    map[string]types.CategoryType
 	activeScratch []live
 	floor         *adaptive.SNRField
 	classifier    *adaptive.Classifier
@@ -148,11 +148,11 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		broadcasts:   make(map[string]*qpool.BroadcastGroup),
 		subscribers:  make(map[string]*qpool.Subscriber),
 		marketEnergy: adaptive.NewEMA(0),
-		categories: map[string]perspectives.CategoryType{
-			"divergent_stress": perspectives.CategoryDivergentStress,
-			"stochastic_noise": perspectives.CategoryStochasticNoise,
-			"decoupled_alpha":  perspectives.CategoryDecoupledAlpha,
-			"systemic_herd":    perspectives.CategorySystemicHerd,
+		categories: map[string]types.CategoryType{
+			"divergent_stress": types.CategoryDivergentStress,
+			"stochastic_noise": types.CategoryStochasticNoise,
+			"decoupled_alpha":  types.CategoryDecoupledAlpha,
+			"systemic_herd":    types.CategorySystemicHerd,
 		},
 		floor:      adaptive.NewSNRField(),
 		classifier: pooledCalibrator.Classifier,

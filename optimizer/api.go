@@ -1,7 +1,7 @@
 package optimizer
 
 import (
-	"github.com/theapemachine/symm/market/perspectives"
+	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/optimizer/budget"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/log"
@@ -25,6 +25,6 @@ var (
 )
 
 // WriteThoughts persists a reasoning forest to a playbook file.
-func WriteThoughts(path string, thoughts []perspectives.Thought) error {
+func WriteThoughts(path string, thoughts []preasoning.Thought) error {
 	return io.WriteThoughts(path, thoughts)
 }

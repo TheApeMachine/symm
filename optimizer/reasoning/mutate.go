@@ -1,6 +1,9 @@
 package reasoning
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
+)
 
 /*
 Neighbors returns the candidate forests one edit away from the given one. The
@@ -13,8 +16,8 @@ add a lifecycle exit), plus numeric tuning of thresholds and protective leashes.
 Every operator works on EACH entry branch, not just the first, so a multi-branch
 forest can grow several deep branches independently — the shape the playbook models.
 */
-func Neighbors(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0, 64)
+func Neighbors(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0, 64)
 
 	neighbors = append(neighbors, tuneEntryThreshold(forest, vocab)...)
 	neighbors = append(neighbors, tunePositionSize(forest, vocab)...)
@@ -31,9 +34,9 @@ func Neighbors(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives
 }
 
 // forestHasPredicate reports whether any predicate in the forest matches.
-func forestHasPredicate(forest []perspectives.Thought, match func(perspectives.Predicate) bool) bool {
-	var inPredicate func(predicate perspectives.Predicate) bool
-	inPredicate = func(predicate perspectives.Predicate) bool {
+func forestHasPredicate(forest []reasoning.Thought, match func(reasoning.Predicate) bool) bool {
+	var inPredicate func(predicate reasoning.Predicate) bool
+	inPredicate = func(predicate reasoning.Predicate) bool {
 		if match(predicate) {
 			return true
 		}
@@ -53,8 +56,8 @@ func forestHasPredicate(forest []perspectives.Thought, match func(perspectives.P
 		return predicate.Not != nil && inPredicate(*predicate.Not)
 	}
 
-	var walk func(nodes []perspectives.Thought) bool
-	walk = func(nodes []perspectives.Thought) bool {
+	var walk func(nodes []reasoning.Thought) bool
+	walk = func(nodes []reasoning.Thought) bool {
 		for index := range nodes {
 			if inPredicate(nodes[index].When) {
 				return true
@@ -73,7 +76,7 @@ func forestHasPredicate(forest []perspectives.Thought, match func(perspectives.P
 
 // ---- navigation -----------------------------------------------------------------
 
-func subtreeHasEntry(thought perspectives.Thought) bool {
+func subtreeHasEntry(thought reasoning.Thought) bool {
 	if isEntry(thought.Do.Type) {
 		return true
 	}
@@ -89,7 +92,7 @@ func subtreeHasEntry(thought perspectives.Thought) bool {
 
 // entryRootIndices returns every root whose subtree contains an entry — one per
 // strategy branch. Gate and depth mutations fan out over all of them.
-func entryRootIndices(forest []perspectives.Thought) []int {
+func entryRootIndices(forest []reasoning.Thought) []int {
 	indices := make([]int, 0, len(forest))
 
 	for index := range forest {
@@ -101,10 +104,10 @@ func entryRootIndices(forest []perspectives.Thought) []int {
 	return indices
 }
 
-func managementIndex(forest []perspectives.Thought) int {
+func managementIndex(forest []reasoning.Thought) int {
 	for index := range forest {
 		action := forest[index].Do.Type
-		if action != perspectives.ActionNone && !isEntry(action) {
+		if action != reasoning.ActionNone && !isEntry(action) {
 			return index
 		}
 	}
@@ -112,9 +115,9 @@ func managementIndex(forest []perspectives.Thought) int {
 	return -1
 }
 
-func signalOperandIndex(predicate perspectives.Predicate) int {
+func signalOperandIndex(predicate reasoning.Predicate) int {
 	for index, operand := range predicate.All {
-		if operand.Subject == perspectives.SubjectSignal {
+		if operand.Subject == reasoning.SubjectSignal {
 			return index
 		}
 	}
@@ -122,7 +125,7 @@ func signalOperandIndex(predicate perspectives.Predicate) int {
 	return -1
 }
 
-func gateHasSubject(predicate perspectives.Predicate, subject perspectives.Subject) bool {
+func gateHasSubject(predicate reasoning.Predicate, subject reasoning.Subject) bool {
 	for _, operand := range predicate.All {
 		if operand.Subject == subject {
 			return true
@@ -132,12 +135,12 @@ func gateHasSubject(predicate perspectives.Predicate, subject perspectives.Subje
 	return false
 }
 
-func usedEntryCategories(forest []perspectives.Thought) map[perspectives.CategoryType]bool {
-	used := make(map[perspectives.CategoryType]bool)
+func usedEntryCategories(forest []reasoning.Thought) map[types.CategoryType]bool {
+	used := make(map[types.CategoryType]bool)
 
 	for index := range forest {
 		for _, operand := range forest[index].When.All {
-			if operand.Subject == perspectives.SubjectSignal {
+			if operand.Subject == reasoning.SubjectSignal {
 				used[operand.Category] = true
 			}
 		}
@@ -146,11 +149,11 @@ func usedEntryCategories(forest []perspectives.Thought) map[perspectives.Categor
 	return used
 }
 
-func hasSettleExit(forest []perspectives.Thought) bool {
-	var walk func(nodes []perspectives.Thought) bool
-	walk = func(nodes []perspectives.Thought) bool {
+func hasSettleExit(forest []reasoning.Thought) bool {
+	var walk func(nodes []reasoning.Thought) bool
+	walk = func(nodes []reasoning.Thought) bool {
 		for index := range nodes {
-			if nodes[index].Do.Type == perspectives.ActionSettlePosition {
+			if nodes[index].Do.Type == reasoning.ActionSettlePosition {
 				return true
 			}
 
@@ -166,8 +169,8 @@ func hasSettleExit(forest []perspectives.Thought) bool {
 }
 
 func applyToManagement(
-	forest []perspectives.Thought, edit func(node *perspectives.Thought),
-) ([]perspectives.Thought, bool) {
+	forest []reasoning.Thought, edit func(node *reasoning.Thought),
+) ([]reasoning.Thought, bool) {
 	clone := cloneForest(forest)
 
 	node, ok := managementNode(clone)
@@ -183,8 +186,8 @@ func applyToManagement(
 // ---- mutations (clone, then edit the clone — parents are never aliased) ----------
 
 // tunePositionSize sweeps each branch's capital-deployment multiplier across the grid.
-func tunePositionSize(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func tunePositionSize(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 
 	for _, root := range entryRootIndices(forest) {
 		node := entryNodeWithin(&forest[root])
@@ -216,8 +219,8 @@ func tunePositionSize(forest []perspectives.Thought, vocab Vocabulary) [][]persp
 }
 
 // tuneEntryThreshold sweeps each branch's entry-signal SNR level across the grid.
-func tuneEntryThreshold(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func tuneEntryThreshold(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 
 	for _, root := range entryRootIndices(forest) {
 		operand := signalOperandIndex(forest[root].When)
@@ -243,8 +246,8 @@ func tuneEntryThreshold(forest []perspectives.Thought, vocab Vocabulary) [][]per
 
 // tightenEntry adds a confirming condition to each branch's gate: a regime
 // requirement (if none yet) or the strongest signal it is not already watching.
-func tightenEntry(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func tightenEntry(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 	used := usedEntryCategories(forest)
 
 	threshold := 1.0
@@ -258,7 +261,7 @@ func tightenEntry(forest []perspectives.Thought, vocab Vocabulary) [][]perspecti
 			continue
 		}
 
-		if !gateHasSubject(gate, perspectives.SubjectRegime) {
+		if !gateHasSubject(gate, reasoning.SubjectRegime) {
 			for _, regime := range vocab.Regimes {
 				clone := cloneForest(forest)
 				clone[root].When.All = append(clone[root].When.All, regimeIs(regime))
@@ -284,8 +287,8 @@ func tightenEntry(forest []perspectives.Thought, vocab Vocabulary) [][]perspecti
 
 // temporalSteps are the follow-through conditions a setup can wait for before it
 // commits: price moving up by a percentage, or the signal itself crossing up.
-func temporalSteps(gate perspectives.Predicate, vocab Vocabulary) []perspectives.Predicate {
-	steps := make([]perspectives.Predicate, 0, len(vocab.PriceMoves)*len(vocab.Lookbacks)+len(vocab.Thresholds))
+func temporalSteps(gate reasoning.Predicate, vocab Vocabulary) []reasoning.Predicate {
+	steps := make([]reasoning.Predicate, 0, len(vocab.PriceMoves)*len(vocab.Lookbacks)+len(vocab.Thresholds))
 
 	for _, move := range vocab.PriceMoves {
 		for _, ago := range vocab.Lookbacks {
@@ -307,8 +310,8 @@ func temporalSteps(gate perspectives.Predicate, vocab Vocabulary) []perspectives
 // temporalizeEntry pushes each branch's entry one step deeper, behind a follow-through
 // the parent gate must latch and wait for — "see the setup, THEN when it confirms,
 // enter". Re-applying it grows an ordered, multi-tick entry chain per branch.
-func temporalizeEntry(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func temporalizeEntry(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 
 	for _, root := range entryRootIndices(forest) {
 		for _, step := range temporalSteps(forest[root].When, vocab) {
@@ -320,8 +323,8 @@ func temporalizeEntry(forest []perspectives.Thought, vocab Vocabulary) [][]persp
 			}
 
 			entry := node.Do
-			node.Do = perspectives.Act{}
-			node.Then = append(node.Then, perspectives.Thought{When: step, Do: entry})
+			node.Do = reasoning.Act{}
+			node.Then = append(node.Then, reasoning.Thought{When: step, Do: entry})
 
 			neighbors = append(neighbors, clone)
 		}
@@ -331,14 +334,14 @@ func temporalizeEntry(forest []perspectives.Thought, vocab Vocabulary) [][]persp
 }
 
 // tuneManagement sweeps the protective leg's type and offset.
-func tuneManagement(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+func tuneManagement(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
 	index := managementIndex(forest)
 	if index < 0 {
 		return nil
 	}
 
 	current := forest[index].Do
-	neighbors := make([][]perspectives.Thought, 0, len(vocab.Protective)*len(vocab.Offsets))
+	neighbors := make([][]reasoning.Thought, 0, len(vocab.Protective)*len(vocab.Offsets))
 
 	for _, action := range vocab.Protective {
 		for _, offset := range vocab.Offsets {
@@ -346,8 +349,8 @@ func tuneManagement(forest []perspectives.Thought, vocab Vocabulary) [][]perspec
 				continue
 			}
 
-			clone, ok := applyToManagement(forest, func(node *perspectives.Thought) {
-				node.Do = perspectives.Act{Type: action, Offset: offset}
+			clone, ok := applyToManagement(forest, func(node *reasoning.Thought) {
+				node.Do = reasoning.Act{Type: action, Offset: offset}
 			})
 
 			if ok {
@@ -362,25 +365,25 @@ func tuneManagement(forest []perspectives.Thought, vocab Vocabulary) [][]perspec
 // addLifecycleExit adds a trajectory-aware exit: settle once the held move has
 // ended (peak rolled over), complementing the protective stop. This is the
 // lifecycle management the hand-written playbook leans on.
-func addLifecycleExit(forest []perspectives.Thought) [][]perspectives.Thought {
+func addLifecycleExit(forest []reasoning.Thought) [][]reasoning.Thought {
 	if hasSettleExit(forest) {
 		return nil
 	}
 
 	clone := cloneForest(forest)
-	clone = append(clone, perspectives.Thought{
-		When: allOf(holding(), lifecycleIs(perspectives.ObservationHasEnded)),
-		Do:   perspectives.Act{Type: perspectives.ActionSettlePosition},
+	clone = append(clone, reasoning.Thought{
+		When: allOf(holding(), lifecycleIs(types.ObservationHasEnded)),
+		Do:   reasoning.Act{Type: reasoning.ActionSettlePosition},
 	})
 
-	return [][]perspectives.Thought{clone}
+	return [][]reasoning.Thought{clone}
 }
 
 // tightenWithVersus adds a metric-to-metric confirmation to each branch's gate: the
 // entry signal must be stronger than another signal (e.g. the breakout dominates the
 // background).
-func tightenWithVersus(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func tightenWithVersus(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 
 	for _, root := range entryRootIndices(forest) {
 		gate := forest[root].When
@@ -416,8 +419,8 @@ func tightenWithVersus(forest []perspectives.Thought, vocab Vocabulary) [][]pers
 
 // avoidSignal adds a negation to each branch's gate: enter only while another
 // signal is absent. Which negations actually help is left to the replay score.
-func avoidSignal(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	neighbors := make([][]perspectives.Thought, 0)
+func avoidSignal(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	neighbors := make([][]reasoning.Thought, 0)
 	used := usedEntryCategories(forest)
 
 	threshold := 1.0
@@ -448,20 +451,20 @@ func avoidSignal(forest []perspectives.Thought, vocab Vocabulary) [][]perspectiv
 
 // addTimeStop adds a holding time-stop: settle once the position has been open past
 // a deadline, so a thesis that has not paid off is cut loose.
-func addTimeStop(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
-	if forestHasPredicate(forest, func(predicate perspectives.Predicate) bool {
-		return predicate.Subject == perspectives.SubjectElapsed
+func addTimeStop(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
+	if forestHasPredicate(forest, func(predicate reasoning.Predicate) bool {
+		return predicate.Subject == reasoning.SubjectElapsed
 	}) {
 		return nil
 	}
 
-	neighbors := make([][]perspectives.Thought, 0, len(vocab.Durations))
+	neighbors := make([][]reasoning.Thought, 0, len(vocab.Durations))
 
 	for _, minutes := range vocab.Durations {
 		clone := cloneForest(forest)
-		clone = append(clone, perspectives.Thought{
+		clone = append(clone, reasoning.Thought{
 			When: allOf(holding(), elapsedAtLeast(minutes)),
-			Do:   perspectives.Act{Type: perspectives.ActionSettlePosition},
+			Do:   reasoning.Act{Type: reasoning.ActionSettlePosition},
 		})
 		neighbors = append(neighbors, clone)
 	}
@@ -471,12 +474,12 @@ func addTimeStop(forest []perspectives.Thought, vocab Vocabulary) [][]perspectiv
 
 // addStrategyRoot grows the forest sideways: a fresh entry branch on a signal not
 // yet traded, sharing the existing protective management.
-func addStrategyRoot(forest []perspectives.Thought, vocab Vocabulary) [][]perspectives.Thought {
+func addStrategyRoot(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning.Thought {
 	used := usedEntryCategories(forest)
-	neighbors := make([][]perspectives.Thought, 0)
+	neighbors := make([][]reasoning.Thought, 0)
 	added := 0
 
-	entry := perspectives.ActionMarket
+	entry := reasoning.ActionMarket
 	if len(vocab.Entries) > 0 {
 		entry = vocab.Entries[0]
 	}
@@ -492,9 +495,9 @@ func addStrategyRoot(forest []perspectives.Thought, vocab Vocabulary) [][]perspe
 		}
 
 		clone := cloneForest(forest)
-		clone = append(clone, perspectives.Thought{
+		clone = append(clone, reasoning.Thought{
 			When: allOf(notHolding(), signalAtLeast(category, threshold)),
-			Do:   perspectives.Act{Type: entry},
+			Do:   reasoning.Act{Type: entry},
 		})
 		neighbors = append(neighbors, clone)
 

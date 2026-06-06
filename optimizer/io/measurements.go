@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func CountMeasurementLines(path string) (int, int, error) {
@@ -18,11 +18,11 @@ func CountMeasurementLines(path string) (int, int, error) {
 LoadMeasurements reads the JSONL measurement tape written by market.Story.
 Malformed, truncated, or unparsable JSONL lines increment skipped.
 */
-func LoadMeasurements(path string) ([]perspectives.Measurement, int, error) {
+func LoadMeasurements(path string) ([]types.Measurement, int, error) {
 	return loadAllMeasurements(path)
 }
 
-func loadAllMeasurements(path string) ([]perspectives.Measurement, int, error) {
+func loadAllMeasurements(path string) ([]types.Measurement, int, error) {
 	file, err := os.Open(path)
 
 	if err != nil {
@@ -31,7 +31,7 @@ func loadAllMeasurements(path string) ([]perspectives.Measurement, int, error) {
 
 	defer file.Close()
 
-	rows := make([]perspectives.Measurement, 0)
+	rows := make([]types.Measurement, 0)
 	skipped := 0
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -43,7 +43,7 @@ func loadAllMeasurements(path string) ([]perspectives.Measurement, int, error) {
 			continue
 		}
 
-		measurement := perspectives.Measurement{}
+		measurement := types.Measurement{}
 
 		if err := sonic.Unmarshal([]byte(line), &measurement); err != nil {
 			skipped++
@@ -89,7 +89,7 @@ func countValidMeasurementLines(path string) (int, int, error) {
 			continue
 		}
 
-		measurement := perspectives.Measurement{}
+		measurement := types.Measurement{}
 
 		if err := sonic.Unmarshal([]byte(line), &measurement); err != nil {
 			skipped++

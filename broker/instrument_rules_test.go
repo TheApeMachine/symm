@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func altPair(symbol string) market.InstrumentPair {
@@ -193,7 +193,7 @@ func TestInstrumentRulesCachePrepareOrderStressSized(t *testing.T) {
 
 		base := 50.0 / 94.523
 		stress := SymbolStress{
-			HawkesCategory: perspectives.CategorySaturation,
+			HawkesCategory: types.CategorySaturation,
 			HawkesSNR:      1,
 		}
 		quantity := stress.EntryQuantity(base)

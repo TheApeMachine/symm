@@ -90,19 +90,6 @@ func TestPearsonAndDot(t *testing.T) {
 	})
 }
 
-func TestPairConditionNumber(t *testing.T) {
-	Convey("Given decoupled liquidity and flow features", t, func() {
-		samples := ladderTrainingSamples(minCausalHistory + 8)
-
-		condition := pairConditionNumber(samples)
-
-		Convey("It should stay below the panic switch", func() {
-			So(condition, ShouldBeGreaterThan, 0)
-			So(condition, ShouldBeLessThan, 1000)
-		})
-	})
-}
-
 func BenchmarkAssociationEffectFor(b *testing.B) {
 	samples := ladderTrainingSamples(minCausalHistory + 8)
 	roles := normalRoles()

@@ -10,17 +10,11 @@ func TestSNRScore(t *testing.T) {
 	Convey("Given a fresh SNR tracker", t, func() {
 		snr := NewSNR()
 
-		Convey("It should report 0 while warming up", func() {
-			score := 0.0
+		Convey("It should score the first standout against the regularized floor", func() {
+			score, err := snr.Score(0.5)
 
-			for range defaultSNRMinObs - 1 {
-				var err error
-				score, err = snr.Score(0.5)
-
-				So(err, ShouldBeNil)
-			}
-
-			So(score, ShouldEqual, 0)
+			So(err, ShouldBeNil)
+			So(score, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("It should stay near 0 for a steady stream then spike on an outlier", func() {
@@ -49,7 +43,7 @@ func TestSNRScore(t *testing.T) {
 			})
 		})
 
-		Convey("It should never return a negative SNR", func() {
+		Convey("It should keep below-mean readings measurable instead of zeroing", func() {
 			for index := range 50 {
 				value := 0.55
 
@@ -63,7 +57,12 @@ func TestSNRScore(t *testing.T) {
 
 			score, err := snr.Score(0.3)
 			So(err, ShouldBeNil)
-			So(score, ShouldEqual, 0)
+			So(score, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("It should error on zero standout", func() {
+			_, err := snr.Score(0)
+			So(err, ShouldNotBeNil)
 		})
 
 		Convey("It should error on non-unit standout instead of silently scoring 0", func() {

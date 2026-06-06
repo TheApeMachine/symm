@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestExhaustReading(t *testing.T) {
@@ -12,7 +12,7 @@ func TestExhaustReading(t *testing.T) {
 		category, evidence := exhaustReading(0.9, 0.1, 0.1, 0.1)
 
 		Convey("It should classify mechanical collapse", func() {
-			So(category, ShouldEqual, perspectives.CategoryMechanicalCollapse)
+			So(category, ShouldEqual, types.CategoryMechanicalCollapse)
 			So(evidence, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -21,7 +21,7 @@ func TestExhaustReading(t *testing.T) {
 		category, _ := exhaustReading(0.1, 0.9, 0.1, 0.1)
 
 		Convey("It should classify fragile expansion", func() {
-			So(category, ShouldEqual, perspectives.CategoryFragileExpansion)
+			So(category, ShouldEqual, types.CategoryFragileExpansion)
 		})
 	})
 

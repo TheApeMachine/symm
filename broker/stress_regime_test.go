@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestSymbolStressEntryExposureScale(t *testing.T) {
 	Convey("Given fluid turbulence readings", t, func() {
 		stress := SymbolStress{
-			FluidCategory: perspectives.CategoryTurbulent,
+			FluidCategory: types.CategoryTurbulent,
 			FluidSNR:      0.8,
 		}
 
@@ -22,7 +22,7 @@ func TestSymbolStressEntryExposureScale(t *testing.T) {
 
 	Convey("Given calm fluid readings", t, func() {
 		stress := SymbolStress{
-			FluidCategory: perspectives.CategoryLaminar,
+			FluidCategory: types.CategoryLaminar,
 		}
 
 		Convey("It should leave entries unscaled", func() {
@@ -33,7 +33,7 @@ func TestSymbolStressEntryExposureScale(t *testing.T) {
 
 	Convey("Given zero requested quantity", t, func() {
 		stress := SymbolStress{
-			FluidCategory: perspectives.CategoryTurbulent,
+			FluidCategory: types.CategoryTurbulent,
 			FluidSNR:      0.8,
 		}
 
@@ -46,7 +46,7 @@ func TestSymbolStressEntryExposureScale(t *testing.T) {
 func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
 	Convey("Given calm stress readings", t, func() {
 		stress := SymbolStress{
-			FluidCategory: perspectives.CategoryLaminar,
+			FluidCategory: types.CategoryLaminar,
 		}
 
 		Convey("It should leave the configured slippage ceiling unchanged", func() {
@@ -56,7 +56,7 @@ func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
 
 	Convey("Given hostile toxicity stress", t, func() {
 		stress := SymbolStress{
-			ToxicityCategory: perspectives.CategoryToxicBluff,
+			ToxicityCategory: types.CategoryToxicBluff,
 			ToxicitySNR:      1,
 		}
 
@@ -67,7 +67,7 @@ func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
 
 	Convey("Given hostile Hawkes stress", t, func() {
 		stress := SymbolStress{
-			HawkesCategory: perspectives.CategorySaturation,
+			HawkesCategory: types.CategorySaturation,
 			HawkesSNR:      3,
 		}
 
@@ -79,7 +79,7 @@ func TestSymbolStressEntrySlippageCapBps(t *testing.T) {
 
 func BenchmarkSymbolStressEntrySlippageCapBps(b *testing.B) {
 	stress := SymbolStress{
-		ToxicityCategory: perspectives.CategoryToxicBluff,
+		ToxicityCategory: types.CategoryToxicBluff,
 		ToxicitySNR:      1,
 	}
 

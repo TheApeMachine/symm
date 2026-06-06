@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestLiquidityReading(t *testing.T) {
@@ -15,7 +15,7 @@ func TestLiquidityReading(t *testing.T) {
 
 		Convey("It should classify robust liquidity", func() {
 			So(err, ShouldBeNil)
-			So(category, ShouldEqual, perspectives.CategoryRobustLiquidity)
+			So(category, ShouldEqual, types.CategoryRobustLiquidity)
 			So(clarity, ShouldBeGreaterThan, 0)
 			So(standout, ShouldBeGreaterThanOrEqualTo, 0)
 		})
@@ -26,7 +26,7 @@ func TestLiquidityReading(t *testing.T) {
 
 		Convey("It should classify extreme scarcity", func() {
 			So(err, ShouldBeNil)
-			So(category, ShouldEqual, perspectives.CategoryExtremeScarcity)
+			So(category, ShouldEqual, types.CategoryExtremeScarcity)
 		})
 	})
 }

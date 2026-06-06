@@ -3,7 +3,7 @@ package leadlag
 import (
 	"math"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -21,15 +21,13 @@ func leadlagReading(
 	stallMargin float64,
 	corr float64,
 	lagBars int,
-) (perspectives.CategoryType, float64, float64) {
+) (types.CategoryType, float64, float64) {
 	if !anchorMoved {
-		// A stalled anchor is the absence of a lead-lag phenomenon: clarity is the
-		// headroom to the move floor, strength is zero.
 		if stallMargin <= 0 {
-			return perspectives.CategoryAnchorStall, 0, 0
+			return types.CategoryAnchorStall, types.UnitMarginFloor, types.UnitMarginFloor
 		}
 
-		return perspectives.CategoryAnchorStall, stallMargin, 0
+		return types.CategoryAnchorStall, stallMargin, stallMargin
 	}
 
 	corrStrength := math.Max(0, math.Min(1, corr))
@@ -43,19 +41,19 @@ func leadlagReading(
 			span := 1 - minLagFraction
 
 			if margin <= 0 || span <= 0 {
-				return perspectives.CategoryInefficientLag, 0, lagStrength
+				return types.CategoryInefficientLag, types.UnitMarginFloor, lagStrength
 			}
 
-			return perspectives.CategoryInefficientLag, margin / span, lagStrength
+			return types.CategoryInefficientLag, margin / span, lagStrength
 		}
 
 		margin := minLagFraction - lagFraction
 
 		if margin <= 0 {
-			return perspectives.CategorySynchronizedDrift, 0, lagStrength
+			return types.CategorySynchronizedDrift, types.UnitMarginFloor, lagStrength
 		}
 
-		return perspectives.CategorySynchronizedDrift, margin / minLagFraction, lagStrength
+		return types.CategorySynchronizedDrift, margin / minLagFraction, lagStrength
 	}
 
 	if corr < leadlagMinimumLagCorrelation {
@@ -63,18 +61,18 @@ func leadlagReading(
 		span := 1 + leadlagMinimumLagCorrelation
 
 		if margin <= 0 || span <= 0 {
-			return perspectives.CategoryDecoupledMove, 0, corrStrength
+			return types.CategoryDecoupledMove, types.UnitMarginFloor, corrStrength
 		}
 
-		return perspectives.CategoryDecoupledMove, margin / span, corrStrength
+		return types.CategoryDecoupledMove, margin / span, corrStrength
 	}
 
 	margin := corr - leadlagMinimumLagCorrelation
 	span := 1 - leadlagMinimumLagCorrelation
 
 	if margin <= 0 || span <= 0 {
-		return perspectives.CategorySynchronizedDrift, 0, corrStrength
+		return types.CategorySynchronizedDrift, types.UnitMarginFloor, corrStrength
 	}
 
-	return perspectives.CategorySynchronizedDrift, margin / span, corrStrength
+	return types.CategorySynchronizedDrift, margin / span, corrStrength
 }

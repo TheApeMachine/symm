@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestHawkesReading(t *testing.T) {
@@ -21,7 +21,7 @@ func TestHawkesReading(t *testing.T) {
 		category, evidence := hawkesReading(fit, 0.1, false)
 
 		Convey("It should classify saturation", func() {
-			So(category, ShouldEqual, perspectives.CategorySaturation)
+			So(category, ShouldEqual, types.CategorySaturation)
 			So(evidence, ShouldBeGreaterThan, 0)
 		})
 	})

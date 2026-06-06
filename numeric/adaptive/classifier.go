@@ -73,39 +73,44 @@ func (classifier *Classifier) Code(observation float64) (float64, error) {
 }
 
 /*
-Confidence returns band clarity in [0, 1]: how deep the observation sits inside its
-assigned band. Interior bands reach 1 at the centre; open-ended head/tail bands
-saturate toward 1 with distance from the flip boundary so pathological raw inputs
-never produce unbounded clarity.
+Confidence returns selection confidence in [1/N, 1): 1/N — a uniform guess among the
+classifier's N categories — right on a band boundary, rising toward (but never
+reaching) full certainty deep inside a band. The floor is derived from the category
+count, not a hard-coded constant: a selection cannot be less certain than a coin
+flip among its options.
 */
 func (classifier *Classifier) Confidence(observation float64) float64 {
 	if classifier == nil || len(classifier.upper) == 0 {
 		return 0
 	}
 
+	floor := classifier.uniformConfidence()
 	classIndex := classifier.classIndex(observation)
 	inBandMargin := classifier.margin(observation, classIndex)
 	halfWidth := classifier.localHalfWidth(classIndex)
 
 	if halfWidth <= snrEpsilon {
-		return confidenceFloor
+		return floor
 	}
 
-	// Continuous, monotonic clarity in [0, 1): 0 right on the band boundary, ~0.86
+	// Continuous, monotonic band depth in [0, 1): 0 right on the band boundary, ~0.86
 	// a half-width inside (a closed band's centre), saturating toward (but never
-	// reaching) 1 deeper into an open-ended band. Replaces the old branch that
-	// jumped discontinuously from 1 down to 0.5 as the margin crossed the half-width
-	// and that capped closed-band centres far too low.
-	clarity := 0.0
+	// reaching) 1 deeper into an open-ended band.
+	depth := 0.0
 
 	if inBandMargin > 0 {
-		clarity = 1 - math.Exp(-2*inBandMargin/halfWidth)
+		depth = 1 - math.Exp(-2*inBandMargin/halfWidth)
 	}
 
-	// Map into the OPEN interval (floor, 1-floor): a boundary observation is
-	// maximally uncertain, not "zero confidence", and a deep one is near-certain,
-	// not a saturated 1 — exact 0 / 1 are clamping artifacts, never a real reading.
-	return confidenceFloor + clarity*(1-2*confidenceFloor)
+	// Map band depth [0, 1) onto [1/N, 1): a boundary reading is no more certain than
+	// a uniform guess among the N categories; deeper inside, certainty approaches 1.
+	return floor + depth*(1-floor)
+}
+
+// uniformConfidence is 1/N, the confidence of a uniform guess among the
+// classifier's N categories — the derived floor below which a selection cannot fall.
+func (classifier *Classifier) uniformConfidence() float64 {
+	return 1 / float64(len(classifier.codes))
 }
 
 /*
@@ -138,7 +143,7 @@ func (classifier *Classifier) Standout(observation float64) float64 {
 	margin := win - runner
 
 	if margin <= 0 {
-		return 0
+		return standoutTieFloor
 	}
 
 	return margin

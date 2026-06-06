@@ -19,13 +19,13 @@ type fakeSink struct {
 	refreshNO atomic.Int64
 }
 
-func (sink *fakeSink) UIFramesSent(count int64)      { sink.sent.Add(count) }
-func (sink *fakeSink) UIFramesDropped(count int64)   { sink.dropped.Add(count) }
-func (sink *fakeSink) UIFramesFiltered(count int64)  { sink.filtered.Add(count) }
-func (sink *fakeSink) LeadlagThrottle()                { sink.throttle.Add(1) }
-func (sink *fakeSink) LeadlagRecompute()               { sink.recompute.Add(1) }
-func (sink *fakeSink) WSConnect()                      { sink.connect.Add(1) }
-func (sink *fakeSink) WSReconnect()                    { sink.reconnect.Add(1) }
+func (sink *fakeSink) UIFramesSent(count int64)     { sink.sent.Add(count) }
+func (sink *fakeSink) UIFramesDropped(count int64)  { sink.dropped.Add(count) }
+func (sink *fakeSink) UIFramesFiltered(count int64) { sink.filtered.Add(count) }
+func (sink *fakeSink) LeadlagThrottle()             { sink.throttle.Add(1) }
+func (sink *fakeSink) LeadlagRecompute()            { sink.recompute.Add(1) }
+func (sink *fakeSink) WSConnect()                   { sink.connect.Add(1) }
+func (sink *fakeSink) WSReconnect()                 { sink.reconnect.Add(1) }
 func (sink *fakeSink) TokenRefresh(success bool) {
 	if success {
 		sink.refreshOK.Add(1)

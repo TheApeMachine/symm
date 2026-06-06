@@ -4,7 +4,7 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const confoundFraction = 0.25
@@ -26,16 +26,16 @@ type causalOutcome struct {
 /*
 causalCategory maps the causal reason onto the structural-origin perspective.
 */
-func causalCategory(reason string) perspectives.CategoryType {
+func causalCategory(reason string) types.CategoryType {
 	switch reason {
 	case "intervention", "counterfactual_like":
-		return perspectives.CategoryEndogenousAlpha
+		return types.CategoryEndogenousAlpha
 	case "intervention_regime_inversion", "counterfactual_like_regime_inversion":
-		return perspectives.CategoryLiquidityShock
+		return types.CategoryLiquidityShock
 	case "macro_association":
-		return perspectives.CategorySystemicBeta
+		return types.CategorySystemicBeta
 	default:
-		return perspectives.CategoryCausalNoise
+		return types.CategoryCausalNoise
 	}
 }
 
@@ -46,7 +46,7 @@ categories. It is distinct from the SNR standout, which carries the raw magnitud
 the causal effect.
 */
 func causalEvidence(
-	category perspectives.CategoryType,
+	category types.CategoryType,
 	outcome causalOutcome,
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
@@ -58,7 +58,7 @@ func causalEvidence(
 	return associationEvidence(category, macroMomentum, changePct, buyPressure)
 }
 
-func ladderEvidence(category perspectives.CategoryType, outcome causalOutcome) float64 {
+func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 {
 	scale := math.Max(
 		math.Abs(outcome.intervention),
 		math.Max(math.Abs(outcome.association), 1e-12),
@@ -71,9 +71,9 @@ func ladderEvidence(category perspectives.CategoryType, outcome causalOutcome) f
 	}
 
 	switch category {
-	case perspectives.CategoryLiquidityShock:
+	case types.CategoryLiquidityShock:
 		return math.Min(interventionMargin, inversionMarginAbove(outcome))
-	case perspectives.CategoryEndogenousAlpha:
+	case types.CategoryEndogenousAlpha:
 		return math.Min(interventionMargin, inversionMarginBelow(outcome))
 	default:
 		return 0
@@ -81,13 +81,13 @@ func ladderEvidence(category perspectives.CategoryType, outcome causalOutcome) f
 }
 
 func associationEvidence(
-	category perspectives.CategoryType,
+	category types.CategoryType,
 	macroMomentum, changePct, buyPressure float64,
 ) float64 {
 	switch category {
-	case perspectives.CategorySystemicBeta:
+	case types.CategorySystemicBeta:
 		return betaEvidence(macroMomentum, changePct, buyPressure)
-	case perspectives.CategoryCausalNoise:
+	case types.CategoryCausalNoise:
 		return noiseEvidence(macroMomentum, changePct, buyPressure)
 	default:
 		return 0

@@ -4,7 +4,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/ring"
@@ -25,7 +25,7 @@ type symbolHistory struct {
 	imbalances  ring.FloatRing
 	lastPrice   float64
 	hasLast     bool
-	tracked     *perspectives.Category
+	tracked     *types.Category
 }
 
 /*
@@ -93,17 +93,29 @@ func (store *historyStore) observe(
 	}
 }
 
-func (store *historyStore) measure(symbol string) (perspectives.Measurement, float64, error) {
+func (store *historyStore) measure(symbol string) (types.Measurement, float64, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	history, ok := store.bySymbol[symbol]
 
 	if !ok || history == nil {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
-	return exhaustMeasurement(history.snapshot(), history.tracked)
+	if !history.hasLast || history.lastPrice <= 0 {
+		return types.Measurement{}, 0, nil
+	}
+
+	measurement, standout, err := exhaustMeasurement(history.snapshot(), history.tracked)
+
+	if err != nil || measurement.Source == types.SourceNone {
+		return measurement, standout, err
+	}
+
+	measurement.Last = history.lastPrice
+
+	return measurement, standout, nil
 }
 
 func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
@@ -121,7 +133,7 @@ func (store *historyStore) ensureLocked(symbol string) *symbolHistory {
 		pressures:   ring.NewFloatRing(exitHistoryCap),
 		pressureEMA: adaptive.NewEMA(0),
 		imbalances:  ring.NewFloatRing(exitHistoryCap),
-		tracked:     perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked:     types.NewCategory(types.CategoryTypeNone),
 	}
 	store.bySymbol[symbol] = history
 
@@ -216,11 +228,11 @@ func imbalanceFlip(imbalances ring.FloatRing, side int) float64 {
 	prior := numeric.Mean(ordered[:len(ordered)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
-		return perspectives.UnitCompetitionMargin(math.Abs(recent), math.Max(prior, 1e-9))
+		return types.UnitCompetitionMargin(math.Abs(recent), math.Max(prior, 1e-9))
 	}
 
 	if side < 0 && prior < 0 && recent > 0 {
-		return perspectives.UnitCompetitionMargin(recent, math.Max(math.Abs(prior), 1e-9))
+		return types.UnitCompetitionMargin(recent, math.Max(math.Abs(prior), 1e-9))
 	}
 
 	return 0

@@ -2,7 +2,8 @@ package replay
 
 import (
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func positionSide(position replayPosition) trading.Side {
@@ -17,7 +18,7 @@ func positionSide(position replayPosition) trading.Side {
 armTrigger attaches a resting protective exit to an open position.
 */
 func (ledger *replayLedger) armTrigger(
-	symbol string, act perspectives.Act,
+	symbol string, act reasoning.Act,
 ) {
 	position, open := ledger.positions[symbol]
 
@@ -38,13 +39,13 @@ func (ledger *replayLedger) armTrigger(
 
 func (ledger *replayLedger) armOffset(
 	symbol string,
-	act perspectives.Act,
+	act reasoning.Act,
 ) (float64, bool) {
 	if act.Offset > 0 && act.Offset < 1 {
 		return act.Offset, true
 	}
 
-	if perspectives.IsTrailingExit(act.Type) {
+	if reasoning.IsTrailingExit(act.Type) {
 		volatility := ledger.priceVolatility(symbol)
 
 		if volatility <= 0 {
@@ -55,16 +56,16 @@ func (ledger *replayLedger) armOffset(
 	}
 
 	switch act.Type {
-	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
+	case reasoning.ActionStopLoss, reasoning.ActionStopLossLimit:
 		return ledger.costs.StopLossPct, ledger.costs.StopLossPct > 0
-	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
+	case reasoning.ActionTakeProfit, reasoning.ActionTakeProfitLimit:
 		return ledger.costs.TakeProfitPct, ledger.costs.TakeProfitPct > 0
 	default:
 		return 0, false
 	}
 }
 
-func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
+func (ledger *replayLedger) checkTriggers(row types.Measurement) {
 	ledger.observePrice(row)
 
 	if row.Symbol == "" || row.Last <= 0 {
@@ -89,7 +90,7 @@ func (ledger *replayLedger) checkTriggers(row perspectives.Measurement) {
 		ledger.positions[row.Symbol] = position
 	}
 
-	if position.triggerType == perspectives.ActionNone {
+	if position.triggerType == reasoning.ActionNone {
 		return
 	}
 
@@ -113,11 +114,11 @@ func triggerLevel(
 	side trading.Side,
 	extremum, price float64,
 ) (level float64, breached bool) {
-	if perspectives.IsTrailingExit(position.triggerType) && position.triggerOffset <= 0 {
+	if reasoning.IsTrailingExit(position.triggerType) && position.triggerOffset <= 0 {
 		return 0, false
 	}
 
-	level = perspectives.ProtectiveLevelForSide(
+	level = reasoning.ProtectiveLevelForSide(
 		side,
 		position.triggerType,
 		position.entryPrice,
@@ -125,7 +126,7 @@ func triggerLevel(
 		position.triggerOffset,
 	)
 
-	return level, perspectives.ProtectiveBreachedForSide(side, position.triggerType, level, price)
+	return level, reasoning.ProtectiveBreachedForSide(side, position.triggerType, level, price)
 }
 
 func trailingVolatilityMultiple(costs ReplayCosts) float64 {
@@ -139,10 +140,10 @@ func trailingVolatilityMultiple(costs ReplayCosts) float64 {
 func (ledger *replayLedger) closeAtTrigger(
 	symbol string,
 	side trading.Side,
-	actionType perspectives.ActionType,
+	actionType reasoning.ActionType,
 	level float64,
-	row perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	row types.Measurement,
+	snapshots []types.Measurement,
 ) {
 	position, open := ledger.positions[symbol]
 
@@ -152,7 +153,7 @@ func (ledger *replayLedger) closeAtTrigger(
 
 	var exitFill, feePct float64
 
-	if perspectives.ExitRestsAsLimit(actionType) {
+	if reasoning.ExitRestsAsLimit(actionType) {
 		exitFill = level
 		feePct = ledger.costs.MakerFeePct
 	} else {
@@ -160,10 +161,10 @@ func (ledger *replayLedger) closeAtTrigger(
 		fill := level
 
 		if side == trading.Sell {
-			if actionType != perspectives.ActionTakeProfit && row.Last > level {
+			if actionType != reasoning.ActionTakeProfit && row.Last > level {
 				fill = row.Last
 			}
-		} else if actionType != perspectives.ActionTakeProfit && row.Last < level {
+		} else if actionType != reasoning.ActionTakeProfit && row.Last < level {
 			fill = row.Last
 		}
 

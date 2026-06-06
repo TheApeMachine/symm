@@ -12,7 +12,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/rawdump"
 )
 
@@ -97,10 +97,10 @@ func TestObserveRawJSONL_LeadLag(t *testing.T) {
 		signal := NewSignal(ctx, pool)
 		defer signal.Close()
 
-		measurement := perspectives.Measurement{
+		measurement := types.Measurement{
 			Symbol:     "ALT/EUR",
-			Source:     perspectives.SourceLeadLag,
-			Category:   perspectives.CategoryAnchorStall,
+			Source:     types.SourceLeadLag,
+			Category:   types.CategoryAnchorStall,
 			Strength:   0.5,
 			Confidence: 0.6,
 			Last:       10,

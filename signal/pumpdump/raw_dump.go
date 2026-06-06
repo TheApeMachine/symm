@@ -1,10 +1,6 @@
 package pumpdump
 
-// rawRecord is pumpdump's bespoke pre-classification reading: the trade that drove
-// the update, the two self-scaled axes (RVOL, precursor), the window state they
-// were derived from, and Observation — the scalar the classifier actually banded
-// (post-projection, post-clamp). Observation is what the signal's pooled, online
-// BandCalibrator fits the shared band edges to. Written to runs/pumpdump_raw.jsonl
+// rawRecord is pumpdump's pre-classification reading written to runs/pumpdump_raw.jsonl
 // when signals.pumpdump.raw_dump is enabled.
 type rawRecord struct {
 	TimestampUnixNano int64   `json:"timestamp_unixnano"`
@@ -13,8 +9,11 @@ type rawRecord struct {
 	Qty               float64 `json:"qty"`
 	Side              string  `json:"side"`
 	Anchor            float64 `json:"anchor"`
-	VolumeSum         float64 `json:"volume_sum"`
+	GrossVolume       float64 `json:"gross_volume"`
+	SignedVolume      float64 `json:"signed_volume"`
 	RVOL              float64 `json:"rvol"`
 	Precursor         float64 `json:"precursor"`
+	Skew              float64 `json:"skew"`
+	Lift              float64 `json:"lift"`
 	Observation       float64 `json:"observation"`
 }

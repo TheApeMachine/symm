@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 /*
@@ -35,7 +35,7 @@ func releaseThoughtKey(key *thoughtKey) {
 	thoughtKeyPool.Put(key)
 }
 
-func keyOf(forest []perspectives.Thought) string {
+func keyOf(forest []reasoning.Thought) string {
 	key := newThoughtKey()
 	key.writeForest(forest)
 	value := string(key.buffer)
@@ -51,7 +51,7 @@ func (key *thoughtKey) fnv64() uint64 {
 	return hasher.Sum64()
 }
 
-func (key *thoughtKey) writeForest(forest []perspectives.Thought) {
+func (key *thoughtKey) writeForest(forest []reasoning.Thought) {
 	key.writeByte('F')
 	key.writeInt(len(forest))
 
@@ -60,14 +60,14 @@ func (key *thoughtKey) writeForest(forest []perspectives.Thought) {
 	}
 }
 
-func (key *thoughtKey) writeThought(thought perspectives.Thought) {
+func (key *thoughtKey) writeThought(thought reasoning.Thought) {
 	key.writeByte('T')
 	key.writePredicate(thought.When)
 	key.writeAct(thought.Do)
 	key.writeForest(thought.Then)
 }
 
-func (key *thoughtKey) writePredicate(predicate perspectives.Predicate) {
+func (key *thoughtKey) writePredicate(predicate reasoning.Predicate) {
 	key.writeByte('P')
 	key.writePredicates('A', predicate.All)
 	key.writePredicates('Y', predicate.Any)
@@ -94,7 +94,7 @@ func (key *thoughtKey) writePredicate(predicate perspectives.Predicate) {
 
 func (key *thoughtKey) writePredicates(
 	marker byte,
-	predicates []perspectives.Predicate,
+	predicates []reasoning.Predicate,
 ) {
 	key.writeByte(marker)
 	key.writeInt(len(predicates))
@@ -104,7 +104,7 @@ func (key *thoughtKey) writePredicates(
 	}
 }
 
-func (key *thoughtKey) writeOperand(operand *perspectives.Operand) {
+func (key *thoughtKey) writeOperand(operand *reasoning.Operand) {
 	if operand == nil {
 		key.writeByte('o')
 
@@ -118,7 +118,7 @@ func (key *thoughtKey) writeOperand(operand *perspectives.Operand) {
 	key.writeInt(operand.Ago)
 }
 
-func (key *thoughtKey) writeAct(act perspectives.Act) {
+func (key *thoughtKey) writeAct(act reasoning.Act) {
 	key.writeByte('D')
 	key.writeInt(int(act.Type))
 	key.writeFloat(act.Offset)

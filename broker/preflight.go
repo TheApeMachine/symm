@@ -6,7 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 /*
@@ -17,7 +17,7 @@ type PreflightRequest struct {
 	Side       trading.Side
 	Quantity   float64
 	OrderType  trading.OrderType
-	ActionType perspectives.ActionType
+	ActionType reasoning.ActionType
 	Stress     SymbolStress
 }
 
@@ -34,7 +34,7 @@ func PreflightGates(request PreflightRequest) error {
 		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
 	}
 
-	if perspectives.IsExitAction(request.ActionType) {
+	if reasoning.IsExitAction(request.ActionType) {
 		return nil
 	}
 

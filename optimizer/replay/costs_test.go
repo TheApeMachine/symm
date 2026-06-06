@@ -5,7 +5,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func TestReplayCostsFeePct(t *testing.T) {
@@ -17,7 +17,7 @@ func TestReplayCostsFeePct(t *testing.T) {
 
 		convey.Convey("It should select the maker rate for maker actions", func() {
 			convey.So(
-				costs.feePct(perspectives.ActionLimit),
+				costs.feePct(reasoning.ActionLimit),
 				convey.ShouldAlmostEqual,
 				0.0016,
 				0.0000001,
@@ -26,7 +26,7 @@ func TestReplayCostsFeePct(t *testing.T) {
 
 		convey.Convey("It should select the taker rate for taker actions", func() {
 			convey.So(
-				costs.feePct(perspectives.ActionMarket),
+				costs.feePct(reasoning.ActionMarket),
 				convey.ShouldAlmostEqual,
 				0.0026,
 				0.0000001,

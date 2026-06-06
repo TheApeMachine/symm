@@ -6,16 +6,16 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestCausalCategory(t *testing.T) {
 	Convey("Given causal reasons", t, func() {
 		Convey("It should map ladder and fallback reasons onto perspectives", func() {
-			So(causalCategory("intervention"), ShouldEqual, perspectives.CategoryEndogenousAlpha)
-			So(causalCategory("counterfactual_like_regime_inversion"), ShouldEqual, perspectives.CategoryLiquidityShock)
-			So(causalCategory("macro_association"), ShouldEqual, perspectives.CategorySystemicBeta)
-			So(causalCategory("flow_pressure"), ShouldEqual, perspectives.CategoryCausalNoise)
+			So(causalCategory("intervention"), ShouldEqual, types.CategoryEndogenousAlpha)
+			So(causalCategory("counterfactual_like_regime_inversion"), ShouldEqual, types.CategoryLiquidityShock)
+			So(causalCategory("macro_association"), ShouldEqual, types.CategorySystemicBeta)
+			So(causalCategory("flow_pressure"), ShouldEqual, types.CategoryCausalNoise)
 		})
 	})
 }
@@ -72,8 +72,8 @@ func TestCausalSymbolMeasure(t *testing.T) {
 
 		Convey("It should publish a ladder measurement with category confidence", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceCausal)
-			So(measurement.Category, ShouldEqual, perspectives.CategoryEndogenousAlpha)
+			So(measurement.Source, ShouldEqual, types.SourceCausal)
+			So(measurement.Category, ShouldEqual, types.CategoryEndogenousAlpha)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
@@ -88,7 +88,7 @@ func TestCausalSymbolMeasure(t *testing.T) {
 
 		Convey("It should classify systemic beta from macro association", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, perspectives.CategorySystemicBeta)
+			So(measurement.Category, ShouldEqual, types.CategorySystemicBeta)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -113,7 +113,7 @@ func TestCausalSymbolMeasure(t *testing.T) {
 
 		Convey("It should classify causal noise from flow pressure", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, perspectives.CategoryCausalNoise)
+			So(measurement.Category, ShouldEqual, types.CategoryCausalNoise)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -153,7 +153,7 @@ func TestCausalSymbolEvaluateConditionBreak(t *testing.T) {
 
 		Convey("It should classify through the inverted regime", func() {
 			So(outcome.inverted, ShouldBeTrue)
-			So(causalCategory(outcome.reason), ShouldEqual, perspectives.CategoryLiquidityShock)
+			So(causalCategory(outcome.reason), ShouldEqual, types.CategoryLiquidityShock)
 		})
 	})
 }
@@ -166,7 +166,7 @@ func TestCausalSymbolMeasureWithoutPrice(t *testing.T) {
 
 		Convey("It should not publish", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, perspectives.SourceNone)
+			So(measurement.Source, ShouldEqual, types.SourceNone)
 		})
 	})
 }

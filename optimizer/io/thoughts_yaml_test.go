@@ -6,20 +6,21 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestWriteThoughts(t *testing.T) {
 	convey.Convey("Given a reasoning forest", t, func() {
 		path := filepath.Join(t.TempDir(), "perspectives.yaml")
-		thoughts := []perspectives.Thought{
+		thoughts := []reasoning.Thought{
 			{
-				When: perspectives.Predicate{
-					Subject:   perspectives.SubjectPosition,
-					Op:        perspectives.ComparisonEquals,
-					Lifecycle: perspectives.ObservationNotHolding,
+				When: reasoning.Predicate{
+					Subject:   reasoning.SubjectPosition,
+					Op:        reasoning.ComparisonEquals,
+					Lifecycle: types.ObservationNotHolding,
 				},
-				Do: perspectives.Act{Type: perspectives.ActionMarket},
+				Do: reasoning.Act{Type: reasoning.ActionMarket},
 			},
 		}
 
@@ -30,7 +31,7 @@ func TestWriteThoughts(t *testing.T) {
 
 			convey.So(readErr, convey.ShouldBeNil)
 
-			reparsed, parseErr := perspectives.ParseThoughts(raw)
+			reparsed, parseErr := reasoning.ParseThoughts(raw)
 
 			convey.So(parseErr, convey.ShouldBeNil)
 			convey.So(reparsed, convey.ShouldResemble, thoughts)
@@ -40,22 +41,22 @@ func TestWriteThoughts(t *testing.T) {
 
 func BenchmarkWriteThoughts(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "perspectives.yaml")
-	thoughts := []perspectives.Thought{
+	thoughts := []reasoning.Thought{
 		{
-			When: perspectives.Predicate{
-				Subject:   perspectives.SubjectPosition,
-				Op:        perspectives.ComparisonEquals,
-				Lifecycle: perspectives.ObservationNotHolding,
+			When: reasoning.Predicate{
+				Subject:   reasoning.SubjectPosition,
+				Op:        reasoning.ComparisonEquals,
+				Lifecycle: types.ObservationNotHolding,
 			},
-			Do: perspectives.Act{Type: perspectives.ActionMarket},
+			Do: reasoning.Act{Type: reasoning.ActionMarket},
 		},
 		{
-			When: perspectives.Predicate{
-				Subject:   perspectives.SubjectPosition,
-				Op:        perspectives.ComparisonEquals,
-				Lifecycle: perspectives.ObservationHolding,
+			When: reasoning.Predicate{
+				Subject:   reasoning.SubjectPosition,
+				Op:        reasoning.ComparisonEquals,
+				Lifecycle: types.ObservationHolding,
 			},
-			Do: perspectives.Act{Type: perspectives.ActionTrailingStop, Offset: 0.02},
+			Do: reasoning.Act{Type: reasoning.ActionTrailingStop, Offset: 0.02},
 		},
 	}
 

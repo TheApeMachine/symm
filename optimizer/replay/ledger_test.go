@@ -4,19 +4,19 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayMeasurementsSnapshot(t *testing.T) {
 	Convey("Given replay measurement rows", t, func() {
 		measurements := newReplayMeasurements()
-		measurements.Add(perspectives.Measurement{
-			Source: perspectives.SourceFluid,
+		measurements.Add(types.Measurement{
+			Source: types.SourceFluid,
 			Symbol: "BTC/EUR",
 			SNR:    1,
 		})
-		measurements.Add(perspectives.Measurement{
-			Source: perspectives.SourceExhaustion,
+		measurements.Add(types.Measurement{
+			Source: types.SourceExhaustion,
 			SNR:    2,
 		})
 
@@ -55,10 +55,10 @@ func TestAcquireReplayLedger(t *testing.T) {
 
 func BenchmarkReplayMeasurementsSnapshot(b *testing.B) {
 	measurements := newReplayMeasurements()
-	measurements.Add(perspectives.Measurement{Source: perspectives.SourceSentiment})
-	measurements.Add(perspectives.Measurement{
+	measurements.Add(types.Measurement{Source: types.SourceSentiment})
+	measurements.Add(types.Measurement{
 		Symbol: "BTC/EUR",
-		Source: perspectives.SourceHawkes,
+		Source: types.SourceHawkes,
 	})
 
 	for b.Loop() {
@@ -68,7 +68,7 @@ func BenchmarkReplayMeasurementsSnapshot(b *testing.B) {
 
 func BenchmarkReplayMeasurementsAdd(b *testing.B) {
 	measurements := newReplayMeasurements()
-	row := perspectives.Measurement{Source: perspectives.SourceFluid, Symbol: "BTC/EUR", SNR: 1}
+	row := types.Measurement{Source: types.SourceFluid, Symbol: "BTC/EUR", SNR: 1}
 
 	for b.Loop() {
 		measurements.Add(row)

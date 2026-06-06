@@ -29,7 +29,7 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/toxicity"
+	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -104,7 +104,7 @@ var (
 				pumpdump.NewSignal(systemCtx, pool),
 				sentiment.NewSignal(systemCtx, pool),
 				toxicity.NewToxicity(systemCtx, pool),
-				newStoryWithBookCapture(systemCtx, pool, streams),
+				newStoryWithBookCapture(systemCtx, pool, streams, quotes),
 				trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress),
 			); err != nil {
 				return err
@@ -202,9 +202,15 @@ func newStoryWithBookCapture(
 	ctx context.Context,
 	pool *qpool.Q,
 	streams *focus.Set,
+	quotes *broker.QuoteCache,
 ) *market.Story {
 	story := market.NewStory(ctx, pool, streams)
 	story.SetBookEnricher(broker.MeasurementBookEnricher(ctx, pool))
+	story.SetQuoteReady(func(symbol string) bool {
+		_, ok := quotes.Snapshot(symbol)
+
+		return ok
+	})
 
 	return story
 }

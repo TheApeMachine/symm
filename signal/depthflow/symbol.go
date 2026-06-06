@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 	symmarket "github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -35,7 +35,7 @@ type DepthSymbol struct {
 	buyPressure            float64
 	pressure               *adaptive.EMA
 	score                  *numeric.Derived
-	tracked                *perspectives.Category
+	tracked                *types.Category
 }
 
 func NewDepthSymbol(symbol string) (*DepthSymbol, error) {
@@ -55,7 +55,7 @@ func NewDepthSymbol(symbol string) (*DepthSymbol, error) {
 			adaptive.NewProduct(),
 			adaptive.NewEMA(0),
 		)),
-		tracked: perspectives.NewCategory(perspectives.CategoryTypeNone),
+		tracked: types.NewCategory(types.CategoryTypeNone),
 	}, nil
 }
 
@@ -119,6 +119,35 @@ func (state *DepthSymbol) HasBook() bool {
 	defer state.mu.RUnlock()
 
 	return state.bookReady
+}
+
+func (state *DepthSymbol) quoteLastLocked() float64 {
+	if state.last > 0 {
+		return state.last
+	}
+
+	if state.bid > 0 && state.ask > 0 {
+		mid := (state.bid + state.ask) / 2
+
+		if mid > 0 {
+			return mid
+		}
+	}
+
+	bids := state.book.Bids
+	asks := state.book.Asks
+
+	if len(bids) == 0 || len(asks) == 0 {
+		return 0
+	}
+
+	mid := (bids[0].Price + asks[0].Price) / 2
+
+	if mid <= 0 {
+		return 0
+	}
+
+	return mid
 }
 
 func (state *DepthSymbol) FeedTicker(row market.TickerUpdate) {

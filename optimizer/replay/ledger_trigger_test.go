@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func TestReplayLedgerArmOffset(t *testing.T) {
@@ -16,7 +16,7 @@ func TestReplayLedgerArmOffset(t *testing.T) {
 		convey.Convey("It should not arm a dynamic trailing stop without volatility", func() {
 			offset, ok := ledger.armOffset(
 				"BTC/EUR",
-				perspectives.Act{Type: perspectives.ActionTrailingStop},
+				reasoning.Act{Type: reasoning.ActionTrailingStop},
 			)
 
 			convey.So(ok, convey.ShouldBeFalse)
@@ -29,7 +29,7 @@ func TestReplayLedgerArmOffset(t *testing.T) {
 
 			offset, ok := ledger.armOffset(
 				"BTC/EUR",
-				perspectives.Act{Type: perspectives.ActionTrailingStop},
+				reasoning.Act{Type: reasoning.ActionTrailingStop},
 			)
 
 			convey.So(ok, convey.ShouldBeTrue)

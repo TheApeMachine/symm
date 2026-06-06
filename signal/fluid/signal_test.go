@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
@@ -44,6 +44,7 @@ func TestEmit(t *testing.T) {
 	Convey("Given a fluid signal with a measurements subscriber", t, func() {
 		t.Cleanup(viper.Reset)
 		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
 
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -57,20 +58,20 @@ func TestEmit(t *testing.T) {
 
 		state, err := signal.state(symbol)
 		So(err, ShouldBeNil)
-		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000})
-		state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6))
+		So(state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000}), ShouldBeNil)
+		So(state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6)), ShouldBeNil)
 
 		Convey("When the field is measured after a book frame", func() {
 			signal.emit(symbol)
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -82,7 +83,7 @@ func TestEmit(t *testing.T) {
 			}
 
 			Convey("It publishes a mechanical perspective reading", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceFluid)
+				So(measurement.Source, ShouldEqual, types.SourceFluid)
 				So(measurement.Symbol, ShouldEqual, symbol)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 			})
@@ -96,6 +97,7 @@ func TestPublishField(t *testing.T) {
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})
 		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
 		ctx := context.Background()
 		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
@@ -107,17 +109,17 @@ func TestPublishField(t *testing.T) {
 
 		unfocused, err := signal.state("ETH/EUR")
 		So(err, ShouldBeNil)
-		unfocused.FeedTicker(market.TickerUpdate{
+		So(unfocused.FeedTicker(market.TickerUpdate{
 			Symbol: "ETH/EUR", Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		})
-		unfocused.FeedBook(bookSnapshot("ETH/EUR", 99, 10, 101, 6))
+		}), ShouldBeNil)
+		So(unfocused.FeedBook(bookSnapshot("ETH/EUR", 99, 10, 101, 6)), ShouldBeNil)
 
 		anchor, err := signal.state(focus.AnchorSymbol())
 		So(err, ShouldBeNil)
-		anchor.FeedTicker(market.TickerUpdate{
+		So(anchor.FeedTicker(market.TickerUpdate{
 			Symbol: focus.AnchorSymbol(), Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		})
-		anchor.FeedBook(bookSnapshot(focus.AnchorSymbol(), 99, 10, 101, 6))
+		}), ShouldBeNil)
+		So(anchor.FeedBook(bookSnapshot(focus.AnchorSymbol(), 99, 10, 101, 6)), ShouldBeNil)
 
 		if err := signal.publishField(anchor); err != nil {
 			t.Fatal(err)
@@ -140,8 +142,71 @@ func TestPublishField(t *testing.T) {
 	})
 }
 
+func TestPublishFieldSkipsUnwarmedSymbols(t *testing.T) {
+	Convey("Given symbols without a priced field yet", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		uiFrames := signal.ui.Subscribe("test:fluid-ui-empty", 1)
+
+		unpriced, err := signal.state("ETH/EUR")
+		So(err, ShouldBeNil)
+		_, err = signal.state("SOL/EUR")
+		So(err, ShouldBeNil)
+
+		Convey("It should not treat missing rows as errors", func() {
+			So(signal.publishField(unpriced), ShouldBeNil)
+
+			select {
+			case <-uiFrames.Incoming:
+				t.Fatal("unexpected field snapshot for unwarmed symbols")
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+	})
+}
+
+func TestEmitSkipsMeasurementWithoutLast(t *testing.T) {
+	Convey("Given ticker volume before a last price", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+
+		ctx := context.Background()
+		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		defer pool.Close()
+
+		signal := NewSignal(ctx, pool)
+		defer signal.Close()
+
+		measurements := signal.broadcasts["measurements"].Subscribe("test:fluid-no-last", 4)
+		symbol := "ETH/EUR"
+
+		state, err := signal.state(symbol)
+		So(err, ShouldBeNil)
+		So(state.FeedTicker(market.TickerUpdate{Symbol: symbol, Volume: 1000}), ShouldBeNil)
+
+		So(signal.emit(symbol), ShouldBeNil)
+
+		select {
+		case <-measurements.Incoming:
+			t.Fatal("unexpected measurement without last price")
+		case <-time.After(50 * time.Millisecond):
+		}
+	})
+}
+
 func BenchmarkPublishField(b *testing.B) {
 	viper.Set("market.book_depth_levels", 10)
+	viper.Set("signals.volume_clock_bars_per_day", 288)
 
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
@@ -157,10 +222,15 @@ func BenchmarkPublishField(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		state.FeedTicker(market.TickerUpdate{
+		if err := state.FeedTicker(market.TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		})
-		state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6))
+		}); err != nil {
+			b.Fatal(err)
+		}
+
+		if err := state.FeedBook(bookSnapshot(symbol, 99, 10, 101, 6)); err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	trigger, err := signal.state("ETH/EUR")
@@ -180,6 +250,7 @@ func BenchmarkPublishField(b *testing.B) {
 
 func BenchmarkEmit(b *testing.B) {
 	viper.Set("market.book_depth_levels", 10)
+	viper.Set("signals.volume_clock_bars_per_day", 288)
 
 	ctx := context.Background()
 	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())

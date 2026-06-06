@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestDepthflowReading(t *testing.T) {
@@ -18,7 +18,7 @@ func TestDepthflowReading(t *testing.T) {
 		)
 
 		Convey("It should keep shift evidence on the unit interval", func() {
-			So(category, ShouldEqual, perspectives.CategorySpoofTrap)
+			So(category, ShouldEqual, types.CategorySpoofTrap)
 			So(evidence, ShouldBeGreaterThan, 0)
 			So(evidence, ShouldBeLessThanOrEqualTo, 1)
 		})

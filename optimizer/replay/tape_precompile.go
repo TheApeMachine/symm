@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 // parallelPrecompileRowThreshold is the minimum tape length before precompilation
@@ -14,7 +14,7 @@ const parallelPrecompileRowThreshold = 8192
 type precompileChunk struct {
 	symbolIndices map[string][]int
 	globalIndices []int
-	categories    map[perspectives.CategoryType]struct{}
+	categories    map[types.CategoryType]struct{}
 	lastPrices    map[string]float64
 }
 
@@ -30,7 +30,7 @@ func precompileWorkerCount(workers int) int {
 PrecompileTapeWorkers builds replay state with parallel index and snapshot passes.
 Pass one to force a fully sequential build.
 */
-func PrecompileTapeWorkers(rows []perspectives.Measurement, workers int) ReplayTape {
+func PrecompileTapeWorkers(rows []types.Measurement, workers int) ReplayTape {
 	rowCount := len(rows)
 
 	if rowCount == 0 {
@@ -93,17 +93,17 @@ func PrecompileTapeWorkers(rows []perspectives.Measurement, workers int) ReplayT
 	}
 }
 
-func precompileTapeSequential(rows []perspectives.Measurement) ReplayTape {
+func precompileTapeSequential(rows []types.Measurement) ReplayTape {
 	ticks := make([]PrecompiledTick, len(rows))
 	lastPrices := make(map[string]float64)
-	categories := make(map[perspectives.CategoryType]struct{})
+	categories := make(map[types.CategoryType]struct{})
 	symbolIndices := make(map[string][]int)
 	globalIndices := make([]int, 0)
 
 	for index, row := range rows {
 		ticks[index] = PrecompiledTick{Row: row}
 
-		if row.Category != perspectives.CategoryTypeNone {
+		if row.Category != types.CategoryTypeNone {
 			categories[row.Category] = struct{}{}
 		}
 
@@ -137,14 +137,14 @@ func precompileTapeSequential(rows []perspectives.Measurement) ReplayTape {
 }
 
 func buildPrecompileChunk(
-	rows []perspectives.Measurement,
+	rows []types.Measurement,
 	ticks []PrecompiledTick,
 	startIndex, endIndex int,
 ) precompileChunk {
 	chunk := precompileChunk{
 		symbolIndices: make(map[string][]int),
 		globalIndices: make([]int, 0, (endIndex-startIndex)/8),
-		categories:    make(map[perspectives.CategoryType]struct{}),
+		categories:    make(map[types.CategoryType]struct{}),
 		lastPrices:    make(map[string]float64),
 	}
 
@@ -152,7 +152,7 @@ func buildPrecompileChunk(
 		row := rows[index]
 		ticks[index] = PrecompiledTick{Row: row}
 
-		if row.Category != perspectives.CategoryTypeNone {
+		if row.Category != types.CategoryTypeNone {
 			chunk.categories[row.Category] = struct{}{}
 		}
 
@@ -175,12 +175,12 @@ func buildPrecompileChunk(
 func mergePrecompileChunks(chunks []precompileChunk) (
 	map[string][]int,
 	[]int,
-	map[perspectives.CategoryType]struct{},
+	map[types.CategoryType]struct{},
 	map[string]float64,
 ) {
 	symbolIndices := make(map[string][]int)
 	globalIndices := make([]int, 0)
-	categories := make(map[perspectives.CategoryType]struct{})
+	categories := make(map[types.CategoryType]struct{})
 	lastPrices := make(map[string]float64)
 
 	for _, chunk := range chunks {

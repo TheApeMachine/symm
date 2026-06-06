@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -24,10 +24,10 @@ assume unlimited top-of-book liquidity.
 */
 func takerFill(
 	costs ReplayCosts,
-	measurement perspectives.Measurement,
+	measurement types.Measurement,
 	side trading.Side,
 	quantity float64,
-	snapshots []perspectives.Measurement,
+	snapshots []types.Measurement,
 ) (executionFill, error) {
 	if quantity <= 0 {
 		return executionFill{}, fmt.Errorf("replay fill: quantity must be positive")
@@ -64,15 +64,15 @@ flatSlippagePct is the legacy half-spread model used when no book depth is prese
 func flatSlippagePct(
 	costs ReplayCosts,
 	spreadBPS float64,
-	snapshots []perspectives.Measurement,
+	snapshots []types.Measurement,
 ) float64 {
 	return executionSlippagePct(costs, spreadBPS, snapshots)
 }
 
 func depthShortfallSlippagePct(
 	costs ReplayCosts,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 ) float64 {
 	base := flatSlippagePct(costs, measurement.SpreadBPS, snapshots)
 
@@ -109,8 +109,8 @@ func depthShortfallPenalty(
 	slot float64,
 	coverage float64,
 	costs ReplayCosts,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 ) float64 {
 	if coverage >= 1 || slot <= 0 {
 		return 0

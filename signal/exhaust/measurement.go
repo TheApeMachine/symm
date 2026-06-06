@@ -1,23 +1,26 @@
 package exhaust
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives/types"
+)
 
 /*
 exhaustMeasurement maps rolling exit features onto the exhaustion perspective.
-Confidence accumulates when the category shifts.
+Confidence is how decisively the dominant exit mode beat its runner-up; standout
+(urgency) is the exhaustion intensity SNR scores against the symbol's history.
 */
 func exhaustMeasurement(
 	history symbolHistory,
-	tracked *perspectives.Category,
-) (perspectives.Measurement, float64, error) {
+	tracked *types.Category,
+) (types.Measurement, float64, error) {
 	urgency, category, evidence := exitScoreLong(history)
 
 	if urgency <= 0 {
 		urgency, category, evidence = exitScoreShort(history)
 	}
 
-	if urgency <= 0 || category == perspectives.CategoryTypeNone {
-		return perspectives.Measurement{}, 0, nil
+	if urgency <= 0 || category == types.CategoryTypeNone {
+		return types.Measurement{}, 0, nil
 	}
 
 	// evidence is how decisively the dominant exit mode beat its runner-up (the
@@ -25,16 +28,15 @@ func exhaustMeasurement(
 	// itself — urgency — which SNR scores against this symbol's own history. A
 	// clear-cut but mild exhaustion has high evidence and low standout.
 	standout := urgency
-	confidence, err := tracked.Observe(category, evidence, standout)
 
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := tracked.Observe(category, evidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceExhaustion,
+	return types.Measurement{
+		Source:     types.SourceExhaustion,
 		Category:   category,
 		Strength:   urgency / (1 - urgency),
-		Confidence: confidence,
+		Confidence: evidence,
 	}, standout, nil
 }

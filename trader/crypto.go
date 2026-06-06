@@ -16,7 +16,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 const (
@@ -31,7 +31,7 @@ Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames
 // symbol, so the trader places it once and does not re-submit an identical one each
 // tick (the exchange holds it). A changed type/offset re-arms.
 type armRecord struct {
-	action perspectives.ActionType
+	action reasoning.ActionType
 	offset float64
 }
 
@@ -53,7 +53,7 @@ type Crypto struct {
 	shortInventory   map[string]float64
 	avgEntry         map[string]float64
 	armed            map[string]armRecord
-	pending          map[string]perspectives.Action
+	pending          map[string]reasoning.Action
 	lastDecision     map[string]string
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
@@ -129,7 +129,7 @@ func NewCryptoWithCaches(
 		shortInventory: make(map[string]float64),
 		avgEntry:       make(map[string]float64),
 		armed:          make(map[string]armRecord),
-		pending:        make(map[string]perspectives.Action),
+		pending:        make(map[string]reasoning.Action),
 		lastDecision:   make(map[string]string),
 	}
 
@@ -181,7 +181,7 @@ func (crypto *Crypto) Tick() error {
 				continue
 			}
 
-			if action, ok := message.Value.(perspectives.Action); ok {
+			if action, ok := message.Value.(reasoning.Action); ok {
 				crypto.submit(action)
 				continue
 			}
@@ -201,8 +201,8 @@ while an order for that symbol is still resolving. This is race-free because
 Tick processes actions and executions on a single goroutine. Exit verdicts carry
 no quantity, so we settle the full position we currently hold.
 */
-func (crypto *Crypto) submit(action perspectives.Action) {
-	if action.Type == perspectives.ActionNone {
+func (crypto *Crypto) submit(action reasoning.Action) {
+	if action.Type == reasoning.ActionNone {
 		return
 	}
 
@@ -213,7 +213,7 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 
 	held := crypto.inventory[action.Symbol]
 
-	if perspectives.IsEntryAction(action.Type) {
+	if reasoning.IsEntryAction(action.Type) {
 		if held > 0 {
 			crypto.publishDecision(action, "rejected", "already holding long")
 			return
@@ -243,7 +243,7 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 		action.Quantity = quantity
 	}
 
-	if perspectives.IsExitAction(action.Type) {
+	if reasoning.IsExitAction(action.Type) {
 		if crypto.shortInventory[action.Symbol] > 0 {
 			action.Side = trading.Buy
 			action.Quantity = crypto.shortInventory[action.Symbol]
@@ -256,7 +256,7 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 		}
 	}
 
-	protective := perspectives.IsProtectiveExit(action.Type)
+	protective := reasoning.IsProtectiveExit(action.Type)
 
 	if protective {
 		// Stop/take levels are measured from the entry price the position holds.
@@ -274,6 +274,10 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 		resolved, err := crypto.desk.ResolveAction(action)
 
 		if err != nil {
+			if isTransientQuoteMiss(err) {
+				return
+			}
+
 			crypto.publishDecision(resolved, "rejected", cleanReason(err.Error()))
 			return
 		}
@@ -292,6 +296,11 @@ func (crypto *Crypto) submit(action perspectives.Action) {
 
 	if err != nil {
 		action = accepted
+
+		if isTransientQuoteMiss(err) {
+			return
+		}
+
 		crypto.publishDecision(action, "rejected", cleanReason(err.Error()))
 		return
 	}
@@ -316,7 +325,7 @@ per symbol so a signal that fires every tick against the same gate does not floo
 the panel; only a change of verdict or reason re-emits.
 */
 func (crypto *Crypto) publishDecision(
-	action perspectives.Action, verdict, reason string,
+	action reasoning.Action, verdict, reason string,
 ) {
 	key := verdict + "|" + reason
 
@@ -345,7 +354,7 @@ func (crypto *Crypto) publishDecision(
 }
 
 func (crypto *Crypto) writeDecisionAudit(
-	action perspectives.Action,
+	action reasoning.Action,
 	verdict string,
 	reason string,
 ) error {
@@ -369,6 +378,14 @@ func (crypto *Crypto) writeDecisionAudit(
 // cleanReason strips the internal prefixes and trailing "for SYMBOL" suffix from
 // a gate/fill error so the dashboard shows a tight human reason (the card already
 // carries the symbol separately).
+func isTransientQuoteMiss(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "no quote for")
+}
+
 func cleanReason(reason string) string {
 	for _, prefix := range []string{"preflight: ", "paper fill: ", "paper balances: "} {
 		reason = strings.TrimPrefix(reason, prefix)
@@ -536,7 +553,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 
 	crypto.publishDecision(submitted, "filled", "")
 
-	if submitted.Type == perspectives.ActionNone {
+	if submitted.Type == reasoning.ActionNone {
 		if side == string(trading.Buy) {
 			crypto.openPosition(symbol, qty, price)
 		} else {
@@ -547,7 +564,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 	}
 
 	if side == string(trading.Buy) {
-		if perspectives.IsEntryAction(submitted.Type) {
+		if reasoning.IsEntryAction(submitted.Type) {
 			crypto.openPosition(symbol, qty, price)
 		} else {
 			crypto.closeShort(symbol)
@@ -556,7 +573,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		return
 	}
 
-	if perspectives.IsEntryAction(submitted.Type) {
+	if reasoning.IsEntryAction(submitted.Type) {
 		crypto.openShort(symbol, qty, price)
 		return
 	}

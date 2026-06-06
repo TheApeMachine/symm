@@ -5,19 +5,19 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	optimizerio "github.com/theapemachine/symm/optimizer/io"
 )
 
 func TestPrecompileTapeRingWindow(t *testing.T) {
 	convey.Convey("Given more than StoryRingCapacity measurements", t, func() {
-		rows := make([]perspectives.Measurement, 0, StoryRingCapacity+10)
+		rows := make([]types.Measurement, 0, 1024+10)
 
-		for index := range StoryRingCapacity + 10 {
-			rows = append(rows, perspectives.Measurement{
+		for index := range 1024 + 10 {
+			rows = append(rows, types.Measurement{
 				Symbol:   "BTC/EUR",
-				Source:   perspectives.SourceFluid,
-				Category: perspectives.CategoryLaminar,
+				Source:   types.SourceFluid,
+				Category: types.CategoryLaminar,
 				SNR:      float64(index),
 				Last:     100 + float64(index),
 			})
@@ -27,7 +27,7 @@ func TestPrecompileTapeRingWindow(t *testing.T) {
 		snapshots := tape.AppendSnapshot(len(rows)-1, nil)
 
 		convey.Convey("It should cap the decision snapshot to the story ring size", func() {
-			convey.So(len(snapshots), convey.ShouldEqual, StoryRingCapacity)
+			convey.So(len(snapshots), convey.ShouldEqual, 1024)
 			convey.So(snapshots[0].SNR, convey.ShouldEqual, 10)
 		})
 	})
@@ -35,15 +35,15 @@ func TestPrecompileTapeRingWindow(t *testing.T) {
 
 func TestReplayTapeAppendSnapshot(t *testing.T) {
 	convey.Convey("Given interleaved symbol and global rows", t, func() {
-		rows := []perspectives.Measurement{
+		rows := []types.Measurement{
 			{Symbol: "BTC/EUR", SNR: 1, Last: 100},
-			{Symbol: "", Category: perspectives.CategoryRiskOnSurge, SNR: 2},
+			{Symbol: "", Category: types.CategoryRiskOnSurge, SNR: 2},
 			{Symbol: "ETH/EUR", SNR: 3, Last: 200},
 			{Symbol: "BTC/EUR", SNR: 4, Last: 101},
 		}
 
 		tape := PrecompileTape(rows)
-		snapshots := tape.AppendSnapshot(3, make([]perspectives.Measurement, 0, 4))
+		snapshots := tape.AppendSnapshot(3, make([]types.Measurement, 0, 4))
 
 		convey.Convey("It should return chronological global and matching-symbol rows only", func() {
 			convey.So(len(snapshots), convey.ShouldEqual, 3)
@@ -54,14 +54,14 @@ func TestReplayTapeAppendSnapshot(t *testing.T) {
 	})
 }
 
-func benchmarkTapeRows(count int) []perspectives.Measurement {
-	rows := make([]perspectives.Measurement, 0, count)
+func benchmarkTapeRows(count int) []types.Measurement {
+	rows := make([]types.Measurement, 0, count)
 
 	for index := range count {
-		rows = append(rows, perspectives.Measurement{
+		rows = append(rows, types.Measurement{
 			Symbol:   "BTC/EUR",
-			Source:   perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
+			Source:   types.SourceFluid,
+			Category: types.CategoryLaminar,
 			SNR:      float64(index),
 			Last:     100 + float64(index),
 		})
@@ -122,13 +122,13 @@ func TestPrecompileTapeParallelPassOneMatchesSequential(t *testing.T) {
 	})
 }
 
-func mixedSymbolRows(rowCount int) []perspectives.Measurement {
-	rows := make([]perspectives.Measurement, 0, rowCount)
+func mixedSymbolRows(rowCount int) []types.Measurement {
+	rows := make([]types.Measurement, 0, rowCount)
 
 	for index := range rowCount {
-		row := perspectives.Measurement{
-			Source:   perspectives.SourceFluid,
-			Category: perspectives.CategoryLaminar,
+		row := types.Measurement{
+			Source:   types.SourceFluid,
+			Category: types.CategoryLaminar,
 			SNR:      float64(index),
 			Last:     100 + float64(index),
 		}
@@ -192,7 +192,7 @@ func BenchmarkPrecompileTapeParallel(b *testing.B) {
 }
 
 func BenchmarkPrecompileTape(b *testing.B) {
-	rows := benchmarkTapeRows(StoryRingCapacity + 10)
+	rows := benchmarkTapeRows(1024 + 10)
 
 	for b.Loop() {
 		_ = PrecompileTape(rows)
@@ -200,10 +200,10 @@ func BenchmarkPrecompileTape(b *testing.B) {
 }
 
 func BenchmarkAppendSnapshot(b *testing.B) {
-	rows := benchmarkTapeRows(StoryRingCapacity * 64)
+	rows := benchmarkTapeRows(1024 * 64)
 	tape := PrecompileTape(rows)
 	tickIndex := len(rows) - 1
-	scratch := make([]perspectives.Measurement, 0, StoryRingCapacity)
+	scratch := make([]types.Measurement, 0, 1024)
 
 	b.ReportMetric(float64(len(rows)), "rows")
 	b.ResetTimer()

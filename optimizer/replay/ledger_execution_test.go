@@ -5,18 +5,19 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestExecutionFillMeasurement(t *testing.T) {
 	Convey("Given a pending signal row and a later market row", t, func() {
-		signalRow := perspectives.Measurement{
+		signalRow := types.Measurement{
 			Symbol:    "BTC/EUR",
 			Last:      100,
 			SpreadBPS: 10,
 			At:        time.Unix(1, 0),
 		}
-		currentRow := perspectives.Measurement{
+		currentRow := types.Measurement{
 			Symbol:    "BTC/EUR",
 			Last:      101,
 			SpreadBPS: 12,
@@ -32,7 +33,7 @@ func TestExecutionFillMeasurement(t *testing.T) {
 		})
 
 		Convey("It should fall back to the signal row without a usable current price", func() {
-			fillRow = executionFillMeasurement(signalRow, perspectives.Measurement{Symbol: "ETH/EUR", Last: 50})
+			fillRow = executionFillMeasurement(signalRow, types.Measurement{Symbol: "ETH/EUR", Last: 50})
 
 			So(fillRow.Last, ShouldEqual, 100)
 		})
@@ -72,14 +73,14 @@ func TestFlushPending(t *testing.T) {
 		ledger.configureExecutionStress(100*time.Millisecond, 50*time.Millisecond)
 
 		base := time.Unix(1_700_000_000, 0)
-		signalRow := perspectives.Measurement{
+		signalRow := types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 			At:     base,
 		}
 
 		ledger.queueAction(
-			perspectives.Act{Type: perspectives.ActionMarket},
+			reasoning.Act{Type: reasoning.ActionMarket},
 			signalRow,
 			nil,
 		)
@@ -92,7 +93,7 @@ func TestFlushPending(t *testing.T) {
 		})
 
 		Convey("It should apply the action once execution is ready", func() {
-			fillRow := perspectives.Measurement{
+			fillRow := types.Measurement{
 				Symbol: "BTC/EUR",
 				Last:   100,
 				At:     base.Add(100 * time.Millisecond),
@@ -109,8 +110,8 @@ func TestFlushPending(t *testing.T) {
 func TestExecutionSlippagePct(t *testing.T) {
 	Convey("Given turbulent snapshot readings", t, func() {
 		costs := triggerTestCosts()
-		snapshots := []perspectives.Measurement{
-			{Category: perspectives.CategoryTurbulent, SNR: 2},
+		snapshots := []types.Measurement{
+			{Category: types.CategoryTurbulent, SNR: 2},
 		}
 
 		slippage := executionSlippagePct(costs, 20, snapshots)
@@ -124,7 +125,7 @@ func TestExecutionSlippagePct(t *testing.T) {
 func TestDeriveExecutionLatency(t *testing.T) {
 	Convey("Given measurement timestamps", t, func() {
 		base := time.Unix(1_700_000_000, 0)
-		rows := []perspectives.Measurement{
+		rows := []types.Measurement{
 			{At: base},
 			{At: base.Add(100 * time.Millisecond)},
 			{At: base.Add(200 * time.Millisecond)},
@@ -164,8 +165,8 @@ func TestDeriveExecutionLatencyFromTape(t *testing.T) {
 		base := time.Unix(1_700_000_000, 0)
 		tape := ReplayTape{
 			Ticks: []PrecompiledTick{
-				{Row: perspectives.Measurement{At: base}},
-				{Row: perspectives.Measurement{At: base.Add(100 * time.Millisecond)}},
+				{Row: types.Measurement{At: base}},
+				{Row: types.Measurement{At: base.Add(100 * time.Millisecond)}},
 			},
 		}
 
@@ -179,8 +180,8 @@ func TestDeriveExecutionLatencyFromTape(t *testing.T) {
 
 func BenchmarkExecutionSlippagePct(b *testing.B) {
 	costs := triggerTestCosts()
-	snapshots := []perspectives.Measurement{
-		{Category: perspectives.CategoryTurbulent, SNR: 2},
+	snapshots := []types.Measurement{
+		{Category: types.CategoryTurbulent, SNR: 2},
 	}
 
 	for b.Loop() {
@@ -190,7 +191,7 @@ func BenchmarkExecutionSlippagePct(b *testing.B) {
 
 func BenchmarkDeriveExecutionLatency(b *testing.B) {
 	base := time.Unix(1_700_000_000, 0)
-	rows := []perspectives.Measurement{
+	rows := []types.Measurement{
 		{At: base},
 		{At: base.Add(100 * time.Millisecond)},
 		{At: base.Add(200 * time.Millisecond)},

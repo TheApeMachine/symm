@@ -5,14 +5,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestCausalEvidence(t *testing.T) {
 	Convey("Given causal category evidence", t, func() {
 		Convey("It should read high for clear systemic beta association", func() {
 			evidence := associationEvidence(
-				perspectives.CategorySystemicBeta,
+				types.CategorySystemicBeta,
 				2.0, 1.5, 0.5,
 			)
 
@@ -39,7 +39,7 @@ func TestCausalEvidence(t *testing.T) {
 			}
 
 			evidence := ladderEvidence(
-				perspectives.CategoryEndogenousAlpha,
+				types.CategoryEndogenousAlpha,
 				outcome,
 			)
 
@@ -56,7 +56,7 @@ func TestCausalEvidence(t *testing.T) {
 			}
 
 			evidence := ladderEvidence(
-				perspectives.CategoryLiquidityShock,
+				types.CategoryLiquidityShock,
 				outcome,
 			)
 
@@ -69,12 +69,12 @@ func TestCausalCategoryMapping(t *testing.T) {
 	Convey("Given category evidence dispatch", t, func() {
 		Convey("It should route ladder and association categories separately", func() {
 			ladder := causalEvidence(
-				perspectives.CategoryEndogenousAlpha,
+				types.CategoryEndogenousAlpha,
 				causalOutcome{intervention: 1, association: 0.2, contagion: 0.1},
 				0, 0, 0, true,
 			)
 			association := causalEvidence(
-				perspectives.CategorySystemicBeta,
+				types.CategorySystemicBeta,
 				causalOutcome{},
 				2, 1.5, 0.5, false,
 			)
@@ -112,7 +112,7 @@ func BenchmarkCausalEvidence(b *testing.B) {
 
 	for b.Loop() {
 		_ = causalEvidence(
-			perspectives.CategoryEndogenousAlpha,
+			types.CategoryEndogenousAlpha,
 			outcome,
 			0.5, 1.2, 0.4, true,
 		)

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -20,7 +21,7 @@ state lets the optimizer overrate fragile strategies in turbulence; tying it to 
 regime forces the search to evolve tighter protective stops to survive a panic.
 */
 func executionStressMultiplier(
-	snapshots []perspectives.Measurement,
+	snapshots []types.Measurement,
 ) float64 {
 	if len(snapshots) == 0 {
 		return 1
@@ -55,30 +56,30 @@ func executionStressMultiplier(
 // regimeHostility is the structural-regime adverse-selection multiplier: a
 // liquidation/bearish regime is the most hostile to fills, choppy whipsaw next, and
 // trending/calm regimes neutral.
-func regimeHostility(regime perspectives.Regime) float64 {
+func regimeHostility(regime types.Regime) float64 {
 	switch regime {
-	case perspectives.RegimeBearish:
+	case types.RegimeBearish:
 		return 1.5
-	case perspectives.RegimeChoppy:
+	case types.RegimeChoppy:
 		return 1.25
 	default:
 		return 1
 	}
 }
 
-func executionStressCategory(category perspectives.CategoryType) bool {
+func executionStressCategory(category types.CategoryType) bool {
 	switch category {
-	case perspectives.CategoryTurbulent,
-		perspectives.CategoryFrenzy,
-		perspectives.CategoryLiquidityVacuum,
-		perspectives.CategoryLiquidityShock,
-		perspectives.CategoryToxicBluff,
-		perspectives.CategorySpoofTrap,
-		perspectives.CategoryBookThinning,
-		perspectives.CategorySystemicHerd,
-		perspectives.CategoryMechanicalCollapse,
-		perspectives.CategoryDivergentStress,
-		perspectives.CategorySystemicSlump:
+	case types.CategoryTurbulent,
+		types.CategoryFrenzy,
+		types.CategoryLiquidityVacuum,
+		types.CategoryLiquidityShock,
+		types.CategoryToxicBluff,
+		types.CategorySpoofTrap,
+		types.CategoryBookThinning,
+		types.CategorySystemicHerd,
+		types.CategoryMechanicalCollapse,
+		types.CategoryDivergentStress,
+		types.CategorySystemicSlump:
 		return true
 	default:
 		return false
@@ -88,14 +89,14 @@ func executionStressCategory(category perspectives.CategoryType) bool {
 func executionSlippagePct(
 	costs ReplayCosts,
 	spreadBPS float64,
-	snapshots []perspectives.Measurement,
+	snapshots []types.Measurement,
 ) float64 {
 	base := halfSpreadSlippagePct(costs, spreadBPS)
 
 	return base * executionStressMultiplier(snapshots)
 }
 
-func deriveExecutionLatency(rows []perspectives.Measurement) time.Duration {
+func deriveExecutionLatency(rows []types.Measurement) time.Duration {
 	medianInterval := medianMeasurementInterval(rows)
 
 	if medianInterval <= 0 {
@@ -119,7 +120,7 @@ func deriveExecutionLatency(rows []perspectives.Measurement) time.Duration {
 }
 
 func deriveExecutionLatencyFromTape(tape ReplayTape) time.Duration {
-	rows := make([]perspectives.Measurement, 0, tape.Len())
+	rows := make([]types.Measurement, 0, tape.Len())
 
 	for _, tick := range tape.Ticks {
 		rows = append(rows, tick.Row)
@@ -128,7 +129,7 @@ func deriveExecutionLatencyFromTape(tape ReplayTape) time.Duration {
 	return deriveExecutionLatency(rows)
 }
 
-func medianMeasurementInterval(rows []perspectives.Measurement) time.Duration {
+func medianMeasurementInterval(rows []types.Measurement) time.Duration {
 	if len(rows) < 2 {
 		return 0
 	}

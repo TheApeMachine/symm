@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -23,7 +23,7 @@ func TestNewSignal(t *testing.T) {
 		defer signal.Close()
 
 		Convey("It should wire absorption categories and a pooled calibrator", func() {
-			So(signal.categories["hidden_absorption"], ShouldEqual, perspectives.CategoryHiddenAbsorption)
+			So(signal.categories["hidden_absorption"], ShouldEqual, types.CategoryHiddenAbsorption)
 			So(signal.calibrator, ShouldNotBeNil)
 			So(signal.classifier, ShouldNotBeNil)
 		})
@@ -76,14 +76,14 @@ func TestObserve(t *testing.T) {
 				})
 			}
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -95,7 +95,7 @@ func TestObserve(t *testing.T) {
 			}
 
 			Convey("It publishes an absorption reading carrying symbol and price", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceCVD)
+				So(measurement.Source, ShouldEqual, types.SourceCVD)
 				So(measurement.Symbol, ShouldEqual, "ALT/EUR")
 				So(measurement.Last, ShouldBeGreaterThan, 0)
 				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)

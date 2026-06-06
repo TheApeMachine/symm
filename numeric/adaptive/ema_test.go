@@ -13,7 +13,7 @@ func TestNewEMA(t *testing.T) {
 		ema := NewEMA(0.35)
 
 		Convey("It should not be observed until the first sample", func() {
-			So(ema.observed, ShouldBeFalse)
+			So(ema.Observed(), ShouldBeFalse)
 		})
 	})
 }

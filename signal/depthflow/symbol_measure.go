@@ -3,10 +3,10 @@ package depthflow
 import (
 	"math"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
+func (state *DepthSymbol) Measure() (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -16,19 +16,13 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 
 	bids := state.book.Bids
 	asks := state.book.Asks
-	mid := state.last
+	last := state.quoteLastLocked()
 
-	if len(bids) > 0 && len(asks) > 0 {
-		mid = (bids[0].Price + asks[0].Price) / 2
+	if last <= 0 {
+		return types.Measurement{}, 0, nil
 	}
 
-	if mid <= 0 && state.bid > 0 && state.ask > 0 {
-		mid = (state.bid + state.ask) / 2
-	}
-
-	if mid <= 0 {
-		return perspectives.Measurement{}, 0, nil
-	}
+	mid := last
 
 	if len(bids) == 0 || len(asks) == 0 {
 		return state.measureTradePressureLocked()
@@ -45,21 +39,20 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 
 	if imbalance == 0 {
 		category, evidence := depthflowReading("", imbalance, flatImbalance, flatOK, 0)
-		standout := perspectives.UnitMagnitudeMargin(0)
-		confidence, err := state.tracked.Observe(category, evidence, standout)
+		standout := evidence
 
-		if err != nil {
-			return perspectives.Measurement{}, 0, err
+		if err := state.tracked.Observe(category, evidence); err != nil {
+			return types.Measurement{}, 0, err
 		}
 
-		return perspectives.Measurement{
+		return types.Measurement{
 			Symbol:     state.symbol,
-			Source:     perspectives.SourceDepthFlow,
+			Source:     types.SourceDepthFlow,
 			Category:   category,
-			Last:       state.last,
+			Last:       last,
 			SpreadBPS:  state.spreadBPSLocked(),
-			Strength:   0,
-			Confidence: confidence,
+			Strength:   evidence,
+			Confidence: evidence,
 		}, standout, nil
 	}
 
@@ -83,7 +76,7 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 		raw, err := state.score.Push(math.Abs(imbalance), pressure)
 
 		if err != nil {
-			return perspectives.Measurement{}, 0, err
+			return types.Measurement{}, 0, err
 		}
 
 		if raw > 0 {
@@ -95,21 +88,20 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 			// standout is the strength of the imbalance itself, scored by SNR
 			// against this symbol's own history. Different questions, different
 			// numbers.
-			standout := perspectives.UnitMagnitudeMargin(raw)
-			confidence, err := state.tracked.Observe(category, evidence, standout)
+			standout := evidence
 
-			if err != nil {
-				return perspectives.Measurement{}, 0, err
+			if err := state.tracked.Observe(category, evidence); err != nil {
+				return types.Measurement{}, 0, err
 			}
 
-			return perspectives.Measurement{
+			return types.Measurement{
 				Symbol:     state.symbol,
-				Source:     perspectives.SourceDepthFlow,
+				Source:     types.SourceDepthFlow,
 				Category:   category,
-				Last:       state.last,
+				Last:       last,
 				SpreadBPS:  state.spreadBPSLocked(),
 				Strength:   raw,
-				Confidence: confidence,
+				Confidence: evidence,
 			}, standout, nil
 		}
 	}
@@ -118,26 +110,30 @@ func (state *DepthSymbol) Measure() (perspectives.Measurement, float64, error) {
 	category, evidence := depthflowReading(
 		reasonDepthSkeptic, imbalance, flatImbalance, flatOK, 0,
 	)
-	standout := perspectives.UnitMagnitudeMargin(raw)
+	standout := evidence
 
-	confidence, err := state.tracked.Observe(category, evidence, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := state.tracked.Observe(category, evidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
+	return types.Measurement{
 		Symbol:     state.symbol,
-		Source:     perspectives.SourceDepthFlow,
+		Source:     types.SourceDepthFlow,
 		Category:   category,
-		Last:       state.last,
+		Last:       last,
 		SpreadBPS:  state.spreadBPSLocked(),
 		Strength:   raw,
-		Confidence: confidence,
+		Confidence: evidence,
 	}, standout, nil
 }
 
-func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement, float64, error) {
+func (state *DepthSymbol) measureTradePressureLocked() (types.Measurement, float64, error) {
+	last := state.quoteLastLocked()
+
+	if last <= 0 {
+		return types.Measurement{}, 0, nil
+	}
+
 	flow := math.Abs(state.buyPressure)
 
 	if flow <= 0 {
@@ -145,26 +141,24 @@ func (state *DepthSymbol) measureTradePressureLocked() (perspectives.Measurement
 	}
 
 	if flow <= 0 {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	category, evidence := depthflowReading("trade_pressure", 0, 0, false, flow)
-	standout := perspectives.UnitMagnitudeMargin(flow)
+	standout := evidence
 
-	confidence, err := state.tracked.Observe(category, evidence, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := state.tracked.Observe(category, evidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
+	return types.Measurement{
 		Symbol:     state.symbol,
-		Source:     perspectives.SourceDepthFlow,
+		Source:     types.SourceDepthFlow,
 		Category:   category,
-		Last:       state.last,
+		Last:       last,
 		SpreadBPS:  state.spreadBPSLocked(),
 		Strength:   flow,
-		Confidence: confidence,
+		Confidence: evidence,
 	}, standout, nil
 }
 

@@ -4,7 +4,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type pendingMakerEntry struct {
@@ -15,7 +16,7 @@ type pendingMakerEntry struct {
 	queueAhead  float64
 	feePct      float64
 	slippagePct float64
-	at          perspectives.Measurement
+	at          types.Measurement
 }
 
 /*
@@ -45,8 +46,8 @@ func (ledger *replayLedger) queueMakerEntry(
 	symbol string,
 	side trading.Side,
 	limitPrice, quantity, feePct, slippagePct float64,
-	measurement perspectives.Measurement,
-	snapshots []perspectives.Measurement,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
 ) {
 	stress := executionStressMultiplier(snapshots)
 
@@ -62,7 +63,7 @@ func (ledger *replayLedger) queueMakerEntry(
 	})
 }
 
-func (ledger *replayLedger) advanceMakerQueues(row perspectives.Measurement) {
+func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 	if len(ledger.pendingMakers) == 0 || row.Symbol == "" || row.Last <= 0 {
 		return
 	}
@@ -94,7 +95,7 @@ func (ledger *replayLedger) advanceMakerQueues(row perspectives.Measurement) {
 		ledger.openEntry(
 			pending.symbol,
 			pending.side,
-			perspectives.Act{Type: perspectives.ActionLimit, Side: pending.side},
+			reasoning.Act{Type: reasoning.ActionLimit, Side: pending.side},
 			fillRow,
 			nil,
 			pending.feePct,
@@ -111,7 +112,7 @@ func (ledger *replayLedger) advanceMakerQueues(row perspectives.Measurement) {
 // smaller on cheap alts. The replay does not model full L2 queue position, so this
 // proxy advances maker fills gradually rather than instantaneously. Tune upward for
 // more aggressive maker fills in fast markets; downward for thin books.
-func makerQueueDepletion(row perspectives.Measurement) float64 {
+func makerQueueDepletion(row types.Measurement) float64 {
 	if row.Last <= 0 {
 		return 0
 	}

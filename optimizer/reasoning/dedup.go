@@ -3,7 +3,7 @@ package reasoning
 import (
 	"bytes"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 /*
@@ -24,7 +24,7 @@ func newForestDedup() *forestDedup {
 /*
 insert reports whether forest was already present.
 */
-func (cache *forestDedup) insert(forest []perspectives.Thought) bool {
+func (cache *forestDedup) insert(forest []reasoning.Thought) bool {
 	key := newThoughtKey()
 	key.writeForest(forest)
 	hash := key.fnv64()

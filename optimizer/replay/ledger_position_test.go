@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func TestReplayShortEntry(t *testing.T) {
@@ -25,7 +25,7 @@ func TestReplayShortEntry(t *testing.T) {
 			So(ledger.positions["BTC/EUR"].side, ShouldEqual, trading.Sell)
 
 			ledger.applyStressed(
-				perspectives.Act{Type: perspectives.ActionSettlePosition},
+				reasoning.Act{Type: reasoning.ActionSettlePosition},
 				eurRow("BTC/EUR", 90),
 				nil,
 			)

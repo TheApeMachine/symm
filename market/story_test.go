@@ -12,6 +12,8 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/signal/sentiment"
 )
 
@@ -43,9 +45,15 @@ func TestNewStory(t *testing.T) {
 				close(done)
 			}()
 
-			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-				Symbol: "BTC/EUR",
-			}})
+			_ = (&types.Measurement{
+				Symbol:     "BTC/EUR",
+				Source:     types.SourceSentiment,
+				Category:   types.CategoryRiskOnSurge,
+				Strength:   0.8,
+				Confidence: 0.6,
+				SNR:        1.2,
+				Last:       50_000,
+			}).Send(pool)
 
 			time.Sleep(50 * time.Millisecond)
 
@@ -68,15 +76,15 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		pool := qpool.NewQ(ctx, 1, 4, nil)
 
 		// A minimal playbook: when flat and an ignition fires, enter at market.
-		thoughts := []perspectives.Thought{{
-			When: perspectives.Predicate{All: []perspectives.Predicate{
-				{Subject: perspectives.SubjectPosition, Op: perspectives.ComparisonEquals, Lifecycle: perspectives.ObservationNotHolding},
-				{Subject: perspectives.SubjectSignal, Category: perspectives.CategoryVerticalIgnition, Unit: perspectives.UnitSNR, Op: perspectives.ComparisonAtLeast, Value: 1.0},
+		thoughts := []reasoning.Thought{{
+			When: reasoning.Predicate{All: []reasoning.Predicate{
+				{Subject: reasoning.SubjectPosition, Op: reasoning.ComparisonEquals, Lifecycle: types.ObservationNotHolding},
+				{Subject: reasoning.SubjectSignal, Category: types.CategoryVerticalIgnition, Unit: reasoning.UnitSNR, Op: reasoning.ComparisonAtLeast, Value: 1.0},
 			}},
-			Do: perspectives.Act{Type: perspectives.ActionMarket},
+			Do: reasoning.Act{Type: reasoning.ActionMarket},
 		}}
 
-		encoded, marshalErr := perspectives.MarshalThoughts(thoughts, 2)
+		encoded, marshalErr := reasoning.MarshalThoughts(thoughts, 2)
 		convey.So(marshalErr, convey.ShouldBeNil)
 
 		path := filepath.Join(t.TempDir(), "perspectives.yaml")
@@ -97,21 +105,24 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 			close(done)
 		}()
 
-		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol:   "BTC/EUR",
-			Category: perspectives.CategoryVerticalIgnition,
-			SNR:      1.5,
-			Last:     50_000,
-		}})
+		_ = (&types.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     types.SourcePumpDump,
+			Category:   types.CategoryVerticalIgnition,
+			Strength:   2.0,
+			Confidence: 0.8,
+			SNR:        1.5,
+			Last:       50_000,
+		}).Send(pool)
 
 		convey.Convey("It should publish the Thought-driven Action on raw", func() {
 			select {
 			case frame := <-subscriber.Incoming:
-				action, ok := frame.Value.(perspectives.Action)
+				action, ok := frame.Value.(reasoning.Action)
 
 				convey.So(ok, convey.ShouldBeTrue)
 				convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
-				convey.So(action.Type, convey.ShouldEqual, perspectives.ActionMarket)
+				convey.So(action.Type, convey.ShouldEqual, reasoning.ActionMarket)
 			case <-time.After(500 * time.Millisecond):
 				convey.So("raw action", convey.ShouldBeBlank)
 			}
@@ -128,7 +139,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 	})
 }
 
-func TestStoryPublishRegimeAnchorOnly(t *testing.T) {
+func TestStoryPublishMarketRegime(t *testing.T) {
 	convey.Convey("Given the story UI bus", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -151,18 +162,28 @@ func TestStoryPublishRegimeAnchorOnly(t *testing.T) {
 		}()
 
 		for range 20 {
-			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-				Symbol: "ETH/EUR",
-				Last:   3_000,
-			}})
+			_ = (&types.Measurement{
+				Symbol:     "ETH/EUR",
+				Source:     types.SourceFluid,
+				Category:   types.CategoryLaminar,
+				Strength:   0.5,
+				Confidence: 0.4,
+				SNR:        1.0,
+				Last:       3_000,
+			}).Send(pool)
 		}
 
-		story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: perspectives.Measurement{
-			Symbol: "BTC/EUR",
-			Last:   50_000,
-		}})
+		_ = (&types.Measurement{
+			Symbol:     "BTC/EUR",
+			Source:     types.SourceFluid,
+			Category:   types.CategoryLaminar,
+			Strength:   0.5,
+			Confidence: 0.4,
+			SNR:        1.0,
+			Last:       50_000,
+		}).Send(pool)
 
-		convey.Convey("It should publish regime radar frames only for the anchor symbol", func() {
+		convey.Convey("It should publish cross-section market regime radar frames", func() {
 			var frames []map[string]any
 
 			deadline := time.After(500 * time.Millisecond)
@@ -186,7 +207,7 @@ func TestStoryPublishRegimeAnchorOnly(t *testing.T) {
 			convey.So(len(frames), convey.ShouldBeGreaterThan, 0)
 
 			for _, payload := range frames {
-				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
+				convey.So(payload["symbol"], convey.ShouldEqual, "market")
 			}
 
 			cancel()
@@ -216,17 +237,17 @@ func TestStoryFixturePlaybook(t *testing.T) {
 		}()
 
 		for _, measurement := range perspectives.FixturePlaybookEntryMeasurements("BTC/EUR", 50_000) {
-			story.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			convey.So(measurement.Send(pool), convey.ShouldBeNil)
 		}
 
 		convey.Convey("It should publish the fixture limit entry", func() {
 			select {
 			case frame := <-subscriber.Incoming:
-				action, ok := frame.Value.(perspectives.Action)
+				action, ok := frame.Value.(reasoning.Action)
 
 				convey.So(ok, convey.ShouldBeTrue)
 				convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
-				convey.So(action.Type, convey.ShouldEqual, perspectives.ActionLimit)
+				convey.So(action.Type, convey.ShouldEqual, reasoning.ActionLimit)
 			case <-time.After(500 * time.Millisecond):
 				convey.So("fixture action", convey.ShouldBeBlank)
 			}

@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -46,7 +46,7 @@ type Signal struct {
 	broadcasts  map[string]*qpool.BroadcastGroup
 	subscribers map[string]*qpool.Subscriber
 	symbols     sync.Map // symbol -> float64 (change percent)
-	tracked     sync.Map // symbol -> *perspectives.Category
+	tracked     sync.Map // symbol -> *types.Category
 	breadthHist ring.FloatRing
 	floor       *adaptive.SNRField
 	classifier  *adaptive.Classifier
@@ -167,22 +167,24 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				return nil, err
 			}
 
-			if measurement.Source == perspectives.SourceNone {
+			if measurement.Source == types.SourceNone {
 				return nil, nil
 			}
 
 			measurement.Symbol = row.Symbol
 			measurement.Last = row.Last
 
-			telemetry, standout := numeric.ObserveGaugeTelemetry(
+			categoryStandout := standout
+
+			telemetry, _ := numeric.ObserveGaugeTelemetry(
 				signal.calibrator,
 				signal.classifier,
 				measurement.Strength,
 				standout,
 			)
 
-			if err := perspectives.AssignCategorySNR(
-				&measurement, signal.floor, standout,
+			if err := types.AssignCategorySNR(
+				&measurement, signal.floor, categoryStandout,
 			); err != nil {
 				return nil, err
 			}
@@ -200,7 +202,9 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 				return nil, err
 			}
 
-			signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+			if err := measurement.Send(signal.pool); err != nil {
+				return nil, err
+			}
 
 			if ui := signal.broadcasts["ui"]; ui != nil {
 				ui.Send(&qpool.QValue[any]{
@@ -229,11 +233,11 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 }
 
 // measure classifies one symbol against the live cross-section breadth.
-func (signal *Signal) measure(symbol string, change float64) (perspectives.Measurement, float64, error) {
+func (signal *Signal) measure(symbol string, change float64) (types.Measurement, float64, error) {
 	snapshot, ok := signal.snapshot()
 
 	if !ok {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
 	signal.breadthHist.Push(snapshot.breadth)
@@ -245,15 +249,15 @@ func (signal *Signal) measureFromSnapshot(
 	symbol string,
 	change float64,
 	snapshot sentimentSnapshot,
-) (perspectives.Measurement, float64, error) {
-	category, clarity := sentimentReading(
+) (types.Measurement, float64, error) {
+	category, confidence := sentimentReading(
 		snapshot.breadth,
 		change,
 		snapshot.surgeThreshold,
 		math.Abs(change) >= snapshot.leaderThreshold && change != 0,
 	)
 
-	// clarity is which category the breadth selects and how decisively; standout is
+	// confidence is which category the breadth selects and how decisively; standout is
 	// the strength of the cross-sectional sentiment itself — how far breadth swings
 	// from a balanced 0.5 — which SNR scores against this symbol's own history. They
 	// are different questions: a lopsided tape can still sit cleanly inside one band,
@@ -263,18 +267,16 @@ func (signal *Signal) measureFromSnapshot(
 
 	trackedRaw, _ := signal.tracked.LoadOrStore(
 		symbol,
-		perspectives.NewCategory(perspectives.CategoryTypeNone),
+		types.NewCategory(types.CategoryTypeNone),
 	)
-	tracked := trackedRaw.(*perspectives.Category)
+	tracked := trackedRaw.(*types.Category)
 
-	confidence, err := tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceSentiment,
+	return types.Measurement{
+		Source:     types.SourceSentiment,
 		Category:   category,
 		Strength:   signal.breadthOdds(snapshot.breadth),
 		Confidence: confidence,
@@ -344,7 +346,7 @@ func (signal *Signal) breadth() (fraction, topChange float64, universe int, ok b
 }
 
 // category maps breadth and this symbol's leadership onto the sentiment perspective.
-func (signal *Signal) category(breadth, change float64, universe int) perspectives.CategoryType {
+func (signal *Signal) category(breadth, change float64, universe int) types.CategoryType {
 	signal.breadthHist.Push(breadth)
 	category, _ := sentimentReading(
 		breadth, change, signal.surgeThreshold(universe), signal.isLeader(change),

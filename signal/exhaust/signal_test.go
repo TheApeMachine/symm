@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func thinningBook(symbol string, bidDepth float64, askPrice float64) market.Book {
@@ -60,14 +60,14 @@ func TestObserveBook(t *testing.T) {
 				}
 			}
 
-			var measurement perspectives.Measurement
+			var measurement types.Measurement
 			received := false
 			deadline := time.After(time.Second)
 
 			for !received {
 				select {
 				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(perspectives.Measurement)
+					reading, ok := value.Value.(types.Measurement)
 
 					if ok {
 						measurement = reading
@@ -79,8 +79,9 @@ func TestObserveBook(t *testing.T) {
 			}
 
 			Convey("It publishes an exhaustion reading", func() {
-				So(measurement.Source, ShouldEqual, perspectives.SourceExhaustion)
+				So(measurement.Source, ShouldEqual, types.SourceExhaustion)
 				So(measurement.Symbol, ShouldEqual, symbol)
+				So(measurement.Last, ShouldBeGreaterThan, 0)
 				So(measurement.Strength, ShouldBeGreaterThan, 0)
 			})
 		})

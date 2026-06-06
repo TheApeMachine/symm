@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -42,7 +42,7 @@ type Signal struct {
 	floor        *adaptive.SNRField
 	classifier   *adaptive.Classifier
 	calibrator   *numeric.BandCalibrator
-	categories   map[string]perspectives.CategoryType
+	categories   map[string]types.CategoryType
 	rawDump      *rawdump.Writer
 }
 
@@ -61,7 +61,7 @@ type symbolState struct {
 	ticks  []market.TradeUpdate
 }
 
-func newSymbolState(categories map[string]perspectives.CategoryType, classifier *adaptive.Classifier) *symbolState {
+func newSymbolState(categories map[string]types.CategoryType, classifier *adaptive.Classifier) *symbolState {
 	return &symbolState{hawkes: NewHawkesSymbol(classifier, categories)}
 }
 
@@ -77,7 +77,7 @@ func (state *symbolState) append(trade market.TradeUpdate) {
 	state.ticks = append(state.ticks, trade)
 }
 
-func (state *symbolState) measure(now time.Time) (perspectives.Measurement, float64, error) {
+func (state *symbolState) measure(now time.Time) (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -96,11 +96,11 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		"hawkes",
 	)
 
-	categories := map[string]perspectives.CategoryType{
-		"organic":    perspectives.CategoryOrganic,
-		"frenzy":     perspectives.CategoryFrenzy,
-		"saturation": perspectives.CategorySaturation,
-		"exhaustion": perspectives.CategoryExhaustion,
+	categories := map[string]types.CategoryType{
+		"organic":    types.CategoryOrganic,
+		"frenzy":     types.CategoryFrenzy,
+		"saturation": types.CategorySaturation,
+		"exhaustion": types.CategoryExhaustion,
 	}
 
 	signal := &Signal{
@@ -260,7 +260,7 @@ func (signal *Signal) publishMeasurement(
 		return err
 	}
 
-	if measurement.Source == perspectives.SourceNone {
+	if measurement.Source == types.SourceNone {
 		return nil
 	}
 
@@ -271,10 +271,10 @@ func (signal *Signal) publishMeasurement(
 
 	telemetry := signal.calibrator.Snapshot(signal.classifier)
 	telemetry.Observation = measurement.Strength
-	standout = numeric.EntropyTrustFromShares(telemetry.Shares) * standout
+	categoryStandout := standout
 
-	if err := perspectives.AssignCategorySNR(
-		&measurement, signal.floor, standout,
+	if err := types.AssignCategorySNR(
+		&measurement, signal.floor, categoryStandout,
 	); err != nil {
 		return err
 	}
@@ -293,7 +293,9 @@ func (signal *Signal) publishMeasurement(
 		return err
 	}
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if err := measurement.Send(signal.pool); err != nil {
+		return err
+	}
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{

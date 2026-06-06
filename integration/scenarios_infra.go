@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func infraScenarios() []Scenario {
@@ -57,16 +57,16 @@ func infraScenarios() []Scenario {
 				checkSourcesObserved(
 					"signals.manifest",
 					"Fast-path sources published at least one measurement",
-					perspectives.SourceCVD,
-					perspectives.SourceFluid,
-					perspectives.SourceHawkes,
-					perspectives.SourceDepthFlow,
-					perspectives.SourceSentiment,
-					perspectives.SourceLiquidity,
-					perspectives.SourceExhaustion,
-					perspectives.SourcePumpDump,
-					perspectives.SourceToxicity,
-					perspectives.SourceCausal,
+					types.SourceCVD,
+					types.SourceFluid,
+					types.SourceHawkes,
+					types.SourceDepthFlow,
+					types.SourceSentiment,
+					types.SourceLiquidity,
+					types.SourceExhaustion,
+					types.SourcePumpDump,
+					types.SourceToxicity,
+					types.SourceCausal,
 				),
 			},
 		},

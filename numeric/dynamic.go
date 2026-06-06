@@ -77,6 +77,7 @@ func (derived *Derived) run(seed float64, values ...float64) (float64, error) {
 		if project, ok := dynamic.(*Project); ok {
 			if project.scalar != nil {
 				derived.scratch[0] = project.scalar(out, work)
+				out = derived.scratch[0]
 				work = derived.scratch[:1]
 				continue
 			}

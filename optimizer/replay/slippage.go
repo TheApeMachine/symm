@@ -5,7 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type bookFillQuote struct {
@@ -19,7 +19,7 @@ walkBookFill mirrors broker.SlippageFill for replay without importing broker,
 which would cycle through market/story.
 */
 func walkBookFill(
-	measurement perspectives.Measurement,
+	measurement types.Measurement,
 	side trading.Side,
 	quantity float64,
 ) (bookFillQuote, error) {
@@ -37,7 +37,7 @@ func walkBookFill(
 		return bookFillQuote{}, fmt.Errorf("replay slippage: missing reference price for %s", measurement.Symbol)
 	}
 
-	book := measurement.MarketBook()
+	book := types.Measurement.MarketBook(measurement)
 	levels := book.Asks
 
 	if side == trading.Sell {
@@ -100,7 +100,7 @@ func walkBookFill(
 }
 
 func halfSpreadBookFill(
-	measurement perspectives.Measurement,
+	measurement types.Measurement,
 	side trading.Side,
 	reference float64,
 ) bookFillQuote {

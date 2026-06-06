@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 type Desk struct {
@@ -93,12 +93,12 @@ func (desk *Desk) TripHalt() {
 	_ = trading.NewOrderClient(desk.ctx, desk.pool).CancelAll(trading.CancelAllParams{})
 }
 
-func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, error) {
+func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
 	if desk.Halted() {
 		return action, fmt.Errorf("order circuit breaker tripped")
 	}
 
-	orderType, err := perspectives.OrderTypeFromActionType(action.Type)
+	orderType, err := reasoning.OrderTypeFromActionType(action.Type)
 
 	if err != nil {
 		return action, err
@@ -141,7 +141,7 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 		return action, err
 	}
 
-	if orderType == trading.Limit && perspectives.IsMakerAction(action.Type) {
+	if orderType == trading.Limit && reasoning.IsMakerAction(action.Type) {
 		if WouldCrossPostOnly(quote, action.Side, action.Price) {
 			return action, fmt.Errorf(
 				"preflight: post-only limit would cross for %s",
@@ -168,11 +168,11 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 
 	// A protective exit rests at the level carried in Triggers; a plain entry/exit
 	// posts its limit/reference price.
-	if !perspectives.IsProtectiveExit(action.Type) {
+	if !reasoning.IsProtectiveExit(action.Type) {
 		addParams.LimitPrice = action.Price
 	}
 
-	if perspectives.IsMakerAction(action.Type) {
+	if reasoning.IsMakerAction(action.Type) {
 		addParams.PostOnly = true
 	}
 
@@ -186,7 +186,7 @@ func (desk *Desk) AddOrder(action perspectives.Action) (perspectives.Action, err
 /*
 ResolveAction applies live quote and stress data to an action before submission.
 */
-func (desk *Desk) ResolveAction(action perspectives.Action) (perspectives.Action, error) {
+func (desk *Desk) ResolveAction(action reasoning.Action) (reasoning.Action, error) {
 	quote, ok := desk.quotes.Snapshot(action.Symbol)
 
 	if !ok {
@@ -197,15 +197,15 @@ func (desk *Desk) ResolveAction(action perspectives.Action) (perspectives.Action
 }
 
 func resolveAction(
-	action perspectives.Action,
+	action reasoning.Action,
 	quote Quote,
 	stress SymbolStress,
-) (perspectives.Action, error) {
-	if perspectives.IsEntryAction(action.Type) {
+) (reasoning.Action, error) {
+	if reasoning.IsEntryAction(action.Type) {
 		action.Quantity = stress.EntryQuantity(action.Quantity)
 	}
 
-	if !perspectives.IsProtectiveExit(action.Type) {
+	if !reasoning.IsProtectiveExit(action.Type) {
 		return action, nil
 	}
 
@@ -228,10 +228,10 @@ paper emulator) trails it from the market price at placement. The per-node offse
 overrides the account default. Returns nil for entries and immediate settles.
 */
 func (desk *Desk) triggersFor(
-	action perspectives.Action,
+	action reasoning.Action,
 	quote Quote,
 ) (*trading.Triggers, error) {
-	if !perspectives.IsProtectiveExit(action.Type) {
+	if !reasoning.IsProtectiveExit(action.Type) {
 		return nil, nil
 	}
 
@@ -241,29 +241,29 @@ func (desk *Desk) triggersFor(
 		return nil, err
 	}
 
-	if perspectives.IsTrailingExit(action.Type) {
+	if reasoning.IsTrailingExit(action.Type) {
 		return &trading.Triggers{Reference: "last", PriceType: "pct", Price: -offset * 100}, nil
 	}
 
 	return &trading.Triggers{
 		Reference: "last",
-		Price:     perspectives.ProtectiveLevelForSide(action.Side, action.Type, action.Price, 0, offset),
+		Price:     reasoning.ProtectiveLevelForSide(action.Side, action.Type, action.Price, 0, offset),
 	}, nil
 }
 
-func triggerOffset(action perspectives.Action, quote Quote) (float64, error) {
+func triggerOffset(action reasoning.Action, quote Quote) (float64, error) {
 	if action.Offset > 0 && action.Offset < 1 {
 		return action.Offset, nil
 	}
 
-	if perspectives.IsTrailingExit(action.Type) {
+	if reasoning.IsTrailingExit(action.Type) {
 		return dynamicTrailingOffset(quote)
 	}
 
 	switch action.Type {
-	case perspectives.ActionStopLoss, perspectives.ActionStopLossLimit:
+	case reasoning.ActionStopLoss, reasoning.ActionStopLossLimit:
 		return requiredPercent("trading.exit.stop_loss_pct")
-	case perspectives.ActionTakeProfit, perspectives.ActionTakeProfitLimit:
+	case reasoning.ActionTakeProfit, reasoning.ActionTakeProfitLimit:
 		return requiredPercent("trading.exit.take_profit_pct")
 	default:
 		return 0, nil

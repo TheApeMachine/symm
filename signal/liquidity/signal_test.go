@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestNewSignal(t *testing.T) {
@@ -49,8 +49,8 @@ func TestMeasure(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurement.Symbol, ShouldNotBeBlank)
 				So(standout, ShouldBeGreaterThan, 0)
-				So(measurement.Source, ShouldEqual, perspectives.SourceLiquidity)
-				So(measurement.Category, ShouldEqual, perspectives.CategoryRobustLiquidity)
+				So(measurement.Source, ShouldEqual, types.SourceLiquidity)
+				So(measurement.Category, ShouldEqual, types.CategoryRobustLiquidity)
 				So(measurement.Confidence, ShouldBeGreaterThan, 0)
 			})
 		})
@@ -80,15 +80,15 @@ func TestCategory(t *testing.T) {
 		Convey("It should map peer quartiles onto scarcity categories", func() {
 			category, _, _, err := liquidityReading(1200, peers)
 			So(err, ShouldBeNil)
-			So(category, ShouldEqual, perspectives.CategoryRobustLiquidity)
+			So(category, ShouldEqual, types.CategoryRobustLiquidity)
 
 			category, _, _, err = liquidityReading(950, peers)
 			So(err, ShouldBeNil)
-			So(category, ShouldEqual, perspectives.CategoryMedianDepth)
+			So(category, ShouldEqual, types.CategoryMedianDepth)
 
 			category, _, _, err = liquidityReading(500, peers)
 			So(err, ShouldBeNil)
-			So(category, ShouldEqual, perspectives.CategoryExtremeScarcity)
+			So(category, ShouldEqual, types.CategoryExtremeScarcity)
 		})
 	})
 }

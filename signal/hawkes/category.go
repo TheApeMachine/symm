@@ -1,7 +1,7 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 const (
@@ -12,7 +12,7 @@ const (
 /*
 hawkesReading classifies the fitted Hawkes state and returns shift evidence.
 */
-func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (perspectives.CategoryType, float64) {
+func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.CategoryType, float64) {
 	intensity, baseline := fit.BuyIntensity, fit.MuBuy
 
 	if sellSide {
@@ -25,27 +25,27 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (perspect
 		span := 1 - hawkesSaturationRadius
 
 		if margin <= 0 || span <= 0 {
-			return perspectives.CategorySaturation, 0
+			return types.CategorySaturation, 0
 		}
 
-		return perspectives.CategorySaturation, margin / span
+		return types.CategorySaturation, margin / span
 	case baseline > 0 && intensity < baseline:
 		margin := baseline - intensity
 
 		if margin <= 0 {
-			return perspectives.CategoryExhaustion, 0
+			return types.CategoryExhaustion, 0
 		}
 
-		return perspectives.CategoryExhaustion, margin / baseline
+		return types.CategoryExhaustion, margin / baseline
 	case asymmetry >= hawkesFrenzyAsymmetry:
 		margin := asymmetry - hawkesFrenzyAsymmetry
 		span := 1 - hawkesFrenzyAsymmetry
 
 		if margin <= 0 || span <= 0 {
-			return perspectives.CategoryFrenzy, 0
+			return types.CategoryFrenzy, 0
 		}
 
-		return perspectives.CategoryFrenzy, margin / span
+		return types.CategoryFrenzy, margin / span
 	default:
 		headroom := -1.0
 
@@ -75,9 +75,9 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (perspect
 		}
 
 		if headroom < 0 {
-			return perspectives.CategoryOrganic, 0
+			return types.CategoryOrganic, 0
 		}
 
-		return perspectives.CategoryOrganic, headroom
+		return types.CategoryOrganic, headroom
 	}
 }

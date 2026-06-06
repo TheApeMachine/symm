@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -67,11 +67,11 @@ func signalValidationScenarioName(probe SignalCategoryProbe) string {
 	)
 }
 
-func signalValidationSettleDelay(source perspectives.SourceType) time.Duration {
+func signalValidationSettleDelay(source types.SourceType) time.Duration {
 	switch source {
-	case perspectives.SourceCausal, perspectives.SourceCorrelation, perspectives.SourceLeadLag:
+	case types.SourceCausal, types.SourceCorrelation, types.SourceLeadLag:
 		return 2 * time.Second
-	case perspectives.SourceHawkes:
+	case types.SourceHawkes:
 		return 900 * time.Millisecond
 	default:
 		return 700 * time.Millisecond

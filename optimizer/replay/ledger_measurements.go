@@ -3,23 +3,23 @@ package replay
 import (
 	"sort"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type replayMeasurements struct {
-	global  map[perspectives.SourceType]perspectives.Measurement
-	symbols map[string]map[perspectives.SourceType]perspectives.Measurement
+	global  map[types.SourceType]types.Measurement
+	symbols map[string]map[types.SourceType]types.Measurement
 }
 
 func newReplayMeasurements() *replayMeasurements {
 	return &replayMeasurements{
-		global:  make(map[perspectives.SourceType]perspectives.Measurement),
-		symbols: make(map[string]map[perspectives.SourceType]perspectives.Measurement),
+		global:  make(map[types.SourceType]types.Measurement),
+		symbols: make(map[string]map[types.SourceType]types.Measurement),
 	}
 }
 
 func (measurements *replayMeasurements) Add(
-	measurement perspectives.Measurement,
+	measurement types.Measurement,
 ) {
 	if measurement.Symbol == "" {
 		measurements.global[measurement.Source] = measurement
@@ -30,7 +30,7 @@ func (measurements *replayMeasurements) Add(
 	symbolRows, ok := measurements.symbols[measurement.Symbol]
 
 	if !ok {
-		symbolRows = make(map[perspectives.SourceType]perspectives.Measurement)
+		symbolRows = make(map[types.SourceType]types.Measurement)
 		measurements.symbols[measurement.Symbol] = symbolRows
 	}
 
@@ -39,9 +39,9 @@ func (measurements *replayMeasurements) Add(
 
 func (measurements *replayMeasurements) Snapshot(
 	symbol string,
-) []perspectives.Measurement {
+) []types.Measurement {
 	rows := make(
-		[]perspectives.Measurement, 0,
+		[]types.Measurement, 0,
 		len(measurements.global)+len(measurements.symbols[symbol]),
 	)
 
@@ -52,9 +52,9 @@ func (measurements *replayMeasurements) Snapshot(
 }
 
 func sortedMeasurementsBySource(
-	rows map[perspectives.SourceType]perspectives.Measurement,
-) []perspectives.Measurement {
-	sorted := make([]perspectives.Measurement, 0, len(rows))
+	rows map[types.SourceType]types.Measurement,
+) []types.Measurement {
+	sorted := make([]types.Measurement, 0, len(rows))
 
 	for _, measurement := range rows {
 		sorted = append(sorted, measurement)

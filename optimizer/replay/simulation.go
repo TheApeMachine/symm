@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 /*
@@ -14,7 +16,7 @@ per-node offsets, lifecycle subjects, and the latched temporal walk all take eff
 */
 type ReplaySimulation struct {
 	ctx      context.Context
-	thoughts []perspectives.Thought
+	thoughts []reasoning.Thought
 	tape     ReplayTape
 	costs    ReplayCosts
 }
@@ -24,7 +26,7 @@ NewThoughtSimulation scores a reasoning-language playbook against a tape.
 */
 func NewThoughtSimulation(
 	ctx context.Context,
-	thoughts []perspectives.Thought,
+	thoughts []reasoning.Thought,
 	tape ReplayTape,
 	costs ReplayCosts,
 ) *ReplaySimulation {
@@ -90,7 +92,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	)
 
 	lastAt := time.Time{}
-	lastRow := perspectives.Measurement{}
+	lastRow := types.Measurement{}
 	reason := &ledger.windowReason
 	snapshots := ledger.snapshotScratch[:0]
 
@@ -132,18 +134,18 @@ cross-tick state, and queue the chosen act (carrying its per-node trigger offset
 */
 func (simulation *ReplaySimulation) applyThoughts(
 	ledger *replayLedger,
-	row perspectives.Measurement,
-	snapshots []perspectives.Measurement,
-	reason *perspectives.WindowReason,
+	row types.Measurement,
+	snapshots []types.Measurement,
+	reason *reasoning.WindowReason,
 ) {
 	regime := perspectives.ClassifyRegime(snapshots).Regime
 	reason.Reset(snapshots, regime, ledger.positionState(row))
 
-	act, found := perspectives.EvaluateStateful(
+	act, found := reasoning.EvaluateStateful(
 		simulation.thoughts, reason, ledger.reasonState(row.Symbol),
 	)
 
-	if !found || act.Type == perspectives.ActionNone {
+	if !found || act.Type == reasoning.ActionNone {
 		return
 	}
 

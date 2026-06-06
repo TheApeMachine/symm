@@ -13,7 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
 func holdingsFrame(holdings ...map[string]any) map[string]any {
@@ -25,7 +25,7 @@ func newTestCrypto() *Crypto {
 		streams:          focus.NewSet(),
 		inventory:        map[string]float64{},
 		avgEntry:         map[string]float64{},
-		pending:          map[string]perspectives.Action{},
+		pending:          map[string]reasoning.Action{},
 		lastDecision:     map[string]string{},
 		positionFraction: 1.0,
 	}
@@ -43,6 +43,14 @@ func sellExec(symbol string, qty float64) map[string]any {
 		"channel": "executions", "symbol": symbol,
 		"side": string(trading.Sell), "qty": qty, "price": 1.0,
 	}
+}
+
+func TestIsTransientQuoteMiss(t *testing.T) {
+	Convey("Given desk preflight errors", t, func() {
+		So(isTransientQuoteMiss(fmt.Errorf("preflight: no quote for BTC/EUR")), ShouldBeTrue)
+		So(isTransientQuoteMiss(fmt.Errorf("preflight: spread too wide")), ShouldBeFalse)
+		So(isTransientQuoteMiss(nil), ShouldBeFalse)
+	})
 }
 
 func TestCleanReason(t *testing.T) {
@@ -142,7 +150,7 @@ func TestSizeEntryConcurrentCap(t *testing.T) {
 
 		Convey("An in-flight entry counts toward capacity (no over-commit before the fill)", func() {
 			crypto.positionFraction = 1.0
-			crypto.pending["BTC/EUR"] = perspectives.Action{} // order placed, not yet filled
+			crypto.pending["BTC/EUR"] = reasoning.Action{} // order placed, not yet filled
 
 			So(crypto.sizeEntry(100), ShouldEqual, 0)
 		})
@@ -161,7 +169,7 @@ func TestSizeEntryConcurrentCap(t *testing.T) {
 func TestObserveExecution(t *testing.T) {
 	Convey("Given a flat trader", t, func() {
 		crypto := newTestCrypto()
-		crypto.pending["BTC/EUR"] = perspectives.Action{}
+		crypto.pending["BTC/EUR"] = reasoning.Action{}
 
 		Convey("A buy fill opens the position and marks it held", func() {
 			crypto.observeExecution(buyExec("BTC/EUR", 0.5, 100))
@@ -199,8 +207,8 @@ func TestObserveExecution(t *testing.T) {
 func TestSubmitGate(t *testing.T) {
 	Convey("Given the not-holding gate", t, func() {
 		crypto := newTestCrypto()
-		entry := perspectives.Action{
-			Type: perspectives.ActionLimit, Symbol: "BTC/EUR",
+		entry := reasoning.Action{
+			Type: reasoning.ActionLimit, Symbol: "BTC/EUR",
 			Side: trading.Buy, Quantity: 1, Price: 100,
 		}
 
@@ -215,7 +223,7 @@ func TestSubmitGate(t *testing.T) {
 		})
 
 		Convey("An entry is skipped while an order is in flight", func() {
-			crypto.pending["BTC/EUR"] = perspectives.Action{}
+			crypto.pending["BTC/EUR"] = reasoning.Action{}
 
 			crypto.submit(entry)
 
@@ -223,8 +231,8 @@ func TestSubmitGate(t *testing.T) {
 		})
 
 		Convey("An exit is skipped when nothing is held", func() {
-			exit := perspectives.Action{
-				Type: perspectives.ActionSettlePosition, Symbol: "BTC/EUR",
+			exit := reasoning.Action{
+				Type: reasoning.ActionSettlePosition, Symbol: "BTC/EUR",
 			}
 
 			crypto.submit(exit)
@@ -279,7 +287,7 @@ func TestReconcilePositions(t *testing.T) {
 		})
 
 		Convey("A holdings snapshot does not double-count a position the fill already opened", func() {
-			crypto.pending["ETC/EUR"] = perspectives.Action{}
+			crypto.pending["ETC/EUR"] = reasoning.Action{}
 			crypto.observeExecution(buyExec("ETC/EUR", 5, 36.0)) // session fill: 5 @ 36
 			crypto.observeBalances(holdingsFrame(                // snapshot agrees: 5 held
 				map[string]any{"symbol": "ETC/EUR", "qty": 5.0},
@@ -333,8 +341,8 @@ func TestPublishDecisionAudit(t *testing.T) {
 
 		crypto := newTestCrypto()
 		crypto.audit = writer
-		action := perspectives.Action{
-			Type:   perspectives.ActionLimit,
+		action := reasoning.Action{
+			Type:   reasoning.ActionLimit,
 			Symbol: "BTC/EUR",
 			Side:   trading.Buy,
 			Price:  100,

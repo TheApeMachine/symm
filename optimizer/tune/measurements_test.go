@@ -9,7 +9,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives"
+	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
+	ptypes "github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/io"
 	"github.com/theapemachine/symm/optimizer/types"
 )
@@ -30,8 +31,8 @@ func TestLoadMeasurements(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(skipped, convey.ShouldEqual, 0)
 			convey.So(len(rows), convey.ShouldEqual, 2)
-			convey.So(rows[0].Category, convey.ShouldEqual, perspectives.CategoryLaminar)
-			convey.So(rows[1].Source, convey.ShouldEqual, perspectives.SourceCVD)
+			convey.So(rows[0].Category, convey.ShouldEqual, ptypes.CategoryLaminar)
+			convey.So(rows[1].Source, convey.ShouldEqual, ptypes.SourceCVD)
 		})
 	})
 
@@ -56,24 +57,24 @@ func TestLoadMeasurements(t *testing.T) {
 
 // profitableRows is a tape of repeated rallies, each opened by an ignition signal,
 // so the optimizer can discover an enter-on-signal / ride-the-trail strategy.
-func profitableRows() []perspectives.Measurement {
+func profitableRows() []ptypes.Measurement {
 	return profitableRowsFor("BTC/EUR", 3)
 }
 
-func profitableRowsFor(symbol string, legs int) []perspectives.Measurement {
+func profitableRowsFor(symbol string, legs int) []ptypes.Measurement {
 	base := time.Unix(1_700_000_000, 0)
 	step := time.Second
-	rows := make([]perspectives.Measurement, 0, 16)
+	rows := make([]ptypes.Measurement, 0, 16)
 
 	start := 100.0
 	at := base
 
 	for range legs {
 		rows = append(rows,
-			perspectives.Measurement{Symbol: symbol, Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
-			perspectives.Measurement{Symbol: symbol, Last: start * 1.05, At: at.Add(step)},
-			perspectives.Measurement{Symbol: symbol, Last: start * 1.10, At: at.Add(2 * step)},
-			perspectives.Measurement{Symbol: symbol, Last: start * 1.07, At: at.Add(3 * step)},
+			ptypes.Measurement{Symbol: symbol, Category: ptypes.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
+			ptypes.Measurement{Symbol: symbol, Last: start * 1.05, At: at.Add(step)},
+			ptypes.Measurement{Symbol: symbol, Last: start * 1.10, At: at.Add(2 * step)},
+			ptypes.Measurement{Symbol: symbol, Last: start * 1.07, At: at.Add(3 * step)},
 		)
 		start *= 1.07
 		at = at.Add(5 * step)
@@ -82,12 +83,12 @@ func profitableRowsFor(symbol string, legs int) []perspectives.Measurement {
 	return rows
 }
 
-func flatRows(symbols ...string) []perspectives.Measurement {
+func flatRows(symbols ...string) []ptypes.Measurement {
 	base := time.Unix(1_700_000_000, 0)
-	rows := make([]perspectives.Measurement, 0, len(symbols))
+	rows := make([]ptypes.Measurement, 0, len(symbols))
 
 	for symbolIndex, symbol := range symbols {
-		rows = append(rows, perspectives.Measurement{
+		rows = append(rows, ptypes.Measurement{
 			Symbol: symbol,
 			Last:   100 + float64(symbolIndex),
 			At:     base.Add(time.Duration(symbolIndex) * time.Second),
@@ -132,7 +133,7 @@ func TestTuneMeasurements(t *testing.T) {
 			convey.So(string(raw), convey.ShouldContainSubstring, "when:")
 
 			// The written playbook is a Thought forest the live story can load.
-			thoughts, parseErr := perspectives.ParseThoughts(raw)
+			thoughts, parseErr := preasoning.ParseThoughts(raw)
 			convey.So(parseErr, convey.ShouldBeNil)
 			convey.So(len(thoughts), convey.ShouldBeGreaterThan, 0)
 		})
@@ -149,7 +150,7 @@ func TestTuneMeasurementsFiltersFundableRows(t *testing.T) {
 
 		fundable := profitableRowsFor("BTC/EUR", 3)
 		unfundable := profitableRowsFor("ETH/BTC", 3)
-		rows := append(append([]perspectives.Measurement{}, fundable...), unfundable...)
+		rows := append(append([]ptypes.Measurement{}, fundable...), unfundable...)
 		outputPath := filepath.Join(t.TempDir(), "perspectives.yaml")
 
 		summary, err := TuneMeasurements(

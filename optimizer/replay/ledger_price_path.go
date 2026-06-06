@@ -1,8 +1,11 @@
 package replay
 
-import "github.com/theapemachine/symm/market/perspectives"
+import (
+	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
+)
 
-func (ledger *replayLedger) observePrice(row perspectives.Measurement) {
+func (ledger *replayLedger) observePrice(row types.Measurement) {
 	ledger.observeSymbolPrice(row.Symbol, row.Last)
 }
 

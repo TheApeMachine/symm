@@ -4,15 +4,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
-
-/*
-StoryRingCapacity matches market.Story's measurement ring buffer. Each replay
-decision sees at most this many recent measurements — the live search space.
-*/
-const StoryRingCapacity = market.StoryRingCapacity
 
 /*
 PrecompiledTick holds one replay row and the tick indices that form its decision
@@ -20,7 +14,7 @@ snapshot window. Indices are resolved once during precompilation so simulation d
 not repeat binary searches and merge passes on every candidate replay.
 */
 type PrecompiledTick struct {
-	Row             perspectives.Measurement
+	Row             types.Measurement
 	SnapshotIndices []int
 }
 
@@ -45,8 +39,8 @@ whose symbol is either global or the tick symbol.
 */
 func (tape ReplayTape) AppendSnapshot(
 	tickIndex int,
-	destination []perspectives.Measurement,
-) []perspectives.Measurement {
+	destination []types.Measurement,
+) []types.Measurement {
 	if tickIndex < 0 || tickIndex >= len(tape.Ticks) {
 		return destination[:0]
 	}
@@ -89,7 +83,7 @@ func mergeSnapshotIndices(
 		return nil
 	}
 
-	startIndex := tickIndex - StoryRingCapacity + 1
+	startIndex := tickIndex - viper.GetInt("story.measurements.buffer") + 1
 
 	if startIndex < 0 {
 		startIndex = 0
@@ -134,6 +128,6 @@ func mergeSnapshotIndices(
 /*
 PrecompileTape builds compact replay state matching market.Story decision context.
 */
-func PrecompileTape(rows []perspectives.Measurement) ReplayTape {
+func PrecompileTape(rows []types.Measurement) ReplayTape {
 	return PrecompileTapeWorkers(rows, 0)
 }

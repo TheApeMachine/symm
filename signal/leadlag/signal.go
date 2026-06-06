@@ -9,10 +9,11 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -20,9 +21,10 @@ import (
 )
 
 const (
-	minLagFraction  = 0.35
-	publishInterval = 200 * time.Millisecond
-	rawSubscriberID = "signal/leadlag:raw"
+	minLagFraction      = 0.35
+	publishInterval     = 200 * time.Millisecond
+	rawSubscriberID     = "signal/leadlag:raw"
+	leadlagMarketSymbol = "market"
 )
 
 var leadlagDefaultBandEdges = []float64{0.25, 0.55, 0.75}
@@ -98,8 +100,8 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
 
 	errnie.Info("signal/leadlag ready", "signal/leadlag")
 
@@ -211,7 +213,7 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 	})
 
 	signal.followerScratch = followers
-
+	readings := make([]leadlagGaugeReading, 0, len(followers))
 	tasks := make([]chan *qpool.QValue[any], 0, len(followers))
 
 	for _, symbolName := range followers {
@@ -230,7 +232,7 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 				return nil, fmt.Errorf("leadlag: measure %s: %w", symbolName, err)
 			}
 
-			if measurement.Source == perspectives.SourceNone {
+			if measurement.Source == types.SourceNone {
 				return nil, nil
 			}
 
@@ -241,7 +243,7 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 				return nil, fmt.Errorf("leadlag: snr %s: %w", symbolName, err)
 			}
 
-			return nil, nil
+			return leadlagGaugeReading{measurement: measurement, standout: standout}, nil
 		}))
 	}
 
@@ -249,10 +251,25 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 
 	for _, task := range tasks {
 		value := <-task
-		err = errors.Join(err, value.Error)
+
+		if value.Error != nil {
+			err = errors.Join(err, value.Error)
+			continue
+		}
+
+		reading, ok := value.Value.(leadlagGaugeReading)
+
+		if ok {
+			readings = append(readings, reading)
+		}
 	}
 
-	return err
+	return errors.Join(err, signal.publishMarketGauge(readings))
+}
+
+type leadlagGaugeReading struct {
+	measurement types.Measurement
+	standout    float64
 }
 
 func (signal *Signal) publishAnchorStall(
@@ -274,6 +291,7 @@ func (signal *Signal) publishAnchorStall(
 	})
 
 	signal.followerScratch = followers
+	readings := make([]leadlagGaugeReading, 0, len(followers)+1)
 	measurement, standout, err := signal.measureStall(anchor, stallMargin)
 
 	if err != nil {
@@ -282,7 +300,7 @@ func (signal *Signal) publishAnchorStall(
 
 	measurement.Symbol = anchorName
 	measurement.Last = anchor.lastPrice()
-
+	readings = append(readings, leadlagGaugeReading{measurement: measurement, standout: standout})
 	joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
 
 	for _, symbolName := range followers {
@@ -302,25 +320,128 @@ func (signal *Signal) publishAnchorStall(
 
 		measurement.Symbol = symbolName
 		measurement.Last = follower.lastPrice()
+		readings = append(readings, leadlagGaugeReading{measurement: measurement, standout: standout})
 		joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
 	}
 
-	return joined
+	return errors.Join(joined, signal.publishMarketGauge(readings))
 }
 
-func (signal *Signal) sendMeasurement(
-	measurement *perspectives.Measurement,
+func (signal *Signal) publishMarketGauge(readings []leadlagGaugeReading) error {
+	aggregate, ok := aggregateLeadlagReadings(readings)
+
+	if !ok {
+		return nil
+	}
+
+	return signal.sendDashboardGauge(&aggregate.measurement, aggregate.standout)
+}
+
+func aggregateLeadlagReadings(
+	readings []leadlagGaugeReading,
+) (leadlagGaugeReading, bool) {
+	if len(readings) == 0 {
+		return leadlagGaugeReading{}, false
+	}
+
+	best := readings[0]
+	confidenceSum := 0.0
+	confidenceCount := 0
+	snrSum := 0.0
+	snrCount := 0
+	strengthSum := 0.0
+	strengthCount := 0
+
+	for _, reading := range readings {
+		measurement := reading.measurement
+
+		if measurement.Confidence > 0 {
+			confidenceSum += measurement.Confidence
+			confidenceCount++
+		}
+
+		if measurement.SNR > 0 {
+			snrSum += measurement.SNR
+			snrCount++
+		}
+
+		if measurement.Strength > 0 {
+			strengthSum += measurement.Strength
+			strengthCount++
+		}
+
+		if measurement.Confidence > best.measurement.Confidence {
+			best = reading
+		}
+	}
+
+	aggregate := best.measurement
+	aggregate.Symbol = leadlagMarketSymbol
+
+	if confidenceCount > 0 {
+		aggregate.Confidence = confidenceSum / float64(confidenceCount)
+	}
+
+	if snrCount > 0 {
+		aggregate.SNR = snrSum / float64(snrCount)
+	}
+
+	if strengthCount > 0 {
+		aggregate.Strength = strengthSum / float64(strengthCount)
+	}
+
+	return leadlagGaugeReading{measurement: aggregate, standout: best.standout}, true
+}
+
+func (signal *Signal) sendDashboardGauge(
+	measurement *types.Measurement,
 	standout float64,
 ) error {
-	telemetry, standout := numeric.ObserveGaugeTelemetry(
+	categoryStandout := standout
+
+	telemetry, _ := numeric.ObserveGaugeTelemetry(
 		signal.calibrator,
 		signal.classifier,
 		measurement.Strength,
 		standout,
 	)
 
-	if err := perspectives.AssignCategorySNR(
-		measurement, signal.floor, standout,
+	if err := types.AssignCategorySNR(
+		measurement, signal.floor, categoryStandout,
+	); err != nil {
+		return err
+	}
+
+	if ui := signal.broadcasts["ui"]; ui != nil {
+		ui.Send(&qpool.QValue[any]{
+			Value: numeric.GaugePayload(
+				measurement.Source.String(),
+				measurement.Symbol,
+				measurement.Category,
+				*measurement,
+				telemetry,
+			),
+		})
+	}
+
+	return nil
+}
+
+func (signal *Signal) sendMeasurement(
+	measurement *types.Measurement,
+	standout float64,
+) error {
+	categoryStandout := standout
+
+	_, _ = numeric.ObserveGaugeTelemetry(
+		signal.calibrator,
+		signal.classifier,
+		measurement.Strength,
+		standout,
+	)
+
+	if err := types.AssignCategorySNR(
+		measurement, signal.floor, categoryStandout,
 	); err != nil {
 		return err
 	}
@@ -339,21 +460,7 @@ func (signal *Signal) sendMeasurement(
 		return err
 	}
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: *measurement})
-
-	if ui := signal.broadcasts["ui"]; ui != nil {
-		ui.Send(&qpool.QValue[any]{
-			Value: numeric.GaugePayload(
-				measurement.Source.String(),
-				measurement.Symbol,
-				measurement.Category,
-				*measurement,
-				telemetry,
-			),
-		})
-	}
-
-	return nil
+	return measurement.Send(signal.pool)
 }
 
 // throttle reports whether enough time has passed to recompute; crossLag is
@@ -374,19 +481,17 @@ func (signal *Signal) throttle() bool {
 func (signal *Signal) measureStall(
 	symbol *symbolState,
 	stallMargin float64,
-) (perspectives.Measurement, float64, error) {
-	category, clarity, standout := leadlagReading(false, stallMargin, 0, 0)
+) (types.Measurement, float64, error) {
+	category, confidence, standout := leadlagReading(false, stallMargin, 0, 0)
 
-	confidence, err := symbol.tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := symbol.tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceLeadLag,
+	return types.Measurement{
+		Source:     types.SourceLeadLag,
 		Category:   category,
-		Strength:   0,
+		Strength:   stallMargin,
 		Confidence: confidence,
 	}, standout, nil
 }
@@ -395,18 +500,16 @@ func (signal *Signal) measureStall(
 func (signal *Signal) measureFollower(
 	anchor *symbolState,
 	state *symbolState,
-) (perspectives.Measurement, float64, error) {
+) (types.Measurement, float64, error) {
 	if bars, corr, ok := state.crossLag(anchor); ok {
-		category, clarity, standout := leadlagReading(true, 0, corr, bars)
+		category, confidence, standout := leadlagReading(true, 0, corr, bars)
 
-		confidence, err := state.tracked.Observe(category, clarity, standout)
-
-		if err != nil {
-			return perspectives.Measurement{}, 0, err
+		if err := state.tracked.Observe(category, confidence); err != nil {
+			return types.Measurement{}, 0, err
 		}
 
-		return perspectives.Measurement{
-			Source:     perspectives.SourceLeadLag,
+		return types.Measurement{
+			Source:     types.SourceLeadLag,
 			Category:   category,
 			Strength:   corr / leadlagMinimumLagCorrelation,
 			Confidence: confidence,
@@ -416,19 +519,17 @@ func (signal *Signal) measureFollower(
 	corr, ok := state.contemporaneous(anchor)
 
 	if !ok {
-		return perspectives.Measurement{}, 0, nil
+		return types.Measurement{}, 0, nil
 	}
 
-	category, clarity, standout := leadlagReading(true, 0, corr, 0)
+	category, confidence, standout := leadlagReading(true, 0, corr, 0)
 
-	confidence, err := state.tracked.Observe(category, clarity, standout)
-
-	if err != nil {
-		return perspectives.Measurement{}, 0, err
+	if err := state.tracked.Observe(category, confidence); err != nil {
+		return types.Measurement{}, 0, err
 	}
 
-	return perspectives.Measurement{
-		Source:     perspectives.SourceLeadLag,
+	return types.Measurement{
+		Source:     types.SourceLeadLag,
 		Category:   category,
 		Strength:   corr / leadlagMinimumLagCorrelation,
 		Confidence: confidence,

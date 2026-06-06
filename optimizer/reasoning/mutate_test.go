@@ -5,17 +5,18 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-func rootDepth(root perspectives.Thought) int {
-	return forestDepth([]perspectives.Thought{root})
+func rootDepth(root reasoning.Thought) int {
+	return forestDepth([]reasoning.Thought{root})
 }
 
 // anyPredicate reports whether any predicate anywhere in the forest matches.
-func anyPredicate(forest []perspectives.Thought, match func(perspectives.Predicate) bool) bool {
-	var checkPredicate func(predicate perspectives.Predicate) bool
-	checkPredicate = func(predicate perspectives.Predicate) bool {
+func anyPredicate(forest []reasoning.Thought, match func(reasoning.Predicate) bool) bool {
+	var checkPredicate func(predicate reasoning.Predicate) bool
+	checkPredicate = func(predicate reasoning.Predicate) bool {
 		if match(predicate) {
 			return true
 		}
@@ -35,8 +36,8 @@ func anyPredicate(forest []perspectives.Thought, match func(perspectives.Predica
 		return predicate.Not != nil && checkPredicate(*predicate.Not)
 	}
 
-	var walk func(nodes []perspectives.Thought) bool
-	walk = func(nodes []perspectives.Thought) bool {
+	var walk func(nodes []reasoning.Thought) bool
+	walk = func(nodes []reasoning.Thought) bool {
 		for index := range nodes {
 			if checkPredicate(nodes[index].When) {
 				return true
@@ -53,11 +54,11 @@ func anyPredicate(forest []perspectives.Thought, match func(perspectives.Predica
 	return walk(forest)
 }
 
-func twoBranchForest() []perspectives.Thought {
-	return []perspectives.Thought{
-		{When: allOf(notHolding(), signalAtLeast(perspectives.CategoryVerticalIgnition, 1.0)), Do: perspectives.Act{Type: perspectives.ActionMarket}},
-		{When: allOf(notHolding(), signalAtLeast(perspectives.CategoryCoiledCompression, 1.0)), Do: perspectives.Act{Type: perspectives.ActionMarket}},
-		{When: holding(), Do: perspectives.Act{Type: perspectives.ActionTrailingStop, Offset: 0.02}},
+func twoBranchForest() []reasoning.Thought {
+	return []reasoning.Thought{
+		{When: allOf(notHolding(), signalAtLeast(types.CategoryVerticalIgnition, 1.0)), Do: reasoning.Act{Type: reasoning.ActionMarket}},
+		{When: allOf(notHolding(), signalAtLeast(types.CategoryCoiledCompression, 1.0)), Do: reasoning.Act{Type: reasoning.ActionMarket}},
+		{When: holding(), Do: reasoning.Act{Type: reasoning.ActionTrailingStop, Offset: 0.02}},
 	}
 }
 
@@ -105,8 +106,8 @@ func TestNeighborsIncludeCrossedUpAndLifecycleExit(t *testing.T) {
 		Convey("Some neighbour waits for the signal to cross up (an edge, not a level)", func() {
 			found := false
 			for _, neighbor := range neighbors {
-				if anyPredicate(neighbor, func(p perspectives.Predicate) bool {
-					return p.Op == perspectives.ComparisonCrossedUp
+				if anyPredicate(neighbor, func(p reasoning.Predicate) bool {
+					return p.Op == reasoning.ComparisonCrossedUp
 				}) {
 					found = true
 				}
@@ -117,8 +118,8 @@ func TestNeighborsIncludeCrossedUpAndLifecycleExit(t *testing.T) {
 		Convey("Some neighbour adds a lifecycle exit (settle once the move has ended)", func() {
 			found := false
 			for _, neighbor := range neighbors {
-				if anyPredicate(neighbor, func(p perspectives.Predicate) bool {
-					return p.Subject == perspectives.SubjectPosition && p.Lifecycle == perspectives.ObservationHasEnded
+				if anyPredicate(neighbor, func(p reasoning.Predicate) bool {
+					return p.Subject == reasoning.SubjectPosition && p.Lifecycle == types.ObservationHasEnded
 				}) {
 					found = true
 				}
@@ -130,9 +131,9 @@ func TestNeighborsIncludeCrossedUpAndLifecycleExit(t *testing.T) {
 
 func TestNeighborsIncludeVersusNotAndTimeStop(t *testing.T) {
 	Convey("Given a seed and a two-signal vocabulary", t, func() {
-		rows := []perspectives.Measurement{
-			{Symbol: "BTC/EUR", Category: perspectives.CategoryVerticalIgnition, SNR: 1.5, Last: 100},
-			{Symbol: "BTC/EUR", Category: perspectives.CategoryCoiledCompression, SNR: 1.2, Last: 101},
+		rows := []types.Measurement{
+			{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 100},
+			{Symbol: "BTC/EUR", Category: types.CategoryCoiledCompression, SNR: 1.2, Last: 101},
 		}
 		vocab := DeriveVocabulary(rows)
 		seed := Seeds(vocab)[0]
@@ -143,13 +144,13 @@ func TestNeighborsIncludeVersusNotAndTimeStop(t *testing.T) {
 		hasTimeStop := false
 
 		for _, neighbor := range neighbors {
-			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Versus != nil }) {
+			if anyPredicate(neighbor, func(p reasoning.Predicate) bool { return p.Versus != nil }) {
 				hasVersus = true
 			}
-			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Not != nil }) {
+			if anyPredicate(neighbor, func(p reasoning.Predicate) bool { return p.Not != nil }) {
 				hasNot = true
 			}
-			if anyPredicate(neighbor, func(p perspectives.Predicate) bool { return p.Subject == perspectives.SubjectElapsed }) {
+			if anyPredicate(neighbor, func(p reasoning.Predicate) bool { return p.Subject == reasoning.SubjectElapsed }) {
 				hasTimeStop = true
 			}
 		}

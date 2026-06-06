@@ -5,12 +5,12 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/optimizer/replay"
 )
 
 type scoreTask struct {
-	forest []perspectives.Thought
+	forest []reasoning.Thought
 	nodes  int
 }
 
@@ -24,7 +24,7 @@ func (config SearchConfig) workerCount() int {
 
 func scoreForest(
 	ctx context.Context,
-	forest []perspectives.Thought,
+	forest []reasoning.Thought,
 	nodes int,
 	tape replay.ReplayTape,
 	costs replay.ReplayCosts,

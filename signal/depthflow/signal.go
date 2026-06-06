@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/rawdump"
@@ -189,21 +189,23 @@ func (signal *Signal) emit(symbol string, at time.Time) error {
 		return err
 	}
 
-	if measurement.Source == perspectives.SourceNone {
+	if measurement.Source == types.SourceNone {
 		return nil
 	}
 
 	measurement.Symbol = symbol
 
-	telemetry, standout := numeric.ObserveGaugeTelemetry(
+	categoryStandout := standout
+
+	telemetry, _ := numeric.ObserveGaugeTelemetry(
 		signal.calibrator,
 		signal.classifier,
 		measurement.Strength,
 		standout,
 	)
 
-	if err := perspectives.AssignCategorySNR(
-		&measurement, signal.floor, standout,
+	if err := types.AssignCategorySNR(
+		&measurement, signal.floor, categoryStandout,
 	); err != nil {
 		return err
 	}
@@ -222,7 +224,9 @@ func (signal *Signal) emit(symbol string, at time.Time) error {
 		return err
 	}
 
-	signal.broadcasts["measurements"].Send(&qpool.QValue[any]{Value: measurement})
+	if err := measurement.Send(signal.pool); err != nil {
+		return err
+	}
 
 	if ui := signal.broadcasts["ui"]; ui != nil {
 		ui.Send(&qpool.QValue[any]{
