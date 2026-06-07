@@ -1,3 +1,5 @@
+# Legacy merged config. Prefer cmd/cfg/infra.yml (engine mechanics) +
+# cmd/cfg/strategy.yml (optimizer sandbox). The engine loads infra then strategy.
 system:
   log:
     level: info
