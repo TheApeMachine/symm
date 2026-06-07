@@ -2,10 +2,12 @@ package trader
 
 import (
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
@@ -29,17 +31,15 @@ const (
 	// weakest held position's entry conviction before it may evict it. Without a
 	// margin, marginally-better candidates churn full round trips of spread+fees.
 	defaultPreemptionMargin = 1.5
-	// preemptionCooldown is the minimum spacing between preemption rounds, so a
-	// burst of near-equal signals cannot rotate the whole book.
-	preemptionCooldown = 30 * time.Second
+	// preemptionCooldown delegates to the shared live/replay policy constant.
+	preemptionCooldown = perspectives.PreemptionCooldown
 )
 
+// preemptionMargin delegates to the SHARED policy (perspectives.PreemptionMargin)
+// so live and replay demand the same regime-scaled edge — the trader-local copy
+// is what let replay preempt on a plain score comparison.
 func preemptionMargin() float64 {
-	if margin := viper.GetFloat64("trading.entry.preemption_margin"); margin > 1 {
-		return margin
-	}
-
-	return defaultPreemptionMargin
+	return perspectives.PreemptionMargin(perspectives.CurrentRegime())
 }
 
 /*
@@ -178,15 +178,25 @@ func (crypto *Crypto) deployEntry(action reasoning.Action) {
 	// victim — require the challenger to beat the incumbent decisively, and only
 	// one preemption in flight at a time (a second plan used to overwrite the
 	// first, selling its victim while dropping its entry).
+	margin := preemptionMargin()
+
 	if !ok || crypto.preemptPlan != nil ||
-		actionConviction(action) <= victimScore*preemptionMargin() {
-		crypto.publishDecision(action, "rejected", "insufficient funds")
+		actionConviction(action) <= victimScore*margin {
+		// The regime rides along so the optimizer can price the opportunity
+		// cost of (not) churning per market weather.
+		crypto.publishDecision(action, "rejected",
+			"insufficient funds (margin "+formatPreemptionMargin(margin)+
+				" regime "+perspectives.CurrentRegime().String()+")")
 		return
 	}
 
 	crypto.preemptPlan = &preemptPlan{entry: action, victim: victim}
 	crypto.lastPreemptAt = time.Now()
 	crypto.submitPreemptExit(victim)
+}
+
+func formatPreemptionMargin(margin float64) string {
+	return strconv.FormatFloat(margin, 'f', 2, 64)
 }
 
 func (crypto *Crypto) weakestHeldPosition() (symbol string, score float64, ok bool) {
@@ -200,7 +210,10 @@ func (crypto *Crypto) weakestHeldPosition() (symbol string, score float64, ok bo
 
 		heldScore := crypto.entryConviction[heldSymbol]
 
-		if !ok || heldScore < minScore {
+		// Strict ordering even at equal scores (alphabetical): positions with
+		// no recorded conviction all score zero, and map iteration order used
+		// to pick the victim at random among them.
+		if !ok || heldScore < minScore || (heldScore == minScore && heldSymbol < symbol) {
 			symbol = heldSymbol
 			minScore = heldScore
 			ok = true

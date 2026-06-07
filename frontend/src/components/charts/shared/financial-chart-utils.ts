@@ -118,15 +118,6 @@ export const resolveFollowVisibleRange = (
 		lastIndex > 0 ? lastX - nativeX.get(lastIndex - 1) : DEFAULT_BAR_STEP_SEC;
 
 	if (mode === "live" && currentRange !== undefined) {
-		const priorLastX = lastIndex > 0 ? nativeX.get(lastIndex - 1) : lastX;
-
-		if (
-			lastIndex > 0 &&
-			!isViewportFollowingLiveEdge(currentRange, priorLastX, barStep)
-		) {
-			return null;
-		}
-
 		const shifted = shiftTrailingVisibleRange(
 			currentRange.min,
 			currentRange.max,
@@ -307,12 +298,17 @@ export const refreshFinancialPriceAxis = (
 		return;
 	}
 
+	// Scan only the VISIBLE window: this runs on every candle update
+	// (including in-place updates of the last bar), so a full-history scan was
+	// O(n) per tick and O(n²) over a session. The label precision only ever
+	// reflects what is on screen anyway — the chart follows the tail.
 	const nativeHigh = ohlc.getNativeHighValues();
 	const nativeLow = ohlc.getNativeLowValues();
+	const firstIndex = Math.max(0, barCount - VISIBLE_CANDLE_COUNT);
 	let minLow = Number.POSITIVE_INFINITY;
 	let maxHigh = Number.NEGATIVE_INFINITY;
 
-	for (let index = 0; index < barCount; index++) {
+	for (let index = firstIndex; index < barCount; index++) {
 		minLow = Math.min(minLow, nativeLow.get(index));
 		maxHigh = Math.max(maxHigh, nativeHigh.get(index));
 	}

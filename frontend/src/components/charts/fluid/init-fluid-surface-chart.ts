@@ -20,7 +20,7 @@ import {
 	resetFluidHeightSmoothing,
 } from "#/components/charts/fluid/fluid-grid";
 import { appTheme } from "#/components/charts/fluid/theme";
-import type { FluidSymbolRow } from "#/components/charts/fluid/types";
+import type { FieldSnapshotEvent } from "#/components/charts/fluid/types";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const FLUID_SURFACE_Y_MIN = -0.3;
@@ -113,23 +113,8 @@ export const initFluidSurfaceChart = async (
 	sciChart3DSurface.chartModifiers.add(new OrbitModifier3D());
 	sciChart3DSurface.chartModifiers.add(new ResetCamera3DModifier());
 
-	const push = (raw: unknown) => {
-		if (typeof raw !== "object" || raw === null) {
-			return;
-		}
-
-		const row = raw as Record<string, unknown>;
-
-		if (row.type !== "fluid" || !Array.isArray(row.symbols)) {
-			return;
-		}
-
-		const symbols = row.symbols as FluidSymbolRow[];
-
-		if (symbols.length === 0) {
-			return;
-		}
-
+	const push = (frame: FieldSnapshotEvent) => {
+		const symbols = frame.symbols;
 		const grid = buildFluidGrid(symbols);
 		const projected = projectFluidGridToHeightmap(
 			grid,

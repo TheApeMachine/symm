@@ -60,7 +60,12 @@ func NewToxicity(ctx context.Context, pool *qpool.Q[any]) *Toxicity {
 		tracker:    Default(),
 		classifier: pooledCalibrator.Classifier,
 		calibrator: pooledCalibrator.Calibrator,
-		l3Active:   settings.L3Enabled(),
+		// l3Active is EARNED by the first real level3 frame (handleLevel3 flips
+		// it), not asserted from config: with the flag pre-set, handleRaw skips
+		// the L2 book fallback, and if the authenticated L3 stream then delivers
+		// nothing the signal is book-blind by configuration — the 18:20:12
+		// "signal-toxicity stalled at 0" watchdog trip with l3=true.
+		l3Active: false,
 	}
 	queueTTL := viper.GetDuration("system.queue.ttl")
 	tox.measurements = pool.CreateBroadcastGroup("measurements", queueTTL)
@@ -74,7 +79,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q[any]) *Toxicity {
 	level3 := pool.CreateBroadcastGroup("level3", queueTTL)
 	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
 
-	errnie.Info("toxicity ready l3="+fmt.Sprint(tox.l3Active), "toxicity")
+	errnie.Info("toxicity ready l3_configured="+fmt.Sprint(settings.L3Enabled())+" (activates on first L3 frame)", "toxicity")
 
 	return tox
 }

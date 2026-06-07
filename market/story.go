@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -22,7 +23,11 @@ import (
 
 const (
 	storyMeasurementsSubscriberID  = "market:story"
-	defaultStoryDecisionMinSamples = 1
+	// A playbook decision needs a real window behind it: with the old default
+	// of 1, the first reading after a restart could fire entries with no
+	// temporal context at all (at ~20 readings/sec on active symbols, 8 is
+	// still sub-second warmup).
+	defaultStoryDecisionMinSamples = 8
 	// playbookRecheckInterval paces playbook file probes while none is loaded.
 	playbookRecheckInterval = 5 * time.Second
 	// decisionTreePublishInterval paces the full-tree dashboard frame. The tree
@@ -54,7 +59,6 @@ type Story struct {
 	symbolWindows           map[string]*ring.Ring
 	windowCapacity          int
 	windowReason            reasoning.WindowReason
-	lastGauge               map[string]time.Time
 	recordFile              *os.File
 	recorder                *bufio.Writer
 	audit                   *audit.Writer
@@ -62,6 +66,10 @@ type Story struct {
 	bookEnricher            func(types.Measurement) types.Measurement
 	quoteReady              func(string) bool
 	positionHeld            func(string) bool
+	positionStrategy func(string) string
+	positionFacts    func(string) (trading.Side, float64, time.Time, bool)
+	snapshotScratch         []types.Measurement
+	lastRegimePublishAt     time.Time
 
 	decisionTree      []reasoning.TreeNode
 	nodeReached       map[string]int
@@ -128,7 +136,6 @@ func NewStoryWithAudit(ctx context.Context, pool *qpool.Q[any], auditWriter *aud
 		forwardFeedback:         newForwardFeedbackFromConfig(),
 		symbolWindows:           make(map[string]*ring.Ring),
 		windowCapacity:          measurementBuffer,
-		lastGauge:               make(map[string]time.Time),
 		nodeReached:             make(map[string]int),
 		nodeHeld:                make(map[string]int),
 		condHeld:                make(map[string][]int),
@@ -176,6 +183,10 @@ func NewStoryWithAudit(ctx context.Context, pool *qpool.Q[any], auditWriter *aud
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(
 		storyMeasurementsSubscriberID, measurementBuffer,
 	)
+
+	if ttl := viper.GetDuration("trading.reasoning.latch_ttl"); ttl > 0 {
+		reasoning.SetLatchTTL(ttl)
+	}
 
 	errnie.Info("market/story ready", "market/story")
 	return story
@@ -271,7 +282,13 @@ func (story *Story) ingestMeasurement(
 
 	features := perspectives.ClassifyRegime(snapshots)
 	story.regimeFeatures[measurement.Symbol] = features
-	story.publishMarketRegime()
+	// Throttled like the decision tree: the cross-section radar does not need
+	// to ship per measurement (it used to — thousands of frames/second at the
+	// hub for a chart that repaints 4x/second at most).
+	if time.Since(story.lastRegimePublishAt) >= decisionTreePublishInterval {
+		story.lastRegimePublishAt = time.Now()
+		story.publishMarketRegime()
+	}
 
 	if len(story.thoughts) == 0 {
 		return nil
@@ -285,7 +302,7 @@ func (story *Story) ingestMeasurement(
 
 	story.reasonTrace.Nodes = story.reasonTrace.Nodes[:0]
 
-	act, found := reasoning.EvaluateStatefulTraced(
+	act, firedKey, found := reasoning.EvaluateStatefulTraced(
 		story.thoughts, context, story.reasonState(measurement.Symbol), &story.reasonTrace,
 	)
 
@@ -295,15 +312,26 @@ func (story *Story) ingestMeasurement(
 		return nil
 	}
 
-	if reasoning.IsShortAct(act) && !viper.GetBool("trading.margin_enabled") {
-		return nil
-	}
-
 	action := reasoning.ActionFromAct(act, measurement)
 	action.Regime = features.Regime
 
-	if story.quoteReady != nil && !story.quoteReady(measurement.Symbol) {
-		return nil
+	// Conviction comes from the signal leaf that actually fired the node, not
+	// from whatever measurement row happened to trigger this walk — a latched
+	// pump entry firing on a depthflow tick used to carry that tick's
+	// near-zero SNR into entry ranking and preemption.
+	action.SNR, action.Confidence = reasoning.ResolveConviction(
+		story.thoughts, firedKey, context, measurement,
+	)
+
+	// Blocked actions are AUDITED, then dropped — a short with margin off and
+	// an entry without a ready quote used to vanish without a trace.
+	blocked := ""
+
+	switch {
+	case reasoning.IsShortAct(act) && !viper.GetBool("trading.margin_enabled"):
+		blocked = "short entries disabled (margin off)"
+	case story.quoteReady != nil && !story.quoteReady(measurement.Symbol):
+		blocked = "quote not ready"
 	}
 
 	if err := story.writePlaybookAudit(
@@ -311,8 +339,13 @@ func (story *Story) ingestMeasurement(
 		story.regimeFeatures[measurement.Symbol],
 		action,
 		story.reasonTrace,
+		blocked,
 	); errnie.Error(err) != nil {
 		return errnie.Error(err)
+	}
+
+	if blocked != "" {
+		return nil
 	}
 
 	story.raw.Send(&qpool.QValue[any]{
@@ -320,9 +353,10 @@ func (story *Story) ingestMeasurement(
 		Value: action,
 	})
 
-	if reasoning.IsEntryAction(act.Type) {
-		story.reasonState(measurement.Symbol).Reset()
-	}
+	// No premature reset on entry EMISSION: cross-tick latches clear when the
+	// holding state actually flips (the evaluator's episode boundary), i.e. on
+	// fill — resetting here destroyed sequence memory for entries the trader
+	// then rejected or batched away.
 
 	return nil
 }
@@ -344,8 +378,11 @@ func (story *Story) ringSnapshot(symbol string) []types.Measurement {
 		return nil
 	}
 
-	capacity := window.Len()
-	snapshots := make([]types.Measurement, 0, capacity)
+	// Reuse one scratch buffer: this runs per measurement and was the story's
+	// steadiest allocation (replay's tape learned the same lesson). Safe because
+	// the story is single-goroutine and every consumer of the snapshot finishes
+	// before the next ingest.
+	snapshots := story.snapshotScratch[:0]
 
 	window.Do(func(value any) {
 		measurement, ok := value.(types.Measurement)
@@ -356,6 +393,8 @@ func (story *Story) ringSnapshot(symbol string) []types.Measurement {
 
 		snapshots = append(snapshots, measurement)
 	})
+
+	story.snapshotScratch = snapshots
 
 	return snapshots
 }
@@ -475,6 +514,7 @@ func (story *Story) writePlaybookAudit(
 	regime perspectives.RegimeFeatures,
 	action reasoning.Action,
 	trace reasoning.ReasonTrace,
+	blocked string,
 ) error {
 	frame := map[string]any{
 		"audit_event": "playbook_walk",
@@ -489,6 +529,10 @@ func (story *Story) writePlaybookAudit(
 		"fraction":    action.Fraction,
 		"offset":      action.Offset,
 		"trace":       playbookAuditTrace(trace),
+	}
+
+	if blocked != "" {
+		frame["blocked"] = blocked
 	}
 
 	for key, value := range playbookAuditMeasurement(measurement) {
@@ -521,9 +565,31 @@ func (story *Story) positionState(measurement types.Measurement) reasoning.Posit
 	state, ok := story.positions[symbol]
 
 	if !ok {
+		// Seed from the trader's FILL-derived facts when available — side,
+		// actual entry price, actual entry time — the same truths replay's
+		// ledger projects. The old projection guessed entry from the first
+		// post-hold mark, never set Side, and never tracked Trough, so
+		// has_started/has_ended and trailing exits reasoned over different
+		// state live than in replay.
 		state = &reasoning.PositionState{
-			Holding: true, EntryPrice: measurement.Last, Peak: measurement.Last, EntryAt: now,
+			Holding: true, EntryPrice: measurement.Last, Peak: measurement.Last,
+			Trough: measurement.Last, EntryAt: now,
 		}
+
+		if story.positionFacts != nil {
+			if side, entryPrice, entryAt, known := story.positionFacts(symbol); known {
+				state.Side = side
+
+				if entryPrice > 0 {
+					state.EntryPrice = entryPrice
+				}
+
+				if !entryAt.IsZero() {
+					state.EntryAt = entryAt
+				}
+			}
+		}
+
 		story.positions[symbol] = state
 	}
 
@@ -531,8 +597,16 @@ func (story *Story) positionState(measurement types.Measurement) reasoning.Posit
 	state.Last = measurement.Last
 	state.Now = now
 
+	if story.positionStrategy != nil {
+		state.Strategy = story.positionStrategy(symbol)
+	}
+
 	if measurement.Last > state.Peak {
 		state.Peak = measurement.Last
+	}
+
+	if state.Trough == 0 || measurement.Last < state.Trough {
+		state.Trough = measurement.Last
 	}
 
 	return *state
@@ -668,6 +742,21 @@ SetPositionHeld wires the trader's exchange-reconciled inventory view so exit
 managers only arm when a symbol is actually held. The chart focus set is UI-only
 and must not drive lifecycle predicates.
 */
+// SetPositionStrategy wires the trader's entry attribution (symbol -> setup
+// name) so position predicates can gate exits per setup.
+func (story *Story) SetPositionStrategy(strategy func(string) string) {
+	story.positionStrategy = strategy
+}
+
+// SetPositionFacts wires the trader's fill-derived position facts (side, fill
+// entry price, fill time) so live lifecycle predicates reason over the same
+// truths replay's ledger projects — not a mark-price guess.
+func (story *Story) SetPositionFacts(
+	facts func(string) (trading.Side, float64, time.Time, bool),
+) {
+	story.positionFacts = facts
+}
+
 func (story *Story) SetPositionHeld(held func(string) bool) {
 	story.positionHeld = held
 }

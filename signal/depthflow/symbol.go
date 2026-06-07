@@ -111,8 +111,8 @@ func (state *DepthSymbol) verifyBookChecksumLocked(expected int64) {
 	// it. While latched, Measure() fell back to trade pressure, whose only
 	// possible category is dense_neutrality — hence 76k rows of one constant
 	// category on the diagnostics page. Keep measuring the approximate book;
-	// a per-symbol resubscribe on persistent divergence is the protocol-correct
-	// follow-up.
+	// the signal layer requests a per-symbol book resync (unsubscribe +
+	// resubscribe → fresh snapshot) which clears this flag.
 	if !state.divergedLogged {
 		state.divergedLogged = true
 		errnie.Warn("depthflow: book checksum diverged for " + state.symbol + " — field degraded, continuing")
@@ -132,6 +132,15 @@ func (state *DepthSymbol) PushTradePressure(sign float64) (float64, error) {
 	state.buyPressure = value
 
 	return value, nil
+}
+
+// Diverged reports whether the maintained book disagrees with the exchange
+// checksum — the trigger for a per-symbol book resync.
+func (state *DepthSymbol) Diverged() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.bookDiverged
 }
 
 func (state *DepthSymbol) HasBook() bool {

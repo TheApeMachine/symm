@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -94,20 +93,60 @@ func (result ReplayResult) ReturnPerTrade() float64 {
 Score replays the tape and returns realized PnL from closed round trips.
 */
 func (simulation *ReplaySimulation) Score() float64 {
-	return simulation.Result().Score
+	return simulation.SearchResult().Score
+}
+
+/*
+SearchResult replays the tape and returns the fields the optimizer scores on,
+without building per-setup attribution or trade logs.
+*/
+func (simulation *ReplaySimulation) SearchResult() ReplayResult {
+	ledger := simulation.replay()
+
+	if ledger == nil {
+		return ReplayResult{}
+	}
+
+	defer releaseReplayLedger(ledger)
+
+	return simulation.coreResult(ledger)
 }
 
 /*
 Result replays the tape and returns PnL with trade activity.
 */
 func (simulation *ReplaySimulation) Result() ReplayResult {
-	if simulation.tape.Len() == 0 {
+	ledger := simulation.replay()
+
+	if ledger == nil {
 		return ReplayResult{}
 	}
 
-	ledger := acquireReplayLedger(simulation.costs)
-
 	defer releaseReplayLedger(ledger)
+
+	result := simulation.coreResult(ledger)
+
+	if !simulation.costs.CollectAttribution && !simulation.costs.CollectTrades {
+		return result
+	}
+
+	if simulation.costs.CollectAttribution {
+		result.PerStrategy = attributedStrategies(ledger)
+	}
+
+	if simulation.costs.CollectTrades {
+		result.Trades = append([]ClosedTrade(nil), ledger.tradeLog...)
+	}
+
+	return result
+}
+
+func (simulation *ReplaySimulation) replay() *replayLedger {
+	if simulation.tape.Len() == 0 {
+		return nil
+	}
+
+	ledger := acquireReplayLedger(simulation.costs)
 
 	ledger.reentryTickCooldown = simulation.tape.ReentryTickCooldown
 
@@ -139,7 +178,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 		}
 
 		snapshots = simulation.tape.AppendSnapshot(tickIndex, snapshots)
-		simulation.applyThoughts(ledger, tick.Row, snapshots, reason)
+		simulation.applyThoughts(ledger, tick, snapshots, reason)
 		ledger.onTick(tick.Row.Symbol)
 
 		if !tick.Row.At.IsZero() {
@@ -151,6 +190,24 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	ledger.flushEntryBatch(time.Time{})
 	ledger.flushPending(lastAt, lastRow)
 
+	return ledger
+}
+
+func (simulation *ReplaySimulation) coreResult(ledger *replayLedger) ReplayResult {
+	return ReplayResult{
+		Score:            ledger.realizedReturn(),
+		RealizedEUR:      ledger.realized,
+		ClosedTrades:     ledger.closedTrades,
+		ExposureTicks:    ledger.exposureTicks,
+		TotalTicks:       simulation.tape.Len(),
+		StartingCapital:  ledger.startingCapital(),
+		FundBlocked:      ledger.fundBlocked,
+		PreflightBlocked: ledger.preflightBlocked,
+		ExitBlocked:      ledger.exitBlocked,
+	}
+}
+
+func attributedStrategies(ledger *replayLedger) map[string]StrategyResult {
 	perStrategy := make(map[string]StrategyResult, len(ledger.perStrategy))
 
 	for strategy, tally := range ledger.perStrategy {
@@ -167,22 +224,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 		perStrategy[strategy] = attributed
 	}
 
-	trades := make([]ClosedTrade, len(ledger.tradeLog))
-	copy(trades, ledger.tradeLog)
-
-	return ReplayResult{
-		Score:            ledger.realizedReturn(),
-		RealizedEUR:      ledger.realized,
-		ClosedTrades:     ledger.closedTrades,
-		ExposureTicks:    ledger.exposureTicks,
-		TotalTicks:       simulation.tape.Len(),
-		StartingCapital:  ledger.startingCapital(),
-		FundBlocked:      ledger.fundBlocked,
-		PreflightBlocked: ledger.preflightBlocked,
-		ExitBlocked:      ledger.exitBlocked,
-		PerStrategy:      perStrategy,
-		Trades:           trades,
-	}
+	return perStrategy
 }
 
 /*
@@ -192,20 +234,29 @@ cross-tick state, and queue the chosen act (carrying its per-node trigger offset
 */
 func (simulation *ReplaySimulation) applyThoughts(
 	ledger *replayLedger,
-	row types.Measurement,
+	tick PrecompiledTick,
 	snapshots []types.Measurement,
 	reason *reasoning.WindowReason,
 ) {
-	regime := perspectives.ClassifyRegime(snapshots).Regime
-	reason.Reset(snapshots, regime, ledger.positionState(row))
+	regime := tick.Regime
+	reason.Reset(snapshots, regime, ledger.positionState(tick.Row))
+	ledger.lastRegime = regime
 
-	act, found := reasoning.EvaluateStateful(
-		simulation.thoughts, reason, ledger.reasonState(row.Symbol),
+	act, firedKey, found := reasoning.EvaluateStatefulKeyed(
+		simulation.thoughts, reason, ledger.reasonState(tick.Row.Symbol),
 	)
 
 	if !found || act.Type == reasoning.ActionNone {
 		return
 	}
+
+	row := tick.Row
+
+	// Same conviction attribution as live: the firing leaf's evidence, not the
+	// ambient row that happened to trigger the walk.
+	row.SNR, row.Confidence = reasoning.ResolveConviction(
+		simulation.thoughts, firedKey, reason, row,
+	)
 
 	ledger.queueAction(act, row, snapshots)
 }

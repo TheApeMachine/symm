@@ -30,7 +30,7 @@ func scoreForest(
 	costs replay.ReplayCosts,
 	config SearchConfig,
 ) Candidate {
-	result := replay.NewThoughtSimulation(ctx, forest, tape, costs).Result()
+	result := replay.NewThoughtSimulation(ctx, forest, tape, costs).SearchResult()
 	credited := walletVelocityScore(result)
 
 	if credited > 0 {

@@ -1,4 +1,4 @@
-export type OhlcBar = {
+export type OhlcCandle = {
 	sec: number;
 	open: number;
 	high: number;
@@ -7,36 +7,16 @@ export type OhlcBar = {
 	volume: number;
 };
 
-type CandleBarEvent = {
-	event: "candle_bar";
+export type CandleWire = OhlcCandle & {
 	symbol: string;
-	sec: number;
-	open: number;
-	high: number;
-	low: number;
-	close: number;
-	volume: number;
 };
 
-type OhlcHubRow = {
-	symbol: string;
-	open: number;
-	high: number;
-	low: number;
-	close: number;
-	volume?: number;
-	interval_begin?: string;
-};
-
-type BarSink = (bar: OhlcBar) => void;
-
-// Threshold used to identify millisecond timestamps: 1e12 ms is approximately Sep 2001.
-const MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000;
+type BarSink = (bar: OhlcCandle) => void;
 
 const chartSinks = new Map<string, BarSink>();
-const pendingBars = new Map<string, OhlcBar[]>();
+const pendingBars = new Map<string, OhlcCandle[]>();
 
-const isCandleBarEvent = (raw: unknown): raw is CandleBarEvent => {
+const isCandleWire = (raw: unknown): raw is CandleWire => {
 	if (typeof raw !== "object" || raw === null) {
 		return false;
 	}
@@ -44,7 +24,6 @@ const isCandleBarEvent = (raw: unknown): raw is CandleBarEvent => {
 	const row = raw as Record<string, unknown>;
 
 	return (
-		row.event === "candle_bar" &&
 		typeof row.symbol === "string" &&
 		typeof row.sec === "number" &&
 		typeof row.open === "number" &&
@@ -54,109 +33,14 @@ const isCandleBarEvent = (raw: unknown): raw is CandleBarEvent => {
 	);
 };
 
-const isOhlcHubRow = (raw: unknown): raw is OhlcHubRow => {
-	if (typeof raw !== "object" || raw === null) {
-		return false;
-	}
-
-	const row = raw as Record<string, unknown>;
-
-	if (typeof row.event === "string") {
-		return false;
-	}
-
-	return (
-		typeof row.symbol === "string" &&
-		typeof row.open === "number" &&
-		typeof row.high === "number" &&
-		typeof row.low === "number" &&
-		typeof row.close === "number"
-	);
-};
-
-export const parseIntervalBeginSec = (
-	intervalBegin: unknown,
-): number | null => {
-	if (typeof intervalBegin === "number" && Number.isFinite(intervalBegin)) {
-		if (intervalBegin > MILLISECOND_TIMESTAMP_THRESHOLD) {
-			return Math.floor(intervalBegin / 1000);
-		}
-
-		if (intervalBegin > 0) {
-			return Math.floor(intervalBegin);
-		}
-
-		return null;
-	}
-
-	if (typeof intervalBegin !== "string") {
-		return null;
-	}
-
-	const trimmed = intervalBegin.trim();
-
-	if (trimmed.length === 0) {
-		return null;
-	}
-
-	const parsed = Date.parse(trimmed);
-
-	if (!Number.isFinite(parsed) || parsed <= 0) {
-		return null;
-	}
-
-	return Math.floor(parsed / 1000);
-};
-
-const hubRowToBar = (row: OhlcHubRow): OhlcBar | null => {
-	const sec = parseIntervalBeginSec(row.interval_begin);
-
-	if (sec === null) {
-		return null;
-	}
-
-	return {
-		sec,
-		open: row.open,
-		high: row.high,
-		low: row.low,
-		close: row.close,
-		volume: row.volume ?? 0,
-	};
-};
-
-export const parseCandleWire = (
-	raw: unknown,
-): { symbol: string; bar: OhlcBar } | undefined => {
-	if (isCandleBarEvent(raw)) {
-		return {
-			symbol: raw.symbol,
-			bar: {
-				sec: raw.sec,
-				open: raw.open,
-				high: raw.high,
-				low: raw.low,
-				close: raw.close,
-				volume: raw.volume,
-			},
-		};
-	}
-
-	if (!isOhlcHubRow(raw)) {
-		return undefined;
-	}
-
-	const bar = hubRowToBar(raw);
-
-	if (bar === null) {
-		return undefined;
-	}
-
-	return {
-		symbol: raw.symbol,
-		bar,
-	};
-};
+const candleFromWire = (wire: CandleWire): OhlcCandle => ({
+	sec: wire.sec,
+	open: wire.open,
+	high: wire.high,
+	low: wire.low,
+	close: wire.close,
+	volume: typeof wire.volume === "number" ? wire.volume : 0,
+});
 
 const flushPending = (symbol: string, sink: BarSink): void => {
 	const queued = pendingBars.get(symbol);
@@ -173,8 +57,8 @@ const flushPending = (symbol: string, sink: BarSink): void => {
 };
 
 /*
-registerTradeChart connects a mounted chart appendBar to candle_bar websocket frames.
-ingestCandleWire parses hub payloads and forwards them to the registered sink only.
+registerTradeChart connects a mounted chart appendBar to ohlc websocket frames.
+ingestCandleWire routes backend candle rows to the registered sink only.
 */
 export const registerTradeChart = (
 	symbol: string,
@@ -191,20 +75,27 @@ export const registerTradeChart = (
 };
 
 export const ingestCandleWire = (raw: unknown): void => {
-	const parsed = parseCandleWire(raw);
-
-	if (parsed === undefined) {
+	if (!isCandleWire(raw)) {
 		return;
 	}
 
-	const sink = chartSinks.get(parsed.symbol);
+	const bar = candleFromWire(raw);
+	const sink = chartSinks.get(raw.symbol);
 
 	if (sink) {
-		sink(parsed.bar);
+		sink(bar);
 		return;
 	}
 
-	const queued = pendingBars.get(parsed.symbol) ?? [];
-	queued.push(parsed.bar);
-	pendingBars.set(parsed.symbol, queued);
+	const queued = pendingBars.get(raw.symbol) ?? [];
+	queued.push(bar);
+
+	// Bound the pre-mount buffer: a chart that never mounts (or a symbol the
+	// user never opens) must not accumulate bars for the whole session. The
+	// visible window is 300 candles; buffering more than that buys nothing.
+	if (queued.length > 300) {
+		queued.splice(0, queued.length - 300);
+	}
+
+	pendingBars.set(raw.symbol, queued);
 };

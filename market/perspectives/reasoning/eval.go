@@ -2,6 +2,8 @@ package reasoning
 
 import (
 	"strconv"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -33,6 +35,11 @@ type ReasonContext interface {
 	Lifecycle(state types.ObservationType) bool
 	// PositionSide is the open position's entry side (buy = long, sell = short).
 	PositionSide() trading.Side
+	// PositionStrategy is the setup name that opened the position ("" when flat).
+	PositionStrategy() string
+	// Now is the context clock — the tape row's moment, not the wall — so latch
+	// aging behaves identically live and in replay.
+	Now() time.Time
 	// Signal returns a category's strength in the given unit at the lookback;
 	// ok is false when the category is absent.
 	Signal(category types.CategoryType, unit UnitType, lookback Lookback) (value float64, ok bool)
@@ -53,18 +60,39 @@ regime episode reasons from a clean frontier. Reuse one
 ReasonState per symbol across ticks; a fresh one yields the single-tick semantics.
 */
 type ReasonState struct {
-	active      map[string]bool
-	next        map[string]bool
+	active      map[string]time.Time // node key -> latch birth (context clock)
+	next        map[string]time.Time
 	lastHolding bool
 	lastRegime  types.Regime
 	primed      bool
 }
 
+// latchTTLNanos bounds how long a fired node keeps its Then children reachable.
+// Without it a "saw compression, then ignition" chain stayed armed for the WHOLE
+// episode — an entry could fire minutes after the setup that justified it, which
+// on a fast pump is how you buy the top. Measured on the CONTEXT clock (the
+// tape row's time), so live and replay age latches identically. 0 disables.
+var latchTTLNanos atomic.Int64
+
+func init() {
+	latchTTLNanos.Store(int64(90 * time.Second))
+}
+
+// SetLatchTTL configures the latch age bound (0 = never expires).
+func SetLatchTTL(ttl time.Duration) {
+	latchTTLNanos.Store(int64(ttl))
+}
+
+// LatchTTL reports the configured latch age bound.
+func LatchTTL() time.Duration {
+	return time.Duration(latchTTLNanos.Load())
+}
+
 // NewReasonState returns an empty, ready-to-thread state.
 func NewReasonState() *ReasonState {
 	return &ReasonState{
-		active: make(map[string]bool),
-		next:   make(map[string]bool),
+		active: make(map[string]time.Time),
+		next:   make(map[string]time.Time),
 	}
 }
 
@@ -125,6 +153,17 @@ type ReasonTrace struct {
 }
 
 func EvaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState) (Act, bool) {
+	act, _, found := evaluateStateful(thoughts, ctx, state, nil)
+
+	return act, found
+}
+
+/*
+EvaluateStatefulKeyed is EvaluateStateful that also returns the fired node's
+tree key, so callers can resolve conviction from the node that actually decided
+instead of from whatever measurement row happened to trigger the walk.
+*/
+func EvaluateStatefulKeyed(thoughts []Thought, ctx ReasonContext, state *ReasonState) (Act, string, bool) {
 	return evaluateStateful(thoughts, ctx, state, nil)
 }
 
@@ -134,11 +173,11 @@ node's outcome so the live decision tree can show where evaluations travel and
 where they die. The returned action is identical to EvaluateStateful — tracing has
 no effect on the decision.
 */
-func EvaluateStatefulTraced(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, bool) {
+func EvaluateStatefulTraced(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, string, bool) {
 	return evaluateStateful(thoughts, ctx, state, trace)
 }
 
-func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, bool) {
+func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState, trace *ReasonTrace) (Act, string, bool) {
 	if state == nil {
 		state = NewReasonState()
 	}
@@ -162,12 +201,14 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 	state.primed = true
 
 	if state.next == nil {
-		state.next = make(map[string]bool, len(state.active))
+		state.next = make(map[string]time.Time, len(state.active))
 	}
 
 	clear(state.next)
 
 	next := state.next
+	ttl := LatchTTL()
+	now := ctx.Now()
 	best := Act{}
 	bestDepth := -1
 	bestKey := ""
@@ -178,7 +219,10 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 		for index := range nodes {
 			node := nodes[index]
 			key := prefix + strconv.Itoa(index)
-			latched := state.active[key]
+			latchedAt, wasLatched := state.active[key]
+			// An expired latch is no latch: the sequence has to re-prove its
+			// premise instead of firing a stale continuation.
+			latched := wasLatched && (ttl <= 0 || now.IsZero() || now.Sub(latchedAt) <= ttl)
 
 			// A node is reachable when its parent is open this tick, or when it
 			// already latched on an earlier tick of this episode.
@@ -189,8 +233,12 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 			if reachable {
 				firesNow = holds(node.When, ctx)
 
-				if firesNow || latched {
-					next[key] = true
+				if firesNow {
+					// A node firing THIS tick refreshes its latch: the premise
+					// is demonstrably still true now.
+					next[key] = now
+				} else if latched {
+					next[key] = latchedAt // carried forward, still aging
 				}
 
 				if firesNow && node.Do.Type != ActionNone && depth > bestDepth {
@@ -249,7 +297,7 @@ func evaluateStateful(thoughts []Thought, ctx ReasonContext, state *ReasonState,
 		}
 	}
 
-	return best, found
+	return best, bestKey, found
 }
 
 // HoldsPredicate exposes predicate evaluation for capture replay tests.
@@ -284,6 +332,19 @@ func holds(pred Predicate, ctx ReasonContext) bool {
 	case SubjectRegime:
 		return ctx.Regime() == pred.Regime
 	case SubjectPosition:
+		// Strategy gates the leaf to positions opened by a named setup, so each
+		// setup can own its exits ("trail 1% on quick_pump, 3% on slow_pump").
+		// A match implies holding: PositionStrategy is "" when flat.
+		if pred.Strategy != "" {
+			if ctx.PositionStrategy() != pred.Strategy {
+				return false
+			}
+
+			if pred.Side == "" && pred.Lifecycle == types.ObservationNone {
+				return true
+			}
+		}
+
 		if pred.Side != "" {
 			return ctx.PositionSide() == pred.Side
 		}

@@ -1,268 +1,30 @@
+import type { OhlcDataSeries, SciChartSurface } from "scichart";
+
 import {
-	AnnotationHoverModifier,
-	DiscontinuousDateAxis,
-	EAnnotationClippingMode,
-	EAutoRange,
-	EAxisAlignment,
-	EBaseType,
-	ECursorStyle,
-	EFillPaletteMode,
-	EHorizontalTextPosition,
-	ENumericFormat,
-	EPaletteProviderType,
-	ETextAlignment,
-	EVerticalTextPosition,
-	EXyDirection,
-	FastCandlestickRenderableSeries,
-	FastColumnRenderableSeries,
-	type IFillPaletteProvider,
-	type IPointMetadata,
-	type IRenderableSeries,
-	MouseWheelZoomModifier,
-	NumberRange,
-	NumericAxis,
-	OhlcDataSeries,
-	parseColorToUIntArgb,
-	registerType,
-	SciChartSurface,
-	Thickness,
-	type TPaletteProviderDefinition,
-	toEngineering,
-	XyDataSeries,
-	ZoomExtentsModifier,
-} from "scichart";
-import type { Point } from "scichart/Core/Point";
-import {
-	EAnnotationVisibilityMode,
-	EAxisLabelDrawMode,
-	EMultiPointLabelAnchorMode,
-	ESegmentLabelRotationMode,
-	ESnapMode,
-	type IMultiPointAnnotationBaseOptions,
-	type IMultiPointLabelFormatParams,
-	SciTraderDarkTheme,
-	StopLossTakeProfitAnnotation,
-	type TMultiPointLabelFormatter,
-} from "scichart-financial-tools";
-import {
-	resolveFollowVisibleRange,
-	visibleRangesMatch,
+	createFinancialChartSurface,
+	followLatestCandleRange,
+	isViewportFollowingLiveEdge,
+	refreshFinancialPriceAxis,
 } from "#/components/charts/shared/financial-chart-utils";
-import { appTheme } from "#/components/charts/shared/theme";
-import type { OhlcBar } from "#/components/charts/trade/trade-chart-wire";
+import type { OhlcCandle } from "#/components/charts/trade/trade-chart-wire";
 import { ensureSciChartWasm } from "#/lib/utils";
-
-const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
-const VOLUME_PALETTE_PROVIDER_TYPE = "TradingAnnotationVolumePaletteProvider";
-const VISIBLE_CANDLE_COUNT = 300;
-
-export const FIB_REGION_COLORS = [
-	"#F87171",
-	"#FB8B62",
-	"#FBA55A",
-	"#FBC35A",
-	"#F5D86A",
-	"#D2E26F",
-	"#9EDB7E",
-	"#70CEA5",
-	"#7FAECE",
-	"#A1A1AA",
-];
-
-export const TRADING_ANNOTATION_COLORS = {
-	foreground: "#F5F5F5",
-	freePolyline: "#C792EA",
-	snappedPolyline: "#4EC385",
-	ray: "#FBA55A",
-	extendedLine: "#cc5511",
-	channel: "#3B82F6",
-	flatChannel: "#93C5FD",
-	disjointChannel: "#FB7185",
-	pitchfork: "#ff8833",
-	pitchfan: "#4EC385",
-	pitchZone: "#3B82F6",
-	halfPitchZone: "#22C55E",
-	measureUp: "#3B82F6",
-	measureDown: "#EF4444",
-	freehand: "#3388FF",
-	lockedFreehand: "#A3E635",
-	warning: "#F97066",
-	connector: "#F7C948",
-};
-
-export type TFinancialChartContext = {
-	sciChartSurface: SciChartSurface;
-	wasmContext: any;
-	xAxis: DiscontinuousDateAxis;
-	yAxis: NumericAxis;
-	candlestickSeries: FastCandlestickRenderableSeries;
-	xValues: number[];
-	openValues: number[];
-	highValues: number[];
-	lowValues: number[];
-	closeValues: number[];
-	volumeValues: number[];
-	xAt: (index: number) => number;
-	yAt: (index: number, offsetFraction?: number) => number;
-	priceAt: (index: number) => number;
-	formatPrice: (value: number) => string;
-};
 
 export type TTradeChartInitResult = {
 	sciChartSurface: SciChartSurface;
-	appendBar: (bar: OhlcBar) => void;
+	appendBar: (bar: OhlcCandle) => void;
 };
 
-export const createFinancialChart = async (
-	rootElement: string | HTMLDivElement,
-	options?: {
-		symbol?: string;
-		startPrice?: number;
-		volatility?: number;
-		title?: string;
-		startDate?: Date;
-		dataSeed?: number;
-	},
-): Promise<TFinancialChartContext> => {
-	const { sciChartSurface, wasmContext } = await SciChartSurface.create(
-		rootElement,
-		{
-			theme: new SciTraderDarkTheme(),
-			padding: new Thickness(10, 10, 10, 10),
-		},
-	);
+const defaultBarStepSec = (ohlc: OhlcDataSeries): number => {
+	const barCount = ohlc.count();
 
-	const xAxis = new DiscontinuousDateAxis(wasmContext, {
-		axisAlignment: EAxisAlignment.Bottom,
-		autoRange: EAutoRange.Never,
-		cursorLabelFormat: ENumericFormat.Date_HHMM,
-		drawMajorBands: true,
-		drawMinorGridLines: true,
-		majorGridLineStyle: { color: "#FFFFFF05" },
-	});
-
-	const yAxis = new NumericAxis(wasmContext, {
-		axisAlignment: EAxisAlignment.Right,
-		growBy: new NumberRange(0.1, 0.2),
-		labelFormat: ENumericFormat.Engineering,
-		labelPrecision: 1,
-		labelPrefix: "$",
-		autoRange: EAutoRange.Always,
-		drawMajorBands: true,
-		drawMinorGridLines: true,
-		majorGridLineStyle: { color: "#FFFFFF05" },
-	});
-
-	sciChartSurface.xAxes.add(xAxis);
-	sciChartSurface.yAxes.add(yAxis);
-	sciChartSurface.yAxes.add(
-		new NumericAxis(wasmContext, {
-			id: Y_AXIS_VOLUME_ID,
-			axisAlignment: EAxisAlignment.Left,
-			growBy: new NumberRange(0, 4),
-			isVisible: false,
-			autoRange: EAutoRange.Always,
-		}),
-	);
-
-	const xValues: number[] = [];
-	const openValues: number[] = [];
-	const highValues: number[] = [];
-	const lowValues: number[] = [];
-	const closeValues: number[] = [];
-	const volumeValues: number[] = [];
-
-	if (xValues.length > 0) {
-		const firstVisibleIndex = Math.max(
-			0,
-			xValues.length - VISIBLE_CANDLE_COUNT,
-		);
-		xAxis.visibleRange = new NumberRange(
-			xValues[firstVisibleIndex],
-			xValues[xValues.length - 1],
-		);
+	if (barCount <= 1) {
+		return 60;
 	}
 
-	const candleDataSeries = new OhlcDataSeries(wasmContext, {
-		xValues,
-		openValues,
-		highValues,
-		lowValues,
-		closeValues,
-		dataSeriesName: options?.title ?? "BTC / USDT",
-		isSorted: true,
-		containsNaN: false,
-	});
+	const nativeX = ohlc.getNativeXValues();
+	const lastIndex = barCount - 1;
 
-	const candlestickSeries = new FastCandlestickRenderableSeries(wasmContext, {
-		id: "Candles",
-		dataSeries: candleDataSeries,
-		stroke: appTheme.ForegroundColor,
-		strokeThickness: 1,
-		dataPointWidth: 0.8,
-		brushUp: appTheme.VividGreen + "CC",
-		brushDown: appTheme.VividRed + "CC",
-		strokeUp: appTheme.VividGreen,
-		strokeDown: appTheme.VividRed,
-	});
-	sciChartSurface.renderableSeries.add(candlestickSeries);
-
-	sciChartSurface.renderableSeries.add(
-		new FastColumnRenderableSeries(wasmContext, {
-			dataSeries: new XyDataSeries(wasmContext, {
-				xValues,
-				yValues: volumeValues,
-				dataSeriesName: "Volume",
-				isSorted: true,
-				containsNaN: false,
-			}),
-			strokeThickness: 0,
-			dataPointWidth: 0.65,
-			yAxisId: Y_AXIS_VOLUME_ID,
-			paletteProvider: new VolumePaletteProvider(
-				openValues,
-				closeValues,
-				appTheme.VividGreen + "66",
-				appTheme.VividRed + "66",
-			),
-		}),
-	);
-
-	const lastIndex = xValues.length - 1;
-	const clampIndex = (index: number) =>
-		Math.max(0, Math.min(lastIndex, Math.round(index)));
-	const minLow = Math.min(...lowValues);
-	const maxHigh = Math.max(...highValues);
-	const span = Math.max(1, maxHigh - minLow);
-
-	const priceAt = (index: number) => closeValues[clampIndex(index)];
-	const xAt = (index: number) => xValues[clampIndex(index)];
-	const yAt = (index: number, offsetFraction = 0) => {
-		const margin = span * 0.025;
-		return Math.max(
-			minLow + margin,
-			Math.min(maxHigh - margin, priceAt(index) + span * offsetFraction),
-		);
-	};
-
-	return {
-		sciChartSurface,
-		wasmContext,
-		xAxis,
-		yAxis,
-		candlestickSeries,
-		xValues,
-		openValues,
-		highValues,
-		lowValues,
-		closeValues,
-		volumeValues,
-		xAt,
-		yAt,
-		priceAt,
-		formatPrice: (value: number) =>
-			yAxis.labelProvider.formatCursorLabel(value),
-	};
+	return nativeX.get(lastIndex) - nativeX.get(lastIndex - 1);
 };
 
 export const initTradeChart = async (
@@ -271,393 +33,54 @@ export const initTradeChart = async (
 ): Promise<TTradeChartInitResult> => {
 	await ensureSciChartWasm();
 
-	const ctx = await createFinancialChart(rootElement, {
-		symbol,
-		title: symbol,
-	});
-	addDefaultFinancialModifiers(ctx.sciChartSurface);
+	const chart = await createFinancialChartSurface(rootElement, symbol);
+	const {
+		sciChartSurface,
+		xAxis,
+		yAxis,
+		ohlc,
+		volume,
+		openValues,
+		closeValues,
+	} = chart;
 
-	const ohlcDataSeries = ctx.candlestickSeries.dataSeries as OhlcDataSeries;
-	const volumeSeries = ctx.sciChartSurface.renderableSeries.get(1);
-	const volumeDataSeries = volumeSeries?.dataSeries as XyDataSeries | undefined;
-	const sciChartSurface = ctx.sciChartSurface;
-	const xAxis = ctx.xAxis;
-	let hasInitialRange = false;
-	let suppressViewportTracking = false;
-	let userControlsViewport = false;
-	let lastProgrammaticRange: NumberRange | null = null;
-	let followVisibleRange: NumberRange | undefined;
+	const appendBar = (bar: OhlcCandle) => {
+		const nativeX = ohlc.getNativeXValues();
+		const lastIndex = ohlc.count() - 1;
+		const priorLastX = lastIndex >= 0 ? nativeX.get(lastIndex) : null;
+		const barStep = defaultBarStepSec(ohlc);
+		const following =
+			priorLastX === null ||
+			isViewportFollowingLiveEdge(xAxis.visibleRange, priorLastX, barStep);
 
-	const setXVisibleRange = (range: NumberRange) => {
-		// SciChart applies visibleRange asynchronously; followVisibleRange is
-		// updated synchronously so back-to-back candle appends never read a stale
-		// wall-clock or pre-follow span from xAxis.visibleRange.
-		suppressViewportTracking = true;
-		lastProgrammaticRange = range;
-		followVisibleRange = range;
-
-		try {
-			xAxis.visibleRange = range;
-		} finally {
-			requestAnimationFrame(() => {
-				suppressViewportTracking = false;
-			});
-		}
-	};
-
-	const onVisibleRangeChanged = () => {
-		if (suppressViewportTracking) {
-			return;
+		if (priorLastX === bar.sec) {
+			ohlc.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
+			volume.update(lastIndex, bar.volume);
+			openValues[lastIndex] = bar.open;
+			closeValues[lastIndex] = bar.close;
+		} else {
+			ohlc.append(bar.sec, bar.open, bar.high, bar.low, bar.close);
+			volume.append(bar.sec, bar.volume);
+			openValues.push(bar.open);
+			closeValues.push(bar.close);
 		}
 
-		const currentRange = xAxis.visibleRange;
-
-		if (
-			lastProgrammaticRange !== null &&
-			visibleRangesMatch(currentRange, lastProgrammaticRange)
-		) {
-			return;
-		}
-
-		userControlsViewport = true;
-	};
-
-	xAxis.visibleRangeChanged.subscribe(onVisibleRangeChanged);
-
-	const applyFollowRange = (mode: "initial" | "live") => {
-		if (userControlsViewport) {
-			return;
-		}
-
-		const nextRange = resolveFollowVisibleRange(
-			ohlcDataSeries,
-			mode,
-			followVisibleRange ?? xAxis.visibleRange,
-		);
-
-		if (nextRange === null) {
-			return;
-		}
-
-		setXVisibleRange(nextRange);
-	};
-
-	const appendBar = (bar: OhlcBar) => {
-		const xSec = bar.sec;
-		const lastIndex = ohlcDataSeries.count() - 1;
-		const lastX =
-			lastIndex >= 0
-				? (ohlcDataSeries.getNativeXValues().get(lastIndex) as number)
-				: null;
-		const isNewBar = lastX !== xSec;
-
-		if (lastX === xSec) {
-			ohlcDataSeries.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
-
-			if (volumeDataSeries !== undefined) {
-				volumeDataSeries.update(lastIndex, bar.volume);
-			}
-
-			sciChartSurface.invalidateElement();
-			return;
-		}
-
-		ohlcDataSeries.append(xSec, bar.open, bar.high, bar.low, bar.close);
-
-		if (volumeDataSeries !== undefined) {
-			volumeDataSeries.append(xSec, bar.volume);
-		}
-
+		refreshFinancialPriceAxis(yAxis, ohlc);
 		sciChartSurface.invalidateElement();
 
-		if (!hasInitialRange) {
-			applyFollowRange("initial");
-			hasInitialRange = true;
+		if (!following) {
 			return;
 		}
 
-		if (isNewBar) {
-			applyFollowRange("live");
-		}
+		followLatestCandleRange(
+			xAxis,
+			ohlc,
+			priorLastX === null ? "initial" : "live",
+		);
 	};
 
 	return {
-		sciChartSurface: ctx.sciChartSurface,
+		sciChartSurface,
 		appendBar,
 	};
 };
-
-export const addDefaultFinancialModifiers = (
-	sciChartSurface: SciChartSurface,
-) => {
-	sciChartSurface.chartModifiers.add(
-		new MouseWheelZoomModifier({ xyDirection: EXyDirection.XDirection }),
-		new ZoomExtentsModifier({ xyDirection: EXyDirection.XDirection }),
-		new AnnotationHoverModifier({
-			enableHover: true,
-			enableCursor: true,
-			idleCursor: ECursorStyle.Crosshair,
-		}),
-	);
-};
-
-export const createTradingLabels = (
-	prefix: string,
-	pointCount: number,
-	options?: {
-		startPointIndex?: number;
-		includePointLabels?: boolean;
-		includeSegmentLabels?: boolean;
-		includeAxisLabels?: boolean;
-		segmentPairs?: ReadonlyArray<readonly [number, number]>;
-		extraLabels?: NonNullable<IMultiPointAnnotationBaseOptions["labels"]>;
-	},
-): IMultiPointAnnotationBaseOptions["labels"] => {
-	const labels: NonNullable<IMultiPointAnnotationBaseOptions["labels"]> = [];
-	const startPointIndex = Math.max(0, options?.startPointIndex ?? 0);
-	const maxPointIndex = Math.max(0, pointCount - 1);
-
-	if (options?.includePointLabels ?? true) {
-		for (let i = startPointIndex; i <= maxPointIndex; i++) {
-			labels.push({
-				id: `${prefix}-pt-${i + 1}`,
-				anchorMode: EMultiPointLabelAnchorMode.Point,
-				pointIndex: i,
-				verticalTextPosition: EVerticalTextPosition.Above,
-				horizontalTextPosition: EHorizontalTextPosition.Center,
-				alignment: ETextAlignment.Center,
-				fontSize: 12,
-				fontWeight: "400",
-				padding: new Thickness(0),
-				yOffset: -3,
-				// color: TRADING_ANNOTATION_COLORS.foreground,
-			});
-		}
-	}
-
-	if ((options?.includeSegmentLabels ?? true) && maxPointIndex >= 1) {
-		const defaultPairs: Array<readonly [number, number]> = [];
-		for (let i = startPointIndex; i < maxPointIndex; i++) {
-			defaultPairs.push([i, i + 1] as const);
-		}
-		const segmentPairs = options?.segmentPairs?.length
-			? options.segmentPairs
-			: defaultPairs;
-		segmentPairs.forEach(([start, end], index) => {
-			labels.push({
-				id: `${prefix}-seg-${start + 1}-${end + 1}`,
-				anchorMode: EMultiPointLabelAnchorMode.Segment,
-				segmentStartIndex: start,
-				segmentEndIndex: end,
-				segmentRatio: index % 2 === 0 ? 0.5 : 0.62,
-				segmentLabelRotationMode: ESegmentLabelRotationMode.Parallel,
-				verticalTextPosition: EVerticalTextPosition.Above,
-				alignment: ETextAlignment.Center,
-				fontSize: 12,
-				fontWeight: "400",
-				padding: new Thickness(1, 5),
-				// color: TRADING_ANNOTATION_COLORS.foreground,
-			});
-		});
-	}
-
-	if (options?.includeAxisLabels ?? true) {
-		for (let i = startPointIndex; i <= maxPointIndex; i++) {
-			labels.push({
-				id: `${prefix}-axis-${i + 1}`,
-				anchorMode: EMultiPointLabelAnchorMode.Axis,
-				axisLabelDrawMode: EAxisLabelDrawMode.Both,
-				pointIndex: i,
-			});
-		}
-	}
-
-	return labels.concat(options?.extraLabels ?? []);
-};
-
-export const createTradingAnnotationOptions = (
-	prefix: string,
-	pointCount: number,
-	formatter?: TMultiPointLabelFormatter,
-	options?: Parameters<typeof createTradingLabels>[2],
-): Partial<IMultiPointAnnotationBaseOptions> => ({
-	clipping: EAnnotationClippingMode.SeriesViewRect,
-	adornerClipping: EAnnotationClippingMode.SeriesViewRect,
-	labels: createTradingLabels(prefix, pointCount, options),
-
-	gripVisibility: EAnnotationVisibilityMode.Always,
-
-	axisLabelVisibility: EAnnotationVisibilityMode.OnInteraction,
-	pointLabelVisibility: EAnnotationVisibilityMode.Always,
-	segmentLabelVisibility: EAnnotationVisibilityMode.OnInteraction,
-
-	axisLabelStroke: "#FFFFFF",
-	axisSpanFillOpacity: 0.2,
-	selectionBoxStroke: "#F5F5F533",
-	selectionBoxThickness: 8,
-	annotationsGripsRadius: 4,
-	// annotationsGripsStroke: TRADING_ANNOTATION_COLORS.foreground,
-	formatLabel:
-		formatter ??
-		((params: IMultiPointLabelFormatParams) => {
-			if (params.defaultText?.trim()) {
-				return params.defaultText;
-			}
-			const price = toEngineering(params.anchorValuePoint.y);
-			if (params.anchorMode === EMultiPointLabelAnchorMode.Point) {
-				return `${prefix}${prefix === "" ? "" : "-" + (params.labelIndex + 1) + "-"}${price}`;
-			}
-			if (params.anchorMode === EMultiPointLabelAnchorMode.Segment) {
-				const delta = params.valuePoints.length > 1 ? params.tangentValue.y : 0;
-				return `${delta >= 0 ? "+" : ""}${toEngineering(delta)}`;
-			}
-			return price;
-		}),
-	formatLabelStyle: ({
-		annotation,
-		label,
-		valuePoints,
-	}: {
-		annotation: any;
-		label: any;
-		valuePoints: Point[];
-	}) => {
-		if (
-			annotation instanceof StopLossTakeProfitAnnotation &&
-			label.anchorMode === EMultiPointLabelAnchorMode.Segment
-		) {
-			const [p1, p2] = valuePoints;
-			return {
-				color:
-					p2?.y >= p1?.y
-						? annotation.takeProfitColor
-						: annotation.stopLossColor,
-				fontSize: 18,
-			};
-		}
-		return undefined;
-	},
-});
-
-export const createAxisPlacementLabels = (
-	options: IMultiPointAnnotationBaseOptions & { extendStart?: boolean },
-): NonNullable<IMultiPointAnnotationBaseOptions["labels"]> => {
-	if ("extendStart" in options) {
-		return [
-			{ anchorMode: EMultiPointLabelAnchorMode.Axis, pointIndex: 0 },
-			{ anchorMode: EMultiPointLabelAnchorMode.Axis, pointIndex: 1 },
-		];
-	}
-	return [
-		{ anchorMode: EMultiPointLabelAnchorMode.Axis, pointIndex: 1 },
-		{ anchorMode: EMultiPointLabelAnchorMode.Axis, pointIndex: 2 },
-	];
-};
-
-export const withPlacementLabelOptions = <
-	T extends IMultiPointAnnotationBaseOptions,
->(
-	options: T,
-	settings: { axisLabels: boolean; labelsOnHover: boolean },
-): T => {
-	const nextOptions = { ...options } as T;
-	if (settings.axisLabels) {
-		nextOptions.labels = createAxisPlacementLabels(options);
-		nextOptions.axisLabelVisibility = EAnnotationVisibilityMode.Always;
-		nextOptions.axisLabelStroke = "#FFFFFF";
-		nextOptions.axisSpanFillOpacity = 0.2;
-	}
-	if (settings.labelsOnHover) {
-		nextOptions.pointLabelVisibility = EAnnotationVisibilityMode.OnInteraction;
-		nextOptions.segmentLabelVisibility =
-			EAnnotationVisibilityMode.OnInteraction;
-		nextOptions.axisLabelVisibility = EAnnotationVisibilityMode.OnInteraction;
-	}
-	return nextOptions;
-};
-
-export const defaultSnapToCandleOptions = (
-	seriesId: string,
-): Partial<IMultiPointAnnotationBaseOptions> => ({
-	snapMode: ESnapMode.DataPoint,
-	snapToSeriesId: seriesId,
-	snapToDataPointRadius: 40,
-	snapToDataPointOnInit: true,
-});
-
-class VolumePaletteProvider implements IFillPaletteProvider {
-	public readonly fillPaletteMode: EFillPaletteMode = EFillPaletteMode.SOLID;
-	private readonly isUpByIndex: boolean[];
-	private readonly upColorArgb: number;
-	private readonly downColorArgb: number;
-
-	constructor(
-		openValues: number[],
-		closeValues: number[],
-		private readonly upColor: string,
-		private readonly downColor: string,
-	) {
-		this.isUpByIndex = openValues.map(
-			(open, index) => (closeValues[index] ?? open) >= open,
-		);
-		this.upColorArgb = parseColorToUIntArgb(upColor);
-		this.downColorArgb = parseColorToUIntArgb(downColor);
-	}
-
-	public onAttached(parentSeries: IRenderableSeries): void {}
-
-	public onDetached(): void {}
-
-	public overrideFillArgb(
-		xValue: number,
-		yValue: number,
-		index: number,
-		opacity?: number,
-		metadata?: IPointMetadata,
-	): number {
-		return this.isUpByIndex[index] ? this.upColorArgb : this.downColorArgb;
-	}
-
-	public overrideStrokeArgb(
-		xValue: number,
-		yValue: number,
-		index: number,
-		opacity?: number,
-		metadata?: IPointMetadata,
-	): number {
-		return this.overrideFillArgb(xValue, yValue, index, opacity, metadata);
-	}
-
-	public toJSON(): TPaletteProviderDefinition {
-		return {
-			type: EPaletteProviderType.Custom,
-			customType: VOLUME_PALETTE_PROVIDER_TYPE,
-			options: {
-				isUpByIndex: this.isUpByIndex,
-				upColor: this.upColor,
-				downColor: this.downColor,
-			},
-		};
-	}
-}
-
-registerType(
-	EBaseType.PaletteProvider,
-	VOLUME_PALETTE_PROVIDER_TYPE,
-	(options?: {
-		isUpByIndex?: boolean[];
-		upColor?: string;
-		downColor?: string;
-	}) => {
-		const isUpByIndex = options?.isUpByIndex ?? [];
-		const openValues = isUpByIndex.map((isUp) => (isUp ? 0 : 1));
-		const closeValues = isUpByIndex.map((isUp) => (isUp ? 1 : 0));
-		return new VolumePaletteProvider(
-			openValues,
-			closeValues,
-			options?.upColor ?? appTheme.VividGreen + "66",
-			options?.downColor ?? appTheme.VividRed + "66",
-		);
-	},
-	true,
-);

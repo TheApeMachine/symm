@@ -238,7 +238,7 @@ func TestObserveExecution(t *testing.T) {
 			So(held, ShouldBeFalse)
 			_, stillPending := crypto.pending["BTC/EUR"]
 			So(stillPending, ShouldBeFalse)
-			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
+			So(crypto.symbolCooling("BTC/EUR", false), ShouldBeTrue)
 		})
 	})
 }
@@ -249,17 +249,19 @@ func TestSymbolSubmissionCooldown(t *testing.T) {
 
 		Convey("It should suppress re-submission until the cool-down expires", func() {
 			crypto.coolSymbol("BTC/EUR")
-			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
+			So(crypto.symbolCooling("BTC/EUR", false), ShouldBeTrue)
 
-			crypto.coolDownUntil.Store("BTC/EUR", time.Now().Add(-time.Millisecond))
-			So(crypto.symbolCooling("BTC/EUR"), ShouldBeFalse)
-			So(crypto.symbolCooling("BTC/EUR"), ShouldBeFalse)
+			// New semantics: the map stores the REJECTION time; push it past the
+			// longest (entry) horizon so the cooldown has fully expired.
+			crypto.cooldownStart.Store("BTC/EUR", time.Now().Add(-symbolSubmissionCooldown-time.Millisecond))
+			So(crypto.symbolCooling("BTC/EUR", false), ShouldBeFalse)
+			So(crypto.symbolCooling("BTC/EUR", false), ShouldBeFalse)
 		})
 
 		Convey("A cooldown on one symbol must not block another", func() {
 			crypto.coolSymbol("BTC/EUR")
-			So(crypto.symbolCooling("BTC/EUR"), ShouldBeTrue)
-			So(crypto.symbolCooling("AAVE/EUR"), ShouldBeFalse)
+			So(crypto.symbolCooling("BTC/EUR", false), ShouldBeTrue)
+			So(crypto.symbolCooling("AAVE/EUR", false), ShouldBeFalse)
 		})
 	})
 }

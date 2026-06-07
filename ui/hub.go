@@ -13,6 +13,7 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
@@ -284,6 +285,17 @@ func (hub *Hub) Tick() error {
 }
 
 func (hub *Hub) broadcastJSON(out map[string]any) {
+	// Serialize ONCE per frame; each client gets the same bytes. The hub used
+	// to re-marshal the identical map inside WriteJSON for every connected
+	// client — CPU spent on N-1 redundant serializations per frame.
+	raw, err := sonic.Marshal(out)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
 	hub.clients.Range(func(key, value any) bool {
 		client, ok := value.(*wsClient)
 
@@ -293,7 +305,7 @@ func (hub *Hub) broadcastJSON(out map[string]any) {
 			return true
 		}
 
-		if err := client.writeJSON(out); err != nil {
+		if err := client.writeRaw(raw); err != nil {
 			if !isBenignWriteError(err) {
 				errnie.Error(err)
 			}

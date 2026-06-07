@@ -247,6 +247,11 @@ func assertMatchingTapes(sequential, parallel ReplayTape) {
 			convey.ShouldEqual,
 			sequential.Ticks[index].SymbolOrdinal,
 		)
+		convey.So(
+			parallel.Ticks[index].Regime,
+			convey.ShouldEqual,
+			sequential.Ticks[index].Regime,
+		)
 
 		sequentialScratch = sequential.AppendSnapshot(index, sequentialScratch)
 		parallelScratch = parallel.AppendSnapshot(index, parallelScratch)

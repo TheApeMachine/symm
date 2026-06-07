@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -171,14 +172,17 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) (ReplayTape, e
 		categoryCount = 1
 	}
 
-	return ReplayTape{
+	tape := ReplayTape{
 		Ticks:               ticks,
 		SymbolIndices:       symbolIndices,
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(rowCount, categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
 		measurementBuffer:   buffer,
-	}, nil
+	}
+	stampPrecompiledRegimes(&tape)
+
+	return tape, nil
 }
 
 func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
@@ -226,14 +230,17 @@ func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 		categoryCount = 1
 	}
 
-	return ReplayTape{
+	tape := ReplayTape{
 		Ticks:               ticks,
 		SymbolIndices:       symbolIndices,
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
 		measurementBuffer:   buffer,
-	}, nil
+	}
+	stampPrecompiledRegimes(&tape)
+
+	return tape, nil
 }
 
 func buildPrecompileChunk(
@@ -333,4 +340,25 @@ func assignSymbolOrdinals(
 	}
 
 	return buffer, nil
+}
+
+/*
+stampPrecompiledRegimes stores ClassifyRegime once per tick so candidate scoring
+does not re-derive the same price-action state on every forest replay.
+*/
+func stampPrecompiledRegimes(tape *ReplayTape) {
+	scratch := make([]types.Measurement, 0, tape.measurementBuffer)
+
+	for tickIndex := range tape.Ticks {
+		tick := &tape.Ticks[tickIndex]
+
+		if tick.Row.Symbol == "" {
+			tick.Regime = types.RegimeNone
+
+			continue
+		}
+
+		scratch = tape.AppendSnapshot(tickIndex, scratch)
+		tick.Regime = perspectives.ClassifyRegime(scratch).Regime
+	}
 }

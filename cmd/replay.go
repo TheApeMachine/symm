@@ -84,6 +84,7 @@ var replayCmd = &cobra.Command{
 
 		costs := replay.DefaultReplayCosts()
 		costs.CollectTrades = true
+		costs.CollectAttribution = true
 
 		if viper.GetBool("optimizer.tune.load_instrument_rules") {
 			rules, loaded, rulesErr := broker.LoadInstrumentRulesFromKraken(cmd.Context())

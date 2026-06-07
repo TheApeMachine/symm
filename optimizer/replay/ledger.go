@@ -45,8 +45,12 @@ type replayPosition struct {
 	peak          float64 // running max price since entry (long trailing stops)
 	trough        float64 // running min price since entry (short trailing stops)
 	entryAt       time.Time
-	triggerType   reasoning.ActionType
-	triggerOffset float64
+	// triggers holds ALL armed protective exits by type (stop_loss AND
+	// trailing_stop can rest concurrently, exactly like the live desk's
+	// per-(symbol, type) protective orders). The old single triggerType field
+	// meant arming a trail overwrote the stop — replay protected positions
+	// differently than live.
+	triggers map[reasoning.ActionType]float64
 	strategy      string // setup attribution from the entering branch's name
 }
 
@@ -88,6 +92,8 @@ type replayLedger struct {
 	medianInterval      time.Duration
 	executionLatency    time.Duration
 	perStrategy         map[string]*strategyTally
+	lastRegime          types.Regime // regime of the most recent evaluated row — preemption margin parity with live
+	lastPreemptAt       time.Time
 	tradeLog            []ClosedTrade
 }
 
@@ -372,6 +378,7 @@ func (ledger *replayLedger) positionState(
 	return reasoning.PositionState{
 		Holding:    true,
 		Side:       position.side,
+		Strategy:   position.strategy,
 		EntryPrice: position.entryPrice,
 		Peak:       position.peak,
 		Trough:     position.trough,

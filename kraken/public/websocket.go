@@ -419,6 +419,11 @@ func (ws *WebSocket) publishOhlc(message json.RawMessage) {
 	for _, candle := range candles {
 		sym, _ := candle["symbol"].(string)
 
+		if err := EnrichOhlcWire(candle); err != nil {
+			errnie.Error(fmt.Errorf("ohlc %s: %w", sym, err))
+			continue
+		}
+
 		if slices.Contains(ws.streams.Snapshot(), sym) && ui != nil {
 			ui.Send(&qpool.QValue[any]{
 				Type:  "ohlc",

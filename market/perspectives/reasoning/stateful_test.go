@@ -1,6 +1,7 @@
 package reasoning
 
 import (
+	"time"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -176,8 +177,8 @@ func TestEvaluateStatefulMatchesSingleTickWhenSimultaneous(t *testing.T) {
 func TestReasonStateReset(t *testing.T) {
 	Convey("Given a primed ReasonState", t, func() {
 		state := NewReasonState()
-		state.active["0"] = true
-		state.next["1"] = true
+		state.active["0"] = time.Now()
+		state.next["1"] = time.Now()
 		state.lastHolding = true
 		state.primed = true
 
@@ -193,11 +194,11 @@ func TestReasonStateReset(t *testing.T) {
 			So(state.lastRegime, ShouldEqual, types.RegimeNone)
 			So(state.lastHolding, ShouldBeFalse)
 
-			state.active["2"] = true
-			state.next["3"] = true
+			state.active["2"] = time.Now()
+			state.next["3"] = time.Now()
 
-			So(active["2"], ShouldBeTrue)
-			So(next["3"], ShouldBeTrue)
+			So(active["2"].IsZero(), ShouldBeFalse)
+			So(next["3"].IsZero(), ShouldBeFalse)
 		})
 	})
 }

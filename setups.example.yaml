@@ -164,11 +164,52 @@ branches:
       do:
         type: stop_loss
         offset: 0.012
-    - name: trail_runner
+    # Per-setup trails — the reason position predicates carry `strategy:`.
+    # A scalp can't breathe under a wide trail; a slow ride dies under a tight
+    # one. protect_fresh above stays the universal floor for ALL positions.
+    - name: trail_quick
       when:
         subject: position
-        lifecycle: holding
+        strategy: quick_pump
         op: equals
+      do:
+        type: trailing_stop
+        offset: 0.01
+    - name: trail_slow
+      when:
+        subject: position
+        strategy: slow_pump
+        op: equals
+      do:
+        type: trailing_stop
+        offset: 0.03
+    - name: trail_revert
+      when:
+        subject: position
+        strategy: intraday_revert
+        op: equals
+      do:
+        type: trailing_stop
+        offset: 0.015
+    # Legacy/unattributed positions (e.g. dust from older sessions) keep the
+    # old generic trail so nothing holds unprotected.
+    - name: trail_runner
+      when:
+        all:
+            - subject: position
+              lifecycle: holding
+              op: equals
+            - not:
+                any:
+                    - subject: position
+                      strategy: quick_pump
+                      op: equals
+                    - subject: position
+                      strategy: slow_pump
+                      op: equals
+                    - subject: position
+                      strategy: intraday_revert
+                      op: equals
       do:
         type: trailing_stop
         offset: 0.01

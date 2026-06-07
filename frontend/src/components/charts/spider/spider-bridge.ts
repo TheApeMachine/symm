@@ -26,34 +26,26 @@ const regimeAxisValues = (
 	Object.fromEntries(axes.map((axis) => [axis, (raw[axis] as number) ?? 0]));
 
 /*
-parseRegimeWire accepts only the cross-section market regime frame so per-symbol
+ingestRegimeWire accepts only the cross-section market regime frame so per-symbol
 classifications cannot overwrite the averaged radar shape.
 */
-export const parseRegimeWire = (
+export const ingestRegimeWire = (
+	bridge: SpiderBridge | null | undefined,
 	raw: Record<string, unknown>,
 	axes: readonly string[],
 	marketSymbol = REGIME_MARKET_SYMBOL,
-): Record<string, number> | null => {
-	if (raw.chart !== "regime") {
-		return null;
+): void => {
+	if (!bridge || raw.chart !== "regime") {
+		return;
 	}
 
 	const symbol = raw.symbol;
 
 	if (typeof symbol === "string" && symbol !== marketSymbol) {
-		return null;
-	}
-
-	return regimeAxisValues(raw, axes);
-};
-
-export const deliverRegimeWire = (
-	bridge: SpiderBridge | null | undefined,
-	values: Record<string, number>,
-) => {
-	if (!bridge) {
 		return;
 	}
+
+	const values = regimeAxisValues(raw, axes);
 
 	Object.assign(bridge.latest, values);
 

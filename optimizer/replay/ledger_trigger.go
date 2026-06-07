@@ -32,8 +32,13 @@ func (ledger *replayLedger) armTrigger(
 		return
 	}
 
-	position.triggerType = act.Type
-	position.triggerOffset = offset
+	if position.triggers == nil {
+		position.triggers = make(map[reasoning.ActionType]float64, 2)
+	}
+
+	// Same type re-arms (a trail ratchets its offset); different types REST
+	// TOGETHER, as on the live desk.
+	position.triggers[act.Type] = offset
 	ledger.positions[symbol] = position
 }
 
@@ -90,7 +95,7 @@ func (ledger *replayLedger) checkTriggers(row types.Measurement) {
 		ledger.positions[row.Symbol] = position
 	}
 
-	if position.triggerType == reasoning.ActionNone {
+	if len(position.triggers) == 0 {
 		return
 	}
 
@@ -100,33 +105,41 @@ func (ledger *replayLedger) checkTriggers(row types.Measurement) {
 		extremum = position.trough
 	}
 
-	level, breached := triggerLevel(position, side, extremum, row.Last)
+	// Evaluate EVERY armed trigger and fire the binding one — the level that
+	// trades first (highest exit level for a long, lowest for a short). With
+	// stop and trail resting together, whichever is tighter right now wins,
+	// exactly as concurrent resting orders behave on the venue.
+	bestType := reasoning.ActionNone
+	bestLevel := 0.0
 
-	if !breached {
+	for trigType, offset := range position.triggers {
+		if reasoning.IsTrailingExit(trigType) && offset <= 0 {
+			continue
+		}
+
+		level := reasoning.ProtectiveLevelForSide(
+			side, trigType, position.entryPrice, extremum, offset,
+		)
+
+		if !reasoning.ProtectiveBreachedForSide(side, trigType, level, row.Last) {
+			continue
+		}
+
+		tighter := bestType == reasoning.ActionNone ||
+			(side != trading.Sell && level > bestLevel) ||
+			(side == trading.Sell && level < bestLevel) ||
+			(level == bestLevel && trigType < bestType) // deterministic across map order
+
+		if tighter {
+			bestType, bestLevel = trigType, level
+		}
+	}
+
+	if bestType == reasoning.ActionNone {
 		return
 	}
 
-	ledger.closeAtTrigger(row.Symbol, side, position.triggerType, level, row, nil)
-}
-
-func triggerLevel(
-	position replayPosition,
-	side trading.Side,
-	extremum, price float64,
-) (level float64, breached bool) {
-	if reasoning.IsTrailingExit(position.triggerType) && position.triggerOffset <= 0 {
-		return 0, false
-	}
-
-	level = reasoning.ProtectiveLevelForSide(
-		side,
-		position.triggerType,
-		position.entryPrice,
-		extremum,
-		position.triggerOffset,
-	)
-
-	return level, reasoning.ProtectiveBreachedForSide(side, position.triggerType, level, price)
+	ledger.closeAtTrigger(row.Symbol, side, bestType, bestLevel, row, nil)
 }
 
 func trailingVolatilityMultiple(costs ReplayCosts) float64 {

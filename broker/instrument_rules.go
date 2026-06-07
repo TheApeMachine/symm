@@ -1,11 +1,12 @@
 package broker
 
 import (
+	"math/big"
+	"strconv"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 
@@ -105,11 +106,18 @@ func (cache *InstrumentRulesCache) ingest(value any) {
 	var update market.InstrumentUpdate
 
 	if err := sonic.Unmarshal(rawData, &update); err != nil {
+		// A malformed instrument frame is a data-layer incident, not noise:
+		// silently skipping it is how a desk ends up with no rules for a pair
+		// and rejects every order at the worst possible moment.
+		errnie.Error(fmt.Errorf("instrument rules: undecodable frame: %w", err))
+
 		return
 	}
 
 	for _, pair := range update.Pairs {
 		if pair.Symbol == "" {
+			errnie.Warn("instrument rules: pair without symbol in instrument frame — skipped")
+
 			continue
 		}
 
@@ -256,6 +264,13 @@ func (cache *InstrumentRulesCache) MinimumOrderQuantity(
 	return minimumQty, true
 }
 
+// minimumRuleTolerance forgives sub-ppm float artifacts from position
+// bookkeeping when checking venue minimums: a stop_loss on a 20000-minimum
+// position held as 19999.99999000 (5e-10 relative, YALA/EUR 2026-06-07) was
+// blocked from ever closing. Genuine undersizing is still rejected, and the
+// venue keeps its own final say.
+const minimumRuleTolerance = 1e-6
+
 /*
 ValidateOrder rejects quantities and prices that violate Kraken instrument rules.
 */
@@ -275,7 +290,7 @@ func (cache *InstrumentRulesCache) ValidateOrder(
 		return fmt.Errorf("preflight: quantity must be positive")
 	}
 
-	if pair.QtyMin > 0 && quantity < pair.QtyMin {
+	if pair.QtyMin > 0 && quantity < pair.QtyMin*(1-minimumRuleTolerance) {
 		return fmt.Errorf(
 			"preflight: quantity %.8f below minimum %.8f for %s",
 			quantity,
@@ -307,7 +322,7 @@ func (cache *InstrumentRulesCache) ValidateOrder(
 	if pair.CostMin > 0 && price > 0 {
 		cost := quantity * price
 
-		if cost < pair.CostMin {
+		if cost < pair.CostMin*(1-minimumRuleTolerance) {
 			return fmt.Errorf(
 				"preflight: order cost %.8f below minimum %.8f for %s",
 				cost,
@@ -350,22 +365,38 @@ func (cache *InstrumentRulesCache) AlignOrder(
 	return alignedQty, alignedPrice
 }
 
+/*
+Grid arithmetic is exact, on math/big rationals built from each float's
+shortest round-trip DECIMAL — the number the exchange actually sent ("0.00001"),
+not its binary approximation. The previous float stepping —
+floor(value/increment + 1e-12) — broke at large step counts: 20000/0.00001
+computes as 1999999999.9999998, the absolute nudge is six orders of magnitude
+too small at 2e9 steps, and the entry left the desk one full increment short of
+the venue minimum (the unsellable YALA/EUR position of 2026-06-07). With exact
+decimal ratios, on-grid values are integers BY IDENTITY and alignment needs no
+tolerance at all.
+*/
+func decimalRat(value float64) *big.Rat {
+	rat, ok := new(big.Rat).SetString(strconv.FormatFloat(value, 'f', -1, 64))
+
+	if !ok {
+		return new(big.Rat).SetFloat64(value)
+	}
+
+	return rat
+}
+
+// gridRatio returns the exact rational value/increment.
+func gridRatio(value, increment float64) *big.Rat {
+	return new(big.Rat).Quo(decimalRat(value), decimalRat(increment))
+}
+
 func isAligned(value, increment float64) bool {
 	if increment <= 0 {
 		return true
 	}
 
-	steps := orderStepsDown(value, increment)
-	aligned := quantityFromSteps(steps, increment)
-	tolerance := alignmentTolerance(value, increment)
-
-	if math.Abs(value-aligned) <= tolerance {
-		return true
-	}
-
-	next := quantityFromSteps(steps+1, increment)
-
-	return math.Abs(value-next) <= tolerance
+	return gridRatio(value, increment).IsInt()
 }
 
 func roundDownToIncrement(value, increment float64) float64 {
@@ -384,25 +415,40 @@ func roundUpToIncrement(value, increment float64) float64 {
 	return quantityFromSteps(orderStepsUp(value, increment), increment)
 }
 
+// orderStepsDown floors the exact ratio: how many whole increments fit.
 func orderStepsDown(value, increment float64) float64 {
-	return math.Floor(value/increment + 1e-12)
+	ratio := gridRatio(value, increment)
+	steps := new(big.Int).Quo(ratio.Num(), ratio.Denom())
+
+	// Quo truncates toward zero; flooring a negative non-integer steps down.
+	if ratio.Sign() < 0 && !ratio.IsInt() {
+		steps.Sub(steps, big.NewInt(1))
+	}
+
+	result, _ := new(big.Float).SetInt(steps).Float64()
+
+	return result
 }
 
 func orderStepsUp(value, increment float64) float64 {
-	return math.Ceil(value/increment - 1e-12)
-}
+	ratio := gridRatio(value, increment)
+	steps := new(big.Int).Quo(ratio.Num(), ratio.Denom())
 
-func quantityFromSteps(steps, increment float64) float64 {
-	return steps * increment
-}
-
-func alignmentTolerance(value, increment float64) float64 {
-	tolerance := increment * 1e-6
-	ulp := math.Nextafter(math.Abs(value), math.Inf(1)) - math.Abs(value)
-
-	if floatingTolerance := ulp * 8; floatingTolerance > tolerance {
-		return floatingTolerance
+	if ratio.Sign() > 0 && !ratio.IsInt() {
+		steps.Add(steps, big.NewInt(1))
 	}
 
-	return tolerance
+	result, _ := new(big.Float).SetInt(steps).Float64()
+
+	return result
+}
+
+// quantityFromSteps returns the float closest to the EXACT decimal grid point
+// steps × increment, so a prepared order is never a hair below the grid value
+// it claims to sit on.
+func quantityFromSteps(steps, increment float64) float64 {
+	exact := new(big.Rat).Mul(decimalRat(steps), decimalRat(increment))
+	result, _ := exact.Float64()
+
+	return result
 }

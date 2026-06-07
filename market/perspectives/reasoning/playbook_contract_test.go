@@ -212,18 +212,38 @@ func TestProductionPlaybookContract(testingObject *testing.T) {
 			So(act.Type, ShouldEqual, ActionSettlePosition)
 		})
 
-		Convey("Faded exhaustion exits a held position", func() {
+		Convey("Faded exhaustion exits a held position on CONFIDENCE, not surprise", func() {
+			// The gate is confidence-based: by the third exhausted tick SNR has
+			// decayed toward its ~0.5 habitual floor while confidence stays
+			// high — surprise-gated exhaustion exits went blind exactly when
+			// the condition persisted.
+			confident := signalSnapshot(types.CategoryFadedExhaustion, 0.5, 100)
+			confident.Confidence = 0.4
+
 			context := productionContext(
 				heldPositionContinued(),
-				[]types.Measurement{
-					signalSnapshot(types.CategoryFadedExhaustion, 1.1, 100),
-				},
+				[]types.Measurement{confident},
 			)
 
 			act, found := EvaluateStateful(playbook, context, NewReasonState())
 
 			So(found, ShouldBeTrue)
 			So(act.Type, ShouldEqual, ActionSettlePosition)
+
+			// Novel-but-unbelieved exhaustion does NOT settle: high SNR with
+			// confidence below the gate falls through to trail management.
+			novel := signalSnapshot(types.CategoryFadedExhaustion, 4.0, 100)
+			novel.Confidence = 0.1
+
+			context = productionContext(
+				heldPositionContinued(),
+				[]types.Measurement{novel},
+			)
+
+			act, found = EvaluateStateful(playbook, context, NewReasonState())
+
+			So(found, ShouldBeTrue)
+			So(act.Type, ShouldNotEqual, ActionSettlePosition)
 		})
 	})
 }

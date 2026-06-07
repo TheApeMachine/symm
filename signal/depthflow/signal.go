@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
+	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -33,6 +34,7 @@ type Signal struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
+	resync        *signalpool.BookResync
 	surpriseField *types.CategorySurpriseField
 	classifier    *adaptive.Classifier
 	calibrator    *numeric.BandCalibrator
@@ -83,6 +85,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 
 	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+
+	if depth, err := symmarket.RequiredBookDepthLevels(); err == nil {
+		signal.resync = signalpool.SharedBookResync(pool, depth)
+	}
 
 	errnie.Info("signal/depthflow ready", "signal/depthflow")
 
@@ -159,6 +165,12 @@ func (signal *Signal) Tick() error {
 				}
 
 				state.ApplyBook(delta)
+
+				// Divergence means a delta was lost; the only repair is a fresh
+				// snapshot. Rate-limited per symbol inside Request.
+				if state.Diverged() {
+					signal.resync.Request(delta.Symbol)
+				}
 
 				if err := signal.emit(delta.Symbol, time.Now().UTC()); err != nil {
 					errnie.Error(err, "depthflow: emit %s", delta.Symbol)

@@ -24,9 +24,17 @@ import (
 const (
 	cryptoRawSubscriberID    = "trader/crypto:raw"
 	cryptoWalletSubscriberID = "trader/crypto:wallet"
-	// symbolSubmissionCooldown isolates a rejected symbol without affecting the rest
-	// of the portfolio or halting the desk.
+	// symbolSubmissionCooldown isolates a rejected symbol without affecting the
+	// rest of the universe — for ENTRIES. Entries are optional; resting a
+	// rejected symbol for 10s costs an opportunity at most.
 	symbolSubmissionCooldown = 10 * time.Second
+	// exitSubmissionCooldown is the protective horizon: a venue rejection must
+	// never disable the brakes for 10 seconds mid-cascade (stop_loss and
+	// settle_position used to be silently dropped by the same universal
+	// cooldown). The playbook re-fires protective triggers on every evaluation
+	// pass, so the reasoning loop IS the retry loop — this just throttles it to
+	// ~1 attempt/second/symbol instead of hammering a venue that said no.
+	exitSubmissionCooldown = time.Second
 )
 
 /*
@@ -83,16 +91,17 @@ type Crypto struct {
 	armed            map[string]armRecord
 	pending          map[string]reasoning.Action
 	pendingSince     map[string]time.Time
-	coolDownUntil    sync.Map // symbol -> time.Time (per-symbol submission backoff)
+	cooldownStart    sync.Map // symbol -> time.Time of last rejection; the horizon is action-aware (entries 10s, exits 1s)
 	lastDecision     map[string]string
 	entryBatch       entryBatch
 	preemptPlan      *preemptPlan
 	lastPreemptAt    time.Time
 	entryConviction  map[string]float64
-	entryStrategies  map[string]string // symbol -> setup name that entered the open position (kept until the next entry overwrites it, so the outcome frame arriving after the close can still attribute)
+	entryStrategies  atomic.Pointer[map[string]string] // symbol -> setup name that entered the open position; copy-on-write like heldSnapshot — read lock-free by the story goroutine on every evaluation
+	positionFacts    atomic.Pointer[map[string]PositionFact] // symbol -> fill-derived side/entry; copy-on-write, read lock-free by the story per evaluation
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
-	capitalBase      float64 // opening capital; one position targets position_fraction of this
+	capitalBase      float64 // first observed capital — fallback equity before quotes exist
 	walletMu         sync.RWMutex
 	heldSnapshot     atomic.Pointer[map[string]struct{}]
 	availableQuote   float64 // latest wallet balance the API (balances.go) published
@@ -183,7 +192,7 @@ func NewCryptoWithCaches(
 		pendingSince:    make(map[string]time.Time),
 		lastDecision:    make(map[string]string),
 		entryConviction: make(map[string]float64),
-		entryStrategies: make(map[string]string),
+
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -324,7 +333,11 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 		return
 	}
 
-	if crypto.symbolCooling(action.Symbol) {
+	if crypto.symbolCooling(action.Symbol, reasoning.IsExitAction(action.Type)) {
+		// Loud, not silent: the 2026-06-07 incident review found protective
+		// triggers being dropped here with no trace.
+		crypto.publishDecision(action, "rejected", "submission cooling")
+
 		return
 	}
 
@@ -535,7 +548,7 @@ func (crypto *Crypto) observeOutcome(envelope map[string]any) {
 		"source":       "wallet",
 	}
 
-	if strategy := crypto.entryStrategies[symbol]; strategy != "" {
+	if strategy := crypto.EntryStrategy(symbol); strategy != "" {
 		frame["strategy"] = strategy
 	}
 
@@ -544,32 +557,42 @@ func (crypto *Crypto) observeOutcome(envelope map[string]any) {
 	}
 }
 
-func (crypto *Crypto) symbolCooling(symbol string) bool {
-	untilRaw, cooling := crypto.coolDownUntil.Load(symbol)
+func (crypto *Crypto) symbolCooling(symbol string, exit bool) bool {
+	atRaw, cooling := crypto.cooldownStart.Load(symbol)
 
 	if !cooling {
 		return false
 	}
 
-	until, ok := untilRaw.(time.Time)
+	rejectedAt, ok := atRaw.(time.Time)
 
 	if !ok {
-		crypto.coolDownUntil.Delete(symbol)
+		crypto.cooldownStart.Delete(symbol)
 
 		return false
 	}
 
-	if time.Now().Before(until) {
+	horizon := symbolSubmissionCooldown
+
+	if exit {
+		horizon = exitSubmissionCooldown
+	}
+
+	if time.Now().Before(rejectedAt.Add(horizon)) {
 		return true
 	}
 
-	crypto.coolDownUntil.Delete(symbol)
+	// Only clear the record once the LONGEST horizon has passed: an exit
+	// probing after 1s must not erase the entry cooldown still in force.
+	if !time.Now().Before(rejectedAt.Add(symbolSubmissionCooldown)) {
+		crypto.cooldownStart.Delete(symbol)
+	}
 
 	return false
 }
 
 func (crypto *Crypto) coolSymbol(symbol string) {
-	crypto.coolDownUntil.Store(symbol, time.Now().Add(symbolSubmissionCooldown))
+	crypto.cooldownStart.Store(symbol, time.Now())
 }
 
 /*
@@ -730,11 +753,54 @@ func (crypto *Crypto) availableCash() float64 {
 	return crypto.availableQuote
 }
 
-func (crypto *Crypto) capitalBaseValue() float64 {
+/*
+equityValue is the capital base each position slot is sized against: current
+quote cash plus open positions at mark. Sizing previously anchored to the
+OPENING balance forever — after drawdown the desk kept targeting fractions of
+money it no longer had (no organic de-risking), and after gains it refused to
+compound. Replay sizes off its live wallet too, so this is also a parity fix.
+Positions without a live quote are marked at entry basis (conservative, never
+zero).
+*/
+func (crypto *Crypto) equityValue() float64 {
 	crypto.walletMu.RLock()
-	defer crypto.walletMu.RUnlock()
+	equity := crypto.availableQuote
+	fallback := crypto.capitalBase
+	crypto.walletMu.RUnlock()
 
-	return crypto.capitalBase
+	markValue := func(symbol string, qty float64) float64 {
+		if qty <= 0 {
+			return 0
+		}
+
+		if crypto.quotes != nil {
+			if quote, ok := crypto.quotes.Snapshot(symbol); ok {
+				if mid := (quote.Bid + quote.Ask) / 2; mid > 0 {
+					return qty * mid
+				}
+
+				if quote.Last > 0 {
+					return qty * quote.Last
+				}
+			}
+		}
+
+		return qty * crypto.avgEntry[symbol]
+	}
+
+	for symbol, qty := range crypto.inventory {
+		equity += markValue(symbol, qty)
+	}
+
+	for symbol, qty := range crypto.shortInventory {
+		equity += markValue(symbol, qty)
+	}
+
+	if equity <= 0 {
+		return fallback
+	}
+
+	return equity
 }
 
 // fundableSymbol reports whether the wallet can pay for the pair: a buy spends the
@@ -760,7 +826,7 @@ func (crypto *Crypto) sizeEntry(action reasoning.Action) (float64, error) {
 		return 0, fmt.Errorf("trader: entry price must be positive")
 	}
 
-	capital := crypto.capitalBaseValue()
+	capital := crypto.equityValue()
 
 	if capital <= 0 {
 		return 0, nil
@@ -826,7 +892,21 @@ func (crypto *Crypto) entryDeployFraction(action reasoning.Action) (float64, err
 }
 
 func (crypto *Crypto) openExposureCount() int {
-	count := len(crypto.inventory) + len(crypto.shortInventory)
+	count := 0
+
+	// Count POSITIONS, not map keys: a stale zero-quantity key silently
+	// blocked an entry slot with no error anywhere.
+	for _, qty := range crypto.inventory {
+		if qty > 0 {
+			count++
+		}
+	}
+
+	for _, qty := range crypto.shortInventory {
+		if qty > 0 {
+			count++
+		}
+	}
 
 	for _, pending := range crypto.pending {
 		if reasoning.IsEntryAction(pending.Type) {
@@ -950,11 +1030,44 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 // the wallet outcome frame (which arrives after the close) can still attribute
 // the round trip. Tolerates manually constructed traders in tests (nil map).
 func (crypto *Crypto) rememberEntryStrategy(symbol, strategy string) {
-	if crypto.entryStrategies == nil {
-		crypto.entryStrategies = make(map[string]string)
+	// Copy-on-write behind an atomic pointer, mirroring heldSnapshot: entries
+	// are rare (a handful per minute), reads happen on every story evaluation.
+	// Locks have no business on that read path.
+	for {
+		current := crypto.entryStrategies.Load()
+		size := 1
+
+		if current != nil {
+			size = len(*current) + 1
+		}
+
+		next := make(map[string]string, size)
+
+		if current != nil {
+			for key, value := range *current {
+				next[key] = value
+			}
+		}
+
+		next[symbol] = strategy
+
+		if crypto.entryStrategies.CompareAndSwap(current, &next) {
+			return
+		}
+	}
+}
+
+// EntryStrategy reports the setup name that opened the symbol's position (""
+// when flat or unattributed). Lock-free: one atomic load on the evaluation
+// hot path.
+func (crypto *Crypto) EntryStrategy(symbol string) string {
+	snapshot := crypto.entryStrategies.Load()
+
+	if snapshot == nil {
+		return ""
 	}
 
-	crypto.entryStrategies[symbol] = strategy
+	return (*snapshot)[symbol]
 }
 
 func (crypto *Crypto) recordPositionClose(
@@ -988,6 +1101,55 @@ func (crypto *Crypto) recordPositionClose(
 	}
 }
 
+// PositionFact is what a FILL proved about an open position: which side it
+// is, the price it actually entered at, and when. The story projects these
+// into PositionState so live lifecycle predicates reason over the same truths
+// replay's ledger has always had.
+type PositionFact struct {
+	Side       trading.Side
+	EntryPrice float64
+	EntryAt    time.Time
+}
+
+func (crypto *Crypto) rememberPositionFact(symbol string, side trading.Side, price float64) {
+	for {
+		current := crypto.positionFacts.Load()
+		size := 1
+
+		if current != nil {
+			size = len(*current) + 1
+		}
+
+		next := make(map[string]PositionFact, size)
+
+		if current != nil {
+			for key, value := range *current {
+				next[key] = value
+			}
+		}
+
+		next[symbol] = PositionFact{Side: side, EntryPrice: price, EntryAt: time.Now().UTC()}
+
+		if crypto.positionFacts.CompareAndSwap(current, &next) {
+			return
+		}
+	}
+}
+
+// PositionFact reports the fill-derived facts for a symbol's open position.
+// Lock-free: one atomic load on the story's evaluation hot path.
+func (crypto *Crypto) PositionFact(symbol string) (PositionFact, bool) {
+	snapshot := crypto.positionFacts.Load()
+
+	if snapshot == nil {
+		return PositionFact{}, false
+	}
+
+	fact, ok := (*snapshot)[symbol]
+
+	return fact, ok
+}
+
 func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 	prevQty := crypto.inventory[symbol]
 	prevCost := prevQty * crypto.avgEntry[symbol]
@@ -995,6 +1157,7 @@ func (crypto *Crypto) openPosition(symbol string, qty, price float64) {
 
 	crypto.inventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
+	crypto.rememberPositionFact(symbol, trading.Buy, crypto.avgEntry[symbol])
 	crypto.streams.Add(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
@@ -1011,6 +1174,7 @@ func (crypto *Crypto) openShort(symbol string, qty, price float64) {
 
 	crypto.shortInventory[symbol] = newQty
 	crypto.avgEntry[symbol] = (prevCost + qty*price) / newQty
+	crypto.rememberPositionFact(symbol, trading.Sell, crypto.avgEntry[symbol])
 	crypto.streams.Add(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
@@ -1151,18 +1315,50 @@ yet); the position then reads ~breakeven and is managed from here by the univers
 position manager.
 */
 func (crypto *Crypto) adoptPosition(symbol string, qty float64) {
-	errnie.Debug(fmt.Sprintf("Adopting untracked position: %s, qty: %f", symbol, qty))
+	mark := crypto.markFor(symbol)
+
+	// Adoption is LOUD and audited: the basis below is the adoption MARK, not
+	// the true (unknown) cost — economic P&L from before adoption is invisible,
+	// and protective triggers anchor to this synthetic entry. Anyone reading
+	// the audit can tell an adopted position from a filled one.
+	errnie.Warn(fmt.Sprintf("adopting untracked position %s qty=%f basis=mark(%f)", symbol, qty, mark))
+
+	if err := crypto.audit.Write(map[string]any{
+		"audit_event": "position_adopted",
+		"symbol":      symbol,
+		"quantity":    qty,
+		"basis":       mark,
+		"basis_kind":  "mark", // NOT a fill price — true cost basis unknown
+	}); err != nil {
+		errnie.Error(err)
+	}
+
 	crypto.inventory[symbol] = qty
-	crypto.avgEntry[symbol] = crypto.markFor(symbol)
+	crypto.avgEntry[symbol] = mark
+	crypto.rememberPositionFact(symbol, trading.Buy, mark)
 	crypto.streams.Add(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
 }
 
 func (crypto *Crypto) adoptShort(symbol string, qty float64) {
-	errnie.Debug(fmt.Sprintf("Adopting untracked short: %s, qty: %f", symbol, qty))
+	mark := crypto.markFor(symbol)
+
+	errnie.Warn(fmt.Sprintf("adopting untracked short %s qty=%f basis=mark(%f)", symbol, qty, mark))
+
+	if err := crypto.audit.Write(map[string]any{
+		"audit_event": "position_adopted",
+		"symbol":      symbol,
+		"quantity":    -qty,
+		"basis":       mark,
+		"basis_kind":  "mark",
+	}); err != nil {
+		errnie.Error(err)
+	}
+
 	crypto.shortInventory[symbol] = qty
-	crypto.avgEntry[symbol] = crypto.markFor(symbol)
+	crypto.avgEntry[symbol] = mark
+	crypto.rememberPositionFact(symbol, trading.Sell, mark)
 	crypto.streams.Add(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
@@ -1273,7 +1469,7 @@ func (crypto *Crypto) publishEquity() {
 	}
 
 	cash := crypto.availableCash()
-	capitalBase := crypto.capitalBaseValue()
+	capitalBase := crypto.equityValue()
 	exitBalance, err := broker.ProjectExitBalance(
 		cash,
 		crypto.inventory,

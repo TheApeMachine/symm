@@ -2,17 +2,29 @@ package audit
 
 import (
 	"fmt"
-	"sync"
+	"runtime"
 	"sync/atomic"
+	"time"
 )
 
 const defaultRingCapacity = 4096
 
+// The consumer's wait strategy, in the go-disruptor mold: yield the scheduler a
+// few times for low-latency wakeup under flow, then sleep when the tape is
+// actually idle. No condvar — the previous "lock-free" ring took a mutex on
+// EVERY Push to signal one, and the consumer held that same mutex across its
+// whole drain loop, serialising every producer in the system through a single
+// lock while the doc comment claimed otherwise.
+const (
+	consumerSpinYields = 64
+	consumerIdleSleep  = time.Millisecond
+)
+
 /*
 ringQueue is a multi-producer, single-consumer bounded queue. Producers reserve
-slots with atomic fetch-and-add and write without mutexes; the lone consumer
-drains slots in order. Push returns an error when the ring is full so the hot
-path never blocks on a contended lock or a parked scheduler.
+slots with CAS and write with an atomic store — no locks, no signaling; the lone
+consumer polls with a yield-then-sleep backoff. Push returns an error when the
+ring is full so the hot path never blocks.
 */
 type ringQueue struct {
 	capacity  uint64
@@ -21,22 +33,16 @@ type ringQueue struct {
 	consumed  atomic.Uint64
 	slots     []atomic.Pointer[map[string]any]
 	closed    atomic.Bool
-	idleMu    sync.Mutex
-	ready     *sync.Cond
 }
 
 func newRingQueue() *ringQueue {
 	capacity := uint64(defaultRingCapacity)
-	queue := &ringQueue{
+
+	return &ringQueue{
 		capacity: capacity,
 		mask:     capacity - 1,
 		slots:    make([]atomic.Pointer[map[string]any], capacity),
 	}
-	queue.idleMu.Lock()
-	queue.ready = sync.NewCond(&queue.idleMu)
-	queue.idleMu.Unlock()
-
-	return queue
 }
 
 func (queue *ringQueue) Push(frame map[string]any) error {
@@ -56,33 +62,35 @@ func (queue *ringQueue) Push(frame map[string]any) error {
 			continue
 		}
 
-		slot := head & queue.mask
-		queue.slots[slot].Store(&frame)
-
-		queue.idleMu.Lock()
-		queue.ready.Signal()
-		queue.idleMu.Unlock()
+		queue.slots[head&queue.mask].Store(&frame)
 
 		return nil
 	}
 }
 
 func (queue *ringQueue) Pop() (map[string]any, bool) {
-	queue.idleMu.Lock()
-	defer queue.idleMu.Unlock()
-
-	for {
+	for spins := 0; ; spins++ {
 		if frame, ok := queue.tryPop(); ok {
-			queue.ready.Signal()
-
 			return frame, true
 		}
 
 		if queue.closed.Load() {
+			// One final attempt catches a producer that claimed its slot
+			// before Close but stored just after our last tryPop.
+			if frame, ok := queue.tryPop(); ok {
+				return frame, true
+			}
+
 			return nil, false
 		}
 
-		queue.ready.Wait()
+		if spins < consumerSpinYields {
+			runtime.Gosched()
+
+			continue
+		}
+
+		time.Sleep(consumerIdleSleep)
 	}
 }
 
@@ -97,6 +105,8 @@ func (queue *ringQueue) tryPop() (map[string]any, bool) {
 	slot := tail & queue.mask
 	framePtr := queue.slots[slot].Load()
 
+	// A producer has claimed this slot but not yet stored into it; treat the
+	// queue as momentarily empty and let the backoff retry preserve order.
 	if framePtr == nil {
 		return nil, false
 	}
@@ -109,8 +119,4 @@ func (queue *ringQueue) tryPop() (map[string]any, bool) {
 
 func (queue *ringQueue) Close() {
 	queue.closed.Store(true)
-
-	queue.idleMu.Lock()
-	queue.ready.Broadcast()
-	queue.idleMu.Unlock()
 }

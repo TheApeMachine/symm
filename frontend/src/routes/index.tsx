@@ -13,7 +13,7 @@ import {
 	SignalGauge,
 	type SignalGaugeBridge,
 } from "#/components/charts/confidence/Gauges";
-import { gaugeWirePayload } from "#/components/charts/confidence/gauge-payload";
+import { ingestGaugeWire } from "#/components/charts/confidence/gauge-wire";
 import {
 	SignalHeatmap,
 	type SignalHeatmapBridge,
@@ -23,24 +23,19 @@ import {
 	type SignalSurpriseHeatmapBridge,
 } from "#/components/charts/confidence/SignalSurpriseHeatmap";
 import {
-	deliverFluidWire,
 	type FluidPushBridge,
-	parseFluidWire,
+	ingestFluidWire,
 } from "#/components/charts/fluid/fluid-push-bridge";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
 import {
 	type PredictionBridge,
 	PredictionChart,
 } from "#/components/charts/prediction/PredictionChart";
-import {
-	deliverPredictionWire,
-	parsePredictionWire,
-} from "#/components/charts/prediction/prediction-wire";
+import { ingestPredictionWire } from "#/components/charts/prediction/prediction-wire";
 import { SpiderChart } from "#/components/charts/spider/spider";
 import {
 	createSpiderBridge,
-	deliverRegimeWire,
-	parseRegimeWire,
+	ingestRegimeWire,
 	type SpiderBridge,
 } from "#/components/charts/spider/spider-bridge";
 import { TabbedChart } from "#/components/charts/tabbed";
@@ -126,10 +121,9 @@ const WsFeed = ({
 					return;
 				}
 
-				const regimeValues = parseRegimeWire(raw, REGIME_AXIS_KEYS);
+				if (raw.chart === "regime") {
+					ingestRegimeWire(spiderRef.current, raw, REGIME_AXIS_KEYS);
 
-				if (regimeValues !== null) {
-					deliverRegimeWire(spiderRef.current, regimeValues);
 					return;
 				}
 
@@ -137,32 +131,25 @@ const WsFeed = ({
 					const source = raw.source as string;
 					const confidence = (raw.confidence as number) ?? 0;
 					const snr = (raw.snr as number) ?? 0;
-					const payload = gaugeWirePayload(raw);
-					const bridge = gaugeRefs.current?.[source];
 
-					if (bridge) {
-						if (bridge.ready) {
-							bridge.update(payload, raw);
-						} else {
-							bridge.pending.push(raw);
-						}
-					}
-
+					ingestGaugeWire(gaugeRefs.current?.[source], raw);
 					heatmapRef.current?.set(source, confidence);
 					surpriseRef.current?.set(source, snr);
 
 					return;
 				}
 
-				const predictionReading = parsePredictionWire(raw);
-
-				if (predictionReading !== null) {
-					deliverPredictionWire(predictionRef.current, predictionReading);
+				if (raw.chart === "prediction") {
+					ingestPredictionWire(predictionRef.current, raw);
 
 					return;
 				}
 
-				if (typeof raw.symbol === "string" && typeof raw.open === "number") {
+				if (
+					typeof raw.symbol === "string" &&
+					typeof raw.sec === "number" &&
+					typeof raw.open === "number"
+				) {
 					// Candles drive the chart only. They MUST NOT write the marks map:
 					// the OHLC stream always carries the chart-anchor (BTC/EUR), and
 					// writing it into the shared, symbol-keyed marks map leaks a
@@ -173,12 +160,7 @@ const WsFeed = ({
 					return;
 				}
 
-				const fluidFrame = parseFluidWire(raw);
-
-				if (fluidFrame !== null) {
-					deliverFluidWire(fluidRef.current, fluidFrame);
-					return;
-				}
+				ingestFluidWire(fluidRef.current, raw);
 			} catch {
 				return;
 			}

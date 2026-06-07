@@ -5,26 +5,7 @@ import {
 	formatGaugePayloadValue,
 	gaugePayloadEntries,
 	gaugeWarmupPercent,
-	gaugeWirePayload,
 } from "#/components/charts/confidence/gauge-payload";
-
-describe("gaugeWirePayload", () => {
-	it("copies gauge fields and drops wire routing keys", () => {
-		expect(
-			gaugeWirePayload({
-				chart: "gauge",
-				event: "tick",
-				source: "hawkes",
-				confidence: 1.2,
-				snr: 0.8,
-			}),
-		).toEqual({
-			source: "hawkes",
-			confidence: 1.2,
-			snr: 0.8,
-		});
-	});
-});
 
 describe("confidenceFromGaugePayload", () => {
 	it("reads confidence for the needle", () => {

@@ -32,6 +32,12 @@ market:
 
 trading:
   order_ack_timeout: 500ms
+  reasoning:
+    # How long a fired playbook node keeps its `then:` children armed. Without
+    # a bound, "saw compression, then ignition" could fire an entry minutes
+    # after the setup that justified it — on a fast pump, that buys the top.
+    # Aged on the tape clock, so live and replay behave identically.
+    latch_ttl: 90s
   # Pump microcaps on the EUR long tail often quote wide and tick slowly; the
   # playbook targets those names, so preflight must not use major-only limits.
   max_quote_age: 15s
@@ -67,6 +73,8 @@ trading:
     # When capacity is full, exit the weakest open position if the new signal beats it
     # by preemption_margin (a full round trip of costs demands a decisive challenger).
     preemption_enabled: true
+    # Base value — scaled at runtime by regime: ×1.5 in choppy/bearish (churn
+    # pays full taker round trips with no momentum), ×0.85 in trending/bullish.
     preemption_margin: 1.5
   paper:
     wallet_eur: 200

@@ -26,7 +26,7 @@ src/
   lib/symm/               # wire protocol, layout schema, WS routing, stores
 ```
 
-Chart adapters under `components/charts/*/` parse websocket frames and call the mounted chart's update function. Trade candles use `trade-chart-wire.ts` (not a telemetry store). SciChart data series own the rendered history; adapters do not mirror it.
+Chart adapters under `components/charts/*/` route websocket frames and call the mounted chart's update function. Each adapter is a thin `ingest*Wire` entry point plus a type guard; charts own SciChart state and do not mirror history in parallel stores. Trade candles additionally rely on the backend emitting numeric `sec` from `interval_begin`.
 
 # Getting Started
 

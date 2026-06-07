@@ -1,21 +1,3 @@
-const gaugeWireSkipKeys = new Set(["chart", "event"]);
-
-export const gaugeWirePayload = (
-	raw: Record<string, unknown>,
-): Record<string, unknown> => {
-	const payload: Record<string, unknown> = {};
-
-	for (const [key, value] of Object.entries(raw)) {
-		if (gaugeWireSkipKeys.has(key)) {
-			continue;
-		}
-
-		payload[key] = value;
-	}
-
-	return payload;
-};
-
 export const confidenceFromGaugePayload = (
 	payload: Record<string, unknown>,
 ): number => {

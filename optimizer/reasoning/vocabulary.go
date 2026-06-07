@@ -8,10 +8,6 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-// maxSeedCategories caps how many distinct signals seed their own strategy branch,
-// so a noisy tape with dozens of categories does not explode the initial beam.
-const maxSeedCategories = 6
-
 // minSeedObservations is the statistical floor for a category to be rankable at
 // all. Without it the mean-forward-return ranking is a lottery for rare
 // categories (variance shrinks as 1/√n): on a real 3.4M-row tape a
@@ -164,10 +160,6 @@ func deriveSeedCategories(rows []types.Measurement) []types.CategoryType {
 
 		return first.category < second.category
 	})
-
-	if len(candidates) > maxSeedCategories {
-		candidates = candidates[:maxSeedCategories]
-	}
 
 	categories := make([]types.CategoryType, 0, len(candidates))
 

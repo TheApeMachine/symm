@@ -1,6 +1,7 @@
 package reasoning
 
 import (
+	"time"
 	"testing"
 
 	"github.com/theapemachine/symm/kraken/trading"
@@ -16,6 +17,8 @@ type fakeReasonContext struct {
 func (ctx fakeReasonContext) Regime() types.Regime { return ctx.regime }
 
 func (ctx fakeReasonContext) PositionSide() trading.Side { return "" }
+func (ctx fakeReasonContext) PositionStrategy() string   { return "" }
+func (ctx fakeReasonContext) Now() time.Time             { return time.Time{} }
 
 func (ctx fakeReasonContext) Lifecycle(state types.ObservationType) bool {
 	switch state {
@@ -109,7 +112,7 @@ func TestEvaluateStatefulTracedRecordsOutcomes(t *testing.T) {
 	}
 
 	trace := &ReasonTrace{}
-	act, found := EvaluateStatefulTraced(thoughts, ctx, NewReasonState(), trace)
+	act, _, found := EvaluateStatefulTraced(thoughts, ctx, NewReasonState(), trace)
 
 	if !found || act.Type != ActionLimit {
 		t.Fatalf("expected ActionLimit, got found=%v act=%v", found, act.Type)

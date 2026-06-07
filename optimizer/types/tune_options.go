@@ -18,6 +18,7 @@ type TuneOptions struct {
 	BeamWidth           int
 	MaxRounds           int
 	MaxNodes            int
+	Patience            int
 	MinRoundTrips       int
 	InstrumentRules     *broker.InstrumentRulesCache
 	OnBest              func(BestTree)

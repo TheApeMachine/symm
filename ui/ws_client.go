@@ -35,6 +35,17 @@ func (client *wsClient) writeJSON(payload any) error {
 	return client.conn.WriteJSON(payload)
 }
 
+// writeRaw ships pre-marshaled JSON. The broadcast path serializes each frame
+// ONCE instead of once per connected client.
+func (client *wsClient) writeRaw(raw []byte) error {
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
+	_ = client.conn.SetWriteDeadline(time.Now().Add(wsWriteDeadline))
+
+	return client.conn.WriteMessage(websocket.TextMessage, raw)
+}
+
 func (client *wsClient) close() error {
 	client.writeMu.Lock()
 	defer client.writeMu.Unlock()

@@ -29,6 +29,11 @@ branches:
       do:
         type: market
         fraction: 0.25
+    # PRIORITY CONTRACT: sibling order below IS economic priority. The evaluator
+    # resolves same-depth ties to the FIRST sibling, so when several holding
+    # branches fire on one tick, settle_position (immediate market close) wins
+    # over stop_loss, which wins over trailing_stop (both only ARM levels).
+    # Reordering these lines reorders risk management — deliberately.
     - when:
         all:
             - subject: position
@@ -42,9 +47,15 @@ branches:
                   value: 1
                 - subject: signal
                   category: faded_exhaustion
-                  unit: snr
+                  # Confidence, not SNR: by the third exhausted tick the SNR has
+                  # decayed toward its ~0.5 habitual floor while confidence stays
+                  # high — surprise-gated exhaustion exits go blind exactly when
+                  # the condition persists. Observed ceiling on 2026-06-07 tape:
+                  # conf max 0.48, p90 0.38 → 0.35 is its top decile. (snr ≥ 1
+                  # here effectively never held.)
+                  unit: confidence
                   op: at_least
-                  value: 1
+                  value: 0.35
       do: settle_position
     - when:
         all:

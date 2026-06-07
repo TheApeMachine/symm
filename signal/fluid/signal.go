@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
+	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -34,6 +35,7 @@ type Signal struct {
 	fieldScratch     []*FluidSymbol
 	fieldPublishedAt time.Time
 	ui               *qpool.BroadcastGroup
+	resync        *signalpool.BookResync
 	surpriseField *types.CategorySurpriseField
 	classifier    *adaptive.Classifier
 	calibrator    *numeric.BandCalibrator
@@ -97,6 +99,10 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 		"measurements", viper.GetDuration("system.queue.ttl"),
 	)
 	signal.ui = pool.CreateBroadcastGroup("ui", viper.GetDuration("system.queue.ttl"))
+
+	if depth, err := symmarket.RequiredBookDepthLevels(); err == nil {
+		signal.resync = signalpool.SharedBookResync(pool, depth)
+	}
 
 	errnie.Info("signal/fluid ready", "signal/fluid")
 
@@ -179,6 +185,12 @@ func (signal *Signal) Tick() (err error) {
 
 				if err = state.FeedBook(delta); errnie.Error(err) != nil {
 					continue
+				}
+
+				// Divergence means a delta was lost; the only repair is a fresh
+				// snapshot. Rate-limited per symbol inside Request.
+				if state.Diverged() {
+					signal.resync.Request(delta.Symbol)
 				}
 
 				if err = signal.emit(delta.Symbol); errnie.Error(err) != nil {

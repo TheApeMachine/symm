@@ -189,13 +189,16 @@ func scoreForestOnRows(
 		return replay.ReplayResult{}, nil
 	}
 
+	attributedCosts := costs
+	attributedCosts.CollectAttribution = true
+
 	tape, err := replay.PrecompileTapeWorkers(rows, workers)
 
 	if err != nil {
 		return replay.ReplayResult{}, err
 	}
 
-	return replay.NewThoughtSimulation(ctx, forest, tape, costs).Result(), nil
+	return replay.NewThoughtSimulation(ctx, forest, tape, attributedCosts).Result(), nil
 }
 
 /*

@@ -16,6 +16,7 @@ on an hour of capture.
 type PrecompiledTick struct {
 	Row           types.Measurement
 	SymbolOrdinal int // position of this tick within symbolIndices[Row.Symbol]
+	Regime        types.Regime // ClassifyRegime at precompile; identical on every candidate replay
 }
 
 /*

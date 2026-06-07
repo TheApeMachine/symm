@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -106,14 +107,25 @@ func (ledger *replayLedger) deployReplayEntry(item batchedReplayEntry) {
 		return
 	}
 
-	victim, victimScore, ok := ledger.weakestOpenConviction()
-
-	if !ok || item.conviction <= victimScore {
+	// Parity with the live desk: a challenger must beat the weakest incumbent
+	// by the regime-scaled margin, and preemption rounds are spaced — replay
+	// used to rotate on any plain score edge, scoring churn live would refuse.
+	if !ledger.lastPreemptAt.IsZero() &&
+		item.at.Sub(ledger.lastPreemptAt) < perspectives.PreemptionCooldown {
 		ledger.fundBlocked++
 
 		return
 	}
 
+	victim, victimScore, ok := ledger.weakestOpenConviction()
+
+	if !ok || item.conviction <= victimScore*perspectives.PreemptionMargin(ledger.lastRegime) {
+		ledger.fundBlocked++
+
+		return
+	}
+
+	ledger.lastPreemptAt = item.at
 	ledger.preemptOpenPosition(victim, item.measurement, item.snapshots)
 
 	if ledger.reserveReplayEntry(item) {

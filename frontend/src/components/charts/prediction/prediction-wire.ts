@@ -10,31 +10,49 @@ const predictionSeriesKinds = new Set<PredictionSeriesKind>([
 	"error",
 ]);
 
-export const parsePredictionWire = (
-	raw: Record<string, unknown>,
-): PredictionReading | null => {
-	if (raw.chart !== "prediction") {
-		return null;
+export const isPredictionWire = (
+	raw: unknown,
+): raw is PredictionReading & {
+	chart: "prediction";
+} => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
 	}
 
-	if (!isPredictionSeriesKind(raw.kind)) {
-		return null;
+	const row = raw as Record<string, unknown>;
+
+	if (row.chart !== "prediction") {
+		return false;
 	}
 
-	if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.value)) {
-		return null;
+	if (!isPredictionSeriesKind(row.kind)) {
+		return false;
 	}
 
-	return { kind: raw.kind, x: raw.x, value: raw.value };
+	return (
+		typeof row.x === "number" &&
+		Number.isFinite(row.x) &&
+		typeof row.value === "number" &&
+		Number.isFinite(row.value)
+	);
 };
 
-export const deliverPredictionWire = (
-	bridge: PredictionBridge,
-	reading: PredictionReading,
-) => {
+export const ingestPredictionWire = (
+	bridge: PredictionBridge | null | undefined,
+	raw: unknown,
+): void => {
+	if (!bridge || !isPredictionWire(raw)) {
+		return;
+	}
+
+	const reading: PredictionReading = {
+		kind: raw.kind,
+		x: raw.x,
+		value: raw.value,
+	};
+
 	if (bridge.ready) {
 		bridge.append(reading);
-
 		return;
 	}
 
@@ -49,8 +67,4 @@ const isPredictionSeriesKind = (
 	}
 
 	return predictionSeriesKinds.has(value as PredictionSeriesKind);
-};
-
-const isFiniteNumber = (value: unknown): value is number => {
-	return typeof value === "number" && Number.isFinite(value);
 };

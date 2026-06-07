@@ -21,6 +21,7 @@ import (
 	kraken "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/runstats"
@@ -172,9 +173,18 @@ var (
 			for _, source := range types.AllSignalSources() {
 				source := source
 
+				// leadlag is structurally silent while its decimated price ring
+				// grows to span half the 60m lag window (~30-35m) — a 5m grace
+				// tripped every cycle during honest warmup.
+				grace := 5 * time.Minute
+
+				if source == types.SourceLeadLag {
+					grace = 45 * time.Minute
+				}
+
 				watchdog.Expect(
 					"signal-"+source.String(),
-					5*time.Minute,
+					grace,
 					false,
 					runstats.RateExpectation(
 						func() uint64 { return types.SourceEmissions(source) },
@@ -367,6 +377,12 @@ func newStoryWithBookCapture(
 		return ok
 	})
 	story.SetPositionHeld(crypto.SymbolHeld)
+	story.SetPositionStrategy(crypto.EntryStrategy)
+	story.SetPositionFacts(func(symbol string) (trading.Side, float64, time.Time, bool) {
+		fact, ok := crypto.PositionFact(symbol)
+
+		return fact.Side, fact.EntryPrice, fact.EntryAt, ok
+	})
 
 	return story, nil
 }

@@ -142,7 +142,7 @@ func TestApplyFillRealizedPnL(t *testing.T) {
 			balances.ApplyFill("ETH/EUR", "sell", 1, 110, 0.44, "exec-2") // proceeds 109.56
 
 			// realized = (110 - 0.44) - 1*100.4 = 9.16, and the wallet grew by exactly that.
-			So(balances.realized, ShouldAlmostEqual, 9.16, 1e-9)
+			So(balances.RealizedPnL(), ShouldAlmostEqual, 9.16, 1e-9)
 			So(balanceOf(balances, "EUR"), ShouldAlmostEqual, 200+9.16, 1e-9)
 			So(balanceOf(balances, "ETH"), ShouldAlmostEqual, 0, 1e-12)
 		})
@@ -151,7 +151,7 @@ func TestApplyFillRealizedPnL(t *testing.T) {
 			balances.ApplyFill("ETH/EUR", "buy", 1, 100, 0.4, "exec-1")
 			balances.ApplyFill("ETH/EUR", "sell", 1, 90, 0.36, "exec-2")
 
-			So(balances.realized, ShouldAlmostEqual, (90-0.36)-100.4, 1e-9) // -10.76
+			So(balances.RealizedPnL(), ShouldAlmostEqual, (90-0.36)-100.4, 1e-9) // -10.76
 			_, hasBasis := balances.costBasis["ETH"]
 			So(hasBasis, ShouldBeFalse)
 		})
@@ -160,7 +160,8 @@ func TestApplyFillRealizedPnL(t *testing.T) {
 			balances.ApplyFill("ETH/EUR", "buy", 1, 100, 0, "exec-1") // basis 100
 			balances.ApplyFill("ETH/EUR", "buy", 1, 50, 0, "exec-2")  // blended (100+50)/2 = 75
 
-			So(balances.costBasis["ETH"], ShouldAlmostEqual, 75, 1e-9)
+			blended, _ := balances.costBasis["ETH"].Float64()
+			So(blended, ShouldAlmostEqual, 75, 1e-9)
 		})
 	})
 }

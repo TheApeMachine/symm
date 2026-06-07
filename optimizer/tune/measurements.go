@@ -90,6 +90,7 @@ func TuneMeasurements(
 		BeamWidth:     options.BeamWidth,
 		MaxRounds:     options.MaxRounds,
 		MaxNodes:      options.MaxNodes,
+		Patience:      options.Patience,
 		MinRoundTrips: minRoundTrips,
 		Workers:       options.Workers,
 		OnProgress: func(progress reasoning.SearchProgress) {

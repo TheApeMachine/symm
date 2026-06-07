@@ -52,7 +52,8 @@ type ReplayCosts struct {
 	ExecutionLatency           time.Duration
 	ExecutionStressEnabled     bool
 	InstrumentRules            *broker.InstrumentRulesCache
-	CollectTrades              bool // workbench: record the attributed trade list (search leaves this off)
+	CollectTrades       bool // workbench: record the attributed round-trip list (search leaves this off)
+	CollectAttribution  bool // workbench / post-search logging: per-setup tallies (search leaves this off)
 }
 
 /*

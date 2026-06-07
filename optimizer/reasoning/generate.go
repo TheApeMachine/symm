@@ -19,7 +19,7 @@ occurs); the numeric grids are coarse starting points the search refines by tryi
 them and keeping what scores. Keeping the grids small bounds the branching factor.
 */
 type Vocabulary struct {
-	Categories []types.CategoryType   // signal categories present in the tape, most frequent first
+	Categories []types.CategoryType   // categories on the tape that clear the observation floor, forward-edge ranked
 	Regimes    []types.Regime         // regimes a gate may require
 	Thresholds []float64              // signal SNR levels
 	Lookbacks  []int                  // `ago` lookbacks for temporal steps

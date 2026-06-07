@@ -16,7 +16,7 @@ func InstrumentPairFromREST(pair *Pair) (InstrumentPair, error) {
 		return InstrumentPair{}, fmt.Errorf("kraken/market: asset pair is nil")
 	}
 
-	symbol := strings.TrimSpace(pair.Wsname)
+	symbol := normalizeWsname(strings.TrimSpace(pair.Wsname))
 
 	if symbol == "" {
 		return InstrumentPair{}, fmt.Errorf("kraken/market: asset pair wsname is required")
@@ -79,6 +79,39 @@ func InstrumentPairFromREST(pair *Pair) (InstrumentPair, error) {
 		PriceIncrement: priceIncrement,
 		QtyMin:         qtyMin,
 	}, nil
+}
+
+// legacyAssetCodes maps Kraken's REST-era asset codes to the v2 websocket
+// names the rest of the system speaks. REST AssetPairs wsnames still say
+// XBT/EUR and XDG/EUR while every v2 tape row says BTC/EUR and DOGE/EUR — a
+// rules cache seeded from REST alone answered "missing instrument rules for
+// BTC/EUR" on the most liquid pair on the exchange (every tune entry blocked;
+// live only survived because the websocket instrument snapshot overlaid the
+// v2 names).
+var legacyAssetCodes = map[string]string{
+	"XBT": "BTC",
+	"XDG": "DOGE",
+}
+
+func normalizeWsname(wsname string) string {
+	slash := strings.IndexByte(wsname, '/')
+
+	if slash <= 0 {
+		return wsname
+	}
+
+	base := wsname[:slash]
+	quote := wsname[slash+1:]
+
+	if modern, legacy := legacyAssetCodes[base]; legacy {
+		base = modern
+	}
+
+	if modern, legacy := legacyAssetCodes[quote]; legacy {
+		quote = modern
+	}
+
+	return base + "/" + quote
 }
 
 func parseRestDecimal(raw string) (float64, error) {

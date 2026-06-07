@@ -1,7 +1,7 @@
 import type { FieldSnapshotEvent } from "#/components/charts/fluid/types";
 
 export type FluidPushBridge = {
-	push: (raw: unknown) => void;
+	push: (frame: FieldSnapshotEvent) => void;
 	ready: boolean;
 	pending: FieldSnapshotEvent | null;
 };
@@ -12,39 +12,37 @@ export const createFluidPushBridge = (): FluidPushBridge => ({
 	pending: null,
 });
 
-export const parseFluidWire = (
-	raw: Record<string, unknown>,
-): FieldSnapshotEvent | null => {
-	if (raw.type !== "fluid" || !Array.isArray(raw.symbols)) {
-		return null;
+export const isFieldSnapshot = (raw: unknown): raw is FieldSnapshotEvent => {
+	if (typeof raw !== "object" || raw === null) {
+		return false;
 	}
 
-	if (raw.symbols.length === 0) {
-		return null;
-	}
+	const row = raw as Record<string, unknown>;
 
-	return raw as FieldSnapshotEvent;
+	return (
+		row.type === "fluid" && Array.isArray(row.symbols) && row.symbols.length > 0
+	);
 };
 
-export const deliverFluidWire = (
+export const ingestFluidWire = (
 	bridge: FluidPushBridge | null | undefined,
-	frame: FieldSnapshotEvent,
-) => {
-	if (!bridge) {
+	raw: unknown,
+): void => {
+	if (!bridge || !isFieldSnapshot(raw)) {
 		return;
 	}
 
 	if (bridge.ready) {
-		bridge.push(frame);
+		bridge.push(raw);
 		return;
 	}
 
-	bridge.pending = frame;
+	bridge.pending = raw;
 };
 
 export const attachFluidPush = (
 	bridge: FluidPushBridge,
-	push: (raw: unknown) => void,
+	push: (frame: FieldSnapshotEvent) => void,
 ) => {
 	bridge.push = push;
 	bridge.ready = true;

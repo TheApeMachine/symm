@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
 	attachFluidPush,
-	deliverFluidWire,
-	parseFluidWire,
+	ingestFluidWire,
+	isFieldSnapshot,
 } from "#/components/charts/fluid/fluid-push-bridge";
 
 const fluidFrame = (symbolCount: number) => ({
@@ -24,18 +24,18 @@ const fluidFrame = (symbolCount: number) => ({
 	],
 });
 
-describe("parseFluidWire", () => {
+describe("isFieldSnapshot", () => {
 	it("accepts fluid field snapshots", () => {
-		expect(parseFluidWire(fluidFrame(1))).toEqual(fluidFrame(1));
+		expect(isFieldSnapshot(fluidFrame(1))).toBe(true);
 	});
 
 	it("rejects non-fluid frames", () => {
-		expect(parseFluidWire({ chart: "gauge", source: "fluid" })).toBeNull();
-		expect(parseFluidWire({ type: "fluid", symbols: [] })).toBeNull();
+		expect(isFieldSnapshot({ chart: "gauge", source: "fluid" })).toBe(false);
+		expect(isFieldSnapshot({ type: "fluid", symbols: [] })).toBe(false);
 	});
 });
 
-describe("deliverFluidWire", () => {
+describe("ingestFluidWire", () => {
 	it("buffers only the latest snapshot until the chart is ready", () => {
 		const bridge = {
 			push: () => {},
@@ -44,8 +44,8 @@ describe("deliverFluidWire", () => {
 		};
 		const applied: unknown[] = [];
 
-		deliverFluidWire(bridge, fluidFrame(1));
-		deliverFluidWire(bridge, {
+		ingestFluidWire(bridge, fluidFrame(1));
+		ingestFluidWire(bridge, {
 			...fluidFrame(2),
 			ts: "2026-06-06T22:00:01Z",
 		});

@@ -89,6 +89,7 @@ when ground truth catches up pushes the signed error back into per-source
 calibration — tuning the values signals use to GENERATE confidence and surprise.
 */
 type forwardFeedback struct {
+	clampedForecasts uint64 // forecasts that hit the return clamp — visible distortion, not silent
 	horizon            time.Duration
 	alpha              float64
 	pending            map[string][]pendingForecast
@@ -245,12 +246,18 @@ func (feedback *forwardFeedback) form(
 		return nil
 	}
 
-	if predicted > predictionReturnClamp {
-		predicted = predictionReturnClamp
-	}
+	// The clamp guards the SGD learner from poisoning itself on one absurd
+	// forecast; it is telemetry-visible rather than silent so a model that
+	// LIVES at the clamp (predicting ±5% per minute, every minute) is a
+	// finding on the dashboard, not a hidden distortion.
+	if predicted > predictionReturnClamp || predicted < -predictionReturnClamp {
+		feedback.clampedForecasts++
 
-	if predicted < -predictionReturnClamp {
-		predicted = -predictionReturnClamp
+		if predicted > predictionReturnClamp {
+			predicted = predictionReturnClamp
+		} else {
+			predicted = -predictionReturnClamp
+		}
 	}
 
 	queue := append(feedback.pending[symbol], pendingForecast{

@@ -2,6 +2,7 @@ package reasoning
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -10,6 +11,7 @@ import (
 
 // mockReason answers predicate queries from ago-indexed series (index 0 = now).
 type mockReason struct {
+	now       time.Time
 	regime    types.Regime
 	lifecycle map[types.ObservationType]bool
 	signal    map[types.CategoryType][]float64
@@ -20,6 +22,8 @@ type mockReason struct {
 
 func (m mockReason) Regime() types.Regime                   { return m.regime }
 func (m mockReason) PositionSide() trading.Side             { return "" }
+func (m mockReason) PositionStrategy() string              { return "" }
+func (m mockReason) Now() time.Time                         { return m.now }
 func (m mockReason) Lifecycle(s types.ObservationType) bool { return m.lifecycle[s] }
 
 func (m mockReason) Signal(c types.CategoryType, _ UnitType, lookback Lookback) (float64, bool) {
@@ -143,6 +147,106 @@ func TestReasoningPredicates(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(act.Type, ShouldEqual, ActionIceberg)
+		})
+	})
+}
+
+func TestPositionStrategyGate(t *testing.T) {
+	Convey("Given a long position opened by quick_pump", t, func() {
+		var regime types.Regime
+
+		held := NewWindowReason(nil, regime, PositionState{
+			Holding: true, Side: trading.Buy, Strategy: "quick_pump", Last: 100,
+		})
+
+		Convey("A matching strategy leaf holds (match implies holding)", func() {
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "quick_pump", Op: ComparisonEquals,
+			}, held), ShouldBeTrue)
+		})
+
+		Convey("A different setup's leaf does not hold", func() {
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "slow_pump", Op: ComparisonEquals,
+			}, held), ShouldBeFalse)
+		})
+
+		Convey("Strategy conjoins with lifecycle and side", func() {
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "quick_pump",
+				Lifecycle: types.ObservationHolding, Op: ComparisonEquals,
+			}, held), ShouldBeTrue)
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "quick_pump",
+				Side: trading.Sell, Op: ComparisonEquals,
+			}, held), ShouldBeFalse)
+		})
+
+		Convey("A flat symbol never matches any strategy", func() {
+			flat := NewWindowReason(nil, regime, PositionState{Holding: false})
+
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "quick_pump", Op: ComparisonEquals,
+			}, flat), ShouldBeFalse)
+		})
+
+		Convey("An unattributed position (legacy dust) matches no strategy leaf", func() {
+			legacy := NewWindowReason(nil, regime, PositionState{
+				Holding: true, Side: trading.Buy, Last: 100,
+			})
+
+			So(holds(Predicate{
+				Subject: SubjectPosition, Strategy: "quick_pump", Op: ComparisonEquals,
+			}, legacy), ShouldBeFalse)
+		})
+	})
+}
+
+func TestLatchExpiresOnContextClock(t *testing.T) {
+	Convey("Given a compression-then-ignition sequence with a 90s latch TTL", t, func() {
+		base := time.Unix(1_000_000, 0)
+		thoughts := []Thought{{
+			Name: "quick_pump",
+			When: Predicate{
+				Subject: SubjectSignal, Category: "coiled_compression",
+				Unit: UnitSNR, Op: ComparisonAtLeast, Value: 0.9,
+			},
+			Then: []Thought{{
+				Name: "ignite",
+				When: Predicate{
+					Subject: SubjectSignal, Category: "vertical_ignition",
+					Unit: UnitSNR, Op: ComparisonAtLeast, Value: 0.9,
+				},
+				Do: Act{Type: ActionMarket, Fraction: 0.5},
+			}},
+		}}
+
+		compression := map[types.CategoryType][]float64{"coiled_compression": {1.0}}
+		ignition := map[types.CategoryType][]float64{"vertical_ignition": {1.0}}
+
+		Convey("Ignition 30s after the latched compression still fires", func() {
+			state := NewReasonState()
+
+			_, fired := EvaluateStateful(thoughts, mockReason{now: base, signal: compression}, state)
+			So(fired, ShouldBeFalse) // parent latches, no action yet
+
+			act, fired := EvaluateStateful(thoughts, mockReason{
+				now: base.Add(30 * time.Second), signal: ignition,
+			}, state)
+			So(fired, ShouldBeTrue)
+			So(act.Type, ShouldEqual, ActionMarket)
+		})
+
+		Convey("Ignition two minutes later finds the latch expired — no stale entry", func() {
+			state := NewReasonState()
+
+			_, fired := EvaluateStateful(thoughts, mockReason{now: base, signal: compression}, state)
+			So(fired, ShouldBeFalse)
+
+			_, fired = EvaluateStateful(thoughts, mockReason{
+				now: base.Add(2 * time.Minute), signal: ignition,
+			}, state)
+			So(fired, ShouldBeFalse)
 		})
 	})
 }

@@ -19,7 +19,9 @@ TUNE_WORKERS ?= 0
 TUNE_BEAM_WIDTH ?= 0
 TUNE_MAX_ROUNDS ?= 0
 TUNE_MAX_NODES ?= 0
-TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rounds $(TUNE_MAX_ROUNDS) --max-nodes $(TUNE_MAX_NODES)
+TUNE_PATIENCE ?= 0
+TUNE_MAX_MEASUREMENTS ?= 0
+TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rounds $(TUNE_MAX_ROUNDS) --max-nodes $(TUNE_MAX_NODES) --patience $(TUNE_PATIENCE) --max-measurements $(TUNE_MAX_MEASUREMENTS)
 
 DUMP_OUTPUT ?= symm.txt
 

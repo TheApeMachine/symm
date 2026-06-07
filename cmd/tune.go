@@ -33,11 +33,12 @@ var tuneCmd = &cobra.Command{
 		options.OutputPath = tunePerspectivesPath()
 		options.CandidateReportPath = tuneCandidateReportPath(cmd)
 		options.MaxMeasurements = maxMeasurements
-		options.BeamWidth, _ = cmd.Flags().GetInt(tuneBeamWidthFlag)
-		options.MaxRounds, _ = cmd.Flags().GetInt(tuneMaxRoundsFlag)
-		options.MaxNodes, _ = cmd.Flags().GetInt(tuneMaxNodesFlag)
+		options.BeamWidth = tuneIntFlagOrConfig(cmd, tuneBeamWidthFlag, "optimizer.tune.beam_width")
+		options.MaxRounds = tuneIntFlagOrConfig(cmd, tuneMaxRoundsFlag, "optimizer.tune.max_rounds")
+		options.MaxNodes = tuneIntFlagOrConfig(cmd, tuneMaxNodesFlag, "optimizer.tune.max_nodes")
+		options.Patience = tuneIntFlagOrConfig(cmd, tunePatienceFlag, "optimizer.tune.patience")
 
-		if workers, _ := cmd.Flags().GetInt(tuneWorkersFlag); workers > 0 {
+		if workers := tuneIntFlagOrConfig(cmd, tuneWorkersFlag, "optimizer.tune.workers"); workers > 0 {
 			options.Workers = workers
 		}
 
@@ -128,6 +129,11 @@ func init() {
 		"maximum nodes per forest; 0 uses the search default",
 	)
 	tuneCmd.Flags().Int(
+		tunePatienceFlag,
+		0,
+		"rounds without a new best before stopping; 0 uses the search default",
+	)
+	tuneCmd.Flags().Int(
 		tuneWorkersFlag,
 		0,
 		"parallel scoring workers; 0 uses all CPUs",
@@ -142,6 +148,8 @@ PnL is the only objective; structure and depth are discovered, not preset. An
 improved tree is written to
 market/perspectives/cfg/perspectives.yaml whenever a new best-scoring candidate
 with closed round trips appears.
+
+Search limits fall back to optimizer.tune.* in strategy.yml when flags are unset.
 `
 
 const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"
@@ -150,6 +158,7 @@ const tuneMaxMeasurementsFlag = "max-measurements"
 const tuneBeamWidthFlag = "beam-width"
 const tuneMaxRoundsFlag = "max-rounds"
 const tuneMaxNodesFlag = "max-nodes"
+const tunePatienceFlag = "patience"
 const tuneWorkersFlag = "workers"
 
 func tuneMeasurementPath() (string, error) {
@@ -189,17 +198,45 @@ func tunePerspectivesPath() string {
 }
 
 func tuneMaxMeasurements(cmd *cobra.Command) (int, error) {
-	maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
+	if cmd.Flags().Changed(tuneMaxMeasurementsFlag) {
+		maxMeasurements, err := cmd.Flags().GetInt(tuneMaxMeasurementsFlag)
 
-	if err != nil {
-		return 0, err
+		if err != nil {
+			return 0, err
+		}
+
+		if maxMeasurements < 0 {
+			return 0, fmt.Errorf("symm tune: --%s must be non-negative", tuneMaxMeasurementsFlag)
+		}
+
+		return maxMeasurements, nil
 	}
 
-	if maxMeasurements < 0 {
-		return 0, fmt.Errorf("symm tune: --%s must be non-negative", tuneMaxMeasurementsFlag)
+	if viper.IsSet("optimizer.tune.max_measurements") {
+		maxMeasurements := viper.GetInt("optimizer.tune.max_measurements")
+
+		if maxMeasurements < 0 {
+			return 0, fmt.Errorf("symm tune: optimizer.tune.max_measurements must be non-negative")
+		}
+
+		return maxMeasurements, nil
 	}
 
-	return maxMeasurements, nil
+	return 0, nil
+}
+
+func tuneIntFlagOrConfig(cmd *cobra.Command, flagName, configKey string) int {
+	if cmd.Flags().Changed(flagName) {
+		value, _ := cmd.Flags().GetInt(flagName)
+
+		return value
+	}
+
+	if viper.IsSet(configKey) {
+		return viper.GetInt(configKey)
+	}
+
+	return 0
 }
 
 func tuneCandidateReportPath(cmd *cobra.Command) string {

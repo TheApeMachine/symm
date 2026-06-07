@@ -58,8 +58,8 @@ func TestDeriveVocabularyRanksForwardEdge(t *testing.T) {
 	Convey("Given many frequent categories and one rare category before an up move", t, func() {
 		vocab := DeriveVocabulary(frequentDownRows())
 
-		Convey("It should keep the rare forward-edge category inside the seed cap", func() {
-			So(len(vocab.Categories), ShouldEqual, maxSeedCategories)
+		Convey("It should include every category on the tape ranked by forward edge", func() {
+			So(len(vocab.Categories), ShouldEqual, 8)
 			So(vocab.Categories, ShouldContain, types.CategoryVerticalIgnition)
 			So(vocab.Categories[0], ShouldEqual, types.CategoryVerticalIgnition)
 		})

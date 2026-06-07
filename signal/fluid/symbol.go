@@ -186,8 +186,9 @@ func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
 	// Kraken only resends a snapshot on resubscribe — which nothing requests —
 	// so the old hard latch silently killed every symbol's field one by one
 	// ("evolving surface, then flat forever"). The field keeps measuring off
-	// the approximate book, flagged; a per-symbol book resubscribe on
-	// persistent divergence is the proper follow-up.
+	// the approximate book, flagged; the signal layer requests a per-symbol
+	// book resync (unsubscribe + resubscribe → fresh snapshot) which clears
+	// this flag.
 	if !state.divergedLogged {
 		state.divergedLogged = true
 		errnie.Warn("fluid: book checksum diverged for " + state.symbol + " — field degraded, continuing")
@@ -251,6 +252,15 @@ func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) 
 	state.buyPressure = value
 
 	return nil
+}
+
+// Diverged reports whether the maintained book disagrees with the exchange
+// checksum — the trigger for a per-symbol book resync.
+func (state *FluidSymbol) Diverged() bool {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.bookDiverged
 }
 
 func (state *FluidSymbol) HasBook() bool {

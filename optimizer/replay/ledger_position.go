@@ -1,7 +1,6 @@
 package replay
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -148,12 +147,16 @@ func (ledger *replayLedger) openEntryReserved(
 		OrderType:  trading.Market,
 		ActionType: act.Type,
 	}, at); err != nil {
-		errnie.Error(err, "replay: entry preflight blocked", "symbol", symbol)
+		// Counted, not screamed: these are the gates WORKING (a 750bps
+		// microcap spread should be refused), and a tune evaluates millions of
+		// rows — per-row error logging drowned the log and slowed the search.
+		// The session summary reports preflightBlocked; detail stays at debug.
+		errnie.Debug("replay: entry preflight blocked", "symbol", symbol, "reason", err.Error())
 		ledger.preflightBlocked++
 		return
 	}
 
-	fill, entryFill, filled := ledger.resolveEntryFill(side, measurement, snapshots, estimateQty)
+	_, entryFill, filled := ledger.resolveEntryFill(side, measurement, snapshots, estimateQty)
 
 	if !filled || entryFill <= 0 {
 		return
@@ -161,9 +164,11 @@ func (ledger *replayLedger) openEntryReserved(
 
 	quantity := slot / (entryFill * (1 + feePct))
 
-	if fill.depthCoverage > 0 && fill.depthCoverage < 1 {
-		quantity *= fill.depthCoverage
-	}
+	// No partial-coverage scaling: broker.PreflightGatesAt already rejected
+	// any entry whose book cannot cover the quantity (the same gate live
+	// enforces), so coverage here is 1 by construction. The scaling block this
+	// replaces was unreachable — and was the drifted twin of an inline
+	// rejection deleted earlier.
 
 	slot = quantity * entryFill * (1 + feePct)
 
@@ -176,7 +181,7 @@ func (ledger *replayLedger) openEntryReserved(
 		)
 
 		if prepErr != nil {
-			errnie.Error(prepErr, "replay: entry order prepare failed", "symbol", symbol)
+			errnie.Debug("replay: entry order prepare failed", "symbol", symbol, "reason", prepErr.Error())
 			ledger.preflightBlocked++
 			return
 		}
@@ -209,7 +214,7 @@ func (ledger *replayLedger) openEntryReserved(
 		quantity:    quantity,
 		cost:        slot,
 		entryAt:     at,
-		triggerType: reasoning.ActionNone,
+
 		strategy:    act.Strategy,
 	}
 
@@ -242,22 +247,16 @@ func (ledger *replayLedger) resolveEntryFill(
 	snapshots []types.Measurement,
 	quantity float64,
 ) (executionFill, float64, bool) {
-	if !measurement.HasBookDepth() {
-		return executionFill{}, 0, false
-	}
-
+	// Policy is NOT re-enacted here: broker.PreflightGatesAt already ruled on
+	// this row's quote (books, staleness, spread, slippage, depth coverage)
+	// before this call — the same single gate the live desk uses. The two
+	// inline copies this replaces had already drifted from each other (one
+	// rejected coverage<1, a later block scaled by it). What remains below is
+	// purely the fill MODEL: price the taker walk.
 	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
 	if err != nil {
 		errnie.Error(err, "replay: entry taker fill failed", "symbol", measurement.Symbol)
-		return executionFill{}, 0, false
-	}
-
-	if fill.depthCoverage < 1 {
-		errnie.Error(
-			fmt.Errorf("replay: insufficient depth coverage: %.4f", fill.depthCoverage),
-			"symbol", measurement.Symbol,
-		)
 		return executionFill{}, 0, false
 	}
 
@@ -355,22 +354,24 @@ func (ledger *replayLedger) attributeClose(
 		strategy = "unnamed"
 	}
 
-	tally := ledger.perStrategy[strategy]
+	if ledger.costs.CollectAttribution {
+		tally := ledger.perStrategy[strategy]
 
-	if tally == nil {
-		tally = &strategyTally{}
-		ledger.perStrategy[strategy] = tally
-	}
+		if tally == nil {
+			tally = &strategyTally{}
+			ledger.perStrategy[strategy] = tally
+		}
 
-	tally.trades++
-	tally.realizedEUR += realized
+		tally.trades++
+		tally.realizedEUR += realized
 
-	if realized > 0 {
-		tally.wins++
-	}
+		if realized > 0 {
+			tally.wins++
+		}
 
-	if !at.IsZero() && !position.entryAt.IsZero() && at.After(position.entryAt) {
-		tally.holdSeconds += at.Sub(position.entryAt).Seconds()
+		if !at.IsZero() && !position.entryAt.IsZero() && at.After(position.entryAt) {
+			tally.holdSeconds += at.Sub(position.entryAt).Seconds()
+		}
 	}
 
 	if !ledger.costs.CollectTrades {
@@ -438,7 +439,11 @@ func (ledger *replayLedger) resolveExitFill(
 
 	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
-	if err != nil || fill.depthCoverage < 1 {
+	// Live exits BYPASS depth/slippage gates by design (preflight's exit
+	// branch): liquidations are never blocked on thin books. Replay demanding
+	// 100% coverage here stranded positions live would have settled, and
+	// scored exits as blocked that the desk would happily fire.
+	if err != nil {
 		return 0, false
 	}
 

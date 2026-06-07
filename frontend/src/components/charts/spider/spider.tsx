@@ -37,8 +37,7 @@ export const SpiderChart = ({
 			const controls = result.controls as SpiderControls;
 
 			const applyValues = (values: Record<string, number>) => {
-				Object.assign(bridge.latest, values);
-				controls.update(scaleSpiderRadarValues(sources, bridge.latest));
+				controls.update(scaleSpiderRadarValues(sources, values));
 			};
 
 			attachSpiderBridge(bridge, applyValues);

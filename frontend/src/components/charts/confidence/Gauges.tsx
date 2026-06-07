@@ -6,7 +6,6 @@ import {
 	confidenceFromGaugePayload,
 	gaugePayloadEntries,
 	gaugeWarmupPercent,
-	gaugeWirePayload,
 } from "#/components/charts/confidence/gauge-payload";
 import { Card, CardPanel } from "#/components/ui/card";
 import { Frame, FrameFooter } from "#/components/ui/frame";
@@ -19,10 +18,7 @@ import {
 } from "#/components/ui/progress";
 
 export type SignalGaugeBridge = {
-	update: (
-		payload: Record<string, unknown>,
-		wire?: Record<string, unknown>,
-	) => void;
+	update: (wire: Record<string, unknown>) => void;
 	ready: boolean;
 	pending: Record<string, unknown>[];
 	latest: Record<string, unknown>;
@@ -200,11 +196,11 @@ export const SignalGauge = ({
 		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
 			bridge.latest = {};
 
-			bridge.update = (nextPayload, wire) => {
-				bridge.latest = nextPayload;
-				result.controls.update(confidenceFromGaugePayload(nextPayload));
+			bridge.update = (wire) => {
+				bridge.latest = wire;
+				result.controls.update(confidenceFromGaugePayload(wire));
 
-				const percent = gaugeWarmupPercent(wire ?? nextPayload);
+				const percent = gaugeWarmupPercent(wire);
 
 				setWarmupPercent(percent === null ? -1 : percent);
 			};
@@ -212,7 +208,7 @@ export const SignalGauge = ({
 			bridge.ready = true;
 
 			for (const pendingWire of bridge.pending) {
-				bridge.update(gaugeWirePayload(pendingWire), pendingWire);
+				bridge.update(pendingWire);
 			}
 
 			bridge.pending = [];

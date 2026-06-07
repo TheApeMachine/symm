@@ -1,13 +1,22 @@
-import { NumberRange } from "scichart";
+import { NumberRange, type OhlcDataSeries } from "scichart";
 import { describe, expect, it } from "vitest";
 
 import {
 	candleChartXExtents,
 	isViewportFollowingLiveEdge,
 	priceLabelDecimals,
+	resolveFollowVisibleRange,
 	shiftTrailingVisibleRange,
 	visibleRangesMatch,
 } from "#/components/charts/shared/financial-chart-utils";
+
+const mockOhlc = (xValues: number[]): OhlcDataSeries =>
+	({
+		count: () => xValues.length,
+		getNativeXValues: () => ({
+			get: (index: number) => xValues[index],
+		}),
+	}) as OhlcDataSeries;
 
 describe("candleChartXExtents", () => {
 	it("pads a single live bar so candles have horizontal width", () => {
@@ -73,6 +82,25 @@ describe("visibleRangesMatch", () => {
 		const right = new NumberRange(1500, 2500);
 
 		expect(visibleRangesMatch(left, right)).toBe(false);
+	});
+});
+
+describe("resolveFollowVisibleRange", () => {
+	it("shifts the live viewport when a new bar arrives", () => {
+		const firstBarX = 1_780_627_020;
+		const secondBarX = firstBarX + 60;
+		const initialRange = resolveFollowVisibleRange(
+			mockOhlc([firstBarX]),
+			"initial",
+		);
+		const liveRange = resolveFollowVisibleRange(
+			mockOhlc([firstBarX, secondBarX]),
+			"live",
+			initialRange ?? undefined,
+		);
+
+		expect(liveRange).not.toBeNull();
+		expect(liveRange?.max).toBeGreaterThanOrEqual(secondBarX);
 	});
 });
 

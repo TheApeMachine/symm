@@ -18,6 +18,7 @@ ended, or barely started.
 type PositionState struct {
 	Holding    bool
 	Side       trading.Side // Buy = long, Sell = short
+	Strategy   string       // setup name that opened the position; "" when unknown
 	EntryPrice float64
 	Peak       float64
 	Trough     float64
@@ -134,6 +135,7 @@ func (reason *WindowReason) Reset(
 
 	var lastPrice float64
 	var lastVolume float64
+	var lastSpread float64
 
 	for index := len(snapshots) - 1; index >= 0; index-- {
 		measurement := snapshots[index]
@@ -159,8 +161,14 @@ func (reason *WindowReason) Reset(
 			lastVolume = measurement.Volume
 		}
 
-		reason.spread = append(reason.spread, measurement.SpreadBPS)
-		reason.spreadAt = append(reason.spreadAt, measurement.At)
+		// Dedupe like price and volume: `ago` on spread counts CHANGES, not
+		// measurement ticks — appending every tick made temporal spread
+		// predicates measure a different clock than their price siblings.
+		if measurement.SpreadBPS > 0 && measurement.SpreadBPS != lastSpread {
+			reason.spread = append(reason.spread, measurement.SpreadBPS)
+			reason.spreadAt = append(reason.spreadAt, measurement.At)
+			lastSpread = measurement.SpreadBPS
+		}
 	}
 
 	return reason
@@ -195,6 +203,21 @@ func (reason *WindowReason) PositionSide() trading.Side {
 	}
 
 	return reason.position.Side
+}
+
+// Now is the context clock: the newest moment this window knows about.
+func (reason *WindowReason) Now() time.Time {
+	return reason.now
+}
+
+// PositionStrategy is the setup name that opened the position ("" when flat or
+// unattributed) — what lets exits be per-setup: "trail 3% only on slow_pump".
+func (reason *WindowReason) PositionStrategy() string {
+	if !reason.position.Holding {
+		return ""
+	}
+
+	return reason.position.Strategy
 }
 
 func (reason *WindowReason) Lifecycle(state types.ObservationType) bool {

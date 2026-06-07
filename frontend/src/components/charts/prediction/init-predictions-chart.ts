@@ -108,6 +108,7 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 
 	let minX = Number.POSITIVE_INFINITY;
 	let maxX = Number.NEGATIVE_INFINITY;
+	let hasVisibleRange = false;
 
 	const appendReading = (reading: PredictionReading) => {
 		const dataSeries = seriesByKind.get(reading.kind);
@@ -123,13 +124,16 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 			return;
 		}
 
+		const priorMaxX = maxX;
+
 		minX = Math.min(minX, reading.x);
 		maxX = Math.max(maxX, reading.x);
 
-		if (Number.isFinite(minX) && Number.isFinite(maxX)) {
+		if (!hasVisibleRange || reading.x >= priorMaxX) {
 			const pad = Math.max(2, (maxX - minX) * 0.05);
 
 			xAxis.visibleRange = new NumberRange(minX - pad, maxX + pad);
+			hasVisibleRange = true;
 		}
 	};
 
