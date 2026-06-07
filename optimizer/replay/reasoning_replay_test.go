@@ -12,6 +12,28 @@ import (
 )
 
 // frictionless: zero fees + slippage, immediate execution, a €100 EUR wallet.
+func tradeableIgnite(symbol string, last float64, at time.Time) types.Measurement {
+	measurement := TradeableRow(symbol, last, at)
+	measurement.Category = types.CategoryVerticalIgnition
+	measurement.SNR = 1.5
+
+	return measurement
+}
+
+func tradeableSignalRow(
+	symbol string,
+	last float64,
+	at time.Time,
+	category types.CategoryType,
+	snr float64,
+) types.Measurement {
+	measurement := TradeableRow(symbol, last, at)
+	measurement.Category = category
+	measurement.SNR = snr
+
+	return measurement
+}
+
 func frictionlessCosts() ReplayCosts {
 	return ReplayCosts{
 		StartingCapital:        100,
@@ -23,9 +45,11 @@ func frictionlessCosts() ReplayCosts {
 }
 
 func ignite(last float64, at time.Time) types.Measurement {
-	return types.Measurement{
-		Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: last, At: at,
-	}
+	measurement := TradeableRow("BTC/EUR", last, at)
+	measurement.Category = types.CategoryVerticalIgnition
+	measurement.SNR = 1.5
+
+	return measurement
 }
 
 func notHolding(category types.CategoryType) reasoning.Predicate {
@@ -36,7 +60,7 @@ func notHolding(category types.CategoryType) reasoning.Predicate {
 }
 
 func priceRow(last float64, at time.Time) types.Measurement {
-	return types.Measurement{Symbol: "BTC/EUR", Last: last, At: at}
+	return TradeableRow("BTC/EUR", last, at)
 }
 
 func priceCrossedUp(level float64) reasoning.Predicate {
@@ -80,7 +104,7 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 			priceRow(100, base),                    // no cross yet
 			priceRow(102, base.Add(time.Second)),   // crosses 101 -> parent latches; 102<103 so child holds off
 			priceRow(104, base.Add(2*time.Second)), // parent edge gone; crosses 103 -> child enters at 104
-			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 108, At: base.Add(3 * time.Second)},
+			tradeableSignalRow("BTC/EUR", 108, base.Add(3*time.Second), types.CategoryActiveReversal, 1.5),
 		}
 
 		sim := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts())
@@ -103,8 +127,8 @@ func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
 
 		rows := []types.Measurement{
 			ignite(100, base), // BTC/EUR enters, spends the whole €100
-			{Symbol: "ETH/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 50, At: base.Add(time.Second)},
-			{Symbol: "ETH/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: 51, At: base.Add(2 * time.Second)},
+			tradeableIgnite("ETH/EUR", 50, base.Add(time.Second)),
+			tradeableIgnite("ETH/EUR", 51, base.Add(2*time.Second)),
 		}
 
 		result := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts()).Result()
@@ -134,7 +158,7 @@ func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 		rows := []types.Measurement{
 			ignite(100, base),
 			ignite(110, base.Add(time.Second)),
-			{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 110, At: base.Add(2 * time.Second)},
+			tradeableSignalRow("BTC/EUR", 110, base.Add(2*time.Second), types.CategoryActiveReversal, 1.5),
 		}
 
 		tape := mustPrecompileTape(t, rows)
@@ -174,7 +198,7 @@ func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 				ignite(100, base),
 				ignite(102, base.Add(time.Second)),
 				ignite(104, base.Add(2*time.Second)),
-				{Symbol: "BTC/EUR", Category: types.CategoryActiveReversal, SNR: 1.5, Last: 104, At: base.Add(3 * time.Second)},
+				tradeableSignalRow("BTC/EUR", 104, base.Add(3*time.Second), types.CategoryActiveReversal, 1.5),
 			}
 
 			sim := NewThoughtSimulation(context.Background(), thoughts, mustPrecompileTape(t, rows), frictionlessCosts())

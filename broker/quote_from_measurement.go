@@ -27,10 +27,13 @@ func QuoteFromMeasurement(measurement types.Measurement) Quote {
 		quote.Book = measurement.MarketBook()
 	}
 
-	if quote.Bid <= 0 && quote.Ask <= 0 && quote.Last > 0 {
-		halfSpread := measurement.SpreadBPS / 20_000 * quote.Last
-		quote.Bid = quote.Last - halfSpread
-		quote.Ask = quote.Last + halfSpread
+	if quote.Bid <= 0 && quote.Ask <= 0 {
+		bid, ask, ok := DeriveBidAsk(measurement)
+
+		if ok {
+			quote.Bid = bid
+			quote.Ask = ask
+		}
 	}
 
 	if quote.UpdatedAt.IsZero() {

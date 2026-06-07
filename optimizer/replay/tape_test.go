@@ -3,6 +3,7 @@ package replay
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/internal/testconfig"
@@ -229,6 +230,52 @@ func BenchmarkAppendSnapshot(b *testing.B) {
 	for b.Loop() {
 		scratch = tape.AppendSnapshot(tickIndex, scratch)
 	}
+}
+
+func TestPrecompileTapeHonestQuotes(t *testing.T) {
+	convey.Convey("Given capture-style rows with and without book depth", t, func() {
+		at := time.Unix(1_700_000_000, 0).UTC()
+		rows := []types.Measurement{
+			{
+				Symbol:    "PUMP/EUR",
+				Last:      1,
+				SpreadBPS: 800,
+				At:        at,
+			},
+			{
+				Symbol: "BTC/EUR",
+				Last:   100,
+				Bid:    99,
+				Ask:    101,
+				BookAsks: []types.BookLevel{
+					{Price: 101, Qty: 2},
+				},
+				BookBids: []types.BookLevel{
+					{Price: 99, Qty: 2},
+				},
+				At: at.Add(time.Second),
+			},
+		}
+
+		tape := mustPrecompileTape(t, rows)
+
+		convey.Convey("It should derive bid/ask from spread without inventing depth", func() {
+			spreadOnly := tape.Ticks[0].Row
+			convey.So(spreadOnly.Bid, convey.ShouldBeGreaterThan, 0)
+			convey.So(spreadOnly.Ask, convey.ShouldBeGreaterThan, spreadOnly.Bid)
+			convey.So(spreadOnly.HasBookDepth(), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("It should preserve tape book levels exactly", func() {
+			withBook := tape.Ticks[1].Row
+			convey.So(withBook.Bid, convey.ShouldEqual, 99)
+			convey.So(withBook.Ask, convey.ShouldEqual, 101)
+			convey.So(len(withBook.BookAsks), convey.ShouldEqual, 1)
+			convey.So(withBook.BookAsks[0].Qty, convey.ShouldEqual, 2)
+			convey.So(len(withBook.BookBids), convey.ShouldEqual, 1)
+			convey.So(withBook.BookBids[0].Qty, convey.ShouldEqual, 2)
+		})
+	})
 }
 
 func BenchmarkPrecompileTapeCapture(b *testing.B) {

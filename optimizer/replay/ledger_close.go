@@ -23,15 +23,20 @@ func (ledger *replayLedger) measurementForSymbol(
 		return row
 	}
 
-	exitRow := row
-	exitRow.Symbol = symbol
-	exitRow.Last = lastPrice
-	exitRow.Bid = 0
-	exitRow.Ask = 0
-	exitRow.BookBids = nil
-	exitRow.BookAsks = nil
+	quoted, ok := ledger.lastQuotedRows[symbol]
 
-	return QuotedMeasurement(exitRow)
+	if !ok || quoted.Last != lastPrice {
+		return types.Measurement{
+			Symbol: symbol,
+			Last:   lastPrice,
+			At:     row.At,
+		}
+	}
+
+	exitRow := quoted
+	exitRow.Symbol = symbol
+
+	return exitRow
 }
 
 func (ledger *replayLedger) lastObservedPrice(symbol string) float64 {

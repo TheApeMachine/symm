@@ -70,6 +70,35 @@ func TestTakerFillDepthShortfallPreflightReject(t *testing.T) {
 	})
 }
 
+func TestExitWithoutBookBlocksSettle(t *testing.T) {
+	Convey("Given an open long and a settle row without book depth", t, func() {
+		testconfig.Load(t)
+		ledger := newReplayLedger(ReplayCosts{
+			StartingCapital:  200,
+			PositionFraction: 1,
+			WalletCurrency:   "EUR",
+			WalletBalances:   map[string]float64{"EUR": 200},
+		})
+		base := time.Unix(1_700_000_000, 0).UTC()
+
+		ledger.openLong("BTC/EUR", 100, 0, base)
+		So(ledger.holding("BTC/EUR"), ShouldBeTrue)
+
+		ledger.applyStressed(
+			reasoning.Act{Type: reasoning.ActionSettlePosition},
+			types.Measurement{Symbol: "BTC/EUR", Last: 110, At: base.Add(time.Second)},
+			nil,
+			0,
+		)
+
+		Convey("It should keep the position open instead of inventing an exit fill", func() {
+			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
+			So(ledger.exitBlocked, ShouldEqual, 1)
+			So(ledger.closedTrades, ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkTakerFill(b *testing.B) {
 	costs := triggerTestCosts()
 	measurement := types.Measurement{

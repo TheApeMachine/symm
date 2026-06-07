@@ -19,6 +19,23 @@ func altPair(symbol string) market.InstrumentPair {
 	}
 }
 
+func TestInstrumentRulesCachePriceTickSize(t *testing.T) {
+	Convey("Given instrument rules with a price increment", t, func() {
+		cache := NewInstrumentRulesCache(t.Context())
+		cache.InstallPairForTest(market.InstrumentPair{
+			Symbol:         "BTC/EUR",
+			PriceIncrement: 0.01,
+		})
+
+		tickSize, err := cache.PriceTickSize("BTC/EUR")
+
+		Convey("It should return the exchange tick size", func() {
+			So(err, ShouldBeNil)
+			So(tickSize, ShouldEqual, 0.01)
+		})
+	})
+}
+
 func TestInstrumentRulesCacheValidateOrder(t *testing.T) {
 	Convey("Given instrument rules for BTC/EUR", t, func() {
 		cache := NewInstrumentRulesCache(t.Context())

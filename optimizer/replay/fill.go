@@ -60,19 +60,3 @@ func takerFill(
 		depthCoverage: fill.DepthCoverage,
 	}, nil
 }
-
-func flatSlippagePct(
-	costs ReplayCosts,
-	spreadBPS float64,
-	snapshots []types.Measurement,
-) float64 {
-	return executionSlippagePct(costs, spreadBPS, snapshots)
-}
-
-func fillPriceFromPct(side trading.Side, reference, slippagePct float64) float64 {
-	if side == trading.Sell {
-		return reference * (1 - slippagePct)
-	}
-
-	return reference * (1 + slippagePct)
-}

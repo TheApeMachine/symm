@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -38,6 +39,34 @@ func TestReplayPreemptUsesVictimSymbolPrice(t *testing.T) {
 	})
 }
 
+func TestReplayExitWithoutFreshQuoteBlocksAfterPriceMove(t *testing.T) {
+	Convey("Given a held position whose price moved without a new quoted row", t, func() {
+		testconfig.Load(t)
+		ledger := newReplayLedger(ReplayCosts{
+			StartingCapital:  200,
+			PositionFraction: 1,
+			WalletCurrency:   "EUR",
+			WalletBalances:   map[string]float64{"EUR": 200},
+		})
+		base := time.Unix(1_700_000_000, 0)
+
+		ledger.openLong("BTC/EUR", 100, 0, base)
+		ledger.observeSymbolPrice("BTC/EUR", 110)
+
+		ledger.applyStressed(
+			reasoning.Act{Type: reasoning.ActionSettlePosition},
+			types.Measurement{Symbol: "BTC/EUR", Last: 110, At: base.Add(time.Second)},
+			nil,
+			0,
+		)
+
+		Convey("It should refuse to settle on stale book", func() {
+			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
+			So(ledger.exitBlocked, ShouldEqual, 1)
+		})
+	})
+}
+
 func TestReplayPreemptFreesCapitalForHigherConvictionEntry(t *testing.T) {
 	Convey("Given entry preemption enabled", t, func() {
 		costs := ReplayCosts{
@@ -53,18 +82,10 @@ func TestReplayPreemptFreesCapitalForHigherConvictionEntry(t *testing.T) {
 		ledger.observePrice(types.Measurement{Symbol: "BTC/EUR", Last: 100})
 		ledger.entryConviction["BTC/EUR"] = 1
 		ledger.entryBatch = []batchedReplayEntry{{
-			act: reasoning.Act{Type: reasoning.ActionMarket},
-			measurement: QuotedMeasurement(types.Measurement{
-				Symbol:     "ETH/EUR",
-				Last:       50,
-				Bid:        50,
-				Ask:        50,
-				SNR:        5,
-				Confidence: 1,
-				At:         base,
-			}),
-			conviction: 5,
-			at:         base,
+			act:         reasoning.Act{Type: reasoning.ActionMarket},
+			measurement: TradeableRowWithSignal("ETH/EUR", 50, base, 5, 1),
+			conviction:  5,
+			at:          base,
 		}}
 		ledger.entryBatchDeadline = base.Add(-time.Millisecond)
 		ledger.flushEntryBatch(base)

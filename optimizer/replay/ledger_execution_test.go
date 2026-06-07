@@ -75,11 +75,7 @@ func TestFlushPending(t *testing.T) {
 		ledger.configureExecutionStress(100*time.Millisecond, 50*time.Millisecond)
 
 		base := time.Unix(1_700_000_000, 0)
-		signalRow := QuotedMeasurement(types.Measurement{
-			Symbol: "BTC/EUR",
-			Last:   100,
-			At:     base,
-		})
+		signalRow := TradeableRow("BTC/EUR", 100, base)
 
 		ledger.queueAction(
 			reasoning.Act{Type: reasoning.ActionMarket},

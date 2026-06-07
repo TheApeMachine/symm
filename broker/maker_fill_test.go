@@ -114,6 +114,27 @@ func TestBookLevelQtyMatchesTickIndexAcrossFloatSources(t *testing.T) {
 	})
 }
 
+func TestMakerBookDepletion(t *testing.T) {
+	Convey("Given consecutive book snapshots at a resting buy limit", t, func() {
+		previous := Quote{
+			Book: market.Book{
+				Bids: []market.BookLevel{{Price: 100, Qty: 2}},
+			},
+		}
+		current := Quote{
+			Book: market.Book{
+				Bids: []market.BookLevel{{Price: 100, Qty: 0.5}},
+			},
+		}
+
+		depletion := MakerBookDepletion(trading.Buy, 100, previous, current, 0.01)
+
+		Convey("It should measure quantity removed at the limit level", func() {
+			So(depletion, ShouldEqual, 1.5)
+		})
+	})
+}
+
 func TestReplayMakerAdverseSlippagePct(t *testing.T) {
 	Convey("Given wide spread under stress", t, func() {
 		slippage := ReplayMakerAdverseSlippagePct(20, 1.5)

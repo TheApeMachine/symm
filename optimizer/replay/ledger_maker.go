@@ -1,71 +1,75 @@
 package replay
 
 import (
-	"math"
-
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 type pendingMakerEntry struct {
-	symbol      string
-	side        trading.Side
-	limitPrice  float64
-	quantity    float64
-	queueAhead  float64
-	feePct      float64
-	slippagePct float64
-	at          types.Measurement
-}
-
-/*
-replayMakerQueueAhead estimates resting queue depth ahead of a post-only order when
-the replay tape lacks L2 history. Hostile microstructure and wider spreads imply
-deeper queues and lower fill optimism than price reachability alone.
-*/
-func replayMakerQueueAhead(
-	quantity float64,
-	spreadBPS float64,
-	stressMultiplier float64,
-) float64 {
-	if quantity <= 0 {
-		return 0
-	}
-
-	spreadFactor := 1.0
-
-	if spreadBPS > 0 {
-		spreadFactor = 1 + spreadBPS/100
-	}
-
-	return quantity * spreadFactor * math.Max(1, stressMultiplier)
+	symbol     string
+	side       trading.Side
+	limitPrice float64
+	quantity   float64
+	feePct     float64
+	at         types.Measurement
+	queue      broker.MakerQueueState
+	tickSize   float64
 }
 
 func (ledger *replayLedger) queueMakerEntry(
 	symbol string,
 	side trading.Side,
-	limitPrice, quantity, feePct, slippagePct float64,
+	limitPrice, quantity, feePct float64,
 	fraction float64,
 	measurement types.Measurement,
-	snapshots []types.Measurement,
 ) {
 	if !ledger.canReserveEntry(fraction, 0, quoteCurrency(symbol)) {
 		ledger.fundBlocked++
+
 		return
 	}
 
-	stress := executionStressMultiplier(snapshots)
+	if !measurement.HasBookDepth() {
+		ledger.preflightBlocked++
+
+		return
+	}
+
+	if ledger.instrumentRules == nil {
+		ledger.preflightBlocked++
+
+		return
+	}
+
+	tickSize, err := ledger.instrumentRules.PriceTickSize(symbol)
+
+	if err != nil {
+		ledger.preflightBlocked++
+
+		return
+	}
+
+	quote := broker.QuoteFromMeasurement(measurement)
+	activeAt := measurement.At.UnixNano()
 
 	ledger.pendingMakers = append(ledger.pendingMakers, pendingMakerEntry{
-		symbol:      symbol,
-		side:        side,
-		limitPrice:  limitPrice,
-		quantity:    quantity,
-		queueAhead:  replayMakerQueueAhead(quantity, measurement.SpreadBPS, stress),
-		feePct:      feePct,
-		slippagePct: slippagePct,
-		at:          measurement,
+		symbol:     symbol,
+		side:       side,
+		limitPrice: limitPrice,
+		quantity:   quantity,
+		feePct:     feePct,
+		at:         measurement,
+		queue: broker.NewMakerQueueState(
+			quote,
+			side,
+			limitPrice,
+			activeAt,
+			tickSize,
+		),
+		tickSize: tickSize,
 	})
 }
 
@@ -74,11 +78,21 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 		return
 	}
 
+	if !row.HasBookDepth() {
+		return
+	}
+
+	previousRow, hasPrevious := ledger.priorQuotedRows[row.Symbol]
+	currentQuote := broker.QuoteFromMeasurement(row)
 	remaining := ledger.pendingMakers[:0]
-	depletion := makerQueueDepletion(row)
 
 	for _, pending := range ledger.pendingMakers {
 		if pending.symbol != row.Symbol {
+			remaining = append(remaining, pending)
+			continue
+		}
+
+		if row.At.UnixNano() < pending.queue.ActiveAt {
 			remaining = append(remaining, pending)
 			continue
 		}
@@ -88,15 +102,39 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 			continue
 		}
 
-		pending.queueAhead -= depletion
+		if hasPrevious && previousRow.HasBookDepth() {
+			previousQuote := broker.QuoteFromMeasurement(previousRow)
+			depletion := broker.MakerBookDepletion(
+				pending.side,
+				pending.limitPrice,
+				previousQuote,
+				currentQuote,
+				pending.tickSize,
+			)
+			pending.queue.Deplete(depletion)
+		}
 
-		if pending.queueAhead > 0 {
+		if !pending.queue.Ready() {
 			remaining = append(remaining, pending)
 			continue
 		}
 
-		fillRow := pending.at
-		fillRow.Last = pending.limitPrice
+		trade := makerLiftTrade(pending.side, pending.limitPrice, row.Last, pending.quantity)
+		fillPrice, _ := broker.MakerRestingFillPrice(
+			pending.side,
+			pending.limitPrice,
+			currentQuote,
+			trade,
+			pending.tickSize,
+		)
+
+		if fillPrice <= 0 {
+			remaining = append(remaining, pending)
+			continue
+		}
+
+		fillRow := row
+		fillRow.Last = fillPrice
 
 		ledger.openEntryReserved(
 			pending.symbol,
@@ -105,7 +143,7 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 			fillRow,
 			nil,
 			pending.feePct,
-			pending.at.At,
+			row.At,
 			1,
 		)
 	}
@@ -113,18 +151,30 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 	ledger.pendingMakers = remaining
 }
 
-// makerQueueDepletion estimates how much resting maker liquidity is consumed as
-// price trades through the queue. It returns 0.01% of last (row.Last * 0.0001):
-// a conservative, price-proportional fill increment — larger on expensive pairs,
-// smaller on cheap alts. The replay does not model full L2 queue position, so this
-// proxy advances maker fills gradually rather than instantaneously. Tune upward for
-// more aggressive maker fills in fast markets; downward for thin books.
-func makerQueueDepletion(row types.Measurement) float64 {
-	if row.Last <= 0 {
-		return 0
+func makerLiftTrade(
+	side trading.Side,
+	limitPrice float64,
+	lastPrice float64,
+	quantity float64,
+) market.TradeUpdate {
+	trade := market.TradeUpdate{
+		Price: limitPrice,
+		Qty:   quantity,
 	}
 
-	return row.Last * 0.0001
+	if lastPrice > 0 {
+		trade.Price = lastPrice
+	}
+
+	if side == trading.Buy {
+		trade.Side = "sell"
+
+		return trade
+	}
+
+	trade.Side = "buy"
+
+	return trade
 }
 
 func makerPriceReachable(side trading.Side, limitPrice, marketPrice float64) bool {

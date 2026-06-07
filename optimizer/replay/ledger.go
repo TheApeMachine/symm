@@ -67,6 +67,7 @@ type replayLedger struct {
 	closedTrades        int
 	fundBlocked         int
 	preflightBlocked    int
+	exitBlocked         int
 	instrumentRules     *broker.InstrumentRulesCache
 	exposureTicks       int
 	observationScratch  map[types.ObservationType]float64
@@ -75,6 +76,8 @@ type replayLedger struct {
 	windowReason        reasoning.WindowReason
 	snapshotScratch     []types.Measurement
 	pricePaths          map[string][]float64
+	lastQuotedRows      map[string]types.Measurement
+	priorQuotedRows     map[string]types.Measurement
 	pending             []pendingReplayAction
 	pendingMakers       []pendingMakerEntry
 	entryBatch          []batchedReplayEntry
@@ -116,6 +119,8 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 		metricsScratch:      make(map[string]float64, 2),
 		reasonStates:        make(map[string]*reasoning.ReasonState),
 		pricePaths:          make(map[string][]float64),
+		lastQuotedRows:      make(map[string]types.Measurement),
+		priorQuotedRows:     make(map[string]types.Measurement),
 		entryConviction:     make(map[string]float64),
 	}
 }
@@ -156,6 +161,7 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.closedTrades = 0
 	ledger.fundBlocked = 0
 	ledger.preflightBlocked = 0
+	ledger.exitBlocked = 0
 	ledger.instrumentRules = costs.InstrumentRules
 	ledger.exposureTicks = 0
 	ledger.tickIndex = 0
@@ -176,6 +182,8 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	}
 
 	clear(ledger.pricePaths)
+	clear(ledger.lastQuotedRows)
+	clear(ledger.priorQuotedRows)
 }
 
 func (ledger *replayLedger) configureExecutionStress(
@@ -401,22 +409,14 @@ func (ledger *replayLedger) applyStressed(
 			quantity := slot / measurement.Last
 
 			if quantity > 0 {
-				slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
-				slippagePct += broker.ReplayMakerAdverseSlippagePct(
-					measurement.SpreadBPS,
-					executionStressMultiplier(snapshots),
-				)
-
 				ledger.queueMakerEntry(
 					measurement.Symbol,
 					entrySide,
 					measurement.Last,
 					quantity,
 					feePct,
-					slippagePct,
 					fraction,
 					measurement,
-					snapshots,
 				)
 
 				return

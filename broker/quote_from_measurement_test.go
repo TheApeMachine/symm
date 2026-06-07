@@ -25,4 +25,19 @@ func TestQuoteFromMeasurement(t *testing.T) {
 		So(quote.Ask, ShouldEqual, 101)
 		So(quote.UpdatedAt, ShouldEqual, at)
 	})
+
+	Convey("Given a measurement with last and spread but no bid/ask", t, func() {
+		spreadAt := time.Unix(1_700_000_001, 0).UTC()
+		quote := QuoteFromMeasurement(types.Measurement{
+			Symbol:    "FXS/EUR",
+			Last:      4.36,
+			SpreadBPS: 400,
+			At:        spreadAt,
+		})
+
+		Convey("It should derive bid/ask from spread bps", func() {
+			So(quote.Bid, ShouldAlmostEqual, 4.2728, 1e-4)
+			So(quote.Ask, ShouldAlmostEqual, 4.4472, 1e-4)
+		})
+	})
 }

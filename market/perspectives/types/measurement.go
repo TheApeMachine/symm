@@ -81,7 +81,7 @@ type Measurement struct {
 	SNR        float64     // temporal surprise: sigma above this symbol's own recent surprisal baseline
 	Last       float64     // last traded price, carried for the trader's sizing/fill
 	Volume     float64     // quote-currency notional volume when known (ticker volume × last)
-	SpreadBPS  float64     // quoted spread in basis points when bid/ask are known; 0 falls back to static replay slippage
+	SpreadBPS  float64     // quoted spread in basis points when bid/ask are known; replay derives bid/ask from Last when set
 	Bid        float64     `json:"bid,omitempty"`
 	Ask        float64     `json:"ask,omitempty"`
 	BookBids   []BookLevel `json:"book_bids,omitempty"` // L2 bid depth at capture time for replay fills

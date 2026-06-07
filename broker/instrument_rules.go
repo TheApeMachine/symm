@@ -112,6 +112,27 @@ func (cache *InstrumentRulesCache) InstallPairForTest(pair market.InstrumentPair
 	cache.pairs.Store(pair.Symbol, pair)
 }
 
+/*
+PriceTickSize returns the exchange price increment for symbol.
+*/
+func (cache *InstrumentRulesCache) PriceTickSize(symbol string) (float64, error) {
+	if cache == nil {
+		return 0, fmt.Errorf("broker: instrument rules cache is required")
+	}
+
+	pair, ok := cache.pair(symbol)
+
+	if !ok {
+		return 0, fmt.Errorf("broker: unknown pair %s", symbol)
+	}
+
+	if pair.PriceIncrement <= 0 {
+		return 0, fmt.Errorf("broker: missing price increment for %s", symbol)
+	}
+
+	return pair.PriceIncrement, nil
+}
+
 func (cache *InstrumentRulesCache) pair(symbol string) (market.InstrumentPair, bool) {
 	value, ok := cache.pairs.Load(symbol)
 

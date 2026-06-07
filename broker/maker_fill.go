@@ -130,6 +130,37 @@ func MakerAdverseSelectionBps(
 	return spreadBps * pressure
 }
 
+/*
+QueueSideLevels returns the maker-queue side of the quote book.
+*/
+func QueueSideLevels(quote Quote, side trading.Side) []market.BookLevel {
+	return queueSideLevels(quote, side)
+}
+
+/*
+MakerBookDepletion reports quantity removed at limitPrice between two quote snapshots.
+*/
+func MakerBookDepletion(
+	side trading.Side,
+	limitPrice float64,
+	previousQuote Quote,
+	currentQuote Quote,
+	tickSize float64,
+) float64 {
+	if tickSize <= 0 || limitPrice <= 0 {
+		return 0
+	}
+
+	previousQty := BookLevelQty(queueSideLevels(previousQuote, side), limitPrice, tickSize)
+	currentQty := BookLevelQty(queueSideLevels(currentQuote, side), limitPrice, tickSize)
+
+	if previousQty <= 0 || currentQty >= previousQty {
+		return 0
+	}
+
+	return previousQty - currentQty
+}
+
 func queueSideLevels(quote Quote, side trading.Side) []market.BookLevel {
 	if side == trading.Sell {
 		return quote.Book.Asks

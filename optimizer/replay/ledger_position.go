@@ -222,6 +222,7 @@ func (ledger *replayLedger) openEntryReserved(
 	}
 
 	ledger.positions[symbol] = position
+	ledger.rememberQuotedMeasurement(measurement)
 	delete(ledger.ticksSinceClose, symbol)
 }
 
@@ -243,19 +244,17 @@ func (ledger *replayLedger) resolveEntryFill(
 	snapshots []types.Measurement,
 	quantity float64,
 ) (executionFill, float64, bool) {
-	if measurement.HasBookDepth() {
-		fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
-
-		if err != nil {
-			return executionFill{}, 0, false
-		}
-
-		return fill, fill.price, true
+	if !measurement.HasBookDepth() {
+		return executionFill{}, 0, false
 	}
 
-	slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
+	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
-	return executionFill{slippagePct: slippagePct}, fillPriceFromPct(side, measurement.Last, slippagePct), true
+	if err != nil || fill.depthCoverage < 1 {
+		return executionFill{}, 0, false
+	}
+
+	return fill, fill.price, true
 }
 
 func (ledger *replayLedger) canReserveEntry(
@@ -348,13 +347,28 @@ func (ledger *replayLedger) closePosition(
 	}
 
 	exitRow := ledger.measurementForSymbol(symbol, measurement)
-	exitFill := ledger.resolveExitFill(
-		position.side,
+	exitFill, filled := ledger.resolveExitFill(
+		exitSide(position.side),
 		exitRow,
 		snapshotsForSymbol(symbol, snapshots),
 		position.quantity,
 	)
+
+	if !filled {
+		ledger.exitBlocked++
+
+		return
+	}
+
 	ledger.settle(symbol, exitFill, feePct)
+}
+
+func exitSide(positionSide trading.Side) trading.Side {
+	if positionSide == trading.Sell {
+		return trading.Buy
+	}
+
+	return trading.Sell
 }
 
 func (ledger *replayLedger) resolveExitFill(
@@ -362,18 +376,18 @@ func (ledger *replayLedger) resolveExitFill(
 	measurement types.Measurement,
 	snapshots []types.Measurement,
 	quantity float64,
-) float64 {
-	if measurement.HasBookDepth() && quantity > 0 {
-		fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
-
-		if err == nil {
-			return fill.price
-		}
+) (float64, bool) {
+	if !measurement.HasBookDepth() || quantity <= 0 {
+		return 0, false
 	}
 
-	slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)
+	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
-	return fillPriceFromPct(side, measurement.Last, slippagePct)
+	if err != nil || fill.depthCoverage < 1 {
+		return 0, false
+	}
+
+	return fill.price, true
 }
 
 func (ledger *replayLedger) holding(symbol string) bool {
@@ -439,13 +453,7 @@ func (ledger *replayLedger) openLong(
 		symbol,
 		trading.Buy,
 		reasoning.Act{Type: reasoning.ActionMarket},
-		QuotedMeasurement(types.Measurement{
-			Symbol: symbol,
-			Last:   price,
-			Bid:    price,
-			Ask:    price,
-			At:     at,
-		}),
+		TradeableRow(symbol, price, at),
 		nil,
 		feePct,
 		at,
@@ -467,13 +475,7 @@ func (ledger *replayLedger) openShort(
 		symbol,
 		trading.Sell,
 		reasoning.Act{Type: reasoning.ActionMarket},
-		QuotedMeasurement(types.Measurement{
-			Symbol: symbol,
-			Last:   price,
-			Bid:    price,
-			Ask:    price,
-			At:     at,
-		}),
+		TradeableRow(symbol, price, at),
 		nil,
 		feePct,
 		at,

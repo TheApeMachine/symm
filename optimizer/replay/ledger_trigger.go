@@ -151,9 +151,21 @@ func (ledger *replayLedger) closeAtTrigger(
 		return
 	}
 
-	var exitFill, feePct float64
+	var (
+		exitFill float64
+		feePct   float64
+		filled   bool
+	)
 
 	if reasoning.ExitRestsAsLimit(actionType) {
+		exitRow := ledger.measurementForSymbol(symbol, row)
+
+		if !exitRow.HasBookDepth() {
+			ledger.exitBlocked++
+
+			return
+		}
+
 		exitFill = level
 		feePct = ledger.costs.MakerFeePct
 	} else {
@@ -169,7 +181,19 @@ func (ledger *replayLedger) closeAtTrigger(
 		}
 
 		fillRow.Last = fill
-		exitFill = ledger.resolveExitFill(side, fillRow, snapshots, position.quantity)
+		exitFill, filled = ledger.resolveExitFill(
+			exitSide(position.side),
+			fillRow,
+			snapshots,
+			position.quantity,
+		)
+
+		if !filled {
+			ledger.exitBlocked++
+
+			return
+		}
+
 		feePct = ledger.costs.TakerFeePct
 	}
 

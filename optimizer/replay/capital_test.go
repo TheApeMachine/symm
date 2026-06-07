@@ -10,7 +10,7 @@ import (
 )
 
 func eurRow(symbol string, last float64) types.Measurement {
-	return types.Measurement{Symbol: symbol, Last: last}
+	return TradeableRow(symbol, last, time.Unix(1_700_000_000, 0))
 }
 
 func TestReplayCapitalConstraint(t *testing.T) {

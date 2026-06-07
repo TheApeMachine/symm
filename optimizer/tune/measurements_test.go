@@ -13,6 +13,7 @@ import (
 	preasoning "github.com/theapemachine/symm/market/perspectives/reasoning"
 	ptypes "github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/optimizer/io"
+	"github.com/theapemachine/symm/optimizer/replay"
 	"github.com/theapemachine/symm/optimizer/types"
 )
 
@@ -100,22 +101,14 @@ func flatRows(symbols ...string) []ptypes.Measurement {
 }
 
 func quotedRow(measurement ptypes.Measurement) ptypes.Measurement {
-	if measurement.Last > 0 && measurement.Bid <= 0 && measurement.Ask <= 0 {
-		halfSpread := measurement.Last * 0.00005
-		measurement.Bid = measurement.Last - halfSpread
-		measurement.Ask = measurement.Last + halfSpread
-	}
+	row := replay.TradeableRow(measurement.Symbol, measurement.Last, measurement.At)
+	row.Category = measurement.Category
+	row.SNR = measurement.SNR
+	row.Source = measurement.Source
+	row.Confidence = measurement.Confidence
+	row.SpreadBPS = measurement.SpreadBPS
 
-	if measurement.HasBookDepth() {
-		return measurement
-	}
-
-	if measurement.Ask > 0 && measurement.Bid > 0 {
-		measurement.BookAsks = []ptypes.BookLevel{{Price: measurement.Ask, Qty: 1_000}}
-		measurement.BookBids = []ptypes.BookLevel{{Price: measurement.Bid, Qty: 1_000}}
-	}
-
-	return measurement
+	return row
 }
 
 func loadTuneTestConfig(t *testing.T) {

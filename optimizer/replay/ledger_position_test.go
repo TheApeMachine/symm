@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
-	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayShortEntry(t *testing.T) {
@@ -60,11 +59,7 @@ func TestReplayEntryRejectsRaisedMinimumAboveWallet(t *testing.T) {
 			InstrumentRules:  rules,
 		}
 		ledger := newReplayLedger(costs)
-		measurement := QuotedMeasurement(types.Measurement{
-			Symbol: "FXS/EUR",
-			Last:   4.36,
-			At:     time.Unix(1_700_000_000, 0),
-		})
+		measurement := TradeableRow("FXS/EUR", 4.36, time.Unix(1_700_000_000, 0))
 
 		ledger.openEntry(
 			"FXS/EUR",

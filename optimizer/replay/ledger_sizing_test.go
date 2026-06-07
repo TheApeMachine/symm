@@ -7,7 +7,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
-	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayEntryQuantityMatchesDeployedSlot(t *testing.T) {
@@ -20,13 +19,7 @@ func TestReplayEntryQuantityMatchesDeployedSlot(t *testing.T) {
 		}
 		ledger := newReplayLedger(costs)
 		at := time.Unix(1_700_000_000, 0)
-		entry := QuotedMeasurement(types.Measurement{
-			Symbol: "PUMP/EUR",
-			Last:   1e-8,
-			Bid:    1e-8,
-			Ask:    1e-8,
-			At:     at,
-		})
+		entry := TradeableRow("PUMP/EUR", 1e-8, at)
 
 		ledger.openEntry(
 			"PUMP/EUR",
@@ -49,13 +42,7 @@ func TestReplayEntryQuantityMatchesDeployedSlot(t *testing.T) {
 
 			ledger.applyStressed(
 				reasoning.Act{Type: reasoning.ActionSettlePosition},
-				QuotedMeasurement(types.Measurement{
-					Symbol: "PUMP/EUR",
-					Last:   1,
-					Bid:    1,
-					Ask:    1,
-					At:     at.Add(time.Second),
-				}),
+				TradeableRow("PUMP/EUR", 1, at.Add(time.Second)),
 				nil,
 				0,
 			)
