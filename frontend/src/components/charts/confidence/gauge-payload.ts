@@ -28,6 +28,30 @@ export const confidenceFromGaugePayload = (
 	return confidence;
 };
 
+export const gaugeWarmupPercent = (
+	payload: Record<string, unknown>,
+): number | null => {
+	if (payload.calibrated === true) {
+		return null;
+	}
+
+	const samples = payload.samples;
+	const minSamples = payload.min_samples;
+
+	if (
+		typeof minSamples !== "number" ||
+		!Number.isFinite(minSamples) ||
+		minSamples <= 0
+	) {
+		return 0;
+	}
+
+	const sampleCount =
+		typeof samples === "number" && Number.isFinite(samples) ? samples : 0;
+
+	return Math.min(100, (sampleCount / minSamples) * 100);
+};
+
 export const formatGaugePayloadValue = (value: unknown): string => {
 	if (value === null) {
 		return "null";

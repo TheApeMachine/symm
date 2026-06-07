@@ -248,6 +248,8 @@ func (signal *Signal) Tick() error {
 			continue
 		}
 
+		errnie.Debug("signal/correlation: Tick()", "type", message.Type)
+
 		if message.Value == nil {
 			continue
 		}

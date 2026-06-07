@@ -1,4 +1,6 @@
 system:
+  log:
+    level: debug
   queue:
     ttl: 10ms
     buffer: 1024

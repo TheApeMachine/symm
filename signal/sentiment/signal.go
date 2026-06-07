@@ -2,8 +2,8 @@ package sentiment
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -107,29 +107,27 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 
 func (signal *Signal) Tick() error {
 	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		message := signal.subscribers["raw"].Poll()
 
-		if err != nil {
-		return err
+		if message == nil {
+			continue
 		}
 
-		if message == nil || message.Value == nil {
-		continue
-		}
+		errnie.Debug("signal/sentiment: Tick()", "type", message.Type)
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-		continue
+			continue
 		}
 
 		switch sm.Channel {
 		case public.TickerChannel:
-		tickers := signalpool.GetTickers(sm)
+			tickers := signalpool.GetTickers(sm)
 
-		if err := signal.publishTickers(tickers); err != nil {
-			errnie.Error(err, "sentiment: publish tickers")
-		}
+			if err := signal.publishTickers(tickers); err != nil {
+				errnie.Error(err, "sentiment: publish tickers")
+			}
 		}
 	}
 }

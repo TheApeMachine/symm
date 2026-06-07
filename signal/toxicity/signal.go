@@ -93,6 +93,8 @@ func (tox *Toxicity) Tick() error {
 		}
 
 		if message := raw.Poll(); message != nil {
+			errnie.Debug("toxicity: Tick()", "type", message.Type)
+
 			if err := tox.handleRaw(message); err != nil {
 				errnie.Error(err, "toxicity: handle raw")
 			}
@@ -101,6 +103,8 @@ func (tox *Toxicity) Tick() error {
 		}
 
 		if message := level3.Poll(); message != nil {
+			errnie.Debug("toxicity: Tick()", "type", message.Type)
+
 			if err := tox.handleLevel3(message); err != nil {
 				errnie.Error(err, "toxicity: handle level3")
 			}

@@ -122,15 +122,13 @@ func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
 
 func (signal *Signal) Tick() (err error) {
 	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		message := signal.subscribers["raw"].Poll()
 
-		if err != nil {
-			return err
-		}
-
-		if message == nil || message.Value == nil {
+		if message == nil {
 			continue
 		}
+
+		errnie.Debug("signal/fluid: Tick()", "type", message.Type)
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
@@ -203,10 +201,12 @@ func (signal *Signal) emit(symbol string) error {
 		return err
 	}
 
+	telemetry := signal.calibrator.Snapshot(signal.classifier)
+
 	if measurement.Source != types.SourceNone {
 		signal.calibrator.Observe(measurement.Strength, signal.classifier)
 
-		telemetry := signal.calibrator.Snapshot(signal.classifier)
+		telemetry = signal.calibrator.Snapshot(signal.classifier)
 		telemetry.Observation = measurement.Strength
 		if err := types.AssignCategorySurpriseSNR(
 			&measurement, signal.surpriseField, measurement.Category,
@@ -231,19 +231,14 @@ func (signal *Signal) emit(symbol string) error {
 		if err := measurement.Send(signal.pool); err != nil {
 			return err
 		}
-
-		if signal.ui != nil {
-			signal.ui.Send(&qpool.QValue[any]{
-				Value: numeric.GaugePayload(
-					measurement.Source.String(),
-					measurement.Symbol,
-					measurement.Category,
-					measurement,
-					telemetry,
-				),
-			})
-		}
 	}
+
+	numeric.PublishGaugeUI(
+		signal.ui,
+		types.SourceFluid.String(),
+		measurement,
+		telemetry,
+	)
 
 	if err := signal.publishField(state); err != nil {
 		return err

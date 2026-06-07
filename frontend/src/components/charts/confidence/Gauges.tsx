@@ -5,12 +5,24 @@ import { drawSignalGauge } from "#/components/charts/confidence/draw-signal-gaug
 import {
 	confidenceFromGaugePayload,
 	gaugePayloadEntries,
+	gaugeWarmupPercent,
+	gaugeWirePayload,
 } from "#/components/charts/confidence/gauge-payload";
 import { Card, CardPanel } from "#/components/ui/card";
 import { Frame, FrameFooter } from "#/components/ui/frame";
+import {
+	Progress,
+	ProgressIndicator,
+	ProgressLabel,
+	ProgressTrack,
+	ProgressValue,
+} from "#/components/ui/progress";
 
 export type SignalGaugeBridge = {
-	update: (payload: Record<string, unknown>) => void;
+	update: (
+		payload: Record<string, unknown>,
+		wire?: Record<string, unknown>,
+	) => void;
 	ready: boolean;
 	pending: Record<string, unknown>[];
 	latest: Record<string, unknown>;
@@ -178,6 +190,7 @@ export const SignalGauge = ({
 	label: string;
 }) => {
 	const [hovered, setHovered] = useState(false);
+	const [warmupPercent, setWarmupPercent] = useState(0);
 	const [tooltipPayload, setTooltipPayload] = useState<Record<
 		string,
 		unknown
@@ -187,15 +200,19 @@ export const SignalGauge = ({
 		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
 			bridge.latest = {};
 
-			bridge.update = (nextPayload) => {
+			bridge.update = (nextPayload, wire) => {
 				bridge.latest = nextPayload;
 				result.controls.update(confidenceFromGaugePayload(nextPayload));
+
+				const percent = gaugeWarmupPercent(wire ?? nextPayload);
+
+				setWarmupPercent(percent === null ? -1 : percent);
 			};
 
 			bridge.ready = true;
 
-			for (const pendingPayload of bridge.pending) {
-				bridge.update(pendingPayload);
+			for (const pendingWire of bridge.pending) {
+				bridge.update(gaugeWirePayload(pendingWire), pendingWire);
 			}
 
 			bridge.pending = [];
@@ -205,6 +222,7 @@ export const SignalGauge = ({
 				bridge.ready = false;
 				bridge.pending = [];
 				bridge.latest = {};
+				setWarmupPercent(0);
 			};
 		},
 		[bridge],
@@ -232,8 +250,8 @@ export const SignalGauge = ({
 		tooltipPayload !== null && gaugePayloadEntries(tooltipPayload).length > 0;
 
 	return (
-		<Frame className="w-full h-full">
-			<Card className="h-full w-full overflow-hidden">
+		<Frame className="flex h-full min-h-0 w-full flex-col">
+			<Card className="min-h-0 flex-1 overflow-hidden">
 				<CardPanel className="h-full w-full p-0">
 					<div
 						className="relative h-full w-full"
@@ -245,6 +263,21 @@ export const SignalGauge = ({
 							onInit={onInit}
 							style={{ height: "100%", width: "100%" }}
 						/>
+						{warmupPercent >= 0 ? (
+							<div className="absolute inset-x-2 bottom-2 z-20 rounded-md bg-background/90 px-2 py-1.5">
+								<Progress value={warmupPercent} className="gap-1">
+									<div className="flex items-center justify-between gap-2">
+										<ProgressLabel className="font-normal text-[10px] text-muted-foreground">
+											Warming up
+										</ProgressLabel>
+										<ProgressValue className="text-[10px] text-muted-foreground" />
+									</div>
+									<ProgressTrack>
+										<ProgressIndicator className="bg-amber-400" />
+									</ProgressTrack>
+								</Progress>
+							</div>
+						) : null}
 						{showTooltip ? (
 							<div
 								className="pointer-events-none absolute inset-x-0 top-2 z-10 mx-auto w-max max-w-[min(100%,17rem)] rounded-md border bg-popover px-2 py-1 text-popover-foreground text-xs shadow-md/5"
@@ -256,7 +289,7 @@ export const SignalGauge = ({
 					</div>
 				</CardPanel>
 			</Card>
-			<FrameFooter className="py-1">
+			<FrameFooter className="shrink-0 py-1">
 				<div className="flex gap-1 text-muted-foreground text-xs">
 					<CircleAlertIcon className="size-3 h-lh shrink-0" />
 					<p>{label}</p>

@@ -61,6 +61,7 @@ type Hub struct {
 	lastEquity         atomic.Pointer[map[string]any]
 	lastDecisionTree   atomic.Pointer[map[string]any]
 	lastDumps          atomic.Pointer[map[string]any]
+	lastGauges         sync.Map
 }
 
 /*
@@ -83,7 +84,7 @@ func NewHub(
 
 	for _, channel := range []string{"ui"} {
 		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 500*time.Millisecond)
-		hub.subscribers[channel] = hub.broadcasts[channel].Subscribe(channel, 128)
+		hub.subscribers[channel] = hub.broadcasts[channel].Subscribe(channel, 4096)
 	}
 
 	addr := viper.GetViper().GetString("ui.addr")
@@ -172,7 +173,7 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	conn, err := wsUpgrader.Upgrade(writer, request, nil)
 
 	if err != nil {
-		_ = errnie.Error(err)
+		errnie.Error(err)
 		return
 	}
 
@@ -209,6 +210,18 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		_ = client.writeJSON(*dumps)
 	}
 
+	hub.lastGauges.Range(func(key, value any) bool {
+		frame, ok := value.(*map[string]any)
+
+		if !ok || frame == nil {
+			return true
+		}
+
+		_ = client.writeJSON(*frame)
+
+		return true
+	})
+
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, client)
 }
@@ -231,29 +244,39 @@ func (hub *Hub) Tick() error {
 			continue
 		}
 
-		var (
-			out map[string]any
-			ok  bool
-		)
+		out, ok := wireJSONObject(value.Value)
 
-		if out, ok = value.Value.(map[string]any); !ok {
+		if !ok {
 			continue
 		}
 
 		if out["event"] == "wallet" {
-			hub.lastWallet.Store(&out)
+			cached := cloneWireMap(out)
+			hub.lastWallet.Store(&cached)
 		}
 
 		if out["event"] == "positions" {
-			hub.lastPositions.Store(&out)
+			cached := cloneWireMap(out)
+			hub.lastPositions.Store(&cached)
 		}
 
 		if out["event"] == "equity" {
-			hub.lastEquity.Store(&out)
+			cached := cloneWireMap(out)
+			hub.lastEquity.Store(&cached)
 		}
 
 		if out["chart"] == "decision_tree" {
-			hub.lastDecisionTree.Store(&out)
+			cached := cloneWireMap(out)
+			hub.lastDecisionTree.Store(&cached)
+		}
+
+		if out["chart"] == "gauge" {
+			source, _ := out["source"].(string)
+
+			if source != "" {
+				cached := cloneWireMap(out)
+				hub.lastGauges.Store(source, &cached)
+			}
 		}
 
 		hub.broadcastJSON(out)

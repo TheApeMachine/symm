@@ -142,9 +142,9 @@ const WsFeed = ({
 
 					if (bridge) {
 						if (bridge.ready) {
-							bridge.update(payload);
+							bridge.update(payload, raw);
 						} else {
-							bridge.pending.push(payload);
+							bridge.pending.push(raw);
 						}
 					}
 

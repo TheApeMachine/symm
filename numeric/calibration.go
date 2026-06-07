@@ -3,6 +3,7 @@ package numeric
 import (
 	"math"
 
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -130,6 +131,59 @@ func ObserveGaugeTelemetry(
 	telemetry.Observation = observation
 
 	return telemetry, EntropyTrustFromShares(telemetry.Shares) * standout
+}
+
+/*
+SendGaugeWarmupUI publishes calibrator progress while bands have not refit yet.
+*/
+func SendGaugeWarmupUI(
+	ui *qpool.BroadcastGroup,
+	source string,
+	telemetry Telemetry,
+) {
+	if ui == nil || telemetry.Calibrated {
+		return
+	}
+
+	ui.Send(&qpool.QValue[any]{Value: map[string]any{
+		"chart":       "gauge",
+		"source":      source,
+		"calibrating": true,
+		"calibrated":  false,
+		"samples":     telemetry.Samples,
+		"min_samples": telemetry.MinSamples,
+		"confidence":  0,
+	}})
+}
+
+/*
+PublishGaugeUI ships either a full gauge frame or calibrator warmup progress.
+*/
+func PublishGaugeUI(
+	ui *qpool.BroadcastGroup,
+	source string,
+	measurement types.Measurement,
+	telemetry Telemetry,
+) {
+	if ui == nil {
+		return
+	}
+
+	if measurement.Source != types.SourceNone {
+		ui.Send(&qpool.QValue[any]{Value: GaugePayload(
+			source,
+			measurement.Symbol,
+			measurement.Category,
+			measurement,
+			telemetry,
+		)})
+
+		return
+	}
+
+	if !telemetry.Calibrated {
+		SendGaugeWarmupUI(ui, source, telemetry)
+	}
 }
 
 /*

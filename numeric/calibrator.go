@@ -54,7 +54,7 @@ func NewBandCalibrator(
 Snapshot reports the calibrator's live state against classifier, for telemetry.
 */
 func (calibrator *BandCalibrator) Snapshot(classifier *adaptive.Classifier) Telemetry {
-	telemetry := Telemetry{Calibrating: true}
+	telemetry := Telemetry{}
 
 	if calibrator == nil {
 		return telemetry
@@ -66,6 +66,7 @@ func (calibrator *BandCalibrator) Snapshot(classifier *adaptive.Classifier) Tele
 	}
 
 	telemetry.Calibrated = calibrator.refits > 0
+	telemetry.Calibrating = !telemetry.Calibrated
 	telemetry.Samples = calibrator.window.Len()
 	telemetry.MinSamples = calibrator.minN
 	telemetry.Shares = append([]float64(nil), calibrator.recentShares...)

@@ -144,20 +144,18 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 
 func (signal *Signal) Tick() error {
 	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		message := signal.subscribers["raw"].Poll()
 
-		if err != nil {
-		return err
+		if message == nil {
+			continue
 		}
 
-		if message == nil || message.Value == nil {
-		continue
-		}
+		errnie.Debug("signal/hawkes: Tick()", "type", message.Type)
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-		continue
+			continue
 		}
 
 		switch sm.Channel {

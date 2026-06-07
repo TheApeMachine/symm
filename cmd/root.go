@@ -55,6 +55,10 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			errnie.Apply(&errnie.Config{
+				Level: viper.GetViper().GetString("system.log.level"),
+			})
+			
 			// --record guarantees the run collects data for the optimizer, without
 			// depending on trading.record.file being set in the config.
 			if recordRun {

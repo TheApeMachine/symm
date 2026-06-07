@@ -148,32 +148,30 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 
 func (signal *Signal) Tick() error {
 	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		message := signal.subscribers["raw"].Poll()
 
-		if err != nil {
-		return err
+		if message == nil {
+			continue
 		}
 
-		if message == nil || message.Value == nil {
-		continue
-		}
+		errnie.Debug("signal/cvd: Tick()", "type", message.Type)
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-		continue
+			continue
 		}
 
 		switch sm.Channel {
 		case public.TradesChannel:
-		trades := signalpool.GetTrades(sm)
+			trades := signalpool.GetTrades(sm)
 
-		for _, trade := range trades {
-			if err := signal.observe(trade); err != nil {
-				errnie.Error(err, "cvd: observe %s", trade.Symbol)
-				continue
+			for _, trade := range trades {
+				if err := signal.observe(trade); err != nil {
+					errnie.Error(err, "cvd: observe %s", trade.Symbol)
+					continue
+				}
 			}
-		}
 		}
 	}
 }
@@ -224,6 +222,13 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	telemetry.Observation = state.pipe.Observation()
 
 	if telemetry.Samples < minCVDFusedSamples {
+		numeric.PublishGaugeUI(
+			signal.broadcasts["ui"],
+			types.SourceCVD.String(),
+			types.Measurement{Source: types.SourceCVD, Symbol: trade.Symbol},
+			telemetry,
+		)
+
 		return nil
 	}
 
