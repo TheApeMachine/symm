@@ -149,6 +149,21 @@ var (
 				return true, ""
 			})
 
+			// The desk fail-closes per order when a pair has no instrument rules
+			// ("missing instrument rules" on every entry, observed live). Seed the
+			// full REST catalog at startup — the same source tune loads — and let
+			// the websocket snapshot keep it fresh; the watchdog screams if the
+			// cache is still empty once the engine should be warm.
+			go seedInstrumentRules(systemCtx, services.Rules)
+
+			watchdog.Expect("instrument-rules", 90*time.Second, false, func() (bool, string) {
+				if size := services.Rules.Size(); size == 0 {
+					return false, "no instrument rules — every entry will be rejected"
+				}
+
+				return true, ""
+			})
+
 			apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
 			apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
 
@@ -234,6 +249,33 @@ func initConfig() {
 		fmt.Fprintf(os.Stderr, "symm: config: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+/*
+seedInstrumentRules fills the live rules cache from REST AssetPairs with a few
+retries, so the desk can validate orders for every tradable pair from the first
+minute instead of waiting on (or missing) the websocket instrument snapshot.
+*/
+func seedInstrumentRules(ctx context.Context, rules *broker.InstrumentRulesCache) {
+	for attempt := 1; attempt <= 3; attempt++ {
+		loaded, err := rules.SeedFromKraken(ctx)
+
+		if err == nil {
+			errnie.Info(fmt.Sprintf("seeded %d instrument rules from REST", loaded), "engine")
+
+			return
+		}
+
+		errnie.Error(fmt.Errorf("instrument rules seed attempt %d/3: %w", attempt, err))
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	errnie.Error(fmt.Errorf("instrument rules REST seed failed — relying on the websocket snapshot alone"))
 }
 
 /*

@@ -2,6 +2,7 @@ package reasoning
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -65,13 +66,16 @@ equals) and a hard MaxNodes cap to stop runaway bloat. This is what lets the sea
 explore the temporal chains the playbook is meant to express.
 */
 type Candidate struct {
-	Forest          []reasoning.Thought
-	Score           float64
-	Return          float64 // realized P&L / starting capital
-	RealizedEUR     float64
-	StartingCapital float64
-	Trades          int
-	Nodes           int
+	Forest           []reasoning.Thought
+	Score            float64
+	Return           float64 // realized P&L / starting capital
+	RealizedEUR      float64
+	StartingCapital  float64
+	Trades           int
+	Nodes            int
+	FundBlocked      int
+	PreflightBlocked int
+	ExitBlocked      int
 }
 
 // Result is the outcome of a search: the best forest found and how much was tried.
@@ -211,12 +215,13 @@ func Search(
 	best := beam[0]
 
 	config.reportProgress(SearchProgress{
-		Phase:      "seeds_done",
-		Evaluated:  evaluated,
-		BestScore:  best.Score,
-		BestReturn: best.Return,
-		BestTrades: best.Trades,
-		Elapsed:    time.Since(started),
+		Phase:       "seeds_done",
+		Evaluated:   evaluated,
+		BestScore:   best.Score,
+		BestReturn:  best.Return,
+		BestTrades:  best.Trades,
+		BestBlocked: blockedSummary(best),
+		Elapsed:     time.Since(started),
 	})
 
 	stagnation := 0
@@ -286,15 +291,30 @@ func Search(
 	}
 
 	config.reportProgress(SearchProgress{
-		Phase:      "done",
-		Evaluated:  evaluated,
-		BestScore:  best.Score,
-		BestReturn: best.Return,
-		BestTrades: best.Trades,
-		Elapsed:    time.Since(started),
+		Phase:       "done",
+		Evaluated:   evaluated,
+		BestScore:   best.Score,
+		BestReturn:  best.Return,
+		BestTrades:  best.Trades,
+		BestBlocked: blockedSummary(best),
+		Elapsed:     time.Since(started),
 	})
 
 	return Result{Best: best, Evaluated: evaluated}, nil
+}
+
+
+/*
+blockedSummary renders where the candidate's wanted-but-unexecuted trades died,
+so a zero-trade search is diagnosable from its own log line.
+*/
+func blockedSummary(candidate Candidate) string {
+	return fmt.Sprintf(
+		"blocked[fund=%d preflight=%d exit=%d]",
+		candidate.FundBlocked,
+		candidate.PreflightBlocked,
+		candidate.ExitBlocked,
+	)
 }
 
 // topCandidates sorts by score (then simpler, then stable by encoding) and keeps the

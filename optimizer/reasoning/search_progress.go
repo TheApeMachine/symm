@@ -24,6 +24,7 @@ type SearchProgress struct {
 	BestScore     float64
 	BestReturn    float64
 	BestTrades    int
+	BestBlocked   string // "fund=N preflight=N exit=N" when the best candidate had blocked trades
 	Stagnation    int
 	Patience      int
 	Elapsed       time.Duration
@@ -63,11 +64,12 @@ func (progress SearchProgress) Message() string {
 		return fmt.Sprintf("scoring %d seed forests...", progress.SeedCount)
 	case "seeds_done":
 		return fmt.Sprintf(
-			"seeds complete: evaluated=%d best_score=%.6f best_return=%.6f best_trades=%d (%.1fs)",
+			"seeds complete: evaluated=%d best_score=%.6f best_return=%.6f best_trades=%d %s (%.1fs)",
 			progress.Evaluated,
 			progress.BestScore,
 			progress.BestReturn,
 			progress.BestTrades,
+			progress.BestBlocked,
 			progress.Elapsed.Seconds(),
 		)
 	case "round":
@@ -87,11 +89,12 @@ func (progress SearchProgress) Message() string {
 		)
 	case "done":
 		return fmt.Sprintf(
-			"search complete: evaluated=%d best_score=%.6f best_return=%.6f best_trades=%d (%.1fs)",
+			"search complete: evaluated=%d best_score=%.6f best_return=%.6f best_trades=%d %s (%.1fs)",
 			progress.Evaluated,
 			progress.BestScore,
 			progress.BestReturn,
 			progress.BestTrades,
+			progress.BestBlocked,
 			progress.Elapsed.Seconds(),
 		)
 	default:

@@ -228,6 +228,8 @@ func ParseThoughts(raw []byte) ([]Thought, error) {
 		return nil, err
 	}
 
+	StampStrategies(document.Branches)
+
 	return document.Branches, nil
 }
 

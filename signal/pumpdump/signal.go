@@ -21,12 +21,28 @@ import (
 const rawSubscriberID = "signal/pumpdump:raw"
 
 /*
-Signal measuring pump and dump ignition from the trade tape.
+Signal measuring Pump and Dump market dynamics — the ignition perspective.
 
-Per symbol it maintains gross and signed volume over a configured horizon, self-scaled
-RVOL and signed price precursor off the window anchor, and tape skew. Ignition lift is
-(rvol-1)*(1+precursor)*(1+skew); a pooled BandCalibrator bands that scalar into four
-categories by live quantile position. Strength is the banded lift observation.
+It reads the trade tape and looks for sudden verticality: a volume spike (RVOL)
+detaching from the symbol's own recent norm, optionally amplified by a precursor
+price move off the window's opening anchor. Both axes are self-scaling — read as
+value / EMA(value), so "high", "moderate" and "falling" mean relative to this
+symbol's own recent behaviour, never a hard-coded level — then fused, smoothed,
+sigma-clamped, and banded into the four ignition categories:
+
+	| Category           | Volume Lift | Price Precursor | Market "Feel"        |
+	|:-------------------|:------------|:----------------|:---------------------|
+	| Vertical Ignition  | High Spike  | High            | Launching / Breakout |
+	| Coiled Compression | Moderate    | Low             | Pre-Pump / Loaded    |
+	| Organic Trend      | Low/Steady  | Moderate        | Healthy Momentum     |
+	| Faded Exhaustion   | Falling     | Flat            | Leg is Dead          |
+
+Mechanics: per symbol it maintains gross and signed volume over a configured
+horizon, self-scaled RVOL and signed price precursor off the window anchor, and
+tape skew. Ignition lift is (rvol-1)*(1+precursor)*(1+skew); a pooled
+BandCalibrator bands that scalar into the four categories by live quantile
+position. Strength is the banded lift observation. Spread compression (a third
+axis in the written design) needs the book and is left to the book-driven signals.
 */
 type Signal struct {
 	ctx           context.Context

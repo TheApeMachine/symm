@@ -66,13 +66,16 @@ func scoreForest(
 	}
 
 	return Candidate{
-		Forest:          forest,
-		Score:           credited,
-		Return:          result.Score,
-		RealizedEUR:     result.RealizedEUR,
-		StartingCapital: result.StartingCapital,
-		Trades:          result.ClosedTrades,
-		Nodes:           nodes,
+		Forest:           forest,
+		Score:            credited,
+		Return:           result.Score,
+		RealizedEUR:      result.RealizedEUR,
+		StartingCapital:  result.StartingCapital,
+		Trades:           result.ClosedTrades,
+		Nodes:            nodes,
+		FundBlocked:      result.FundBlocked,
+		PreflightBlocked: result.PreflightBlocked,
+		ExitBlocked:      result.ExitBlocked,
 	}
 }
 

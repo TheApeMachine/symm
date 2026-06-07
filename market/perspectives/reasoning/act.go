@@ -15,6 +15,7 @@ type Act struct {
 	Side     trading.Side `yaml:"side,omitempty"`     // sell opens a short entry; buy is the default for entries
 	Offset   float64      `yaml:"offset,omitempty"`   // overrides the global stop/take/trail fraction for this node (0 = use global)
 	Fraction float64      `yaml:"fraction,omitempty"` // multiplier on trading.position_fraction for this entry (0 = deploy the global fraction)
+	Strategy string       `yaml:"-"`                  // setup attribution, stamped from the root Thought.Name — never serialized
 }
 
 /*

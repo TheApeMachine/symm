@@ -35,6 +35,7 @@ type Action struct {
 	SNR        float64      // signal surprise at emission; drives conviction-ranked capital allocation
 	Confidence float64      // selection confidence at emission
 	ClOrdID    string       // client order id the desk stamped at submission; lets the trader cancel resting orders on close
+	Strategy   string       // setup attribution from the firing branch's name
 }
 
 /*
@@ -82,6 +83,7 @@ func ActionFromAct(act Act, measurement types.Measurement) Action {
 		Fraction:   act.Fraction,
 		SNR:        measurement.SNR,
 		Confidence: measurement.Confidence,
+		Strategy:   act.Strategy,
 	}
 
 	if IsEntryAction(act.Type) {

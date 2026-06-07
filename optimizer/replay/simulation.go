@@ -52,6 +52,10 @@ type ReplayResult struct {
 	// wallet was already locked in another position — the opportunity cost of
 	// tying up capital, surfaced so the optimizer can price it.
 	FundBlocked int
+	// PreflightBlocked / ExitBlocked surface where wanted trades died, so a
+	// zero-trade tune is diagnosable from its log instead of a mystery.
+	PreflightBlocked int
+	ExitBlocked      int
 }
 
 /*
@@ -132,8 +136,10 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 		ClosedTrades:    ledger.closedTrades,
 		ExposureTicks:   ledger.exposureTicks,
 		TotalTicks:      simulation.tape.Len(),
-		StartingCapital: ledger.startingCapital(),
-		FundBlocked:     ledger.fundBlocked,
+		StartingCapital:  ledger.startingCapital(),
+		FundBlocked:      ledger.fundBlocked,
+		PreflightBlocked: ledger.preflightBlocked,
+		ExitBlocked:      ledger.exitBlocked,
 	}
 }
 
