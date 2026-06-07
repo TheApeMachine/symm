@@ -122,7 +122,10 @@ func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
 
 func (signal *Signal) Tick() (err error) {
 	for {
-		message := signal.subscribers["raw"].Poll()
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		if err != nil {
+			return err
+		}
 
 		if message == nil {
 			continue

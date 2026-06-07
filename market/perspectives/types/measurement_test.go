@@ -105,7 +105,11 @@ func TestMeasurementSend(t *testing.T) {
 		Convey("It should publish on the measurements bus", func() {
 			So(measurement.Send(pool), ShouldBeNil)
 
-			frame := subscriber.Poll()
+			frame, err := subscriber.Wait(t.Context())
+			if err != nil {
+				t.Fatal("no published measurement")
+			}
+
 			if frame == nil {
 				t.Fatal("expected published measurement")
 			}

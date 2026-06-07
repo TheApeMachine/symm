@@ -65,7 +65,11 @@ func drainMeasurements(measurements *qpool.BroadcastConsumer) []types.Measuremen
 	published := make([]types.Measurement, 0)
 
 	for {
-		value := measurements.Poll()
+		value, err := measurements.Wait(context.Background())
+		if err != nil {
+			return published
+		}
+
 		if value == nil {
 			return published
 		}
@@ -127,7 +131,12 @@ func TestObserve(t *testing.T) {
 			Convey("It should fail without publishing", func() {
 				So(errors.Is(err, errBaselineUnobserved), ShouldBeTrue)
 
-				if measurements.Poll() != nil {
+				value, err := measurements.Wait(context.Background())
+				if err != nil {
+					t.Fatal("no measurement published during warmup")
+				}
+
+				if value != nil {
 					t.Fatal("unexpected measurement during warmup")
 				}
 			})

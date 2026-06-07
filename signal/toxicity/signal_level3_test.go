@@ -40,7 +40,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 
 		tox.tracker.ObserveMid("BTC/EUR", market.Pair{}, 100)
 
-		err := tox.handleLevel3(tox.subscribers["level3"].Poll())
+		err := tox.handleLevel3(tox.subscribers["level3"].	Poll())
 
 		Convey("It should classify per-order churn as toxic", func() {
 			So(err, ShouldBeNil)

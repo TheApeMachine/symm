@@ -172,7 +172,16 @@ func (websocketClient *WebSocket) tickDataOnly(endpoint public.EndpointType) err
 			continue
 		}
 
-		if message := websocketClient.rawSubscriber.Poll(); message != nil && message.Value != nil {
+		message, err := websocketClient.rawSubscriber.Wait(websocketClient.ctx)
+		if err != nil {
+			return err
+		}
+
+		if message == nil {
+			continue
+		}
+
+		if message.Value != nil {
 			websocketClient.ingestInstrumentForL3(message.Value)
 
 			continue

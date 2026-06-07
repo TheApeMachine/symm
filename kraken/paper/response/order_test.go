@@ -44,7 +44,10 @@ func expectNoFill(sub *qpool.BroadcastConsumer) bool {
 	deadline := time.Now().Add(40 * time.Millisecond)
 
 	for time.Now().Before(deadline) {
-		frame := sub.Poll()
+		frame, err := sub.Wait(context.Background())
+		if err != nil {
+			return false
+		}
 
 		if frame == nil {
 			time.Sleep(1 * time.Millisecond)
@@ -71,7 +74,10 @@ func expectFill(sub *qpool.BroadcastConsumer) map[string]any {
 	deadline := time.Now().Add(300 * time.Millisecond)
 
 	for time.Now().Before(deadline) {
-		frame := sub.Poll()
+		frame, err := sub.Wait(context.Background())
+		if err != nil {
+			return nil
+		}
 
 		if frame == nil {
 			time.Sleep(1 * time.Millisecond)
@@ -98,7 +104,10 @@ func drainUntilFill(sub *qpool.BroadcastConsumer) {
 	deadline := time.Now().Add(300 * time.Millisecond)
 
 	for time.Now().Before(deadline) {
-		frame := sub.Poll()
+		frame, err := sub.Wait(context.Background())
+		if err != nil {
+			return
+		}
 
 		if frame == nil {
 			time.Sleep(1 * time.Millisecond)

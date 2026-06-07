@@ -225,7 +225,10 @@ func (signal *Signal) Tick() error {
 		default:
 		}
 
-		message := raw.Poll()
+		message, err := raw.Wait(signal.ctx)
+		if err != nil {
+			return err
+		}
 
 		if message == nil {
 			select {

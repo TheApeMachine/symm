@@ -28,7 +28,12 @@ func TestPublishExecutionDerived(t *testing.T) {
 
 			var derived map[string]any
 
-			if msg := sub.Poll(); msg != nil {
+			msg, err := sub.Wait(t.Context())
+			if err != nil {
+				t.Fatal("no derived frame published")
+			}
+
+			if msg != nil {
 				frame, _ := msg.Value.(map[string]any)
 
 				if frame["qty"] != nil {
@@ -37,7 +42,12 @@ func TestPublishExecutionDerived(t *testing.T) {
 			}
 
 			if derived == nil {
-				if msg := sub.Poll(); msg != nil {
+				msg, err := sub.Wait(t.Context())
+				if err != nil {
+					t.Fatal("no derived frame published")
+				}
+
+				if msg != nil {
 					frame, _ := msg.Value.(map[string]any)
 
 					if frame["qty"] != nil {

@@ -120,7 +120,10 @@ func (signal *Signal) stateFor(symbol string) *pumpState {
 
 func (signal *Signal) Tick() error {
 	for {
-		message := signal.subscribers["raw"].Poll()
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
+		if err != nil {
+			return err
+		}
 
 		if message == nil {
 			continue

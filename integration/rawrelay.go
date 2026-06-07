@@ -83,7 +83,10 @@ func (relay *RawRelay) Tick() error {
 
 func (relay *RawRelay) forwardOne() bool {
 	for _, consumer := range relay.consumers {
-		message := consumer.Poll()
+		message, err := consumer.Wait(relay.ctx)
+		if err != nil {
+			return false
+		}
 
 		if message == nil || message.Value == nil {
 			continue
