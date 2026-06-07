@@ -16,7 +16,6 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 )
 
@@ -30,17 +29,17 @@ type WebSocketClient interface {
 }
 
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	conns       []*websocket.Conn
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.BroadcastConsumer
-	recorder    io.Writer
-	streams     *focus.Set
-	latencies   *ring.Ring
-	isConnected bool
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	pool             *qpool.Q[any]
+	conns            []*websocket.Conn
+	broadcasts       map[string]*qpool.BroadcastGroup
+	subscribers      map[string]*qpool.BroadcastConsumer
+	recorder         io.Writer
+	streams          *focus.Set
+	latencies        *ring.Ring
+	isConnected      bool
 	reconnectAttempt uint64
 }
 
@@ -73,11 +72,11 @@ func NewWebSocket(
 		}
 
 		for _, channel := range []string{"raw", "level3", "kraken:public"} {
-			socket.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+			socket.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 			socket.subscribers[channel] = socket.broadcasts[channel].Subscribe(channel, 1024)
 		}
 
-		socket.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
+		socket.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 		socket.broadcasts["kraken:public"].Send(&qpool.QValue[any]{Value: map[string]any{
 			"method": "subscribe",
@@ -256,19 +255,22 @@ func (ws *WebSocket) Tick() (err error) {
 	outbound := ws.subscribers["kraken:public"]
 
 	for {
+		if !ws.isConnected || ws.conns[0] == nil {
+			if connectErr := ws.ensureConnected(); connectErr != nil {
+				errnie.Error(connectErr)
+			}
+
+			continue
+		}
+
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
-			if ws.conns[0] == nil {
-				continue
-			}
-
 			if err = ws.conns[0].WriteJSON(map[string]any{
 				"method": "ping",
 			}); err != nil {
 				ws.handleError(errnie.Error(err))
-				continue
 			}
 
 			if time.Now().Unix()%64 == 0 {
@@ -276,20 +278,12 @@ func (ws *WebSocket) Tick() (err error) {
 			}
 		default:
 			if message := outbound.Poll(); message != nil {
-				if ws.conns[0] != nil {
-					errnie.Error(ws.conns[0].WriteJSON(message.Value))
+				if writeErr := ws.conns[0].WriteJSON(message.Value); writeErr != nil {
+					ws.handleError(errnie.Error(writeErr))
 				}
 
 				continue
 			}
-		}
-
-		if !ws.isConnected || ws.conns[0] == nil {
-			if err := ws.ensureConnected(); err != nil {
-				errnie.Error(err)
-			}
-
-			continue
 		}
 
 		if err = ws.readFrame(); err != nil {
@@ -302,16 +296,16 @@ func (ws *WebSocket) readFrame() (err error) {
 	message := sockMsgPool.Get().(*SocketMessage)
 	defer sockMsgPool.Put(message)
 
-	*message = SocketMessage{}
-
 	if err = ws.conns[0].ReadJSON(message); err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
 	if message.Channel == "heartbeat" {
 		ws.isConnected = true
 		return nil
 	}
+
+	fmt.Println("kraken/public: read frame", message.Channel, message.Type)
 
 	if message.Channel != "" {
 		if ch := ws.broadcasts["raw"]; ch != nil {

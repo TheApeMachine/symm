@@ -8,7 +8,6 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -261,8 +260,11 @@ func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		private := bus.Group(pool, "kraken:private", 10*time.Millisecond).
-			Subscribe("test:desk-entry-minimum", 4)
+		private, err := qpool.NewBroadcastGroup(ctx, "kraken:private", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected private broadcast group")
+		}
+		privateSub := private.Subscribe("test:desk-entry-minimum", 4)
 		quotes := NewQuoteCache(ctx, nil)
 		quotes.InstallQuoteForTest(Quote{
 			Symbol:    "FXS/EUR",
@@ -300,7 +302,7 @@ func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
 			defer waitCancel()
 
-			message, err := bus.PollFor(waitCtx, private)
+			message, err := privateSub.Wait(waitCtx)
 			if err != nil {
 				t.Fatal("expected add_order frame")
 			}

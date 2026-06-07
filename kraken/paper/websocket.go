@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/public"
@@ -53,8 +52,8 @@ func NewWebSocketWithQuoteCache(
 
 	latencies, latencyErr := loadLatencyProfile()
 
-	raw := bus.Group(pool, "raw", 10*time.Millisecond)
-	ui := bus.Group(pool, "ui", 10*time.Millisecond)
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 	ids := response.NewIdentifier()
 	catalog := response.NewPairCatalog(ctx)
 
@@ -86,7 +85,7 @@ func NewWebSocketWithQuoteCache(
 	}
 
 	for _, channel := range []string{"raw", "kraken:private"} {
-		ws.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		ws.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		ws.subscribers[channel] = ws.broadcasts[channel].Subscribe(
 			"kraken/paper:"+channel, 1024,
 		)

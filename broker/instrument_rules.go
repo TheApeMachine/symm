@@ -10,7 +10,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -79,7 +78,10 @@ func (cache *InstrumentRulesCache) Start(pool *qpool.Q[any]) {
 		return
 	}
 
-	raw := bus.Group(pool, "raw", 0)
+	raw, err := qpool.NewBroadcastGroup(cache.ctx, "raw", 0)
+	if err != nil {
+		return
+	}
 	consumer := raw.Subscribe("broker:instrument-rules", 1024)
 
 	go func() {

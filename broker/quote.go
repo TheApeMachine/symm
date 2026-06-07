@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	signalpool "github.com/theapemachine/symm/signal"
@@ -147,7 +146,10 @@ func (cache *QuoteCache) run(pool *qpool.Q[any]) {
 		return
 	}
 
-	group := bus.Group(pool, "raw", 10*time.Millisecond)
+	group, err := qpool.NewBroadcastGroup(cache.ctx, "raw", 10*time.Millisecond)
+	if err != nil {
+		return
+	}
 	consumer := group.Subscribe("broker:quotes", 4096)
 
 	if consumer == nil {

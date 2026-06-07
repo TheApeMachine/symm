@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -68,7 +67,7 @@ func TestEmit(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 			defer waitCancel()
 
-			value, err := bus.PollFor(waitCtx, measurements)
+			value, err := measurements.Wait(waitCtx)
 			if err != nil {
 				t.Fatal("timed out waiting for fluid measurement")
 			}
@@ -121,7 +120,7 @@ func TestPublishField(t *testing.T) {
 		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 		defer waitCancel()
 
-		value, err := bus.PollFor(waitCtx, uiFrames)
+		value, err := uiFrames.Wait(waitCtx)
 		if err != nil {
 			t.Fatal("timed out waiting for field snapshot")
 		}
@@ -164,7 +163,7 @@ func TestPublishFieldSkipsUnwarmedSymbols(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			defer waitCancel()
 
-			if _, err := bus.PollFor(waitCtx, uiFrames); err == nil {
+			if _, err := uiFrames.Wait(waitCtx); err == nil {
 				t.Fatal("unexpected field snapshot for unwarmed symbols")
 			}
 		})
@@ -196,7 +195,7 @@ func TestEmitSkipsMeasurementWithoutLast(t *testing.T) {
 		waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
 		defer waitCancel()
 
-		if _, err := bus.PollFor(waitCtx, measurements); err == nil {
+		if _, err := measurements.Wait(waitCtx); err == nil {
 			t.Fatal("unexpected measurement without last price")
 		}
 	})

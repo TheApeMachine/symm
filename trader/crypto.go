@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -128,7 +127,7 @@ func NewCryptoWithCaches(
 		ctx:             ctx,
 		cancel:          cancel,
 		pool:            pool,
-		ui:              bus.Group(pool, "ui", 10*time.Millisecond),
+		ui:              pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
 		broadcasts:      make(map[string]*qpool.BroadcastGroup),
 		subscribers:     make(map[string]*qpool.BroadcastConsumer),
 		streams:         streams,
@@ -145,7 +144,7 @@ func NewCryptoWithCaches(
 	}
 
 	for _, channel := range []string{"raw"} {
-		crypto.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		crypto.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		crypto.subscribers[channel] = crypto.broadcasts[channel].Subscribe(cryptoRawSubscriberID, 1024)
 	}
 

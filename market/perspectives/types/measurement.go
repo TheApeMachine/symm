@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 )
 
 type SourceType uint8
@@ -128,8 +127,8 @@ func (measurement *Measurement) Send(pool *qpool.Q[any]) error {
 		return errnie.Error(err, "%s measurement for %q", measurement.Source.String(), measurement.Symbol)
 	}
 
-	bus.Group(
-		pool, "measurements", viper.GetDuration("system.queue.ttl"),
+	pool.CreateBroadcastGroup(
+		"measurements", viper.GetDuration("system.queue.ttl"),
 	).Send(&qpool.QValue[any]{
 		Type:  "measurement",
 		Value: *measurement,

@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -99,12 +98,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	queueTTL := viper.GetDuration("system.queue.ttl")
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, queueTTL)
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, queueTTL)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", queueTTL)
-	signal.broadcasts["ui"] = bus.Group(pool, "ui", queueTTL)
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", queueTTL)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", queueTTL)
 
 	errnie.Info("signal/pumpdump ready", "signal/pumpdump")
 
@@ -124,29 +123,29 @@ func (signal *Signal) Tick() error {
 		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
 		if err != nil {
-			return err
+		return err
 		}
 
 		if message == nil || message.Value == nil {
-			continue
+		continue
 		}
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-			continue
+		continue
 		}
 
 		if sm.Channel != public.TradesChannel {
-			continue
+		continue
 		}
 
 		for _, trade := range signalpool.GetTrades(sm) {
-			err := signal.observe(trade)
+		err := signal.observe(trade)
 
-			if err != nil && !isWarmup(err) {
-				errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
-			}
+		if err != nil && !isWarmup(err) {
+			errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
+		}
 		}
 	}
 }

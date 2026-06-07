@@ -10,7 +10,6 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -123,7 +122,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		convey.Convey("It should publish the Thought-driven Action on raw", func() {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer waitCancel()
-			frame, err := bus.PollFor(waitCtx, subscriber)
+			frame, err := subscriber.Wait(waitCtx)
 			if err != nil {
 				convey.So("raw action", convey.ShouldBeBlank)
 			} else {
@@ -157,7 +156,7 @@ func TestStoryPublishMarketRegime(t *testing.T) {
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		story := NewStory(ctx, pool)
-		ui := bus.Group(pool, "ui", 10*time.Millisecond)
+		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 		subscriber := ui.Subscribe("test:story:regime", 8)
 
 		done := make(chan struct{})
@@ -196,7 +195,7 @@ func TestStoryPublishMarketRegime(t *testing.T) {
 		defer collectCancel()
 
 		for {
-			frame, err := bus.PollFor(collectCtx, subscriber)
+			frame, err := subscriber.Wait(collectCtx)
 			if err != nil {
 				break
 			}
@@ -250,7 +249,7 @@ func TestStoryFixturePlaybook(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer waitCancel()
 
-			frame, err := bus.PollFor(waitCtx, subscriber)
+			frame, err := subscriber.Wait(waitCtx)
 			if err != nil {
 				convey.So("fixture action", convey.ShouldBeBlank)
 			} else {
@@ -371,7 +370,7 @@ func TestStorySkipsShortActWithoutMargin(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 200*time.Millisecond)
 			defer waitCancel()
 
-			if _, err := bus.PollFor(waitCtx, subscriber); err == nil {
+			if _, err := subscriber.Wait(waitCtx); err == nil {
 				convey.So("short entry action", convey.ShouldBeBlank)
 			}
 

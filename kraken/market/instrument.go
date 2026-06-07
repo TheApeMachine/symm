@@ -10,7 +10,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/quote"
 	"github.com/theapemachine/symm/market/settings"
@@ -98,8 +97,8 @@ func NewInstrument(ctx context.Context, pool *qpool.Q[any]) *Instrument {
 		Pairs:       make([]string, 0),
 	}
 
-	instrument.broadcasts["kraken:public"] = bus.Group(pool, "kraken:public", 10*time.Millisecond)
-	instrument.broadcasts["raw"] = bus.Group(pool, "raw", 10*time.Millisecond)
+	instrument.broadcasts["kraken:public"] = pool.CreateBroadcastGroup("kraken:public", 10*time.Millisecond)
+	instrument.broadcasts["raw"] = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 	instrument.subscribers["raw"] = instrument.broadcasts["raw"].Subscribe(
 		instrumentSubscriberID, 128,
 	)

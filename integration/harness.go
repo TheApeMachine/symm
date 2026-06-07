@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/focus"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
@@ -104,6 +103,15 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	tape := NewTape()
 	tape.Subscribe(ctx, pool)
 
+	measureBus, err := qpool.NewBroadcastGroup(ctx, "measurements", 10*time.Millisecond)
+
+	if err != nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: new broadcast group: %w", err)
+	}
+
 	harness := &Harness{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -113,7 +121,7 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 		capture:    capture,
 		tape:       tape,
 		streams:    streams,
-		measureBus: bus.Group(pool, "measurements", 10*time.Millisecond),
+		measureBus: measureBus,
 		auditPath:  auditPath,
 	}
 
@@ -319,7 +327,10 @@ type captureFrame struct {
 
 func (harness *Harness) playCapture() error {
 	reader := bufio.NewReader(harness.capture)
-	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
+	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("integration capture: new broadcast group: %w", err)
+	}
 
 	for {
 		line, readErr := reader.ReadBytes('\n')
@@ -331,7 +342,10 @@ func (harness *Harness) playCapture() error {
 				return err
 			}
 
-			group := bus.Group(harness.pool, frame.Channel, 10*time.Millisecond)
+			group, err := qpool.NewBroadcastGroup(harness.ctx, frame.Channel, 10*time.Millisecond)
+			if err != nil {
+				return fmt.Errorf("integration capture: new broadcast group: %w", err)
+			}
 			envelope := map[string]any{
 				"channel": frame.Channel,
 				"type":    frame.Type,
@@ -430,7 +444,12 @@ func (harness *Harness) publishHeldPositions(symbols []string) {
 		})
 	}
 
-	raw := bus.Group(harness.pool, "raw", 10*time.Millisecond)
+	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
+
+	if err != nil {
+		return
+	}
+
 	raw.Send(&qpool.QValue[any]{
 		Type: "holdings",
 		Value: map[string]any{
@@ -438,6 +457,7 @@ func (harness *Harness) publishHeldPositions(symbols []string) {
 			"holdings": holdings,
 		},
 	})
+
 	harness.sleep(50 * time.Millisecond)
 }
 

@@ -8,7 +8,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -137,7 +136,10 @@ func TestStressCacheBroadcast(t *testing.T) {
 		cache := NewStressCache(ctx, nil)
 		cache.Start(pool)
 
-		group := bus.Group(pool, "measurements", 0)
+		group, err := qpool.NewBroadcastGroup(ctx, "measurements", 0)
+		if err != nil {
+			t.Fatal("expected measurements broadcast group")
+		}
 		measurement := types.Measurement{
 			Symbol:   "BTC/EUR",
 			Source:   types.SourceToxicity,

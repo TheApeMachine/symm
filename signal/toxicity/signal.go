@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -62,15 +61,15 @@ func NewToxicity(ctx context.Context, pool *qpool.Q[any]) *Toxicity {
 		l3Active:   settings.L3Enabled(),
 	}
 	queueTTL := viper.GetDuration("system.queue.ttl")
-	tox.measurements = bus.Group(pool, "measurements", queueTTL)
-	tox.ui = bus.Group(pool, "ui", queueTTL)
+	tox.measurements = pool.CreateBroadcastGroup("measurements", queueTTL)
+	tox.ui = pool.CreateBroadcastGroup("ui", queueTTL)
 	tox.subscribers = make(map[string]*qpool.BroadcastConsumer)
 	tox.rawDump = rawdump.Open("toxicity")
 
-	raw := bus.Group(pool, "raw", queueTTL)
+	raw := pool.CreateBroadcastGroup("raw", queueTTL)
 	tox.subscribers["raw"] = raw.Subscribe("toxicity:raw", 1024)
 
-	level3 := bus.Group(pool, "level3", queueTTL)
+	level3 := pool.CreateBroadcastGroup("level3", queueTTL)
 	tox.subscribers["level3"] = level3.Subscribe("toxicity:level3", 4096)
 
 	errnie.Info("toxicity ready l3="+fmt.Sprint(tox.l3Active), "toxicity")

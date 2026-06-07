@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -17,7 +16,10 @@ func TestExecutionsPublishFill(t *testing.T) {
 
 	Convey("Given wired paper orders and executions", t, func() {
 		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:executions", 32)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -48,7 +50,7 @@ func TestExecutionsPublishFill(t *testing.T) {
 			var channelFrame map[string]any
 
 			for channelFrame == nil || derived == nil {
-				msg, err := bus.PollFor(waitCtx, sub)
+				msg, err := sub.Wait(waitCtx)
 				if err != nil {
 					break
 				}
@@ -84,8 +86,10 @@ func TestExecutionsPublishFill(t *testing.T) {
 
 func TestExecutionsSubscribe(t *testing.T) {
 	Convey("Given an executions socket", t, func() {
-		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:executions:snap", 8)
 		executions := NewExecutions(raw, nil, NewIdentifier())
 
@@ -102,7 +106,7 @@ func TestExecutionsSubscribe(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer waitCancel()
 
-			msg, err := bus.PollFor(waitCtx, sub)
+			msg, err := sub.Wait(waitCtx)
 			if err != nil {
 				So("snapshot timeout", ShouldBeEmpty)
 			} else {

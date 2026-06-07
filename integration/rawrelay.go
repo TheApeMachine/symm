@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -22,23 +21,33 @@ var replayRelayChannels = []string{
 RawRelay forwards replay websocket channel frames onto the shared raw bus.
 */
 type RawRelay struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	raw         *qpool.BroadcastGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	raw       *qpool.BroadcastGroup
 	consumers []*qpool.BroadcastConsumer
 }
 
 func NewRawRelay(ctx context.Context, pool *qpool.Q[any]) *RawRelay {
 	ctx, cancel := context.WithCancel(ctx)
 
+	raw, err := qpool.NewBroadcastGroup(ctx, "raw", 10*time.Millisecond)
+	if err != nil {
+		cancel()
+		return nil
+	}
+
 	relay := &RawRelay{
 		ctx:    ctx,
 		cancel: cancel,
-		raw:    bus.Group(pool, "raw", 10*time.Millisecond),
+		raw:    raw,
 	}
 
 	for _, channel := range replayRelayChannels {
-		group := bus.Group(pool, channel, 10*time.Millisecond)
+		group, err := qpool.NewBroadcastGroup(ctx, channel, 10*time.Millisecond)
+		if err != nil {
+			cancel()
+			return nil
+		}
 		consumer := group.Subscribe("integration/rawrelay:"+channel, 4096)
 
 		if consumer == nil {

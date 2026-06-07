@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -53,7 +52,7 @@ func TestPublishMeasurement(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 			defer waitCancel()
 
-			value, err := bus.PollFor(waitCtx, measurements)
+			value, err := measurements.Wait(waitCtx)
 			if err != nil {
 				t.Fatal("timed out waiting for toxicity measurement")
 			}

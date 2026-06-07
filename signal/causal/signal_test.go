@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -79,7 +78,7 @@ func TestPublish(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 			defer waitCancel()
 
-			value, err := bus.PollFor(waitCtx, measurements)
+			value, err := measurements.Wait(waitCtx)
 			if err != nil {
 				t.Fatal("timed out waiting for causal measurement")
 			}
@@ -230,7 +229,7 @@ func TestPublishThrottled(t *testing.T) {
 		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 		defer waitCancel()
 
-		if _, err := bus.PollFor(waitCtx, measurements); err != nil {
+		if _, err := measurements.Wait(waitCtx); err != nil {
 			t.Fatal("timed out waiting for first publish")
 		}
 
@@ -240,7 +239,7 @@ func TestPublishThrottled(t *testing.T) {
 			throttleCtx, throttleCancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			defer throttleCancel()
 
-			if value, err := bus.PollFor(throttleCtx, measurements); err == nil {
+			if value, err := measurements.Wait(throttleCtx); err == nil {
 				t.Fatalf("unexpected throttled measurement: %+v", value.Value)
 			}
 		})

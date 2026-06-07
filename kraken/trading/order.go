@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 )
 
 const (
@@ -153,7 +152,7 @@ func NewOrderClient(ctx context.Context, pool *qpool.Q[any]) *OrderClient {
 	}
 
 	for _, channel := range []string{"kraken:private"} {
-		client.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		client.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		client.subscribers[channel] = client.broadcasts[channel].Subscribe(channel, 1024)
 	}
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -131,12 +130,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	errnie.Info("signal/hawkes ready", "signal/hawkes")
 
@@ -148,32 +147,32 @@ func (signal *Signal) Tick() error {
 		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
 		if err != nil {
-			return err
+		return err
 		}
 
 		if message == nil || message.Value == nil {
-			continue
+		continue
 		}
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-			continue
+		continue
 		}
 
 		switch sm.Channel {
-			case public.TradesChannel:
-				trades := signalpool.GetTrades(sm)
+		case public.TradesChannel:
+			trades := signalpool.GetTrades(sm)
 
-				if err := signal.observeTrades(trades); err != nil {
-					errnie.Error(err, "hawkes: observe trades")
-				}
-			case public.TickerChannel:
-				tickers := signalpool.GetTickers(sm)
+			if err := signal.observeTrades(trades); err != nil {
+				errnie.Error(err, "hawkes: observe trades")
+			}
+		case public.TickerChannel:
+			tickers := signalpool.GetTickers(sm)
 
-				if err := signal.observeTickers(tickers); err != nil {
-					errnie.Error(err, "hawkes: observe tickers")
-				}
+			if err := signal.observeTickers(tickers); err != nil {
+				errnie.Error(err, "hawkes: observe tickers")
+			}
 		}
 	}
 }

@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 )
 
 func configurePaperWallet() {
@@ -73,8 +72,10 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a wallet wired to a ui broadcast group", t, func() {
-		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
-		ui := bus.Group(pool, "ui", 10*time.Millisecond)
+		ui, err := qpool.NewBroadcastGroup(context.Background(), "ui", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected ui broadcast group")
+		}
 		sub := ui.Subscribe("test:ui", 16)
 
 		balances := NewBalances(nil, ui, NewIdentifier())
@@ -100,9 +101,14 @@ func TestBalancesSend(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a wallet wired to raw and ui groups", t, func() {
-		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
-		ui := bus.Group(pool, "ui", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
+		ui, err := qpool.NewBroadcastGroup(context.Background(), "ui", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected ui broadcast group")
+		}
 		balances := NewBalances(raw, ui, NewIdentifier())
 		uiSub := ui.Subscribe("test:ui:subscribe", 16)
 		rawSub := raw.Subscribe("test:raw:subscribe", 16)
@@ -174,7 +180,7 @@ func drainWallet(sub *qpool.BroadcastConsumer) map[string]any {
 	defer cancel()
 
 	for {
-		msg, err := bus.PollFor(waitCtx, sub)
+		msg, err := sub.Wait(waitCtx)
 		if err != nil {
 			return nil
 		}
@@ -191,7 +197,7 @@ func drainRawBalances(sub *qpool.BroadcastConsumer) map[string]any {
 	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	msg, err := bus.PollFor(waitCtx, sub)
+	msg, err := sub.Wait(waitCtx)
 	if err != nil {
 		return nil
 	}

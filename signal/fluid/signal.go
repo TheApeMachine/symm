@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/numeric"
@@ -87,18 +86,18 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(
-			pool, channel, viper.GetDuration("system.queue.ttl"),
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(
+			channel, viper.GetDuration("system.queue.ttl"),
 		)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(
 			rawSubscriberID, viper.GetInt("system.queue.buffer"),
 		)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(
-		pool, "measurements", viper.GetDuration("system.queue.ttl"),
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup(
+		"measurements", viper.GetDuration("system.queue.ttl"),
 	)
-	signal.ui = bus.Group(pool, "ui", viper.GetDuration("system.queue.ttl"))
+	signal.ui = pool.CreateBroadcastGroup("ui", viper.GetDuration("system.queue.ttl"))
 
 	errnie.Info("signal/fluid ready", "signal/fluid")
 

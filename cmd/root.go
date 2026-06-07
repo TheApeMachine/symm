@@ -81,16 +81,25 @@ var (
 				"engine",
 			)
 
+			apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
+			apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
+
 			if err := engine.AddSystems(
 				ui.NewHub(systemCtx, pool),
 				public.NewWebSocket(systemCtx, pool, streams),
-				private.NewWebSocketWithQuoteCache(
-					systemCtx,
-					pool,
-					os.Getenv("SYMM_KRAKEN_API_KEY"),
-					os.Getenv("SYMM_KRAKEN_API_SECRET"),
-					quotes,
-				),
+			); err != nil {
+				return err
+			}
+
+			for _, runtime := range private.ExecutionSystems(
+				systemCtx, pool, apiKey, apiSecret, quotes,
+			) {
+				if err := engine.AddSystems(runtime); err != nil {
+					return err
+				}
+			}
+
+			if err := engine.AddSystems(
 				kraken.NewInstrument(systemCtx, pool),
 				causal.NewSignal(systemCtx, pool),
 				correlation.NewSignal(systemCtx, pool),

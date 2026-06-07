@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -95,12 +94,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	errnie.Info("signal/leadlag ready", "signal/leadlag")
 
@@ -112,49 +111,49 @@ func (signal *Signal) Tick() error {
 		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
 		if err != nil {
-			return err
+		return err
 		}
 
 		if message == nil || message.Value == nil {
-			continue
+		continue
 		}
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-			continue
+		continue
 		}
 
 		switch sm.Channel {
-			case public.TickerChannel:
-				tickers := signalpool.GetTickers(sm)
+		case public.TickerChannel:
+			tickers := signalpool.GetTickers(sm)
 
-				ingested := false
+			ingested := false
 
-				for _, ticker := range tickers {
-					if ticker.Last <= 0 {
-						continue
-					}
-
-					at, err := signal.timestamp(ticker)
-
-					if err != nil {
-						errnie.Error(err, "leadlag: timestamp %s", ticker.Symbol)
-						continue
-					}
-
-					stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
-					stored.(*symbolState).observeTicker(ticker.Last, at)
-					ingested = true
-				}
-
-				if !ingested {
+			for _, ticker := range tickers {
+				if ticker.Last <= 0 {
 					continue
 				}
 
-				if err := signal.publish(); err != nil {
-					errnie.Error(err, "leadlag: publish")
+				at, err := signal.timestamp(ticker)
+
+				if err != nil {
+					errnie.Error(err, "leadlag: timestamp %s", ticker.Symbol)
+					continue
 				}
+
+				stored, _ := signal.symbols.LoadOrStore(ticker.Symbol, newSymbolState())
+				stored.(*symbolState).observeTicker(ticker.Last, at)
+				ingested = true
+			}
+
+			if !ingested {
+				continue
+			}
+
+			if err := signal.publish(); err != nil {
+				errnie.Error(err, "leadlag: publish")
+			}
 		}
 	}
 }

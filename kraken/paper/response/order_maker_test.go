@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -87,7 +86,10 @@ func TestPostOnlyMakerRestsUntilTradeDepletesQueue(t *testing.T) {
 			},
 		})
 
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:maker", 32)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -135,7 +137,10 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{Symbol: "BTC/EUR", Bid: 99, Ask: 100, Last: 100})
 
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:reject", 8)
 		ids := NewIdentifier()
 		orders := NewOrdersWithQuoteCache(ctx, pool, NewBalances(raw, nil, ids), ids, cache, nil, ZeroLatency())
@@ -159,7 +164,7 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 200*time.Millisecond)
 			defer waitCancel()
 
-			frame, err := bus.PollFor(waitCtx, sub)
+			frame, err := sub.Wait(waitCtx)
 			if err != nil {
 				So("reject timeout", ShouldBeEmpty)
 			} else {
@@ -192,7 +197,10 @@ func TestTakerFillUsesSlippageFill(t *testing.T) {
 			},
 		})
 
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:taker", 16)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)
@@ -229,7 +237,10 @@ func TestTakerFillDefersUntilLatencyElapses(t *testing.T) {
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 
-		raw := bus.Group(pool, "raw", 10*time.Millisecond)
+		raw, err := qpool.NewBroadcastGroup(context.Background(), "raw", 10*time.Millisecond)
+		if err != nil {
+			t.Fatal("expected raw broadcast group")
+		}
 		sub := raw.Subscribe("test:latency", 8)
 		ids := NewIdentifier()
 		balances := NewBalances(raw, nil, ids)

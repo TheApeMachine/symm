@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -100,7 +99,10 @@ func (cache *StressCache) run(pool *qpool.Q[any]) {
 		return
 	}
 
-	group := bus.Group(pool, "measurements", 0)
+	group, err := qpool.NewBroadcastGroup(cache.ctx, "measurements", 0)
+	if err != nil {
+		return
+	}
 	consumer := group.Subscribe("broker:stress", 4096)
 
 	if consumer == nil {

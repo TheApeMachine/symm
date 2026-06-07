@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -110,8 +109,8 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		quoteVolumeBase:         make(map[string]float64),
 	}
 
-	story.ui = bus.Group(pool, "ui", 10*time.Millisecond)
-	story.raw = bus.Group(pool, "raw", 10*time.Millisecond)
+	story.ui = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+	story.raw = pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 
 	story.predictionCalibrator = numeric.NewSignalCalibrator(
 		predictionDefaultBandEdges,
@@ -146,8 +145,8 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		return nil
 	}
 
-	story.broadcasts["measurements"] = bus.Group(
-		pool, "measurements", viper.GetDuration("system.queue.ttl"),
+	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
+		"measurements", viper.GetDuration("system.queue.ttl"),
 	)
 
 	story.subscribers["measurements"] = story.broadcasts["measurements"].Subscribe(

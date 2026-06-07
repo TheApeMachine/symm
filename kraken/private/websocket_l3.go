@@ -13,13 +13,12 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market/settings"
 )
 
-func newDataOnlyWebSocket(
+func NewLevel3WebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	apiKey string,
@@ -37,7 +36,7 @@ func newDataOnlyWebSocket(
 		return nil, err
 	}
 
-	raw := bus.Group(pool, "raw", 10*time.Millisecond)
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 
 	websocketClient := &WebSocket{
 		ctx:           ctx,
@@ -45,7 +44,7 @@ func newDataOnlyWebSocket(
 		provider:      provider,
 		pool:          pool,
 		raw:           raw,
-		level3:        bus.Group(pool, "level3", 10*time.Millisecond),
+		level3:        pool.CreateBroadcastGroup("level3", 10*time.Millisecond),
 		rawSubscriber: raw.Subscribe("kraken/private:l3-instrument", 1024),
 		dialer:        *websocket.DefaultDialer,
 		dataOnly:      true,
@@ -102,28 +101,6 @@ func (websocketClient *WebSocket) ensureLevel3Symbols(symbols []string) {
 
 func (websocketClient *WebSocket) seedLevel3Symbols() {
 	websocketClient.ensureLevel3Symbols(viper.GetStringSlice("market.default_symbols"))
-}
-
-func (websocketClient *WebSocket) watchInstrumentCatalog() {
-	if websocketClient.rawSubscriber == nil {
-		return
-	}
-
-	go func() {
-		for {
-			message, err := websocketClient.rawSubscriber.Wait(websocketClient.ctx)
-
-			if err != nil {
-				return
-			}
-
-			if message == nil || message.Value == nil {
-				continue
-			}
-
-			websocketClient.ingestInstrumentForL3(message.Value)
-		}
-	}()
 }
 
 func (websocketClient *WebSocket) ingestInstrumentForL3(value any) {

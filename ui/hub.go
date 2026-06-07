@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -83,7 +82,7 @@ func NewHub(
 	}
 
 	for _, channel := range []string{"ui"} {
-		hub.broadcasts[channel] = bus.Group(pool, channel, 500*time.Millisecond)
+		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 500*time.Millisecond)
 		hub.subscribers[channel] = hub.broadcasts[channel].Subscribe(channel, 128)
 	}
 

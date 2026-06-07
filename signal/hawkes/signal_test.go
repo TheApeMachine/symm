@@ -3,7 +3,6 @@ package hawkes
 import (
 	"context"
 
-	"github.com/theapemachine/symm/bus"
 	"testing"
 	"time"
 
@@ -90,7 +89,7 @@ func TestObserveTrades(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
 			defer waitCancel()
 
-			value, err := bus.PollFor(waitCtx, measurements)
+			value, err := measurements.Wait(waitCtx)
 			if err != nil {
 				t.Fatal("timed out waiting for hawkes measurement")
 			}

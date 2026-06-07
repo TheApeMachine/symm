@@ -7,14 +7,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestHandleMethodResponse(t *testing.T) {
 	Convey("Given a tracked outbound add_order", t, func() {
 		pool := qpool.NewQ[any](t.Context(), 1, 4, nil)
-		raw := bus.Group(pool, "raw", 0)
+		raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:method-response", 8)
 
 		websocketClient := &WebSocket{
@@ -29,17 +28,24 @@ func TestHandleMethodResponse(t *testing.T) {
 				`{"method":"add_order","success":false,"error":"Insufficient funds","result":{"cl_ord_id":"s001"}}`,
 			))
 
-			waitCtx, waitCancel := context.WithTimeout(t.Context(), 2*time.Second)
+			waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer waitCancel()
 
-			derived, err := bus.PollFor(waitCtx, sub)
-			if err != nil {
-				t.Fatal("no derived rejection published")
-			}
+			var frame map[string]any
 
-			frame, ok := derived.Value.(map[string]any)
-			if !ok || frame["channel"] != "executions" {
-				t.Fatal("no derived rejection published")
+			for frame == nil {
+				derived, err := sub.Wait(waitCtx)
+				if err != nil {
+					t.Fatal("no derived rejection published")
+				}
+
+				candidate, ok := derived.Value.(map[string]any)
+
+				if !ok || candidate["channel"] != "executions" {
+					continue
+				}
+
+				frame = candidate
 			}
 
 			So(frame["symbol"], ShouldEqual, "BTC/EUR")
@@ -58,7 +64,7 @@ func TestHandleMethodResponse(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 			defer waitCancel()
 
-			if message, err := bus.PollFor(waitCtx, sub); err == nil {
+			if message, err := sub.Wait(waitCtx); err == nil {
 				frame, ok := message.Value.(map[string]any)
 
 				if ok && frame["channel"] == "executions" {

@@ -11,7 +11,6 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -145,7 +144,7 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 			gaugeCtx, gaugeCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer gaugeCancel()
 
-			if frame, err := bus.PollFor(gaugeCtx, subscriber); err != nil {
+			if frame, err := subscriber.Wait(gaugeCtx); err != nil {
 				convey.So("prediction gauge", convey.ShouldBeBlank)
 			} else {
 				payload, ok := frame.Value.(map[string]any)
@@ -160,7 +159,7 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 			chartCtx, chartCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer chartCancel()
 
-			if frame, err := bus.PollFor(chartCtx, subscriber); err != nil {
+			if frame, err := subscriber.Wait(chartCtx); err != nil {
 				convey.So("prediction chart", convey.ShouldBeBlank)
 			} else {
 				payload, ok := frame.Value.(map[string]any)

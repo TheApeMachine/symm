@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -124,12 +123,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	}
 
 	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = bus.Group(pool, channel, 10*time.Millisecond)
+		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
 		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
 	}
 
-	signal.broadcasts["measurements"] = bus.Group(pool, "measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = bus.Group(pool, "ui", 10*time.Millisecond)
+	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 
 	errnie.Info("signal/causal ready", "signal/causal")
 
@@ -156,106 +155,106 @@ func (signal *Signal) Tick() error {
 		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
 		if err != nil {
-			return err
+		return err
 		}
 
 		if message == nil || message.Value == nil {
-			continue
+		continue
 		}
 
 		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
 		if !ok {
-			continue
+		continue
 		}
 
 		switch sm.Channel {
-			case public.TradesChannel:
-				trades := signalpool.GetTrades(sm)
-				publishAt := time.Time{}
+		case public.TradesChannel:
+			trades := signalpool.GetTrades(sm)
+			publishAt := time.Time{}
 
-				for _, trade := range trades {
-					if trade.Timestamp.IsZero() {
-						errnie.Error(
-							fmt.Errorf("causal: trade timestamp is required"),
-							"causal: feed trade %s",
-							trade.Symbol,
-						)
-						continue
-					}
-
-					if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
-						errnie.Error(err, "causal: feed trade %s", trade.Symbol)
-						continue
-					}
-
-					if trade.Timestamp.After(publishAt) {
-						publishAt = trade.Timestamp
-					}
-				}
-
-				if publishAt.IsZero() {
+			for _, trade := range trades {
+				if trade.Timestamp.IsZero() {
+					errnie.Error(
+						fmt.Errorf("causal: trade timestamp is required"),
+						"causal: feed trade %s",
+						trade.Symbol,
+					)
 					continue
 				}
 
-				if err := signal.publishAt(publishAt); err != nil {
-					errnie.Error(err, "causal: publish")
-					continue
-				}
-			case public.TickerChannel:
-				tickers := signalpool.GetTickers(sm)
-				publishAt := time.Time{}
-
-				for _, ticker := range tickers {
-					at, err := causalTickerTime(ticker)
-
-					if err != nil {
-						errnie.Error(err, "causal: feed ticker %s", ticker.Symbol)
-						continue
-					}
-
-					signal.state(ticker.Symbol).FeedTicker(ticker)
-
-					if at.After(publishAt) {
-						publishAt = at
-					}
-				}
-
-				if publishAt.IsZero() {
+				if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
+					errnie.Error(err, "causal: feed trade %s", trade.Symbol)
 					continue
 				}
 
-				if err := signal.publishAt(publishAt); err != nil {
-					errnie.Error(err, "causal: publish")
+				if trade.Timestamp.After(publishAt) {
+					publishAt = trade.Timestamp
+				}
+			}
+
+			if publishAt.IsZero() {
+				continue
+			}
+
+			if err := signal.publishAt(publishAt); err != nil {
+				errnie.Error(err, "causal: publish")
+				continue
+			}
+		case public.TickerChannel:
+			tickers := signalpool.GetTickers(sm)
+			publishAt := time.Time{}
+
+			for _, ticker := range tickers {
+				at, err := causalTickerTime(ticker)
+
+				if err != nil {
+					errnie.Error(err, "causal: feed ticker %s", ticker.Symbol)
 					continue
 				}
-			case public.BookChannel:
-				books := signalpool.GetBooks(sm)
-				publishAt := time.Time{}
 
-				for _, delta := range books {
-					at, err := causalBookTime(delta)
+				signal.state(ticker.Symbol).FeedTicker(ticker)
 
-					if err != nil {
-						errnie.Error(err, "causal: feed book %s", delta.Symbol)
-						continue
-					}
-
-					signal.state(delta.Symbol).FeedBook(delta)
-
-					if at.After(publishAt) {
-						publishAt = at
-					}
+				if at.After(publishAt) {
+					publishAt = at
 				}
+			}
 
-				if publishAt.IsZero() {
+			if publishAt.IsZero() {
+				continue
+			}
+
+			if err := signal.publishAt(publishAt); err != nil {
+				errnie.Error(err, "causal: publish")
+				continue
+			}
+		case public.BookChannel:
+			books := signalpool.GetBooks(sm)
+			publishAt := time.Time{}
+
+			for _, delta := range books {
+				at, err := causalBookTime(delta)
+
+				if err != nil {
+					errnie.Error(err, "causal: feed book %s", delta.Symbol)
 					continue
 				}
 
-				if err := signal.publishAt(publishAt); err != nil {
-					errnie.Error(err, "causal: publish")
-					continue
+				signal.state(delta.Symbol).FeedBook(delta)
+
+				if at.After(publishAt) {
+					publishAt = at
 				}
+			}
+
+			if publishAt.IsZero() {
+				continue
+			}
+
+			if err := signal.publishAt(publishAt); err != nil {
+				errnie.Error(err, "causal: publish")
+				continue
+			}
 		}
 	}
 }

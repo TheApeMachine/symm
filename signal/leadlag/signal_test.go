@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -148,7 +147,7 @@ func TestSendMeasurementSkipsWithoutLast(t *testing.T) {
 			waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			defer waitCancel()
 
-			if _, err := bus.PollFor(waitCtx, measurements); err == nil {
+			if _, err := measurements.Wait(waitCtx); err == nil {
 				t.Fatal("unexpected measurement without last price")
 			}
 		})
