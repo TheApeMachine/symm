@@ -10,7 +10,11 @@ func (state *DepthSymbol) Measure() (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.bookDiverged || !state.bookReady {
+	// bookDiverged no longer forces the trade-pressure fallback: divergence is
+	// flagged telemetry on an observational book, and the fallback can only ever
+	// say dense_neutrality — which is how this signal spent a whole session
+	// pinned to one category.
+	if !state.bookReady {
 		return state.measureTradePressureLocked()
 	}
 

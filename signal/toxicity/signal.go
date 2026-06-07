@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -82,50 +83,51 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
+	// The level3 stream only carries data when authenticated L3 is configured;
+	// without credentials NOTHING ever publishes to it. The previous loop
+	// chained the two Waits serially, so the first nil from raw dropped it into
+	// level3.Wait — a park on a channel with no publisher — and toxicity froze
+	// for the rest of the session (zero rows after 2026-06-06 22:57). Each
+	// subscription gets its own loop.
+	go tox.drainLevel3()
+
 	raw := tox.subscribers["raw"]
-	level3 := tox.subscribers["level3"]
 
 	for {
-		select {
-		case <-tox.ctx.Done():
-			return tox.ctx.Err()
-		default:
-		}
-
 		message, err := raw.Wait(tox.ctx)
 		if err != nil {
 			return err
 		}
 
-		if message != nil {
-			errnie.Debug("toxicity: Tick()", "type", message.Type)
-
-			if err := tox.handleRaw(message); err != nil {
-				errnie.Error(err, "toxicity: handle raw")
-			}
-
+		if message == nil {
 			continue
 		}
 
-		message, err = level3.Wait(tox.ctx)
+		errnie.Debug("toxicity: Tick()", "type", message.Type)
+
+		if err := tox.handleRaw(message); err != nil {
+			errnie.Error(err, "toxicity: handle raw")
+		}
+	}
+}
+
+func (tox *Toxicity) drainLevel3() {
+	level3 := tox.subscribers["level3"]
+
+	for {
+		message, err := level3.Wait(tox.ctx)
 		if err != nil {
-			return err
+			return
 		}
 
-		if message != nil {
-			errnie.Debug("toxicity: Tick()", "type", message.Type)
-
-			if err := tox.handleLevel3(message); err != nil {
-				errnie.Error(err, "toxicity: handle level3")
-			}
-
+		if message == nil {
 			continue
 		}
 
-		select {
-		case <-tox.ctx.Done():
-			return tox.ctx.Err()
-		case <-time.After(2 * time.Millisecond):
+		errnie.Debug("toxicity: Tick()", "type", message.Type)
+
+		if err := tox.handleLevel3(message); err != nil {
+			errnie.Error(err, "toxicity: handle level3")
 		}
 	}
 }
@@ -151,18 +153,21 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 	case public.TickerChannel:
 		tickers := signalpool.GetTickers(frame)
 
+		// Per-frame tolerance: one malformed frame must not starve the rest of
+		// the batch (a returned error here used to abort every remaining symbol).
 		for _, ticker := range tickers {
 			at, err := toxicityTickerTime(ticker)
 
 			if err != nil {
-				return err
+				errnie.Error(err, "toxicity: ticker time")
+				continue
 			}
 
 			tox.tracker.ObserveMid(ticker.Symbol, market.Pair{}, midOf(ticker))
 			tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
 
 			if err := tox.publishMeasurementAt(ticker.Symbol, at); err != nil {
-				return fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err)
+				errnie.Error(fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err))
 			}
 		}
 	case public.BookChannel:
@@ -176,11 +181,12 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 			at, err := tox.observeBook(update)
 
 			if err != nil {
-				return err
+				errnie.Error(err, "toxicity: book")
+				continue
 			}
 
 			if err := tox.publishMeasurementAt(update.Symbol, at); err != nil {
-				return fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err)
+				errnie.Error(fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err))
 			}
 		}
 	}
@@ -290,10 +296,21 @@ func (tox *Toxicity) observeTrade(trade market.TradeUpdate) {
 }
 
 func (tox *Toxicity) observeBook(update market.Book) (time.Time, error) {
-	now, err := time.Parse(time.RFC3339Nano, update.Timestamp)
+	// Kraken v2 book SNAPSHOTS carry no timestamp field (deltas do). Requiring
+	// one rejected every snapshot at the top of the batch; arrival time is the
+	// honest stand-in for a frame that just crossed the wire.
+	now := time.Now()
 
-	if err != nil {
-		return time.Time{}, fmt.Errorf("toxicity: book timestamp %s: %w", update.Symbol, err)
+	if raw := strings.TrimSpace(update.Timestamp); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+
+		if err != nil {
+			return time.Time{}, fmt.Errorf("toxicity: book timestamp %s: %w", update.Symbol, err)
+		}
+
+		now = parsed
+	} else if !update.IsSnapshot() {
+		return time.Time{}, fmt.Errorf("toxicity: book timestamp is required for %s update", update.Symbol)
 	}
 
 	for _, level := range update.Bids {

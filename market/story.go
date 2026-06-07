@@ -79,13 +79,13 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) (*Story, error) {
 	auditWriter, err := auditPool.OpenConfigured()
 
 	if err != nil {
-		return nil, fmt.Errorf("market/story: audit: %w", err)
+		return nil, errnie.Error(fmt.Errorf("market/story: audit: %w", err))
 	}
 
 	story := NewStoryWithAudit(ctx, pool, auditWriter)
 
 	if story == nil {
-		return nil, fmt.Errorf("market/story: construction failed")
+		return nil, errnie.Error(fmt.Errorf("market/story: construction failed"))
 	}
 
 	return story, nil
@@ -201,7 +201,7 @@ func (story *Story) Tick() error {
 		row, err := measurements.Wait(story.ctx)
 
 		if err != nil {
-			return err
+			return errnie.Error(err)
 		}
 
 		if row == nil || row.Value == nil {
@@ -237,7 +237,9 @@ func (story *Story) ingestMeasurement(
 
 	if predicted {
 		prediction = story.stampQuoteNotional(prediction)
-		story.recordMeasurement(story.enrichMeasurementBook(prediction))
+		// Prediction rows never fill orders; enriching them duplicated the parent
+		// row's book byte-for-byte and doubled the capture's resident size.
+		story.recordMeasurement(prediction)
 		story.rememberMeasurement(prediction)
 		story.publishPredictionGauge(prediction, telemetry)
 		story.publishPredictionChart(measurement.Symbol, chartPoints)

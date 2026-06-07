@@ -1,6 +1,8 @@
 package types
 
 import (
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -43,6 +45,18 @@ var sourceNames = map[SourceType]string{
 	SourcePrediction:  "prediction",
 	SourceCVD:         "cvd",
 	SourceToxicity:    "toxicity",
+}
+
+/*
+AllSignalSources lists every real signal source (prediction excluded — it is
+derived in the story, not a signal that can silently die upstream).
+*/
+func AllSignalSources() []SourceType {
+	return []SourceType{
+		SourceFluid, SourceHawkes, SourcePumpDump, SourceDepthFlow,
+		SourceSentiment, SourceCorrelation, SourceCausal, SourceLeadLag,
+		SourceLiquidity, SourceExhaustion, SourceCVD, SourceToxicity,
+	}
 }
 
 /*
@@ -108,6 +122,40 @@ func NewMeasurement(
 	}
 }
 
+// sourceEmissions counts successful publishes per source — the one chokepoint
+// every signal passes through. Five signals died silently over two days (input
+// starvation and warmup-swallowed errors produce no logs by construction); a
+// watchdog reading these counters names a dead signal within minutes instead.
+var sourceEmissions sync.Map
+
+/*
+SourceEmissions reports how many measurements a source has successfully
+published this process.
+*/
+func SourceEmissions(source SourceType) uint64 {
+	value, ok := sourceEmissions.Load(source)
+
+	if !ok {
+		return 0
+	}
+
+	counter, ok := value.(*atomic.Uint64)
+
+	if !ok {
+		return 0
+	}
+
+	return counter.Load()
+}
+
+func countEmission(source SourceType) {
+	value, _ := sourceEmissions.LoadOrStore(source, &atomic.Uint64{})
+
+	if counter, ok := value.(*atomic.Uint64); ok {
+		counter.Add(1)
+	}
+}
+
 func (measurement *Measurement) Send(pool *qpool.Q[any]) error {
 	// strength and snr are intentionally NOT required: a warm-up / neutral reading
 	// legitimately carries strength 0 (no fused signal yet) and snr 0 (no surprise
@@ -133,6 +181,8 @@ func (measurement *Measurement) Send(pool *qpool.Q[any]) error {
 		Type:  "measurement",
 		Value: *measurement,
 	})
+
+	countEmission(measurement.Source)
 
 	return nil
 }

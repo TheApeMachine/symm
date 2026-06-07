@@ -255,6 +255,8 @@ func (reason *WindowReason) Signal(
 	switch unit {
 	case UnitConfidence:
 		return measurement.Confidence, true
+	case UnitStrength:
+		return measurement.Strength, true
 	default:
 		return measurement.SNR, true
 	}

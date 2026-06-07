@@ -23,7 +23,7 @@ TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rou
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune replay dump profile profile-stack profile-report profile-tune strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -102,6 +102,14 @@ run-profile: build
 tune: build
 	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it (Ctrl+C when you have enough), then 'make tune'." && exit 1)
 	./$(SYMM_BIN) tune $(CONFIG_FLAG) $(TUNE_FLAGS)
+
+# Manual workbench: score a hand-written playbook against the capture, per-setup.
+#   make replay                              (live playbook vs default capture)
+#   make replay PLAYBOOK=my-ideas.yaml       (your experiment)
+PLAYBOOK ?=
+replay: build
+	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it first." && exit 1)
+	./$(SYMM_BIN) replay $(CONFIG_FLAG) $(if $(PLAYBOOK),--playbook $(PLAYBOOK),)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

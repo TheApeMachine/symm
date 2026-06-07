@@ -67,7 +67,7 @@ func TestDepthSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 	})
 }
 
-func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
+func TestDepthSymbolMeasureSurvivesDivergedBook(t *testing.T) {
 	Convey("Given a depthflow symbol with a verified book", t, func() {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
@@ -91,11 +91,19 @@ func TestDepthSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta.Checksum = 1
 			state.ApplyBook(badDelta)
 
+			So(state.bookDiverged, ShouldBeTrue)
+
 			measurement, _, err := state.Measure()
 
-			Convey("It should suppress book-derived emission", func() {
+			// Divergence is flagged telemetry, not a kill switch: on a
+			// drop-oldest bus a missed delta makes a checksum mismatch
+			// inevitable, and the old suppression pinned this signal to the
+			// dense_neutrality fallback for an entire session. The field keeps
+			// measuring the approximate book.
+			Convey("It should keep publishing book-derived measurements", func() {
 				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, types.SourceNone)
+				So(measurement.Source, ShouldNotBeEmpty)
+				So(measurement.Source.String(), ShouldEqual, "depthflow")
 			})
 		})
 	})

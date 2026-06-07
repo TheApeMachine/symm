@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,51 +23,63 @@ func TestForwardFeedbackObserve(t *testing.T) {
 
 		base := time.Unix(0, 0).UTC()
 
-		convey.Convey("It should sharpen a source that undercalled realized movement", func() {
+		convey.Convey("It should predict the price, settle signed error, and learn a positive weight from a confirmed up-move", func() {
 			feedback := newForwardFeedback(time.Second, 1)
 
-			points, err := feedback.Observe(types.Measurement{
+			// loaded_imbalance carries +0.5 polarity; confidence 0.5 → feature +0.25.
+			points, forecast, err := feedback.Observe(types.Measurement{
 				At:         base,
 				Symbol:     "BTC/EUR",
 				Source:     types.SourceDepthFlow,
 				Category:   types.CategoryLoadedImbalance,
-				Confidence: 0.25,
+				Confidence: 0.5,
 				Last:       100,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(forecast, convey.ShouldNotBeNil)
 			convey.So(len(points), convey.ShouldEqual, 1)
 			convey.So(points[0].kind, convey.ShouldEqual, predictionChartForecast)
 			convey.So(points[0].at, convey.ShouldResemble, base.Add(time.Second))
-			convey.So(points[0].value, convey.ShouldEqual, 0.25)
+			// Cold weights: the first forecast is "price stays where it is".
+			convey.So(points[0].value, convey.ShouldAlmostEqual, 100, 1e-9)
 
-			points, err = feedback.Observe(types.Measurement{
+			points, forecast, err = feedback.Observe(types.Measurement{
 				At:         base.Add(2 * time.Second),
 				Symbol:     "BTC/EUR",
 				Source:     types.SourceDepthFlow,
 				Category:   types.CategoryLoadedImbalance,
-				Confidence: 0.25,
+				Confidence: 0.5,
 				Last:       200,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(forecast, convey.ShouldNotBeNil)
 			convey.So(len(points), convey.ShouldEqual, 3)
+
+			// Ground truth caught up: realized price and SIGNED percent error.
 			convey.So(points[0].kind, convey.ShouldEqual, predictionChartActual)
 			convey.So(points[0].at, convey.ShouldResemble, base.Add(time.Second))
-			convey.So(points[0].value, convey.ShouldAlmostEqual, 0.5, 1e-9)
+			convey.So(points[0].value, convey.ShouldAlmostEqual, 200, 1e-9)
 			convey.So(points[1].kind, convey.ShouldEqual, predictionChartError)
-			convey.So(points[1].at, convey.ShouldResemble, base.Add(time.Second))
-			convey.So(points[1].value, convey.ShouldAlmostEqual, 0.25, 1e-9)
+			convey.So(points[1].value, convey.ShouldAlmostEqual, 100*math.Log(2), 1e-9)
 			convey.So(points[2].kind, convey.ShouldEqual, predictionChartForecast)
 			convey.So(points[2].at, convey.ShouldResemble, base.Add(3*time.Second))
 
+			// The error flowed back through the receipt: the contributing source
+			// earned a positive fusion weight, so the next forecast points up.
+			convey.So(feedback.weights[types.SourceDepthFlow], convey.ShouldBeGreaterThan, 0)
+			convey.So(forecast.predictedReturn, convey.ShouldBeGreaterThan, 0)
+			convey.So(points[2].value, convey.ShouldBeGreaterThan, 200)
+
 			sourceFeedback := types.CurrentSourceFeedback(types.SourceDepthFlow)
 			convey.So(sourceFeedback.Samples, convey.ShouldEqual, 1)
-			convey.So(sourceFeedback.Scale, convey.ShouldAlmostEqual, 2, 1e-9)
+			convey.So(sourceFeedback.Bias, convey.ShouldBeGreaterThan, 0)
+			convey.So(sourceFeedback.Scale, convey.ShouldBeGreaterThan, 0)
 		})
 
-		convey.Convey("It should soften a source that overcalled a flat horizon", func() {
+		convey.Convey("It should settle a flat horizon with zero error and form no duplicate forecast at an unchanged price", func() {
 			feedback := newForwardFeedback(time.Second, 1)
 
-			_, err := feedback.Observe(types.Measurement{
+			_, forecast, err := feedback.Observe(types.Measurement{
 				At:         base,
 				Symbol:     "ETH/EUR",
 				Source:     types.SourceExhaustion,
@@ -75,8 +88,9 @@ func TestForwardFeedbackObserve(t *testing.T) {
 				Last:       100,
 			})
 			convey.So(err, convey.ShouldBeNil)
+			convey.So(forecast, convey.ShouldNotBeNil)
 
-			points, err := feedback.Observe(types.Measurement{
+			points, forecast, err := feedback.Observe(types.Measurement{
 				At:         base.Add(2 * time.Second),
 				Symbol:     "ETH/EUR",
 				Source:     types.SourceExhaustion,
@@ -85,15 +99,16 @@ func TestForwardFeedbackObserve(t *testing.T) {
 				Last:       100,
 			})
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(len(points), convey.ShouldEqual, 3)
+			// Price unchanged: settle happens, no new forecast is formed.
+			convey.So(forecast, convey.ShouldBeNil)
+			convey.So(len(points), convey.ShouldEqual, 2)
 			convey.So(points[0].kind, convey.ShouldEqual, predictionChartActual)
-			convey.So(points[0].value, convey.ShouldEqual, 0)
+			convey.So(points[0].value, convey.ShouldAlmostEqual, 100, 1e-9)
 			convey.So(points[1].kind, convey.ShouldEqual, predictionChartError)
-			convey.So(points[1].value, convey.ShouldEqual, 0.8)
+			convey.So(points[1].value, convey.ShouldAlmostEqual, 0, 1e-9)
 
 			sourceFeedback := types.CurrentSourceFeedback(types.SourceExhaustion)
 			convey.So(sourceFeedback.Samples, convey.ShouldEqual, 1)
-			convey.So(sourceFeedback.Scale, convey.ShouldEqual, 0)
 		})
 	})
 }
@@ -171,7 +186,8 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 				convey.So(payload["symbol"], convey.ShouldEqual, "BTC/EUR")
 				convey.So(payload["kind"], convey.ShouldEqual, string(predictionChartForecast))
 				convey.So(payload["x"], convey.ShouldBeGreaterThan, float64(now.Unix()))
-				convey.So(payload["value"], convey.ShouldEqual, 0.5)
+				// Cold weights: the forecast is the current price.
+				convey.So(payload["value"], convey.ShouldAlmostEqual, 100, 1e-9)
 				chartSeen = true
 			}
 
@@ -199,7 +215,7 @@ func BenchmarkForwardFeedbackObserve(b *testing.B) {
 		index++
 		price := 100 + float64(index%1000)*0.001
 
-		_, _ = feedback.Observe(types.Measurement{
+		_, _, _ = feedback.Observe(types.Measurement{
 			At:         at,
 			Symbol:     "BTC/EUR",
 			Source:     types.SourceDepthFlow,

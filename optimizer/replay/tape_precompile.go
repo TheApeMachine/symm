@@ -19,12 +19,91 @@ type precompileChunk struct {
 	lastPrices    map[string]float64
 }
 
+// sharedBooks aliases a row's book slices to the symbol's previous tick when
+// byte-identical. Half of every capture is prediction rows carrying exact
+// copies of their parent row's book; sharing halves resident book memory.
+type sharedBooks struct {
+	bids []types.BookLevel
+	asks []types.BookLevel
+}
+
+func shareRowBooks(row *types.Measurement, previous map[string]sharedBooks) {
+	if row.Symbol == "" {
+		return
+	}
+
+	prior, ok := previous[row.Symbol]
+
+	if ok {
+		if bookLevelsEqual(row.BookBids, prior.bids) {
+			row.BookBids = prior.bids
+		}
+
+		if bookLevelsEqual(row.BookAsks, prior.asks) {
+			row.BookAsks = prior.asks
+		}
+	}
+
+	previous[row.Symbol] = sharedBooks{bids: row.BookBids, asks: row.BookAsks}
+}
+
+func bookLevelsEqual(left, right []types.BookLevel) bool {
+	if len(left) != len(right) || len(left) == 0 {
+		return false
+	}
+
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+
+	return true
+}
+
 func precompileWorkerCount(workers int) int {
 	if workers > 0 {
 		return workers
 	}
 
 	return runtime.NumCPU()
+}
+
+/*
+backfillSymbolQuotes gives every row its symbol's last-known book and top-of-book,
+aliased (never copied). This is the replay twin of the live quote cache: the desk
+quotes an order from the cache's CURRENT book, not from whatever book happened to
+ride on the firing measurement — so rows recorded without books (prediction rows,
+cache-gap rows) must still present the book a live desk would have used, or
+replay refuses entries live would take. Aliasing keeps resident memory at one
+book per change instead of one per row.
+*/
+func backfillSymbolQuotes(rows []types.Measurement) {
+	lastBooks := make(map[string]sharedBooks)
+	type topOfBook struct{ bid, ask float64 }
+	lastTops := make(map[string]topOfBook)
+
+	for index := range rows {
+		symbol := rows[index].Symbol
+
+		if symbol == "" {
+			continue
+		}
+
+		if rows[index].HasBookDepth() {
+			lastBooks[symbol] = sharedBooks{bids: rows[index].BookBids, asks: rows[index].BookAsks}
+		} else if prior, ok := lastBooks[symbol]; ok {
+			rows[index].BookBids = prior.bids
+			rows[index].BookAsks = prior.asks
+		}
+
+		if rows[index].Bid > 0 || rows[index].Ask > 0 {
+			lastTops[symbol] = topOfBook{bid: rows[index].Bid, ask: rows[index].Ask}
+		} else if prior, ok := lastTops[symbol]; ok {
+			rows[index].Bid = prior.bid
+			rows[index].Ask = prior.ask
+		}
+	}
 }
 
 /*
@@ -37,6 +116,8 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) (ReplayTape, e
 	if rowCount == 0 {
 		return ReplayTape{}, nil
 	}
+
+	backfillSymbolQuotes(rows)
 
 	workers = precompileWorkerCount(workers)
 
@@ -77,9 +158,10 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) (ReplayTape, e
 
 	passOne.Wait()
 
-	symbolIndices, globalIndices, categories, lastPrices := mergePrecompileChunks(chunks)
+	symbolIndices, _, categories, lastPrices := mergePrecompileChunks(chunks)
+	buffer, err := assignSymbolOrdinals(ticks, symbolIndices)
 
-	if err := precompileSnapshotIndices(ticks, symbolIndices, globalIndices, workers); err != nil {
+	if err != nil {
 		return ReplayTape{}, err
 	}
 
@@ -91,9 +173,11 @@ func PrecompileTapeWorkers(rows []types.Measurement, workers int) (ReplayTape, e
 
 	return ReplayTape{
 		Ticks:               ticks,
+		SymbolIndices:       symbolIndices,
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(rowCount, categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
+		measurementBuffer:   buffer,
 	}, nil
 }
 
@@ -104,8 +188,12 @@ func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 	symbolIndices := make(map[string][]int)
 	globalIndices := make([]int, 0)
 
+	previousBooks := make(map[string]sharedBooks)
+
 	for index, row := range rows {
-		ticks[index] = PrecompiledTick{Row: QuotedMeasurement(row)}
+		quoted := QuotedMeasurement(row)
+		shareRowBooks(&quoted, previousBooks)
+		ticks[index] = PrecompiledTick{Row: quoted}
 
 		if row.Category != types.CategoryTypeNone {
 			categories[row.Category] = struct{}{}
@@ -124,7 +212,11 @@ func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 		symbolIndices[row.Symbol] = append(symbolIndices[row.Symbol], index)
 	}
 
-	if err := precompileSnapshotIndices(ticks, symbolIndices, globalIndices, 1); err != nil {
+	_ = globalIndices // symbol-less rows never enter a live story window
+
+	buffer, err := assignSymbolOrdinals(ticks, symbolIndices)
+
+	if err != nil {
 		return ReplayTape{}, err
 	}
 
@@ -136,9 +228,11 @@ func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 
 	return ReplayTape{
 		Ticks:               ticks,
+		SymbolIndices:       symbolIndices,
 		LastPrices:          lastPrices,
 		ReentryTickCooldown: deriveReentryTickCooldown(len(rows), categoryCount),
 		MedianInterval:      medianMeasurementInterval(rows),
+		measurementBuffer:   buffer,
 	}, nil
 }
 
@@ -154,8 +248,11 @@ func buildPrecompileChunk(
 		lastPrices:    make(map[string]float64),
 	}
 
+	previousBooks := make(map[string]sharedBooks)
+
 	for index := startIndex; index < endIndex; index++ {
 		row := QuotedMeasurement(rows[index])
+		shareRowBooks(&row, previousBooks)
 		ticks[index] = PrecompiledTick{Row: row}
 
 		if row.Category != types.CategoryTypeNone {
@@ -214,80 +311,26 @@ func mergePrecompileChunks(chunks []precompileChunk) (
 	return symbolIndices, globalIndices, categories, lastPrices
 }
 
-func precompileSnapshotIndices(
+/*
+assignSymbolOrdinals stamps each tick with its position in its symbol's
+occurrence list and returns the configured story ring size. The decision window
+is derived from the ordinal at read time — nothing per-tick is materialized.
+*/
+func assignSymbolOrdinals(
 	ticks []PrecompiledTick,
 	symbolIndices map[string][]int,
-	globalIndices []int,
-	workers int,
-) error {
-	measurementBuffer, err := market.MeasurementBuffer()
+) (int, error) {
+	buffer, err := market.MeasurementBuffer()
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	workers = precompileWorkerCount(workers)
-	rowCount := len(ticks)
-
-	if rowCount < parallelPrecompileRowThreshold || workers <= 1 {
-		for index := range ticks {
-			if ticks[index].Row.Symbol == "" {
-				continue
-			}
-
-			ticks[index].SnapshotIndices = mergeSnapshotIndices(
-				ticks,
-				symbolIndices,
-				globalIndices,
-				index,
-				measurementBuffer,
-			)
+	for _, indices := range symbolIndices {
+		for ordinal, tickIndex := range indices {
+			ticks[tickIndex].SymbolOrdinal = ordinal
 		}
-
-		return nil
 	}
 
-	if workers > rowCount {
-		workers = rowCount
-	}
-
-	var passTwo sync.WaitGroup
-	chunkSize := (rowCount + workers - 1) / workers
-
-	for workerIndex := range workers {
-		startIndex := workerIndex * chunkSize
-		endIndex := startIndex + chunkSize
-
-		if startIndex >= rowCount {
-			break
-		}
-
-		if endIndex > rowCount {
-			endIndex = rowCount
-		}
-
-		passTwo.Add(1)
-
-		go func(startIndex, endIndex int) {
-			defer passTwo.Done()
-
-			for index := startIndex; index < endIndex; index++ {
-				if ticks[index].Row.Symbol == "" {
-					continue
-				}
-
-				ticks[index].SnapshotIndices = mergeSnapshotIndices(
-					ticks,
-					symbolIndices,
-					globalIndices,
-					index,
-					measurementBuffer,
-				)
-			}
-		}(startIndex, endIndex)
-	}
-
-	passTwo.Wait()
-
-	return nil
+	return buffer, nil
 }

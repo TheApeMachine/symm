@@ -213,6 +213,9 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
 	fused := activity * conviction * (1 + drift)
 
+	// Top-down prediction feedback retunes the fused observation before
+	// banding — the market.Signal loop: inputs tuned, outputs never limited.
+	fused = types.AdjustSourceValue(types.SourceCVD, fused)
 	code, err := state.pipe.Push(fused)
 
 	if err != nil {

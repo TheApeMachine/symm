@@ -77,6 +77,8 @@ func TestMarshalThoughtsRoundTrips(t *testing.T) {
 			reparsed, err := ParseThoughts(encoded)
 			So(err, ShouldBeNil)
 
+			// ParseThoughts stamps setup names; stamp the original to match.
+			StampStrategies(original)
 			So(reparsed, ShouldResemble, original)
 		})
 	})

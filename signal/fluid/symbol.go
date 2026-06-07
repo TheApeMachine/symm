@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -30,9 +31,10 @@ the size of whatever slice the feed happened to send.
 type FluidSymbol struct {
 	mu           sync.RWMutex
 	symbol       string
-	book         krakenmarket.Book
-	bookReady    bool
-	bookDiverged bool
+	book           krakenmarket.Book
+	bookReady      bool
+	bookDiverged   bool
+	divergedLogged bool
 	bookDepth    int
 	buyPressure  float64
 	changePct    float64
@@ -171,8 +173,24 @@ func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
 		return
 	}
 
-	if state.book.ComputedChecksum() != expected {
-		state.bookDiverged = true
+	if state.book.ComputedChecksum() == expected {
+		state.bookDiverged = false
+
+		return
+	}
+
+	state.bookDiverged = true
+
+	// Divergence is telemetry, not a death sentence. On a drop-oldest bus a
+	// missed delta makes a checksum mismatch inevitable within minutes, and
+	// Kraken only resends a snapshot on resubscribe — which nothing requests —
+	// so the old hard latch silently killed every symbol's field one by one
+	// ("evolving surface, then flat forever"). The field keeps measuring off
+	// the approximate book, flagged; a per-symbol book resubscribe on
+	// persistent divergence is the proper follow-up.
+	if !state.divergedLogged {
+		state.divergedLogged = true
+		errnie.Warn("fluid: book checksum diverged for " + state.symbol + " — field degraded, continuing")
 	}
 }
 
@@ -251,10 +269,6 @@ func (state *FluidSymbol) Row() map[string]any {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	if state.bookDiverged {
-		return nil
-	}
-
 	return state.wireRowLocked()
 }
 
@@ -263,10 +277,6 @@ func (state *FluidSymbol) Measure(
 ) (types.Measurement, float64, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-
-	if state.bookDiverged {
-		return types.Measurement{}, 0, nil
-	}
 
 	row := state.wireRowLocked()
 
@@ -280,6 +290,7 @@ func (state *FluidSymbol) Measure(
 		return types.Measurement{}, 0, nil
 	}
 
+	re = types.AdjustSourceValue(types.SourceFluid, re) // top-down prediction feedback
 	code, err := state.pipe.Push(re)
 
 	if err != nil {
@@ -350,6 +361,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 
 	return WireRow(map[string]any{
 		"symbol":     state.symbol,
+		"diverged":   state.bookDiverged,
 		"change_pct": state.changePct,
 		"vol":        state.volume,
 		"div":        imbalance,

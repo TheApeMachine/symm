@@ -222,5 +222,5 @@ func (ledger *replayLedger) closeAtTrigger(
 		feePct = ledger.costs.TakerFeePct
 	}
 
-	ledger.settle(symbol, exitFill, feePct)
+	ledger.settle(symbol, exitFill, feePct, row.At)
 }

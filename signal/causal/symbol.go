@@ -157,6 +157,7 @@ func (state *CausalSymbol) Measure(
 		outcome := state.evaluate(currentSample, contagion)
 
 		if outcome.raw > 0 {
+			outcome.raw = types.AdjustSourceValue(types.SourceCausal, outcome.raw) // top-down prediction feedback
 			category := causalCategory(outcome.reason)
 			// confidence is how decisively the Pearl-ladder read lands in its
 			// structural category (the intervention/inversion margin); standout is the

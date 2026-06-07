@@ -150,6 +150,8 @@ func TuneMeasurements(
 		})
 	}
 
+	logPerSetup(ctx, best.Forest, rows, costs, options.Workers)
+
 	verdict := evaluateHoldout(
 		ctx,
 		best.Forest,

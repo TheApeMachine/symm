@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -17,6 +18,7 @@ type pendingMakerEntry struct {
 	at         types.Measurement
 	queue      broker.MakerQueueState
 	tickSize   float64
+	strategy   string
 }
 
 func (ledger *replayLedger) queueMakerEntry(
@@ -25,28 +27,27 @@ func (ledger *replayLedger) queueMakerEntry(
 	limitPrice, quantity, feePct float64,
 	fraction float64,
 	measurement types.Measurement,
+	strategy string,
 ) {
 	if !ledger.canReserveEntry(fraction, 0, quoteCurrency(symbol)) {
 		ledger.fundBlocked++
-
 		return
 	}
 
 	if !measurement.HasBookDepth() {
 		ledger.preflightBlocked++
-
 		return
 	}
 
 	if ledger.instrumentRules == nil {
 		ledger.preflightBlocked++
-
 		return
 	}
 
 	tickSize, err := ledger.instrumentRules.PriceTickSize(symbol)
 
 	if err != nil {
+		errnie.Error(err)
 		ledger.preflightBlocked++
 
 		return
@@ -62,6 +63,7 @@ func (ledger *replayLedger) queueMakerEntry(
 		quantity:   quantity,
 		feePct:     feePct,
 		at:         measurement,
+		strategy:   strategy,
 		queue: broker.NewMakerQueueState(
 			quote,
 			side,
@@ -139,7 +141,7 @@ func (ledger *replayLedger) advanceMakerQueues(row types.Measurement) {
 		ledger.openEntryReserved(
 			pending.symbol,
 			pending.side,
-			reasoning.Act{Type: reasoning.ActionLimit, Side: pending.side},
+			reasoning.Act{Type: reasoning.ActionLimit, Side: pending.side, Strategy: pending.strategy},
 			fillRow,
 			nil,
 			pending.feePct,

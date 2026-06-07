@@ -13,7 +13,20 @@ func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) err
 		return signal.publishWarmup(trade)
 	}
 
-	category := signal.categories[signal.classifier.Label(reading.code)]
+	// Top-down feedback from settled price predictions retunes the OBSERVATION
+	// the category, confidence and surprise all derive from — the loop the
+	// market.Signal contract always specified. Inputs are tuned; outputs are
+	// never limited.
+	observation := types.AdjustSourceValue(types.SourcePumpDump, reading.observation)
+	code, codeErr := signal.classifier.Code(observation)
+
+	if codeErr != nil {
+		observation = reading.observation
+		code = reading.code
+	}
+
+	confidence := signal.classifier.Confidence(observation)
+	category := signal.categories[signal.classifier.Label(code)]
 
 	measurement := types.Measurement{
 		At:         trade.Timestamp,
@@ -21,8 +34,8 @@ func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) err
 		Source:     types.SourcePumpDump,
 		Category:   category,
 		Last:       trade.Price,
-		Strength:   reading.observation,
-		Confidence: reading.confidence,
+		Strength:   observation,
+		Confidence: confidence,
 	}
 
 	if err := types.AssignCategorySurpriseSNR(
@@ -31,10 +44,11 @@ func (signal *Signal) publish(trade market.TradeUpdate, reading pumpReading) err
 		return errnie.Error(err, "pumpdump: snr %s", trade.Symbol)
 	}
 
-	signal.calibrator.Observe(reading.observation, signal.classifier)
+	signal.rememberMeasurement(measurement)
+	signal.calibrator.Observe(observation, signal.classifier)
 
 	telemetry := signal.calibrator.Snapshot(signal.classifier)
-	telemetry.Observation = reading.observation
+	telemetry.Observation = observation
 
 	if err := measurement.Send(signal.pool); err != nil {
 		return errnie.Error(err, "pumpdump: send %s", trade.Symbol)

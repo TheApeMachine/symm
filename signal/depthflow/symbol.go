@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
 	symmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -26,6 +27,7 @@ type DepthSymbol struct {
 	book                   market.Book
 	bookReady              bool
 	bookDiverged           bool
+	divergedLogged         bool
 	bookDepth              int
 	spoofWeightedThreshold float64
 	spoofLevel1Reject      float64
@@ -94,8 +96,25 @@ func (state *DepthSymbol) verifyBookChecksumLocked(expected int64) {
 		return
 	}
 
-	if state.book.ComputedChecksum() != expected {
-		state.bookDiverged = true
+	if state.book.ComputedChecksum() == expected {
+		state.bookDiverged = false
+
+		return
+	}
+
+	state.bookDiverged = true
+
+	// Telemetry, not a death sentence — the same latch that froze fluid: on a
+	// drop-oldest bus a missed delta makes divergence inevitable within
+	// minutes, and only a fresh snapshot (which is never re-requested) cleared
+	// it. While latched, Measure() fell back to trade pressure, whose only
+	// possible category is dense_neutrality — hence 76k rows of one constant
+	// category on the diagnostics page. Keep measuring the approximate book;
+	// a per-symbol resubscribe on persistent divergence is the protocol-correct
+	// follow-up.
+	if !state.divergedLogged {
+		state.divergedLogged = true
+		errnie.Warn("depthflow: book checksum diverged for " + state.symbol + " — field degraded, continuing")
 	}
 }
 

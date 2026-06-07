@@ -34,6 +34,7 @@ func TestWriteThoughts(t *testing.T) {
 			reparsed, parseErr := reasoning.ParseThoughts(raw)
 
 			convey.So(parseErr, convey.ShouldBeNil)
+			reasoning.StampStrategies(thoughts) // parse stamps setup names; the round-trip must too
 			convey.So(reparsed, convey.ShouldResemble, thoughts)
 		})
 	})

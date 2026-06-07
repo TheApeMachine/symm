@@ -59,6 +59,7 @@ func TestAdvanceMakerQueuesUsesBookDepletion(t *testing.T) {
 			0,
 			1,
 			first,
+			"test_setup",
 		)
 		ledger.observePrice(first)
 		ledger.advanceMakerQueues(second)
@@ -94,6 +95,7 @@ func TestQueueMakerEntryRequiresBook(t *testing.T) {
 			0,
 			1,
 			types.Measurement{Symbol: "BTC/EUR", Last: 100},
+			"test_setup",
 		)
 
 		Convey("It should refuse to queue the order", func() {

@@ -244,25 +244,25 @@ func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
 }
 
 func (signal *Signal) publishTouches(touches []tradeTouch) error {
-	tasks := make([]*qpool.ResultWait[any], 0, len(touches))
-
-	for _, touch := range touches {
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "hawkes", &tasks), func(ctx context.Context) (any, error) {
-			now := touchLastTime(touch.state)
-			return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
-		}))
-	}
-
 	var err error
 
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
-		if getErr != nil {
-			err = errors.Join(err, getErr)
-			continue
+	for _, touch := range touches {
+		// Inline, not pooled: the previous fan-out scheduled every item under
+		// ONE shared job id (%p of the same local), so results overwrote each
+		// other and Get parked this signal's goroutine forever — the silent
+		// signal deaths of 2026-06-07.
+		runItem := func(ctx context.Context) (any, error) {
+		now := touchLastTime(touch.state)
+		return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
 		}
-		err = errors.Join(err, value.Error)
+
+		if _, runErr := runItem(signal.ctx); runErr != nil {
+			err = errors.Join(err, runErr)
+		}
+
 	}
+
+	
 
 	return err
 }

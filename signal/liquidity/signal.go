@@ -153,77 +153,77 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 	}
 
 	volumes := signal.volumeSnapshot()
-	tasks := make([]*qpool.ResultWait[any], 0, len(rows))
-
-	for _, row := range rows {
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "liquidity", &tasks), func(ctx context.Context) (any, error) {
-			measurement, standout, err := signal.measureFromVolumes(row, volumes)
-
-			if err != nil {
-				return nil, err
-			}
-
-			if measurement.Symbol == "" {
-				return nil, nil
-			}
-
-			telemetry, _ := numeric.ObserveGaugeTelemetry(
-				signal.calibrator,
-				signal.classifier,
-				measurement.Strength,
-				standout,
-			)
-
-			if err := types.AssignCategorySurpriseSNR(
-				&measurement, signal.surpriseField, measurement.Category,
-			); err != nil {
-				return nil, err
-			}
-
-			if err := signal.rawDump.Write(rawRecord{
-				TimestampUnixNano: time.Now().UTC().UnixNano(),
-				Symbol:            measurement.Symbol,
-				Category:          measurement.Category,
-				Strength:          measurement.Strength,
-				Confidence:        measurement.Confidence,
-				SNR:               measurement.SNR,
-				Standout:          standout,
-				Last:              measurement.Last,
-				SpreadBPS:         measurement.SpreadBPS,
-			}); err != nil {
-				return nil, err
-			}
-
-			if err := measurement.Send(signal.pool); err != nil {
-				return nil, err
-			}
-
-			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{
-					Value: numeric.GaugePayload(
-						measurement.Source.String(),
-						measurement.Symbol,
-						measurement.Category,
-						measurement,
-						telemetry,
-					),
-				})
-			}
-
-			return nil, nil
-		}))
-	}
-
 	var err error
 
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
-		if getErr != nil {
-			err = errors.Join(err, getErr)
-			continue
+	for _, row := range rows {
+		// Inline, not pooled: the previous fan-out scheduled every item under
+		// ONE shared job id (%p of the same local), so results overwrote each
+		// other and Get parked this signal's goroutine forever — the silent
+		// signal deaths of 2026-06-07.
+		runItem := func(ctx context.Context) (any, error) {
+		measurement, standout, err := signal.measureFromVolumes(row, volumes)
+
+		if err != nil {
+			return nil, err
 		}
-		err = errors.Join(err, value.Error)
+
+		if measurement.Symbol == "" {
+			return nil, nil
+		}
+
+		telemetry, _ := numeric.ObserveGaugeTelemetry(
+			signal.calibrator,
+			signal.classifier,
+			measurement.Strength,
+			standout,
+		)
+
+		if err := types.AssignCategorySurpriseSNR(
+			&measurement, signal.surpriseField, measurement.Category,
+		); err != nil {
+			return nil, err
+		}
+
+		if err := signal.rawDump.Write(rawRecord{
+			TimestampUnixNano: time.Now().UTC().UnixNano(),
+			Symbol:            measurement.Symbol,
+			Category:          measurement.Category,
+			Strength:          measurement.Strength,
+			Confidence:        measurement.Confidence,
+			SNR:               measurement.SNR,
+			Standout:          standout,
+			Last:              measurement.Last,
+			SpreadBPS:         measurement.SpreadBPS,
+		}); err != nil {
+			return nil, err
+		}
+
+		if err := measurement.Send(signal.pool); err != nil {
+			return nil, err
+		}
+
+		if ui := signal.broadcasts["ui"]; ui != nil {
+			ui.Send(&qpool.QValue[any]{
+				Value: numeric.GaugePayload(
+					measurement.Source.String(),
+					measurement.Symbol,
+					measurement.Category,
+					measurement,
+					telemetry,
+				),
+			})
+		}
+
+		return nil, nil
+		}
+
+		if _, runErr := runItem(signal.ctx); runErr != nil {
+			err = errors.Join(err, runErr)
+		}
+
 	}
+
+	
 
 	return err
 }
@@ -267,6 +267,7 @@ func (signal *Signal) measureFromVolumes(
 
 	ratio := quoteVol / median
 	raw := signal.strength(ratio)
+	quoteVol = types.AdjustSourceValue(types.SourceLiquidity, quoteVol) // top-down prediction feedback
 	category, confidence, standout, err := liquidityReading(quoteVol, peers)
 
 	if err != nil {

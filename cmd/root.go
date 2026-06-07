@@ -22,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/runstats"
 	"github.com/theapemachine/symm/runtime"
 	"github.com/theapemachine/symm/signal/causal"
@@ -163,6 +164,24 @@ var (
 
 				return true, ""
 			})
+
+			// One expectation per signal: a source that publishes nothing for
+			// five minutes while raw frames flow is dead, whatever killed it —
+			// input starvation, a swallowed warmup error, a parked goroutine.
+			// Five signals died silently over two days before this existed.
+			for _, source := range types.AllSignalSources() {
+				source := source
+
+				watchdog.Expect(
+					"signal-"+source.String(),
+					5*time.Minute,
+					false,
+					runstats.RateExpectation(
+						func() uint64 { return types.SourceEmissions(source) },
+						public.RawFramesPublished,
+					),
+				)
+			}
 
 			apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
 			apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")

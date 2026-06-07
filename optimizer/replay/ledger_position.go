@@ -99,7 +99,6 @@ func (ledger *replayLedger) openEntryReserved(
 	if err != nil {
 		errnie.Error(err, "replay: entry deploy fraction")
 		ledger.fundBlocked++
-
 		return
 	}
 
@@ -125,7 +124,6 @@ func (ledger *replayLedger) openEntryReserved(
 
 	if slot <= 0 {
 		ledger.fundBlocked++
-
 		return
 	}
 
@@ -149,8 +147,8 @@ func (ledger *replayLedger) openEntryReserved(
 		OrderType:  trading.Market,
 		ActionType: act.Type,
 	}, at); err != nil {
+		errnie.Error(err)
 		ledger.preflightBlocked++
-
 		return
 	}
 
@@ -177,8 +175,8 @@ func (ledger *replayLedger) openEntryReserved(
 		)
 
 		if prepErr != nil {
+			errnie.Error(prepErr)
 			ledger.preflightBlocked++
-
 			return
 		}
 
@@ -189,7 +187,6 @@ func (ledger *replayLedger) openEntryReserved(
 
 		if slot > ledger.walletCash(quoteCurrencyName)+1e-9 {
 			ledger.fundBlocked++
-
 			return
 		}
 	}
@@ -202,7 +199,6 @@ func (ledger *replayLedger) openEntryReserved(
 
 	if !ledger.debitWallet(quoteCurrencyName, slot) {
 		ledger.fundBlocked++
-
 		return
 	}
 
@@ -213,6 +209,7 @@ func (ledger *replayLedger) openEntryReserved(
 		cost:        slot,
 		entryAt:     at,
 		triggerType: reasoning.ActionNone,
+		strategy:    act.Strategy,
 	}
 
 	if side == trading.Sell {
@@ -251,6 +248,7 @@ func (ledger *replayLedger) resolveEntryFill(
 	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
 	if err != nil || fill.depthCoverage < 1 {
+		errnie.Error(err)
 		return executionFill{}, 0, false
 	}
 
@@ -262,11 +260,7 @@ func (ledger *replayLedger) canReserveEntry(
 	reservationCredit int,
 	quoteCurrencyName string,
 ) bool {
-	reserved := ledger.reservedEntryCount() - reservationCredit
-
-	if reserved < 0 {
-		reserved = 0
-	}
+	reserved := max(ledger.reservedEntryCount() - reservationCredit, 0)
 
 	capital := ledger.costs.WalletBalance(quoteCurrencyName)
 	feePct := ledger.costs.TakerFeePct
@@ -306,9 +300,10 @@ func (ledger *replayLedger) fundableSymbol(symbol string) bool {
 }
 
 /*
-settle closes a position back to cash and books realized P&L in the quote currency.
+settle closes a position back to cash, books realized P&L in the quote currency,
+and attributes the round trip to the setup that entered it.
 */
-func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64) {
+func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64, at time.Time) {
 	position, open := ledger.positions[symbol]
 
 	if !open {
@@ -316,22 +311,73 @@ func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64) {
 	}
 
 	quote := quoteCurrency(symbol)
+	tradeRealized := 0.0
 
 	if position.side == trading.Sell {
 		exitCost := position.quantity * exitFill * (1 + feePct)
 		entryProceeds := position.quantity * position.entryPrice * (1 - feePct)
-		ledger.realized += entryProceeds - exitCost
+		tradeRealized = entryProceeds - exitCost
+		ledger.realized += tradeRealized
 		ledger.creditWallet(quote, position.cost+entryProceeds-exitCost)
 	} else {
 		netProceeds := position.quantity * exitFill * (1 - feePct)
 		ledger.creditWallet(quote, netProceeds)
-		ledger.realized += netProceeds - position.cost
+		tradeRealized = netProceeds - position.cost
+		ledger.realized += tradeRealized
 	}
 
 	ledger.closedTrades++
+	ledger.attributeClose(symbol, position, exitFill, tradeRealized, at)
 	delete(ledger.positions, symbol)
 	delete(ledger.entryConviction, symbol)
 	ledger.ticksSinceClose[symbol] = 0
+}
+
+func (ledger *replayLedger) attributeClose(
+	symbol string,
+	position replayPosition,
+	exitFill float64,
+	realized float64,
+	at time.Time,
+) {
+	strategy := position.strategy
+
+	if strategy == "" {
+		strategy = "unnamed"
+	}
+
+	tally := ledger.perStrategy[strategy]
+
+	if tally == nil {
+		tally = &strategyTally{}
+		ledger.perStrategy[strategy] = tally
+	}
+
+	tally.trades++
+	tally.realizedEUR += realized
+
+	if realized > 0 {
+		tally.wins++
+	}
+
+	if !at.IsZero() && !position.entryAt.IsZero() && at.After(position.entryAt) {
+		tally.holdSeconds += at.Sub(position.entryAt).Seconds()
+	}
+
+	if !ledger.costs.CollectTrades {
+		return
+	}
+
+	ledger.tradeLog = append(ledger.tradeLog, ClosedTrade{
+		Symbol:      symbol,
+		Strategy:    strategy,
+		EntryAt:     position.entryAt,
+		ExitAt:      at,
+		EntryPrice:  position.entryPrice,
+		ExitPrice:   exitFill,
+		Quantity:    position.quantity,
+		RealizedEUR: realized,
+	})
 }
 
 func (ledger *replayLedger) closePosition(
@@ -360,7 +406,7 @@ func (ledger *replayLedger) closePosition(
 		return
 	}
 
-	ledger.settle(symbol, exitFill, feePct)
+	ledger.settle(symbol, exitFill, feePct, measurement.At)
 }
 
 func exitSide(positionSide trading.Side) trading.Side {

@@ -51,9 +51,10 @@ type Signal struct {
 	window        time.Duration
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map
-	tickerTracks  sync.Map
-	categories    map[string]types.CategoryType
+	symbols         sync.Map
+	tickerTracks    sync.Map
+	lastMeasurement types.Measurement
+	categories      map[string]types.CategoryType
 	surpriseField *types.CategorySurpriseField
 	rawDump       *rawdump.Writer
 	classifier    *adaptive.Classifier

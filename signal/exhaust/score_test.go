@@ -69,7 +69,7 @@ func TestExitScoreLongUsesForwardFeedbackOnComponents(t *testing.T) {
 		history.imbalances.Push(-0.6)
 
 		rawUrgency, _, rawEvidence := exitScoreLong(history)
-		_, feedbackErr := types.UpdateSourceFeedback(types.SourceExhaustion, 0.1, 2, 1)
+		_, feedbackErr := types.UpdateSourceFeedback(types.SourceExhaustion, 0.1, 2, 0, 1)
 		So(feedbackErr, ShouldBeNil)
 		adjustedUrgency, _, adjustedEvidence := exitScoreLong(history)
 
@@ -103,7 +103,7 @@ func BenchmarkExitScoreLong(b *testing.B) {
 	history.spreads.Push(15)
 	history.pressures.Push(0.05)
 	history.imbalances.Push(-0.6)
-	_, _ = types.UpdateSourceFeedback(types.SourceExhaustion, 0.1, 1.25, 1)
+	_, _ = types.UpdateSourceFeedback(types.SourceExhaustion, 0.1, 1.25, 0, 1)
 
 	for b.Loop() {
 		_, _, _ = exitScoreLong(history)

@@ -2,8 +2,6 @@ package fluid
 
 import (
 	"context"
-	"fmt"
-	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -33,8 +31,9 @@ type Signal struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
-	fieldScratch  []*FluidSymbol
-	ui            *qpool.BroadcastGroup
+	fieldScratch     []*FluidSymbol
+	fieldPublishedAt time.Time
+	ui               *qpool.BroadcastGroup
 	surpriseField *types.CategorySurpriseField
 	classifier    *adaptive.Classifier
 	calibrator    *numeric.BandCalibrator
@@ -250,9 +249,20 @@ func (signal *Signal) emit(symbol string) error {
 	return nil
 }
 
+// fluidFieldPublishInterval paces the whole-universe surface frame: previously
+// it shipped on EVERY inbound frame (thousands/second) through a pooled fan-out
+// whose shared job id parked this signal forever — the flat-surface death.
+const fluidFieldPublishInterval = 250 * time.Millisecond
+
 // publishField ships an aggregated universe field snapshot to the dashboard
-// surface when at least one symbol has field data.
+// surface — inline and throttled.
 func (signal *Signal) publishField(_ *FluidSymbol) error {
+	if time.Since(signal.fieldPublishedAt) < fluidFieldPublishInterval {
+		return nil
+	}
+
+	signal.fieldPublishedAt = time.Now()
+
 	states := signal.fieldScratch[:0]
 
 	signal.symbols.Range(func(_, value any) bool {
@@ -262,52 +272,12 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 	})
 
 	signal.fieldScratch = states
-
-	tasks := make([]*qpool.ResultWait[any], 0, len(states))
+	rows := make([]map[string]any, 0, len(states))
 
 	for _, fluidState := range states {
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "fluid", &tasks), func(ctx context.Context) (any, error) {
-			row := fluidState.Row()
-
-			if row == nil {
-				return nil, nil
-			}
-
-			return row, nil
-		}))
-	}
-
-	rows := make([]map[string]any, 0, len(tasks))
-	var err error
-
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
-
-		if getErr != nil {
-			err = errors.Join(err, getErr)
-			continue
+		if row := fluidState.Row(); row != nil {
+			rows = append(rows, row)
 		}
-
-		if value.Error != nil {
-			err = errors.Join(err, value.Error)
-			continue
-		}
-
-		if value.Value == nil {
-			continue
-		}
-
-		row, ok := value.Value.(map[string]any)
-
-		if !ok {
-			return errors.Join(err, errors.New("fluid: field row has unexpected type"))
-		}
-
-		rows = append(rows, row)
-	}
-
-	if err != nil {
-		return err
 	}
 
 	if len(rows) == 0 {

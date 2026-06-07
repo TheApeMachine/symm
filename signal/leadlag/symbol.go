@@ -10,7 +10,14 @@ import (
 )
 
 const (
-	priceHistoryCap              = 256
+	priceHistoryCap = 256
+	// ringSampleSpacing decimates ring pushes so the 256-slot ring can actually
+	// span the lag window: 256 × 15s ≈ 64 minutes vs the 60-minute window
+	// (maxLagBars × barInterval). At raw ticker rate (multiple frames/second)
+	// the ring held ~4 minutes, recentPathMove could never cover window/2, the
+	// anchor baseline never became ready — and the signal spent its whole life
+	// publishing a hardcoded stall for every symbol (301k constant rows).
+	ringSampleSpacing            = 15 * time.Second
 	maxLagBars                   = 12
 	minLagSamples                = 16
 	leadlagDominanceMarginAbs    = 0.1
@@ -26,10 +33,11 @@ pairs sampled on every ticker frame, so the lag can be measured in bars rather
 than in a same-instant cross-section spread.
 */
 type symbolState struct {
-	mu      sync.RWMutex
-	last    float64
-	prices  numeric.PriceSampleRing
-	tracked *types.Category
+	mu           sync.RWMutex
+	last         float64
+	lastSampleAt time.Time
+	prices       numeric.PriceSampleRing
+	tracked      *types.Category
 }
 
 func newSymbolState() *symbolState {
@@ -44,6 +52,12 @@ func (state *symbolState) observeTicker(last float64, at time.Time) {
 	defer state.mu.Unlock()
 
 	state.last = last
+
+	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
+		return
+	}
+
+	state.lastSampleAt = at
 	state.prices.Push(at, last)
 }
 

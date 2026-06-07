@@ -198,6 +198,46 @@ func scoreForestOnRows(
 	return replay.NewThoughtSimulation(ctx, forest, tape, costs).Result(), nil
 }
 
+/*
+logPerSetup prints the chosen forest's per-setup attribution on the train slice,
+so a tune's output reads as a portfolio of named setups — each with its own
+trades, win rate and realized PnL — instead of one anonymous total.
+*/
+func logPerSetup(
+	ctx context.Context,
+	forest []preasoning.Thought,
+	rows []ptypes.Measurement,
+	costs replay.ReplayCosts,
+	workers int,
+) {
+	if len(forest) == 0 || len(rows) == 0 {
+		return
+	}
+
+	result, err := scoreForestOnRows(ctx, forest, rows, costs, workers)
+
+	if err != nil || len(result.PerStrategy) == 0 {
+		return
+	}
+
+	for name, setup := range result.PerStrategy {
+		winPct := 0.0
+
+		if setup.Trades > 0 {
+			winPct = 100 * float64(setup.Wins) / float64(setup.Trades)
+		}
+
+		log.TuneLog(
+			"setup %s: trades=%d win=%.0f%% realized_eur=%+.4f avg_hold=%.0fs (train)",
+			name,
+			setup.Trades,
+			winPct,
+			setup.RealizedEUR,
+			setup.AvgHoldSeconds,
+		)
+	}
+}
+
 func stressedCosts(costs replay.ReplayCosts) replay.ReplayCosts {
 	stressed := costs
 	stressed.TakerFeePct *= stressFeeMultiple

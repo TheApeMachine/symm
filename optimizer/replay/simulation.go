@@ -30,6 +30,10 @@ func NewThoughtSimulation(
 	tape ReplayTape,
 	costs ReplayCosts,
 ) *ReplaySimulation {
+	// Generated forests arrive unnamed; stamping here gives every candidate the
+	// same per-setup attribution hand-written files get from ParseThoughts.
+	reasoning.StampStrategies(thoughts)
+
 	return &ReplaySimulation{
 		ctx:      ctx,
 		thoughts: thoughts,
@@ -56,6 +60,23 @@ type ReplayResult struct {
 	// zero-trade tune is diagnosable from its log instead of a mystery.
 	PreflightBlocked int
 	ExitBlocked      int
+	// PerStrategy attributes round trips to the named setup that entered them —
+	// the forest stops being one anonymous blob and becomes a portfolio of
+	// setups, each accountable on its own line.
+	PerStrategy map[string]StrategyResult
+	// Trades is the attributed round-trip list, populated only when
+	// ReplayCosts.CollectTrades is set (the workbench path).
+	Trades []ClosedTrade
+}
+
+/*
+StrategyResult is one setup's attributed results over a replay pass.
+*/
+type StrategyResult struct {
+	Trades         int
+	Wins           int
+	RealizedEUR    float64
+	AvgHoldSeconds float64
 }
 
 /*
@@ -130,16 +151,37 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 	ledger.flushEntryBatch(time.Time{})
 	ledger.flushPending(lastAt, lastRow)
 
+	perStrategy := make(map[string]StrategyResult, len(ledger.perStrategy))
+
+	for strategy, tally := range ledger.perStrategy {
+		attributed := StrategyResult{
+			Trades:      tally.trades,
+			Wins:        tally.wins,
+			RealizedEUR: tally.realizedEUR,
+		}
+
+		if tally.trades > 0 {
+			attributed.AvgHoldSeconds = tally.holdSeconds / float64(tally.trades)
+		}
+
+		perStrategy[strategy] = attributed
+	}
+
+	trades := make([]ClosedTrade, len(ledger.tradeLog))
+	copy(trades, ledger.tradeLog)
+
 	return ReplayResult{
-		Score:           ledger.realizedReturn(),
-		RealizedEUR:     ledger.realized,
-		ClosedTrades:    ledger.closedTrades,
-		ExposureTicks:   ledger.exposureTicks,
-		TotalTicks:      simulation.tape.Len(),
+		Score:            ledger.realizedReturn(),
+		RealizedEUR:      ledger.realized,
+		ClosedTrades:     ledger.closedTrades,
+		ExposureTicks:    ledger.exposureTicks,
+		TotalTicks:       simulation.tape.Len(),
 		StartingCapital:  ledger.startingCapital(),
 		FundBlocked:      ledger.fundBlocked,
 		PreflightBlocked: ledger.preflightBlocked,
 		ExitBlocked:      ledger.exitBlocked,
+		PerStrategy:      perStrategy,
+		Trades:           trades,
 	}
 }
 

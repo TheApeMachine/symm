@@ -61,10 +61,13 @@ func TestDeriveVocabularyAndSeeds(t *testing.T) {
 			So(hasManagement, ShouldBeTrue)
 
 			// It round-trips through the playbook serializer (a real, writable tree).
+			// ParseThoughts stamps setup names on load, so the original must be
+			// stamped too before comparing.
 			encoded, err := reasoning.MarshalThoughts(seed, 2)
 			So(err, ShouldBeNil)
 			reparsed, err := reasoning.ParseThoughts(encoded)
 			So(err, ShouldBeNil)
+			reasoning.StampStrategies(seed)
 			So(reparsed, ShouldResemble, seed)
 		})
 	})

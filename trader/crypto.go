@@ -89,6 +89,7 @@ type Crypto struct {
 	preemptPlan      *preemptPlan
 	lastPreemptAt    time.Time
 	entryConviction  map[string]float64
+	entryStrategies  map[string]string // symbol -> setup name that entered the open position (kept until the next entry overwrites it, so the outcome frame arriving after the close can still attribute)
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
 	capitalBase      float64 // opening capital; one position targets position_fraction of this
@@ -182,6 +183,7 @@ func NewCryptoWithCaches(
 		pendingSince:    make(map[string]time.Time),
 		lastDecision:    make(map[string]string),
 		entryConviction: make(map[string]float64),
+		entryStrategies: make(map[string]string),
 	}
 
 	for _, channel := range []string{"raw"} {
@@ -522,7 +524,7 @@ func (crypto *Crypto) observeOutcome(envelope map[string]any) {
 	realized, _ := envelope["realized"].(float64)
 	entryBasis, _ := envelope["entry_basis"].(float64)
 
-	if err := crypto.audit.Write(map[string]any{
+	frame := map[string]any{
 		"audit_event":  "position_outcome",
 		"symbol":       symbol,
 		"entry_price":  entryBasis, // per-unit fee-inclusive average cost from the wallet
@@ -531,7 +533,13 @@ func (crypto *Crypto) observeOutcome(envelope map[string]any) {
 		"fee":          fee,
 		"realized_pnl": realized,
 		"source":       "wallet",
-	}); err != nil {
+	}
+
+	if strategy := crypto.entryStrategies[symbol]; strategy != "" {
+		frame["strategy"] = strategy
+	}
+
+	if err := crypto.audit.Write(frame); err != nil {
 		errnie.Error(err)
 	}
 }
@@ -909,6 +917,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 	if side == string(trading.Buy) {
 		if reasoning.IsEntryAction(submitted.Type) {
 			crypto.recordEntryConviction(symbol, submitted)
+			crypto.rememberEntryStrategy(symbol, submitted.Strategy)
 			crypto.openPosition(symbol, qty, price)
 
 			if err := crypto.writePositionOpenAudit(
@@ -926,6 +935,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 
 	if reasoning.IsEntryAction(submitted.Type) {
 		crypto.recordEntryConviction(symbol, submitted)
+		crypto.rememberEntryStrategy(symbol, submitted.Strategy)
 		crypto.openShort(symbol, qty, price)
 
 		return
@@ -934,6 +944,17 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 	crypto.recordPositionClose(symbol, qty, price, envelope)
 	crypto.closePosition(symbol)
 	crypto.tryFinishPreemption(symbol)
+}
+
+// rememberEntryStrategy keeps the setup name that opened a symbol's position so
+// the wallet outcome frame (which arrives after the close) can still attribute
+// the round trip. Tolerates manually constructed traders in tests (nil map).
+func (crypto *Crypto) rememberEntryStrategy(symbol, strategy string) {
+	if crypto.entryStrategies == nil {
+		crypto.entryStrategies = make(map[string]string)
+	}
+
+	crypto.entryStrategies[symbol] = strategy
 }
 
 func (crypto *Crypto) recordPositionClose(

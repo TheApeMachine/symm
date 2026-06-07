@@ -51,6 +51,7 @@ var unitNames = map[UnitType]string{
 	UnitTimeNanoseconds:  "time_nanoseconds",
 	UnitConfidence:       "confidence",
 	UnitSNR:              "snr",
+	UnitStrength:         "strength",
 }
 
 var conditionNames = map[ConditionType]string{

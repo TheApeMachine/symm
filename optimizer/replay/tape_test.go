@@ -91,6 +91,35 @@ func TestReplayTapeWindowIsPerSymbolOccurrences(t *testing.T) {
 	})
 }
 
+func TestBackfillSymbolQuotesGivesPredictionRowsTheCacheBook(t *testing.T) {
+	convey.Convey("Given a booked row followed by a bookless prediction-style row", t, func() {
+		testconfig.Load(t)
+		rows := []types.Measurement{
+			{
+				Symbol: "BTC/EUR", Source: types.SourceFluid, SNR: 1, Last: 100,
+				Bid: 99.9, Ask: 100.1,
+				BookBids: []types.BookLevel{{Price: 99.9, Qty: 50}},
+				BookAsks: []types.BookLevel{{Price: 100.1, Qty: 50}},
+			},
+			{Symbol: "BTC/EUR", Source: types.SourcePrediction, SNR: 2, Last: 100},
+		}
+
+		tape := mustPrecompileTape(t, rows)
+
+		convey.Convey("The bookless row presents the symbol's last-known book and touch, aliased", func() {
+			row := tape.Ticks[1].Row
+
+			// Live fills come from the quote cache's current book; replay must
+			// offer the same book on rows recorded without one, or it refuses
+			// entries the live desk would take.
+			convey.So(row.HasBookDepth(), convey.ShouldBeTrue)
+			convey.So(row.Bid, convey.ShouldEqual, 99.9)
+			convey.So(row.Ask, convey.ShouldEqual, 100.1)
+			convey.So(&row.BookBids[0], convey.ShouldEqual, &tape.Ticks[0].Row.BookBids[0])
+		})
+	})
+}
+
 func benchmarkTapeRows(count int) []types.Measurement {
 	rows := make([]types.Measurement, 0, count)
 
@@ -149,12 +178,14 @@ func TestPrecompileTapeParallelPassOneMatchesSequential(t *testing.T) {
 		}
 
 		symbolIndices, globalIndices, categories, lastPrices := mergePrecompileChunks(chunks)
-		err = precompileSnapshotIndices(parallelTicks, symbolIndices, globalIndices, 8)
+		buffer, err := assignSymbolOrdinals(parallelTicks, symbolIndices)
 		convey.So(err, convey.ShouldBeNil)
 
 		parallel := ReplayTape{
-			Ticks:      parallelTicks,
-			LastPrices: lastPrices,
+			Ticks:             parallelTicks,
+			SymbolIndices:     symbolIndices,
+			LastPrices:        lastPrices,
+			measurementBuffer: buffer,
 		}
 
 		convey.Convey("It should merge pass-one indices in chronological order", func() {
@@ -206,12 +237,20 @@ func collectGlobalIndices(ticks []PrecompiledTick) []int {
 func assertMatchingTapes(sequential, parallel ReplayTape) {
 	convey.So(len(parallel.Ticks), convey.ShouldEqual, len(sequential.Ticks))
 
+	// The decision window is derived per tick; equality of derived snapshots is
+	// the contract that matters between the two precompile paths.
+	var sequentialScratch, parallelScratch []types.Measurement
+
 	for index := range sequential.Ticks {
 		convey.So(
-			parallel.Ticks[index].SnapshotIndices,
-			convey.ShouldResemble,
-			sequential.Ticks[index].SnapshotIndices,
+			parallel.Ticks[index].SymbolOrdinal,
+			convey.ShouldEqual,
+			sequential.Ticks[index].SymbolOrdinal,
 		)
+
+		sequentialScratch = sequential.AppendSnapshot(index, sequentialScratch)
+		parallelScratch = parallel.AppendSnapshot(index, parallelScratch)
+		convey.So(len(parallelScratch), convey.ShouldEqual, len(sequentialScratch))
 	}
 }
 

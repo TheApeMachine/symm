@@ -12,8 +12,11 @@ func TestSymbolStatePriceSamples(t *testing.T) {
 		state := newSymbolState()
 		start := time.Now()
 
+		// Samples are spaced at the ring's decimation interval: pushes inside
+		// ringSampleSpacing update last but do not enter the ring — that is the
+		// fix that lets 256 slots actually span the 60m lag window.
 		for index := range 20 {
-			state.observeTicker(100+float64(index), start.Add(time.Duration(index)*time.Second))
+			state.observeTicker(100+float64(index), start.Add(time.Duration(index)*ringSampleSpacing))
 		}
 
 		Convey("It should retain enough samples for correlation", func() {
@@ -46,7 +49,7 @@ func TestSymbolStateContemporaneous(t *testing.T) {
 		start := time.Now()
 
 		for index := range 20 {
-			at := start.Add(time.Duration(index) * time.Second)
+			at := start.Add(time.Duration(index) * ringSampleSpacing)
 			anchor.observeTicker(100+float64(index), at)
 			follower.observeTicker(200+float64(index)*2, at)
 		}

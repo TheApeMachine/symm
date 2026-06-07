@@ -308,20 +308,36 @@ func numericReport(name string, values []float64, thresholds DiagnosticThreshold
 	report.P90 = percentile(sorted, 0.90)
 	report.P99 = percentile(sorted, 0.99)
 
-	mean := sum(values) / float64(len(values))
+	// Derived moments can overflow even on all-finite input: toxicity's
+	// runaway strengths (≈1e150) square to ≈1e300 inside Σδ², and the
+	// autocorrelation's cross-products push past max float64 to +Inf. sonic,
+	// like encoding/json, refuses NaN/Inf wholesale — which turned into
+	// "failed to encode response" on exactly the file that most needed
+	// inspecting. Clamp every derived stat to a finite value.
+	mean := finiteOr(sum(values)/float64(len(values)), 0)
 	report.Mean = mean
-	report.Std = std(values, mean)
+	report.Std = finiteOr(std(values, mean), 0)
 
-	report.Lag1Autocorr = lag1Autocorr(values, mean)
-	report.MeanCrossingRate = meanCrossingRate(values, mean)
-	report.JumpRate = jumpRate(values)
-	report.BaselineOccupancy = baselineOccupancy(values, report.Median, report.Std)
-	report.ZeroFraction = zeroFraction(values)
+	report.Lag1Autocorr = finiteOr(lag1Autocorr(values, mean), 0)
+	report.MeanCrossingRate = finiteOr(meanCrossingRate(values, mean), 0)
+	report.JumpRate = finiteOr(jumpRate(values), 0)
+	report.BaselineOccupancy = finiteOr(baselineOccupancy(values, report.Median, report.Std), 0)
+	report.ZeroFraction = finiteOr(zeroFraction(values), 0)
 	report.Histogram = histogram(sorted)
 
 	report.Verdict, report.Notes = numericVerdict(report, thresholds)
 
 	return report
+}
+
+// finiteOr replaces a non-finite computed statistic with fallback so reports
+// always survive JSON encoding.
+func finiteOr(value, fallback float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fallback
+	}
+
+	return value
 }
 
 func finiteValues(values []float64) []float64 {

@@ -171,6 +171,7 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (types.Measurement, float6
 	evidence := 0.0
 
 	if sym.pipe != nil && sym.categories != nil {
+		raw = types.AdjustSourceValue(types.SourceHawkes, raw) // top-down prediction feedback
 		code, err := sym.pipe.Push(raw)
 
 		if err == nil {

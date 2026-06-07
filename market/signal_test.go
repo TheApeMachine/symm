@@ -16,7 +16,10 @@ func (signalStub) Measure(_ perspectives.Feedback) types.Measurement {
 
 type feedbackStub struct{}
 
-func (feedbackStub) MSE() float64 { return 0 }
+func (feedbackStub) MSE() float64   { return 0 }
+func (feedbackStub) Scale() float64 { return 1 }
+func (feedbackStub) Bias() float64  { return 0 }
+func (feedbackStub) Samples() int   { return 1 }
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a Signal implementation", t, func() {

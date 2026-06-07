@@ -90,7 +90,7 @@ func TestDepthSymbolMeasureUsesForwardFeedbackOnTradePressure(t *testing.T) {
 		rawMeasurement, _, rawErr := baseline.Measure()
 		So(rawErr, ShouldBeNil)
 
-		_, feedbackErr := types.UpdateSourceFeedback(types.SourceDepthFlow, 0.1, 0.5, 1)
+		_, feedbackErr := types.UpdateSourceFeedback(types.SourceDepthFlow, 0.1, 0.5, 0, 1)
 		So(feedbackErr, ShouldBeNil)
 
 		adjusted, adjustedErr := NewDepthSymbol(symbol)

@@ -17,6 +17,7 @@ signals and soften overconfident ones.
 type SourceFeedback struct {
 	MSE     float64
 	Scale   float64
+	Bias    float64 // signed mean settle error while this source contributed
 	Samples int
 }
 
@@ -37,6 +38,7 @@ func UpdateSourceFeedback(
 	source SourceType,
 	mse float64,
 	scale float64,
+	bias float64,
 	samples int,
 ) (SourceFeedback, error) {
 	if source == SourceNone {
@@ -51,9 +53,16 @@ func UpdateSourceFeedback(
 		))
 	}
 
+	if math.IsNaN(bias) || math.IsInf(bias, 0) {
+		return SourceFeedback{}, errnie.Error(fmt.Errorf(
+			"perspectives: invalid feedback bias=%v", bias,
+		))
+	}
+
 	feedback := SourceFeedback{
 		MSE:     mse,
 		Scale:   scale,
+		Bias:    bias,
 		Samples: samples,
 	}
 
@@ -97,7 +106,19 @@ func AdjustSourceValue(source SourceType, value float64) float64 {
 		return value
 	}
 
-	return value * feedback.Scale
+	scale := feedback.Scale
+
+	// Bounded: feedback tunes a signal's observation scale, it must never be
+	// able to zero a signal out or blow it up.
+	if scale < 0.5 {
+		scale = 0.5
+	}
+
+	if scale > 2 {
+		scale = 2
+	}
+
+	return value * scale
 }
 
 func invalidFeedbackValue(value float64) bool {

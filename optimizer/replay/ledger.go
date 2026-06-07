@@ -47,6 +47,7 @@ type replayPosition struct {
 	entryAt       time.Time
 	triggerType   reasoning.ActionType
 	triggerOffset float64
+	strategy      string // setup attribution from the entering branch's name
 }
 
 type pendingReplayAction struct {
@@ -86,6 +87,31 @@ type replayLedger struct {
 	tickIndex           int
 	medianInterval      time.Duration
 	executionLatency    time.Duration
+	perStrategy         map[string]*strategyTally
+	tradeLog            []ClosedTrade
+}
+
+// strategyTally accumulates one setup's attributed results during a replay pass.
+type strategyTally struct {
+	trades      int
+	wins        int
+	realizedEUR float64
+	holdSeconds float64
+}
+
+/*
+ClosedTrade is one attributed round trip from a replay pass, collected when
+ReplayCosts.CollectTrades is set (the workbench path; search leaves it off).
+*/
+type ClosedTrade struct {
+	Symbol      string
+	Strategy    string
+	EntryAt     time.Time
+	ExitAt      time.Time
+	EntryPrice  float64
+	ExitPrice   float64
+	Quantity    float64
+	RealizedEUR float64
 }
 
 // effectiveCapital and effectiveFraction let any ReplayCosts — including the bare
@@ -122,6 +148,7 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 		lastQuotedRows:      make(map[string]types.Measurement),
 		priorQuotedRows:     make(map[string]types.Measurement),
 		entryConviction:     make(map[string]float64),
+		perStrategy:         make(map[string]*strategyTally),
 	}
 }
 
@@ -184,6 +211,8 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	clear(ledger.pricePaths)
 	clear(ledger.lastQuotedRows)
 	clear(ledger.priorQuotedRows)
+	clear(ledger.perStrategy)
+	ledger.tradeLog = ledger.tradeLog[:0]
 }
 
 func (ledger *replayLedger) configureExecutionStress(
@@ -447,6 +476,7 @@ func (ledger *replayLedger) applyStressed(
 					feePct,
 					fraction,
 					measurement,
+					act.Strategy,
 				)
 
 				return

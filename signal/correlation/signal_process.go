@@ -1,7 +1,6 @@
 package correlation
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -213,87 +212,77 @@ its assigned category band; SNR is how surprising that clarity is versus the
 coin's own recent baseline, not how large the strength is.
 */
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) error {
-	tasks := make([]*qpool.ResultWait[any], 0, len(active))
-
-	for _, coin := range active {
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "correlation", &tasks), func(ctx context.Context) (any, error) {
-			agree := hashBits - bits.OnesCount64(coin.sig^mode)
-			corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
-			energy := coin.state.energy.Value()
-
-			code, err := coin.state.pipe.Push(corr, energy, baseline)
-
-			if err != nil {
-				return nil, fmt.Errorf("correlation: pipe %s: %w", coin.symbol, err)
-			}
-
-			raw := energy * (1 + 2*corr) / baseline
-			telemetry := signal.calibrator.Snapshot(signal.classifier)
-			telemetry.Observation = coin.state.pipe.Observation()
-
-			measurement := types.Measurement{
-				Symbol:     coin.symbol,
-				Source:     types.SourceCorrelation,
-				Category:   signal.categories[coin.state.pipe.Label(code)],
-				Last:       coin.price,
-				Strength:   raw,
-				Confidence: coin.state.pipe.Confidence(),
-			}
-
-			if err := types.AssignCategorySurpriseSNR(
-				&measurement, signal.surpriseField, measurement.Category,
-			); err != nil {
-				return nil, fmt.Errorf("correlation: snr %s: %w", coin.symbol, err)
-			}
-
-			if err := signal.rawDump.Write(rawRecord{
-				Symbol:     measurement.Symbol,
-				Category:   measurement.Category,
-				Strength:   measurement.Strength,
-				Confidence: measurement.Confidence,
-				SNR:        measurement.SNR,
-				Standout:   coin.state.pipe.Standout(),
-				Last:       measurement.Last,
-				SpreadBPS:  measurement.SpreadBPS,
-			}); err != nil {
-				return nil, err
-			}
-
-			if err := measurement.Send(signal.pool); err != nil {
-				return nil, err
-			}
-
-			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{
-					Value: numeric.GaugePayload(
-						measurement.Source.String(),
-						measurement.Symbol,
-						measurement.Category,
-						measurement,
-						telemetry,
-					),
-				})
-			}
-
-			return coin.state.pipe.Observation(), nil
-		}))
-	}
-
 	var err error
 
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
+	// Inline, not pooled: the previous fan-out scheduled every coin under ONE
+	// shared job id (%p of the same local), so results overwrote each other and
+	// Get parked this signal's goroutine forever — the silent signal deaths of
+	// 2026-06-07.
+	for _, coin := range active {
+		agree := hashBits - bits.OnesCount64(coin.sig^mode)
+		corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
+		corr = types.AdjustSourceValue(types.SourceCorrelation, corr) // top-down prediction feedback
+		energy := coin.state.energy.Value()
 
-		if getErr != nil {
-			err = errors.Join(err, getErr)
+		code, pipeErr := coin.state.pipe.Push(corr, energy, baseline)
+
+		if pipeErr != nil {
+			err = errors.Join(err, fmt.Errorf("correlation: pipe %s: %w", coin.symbol, pipeErr))
 			continue
 		}
 
-		err = errors.Join(err, value.Error)
+		raw := energy * (1 + 2*corr) / baseline
+		telemetry := signal.calibrator.Snapshot(signal.classifier)
+		telemetry.Observation = coin.state.pipe.Observation()
 
-		if observation, ok := value.Value.(float64); ok {
-			signal.calibrator.Observe(observation, signal.classifier)
+		measurement := types.Measurement{
+			Symbol:     coin.symbol,
+			Source:     types.SourceCorrelation,
+			Category:   signal.categories[coin.state.pipe.Label(code)],
+			Last:       coin.price,
+			Strength:   raw,
+			Confidence: coin.state.pipe.Confidence(),
 		}
+
+		if snrErr := types.AssignCategorySurpriseSNR(
+			&measurement, signal.surpriseField, measurement.Category,
+		); snrErr != nil {
+			err = errors.Join(err, fmt.Errorf("correlation: snr %s: %w", coin.symbol, snrErr))
+			continue
+		}
+
+		if dumpErr := signal.rawDump.Write(rawRecord{
+			Symbol:     measurement.Symbol,
+			Category:   measurement.Category,
+			Strength:   measurement.Strength,
+			Confidence: measurement.Confidence,
+			SNR:        measurement.SNR,
+			Standout:   coin.state.pipe.Standout(),
+			Last:       measurement.Last,
+			SpreadBPS:  measurement.SpreadBPS,
+		}); dumpErr != nil {
+			err = errors.Join(err, dumpErr)
+			continue
+		}
+
+		if sendErr := measurement.Send(signal.pool); sendErr != nil {
+			err = errors.Join(err, sendErr)
+			continue
+		}
+
+		if ui := signal.broadcasts["ui"]; ui != nil {
+			ui.Send(&qpool.QValue[any]{
+				Value: numeric.GaugePayload(
+					measurement.Source.String(),
+					measurement.Symbol,
+					measurement.Category,
+					measurement,
+					telemetry,
+				),
+			})
+		}
+
+		signal.calibrator.Observe(coin.state.pipe.Observation(), signal.classifier)
 	}
 
 	return err

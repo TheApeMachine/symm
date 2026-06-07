@@ -7,6 +7,11 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
+// vacuumStrengthCap bounds the cancel/fill asymmetry strength (see
+// classifyBookQuality): the fill EMA decays toward zero through cancel-only
+// stretches, so the uncapped ratio compounds without bound.
+const vacuumStrengthCap = 100.0
+
 /*
 bookQualitySnapshot is the per-symbol cancel/fill asymmetry the tracker maintains.
 */
@@ -39,6 +44,7 @@ func (tracker *Tracker) Measure(symbol string, at time.Time) (types.Measurement,
 
 	snapshot := bookQualitySnapshotLocked(state, at)
 	category, strength, evidence := classifyBookQuality(tracker, snapshot)
+	strength = types.AdjustSourceValue(types.SourceToxicity, strength) // top-down prediction feedback
 
 	if category == types.CategoryTypeNone || strength <= 0 || evidence <= 0 {
 		return types.Measurement{}, nil
@@ -158,7 +164,12 @@ func classifyBookQuality(
 	if bidVacuum || askVacuum {
 		margin := maxRatio - threshold
 		evidence := types.UnitCompetitionMargin(margin, threshold)
-		strength := maxRatio / threshold
+		// Fill flow is an EMA decaying toward zero through any cancel-only
+		// stretch, so the raw cancel/fill ratio compounds without bound —
+		// observed at 2.5e+150 on ZEC/EUR, which then overflowed the
+		// diagnostics stats into +Inf. A vacuum at the cap is already
+		// saturated information.
+		strength := math.Min(maxRatio/threshold, vacuumStrengthCap)
 
 		return types.CategoryLiquidityVacuum, strength, evidence
 	}

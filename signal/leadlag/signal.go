@@ -186,8 +186,12 @@ func (signal *Signal) publish() error {
 	anchor := anchorRaw.(*symbolState)
 	move := signal.anchorMoveStatus(anchor)
 
+	// Warming up is not information. Before the baseline was ready this
+	// published a hardcoded stallMargin of 1.0 for EVERY symbol on every
+	// recompute — and because the ring could never span the lag window, that
+	// was the signal's entire output: 301k rows of strength=1/conf=0.3942.
 	if !move.ready {
-		return signal.publishAnchorStall(anchorName, anchor, 1.0)
+		return nil
 	}
 
 	if !move.moved {
@@ -214,8 +218,13 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 
 	signal.followerScratch = followers
 	readings := make([]leadlagGaugeReading, 0, len(followers))
-	tasks := make([]*qpool.ResultWait[any], 0, len(followers))
 
+	var err error
+
+	// Inline, not pooled: the previous fan-out scheduled every follower under
+	// ONE shared job id (%p of the same local), so results overwrote each other
+	// and Get parked this signal's goroutine forever — the silent signal deaths
+	// of 2026-06-07.
 	for _, symbolName := range followers {
 		raw, ok := signal.symbols.Load(symbolName)
 
@@ -224,49 +233,26 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 		}
 
 		follower := raw.(*symbolState)
+		measurement, standout, measureErr := signal.measureFollower(anchor, follower)
 
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "leadlag", &tasks), func(ctx context.Context) (any, error) {
-			measurement, standout, err := signal.measureFollower(anchor, follower)
-
-			if err != nil {
-				return nil, fmt.Errorf("leadlag: measure %s: %w", symbolName, err)
-			}
-
-			if measurement.Source == types.SourceNone {
-				return nil, nil
-			}
-
-			measurement.Symbol = symbolName
-			measurement.Last = follower.lastPrice()
-
-			if err := signal.sendMeasurement(&measurement, standout); err != nil {
-				return nil, fmt.Errorf("leadlag: snr %s: %w", symbolName, err)
-			}
-
-			return leadlagGaugeReading{measurement: measurement, standout: standout}, nil
-		}))
-	}
-
-	var err error
-
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
-
-		if getErr != nil {
-			err = errors.Join(err, getErr)
+		if measureErr != nil {
+			err = errors.Join(err, fmt.Errorf("leadlag: measure %s: %w", symbolName, measureErr))
 			continue
 		}
 
-		if value.Error != nil {
-			err = errors.Join(err, value.Error)
+		if measurement.Source == types.SourceNone {
 			continue
 		}
 
-		reading, ok := value.Value.(leadlagGaugeReading)
+		measurement.Symbol = symbolName
+		measurement.Last = follower.lastPrice()
 
-		if ok {
-			readings = append(readings, reading)
+		if sendErr := signal.sendMeasurement(&measurement, standout); sendErr != nil {
+			err = errors.Join(err, fmt.Errorf("leadlag: snr %s: %w", symbolName, sendErr))
+			continue
 		}
+
+		readings = append(readings, leadlagGaugeReading{measurement: measurement, standout: standout})
 	}
 
 	return errors.Join(err, signal.publishMarketGauge(readings))
@@ -277,26 +263,15 @@ type leadlagGaugeReading struct {
 	standout    float64
 }
 
+// publishAnchorStall emits the stall as ONE measurement on the anchor symbol.
+// "The anchor is not moving" is a single fact about the anchor — the previous
+// version stamped the same margin onto every follower in the universe, which
+// is where the uniform per-symbol row counts in the raw dump came from.
 func (signal *Signal) publishAnchorStall(
 	anchorName string,
 	anchor *symbolState,
 	stallMargin float64,
 ) error {
-	var joined error
-	followers := signal.followerScratch[:0]
-
-	signal.symbols.Range(func(key, value any) bool {
-		symbol := key.(string)
-
-		if symbol != anchorName {
-			followers = append(followers, symbol)
-		}
-
-		return true
-	})
-
-	signal.followerScratch = followers
-	readings := make([]leadlagGaugeReading, 0, len(followers)+1)
 	measurement, standout, err := signal.measureStall(anchor, stallMargin)
 
 	if err != nil {
@@ -305,31 +280,11 @@ func (signal *Signal) publishAnchorStall(
 
 	measurement.Symbol = anchorName
 	measurement.Last = anchor.lastPrice()
-	readings = append(readings, leadlagGaugeReading{measurement: measurement, standout: standout})
-	joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
+	joined := signal.sendMeasurement(&measurement, standout)
 
-	for _, symbolName := range followers {
-		raw, ok := signal.symbols.Load(symbolName)
-
-		if !ok {
-			continue
-		}
-
-		follower := raw.(*symbolState)
-		measurement, standout, err := signal.measureStall(follower, stallMargin)
-
-		if err != nil {
-			joined = errors.Join(joined, fmt.Errorf("leadlag: measure follower stall %s: %w", symbolName, err))
-			continue
-		}
-
-		measurement.Symbol = symbolName
-		measurement.Last = follower.lastPrice()
-		readings = append(readings, leadlagGaugeReading{measurement: measurement, standout: standout})
-		joined = errors.Join(joined, signal.sendMeasurement(&measurement, standout))
-	}
-
-	return errors.Join(joined, signal.publishMarketGauge(readings))
+	return errors.Join(joined, signal.publishMarketGauge(
+		[]leadlagGaugeReading{{measurement: measurement, standout: standout}},
+	))
 }
 
 func (signal *Signal) publishMarketGauge(readings []leadlagGaugeReading) error {
@@ -494,6 +449,7 @@ func (signal *Signal) measureStall(
 	symbol *symbolState,
 	stallMargin float64,
 ) (types.Measurement, float64, error) {
+	stallMargin = types.AdjustSourceValue(types.SourceLeadLag, stallMargin) // top-down prediction feedback
 	category, confidence, standout := leadlagReading(false, stallMargin, 0, 0)
 
 	if err := symbol.tracked.Observe(category, confidence); err != nil {
@@ -514,6 +470,7 @@ func (signal *Signal) measureFollower(
 	state *symbolState,
 ) (types.Measurement, float64, error) {
 	if bars, corr, ok := state.crossLag(anchor); ok {
+		corr = types.AdjustSourceValue(types.SourceLeadLag, corr) // top-down prediction feedback
 		category, confidence, standout := leadlagReading(true, 0, corr, bars)
 
 		if err := state.tracked.Observe(category, confidence); err != nil {
@@ -534,6 +491,7 @@ func (signal *Signal) measureFollower(
 		return types.Measurement{}, 0, nil
 	}
 
+	corr = types.AdjustSourceValue(types.SourceLeadLag, corr) // top-down prediction feedback
 	category, confidence, standout := leadlagReading(true, 0, corr, 0)
 
 	if err := state.tracked.Observe(category, confidence); err != nil {

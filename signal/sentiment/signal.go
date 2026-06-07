@@ -3,7 +3,6 @@ package sentiment
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -170,81 +169,81 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 
 	signal.breadthHist.Push(snapshot.breadth)
 
-	tasks := make([]*qpool.ResultWait[any], 0, len(rows))
-
-	for _, row := range rows {
-		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "sentiment", &tasks), func(ctx context.Context) (any, error) {
-			measurement, standout, err := signal.measureFromSnapshot(
-				row.Symbol, row.ChangePct, snapshot,
-			)
-
-			if err != nil {
-				return nil, err
-			}
-
-			if measurement.Source == types.SourceNone {
-				return nil, nil
-			}
-
-			measurement.Symbol = row.Symbol
-			measurement.Last = row.Last
-
-			telemetry, _ := numeric.ObserveGaugeTelemetry(
-				signal.calibrator,
-				signal.classifier,
-				measurement.Strength,
-				standout,
-			)
-
-			if err := types.AssignCategorySurpriseSNR(
-				&measurement, signal.surpriseField, measurement.Category,
-			); err != nil {
-				return nil, err
-			}
-
-			if err := signal.rawDump.Write(rawRecord{
-				Symbol:     measurement.Symbol,
-				Category:   measurement.Category,
-				Strength:   measurement.Strength,
-				Confidence: measurement.Confidence,
-				SNR:        measurement.SNR,
-				Standout:   standout,
-				Last:       measurement.Last,
-				SpreadBPS:  measurement.SpreadBPS,
-			}); err != nil {
-				return nil, err
-			}
-
-			if err := measurement.Send(signal.pool); err != nil {
-				return nil, err
-			}
-
-			if ui := signal.broadcasts["ui"]; ui != nil {
-				ui.Send(&qpool.QValue[any]{
-					Value: numeric.GaugePayload(
-						measurement.Source.String(),
-						measurement.Symbol,
-						measurement.Category,
-						measurement,
-						telemetry,
-					),
-				})
-			}
-
-			return nil, nil
-		}))
-	}
-
 	var err error
 
-	for _, task := range tasks {
-		value, getErr := task.Get(signal.ctx)
-		if getErr != nil {
-			err = errors.Join(err, getErr)
-			continue
+	for _, row := range rows {
+		// Inline, not pooled: the previous fan-out scheduled every item under
+		// ONE shared job id (%p of the same local), so results overwrote each
+		// other and Get parked this signal's goroutine forever — the silent
+		// signal deaths of 2026-06-07.
+		runItem := func(ctx context.Context) (any, error) {
+		measurement, standout, err := signal.measureFromSnapshot(
+			row.Symbol, row.ChangePct, snapshot,
+		)
+
+		if err != nil {
+			return nil, err
 		}
-		err = errors.Join(err, value.Error)
+
+		if measurement.Source == types.SourceNone {
+			return nil, nil
+		}
+
+		measurement.Symbol = row.Symbol
+		measurement.Last = row.Last
+
+		telemetry, _ := numeric.ObserveGaugeTelemetry(
+			signal.calibrator,
+			signal.classifier,
+			measurement.Strength,
+			standout,
+		)
+
+		if err := types.AssignCategorySurpriseSNR(
+			&measurement, signal.surpriseField, measurement.Category,
+		); err != nil {
+			return nil, err
+		}
+
+		if err := signal.rawDump.Write(rawRecord{
+			Symbol:     measurement.Symbol,
+			Category:   measurement.Category,
+			Strength:   measurement.Strength,
+			Confidence: measurement.Confidence,
+			SNR:        measurement.SNR,
+			Standout:   standout,
+			Last:       measurement.Last,
+			SpreadBPS:  measurement.SpreadBPS,
+		}); err != nil {
+			return nil, err
+		}
+
+		if err := measurement.Send(signal.pool); err != nil {
+			return nil, err
+		}
+
+		if ui := signal.broadcasts["ui"]; ui != nil {
+			ui.Send(&qpool.QValue[any]{
+				Value: numeric.GaugePayload(
+					measurement.Source.String(),
+					measurement.Symbol,
+					measurement.Category,
+					measurement,
+					telemetry,
+				),
+			})
+		}
+
+		return nil, nil
+		}
+
+		if _, runErr := runItem(signal.ctx); runErr != nil {
+			err = errors.Join(err, runErr)
+		}
+
 	}
+
+	
 
 	return err
 }
@@ -267,6 +266,7 @@ func (signal *Signal) measureFromSnapshot(
 	change float64,
 	snapshot sentimentSnapshot,
 ) (types.Measurement, float64, error) {
+	change = types.AdjustSourceValue(types.SourceSentiment, change) // top-down prediction feedback
 	category, confidence := sentimentReading(
 		snapshot.breadth,
 		change,
