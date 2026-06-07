@@ -5,6 +5,16 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
+const maxLateralBranchCount = 2
+
+func maxLateralBranches(categoryCount int) int {
+	if categoryCount < maxLateralBranchCount {
+		return categoryCount
+	}
+
+	return maxLateralBranchCount
+}
+
 /*
 Neighbors returns the candidate forests one edit away from the given one. The
 search scores them and keeps the best. The operators span the two axes the playbook
@@ -525,6 +535,8 @@ func addStrategyRoot(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning
 		threshold = vocab.Thresholds[0]
 	}
 
+	lateralCap := maxLateralBranches(len(vocab.Categories))
+
 	for _, category := range vocab.Categories {
 		if used[category] {
 			continue
@@ -539,7 +551,7 @@ func addStrategyRoot(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning
 
 		added++
 
-		if added >= len(vocab.Categories) {
+		if added >= lateralCap {
 			break
 		}
 	}

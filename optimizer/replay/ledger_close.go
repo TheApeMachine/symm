@@ -54,9 +54,17 @@ func snapshotsForSymbol(symbol string, snapshots []types.Measurement) []types.Me
 		return nil
 	}
 
-	if snapshots[len(snapshots)-1].Symbol == symbol {
-		return snapshots
+	filtered := make([]types.Measurement, 0, len(snapshots))
+
+	for _, snapshot := range snapshots {
+		if snapshot.Symbol == symbol {
+			filtered = append(filtered, snapshot)
+		}
 	}
 
-	return nil
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
 }

@@ -192,7 +192,7 @@ func (signal *Signal) observeTicker(ticker market.TickerUpdate) error {
 	at, err := tickerTimestamp(ticker)
 
 	if err != nil {
-		return nil
+		return errnie.Error(err, "pumpdump: ticker timestamp %s", ticker.Symbol)
 	}
 
 	state := signal.stateFor(ticker.Symbol)

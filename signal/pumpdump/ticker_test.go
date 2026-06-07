@@ -70,6 +70,10 @@ func TestObserveTicker(t *testing.T) {
 				}
 			}
 
+			if measurement.Strength == 0 {
+				t.Fatalf("timeout waiting for measurement")
+			}
+
 			Convey("It should publish a classified reading for the symbol", func() {
 				So(measurement.Source, ShouldEqual, types.SourcePumpDump)
 				So(measurement.Symbol, ShouldEqual, "ALT/EUR")

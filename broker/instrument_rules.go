@@ -106,10 +106,17 @@ func (cache *InstrumentRulesCache) ingest(value any) {
 }
 
 /*
-InstallPairForTest seeds one pair without a live instrument feed.
+InstallPair seeds one pair without a live instrument feed.
+*/
+func (cache *InstrumentRulesCache) InstallPair(pair market.InstrumentPair) {
+	cache.pairs.Store(pair.Symbol, pair)
+}
+
+/*
+InstallPairForTest is an alias for InstallPair kept for tests.
 */
 func (cache *InstrumentRulesCache) InstallPairForTest(pair market.InstrumentPair) {
-	cache.pairs.Store(pair.Symbol, pair)
+	cache.InstallPair(pair)
 }
 
 /*

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"strings"
+	"time"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -25,7 +26,7 @@ func (crypto *Crypto) quoteAuditFields(action reasoning.Action) map[string]any {
 		quantity = 1
 	}
 
-	return broker.QuoteAuditFields(quote, action.Side, quantity)
+	return broker.QuoteAuditFields(quote, action.Side, quantity, time.Now().UTC())
 }
 
 func (crypto *Crypto) mergeQuoteAudit(frame map[string]any, action reasoning.Action) {

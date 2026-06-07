@@ -35,6 +35,27 @@ func TestTakerFillPriceWalksBook(t *testing.T) {
 	})
 }
 
+func TestTakerFillPriceRejectsZeroDepthCoverage(t *testing.T) {
+	Convey("Given a quote with no walkable depth", t, func() {
+		orders := &Orders{
+			quotes: broker.EnsureQuoteCache(t.Context(), nil),
+		}
+		orders.quotes.InstallQuoteForTest(broker.Quote{
+			Symbol: "BTC/EUR",
+			Last:   100,
+			Bid:    99,
+			Ask:    101,
+		})
+
+		fill, err := orders.takerFillQuote("BTC/EUR", trading.Buy, 1, 0, reasoning.ActionNone)
+
+		Convey("It should return zero filled quantity", func() {
+			So(err, ShouldBeNil)
+			So(fill.filledQty, ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkTakerFillPrice(b *testing.B) {
 	orders := &Orders{
 		quotes: broker.EnsureQuoteCache(b.Context(), nil),

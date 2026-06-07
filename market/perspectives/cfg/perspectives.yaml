@@ -5,20 +5,54 @@ branches:
             - subject: position
               lifecycle: not_holding
               op: equals
-            - subject: signal
-              category: laminar
-              unit: snr
-              op: at_least
-              value: 1
-            - subject: regime
-              regime: bullish
+            - any:
+                - subject: signal
+                  category: vertical_ignition
+                  unit: snr
+                  ago: 1
+                  op: crossed_up
+                  value: 1.5
+                - subject: signal
+                  category: organic_trend
+                  unit: snr
+                  op: at_least
+                  value: 1
+            - subject: price
+              unit: percentage
+              ago: 20
+              op: fell_by
+              value: 2
+      do:
+        type: market
+        fraction: 0.25
+    - when:
+        all:
+            - subject: position
+              lifecycle: holding
               op: equals
-            - subject: signal
-              category: extreme_scarcity
-              unit: snr
-              op: at_least
-              value: 1
-      do: market
+            - any:
+                - subject: signal
+                  category: active_reversal
+                  unit: snr
+                  op: at_least
+                  value: 1
+                - subject: signal
+                  category: faded_exhaustion
+                  unit: snr
+                  op: at_least
+                  value: 1
+      do: settle_position
+    - when:
+        all:
+            - subject: position
+              lifecycle: holding
+              op: equals
+            - subject: position
+              lifecycle: has_started
+              op: equals
+      do:
+        type: stop_loss
+        offset: 0.012
     - when:
         subject: position
         lifecycle: holding

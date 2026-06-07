@@ -17,8 +17,9 @@ func TestAffordableSlots(t *testing.T) {
 	})
 
 	Convey("Given max concurrent above cash slots", t, func() {
+		original := viper.Get("trading.max_concurrent_positions")
 		viper.Set("trading.max_concurrent_positions", 16)
-		defer viper.Set("trading.max_concurrent_positions", nil)
+		defer viper.Set("trading.max_concurrent_positions", original)
 
 		Convey("EntrySlotAvailable should respect both limits", func() {
 			So(EntrySlotAvailable(4, 0.2, 200, 40, 0.0026), ShouldBeTrue)

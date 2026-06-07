@@ -13,6 +13,7 @@ func QuoteAuditFields(
 	quote Quote,
 	side trading.Side,
 	quantity float64,
+	now time.Time,
 ) map[string]any {
 	fields := map[string]any{
 		"bid":        quote.Bid,
@@ -21,8 +22,8 @@ func QuoteAuditFields(
 		"spread_bps": MidSpreadBps(quote) * 2,
 	}
 
-	if !quote.UpdatedAt.IsZero() {
-		fields["quote_age_ms"] = time.Since(quote.UpdatedAt).Milliseconds()
+	if !quote.UpdatedAt.IsZero() && !now.IsZero() {
+		fields["quote_age_ms"] = now.Sub(quote.UpdatedAt).Milliseconds()
 	}
 
 	if quote.Volatility > 0 {

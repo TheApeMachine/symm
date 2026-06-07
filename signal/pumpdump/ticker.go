@@ -35,7 +35,7 @@ func (track *tickerTrack) fold(
 
 	volDelta := ticker.Volume - track.lastVolume
 
-	if volDelta <= 0 {
+	if volDelta <= 0 || ticker.Last == track.lastPrice {
 		track.lastPrice = ticker.Last
 		track.lastVolume = ticker.Volume
 

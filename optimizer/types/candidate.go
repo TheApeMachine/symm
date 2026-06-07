@@ -36,7 +36,7 @@ func (candidate CandidateScore) ReturnPct() float64 {
 		return 0
 	}
 
-	return candidate.ReturnFraction * 100
+	return (candidate.RealizedEUR / candidate.StartingCapital) * 100
 }
 
 func (candidate CandidateScore) AvgTradeEUR() float64 {

@@ -108,6 +108,7 @@ func pumpDipEntrySnapshots() []types.Measurement {
 			Category:   types.CategoryOrganicTrend,
 			Source:     types.SourcePumpDump,
 			Confidence: 0.5,
+			SNR:        1.5,
 		}
 	}
 

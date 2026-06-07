@@ -42,6 +42,30 @@ func InstrumentPairFromREST(pair *Pair) (InstrumentPair, error) {
 
 	qtyIncrement := quantityIncrementFromLotDecimals(pair.LotDecimals)
 
+	if strings.TrimSpace(pair.Base) == "" {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s base is required", symbol)
+	}
+
+	if strings.TrimSpace(pair.Quote) == "" {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s quote is required", symbol)
+	}
+
+	if strings.TrimSpace(pair.Status) == "" {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s status is required", symbol)
+	}
+
+	if qtyMin <= 0 {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s ordermin must be positive", symbol)
+	}
+
+	if costMin <= 0 {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s costmin must be positive", symbol)
+	}
+
+	if priceIncrement <= 0 {
+		return InstrumentPair{}, fmt.Errorf("kraken/market: %s tick_size must be positive", symbol)
+	}
+
 	return InstrumentPair{
 		Symbol:         symbol,
 		Base:           pair.Base,

@@ -36,7 +36,7 @@ func TestReplayShortEntry(t *testing.T) {
 			)
 
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-3)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-9)
 		})
 	})
 }

@@ -49,7 +49,7 @@ func (cache *InstrumentRulesCache) LoadFromAssetPairs(pairs market.AssetPairs) i
 			continue
 		}
 
-		cache.InstallPairForTest(instrument)
+		cache.InstallPair(instrument)
 		loaded++
 	}
 

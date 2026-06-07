@@ -50,7 +50,7 @@ OpenAudit returns the shared audit writer for the configured path, refcounted pe
 */
 func (runtime *Runtime) OpenAudit() (*audit.Writer, error) {
 	if runtime == nil || runtime.Audit == nil {
-		return nil, nil
+		return nil, fmt.Errorf("runtime: audit writer pool is not configured")
 	}
 
 	return runtime.Audit.OpenConfigured()

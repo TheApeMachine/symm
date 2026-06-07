@@ -82,6 +82,10 @@ func (orders *Orders) takerFillQuote(
 
 	filledQty := qty
 
+	if fill.DepthCoverage <= 0 {
+		filledQty = 0
+	}
+
 	if fill.DepthCoverage > 0 && fill.DepthCoverage < 1 {
 		filledQty = qty * fill.DepthCoverage
 	}

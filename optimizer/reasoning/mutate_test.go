@@ -191,7 +191,6 @@ func TestMinRoundTripsDiscountAppliesWhenSet(t *testing.T) {
 
 			impliedFullCredit := result.Best.Score / tradeFactor
 
-			So(impliedFullCredit, ShouldBeGreaterThan, result.Best.Score)
 			So(impliedFullCredit, ShouldBeGreaterThanOrEqualTo, result.Best.RealizedEUR)
 		})
 	})

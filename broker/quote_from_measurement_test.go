@@ -23,6 +23,8 @@ func TestQuoteFromMeasurement(t *testing.T) {
 		So(quote.Symbol, ShouldEqual, "BTC/EUR")
 		So(quote.Bid, ShouldEqual, 99)
 		So(quote.Ask, ShouldEqual, 101)
+		So(quote.Last, ShouldEqual, 100)
+		So(MidSpreadBps(quote)*2, ShouldAlmostEqual, 200, 1e-9)
 		So(quote.UpdatedAt, ShouldEqual, at)
 	})
 

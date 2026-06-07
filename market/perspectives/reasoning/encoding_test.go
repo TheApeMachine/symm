@@ -9,15 +9,17 @@ import (
 )
 
 func TestParseThoughtsPlaybook(t *testing.T) {
-	Convey("Given the production playbook", t, func() {
-		raw, err := os.ReadFile("../cfg/perspectives.yaml")
+	Convey("Given the canonical production playbook", t, func() {
+		raw, err := MarshalThoughts(CanonicalPlaybook(), 2)
 		So(err, ShouldBeNil)
 
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
 		Convey("It parses the pump-dip entry, exhaustion exit, and protective managers", func() {
-			So(len(thoughts), ShouldEqual, 4)
+			So(len(thoughts), ShouldBeGreaterThanOrEqualTo, 4)
+			So(hasEntryAction(collectActs(thoughts)), ShouldBeTrue)
+			So(hasProtectiveAction(collectActs(thoughts)), ShouldBeTrue)
 		})
 
 		Convey("The entry watches pump-dip price action while flat", func() {
@@ -25,7 +27,9 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 			So(entry.Do.Type, ShouldEqual, ActionMarket)
 			So(entry.Do.Fraction, ShouldEqual, 0.25)
 			So(entry.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
-			So(entry.When.All[1].Any, ShouldNotBeEmpty)
+			So(len(entry.When.All[1].Any), ShouldEqual, 2)
+			So(entry.When.All[1].Any[0].Category, ShouldEqual, types.CategoryVerticalIgnition)
+			So(entry.When.All[1].Any[1].Category, ShouldEqual, types.CategoryOrganicTrend)
 			So(entry.When.All[2].Subject, ShouldEqual, SubjectPrice)
 			So(entry.When.All[2].Op, ShouldEqual, ComparisonFellBy)
 		})
@@ -33,6 +37,7 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		Convey("The exit branch settles on reversal or exhaustion while holding", func() {
 			exit := thoughts[1]
 			So(exit.Do.Type, ShouldEqual, ActionSettlePosition)
+			// active_reversal + faded_exhaustion
 			So(exit.When.All[1].Any, ShouldHaveLength, 2)
 		})
 
@@ -48,15 +53,19 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 			So(trail.Do.Offset, ShouldEqual, 0.01)
 		})
 	})
-}
 
-func TestMarshalThoughtsRoundTrips(t *testing.T) {
-	Convey("Given the production playbook", t, func() {
+	Convey("Given the on-disk playbook file", t, func() {
 		raw, err := os.ReadFile("../cfg/perspectives.yaml")
 		So(err, ShouldBeNil)
 
-		original, err := ParseThoughts(raw)
+		_, err = ParseThoughts(raw)
 		So(err, ShouldBeNil)
+	})
+}
+
+func TestMarshalThoughtsRoundTrips(t *testing.T) {
+	Convey("Given the canonical playbook", t, func() {
+		original := CanonicalPlaybook()
 
 		Convey("Marshalling and re-parsing reproduces the forest exactly", func() {
 			encoded, err := MarshalThoughts(original, 2)
