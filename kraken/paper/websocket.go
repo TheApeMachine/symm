@@ -119,28 +119,36 @@ func (ws *WebSocket) Tick() (err error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Periodic holdings snapshots let the trader re-reconcile inventory against
+	// the wallet (a lost execution frame otherwise diverges them until restart).
+	holdings := time.NewTicker(5 * time.Second)
+	defer holdings.Stop()
+
 	publishedInitialWallet := false
 	private := ws.subscribers["kraken:private"]
+
+	// Network latency is modeled PER ORDER by the order engine (pendingTakers
+	// hold fills until their one-way latency elapses). The previous time.Sleep
+	// here stalled the entire matching engine — trigger checks included — for
+	// every simulated packet, which models nothing real.
+	matchTick := func() {
+		if !publishedInitialWallet {
+			ws.balances.PublishUI()
+			publishedInitialWallet = true
+		}
+
+		ws.orders.CheckPending()
+		ws.orders.CheckTriggers()
+	}
 
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
+		case <-holdings.C:
+			ws.balances.PublishHoldingsSnapshot()
 		case <-ticker.C:
-			if !publishedInitialWallet {
-				ws.balances.PublishUI()
-				publishedInitialWallet = true
-			}
-
-			ws.orders.CheckPending()
-			ws.orders.CheckTriggers()
-
-			latency, _ := ws.latencies.Value.(time.Duration)
-			if latency > 0 {
-				time.Sleep(latency)
-			}
-
-			ws.latencies = ws.latencies.Next()
+			matchTick()
 		default:
 			message := private.Poll()
 
@@ -148,21 +156,10 @@ func (ws *WebSocket) Tick() (err error) {
 				select {
 				case <-ws.ctx.Done():
 					return ws.err
+				case <-holdings.C:
+					ws.balances.PublishHoldingsSnapshot()
 				case <-ticker.C:
-					if !publishedInitialWallet {
-						ws.balances.PublishUI()
-						publishedInitialWallet = true
-					}
-
-					ws.orders.CheckPending()
-					ws.orders.CheckTriggers()
-
-					latency, _ := ws.latencies.Value.(time.Duration)
-					if latency > 0 {
-						time.Sleep(latency)
-					}
-
-					ws.latencies = ws.latencies.Next()
+					matchTick()
 				case <-time.After(2 * time.Millisecond):
 				}
 

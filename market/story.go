@@ -23,6 +23,12 @@ import (
 const (
 	storyMeasurementsSubscriberID  = "market:story"
 	defaultStoryDecisionMinSamples = 1
+	// playbookRecheckInterval paces playbook file probes while none is loaded.
+	playbookRecheckInterval = 5 * time.Second
+	// decisionTreePublishInterval paces the full-tree dashboard frame. The tree
+	// was previously rebuilt and broadcast per measurement — the story's largest
+	// allocation source and a firehose at the hub.
+	decisionTreePublishInterval = 250 * time.Millisecond
 )
 
 /*
@@ -57,13 +63,15 @@ type Story struct {
 	quoteReady              func(string) bool
 	positionHeld            func(string) bool
 
-	decisionTree    []reasoning.TreeNode
-	nodeReached     map[string]int
-	nodeHeld        map[string]int
-	decisionEvals   int
-	recentDecisions []map[string]any
-	reasonTrace     reasoning.ReasonTrace
-	condHeld        map[string][]int
+	decisionTree      []reasoning.TreeNode
+	nodeReached       map[string]int
+	nodeHeld          map[string]int
+	decisionEvals     int
+	recentDecisions   []map[string]any
+	reasonTrace       reasoning.ReasonTrace
+	condHeld          map[string][]int
+	playbookCheckedAt time.Time
+	treePublishedAt   time.Time
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q[any]) (*Story, error) {
@@ -142,6 +150,11 @@ func NewStoryWithAudit(ctx context.Context, pool *qpool.Q[any], auditWriter *aud
 	recordPath := viper.GetViper().GetString("trading.record.file")
 
 	if recordPath != "" {
+		// Preserve the previous capture instead of truncating it: a day of
+		// recorded market history (yesterday's only profitable session, say)
+		// must not vanish because someone restarted the engine.
+		rotateExistingCapture(recordPath)
+
 		fh, err := os.Create(recordPath)
 
 		if err != nil {
@@ -231,12 +244,19 @@ func (story *Story) ingestMeasurement(
 	}
 
 	if len(story.thoughts) == 0 {
-		if story.thoughts, story.err = story.loadThoughts(); story.err != nil {
-			return errnie.Error(story.err)
-		}
+		// Re-check for a playbook on a cadence, not on every measurement: at
+		// thousands of measurements per second the miss path was a continuous
+		// stream of os.ReadFile syscalls.
+		if time.Since(story.playbookCheckedAt) >= playbookRecheckInterval {
+			story.playbookCheckedAt = time.Now()
 
-		story.decisionTree = reasoning.BuildTree(story.thoughts)
-		story.publishDecisionTree()
+			if story.thoughts, story.err = story.loadThoughts(); story.err != nil {
+				return errnie.Error(story.err)
+			}
+
+			story.decisionTree = reasoning.BuildTree(story.thoughts)
+			story.publishDecisionTree()
+		}
 	}
 
 	story.rememberMeasurement(measurement)
@@ -399,6 +419,12 @@ func (story *Story) publishDecisionTree() {
 		return
 	}
 
+	if time.Since(story.treePublishedAt) < decisionTreePublishInterval {
+		return
+	}
+
+	story.treePublishedAt = time.Now()
+
 	nodes := make([]map[string]any, 0, len(story.decisionTree))
 
 	for index := range story.decisionTree {
@@ -552,6 +578,33 @@ func (story *Story) publishMarketRegime() {
 		"bearish":    axes[perspectives.RegimeAxisBearish],
 		"choppiness": axes[perspectives.RegimeAxisChoppiness],
 	}})
+}
+
+/*
+rotateExistingCapture renames a non-empty capture aside with its mtime stamp so
+`make run --record` appends history instead of destroying it. Tune still reads
+the configured path (the freshest capture); older sessions stay on disk.
+*/
+func rotateExistingCapture(path string) {
+	info, err := os.Stat(path)
+
+	if err != nil || info.Size() == 0 {
+		return
+	}
+
+	rotated := fmt.Sprintf(
+		"%s.%s",
+		path,
+		info.ModTime().UTC().Format("20060102T150405Z"),
+	)
+
+	if err := os.Rename(path, rotated); err != nil {
+		errnie.Error(fmt.Errorf("story: rotate capture %q: %w", path, err), "story")
+
+		return
+	}
+
+	errnie.Info("rotated previous capture to "+rotated, "market/story")
 }
 
 // loadThoughts reads the reasoning playbook the optimizer writes. A missing file

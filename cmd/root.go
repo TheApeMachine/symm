@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -18,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/runstats"
 	"github.com/theapemachine/symm/runtime"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -88,6 +93,12 @@ var (
 				return err
 			}
 
+			// Stamp the EFFECTIVE config (post-merge, post-flags) into the run
+			// directory and the audit prologue: yesterday's audit shows gates
+			// (spread 60bps) that no checked-in config contains — runs and tunes
+			// must be attributable to the exact configuration they executed.
+			stampEffectiveConfig(auditWriter)
+
 			crypto := trader.NewCryptoWithCaches(
 				systemCtx,
 				pool,
@@ -113,12 +124,38 @@ var (
 				"engine",
 			)
 
+			// Silence must be loud: the watchdog pages (and halts order flow) when
+			// inputs that should be flowing aren't — the failure shape of the
+			// 2026-06-07 quote-cache severance, which ran blind for an hour.
+			watchdog := runstats.NewWatchdog(systemCtx, 10*time.Second, func(name, detail string) {
+				errnie.Error(fmt.Errorf("watchdog trip: %s — halting order flow: %s", name, detail))
+				crypto.Desk().TripHalt()
+			})
+
+			watchdog.Expect("quote-cache-ingest", 30*time.Second, true, runstats.RateExpectation(
+				func() uint64 {
+					_, ingested := services.Quotes.IngestStats()
+
+					return ingested
+				},
+				public.RawFramesPublished,
+			))
+
+			watchdog.Expect("audit-writer", 0, true, func() (bool, string) {
+				if err := auditWriter.Err(); err != nil {
+					return false, err.Error()
+				}
+
+				return true, ""
+			})
+
 			apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
 			apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
 
 			if err := engine.AddSystems(
 				ui.NewHub(systemCtx, pool),
 				public.NewWebSocket(systemCtx, pool, streams),
+				watchdog,
 			); err != nil {
 				return err
 			}
@@ -196,6 +233,50 @@ func initConfig() {
 	if err := loadDefaultConfigs(); err != nil {
 		fmt.Fprintf(os.Stderr, "symm: config: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+/*
+stampEffectiveConfig persists the merged viper state with a content hash so every
+capture, audit trail, and tune is attributable to the exact configuration that
+produced it.
+*/
+func stampEffectiveConfig(auditWriter *audit.Writer) {
+	raw, err := json.MarshalIndent(viper.AllSettings(), "", "  ")
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	digest := sha256.Sum256(raw)
+	hash := hex.EncodeToString(digest[:8])
+
+	if err := os.MkdirAll("runs", 0o755); err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	path := "runs/effective-config.json"
+
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	errnie.Info("effective config "+hash+" -> "+path, "engine")
+
+	if auditWriter != nil {
+		if err := auditWriter.Write(map[string]any{
+			"audit_event": "session_config",
+			"config_sha":  hash,
+			"path":        path,
+		}); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 

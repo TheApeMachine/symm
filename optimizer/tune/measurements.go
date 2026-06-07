@@ -54,6 +54,36 @@ func TuneMeasurements(
 		)
 	}
 
+	rows = normalizeRowOrder(rows)
+
+	if err := tapeSanity(rows); err != nil {
+		return types.SessionSummary{}, err
+	}
+
+	fundableCount := len(rows)
+	trainRows, testRows := splitHoldout(rows, holdoutFraction(), holdoutEmbargo())
+
+	if len(testRows) > 0 && len(testRows) < minHoldoutRows {
+		// A holdout too small to validate on must not also rob the search of its
+		// tail — train on everything and mark the result unvalidated instead.
+		log.TuneLog(
+			"holdout tail too small to validate (%d rows < %d) — training on the full tape",
+			len(testRows), minHoldoutRows,
+		)
+		trainRows, testRows = rows, nil
+	}
+
+	if len(testRows) > 0 {
+		log.TuneLog(
+			"walk-forward split: %d train rows, %d holdout rows (embargo %s)",
+			len(trainRows), len(testRows), holdoutEmbargo(),
+		)
+	} else {
+		log.TuneLog("WARNING: holdout disabled — selection is in-sample only")
+	}
+
+	rows = trainRows
+
 	log.TuneLog("searching reasoning forests over %d rows", len(rows))
 
 	config := reasoning.SearchConfig{
@@ -120,15 +150,41 @@ func TuneMeasurements(
 		})
 	}
 
-	if options.OutputPath != "" && shouldWrite(best) {
+	verdict := evaluateHoldout(
+		ctx,
+		best.Forest,
+		best.RealizedEUR,
+		best.Trades,
+		testRows,
+		costs,
+		options.Workers,
+	)
+
+	if verdict.Enabled {
+		log.TuneLog(
+			"holdout: trades=%d realized_eur=%.4f return=%.6f decay=%.3f stressed_eur=%.4f — %s",
+			verdict.TestTrades,
+			verdict.TestRealized,
+			verdict.TestReturn,
+			verdict.Decay,
+			verdict.StressRealized,
+			verdict.Reason,
+		)
+	} else {
+		log.TuneLog("%s", verdict.Reason)
+	}
+
+	if options.OutputPath != "" && shouldWrite(best) && verdict.Publish {
 		if err := io.WriteThoughts(options.OutputPath, best.Forest); err != nil {
 			return types.SessionSummary{}, err
 		}
+	} else if shouldWrite(best) && !verdict.Publish {
+		log.TuneLog("not writing candidate: %s", verdict.Reason)
 	}
 
 	return types.SessionSummary{
 		MeasurementCount:     measurementCount,
-		FundableMeasurements: len(rows),
+		FundableMeasurements: fundableCount,
 		MinRoundTrips:        minRoundTrips,
 		Strategies:           strategies,
 		Nodes:                best.Nodes,
@@ -136,6 +192,10 @@ func TuneMeasurements(
 		Evaluated:            result.Evaluated,
 		BestReturn:           best.Return,
 		BestScore:            best.Score,
+		HoldoutTrades:        verdict.TestTrades,
+		HoldoutReturn:        verdict.TestReturn,
+		HoldoutDecay:         verdict.Decay,
+		HoldoutPublished:     verdict.Publish,
 	}, nil
 }
 

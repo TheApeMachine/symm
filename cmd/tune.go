@@ -33,6 +33,13 @@ var tuneCmd = &cobra.Command{
 		options.OutputPath = tunePerspectivesPath()
 		options.CandidateReportPath = tuneCandidateReportPath(cmd)
 		options.MaxMeasurements = maxMeasurements
+		options.BeamWidth, _ = cmd.Flags().GetInt(tuneBeamWidthFlag)
+		options.MaxRounds, _ = cmd.Flags().GetInt(tuneMaxRoundsFlag)
+		options.MaxNodes, _ = cmd.Flags().GetInt(tuneMaxNodesFlag)
+
+		if workers, _ := cmd.Flags().GetInt(tuneWorkersFlag); workers > 0 {
+			options.Workers = workers
+		}
 
 		optimizer.TuneLog("loading measurements from %s", path)
 
@@ -105,6 +112,26 @@ func init() {
 		0,
 		"maximum valid measurement rows to load from the capture before tuning; 0 loads all rows",
 	)
+	tuneCmd.Flags().Int(
+		tuneBeamWidthFlag,
+		0,
+		"beam width for the forest search; 0 uses the search default",
+	)
+	tuneCmd.Flags().Int(
+		tuneMaxRoundsFlag,
+		0,
+		"maximum expansion rounds; 0 uses the search default",
+	)
+	tuneCmd.Flags().Int(
+		tuneMaxNodesFlag,
+		0,
+		"maximum nodes per forest; 0 uses the search default",
+	)
+	tuneCmd.Flags().Int(
+		tuneWorkersFlag,
+		0,
+		"parallel scoring workers; 0 uses all CPUs",
+	)
 }
 
 const tuneLong = `
@@ -120,6 +147,10 @@ with closed round trips appears.
 const defaultPerspectivesOutputPath = "market/perspectives/cfg/perspectives.yaml"
 const tuneCandidateReportFlag = "candidate-report"
 const tuneMaxMeasurementsFlag = "max-measurements"
+const tuneBeamWidthFlag = "beam-width"
+const tuneMaxRoundsFlag = "max-rounds"
+const tuneMaxNodesFlag = "max-nodes"
+const tuneWorkersFlag = "workers"
 
 func tuneMeasurementPath() (string, error) {
 	path := strings.TrimSpace(viper.GetString("trading.record.file"))

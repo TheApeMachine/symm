@@ -70,14 +70,19 @@ func TestReplayTriggerExits(t *testing.T) {
 			So(ledger.realizedReturn(), ShouldAlmostEqual, -0.03, 1e-3)
 		})
 
-		Convey("A stop-loss-LIMIT fills at its trigger level (no gap-through), paying maker fee", func() {
+		Convey("A stop-loss-LIMIT does NOT fill on a gap through its level — that is its crash risk", func() {
 			costs := triggerTestCosts()
 			costs.MakerFeePct = 0.001 // 0.1%
 			ledger := newReplayLedger(costs)
 			ledger.openLong("BTC/EUR", 100, 0, time.Time{})
 			ledger.armTrigger("BTC/EUR", reasoning.Act{Type: reasoning.ActionStopLossLimit})
 
-			ledger.checkTriggers(btcRow(97)) // gaps through, but the resting limit fills at 98
+			ledger.checkTriggers(btcRow(97)) // gaps below 98: no buyer at the limit, stays open
+			So(ledger.holding("BTC/EUR"), ShouldBeTrue)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0, 1e-9)
+
+			ledger.checkTriggers(btcRow(98)) // a print AT the level is a buyer there — fills at 98
+			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
 			// fill 98 less the maker fee on the exit proceeds, over €100 capital.
 			So(ledger.realizedReturn(), ShouldAlmostEqual, (98.0*(1-0.001)-100.0)/100.0, 1e-9)
 		})

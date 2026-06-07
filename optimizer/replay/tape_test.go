@@ -49,11 +49,44 @@ func TestReplayTapeAppendSnapshot(t *testing.T) {
 		tape := mustPrecompileTape(t, rows)
 		snapshots := tape.AppendSnapshot(3, make([]types.Measurement, 0, 4))
 
-		convey.Convey("It should return chronological global and matching-symbol rows only", func() {
+		convey.Convey("It should return exactly the symbol's own chronological window, matching the live story ring", func() {
+			// market/story.rememberMeasurement keeps a per-symbol ring; rows with
+			// no symbol never enter any live window, so replay must exclude them
+			// too — otherwise replay reasons over context live never sees.
+			convey.So(len(snapshots), convey.ShouldEqual, 2)
+			convey.So(snapshots[0].SNR, convey.ShouldEqual, 1)
+			convey.So(snapshots[1].SNR, convey.ShouldEqual, 4)
+		})
+	})
+}
+
+func TestReplayTapeWindowIsPerSymbolOccurrences(t *testing.T) {
+	convey.Convey("Given a sparse symbol interleaved with a dense one", t, func() {
+		testconfig.Load(t)
+
+		// 2048 dense rows interleaved with 3 sparse rows. Under the old global
+		// window the sparse symbol kept ~buffer/symbols rows of context; live it
+		// keeps its own last buffer readings regardless of how long ago they
+		// happened. The snapshot must contain ALL THREE sparse readings.
+		rows := make([]types.Measurement, 0, 2053)
+		rows = append(rows, types.Measurement{Symbol: "SPARSE/EUR", SNR: 1, Last: 1})
+
+		for index := range 2048 {
+			rows = append(rows, types.Measurement{Symbol: "DENSE/EUR", SNR: float64(index), Last: 100})
+		}
+
+		rows = append(rows, types.Measurement{Symbol: "SPARSE/EUR", SNR: 2, Last: 1.1})
+		rows = append(rows, types.Measurement{Symbol: "DENSE/EUR", SNR: 9999, Last: 100})
+		rows = append(rows, types.Measurement{Symbol: "SPARSE/EUR", SNR: 3, Last: 1.2})
+
+		tape := mustPrecompileTape(t, rows)
+		snapshots := tape.AppendSnapshot(len(rows)-1, nil)
+
+		convey.Convey("It should keep the sparse symbol's full history within the ring capacity", func() {
 			convey.So(len(snapshots), convey.ShouldEqual, 3)
 			convey.So(snapshots[0].SNR, convey.ShouldEqual, 1)
 			convey.So(snapshots[1].SNR, convey.ShouldEqual, 2)
-			convey.So(snapshots[2].SNR, convey.ShouldEqual, 4)
+			convey.So(snapshots[2].SNR, convey.ShouldEqual, 3)
 		})
 	})
 }

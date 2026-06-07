@@ -16,11 +16,29 @@ import (
 // pullback past a 2% trail off the peak — so entering on the signal and riding a
 // trailing stop locks in the run.
 func upLeg(start float64, at time.Time, step time.Duration) []types.Measurement {
+	signal := quotedFixtureRow(start, at)
+	signal.Category = types.CategoryVerticalIgnition
+	signal.SNR = 1.5
+
 	return []types.Measurement{
-		{Symbol: "BTC/EUR", Category: types.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
-		{Symbol: "BTC/EUR", Last: start * 1.05, At: at.Add(step)},
-		{Symbol: "BTC/EUR", Last: start * 1.10, At: at.Add(2 * step)},
-		{Symbol: "BTC/EUR", Last: start * 1.07, At: at.Add(3 * step)}, // pulls back through the trail
+		signal,
+		quotedFixtureRow(start*1.05, at.Add(step)),
+		quotedFixtureRow(start*1.10, at.Add(2*step)),
+		quotedFixtureRow(start*1.07, at.Add(3*step)), // pulls back through the trail
+	}
+}
+
+// quotedFixtureRow carries the L2 depth replay entries require: fills walk the
+// book, so a fixture without depth can never open a position.
+func quotedFixtureRow(price float64, at time.Time) types.Measurement {
+	return types.Measurement{
+		Symbol:   "BTC/EUR",
+		Last:     price,
+		At:       at,
+		Bid:      price * 0.9995,
+		Ask:      price * 1.0005,
+		BookBids: []types.BookLevel{{Price: price * 0.9995, Qty: 1_000}},
+		BookAsks: []types.BookLevel{{Price: price * 1.0005, Qty: 1_000}},
 	}
 }
 

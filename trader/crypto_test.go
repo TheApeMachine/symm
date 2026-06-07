@@ -396,6 +396,13 @@ func TestRecordPositionCloseAudit(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
+		// The trader-side estimate is the LIVE-mode path; paper outcomes are
+		// wallet-sourced via observeOutcome (the wallet knows the fee-inclusive
+		// basis and sees protective closes the trader never initiated).
+		previousModel := viper.GetString("trading.model")
+		viper.Set("trading.model", "live")
+		defer viper.Set("trading.model", previousModel)
+
 		writerPool := audit.NewWriterPool()
 		writer, err := writerPool.OpenConfigured()
 		So(err, ShouldBeNil)

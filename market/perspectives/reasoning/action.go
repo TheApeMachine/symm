@@ -34,6 +34,7 @@ type Action struct {
 	Regime     types.Regime // price-action regime observed when the action was emitted
 	SNR        float64      // signal surprise at emission; drives conviction-ranked capital allocation
 	Confidence float64      // selection confidence at emission
+	ClOrdID    string       // client order id the desk stamped at submission; lets the trader cancel resting orders on close
 }
 
 /*

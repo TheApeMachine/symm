@@ -12,6 +12,7 @@ import (
 
 func TestExecutionFillMeasurement(t *testing.T) {
 	Convey("Given a pending signal row and a later market row", t, func() {
+		ledger := newReplayLedger(triggerTestCosts())
 		signalRow := types.Measurement{
 			Symbol:    "BTC/EUR",
 			Last:      100,
@@ -25,7 +26,7 @@ func TestExecutionFillMeasurement(t *testing.T) {
 			At:        time.Unix(2, 0),
 		}
 
-		fillRow := executionFillMeasurement(signalRow, currentRow)
+		fillRow := ledger.executionFillMeasurement(signalRow, currentRow)
 
 		Convey("It should carry the current price and spread into the fill", func() {
 			So(fillRow.Last, ShouldEqual, 101)
@@ -34,9 +35,21 @@ func TestExecutionFillMeasurement(t *testing.T) {
 		})
 
 		Convey("It should fall back to the signal row without a usable current price", func() {
-			fillRow = executionFillMeasurement(signalRow, types.Measurement{Symbol: "ETH/EUR", Last: 50})
+			fillRow = ledger.executionFillMeasurement(signalRow, types.Measurement{Symbol: "ETH/EUR", Last: 50})
 
 			So(fillRow.Last, ShouldEqual, 100)
+		})
+
+		Convey("It should fill at the signal symbol's latest observed price when latency expires on another symbol's row", func() {
+			// The signal symbol moved 100 -> 105 during the latency window; the
+			// expiring tick belongs to ETH. The fill must see 105, not the stale
+			// signal-time 100 (zero-drift latency was the pre-fix optimism).
+			ledger.observeSymbolPrice("BTC/EUR", 105)
+
+			fillRow = ledger.executionFillMeasurement(signalRow, types.Measurement{Symbol: "ETH/EUR", Last: 50, At: time.Unix(3, 0)})
+
+			So(fillRow.Symbol, ShouldEqual, "BTC/EUR")
+			So(fillRow.Last, ShouldEqual, 105)
 		})
 	})
 }

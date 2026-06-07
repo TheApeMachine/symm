@@ -146,13 +146,13 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	tape := NewTape()
 	tape.Subscribe(ctx, pool)
 
-	measureBus, err := qpool.NewBroadcastGroup(ctx, "measurements", 10*time.Millisecond)
+	measureBus := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
 
-	if err != nil {
+	if measureBus == nil {
 		cancel()
 		pool.Close()
 
-		return nil, fmt.Errorf("integration harness: new broadcast group: %w", err)
+		return nil, fmt.Errorf("integration harness: measurements broadcast group unavailable")
 	}
 
 	harness := &Harness{
@@ -370,9 +370,10 @@ type captureFrame struct {
 
 func (harness *Harness) playCapture() error {
 	reader := bufio.NewReader(harness.capture)
-	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
-	if err != nil {
-		return fmt.Errorf("integration capture: new broadcast group: %w", err)
+	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
+		return fmt.Errorf("integration capture: raw broadcast group unavailable")
 	}
 
 	for {
@@ -385,9 +386,10 @@ func (harness *Harness) playCapture() error {
 				return err
 			}
 
-			group, err := qpool.NewBroadcastGroup(harness.ctx, frame.Channel, 10*time.Millisecond)
-			if err != nil {
-				return fmt.Errorf("integration capture: new broadcast group: %w", err)
+			group := harness.pool.CreateBroadcastGroup(frame.Channel, 10*time.Millisecond)
+
+			if group == nil {
+				return fmt.Errorf("integration capture: %q broadcast group unavailable", frame.Channel)
 			}
 			envelope := map[string]any{
 				"channel": frame.Channel,
@@ -487,9 +489,9 @@ func (harness *Harness) publishHeldPositions(symbols []string) {
 		})
 	}
 
-	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
+	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
 
-	if err != nil {
+	if raw == nil {
 		return
 	}
 

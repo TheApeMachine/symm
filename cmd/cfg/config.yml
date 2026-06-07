@@ -64,8 +64,10 @@ trading:
     # Hold concurrent entry signals for this window, rank by SNR×confidence, then deploy.
     # Defaults to market.subscribe_pace when unset.
     batch_window: 50ms
-    # When capacity is full, exit the weakest open position if the new signal beats it.
+    # When capacity is full, exit the weakest open position if the new signal beats it
+    # by preemption_margin (a full round trip of costs demands a decisive challenger).
     preemption_enabled: true
+    preemption_margin: 1.5
   paper:
     wallet_eur: 200
     # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.
@@ -89,6 +91,10 @@ optimizer:
     # Fetch Kraken AssetPairs at tune start so replay enforces the same minimums as the desk.
     load_instrument_rules: true
     candidate_report: ""
+    # Walk-forward holdout: tail fraction reserved for out-of-sample validation;
+    # the winner must reproduce there (and under +50% costs) before publishing.
+    holdout_fraction: 0.25
+    max_holdout_decay: 0.5
   search:
     # Explore "in regime X do Y" branches. When off, the regime axis collapses to
     # RegimeNone (legacy behaviour) and the MCTS move set shrinks ~6x.

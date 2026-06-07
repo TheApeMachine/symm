@@ -18,8 +18,9 @@ func (harness *Harness) InjectTrade(trade market.TradeUpdate) {
 		trade.Timestamp = time.Now().UTC()
 	}
 
-	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
 		return
 	}
 
@@ -39,8 +40,9 @@ func (harness *Harness) InjectTrade(trade market.TradeUpdate) {
 InjectTicker publishes one ticker frame onto the shared raw bus after replay.
 */
 func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
-	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
 		return
 	}
 
@@ -68,8 +70,9 @@ func (harness *Harness) InjectTicker(ticker market.TickerUpdate) {
 InjectBook publishes one book snapshot onto the shared raw bus.
 */
 func (harness *Harness) InjectBook(book market.Book) {
-	raw, err := qpool.NewBroadcastGroup(harness.ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	raw := harness.pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
 		return
 	}
 

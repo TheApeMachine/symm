@@ -1,0 +1,51 @@
+# Remediation log — SYSTEM_REVIEW.md findings
+
+**Date:** 2026-06-07, same session as the review. Every item below was implemented, built (`go build ./...` clean), and `go vet`-clean against Go 1.26.3 with the published dependency pins. Test status per package at the bottom — read its caveats; they matter.
+
+## P0
+
+**§1 Bus severance (the live incident).** `broker/quote.go`, `broker/instrument_rules.go`, `broker/stress.go` now attach through the pool registry (`pool.CreateBroadcastGroup`) with explicit subscriber IDs, and every subscription failure logs loudly instead of `return`-ing into silence. The stress cache also stops using `pool.Subscribe`, which returned nil whenever the group didn't exist yet (startup race) and used a 10-slot drop-oldest ring. The integration harness, raw relay, observer tape, and inject helpers (6 files, 11 call sites) were moved off detached `qpool.NewBroadcastGroup` onto the pool registry, so the e2e suite exercises the same bus production uses. `QuoteCache` now exposes `IngestStats()` (frames seen / quotes folded) for the watchdog.
+
+**§2.1 Spread-erasing stressed fills.** `execution.StressedFillQuote` now takes the achieved book-walk price as its anchor and applies only the *extra* stress on top (`multiplier−1` plus the shortfall term); `broker.applyExecutionStress` anchors at `fill.Price` with a side-touch fallback (`sideTouchPrice`). A stressed fill can no longer be better than the touch. Regression test `TestStressedFillNeverInsideTheTouch` (broker) pins it for paper and replay paths: calm buy ≥ ask, calm sell ≤ bid.
+
+**§3.1 In-sample-only optimizer.** `optimizer/tune` now runs walk-forward validation (`holdout.go`): chronological tail holdout (default 25%, `optimizer.tune.holdout_fraction`), embargo equal to the prediction horizon, the winner rescored out-of-sample, gated on closed holdout trades, positive holdout PnL, per-trade decay ≤ `max_holdout_decay` (default 0.5, via the previously-dead `replay.HoldoutDecay`), and survival under +50% fees/slippage (`stressedCosts`). A candidate failing any gate is **not written** to the live playbook, with the reason logged; tiny tapes train on everything and are loudly marked unvalidated. `SessionSummary` gained `holdout_trades/holdout_return/holdout_decay/published`. Also: `tapeSanity` refuses a bookless tape outright (today's 17.6M-row capture would now abort the tune with an explanation instead of silently scoring zero trades) and logs per-source row coverage; `normalizeRowOrder` stable-sorts out-of-order timestamps.
+
+## P1
+
+**§2.2 Latency fills at stale prices.** `replayLedger.executionFillMeasurement` resolves cross-symbol latency expiry through `measurementForSymbol` — the signal symbol's most recently observed quoted state at expiry — instead of the signal-time price, carrying the signal row's book when the resolved row lacks one. New test case: fill sees the symbol's 105, not the stale 100, when the timer expires on another symbol's tick.
+
+**§3.2 Replay window ≠ live window.** `mergeSnapshotIndices` now windows by *per-symbol occurrence count* (the symbol's last `story.measurements.buffer` readings) exactly as `story.rememberMeasurement` does, and excludes symbol-less rows (live never windows them). `TestReplayTapeWindowIsPerSymbolOccurrences` pins the sparse-symbol case the old global window broke; the old test asserting global-row inclusion was updated to the live-matching contract.
+
+**§4.1 SNR scale glued from two regimes.** `numeric/adaptive/snr.go` warmup now scores `value/(value+minStd)` — saturating in (0,1) on the steady-state scale — instead of `value/minStd` (the 15–20 pseudo-sigma cold-start artifact, 2,583 rows in today's capture). A warmup reading can never pass an `snr ≥ 1` gate, removing the optimizer's cold-start bait. The ≈0.5047 steady-state fixed point is now documented at the formula.
+
+**§5.3 Outcomes, audit durability.** Paper outcomes are wallet-sourced: `Balances.ApplyFill` returns a `FillOutcome` (realized, fee-inclusive entry basis), `Executions.publishOutcome` ships a `position_outcome` frame for *every* settling sell — protective triggers and preemptions included — and the trader audits it (`observeOutcome`). The trader's entry-fee-blind estimate is retained for live mode only. The audit writer no longer fail-stops on the first I/O error: it reopens and retries (`Reopen`), latching only after 32 consecutive failures, and flushes every second via a sentinel so the tail survives crashes.
+
+**§5.1 Wedged in-flight symbols.** `pendingSince` + `expireStalePending`: an execution envelope that never arrives within `4×order_ack_timeout` (floor 2s) clears the marker, writes a `lost_execution` audit frame, cools the symbol; the paper wallet now publishes holdings snapshots every 5s so `reconcilePositions` heals divergence. The paper wallet itself gained the mutex it always needed (fills mutate it from two goroutines).
+
+**§5.4 + §2.4 Websocket liveness and the zero-latency profile.** Public ws: 30s read deadline per read (silent TCP death now becomes a reconnect), 5s write deadlines, `isConnected` is atomic, pooled `SocketMessage` zeroed before reuse. Pongs are parsed from `method` (the v2 field — the old `type` check never matched, hence the all-zeros profile), latency = RTT/2 from the actual ping send time, recorded every 6 pongs via atomic temp+rename with truncation. The paper matcher's `time.Sleep(latency)` — which stalled the entire engine including trigger checks — is gone; latency was already modeled per-order.
+
+**§7 Watchdog.** New `runstats.Watchdog` (an engine `System`): declarative expectations with grace windows and a trip callback. Wired in `cmd/root.go`: quote-cache ingest vs `public.RawFramesPublished()` (the exact severance signature, 30s grace, **trips `Desk.TripHalt`** — the circuit breaker finally has a caller) and audit-writer health. `stampEffectiveConfig` writes the merged config + SHA to `runs/effective-config.json` and an audit prologue frame, so runs/tunes are attributable to their exact configuration (yesterday's 60bps-vs-120bps drift can't recur unexplained).
+
+## P2
+
+**§5.2** Protective dedup keyed by `(symbol, side, type)` so stop+take no longer thrash re-placement; `armRecord` carries the desk-stamped `ClOrdID` (new `Action.ClOrdID`, set in `Desk.AddOrder`); `releaseProtection` cancels resting orders on the venue via new `Desk.CancelByClOrdID` whenever a position closes; an untracked protective *buy* on a shorted symbol now closes the short instead of booking a phantom long; `NextClOrdID` is epoch-prefixed so client order ids no longer repeat across restarts.
+
+**§2.3** Take-profit-limits require a strict trade-through (the breach print is a touch); stop/trailing-limits fill on prints at-or-beyond the limit side and **no longer fill through gaps** — the realistic crash risk of stop-limit orders, in both the paper matcher (`makerLimitFills`) and replay, with the trigger test updated to assert the gap case. Partial fills now pay the covered-quantity book-walk price (`FillQuote.PriceCovered`), not the optimistic blend.
+
+**§4.2** Preemption hysteresis: challenger must beat the incumbent by `trading.entry.preemption_margin` (default 1.5×), one preemption in flight at a time (the overwrite that dropped a planned entry while still selling its victim is gone), 30s cooldown between rounds.
+
+**§3.3** `make run --record` rotates the previous capture aside (mtime-stamped) instead of truncating a day of history.
+
+**§5.6** Decision tree publishes at 250ms cadence instead of per measurement; missing-playbook re-probe at 5s instead of per measurement; hub client writes carry a 2s deadline so one stalled browser can't block the fan-out; `signal/pool.go` dropped the sync.Pool-then-copy pattern that saved nothing.
+
+**§6** Makefile: tune knobs actually pass to the binary (`--beam-width/--max-rounds/--max-nodes/--workers` added to `symm tune`), the stale race filter is gone, `CONFIG` defaults to the binary's documented infra+strategy loading. `.gitignore` covers the generated trees (runs/, logs/, bin/, dist/, package-local runs dirs); `scripts/hygiene.sh` contains the untracking commands (git index operations are deliberately left to you).
+
+## Test status (pinned published deps, Go 1.26.3, linux/arm64)
+
+Passing: `optimizer/{budget,io,log,reasoning,replay,tune}`, `trader`, `audit`, `ui`, `cmd`, `execution`, `market/perspectives{,/reasoning}`, `numeric/...`, `kraken/{market,paper,private,public,trading,transparency,user}`, `replay`, `snapshot`, `ring`, `rawdump`, `focus`, `analyze`, `runstats`, `signal/cvd`, `signal/liquidity`, and `broker` except the one case below. Two pre-existing failures I found red *before* my changes (verified by reverting my edits) are now green: the search-fixture tests had no book depth, so your WIP's depth-requiring fills could never trade them — fixtures now carry L2.
+
+**Environmental, not code:** `broker/TestStressCacheBroadcast`, `kraken/paper/response/TestBalancesSend` (hang), `signal/fluid` (hang), `market/perspectives/types/TestMeasurementRequire` — all reproduce with my changes fully reverted. Root cause: the *published* `qpool v1.2.4`'s `BroadcastConsumer.Wait` parks via a runtime hook with no wake on push, and published `errnie v1.2.3`'s `Require` differs from your local copies. Your repo only works against `../qpool` and `../errnie` via `replace` — these suites will pass on your machine and fail for anyone else. **Remaining action that only you can take: publish (or vendor) the real qpool/errnie versions and drop the replaces.**
+
+## Honest residuals
+
+A true stop+take OCO pair still can't coexist (paper holds one trigger per symbol; replay one per position — consistent with each other, divergent from Kraken; latent while playbooks emit a single protective action). Live mode has no wallet-sourced outcomes (the estimate path remains). Conviction is margin-gated but not percentile-normalized across sources. `analyze` verdicts still don't bench signals (the watchdog covers rate-silence, not statistical degeneracy). The frontend was not touched. The integration e2e suite (360s, Wait-dependent) must run on your machine. And the operational steps no patch can do: re-record a capture with books flowing, re-tune through the new holdout gate, and let the watchdog soak.

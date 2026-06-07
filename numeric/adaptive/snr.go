@@ -78,10 +78,12 @@ func NewSurprisalSNR() *SNR {
 
 /*
 Score folds value into the running baseline and returns positive temporal surprise
-for every valid standout. Before minObs the score is value / minStd; afterward a
-positive excess uses (value − mean) / std and a non-positive excess uses
-value / (mean + minStd) so routine readings stay measurable without collapsing
-to zero. Invalid or zero standout returns an error — never a silent substitute.
+for every valid standout. Before minObs the score is value / (value + minStd) — a
+saturating sub-1 warmup reading on the steady-state scale, never a pseudo-sigma.
+Afterward a positive excess uses (value − mean) / std and a non-positive excess
+uses value / (mean + minStd) so routine readings stay measurable without
+collapsing to zero. Invalid or zero standout returns an error — never a silent
+substitute.
 */
 func (snr *SNR) Score(value float64) (float64, error) {
 	if err := validateStandout(value); err != nil {
@@ -105,10 +107,11 @@ func (snr *SNR) ScoreSurprisal(value float64) (float64, error) {
 
 func (snr *SNR) score(value float64) (float64, error) {
 	floorVar := snr.minStd * snr.minStd
+	warm := snr.moments.Observations() >= snr.minObs
 	historicalVar := 0.0
 	mean := 0.0
 
-	if snr.moments.Observations() >= snr.minObs {
+	if warm {
 		mean = snr.moments.Mean()
 
 		historicalVar = snr.moments.VarianceEWMA()
@@ -121,9 +124,23 @@ func (snr *SNR) score(value float64) (float64, error) {
 	std := math.Sqrt(historicalVar + floorVar)
 	var result float64
 
-	if value > mean {
+	switch {
+	case !warm:
+		// Cold start: no baseline exists yet, so score the value against itself —
+		// a saturating (0, 1) reading on the same scale as the steady-state
+		// "routine" branch below. The previous form divided by the bare minStd
+		// floor, emitting 15–20 "sigma" readings for the first minObs samples of
+		// every tracker — a different unit from the warm z-score, and exactly the
+		// kind of artifact an in-sample optimizer learns to trade. A warmup row
+		// can never pass an "snr >= 1" gate.
+		result = value / (value + snr.minStd)
+	case value > mean:
 		result = (value - mean) / std
-	} else {
+	default:
+		// Routine reading at or below baseline: bounded (0, 1). For a fully
+		// converged always-same-category tracker this sits at the fixed point
+		// s*/(s*+minStd) ≈ 0.50 — the "nothing happening" floor visible across
+		// a third of any long capture.
 		result = value / (mean + snr.minStd)
 	}
 

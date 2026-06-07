@@ -51,7 +51,7 @@ func TestApplyFill(t *testing.T) {
 		})
 
 		Convey("A buy in a quote currency we do not hold is rejected", func() {
-			err := balances.ApplyFill("EUR/AUD", "buy", 100, 1.6, 0.4, "exec-1")
+			_, err := balances.ApplyFill("EUR/AUD", "buy", 100, 1.6, 0.4, "exec-1")
 
 			So(err, ShouldEqual, ErrInsufficientFunds)
 			So(balanceOf(balances, "EUR"), ShouldEqual, 200)
@@ -59,7 +59,7 @@ func TestApplyFill(t *testing.T) {
 		})
 
 		Convey("A buy exceeding available quote is rejected, wallet untouched", func() {
-			err := balances.ApplyFill("BTC/EUR", "buy", 1, 50000, 0.13, "exec-1")
+			_, err := balances.ApplyFill("BTC/EUR", "buy", 1, 50000, 0.13, "exec-1")
 
 			So(err, ShouldEqual, ErrInsufficientFunds)
 			So(balanceOf(balances, "EUR"), ShouldEqual, 200)

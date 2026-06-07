@@ -8,3 +8,15 @@ symm.txt
 .DS_Store
 *.test
 integration/runs/
+
+# generated artifacts that must never be tracked
+runs/
+logs/
+bin/
+frontend/dist/
+.pnpm-store/
+*.tmp
+kraken/public/runs/
+kraken/paper/runs/
+market/runs/
+runs/effective-config.json

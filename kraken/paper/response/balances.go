@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -17,8 +18,13 @@ var ErrInsufficientFunds = errors.New("paper balances: insufficient funds")
 
 /*
 Balances simulates the Kraken balances channel on the shared raw bus.
+
+mu guards model/costBasis/realized: fills arrive both from the paper matching
+tick (resting triggers, pending takers) and from the quote cache's trade-listener
+goroutine (maker queue fills), so wallet state is mutated from two goroutines.
 */
 type Balances struct {
+	mu        sync.Mutex
 	quote     string
 	model     user.Balances
 	raw       *qpool.BroadcastGroup
@@ -99,9 +105,37 @@ func (balances *Balances) subscribeAckMap(frame map[string]any) map[string]any {
 }
 
 func (balances *Balances) publishSnapshot() {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	user.PublishBalancesRaw(balances.raw, user.BalanceSnapshot, balances.model.Asset)
 	user.PublishHoldingsDerived(balances.raw, balances.model.Asset)
-	balances.PublishUI()
+	balances.publishUILocked()
+}
+
+/*
+PublishHoldingsSnapshot re-emits the wallet's holdings view so the trader can
+reconcile its inventory on a cadence, not only at subscribe time — a lost
+execution frame otherwise diverges trader and wallet until restart.
+*/
+func (balances *Balances) PublishHoldingsSnapshot() {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	user.PublishHoldingsDerived(balances.raw, balances.model.Asset)
+}
+
+/*
+FillOutcome reports what one settled fill did to the wallet. Settled is true for a
+sell of a held base; Realized is the fee-inclusive round-trip P&L for the sold
+quantity and EntryBasis the per-unit average cost it was bought at. The wallet is
+the single source of truth for outcomes — the trader audits these instead of
+recomputing an entry-fee-blind estimate of its own.
+*/
+type FillOutcome struct {
+	Settled    bool
+	Realized   float64
+	EntryBasis float64
 }
 
 /*
@@ -114,23 +148,27 @@ func (balances *Balances) ApplyFill(
 	symbol, side string,
 	qty, price, fee float64,
 	refID string,
-) error {
+) (FillOutcome, error) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	slash := strings.IndexByte(symbol, '/')
 
 	if slash <= 0 {
-		return fmt.Errorf("paper balances: malformed symbol %q", symbol)
+		return FillOutcome{}, fmt.Errorf("paper balances: malformed symbol %q", symbol)
 	}
 
 	base := symbol[:slash]
 	quote := symbol[slash+1:]
 	cost := qty * price
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	outcome := FillOutcome{}
 
 	var ledgerRows []user.Balance
 
 	if side == "buy" {
 		if balances.available(quote) < cost+fee {
-			return ErrInsufficientFunds
+			return FillOutcome{}, ErrInsufficientFunds
 		}
 
 		// Fold the lot into the fee-inclusive average cost before crediting it, so a
@@ -145,12 +183,15 @@ func (balances *Balances) ApplyFill(
 		}
 	} else {
 		if balances.available(base) < qty {
-			return ErrInsufficientFunds
+			return FillOutcome{}, ErrInsufficientFunds
 		}
 
 		// Realise P&L for the sold quantity against its average cost: proceeds net of
 		// the sell fee, minus the fee-inclusive cost it was bought at.
-		balances.realized += (cost - fee) - qty*balances.costBasis[base]
+		basis := balances.costBasis[base]
+		realized := (cost - fee) - qty*basis
+		balances.realized += realized
+		outcome = FillOutcome{Settled: true, Realized: realized, EntryBasis: basis}
 
 		balances.adjust(base, -qty)
 		balances.adjust(quote, cost-fee)
@@ -169,9 +210,9 @@ func (balances *Balances) ApplyFill(
 		user.PublishBalancesRaw(balances.raw, user.BalanceUpdate, []user.Balance{row})
 	}
 
-	balances.PublishUI()
+	balances.publishUILocked()
 
-	return nil
+	return outcome, nil
 }
 
 func (balances *Balances) ledgerRow(
@@ -252,6 +293,13 @@ func (balances *Balances) RealizedPnL() float64 {
 }
 
 func (balances *Balances) PublishUI() {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	balances.publishUILocked()
+}
+
+func (balances *Balances) publishUILocked() {
 	if balances.ui == nil {
 		return
 	}

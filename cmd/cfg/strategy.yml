@@ -37,6 +37,14 @@ optimizer:
   tune:
     load_instrument_rules: true
     candidate_report: ""
+    # Walk-forward validation: the chronological tail is held out of the search
+    # and the winning forest must reproduce on it (and survive +50% costs)
+    # before it is written to the live playbook. 0 disables (in-sample only —
+    # the playbook will be marked unvalidated in the tune log).
+    holdout_fraction: 0.25
+    # Largest tolerated train→holdout per-trade PnL decay (0.5 = holdout keeps
+    # at least half the train edge).
+    max_holdout_decay: 0.5
   search:
     regime_aware: true
 

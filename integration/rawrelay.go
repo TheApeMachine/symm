@@ -30,8 +30,9 @@ type RawRelay struct {
 func NewRawRelay(ctx context.Context, pool *qpool.Q[any]) *RawRelay {
 	ctx, cancel := context.WithCancel(ctx)
 
-	raw, err := qpool.NewBroadcastGroup(ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
 		cancel()
 		return nil
 	}
@@ -43,8 +44,9 @@ func NewRawRelay(ctx context.Context, pool *qpool.Q[any]) *RawRelay {
 	}
 
 	for _, channel := range replayRelayChannels {
-		group, err := qpool.NewBroadcastGroup(ctx, channel, 10*time.Millisecond)
-		if err != nil {
+		group := pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
+
+		if group == nil {
 			cancel()
 			return nil
 		}

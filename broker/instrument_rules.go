@@ -3,12 +3,14 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -50,11 +52,21 @@ func (cache *InstrumentRulesCache) Start(pool *qpool.Q[any]) {
 		return
 	}
 
-	raw, err := qpool.NewBroadcastGroup(cache.ctx, "raw", 0)
-	if err != nil {
+	// Pool registry only — qpool.NewBroadcastGroup creates a detached group that
+	// never receives the bus traffic (2026-06-07 incident, commit e26ef63b).
+	raw := pool.CreateBroadcastGroup("raw", 0)
+
+	if raw == nil {
+		errnie.Error(errors.New("broker/instrument_rules: raw broadcast group unavailable — rules cache will never ingest"), "broker/instrument_rules")
 		return
 	}
+
 	consumer := raw.Subscribe("broker:instrument-rules", 1024)
+
+	if consumer == nil {
+		errnie.Error(errors.New("broker/instrument_rules: raw subscription failed — rules cache will never ingest"), "broker/instrument_rules")
+		return
+	}
 
 	go func() {
 		for {

@@ -49,20 +49,23 @@ func NewTape() *Tape {
 func (tape *Tape) Subscribe(ctx context.Context, pool *qpool.Q[any]) {
 	tape.ctx = ctx
 
-	measurements, err := qpool.NewBroadcastGroup(ctx, "measurements", 10*time.Millisecond)
-	if err != nil {
+	measurements := pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
+
+	if measurements == nil {
 		return
 	}
 	measurementSub := measurements.Subscribe("integration:tape:measurements", 4096)
 
-	raw, err := qpool.NewBroadcastGroup(ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	raw := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if raw == nil {
 		return
 	}
 	rawSub := raw.Subscribe("integration:tape:raw", 4096)
 
-	ui, err := qpool.NewBroadcastGroup(ctx, "ui", 10*time.Millisecond)
-	if err != nil {
+	ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
+
+	if ui == nil {
 		return
 	}
 	uiSub := ui.Subscribe("integration:tape:ui", 256)

@@ -32,9 +32,13 @@ func (tape ReplayTape) Len() int {
 }
 
 /*
-AppendSnapshot appends the exact live-story ring snapshot for tickIndex into
-destination. It returns chronological rows from the last StoryRingCapacity ticks
-whose symbol is either global or the tick symbol.
+AppendSnapshot appends the live-story ring snapshot for tickIndex into
+destination: the last story.measurements.buffer measurements OF THE TICK'S OWN
+SYMBOL, chronologically. This mirrors market/story.rememberMeasurement exactly —
+a per-symbol ring of that symbol's readings (symbol-less rows never enter a live
+window). The previous scheme windowed by GLOBAL tick distance, which on a
+multi-symbol tape gave each symbol ~buffer/symbolCount rows of context while live
+saw up to the full buffer — regimes and lookbacks diverged between the clocks.
 */
 func (tape ReplayTape) AppendSnapshot(
 	tickIndex int,
@@ -77,50 +81,35 @@ func mergeSnapshotIndices(
 	tickIndex int,
 	measurementBuffer int,
 ) []int {
+	_ = globalIndices // symbol-less rows never enter a live story window
+
 	symbol := ticks[tickIndex].Row.Symbol
 
 	if symbol == "" {
 		return nil
 	}
 
-	startIndex := tickIndex - measurementBuffer + 1
+	indices := symbolIndices[symbol]
 
-	if startIndex < 0 {
-		startIndex = 0
+	// Window by OCCURRENCE COUNT of this symbol, not by global tick distance:
+	// the live ring holds the symbol's last measurementBuffer readings however
+	// long ago they happened.
+	end := sort.Search(len(indices), func(index int) bool {
+		return indices[index] > tickIndex
+	})
+
+	start := end - measurementBuffer
+
+	if start < 0 {
+		start = 0
 	}
 
-	symbolWindow := indicesInWindow(symbolIndices[symbol], startIndex, tickIndex)
-	globalWindow := indicesInWindow(globalIndices, startIndex, tickIndex)
-	merged := make([]int, 0, len(symbolWindow)+len(globalWindow))
-
-	symbolCursor := 0
-	globalCursor := 0
-
-	for symbolCursor < len(symbolWindow) || globalCursor < len(globalWindow) {
-		if globalCursor >= len(globalWindow) {
-			merged = append(merged, symbolWindow[symbolCursor])
-			symbolCursor++
-
-			continue
-		}
-
-		if symbolCursor >= len(symbolWindow) {
-			merged = append(merged, globalWindow[globalCursor])
-			globalCursor++
-
-			continue
-		}
-
-		if globalWindow[globalCursor] < symbolWindow[symbolCursor] {
-			merged = append(merged, globalWindow[globalCursor])
-			globalCursor++
-
-			continue
-		}
-
-		merged = append(merged, symbolWindow[symbolCursor])
-		symbolCursor++
+	if start >= end {
+		return nil
 	}
+
+	merged := make([]int, end-start)
+	copy(merged, indices[start:end])
 
 	return merged
 }

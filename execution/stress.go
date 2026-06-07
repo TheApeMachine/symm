@@ -92,22 +92,38 @@ func stressCategory(category types.CategoryType) bool {
 }
 
 /*
-StressedFillQuote inflates slippage for hostile flow, regime, and depth shortfall.
+StressedFillQuote worsens an achieved book-walk fill for hostile flow, regime, and
+depth shortfall. anchor is the book-walk price (or the side touch when no walk was
+possible) — the stress component applies ON TOP of the walk, so a calm, fully
+covered fill returns the walk price unchanged. Stress can only move a fill against
+the taker; it must never produce a price better than the anchor. Anchoring at the
+reference last/mid (the previous behavior) silently erased the bid/ask spread from
+every paper and replay fill. slippageBps reports total modeled slippage (walk +
+stress) for gates and telemetry.
 */
 func StressedFillQuote(
 	side trading.Side,
-	reference float64,
+	anchor float64,
 	baseSlippageBps float64,
 	depthCoverage float64,
 	multiplier float64,
 	defaultSlippagePct float64,
 ) (price float64, slippageBps float64, err error) {
-	slippagePct := baseSlippageBps / 10_000
-	slippagePct *= multiplier
+	basePct := baseSlippageBps / 10_000
+
+	if basePct < 0 {
+		basePct = 0
+	}
+
+	if multiplier < 1 {
+		multiplier = 1
+	}
+
+	extraPct := basePct * (multiplier - 1)
 
 	if depthCoverage > 0 && depthCoverage < 1 {
 		shortfall := 1 - depthCoverage
-		base := slippagePct
+		base := basePct
 
 		if base <= 0 {
 			base = defaultSlippagePct
@@ -119,18 +135,20 @@ func StressedFillQuote(
 			return 0, 0, multiplierErr
 		}
 
-		slippagePct += shortfall * base * multiplier * shortfallMultiplier
+		extraPct += shortfall * base * multiplier * shortfallMultiplier
 	}
 
-	if reference <= 0 {
-		return 0, slippagePct * 10_000, nil
+	slippageBps = (basePct + extraPct) * 10_000
+
+	if anchor <= 0 {
+		return 0, slippageBps, nil
 	}
 
 	if side == trading.Sell {
-		return reference * (1 - slippagePct), slippagePct * 10_000, nil
+		return anchor * (1 - extraPct), slippageBps, nil
 	}
 
-	return reference * (1 + slippagePct), slippagePct * 10_000, nil
+	return anchor * (1 + extraPct), slippageBps, nil
 }
 
 func requiredDepthShortfallStressMultiplier() (float64, error) {

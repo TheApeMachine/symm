@@ -9,9 +9,14 @@ import (
 
 /*
 FillQuote is the simulated execution price and slippage for one order size.
+PriceCovered is the book-walk VWAP of ONLY the covered quantity on a partial
+fill; Price blends the optimistic half-spread remainder in for full-size
+costing. A matcher that reduces the order to the covered quantity must charge
+PriceCovered — charging the blend under-priced every partial fill.
 */
 type FillQuote struct {
 	Price         float64
+	PriceCovered  float64
 	SlippageBps   float64
 	DepthCoverage float64
 }
@@ -88,6 +93,7 @@ func SlippageFill(
 
 		return FillQuote{
 			Price:         blended,
+			PriceCovered:  avgPrice,
 			SlippageBps:   slippageBps,
 			DepthCoverage: filledQty / qty,
 		}, nil
@@ -95,6 +101,7 @@ func SlippageFill(
 
 	return FillQuote{
 		Price:         avgPrice,
+		PriceCovered:  avgPrice,
 		SlippageBps:   slippageBps,
 		DepthCoverage: coverage,
 	}, nil

@@ -322,8 +322,9 @@ func (orders *Orders) CheckTriggers() {
 		}
 
 		if reasoning.ProtectiveBreachedForSide(positionSide, trigger.action, level, quote.Last) {
-			orders.closeAtTrigger(symbol, trigger, level, quote.Last)
-			breached = append(breached, symbol)
+			if orders.closeAtTrigger(symbol, trigger, level, quote.Last) {
+				breached = append(breached, symbol)
+			}
 		}
 	}
 
@@ -341,19 +342,26 @@ func (orders *Orders) CheckTriggers() {
 }
 
 /*
-closeAtTrigger realizes a breached protective exit. The -limit variants rest as
-maker orders and fill at their trigger level (maker fee, no crossing slippage); the
-market variants cross the book via broker.SlippageFill — a stop or trail eats a
-downside gap-through — paying the taker fee. Mirrors optimizer/replay/ledger.go.
+closeAtTrigger realizes a breached protective exit and reports whether it filled.
+The -limit variants rest as maker orders and fill at their trigger level (maker
+fee, no crossing slippage) only once price trades THROUGH the level — a touch is
+not a fill: resting limits at a touched level fill perhaps half the time, and
+touch-filling them systematically flattered take-profit-limit exits. The market
+variants cross the book via broker.SlippageFill — a stop or trail eats a downside
+gap-through — paying the taker fee. Mirrors optimizer/replay/ledger.go.
 */
 func (orders *Orders) closeAtTrigger(
 	symbol string,
 	trigger *restingTrigger,
 	level, last float64,
-) {
+) bool {
 	maker := reasoning.ExitRestsAsLimit(trigger.action)
 
 	if maker {
+		if !makerLimitFills(trigger.action, trigger.params.Side, level, last) {
+			return false // keep resting until price trades through the level
+		}
+
 		fee := orders.feeAmount(symbol, trigger.qty, level, true)
 		orders.notifyFill(FillNotice{
 			Params:       trigger.params,
@@ -364,7 +372,7 @@ func (orders *Orders) closeAtTrigger(
 			Maker:        true,
 		})
 
-		return
+		return true
 	}
 
 	fill, err := orders.takerFillQuote(
@@ -376,7 +384,7 @@ func (orders *Orders) closeAtTrigger(
 			Params: trigger.params, OrderID: trigger.orderID, Reason: err.Error(),
 		})
 
-		return
+		return true
 	}
 
 	price := fill.price
@@ -387,7 +395,7 @@ func (orders *Orders) closeAtTrigger(
 			Params: trigger.params, OrderID: trigger.orderID, Reason: "paper fill: no liquidity",
 		})
 
-		return
+		return true
 	}
 
 	if trigger.action != reasoning.ActionTakeProfit {
@@ -410,6 +418,39 @@ func (orders *Orders) closeAtTrigger(
 		Maker:        false,
 		Partial:      fill.depthCoverage > 0 && fill.depthCoverage < 1,
 	})
+
+	return true
+}
+
+/*
+makerLimitFills reports whether a resting protective limit plausibly fills at the
+current print. Take-profit limits demand a STRICT trade-through — the breach
+print itself is a touch, and touch-filling them was systematic optimism. Stop and
+trailing limits breached in the adverse direction fill on prints at-or-beyond
+their limit side: after a downward breach, a print at the level is a real buyer
+there, while a gap straight through leaves the limit unfilled (the true crash
+risk of stop-limit orders).
+*/
+func makerLimitFills(
+	action reasoning.ActionType,
+	side trading.Side,
+	level, last float64,
+) bool {
+	strict := action == reasoning.ActionTakeProfitLimit
+
+	if side == trading.Sell {
+		if strict {
+			return last > level
+		}
+
+		return last >= level
+	}
+
+	if strict {
+		return last < level
+	}
+
+	return last <= level
 }
 
 func (orders *Orders) notifyFill(notice FillNotice) {

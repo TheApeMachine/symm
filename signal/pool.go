@@ -2,7 +2,6 @@ package signal
 
 import (
 	"encoding/json"
-	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -13,63 +12,35 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-var tradesPool = sync.Pool{
-	New: func() any {
-		return make([]market.TradeUpdate, 0)
-	},
-}
-
-var tickersPool = sync.Pool{
-	New: func() any {
-		return make([]market.TickerUpdate, 0)
-	},
-}
-
-var booksPool = sync.Pool{
-	New: func() any {
-		return make([]market.Book, 0)
-	},
-}
-
-var executionsPool = sync.Pool{
-	New: func() any {
-		return make([]user.Execution, 0)
-	},
-}
+// The previous sync.Pool pattern here (Get pooled slice, unmarshal, copy to a
+// fresh slice, Put) allocated the full copy on every call anyway — the pool
+// saved nothing and added contention. Plain unmarshal into a local slice is the
+// same allocation profile with none of the machinery.
 
 func GetTrades(data *public.SocketMessage) []market.TradeUpdate {
-	trades := tradesPool.Get().([]market.TradeUpdate)[:0]
-	defer func() {
-		tradesPool.Put(trades[:0])
-	}()
+	var trades []market.TradeUpdate
 
 	if err := sonic.Unmarshal(data.Data, &trades); err != nil {
 		errnie.Error(err)
 		return nil
 	}
 
-	return append([]market.TradeUpdate(nil), trades...)
+	return trades
 }
 
 func GetTickers(data *public.SocketMessage) []market.TickerUpdate {
-	tickers := tickersPool.Get().([]market.TickerUpdate)[:0]
-	defer func() {
-		tickersPool.Put(tickers[:0])
-	}()
+	var tickers []market.TickerUpdate
 
 	if err := sonic.Unmarshal(data.Data, &tickers); err != nil {
 		errnie.Error(err)
 		return nil
 	}
 
-	return append([]market.TickerUpdate(nil), tickers...)
+	return tickers
 }
 
 func GetBooks(data *public.SocketMessage) []market.Book {
-	books := booksPool.Get().([]market.Book)[:0]
-	defer func() {
-		booksPool.Put(books[:0])
-	}()
+	var books []market.Book
 
 	if err := sonic.Unmarshal(data.Data, &books); err != nil {
 		errnie.Error(err)
@@ -80,21 +51,18 @@ func GetBooks(data *public.SocketMessage) []market.Book {
 		books[index].SetEnvelopeType(data.Type)
 	}
 
-	return append([]market.Book(nil), books...)
+	return books
 }
 
 func GetExecutions(data *public.SocketMessage) []user.Execution {
-	executions := executionsPool.Get().([]user.Execution)[:0]
-	defer func() {
-		executionsPool.Put(executions[:0])
-	}()
+	var executions []user.Execution
 
 	if err := sonic.Unmarshal(data.Data, &executions); err != nil {
 		errnie.Error(err)
 		return nil
 	}
 
-	return append([]user.Execution(nil), executions...)
+	return executions
 }
 
 func SocketMessageFromValue(value any) (*public.SocketMessage, bool) {

@@ -155,25 +155,53 @@ func (executions *Executions) publishFill(notice FillNotice) {
 	}
 
 	execID := executions.ids.ExecID()
+	outcome := FillOutcome{}
 
 	if executions.balances != nil {
-		if err := executions.balances.ApplyFill(
+		applied, err := executions.balances.ApplyFill(
 			notice.Params.Symbol,
 			string(notice.Params.Side),
 			notice.Params.OrderQty,
 			notice.Price,
 			notice.Fee,
 			execID,
-		); err != nil {
+		)
+
+		if err != nil {
 			user.PublishExecutionRejectDerived(
 				executions.raw, notice.Params.Symbol, string(notice.Params.Side), err.Error(),
 			)
 
 			return
 		}
+
+		outcome = applied
 	}
 
 	executions.emitTrade(notice, execID)
+
+	if outcome.Settled {
+		executions.publishOutcome(notice, outcome)
+	}
+}
+
+/*
+publishOutcome ships the wallet-truth round-trip result for a settling sell so the
+trader can audit it. This fires for EVERY close — trader-initiated, protective
+trigger, preemption — which is what makes position_outcome frames complete; the
+trader's own path only saw the closes it initiated itself.
+*/
+func (executions *Executions) publishOutcome(notice FillNotice, outcome FillOutcome) {
+	executions.raw.Send(&qpool.QValue[any]{Value: map[string]any{
+		"channel":     "position_outcome",
+		"symbol":      notice.Params.Symbol,
+		"side":        string(notice.Params.Side),
+		"qty":         notice.Params.OrderQty,
+		"exit_price":  notice.Price,
+		"fee":         notice.Fee,
+		"realized":    outcome.Realized,
+		"entry_basis": outcome.EntryBasis,
+	}})
 }
 
 func (executions *Executions) emitTrade(notice FillNotice, execID string) {

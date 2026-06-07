@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -28,6 +29,12 @@ type WebSocketClient interface {
 	Close() error
 }
 
+// publicReadDeadline bounds how long a read may block. Kraken heartbeats every
+// second; 30s of silence means the TCP session is dead (NAT timeout, half-open)
+// and must surface as an error so the reconnect path runs. Without a deadline
+// the read blocked forever, the ping ticker starved, and prices froze silently.
+const publicReadDeadline = 30 * time.Second
+
 type WebSocket struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -39,8 +46,10 @@ type WebSocket struct {
 	recorder         io.Writer
 	streams          *focus.Set
 	latencies        *ring.Ring
-	isConnected      bool
+	isConnected      atomic.Bool
 	reconnectAttempt uint64
+	lastPingAt       time.Time
+	pongsObserved    uint64
 }
 
 func NewWebSocket(
@@ -183,7 +192,7 @@ func (ws *WebSocket) tryConnect(endpoint EndpointType) error {
 }
 
 func (ws *WebSocket) markDisconnected() {
-	ws.isConnected = false
+	ws.isConnected.Store(false)
 
 	if ws.conns[0] != nil {
 		_ = ws.conns[0].Close()
@@ -192,7 +201,7 @@ func (ws *WebSocket) markDisconnected() {
 }
 
 func (ws *WebSocket) ensureConnected() error {
-	if ws.isConnected && ws.conns[0] != nil {
+	if ws.isConnected.Load() && ws.conns[0] != nil {
 		return nil
 	}
 
@@ -216,7 +225,7 @@ func (ws *WebSocket) ensureConnected() error {
 }
 
 func (ws *WebSocket) afterConnect() {
-	ws.isConnected = true
+	ws.isConnected.Store(true)
 
 	if outbound := ws.broadcasts["kraken:public"]; outbound != nil {
 		outbound.Send(&qpool.QValue[any]{Value: map[string]any{
@@ -235,6 +244,7 @@ func (ws *WebSocket) afterConnect() {
 type SocketMessage struct {
 	Channel string          `json:"channel"`
 	Type    string          `json:"type"`
+	Method  string          `json:"method"` // Kraken v2 method replies (pong, subscribe acks) arrive here, not in type
 	Errors  []string        `json:"errors"`
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data"`
@@ -248,6 +258,17 @@ var sockMsgPool = sync.Pool{
 	},
 }
 
+var rawFramesPublished atomic.Uint64
+
+/*
+RawFramesPublished reports how many frames the public websocket has pushed onto
+the raw bus — the watchdog's reference clock: when this advances while a raw
+consumer's ingest counter stalls, that consumer is severed from the bus.
+*/
+func RawFramesPublished() uint64 {
+	return rawFramesPublished.Load()
+}
+
 func (ws *WebSocket) Tick() (err error) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -255,7 +276,7 @@ func (ws *WebSocket) Tick() (err error) {
 	outbound := ws.subscribers["kraken:public"]
 
 	for {
-		if !ws.isConnected || ws.conns[0] == nil {
+		if !ws.isConnected.Load() || ws.conns[0] == nil {
 			if connectErr := ws.ensureConnected(); connectErr != nil {
 				errnie.Error(connectErr)
 			}
@@ -267,17 +288,18 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
+			ws.lastPingAt = time.Now()
+			_ = ws.conns[0].SetWriteDeadline(time.Now().Add(5 * time.Second))
+
 			if err = ws.conns[0].WriteJSON(map[string]any{
 				"method": "ping",
 			}); err != nil {
 				ws.handleError(errnie.Error(err))
 			}
-
-			if time.Now().Unix()%64 == 0 {
-				ws.recordLatency()
-			}
 		default:
 			if message := outbound.Poll(); message != nil {
+				_ = ws.conns[0].SetWriteDeadline(time.Now().Add(5 * time.Second))
+
 				if writeErr := ws.conns[0].WriteJSON(message.Value); writeErr != nil {
 					ws.handleError(errnie.Error(writeErr))
 				}
@@ -294,14 +316,22 @@ func (ws *WebSocket) Tick() (err error) {
 
 func (ws *WebSocket) readFrame() (err error) {
 	message := sockMsgPool.Get().(*SocketMessage)
+	// Zero before reuse: ReadJSON leaves absent fields untouched, so a pooled
+	// struct could leak the previous frame's channel/type/data into this one.
+	*message = SocketMessage{}
 	defer sockMsgPool.Put(message)
+
+	// A read deadline converts silent connection death into an error the
+	// reconnect path already handles. Kraken heartbeats every second; 30s of
+	// silence is a dead session, not a quiet market.
+	_ = ws.conns[0].SetReadDeadline(time.Now().Add(publicReadDeadline))
 
 	if err = ws.conns[0].ReadJSON(message); err != nil {
 		return errnie.Error(err)
 	}
 
 	if message.Channel == "heartbeat" {
-		ws.isConnected = true
+		ws.isConnected.Store(true)
 		return nil
 	}
 
@@ -315,12 +345,24 @@ func (ws *WebSocket) readFrame() (err error) {
 					"data":    append(json.RawMessage(nil), message.Data...),
 				},
 			})
+			rawFramesPublished.Add(1)
 		}
 	}
 
-	if message.Type == "pong" {
-		ws.latencies.Value = time.Since(message.TimeIn)
-		ws.latencies = ws.latencies.Next()
+	// Kraken v2 pongs arrive as {"method":"pong",...} — the previous check on
+	// message.Type never matched, so the latency ring stayed all zeros and the
+	// paper matcher simulated a zero-latency network.
+	if message.Method == "pong" || message.Type == "pong" {
+		if !ws.lastPingAt.IsZero() {
+			ws.latencies.Value = time.Since(ws.lastPingAt) / 2 // one-way ≈ RTT/2
+			ws.latencies = ws.latencies.Next()
+		}
+
+		ws.pongsObserved++
+
+		if ws.pongsObserved%6 == 0 {
+			ws.recordLatency()
+		}
 	}
 
 	if message.Channel == "ohlc" {
@@ -336,20 +378,32 @@ func (ws *WebSocket) handleError(err error) {
 }
 
 func (ws *WebSocket) recordLatency() {
-	// Write the latency ring to the file.
-	latencyFile, err := os.OpenFile("runs/network_latency.json", os.O_CREATE|os.O_WRONLY, 0644)
+	// Atomic replace (temp + rename) with truncation: the previous O_WRONLY
+	// overwrite-in-place could leave stale trailing bytes, and the file was only
+	// ever written on a 1-in-64 coin flip of the wall clock.
+	path := "runs/network_latency.json"
+	tempPath := path + ".tmp"
+
+	latencyFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 
 	if err != nil {
 		errnie.Error(err)
 		return
 	}
 
-	defer latencyFile.Close()
-
 	ws.latencies.Do(func(value any) {
 		duration, _ := value.(time.Duration)
 		fmt.Fprintf(latencyFile, "%d\n", duration)
 	})
+
+	if err := latencyFile.Close(); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (ws *WebSocket) publishOhlc(message json.RawMessage) {

@@ -201,6 +201,7 @@ func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
 	}
 
 	clOrdID := desk.NextClOrdID()
+	action.ClOrdID = clOrdID
 	triggers, err := desk.triggersFor(action, quote)
 
 	if err != nil {
@@ -361,10 +362,40 @@ func requiredPercent(key string) (float64, error) {
 	return percent / 100, nil
 }
 
-var clOrdCounter atomic.Uint64
+var (
+	clOrdCounter atomic.Uint64
+	// clOrdEpoch namespaces client order ids per process start. A bare counter
+	// repeats s…0001 on every restart, and the exchange treats client order ids
+	// as the caller's to deconflict across sessions.
+	clOrdEpoch = uint64(time.Now().Unix())
+)
 
 func (desk *Desk) NextClOrdID() string {
-	return fmt.Sprintf("s%016x", clOrdCounter.Add(1))
+	return fmt.Sprintf("s%08x-%010x", clOrdEpoch, clOrdCounter.Add(1))
+}
+
+/*
+CancelByClOrdID cancels resting exchange orders by client order id — the desk-side
+half of "closing a position must also pull its protective orders". A real venue
+keeps a stop working after the position it protected is gone; that stray order
+would fire later as an unintended naked trade.
+*/
+func (desk *Desk) CancelByClOrdID(clOrdIDs ...string) error {
+	ids := make([]string, 0, len(clOrdIDs))
+
+	for _, id := range clOrdIDs {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	return trading.NewOrderClient(desk.ctx, desk.pool).CancelOrder(trading.CancelParams{
+		ClOrdID: ids,
+	})
 }
 
 func (desk *Desk) Close() error {

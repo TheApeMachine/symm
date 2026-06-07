@@ -3,10 +3,12 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -44,6 +46,22 @@ type QuoteCache struct {
 	tradeMu        sync.Mutex
 	tradeListeners atomic.Pointer[[]tradeListener]
 	started        atomic.Bool
+	framesSeen     atomic.Uint64 // raw bus frames observed by the cache consumer
+	quotesIngested atomic.Uint64 // ticker/book/trade frames folded into quote slots
+}
+
+/*
+IngestStats reports how many raw frames the cache consumer has observed and how
+many it folded into quote state. A watchdog uses the pair to distinguish "market
+is quiet" (both flat) from "cache disconnected from the bus" (frames flow
+elsewhere, both flat here) — the failure mode of the 2026-06-07 incident.
+*/
+func (cache *QuoteCache) IngestStats() (frames uint64, ingested uint64) {
+	if cache == nil {
+		return 0, 0
+	}
+
+	return cache.framesSeen.Load(), cache.quotesIngested.Load()
 }
 
 /*
@@ -113,16 +131,24 @@ func (cache *QuoteCache) SubscribeTrades(listener tradeListener) {
 
 func (cache *QuoteCache) run(pool *qpool.Q[any]) {
 	if pool == nil {
+		errnie.Error(errors.New("broker/quote: nil pool — quote cache will never ingest"), "broker/quote")
 		return
 	}
 
-	group, err := qpool.NewBroadcastGroup(cache.ctx, "raw", 10*time.Millisecond)
-	if err != nil {
+	// The cache MUST attach to the pool's shared "raw" group. qpool.NewBroadcastGroup
+	// constructs a detached group nothing publishes to (see 2026-06-07 incident:
+	// commit e26ef63b starved this cache for a full run). Pool registry only.
+	group := pool.CreateBroadcastGroup("raw", 10*time.Millisecond)
+
+	if group == nil {
+		errnie.Error(errors.New("broker/quote: raw broadcast group unavailable — quote cache will never ingest"), "broker/quote")
 		return
 	}
+
 	consumer := group.Subscribe("broker:quotes", 4096)
 
 	if consumer == nil {
+		errnie.Error(errors.New("broker/quote: raw subscription failed — quote cache will never ingest"), "broker/quote")
 		return
 	}
 
@@ -143,16 +169,21 @@ func (cache *QuoteCache) run(pool *qpool.Q[any]) {
 			continue
 		}
 
+		cache.framesSeen.Add(1)
+
 		channel, _ := envelope["channel"].(string)
 		rawData, _ := envelope["data"].(json.RawMessage)
 		frame := &public.SocketMessage{Channel: channel, Data: rawData}
 
 		switch channel {
 		case public.TickerChannel:
+			cache.quotesIngested.Add(1)
 			cache.ingestTickers(frame)
 		case public.BookChannel:
+			cache.quotesIngested.Add(1)
 			cache.ingestBooks(frame)
 		case public.TradesChannel:
+			cache.quotesIngested.Add(1)
 			cache.ingestTrades(frame)
 		}
 	}

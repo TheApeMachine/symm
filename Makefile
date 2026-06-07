@@ -7,14 +7,19 @@ export GOFLAGS := -ldflags=-checklinkname=0
 LDFLAGS := $(GOFLAGS)
 
 SYMM_BIN := bin/symm
-CONFIG ?= cmd/cfg/config.yml
+# Leave CONFIG empty to use the binary's own default loading (cmd/cfg/infra.yml +
+# strategy.yml — the documented source of truth). Set CONFIG=path to override.
+# The previous default silently loaded the legacy merged config.yml instead.
+CONFIG ?=
+CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
-TUNE_WORKERS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)
-TUNE_MAX_THRESHOLDS ?= 128
-TUNE_BEAM_WIDTH ?= 256
-TUNE_CANDIDATE_LIMIT ?= 2000
-
-RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
+# Tune knobs — these are now actually passed to the binary; they were previously
+# defined here and never used, so beam width silently ran at the code default.
+TUNE_WORKERS ?= 0
+TUNE_BEAM_WIDTH ?= 0
+TUNE_MAX_ROUNDS ?= 0
+TUNE_MAX_NODES ?= 0
+TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rounds $(TUNE_MAX_ROUNDS) --max-nodes $(TUNE_MAX_NODES)
 
 DUMP_OUTPUT ?= symm.txt
 
@@ -34,11 +39,7 @@ test-e2e:
 	go test $(LDFLAGS) ./integration/... -count=1 -timeout 360s
 
 test-race:
-ifeq ($(shell uname -s),Darwin)
-	go test -race $(RACE_PACKAGES)
-else
 	go test -race ./...
-endif
 
 test-cover:
 	@mkdir -p runs
@@ -75,20 +76,20 @@ profile-tune: build
 	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it, then 'make tune'." && exit 1)
 	@echo "=== profile tune ==="
 	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
-	SYMM_PPROF=1 ./$(SYMM_BIN) tune --config $(CONFIG)
+	SYMM_PPROF=1 ./$(SYMM_BIN) tune $(CONFIG_FLAG) $(TUNE_FLAGS)
 
 run: build
 	@mkdir -p $(LOG_DIR)
 	@echo "symm running — collecting run data → runs/capture.jsonl  (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) --config $(CONFIG) --record
+	./$(SYMM_BIN) $(CONFIG_FLAG) --record
 
 audit: build
 	@mkdir -p $(LOG_DIR)
 	@echo "symm running with desk audit log (trading.audit.file in $(CONFIG))"
 	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) --config $(CONFIG)
+	./$(SYMM_BIN) $(CONFIG_FLAG)
 
 audit-report:
 	@test -f $(LOG_DIR)/audit.jsonl || (echo "No audit log yet — run 'make audit' or 'make run' first." && exit 1)
@@ -96,11 +97,11 @@ audit-report:
 
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	SYMM_PPROF=1 ./$(SYMM_BIN) --config $(CONFIG)
+	SYMM_PPROF=1 ./$(SYMM_BIN) $(CONFIG_FLAG)
 
 tune: build
 	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it (Ctrl+C when you have enough), then 'make tune'." && exit 1)
-	./$(SYMM_BIN) tune --config $(CONFIG)
+	./$(SYMM_BIN) tune $(CONFIG_FLAG) $(TUNE_FLAGS)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

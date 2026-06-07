@@ -75,11 +75,6 @@ func (orders *Orders) takerFillQuote(
 	}
 
 	price := fill.Price
-
-	if action == reasoning.ActionTakeProfit && side == trading.Sell && capPrice > 0 && price > capPrice {
-		price = capPrice
-	}
-
 	filledQty := qty
 
 	if fill.DepthCoverage <= 0 {
@@ -88,6 +83,17 @@ func (orders *Orders) takerFillQuote(
 
 	if fill.DepthCoverage > 0 && fill.DepthCoverage < 1 {
 		filledQty = qty * fill.DepthCoverage
+
+		// The order shrinks to the covered quantity, so it pays the covered
+		// book-walk price — not the blend that assumed an optimistic half-spread
+		// fill for the remainder it no longer takes.
+		if fill.PriceCovered > 0 {
+			price = fill.PriceCovered
+		}
+	}
+
+	if action == reasoning.ActionTakeProfit && side == trading.Sell && capPrice > 0 && price > capPrice {
+		price = capPrice
 	}
 
 	return takerFillQuote{

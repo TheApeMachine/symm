@@ -42,14 +42,14 @@ func TestWebSocketMarkDisconnected(t *testing.T) {
 	defer cancel()
 
 	ws := &WebSocket{
-		ctx:         ctx,
-		conns:       []*websocket.Conn{nil},
-		isConnected: true,
+		ctx:   ctx,
+		conns: []*websocket.Conn{nil},
 	}
+	ws.isConnected.Store(true)
 
 	ws.markDisconnected()
 
-	if ws.isConnected {
+	if ws.isConnected.Load() {
 		t.Fatal("expected disconnected after markDisconnected")
 	}
 }

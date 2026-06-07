@@ -12,6 +12,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 const (
@@ -182,6 +183,19 @@ type fileWriter struct {
 	backupCount int
 }
 
+// maxConsecutiveAuditFailures bounds recovery attempts before the writer
+// fail-stops. One transient I/O error must not end auditing for the session
+// (the previous behavior latched the first error forever).
+const maxConsecutiveAuditFailures = 32
+
+const auditFlushSentinelKey = "__audit_flush__"
+
+func isAuditFlushSentinel(frame map[string]any) bool {
+	_, ok := frame[auditFlushSentinelKey]
+
+	return ok
+}
+
 func (writer *Writer) run(file *os.File, buffered *bufio.Writer, bytesWritten int64) {
 	defer close(writer.done)
 
@@ -194,6 +208,24 @@ func (writer *Writer) run(file *os.File, buffered *bufio.Writer, bytesWritten in
 		backupCount: writer.backupCount,
 	}
 
+	// Periodic flush: frames previously sat in the bufio buffer until rotation
+	// or shutdown, so a crash lost the audit tail and tail -f lagged reality.
+	flushTicker := time.NewTicker(time.Second)
+	defer flushTicker.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-writer.done:
+				return
+			case <-flushTicker.C:
+				_ = writer.queue.Push(map[string]any{auditFlushSentinelKey: true})
+			}
+		}
+	}()
+
+	consecutiveFailures := 0
+
 	for {
 		frame, ok := writer.queue.Pop()
 
@@ -201,11 +233,36 @@ func (writer *Writer) run(file *os.File, buffered *bufio.Writer, bytesWritten in
 			break
 		}
 
-		if err := fileWriter.Write(frame); err != nil {
-			writer.fail(err)
+		if isAuditFlushSentinel(frame) {
+			if err := fileWriter.Flush(); err != nil {
+				errnie.Error(fmt.Errorf("audit: periodic flush: %w", err))
+			}
 
-			break
+			continue
 		}
+
+		if err := fileWriter.Write(frame); err != nil {
+			consecutiveFailures++
+			errnie.Error(fmt.Errorf("audit: write failed (attempt %d): %w", consecutiveFailures, err))
+
+			if reopenErr := fileWriter.Reopen(); reopenErr == nil {
+				if retryErr := fileWriter.Write(frame); retryErr == nil {
+					consecutiveFailures = 0
+
+					continue
+				}
+			}
+
+			if consecutiveFailures >= maxConsecutiveAuditFailures {
+				writer.fail(err)
+
+				break
+			}
+
+			continue
+		}
+
+		consecutiveFailures = 0
 	}
 
 	writer.fail(fileWriter.Close())
@@ -227,6 +284,46 @@ func (fileWriter *fileWriter) Write(frame map[string]any) error {
 	fileWriter.bytes += int64(len(line))
 
 	return fileWriter.rotateIfNeeded()
+}
+
+func (fileWriter *fileWriter) Flush() error {
+	if fileWriter.writer == nil {
+		return nil
+	}
+
+	return fileWriter.writer.Flush()
+}
+
+/*
+Reopen discards the (possibly broken) handle and reattaches to the audit path so
+one transient I/O error does not end auditing for the session.
+*/
+func (fileWriter *fileWriter) Reopen() error {
+	if fileWriter.file != nil {
+		_ = fileWriter.file.Close()
+		fileWriter.file = nil
+		fileWriter.writer = nil
+	}
+
+	file, err := os.OpenFile(fileWriter.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+
+	if err != nil {
+		return fmt.Errorf("audit: reopen %q: %w", fileWriter.path, err)
+	}
+
+	info, err := file.Stat()
+
+	if err != nil {
+		_ = file.Close()
+
+		return fmt.Errorf("audit: reopen stat %q: %w", fileWriter.path, err)
+	}
+
+	fileWriter.file = file
+	fileWriter.writer = bufio.NewWriter(file)
+	fileWriter.bytes = info.Size()
+
+	return nil
 }
 
 func (fileWriter *fileWriter) Close() error {

@@ -221,7 +221,7 @@ func (ledger *replayLedger) flushPending(
 			continue
 		}
 
-		fillRow := executionFillMeasurement(item.measurement, currentRow)
+		fillRow := ledger.executionFillMeasurement(item.measurement, currentRow)
 
 		// A resting maker entry that the price ran away from never fills — drop
 		// it rather than applying a phantom fill.
@@ -263,20 +263,50 @@ func makerEntryMissed(
 	return fillPrice > postPrice
 }
 
-func executionFillMeasurement(
+/*
+executionFillMeasurement resolves the price state an action fills against once its
+execution latency has elapsed. The latency timer usually expires on another
+symbol's tape row; filling at the signal-time price in that case (the previous
+behavior) silently removed all adverse price drift during the latency window —
+the main cost a latency model exists to capture. Instead the fill uses the signal
+symbol's most recently observed quoted state at expiry time.
+*/
+func (ledger *replayLedger) executionFillMeasurement(
 	signalRow types.Measurement,
 	currentRow types.Measurement,
 ) types.Measurement {
-	if currentRow.Symbol != signalRow.Symbol || currentRow.Last <= 0 {
+	if currentRow.Symbol == signalRow.Symbol && currentRow.Last > 0 {
+		fillRow := signalRow
+		fillRow.Last = currentRow.Last
+		fillRow.SpreadBPS = currentRow.SpreadBPS
+
+		if !currentRow.At.IsZero() {
+			fillRow.At = currentRow.At
+		}
+
+		return fillRow
+	}
+
+	resolved := ledger.measurementForSymbol(signalRow.Symbol, currentRow)
+
+	if resolved.Symbol != signalRow.Symbol || resolved.Last <= 0 {
 		return signalRow
 	}
 
-	fillRow := signalRow
-	fillRow.Last = currentRow.Last
-	fillRow.SpreadBPS = currentRow.SpreadBPS
+	fillRow := resolved
 
-	if !currentRow.At.IsZero() {
+	if fillRow.At.IsZero() && !currentRow.At.IsZero() {
 		fillRow.At = currentRow.At
+	}
+
+	// Carry the signal row's book when the resolved row lacks one, so an entry
+	// that latencies through a quiet stretch still walks the depth it signaled
+	// against rather than silently failing HasBookDepth.
+	if !fillRow.HasBookDepth() && signalRow.HasBookDepth() {
+		fillRow.BookBids = signalRow.BookBids
+		fillRow.BookAsks = signalRow.BookAsks
+		fillRow.Bid = signalRow.Bid
+		fillRow.Ask = signalRow.Ask
 	}
 
 	return fillRow

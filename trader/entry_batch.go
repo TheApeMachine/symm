@@ -24,6 +24,24 @@ type preemptPlan struct {
 	victim string
 }
 
+const (
+	// defaultPreemptionMargin is how decisively a new signal must beat the
+	// weakest held position's entry conviction before it may evict it. Without a
+	// margin, marginally-better candidates churn full round trips of spread+fees.
+	defaultPreemptionMargin = 1.5
+	// preemptionCooldown is the minimum spacing between preemption rounds, so a
+	// burst of near-equal signals cannot rotate the whole book.
+	preemptionCooldown = 30 * time.Second
+)
+
+func preemptionMargin() float64 {
+	if margin := viper.GetFloat64("trading.entry.preemption_margin"); margin > 1 {
+		return margin
+	}
+
+	return defaultPreemptionMargin
+}
+
 /*
 entryBatchWindow defaults to market.subscribe_pace — the same cadence the live
 feed already uses — so the hold delay matches the system's existing temporal grain.
@@ -149,14 +167,25 @@ func (crypto *Crypto) deployEntry(action reasoning.Action) {
 		return
 	}
 
+	if !crypto.lastPreemptAt.IsZero() && time.Since(crypto.lastPreemptAt) < preemptionCooldown {
+		crypto.publishDecision(action, "rejected", "insufficient funds (preemption cooling)")
+		return
+	}
+
 	victim, victimScore, ok := crypto.weakestHeldPosition()
 
-	if !ok || actionConviction(action) <= victimScore {
+	// Hysteresis: a preemption is a full round trip of spread and fees on the
+	// victim — require the challenger to beat the incumbent decisively, and only
+	// one preemption in flight at a time (a second plan used to overwrite the
+	// first, selling its victim while dropping its entry).
+	if !ok || crypto.preemptPlan != nil ||
+		actionConviction(action) <= victimScore*preemptionMargin() {
 		crypto.publishDecision(action, "rejected", "insufficient funds")
 		return
 	}
 
 	crypto.preemptPlan = &preemptPlan{entry: action, victim: victim}
+	crypto.lastPreemptAt = time.Now()
 	crypto.submitPreemptExit(victim)
 }
 

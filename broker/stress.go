@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -66,12 +68,25 @@ func (cache *StressCache) Start(pool *qpool.Q[any]) {
 
 func (cache *StressCache) run(pool *qpool.Q[any]) {
 	if pool == nil {
+		errnie.Error(errors.New("broker/stress: nil pool — stress cache will never ingest"), "broker/stress")
 		return
 	}
 
-	consumer := pool.Subscribe("measurements")
+	// Get-or-create through the pool registry with an explicit subscriber — the
+	// same pattern as every other cache. pool.Subscribe returns nil whenever the
+	// group does not exist yet (and uses a 10-slot drop-oldest ring), a silent
+	// startup race that could leave this cache permanently empty.
+	group := pool.CreateBroadcastGroup("measurements", 0)
+
+	if group == nil {
+		errnie.Error(errors.New("broker/stress: measurements broadcast group unavailable — stress cache will never ingest"), "broker/stress")
+		return
+	}
+
+	consumer := group.Subscribe("broker:stress", 1024)
 
 	if consumer == nil {
+		errnie.Error(errors.New("broker/stress: measurements subscription failed — stress cache will never ingest"), "broker/stress")
 		return
 	}
 

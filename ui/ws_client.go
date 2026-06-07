@@ -2,9 +2,15 @@ package ui
 
 import (
 	"sync"
+	"time"
 
 	"github.com/fasthttp/websocket"
 )
+
+// wsWriteDeadline bounds one frame write. The hub fans out synchronously from
+// its Tick goroutine; without a deadline one stalled browser connection (sleeping
+// laptop, dead Wi-Fi) blocked every other client's frames behind it.
+const wsWriteDeadline = 2 * time.Second
 
 /*
 wsClient wraps one browser websocket with a write lock. fasthttp/websocket forbids
@@ -23,6 +29,8 @@ func newWSClient(conn *websocket.Conn) *wsClient {
 func (client *wsClient) writeJSON(payload any) error {
 	client.writeMu.Lock()
 	defer client.writeMu.Unlock()
+
+	_ = client.conn.SetWriteDeadline(time.Now().Add(wsWriteDeadline))
 
 	return client.conn.WriteJSON(payload)
 }

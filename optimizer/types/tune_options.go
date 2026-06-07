@@ -37,11 +37,15 @@ type SessionSummary struct {
 	Evaluated            int     `json:"evaluated"`
 	BestReturn           float64 `json:"best_return"`
 	BestScore            float64 `json:"best_score"`
+	HoldoutTrades        int     `json:"holdout_trades"`
+	HoldoutReturn        float64 `json:"holdout_return"`
+	HoldoutDecay         float64 `json:"holdout_decay"`
+	HoldoutPublished     bool    `json:"holdout_published"`
 }
 
 func (summary SessionSummary) String() string {
 	return fmt.Sprintf(
-		"measurements=%d fundable_measurements=%d min_round_trips=%d strategies=%d nodes=%d trades=%d evaluated=%d return=%.6f score=%.6f",
+		"measurements=%d fundable_measurements=%d min_round_trips=%d strategies=%d nodes=%d trades=%d evaluated=%d return=%.6f score=%.6f holdout_trades=%d holdout_return=%.6f holdout_decay=%.3f published=%t",
 		summary.MeasurementCount,
 		summary.FundableMeasurements,
 		summary.MinRoundTrips,
@@ -51,5 +55,9 @@ func (summary SessionSummary) String() string {
 		summary.Evaluated,
 		summary.BestReturn,
 		summary.BestScore,
+		summary.HoldoutTrades,
+		summary.HoldoutReturn,
+		summary.HoldoutDecay,
+		summary.HoldoutPublished,
 	)
 }

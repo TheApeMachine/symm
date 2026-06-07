@@ -34,10 +34,33 @@ Crypto publishes wallet snapshots to the ui broadcast from Kraken balance frames
 */
 // armRecord is the protective trigger currently resting on the exchange for a
 // symbol, so the trader places it once and does not re-submit an identical one each
-// tick (the exchange holds it). A changed type/offset re-arms.
+// tick (the exchange holds it). A changed type/offset re-arms. clOrdID lets the
+// trader cancel the resting order when the position closes through another path —
+// a real venue keeps a stop working after its position is gone.
 type armRecord struct {
-	action reasoning.ActionType
-	offset float64
+	action  reasoning.ActionType
+	offset  float64
+	clOrdID string
+}
+
+// pendingFillTimeout bounds how long an in-flight order may wait for its
+// execution envelope. The bus delivers at-most-once (drop-oldest rings); a
+// dropped fill frame previously wedged the symbol as "order still resolving"
+// until restart, with trader inventory silently diverged from the wallet.
+func pendingFillTimeout() time.Duration {
+	configured := viper.GetDuration("trading.order_ack_timeout")
+
+	if configured <= 0 {
+		configured = 500 * time.Millisecond
+	}
+
+	timeout := 4 * configured
+
+	if timeout < 2*time.Second {
+		timeout = 2 * time.Second
+	}
+
+	return timeout
 }
 
 type Crypto struct {
@@ -59,10 +82,12 @@ type Crypto struct {
 	avgEntry         map[string]float64
 	armed            map[string]armRecord
 	pending          map[string]reasoning.Action
+	pendingSince     map[string]time.Time
 	coolDownUntil    sync.Map // symbol -> time.Time (per-symbol submission backoff)
 	lastDecision     map[string]string
 	entryBatch       entryBatch
 	preemptPlan      *preemptPlan
+	lastPreemptAt    time.Time
 	entryConviction  map[string]float64
 	walletCurrency   string
 	positionFraction float64 // validated share of capital per position; in (0, 1]
@@ -154,6 +179,7 @@ func NewCryptoWithCaches(
 		avgEntry:        make(map[string]float64),
 		armed:           make(map[string]armRecord),
 		pending:         make(map[string]reasoning.Action),
+		pendingSince:    make(map[string]time.Time),
 		lastDecision:    make(map[string]string),
 		entryConviction: make(map[string]float64),
 	}
@@ -237,6 +263,7 @@ func (crypto *Crypto) Tick() error {
 		case <-marks.C:
 			crypto.publishMarks()
 			crypto.publishEquity()
+			crypto.expireStalePending(time.Now())
 			if crypto.entryBatchDue(time.Now()) {
 				crypto.flushEntryBatch()
 			}
@@ -250,6 +277,7 @@ func (crypto *Crypto) Tick() error {
 				case <-marks.C:
 					crypto.publishMarks()
 					crypto.publishEquity()
+					crypto.expireStalePending(time.Now())
 					if crypto.entryBatchDue(time.Now()) {
 						crypto.flushEntryBatch()
 					}
@@ -275,6 +303,7 @@ func (crypto *Crypto) Tick() error {
 
 			if envelope, ok := message.Value.(map[string]any); ok {
 				crypto.observeExecution(envelope)
+				crypto.observeOutcome(envelope)
 				crypto.observeBalances(envelope)
 			}
 		}
@@ -387,8 +416,12 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 
 		// The same protective trigger fires every tick the management gate holds;
 		// the exchange already rests one, so only (re)place it when it changes.
-		armKey := action.Symbol + ":" + string(action.Side)
-		if crypto.armed[armKey] == (armRecord{action.Type, action.Offset}) {
+		// Keyed by action type as well as side: a stop-loss and a take-profit on
+		// the same long are both sells, and a side-only key made them overwrite
+		// each other's dedup record — re-placing an exchange order every tick.
+		armKey := protectiveArmKey(action.Symbol, action.Side, action.Type)
+		if record, resting := crypto.armed[armKey]; resting &&
+			record.action == action.Type && record.offset == action.Offset {
 			return
 		}
 	}
@@ -415,12 +448,92 @@ func (crypto *Crypto) submit(action reasoning.Action) {
 	// A protective trigger rests on the exchange — it has no immediate fill, so it
 	// does not block the symbol; record it so identical re-arms are skipped.
 	if protective {
-		armKey := action.Symbol + ":" + string(action.Side)
-		crypto.armed[armKey] = armRecord{action.Type, action.Offset}
+		armKey := protectiveArmKey(action.Symbol, action.Side, action.Type)
+		crypto.armed[armKey] = armRecord{action.Type, action.Offset, action.ClOrdID}
 		return
 	}
 
 	crypto.pending[action.Symbol] = action
+	crypto.pendingSince[action.Symbol] = time.Now()
+}
+
+func protectiveArmKey(symbol string, side trading.Side, actionType reasoning.ActionType) string {
+	return symbol + ":" + string(side) + ":" + actionType.String()
+}
+
+/*
+expireStalePending clears in-flight markers whose execution envelope never
+arrived within the fill timeout. The marker is cleared, the loss is audited, and
+the symbol cools down; the next holdings snapshot reconciles any fill that
+actually happened on the venue while the frame was lost.
+*/
+func (crypto *Crypto) expireStalePending(now time.Time) {
+	for symbol, since := range crypto.pendingSince {
+		if now.Sub(since) < pendingFillTimeout() {
+			continue
+		}
+
+		submitted := crypto.pending[symbol]
+		delete(crypto.pending, symbol)
+		delete(crypto.pendingSince, symbol)
+
+		errnie.Error(fmt.Errorf(
+			"trader: no execution envelope for %s within %s — clearing in-flight marker",
+			symbol, pendingFillTimeout(),
+		))
+
+		if crypto.audit != nil {
+			if err := crypto.audit.Write(map[string]any{
+				"audit_event": "lost_execution",
+				"symbol":      symbol,
+				"type":        submitted.Type.String(),
+				"side":        string(submitted.Side),
+				"quantity":    submitted.Quantity,
+				"waited_ms":   now.Sub(since).Milliseconds(),
+			}); err != nil {
+				errnie.Error(err)
+			}
+		}
+
+		crypto.coolSymbol(symbol)
+	}
+}
+
+/*
+observeOutcome audits the wallet-truth round-trip result the paper ledger
+publishes for every settling sell — including protective-trigger and preemption
+closes the trader never initiated. Before this, a full trading day produced 8
+fills and zero position_outcome frames.
+*/
+func (crypto *Crypto) observeOutcome(envelope map[string]any) {
+	if envelope["channel"] != "position_outcome" {
+		return
+	}
+
+	symbol, _ := envelope["symbol"].(string)
+
+	if symbol == "" || crypto.audit == nil {
+		return
+	}
+
+	qty, _ := envelope["qty"].(float64)
+	exitPrice, _ := envelope["exit_price"].(float64)
+	fee, _ := envelope["fee"].(float64)
+	realized, _ := envelope["realized"].(float64)
+	entryBasis, _ := envelope["entry_basis"].(float64)
+
+	if err := crypto.audit.Write(map[string]any{
+		"audit_event":  "position_outcome",
+		"symbol":       symbol,
+		"entry_price":  entryBasis, // per-unit fee-inclusive average cost from the wallet
+		"exit_price":   exitPrice,
+		"quantity":     qty,
+		"fee":          fee,
+		"realized_pnl": realized,
+		"source":       "wallet",
+	}); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (crypto *Crypto) symbolCooling(symbol string) bool {
@@ -743,6 +856,7 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 	submitted := crypto.pending[symbol]
 	submitted.Symbol = symbol
 	delete(crypto.pending, symbol)
+	delete(crypto.pendingSince, symbol)
 
 	side, _ := envelope["side"].(string)
 	qty, _ := envelope["qty"].(float64)
@@ -776,7 +890,15 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 
 	if submitted.Type == reasoning.ActionNone {
 		if side == string(trading.Buy) {
-			crypto.openPosition(symbol, qty, price)
+			// An untracked buy on a symbol we are short is a protective cover
+			// firing on the exchange — it closes the short. Booking it as a new
+			// long (the previous behavior) would have inverted the position the
+			// day margin trading is enabled.
+			if crypto.shortInventory[symbol] > 0 {
+				crypto.closeShort(symbol)
+			} else {
+				crypto.openPosition(symbol, qty, price)
+			}
 		} else {
 			crypto.closePosition(symbol)
 		}
@@ -820,6 +942,14 @@ func (crypto *Crypto) recordPositionClose(
 	exitPrice float64,
 	envelope map[string]any,
 ) {
+	// Paper outcomes are wallet-sourced (observeOutcome): the ledger knows the
+	// fee-inclusive basis and covers protective/preempted closes the trader never
+	// initiated. This estimate (entry-fee-blind, trader-initiated closes only)
+	// remains for live mode, where no wallet outcome frame exists yet.
+	if viper.GetString("trading.model") == "paper" {
+		return
+	}
+
 	entryPrice := crypto.avgEntry[symbol]
 	held := crypto.inventory[symbol]
 
@@ -868,8 +998,7 @@ func (crypto *Crypto) openShort(symbol string, qty, price float64) {
 func (crypto *Crypto) closeShort(symbol string) {
 	delete(crypto.shortInventory, symbol)
 	delete(crypto.avgEntry, symbol)
-	delete(crypto.armed, symbol+":"+string(trading.Buy))
-	delete(crypto.armed, symbol+":"+string(trading.Sell))
+	crypto.releaseProtection(symbol)
 	crypto.clearEntryConviction(symbol)
 	crypto.streams.Remove(symbol)
 	crypto.syncHeldSnapshot()
@@ -879,12 +1008,42 @@ func (crypto *Crypto) closeShort(symbol string) {
 func (crypto *Crypto) closePosition(symbol string) {
 	delete(crypto.inventory, symbol)
 	delete(crypto.avgEntry, symbol)
-	delete(crypto.armed, symbol+":"+string(trading.Buy))
-	delete(crypto.armed, symbol+":"+string(trading.Sell))
+	crypto.releaseProtection(symbol)
 	crypto.clearEntryConviction(symbol)
 	crypto.streams.Remove(symbol)
 	crypto.syncHeldSnapshot()
 	crypto.publishPositions()
+}
+
+/*
+releaseProtection drops the local arm records for a symbol AND cancels the resting
+orders on the exchange. Clearing only the local map (the previous behavior) left
+real stops working on the venue after their position was gone — a stray order
+that would fire later as an unintended naked trade.
+*/
+func (crypto *Crypto) releaseProtection(symbol string) {
+	prefix := symbol + ":"
+	clOrdIDs := make([]string, 0, 2)
+
+	for key, record := range crypto.armed {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		if record.clOrdID != "" {
+			clOrdIDs = append(clOrdIDs, record.clOrdID)
+		}
+
+		delete(crypto.armed, key)
+	}
+
+	if len(clOrdIDs) == 0 || crypto.desk == nil {
+		return
+	}
+
+	if err := crypto.desk.CancelByClOrdID(clOrdIDs...); err != nil {
+		errnie.Error(fmt.Errorf("trader: cancel protective orders for %s: %w", symbol, err))
+	}
 }
 
 /*
@@ -1121,6 +1280,14 @@ func (crypto *Crypto) publishEquity() {
 // non-positive value and callers skip it — never a substitute price.
 func markPrice(quote broker.Quote) float64 {
 	return quote.Bid
+}
+
+/*
+Desk exposes the trader's order desk so the engine can wire safety machinery
+(watchdog TripHalt) without reaching into private state.
+*/
+func (crypto *Crypto) Desk() *broker.Desk {
+	return crypto.desk
 }
 
 func (crypto *Crypto) Close() error {

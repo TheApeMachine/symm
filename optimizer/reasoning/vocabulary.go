@@ -12,12 +12,20 @@ import (
 // so a noisy tape with dozens of categories does not explode the initial beam.
 const maxSeedCategories = 6
 
+// minSeedObservations is the statistical floor for a category to be rankable at
+// all. Without it the mean-forward-return ranking is a lottery for rare
+// categories (variance shrinks as 1/√n): on a real 3.4M-row tape a
+// 36-observation category outranked 467k-observation ones, and the seed slots
+// filled with noise winners whose SNR gates then never fired.
+const minSeedObservations = 64
+
 const priceChangeEpsilon = 1e-9
 
 type categorySeedStats struct {
 	category            types.CategoryType
 	count               int
 	forwardReturn       float64
+	forwardSquared      float64
 	forwardObservations int
 }
 
@@ -46,7 +54,7 @@ func DeriveVocabulary(rows []types.Measurement) Vocabulary {
 		Regimes: []types.Regime{
 			types.RegimeTrending, types.RegimeBullish, types.RegimeChoppy,
 		},
-		Thresholds: []float64{1.0, 1.5, 2.0},
+		Thresholds: deriveThresholds(rows),
 		Lookbacks:  []int{3, 5, 8},
 		PriceMoves: []float64{0.5, 1.0, 2.0},
 		Offsets:    []float64{0.01, 0.02, 0.05},
@@ -59,13 +67,85 @@ func DeriveVocabulary(rows []types.Measurement) Vocabulary {
 	}
 }
 
+/*
+deriveThresholds grids SNR gates on the tape's ACTUAL SNR distribution (median /
+p90 / p99 of category-bearing rows) instead of a static {1, 1.5, 2}. The
+surprisal SNR pins a tracker's dominant category to a ~0.5 fixed point and only
+transitions spike above it, so a hardcoded ≥1 gate is structurally unfireable
+for exactly the categories that dominate a tape (observed live: anchor_stall —
+260k rows, zero of them ≥1). Seeding from the median lets seeds actually trade;
+mutations can still tighten toward the tails.
+*/
+func deriveThresholds(rows []types.Measurement) []float64 {
+	values := make([]float64, 0, len(rows)/4)
+
+	for index := range rows {
+		if rows[index].Category == types.CategoryTypeNone || rows[index].SNR <= 0 {
+			continue
+		}
+
+		values = append(values, rows[index].SNR)
+	}
+
+	if len(values) < minSeedObservations {
+		return []float64{1.0, 1.5, 2.0}
+	}
+
+	sort.Float64s(values)
+
+	quantile := func(fraction float64) float64 {
+		position := int(float64(len(values)-1) * fraction)
+
+		return values[position]
+	}
+
+	thresholds := []float64{quantile(0.50), quantile(0.90), quantile(0.99)}
+	unique := thresholds[:0]
+
+	for _, threshold := range thresholds {
+		rounded := math.Round(threshold*100) / 100
+
+		if rounded <= 0 {
+			continue
+		}
+
+		if len(unique) > 0 && unique[len(unique)-1] >= rounded {
+			continue
+		}
+
+		unique = append(unique, rounded)
+	}
+
+	if len(unique) == 0 {
+		return []float64{1.0, 1.5, 2.0}
+	}
+
+	return unique
+}
+
 func deriveSeedCategories(rows []types.Measurement) []types.CategoryType {
 	stats := categoryForwardStats(rows)
 	candidates := make([]categorySeedStats, 0, len(stats))
+	floor := seedObservationFloor(len(rows))
 
 	for category, candidate := range stats {
+		if candidate.forwardObservations < floor {
+			continue
+		}
+
 		candidate.category = category
 		candidates = append(candidates, candidate)
+	}
+
+	// Too few categories clear the floor (tiny fixture tapes): fall back to all,
+	// still ranked, so small tests and thin captures keep working.
+	if len(candidates) < 2 {
+		candidates = candidates[:0]
+
+		for category, candidate := range stats {
+			candidate.category = category
+			candidates = append(candidates, candidate)
+		}
 	}
 
 	sort.Slice(candidates, func(firstIndex, secondIndex int) bool {
@@ -98,12 +178,40 @@ func deriveSeedCategories(rows []types.Measurement) []types.CategoryType {
 	return categories
 }
 
+// seedObservationFloor scales the rankability floor with tape size, bounded
+// below by minSeedObservations.
+func seedObservationFloor(rowCount int) int {
+	floor := rowCount / 50_000
+
+	if floor < minSeedObservations {
+		return minSeedObservations
+	}
+
+	return floor
+}
+
+/*
+forwardScore ranks a category by the t-statistic of its mean forward return —
+mean / (std/√n) — not the raw mean. The raw mean rewarded whichever rare
+category got lucky: with no variance term a handful of fortunate observations
+beat half a million unremarkable ones, and the seed slots filled with
+unfireable noise.
+*/
 func (stats categorySeedStats) forwardScore() float64 {
-	if stats.forwardObservations <= 0 {
+	n := float64(stats.forwardObservations)
+
+	if n <= 1 {
 		return 0
 	}
 
-	return stats.forwardReturn / float64(stats.forwardObservations)
+	mean := stats.forwardReturn / n
+	variance := stats.forwardSquared/n - mean*mean
+
+	if variance < 1e-18 {
+		variance = 1e-18
+	}
+
+	return mean / math.Sqrt(variance/n)
 }
 
 func categoryForwardStats(rows []types.Measurement) map[types.CategoryType]categorySeedStats {
@@ -173,6 +281,7 @@ func scorePendingCategories(
 		returnValue := math.Log(nextPrice / entry.price)
 		candidate := stats[entry.category]
 		candidate.forwardReturn += returnValue
+		candidate.forwardSquared += returnValue * returnValue
 		candidate.forwardObservations++
 		stats[entry.category] = candidate
 	}

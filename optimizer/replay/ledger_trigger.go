@@ -158,6 +158,31 @@ func (ledger *replayLedger) closeAtTrigger(
 	)
 
 	if reasoning.ExitRestsAsLimit(actionType) {
+		// Take-profit limits demand a STRICT trade-through — the breach print is
+		// a touch, and touch-filling them was systematic optimism. Stop/trailing
+		// limits fill on prints at-or-beyond their limit side (mirrors the paper
+		// matcher's makerLimitFills).
+		exitSideForFill := exitSide(position.side)
+		strict := actionType == reasoning.ActionTakeProfitLimit
+
+		if exitSideForFill == trading.Sell {
+			if strict && row.Last <= level {
+				return
+			}
+
+			if !strict && row.Last < level {
+				return
+			}
+		} else {
+			if strict && row.Last >= level {
+				return
+			}
+
+			if !strict && row.Last > level {
+				return
+			}
+		}
+
 		exitRow := ledger.measurementForSymbol(symbol, row)
 
 		if !exitRow.HasBookDepth() {
