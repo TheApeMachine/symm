@@ -28,7 +28,16 @@ type Desk struct {
 }
 
 func NewDesk(ctx context.Context, pool *qpool.Q[any]) (*Desk, error) {
-	return NewDeskWithCaches(ctx, pool, EnsureQuoteCache(ctx, pool), EnsureStressCache(ctx, pool))
+	quotes := NewQuoteCache(ctx, pool)
+	quotes.Start(pool)
+
+	stress := NewStressCache(ctx, pool)
+	stress.Start(pool)
+
+	rules := NewInstrumentRulesCache(ctx)
+	rules.Start(pool)
+
+	return NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
 }
 
 /*
@@ -40,7 +49,10 @@ func NewDeskWithCaches(
 	quotes *QuoteCache,
 	stress *StressCache,
 ) (*Desk, error) {
-	return NewDeskWithAllCaches(ctx, pool, quotes, stress, EnsureInstrumentRulesCache(ctx, pool))
+	rules := NewInstrumentRulesCache(ctx)
+	rules.Start(pool)
+
+	return NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
 }
 
 /*

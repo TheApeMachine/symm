@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func configPath() string {
+func configDir() string {
 	_, file, _, ok := runtime.Caller(0)
 
 	if !ok {
@@ -18,7 +18,25 @@ func configPath() string {
 
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 
-	return filepath.Join(repoRoot, "cmd", "cfg", "config.yml")
+	return filepath.Join(repoRoot, "cmd", "cfg")
+}
+
+func loadMergedConfig() error {
+	viper.Reset()
+	viper.SetConfigType("yaml")
+
+	infraPath := filepath.Join(configDir(), "infra.yml")
+	strategyPath := filepath.Join(configDir(), "strategy.yml")
+
+	viper.SetConfigFile(infraPath)
+
+	if err := viper.MergeInConfig(); err != nil {
+		return err
+	}
+
+	viper.SetConfigFile(strategyPath)
+
+	return viper.MergeInConfig()
 }
 
 /*
@@ -26,11 +44,8 @@ MustLoad reads cmd/cfg/config.yml into the process-wide viper instance.
 It fatals on failure and is intended for TestMain setup.
 */
 func MustLoad() {
-	viper.SetConfigType("yaml")
-	viper.SetConfigFile(configPath())
-
-	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("testconfig: read %s: %v", configPath(), err)
+	if err := loadMergedConfig(); err != nil {
+		log.Fatalf("testconfig: load config: %v", err)
 	}
 }
 
@@ -40,10 +55,7 @@ Load reads cmd/cfg/config.yml into viper for one test.
 func Load(test *testing.T) {
 	test.Helper()
 
-	viper.SetConfigType("yaml")
-	viper.SetConfigFile(configPath())
-
-	if err := viper.ReadInConfig(); err != nil {
-		test.Fatalf("testconfig: read %s: %v", configPath(), err)
+	if err := loadMergedConfig(); err != nil {
+		test.Fatalf("testconfig: load config: %v", err)
 	}
 }

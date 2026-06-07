@@ -24,6 +24,7 @@ Writer appends desk audit frames as JSONL when trading.audit.file is configured.
 */
 type Writer struct {
 	path        string
+	pool        *WriterPool
 	seq         atomic.Int64
 	maxBytes    int64
 	backupCount int
@@ -37,50 +38,14 @@ type writerFailure struct {
 	err error
 }
 
-// shared keeps one audit Writer per file path so every component (story, trader)
-// funnels frames through a single serialised queue. Two independent writers over
-// the same O_APPEND file flush unaligned buffers and interleave mid-line — which is
-// what tore the audit log; a per-path singleton with refcounting prevents that.
-var (
-	sharedMu sync.Mutex
-	shared   = map[string]*sharedWriter{}
-)
-
-type sharedWriter struct {
-	writer *Writer
-	refs   int
-}
+var defaultWriterPool = NewWriterPool()
 
 /*
-OpenWriter returns the process-wide audit writer for the configured path, creating
-it on first use and sharing it across callers so all audit frames serialise through
-one queue. Each successful OpenWriter must be balanced by one Close.
+OpenWriter opens the configured audit path via the process-default writer pool.
+Prefer injecting audit.WriterPool from runtime.Runtime in new code.
 */
 func OpenWriter() (*Writer, error) {
-	path := auditPath()
-
-	if path == "" {
-		return nil, nil
-	}
-
-	sharedMu.Lock()
-	defer sharedMu.Unlock()
-
-	if existing := shared[path]; existing != nil {
-		existing.refs++
-
-		return existing.writer, nil
-	}
-
-	writer, err := openWriter(path)
-
-	if err != nil {
-		return nil, err
-	}
-
-	shared[path] = &sharedWriter{writer: writer, refs: 1}
-
-	return writer, nil
+	return defaultWriterPool.OpenConfigured()
 }
 
 func openWriter(path string) (*Writer, error) {
@@ -166,24 +131,14 @@ func (writer *Writer) Close() error {
 		return nil
 	}
 
-	// Only the last holder of a shared writer actually shuts the queue down, so one
-	// component closing on shutdown does not silence audit for the others.
-	sharedMu.Lock()
-
-	if entry := shared[writer.path]; entry != nil && entry.writer == writer {
-		entry.refs--
-
-		if entry.refs > 0 {
-			sharedMu.Unlock()
-
-			return writer.Err()
-		}
-
-		delete(shared, writer.path)
+	if writer.pool != nil {
+		return writer.pool.release(writer)
 	}
 
-	sharedMu.Unlock()
+	return writer.closeDirect()
+}
 
+func (writer *Writer) closeDirect() error {
 	writer.closeOnce.Do(func() {
 		writer.queue.Close()
 		<-writer.done

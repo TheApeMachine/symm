@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -78,49 +77,21 @@ func TestStressCacheIngestMeasurement(t *testing.T) {
 	})
 }
 
-func TestEnsureStressCache(t *testing.T) {
+func TestEnsureStressCacheConstructsInstance(t *testing.T) {
 	Convey("Given a pool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
 		defer func() {
 			cancel()
-			ResetStressCacheForTest()
 			pool.Close()
 		}()
 
-		Convey("It should return a shared cache instance", func() {
-			first := EnsureStressCache(ctx, pool)
-			second := EnsureStressCache(ctx, pool)
+		Convey("EnsureStressCache should return a started cache", func() {
+			cache := EnsureStressCache(ctx, pool)
 
-			So(first, ShouldEqual, second)
-		})
-	})
-}
-
-func TestEnsureStressCacheRecyclesOnCancel(t *testing.T) {
-	Convey("Given a canceled stress-cache context", t, func() {
-		firstCtx, firstCancel := context.WithCancel(context.Background())
-		firstPool := qpool.NewQ[any](firstCtx, 1, 4, nil)
-
-		first := EnsureStressCache(firstCtx, firstPool)
-		firstCancel()
-		ResetStressCacheForTest()
-		firstPool.Close()
-
-		secondCtx, secondCancel := context.WithCancel(context.Background())
-		defer secondCancel()
-
-		secondPool := qpool.NewQ[any](secondCtx, 1, 4, nil)
-		defer func() {
-			ResetStressCacheForTest()
-			secondPool.Close()
-		}()
-
-		second := EnsureStressCache(secondCtx, secondPool)
-
-		Convey("It should construct a new cache instance", func() {
-			So(fmt.Sprintf("%p", second), ShouldNotEqual, fmt.Sprintf("%p", first))
+			So(cache, ShouldNotBeNil)
+			So(cache.started.Load(), ShouldBeTrue)
 		})
 	})
 }

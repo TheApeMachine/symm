@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,6 +29,7 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/runtime"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -39,7 +39,7 @@ Embed a mini filesystem into the binary to hold the default config file.
 This will be written to the home directory of the user running the service,
 which allows a developer to easily override the config file.
 */
-//go:embed cfg/config.yml
+//go:embed cfg/config.yml cfg/infra.yml cfg/strategy.yml
 var embedded embed.FS
 
 // defaultCapturePath is where `make run --record` writes measurements and where
@@ -58,7 +58,7 @@ var (
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
-			
+
 			// --record guarantees the run collects data for the optimizer, without
 			// depending on trading.record.file being set in the config.
 			if recordRun {
@@ -74,11 +74,29 @@ var (
 			}
 
 			systemCtx := engine.Context()
+			services, err := runtime.New(systemCtx, pool)
+
+			if err != nil {
+				return err
+			}
+
 			streams := focus.NewSet()
-			quotes := broker.EnsureQuoteCache(systemCtx, pool)
-			stress := broker.EnsureStressCache(systemCtx, pool)
-			crypto := trader.NewCryptoWithCaches(systemCtx, pool, streams, quotes, stress)
-			story := newStoryWithBookCapture(systemCtx, pool, quotes, crypto)
+			auditWriter, err := services.OpenAudit()
+
+			if err != nil {
+				return err
+			}
+
+			crypto := trader.NewCryptoWithCaches(
+				systemCtx,
+				pool,
+				streams,
+				services.Quotes,
+				services.Stress,
+				services.Rules,
+				auditWriter,
+			)
+			story := newStoryWithBookCapture(systemCtx, pool, services, crypto)
 
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),
@@ -95,10 +113,10 @@ var (
 				return err
 			}
 
-			for _, runtime := range private.ExecutionSystems(
-				systemCtx, pool, apiKey, apiSecret, quotes,
+			for _, executionSystem := range private.ExecutionSystems(
+				systemCtx, pool, apiKey, apiSecret, services.Quotes,
 			) {
-				if err := engine.AddSystems(runtime); err != nil {
+				if err := engine.AddSystems(executionSystem); err != nil {
 					return err
 				}
 			}
@@ -156,71 +174,38 @@ func init() {
 }
 
 func initConfig() {
-	viper.SetConfigType("yml")
-
-	tryRead := func(path string) error {
-		viper.SetConfigFile(path)
-		return viper.ReadInConfig()
-	}
-
-	loaded := false
-
 	if rootCmd.PersistentFlags().Changed("config") && strings.TrimSpace(cfgFile) != "" {
-		if err := tryRead(cfgFile); err == nil {
-			loaded = true
-		} else {
+		if err := mergeConfigFiles(cfgFile); err != nil {
 			fmt.Fprintf(os.Stderr, "symm: config file %q: %v\n", cfgFile, err)
 			os.Exit(1)
 		}
+
+		return
 	}
 
-	if !loaded {
-		paths := []string{
-			"cmd/cfg/config.yml",
-			"config.yml",
-		}
-
-		if home, err := os.UserHomeDir(); err == nil {
-			paths = append(paths, filepath.Join(home, ".symm", "config.yml"))
-		}
-
-		for _, p := range paths {
-			if err := tryRead(p); err == nil {
-				loaded = true
-				break
-			}
-		}
+	if err := loadDefaultConfigs(); err != nil {
+		fmt.Fprintf(os.Stderr, "symm: config: %v\n", err)
+		os.Exit(1)
 	}
-
-	if !loaded {
-		cfgReader, err := embedded.Open("cfg/config.yml")
-
-		if err != nil {
-			fmt.Printf("embedded config file not readable: %v\n", err)
-			return
-		}
-
-		defer cfgReader.Close()
-
-		if readErr := viper.ReadConfig(cfgReader); readErr != nil {
-			fmt.Printf("embedded config file not readable: %v\n", readErr)
-			return
-		}
-	}
-
-	viper.WatchConfig()
 }
 
 func newStoryWithBookCapture(
 	ctx context.Context,
 	pool *qpool.Q[any],
-	quotes *broker.QuoteCache,
+	services *runtime.Runtime,
 	crypto *trader.Crypto,
 ) *market.Story {
-	story := market.NewStory(ctx, pool)
-	story.SetBookEnricher(broker.MeasurementBookEnricher(ctx, pool))
+	auditWriter, err := services.OpenAudit()
+
+	if err != nil {
+		errnie.Error(err, "engine: audit")
+		return nil
+	}
+
+	story := market.NewStoryWithAudit(ctx, pool, auditWriter)
+	story.SetBookEnricher(broker.MeasurementBookEnricher(services.Quotes))
 	story.SetQuoteReady(func(symbol string) bool {
-		_, ok := quotes.Snapshot(symbol)
+		_, ok := services.Quotes.Snapshot(symbol)
 
 		return ok
 	})

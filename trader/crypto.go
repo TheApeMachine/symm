@@ -76,13 +76,12 @@ type Crypto struct {
 const markInterval = 500 * time.Millisecond
 
 func NewCrypto(ctx context.Context, pool *qpool.Q[any], streams *focus.Set) *Crypto {
-	return NewCryptoWithCaches(
-		ctx,
-		pool,
-		streams,
-		broker.EnsureQuoteCache(ctx, pool),
-		broker.EnsureStressCache(ctx, pool),
-	)
+	quotes := broker.EnsureQuoteCache(ctx, pool)
+	stress := broker.EnsureStressCache(ctx, pool)
+	rules := broker.EnsureInstrumentRulesCache(ctx, pool)
+	auditWriter, _ := audit.OpenWriter()
+
+	return NewCryptoWithCaches(ctx, pool, streams, quotes, stress, rules, auditWriter)
 }
 
 /*
@@ -94,6 +93,8 @@ func NewCryptoWithCaches(
 	streams *focus.Set,
 	quotes *broker.QuoteCache,
 	stress *broker.StressCache,
+	rules *broker.InstrumentRulesCache,
+	auditWriter *audit.Writer,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -107,19 +108,11 @@ func NewCryptoWithCaches(
 		return nil
 	}
 
-	desk, err := broker.NewDeskWithCaches(ctx, pool, quotes, stress)
+	desk, err := broker.NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
 
 	if err != nil {
 		cancel()
 		errnie.Error(fmt.Errorf("trader/crypto: desk: %w", err), "trader/crypto")
-		return nil
-	}
-
-	auditWriter, err := audit.OpenWriter()
-
-	if err != nil {
-		cancel()
-		errnie.Error(fmt.Errorf("trader/crypto: audit: %w", err), "trader/crypto")
 		return nil
 	}
 

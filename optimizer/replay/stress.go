@@ -6,13 +6,14 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/execution"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func executionStressMultiplier(
 	snapshots []types.Measurement,
 ) float64 {
-	return broker.ExecutionStressMultiplier(snapshots)
+	return execution.StressMultiplier(snapshots)
 }
 
 func executionSlippagePct(

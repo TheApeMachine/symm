@@ -33,45 +33,20 @@ type StressCache struct {
 	started atomic.Bool
 }
 
-var (
-	stressCacheMu sync.Mutex
-	sharedStress  *StressCache
-)
+/*
+ResetStressCacheForTest is a no-op; caches are constructed per runtime.Runtime.
+*/
+func ResetStressCacheForTest() {}
 
 /*
-EnsureStressCache returns the process-wide stress cache bound to a live context.
+EnsureStressCache constructs a fresh stress cache. Prefer runtime.Runtime at the
+process root so live components share one instance via dependency injection.
 */
 func EnsureStressCache(ctx context.Context, pool *qpool.Q[any]) *StressCache {
-	stressCacheMu.Lock()
-	defer stressCacheMu.Unlock()
+	cache := NewStressCache(ctx, pool)
+	cache.Start(pool)
 
-	if sharedStress != nil && sharedStress.ctx.Err() == nil {
-		return sharedStress
-	}
-
-	if sharedStress != nil {
-		sharedStress.cancel()
-	}
-
-	sharedStress = NewStressCache(ctx, pool)
-	sharedStress.Start(pool)
-
-	return sharedStress
-}
-
-/*
-ResetStressCacheForTest tears down the shared cache between isolated harness runs.
-*/
-func ResetStressCacheForTest() {
-	stressCacheMu.Lock()
-	defer stressCacheMu.Unlock()
-
-	if sharedStress == nil {
-		return
-	}
-
-	sharedStress.cancel()
-	sharedStress = nil
+	return cache
 }
 
 func NewStressCache(ctx context.Context, _ *qpool.Q[any]) *StressCache {

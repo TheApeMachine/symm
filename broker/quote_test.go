@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -140,7 +139,7 @@ func BenchmarkQuoteCacheSnapshot(b *testing.B) {
 	}
 }
 
-func TestEnsureQuoteCache(t *testing.T) {
+func TestEnsureQuoteCacheConstructsInstance(t *testing.T) {
 	Convey("Given a pool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
@@ -150,35 +149,11 @@ func TestEnsureQuoteCache(t *testing.T) {
 			pool.Close()
 		}()
 
-		Convey("It should return a shared cache instance", func() {
-			first := EnsureQuoteCache(ctx, pool)
-			second := EnsureQuoteCache(ctx, pool)
+		Convey("EnsureQuoteCache should return a started cache", func() {
+			cache := EnsureQuoteCache(ctx, pool)
 
-			So(first, ShouldEqual, second)
-		})
-	})
-}
-
-func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
-	Convey("Given a canceled quote-cache context", t, func() {
-		firstCtx, firstCancel := context.WithCancel(context.Background())
-		firstPool := qpool.NewQ[any](firstCtx, 1, 4, nil)
-
-		first := EnsureQuoteCache(firstCtx, firstPool)
-		firstCancel()
-		ResetQuoteCacheForTest()
-		firstPool.Close()
-
-		secondCtx, secondCancel := context.WithCancel(context.Background())
-		defer secondCancel()
-
-		secondPool := qpool.NewQ[any](secondCtx, 1, 4, nil)
-		defer secondPool.Close()
-
-		second := EnsureQuoteCache(secondCtx, secondPool)
-
-		Convey("It should construct a new cache instance", func() {
-			So(fmt.Sprintf("%p", second), ShouldNotEqual, fmt.Sprintf("%p", first))
+			So(cache, ShouldNotBeNil)
+			So(cache.started.Load(), ShouldBeTrue)
 		})
 	})
 }

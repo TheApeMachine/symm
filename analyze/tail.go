@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 // LiveMaxRows is the sliding tail window used for streaming diagnostics so each
@@ -95,8 +96,10 @@ func AnalyzeFileTail(signal, path string, maxRows int) (*Report, error) {
 
 	fields := make([]FieldReport, 0, len(ordered))
 
+	thresholds := DiagnosticThresholdsForRegime(types.RegimeNone)
+
 	for _, acc := range ordered {
-		fields = append(fields, acc.report())
+		fields = append(fields, acc.report(thresholds))
 	}
 
 	report := &Report{

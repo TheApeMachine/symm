@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 // DefaultMaxRows caps how many lines a single analysis reads, keeping memory and
@@ -139,10 +140,29 @@ func sortFieldAccumulators(accumulators []*accumulator) {
 }
 
 /*
+AnalyzeOptions tunes the diagnostic battery for a specific market context.
+*/
+type AnalyzeOptions struct {
+	Regime     types.Regime
+	Thresholds DiagnosticThresholds
+}
+
+/*
 AnalyzeFile reads a raw JSONL dump and returns its diagnostic report. signal is a
 display label (typically the signal name). maxRows <= 0 uses DefaultMaxRows.
 */
-func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
+func AnalyzeFile(signal, path string, maxRows int, options ...AnalyzeOptions) (*Report, error) {
+	thresholds := DiagnosticThresholdsForRegime(types.RegimeNone)
+
+	for _, option := range options {
+		if option.Thresholds != (DiagnosticThresholds{}) {
+			thresholds = option.Thresholds
+		}
+
+		if option.Regime != types.RegimeNone {
+			thresholds = DiagnosticThresholdsForRegime(option.Regime)
+		}
+	}
 	if maxRows <= 0 {
 		maxRows = DefaultMaxRows
 	}
@@ -213,7 +233,7 @@ func AnalyzeFile(signal, path string, maxRows int) (*Report, error) {
 	fields := make([]FieldReport, 0, len(ordered))
 
 	for _, acc := range ordered {
-		fields = append(fields, acc.report())
+		fields = append(fields, acc.report(thresholds))
 	}
 
 	report := &Report{
@@ -259,16 +279,16 @@ func (acc *accumulator) observe(value any) {
 	}
 }
 
-func (acc *accumulator) report() FieldReport {
+func (acc *accumulator) report(thresholds DiagnosticThresholds) FieldReport {
 	// A field is numeric when its readings are predominantly numbers.
 	if acc.numeric >= acc.textual && acc.numeric > 0 {
-		return numericReport(acc.name, acc.nums)
+		return numericReport(acc.name, acc.nums, thresholds)
 	}
 
-	return categoricalReport(acc.name, acc.strs)
+	return categoricalReport(acc.name, acc.strs, thresholds)
 }
 
-func numericReport(name string, values []float64) FieldReport {
+func numericReport(name string, values []float64, thresholds DiagnosticThresholds) FieldReport {
 	values = finiteValues(values)
 	report := FieldReport{Name: name, Kind: kindNumeric, Count: len(values)}
 
@@ -299,7 +319,7 @@ func numericReport(name string, values []float64) FieldReport {
 	report.ZeroFraction = zeroFraction(values)
 	report.Histogram = histogram(sorted)
 
-	report.Verdict, report.Notes = numericVerdict(report)
+	report.Verdict, report.Notes = numericVerdict(report, thresholds)
 
 	return report
 }
@@ -318,7 +338,7 @@ func finiteValues(values []float64) []float64 {
 	return finite
 }
 
-func categoricalReport(name string, values []string) FieldReport {
+func categoricalReport(name string, values []string, thresholds DiagnosticThresholds) FieldReport {
 	report := FieldReport{Name: name, Kind: kindCategorical, Count: len(values)}
 
 	if len(values) == 0 {
@@ -337,7 +357,7 @@ func categoricalReport(name string, values []string) FieldReport {
 	report.SwitchRate = switchRate(values)
 	report.Top = topCategories(counts)
 
-	report.Verdict, report.Notes = categoricalVerdict(report)
+	report.Verdict, report.Notes = categoricalVerdict(report, thresholds)
 
 	return report
 }
@@ -566,7 +586,7 @@ func topCategories(counts map[string]int) []CategoryCount {
 
 // ---- verdicts ------------------------------------------------------------------
 
-func numericVerdict(report FieldReport) (string, []string) {
+func numericVerdict(report FieldReport, thresholds DiagnosticThresholds) (string, []string) {
 	notes := []string{}
 
 	if report.ZeroFraction >= 0.25 {
@@ -581,13 +601,14 @@ func numericVerdict(report FieldReport) (string, []string) {
 	spread := report.Max - report.Min
 	dispersion := report.Std / (math.Abs(report.Mean) + 1e-12)
 
-	if spread <= constantSpread || dispersion < deadDispersion {
+	if spread <= constantSpread || dispersion < thresholds.DeadDispersion {
 		return verdictDead, append([]string{
 			fmt.Sprintf("near-constant at %.6g — no usable dynamic range", report.Median),
 		}, notes...)
 	}
 
-	if report.MeanCrossingRate > flickerCrossing && report.Lag1Autocorr < flickerAutocorr {
+	if report.MeanCrossingRate > thresholds.FlickerCrossing &&
+		report.Lag1Autocorr < thresholds.FlickerAutocorr {
 		return verdictFlicker, append([]string{
 			fmt.Sprintf(
 				"flips across its mean %.0f%% of ticks with autocorrelation %.2f — reads as noise, not signal",
@@ -598,8 +619,8 @@ func numericVerdict(report FieldReport) (string, []string) {
 
 	excursion := report.P99 / nonZero(report.Median)
 
-	if report.Lag1Autocorr >= smoothAutocorr {
-		if math.Abs(excursion) < flatExcursionRatio {
+	if report.Lag1Autocorr >= thresholds.SmoothAutocorr {
+		if math.Abs(excursion) < thresholds.FlatExcursionRatio {
 			return verdictFlat, append([]string{
 				fmt.Sprintf(
 					"smooth (autocorrelation %.2f) but barely moves — p99 is only %.2f× the median",
@@ -624,7 +645,7 @@ func numericVerdict(report FieldReport) (string, []string) {
 	}, notes...)
 }
 
-func categoricalVerdict(report FieldReport) (string, []string) {
+func categoricalVerdict(report FieldReport, thresholds DiagnosticThresholds) (string, []string) {
 	if report.Distinct <= 1 {
 		value := ""
 
@@ -635,7 +656,7 @@ func categoricalVerdict(report FieldReport) (string, []string) {
 		return verdictConstant, []string{fmt.Sprintf("always %q — carries no information", value)}
 	}
 
-	if report.SwitchRate > unstableSwitchRate {
+	if report.SwitchRate > thresholds.UnstableSwitchRate {
 		return verdictUnstable, []string{fmt.Sprintf(
 			"changes value %.0f%% of ticks across %d categories — unstable",
 			report.SwitchRate*100, report.Distinct,

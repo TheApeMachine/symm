@@ -25,43 +25,20 @@ type InstrumentRulesCache struct {
 	started atomic.Bool
 }
 
-var (
-	instrumentRulesMu sync.Mutex
-	sharedRules       *InstrumentRulesCache
-)
+/*
+ResetInstrumentRulesCacheForTest is a no-op; caches are constructed per runtime.Runtime.
+*/
+func ResetInstrumentRulesCacheForTest() {}
 
 /*
-EnsureInstrumentRulesCache returns the process-wide instrument rules cache.
+EnsureInstrumentRulesCache constructs a fresh instrument-rules cache. Prefer
+runtime.Runtime at the process root so live components share one instance.
 */
 func EnsureInstrumentRulesCache(ctx context.Context, pool *qpool.Q[any]) *InstrumentRulesCache {
-	instrumentRulesMu.Lock()
-	defer instrumentRulesMu.Unlock()
+	cache := NewInstrumentRulesCache(ctx)
+	cache.Start(pool)
 
-	if sharedRules != nil && sharedRules.ctx.Err() == nil {
-		return sharedRules
-	}
-
-	if sharedRules != nil {
-		sharedRules.cancel()
-	}
-
-	sharedRules = NewInstrumentRulesCache(ctx)
-	sharedRules.Start(pool)
-
-	return sharedRules
-}
-
-/*
-ResetInstrumentRulesCacheForTest tears down the shared cache between isolated runs.
-*/
-func ResetInstrumentRulesCacheForTest() {
-	instrumentRulesMu.Lock()
-	defer instrumentRulesMu.Unlock()
-
-	if sharedRules != nil {
-		sharedRules.cancel()
-		sharedRules = nil
-	}
+	return cache
 }
 
 func NewInstrumentRulesCache(ctx context.Context) *InstrumentRulesCache {

@@ -1,0 +1,95 @@
+# Trading strategy hyperparameters — optimizer sandbox; safe to mutate during tune.
+trading:
+  order_ack_timeout: 500ms
+  max_quote_age: 15s
+  max_spread_bps: 120
+  max_slippage_bps: 80
+  model: paper
+  margin_enabled: false
+  replay:
+    execution_latency_ms: 100
+    execution_stress_enabled: true
+    min_depth_coverage: 1.0
+    depth_shortfall_stress: 8
+    none_size_scale: 1.0
+    dead_size_scale: 1.0
+    trending_size_scale: 1.0
+    bullish_size_scale: 1.0
+    choppy_size_scale: 0.5
+    bearish_size_scale: 0.35
+  position_fraction: 0.2
+  max_concurrent_positions: 16
+  entry:
+    batch_window: 50ms
+    preemption_enabled: true
+  paper:
+    wallet_eur: 200
+    taker_fee_pct: 0.26
+    maker_fee_pct: 0.16
+    slippage_bps: 5
+    latency_profile: runs/network_latency.json
+  exit:
+    stop_loss_pct: 1.2
+    take_profit_pct: 2.4
+    trailing_volatility_multiple: 2.5
+
+optimizer:
+  tune:
+    load_instrument_rules: true
+    candidate_report: ""
+  search:
+    regime_aware: true
+
+regime:
+  window: 256
+  min_samples: 16
+  dead_vol: 0.0005
+  trend_threshold: 1.25
+  strong_trend: 2.5
+  vol_scale: 0.01
+
+signals:
+  volume_clock_bars_per_day: 288
+  spoof_weighted_threshold: 0.5
+  min_fill_to_cancel_ratio: 0.1
+  hawkes_fit_cooldown: 5
+  raw_dump: true
+  diagnostics:
+    dead_dispersion: 0.0001
+    flicker_crossing: 0.40
+    flicker_autocorr: 0.20
+    smooth_autocorr: 0.50
+    flat_excursion_ratio: 1.05
+    unstable_switch_rate: 0.50
+  causal:
+    contagion_break: 0.8
+    condition_switch: 1000
+    contagion_window_fast: 16
+    contagion_window_medium: 64
+    contagion_window_slow: 128
+    contagion_adaptive_sigma: 2
+    contagion_volatility_reset_sigma: 5
+    raw_dump: false
+  pumpdump:
+    raw_dump: true
+    window: 1m
+  exhaust:
+    raw_dump: true
+  cvd:
+    raw_dump: true
+  depthflow:
+    raw_dump: true
+  hawkes:
+    raw_dump: true
+  fluid:
+    raw_dump: true
+  leadlag:
+    raw_dump: true
+  liquidity:
+    raw_dump: true
+  sentiment:
+    raw_dump: true
+  correlation:
+    raw_dump: true
+  toxicity:
+    raw_dump: true

@@ -67,6 +67,12 @@ type Story struct {
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
+	auditWriter, _ := audit.OpenWriter()
+
+	return NewStoryWithAudit(ctx, pool, auditWriter)
+}
+
+func NewStoryWithAudit(ctx context.Context, pool *qpool.Q[any], auditWriter *audit.Writer) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	predictionSurpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
@@ -137,14 +143,7 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		story.recorder = bufio.NewWriter(fh)
 	}
 
-	if story.audit, story.err = audit.OpenWriter(); story.err != nil {
-		if story.recordFile != nil {
-			errnie.Error(story.recordFile.Close(), "story: record file")
-		}
-
-		story.cancel()
-		return nil
-	}
+	story.audit = auditWriter
 
 	story.broadcasts["measurements"] = pool.CreateBroadcastGroup(
 		"measurements", viper.GetDuration("system.queue.ttl"),

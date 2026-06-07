@@ -1,10 +1,7 @@
 package broker
 
 import (
-	"context"
-
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/market/settings"
 )
@@ -14,10 +11,8 @@ MeasurementBookEnricher returns a callback that attaches cached L2 depth to
 measurements before they are written to the optimizer capture tape.
 */
 func MeasurementBookEnricher(
-	ctx context.Context,
-	pool *qpool.Q[any],
+	quotes *QuoteCache,
 ) func(types.Measurement) types.Measurement {
-	quotes := EnsureQuoteCache(ctx, pool)
 	depth, err := settings.RequiredBookDepthLevels()
 
 	if err != nil {

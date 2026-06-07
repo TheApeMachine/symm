@@ -46,45 +46,20 @@ type QuoteCache struct {
 	started        atomic.Bool
 }
 
-var (
-	quoteCacheMu sync.Mutex
-	sharedQuotes *QuoteCache
-)
-
 /*
-EnsureQuoteCache returns the process-wide quote cache bound to a live context.
+EnsureQuoteCache constructs a fresh quote cache. Prefer runtime.Runtime at the
+process root so live components share one instance via dependency injection.
 */
+/*
+ResetQuoteCacheForTest is a no-op; caches are constructed per runtime.Runtime.
+*/
+func ResetQuoteCacheForTest() {}
+
 func EnsureQuoteCache(ctx context.Context, pool *qpool.Q[any]) *QuoteCache {
-	quoteCacheMu.Lock()
-	defer quoteCacheMu.Unlock()
+	cache := NewQuoteCache(ctx, pool)
+	cache.Start(pool)
 
-	if sharedQuotes != nil && sharedQuotes.ctx.Err() == nil {
-		return sharedQuotes
-	}
-
-	if sharedQuotes != nil {
-		sharedQuotes.cancel()
-	}
-
-	sharedQuotes = NewQuoteCache(ctx, pool)
-	sharedQuotes.Start(pool)
-
-	return sharedQuotes
-}
-
-/*
-ResetQuoteCacheForTest tears down the shared cache between isolated harness runs.
-*/
-func ResetQuoteCacheForTest() {
-	quoteCacheMu.Lock()
-	defer quoteCacheMu.Unlock()
-
-	if sharedQuotes == nil {
-		return
-	}
-
-	sharedQuotes.cancel()
-	sharedQuotes = nil
+	return cache
 }
 
 func NewQuoteCache(ctx context.Context, _ *qpool.Q[any]) *QuoteCache {
