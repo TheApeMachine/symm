@@ -20,7 +20,7 @@ Protective orders REST until price breaches, then use the same fill helpers.
 */
 type Orders struct {
 	ctx           context.Context
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	quotes        *broker.QuoteCache
 	balances      *Balances
 	catalog       *PairCatalog
@@ -47,7 +47,7 @@ type restingTrigger struct {
 	params  trading.AddParams
 }
 
-func NewOrders(ctx context.Context, pool *qpool.Q, balances *Balances, ids *Identifier) *Orders {
+func NewOrders(ctx context.Context, pool *qpool.Q[any], balances *Balances, ids *Identifier) *Orders {
 	return NewOrdersWithQuoteCache(
 		ctx, pool, balances, ids, broker.EnsureQuoteCache(ctx, pool), nil, ZeroLatency(),
 	)
@@ -58,7 +58,7 @@ NewOrdersWithQuoteCache builds the paper order emulator against explicit quotes.
 */
 func NewOrdersWithQuoteCache(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	balances *Balances,
 	ids *Identifier,
 	quotes *broker.QuoteCache,
@@ -368,6 +368,14 @@ func (orders *Orders) closeAtTrigger(
 		})
 
 		return
+	}
+
+	if trigger.action != reasoning.ActionTakeProfit {
+		if trigger.params.Side == trading.Sell && last > level {
+			price = last
+		} else if trigger.params.Side == trading.Buy && last < level {
+			price = last
+		}
 	}
 
 	fee := orders.feeAmount(symbol, trigger.qty, price, false)

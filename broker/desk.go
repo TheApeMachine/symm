@@ -17,7 +17,7 @@ const defaultHaltCooldown = 5 * time.Minute
 type Desk struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
-	pool         *qpool.Q
+	pool         *qpool.Q[any]
 	quotes       *QuoteCache
 	stress       *StressCache
 	rules        *InstrumentRulesCache
@@ -27,7 +27,7 @@ type Desk struct {
 	err          error
 }
 
-func NewDesk(ctx context.Context, pool *qpool.Q) (*Desk, error) {
+func NewDesk(ctx context.Context, pool *qpool.Q[any]) (*Desk, error) {
 	return NewDeskWithCaches(ctx, pool, EnsureQuoteCache(ctx, pool), EnsureStressCache(ctx, pool))
 }
 
@@ -36,7 +36,7 @@ NewDeskWithCaches builds a desk with explicit quote and stress dependencies.
 */
 func NewDeskWithCaches(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	quotes *QuoteCache,
 	stress *StressCache,
 ) (*Desk, error) {
@@ -48,7 +48,7 @@ NewDeskWithAllCaches builds a desk with explicit quote, stress, and instrument c
 */
 func NewDeskWithAllCaches(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	quotes *QuoteCache,
 	stress *StressCache,
 	rules *InstrumentRulesCache,

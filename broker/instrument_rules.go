@@ -34,7 +34,7 @@ var (
 /*
 EnsureInstrumentRulesCache returns the process-wide instrument rules cache.
 */
-func EnsureInstrumentRulesCache(ctx context.Context, pool *qpool.Q) *InstrumentRulesCache {
+func EnsureInstrumentRulesCache(ctx context.Context, pool *qpool.Q[any]) *InstrumentRulesCache {
 	instrumentRulesMu.Lock()
 	defer instrumentRulesMu.Unlock()
 
@@ -74,26 +74,27 @@ func NewInstrumentRulesCache(ctx context.Context) *InstrumentRulesCache {
 	}
 }
 
-func (cache *InstrumentRulesCache) Start(pool *qpool.Q) {
+func (cache *InstrumentRulesCache) Start(pool *qpool.Q[any]) {
 	if pool == nil || !cache.started.CompareAndSwap(false, true) {
 		return
 	}
 
 	raw := bus.Group(pool, "raw", 0)
-	subscriber := raw.Subscribe("broker:instrument-rules", 1024)
+	consumer := raw.Subscribe("broker:instrument-rules", 1024)
 
 	go func() {
 		for {
-			select {
-			case <-cache.ctx.Done():
-				return
-			case message, ok := <-subscriber.Incoming:
-				if !ok || message == nil {
-					return
-				}
+			message, err := consumer.Wait(cache.ctx)
 
-				cache.ingest(message.Value)
+			if err != nil {
+				return
 			}
+
+			if message == nil {
+				return
+			}
+
+			cache.ingest(message.Value)
 		}
 	}()
 }

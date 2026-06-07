@@ -2,6 +2,8 @@ package depthflow
 
 import (
 	"context"
+
+	"github.com/theapemachine/symm/bus"
 	"testing"
 	"time"
 
@@ -26,7 +28,7 @@ func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) mar
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -44,7 +46,7 @@ func TestObserveTrade(t *testing.T) {
 		viper.Set("market.book_depth_levels", 10)
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -64,23 +66,15 @@ func TestObserveTrade(t *testing.T) {
 				Symbol: symbol, Side: "buy", Price: 100, Qty: 3, Timestamp: now,
 			})
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for depthflow measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for depthflow measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes a depthflow reading", func() {
 				So(measurement.Source, ShouldEqual, types.SourceDepthFlow)
@@ -95,7 +89,7 @@ func BenchmarkObserveTrade(b *testing.B) {
 	viper.Set("market.book_depth_levels", 10)
 
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

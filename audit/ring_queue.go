@@ -15,8 +15,8 @@ drains slots in order. Push returns an error when the ring is full so the hot
 path never blocks on a contended lock or a parked scheduler.
 */
 type ringQueue struct {
-	capacity uint64
-	mask     uint64
+	capacity  uint64
+	mask      uint64
 	published atomic.Uint64
 	consumed  atomic.Uint64
 	slots     []atomic.Pointer[map[string]any]
@@ -72,27 +72,10 @@ func (queue *ringQueue) Pop() (map[string]any, bool) {
 	defer queue.idleMu.Unlock()
 
 	for {
-		tail := queue.consumed.Load()
-		head := queue.published.Load()
+		if frame, ok := queue.tryPop(); ok {
+			queue.ready.Signal()
 
-		if tail < head {
-			slot := tail & queue.mask
-			framePtr := queue.slots[slot].Load()
-
-			if framePtr == nil {
-				queue.ready.Wait()
-
-				if queue.closed.Load() && queue.consumed.Load() >= queue.published.Load() {
-					return nil, false
-				}
-
-				continue
-			}
-
-			queue.slots[slot].Store(nil)
-			queue.consumed.Store(tail + 1)
-
-			return *framePtr, true
+			return frame, true
 		}
 
 		if queue.closed.Load() {
@@ -101,6 +84,27 @@ func (queue *ringQueue) Pop() (map[string]any, bool) {
 
 		queue.ready.Wait()
 	}
+}
+
+func (queue *ringQueue) tryPop() (map[string]any, bool) {
+	tail := queue.consumed.Load()
+	head := queue.published.Load()
+
+	if tail >= head {
+		return nil, false
+	}
+
+	slot := tail & queue.mask
+	framePtr := queue.slots[slot].Load()
+
+	if framePtr == nil {
+		return nil, false
+	}
+
+	queue.slots[slot].Store(nil)
+	queue.consumed.Store(tail + 1)
+
+	return *framePtr, true
 }
 
 func (queue *ringQueue) Close() {

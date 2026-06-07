@@ -9,13 +9,13 @@ import (
 
 var registryMu sync.Mutex
 
-var groupsByPool = map[*qpool.Q]map[string]*qpool.BroadcastGroup{}
+var groupsByPool = map[*qpool.Q[any]]map[string]*qpool.BroadcastGroup{}
 
 /*
 Group returns the single broadcast group for id on this pool.
 Repeated calls share one *BroadcastGroup so producers and subscribers wire together.
 */
-func Group(pool *qpool.Q, id string, ttl time.Duration) *qpool.BroadcastGroup {
+func Group(pool *qpool.Q[any], id string, ttl time.Duration) *qpool.BroadcastGroup {
 	if pool == nil {
 		return nil
 	}

@@ -143,7 +143,7 @@ func BenchmarkQuoteCacheSnapshot(b *testing.B) {
 func TestEnsureQuoteCache(t *testing.T) {
 	Convey("Given a pool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
 		defer func() {
 			cancel()
@@ -162,7 +162,7 @@ func TestEnsureQuoteCache(t *testing.T) {
 func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
 	Convey("Given a canceled quote-cache context", t, func() {
 		firstCtx, firstCancel := context.WithCancel(context.Background())
-		firstPool := qpool.NewQ(firstCtx, 1, 4, nil)
+		firstPool := qpool.NewQ[any](firstCtx, 1, 4, nil)
 
 		first := EnsureQuoteCache(firstCtx, firstPool)
 		firstCancel()
@@ -172,7 +172,7 @@ func TestEnsureQuoteCacheRecyclesOnCancel(t *testing.T) {
 		secondCtx, secondCancel := context.WithCancel(context.Background())
 		defer secondCancel()
 
-		secondPool := qpool.NewQ(secondCtx, 1, 4, nil)
+		secondPool := qpool.NewQ[any](secondCtx, 1, 4, nil)
 		defer secondPool.Close()
 
 		second := EnsureQuoteCache(secondCtx, secondPool)

@@ -43,7 +43,7 @@ Harness wires the production stack with kraken/replay market data and paper trad
 type Harness struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	pool       *qpool.Q
+	pool       *qpool.Q[any]
 	engine     *cmd.Engine
 	replay     *paper.WebSocket
 	capture    io.Reader
@@ -56,7 +56,7 @@ type Harness struct {
 func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*Harness, error) {
 	ctx, cancel := context.WithCancel(parent)
 
-	pool := qpool.NewQ(ctx, 2, 8, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 8, qpool.NewConfig())
 
 	engine, err := cmd.NewEngine(ctx, pool)
 
@@ -102,7 +102,7 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	}
 
 	tape := NewTape()
-	tape.Subscribe(pool)
+	tape.Subscribe(ctx, pool)
 
 	harness := &Harness{
 		ctx:        ctx,

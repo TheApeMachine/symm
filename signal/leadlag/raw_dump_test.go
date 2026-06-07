@@ -91,7 +91,7 @@ func TestObserveRawJSONL_LeadLag(t *testing.T) {
 		withLeadlagRawDump(t, path)
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)

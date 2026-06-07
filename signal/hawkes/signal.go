@@ -35,9 +35,9 @@ per-symbol fit is cooldown-throttled inside HawkesSymbol.
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	tradeScratch  []tradeTouch
 	surpriseField *types.CategorySurpriseField
@@ -85,7 +85,7 @@ func (state *symbolState) measure(now time.Time) (types.Measurement, float64, er
 	return state.hawkes.Measure(state.ticks, now)
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -122,7 +122,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:        cancel,
 		pool:          pool,
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.Subscriber),
+		subscribers:   make(map[string]*qpool.BroadcastConsumer),
 		surpriseField: surpriseField,
 		classifier:    pooledCalibrator.Classifier,
 		calibrator:    pooledCalibrator.Calibrator,
@@ -145,21 +145,23 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			switch sm.Channel {
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+
+		if !ok {
+			continue
+		}
+
+		switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
@@ -172,7 +174,6 @@ func (signal *Signal) Tick() error {
 				if err := signal.observeTickers(tickers); err != nil {
 					errnie.Error(err, "hawkes: observe tickers")
 				}
-			}
 		}
 	}
 }
@@ -243,10 +244,10 @@ func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
 }
 
 func (signal *Signal) publishTouches(touches []tradeTouch) error {
-	tasks := make([]chan *qpool.QValue[any], 0, len(touches))
+	tasks := make([]*qpool.ResultWait[any], 0, len(touches))
 
 	for _, touch := range touches {
-		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "hawkes", &tasks), func(ctx context.Context) (any, error) {
 			now := touchLastTime(touch.state)
 			return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
 		}))
@@ -255,7 +256,11 @@ func (signal *Signal) publishTouches(touches []tradeTouch) error {
 	var err error
 
 	for _, task := range tasks {
-		value := <-task
+		value, getErr := task.Get(signal.ctx)
+		if getErr != nil {
+			err = errors.Join(err, getErr)
+			continue
+		}
 		err = errors.Join(err, value.Error)
 	}
 

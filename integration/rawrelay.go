@@ -25,10 +25,10 @@ type RawRelay struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	raw         *qpool.BroadcastGroup
-	subscribers []*qpool.Subscriber
+	consumers []*qpool.BroadcastConsumer
 }
 
-func NewRawRelay(ctx context.Context, pool *qpool.Q) *RawRelay {
+func NewRawRelay(ctx context.Context, pool *qpool.Q[any]) *RawRelay {
 	ctx, cancel := context.WithCancel(ctx)
 
 	relay := &RawRelay{
@@ -39,14 +39,14 @@ func NewRawRelay(ctx context.Context, pool *qpool.Q) *RawRelay {
 
 	for _, channel := range replayRelayChannels {
 		group := bus.Group(pool, channel, 10*time.Millisecond)
-		subscriber := group.Subscribe("integration/rawrelay:"+channel, 4096)
+		consumer := group.Subscribe("integration/rawrelay:"+channel, 4096)
 
-		if subscriber == nil {
+		if consumer == nil {
 			cancel()
 			return nil
 		}
 
-		relay.subscribers = append(relay.subscribers, subscriber)
+		relay.consumers = append(relay.consumers, consumer)
 	}
 
 	return relay
@@ -73,28 +73,26 @@ func (relay *RawRelay) Tick() error {
 }
 
 func (relay *RawRelay) forwardOne() bool {
-	for _, subscriber := range relay.subscribers {
-		select {
-		case message := <-subscriber.Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+	for _, consumer := range relay.consumers {
+		message := consumer.Poll()
 
-			envelope, ok := message.Value.(map[string]any)
-
-			if !ok {
-				continue
-			}
-
-			ch, _ := envelope["channel"].(string)
-			relay.raw.Send(&qpool.QValue[any]{
-				Type:  ch,
-				Value: envelope,
-			})
-
-			return true
-		default:
+		if message == nil || message.Value == nil {
+			continue
 		}
+
+		envelope, ok := message.Value.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		ch, _ := envelope["channel"].(string)
+		relay.raw.Send(&qpool.QValue[any]{
+			Type:  ch,
+			Value: envelope,
+		})
+
+		return true
 	}
 
 	return false

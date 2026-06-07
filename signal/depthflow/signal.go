@@ -30,9 +30,9 @@ var depthflowDefaultBandEdges = []float64{0.5, 1.5, 2.5}
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	surpriseField *types.CategorySurpriseField
 	classifier    *adaptive.Classifier
@@ -40,7 +40,7 @@ type Signal struct {
 	rawDump       *rawdump.Writer
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -70,7 +70,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:        cancel,
 		pool:          pool,
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.Subscriber),
+		subscribers:   make(map[string]*qpool.BroadcastConsumer),
 		surpriseField: surpriseField,
 		classifier:    pooledCalibrator.Classifier,
 		calibrator:    pooledCalibrator.Calibrator,
@@ -108,21 +108,23 @@ func (signal *Signal) state(symbol string) (*DepthSymbol, error) {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			switch sm.Channel {
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+
+		if !ok {
+			continue
+		}
+
+		switch sm.Channel {
 			case public.TradesChannel:
 				trades := signalpool.GetTrades(sm)
 
@@ -163,7 +165,6 @@ func (signal *Signal) Tick() error {
 						continue
 					}
 				}
-			}
 		}
 	}
 }

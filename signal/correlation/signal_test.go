@@ -7,13 +7,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -29,7 +30,7 @@ func TestNewSignal(t *testing.T) {
 func TestFingerprintColdHist(t *testing.T) {
 	Convey("Given an all-zero return ring", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -46,7 +47,7 @@ func TestFingerprintColdHist(t *testing.T) {
 func TestProcessColdStart(t *testing.T) {
 	Convey("Given a correlation signal before the ring is full", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -66,10 +67,11 @@ func TestProcessColdStart(t *testing.T) {
 		})
 
 		Convey("It should not publish false herd readings", func() {
-			select {
-			case value := <-measurements.Incoming:
+			waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer waitCancel()
+
+			if value, err := bus.PollFor(waitCtx, measurements); err == nil {
 				t.Fatalf("unexpected measurement during warm-up: %+v", value.Value)
-			case <-time.After(50 * time.Millisecond):
 			}
 		})
 	})
@@ -78,7 +80,7 @@ func TestProcessColdStart(t *testing.T) {
 func TestProcess(t *testing.T) {
 	Convey("Given a correlation signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -102,23 +104,15 @@ func TestProcess(t *testing.T) {
 				}
 			}
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for correlation measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for correlation measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes a herd-behavior reading", func() {
 				So(measurement.Source, ShouldEqual, types.SourceCorrelation)
@@ -149,7 +143,7 @@ func TestMarketMode(t *testing.T) {
 
 func BenchmarkProcess(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

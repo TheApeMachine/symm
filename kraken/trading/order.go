@@ -136,12 +136,12 @@ type OrderUpdate struct {
 type OrderClient struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pool        *qpool.Q
+	pool        *qpool.Q[any]
 	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
+	subscribers map[string]*qpool.BroadcastConsumer
 }
 
-func NewOrderClient(ctx context.Context, pool *qpool.Q) *OrderClient {
+func NewOrderClient(ctx context.Context, pool *qpool.Q[any]) *OrderClient {
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &OrderClient{
@@ -149,7 +149,7 @@ func NewOrderClient(ctx context.Context, pool *qpool.Q) *OrderClient {
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 	}
 
 	for _, channel := range []string{"kraken:private"} {

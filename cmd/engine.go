@@ -19,11 +19,11 @@ type Engine struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
-	pool    *qpool.Q
+	pool    *qpool.Q[any]
 	systems []System
 }
 
-func NewEngine(ctx context.Context, pool *qpool.Q) (*Engine, error) {
+func NewEngine(ctx context.Context, pool *qpool.Q[any]) (*Engine, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	engine := &Engine{

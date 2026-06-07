@@ -121,6 +121,7 @@ func (simulation *ReplaySimulation) Result() ReplayResult {
 		}
 	}
 
+	ledger.flushEntryBatch(time.Time{})
 	ledger.flushPending(lastAt, lastRow)
 
 	return ReplayResult{

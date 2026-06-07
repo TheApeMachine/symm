@@ -33,19 +33,20 @@ type WebSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	err         error
-	pool        *qpool.Q
+	pool        *qpool.Q[any]
 	conns       []*websocket.Conn
 	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
+	subscribers map[string]*qpool.BroadcastConsumer
 	recorder    io.Writer
 	streams     *focus.Set
 	latencies   *ring.Ring
 	isConnected bool
+	reconnectAttempt uint64
 }
 
 func NewWebSocket(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	streams *focus.Set,
 	conns ...*websocket.Conn,
 ) *WebSocket {
@@ -65,7 +66,7 @@ func NewWebSocket(
 			cancel:      cancel,
 			pool:        pool,
 			broadcasts:  make(map[string]*qpool.BroadcastGroup),
-			subscribers: make(map[string]*qpool.Subscriber),
+			subscribers: make(map[string]*qpool.BroadcastConsumer),
 			latencies:   newLatencyRing(64),
 			conns:       conns,
 			streams:     streams,
@@ -120,22 +121,10 @@ func AppendConn(conn *websocket.Conn) {
 func (ws *WebSocket) Connect(
 	endpoint EndpointType, channel string, n uint64,
 ) error {
-	// Error, retry.
-	ws.conns[0], _, ws.err = websocket.DefaultDialer.Dial(string(endpoint), nil)
+	delay := reconnectBackoff(n)
 
-	if ws.err != nil {
-		errnie.Error(ws.err)
-
-		// Backoff delay time by using Fibonacci sequence.
-		n = uint64(
-			math.Round((math.Pow(
-				math.Phi, float64(n),
-			) + math.Pow(
-				math.Phi-1, float64(n),
-			)) / math.Sqrt(5)),
-		)
-
-		timer := time.NewTimer(time.Duration(n) * time.Second)
+	if delay > 0 {
+		timer := time.NewTimer(delay)
 		defer timer.Stop()
 
 		select {
@@ -143,14 +132,88 @@ func (ws *WebSocket) Connect(
 			return ws.ctx.Err()
 		case <-timer.C:
 		}
+	}
 
+	if err := ws.tryConnect(endpoint); err != nil {
 		return ws.Connect(endpoint, channel, n+1)
 	}
 
-	errnie.Info("kraken/public websocket connected")
+	return nil
+}
+
+func reconnectBackoff(attempt uint64) time.Duration {
+	if attempt == 0 {
+		return 0
+	}
+
+	seconds := uint64(
+		math.Round((math.Pow(
+			math.Phi, float64(attempt),
+		) + math.Pow(
+			math.Phi-1, float64(attempt),
+		)) / math.Sqrt(5)),
+	)
+
+	const maxSeconds = 30
+
+	if seconds > maxSeconds {
+		seconds = maxSeconds
+	}
+
+	return time.Duration(seconds) * time.Second
+}
+
+func (ws *WebSocket) tryConnect(endpoint EndpointType) error {
+	conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
+
+	if err != nil {
+		ws.err = err
+
+		return err
+	}
+
+	if ws.conns[0] != nil {
+		_ = ws.conns[0].Close()
+	}
+
+	ws.conns[0] = conn
+	ws.reconnectAttempt = 0
 	ws.afterConnect()
 
-	return ws.err
+	return nil
+}
+
+func (ws *WebSocket) markDisconnected() {
+	ws.isConnected = false
+
+	if ws.conns[0] != nil {
+		_ = ws.conns[0].Close()
+		ws.conns[0] = nil
+	}
+}
+
+func (ws *WebSocket) ensureConnected() error {
+	if ws.isConnected && ws.conns[0] != nil {
+		return nil
+	}
+
+	delay := reconnectBackoff(ws.reconnectAttempt)
+
+	if delay > 0 {
+		select {
+		case <-ws.ctx.Done():
+			return ws.ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+
+	if err := ws.tryConnect(WebSocketURL); err != nil {
+		ws.reconnectAttempt++
+
+		return err
+	}
+
+	return nil
 }
 
 func (ws *WebSocket) afterConnect() {
@@ -165,6 +228,9 @@ func (ws *WebSocket) afterConnect() {
 			},
 		}})
 	}
+
+	errnie.Info("kraken/public websocket connected")
+	notifyReconnect()
 }
 
 type SocketMessage struct {
@@ -187,18 +253,12 @@ func (ws *WebSocket) Tick() (err error) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	outbound := ws.subscribers["kraken:public"]
+
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
-		case message, ok := <-ws.subscribers["kraken:public"].Incoming:
-			if !ok || message == nil {
-				return ws.ctx.Err()
-			}
-
-			if ws.conns[0] != nil {
-				errnie.Error(ws.conns[0].WriteJSON(message.Value))
-			}
 		case <-ticker.C:
 			if ws.conns[0] == nil {
 				continue
@@ -215,10 +275,20 @@ func (ws *WebSocket) Tick() (err error) {
 				ws.recordLatency()
 			}
 		default:
+			if message := outbound.Poll(); message != nil {
+				if ws.conns[0] != nil {
+					errnie.Error(ws.conns[0].WriteJSON(message.Value))
+				}
+
+				continue
+			}
 		}
 
 		if !ws.isConnected || ws.conns[0] == nil {
-			ws.Connect(WebSocketURL, "kraken:public", 0)
+			if err := ws.ensureConnected(); err != nil {
+				errnie.Error(err)
+			}
+
 			continue
 		}
 
@@ -270,13 +340,7 @@ func (ws *WebSocket) readFrame() (err error) {
 
 func (ws *WebSocket) handleError(err error) {
 	errnie.Error(err)
-
-	if ws.conns[0] != nil {
-		ws.conns[0].Close()
-		ws.conns[0] = nil
-	}
-
-	ws.Connect(WebSocketURL, "kraken:public", 0)
+	ws.markDisconnected()
 }
 
 func (ws *WebSocket) recordLatency() {

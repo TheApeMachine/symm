@@ -19,7 +19,7 @@ func TestOnTradeQueueDepletion(t *testing.T) {
 	Convey("Given a resting post-only order with queue ahead", t, func() {
 		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{
 			Symbol: "BTC/EUR",
@@ -75,7 +75,7 @@ func TestPostOnlyMakerRestsUntilTradeDepletesQueue(t *testing.T) {
 	Convey("Given a post-only buy resting behind L2 queue depth", t, func() {
 		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{
 			Symbol: "BTC/EUR",
@@ -131,7 +131,7 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 	Convey("Given a post-only buy that would cross the ask", t, func() {
 		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{Symbol: "BTC/EUR", Bid: 99, Ask: 100, Last: 100})
 
@@ -156,13 +156,16 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 		}})
 
 		Convey("It rejects with zero quantity", func() {
-			select {
-			case frame := <-sub.Incoming:
+			waitCtx, waitCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+			defer waitCancel()
+
+			frame, err := bus.PollFor(waitCtx, sub)
+			if err != nil {
+				So("reject timeout", ShouldBeEmpty)
+			} else {
 				exec, _ := frame.Value.(map[string]any)
 				So(exec["qty"], ShouldEqual, 0.0)
 				So(exec["reason"], ShouldContainSubstring, "post-only")
-			case <-time.After(200 * time.Millisecond):
-				So("reject timeout", ShouldBeEmpty)
 			}
 		})
 	})
@@ -174,7 +177,7 @@ func TestTakerFillUsesSlippageFill(t *testing.T) {
 	Convey("Given an L2 book and a market buy", t, func() {
 		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		cache.InstallQuoteForTest(broker.Quote{
 			Symbol: "BTC/EUR",
@@ -222,7 +225,7 @@ func TestTakerFillDefersUntilLatencyElapses(t *testing.T) {
 	Convey("Given a positive one-way latency", t, func() {
 		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 

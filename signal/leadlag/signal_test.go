@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -15,7 +16,7 @@ import (
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -107,7 +108,7 @@ func TestPublishAnchorStall(t *testing.T) {
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -128,7 +129,7 @@ func TestPublishAnchorStall(t *testing.T) {
 func TestSendMeasurementSkipsWithoutLast(t *testing.T) {
 	Convey("Given a lead-lag reading without a last price", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -144,10 +145,11 @@ func TestSendMeasurementSkipsWithoutLast(t *testing.T) {
 		Convey("It should not publish to measurements", func() {
 			So(signal.sendMeasurement(&measurement, 0.5), ShouldNotBeNil)
 
-			select {
-			case <-measurements.Incoming:
+			waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer waitCancel()
+
+			if _, err := bus.PollFor(waitCtx, measurements); err == nil {
 				t.Fatal("unexpected measurement without last price")
-			case <-time.After(50 * time.Millisecond):
 			}
 		})
 	})

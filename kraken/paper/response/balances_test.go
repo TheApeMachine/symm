@@ -73,7 +73,7 @@ func TestApplyFillPublishesOpenCount(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a wallet wired to a ui broadcast group", t, func() {
-		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
 		ui := bus.Group(pool, "ui", 10*time.Millisecond)
 		sub := ui.Subscribe("test:ui", 16)
 
@@ -100,7 +100,7 @@ func TestBalancesSend(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a wallet wired to raw and ui groups", t, func() {
-		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		ui := bus.Group(pool, "ui", 10*time.Millisecond)
 		balances := NewBalances(raw, ui, NewIdentifier())
@@ -169,31 +169,33 @@ func balanceOf(balances *Balances, asset string) float64 {
 	return 0
 }
 
-func drainWallet(sub *qpool.Subscriber) map[string]any {
-	timeout := time.After(2 * time.Second)
+func drainWallet(sub *qpool.BroadcastConsumer) map[string]any {
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
 	for {
-		select {
-		case msg := <-sub.Incoming:
-			frame, _ := msg.Value.(map[string]any)
-
-			if frame["event"] == "wallet" {
-				return frame
-			}
-		case <-timeout:
+		msg, err := bus.PollFor(waitCtx, sub)
+		if err != nil {
 			return nil
+		}
+
+		frame, _ := msg.Value.(map[string]any)
+
+		if frame["event"] == "wallet" {
+			return frame
 		}
 	}
 }
 
-func drainRawBalances(sub *qpool.Subscriber) map[string]any {
-	timeout := time.After(2 * time.Second)
+func drainRawBalances(sub *qpool.BroadcastConsumer) map[string]any {
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	select {
-	case msg := <-sub.Incoming:
-		frame, _ := msg.Value.(map[string]any)
-		return frame
-	case <-timeout:
+	msg, err := bus.PollFor(waitCtx, sub)
+	if err != nil {
 		return nil
 	}
+
+	frame, _ := msg.Value.(map[string]any)
+	return frame
 }

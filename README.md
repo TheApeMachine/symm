@@ -114,7 +114,7 @@ type System interface {
 
 `Tick` is the long-running event loop. Signals typically `range` over a shared feed channel; the trader and view systems `select` on broadcast subscribers and heartbeats. There is no timer polling.
 
-Registration lives in `cmd/root.go`. Systems communicate only through named broadcast groups on a shared `qpool.Q`. The booter starts `ui.Hub` first, then launches each system's `Tick` in its own goroutine; any fatal `Tick` error cancels the context and triggers `Close` on all peers.
+Registration lives in `cmd/root.go`. Systems communicate only through named broadcast groups on a shared `qpool.Q[any]`. The booter starts `ui.Hub` first, then launches each system's `Tick` in its own goroutine; any fatal `Tick` error cancels the context and triggers `Close` on all peers.
 
 ## Boot sequence
 

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"sort"
 	"sync"
 	"time"
@@ -27,7 +28,8 @@ type FillEvent struct {
 Tape collects measurements, actions, and wallet frames during a scenario.
 */
 type Tape struct {
-	mu sync.Mutex
+	ctx context.Context
+	mu  sync.Mutex
 
 	measurements []types.Measurement
 	actions      []reasoning.Action
@@ -45,7 +47,9 @@ func NewTape() *Tape {
 	}
 }
 
-func (tape *Tape) Subscribe(pool *qpool.Q) {
+func (tape *Tape) Subscribe(ctx context.Context, pool *qpool.Q[any]) {
+	tape.ctx = ctx
+
 	measurements := bus.Group(pool, "measurements", 10*time.Millisecond)
 	measurementSub := measurements.Subscribe("integration:tape:measurements", 4096)
 
@@ -60,12 +64,18 @@ func (tape *Tape) Subscribe(pool *qpool.Q) {
 	go tape.drainUI(uiSub)
 }
 
-func (tape *Tape) drainMeasurements(subscriber *qpool.Subscriber) {
-	if subscriber == nil {
+func (tape *Tape) drainMeasurements(consumer *qpool.BroadcastConsumer) {
+	if consumer == nil || tape.ctx == nil {
 		return
 	}
 
-	for message := range subscriber.Incoming {
+	for {
+		message, err := consumer.Wait(tape.ctx)
+
+		if err != nil {
+			return
+		}
+
 		if message == nil || message.Value == nil {
 			continue
 		}
@@ -82,12 +92,18 @@ func (tape *Tape) drainMeasurements(subscriber *qpool.Subscriber) {
 	}
 }
 
-func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
-	if subscriber == nil {
+func (tape *Tape) drainRaw(consumer *qpool.BroadcastConsumer) {
+	if consumer == nil || tape.ctx == nil {
 		return
 	}
 
-	for message := range subscriber.Incoming {
+	for {
+		message, err := consumer.Wait(tape.ctx)
+
+		if err != nil {
+			return
+		}
+
 		if message == nil || message.Value == nil {
 			continue
 		}
@@ -137,12 +153,18 @@ func (tape *Tape) drainRaw(subscriber *qpool.Subscriber) {
 	}
 }
 
-func (tape *Tape) drainUI(subscriber *qpool.Subscriber) {
-	if subscriber == nil {
+func (tape *Tape) drainUI(consumer *qpool.BroadcastConsumer) {
+	if consumer == nil || tape.ctx == nil {
 		return
 	}
 
-	for message := range subscriber.Incoming {
+	for {
+		message, err := consumer.Wait(tape.ctx)
+
+		if err != nil {
+			return
+		}
+
 		if message == nil || message.Value == nil {
 			continue
 		}

@@ -36,7 +36,7 @@ func TestMeasurementRequire(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		Convey("It should satisfy the ingest contract", func() {
@@ -55,7 +55,7 @@ func TestMeasurementRequire(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		Convey("It should fail validation", func() {
@@ -75,7 +75,7 @@ func TestMeasurementRequire(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		Convey("It should satisfy the ingest contract", func() {
@@ -87,7 +87,7 @@ func TestMeasurementRequire(t *testing.T) {
 func TestMeasurementSend(t *testing.T) {
 	Convey("Given a validated measurement and pool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		subscriber := bus.Group(pool, "measurements", 0).
@@ -106,20 +106,20 @@ func TestMeasurementSend(t *testing.T) {
 		Convey("It should publish on the measurements bus", func() {
 			So(measurement.Send(pool), ShouldBeNil)
 
-			select {
-			case frame := <-subscriber.Incoming:
-				published, ok := frame.Value.(Measurement)
-				So(ok, ShouldBeTrue)
-				So(published.Symbol, ShouldEqual, "BTC/EUR")
-			default:
+			frame := subscriber.Poll()
+			if frame == nil {
 				t.Fatal("expected published measurement")
 			}
+
+			published, ok := frame.Value.(Measurement)
+			So(ok, ShouldBeTrue)
+			So(published.Symbol, ShouldEqual, "BTC/EUR")
 		})
 	})
 
 	Convey("Given an incomplete measurement", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		measurement := Measurement{

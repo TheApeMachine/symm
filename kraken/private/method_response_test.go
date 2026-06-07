@@ -1,6 +1,7 @@
 package private
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func TestHandleMethodResponse(t *testing.T) {
 	Convey("Given a tracked outbound add_order", t, func() {
-		pool := qpool.NewQ(t.Context(), 1, 4, nil)
+		pool := qpool.NewQ[any](t.Context(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:method-response", 8)
 
@@ -28,29 +29,23 @@ func TestHandleMethodResponse(t *testing.T) {
 				`{"method":"add_order","success":false,"error":"Insufficient funds","result":{"cl_ord_id":"s001"}}`,
 			))
 
-			var derived map[string]any
+			waitCtx, waitCancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer waitCancel()
 
-			deadline := time.After(2 * time.Second)
-
-			for derived == nil {
-				select {
-				case message := <-sub.Incoming:
-					frame, ok := message.Value.(map[string]any)
-
-					if !ok || frame["channel"] != "executions" {
-						continue
-					}
-
-					derived = frame
-				case <-deadline:
-					t.Fatal("no derived rejection published")
-				}
+			derived, err := bus.PollFor(waitCtx, sub)
+			if err != nil {
+				t.Fatal("no derived rejection published")
 			}
 
-			So(derived["symbol"], ShouldEqual, "BTC/EUR")
-			So(derived["side"], ShouldEqual, "buy")
-			So(derived["qty"], ShouldEqual, 0.0)
-			So(derived["reason"], ShouldEqual, "Insufficient funds")
+			frame, ok := derived.Value.(map[string]any)
+			if !ok || frame["channel"] != "executions" {
+				t.Fatal("no derived rejection published")
+			}
+
+			So(frame["symbol"], ShouldEqual, "BTC/EUR")
+			So(frame["side"], ShouldEqual, "buy")
+			So(frame["qty"], ShouldEqual, 0.0)
+			So(frame["reason"], ShouldEqual, "Insufficient funds")
 			_, stillTracked := websocketClient.outbound["s001"]
 			So(stillTracked, ShouldBeFalse)
 		})
@@ -60,22 +55,17 @@ func TestHandleMethodResponse(t *testing.T) {
 				`{"method":"add_order","success":true,"result":{"order_id":"O1","cl_ord_id":"s001"}}`,
 			))
 
-			deadline := time.After(100 * time.Millisecond)
+			waitCtx, waitCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer waitCancel()
 
-			for {
-				select {
-				case message := <-sub.Incoming:
-					frame, ok := message.Value.(map[string]any)
+			if message, err := bus.PollFor(waitCtx, sub); err == nil {
+				frame, ok := message.Value.(map[string]any)
 
-					if ok && frame["channel"] == "executions" {
-						t.Fatal("successful ack should not publish a derived rejection")
-					}
-				case <-deadline:
-					goto done
+				if ok && frame["channel"] == "executions" {
+					t.Fatal("successful ack should not publish a derived rejection")
 				}
 			}
 
-		done:
 			_, stillTracked := websocketClient.outbound["s001"]
 			So(stillTracked, ShouldBeTrue)
 		})

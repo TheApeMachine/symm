@@ -186,3 +186,31 @@ func pick(condition bool, whenTrue, whenFalse string) string {
 
 	return whenFalse
 }
+
+func TestNumericReportIgnoresNonFiniteValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dump.jsonl")
+
+	if err := os.WriteFile(path, []byte(`{"strength":NaN}
+{"strength":1}
+{"strength":Infinity}
+{"strength":2}
+`), 0o644); err != nil {
+		t.Fatalf("write dump: %v", err)
+	}
+
+	report, err := AnalyzeFile("toxicity", path, 0)
+
+	if err != nil {
+		t.Fatalf("AnalyzeFile: %v", err)
+	}
+
+	field := fieldByName(t, report, "strength")
+
+	if field.Count != 2 {
+		t.Fatalf("strength count = %d, want 2 finite readings", field.Count)
+	}
+
+	if _, err := json.Marshal(report); err != nil {
+		t.Fatalf("json.Marshal report: %v", err)
+	}
+}

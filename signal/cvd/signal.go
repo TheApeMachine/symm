@@ -49,9 +49,9 @@ type cvdState struct {
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	categories    map[string]types.CategoryType
 	surpriseField *types.CategorySurpriseField
@@ -60,7 +60,7 @@ type Signal struct {
 	rawDump       *rawdump.Writer
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -95,7 +95,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 		categories: map[string]types.CategoryType{
 			"volume_starvation":  types.CategoryVolumeStarvation,
 			"stochastic_balance": types.CategoryStochasticBalance,
@@ -149,29 +149,30 @@ func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			switch sm.Channel {
-			case public.TradesChannel:
-				trades := signalpool.GetTrades(sm)
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
-				for _, trade := range trades {
-					if err := signal.observe(trade); err != nil {
-						errnie.Error(err, "cvd: observe %s", trade.Symbol)
-						continue
-					}
+		if !ok {
+			continue
+		}
+
+		switch sm.Channel {
+		case public.TradesChannel:
+			trades := signalpool.GetTrades(sm)
+
+			for _, trade := range trades {
+				if err := signal.observe(trade); err != nil {
+					errnie.Error(err, "cvd: observe %s", trade.Symbol)
+					continue
 				}
 			}
 		}

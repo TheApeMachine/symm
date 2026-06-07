@@ -96,9 +96,9 @@ no pairwise correlation matrix.
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	planes        [hashBits][gridBars]float64
 	marketEnergy  *adaptive.EMA
@@ -115,7 +115,7 @@ NewSignal wires the measurements broadcast and installs one fixed random
 hyperplane set. The seed is fixed so every coin is stamped with the same
 projection — otherwise bit agreement would be meaningless.
 */
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// One classifier and one calibrator shared by every coin, so the herd bands
@@ -160,7 +160,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:       cancel,
 		pool:         pool,
 		broadcasts:   make(map[string]*qpool.BroadcastGroup),
-		subscribers:  make(map[string]*qpool.Subscriber),
+		subscribers:  make(map[string]*qpool.BroadcastConsumer),
 		marketEnergy: adaptive.NewEMA(0),
 		categories: map[string]types.CategoryType{
 			"divergent_stress": types.CategoryDivergentStress,
@@ -206,32 +206,12 @@ func (signal *Signal) Tick() error {
 	defer batch.Stop()
 
 	latest := make(map[string]float64)
+	raw := signal.subscribers["raw"]
 
 	for {
 		select {
 		case <-signal.ctx.Done():
 			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
-
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
-
-			if !ok {
-				continue
-			}
-
-			switch sm.Channel {
-			case public.TradesChannel:
-				trades := signalpool.GetTrades(sm)
-
-				for _, trade := range trades {
-					if trade.Price > 0 {
-						latest[trade.Symbol] = trade.Price
-					}
-				}
-			}
 		case <-batch.C:
 			if len(latest) == 0 {
 				continue
@@ -243,6 +223,50 @@ func (signal *Signal) Tick() error {
 			}
 
 			clear(latest)
+		default:
+		}
+
+		message := raw.Poll()
+
+		if message == nil {
+			select {
+			case <-signal.ctx.Done():
+				return signal.ctx.Err()
+			case <-batch.C:
+				if len(latest) == 0 {
+					continue
+				}
+
+				if err := signal.process(latest); err != nil {
+					errnie.Error(err, "correlation: process")
+					continue
+				}
+
+				clear(latest)
+			case <-time.After(2 * time.Millisecond):
+			}
+
+			continue
+		}
+
+		if message.Value == nil {
+			continue
+		}
+
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+
+		if !ok {
+			continue
+		}
+
+		if sm.Channel != public.TradesChannel {
+			continue
+		}
+
+		for _, trade := range signalpool.GetTrades(sm) {
+			if trade.Price > 0 {
+				latest[trade.Symbol] = trade.Price
+			}
 		}
 	}
 }

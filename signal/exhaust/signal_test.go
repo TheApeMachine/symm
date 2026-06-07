@@ -2,6 +2,8 @@ package exhaust
 
 import (
 	"context"
+
+	"github.com/theapemachine/symm/bus"
 	"testing"
 	"time"
 
@@ -25,7 +27,7 @@ func thinningBook(symbol string, bidDepth float64, askPrice float64) market.Book
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -40,7 +42,7 @@ func TestNewSignal(t *testing.T) {
 func TestObserveBook(t *testing.T) {
 	Convey("Given an exhaust signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -60,23 +62,15 @@ func TestObserveBook(t *testing.T) {
 				}
 			}
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for exhaust measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for exhaust measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes an exhaustion reading", func() {
 				So(measurement.Source, ShouldEqual, types.SourceExhaustion)
@@ -90,7 +84,7 @@ func TestObserveBook(t *testing.T) {
 
 func BenchmarkObserveBook(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

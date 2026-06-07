@@ -76,7 +76,7 @@ type Balances struct {
 	Asset []Balance `json:"asset"`
 }
 
-func NewBalance(pool *qpool.Q, tokenSource TokenSource) error {
+func NewBalance(pool *qpool.Q[any], tokenSource TokenSource) error {
 	params := BalanceParams{
 		Channel:  public.BalancesChannel,
 		Snapshot: true,

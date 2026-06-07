@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func TestPublishExecutionDerived(t *testing.T) {
 	Convey("Given a raw broadcast group", t, func() {
-		pool := qpool.NewQ(t.Context(), 1, 4, nil)
+		pool := qpool.NewQ[any](t.Context(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:derived", 4)
 
@@ -28,24 +29,22 @@ func TestPublishExecutionDerived(t *testing.T) {
 
 			var derived map[string]any
 
-			select {
-			case msg := <-sub.Incoming:
+			if msg := sub.Poll(); msg != nil {
 				frame, _ := msg.Value.(map[string]any)
 
 				if frame["qty"] != nil {
 					derived = frame
 				}
-			default:
 			}
 
-			select {
-			case msg := <-sub.Incoming:
-				frame, _ := msg.Value.(map[string]any)
+			if derived == nil {
+				if msg := sub.Poll(); msg != nil {
+					frame, _ := msg.Value.(map[string]any)
 
-				if frame["qty"] != nil {
-					derived = frame
+					if frame["qty"] != nil {
+						derived = frame
+					}
 				}
-			default:
 			}
 
 			So(derived, ShouldNotBeNil)
@@ -76,7 +75,7 @@ func TestPublishHoldingsDerived(t *testing.T) {
 		viper.Set("market.quote_currency", "EUR")
 		defer viper.Set("market.quote_currency", "")
 
-		pool := qpool.NewQ(t.Context(), 1, 4, nil)
+		pool := qpool.NewQ[any](t.Context(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 0)
 		sub := raw.Subscribe("test:holdings", 4)
 
@@ -86,19 +85,22 @@ func TestPublishHoldingsDerived(t *testing.T) {
 		})
 
 		Convey("It publishes one holdings frame carrying only the non-quote pair", func() {
-			select {
-			case msg := <-sub.Incoming:
-				frame, _ := msg.Value.(map[string]any)
-				So(frame["channel"], ShouldEqual, "holdings")
+			waitCtx, waitCancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer waitCancel()
 
-				holdings, ok := frame["holdings"].([]map[string]any)
-				So(ok, ShouldBeTrue)
-				So(len(holdings), ShouldEqual, 1)
-				So(holdings[0]["symbol"], ShouldEqual, "ETC/EUR")
-				So(holdings[0]["qty"], ShouldEqual, 5.0)
-			case <-time.After(2 * time.Second):
+			msg, err := bus.PollFor(waitCtx, sub)
+			if err != nil {
 				t.Fatal("no holdings frame published")
 			}
+
+			frame, _ := msg.Value.(map[string]any)
+			So(frame["channel"], ShouldEqual, "holdings")
+
+			holdings, ok := frame["holdings"].([]map[string]any)
+			So(ok, ShouldBeTrue)
+			So(len(holdings), ShouldEqual, 1)
+			So(holdings[0]["symbol"], ShouldEqual, "ETC/EUR")
+			So(holdings[0]["qty"], ShouldEqual, 5.0)
 		})
 	})
 }

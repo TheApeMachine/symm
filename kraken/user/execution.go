@@ -82,7 +82,7 @@ type Execution struct {
 	Timestamp    string         `json:"timestamp,omitempty"`
 }
 
-func NewExecution(pool *qpool.Q, tokenSource ExecutionTokenSource) error {
+func NewExecution(pool *qpool.Q[any], tokenSource ExecutionTokenSource) error {
 	params := ExecutionParams{
 		Channel:     public.ExecutionsChannel,
 		SnapOrders:  true,

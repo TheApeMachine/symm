@@ -61,19 +61,18 @@ func tradeBatch(
 	return trades
 }
 
-func drainMeasurements(measurements *qpool.Subscriber) []types.Measurement {
+func drainMeasurements(measurements *qpool.BroadcastConsumer) []types.Measurement {
 	published := make([]types.Measurement, 0)
 
 	for {
-		select {
-		case value := <-measurements.Incoming:
-			reading, ok := value.Value.(types.Measurement)
-
-			if ok {
-				published = append(published, reading)
-			}
-		default:
+		value := measurements.Poll()
+		if value == nil {
 			return published
+		}
+
+		reading, ok := value.Value.(types.Measurement)
+		if ok {
+			published = append(published, reading)
 		}
 	}
 }
@@ -83,7 +82,7 @@ func TestNewSignal(t *testing.T) {
 
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -107,7 +106,7 @@ func TestObserve(t *testing.T) {
 
 	Convey("Given a pumpdump signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -128,10 +127,8 @@ func TestObserve(t *testing.T) {
 			Convey("It should fail without publishing", func() {
 				So(errors.Is(err, errBaselineUnobserved), ShouldBeTrue)
 
-				select {
-				case <-measurements.Incoming:
+				if measurements.Poll() != nil {
 					t.Fatal("unexpected measurement during warmup")
-				default:
 				}
 			})
 		})
@@ -255,7 +252,7 @@ func BenchmarkObserve(b *testing.B) {
 	withPumpdumpConfig(&testing.T{})
 
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

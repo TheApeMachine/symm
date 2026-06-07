@@ -43,10 +43,10 @@ type armRecord struct {
 type Crypto struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
-	pool             *qpool.Q
+	pool             *qpool.Q[any]
 	ui               *qpool.BroadcastGroup
 	broadcasts       map[string]*qpool.BroadcastGroup
-	subscribers      map[string]*qpool.Subscriber
+	subscribers      map[string]*qpool.BroadcastConsumer
 	desk             *broker.Desk
 	quotes           *broker.QuoteCache
 	streams          *focus.Set
@@ -76,7 +76,7 @@ type Crypto struct {
 // symbol, so the dashboard shows real-time unrealized P&L on open positions.
 const markInterval = 500 * time.Millisecond
 
-func NewCrypto(ctx context.Context, pool *qpool.Q, streams *focus.Set) *Crypto {
+func NewCrypto(ctx context.Context, pool *qpool.Q[any], streams *focus.Set) *Crypto {
 	return NewCryptoWithCaches(
 		ctx,
 		pool,
@@ -91,7 +91,7 @@ NewCryptoWithCaches builds the trader against explicit broker state caches.
 */
 func NewCryptoWithCaches(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	streams *focus.Set,
 	quotes *broker.QuoteCache,
 	stress *broker.StressCache,
@@ -125,20 +125,20 @@ func NewCryptoWithCaches(
 	}
 
 	crypto := &Crypto{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		ui:             bus.Group(pool, "ui", 10*time.Millisecond),
-		broadcasts:     make(map[string]*qpool.BroadcastGroup),
-		subscribers:    make(map[string]*qpool.Subscriber),
-		streams:        streams,
-		desk:           desk,
-		quotes:         quotes,
-		audit:          auditWriter,
-		inventory:      make(map[string]float64),
-		shortInventory: make(map[string]float64),
-		avgEntry:       make(map[string]float64),
-		armed:          make(map[string]armRecord),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		ui:              bus.Group(pool, "ui", 10*time.Millisecond),
+		broadcasts:      make(map[string]*qpool.BroadcastGroup),
+		subscribers:     make(map[string]*qpool.BroadcastConsumer),
+		streams:         streams,
+		desk:            desk,
+		quotes:          quotes,
+		audit:           auditWriter,
+		inventory:       make(map[string]float64),
+		shortInventory:  make(map[string]float64),
+		avgEntry:        make(map[string]float64),
+		armed:           make(map[string]armRecord),
 		pending:         make(map[string]reasoning.Action),
 		lastDecision:    make(map[string]string),
 		entryConviction: make(map[string]float64),
@@ -212,7 +212,7 @@ the paper desk emits execution maps. Actions submit orders; executions update
 inventory and the shared focus set so the not-holding gate sees open positions.
 */
 func (crypto *Crypto) Tick() error {
-	incoming := crypto.subscribers["raw"].Incoming
+	raw := crypto.subscribers["raw"]
 	marks := time.NewTicker(markInterval)
 	defer marks.Stop()
 
@@ -221,14 +221,31 @@ func (crypto *Crypto) Tick() error {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
 		case <-marks.C:
-			// Same goroutine that mutates inventory, so the read is race-free.
 			crypto.publishMarks()
 			crypto.publishEquity()
 			if crypto.entryBatchDue(time.Now()) {
 				crypto.flushEntryBatch()
 			}
-		case message := <-incoming:
-			if message == nil || message.Value == nil {
+		default:
+			message := raw.Poll()
+
+			if message == nil {
+				select {
+				case <-crypto.ctx.Done():
+					return crypto.ctx.Err()
+				case <-marks.C:
+					crypto.publishMarks()
+					crypto.publishEquity()
+					if crypto.entryBatchDue(time.Now()) {
+						crypto.flushEntryBatch()
+					}
+				case <-time.After(2 * time.Millisecond):
+				}
+
+				continue
+			}
+
+			if message.Value == nil {
 				continue
 			}
 
@@ -508,35 +525,33 @@ publishes on the ui bus. It only ever reflects the API's authoritative figure â€
 crypto never derives a balance of its own â€” so there is a single source of truth.
 */
 func (crypto *Crypto) watchWallet() {
-	incoming := crypto.subscribers["ui"].Incoming
+	ui := crypto.subscribers["ui"]
 
 	for {
-		select {
-		case <-crypto.ctx.Done():
+		message, err := ui.Wait(crypto.ctx)
+
+		if err != nil {
 			return
-		case message := <-incoming:
-			if message == nil {
-				continue
-			}
-
-			frame, ok := message.Value.(map[string]any)
-
-			if !ok || frame["event"] != "wallet" {
-				continue
-			}
-
-			balance, _ := frame["balance"].(float64)
-
-			crypto.walletMu.Lock()
-			crypto.availableQuote = balance
-			// Seed the capital base from the first real balance when no opening
-			// balance was configured (live), so the per-position slot cap still
-			// applies instead of falling back to deploying all available cash.
-			if crypto.capitalBase <= 0 && balance > 0 {
-				crypto.capitalBase = balance
-			}
-			crypto.walletMu.Unlock()
 		}
+
+		if message == nil {
+			continue
+		}
+
+		frame, ok := message.Value.(map[string]any)
+
+		if !ok || frame["event"] != "wallet" {
+			continue
+		}
+
+		balance, _ := frame["balance"].(float64)
+
+		crypto.walletMu.Lock()
+		crypto.availableQuote = balance
+		if crypto.capitalBase <= 0 && balance > 0 {
+			crypto.capitalBase = balance
+		}
+		crypto.walletMu.Unlock()
 	}
 }
 

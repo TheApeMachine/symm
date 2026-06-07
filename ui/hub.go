@@ -50,9 +50,9 @@ per client; the frontend never sends frames.
 type Hub struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
-	pool               *qpool.Q
+	pool               *qpool.Q[any]
 	broadcasts         map[string]*qpool.BroadcastGroup
-	subscribers        map[string]*qpool.Subscriber
+	subscribers        map[string]*qpool.BroadcastConsumer
 	clients            *sync.Map
 	server             *http.Server
 	diagnosticsWatcher *diagnosticsWatcher
@@ -69,7 +69,7 @@ NewHub subscribes to all broadcast groups on pool.
 */
 func NewHub(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -78,7 +78,7 @@ func NewHub(
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 		clients:     &sync.Map{},
 	}
 
@@ -219,46 +219,45 @@ Tick drains qpool into the lossy telemetry ring and fanout to websocket clients.
 from that ring so the qpool subscriber never waits on browser pressure.
 */
 func (hub *Hub) Tick() error {
+	ui := hub.subscribers["ui"]
+
 	for {
-		select {
-		case <-hub.ctx.Done():
-			return hub.ctx.Err()
-		case value, ok := <-hub.subscribers["ui"].Incoming:
-			if !ok {
-				return hub.ctx.Err()
-			}
+		value, err := ui.Wait(hub.ctx)
 
-			if value == nil || value.Value == nil {
-				continue
-			}
-
-			var (
-				out map[string]any
-				k   bool
-			)
-
-			if out, k = value.Value.(map[string]any); !k {
-				continue
-			}
-
-			if out["event"] == "wallet" {
-				hub.lastWallet.Store(&out)
-			}
-
-			if out["event"] == "positions" {
-				hub.lastPositions.Store(&out)
-			}
-
-			if out["event"] == "equity" {
-				hub.lastEquity.Store(&out)
-			}
-
-			if out["chart"] == "decision_tree" {
-				hub.lastDecisionTree.Store(&out)
-			}
-
-			hub.broadcastJSON(out)
+		if err != nil {
+			return err
 		}
+
+		if value == nil || value.Value == nil {
+			continue
+		}
+
+		var (
+			out map[string]any
+			ok  bool
+		)
+
+		if out, ok = value.Value.(map[string]any); !ok {
+			continue
+		}
+
+		if out["event"] == "wallet" {
+			hub.lastWallet.Store(&out)
+		}
+
+		if out["event"] == "positions" {
+			hub.lastPositions.Store(&out)
+		}
+
+		if out["event"] == "equity" {
+			hub.lastEquity.Store(&out)
+		}
+
+		if out["chart"] == "decision_tree" {
+			hub.lastDecisionTree.Store(&out)
+		}
+
+		hub.broadcastJSON(out)
 	}
 }
 
@@ -273,8 +272,14 @@ func (hub *Hub) broadcastJSON(out map[string]any) {
 		}
 
 		if err := client.writeJSON(out); err != nil {
-			errnie.Error(err)
-			errnie.Error(client.close())
+			if !isBenignWriteError(err) {
+				errnie.Error(err)
+			}
+
+			if closeErr := client.close(); closeErr != nil && !isBenignWriteError(closeErr) {
+				errnie.Error(closeErr)
+			}
+
 			hub.clients.Delete(key)
 		}
 

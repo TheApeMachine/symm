@@ -78,11 +78,11 @@ func TestRingQueueConcurrentPush(t *testing.T) {
 
 	received := 0
 
-	for {
+	for received < publishers*framesPerPublisher {
 		frame, ok := queue.Pop()
 
 		if !ok {
-			break
+			t.Fatalf("pop ended early at %d", received)
 		}
 
 		if frame == nil {
@@ -91,24 +91,6 @@ func TestRingQueueConcurrentPush(t *testing.T) {
 
 		received++
 	}
-
-	if received != publishers*framesPerPublisher {
-		t.Fatalf("received %d frames, want %d", received, publishers*framesPerPublisher)
-	}
-}
-
-func BenchmarkRingQueueConcurrentPush(b *testing.B) {
-	queue := newRingQueue()
-	frame := map[string]any{"audit_event": "playbook_walk", "symbol": "BTC/EUR"}
-
-	b.ReportAllocs()
-	b.RunParallel(func(parallel *testing.PB) {
-		for parallel.Next() {
-			if err := queue.Push(frame); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
 }
 
 func BenchmarkWriterQueuePushPop(b *testing.B) {

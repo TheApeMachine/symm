@@ -15,7 +15,7 @@ import (
 func TestToxicityHandleLevel3(t *testing.T) {
 	Convey("Given a level3 update on the bus", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		tox := NewToxicity(ctx, pool)
@@ -41,7 +41,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 
 		tox.tracker.ObserveMid("BTC/EUR", market.Pair{}, 100)
 
-		err := tox.handleLevel3(<-tox.subscribers["level3"].Incoming)
+		err := tox.handleLevel3(tox.subscribers["level3"].Poll())
 
 		Convey("It should classify per-order churn as toxic", func() {
 			So(err, ShouldBeNil)
@@ -51,7 +51,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 
 	Convey("Given a level3 envelope without order data", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		tox := NewToxicity(ctx, pool)
@@ -63,7 +63,7 @@ func TestToxicityHandleLevel3(t *testing.T) {
 			"type":    "update",
 		}})
 
-		err := tox.handleLevel3(<-tox.subscribers["level3"].Incoming)
+		err := tox.handleLevel3(tox.subscribers["level3"].Poll())
 
 		Convey("It should ignore the frame without error", func() {
 			So(err, ShouldBeNil)

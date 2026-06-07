@@ -3,6 +3,7 @@ package private
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -23,7 +24,7 @@ func TestNewWebSocketHybridMode(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		Convey("It should return hybrid without credentials but keep paper execution", func() {
@@ -49,7 +50,7 @@ func TestNewWebSocketHybridMode(t *testing.T) {
 func TestWebSocketPublishLevel3DataOnly(t *testing.T) {
 	Convey("Given a data-only websocket", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		level3 := bus.Group(pool, "level3", 0)
@@ -69,7 +70,12 @@ func TestWebSocketPublishLevel3DataOnly(t *testing.T) {
 		})
 
 		Convey("It should mirror level3 frames onto the level3 bus", func() {
-			message := <-subscriber.Incoming
+			waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
+			defer waitCancel()
+
+			message, err := bus.PollFor(waitCtx, subscriber)
+			So(err, ShouldBeNil)
+
 			envelope, ok := message.Value.(map[string]any)
 
 			So(ok, ShouldBeTrue)

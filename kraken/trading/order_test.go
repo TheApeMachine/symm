@@ -18,7 +18,7 @@ func TestNewOrderClient(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		client := NewOrderClient(ctx, pool)
 
 		So(client, ShouldNotBeNil)
@@ -49,7 +49,7 @@ func BenchmarkNewOrder(b *testing.B) {
 	viper.Set("trading.order_ack_timeout", time.Second)
 
 	for b.Loop() {
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		_ = NewOrderClient(ctx, pool)
 		pool.Close()
 	}

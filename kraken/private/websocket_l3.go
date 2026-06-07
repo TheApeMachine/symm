@@ -21,7 +21,7 @@ import (
 
 func newDataOnlyWebSocket(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	apiKey string,
 	apiSecret string,
 ) (*WebSocket, error) {
@@ -111,16 +111,17 @@ func (websocketClient *WebSocket) watchInstrumentCatalog() {
 
 	go func() {
 		for {
-			select {
-			case <-websocketClient.ctx.Done():
-				return
-			case message, ok := <-websocketClient.rawSubscriber.Incoming:
-				if !ok || message == nil || message.Value == nil {
-					continue
-				}
+			message, err := websocketClient.rawSubscriber.Wait(websocketClient.ctx)
 
-				websocketClient.ingestInstrumentForL3(message.Value)
+			if err != nil {
+				return
 			}
+
+			if message == nil || message.Value == nil {
+				continue
+			}
+
+			websocketClient.ingestInstrumentForL3(message.Value)
 		}
 	}()
 }

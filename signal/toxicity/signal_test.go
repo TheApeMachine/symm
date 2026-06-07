@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -14,7 +15,7 @@ import (
 func TestNewToxicity(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		tox := NewToxicity(ctx, pool)
@@ -29,7 +30,7 @@ func TestNewToxicity(t *testing.T) {
 func TestPublishMeasurement(t *testing.T) {
 	Convey("Given a toxicity service with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		tox := NewToxicity(ctx, pool)
@@ -49,23 +50,15 @@ func TestPublishMeasurement(t *testing.T) {
 		Convey("When a toxic near-touch level is measured", func() {
 			tox.publishMeasurement(symbol)
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for toxicity measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for toxicity measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It should publish toxic bluff with measurable strength", func() {
 				So(measurement.Category, ShouldEqual, types.CategoryToxicBluff)
@@ -93,7 +86,7 @@ func TestMidOf(t *testing.T) {
 
 func BenchmarkPublishMeasurement(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	tox := NewToxicity(ctx, pool)

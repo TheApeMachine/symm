@@ -33,9 +33,9 @@ type Story struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	err                     error
-	pool                    *qpool.Q
+	pool                    *qpool.Q[any]
 	broadcasts              map[string]*qpool.BroadcastGroup
-	subscribers             map[string]*qpool.Subscriber
+	subscribers             map[string]*qpool.BroadcastConsumer
 	ui                      *qpool.BroadcastGroup
 	raw                     *qpool.BroadcastGroup
 	regimeFeatures          map[string]perspectives.RegimeFeatures
@@ -67,7 +67,7 @@ type Story struct {
 	condHeld        map[string][]int
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	predictionSurpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
@@ -96,7 +96,7 @@ func NewStory(ctx context.Context, pool *qpool.Q) *Story {
 		cancel:                  cancel,
 		pool:                    pool,
 		broadcasts:              make(map[string]*qpool.BroadcastGroup),
-		subscribers:             make(map[string]*qpool.Subscriber),
+		subscribers:             make(map[string]*qpool.BroadcastConsumer),
 		reasonStates:            make(map[string]*reasoning.ReasonState),
 		positions:               make(map[string]*reasoning.PositionState),
 		regimeFeatures:          make(map[string]perspectives.RegimeFeatures),
@@ -172,21 +172,24 @@ func (story *Story) Tick() error {
 		defer story.recorder.Flush()
 	}
 
-	for {
-		select {
-		case <-story.ctx.Done():
-			return story.ctx.Err()
-		case row, ok := <-story.subscribers["measurements"].Incoming:
-			if !ok || row == nil || row.Value == nil {
-				errnie.Warn("story: nil measurement envelope")
-				continue
-			}
+	measurements := story.subscribers["measurements"]
 
-			if err := errnie.Error(
-				story.ingestMeasurement(signalpool.GetMeasurement(row)),
-			); err != nil {
-				continue
-			}
+	for {
+		row, err := measurements.Wait(story.ctx)
+
+		if err != nil {
+			return err
+		}
+
+		if row == nil || row.Value == nil {
+			errnie.Warn("story: nil measurement envelope")
+			continue
+		}
+
+		if err := errnie.Error(
+			story.ingestMeasurement(signalpool.GetMeasurement(row)),
+		); err != nil {
+			continue
 		}
 	}
 }
@@ -638,7 +641,7 @@ func (story *Story) Close() error {
 
 	if subscriber := story.subscribers["measurements"]; subscriber != nil {
 		if broadcast := story.broadcasts["measurements"]; broadcast != nil {
-			broadcast.Unsubscribe(subscriber.ID)
+			broadcast.Unsubscribe(storyMeasurementsSubscriberID)
 		}
 	}
 

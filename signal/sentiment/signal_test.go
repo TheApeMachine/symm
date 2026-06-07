@@ -13,7 +13,7 @@ import (
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -28,7 +28,7 @@ func TestNewSignal(t *testing.T) {
 func TestMeasure(t *testing.T) {
 	Convey("Given a sentiment signal with a bullish cross-section", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -90,7 +90,7 @@ func TestCategory(t *testing.T) {
 
 func BenchmarkMeasure(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

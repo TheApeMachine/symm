@@ -21,7 +21,7 @@ func TestNewWebSocketPaperMode(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		client := NewWebSocket(ctx, pool, "", "")

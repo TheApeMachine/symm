@@ -55,7 +55,7 @@ var (
 /*
 EnsureQuoteCache returns the process-wide quote cache bound to a live context.
 */
-func EnsureQuoteCache(ctx context.Context, pool *qpool.Q) *QuoteCache {
+func EnsureQuoteCache(ctx context.Context, pool *qpool.Q[any]) *QuoteCache {
 	quoteCacheMu.Lock()
 	defer quoteCacheMu.Unlock()
 
@@ -88,7 +88,7 @@ func ResetQuoteCacheForTest() {
 	sharedQuotes = nil
 }
 
-func NewQuoteCache(ctx context.Context, _ *qpool.Q) *QuoteCache {
+func NewQuoteCache(ctx context.Context, _ *qpool.Q[any]) *QuoteCache {
 	ctx, cancel := context.WithCancel(ctx)
 	cache := &QuoteCache{
 		ctx:    ctx,
@@ -106,7 +106,7 @@ func NewQuoteCache(ctx context.Context, _ *qpool.Q) *QuoteCache {
 /*
 Start begins ingesting raw Kraken quote frames into the cache.
 */
-func (cache *QuoteCache) Start(pool *qpool.Q) {
+func (cache *QuoteCache) Start(pool *qpool.Q[any]) {
 	if cache == nil || !cache.started.CompareAndSwap(false, true) {
 		return
 	}
@@ -142,49 +142,46 @@ func (cache *QuoteCache) SubscribeTrades(listener tradeListener) {
 	cache.tradeListeners.Store(&next)
 }
 
-func (cache *QuoteCache) run(pool *qpool.Q) {
+func (cache *QuoteCache) run(pool *qpool.Q[any]) {
 	if pool == nil {
 		return
 	}
 
 	group := bus.Group(pool, "raw", 10*time.Millisecond)
-	subscriber := group.Subscribe("broker:quotes", 4096)
+	consumer := group.Subscribe("broker:quotes", 4096)
 
-	if subscriber == nil {
+	if consumer == nil {
 		return
 	}
 
 	for {
-		select {
-		case <-cache.ctx.Done():
+		message, err := consumer.Wait(cache.ctx)
+
+		if err != nil {
 			return
-		case message, ok := <-subscriber.Incoming:
-			if !ok {
-				return
-			}
+		}
 
-			if message == nil || message.Value == nil {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			envelope, ok := message.Value.(map[string]any)
+		envelope, ok := message.Value.(map[string]any)
 
-			if !ok {
-				continue
-			}
+		if !ok {
+			continue
+		}
 
-			channel, _ := envelope["channel"].(string)
-			rawData, _ := envelope["data"].(json.RawMessage)
-			frame := &public.SocketMessage{Channel: channel, Data: rawData}
+		channel, _ := envelope["channel"].(string)
+		rawData, _ := envelope["data"].(json.RawMessage)
+		frame := &public.SocketMessage{Channel: channel, Data: rawData}
 
-			switch channel {
-			case public.TickerChannel:
-				cache.ingestTickers(frame)
-			case public.BookChannel:
-				cache.ingestBooks(frame)
-			case public.TradesChannel:
-				cache.ingestTrades(frame)
-			}
+		switch channel {
+		case public.TickerChannel:
+			cache.ingestTickers(frame)
+		case public.BookChannel:
+			cache.ingestBooks(frame)
+		case public.TradesChannel:
+			cache.ingestTrades(frame)
 		}
 	}
 }

@@ -18,7 +18,7 @@ func TestNewWebSocketSingleton(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		streams := focus.NewSet()

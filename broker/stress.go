@@ -42,7 +42,7 @@ var (
 /*
 EnsureStressCache returns the process-wide stress cache bound to a live context.
 */
-func EnsureStressCache(ctx context.Context, pool *qpool.Q) *StressCache {
+func EnsureStressCache(ctx context.Context, pool *qpool.Q[any]) *StressCache {
 	stressCacheMu.Lock()
 	defer stressCacheMu.Unlock()
 
@@ -75,7 +75,7 @@ func ResetStressCacheForTest() {
 	sharedStress = nil
 }
 
-func NewStressCache(ctx context.Context, _ *qpool.Q) *StressCache {
+func NewStressCache(ctx context.Context, _ *qpool.Q[any]) *StressCache {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &StressCache{
@@ -87,7 +87,7 @@ func NewStressCache(ctx context.Context, _ *qpool.Q) *StressCache {
 /*
 Start begins ingesting measurement frames into the cache.
 */
-func (cache *StressCache) Start(pool *qpool.Q) {
+func (cache *StressCache) Start(pool *qpool.Q[any]) {
 	if cache == nil || !cache.started.CompareAndSwap(false, true) {
 		return
 	}
@@ -95,39 +95,36 @@ func (cache *StressCache) Start(pool *qpool.Q) {
 	go cache.run(pool)
 }
 
-func (cache *StressCache) run(pool *qpool.Q) {
+func (cache *StressCache) run(pool *qpool.Q[any]) {
 	if pool == nil {
 		return
 	}
 
 	group := bus.Group(pool, "measurements", 0)
-	subscriber := group.Subscribe("broker:stress", 4096)
+	consumer := group.Subscribe("broker:stress", 4096)
 
-	if subscriber == nil {
+	if consumer == nil {
 		return
 	}
 
 	for {
-		select {
-		case <-cache.ctx.Done():
+		message, err := consumer.Wait(cache.ctx)
+
+		if err != nil {
 			return
-		case message, ok := <-subscriber.Incoming:
-			if !ok {
-				return
-			}
-
-			if message == nil || message.Value == nil {
-				continue
-			}
-
-			measurement, typeOK := message.Value.(types.Measurement)
-
-			if !typeOK {
-				continue
-			}
-
-			cache.ingestMeasurement(measurement)
 		}
+
+		if message == nil || message.Value == nil {
+			continue
+		}
+
+		measurement, typeOK := message.Value.(types.Measurement)
+
+		if !typeOK {
+			continue
+		}
+
+		cache.ingestMeasurement(measurement)
 	}
 }
 

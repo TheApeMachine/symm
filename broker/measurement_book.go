@@ -15,7 +15,7 @@ measurements before they are written to the optimizer capture tape.
 */
 func MeasurementBookEnricher(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 ) func(types.Measurement) types.Measurement {
 	quotes := EnsureQuoteCache(ctx, pool)
 	depth, err := settings.RequiredBookDepthLevels()

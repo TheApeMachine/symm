@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"sort"
 	"sync"
@@ -29,9 +30,9 @@ const rawSubscriberID = "signal/fluid:raw"
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	fieldScratch  []*FluidSymbol
 	ui            *qpool.BroadcastGroup
@@ -42,7 +43,7 @@ type Signal struct {
 	rawDump       *rawdump.Writer
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -72,7 +73,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:        cancel,
 		pool:          pool,
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.Subscriber),
+		subscribers:   make(map[string]*qpool.BroadcastConsumer),
 		surpriseField: surpriseField,
 		classifier:    pooledCalibrator.Classifier,
 		calibrator:    pooledCalibrator.Calibrator,
@@ -122,66 +123,67 @@ func (signal *Signal) state(symbol string) (*FluidSymbol, error) {
 
 func (signal *Signal) Tick() (err error) {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			var state *FluidSymbol
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
-			switch sm.Channel {
-			case public.TradesChannel:
-				for _, trade := range signalpool.GetTrades(sm) {
-					if state, err = signal.state(trade.Symbol); errnie.Error(err) != nil {
-						continue
-					}
+		if !ok {
+			continue
+		}
 
-					if err = state.FeedTradeSide(
-						trade.Timestamp, trade.Qty, trade.Side,
-					); errnie.Error(err) != nil {
-						continue
-					}
+		var state *FluidSymbol
 
-					if err = signal.emit(trade.Symbol); errnie.Error(err) != nil {
-						continue
-					}
+		switch sm.Channel {
+		case public.TradesChannel:
+			for _, trade := range signalpool.GetTrades(sm) {
+				if state, err = signal.state(trade.Symbol); errnie.Error(err) != nil {
+					continue
 				}
-			case public.TickerChannel:
-				for _, ticker := range signalpool.GetTickers(sm) {
-					if state, err = signal.state(ticker.Symbol); errnie.Error(err) != nil {
-						continue
-					}
 
-					if err = state.FeedTicker(ticker); errnie.Error(err) != nil {
-						continue
-					}
-
-					if err = signal.emit(ticker.Symbol); errnie.Error(err) != nil {
-						continue
-					}
+				if err = state.FeedTradeSide(
+					trade.Timestamp, trade.Qty, trade.Side,
+				); errnie.Error(err) != nil {
+					continue
 				}
-			case public.BookChannel:
-				for _, delta := range signalpool.GetBooks(sm) {
-					if state, err = signal.state(delta.Symbol); errnie.Error(err) != nil {
-						continue
-					}
 
-					if err = state.FeedBook(delta); errnie.Error(err) != nil {
-						continue
-					}
+				if err = signal.emit(trade.Symbol); errnie.Error(err) != nil {
+					continue
+				}
+			}
+		case public.TickerChannel:
+			for _, ticker := range signalpool.GetTickers(sm) {
+				if state, err = signal.state(ticker.Symbol); errnie.Error(err) != nil {
+					continue
+				}
 
-					if err = signal.emit(delta.Symbol); errnie.Error(err) != nil {
-						continue
-					}
+				if err = state.FeedTicker(ticker); errnie.Error(err) != nil {
+					continue
+				}
+
+				if err = signal.emit(ticker.Symbol); errnie.Error(err) != nil {
+					continue
+				}
+			}
+		case public.BookChannel:
+			for _, delta := range signalpool.GetBooks(sm) {
+				if state, err = signal.state(delta.Symbol); errnie.Error(err) != nil {
+					continue
+				}
+
+				if err = state.FeedBook(delta); errnie.Error(err) != nil {
+					continue
+				}
+
+				if err = signal.emit(delta.Symbol); errnie.Error(err) != nil {
+					continue
 				}
 			}
 		}
@@ -264,10 +266,10 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 
 	signal.fieldScratch = states
 
-	tasks := make([]chan *qpool.QValue[any], 0, len(states))
+	tasks := make([]*qpool.ResultWait[any], 0, len(states))
 
 	for _, fluidState := range states {
-		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "fluid", &tasks), func(ctx context.Context) (any, error) {
 			row := fluidState.Row()
 
 			if row == nil {
@@ -282,7 +284,12 @@ func (signal *Signal) publishField(_ *FluidSymbol) error {
 	var err error
 
 	for _, task := range tasks {
-		value := <-task
+		value, getErr := task.Get(signal.ctx)
+
+		if getErr != nil {
+			err = errors.Join(err, getErr)
+			continue
+		}
 
 		if value.Error != nil {
 			err = errors.Join(err, value.Error)

@@ -109,7 +109,7 @@ func NewMeasurement(
 	}
 }
 
-func (measurement *Measurement) Send(pool *qpool.Q) error {
+func (measurement *Measurement) Send(pool *qpool.Q[any]) error {
 	// strength and snr are intentionally NOT required: a warm-up / neutral reading
 	// legitimately carries strength 0 (no fused signal yet) and snr 0 (no surprise
 	// yet) while still being a valid, always-emitted Measurement. Identity, the

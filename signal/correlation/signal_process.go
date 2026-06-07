@@ -213,10 +213,10 @@ its assigned category band; SNR is how surprising that clarity is versus the
 coin's own recent baseline, not how large the strength is.
 */
 func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) error {
-	tasks := make([]chan *qpool.QValue[any], 0, len(active))
+	tasks := make([]*qpool.ResultWait[any], 0, len(active))
 
 	for _, coin := range active {
-		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "correlation", &tasks), func(ctx context.Context) (any, error) {
 			agree := hashBits - bits.OnesCount64(coin.sig^mode)
 			corr := (float64(agree) - float64(hashBits)/2) / (float64(hashBits) / 2)
 			energy := coin.state.energy.Value()
@@ -282,12 +282,15 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 	var err error
 
 	for _, task := range tasks {
-		value := <-task
+		value, getErr := task.Get(signal.ctx)
+
+		if getErr != nil {
+			err = errors.Join(err, getErr)
+			continue
+		}
+
 		err = errors.Join(err, value.Error)
 
-		// Feed the pooled calibrator sequentially, after the concurrent emit pass, so
-		// the shared classifier is only ever written from this single goroutine while
-		// the parallel Push/Snapshot reads above stay race-free.
 		if observation, ok := value.Value.(float64); ok {
 			signal.calibrator.Observe(observation, signal.classifier)
 		}

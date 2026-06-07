@@ -43,9 +43,9 @@ the symbol's own recent baseline.
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map // symbol -> float64 (daily quote volume)
 	tracked       sync.Map // symbol -> *types.Category
 	surpriseField *types.CategorySurpriseField
@@ -54,7 +54,7 @@ type Signal struct {
 	rawDump       *rawdump.Writer
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -83,7 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:        cancel,
 		pool:          pool,
 		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.Subscriber),
+		subscribers:   make(map[string]*qpool.BroadcastConsumer),
 		surpriseField: surpriseField,
 		classifier:    pooledCalibrator.Classifier,
 		calibrator:    pooledCalibrator.Calibrator,
@@ -105,27 +105,28 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			switch sm.Channel {
-			case public.TickerChannel:
-				tickers := signalpool.GetTickers(sm)
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
-				if err := signal.publishTickers(tickers); err != nil {
-					errnie.Error(err, "liquidity: publish tickers")
-				}
+		if !ok {
+			continue
+		}
+
+		switch sm.Channel {
+		case public.TickerChannel:
+			tickers := signalpool.GetTickers(sm)
+
+			if err := signal.publishTickers(tickers); err != nil {
+				errnie.Error(err, "liquidity: publish tickers")
 			}
 		}
 	}
@@ -152,10 +153,10 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 	}
 
 	volumes := signal.volumeSnapshot()
-	tasks := make([]chan *qpool.QValue[any], 0, len(rows))
+	tasks := make([]*qpool.ResultWait[any], 0, len(rows))
 
 	for _, row := range rows {
-		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "liquidity", &tasks), func(ctx context.Context) (any, error) {
 			measurement, standout, err := signal.measureFromVolumes(row, volumes)
 
 			if err != nil {
@@ -216,7 +217,11 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 	var err error
 
 	for _, task := range tasks {
-		value := <-task
+		value, getErr := task.Get(signal.ctx)
+		if getErr != nil {
+			err = errors.Join(err, getErr)
+			continue
+		}
 		err = errors.Join(err, value.Error)
 	}
 

@@ -269,6 +269,7 @@ func (acc *accumulator) report() FieldReport {
 }
 
 func numericReport(name string, values []float64) FieldReport {
+	values = finiteValues(values)
 	report := FieldReport{Name: name, Kind: kindNumeric, Count: len(values)}
 
 	if len(values) == 0 {
@@ -301,6 +302,20 @@ func numericReport(name string, values []float64) FieldReport {
 	report.Verdict, report.Notes = numericVerdict(report)
 
 	return report
+}
+
+func finiteValues(values []float64) []float64 {
+	finite := make([]float64, 0, len(values))
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+
+		finite = append(finite, value)
+	}
+
+	return finite
 }
 
 func categoricalReport(name string, values []string) FieldReport {

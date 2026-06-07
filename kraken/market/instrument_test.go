@@ -25,7 +25,7 @@ func TestInstrumentTick(t *testing.T) {
 		viper.Set("market.default_symbols", []string{"BTC/EUR"})
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		raw := bus.Group(pool, "raw", 10*time.Millisecond)
@@ -81,26 +81,28 @@ func TestInstrumentTick(t *testing.T) {
 		})
 
 		Convey("It should emit book subscribe only for tradable EUR pairs", func() {
-			deadline := time.After(2 * time.Second)
-			var bookSubscribe bool
+			waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
+			defer waitCancel()
+
+			bookSubscribe := false
 
 			for !bookSubscribe {
-				select {
-				case message := <-publicSubscriber.Incoming:
-					frame, ok := message.Value.(map[string]any)
-
-					if !ok {
-						continue
-					}
-
-					params, _ := frame["params"].(map[string]any)
-
-					if params["channel"] == "book" {
-						bookSubscribe = true
-					}
-				case <-deadline:
+				message, err := bus.PollFor(waitCtx, publicSubscriber)
+				if err != nil {
 					So("timeout waiting for book subscribe", ShouldBeEmpty)
 					return
+				}
+
+				frame, ok := message.Value.(map[string]any)
+
+				if !ok {
+					continue
+				}
+
+				params, _ := frame["params"].(map[string]any)
+
+				if params["channel"] == "book" {
+					bookSubscribe = true
 				}
 			}
 
@@ -115,5 +117,59 @@ func TestInstrumentTick(t *testing.T) {
 		case <-tickDone:
 		case <-time.After(2 * time.Second):
 		}
+	})
+}
+
+func TestInstrumentReplaySubscriptions(t *testing.T) {
+	Convey("Given an instrument with active pairs", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("market.subscribe_pace", time.Millisecond)
+
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		defer pool.Close()
+
+		publicOut := bus.Group(pool, "kraken:public", 10*time.Millisecond)
+		publicSubscriber := publicOut.Subscribe("test:replay", 32)
+
+		instrument := NewInstrument(ctx, pool)
+		instrument.Pairs = []string{"BTC/EUR"}
+
+		Convey("When replaySubscriptions runs after reconnect", func() {
+			instrument.replaySubscriptions()
+
+			waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
+			defer waitCancel()
+
+			channels := map[string]bool{}
+
+			for len(channels) < 4 {
+				message, err := bus.PollFor(waitCtx, publicSubscriber)
+				if err != nil {
+					So("timeout waiting for replay subscribe frames", ShouldBeEmpty)
+					return
+				}
+
+				frame, ok := message.Value.(map[string]any)
+
+				if !ok {
+					continue
+				}
+
+				params, _ := frame["params"].(map[string]any)
+				channel, _ := params["channel"].(string)
+
+				if channel != "" {
+					channels[channel] = true
+				}
+			}
+
+			So(channels["ticker"], ShouldBeTrue)
+			So(channels["book"], ShouldBeTrue)
+			So(channels["ohlc"], ShouldBeTrue)
+			So(channels["trade"], ShouldBeTrue)
+		})
 	})
 }

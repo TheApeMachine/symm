@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"slices"
 	"sync"
 	"time"
@@ -80,14 +79,14 @@ type Instrument struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	subscribersMu sync.RWMutex
 	Pairs         []string
 }
 
-func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
+func NewInstrument(ctx context.Context, pool *qpool.Q[any]) *Instrument {
 	ctx, cancel := context.WithCancel(ctx)
 
 	instrument := &Instrument{
@@ -95,7 +94,7 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 		Pairs:       make([]string, 0),
 	}
 
@@ -105,11 +104,13 @@ func NewInstrument(ctx context.Context, pool *qpool.Q) *Instrument {
 		instrumentSubscriberID, 128,
 	)
 
+	public.OnReconnect(instrument.replaySubscriptions)
+
 	return instrument
 }
 
 func (instrument *Instrument) Tick() error {
-	incoming := instrument.subscribers["raw"].Incoming
+	raw := instrument.subscribers["raw"]
 	publicBroadcast := instrument.broadcasts["kraken:public"]
 	bookDepth, err := settings.RequiredBookDepthLevels()
 
@@ -132,91 +133,120 @@ func (instrument *Instrument) Tick() error {
 	scanCap := settings.ScanSymbolCap()
 
 	for {
-		select {
-		case <-instrument.ctx.Done():
-			return instrument.ctx.Err()
-		case message, ok := <-incoming:
-			if !ok {
-				return io.EOF
+		message, err := raw.Wait(instrument.ctx)
+
+		if err != nil {
+			return err
+		}
+
+		if message == nil {
+			continue
+		}
+
+		sm, ok := instrument.socketMessage(message.Value)
+
+		if !ok {
+			continue
+		}
+
+		if sm.Channel != public.InstrumentsChannel {
+			continue
+		}
+
+		var update InstrumentUpdate
+
+		if err := sonic.Unmarshal(sm.Data, &update); err != nil {
+			return fmt.Errorf("instrument: decode snapshot: %w", err)
+		}
+
+		for _, pair := range update.Pairs {
+			if scanCap > 0 && len(instrument.Pairs) >= scanCap {
+				break
 			}
 
-			if message == nil {
+			if !instrument.tradableQuotePair(pair, currency) {
 				continue
 			}
 
-			sm, ok := instrument.socketMessage(message.Value)
-
-			if !ok {
+			if slices.Contains(instrument.Pairs, pair.Symbol) {
 				continue
 			}
 
-			if sm.Channel != public.InstrumentsChannel {
-				continue
-			}
-
-			var update InstrumentUpdate
-
-			if err := sonic.Unmarshal(sm.Data, &update); err != nil {
-				return fmt.Errorf("instrument: decode snapshot: %w", err)
-			}
-
-			for _, pair := range update.Pairs {
-				if scanCap > 0 && len(instrument.Pairs) >= scanCap {
-					break
-				}
-
-				if !instrument.tradableQuotePair(pair, currency) {
-					continue
-				}
-
-				if slices.Contains(instrument.Pairs, pair.Symbol) {
-					continue
-				}
-
-				instrument.Pairs = append(instrument.Pairs, pair.Symbol)
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "ticker",
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "book",
-						"depth":    bookDepth,
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "ohlc",
-						"interval": 1,
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
-					"method": "subscribe",
-					"params": map[string]any{
-						"channel":  "trade",
-						"symbol":   []string{pair.Symbol},
-						"snapshot": true,
-					},
-				}})
-
-				time.Sleep(pace)
-			}
+			instrument.Pairs = append(instrument.Pairs, pair.Symbol)
+			instrument.subscribeSymbol(publicBroadcast, pair.Symbol, bookDepth, pace)
 		}
 	}
+}
+
+func (instrument *Instrument) replaySubscriptions() {
+	publicBroadcast := instrument.broadcasts["kraken:public"]
+
+	if publicBroadcast == nil || len(instrument.Pairs) == 0 {
+		return
+	}
+
+	bookDepth, err := settings.RequiredBookDepthLevels()
+
+	if err != nil {
+		return
+	}
+
+	pace, err := settings.RequiredDuration("market.subscribe_pace")
+
+	if err != nil {
+		return
+	}
+
+	for _, symbol := range append([]string(nil), instrument.Pairs...) {
+		instrument.subscribeSymbol(publicBroadcast, symbol, bookDepth, pace)
+	}
+}
+
+func (instrument *Instrument) subscribeSymbol(
+	publicBroadcast *qpool.BroadcastGroup,
+	symbol string,
+	bookDepth int,
+	pace time.Duration,
+) {
+	publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "ticker",
+			"symbol":   []string{symbol},
+			"snapshot": true,
+		},
+	}})
+
+	publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "book",
+			"depth":    bookDepth,
+			"symbol":   []string{symbol},
+			"snapshot": true,
+		},
+	}})
+
+	publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "ohlc",
+			"interval": 1,
+			"symbol":   []string{symbol},
+			"snapshot": true,
+		},
+	}})
+
+	publicBroadcast.Send(&qpool.QValue[any]{Value: map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "trade",
+			"symbol":   []string{symbol},
+			"snapshot": true,
+		},
+	}})
+
+	time.Sleep(pace)
 }
 
 func (instrument *Instrument) socketMessage(value any) (*public.SocketMessage, bool) {
@@ -290,7 +320,7 @@ func (instrument *Instrument) Close() error {
 		}
 
 		if broadcast, ok := instrument.broadcasts[channel]; ok && broadcast != nil {
-			broadcast.Unsubscribe(subscriber.ID)
+			broadcast.Unsubscribe(instrumentSubscriberID)
 		}
 	}
 

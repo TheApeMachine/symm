@@ -2,6 +2,8 @@ package cvd
 
 import (
 	"context"
+
+	"github.com/theapemachine/symm/bus"
 	"testing"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -56,7 +58,7 @@ func TestPooledPipeClassification(t *testing.T) {
 func TestObserve(t *testing.T) {
 	Convey("Given a CVD signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -76,23 +78,15 @@ func TestObserve(t *testing.T) {
 				})
 			}
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for CVD measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for CVD measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes an absorption reading carrying symbol and price", func() {
 				So(measurement.Source, ShouldEqual, types.SourceCVD)
@@ -115,7 +109,7 @@ func TestObserve(t *testing.T) {
 
 func BenchmarkObserve(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

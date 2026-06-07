@@ -31,13 +31,13 @@ type WebSocket struct {
 	cancel        context.CancelFunc
 	err           error
 	provider      *TokenProvider
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	raw           *qpool.BroadcastGroup
 	ui            *qpool.BroadcastGroup
 	private       *qpool.BroadcastGroup
 	level3        *qpool.BroadcastGroup
-	subscriber    *qpool.Subscriber
-	rawSubscriber *qpool.Subscriber
+	subscriber    *qpool.BroadcastConsumer
+	rawSubscriber *qpool.BroadcastConsumer
 	conn          *websocket.Conn
 	dialer        websocket.Dialer
 	outboundMu    sync.Mutex
@@ -50,7 +50,7 @@ type WebSocket struct {
 NewWebSocket returns paper simulation or a live authenticated connection holder.
 */
 func NewWebSocket(
-	ctx context.Context, pool *qpool.Q, apiKey, apiSecret string,
+	ctx context.Context, pool *qpool.Q[any], apiKey, apiSecret string,
 ) public.WebSocketClient {
 	return NewWebSocketWithQuoteCache(
 		ctx,
@@ -67,7 +67,7 @@ quote state for the paper exchange emulator.
 */
 func NewWebSocketWithQuoteCache(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	apiKey string,
 	apiSecret string,
 	quotes *broker.QuoteCache,
@@ -195,12 +195,19 @@ func (websocketClient *WebSocket) Tick() error {
 		case err := <-readErrs:
 			websocketClient.err = err
 			return err
-		case message, ok := <-websocketClient.subscriber.Incoming:
-			if !ok {
-				return websocketClient.ctx.Err()
-			}
+		default:
+			message := websocketClient.subscriber.Poll()
 
 			if message == nil {
+				select {
+				case <-websocketClient.ctx.Done():
+					return websocketClient.ctx.Err()
+				case err := <-readErrs:
+					websocketClient.err = err
+					return err
+				case <-time.After(2 * time.Millisecond):
+				}
+
 				continue
 			}
 
@@ -219,11 +226,11 @@ func (websocketClient *WebSocket) Close() error {
 	websocketClient.cancel()
 
 	if websocketClient.private != nil && websocketClient.subscriber != nil {
-		websocketClient.private.Unsubscribe(websocketClient.subscriber.ID)
+		websocketClient.private.Unsubscribe(privateSubscriberID)
 	}
 
 	if websocketClient.raw != nil && websocketClient.rawSubscriber != nil {
-		websocketClient.raw.Unsubscribe(websocketClient.rawSubscriber.ID)
+		websocketClient.raw.Unsubscribe("kraken/private:l3-instrument")
 	}
 
 	if websocketClient.conn == nil {

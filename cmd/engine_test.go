@@ -29,7 +29,7 @@ func TestNewEngine(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		engine, err := NewEngine(ctx, pool)
 
 		So(err, ShouldBeNil)
@@ -62,7 +62,7 @@ func TestNewEngine(t *testing.T) {
 
 func BenchmarkEngineStart(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 1, 4, nil)
+	pool := qpool.NewQ[any](ctx, 1, 4, nil)
 	engine, _ := NewEngine(ctx, pool)
 	engine.systems = append(engine.systems, &stubSystem{})
 

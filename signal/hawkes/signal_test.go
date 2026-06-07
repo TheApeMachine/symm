@@ -2,6 +2,8 @@ package hawkes
 
 import (
 	"context"
+
+	"github.com/theapemachine/symm/bus"
 	"testing"
 	"time"
 
@@ -36,7 +38,7 @@ func tradeBurst(symbol string, base time.Time, count int) []market.TradeUpdate {
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -70,7 +72,7 @@ func TestMeasure(t *testing.T) {
 func TestObserveTrades(t *testing.T) {
 	Convey("Given a hawkes signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -85,23 +87,15 @@ func TestObserveTrades(t *testing.T) {
 
 			So(err, ShouldBeNil)
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for hawkes measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for hawkes measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes one thermal reading for the symbol", func() {
 				So(measurement.Source, ShouldEqual, types.SourceHawkes)
@@ -114,7 +108,7 @@ func TestObserveTrades(t *testing.T) {
 
 func BenchmarkObserveTrades(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

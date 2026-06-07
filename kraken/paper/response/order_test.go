@@ -12,7 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
-func paperOrders(ctx context.Context, pool *qpool.Q, cache *broker.QuoteCache) (*Orders, *qpool.Subscriber) {
+func paperOrders(ctx context.Context, pool *qpool.Q[any], cache *broker.QuoteCache) (*Orders, *qpool.BroadcastConsumer) {
 	configurePaperWallet()
 
 	if cache == nil {
@@ -41,70 +41,80 @@ func seedQuote(cache *broker.QuoteCache, last float64) {
 	cache.InstallQuoteForTest(broker.Quote{Symbol: "BTC/EUR", Bid: last, Ask: last, Last: last})
 }
 
-func expectNoFill(sub *qpool.Subscriber) bool {
-	deadline := time.After(40 * time.Millisecond)
+func expectNoFill(sub *qpool.BroadcastConsumer) bool {
+	deadline := time.Now().Add(40 * time.Millisecond)
 
-	for {
-		select {
-		case frame := <-sub.Incoming:
-			exec, ok := frame.Value.(map[string]any)
+	for time.Now().Before(deadline) {
+		frame := sub.Poll()
 
-			if !ok || exec["channel"] != "executions" {
-				continue
-			}
+		if frame == nil {
+			time.Sleep(1 * time.Millisecond)
+			continue
+		}
 
-			qty, ok := exec["qty"].(float64)
+		exec, ok := frame.Value.(map[string]any)
 
-			if ok && qty > 0 {
-				return false
-			}
-		case <-deadline:
-			return true
+		if !ok || exec["channel"] != "executions" {
+			continue
+		}
+
+		qty, ok := exec["qty"].(float64)
+
+		if ok && qty > 0 {
+			return false
 		}
 	}
+
+	return true
 }
 
-func expectFill(sub *qpool.Subscriber) map[string]any {
-	deadline := time.After(300 * time.Millisecond)
+func expectFill(sub *qpool.BroadcastConsumer) map[string]any {
+	deadline := time.Now().Add(300 * time.Millisecond)
 
-	for {
-		select {
-		case frame := <-sub.Incoming:
-			exec, ok := frame.Value.(map[string]any)
+	for time.Now().Before(deadline) {
+		frame := sub.Poll()
 
-			if !ok || exec["channel"] != "executions" {
-				continue
-			}
+		if frame == nil {
+			time.Sleep(1 * time.Millisecond)
+			continue
+		}
 
-			qty, ok := exec["qty"].(float64)
+		exec, ok := frame.Value.(map[string]any)
 
-			if ok && qty > 0 {
-				return exec
-			}
-		case <-deadline:
-			return nil
+		if !ok || exec["channel"] != "executions" {
+			continue
+		}
+
+		qty, ok := exec["qty"].(float64)
+
+		if ok && qty > 0 {
+			return exec
 		}
 	}
+
+	return nil
 }
 
-func drainUntilFill(sub *qpool.Subscriber) {
-	deadline := time.After(300 * time.Millisecond)
+func drainUntilFill(sub *qpool.BroadcastConsumer) {
+	deadline := time.Now().Add(300 * time.Millisecond)
 
-	for {
-		select {
-		case frame := <-sub.Incoming:
-			exec, ok := frame.Value.(map[string]any)
+	for time.Now().Before(deadline) {
+		frame := sub.Poll()
 
-			if !ok || exec["channel"] != "executions" {
-				continue
-			}
+		if frame == nil {
+			time.Sleep(1 * time.Millisecond)
+			continue
+		}
 
-			qty, ok := exec["qty"].(float64)
+		exec, ok := frame.Value.(map[string]any)
 
-			if ok && qty > 0 {
-				return
-			}
-		case <-deadline:
+		if !ok || exec["channel"] != "executions" {
+			continue
+		}
+
+		qty, ok := exec["qty"].(float64)
+
+		if ok && qty > 0 {
 			return
 		}
 	}
@@ -116,7 +126,7 @@ func TestPaperStopRestsThenFills(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 
@@ -156,7 +166,7 @@ func TestPaperTrailingStopTracksPeak(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 
@@ -200,7 +210,7 @@ func TestPaperAddOrderAck(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
 		seedQuote(cache, 100)
 

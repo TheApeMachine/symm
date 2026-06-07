@@ -26,7 +26,7 @@ func TestNewStory(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		recordPath := filepath.Join(t.TempDir(), "capture.jsonl")
 
 		viper.Set("trading.record.file", recordPath)
@@ -39,7 +39,6 @@ func TestNewStory(t *testing.T) {
 		story := NewStory(ctx, pool)
 
 		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
-		convey.So(story.subscribers["measurements"].ID, convey.ShouldEqual, storyMeasurementsSubscriberID)
 
 		convey.Convey("It should receive published measurements", func() {
 			done := make(chan struct{})
@@ -79,7 +78,7 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
 		// A minimal playbook: when flat and an ignition fires, enter at market.
 		thoughts := []reasoning.Thought{{
@@ -122,15 +121,16 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		}).Send(pool)
 
 		convey.Convey("It should publish the Thought-driven Action on raw", func() {
-			select {
-			case frame := <-subscriber.Incoming:
+			waitCtx, waitCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer waitCancel()
+			frame, err := bus.PollFor(waitCtx, subscriber)
+			if err != nil {
+				convey.So("raw action", convey.ShouldBeBlank)
+			} else {
 				action, ok := frame.Value.(reasoning.Action)
-
 				convey.So(ok, convey.ShouldBeTrue)
 				convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
 				convey.So(action.Type, convey.ShouldEqual, reasoning.ActionMarket)
-			case <-time.After(500 * time.Millisecond):
-				convey.So("raw action", convey.ShouldBeBlank)
 			}
 
 			cancel()
@@ -155,7 +155,7 @@ func TestStoryPublishMarketRegime(t *testing.T) {
 		defer viper.Set("market.anchor_symbol", "")
 		defer viper.Set("market.default_symbols", nil)
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		story := NewStory(ctx, pool)
 		ui := bus.Group(pool, "ui", 10*time.Millisecond)
 		subscriber := ui.Subscribe("test:story:regime", 8)
@@ -192,23 +192,23 @@ func TestStoryPublishMarketRegime(t *testing.T) {
 		convey.Convey("It should publish cross-section market regime radar frames", func() {
 			var frames []map[string]any
 
-			deadline := time.After(500 * time.Millisecond)
+		collectCtx, collectCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer collectCancel()
 
-		collect:
-			for {
-				select {
-				case frame := <-subscriber.Incoming:
-					payload, ok := frame.Value.(map[string]any)
-
-					convey.So(ok, convey.ShouldBeTrue)
-
-					if payload["chart"] == "regime" {
-						frames = append(frames, payload)
-					}
-				case <-deadline:
-					break collect
-				}
+		for {
+			frame, err := bus.PollFor(collectCtx, subscriber)
+			if err != nil {
+				break
 			}
+
+			payload, ok := frame.Value.(map[string]any)
+
+			convey.So(ok, convey.ShouldBeTrue)
+
+			if payload["chart"] == "regime" {
+				frames = append(frames, payload)
+			}
+		}
 
 			convey.So(len(frames), convey.ShouldBeGreaterThan, 0)
 
@@ -231,7 +231,7 @@ func TestStoryFixturePlaybook(t *testing.T) {
 		viper.Set("market.perspectives.fixture_playbook", true)
 		defer viper.Set("market.perspectives.fixture_playbook", false)
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		story := NewStory(ctx, pool)
 		subscriber := story.raw.Subscribe("test:story:fixture:raw", 4)
 
@@ -246,16 +246,19 @@ func TestStoryFixturePlaybook(t *testing.T) {
 			convey.So(measurement.Send(pool), convey.ShouldBeNil)
 		}
 
-		convey.Convey("It should publish the fixture limit entry", func() {
-			select {
-			case frame := <-subscriber.Incoming:
+		convey.		Convey("It should publish the fixture limit entry", func() {
+			waitCtx, waitCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer waitCancel()
+
+			frame, err := bus.PollFor(waitCtx, subscriber)
+			if err != nil {
+				convey.So("fixture action", convey.ShouldBeBlank)
+			} else {
 				action, ok := frame.Value.(reasoning.Action)
 
 				convey.So(ok, convey.ShouldBeTrue)
 				convey.So(action.Symbol, convey.ShouldEqual, "BTC/EUR")
 				convey.So(action.Type, convey.ShouldEqual, reasoning.ActionLimit)
-			case <-time.After(500 * time.Millisecond):
-				convey.So("fixture action", convey.ShouldBeBlank)
 			}
 
 			cancel()
@@ -270,7 +273,7 @@ func TestStoryPositionState(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		story := NewStory(ctx, pool)
 		held := map[string]struct{}{"BTC/EUR": {}}
 		story.SetPositionHeld(func(symbol string) bool {
@@ -327,7 +330,7 @@ func TestStorySkipsShortActWithoutMargin(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		viper.Set("trading.margin_enabled", false)
 		defer viper.Set("trading.margin_enabled", nil)
 
@@ -364,11 +367,12 @@ func TestStorySkipsShortActWithoutMargin(t *testing.T) {
 			Last:     50_000,
 		}).Send(pool)
 
-		convey.Convey("It should not publish a short entry on raw", func() {
-			select {
-			case <-subscriber.Incoming:
+		convey.		Convey("It should not publish a short entry on raw", func() {
+			waitCtx, waitCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+			defer waitCancel()
+
+			if _, err := bus.PollFor(waitCtx, subscriber); err == nil {
 				convey.So("short entry action", convey.ShouldBeBlank)
-			case <-time.After(200 * time.Millisecond):
 			}
 
 			cancel()

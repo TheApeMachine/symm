@@ -26,10 +26,10 @@ WebSocket simulates Kraken private websocket traffic on raw and kraken:private.
 type WebSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pool        *qpool.Q
+	pool        *qpool.Q[any]
 	err         error
 	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.Subscriber
+	subscribers map[string]*qpool.BroadcastConsumer
 	sockets     map[string]types.Socket
 	balances    *response.Balances
 	orders      *response.Orders
@@ -37,7 +37,7 @@ type WebSocket struct {
 	latencies   *ring.Ring
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q) *WebSocket {
+func NewWebSocket(ctx context.Context, pool *qpool.Q[any]) *WebSocket {
 	return NewWebSocketWithQuoteCache(ctx, pool, broker.EnsureQuoteCache(ctx, pool))
 }
 
@@ -46,7 +46,7 @@ NewWebSocketWithQuoteCache builds the paper socket with explicit quote state.
 */
 func NewWebSocketWithQuoteCache(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	quotes *broker.QuoteCache,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
@@ -72,7 +72,7 @@ func NewWebSocketWithQuoteCache(
 		cancel:      cancel,
 		pool:        pool,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 		sockets: map[string]types.Socket{
 			"balances":   balances,
 			"orders":     orders,
@@ -120,26 +120,12 @@ func (ws *WebSocket) Tick() (err error) {
 	defer ticker.Stop()
 
 	publishedInitialWallet := false
+	private := ws.subscribers["kraken:private"]
 
 	for {
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
-		case message, ok := <-ws.subscribers["kraken:private"].Incoming:
-			if !ok || message == nil {
-				return ws.ctx.Err()
-			}
-
-			socket, ok := ws.sockets[message.Type]
-
-			if !ok {
-				continue
-			}
-
-			ws.broadcasts["raw"].Send(&qpool.QValue[any]{
-				Type:  message.Type,
-				Value: socket.Send(message),
-			})
 		case <-ticker.C:
 			if !publishedInitialWallet {
 				ws.balances.PublishUI()
@@ -155,6 +141,44 @@ func (ws *WebSocket) Tick() (err error) {
 			}
 
 			ws.latencies = ws.latencies.Next()
+		default:
+			message := private.Poll()
+
+			if message == nil {
+				select {
+				case <-ws.ctx.Done():
+					return ws.err
+				case <-ticker.C:
+					if !publishedInitialWallet {
+						ws.balances.PublishUI()
+						publishedInitialWallet = true
+					}
+
+					ws.orders.CheckPending()
+					ws.orders.CheckTriggers()
+
+					latency, _ := ws.latencies.Value.(time.Duration)
+					if latency > 0 {
+						time.Sleep(latency)
+					}
+
+					ws.latencies = ws.latencies.Next()
+				case <-time.After(2 * time.Millisecond):
+				}
+
+				continue
+			}
+
+			socket, ok := ws.sockets[message.Type]
+
+			if !ok {
+				continue
+			}
+
+			ws.broadcasts["raw"].Send(&qpool.QValue[any]{
+				Type:  message.Type,
+				Value: socket.Send(message),
+			})
 		}
 	}
 }

@@ -20,7 +20,7 @@ type hybridWebSocket struct {
 
 func newHybridWebSocket(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	apiKey string,
 	apiSecret string,
 	paperClient public.WebSocketClient,

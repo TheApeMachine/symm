@@ -11,6 +11,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -115,7 +116,7 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 
 		t.Setenv("SYMM_PERSPECTIVES_FILE", filepath.Join(tempDir, "missing.yaml"))
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		story := NewStory(ctx, pool)
 		convey.So(story, convey.ShouldNotBeNil)
 		defer func() {
@@ -141,8 +142,12 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 			chartSeen := false
 			gaugeSeen := false
 
-			select {
-			case frame := <-subscriber.Incoming:
+			gaugeCtx, gaugeCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer gaugeCancel()
+
+			if frame, err := bus.PollFor(gaugeCtx, subscriber); err != nil {
+				convey.So("prediction gauge", convey.ShouldBeBlank)
+			} else {
 				payload, ok := frame.Value.(map[string]any)
 
 				convey.So(ok, convey.ShouldBeTrue)
@@ -150,12 +155,14 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 				convey.So(payload["source"], convey.ShouldEqual, "prediction")
 				convey.So(payload["confidence"], convey.ShouldBeGreaterThan, 0)
 				gaugeSeen = true
-			case <-time.After(500 * time.Millisecond):
-				convey.So("prediction gauge", convey.ShouldBeBlank)
 			}
 
-			select {
-			case frame := <-subscriber.Incoming:
+			chartCtx, chartCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer chartCancel()
+
+			if frame, err := bus.PollFor(chartCtx, subscriber); err != nil {
+				convey.So("prediction chart", convey.ShouldBeBlank)
+			} else {
 				payload, ok := frame.Value.(map[string]any)
 
 				convey.So(ok, convey.ShouldBeTrue)
@@ -165,8 +172,6 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 				convey.So(payload["x"], convey.ShouldBeGreaterThan, float64(now.Unix()))
 				convey.So(payload["value"], convey.ShouldEqual, 0.5)
 				chartSeen = true
-			case <-time.After(500 * time.Millisecond):
-				convey.So("prediction chart", convey.ShouldBeBlank)
 			}
 
 			convey.So(gaugeSeen, convey.ShouldBeTrue)

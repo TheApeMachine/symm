@@ -29,8 +29,8 @@ measurements while feeding IsToxic and NearTouchToxic for depthflow and fluid.
 type Toxicity struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
-	pool         *qpool.Q
-	subscribers  map[string]*qpool.Subscriber
+	pool         *qpool.Q[any]
+	subscribers  map[string]*qpool.BroadcastConsumer
 	tracker      *Tracker
 	measurements *qpool.BroadcastGroup
 	ui           *qpool.BroadcastGroup
@@ -40,7 +40,7 @@ type Toxicity struct {
 	rawDump      *rawdump.Writer
 }
 
-func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
+func NewToxicity(ctx context.Context, pool *qpool.Q[any]) *Toxicity {
 	ctx, cancel := context.WithCancel(ctx)
 
 	pooledCalibrator := numeric.NewSignalCalibrator(
@@ -64,7 +64,7 @@ func NewToxicity(ctx context.Context, pool *qpool.Q) *Toxicity {
 	queueTTL := viper.GetDuration("system.queue.ttl")
 	tox.measurements = bus.Group(pool, "measurements", queueTTL)
 	tox.ui = bus.Group(pool, "ui", queueTTL)
-	tox.subscribers = make(map[string]*qpool.Subscriber)
+	tox.subscribers = make(map[string]*qpool.BroadcastConsumer)
 	tox.rawDump = rawdump.Open("toxicity")
 
 	raw := bus.Group(pool, "raw", queueTTL)
@@ -83,22 +83,36 @@ Tick joins the live trade tape, ticker, L2 or L3 book events onto the shared Tra
 When L3 credentials are configured, per-order events replace the L2 fallback path.
 */
 func (tox *Toxicity) Tick() error {
-	level3In := tox.subscribers["level3"]
+	raw := tox.subscribers["raw"]
+	level3 := tox.subscribers["level3"]
 
 	for {
 		select {
 		case <-tox.ctx.Done():
 			return tox.ctx.Err()
-		case message := <-tox.subscribers["raw"].Incoming:
+		default:
+		}
+
+		if message := raw.Poll(); message != nil {
 			if err := tox.handleRaw(message); err != nil {
 				errnie.Error(err, "toxicity: handle raw")
-				continue
 			}
-		case message := <-level3In.Incoming:
+
+			continue
+		}
+
+		if message := level3.Poll(); message != nil {
 			if err := tox.handleLevel3(message); err != nil {
 				errnie.Error(err, "toxicity: handle level3")
-				continue
 			}
+
+			continue
+		}
+
+		select {
+		case <-tox.ctx.Done():
+			return tox.ctx.Err()
+		case <-time.After(2 * time.Millisecond):
 		}
 	}
 }

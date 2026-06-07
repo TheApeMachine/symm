@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/bus"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -25,7 +26,7 @@ func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) mar
 func TestNewSignal(t *testing.T) {
 	Convey("Given a qpool", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -40,7 +41,7 @@ func TestNewSignal(t *testing.T) {
 func TestPublish(t *testing.T) {
 	Convey("Given a causal signal with a measurements subscriber", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -75,23 +76,15 @@ func TestPublish(t *testing.T) {
 		Convey("When the cross-section fit runs", func() {
 			signal.publish()
 
-			var measurement types.Measurement
-			received := false
-			deadline := time.After(time.Second)
+			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+			defer waitCancel()
 
-			for !received {
-				select {
-				case value := <-measurements.Incoming:
-					reading, ok := value.Value.(types.Measurement)
-
-					if ok {
-						measurement = reading
-						received = true
-					}
-				case <-deadline:
-					t.Fatal("timed out waiting for causal measurement")
-				}
+			value, err := bus.PollFor(waitCtx, measurements)
+			if err != nil {
+				t.Fatal("timed out waiting for causal measurement")
 			}
+
+			measurement, _ := value.Value.(types.Measurement)
 
 			Convey("It publishes a structural reading", func() {
 				So(measurement.Source, ShouldEqual, types.SourceCausal)
@@ -220,7 +213,7 @@ func BenchmarkContagion(b *testing.B) {
 func TestPublishThrottled(t *testing.T) {
 	Convey("Given a signal that just published", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		signal := NewSignal(ctx, pool)
@@ -234,19 +227,21 @@ func TestPublishThrottled(t *testing.T) {
 		signal.lastPublish = time.Time{}
 		signal.publish()
 
-		select {
-		case <-measurements.Incoming:
-		case <-time.After(time.Second):
+		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+		defer waitCancel()
+
+		if _, err := bus.PollFor(waitCtx, measurements); err != nil {
 			t.Fatal("timed out waiting for first publish")
 		}
 
 		signal.publish()
 
 		Convey("It should not emit a second reading inside the interval", func() {
-			select {
-			case value := <-measurements.Incoming:
+			throttleCtx, throttleCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer throttleCancel()
+
+			if value, err := bus.PollFor(throttleCtx, measurements); err == nil {
 				t.Fatalf("unexpected throttled measurement: %+v", value.Value)
-			case <-time.After(50 * time.Millisecond):
 			}
 		})
 	})
@@ -254,7 +249,7 @@ func TestPublishThrottled(t *testing.T) {
 
 func BenchmarkPublish(b *testing.B) {
 	ctx := context.Background()
-	pool := qpool.NewQ(ctx, 2, 4, qpool.NewConfig())
+	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
 	defer pool.Close()
 
 	signal := NewSignal(ctx, pool)

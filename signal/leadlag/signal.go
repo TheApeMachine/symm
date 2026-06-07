@@ -55,9 +55,9 @@ maxLagBars) per follower and would otherwise saturate a core at ticker rate.
 type Signal struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
-	pool            *qpool.Q
+	pool            *qpool.Q[any]
 	broadcasts      map[string]*qpool.BroadcastGroup
-	subscribers     map[string]*qpool.Subscriber
+	subscribers     map[string]*qpool.BroadcastConsumer
 	symbols         sync.Map
 	anchorBaseline  moveBaseline
 	followerScratch []string
@@ -67,7 +67,7 @@ type Signal struct {
 	rawDump         *rawdump.Writer
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
@@ -88,7 +88,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		cancel:         cancel,
 		pool:           pool,
 		broadcasts:     make(map[string]*qpool.BroadcastGroup),
-		subscribers:    make(map[string]*qpool.Subscriber),
+		subscribers:    make(map[string]*qpool.BroadcastConsumer),
 		anchorBaseline: *newMoveBaseline(),
 		surpriseField:  surpriseField,
 		rawDump:        rawdump.Open("leadlag"),
@@ -109,21 +109,23 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			switch sm.Channel {
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+
+		if !ok {
+			continue
+		}
+
+		switch sm.Channel {
 			case public.TickerChannel:
 				tickers := signalpool.GetTickers(sm)
 
@@ -153,7 +155,6 @@ func (signal *Signal) Tick() error {
 				if err := signal.publish(); err != nil {
 					errnie.Error(err, "leadlag: publish")
 				}
-			}
 		}
 	}
 }
@@ -213,7 +214,7 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 
 	signal.followerScratch = followers
 	readings := make([]leadlagGaugeReading, 0, len(followers))
-	tasks := make([]chan *qpool.QValue[any], 0, len(followers))
+	tasks := make([]*qpool.ResultWait[any], 0, len(followers))
 
 	for _, symbolName := range followers {
 		raw, ok := signal.symbols.Load(symbolName)
@@ -224,7 +225,7 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 
 		follower := raw.(*symbolState)
 
-		tasks = append(tasks, signal.pool.ScheduleFast(signal.ctx, func(context.Context) (any, error) {
+		tasks = append(tasks, signal.pool.Schedule(fmt.Sprintf("%s:parallel:%p", "leadlag", &tasks), func(ctx context.Context) (any, error) {
 			measurement, standout, err := signal.measureFollower(anchor, follower)
 
 			if err != nil {
@@ -249,7 +250,12 @@ func (signal *Signal) publishFollowers(anchorName string, anchor *symbolState) e
 	var err error
 
 	for _, task := range tasks {
-		value := <-task
+		value, getErr := task.Get(signal.ctx)
+
+		if getErr != nil {
+			err = errors.Join(err, getErr)
+			continue
+		}
 
 		if value.Error != nil {
 			err = errors.Join(err, value.Error)

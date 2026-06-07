@@ -37,8 +37,6 @@ export const TradeChart = memo(function TradeChart({
 		<SciChartReact
 			initChart={initChart}
 			onInit={onInit}
-			className={`h-full w-full ${className}`}
-			innerContainerProps={{ className: "h-full w-full flex-1" }}
 			style={{ width: "100%", height: "100%" }}
 		/>
 	);

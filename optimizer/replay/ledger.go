@@ -75,6 +75,9 @@ type replayLedger struct {
 	pricePaths          map[string][]float64
 	pending             []pendingReplayAction
 	pendingMakers       []pendingMakerEntry
+	entryBatch          []batchedReplayEntry
+	entryBatchDeadline  time.Time
+	entryConviction     map[string]float64
 	tickIndex           int
 	medianInterval      time.Duration
 	executionLatency    time.Duration
@@ -110,6 +113,7 @@ func newReplayLedger(costs ReplayCosts) *replayLedger {
 		metricsScratch:      make(map[string]float64, 2),
 		reasonStates:        make(map[string]*reasoning.ReasonState),
 		pricePaths:          make(map[string][]float64),
+		entryConviction:     make(map[string]float64),
 	}
 }
 
@@ -155,6 +159,9 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.executionLatency = 0
 	ledger.pending = ledger.pending[:0]
 	ledger.pendingMakers = ledger.pendingMakers[:0]
+	ledger.entryBatch = ledger.entryBatch[:0]
+	ledger.entryBatchDeadline = time.Time{}
+	clear(ledger.entryConviction)
 
 	clear(ledger.positions)
 	clear(ledger.ticksSinceClose)
@@ -181,6 +188,7 @@ func (ledger *replayLedger) onTickStart(
 ) {
 	ledger.observePrice(row)
 	ledger.advanceMakerQueues(row)
+	ledger.flushEntryBatch(at)
 	ledger.flushPending(at, row)
 	ledger.checkTriggers(row)
 }
@@ -313,6 +321,20 @@ func (ledger *replayLedger) onTick(symbol string) {
 }
 
 func (ledger *replayLedger) queueAction(
+	act reasoning.Act,
+	measurement types.Measurement,
+	snapshots []types.Measurement,
+) {
+	if reasoning.IsEntryAction(act.Type) {
+		ledger.queueEntryAction(act, measurement, snapshots)
+
+		return
+	}
+
+	ledger.queueActionImmediate(act, measurement, snapshots)
+}
+
+func (ledger *replayLedger) queueActionImmediate(
 	act reasoning.Act,
 	measurement types.Measurement,
 	snapshots []types.Measurement,

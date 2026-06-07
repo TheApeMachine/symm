@@ -82,7 +82,7 @@ func TestStressCacheIngestMeasurement(t *testing.T) {
 func TestEnsureStressCache(t *testing.T) {
 	Convey("Given a pool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
 		defer func() {
 			cancel()
@@ -102,7 +102,7 @@ func TestEnsureStressCache(t *testing.T) {
 func TestEnsureStressCacheRecyclesOnCancel(t *testing.T) {
 	Convey("Given a canceled stress-cache context", t, func() {
 		firstCtx, firstCancel := context.WithCancel(context.Background())
-		firstPool := qpool.NewQ(firstCtx, 1, 4, nil)
+		firstPool := qpool.NewQ[any](firstCtx, 1, 4, nil)
 
 		first := EnsureStressCache(firstCtx, firstPool)
 		firstCancel()
@@ -112,7 +112,7 @@ func TestEnsureStressCacheRecyclesOnCancel(t *testing.T) {
 		secondCtx, secondCancel := context.WithCancel(context.Background())
 		defer secondCancel()
 
-		secondPool := qpool.NewQ(secondCtx, 1, 4, nil)
+		secondPool := qpool.NewQ[any](secondCtx, 1, 4, nil)
 		defer func() {
 			ResetStressCacheForTest()
 			secondPool.Close()
@@ -131,7 +131,7 @@ func TestStressCacheBroadcast(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		pool := qpool.NewQ(ctx, 1, 4, nil)
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
 		cache := NewStressCache(ctx, nil)

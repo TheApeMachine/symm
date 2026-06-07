@@ -16,7 +16,7 @@ func TestExecutionsPublishFill(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given wired paper orders and executions", t, func() {
-		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:executions", 32)
 		ids := NewIdentifier()
@@ -41,38 +41,34 @@ func TestExecutionsPublishFill(t *testing.T) {
 				Maker:        true,
 			})
 
+			waitCtx, waitCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer waitCancel()
+
 			var derived map[string]any
 			var channelFrame map[string]any
 
-			deadline := time.After(500 * time.Millisecond)
+			for channelFrame == nil || derived == nil {
+				msg, err := bus.PollFor(waitCtx, sub)
+				if err != nil {
+					break
+				}
 
-		collect:
-			for {
-				select {
-				case msg := <-sub.Incoming:
-					frame, ok := msg.Value.(map[string]any)
+				frame, ok := msg.Value.(map[string]any)
 
-					if !ok {
-						continue
+				if !ok {
+					continue
+				}
+
+				if frame["channel"] == "executions" && frame["type"] == "update" {
+					channelFrame = frame
+				}
+
+				if frame["channel"] == "executions" && frame["qty"] != nil {
+					qty, _ := frame["qty"].(float64)
+
+					if qty > 0 {
+						derived = frame
 					}
-
-					if frame["channel"] == "executions" && frame["type"] == "update" {
-						channelFrame = frame
-					}
-
-					if frame["channel"] == "executions" && frame["qty"] != nil {
-						qty, _ := frame["qty"].(float64)
-
-						if qty > 0 {
-							derived = frame
-						}
-					}
-
-					if channelFrame != nil && derived != nil {
-						break collect
-					}
-				case <-deadline:
-					break collect
 				}
 			}
 
@@ -88,7 +84,7 @@ func TestExecutionsPublishFill(t *testing.T) {
 
 func TestExecutionsSubscribe(t *testing.T) {
 	Convey("Given an executions socket", t, func() {
-		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
 		raw := bus.Group(pool, "raw", 10*time.Millisecond)
 		sub := raw.Subscribe("test:executions:snap", 8)
 		executions := NewExecutions(raw, nil, NewIdentifier())
@@ -103,13 +99,16 @@ func TestExecutionsSubscribe(t *testing.T) {
 
 			So(ack["success"], ShouldBeTrue)
 
-			select {
-			case msg := <-sub.Incoming:
+			waitCtx, waitCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer waitCancel()
+
+			msg, err := bus.PollFor(waitCtx, sub)
+			if err != nil {
+				So("snapshot timeout", ShouldBeEmpty)
+			} else {
 				frame, _ := msg.Value.(map[string]any)
 				So(frame["channel"], ShouldEqual, "executions")
 				So(frame["type"], ShouldEqual, "snapshot")
-			case <-time.After(200 * time.Millisecond):
-				So("snapshot timeout", ShouldBeEmpty)
 			}
 		})
 	})

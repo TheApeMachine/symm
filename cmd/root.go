@@ -62,7 +62,7 @@ var (
 				errnie.Info("recording run measurements to "+defaultCapturePath+" (feeds `make tune`)", "engine")
 			}
 
-			pool := qpool.NewQ(cmd.Context(), 1, 4, nil)
+			pool := qpool.NewQ[any](cmd.Context(), 1, 4, nil)
 			engine, err := NewEngine(cmd.Context(), pool)
 
 			if err != nil {
@@ -200,7 +200,7 @@ func initConfig() {
 
 func newStoryWithBookCapture(
 	ctx context.Context,
-	pool *qpool.Q,
+	pool *qpool.Q[any],
 	quotes *broker.QuoteCache,
 	crypto *trader.Crypto,
 ) *market.Story {

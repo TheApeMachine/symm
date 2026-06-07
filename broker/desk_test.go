@@ -258,7 +258,7 @@ func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
 
 	convey.Convey("Given a desk entry below Kraken minimum quantity", t, func() {
 		ctx := context.Background()
-		pool := qpool.NewQ(ctx, 1, 4, qpool.NewConfig())
+		pool := qpool.NewQ[any](ctx, 1, 4, qpool.NewConfig())
 		defer pool.Close()
 
 		private := bus.Group(pool, "kraken:private", 10*time.Millisecond).
@@ -297,16 +297,19 @@ func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(resolved.Quantity, convey.ShouldEqual, 12)
 
-			select {
-			case message := <-private.Incoming:
-				frame, ok := message.Value.(map[string]any)
-				convey.So(ok, convey.ShouldBeTrue)
-				params, ok := frame["params"].(trading.AddParams)
-				convey.So(ok, convey.ShouldBeTrue)
-				convey.So(params.OrderQty, convey.ShouldEqual, 12)
-			case <-time.After(time.Second):
+			waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+			defer waitCancel()
+
+			message, err := bus.PollFor(waitCtx, private)
+			if err != nil {
 				t.Fatal("expected add_order frame")
 			}
+
+			frame, ok := message.Value.(map[string]any)
+			convey.So(ok, convey.ShouldBeTrue)
+			params, ok := frame["params"].(trading.AddParams)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(params.OrderQty, convey.ShouldEqual, 12)
 		})
 	})
 }

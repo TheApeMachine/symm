@@ -11,7 +11,7 @@ import (
 
 func TestGroup(t *testing.T) {
 	Convey("Given two Group calls for the same id on one pool", t, func() {
-		pool := qpool.NewQ(context.Background(), 1, 4, nil)
+		pool := qpool.NewQ[any](context.Background(), 1, 4, nil)
 		defer pool.Close()
 
 		first := Group(pool, "ui", 100*time.Millisecond)
@@ -27,11 +27,12 @@ func TestGroup(t *testing.T) {
 			first.Send(&qpool.QValue[any]{Value: map[string]any{"type": "fluid"}})
 
 			select {
-			case message := <-subscriber.Incoming:
-				So(message, ShouldNotBeNil)
-				So(message.Value, ShouldResemble, map[string]any{"type": "fluid"})
 			case <-time.After(2 * time.Second):
 				So("timeout waiting for bus fanout", ShouldBeEmpty)
+			default:
+				message := subscriber.Poll()
+				So(message, ShouldNotBeNil)
+				So(message.Value, ShouldResemble, map[string]any{"type": "fluid"})
 			}
 		})
 	})

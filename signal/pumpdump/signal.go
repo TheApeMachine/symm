@@ -32,10 +32,10 @@ categories by live quantile position. Strength is the banded lift observation.
 type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	pool          *qpool.Q
+	pool          *qpool.Q[any]
 	window        time.Duration
 	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.Subscriber
+	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
 	categories    map[string]types.CategoryType
 	surpriseField *types.CategorySurpriseField
@@ -46,7 +46,7 @@ type Signal struct {
 
 var pumpDefaultBandEdges = []float64{-0.10, 0.50, 2.00}
 
-func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
+func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	window := viper.GetDuration("signals.pumpdump.window")
@@ -83,7 +83,7 @@ func NewSignal(ctx context.Context, pool *qpool.Q) *Signal {
 		pool:        pool,
 		window:      window,
 		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.Subscriber),
+		subscribers: make(map[string]*qpool.BroadcastConsumer),
 		categories: map[string]types.CategoryType{
 			"faded_exhaustion":   types.CategoryFadedExhaustion,
 			"organic_trend":      types.CategoryOrganicTrend,
@@ -121,30 +121,31 @@ func (signal *Signal) stateFor(symbol string) *pumpState {
 
 func (signal *Signal) Tick() error {
 	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case message := <-signal.subscribers["raw"].Incoming:
-			if message == nil || message.Value == nil {
-				continue
-			}
+		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 
-			sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		if err != nil {
+			return err
+		}
 
-			if !ok {
-				continue
-			}
+		if message == nil || message.Value == nil {
+			continue
+		}
 
-			if sm.Channel != public.TradesChannel {
-				continue
-			}
+		sm, ok := signalpool.SocketMessageFromValue(message.Value)
 
-			for _, trade := range signalpool.GetTrades(sm) {
-				err := signal.observe(trade)
+		if !ok {
+			continue
+		}
 
-				if err != nil && !isWarmup(err) {
-					errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
-				}
+		if sm.Channel != public.TradesChannel {
+			continue
+		}
+
+		for _, trade := range signalpool.GetTrades(sm) {
+			err := signal.observe(trade)
+
+			if err != nil && !isWarmup(err) {
+				errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
 			}
 		}
 	}

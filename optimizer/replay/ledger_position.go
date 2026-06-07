@@ -278,6 +278,7 @@ func (ledger *replayLedger) settle(symbol string, exitFill, feePct float64) {
 
 	ledger.closedTrades++
 	delete(ledger.positions, symbol)
+	delete(ledger.entryConviction, symbol)
 	ledger.ticksSinceClose[symbol] = 0
 }
 

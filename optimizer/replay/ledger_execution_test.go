@@ -84,6 +84,7 @@ func TestFlushPending(t *testing.T) {
 			signalRow,
 			nil,
 		)
+		ledger.flushEntryBatch(base.Add(replayEntryBatchWindow()))
 
 		Convey("It should keep the action pending before the latency window elapses", func() {
 			ledger.flushPending(base.Add(50*time.Millisecond), signalRow)
