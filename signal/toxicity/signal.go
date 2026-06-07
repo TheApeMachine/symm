@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -117,6 +118,10 @@ func (tox *Toxicity) drainLevel3() {
 	for {
 		message, err := level3.Wait(tox.ctx)
 		if err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				errnie.Error(err, "toxicity: level3 wait failed")
+			}
+
 			return
 		}
 
@@ -167,7 +172,7 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 			tox.tracker.ObserveLast(ticker.Symbol, market.Pair{}, ticker.Last)
 
 			if err := tox.publishMeasurementAt(ticker.Symbol, at); err != nil {
-				errnie.Error(fmt.Errorf("toxicity: publish %s: %w", ticker.Symbol, err))
+				errnie.Error(err, "toxicity: publish", "symbol", ticker.Symbol)
 			}
 		}
 	case public.BookChannel:
@@ -186,7 +191,7 @@ func (tox *Toxicity) handleRaw(message *qpool.QValue[any]) error {
 			}
 
 			if err := tox.publishMeasurementAt(update.Symbol, at); err != nil {
-				errnie.Error(fmt.Errorf("toxicity: publish %s: %w", update.Symbol, err))
+				errnie.Error(err, "toxicity: publish", "symbol", update.Symbol)
 			}
 		}
 	}

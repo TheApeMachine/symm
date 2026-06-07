@@ -54,6 +54,7 @@ type Signal struct {
 	symbols         sync.Map
 	tickerTracks    sync.Map
 	lastMeasurement types.Measurement
+	measurementMu   sync.RWMutex
 	categories      map[string]types.CategoryType
 	surpriseField *types.CategorySurpriseField
 	rawDump       *rawdump.Writer

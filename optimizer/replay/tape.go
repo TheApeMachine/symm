@@ -1,7 +1,6 @@
 package replay
 
 import (
-	"sort"
 	"time"
 
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -67,8 +66,9 @@ func (tape ReplayTape) AppendSnapshot(
 
 	start := end - tape.measurementBuffer
 
+	// Non-positive measurementBuffer yields an empty window.
 	if tape.measurementBuffer <= 0 {
-		start = 0
+		start = end
 	}
 
 	if start < 0 {
@@ -81,24 +81,6 @@ func (tape ReplayTape) AppendSnapshot(
 
 	return destination
 }
-
-// indicesInWindow returns the sub-slice of indices whose values fall in
-// [startIndex, endIndex]. indices must be sorted in ascending order (required
-// by sort.SearchInts and sort.Search); behavior is undefined if unsorted.
-func indicesInWindow(indices []int, startIndex, endIndex int) []int {
-	if len(indices) == 0 {
-		return nil
-	}
-
-	start := sort.SearchInts(indices, startIndex)
-	end := sort.Search(len(indices), func(index int) bool {
-		return indices[index] > endIndex
-	})
-
-	return indices[start:end]
-}
-
-
 
 /*
 PrecompileTape builds compact replay state matching market.Story decision context.

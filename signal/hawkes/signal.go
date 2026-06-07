@@ -251,12 +251,12 @@ func (signal *Signal) publishTouches(touches []tradeTouch) error {
 		// ONE shared job id (%p of the same local), so results overwrote each
 		// other and Get parked this signal's goroutine forever — the silent
 		// signal deaths of 2026-06-07.
-		runItem := func(ctx context.Context) (any, error) {
+		runItem := func() (any, error) {
 		now := touchLastTime(touch.state)
 		return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
 		}
 
-		if _, runErr := runItem(signal.ctx); runErr != nil {
+		if _, runErr := runItem(); runErr != nil {
 			err = errors.Join(err, runErr)
 		}
 

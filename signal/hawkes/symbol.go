@@ -171,7 +171,10 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (types.Measurement, float6
 	evidence := 0.0
 
 	if sym.pipe != nil && sym.categories != nil {
-		raw = types.AdjustSourceValue(types.SourceHawkes, raw) // top-down prediction feedback
+		// Apply learned prediction feedback scale to raw intensity before banding;
+		// category and confidence are derived from this adjusted value, not the raw
+		// Hawkes ratio, so settled forecast error can sharpen or soften the signal.
+		raw = types.AdjustSourceValue(types.SourceHawkes, raw)
 		code, err := sym.pipe.Push(raw)
 
 		if err == nil {

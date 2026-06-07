@@ -24,6 +24,27 @@ func TestAdjustSourceValue(t *testing.T) {
 
 			So(AdjustSourceValue(SourceDepthFlow, 0.4), ShouldAlmostEqual, 0.2, 1e-9)
 		})
+
+		Convey("It should clamp scale below 0.5 to the lower bound", func() {
+			_, err := UpdateSourceFeedback(SourceDepthFlow, 0.01, 0.1, 0, 4)
+			So(err, ShouldBeNil)
+
+			So(AdjustSourceValue(SourceDepthFlow, 1.0), ShouldAlmostEqual, 0.5, 1e-9)
+		})
+
+		Convey("It should apply an in-range scale exactly", func() {
+			_, err := UpdateSourceFeedback(SourceDepthFlow, 0.01, 1.25, 0, 4)
+			So(err, ShouldBeNil)
+
+			So(AdjustSourceValue(SourceDepthFlow, 0.8), ShouldAlmostEqual, 1.0, 1e-9)
+		})
+
+		Convey("It should clamp scale above 2 to the upper bound", func() {
+			_, err := UpdateSourceFeedback(SourceDepthFlow, 0.01, 3.0, 0, 4)
+			So(err, ShouldBeNil)
+
+			So(AdjustSourceValue(SourceDepthFlow, 1.0), ShouldAlmostEqual, 2.0, 1e-9)
+		})
 	})
 }
 

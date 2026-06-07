@@ -262,7 +262,6 @@ func (signal *Signal) emitActive(active []live, mode uint64, baseline float64) e
 			SpreadBPS:  measurement.SpreadBPS,
 		}); dumpErr != nil {
 			err = errors.Join(err, dumpErr)
-			continue
 		}
 
 		if sendErr := measurement.Send(signal.pool); sendErr != nil {

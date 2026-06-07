@@ -1,8 +1,6 @@
 package pumpdump
 
 import (
-	"sync"
-
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -12,11 +10,9 @@ import (
 // structured raw market data whose generating values accept top-down Feedback.
 var _ market.Signal = (*Signal)(nil)
 
-var lastMeasurementMu sync.RWMutex
-
 func (signal *Signal) rememberMeasurement(measurement types.Measurement) {
-	lastMeasurementMu.Lock()
-	defer lastMeasurementMu.Unlock()
+	signal.measurementMu.Lock()
+	defer signal.measurementMu.Unlock()
 
 	signal.lastMeasurement = measurement
 }
@@ -30,9 +26,9 @@ the streaming emission path applies the same correction live via
 types.AdjustSourceValue on every publish.
 */
 func (signal *Signal) Measure(feedback perspectives.Feedback) types.Measurement {
-	lastMeasurementMu.RLock()
+	signal.measurementMu.RLock()
 	measurement := signal.lastMeasurement
-	lastMeasurementMu.RUnlock()
+	signal.measurementMu.RUnlock()
 
 	if measurement.Symbol == "" || feedback == nil || feedback.Samples() <= 0 {
 		return measurement

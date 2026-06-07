@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -147,7 +148,7 @@ func (ledger *replayLedger) openEntryReserved(
 		OrderType:  trading.Market,
 		ActionType: act.Type,
 	}, at); err != nil {
-		errnie.Error(err)
+		errnie.Error(err, "replay: entry preflight blocked", "symbol", symbol)
 		ledger.preflightBlocked++
 		return
 	}
@@ -175,7 +176,7 @@ func (ledger *replayLedger) openEntryReserved(
 		)
 
 		if prepErr != nil {
-			errnie.Error(prepErr)
+			errnie.Error(prepErr, "replay: entry order prepare failed", "symbol", symbol)
 			ledger.preflightBlocked++
 			return
 		}
@@ -247,8 +248,16 @@ func (ledger *replayLedger) resolveEntryFill(
 
 	fill, err := takerFill(ledger.costs, measurement, side, quantity, snapshots)
 
-	if err != nil || fill.depthCoverage < 1 {
-		errnie.Error(err)
+	if err != nil {
+		errnie.Error(err, "replay: entry taker fill failed", "symbol", measurement.Symbol)
+		return executionFill{}, 0, false
+	}
+
+	if fill.depthCoverage < 1 {
+		errnie.Error(
+			fmt.Errorf("replay: insufficient depth coverage: %.4f", fill.depthCoverage),
+			"symbol", measurement.Symbol,
+		)
 		return executionFill{}, 0, false
 	}
 
@@ -260,7 +269,7 @@ func (ledger *replayLedger) canReserveEntry(
 	reservationCredit int,
 	quoteCurrencyName string,
 ) bool {
-	reserved := max(ledger.reservedEntryCount() - reservationCredit, 0)
+	reserved := max(ledger.reservedEntryCount()-reservationCredit, 0)
 
 	capital := ledger.costs.WalletBalance(quoteCurrencyName)
 	feePct := ledger.costs.TakerFeePct

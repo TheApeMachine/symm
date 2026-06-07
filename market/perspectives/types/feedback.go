@@ -108,8 +108,8 @@ func AdjustSourceValue(source SourceType, value float64) float64 {
 
 	scale := feedback.Scale
 
-	// Bounded: feedback tunes a signal's observation scale, it must never be
-	// able to zero a signal out or blow it up.
+	// Clamp feedback.Scale to [0.5, 2]: feedback tunes observation scale but
+	// must never zero a signal out or blow it up.
 	if scale < 0.5 {
 		scale = 0.5
 	}

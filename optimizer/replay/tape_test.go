@@ -304,6 +304,26 @@ func BenchmarkAppendSnapshot(b *testing.B) {
 	}
 }
 
+func TestReplayTapeEmptyMeasurementBuffer(t *testing.T) {
+	convey.Convey("Given a tape with non-positive measurementBuffer", t, func() {
+		testconfig.Load(t)
+		rows := []types.Measurement{
+			{Symbol: "BTC/EUR", SNR: 1, Last: 100},
+			{Symbol: "BTC/EUR", SNR: 4, Last: 101},
+		}
+
+		tape, err := PrecompileTape(rows)
+		convey.So(err, convey.ShouldBeNil)
+		tape.measurementBuffer = 0
+
+		snapshots := tape.AppendSnapshot(1, nil)
+
+		convey.Convey("It should return an empty snapshot window", func() {
+			convey.So(len(snapshots), convey.ShouldEqual, 0)
+		})
+	})
+}
+
 func TestPrecompileTapeHonestQuotes(t *testing.T) {
 	convey.Convey("Given capture-style rows with and without book depth", t, func() {
 		at := time.Unix(1_700_000_000, 0).UTC()

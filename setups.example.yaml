@@ -70,7 +70,11 @@ branches:
                   category: faded_exhaustion
                   unit: confidence
                   op: at_least
-                  value: 0.6
+                  # 0.6 was above this source's observable ceiling — on 2026-06-07
+                  # tape faded_exhaustion confidence maxed at 0.48 (p90 0.38) over
+                  # 169 readings. Confidence is margin-based and saturates ≈0.4-0.5;
+                  # 0.35 ≈ its top decile.
+                  value: 0.35
                 - subject: signal
                   category: active_reversal
                   unit: snr
@@ -107,7 +111,10 @@ branches:
               category: organic_trend
               unit: confidence
               op: at_least
-              value: 0.6
+              # Same ceiling problem: organic_trend confidence maxed at 0.45
+              # (p90 0.275) over 11,650 readings on 2026-06-07 tape — a 0.6 gate
+              # can never open. 0.30 ≈ top ~7% of observed belief.
+              value: 0.30
       do:
         type: market
         fraction: 0.25

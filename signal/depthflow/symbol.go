@@ -98,6 +98,7 @@ func (state *DepthSymbol) verifyBookChecksumLocked(expected int64) {
 
 	if state.book.ComputedChecksum() == expected {
 		state.bookDiverged = false
+		state.divergedLogged = false
 
 		return
 	}

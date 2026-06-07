@@ -176,7 +176,7 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 		// ONE shared job id (%p of the same local), so results overwrote each
 		// other and Get parked this signal's goroutine forever — the silent
 		// signal deaths of 2026-06-07.
-		runItem := func(ctx context.Context) (any, error) {
+		runItem := func() (any, error) {
 		measurement, standout, err := signal.measureFromSnapshot(
 			row.Symbol, row.ChangePct, snapshot,
 		)
@@ -237,7 +237,7 @@ func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
 		return nil, nil
 		}
 
-		if _, runErr := runItem(signal.ctx); runErr != nil {
+		if _, runErr := runItem(); runErr != nil {
 			err = errors.Join(err, runErr)
 		}
 
