@@ -244,6 +244,13 @@ func (balances *Balances) adjust(asset string, delta float64) {
 	})
 }
 
+/*
+RealizedPnL returns the session net realized P&L in the quote currency.
+*/
+func (balances *Balances) RealizedPnL() float64 {
+	return balances.realized
+}
+
 func (balances *Balances) PublishUI() {
 	if balances.ui == nil {
 		return

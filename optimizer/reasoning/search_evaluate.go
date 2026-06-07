@@ -31,9 +31,15 @@ func scoreForest(
 	config SearchConfig,
 ) Candidate {
 	result := replay.NewThoughtSimulation(ctx, forest, tape, costs).Result()
-	credited := result.Score
+	credited := walletVelocityScore(result)
 
 	if credited > 0 {
+		strategies := ForestStrategyCount(forest)
+
+		if strategies >= 2 {
+			credited *= 1 + strategyBreadthBonus*float64(strategies-1)
+		}
+
 		if config.MinRoundTrips > 0 && result.ClosedTrades < config.MinRoundTrips {
 			credited *= float64(result.ClosedTrades) / float64(config.MinRoundTrips)
 		}
@@ -60,11 +66,13 @@ func scoreForest(
 	}
 
 	return Candidate{
-		Forest: forest,
-		Score:  credited,
-		Return: result.Score,
-		Trades: result.ClosedTrades,
-		Nodes:  nodes,
+		Forest:          forest,
+		Score:           credited,
+		Return:          result.Score,
+		RealizedEUR:     result.RealizedEUR,
+		StartingCapital: result.StartingCapital,
+		Trades:          result.ClosedTrades,
+		Nodes:           nodes,
 	}
 }
 

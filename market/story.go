@@ -45,8 +45,8 @@ type Story struct {
 	playbookLoaded          bool
 	reasonStates            map[string]*reasoning.ReasonState
 	positions               map[string]*reasoning.PositionState
-	ringWindow              *ring.Ring
-	ringPtr                 int
+	symbolWindows           map[string]*ring.Ring
+	windowCapacity          int
 	windowReason            reasoning.WindowReason
 	lastGauge               map[string]time.Time
 	recordFile              *os.File
@@ -101,7 +101,8 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		regimeFeatures:          make(map[string]perspectives.RegimeFeatures),
 		predictionSurpriseField: predictionSurpriseField,
 		forwardFeedback:         newForwardFeedbackFromConfig(),
-		ringWindow:              ring.New(measurementBuffer),
+		symbolWindows:           make(map[string]*ring.Ring),
+		windowCapacity:          measurementBuffer,
 		lastGauge:               make(map[string]time.Time),
 		nodeReached:             make(map[string]int),
 		nodeHeld:                make(map[string]int),
@@ -277,6 +278,7 @@ func (story *Story) ingestMeasurement(
 		measurement,
 		story.regimeFeatures[measurement.Symbol],
 		action,
+		story.reasonTrace,
 	); errnie.Error(err) != nil {
 		return errnie.Error(err)
 	}
@@ -304,17 +306,19 @@ func storyDecisionMinSamples() int {
 }
 
 func (story *Story) ringSnapshot(symbol string) []types.Measurement {
-	capacity := story.ringWindow.Len()
+	window, ok := story.symbolWindows[symbol]
+
+	if !ok {
+		return nil
+	}
+
+	capacity := window.Len()
 	snapshots := make([]types.Measurement, 0, capacity)
 
-	story.ringWindow.Do(func(value any) {
+	window.Do(func(value any) {
 		measurement, ok := value.(types.Measurement)
 
 		if !ok {
-			return
-		}
-
-		if measurement.Symbol != "" && measurement.Symbol != symbol {
 			return
 		}
 
@@ -432,8 +436,9 @@ func (story *Story) writePlaybookAudit(
 	measurement types.Measurement,
 	regime perspectives.RegimeFeatures,
 	action reasoning.Action,
+	trace reasoning.ReasonTrace,
 ) error {
-	return story.audit.Write(map[string]any{
+	frame := map[string]any{
 		"audit_event": "playbook_walk",
 		"symbol":      measurement.Symbol,
 		"source":      measurement.Source.String(),
@@ -442,7 +447,17 @@ func (story *Story) writePlaybookAudit(
 		"price":       measurement.Last,
 		"regime":      regime.Regime.String(),
 		"verdict":     action.Type.String(),
-	})
+		"side":        string(action.Side),
+		"fraction":    action.Fraction,
+		"offset":      action.Offset,
+		"trace":       playbookAuditTrace(trace),
+	}
+
+	for key, value := range playbookAuditMeasurement(measurement) {
+		frame[key] = value
+	}
+
+	return story.audit.Write(frame)
 }
 
 // positionState projects what the story knows about the open position into the

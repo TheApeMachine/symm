@@ -1,0 +1,57 @@
+package replay
+
+import (
+	"github.com/theapemachine/symm/market/perspectives/types"
+)
+
+/*
+measurementForSymbol returns a price-bearing row for symbol. When the caller's row
+belongs to another market (entry-batch preemption), the ledger's last observed
+price for symbol is used instead of cross-contaminating exit fills.
+*/
+func (ledger *replayLedger) measurementForSymbol(
+	symbol string,
+	row types.Measurement,
+) types.Measurement {
+	if row.Symbol == symbol && row.Last > 0 {
+		return row
+	}
+
+	lastPrice := ledger.lastObservedPrice(symbol)
+
+	if lastPrice <= 0 {
+		return row
+	}
+
+	exitRow := row
+	exitRow.Symbol = symbol
+	exitRow.Last = lastPrice
+	exitRow.Bid = 0
+	exitRow.Ask = 0
+	exitRow.BookBids = nil
+	exitRow.BookAsks = nil
+
+	return QuotedMeasurement(exitRow)
+}
+
+func (ledger *replayLedger) lastObservedPrice(symbol string) float64 {
+	prices := ledger.pricePaths[symbol]
+
+	if len(prices) == 0 {
+		return 0
+	}
+
+	return prices[len(prices)-1]
+}
+
+func snapshotsForSymbol(symbol string, snapshots []types.Measurement) []types.Measurement {
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	if snapshots[len(snapshots)-1].Symbol == symbol {
+		return snapshots
+	}
+
+	return nil
+}

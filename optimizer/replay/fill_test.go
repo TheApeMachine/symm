@@ -2,8 +2,10 @@ package replay
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -33,15 +35,18 @@ func TestTakerFillWalksBook(t *testing.T) {
 	})
 }
 
-func TestTakerFillDepthShortfallPenalty(t *testing.T) {
+func TestTakerFillDepthShortfallPreflightReject(t *testing.T) {
 	Convey("Given a thin ask book", t, func() {
+		testconfig.Load(t)
 		costs := triggerTestCosts()
 		ledger := newReplayLedger(costs)
+		now := time.Now().UTC()
 		measurement := types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 			Bid:    99,
 			Ask:    100,
+			At:     now,
 			BookAsks: []types.BookLevel{
 				{Price: 100, Qty: 0.1},
 			},
@@ -50,18 +55,17 @@ func TestTakerFillDepthShortfallPenalty(t *testing.T) {
 		ledger.openEntry(
 			"BTC/EUR",
 			trading.Buy,
-			reasoning.Act{},
+			reasoning.Act{Type: reasoning.ActionMarket},
 			measurement,
 			nil,
 			0,
-			measurement.At,
+			now,
 			0,
 		)
 
-		Convey("It should refuse the entry and book a depth penalty", func() {
+		Convey("It should refuse the entry at preflight like the desk", func() {
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.depthBlocked, ShouldEqual, 1)
-			So(ledger.realized, ShouldBeLessThan, 0)
+			So(ledger.preflightBlocked, ShouldEqual, 1)
 		})
 	})
 }

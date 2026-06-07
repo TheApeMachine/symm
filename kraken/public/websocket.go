@@ -305,8 +305,6 @@ func (ws *WebSocket) readFrame() (err error) {
 		return nil
 	}
 
-	fmt.Println("kraken/public: read frame", message.Channel, message.Type)
-
 	if message.Channel != "" {
 		if ch := ws.broadcasts["raw"]; ch != nil {
 			ch.Send(&qpool.QValue[any]{

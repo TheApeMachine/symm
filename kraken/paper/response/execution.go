@@ -28,6 +28,7 @@ type FillNotice struct {
 	Reason       string
 	LiquidityInd string
 	Maker        bool
+	Partial      bool
 }
 
 /*
@@ -190,6 +191,12 @@ func (executions *Executions) emitTrade(notice FillNotice, execID string) {
 		return
 	}
 
+	orderStatus := "filled"
+
+	if notice.Partial {
+		orderStatus = "partially_filled"
+	}
+
 	trade := user.Execution{
 		OrderID:      notice.OrderID,
 		ClOrdID:      params.ClOrdID,
@@ -207,13 +214,17 @@ func (executions *Executions) emitTrade(notice FillNotice, execID string) {
 		CumCost:      cost,
 		Cost:         cost,
 		LiquidityInd: notice.LiquidityInd,
-		OrderStatus:  "filled",
+		OrderStatus:  orderStatus,
 		Fees:         []user.ExecutionFee{{Asset: feeAsset, Qty: notice.Fee}},
 		Timestamp:    stamp,
 	}
 
 	filled := trade
 	filled.ExecType = "filled"
+
+	if notice.Partial {
+		filled.OrderStatus = "partially_filled"
+	}
 
 	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{trade})
 	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{filled})

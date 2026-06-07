@@ -50,7 +50,7 @@ func (ledger *replayLedger) queueMakerEntry(
 	measurement types.Measurement,
 	snapshots []types.Measurement,
 ) {
-	if !ledger.canReserveEntry(fraction, 0) {
+	if !ledger.canReserveEntry(fraction, 0, quoteCurrency(symbol)) {
 		ledger.fundBlocked++
 		return
 	}

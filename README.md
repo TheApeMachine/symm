@@ -264,7 +264,7 @@ Signals classify into four-category families (details in DECISION.md):
 | **Fluid**       | `signal/fluid`       | `laminar`, `turbulent`, `inertial`, `viscous`                                       | book, trade, ticker |
 | **Causal**      | `signal/causal`      | `endogenous_alpha`, `systemic_beta`, `liquidity_shock`, `causal_noise`              | trade, book         |
 | **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade               |
-| **Toxicity**    | `toxicity`           | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade, ticker |
+| **Toxicity**    | `toxicity`           | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade, ticker (L3 cancel/delete classification required; ticker-only paths do not emit toxicity measurements) |
 | **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade, ticker |
 
 ### 💥 PumpDump
@@ -445,7 +445,7 @@ Wallet PnL is discounted when profitable exits take longer to realize, using the
 - `--max-thresholds` bounds unique threshold values per category/unit; `0` scans all unique observed values.
 - `--beam-width` bounds how many primitive entry and exit candidates are combined as sibling trees.
 - `--candidate-limit` caps scored candidate trees; `0` scans the generated bounded space.
-- Every scored candidate prints `profit_loss` and percent return to stderr.
+- Every scored candidate prints `realized_eur`, `return_pct` (P&L / starting capital × 100), and risk-adjusted `score` to stderr. Replay uses the same `broker` fill and preflight paths as the desk — see [`EXECUTION.md`](EXECUTION.md).
 - `--candidate-report` optionally also writes every scored candidate as JSONL with `score`, `profit_loss`, `return_pct`, and the candidate branches.
 - Each improved best tree is written immediately to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the path.
 - Progress and the final summary print to **stderr**.

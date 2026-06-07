@@ -14,7 +14,7 @@ story:
 
 market:
   quote_currency: EUR
-  anchor_symbol: ""
+  anchor_symbol: BTC/EUR
   default_symbols:
     - BTC/EUR
   max_scan_symbols: 1024
@@ -30,9 +30,11 @@ market:
 
 trading:
   order_ack_timeout: 500ms
-  max_quote_age: 5s
-  max_spread_bps: 60
-  max_slippage_bps: 35
+  # Pump microcaps on the EUR long tail often quote wide and tick slowly; the
+  # playbook targets those names, so preflight must not use major-only limits.
+  max_quote_age: 15s
+  max_spread_bps: 120
+  max_slippage_bps: 80
   model: paper
   margin_enabled: false
   record:
@@ -40,7 +42,7 @@ trading:
   replay:
     file: runs/capture.jsonl
     # Derive 50–200ms latency from tape when unset; set explicitly to override.
-    execution_latency_ms: 0
+    execution_latency_ms: 100
     execution_stress_enabled: true
     # L2 depth replay: require full book coverage before opening; shortfall books a penalty.
     min_depth_coverage: 1.0
@@ -52,10 +54,10 @@ trading:
     bullish_size_scale: 1.0
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
-  # Fraction of available account cash deployed per entry. 1.0 = full deployment
-  # (one position at a time on a small wallet); lower allows concurrent positions.
-  # The optimizer replay sizes entries the same way, so funding contention is real.
-  position_fraction: 1.0
+  # Fraction of capital base deployed per entry slot (not concurrent count).
+  # Concurrent entries are capped by max_concurrent_positions and remaining cash.
+  position_fraction: 0.2
+  max_concurrent_positions: 16
   entry:
     # Hold concurrent entry signals for this window, rank by SNR×confidence, then deploy.
     # Defaults to market.subscribe_pace when unset.
@@ -81,12 +83,14 @@ trading:
     file: runs/audit.jsonl
 
 optimizer:
+  tune:
+    # Fetch Kraken AssetPairs at tune start so replay enforces the same minimums as the desk.
+    load_instrument_rules: true
+    candidate_report: ""
   search:
     # Explore "in regime X do Y" branches. When off, the regime axis collapses to
     # RegimeNone (legacy behaviour) and the MCTS move set shrinks ~6x.
     regime_aware: true
-  tune:
-    candidate_report: ""
 
 # Price-action regime classification (market/perspectives.ClassifyRegime).
 # Computed identically on the live and replay paths from the recent distinct-price

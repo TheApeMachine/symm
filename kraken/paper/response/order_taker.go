@@ -69,7 +69,7 @@ func (orders *Orders) executeTaker(
 	orderID string,
 	action reasoning.ActionType,
 ) {
-	price, err := orders.takerFillPrice(params.Symbol, params.Side, params.OrderQty, 0, action)
+	fill, err := orders.takerFillQuote(params.Symbol, params.Side, params.OrderQty, 0, action)
 
 	if err != nil {
 		errnie.Error(err)
@@ -80,15 +80,25 @@ func (orders *Orders) executeTaker(
 		return
 	}
 
-	fee := orders.feeAmount(params.Symbol, params.OrderQty, price, false)
+	if fill.filledQty <= 0 {
+		orders.notifyFill(FillNotice{
+			Params: params, OrderID: orderID, Reason: "paper fill: no liquidity",
+		})
+
+		return
+	}
+
+	params.OrderQty = fill.filledQty
+	fee := orders.feeAmount(params.Symbol, fill.filledQty, fill.price, false)
 
 	orders.notifyFill(FillNotice{
-		Params:       params,
-		OrderID:      orderID,
-		Price:        price,
-		Fee:          fee,
-		LiquidityInd: "t",
-		Maker:        false,
+		Params:        params,
+		OrderID:       orderID,
+		Price:         fill.price,
+		Fee:           fee,
+		LiquidityInd:  "t",
+		Maker:         false,
+		Partial:       fill.depthCoverage > 0 && fill.depthCoverage < 1,
 	})
 
 	if params.Side == trading.Sell {

@@ -99,11 +99,7 @@ func (cache *StressCache) run(pool *qpool.Q[any]) {
 		return
 	}
 
-	group, err := qpool.NewBroadcastGroup(cache.ctx, "measurements", 0)
-	if err != nil {
-		return
-	}
-	consumer := group.Subscribe("broker:stress", 4096)
+	consumer := pool.Subscribe("measurements")
 
 	if consumer == nil {
 		return

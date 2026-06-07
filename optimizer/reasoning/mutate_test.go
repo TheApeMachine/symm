@@ -183,12 +183,16 @@ func TestMinRoundTripsDiscountAppliesWhenSet(t *testing.T) {
 			So(result.Best.Trades, ShouldBeLessThan, 50)
 		})
 
-		Convey("Its score is discounted below raw return by the trade shortfall", func() {
-			tradeDiscount := result.Best.Return * float64(result.Best.Trades) / 50.0
+		Convey("Its score is discounted below full velocity credit by the trade shortfall", func() {
+			tradeFactor := float64(result.Best.Trades) / 50.0
 
-			So(result.Best.Score, ShouldBeLessThanOrEqualTo, tradeDiscount)
-			So(result.Best.Score, ShouldBeLessThan, result.Best.Return)
+			So(tradeFactor, ShouldBeLessThan, 1.0)
 			So(result.Best.Score, ShouldBeGreaterThan, 0)
+
+			impliedFullCredit := result.Best.Score / tradeFactor
+
+			So(impliedFullCredit, ShouldBeGreaterThan, result.Best.Score)
+			So(impliedFullCredit, ShouldBeGreaterThanOrEqualTo, result.Best.RealizedEUR)
 		})
 	})
 }

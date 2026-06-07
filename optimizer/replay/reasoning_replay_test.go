@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -16,6 +17,7 @@ func frictionlessCosts() ReplayCosts {
 		StartingCapital:        100,
 		PositionFraction:       1,
 		WalletCurrency:         "EUR",
+		WalletBalances:         map[string]float64{"EUR": 100},
 		ExecutionStressEnabled: false,
 	}
 }
@@ -51,6 +53,7 @@ func priceCrossedUp(level float64) reasoning.Predicate {
 // never enter here, because the parent gate is shut by the time the child triggers.
 func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 	Convey("Given a frictionless €100 wallet and a price path that crosses two levels on different ticks", t, func() {
+		testconfig.Load(t)
 		base := time.Unix(1_700_000_000, 0)
 
 		thoughts := []reasoning.Thought{
@@ -90,6 +93,7 @@ func TestThoughtSimulationArmsAcrossTicks(t *testing.T) {
 
 func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
 	Convey("Given a €100 wallet that one position fully deploys", t, func() {
+		testconfig.Load(t)
 		base := time.Unix(1_700_000_000, 0)
 
 		// Enter on an ignition; no exit, so the first fill camps and ties up the cash.
@@ -113,6 +117,7 @@ func TestThoughtSimulationCountsFundBlockedEntries(t *testing.T) {
 
 func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 	Convey("Given the same reasoning tree scored with and without fees", t, func() {
+		testconfig.Load(t)
 		base := time.Unix(1_700_000_000, 0)
 
 		thoughts := []reasoning.Thought{
@@ -150,6 +155,7 @@ func TestThoughtSimulationFeesReduceReturn(t *testing.T) {
 
 func TestThoughtSimulationScoresAReasoningTree(t *testing.T) {
 	Convey("Given a frictionless €100 wallet and a tape", t, func() {
+		testconfig.Load(t)
 		base := time.Unix(1_700_000_000, 0)
 
 		Convey("A reasoning tree (enter on ignition, settle on reversal) trades and profits", func() {

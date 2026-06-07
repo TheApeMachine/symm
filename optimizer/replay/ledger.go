@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/execution"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -65,7 +66,8 @@ type replayLedger struct {
 	realized            float64
 	closedTrades        int
 	fundBlocked         int
-	depthBlocked        int
+	preflightBlocked    int
+	instrumentRules     *broker.InstrumentRulesCache
 	exposureTicks       int
 	observationScratch  map[types.ObservationType]float64
 	metricsScratch      map[string]float64
@@ -105,6 +107,7 @@ func effectiveFraction(costs ReplayCosts) float64 {
 func newReplayLedger(costs ReplayCosts) *replayLedger {
 	return &replayLedger{
 		costs:               costs,
+		instrumentRules:     costs.InstrumentRules,
 		positions:           make(map[string]replayPosition),
 		cash:                cloneWalletBalances(costs),
 		reentryTickCooldown: 1,
@@ -152,7 +155,8 @@ func (ledger *replayLedger) reset(costs ReplayCosts) {
 	ledger.realized = 0
 	ledger.closedTrades = 0
 	ledger.fundBlocked = 0
-	ledger.depthBlocked = 0
+	ledger.preflightBlocked = 0
+	ledger.instrumentRules = costs.InstrumentRules
 	ledger.exposureTicks = 0
 	ledger.tickIndex = 0
 	ledger.medianInterval = 0
@@ -386,9 +390,15 @@ func (ledger *replayLedger) applyStressed(
 				return
 			}
 
-			slot := fraction * ledger.costs.WalletBalance(quoteCurrency(measurement.Symbol))
-			entryNotional := slot / (1 + feePct)
-			quantity := entryNotional / measurement.Last
+			quoteCurrencyName := quoteCurrency(measurement.Symbol)
+			capital := ledger.costs.WalletBalance(quoteCurrencyName)
+			slot := execution.EntrySlotSpend(
+				capital,
+				fraction,
+				feePct,
+				ledger.walletCash(quoteCurrencyName),
+			)
+			quantity := slot / measurement.Last
 
 			if quantity > 0 {
 				slippagePct := flatSlippagePct(ledger.costs, measurement.SpreadBPS, snapshots)

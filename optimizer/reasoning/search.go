@@ -17,6 +17,8 @@ import (
 const (
 	capitalBlockWeight = 0.5
 	exposureTimeWeight = 0.25
+	velocityWeight     = 1.0
+	mergedSeedCount    = 3
 )
 
 /*
@@ -63,11 +65,13 @@ equals) and a hard MaxNodes cap to stop runaway bloat. This is what lets the sea
 explore the temporal chains the playbook is meant to express.
 */
 type Candidate struct {
-	Forest []reasoning.Thought
-	Score  float64
-	Return float64 // raw realized return from the replay
-	Trades int
-	Nodes  int
+	Forest          []reasoning.Thought
+	Score           float64
+	Return          float64 // realized P&L / starting capital
+	RealizedEUR     float64
+	StartingCapital float64
+	Trades          int
+	Nodes           int
 }
 
 // Result is the outcome of a search: the best forest found and how much was tried.
@@ -163,11 +167,36 @@ func Search(
 		SeedCount: len(seeds),
 	})
 
-	for _, candidate := range scoreTasks(queueTasks(seeds)) {
-		beam = append(beam, candidate)
-	}
+	seedScored := scoreTasks(queueTasks(seeds))
+	beam = topCandidates(seedScored, config.BeamWidth)
 
-	beam = topCandidates(beam, config.BeamWidth)
+	if len(seedScored) > 1 {
+		sort.Slice(seedScored, func(leftIndex, rightIndex int) bool {
+			return seedScored[leftIndex].Score > seedScored[rightIndex].Score
+		})
+
+		mergeCount := mergedSeedCount
+
+		if mergeCount > len(seedScored) {
+			mergeCount = len(seedScored)
+		}
+
+		mergeSources := make([][]reasoning.Thought, mergeCount)
+
+		for index := 0; index < mergeCount; index++ {
+			mergeSources[index] = seedScored[index].Forest
+		}
+
+		mergedForest := MergeSeedForests(mergeSources)
+
+		if ForestStrategyCount(mergedForest) > 1 {
+			for _, candidate := range scoreTasks(queueTasks([][]reasoning.Thought{mergedForest})) {
+				beam = append(beam, candidate)
+			}
+
+			beam = topCandidates(beam, config.BeamWidth)
+		}
+	}
 
 	if len(beam) == 0 {
 		config.reportProgress(SearchProgress{

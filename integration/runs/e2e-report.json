@@ -1,57 +1,46 @@
 {
   "pass": false,
-  "started_at": "2026-06-06T23:47:59.517043+02:00",
-  "elapsed": 169536742500,
+  "started_at": "2026-06-07T05:40:32.050839+02:00",
+  "elapsed": 203345491458,
   "scenarios": [
     {
       "id": "infra.replay_raw_bus",
       "name": "Replay websocket feeds the raw bus",
-      "pass": true,
-      "started_at": "2026-06-06T23:47:59.518889+02:00",
-      "elapsed": 861333125,
+      "pass": false,
+      "started_at": "2026-06-07T05:40:32.053289+02:00",
+      "elapsed": 858464584,
       "checks": [
         {
           "id": "raw.frames",
           "name": "Raw bus received replay frames",
-          "pass": true,
-          "detail": "raw_frames=9",
+          "pass": false,
+          "detail": "raw_frames=0",
           "context": {
-            "raw_frames": 9
+            "raw_frames": 0
           }
         },
         {
           "id": "desk.ready",
           "name": "Paper desk reports ready after balance handshake",
-          "pass": true,
-          "detail": "desk_ready=true"
+          "pass": false,
+          "detail": "desk_ready=false"
         }
       ]
     },
     {
       "id": "infra.fast_signals_manifest",
       "name": "Baseline replay activates fast-path measurement sources",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:00.381616+02:00",
-      "elapsed": 2610633084,
+      "pass": false,
+      "started_at": "2026-06-07T05:40:33.055762+02:00",
+      "elapsed": 2597620500,
       "checks": [
         {
           "id": "signals.manifest",
           "name": "Fast-path sources published at least one measurement",
-          "pass": true,
-          "detail": "missing=[]",
+          "pass": false,
+          "detail": "missing=[cvd fluid hawkes depthflow sentiment liquidity exhaustion pumpdump toxicity causal]",
           "context": {
-            "counts": {
-              "causal": 2,
-              "cvd": 225,
-              "depthflow": 245,
-              "exhaustion": 119,
-              "fluid": 261,
-              "hawkes": 39,
-              "liquidity": 12,
-              "pumpdump": 219,
-              "sentiment": 16,
-              "toxicity": 28
-            }
+            "counts": {}
           }
         }
       ]
@@ -59,25 +48,21 @@
     {
       "id": "signal.validate.cvd.aggressive_drive",
       "name": "cvd → aggressive_drive when sustained one-sided buy aggression on the tape",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:02.994045+02:00",
-      "elapsed": 1162338125,
+      "pass": false,
+      "started_at": "2026-06-07T05:40:36.063873+02:00",
+      "elapsed": 1163563875,
       "checks": [
         {
           "id": "signal.category",
           "name": "cvd latest reading on SYN/EUR must be aggressive_drive",
-          "pass": true,
-          "detail": "category=aggressive_drive snr=0.2000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "sustained one-sided buy aggression on the tape",
             "expected": "aggressive_drive",
             "fixture": "cvd.aggressive_drive",
-            "observed": [
-              "aggressive_drive",
-              "hidden_absorption",
-              "stochastic_balance"
-            ],
-            "publish_n": 40,
+            "observed": [],
+            "publish_n": 0,
             "source": 12,
             "symbol": "SYN/EUR"
           }
@@ -88,24 +73,20 @@
       "id": "signal.validate.cvd.hidden_absorption",
       "name": "cvd → hidden_absorption when high volume with muted price progress (absorption)",
       "pass": false,
-      "started_at": "2026-06-06T23:48:04.158558+02:00",
-      "elapsed": 1333737083,
+      "started_at": "2026-06-07T05:40:38.075098+02:00",
+      "elapsed": 1394856083,
       "checks": [
         {
           "id": "signal.category",
           "name": "cvd latest reading on SYN/EUR must be hidden_absorption",
           "pass": false,
-          "detail": "latest=aggressive_drive want=hidden_absorption",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "high volume with muted price progress (absorption)",
             "expected": "hidden_absorption",
             "fixture": "cvd.hidden_absorption",
-            "observed": [
-              "aggressive_drive",
-              "hidden_absorption",
-              "stochastic_balance"
-            ],
-            "publish_n": 80,
+            "observed": [],
+            "publish_n": 0,
             "source": 12,
             "symbol": "SYN/EUR"
           }
@@ -115,25 +96,21 @@
     {
       "id": "signal.validate.cvd.stochastic_balance",
       "name": "cvd → stochastic_balance when balanced two-sided flow around the local mean",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:05.494318+02:00",
-      "elapsed": 1200950792,
+      "pass": false,
+      "started_at": "2026-06-07T05:40:40.07497+02:00",
+      "elapsed": 1380300000,
       "checks": [
         {
           "id": "signal.category",
           "name": "cvd latest reading on SYN/EUR must be stochastic_balance",
-          "pass": true,
-          "detail": "category=stochastic_balance snr=0.3992",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "balanced two-sided flow around the local mean",
             "expected": "stochastic_balance",
             "fixture": "cvd.stochastic_balance",
-            "observed": [
-              "aggressive_drive",
-              "hidden_absorption",
-              "stochastic_balance"
-            ],
-            "publish_n": 42,
+            "observed": [],
+            "publish_n": 0,
             "source": 12,
             "symbol": "SYN/EUR"
           }
@@ -144,24 +121,20 @@
       "id": "signal.validate.cvd.volume_starvation",
       "name": "cvd → volume_starvation when negligible executed volume relative to history",
       "pass": false,
-      "started_at": "2026-06-06T23:48:06.697425+02:00",
-      "elapsed": 1163109625,
+      "started_at": "2026-06-07T05:40:42.082322+02:00",
+      "elapsed": 1160493166,
       "checks": [
         {
           "id": "signal.category",
           "name": "cvd latest reading on SYN/EUR must be volume_starvation",
           "pass": false,
-          "detail": "latest=stochastic_balance want=volume_starvation",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "negligible executed volume relative to history",
             "expected": "volume_starvation",
             "fixture": "cvd.volume_starvation",
-            "observed": [
-              "aggressive_drive",
-              "hidden_absorption",
-              "stochastic_balance"
-            ],
-            "publish_n": 25,
+            "observed": [],
+            "publish_n": 0,
             "source": 12,
             "symbol": "SYN/EUR"
           }
@@ -171,23 +144,21 @@
     {
       "id": "signal.validate.fluid.laminar",
       "name": "fluid → laminar when calm book with low divergence and Reynolds number",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:07.863037+02:00",
-      "elapsed": 1159213834,
+      "pass": false,
+      "started_at": "2026-06-07T05:40:44.086626+02:00",
+      "elapsed": 1157055125,
       "checks": [
         {
           "id": "signal.category",
           "name": "fluid latest reading on SYN/EUR must be laminar",
-          "pass": true,
-          "detail": "category=laminar snr=16.5208",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "calm book with low divergence and Reynolds number",
             "expected": "laminar",
             "fixture": "fluid.laminar",
-            "observed": [
-              "laminar"
-            ],
-            "publish_n": 2,
+            "observed": [],
+            "publish_n": 0,
             "source": 1,
             "symbol": "SYN/EUR"
           }
@@ -198,22 +169,20 @@
       "id": "signal.validate.fluid.turbulent",
       "name": "fluid → turbulent when turbulence dominates divergence",
       "pass": false,
-      "started_at": "2026-06-06T23:48:09.024686+02:00",
-      "elapsed": 1192918750,
+      "started_at": "2026-06-07T05:40:46.096091+02:00",
+      "elapsed": 1189261333,
       "checks": [
         {
           "id": "signal.category",
           "name": "fluid latest reading on SYN/EUR must be turbulent",
           "pass": false,
-          "detail": "latest=laminar want=turbulent",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "turbulence dominates divergence",
             "expected": "turbulent",
             "fixture": "fluid.turbulent",
-            "observed": [
-              "laminar"
-            ],
-            "publish_n": 18,
+            "observed": [],
+            "publish_n": 0,
             "source": 1,
             "symbol": "SYN/EUR"
           }
@@ -224,23 +193,20 @@
       "id": "signal.validate.fluid.inertial",
       "name": "fluid → inertial when strong divergence with inertial Reynolds read",
       "pass": false,
-      "started_at": "2026-06-06T23:48:10.220142+02:00",
-      "elapsed": 1164729125,
+      "started_at": "2026-06-07T05:40:48.097459+02:00",
+      "elapsed": 1156466500,
       "checks": [
         {
           "id": "signal.category",
           "name": "fluid latest reading on SYN/EUR must be inertial",
           "pass": false,
-          "detail": "latest=viscous want=inertial",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "strong divergence with inertial Reynolds read",
             "expected": "inertial",
             "fixture": "fluid.inertial",
-            "observed": [
-              "laminar",
-              "viscous"
-            ],
-            "publish_n": 2,
+            "observed": [],
+            "publish_n": 0,
             "source": 1,
             "symbol": "SYN/EUR"
           }
@@ -251,22 +217,20 @@
       "id": "signal.validate.fluid.viscous",
       "name": "fluid → viscous when high viscosity read below the viscous threshold",
       "pass": false,
-      "started_at": "2026-06-06T23:48:11.387207+02:00",
-      "elapsed": 1158119375,
+      "started_at": "2026-06-07T05:40:50.106148+02:00",
+      "elapsed": 1157216416,
       "checks": [
         {
           "id": "signal.category",
           "name": "fluid latest reading on SYN/EUR must be viscous",
           "pass": false,
-          "detail": "latest=laminar want=viscous",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "high viscosity read below the viscous threshold",
             "expected": "viscous",
             "fixture": "fluid.viscous",
-            "observed": [
-              "laminar"
-            ],
-            "publish_n": 2,
+            "observed": [],
+            "publish_n": 0,
             "source": 1,
             "symbol": "SYN/EUR"
           }
@@ -277,22 +241,20 @@
       "id": "signal.validate.hawkes.frenzy",
       "name": "hawkes → frenzy when asymmetric buy-side Hawkes intensity",
       "pass": false,
-      "started_at": "2026-06-06T23:48:12.54824+02:00",
-      "elapsed": 1359419417,
+      "started_at": "2026-06-07T05:40:52.110941+02:00",
+      "elapsed": 1358090709,
       "checks": [
         {
           "id": "signal.category",
           "name": "hawkes latest reading on SYN/EUR must be frenzy",
           "pass": false,
-          "detail": "latest=saturation want=frenzy",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "asymmetric buy-side Hawkes intensity",
             "expected": "frenzy",
             "fixture": "hawkes.frenzy",
-            "observed": [
-              "saturation"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 2,
             "symbol": "SYN/EUR"
           }
@@ -303,23 +265,20 @@
       "id": "signal.validate.hawkes.saturation",
       "name": "hawkes → saturation when near-critical spectral radius from clustered prints",
       "pass": false,
-      "started_at": "2026-06-06T23:48:13.911604+02:00",
-      "elapsed": 1375799084,
+      "started_at": "2026-06-07T05:40:54.116778+02:00",
+      "elapsed": 1373016792,
       "checks": [
         {
           "id": "signal.category",
           "name": "hawkes latest reading on SYN/EUR must be saturation",
           "pass": false,
-          "detail": "latest=exhaustion want=saturation",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "near-critical spectral radius from clustered prints",
             "expected": "saturation",
             "fixture": "hawkes.saturation",
-            "observed": [
-              "exhaustion",
-              "saturation"
-            ],
-            "publish_n": 9,
+            "observed": [],
+            "publish_n": 0,
             "source": 2,
             "symbol": "SYN/EUR"
           }
@@ -330,23 +289,20 @@
       "id": "signal.validate.hawkes.organic",
       "name": "hawkes → organic when low clustering with organic baseline intensity",
       "pass": false,
-      "started_at": "2026-06-06T23:48:15.292816+02:00",
-      "elapsed": 1408037625,
+      "started_at": "2026-06-07T05:40:56.121301+02:00",
+      "elapsed": 1403146958,
       "checks": [
         {
           "id": "signal.category",
           "name": "hawkes latest reading on SYN/EUR must be organic",
           "pass": false,
-          "detail": "latest=saturation want=organic",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "low clustering with organic baseline intensity",
             "expected": "organic",
             "fixture": "hawkes.organic",
-            "observed": [
-              "exhaustion",
-              "saturation"
-            ],
-            "publish_n": 11,
+            "observed": [],
+            "publish_n": 0,
             "source": 2,
             "symbol": "SYN/EUR"
           }
@@ -357,24 +313,20 @@
       "id": "signal.validate.hawkes.exhaustion",
       "name": "hawkes → exhaustion when intensity collapse after a burst",
       "pass": false,
-      "started_at": "2026-06-06T23:48:16.705656+02:00",
-      "elapsed": 1415519500,
+      "started_at": "2026-06-07T05:40:58.125874+02:00",
+      "elapsed": 1375393417,
       "checks": [
         {
           "id": "signal.category",
           "name": "hawkes latest reading on SYN/EUR must be exhaustion",
           "pass": false,
-          "detail": "latest=frenzy want=exhaustion",
+          "detail": "source never published a measurement",
           "context": {
             "condition": "intensity collapse after a burst",
             "expected": "exhaustion",
             "fixture": "hawkes.exhaustion",
-            "observed": [
-              "exhaustion",
-              "frenzy",
-              "saturation"
-            ],
-            "publish_n": 10,
+            "observed": [],
+            "publish_n": 0,
             "source": 2,
             "symbol": "SYN/EUR"
           }
@@ -384,23 +336,21 @@
     {
       "id": "signal.validate.depthflow.loaded_imbalance",
       "name": "depthflow → loaded_imbalance when persistent bid-heavy book without spoof pathology",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:18.127974+02:00",
-      "elapsed": 1157492333,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:00.132342+02:00",
+      "elapsed": 1156727875,
       "checks": [
         {
           "id": "signal.category",
           "name": "depthflow latest reading on SYN/EUR must be loaded_imbalance",
-          "pass": true,
-          "detail": "category=loaded_imbalance snr=16.5208",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "persistent bid-heavy book without spoof pathology",
             "expected": "loaded_imbalance",
             "fixture": "depthflow.loaded_imbalance",
-            "observed": [
-              "loaded_imbalance"
-            ],
-            "publish_n": 2,
+            "observed": [],
+            "publish_n": 0,
             "source": 4,
             "symbol": "SYN/EUR"
           }
@@ -410,23 +360,21 @@
     {
       "id": "signal.validate.depthflow.spoof_trap",
       "name": "depthflow → spoof_trap when pathological near-touch imbalance (spoof trap)",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:19.292065+02:00",
-      "elapsed": 1158509042,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:02.13996+02:00",
+      "elapsed": 1156339291,
       "checks": [
         {
           "id": "signal.category",
           "name": "depthflow latest reading on SYN/EUR must be spoof_trap",
-          "pass": true,
-          "detail": "category=spoof_trap snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "pathological near-touch imbalance (spoof trap)",
             "expected": "spoof_trap",
             "fixture": "depthflow.spoof_trap",
-            "observed": [
-              "spoof_trap"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 4,
             "symbol": "SYN/EUR"
           }
@@ -436,23 +384,21 @@
     {
       "id": "signal.validate.depthflow.book_thinning",
       "name": "depthflow → book_thinning when depth pulls away from the touch",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:20.458547+02:00",
-      "elapsed": 1161271333,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:04.141424+02:00",
+      "elapsed": 1156335083,
       "checks": [
         {
           "id": "signal.category",
           "name": "depthflow latest reading on SYN/EUR must be book_thinning",
-          "pass": true,
-          "detail": "category=book_thinning snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "depth pulls away from the touch",
             "expected": "book_thinning",
             "fixture": "depthflow.book_thinning",
-            "observed": [
-              "book_thinning"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 4,
             "symbol": "SYN/EUR"
           }
@@ -462,23 +408,21 @@
     {
       "id": "signal.validate.depthflow.dense_neutrality",
       "name": "depthflow → dense_neutrality when flat, balanced book at the touch",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:21.62752+02:00",
-      "elapsed": 1160106958,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:06.149555+02:00",
+      "elapsed": 1156340542,
       "checks": [
         {
           "id": "signal.category",
           "name": "depthflow latest reading on SYN/EUR must be dense_neutrality",
-          "pass": true,
-          "detail": "category=dense_neutrality snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "flat, balanced book at the touch",
             "expected": "dense_neutrality",
             "fixture": "depthflow.dense_neutrality",
-            "observed": [
-              "dense_neutrality"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 4,
             "symbol": "SYN/EUR"
           }
@@ -488,24 +432,21 @@
     {
       "id": "signal.validate.sentiment.systemic_slump",
       "name": "sentiment → systemic_slump when weak cross-section breadth with negative changes",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:22.7945+02:00",
-      "elapsed": 1155420500,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:08.158188+02:00",
+      "elapsed": 1154338375,
       "checks": [
         {
           "id": "signal.category",
           "name": "sentiment latest reading on SYN/EUR must be systemic_slump",
-          "pass": true,
-          "detail": "category=systemic_slump snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "weak cross-section breadth with negative changes",
             "expected": "systemic_slump",
             "fixture": "sentiment.systemic_slump",
-            "observed": [
-              "divergent_move",
-              "systemic_slump"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 5,
             "symbol": "SYN/EUR"
           }
@@ -515,23 +456,21 @@
     {
       "id": "signal.validate.sentiment.risk_on_surge",
       "name": "sentiment → risk_on_surge when broad positive breadth above the surge threshold",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:23.95548+02:00",
-      "elapsed": 1156589541,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:10.167222+02:00",
+      "elapsed": 1154461958,
       "checks": [
         {
           "id": "signal.category",
           "name": "sentiment latest reading on SYN/EUR must be risk_on_surge",
-          "pass": true,
-          "detail": "category=risk_on_surge snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "broad positive breadth above the surge threshold",
             "expected": "risk_on_surge",
             "fixture": "sentiment.risk_on_surge",
-            "observed": [
-              "risk_on_surge"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 5,
             "symbol": "SYN/EUR"
           }
@@ -541,24 +480,21 @@
     {
       "id": "signal.validate.sentiment.divergent_move",
       "name": "sentiment → divergent_move when leader symbol moves against the broad tape",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:25.119066+02:00",
-      "elapsed": 1156036584,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:12.173013+02:00",
+      "elapsed": 1154779292,
       "checks": [
         {
           "id": "signal.category",
           "name": "sentiment latest reading on SYN/EUR must be divergent_move",
-          "pass": true,
-          "detail": "category=divergent_move snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "leader symbol moves against the broad tape",
             "expected": "divergent_move",
             "fixture": "sentiment.divergent_move",
-            "observed": [
-              "divergent_move",
-              "systemic_slump"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 5,
             "symbol": "SYN/EUR"
           }
@@ -568,24 +504,21 @@
     {
       "id": "signal.validate.liquidity.robust_liquidity",
       "name": "liquidity → robust_liquidity when primary symbol quote volume in the top peer quartile",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:26.282644+02:00",
-      "elapsed": 1157078042,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:14.181795+02:00",
+      "elapsed": 1154334417,
       "checks": [
         {
           "id": "signal.category",
           "name": "liquidity latest reading on SYN/EUR must be robust_liquidity",
-          "pass": true,
-          "detail": "category=robust_liquidity snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "primary symbol quote volume in the top peer quartile",
             "expected": "robust_liquidity",
             "fixture": "liquidity.robust",
-            "observed": [
-              "extreme_scarcity",
-              "robust_liquidity"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 9,
             "symbol": "SYN/EUR"
           }
@@ -595,25 +528,21 @@
     {
       "id": "signal.validate.liquidity.median_depth",
       "name": "liquidity → median_depth when primary symbol quote volume between peer quartiles",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:27.4461+02:00",
-      "elapsed": 1155783083,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:16.186523+02:00",
+      "elapsed": 1154436875,
       "checks": [
         {
           "id": "signal.category",
           "name": "liquidity latest reading on SYN/EUR must be median_depth",
-          "pass": true,
-          "detail": "category=median_depth snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "primary symbol quote volume between peer quartiles",
             "expected": "median_depth",
             "fixture": "liquidity.median_depth",
-            "observed": [
-              "extreme_scarcity",
-              "median_depth",
-              "robust_liquidity"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 9,
             "symbol": "SYN/EUR"
           }
@@ -623,25 +552,21 @@
     {
       "id": "signal.validate.liquidity.extreme_scarcity",
       "name": "liquidity → extreme_scarcity when primary symbol quote volume in the bottom peer quartile",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:28.608615+02:00",
-      "elapsed": 1156596041,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:18.194676+02:00",
+      "elapsed": 1154324959,
       "checks": [
         {
           "id": "signal.category",
           "name": "liquidity latest reading on SYN/EUR must be extreme_scarcity",
-          "pass": true,
-          "detail": "category=extreme_scarcity snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "primary symbol quote volume in the bottom peer quartile",
             "expected": "extreme_scarcity",
             "fixture": "liquidity.extreme_scarcity",
-            "observed": [
-              "extreme_scarcity",
-              "median_depth",
-              "robust_liquidity"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 9,
             "symbol": "SYN/EUR"
           }
@@ -651,24 +576,21 @@
     {
       "id": "signal.validate.pumpdump.vertical_ignition",
       "name": "pumpdump → vertical_ignition when accelerating buy tape with rising lift scores",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:29.771345+02:00",
-      "elapsed": 1214378000,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:20.19977+02:00",
+      "elapsed": 1207656667,
       "checks": [
         {
           "id": "signal.category",
           "name": "pumpdump latest reading on SYN/EUR must be vertical_ignition",
-          "pass": true,
-          "detail": "category=vertical_ignition snr=0.7240",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "accelerating buy tape with rising lift scores",
             "expected": "vertical_ignition",
             "fixture": "pumpdump.vertical_ignition",
-            "observed": [
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 24,
+            "observed": [],
+            "publish_n": 0,
             "source": 3,
             "symbol": "SYN/EUR"
           }
@@ -678,24 +600,21 @@
     {
       "id": "signal.validate.pumpdump.coiled_compression",
       "name": "pumpdump → coiled_compression when tight range with coiled volume precursor",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:30.995044+02:00",
-      "elapsed": 1198735667,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:22.208404+02:00",
+      "elapsed": 1195144750,
       "checks": [
         {
           "id": "signal.category",
           "name": "pumpdump latest reading on SYN/EUR must be coiled_compression",
-          "pass": true,
-          "detail": "category=coiled_compression snr=0.3008",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "tight range with coiled volume precursor",
             "expected": "coiled_compression",
             "fixture": "pumpdump.coiled_compression",
-            "observed": [
-              "coiled_compression",
-              "vertical_ignition"
-            ],
-            "publish_n": 18,
+            "observed": [],
+            "publish_n": 0,
             "source": 3,
             "symbol": "SYN/EUR"
           }
@@ -705,24 +624,21 @@
     {
       "id": "signal.validate.pumpdump.organic_trend",
       "name": "pumpdump → organic_trend when steady organic drift without ignition",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:32.20068+02:00",
-      "elapsed": 1211106167,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:24.216146+02:00",
+      "elapsed": 1206799625,
       "checks": [
         {
           "id": "signal.category",
           "name": "pumpdump latest reading on SYN/EUR must be organic_trend",
-          "pass": true,
-          "detail": "category=organic_trend snr=0.2419",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "steady organic drift without ignition",
             "expected": "organic_trend",
             "fixture": "pumpdump.organic_trend",
-            "observed": [
-              "coiled_compression",
-              "organic_trend"
-            ],
-            "publish_n": 22,
+            "observed": [],
+            "publish_n": 0,
             "source": 3,
             "symbol": "SYN/EUR"
           }
@@ -732,25 +648,21 @@
     {
       "id": "signal.validate.pumpdump.faded_exhaustion",
       "name": "pumpdump → faded_exhaustion when lift fades after an impulse",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:33.420209+02:00",
-      "elapsed": 1269465500,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:26.22253+02:00",
+      "elapsed": 1255984041,
       "checks": [
         {
           "id": "signal.category",
           "name": "pumpdump latest reading on SYN/EUR must be faded_exhaustion",
-          "pass": true,
-          "detail": "category=faded_exhaustion snr=0.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "lift fades after an impulse",
             "expected": "faded_exhaustion",
             "fixture": "pumpdump.faded_exhaustion",
-            "observed": [
-              "coiled_compression",
-              "faded_exhaustion",
-              "vertical_ignition"
-            ],
-            "publish_n": 48,
+            "observed": [],
+            "publish_n": 0,
             "source": 3,
             "symbol": "SYN/EUR"
           }
@@ -760,23 +672,21 @@
     {
       "id": "signal.validate.exhaustion.mechanical_collapse",
       "name": "exhaustion → mechanical_collapse when book thinning dominates exit score",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:34.697024+02:00",
-      "elapsed": 1173427542,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:28.224557+02:00",
+      "elapsed": 1170803250,
       "checks": [
         {
           "id": "signal.category",
           "name": "exhaustion latest reading on SYN/EUR must be mechanical_collapse",
-          "pass": true,
-          "detail": "category=mechanical_collapse snr=10.4550",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "book thinning dominates exit score",
             "expected": "mechanical_collapse",
             "fixture": "exhaust.mechanical_collapse",
-            "observed": [
-              "mechanical_collapse"
-            ],
-            "publish_n": 5,
+            "observed": [],
+            "publish_n": 0,
             "source": 10,
             "symbol": "SYN/EUR"
           }
@@ -786,23 +696,21 @@
     {
       "id": "signal.validate.exhaustion.fragile_expansion",
       "name": "exhaustion → fragile_expansion when spread widening dominates exit score",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:35.877684+02:00",
-      "elapsed": 1186133292,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:30.231833+02:00",
+      "elapsed": 1182766083,
       "checks": [
         {
           "id": "signal.category",
           "name": "exhaustion latest reading on SYN/EUR must be fragile_expansion",
-          "pass": true,
-          "detail": "category=fragile_expansion snr=5.8280",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "spread widening dominates exit score",
             "expected": "fragile_expansion",
             "fixture": "exhaust.fragile_expansion",
-            "observed": [
-              "fragile_expansion"
-            ],
-            "publish_n": 10,
+            "observed": [],
+            "publish_n": 0,
             "source": 10,
             "symbol": "SYN/EUR"
           }
@@ -812,23 +720,21 @@
     {
       "id": "signal.validate.exhaustion.thermal_exhaustion",
       "name": "exhaustion → thermal_exhaustion when pressure fade dominates exit score",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:37.070877+02:00",
-      "elapsed": 1161298542,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:32.243164+02:00",
+      "elapsed": 1158360458,
       "checks": [
         {
           "id": "signal.category",
           "name": "exhaustion latest reading on SYN/EUR must be thermal_exhaustion",
-          "pass": true,
-          "detail": "category=thermal_exhaustion snr=12.0167",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "pressure fade dominates exit score",
             "expected": "thermal_exhaustion",
             "fixture": "exhaust.thermal_exhaustion",
-            "observed": [
-              "thermal_exhaustion"
-            ],
-            "publish_n": 4,
+            "observed": [],
+            "publish_n": 0,
             "source": 10,
             "symbol": "SYN/EUR"
           }
@@ -838,23 +744,21 @@
     {
       "id": "signal.validate.exhaustion.active_reversal",
       "name": "exhaustion → active_reversal when imbalance flip dominates exit score",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:38.239963+02:00",
-      "elapsed": 1162791958,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:34.251756+02:00",
+      "elapsed": 1160649542,
       "checks": [
         {
           "id": "signal.category",
           "name": "exhaustion latest reading on SYN/EUR must be active_reversal",
-          "pass": true,
-          "detail": "category=active_reversal snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "imbalance flip dominates exit score",
             "expected": "active_reversal",
             "fixture": "exhaust.active_reversal",
-            "observed": [
-              "active_reversal"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 10,
             "symbol": "SYN/EUR"
           }
@@ -864,25 +768,21 @@
     {
       "id": "signal.validate.causal.endogenous_alpha",
       "name": "causal → endogenous_alpha when intervention ladder read with endogenous alpha",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:39.411836+02:00",
-      "elapsed": 2808102750,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:36.260154+02:00",
+      "elapsed": 2778492625,
       "checks": [
         {
           "id": "signal.category",
           "name": "causal latest reading on SYN/EUR must be endogenous_alpha",
-          "pass": true,
-          "detail": "category=endogenous_alpha snr=0.2495",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "intervention ladder read with endogenous alpha",
             "expected": "endogenous_alpha",
             "fixture": "causal.endogenous_alpha",
-            "observed": [
-              "causal_noise",
-              "endogenous_alpha",
-              "systemic_beta"
-            ],
-            "publish_n": 96,
+            "observed": [],
+            "publish_n": 0,
             "source": 7,
             "symbol": "SYN/EUR"
           }
@@ -892,23 +792,21 @@
     {
       "id": "signal.validate.causal.systemic_beta",
       "name": "causal → systemic_beta when macro association drives beta read",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:42.227047+02:00",
-      "elapsed": 2471956084,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:39.265864+02:00",
+      "elapsed": 2468711125,
       "checks": [
         {
           "id": "signal.category",
           "name": "causal latest reading on SYN/EUR must be systemic_beta",
-          "pass": true,
-          "detail": "category=systemic_beta snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "macro association drives beta read",
             "expected": "systemic_beta",
             "fixture": "causal.systemic_beta",
-            "observed": [
-              "systemic_beta"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 7,
             "symbol": "SYN/EUR"
           }
@@ -918,25 +816,21 @@
     {
       "id": "signal.validate.causal.liquidity_shock",
       "name": "causal → liquidity_shock when regime inversion shock on the ladder",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:44.707756+02:00",
-      "elapsed": 2851068208,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:42.270521+02:00",
+      "elapsed": 2821110791,
       "checks": [
         {
           "id": "signal.category",
           "name": "causal latest reading on SYN/EUR must be liquidity_shock",
-          "pass": true,
-          "detail": "category=liquidity_shock snr=0.2312",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "regime inversion shock on the ladder",
             "expected": "liquidity_shock",
             "fixture": "causal.liquidity_shock",
-            "observed": [
-              "endogenous_alpha",
-              "liquidity_shock",
-              "systemic_beta"
-            ],
-            "publish_n": 108,
+            "observed": [],
+            "publish_n": 0,
             "source": 7,
             "symbol": "SYN/EUR"
           }
@@ -946,23 +840,21 @@
     {
       "id": "signal.validate.causal.causal_noise",
       "name": "causal → causal_noise when buy pressure without price change (noise)",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:47.567722+02:00",
-      "elapsed": 3812494125,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:45.281936+02:00",
+      "elapsed": 3808833917,
       "checks": [
         {
           "id": "signal.category",
           "name": "causal latest reading on SYN/EUR must be causal_noise",
-          "pass": true,
-          "detail": "category=causal_noise snr=9.1808",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "buy pressure without price change (noise)",
             "expected": "causal_noise",
             "fixture": "causal.causal_noise",
-            "observed": [
-              "causal_noise"
-            ],
-            "publish_n": 6,
+            "observed": [],
+            "publish_n": 0,
             "source": 7,
             "symbol": "SYN/EUR"
           }
@@ -972,23 +864,21 @@
     {
       "id": "signal.validate.leadlag.anchor_stall",
       "name": "leadlag → anchor_stall when flat anchor with follower drift",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:51.390488+02:00",
-      "elapsed": 8194918875,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:49.284731+02:00",
+      "elapsed": 8179035792,
       "checks": [
         {
           "id": "signal.category",
           "name": "leadlag latest reading on SYN/EUR must be anchor_stall",
-          "pass": true,
-          "detail": "category=anchor_stall snr=0.2332",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "flat anchor with follower drift",
             "expected": "anchor_stall",
             "fixture": "leadlag.anchor_stall",
-            "observed": [
-              "anchor_stall"
-            ],
-            "publish_n": 32,
+            "observed": [],
+            "publish_n": 0,
             "source": 8,
             "symbol": "SYN/EUR"
           }
@@ -998,26 +888,21 @@
     {
       "id": "signal.validate.leadlag.inefficient_lag",
       "name": "leadlag → inefficient_lag when follower lags anchor beyond min lag fraction",
-      "pass": true,
-      "started_at": "2026-06-06T23:48:59.596633+02:00",
-      "elapsed": 10401126542,
+      "pass": false,
+      "started_at": "2026-06-07T05:41:58.296299+02:00",
+      "elapsed": 10379552292,
       "checks": [
         {
           "id": "signal.category",
           "name": "leadlag latest reading on SYN/EUR must be inefficient_lag",
-          "pass": true,
-          "detail": "category=inefficient_lag snr=0.3431",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "follower lags anchor beyond min lag fraction",
             "expected": "inefficient_lag",
             "fixture": "leadlag.inefficient_lag",
-            "observed": [
-              "anchor_stall",
-              "decoupled_move",
-              "inefficient_lag",
-              "synchronized_drift"
-            ],
-            "publish_n": 28,
+            "observed": [],
+            "publish_n": 0,
             "source": 8,
             "symbol": "SYN/EUR"
           }
@@ -1027,24 +912,21 @@
     {
       "id": "signal.validate.leadlag.synchronized_drift",
       "name": "leadlag → synchronized_drift when anchor and follower move together",
-      "pass": true,
-      "started_at": "2026-06-06T23:49:10.008135+02:00",
-      "elapsed": 10401705334,
+      "pass": false,
+      "started_at": "2026-06-07T05:42:09.29967+02:00",
+      "elapsed": 10379366625,
       "checks": [
         {
           "id": "signal.category",
           "name": "leadlag latest reading on SYN/EUR must be synchronized_drift",
-          "pass": true,
-          "detail": "category=synchronized_drift snr=0.3468",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "anchor and follower move together",
             "expected": "synchronized_drift",
             "fixture": "leadlag.synchronized_drift",
-            "observed": [
-              "anchor_stall",
-              "synchronized_drift"
-            ],
-            "publish_n": 28,
+            "observed": [],
+            "publish_n": 0,
             "source": 8,
             "symbol": "SYN/EUR"
           }
@@ -1054,24 +936,21 @@
     {
       "id": "signal.validate.leadlag.decoupled_move",
       "name": "leadlag → decoupled_move when low correlation between anchor and follower",
-      "pass": true,
-      "started_at": "2026-06-06T23:49:20.418282+02:00",
-      "elapsed": 10401244166,
+      "pass": false,
+      "started_at": "2026-06-07T05:42:20.3091+02:00",
+      "elapsed": 10381121083,
       "checks": [
         {
           "id": "signal.category",
           "name": "leadlag latest reading on SYN/EUR must be decoupled_move",
-          "pass": true,
-          "detail": "category=decoupled_move snr=0.4978",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "low correlation between anchor and follower",
             "expected": "decoupled_move",
             "fixture": "leadlag.decoupled_move",
-            "observed": [
-              "anchor_stall",
-              "decoupled_move"
-            ],
-            "publish_n": 30,
+            "observed": [],
+            "publish_n": 0,
             "source": 8,
             "symbol": "SYN/EUR"
           }
@@ -1081,23 +960,21 @@
     {
       "id": "signal.validate.correlation.systemic_herd",
       "name": "correlation → systemic_herd when coordinated cross-section buy drift",
-      "pass": true,
-      "started_at": "2026-06-06T23:49:30.830362+02:00",
-      "elapsed": 10985720791,
+      "pass": false,
+      "started_at": "2026-06-07T05:42:31.321225+02:00",
+      "elapsed": 10950063542,
       "checks": [
         {
           "id": "signal.category",
           "name": "correlation latest reading on SYN/EUR must be systemic_herd",
-          "pass": true,
-          "detail": "category=systemic_herd snr=13.9766",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "coordinated cross-section buy drift",
             "expected": "systemic_herd",
             "fixture": "correlation.systemic_herd",
-            "observed": [
-              "systemic_herd"
-            ],
-            "publish_n": 9,
+            "observed": [],
+            "publish_n": 0,
             "source": 6,
             "symbol": "SYN/EUR"
           }
@@ -1107,24 +984,21 @@
     {
       "id": "signal.validate.correlation.decoupled_alpha",
       "name": "correlation → decoupled_alpha when one symbol diverges from the herd fingerprint",
-      "pass": true,
-      "started_at": "2026-06-06T23:49:41.825958+02:00",
-      "elapsed": 10716864792,
+      "pass": false,
+      "started_at": "2026-06-07T05:42:42.327692+02:00",
+      "elapsed": 10704098833,
       "checks": [
         {
           "id": "signal.category",
           "name": "correlation latest reading on SYN/EUR must be decoupled_alpha",
-          "pass": true,
-          "detail": "category=decoupled_alpha snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "one symbol diverges from the herd fingerprint",
             "expected": "decoupled_alpha",
             "fixture": "correlation.decoupled_alpha",
-            "observed": [
-              "decoupled_alpha",
-              "systemic_herd"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 6,
             "symbol": "SYN/EUR"
           }
@@ -1134,24 +1008,21 @@
     {
       "id": "signal.validate.correlation.stochastic_noise",
       "name": "correlation → stochastic_noise when quiet uncorrelated movement",
-      "pass": true,
-      "started_at": "2026-06-06T23:49:52.55422+02:00",
-      "elapsed": 10722358250,
+      "pass": false,
+      "started_at": "2026-06-07T05:42:53.331804+02:00",
+      "elapsed": 10706062208,
       "checks": [
         {
           "id": "signal.category",
           "name": "correlation latest reading on SYN/EUR must be stochastic_noise",
-          "pass": true,
-          "detail": "category=stochastic_noise snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "quiet uncorrelated movement",
             "expected": "stochastic_noise",
             "fixture": "correlation.stochastic_noise",
-            "observed": [
-              "stochastic_noise",
-              "systemic_herd"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 6,
             "symbol": "SYN/EUR"
           }
@@ -1161,24 +1032,21 @@
     {
       "id": "signal.validate.correlation.divergent_stress",
       "name": "correlation → divergent_stress when contrarian symbol against the majority fingerprint",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:03.288331+02:00",
-      "elapsed": 10717554041,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:04.341193+02:00",
+      "elapsed": 10703960000,
       "checks": [
         {
           "id": "signal.category",
           "name": "correlation latest reading on SYN/EUR must be divergent_stress",
-          "pass": true,
-          "detail": "category=divergent_stress snr=20.0000",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "contrarian symbol against the majority fingerprint",
             "expected": "divergent_stress",
             "fixture": "correlation.divergent_stress",
-            "observed": [
-              "divergent_stress",
-              "systemic_herd"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 6,
             "symbol": "SYN/EUR"
           }
@@ -1188,23 +1056,21 @@
     {
       "id": "signal.validate.toxicity.toxic_bluff",
       "name": "toxicity → toxic_bluff when near-touch cancel-heavy book updates",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:14.017622+02:00",
-      "elapsed": 1160665084,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:15.342781+02:00",
+      "elapsed": 1160494750,
       "checks": [
         {
           "id": "signal.category",
           "name": "toxicity latest reading on SYN/EUR must be toxic_bluff",
-          "pass": true,
-          "detail": "category=toxic_bluff snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "near-touch cancel-heavy book updates",
             "expected": "toxic_bluff",
             "fixture": "toxicity.toxic_bluff",
-            "observed": [
-              "toxic_bluff"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 13,
             "symbol": "SYN/EUR"
           }
@@ -1214,24 +1080,21 @@
     {
       "id": "signal.validate.toxicity.liquidity_vacuum",
       "name": "toxicity → liquidity_vacuum when vacuum after liquidity pulls from the touch",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:15.190024+02:00",
-      "elapsed": 1173492583,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:17.350661+02:00",
+      "elapsed": 1164511167,
       "checks": [
         {
           "id": "signal.category",
           "name": "toxicity latest reading on SYN/EUR must be liquidity_vacuum",
-          "pass": true,
-          "detail": "category=liquidity_vacuum snr=18.5853",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "vacuum after liquidity pulls from the touch",
             "expected": "liquidity_vacuum",
             "fixture": "toxicity.liquidity_vacuum",
-            "observed": [
-              "hard_support",
-              "liquidity_vacuum"
-            ],
-            "publish_n": 3,
+            "observed": [],
+            "publish_n": 0,
             "source": 13,
             "symbol": "SYN/EUR"
           }
@@ -1241,23 +1104,21 @@
     {
       "id": "signal.validate.toxicity.hard_support",
       "name": "toxicity → hard_support when stable size at the touch without bluff cancels",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:16.373137+02:00",
-      "elapsed": 1158366041,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:19.355729+02:00",
+      "elapsed": 1156391125,
       "checks": [
         {
           "id": "signal.category",
           "name": "toxicity latest reading on SYN/EUR must be hard_support",
-          "pass": true,
-          "detail": "category=hard_support snr=15.8496",
+          "pass": false,
+          "detail": "source never published a measurement",
           "context": {
             "condition": "stable size at the touch without bluff cancels",
             "expected": "hard_support",
             "fixture": "toxicity.hard_support",
-            "observed": [
-              "hard_support"
-            ],
-            "publish_n": 1,
+            "observed": [],
+            "publish_n": 0,
             "source": 13,
             "symbol": "SYN/EUR"
           }
@@ -1267,23 +1128,26 @@
     {
       "id": "playbook.limit_entry",
       "name": "Perspective tree publishes limit entry on raw",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:17.543694+02:00",
-      "elapsed": 4070151958,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:21.361719+02:00",
+      "elapsed": 4066387417,
       "checks": [
         {
           "id": "playbook.action",
           "name": "Story publishes limit entry action",
-          "pass": true,
-          "detail": "action=limit qty=0.00000000"
+          "pass": false,
+          "detail": "expected action not observed on raw",
+          "context": {
+            "actions": 0
+          }
         },
         {
           "id": "playbook.audit",
           "name": "Playbook walk audit records limit verdict",
-          "pass": true,
-          "detail": "audit verdict=limit",
+          "pass": false,
+          "detail": "playbook walk audit row not found",
           "context": {
-            "block_reason": ""
+            "audit_rows": 0
           }
         }
       ]
@@ -1291,23 +1155,26 @@
     {
       "id": "playbook.settle_holding",
       "name": "Holding observation routes to settle_position",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:21.631421+02:00",
-      "elapsed": 4117889417,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:26.366907+02:00",
+      "elapsed": 4111504500,
       "checks": [
         {
           "id": "playbook.exit",
           "name": "Story publishes settle_position while holding",
-          "pass": true,
-          "detail": "action=settle_position qty=0.00000000"
+          "pass": false,
+          "detail": "expected action not observed on raw",
+          "context": {
+            "actions": 0
+          }
         },
         {
           "id": "playbook.exit_audit",
           "name": "Playbook walk audit records settle verdict",
-          "pass": true,
-          "detail": "audit verdict=settle_position",
+          "pass": false,
+          "detail": "playbook walk audit row not found",
           "context": {
-            "block_reason": ""
+            "audit_rows": 0
           }
         }
       ]
@@ -1315,9 +1182,9 @@
     {
       "id": "execution.limit_fill_inventory",
       "name": "Limit entry fills through paper matcher and updates inventory",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:25.766004+02:00",
-      "elapsed": 10871620584,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:31.374683+02:00",
+      "elapsed": 10866874959,
       "checks": [
         {
           "id": "execution.engine",
@@ -1328,36 +1195,40 @@
         {
           "id": "execution.action",
           "name": "Limit entry action observed on raw",
-          "pass": true,
-          "detail": "action=limit qty=0.00000000"
+          "pass": false,
+          "detail": "expected action not observed on raw",
+          "context": {
+            "actions": 0
+          }
         },
         {
           "id": "execution.fill",
           "name": "Trader publishes fill frame",
-          "pass": true,
-          "detail": "qty=0.99990000 price=100.0000"
+          "pass": false,
+          "detail": "no fill ui event for symbol",
+          "context": {
+            "fills": 0
+          }
         },
         {
           "id": "execution.inventory",
           "name": "Paper wallet holds SYN base inventory",
-          "pass": true,
-          "detail": "SYN=0.99990000",
+          "pass": false,
+          "detail": "SYN=0.00000000",
           "context": {
-            "inventory": {
-              "SYN": 0.9999
-            }
+            "inventory": null
           }
         },
         {
           "id": "execution.cash",
           "name": "Cash balance decreases after entry fill",
-          "pass": true,
-          "detail": "balance=99.7600",
+          "pass": false,
+          "detail": "balance=0.0000",
           "context": {
-            "balance": 99.760025,
-            "decreased": 100.239975,
-            "initial": 200,
-            "wallets": 3
+            "balance": 0,
+            "decreased": 0,
+            "initial": 0,
+            "wallets": 0
           }
         }
       ]
@@ -1365,101 +1236,94 @@
     {
       "id": "execution.settle_reduces_inventory",
       "name": "Settle action exits held inventory through paper desk",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:36.655836+02:00",
-      "elapsed": 5982392667,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:42.376507+02:00",
+      "elapsed": 5999426583,
       "checks": [
         {
           "id": "execution.exit",
           "name": "Settle action observed on raw",
-          "pass": true,
-          "detail": "action=settle_position qty=0.00000000"
+          "pass": false,
+          "detail": "expected action not observed on raw",
+          "context": {
+            "actions": 0
+          }
         }
       ]
     },
     {
       "id": "black_swan.crash_recovery",
       "name": "System continues measuring through crash and wide spread",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:42.648089+02:00",
-      "elapsed": 1688502500,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:48.386538+02:00",
+      "elapsed": 1683058958,
       "checks": [
         {
           "id": "black_swan.desk",
           "name": "Desk stays unhalted through crash replay",
-          "pass": true,
+          "pass": false,
           "detail": "desk remained ready"
         },
         {
           "id": "black_swan.fluid",
           "name": "Fluid still publishes after crash",
-          "pass": true,
-          "detail": "source=fluid symbol=SYN/EUR last=70.0000",
+          "pass": false,
+          "detail": "source= symbol= last=0.0000",
           "context": {
-            "categories": [
-              "inertial",
-              "laminar",
-              "turbulent",
-              "viscous"
-            ]
+            "categories": []
           }
         },
         {
           "id": "black_swan.cvd",
           "name": "CVD still publishes after crash",
-          "pass": true,
-          "detail": "source=cvd symbol=SYN/EUR last=51.9300",
+          "pass": false,
+          "detail": "source= symbol= last=0.0000",
           "context": {
-            "categories": [
-              "aggressive_drive",
-              "hidden_absorption",
-              "stochastic_balance",
-              "volume_starvation"
-            ]
+            "categories": []
           }
         },
         {
           "id": "black_swan.sentiment",
           "name": "Sentiment classifies stress after crash",
-          "pass": true,
-          "detail": "matched systemic_slump",
+          "pass": false,
+          "detail": "no expected category observed",
           "context": {
-            "categories": [
+            "categories": [],
+            "expected": [
+              "systemic_slump",
               "divergent_move",
-              "risk_on_surge",
-              "systemic_slump"
+              "risk_on_surge"
             ]
           }
         },
         {
           "id": "black_swan.spread",
           "name": "Wide-spread book frames were ingested",
-          "pass": true,
-          "detail": "raw_frames=77"
+          "pass": false,
+          "detail": "raw_frames=0"
         }
       ]
     },
     {
       "id": "black_swan.post_crash_entry_gate",
       "name": "Playbook still evaluates entries after crash without tripping halt",
-      "pass": true,
-      "started_at": "2026-06-06T23:50:44.350787+02:00",
-      "elapsed": 4702753500,
+      "pass": false,
+      "started_at": "2026-06-07T05:43:50.392297+02:00",
+      "elapsed": 4696871791,
       "checks": [
         {
           "id": "black_swan.halt",
           "name": "Desk remains ready for post-crash playbook walk",
-          "pass": true,
+          "pass": false,
           "detail": "desk ready after crash"
         },
         {
           "id": "black_swan.playbook_audit",
           "name": "Playbook walk audit emitted after crash",
-          "pass": true,
-          "detail": "playbook_walk logged",
+          "pass": false,
+          "detail": "no playbook_walk audit after crash",
           "context": {
-            "block_reason": "",
-            "verdict": "limit"
+            "audit_rows": 0
           }
         }
       ]

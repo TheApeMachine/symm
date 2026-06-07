@@ -1,6 +1,7 @@
 package market
 
 import (
+	"container/ring"
 	"fmt"
 	"time"
 
@@ -31,7 +32,19 @@ func (story *Story) recordMeasurement(measurement types.Measurement) {
 }
 
 func (story *Story) rememberMeasurement(measurement types.Measurement) {
-	story.ringWindow.Value = measurement
-	story.ringWindow = story.ringWindow.Next()
-	story.ringPtr++
+	symbol := measurement.Symbol
+
+	if symbol == "" {
+		return
+	}
+
+	window, ok := story.symbolWindows[symbol]
+
+	if !ok {
+		window = ring.New(story.windowCapacity)
+		story.symbolWindows[symbol] = window
+	}
+
+	window.Value = measurement
+	story.symbolWindows[symbol] = window.Next()
 }

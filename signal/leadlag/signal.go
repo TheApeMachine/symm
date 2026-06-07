@@ -187,7 +187,7 @@ func (signal *Signal) publish() error {
 	move := signal.anchorMoveStatus(anchor)
 
 	if !move.ready {
-		return nil
+		return signal.publishAnchorStall(anchorName, anchor, 1.0)
 	}
 
 	if !move.moved {

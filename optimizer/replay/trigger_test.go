@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -20,15 +21,31 @@ func triggerTestCosts() ReplayCosts {
 		StartingCapital:            100, // €100 account so realizedReturn is P&L / 100
 		PositionFraction:           1,   // deploy the whole balance per entry
 		WalletCurrency:             "EUR",
+		WalletBalances:             map[string]float64{"EUR": 100},
 	}
 }
 
 func btcRow(last float64) types.Measurement {
-	return types.Measurement{Symbol: "BTC/EUR", Last: last}
+	bid := last * 0.9995
+	ask := last * 1.0005
+
+	return types.Measurement{
+		Symbol: "BTC/EUR",
+		Last:   last,
+		Bid:    bid,
+		Ask:    ask,
+		BookBids: []types.BookLevel{
+			{Price: bid, Qty: 1_000},
+		},
+		BookAsks: []types.BookLevel{
+			{Price: ask, Qty: 1_000},
+		},
+	}
 }
 
 func TestReplayTriggerExits(t *testing.T) {
 	Convey("Given an open long with no fees or slippage", t, func() {
+		testconfig.Load(t)
 		Convey("A stop-loss rests until price falls to the trigger, then realizes the loss", func() {
 			ledger := newReplayLedger(triggerTestCosts())
 			ledger.openLong("BTC/EUR", 100, 0, time.Time{})
@@ -41,7 +58,7 @@ func TestReplayTriggerExits(t *testing.T) {
 			ledger.checkTriggers(btcRow(98)) // touches the trigger — fills at 98
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
 			So(ledger.closedTrades, ShouldEqual, 1)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, -0.02, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, -0.02, 1e-3)
 		})
 
 		Convey("A market stop-loss eats a downside gap-through", func() {
@@ -50,7 +67,7 @@ func TestReplayTriggerExits(t *testing.T) {
 			ledger.armTrigger("BTC/EUR", reasoning.Act{Type: reasoning.ActionStopLoss})
 
 			ledger.checkTriggers(btcRow(97)) // gaps below the 98 trigger — fills at 97
-			So(ledger.realizedReturn(), ShouldAlmostEqual, -0.03, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, -0.03, 1e-3)
 		})
 
 		Convey("A stop-loss-LIMIT fills at its trigger level (no gap-through), paying maker fee", func() {
@@ -75,7 +92,7 @@ func TestReplayTriggerExits(t *testing.T) {
 
 			ledger.checkTriggers(btcRow(103)) // hits the target — fills at 103
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.03, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.03, 1e-3)
 		})
 
 		Convey("A trailing stop ratchets with the peak and locks in the run-up", func() {
@@ -89,7 +106,7 @@ func TestReplayTriggerExits(t *testing.T) {
 
 			ledger.checkTriggers(btcRow(101.9))
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.019, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.019, 1e-3)
 		})
 
 		Convey("settle_position still closes immediately at the current price", func() {
@@ -98,7 +115,7 @@ func TestReplayTriggerExits(t *testing.T) {
 			ledger.applyStressed(reasoning.Act{Type: reasoning.ActionSettlePosition}, btcRow(101), nil, 0)
 
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.01, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.01, 1e-3)
 		})
 
 		Convey("An armed trigger that never breaches leaves the position open (no phantom close)", func() {

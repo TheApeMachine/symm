@@ -36,13 +36,14 @@ func TuneMeasurements(
 	}
 
 	costs := replay.DefaultReplayCosts()
+
+	if err := attachInstrumentRules(ctx, &costs, options.InstrumentRules); err != nil {
+		return types.SessionSummary{}, err
+	}
+
 	measurementCount := len(rows)
 	rows = fundableRows(rows, costs.WalletCurrency)
-	minRoundTrips := options.MinRoundTrips
-
-	if minRoundTrips <= 0 {
-		minRoundTrips = fundableSymbolCount(rows, costs.WalletCurrency)
-	}
+	minRoundTrips := effectiveMinRoundTrips(options.MinRoundTrips, rows, costs.WalletCurrency)
 
 	if len(rows) != measurementCount {
 		log.TuneLog(
@@ -70,12 +71,15 @@ func TuneMeasurements(
 			}
 
 			options.OnCandidate(types.CandidateScore{
-				Candidate:    0,
-				Score:        candidate.Return,
-				ClosedTrades: candidate.Trades,
-				Depth:        forestDepth(candidate.Forest),
-				Strategies:   strategyCount(candidate.Forest),
-				Thoughts:     candidate.Forest,
+				Candidate:       0,
+				Score:           candidate.Score,
+				ReturnFraction:  candidate.Return,
+				RealizedEUR:     candidate.RealizedEUR,
+				StartingCapital: candidate.StartingCapital,
+				ClosedTrades:    candidate.Trades,
+				Depth:           forestDepth(candidate.Forest),
+				Strategies:      strategyCount(candidate.Forest),
+				Thoughts:        candidate.Forest,
 			})
 		},
 	}
@@ -93,12 +97,15 @@ func TuneMeasurements(
 
 	if options.OnCandidate != nil {
 		options.OnCandidate(types.CandidateScore{
-			Candidate:    result.Evaluated,
-			Score:        best.Return,
-			ClosedTrades: best.Trades,
-			Depth:        depth,
-			Strategies:   strategies,
-			Thoughts:     best.Forest,
+			Candidate:       result.Evaluated,
+			Score:           best.Score,
+			ReturnFraction:  best.Return,
+			RealizedEUR:     best.RealizedEUR,
+			StartingCapital: best.StartingCapital,
+			ClosedTrades:    best.Trades,
+			Depth:           depth,
+			Strategies:      strategies,
+			Thoughts:        best.Forest,
 		})
 	}
 

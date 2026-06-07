@@ -14,9 +14,9 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/execution"
 	"github.com/theapemachine/symm/focus"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
@@ -480,7 +480,7 @@ func (crypto *Crypto) writeDecisionAudit(
 		return nil
 	}
 
-	return crypto.audit.Write(map[string]any{
+	frame := map[string]any{
 		"audit_event":  "trade_decision",
 		"symbol":       action.Symbol,
 		"type":         action.Type.String(),
@@ -492,7 +492,40 @@ func (crypto *Crypto) writeDecisionAudit(
 		"offset":       action.Offset,
 		"fraction":     action.Fraction,
 		"regime":       action.Regime.String(),
-	})
+	}
+
+	if gate := preflightGateFromReason(reason); gate != "" {
+		frame["preflight_gate"] = gate
+	}
+
+	crypto.mergeQuoteAudit(frame, action)
+
+	return crypto.audit.Write(frame)
+}
+
+func (crypto *Crypto) writePositionOutcomeAudit(
+	symbol string,
+	entryPrice float64,
+	exitPrice float64,
+	quantity float64,
+	fee float64,
+	realized float64,
+) error {
+	if crypto.audit == nil {
+		return nil
+	}
+
+	frame := map[string]any{
+		"audit_event":  "position_outcome",
+		"symbol":       symbol,
+		"entry_price":  entryPrice,
+		"exit_price":   exitPrice,
+		"quantity":     quantity,
+		"fee":          fee,
+		"realized_pnl": realized,
+	}
+
+	return crypto.audit.Write(frame)
 }
 
 // cleanReason strips the internal prefixes and trailing "for SYMBOL" suffix from
@@ -580,11 +613,9 @@ func (crypto *Crypto) fundableSymbol(symbol string) bool {
 
 /*
 sizeEntry sizes a buy as one position slot — position_fraction of the capital base.
-position_fraction is the share of capital committed per position, so the desk holds
-at most floor(1/fraction) positions at once: once that many are committed (held plus
-in flight) a new entry is refused, instead of splitting the remaining cash into
-ever-smaller positions. A position cannot be sized against capital we do not yet know,
-so it returns 0 until a capital base exists rather than substituting the live cash.
+Concurrent entries are capped by trading.max_concurrent_positions and by remaining
+cash (see execution.EntrySlotAvailable). A position cannot be sized against capital
+we do not yet know, so it returns 0 until a capital base exists.
 */
 func (crypto *Crypto) sizeEntry(action reasoning.Action) (float64, error) {
 	price := action.Price
@@ -613,20 +644,17 @@ func (crypto *Crypto) sizeEntry(action reasoning.Action) (float64, error) {
 		return 0, fmt.Errorf("trader: deploy fraction %.4f exceeds 1", fraction)
 	}
 
-	// At most floor(1/fraction) positions run at once. A 60% slot must not permit
-	// two simultaneous positions; cash would shrink the second, silently changing the
-	// strategy the optimizer scored. Pending entry orders count too.
-	capacity := int(math.Floor(1/fraction + 1e-9))
+	feeRate := crypto.entryFeeRate(action.Type)
 
-	if capacity < 1 {
-		return 0, fmt.Errorf("trader: deploy fraction %.4f exceeds concurrent capacity", fraction)
-	}
-
-	if crypto.openExposureCount() >= capacity {
+	if !execution.EntrySlotAvailable(
+		crypto.openExposureCount(),
+		fraction,
+		capital,
+		crypto.availableCash(),
+		feeRate,
+	) {
 		return 0, nil
 	}
-
-	feeRate := crypto.entryFeeRate(action.Type)
 
 	// One position deploys the selected fraction of the capital base in total
 	// spend. Convert that total spend to fee-aware notional, then bound it by what
@@ -654,25 +682,11 @@ func (crypto *Crypto) entryFeeRate(actionType reasoning.ActionType) float64 {
 }
 
 func (crypto *Crypto) entryDeployFraction(action reasoning.Action) (float64, error) {
-	fraction := crypto.positionFraction
-
-	if action.Fraction > 0 {
-		fraction *= action.Fraction
-	}
-
-	scale, err := perspectives.RegimeSizeScale(action.Regime)
-
-	if err != nil {
-		return 0, err
-	}
-
-	fraction *= scale
-
-	if fraction < 0 {
-		return 0, nil
-	}
-
-	return fraction, nil
+	return execution.EntryDeployFraction(execution.DeployFractionInput{
+		PositionFraction: crypto.positionFraction,
+		ActFraction:      action.Fraction,
+		Regime:           action.Regime,
+	})
 }
 
 func (crypto *Crypto) openExposureCount() int {
@@ -727,12 +741,23 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		}
 
 		crypto.publishDecision(submitted, "rejected", cleanReason(reason))
+
+		if err := crypto.writeFillAudit(submitted, price, qty, 0, "rejected"); err != nil {
+			errnie.Error(err)
+		}
+
 		crypto.coolSymbol(symbol)
 
 		return
 	}
 
+	fee, _ := envelope["fee"].(float64)
+
 	crypto.publishDecision(submitted, "filled", "")
+
+	if err := crypto.writeFillAudit(submitted, price, qty, fee, "filled"); err != nil {
+		errnie.Error(err)
+	}
 
 	if submitted.Type == reasoning.ActionNone {
 		if side == string(trading.Buy) {
@@ -748,6 +773,12 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		if reasoning.IsEntryAction(submitted.Type) {
 			crypto.recordEntryConviction(symbol, submitted)
 			crypto.openPosition(symbol, qty, price)
+
+			if err := crypto.writePositionOpenAudit(
+				symbol, trading.Buy, price, qty, fee, submitted.Type,
+			); err != nil {
+				errnie.Error(err)
+			}
 		} else {
 			crypto.closeShort(symbol)
 			crypto.tryFinishPreemption(symbol)
@@ -763,8 +794,32 @@ func (crypto *Crypto) observeExecution(envelope map[string]any) {
 		return
 	}
 
+	crypto.recordPositionClose(symbol, qty, price, envelope)
 	crypto.closePosition(symbol)
 	crypto.tryFinishPreemption(symbol)
+}
+
+func (crypto *Crypto) recordPositionClose(
+	symbol string,
+	qty float64,
+	exitPrice float64,
+	envelope map[string]any,
+) {
+	entryPrice := crypto.avgEntry[symbol]
+	held := crypto.inventory[symbol]
+
+	if entryPrice <= 0 || held <= 0 || qty <= 0 || exitPrice <= 0 {
+		return
+	}
+
+	fee, _ := envelope["fee"].(float64)
+	realized := (exitPrice*qty - fee) - entryPrice*qty
+
+	if err := crypto.writePositionOutcomeAudit(
+		symbol, entryPrice, exitPrice, qty, fee, realized,
+	); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (crypto *Crypto) openPosition(symbol string, qty, price float64) {

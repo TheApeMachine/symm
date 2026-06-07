@@ -36,6 +36,7 @@ type Signal struct {
 	broadcasts    map[string]*qpool.BroadcastGroup
 	subscribers   map[string]*qpool.BroadcastConsumer
 	symbols       sync.Map
+	tickerTracks  sync.Map
 	categories    map[string]types.CategoryType
 	surpriseField *types.CategorySurpriseField
 	rawDump       *rawdump.Writer
@@ -137,15 +138,22 @@ func (signal *Signal) Tick() error {
 			continue
 		}
 
-		if sm.Channel != public.TradesChannel {
-			continue
-		}
+		switch sm.Channel {
+		case public.TradesChannel:
+			for _, trade := range signalpool.GetTrades(sm) {
+				err := signal.observe(trade)
 
-		for _, trade := range signalpool.GetTrades(sm) {
-			err := signal.observe(trade)
+				if err != nil && !isWarmup(err) {
+					errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
+				}
+			}
+		case public.TickerChannel:
+			for _, ticker := range signalpool.GetTickers(sm) {
+				err := signal.observeTicker(ticker)
 
-			if err != nil && !isWarmup(err) {
-				errnie.Error(err, "pumpdump: observe %s", trade.Symbol)
+				if err != nil && !isWarmup(err) {
+					errnie.Error(err, "pumpdump: observe ticker %s", ticker.Symbol)
+				}
 			}
 		}
 	}
@@ -165,6 +173,44 @@ func (signal *Signal) observe(trade market.TradeUpdate) error {
 		}
 
 		return errnie.Error(err, "pumpdump: fold %s", trade.Symbol)
+	}
+
+	return signal.publish(trade, reading)
+}
+
+func (signal *Signal) tickerTrackFor(symbol string) *tickerTrack {
+	stored, _ := signal.tickerTracks.LoadOrStore(symbol, &tickerTrack{})
+
+	return stored.(*tickerTrack)
+}
+
+func (signal *Signal) observeTicker(ticker market.TickerUpdate) error {
+	if ticker.Last <= 0 {
+		return nil
+	}
+
+	at, err := tickerTimestamp(ticker)
+
+	if err != nil {
+		return nil
+	}
+
+	state := signal.stateFor(ticker.Symbol)
+	track := signal.tickerTrackFor(ticker.Symbol)
+	reading, err := track.fold(state, ticker, at)
+
+	if err != nil {
+		if isWarmup(err) {
+			return err
+		}
+
+		return errnie.Error(err, "pumpdump: fold ticker %s", ticker.Symbol)
+	}
+
+	trade := market.TradeUpdate{
+		Symbol:    ticker.Symbol,
+		Price:     ticker.Last,
+		Timestamp: at,
 	}
 
 	return signal.publish(trade, reading)

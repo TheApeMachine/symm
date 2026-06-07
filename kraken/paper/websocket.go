@@ -61,6 +61,7 @@ func NewWebSocketWithQuoteCache(
 	executions := response.NewExecutions(raw, balances, ids)
 	orders := response.NewOrdersWithQuoteCache(
 		ctx, pool, balances, ids, quotes, catalog, newRingLatency(latencies),
+		broker.EnsureStressCache(ctx, pool),
 	)
 	orders.Observe(executions)
 

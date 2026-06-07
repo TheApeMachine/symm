@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
@@ -47,21 +48,21 @@ func TestExecutionStressMultiplier(t *testing.T) {
 
 func TestRegimeHostility(t *testing.T) {
 	convey.Convey("Adverse selection is anchored to the structural regime", t, func() {
-		convey.So(regimeHostility(types.RegimeBearish), convey.ShouldBeGreaterThan, 1)
-		convey.So(regimeHostility(types.RegimeChoppy), convey.ShouldBeGreaterThan, 1)
+		convey.So(broker.RegimeHostility(types.RegimeBearish), convey.ShouldBeGreaterThan, 1)
+		convey.So(broker.RegimeHostility(types.RegimeChoppy), convey.ShouldBeGreaterThan, 1)
 
 		convey.Convey("A liquidation/bearish regime is the most hostile", func() {
 			convey.So(
-				regimeHostility(types.RegimeBearish),
+				broker.RegimeHostility(types.RegimeBearish),
 				convey.ShouldBeGreaterThan,
-				regimeHostility(types.RegimeChoppy),
+				broker.RegimeHostility(types.RegimeChoppy),
 			)
 		})
 
 		convey.Convey("Calm and trending regimes are neutral", func() {
-			convey.So(regimeHostility(types.RegimeTrending), convey.ShouldEqual, 1)
-			convey.So(regimeHostility(types.RegimeBullish), convey.ShouldEqual, 1)
-			convey.So(regimeHostility(types.RegimeDead), convey.ShouldEqual, 1)
+			convey.So(broker.RegimeHostility(types.RegimeTrending), convey.ShouldEqual, 1)
+			convey.So(broker.RegimeHostility(types.RegimeBullish), convey.ShouldEqual, 1)
+			convey.So(broker.RegimeHostility(types.RegimeDead), convey.ShouldEqual, 1)
 		})
 	})
 }
@@ -79,6 +80,6 @@ func BenchmarkExecutionStressMultiplier(b *testing.B) {
 
 func BenchmarkRegimeHostility(b *testing.B) {
 	for b.Loop() {
-		_ = regimeHostility(types.RegimeBearish)
+		_ = broker.RegimeHostility(types.RegimeBearish)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/execution"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
@@ -106,19 +108,20 @@ func (ledger *replayLedger) openEntryReserved(
 		return
 	}
 
-	if !ledger.canReserveEntry(fraction, reservationCredit) {
+	quoteCurrencyName := quoteCurrency(symbol)
+
+	if !ledger.canReserveEntry(fraction, reservationCredit, quoteCurrencyName) {
 		ledger.fundBlocked++
 
 		return
 	}
-
-	quote := quoteCurrency(symbol)
-	capital := ledger.costs.WalletBalance(quote)
-	slot := fraction * capital
-
-	if affordable := ledger.walletCash(quote); slot > affordable {
-		slot = affordable
-	}
+	capital := ledger.costs.WalletBalance(quoteCurrencyName)
+	slot := execution.EntrySlotSpend(
+		capital,
+		fraction,
+		feePct,
+		ledger.walletCash(quoteCurrencyName),
+	)
 
 	if slot <= 0 {
 		ledger.fundBlocked++
@@ -126,37 +129,78 @@ func (ledger *replayLedger) openEntryReserved(
 		return
 	}
 
-	entryNotional := slot / (1 + feePct)
-	quantity := entryNotional / measurement.Last
+	brokerQuote := broker.QuoteFromMeasurement(measurement)
+	reference := sizingReferencePrice(side, brokerQuote)
 
-	if quantity <= 0 {
+	if reference <= 0 {
 		return
 	}
 
-	fill, entryFill, filled := ledger.resolveEntryFill(side, measurement, snapshots, quantity)
+	estimateQty := slot / reference
 
-	if !filled {
+	if estimateQty <= 0 {
 		return
 	}
 
-	if measurement.HasBookDepth() && fill.depthCoverage < minDepthCoverage() {
-		ledger.depthBlocked++
-		ledger.realized -= depthShortfallPenalty(
-			slot, fill.depthCoverage, ledger.costs, measurement, snapshots,
+	if err := broker.PreflightGatesAt(broker.PreflightRequest{
+		Quote:      brokerQuote,
+		Side:       side,
+		Quantity:   estimateQty,
+		OrderType:  trading.Market,
+		ActionType: act.Type,
+	}, at); err != nil {
+		ledger.preflightBlocked++
+
+		return
+	}
+
+	fill, entryFill, filled := ledger.resolveEntryFill(side, measurement, snapshots, estimateQty)
+
+	if !filled || entryFill <= 0 {
+		return
+	}
+
+	quantity := slot / (entryFill * (1 + feePct))
+
+	if fill.depthCoverage > 0 && fill.depthCoverage < 1 {
+		quantity *= fill.depthCoverage
+	}
+
+	slot = quantity * entryFill * (1 + feePct)
+
+	if ledger.instrumentRules != nil {
+		preparedQty, preparedPrice, prepErr := ledger.instrumentRules.PrepareEntryOrder(
+			symbol,
+			quantity,
+			entryFill,
+			trading.Market,
 		)
 
+		if prepErr != nil {
+			ledger.preflightBlocked++
+
+			return
+		}
+
+		quantity = preparedQty
+		entryFill = preparedPrice
+
+		slot = quantity * entryFill * (1 + feePct)
+
+		if slot > ledger.walletCash(quoteCurrencyName)+1e-9 {
+			ledger.fundBlocked++
+
+			return
+		}
+	}
+
+	if quantity <= 0 || slot <= 0 {
 		return
 	}
 
 	ledger.observeSymbolPrice(symbol, entryFill)
 
-	quantity = entryNotional / entryFill
-
-	if quantity <= 0 {
-		return
-	}
-
-	if !ledger.debitWallet(quote, slot) {
+	if !ledger.debitWallet(quoteCurrencyName, slot) {
 		ledger.fundBlocked++
 
 		return
@@ -181,6 +225,18 @@ func (ledger *replayLedger) openEntryReserved(
 	delete(ledger.ticksSinceClose, symbol)
 }
 
+func sizingReferencePrice(side trading.Side, quote broker.Quote) float64 {
+	if side == trading.Buy && quote.Ask > 0 {
+		return quote.Ask
+	}
+
+	if side == trading.Sell && quote.Bid > 0 {
+		return quote.Bid
+	}
+
+	return quote.Last
+}
+
 func (ledger *replayLedger) resolveEntryFill(
 	side trading.Side,
 	measurement types.Measurement,
@@ -202,30 +258,27 @@ func (ledger *replayLedger) resolveEntryFill(
 	return executionFill{slippagePct: slippagePct}, fillPriceFromPct(side, measurement.Last, slippagePct), true
 }
 
-func entryCapacity(fraction float64) int {
-	if fraction <= 0 {
-		return 0
-	}
-
-	capacity := int(math.Floor(1/fraction + 1e-9))
-
-	return capacity
-}
-
-func (ledger *replayLedger) canReserveEntry(fraction float64, reservationCredit int) bool {
-	capacity := entryCapacity(fraction)
-
-	if capacity <= 0 {
-		return false
-	}
-
+func (ledger *replayLedger) canReserveEntry(
+	fraction float64,
+	reservationCredit int,
+	quoteCurrencyName string,
+) bool {
 	reserved := ledger.reservedEntryCount() - reservationCredit
 
 	if reserved < 0 {
 		reserved = 0
 	}
 
-	return reserved < capacity
+	capital := ledger.costs.WalletBalance(quoteCurrencyName)
+	feePct := ledger.costs.TakerFeePct
+
+	return execution.EntrySlotAvailable(
+		reserved,
+		fraction,
+		capital,
+		ledger.walletCash(quoteCurrencyName),
+		feePct,
+	)
 }
 
 func (ledger *replayLedger) reservedEntryCount() int {
@@ -294,7 +347,13 @@ func (ledger *replayLedger) closePosition(
 		return
 	}
 
-	exitFill := ledger.resolveExitFill(position.side, measurement, snapshots, position.quantity)
+	exitRow := ledger.measurementForSymbol(symbol, measurement)
+	exitFill := ledger.resolveExitFill(
+		position.side,
+		exitRow,
+		snapshotsForSymbol(symbol, snapshots),
+		position.quantity,
+	)
 	ledger.settle(symbol, exitFill, feePct)
 }
 
@@ -326,7 +385,7 @@ func (ledger *replayLedger) holding(symbol string) bool {
 /*
 realizedReturn is the account's realized P&L as a fraction of total starting capital.
 */
-func (ledger *replayLedger) realizedReturn() float64 {
+func (ledger *replayLedger) startingCapital() float64 {
 	totalCapital := 0.0
 
 	for _, balance := range ledger.costs.WalletBalances {
@@ -335,6 +394,16 @@ func (ledger *replayLedger) realizedReturn() float64 {
 
 	if totalCapital <= 0 {
 		totalCapital = effectiveCapital(ledger.costs)
+	}
+
+	return totalCapital
+}
+
+func (ledger *replayLedger) realizedReturn() float64 {
+	totalCapital := ledger.startingCapital()
+
+	if totalCapital <= 0 {
+		return 0
 	}
 
 	return ledger.realized / totalCapital
@@ -358,11 +427,25 @@ func (ledger *replayLedger) openLong(
 	feePct float64,
 	at time.Time,
 ) {
+	if price <= 0 {
+		return
+	}
+
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
 	ledger.openEntry(
 		symbol,
 		trading.Buy,
-		reasoning.Act{},
-		types.Measurement{Symbol: symbol, Last: price},
+		reasoning.Act{Type: reasoning.ActionMarket},
+		QuotedMeasurement(types.Measurement{
+			Symbol: symbol,
+			Last:   price,
+			Bid:    price,
+			Ask:    price,
+			At:     at,
+		}),
 		nil,
 		feePct,
 		at,
@@ -376,11 +459,21 @@ func (ledger *replayLedger) openShort(
 	feePct float64,
 	at time.Time,
 ) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
 	ledger.openEntry(
 		symbol,
 		trading.Sell,
-		reasoning.Act{},
-		types.Measurement{Symbol: symbol, Last: price},
+		reasoning.Act{Type: reasoning.ActionMarket},
+		QuotedMeasurement(types.Measurement{
+			Symbol: symbol,
+			Last:   price,
+			Bid:    price,
+			Ask:    price,
+			At:     at,
+		}),
 		nil,
 		feePct,
 		at,

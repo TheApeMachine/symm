@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
 
@@ -50,6 +51,7 @@ type ReplayCosts struct {
 	WalletBalances             map[string]float64 // quote currency -> starting cash for multi-wallet replay
 	ExecutionLatency           time.Duration
 	ExecutionStressEnabled     bool
+	InstrumentRules            *broker.InstrumentRulesCache
 }
 
 /*

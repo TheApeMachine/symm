@@ -9,14 +9,7 @@ import (
 )
 
 func auditVerdictMatches(row AuditRow, want reasoning.ActionType) bool {
-	switch typed := row.Verdict.(type) {
-	case string:
-		return typed == want.String()
-	case float64:
-		return reasoning.ActionType(typed) == want
-	default:
-		return false
-	}
+	return row.Verdict == want.String()
 }
 
 func checkMeasurementSource(

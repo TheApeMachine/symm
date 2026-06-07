@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
@@ -69,15 +70,16 @@ func TestExecutionReady(t *testing.T) {
 
 func TestFlushPending(t *testing.T) {
 	Convey("Given a queued market entry under execution latency", t, func() {
+		testconfig.Load(t)
 		ledger := newReplayLedger(triggerTestCosts())
 		ledger.configureExecutionStress(100*time.Millisecond, 50*time.Millisecond)
 
 		base := time.Unix(1_700_000_000, 0)
-		signalRow := types.Measurement{
+		signalRow := QuotedMeasurement(types.Measurement{
 			Symbol: "BTC/EUR",
 			Last:   100,
 			At:     base,
-		}
+		})
 
 		ledger.queueAction(
 			reasoning.Act{Type: reasoning.ActionMarket},

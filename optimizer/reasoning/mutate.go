@@ -538,7 +538,8 @@ func addStrategyRoot(forest []reasoning.Thought, vocab Vocabulary) [][]reasoning
 		neighbors = append(neighbors, clone)
 
 		added++
-		if added >= 2 {
+
+		if added >= len(vocab.Categories) {
 			break
 		}
 	}

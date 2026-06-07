@@ -6,13 +6,19 @@ branches:
               lifecycle: not_holding
               op: equals
             - subject: signal
+              category: laminar
+              unit: snr
+              op: at_least
+              value: 1
+            - subject: regime
+              regime: bullish
+              op: equals
+            - subject: signal
               category: extreme_scarcity
               unit: snr
               op: at_least
               value: 1
-      do:
-        type: market
-        fraction: 0.25
+      do: market
     - when:
         subject: position
         lifecycle: holding

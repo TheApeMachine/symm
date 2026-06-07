@@ -72,10 +72,10 @@ func profitableRowsFor(symbol string, legs int) []ptypes.Measurement {
 
 	for range legs {
 		rows = append(rows,
-			ptypes.Measurement{Symbol: symbol, Category: ptypes.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at},
-			ptypes.Measurement{Symbol: symbol, Last: start * 1.05, At: at.Add(step)},
-			ptypes.Measurement{Symbol: symbol, Last: start * 1.10, At: at.Add(2 * step)},
-			ptypes.Measurement{Symbol: symbol, Last: start * 1.07, At: at.Add(3 * step)},
+			quotedRow(ptypes.Measurement{Symbol: symbol, Category: ptypes.CategoryVerticalIgnition, SNR: 1.5, Last: start, At: at}),
+			quotedRow(ptypes.Measurement{Symbol: symbol, Last: start * 1.05, At: at.Add(step)}),
+			quotedRow(ptypes.Measurement{Symbol: symbol, Last: start * 1.10, At: at.Add(2 * step)}),
+			quotedRow(ptypes.Measurement{Symbol: symbol, Last: start * 1.07, At: at.Add(3 * step)}),
 		)
 		start *= 1.07
 		at = at.Add(5 * step)
@@ -89,14 +89,33 @@ func flatRows(symbols ...string) []ptypes.Measurement {
 	rows := make([]ptypes.Measurement, 0, len(symbols))
 
 	for symbolIndex, symbol := range symbols {
-		rows = append(rows, ptypes.Measurement{
+		rows = append(rows, quotedRow(ptypes.Measurement{
 			Symbol: symbol,
 			Last:   100 + float64(symbolIndex),
 			At:     base.Add(time.Duration(symbolIndex) * time.Second),
-		})
+		}))
 	}
 
 	return rows
+}
+
+func quotedRow(measurement ptypes.Measurement) ptypes.Measurement {
+	if measurement.Last > 0 && measurement.Bid <= 0 && measurement.Ask <= 0 {
+		halfSpread := measurement.Last * 0.00005
+		measurement.Bid = measurement.Last - halfSpread
+		measurement.Ask = measurement.Last + halfSpread
+	}
+
+	if measurement.HasBookDepth() {
+		return measurement
+	}
+
+	if measurement.Ask > 0 && measurement.Bid > 0 {
+		measurement.BookAsks = []ptypes.BookLevel{{Price: measurement.Ask, Qty: 1_000}}
+		measurement.BookBids = []ptypes.BookLevel{{Price: measurement.Bid, Qty: 1_000}}
+	}
+
+	return measurement
 }
 
 func loadTuneTestConfig(t *testing.T) {
@@ -105,6 +124,7 @@ func loadTuneTestConfig(t *testing.T) {
 	viper.Reset()
 	testconfig.Load(t)
 	viper.Set("trading.replay.execution_stress_enabled", false)
+	viper.Set("optimizer.tune.load_instrument_rules", false)
 }
 
 func TestTuneMeasurements(t *testing.T) {
@@ -277,6 +297,7 @@ func BenchmarkTuneMeasurements(b *testing.B) {
 	viper.Reset()
 	testconfig.MustLoad()
 	viper.Set("trading.replay.execution_stress_enabled", false)
+	viper.Set("optimizer.tune.load_instrument_rules", false)
 
 	rows := profitableRows()
 

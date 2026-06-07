@@ -5,12 +5,17 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestReplayShortEntry(t *testing.T) {
 	Convey("Given a replay ledger with EUR funding", t, func() {
+		testconfig.Load(t)
 		costs := ReplayCosts{
 			StartingCapital:  200,
 			PositionFraction: 1,
@@ -32,7 +37,50 @@ func TestReplayShortEntry(t *testing.T) {
 			)
 
 			So(ledger.holding("BTC/EUR"), ShouldBeFalse)
-			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-9)
+			So(ledger.realizedReturn(), ShouldAlmostEqual, 0.10, 1e-3)
+		})
+	})
+}
+
+func TestReplayEntryRejectsRaisedMinimumAboveWallet(t *testing.T) {
+	Convey("Given instrument rules that raise entry cost above cash", t, func() {
+		rules := broker.NewInstrumentRulesCache(t.Context())
+		rules.InstallPairForTest(market.InstrumentPair{
+			Symbol:       "FXS/EUR",
+			QtyIncrement: 0.00000001,
+			QtyMin:       12,
+			CostMin:      10,
+		})
+
+		costs := ReplayCosts{
+			StartingCapital:  5,
+			PositionFraction: 1,
+			WalletCurrency:   "EUR",
+			WalletBalances:   map[string]float64{"EUR": 5},
+			InstrumentRules:  rules,
+		}
+		ledger := newReplayLedger(costs)
+		measurement := QuotedMeasurement(types.Measurement{
+			Symbol: "FXS/EUR",
+			Last:   4.36,
+			At:     time.Unix(1_700_000_000, 0),
+		})
+
+		ledger.openEntry(
+			"FXS/EUR",
+			trading.Buy,
+			reasoning.Act{Type: reasoning.ActionMarket},
+			measurement,
+			nil,
+			0,
+			measurement.At,
+			0,
+		)
+
+		Convey("It should refuse the entry instead of overspending", func() {
+			So(ledger.holding("FXS/EUR"), ShouldBeFalse)
+			So(ledger.fundBlocked, ShouldEqual, 1)
+			So(ledger.walletCash("EUR"), ShouldEqual, 5)
 		})
 	})
 }

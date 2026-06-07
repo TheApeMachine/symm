@@ -26,6 +26,14 @@ PreflightGates rejects orders when quote quality or projected slippage is unacce
 Exit actions bypass volatility and stress gates so liquidations are never blocked.
 */
 func PreflightGates(request PreflightRequest) error {
+	return PreflightGatesAt(request, time.Now())
+}
+
+/*
+PreflightGatesAt is PreflightGates evaluated at an explicit clock. Optimizer replay
+passes the tape row timestamp so stale-quote checks use replay time, not wall time.
+*/
+func PreflightGatesAt(request PreflightRequest, now time.Time) error {
 	if request.Quantity <= 0 {
 		return fmt.Errorf("preflight: quantity must be positive")
 	}
@@ -35,7 +43,7 @@ func PreflightGates(request PreflightRequest) error {
 			return fmt.Errorf("preflight: incomplete quote for exit %s", request.Quote.Symbol)
 		}
 
-		if err := preflightQuoteQuality(request.Quote); err != nil {
+		if err := preflightQuoteQualityAt(request.Quote, now); err != nil {
 			return fmt.Errorf("preflight: stale last price for exit: %w", err)
 		}
 
@@ -46,7 +54,7 @@ func PreflightGates(request PreflightRequest) error {
 		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
 	}
 
-	if err := preflightQuoteQuality(request.Quote); err != nil {
+	if err := preflightQuoteQualityAt(request.Quote, now); err != nil {
 		return err
 	}
 
@@ -65,7 +73,7 @@ func usableExitReference(quote Quote) bool {
 	return quote.Bid > 0 && quote.Ask > 0
 }
 
-func preflightQuoteQuality(quote Quote) error {
+func preflightQuoteQualityAt(quote Quote, now time.Time) error {
 	maxAge, err := market.RequiredDuration("trading.max_quote_age")
 
 	if err != nil {
@@ -76,7 +84,7 @@ func preflightQuoteQuality(quote Quote) error {
 		return fmt.Errorf("preflight: missing quote timestamp for %s", quote.Symbol)
 	}
 
-	if time.Since(quote.UpdatedAt) > maxAge {
+	if now.Sub(quote.UpdatedAt) > maxAge {
 		return fmt.Errorf("preflight: stale quote for %s", quote.Symbol)
 	}
 

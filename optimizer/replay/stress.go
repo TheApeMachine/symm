@@ -1,89 +1,18 @@
 package replay
 
 import (
-	"fmt"
 	"math"
-	"os"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/market/perspectives"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
-/*
-executionStressMultiplier scales replay slippage when the tick snapshot shows
-high-vorticity flow or liquidity/contagion stress categories, and ANCHORS that
-hostility to the structural price-action regime: a bearish/panic regime hunts stops
-and fills worse than a calm one. Modelling a flat hostility across every market
-state lets the optimizer overrate fragile strategies in turbulence; tying it to the
-regime forces the search to evolve tighter protective stops to survive a panic.
-*/
 func executionStressMultiplier(
 	snapshots []types.Measurement,
 ) float64 {
-	if len(snapshots) == 0 {
-		return 1
-	}
-
-	stressSNR := 0.0
-	stressReadings := 0
-
-	for _, measurement := range snapshots {
-		if !executionStressCategory(measurement.Category) {
-			continue
-		}
-
-		stressReadings++
-
-		if measurement.SNR > stressSNR {
-			stressSNR = measurement.SNR
-		}
-	}
-
-	categoryFactor := 1.0
-
-	if stressReadings > 0 && stressSNR > 0 {
-		coverage := float64(stressReadings) / float64(len(snapshots))
-		strength := stressSNR / (stressSNR + 1)
-		categoryFactor = 1 + coverage*strength
-	}
-
-	return categoryFactor * regimeHostility(perspectives.ClassifyRegime(snapshots).Regime)
-}
-
-// regimeHostility is the structural-regime adverse-selection multiplier: a
-// liquidation/bearish regime is the most hostile to fills, choppy whipsaw next, and
-// trending/calm regimes neutral.
-func regimeHostility(regime types.Regime) float64 {
-	switch regime {
-	case types.RegimeBearish:
-		return 1.5
-	case types.RegimeChoppy:
-		return 1.25
-	default:
-		return 1
-	}
-}
-
-func executionStressCategory(category types.CategoryType) bool {
-	switch category {
-	case types.CategoryTurbulent,
-		types.CategoryFrenzy,
-		types.CategoryLiquidityVacuum,
-		types.CategoryLiquidityShock,
-		types.CategoryToxicBluff,
-		types.CategorySpoofTrap,
-		types.CategoryBookThinning,
-		types.CategorySystemicHerd,
-		types.CategoryMechanicalCollapse,
-		types.CategoryDivergentStress,
-		types.CategorySystemicSlump:
-		return true
-	default:
-		return false
-	}
+	return broker.ExecutionStressMultiplier(snapshots)
 }
 
 func executionSlippagePct(
@@ -216,26 +145,7 @@ func (costs ReplayCosts) effectiveExecutionLatency() time.Duration {
 		return 0
 	}
 
-	// Load the latency ring from the file.
-	latencyFile, err := os.Open("runs/network_latency.json")
-	if err != nil {
-		errnie.Error(err)
-		return 0
-	}
-	defer latencyFile.Close()
-
-	var latency time.Duration
-
-	for {
-		var value time.Duration
-		_, err = fmt.Fscanf(latencyFile, "%d\n", &value)
-		latency += value
-		if err != nil {
-			break
-		}
-	}
-
-	return latency
+	return broker.EffectiveNetworkLatency()
 }
 
 func replayExecutionLatencyFromViper() time.Duration {

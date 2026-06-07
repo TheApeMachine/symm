@@ -160,25 +160,32 @@ func TestSizeEntry(t *testing.T) {
 }
 
 func TestSizeEntryConcurrentCap(t *testing.T) {
-	Convey("position_fraction caps concurrent positions at round(1/fraction)", t, func() {
+	Convey("concurrent entries respect max_concurrent_positions and affordable cash", t, func() {
 		testconfig.Load(t)
+		viper.Set("trading.max_concurrent_positions", 16)
+		defer viper.Set("trading.max_concurrent_positions", nil)
 
 		crypto := newTestCrypto()
 		crypto.capitalBase = 200
 		crypto.availableQuote = 200
 		entry := reasoning.Action{Price: 100}
 
-		Convey("At fraction 1.0 a second entry is refused while one position is held", func() {
-			crypto.positionFraction = 1.0
-			crypto.inventory["BTC/EUR"] = 2 // the single allowed slot is taken
+		Convey("At fraction 0.2 a sixth entry is refused when five slots are committed", func() {
+			crypto.positionFraction = 0.2
+			for index := 0; index < 5; index++ {
+				crypto.inventory[fmt.Sprintf("C%d/EUR", index)] = 1
+			}
 
 			qty, err := crypto.sizeEntry(entry)
 			So(err, ShouldBeNil)
 			So(qty, ShouldEqual, 0)
 		})
 
-		Convey("An in-flight entry counts toward capacity (no over-commit before the fill)", func() {
-			crypto.positionFraction = 1.0
+		Convey("An in-flight entry counts toward capacity", func() {
+			crypto.positionFraction = 0.2
+			for index := 0; index < 4; index++ {
+				crypto.inventory[fmt.Sprintf("C%d/EUR", index)] = 1
+			}
 			crypto.pending["BTC/EUR"] = reasoning.Action{Type: reasoning.ActionMarket}
 
 			qty, err := crypto.sizeEntry(entry)
@@ -186,15 +193,13 @@ func TestSizeEntryConcurrentCap(t *testing.T) {
 			So(qty, ShouldEqual, 0)
 		})
 
-		Convey("At fraction 0.1 the eleventh position is refused (ten already committed)", func() {
-			crypto.positionFraction = 0.1
-			for i := 0; i < 10; i++ {
-				crypto.inventory[fmt.Sprintf("C%d/EUR", i)] = 1
-			}
+		Convey("At fraction 0.2 a second entry is allowed while one position is held", func() {
+			crypto.positionFraction = 0.2
+			crypto.inventory["BTC/EUR"] = 2
 
 			qty, err := crypto.sizeEntry(entry)
 			So(err, ShouldBeNil)
-			So(qty, ShouldEqual, 0)
+			So(qty, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -381,6 +386,31 @@ func TestAdoptPositionMarksAtBid(t *testing.T) {
 			crypto.publishMarks()
 
 			So(crypto.avgEntry["XLM/EUR"], ShouldEqual, 0.17)
+		})
+	})
+}
+
+func TestRecordPositionCloseAudit(t *testing.T) {
+	Convey("Given a trader with audit enabled", t, func() {
+		path := filepath.Join(t.TempDir(), "audit.jsonl")
+		viper.Set("trading.audit.file", path)
+		defer viper.Set("trading.audit.file", "")
+
+		writer, err := audit.OpenWriter()
+		So(err, ShouldBeNil)
+
+		crypto := newTestCrypto()
+		crypto.audit = writer
+		crypto.openPosition("BTC/EUR", 1, 100)
+		crypto.recordPositionClose("BTC/EUR", 1, 110, map[string]any{"fee": 0.44})
+		So(writer.Close(), ShouldBeNil)
+
+		Convey("It should write a realized position outcome row", func() {
+			raw, readErr := os.ReadFile(path)
+
+			So(readErr, ShouldBeNil)
+			So(string(raw), ShouldContainSubstring, `"audit_event":"position_outcome"`)
+			So(string(raw), ShouldContainSubstring, `"realized_pnl":`)
 		})
 	})
 }

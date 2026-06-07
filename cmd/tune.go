@@ -69,12 +69,14 @@ var tuneCmd = &cobra.Command{
 
 			fmt.Fprintf(
 				os.Stderr,
-				"symm tune: candidate depth=%d strategies=%d trades=%d profit_loss=%.6f return_per_trade=%.4f%%\n",
+				"symm tune: candidate depth=%d strategies=%d trades=%d realized_eur=%.4f return_pct=%.4f avg_trade_eur=%.4f score=%.6f\n",
 				candidate.ReasoningDepth(),
 				candidate.RegistryWidth(),
 				candidate.ClosedTrades,
 				candidate.ProfitLoss(),
 				candidate.ReturnPct(),
+				candidate.AvgTradeEUR(),
+				candidate.Score,
 			)
 		}
 

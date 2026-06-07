@@ -260,10 +260,7 @@ func TestDeskAddOrderPreparesEntryMinimum(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 4, qpool.NewConfig())
 		defer pool.Close()
 
-		private, err := qpool.NewBroadcastGroup(ctx, "kraken:private", 10*time.Millisecond)
-		if err != nil {
-			t.Fatal("expected private broadcast group")
-		}
+		private := pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond)
 		privateSub := private.Subscribe("test:desk-entry-minimum", 4)
 		quotes := NewQuoteCache(ctx, nil)
 		quotes.InstallQuoteForTest(Quote{

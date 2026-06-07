@@ -191,7 +191,7 @@ func derivePositionFractions(rows []types.Measurement) []float64 {
 		}
 	}
 
-	fractions := []float64{0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+	fractions := []float64{0.25, 0.5, 0.75, 1.0}
 
 	if peakSNR > 0 {
 		step := peakSNR / 4
@@ -200,18 +200,18 @@ func derivePositionFractions(rows []types.Measurement) []float64 {
 			step = 0.25
 		}
 
-		if step > 2.0 {
-			step = 2.0
+		if step > 1.0 {
+			step = 1.0
 		}
 
-		fractions = append(fractions, step, step*2, step*3, step*4)
+		fractions = append(fractions, step)
 	}
 
 	sort.Float64s(fractions)
 	unique := fractions[:0]
 
 	for _, fraction := range fractions {
-		if fraction <= 0 {
+		if fraction <= 0 || fraction > 1 {
 			continue
 		}
 

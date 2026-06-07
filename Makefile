@@ -18,7 +18,7 @@ RACE_PACKAGES := $(shell go list ./... | grep -v '/engine$$')
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune dump profile profile-stack profile-report profile-tune strip-trailing-newlines
 
 build:
 	@mkdir -p $(LOG_DIR)
@@ -89,6 +89,10 @@ audit: build
 	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	./$(SYMM_BIN) --config $(CONFIG)
+
+audit-report:
+	@test -f $(LOG_DIR)/audit.jsonl || (echo "No audit log yet — run 'make audit' or 'make run' first." && exit 1)
+	go run ./scripts/auditreport $(LOG_DIR)/audit.jsonl
 
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"

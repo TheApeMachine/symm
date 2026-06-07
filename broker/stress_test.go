@@ -133,13 +133,10 @@ func TestStressCacheBroadcast(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		defer pool.Close()
 
-		cache := NewStressCache(ctx, nil)
+		measurements := pool.CreateBroadcastGroup("measurements", 0)
+		cache := NewStressCache(ctx, pool)
 		cache.Start(pool)
 
-		group, err := qpool.NewBroadcastGroup(ctx, "measurements", 0)
-		if err != nil {
-			t.Fatal("expected measurements broadcast group")
-		}
 		measurement := types.Measurement{
 			Symbol:   "BTC/EUR",
 			Source:   types.SourceToxicity,
@@ -151,7 +148,7 @@ func TestStressCacheBroadcast(t *testing.T) {
 		var stress SymbolStress
 
 		for time.Now().Before(deadline) {
-			group.Send(&qpool.QValue[any]{Value: measurement})
+			measurements.Send(&qpool.QValue[any]{Value: measurement})
 			stress = cache.Snapshot("BTC/EUR")
 
 			if stress.ToxicityCategory == types.CategoryToxicBluff {

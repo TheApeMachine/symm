@@ -12,6 +12,41 @@ import (
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
+func TestPreflightGatesAtReplayTime(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given a historical quote timestamp", t, func() {
+		tapeAt := time.Unix(1_700_000_000, 0).UTC()
+		quote := Quote{
+			Symbol:    "BTC/EUR",
+			Bid:       99.95,
+			Ask:       100.05,
+			Last:      100,
+			UpdatedAt: tapeAt,
+			Book: market.Book{
+				Asks: []market.BookLevel{{Price: 100.05, Qty: 1}},
+				Bids: []market.BookLevel{{Price: 99.95, Qty: 1}},
+			},
+		}
+
+		request := PreflightRequest{
+			Quote:      quote,
+			Side:       trading.Buy,
+			Quantity:   0.01,
+			OrderType:  trading.Market,
+			ActionType: reasoning.ActionMarket,
+		}
+
+		Convey("Wall-clock PreflightGates rejects it as stale", func() {
+			So(PreflightGates(request), ShouldNotBeNil)
+		})
+
+		Convey("PreflightGatesAt at tape time accepts it", func() {
+			So(PreflightGatesAt(request, tapeAt), ShouldBeNil)
+		})
+	})
+}
+
 func TestPreflightGates(t *testing.T) {
 	testconfig.Load(t)
 

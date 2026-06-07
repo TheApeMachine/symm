@@ -1,6 +1,10 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/theapemachine/symm/broker"
+)
 
 /*
 TuneOptions controls a measurement-backed optimizer run. Zero search fields fall
@@ -15,6 +19,7 @@ type TuneOptions struct {
 	MaxRounds           int
 	MaxNodes            int
 	MinRoundTrips       int
+	InstrumentRules     *broker.InstrumentRulesCache
 	OnBest              func(BestTree)
 	OnCandidate         func(CandidateScore)
 }

@@ -27,9 +27,10 @@ func TestTakerFillPriceWalksBook(t *testing.T) {
 		})
 
 		Convey("It prices through broker.SlippageFill", func() {
-			price, err := orders.takerFillPrice("BTC/EUR", trading.Buy, 2, 0, reasoning.ActionNone)
+			fill, err := orders.takerFillQuote("BTC/EUR", trading.Buy, 2, 0, reasoning.ActionNone)
 			So(err, ShouldBeNil)
-			So(price, ShouldEqual, 101)
+			So(fill.price, ShouldEqual, 101)
+			So(fill.filledQty, ShouldEqual, 2)
 		})
 	})
 }
@@ -52,6 +53,6 @@ func BenchmarkTakerFillPrice(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = orders.takerFillPrice("BTC/EUR", trading.Buy, 1.5, 0, reasoning.ActionNone)
+		_, _ = orders.takerFillQuote("BTC/EUR", trading.Buy, 1.5, 0, reasoning.ActionNone)
 	}
 }

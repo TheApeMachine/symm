@@ -16,25 +16,36 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 		thoughts, err := ParseThoughts(raw)
 		So(err, ShouldBeNil)
 
-		Convey("It parses the tuned entry and protective manager", func() {
-			So(len(thoughts), ShouldEqual, 2)
+		Convey("It parses the pump-dip entry, exhaustion exit, and protective managers", func() {
+			So(len(thoughts), ShouldEqual, 4)
 		})
 
-		Convey("The entry watches extreme scarcity SNR while flat", func() {
+		Convey("The entry watches pump-dip price action while flat", func() {
 			entry := thoughts[0]
 			So(entry.Do.Type, ShouldEqual, ActionMarket)
 			So(entry.Do.Fraction, ShouldEqual, 0.25)
 			So(entry.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
-			So(entry.When.All[1].Category, ShouldEqual, types.CategoryExtremeScarcity)
-			So(entry.When.All[1].Unit, ShouldEqual, UnitSNR)
-			So(entry.When.All[1].Value, ShouldEqual, 1.0)
+			So(entry.When.All[1].Any, ShouldNotBeEmpty)
+			So(entry.When.All[2].Subject, ShouldEqual, SubjectPrice)
+			So(entry.When.All[2].Op, ShouldEqual, ComparisonFellBy)
 		})
 
-		Convey("The protective manager trails held positions", func() {
-			manager := thoughts[1]
-			So(manager.When.Lifecycle, ShouldEqual, types.ObservationHolding)
-			So(manager.Do.Type, ShouldEqual, ActionTrailingStop)
-			So(manager.Do.Offset, ShouldEqual, 0.01)
+		Convey("The exit branch settles on reversal or exhaustion while holding", func() {
+			exit := thoughts[1]
+			So(exit.Do.Type, ShouldEqual, ActionSettlePosition)
+			So(exit.When.All[1].Any, ShouldHaveLength, 2)
+		})
+
+		Convey("The protective managers arm stop-loss on has_started then trail while holding", func() {
+			stop := thoughts[2]
+			So(stop.Do.Type, ShouldEqual, ActionStopLoss)
+			So(stop.Do.Offset, ShouldEqual, 0.012)
+			So(stop.When.All[1].Lifecycle, ShouldEqual, types.ObservationHasStarted)
+
+			trail := thoughts[3]
+			So(trail.When.Lifecycle, ShouldEqual, types.ObservationHolding)
+			So(trail.Do.Type, ShouldEqual, ActionTrailingStop)
+			So(trail.Do.Offset, ShouldEqual, 0.01)
 		})
 	})
 }

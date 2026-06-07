@@ -22,6 +22,7 @@ type Orders struct {
 	ctx           context.Context
 	pool          *qpool.Q[any]
 	quotes        *broker.QuoteCache
+	stress        *broker.StressCache
 	balances      *Balances
 	catalog       *PairCatalog
 	latency       LatencySampler
@@ -64,15 +65,23 @@ func NewOrdersWithQuoteCache(
 	quotes *broker.QuoteCache,
 	catalog *PairCatalog,
 	latency LatencySampler,
+	stress ...*broker.StressCache,
 ) *Orders {
 	if latency == nil {
 		latency = ZeroLatency()
+	}
+
+	var stressCache *broker.StressCache
+
+	if len(stress) > 0 {
+		stressCache = stress[0]
 	}
 
 	orders := &Orders{
 		ctx:      ctx,
 		pool:     pool,
 		quotes:   quotes,
+		stress:   stressCache,
 		balances: balances,
 		catalog:  catalog,
 		latency:  latency,
@@ -358,13 +367,24 @@ func (orders *Orders) closeAtTrigger(
 		return
 	}
 
-	price, err := orders.takerFillPrice(
+	fill, err := orders.takerFillQuote(
 		symbol, trigger.params.Side, trigger.qty, level, trigger.action,
 	)
 
 	if err != nil {
 		orders.notifyFill(FillNotice{
 			Params: trigger.params, OrderID: trigger.orderID, Reason: err.Error(),
+		})
+
+		return
+	}
+
+	price := fill.price
+	qty := fill.filledQty
+
+	if qty <= 0 {
+		orders.notifyFill(FillNotice{
+			Params: trigger.params, OrderID: trigger.orderID, Reason: "paper fill: no liquidity",
 		})
 
 		return
@@ -378,7 +398,8 @@ func (orders *Orders) closeAtTrigger(
 		}
 	}
 
-	fee := orders.feeAmount(symbol, trigger.qty, price, false)
+	trigger.params.OrderQty = qty
+	fee := orders.feeAmount(symbol, qty, price, false)
 
 	orders.notifyFill(FillNotice{
 		Params:       trigger.params,
@@ -387,6 +408,7 @@ func (orders *Orders) closeAtTrigger(
 		Fee:          fee,
 		LiquidityInd: "t",
 		Maker:        false,
+		Partial:      fill.depthCoverage > 0 && fill.depthCoverage < 1,
 	})
 }
 

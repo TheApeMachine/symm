@@ -42,32 +42,55 @@ func (orders *Orders) tickSize(symbol string) float64 {
 takerFillPrice walks the cached L2 book for market-style exits and entries.
 Protective take-profit market orders do not assume upside gap-through.
 */
-func (orders *Orders) takerFillPrice(
+type takerFillQuote struct {
+	price         float64
+	filledQty     float64
+	depthCoverage float64
+}
+
+func (orders *Orders) takerFillQuote(
 	symbol string,
 	side trading.Side,
 	qty float64,
 	capPrice float64,
 	action reasoning.ActionType,
-) (price float64, err error) {
+) (takerFillQuote, error) {
 	quote, ok := orders.quotes.Snapshot(symbol)
 
 	if !ok {
-		return 0, fmt.Errorf("paper fill: no quote for %s", symbol)
+		return takerFillQuote{}, fmt.Errorf("paper fill: no quote for %s", symbol)
 	}
 
-	fill, err := broker.SlippageFill(quote, side, qty)
+	var fill broker.FillQuote
+	var err error
+
+	if orders.stress != nil {
+		fill, err = broker.StressedSlippageFill(quote, side, qty, orders.stress.Snapshot(symbol))
+	} else {
+		fill, err = broker.SlippageFill(quote, side, qty)
+	}
 
 	if err != nil {
-		return 0, err
+		return takerFillQuote{}, err
 	}
 
-	price = fill.Price
+	price := fill.Price
 
 	if action == reasoning.ActionTakeProfit && side == trading.Sell && capPrice > 0 && price > capPrice {
 		price = capPrice
 	}
 
-	return price, nil
+	filledQty := qty
+
+	if fill.DepthCoverage > 0 && fill.DepthCoverage < 1 {
+		filledQty = qty * fill.DepthCoverage
+	}
+
+	return takerFillQuote{
+		price:         price,
+		filledQty:     filledQty,
+		depthCoverage: fill.DepthCoverage,
+	}, nil
 }
 
 func (orders *Orders) rejectCrossingPostOnly(

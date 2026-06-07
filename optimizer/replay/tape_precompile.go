@@ -105,7 +105,7 @@ func precompileTapeSequential(rows []types.Measurement) (ReplayTape, error) {
 	globalIndices := make([]int, 0)
 
 	for index, row := range rows {
-		ticks[index] = PrecompiledTick{Row: row}
+		ticks[index] = PrecompiledTick{Row: QuotedMeasurement(row)}
 
 		if row.Category != types.CategoryTypeNone {
 			categories[row.Category] = struct{}{}
@@ -155,7 +155,7 @@ func buildPrecompileChunk(
 	}
 
 	for index := startIndex; index < endIndex; index++ {
-		row := rows[index]
+		row := QuotedMeasurement(rows[index])
 		ticks[index] = PrecompiledTick{Row: row}
 
 		if row.Category != types.CategoryTypeNone {

@@ -89,11 +89,45 @@ func signalSnapshot(category types.CategoryType, snr, last float64) types.Measur
 	}
 }
 
+func pumpDipEntrySnapshots() []types.Measurement {
+	prices := make([]float64, 0, 48)
+
+	for index := range 22 {
+		prices = append(prices, 100+float64(index)*11.0/21.0)
+	}
+
+	prices = append(prices, 112, 111.5, 111, 110.5, 110, 109.5, 109, 108.5, 108)
+
+	snapshots := make([]types.Measurement, len(prices))
+
+	for index, last := range prices {
+		snapshots[index] = types.Measurement{
+			Last:       last,
+			SpreadBPS:  30,
+			Volume:     1_000_000,
+			Category:   types.CategoryOrganicTrend,
+			Source:     types.SourcePumpDump,
+			Confidence: 0.5,
+		}
+	}
+
+	return snapshots
+}
+
 func flatPosition() PositionState {
 	return PositionState{}
 }
 
 func heldPosition() PositionState {
+	return PositionState{
+		Holding:    true,
+		EntryPrice: 100,
+		Peak:       100,
+		Last:       100,
+	}
+}
+
+func heldPositionContinued() PositionState {
 	return PositionState{
 		Holding:    true,
 		EntryPrice: 100,
@@ -124,13 +158,8 @@ func TestProductionPlaybookContract(testingObject *testing.T) {
 			So(hasProtectiveAction(acts), ShouldBeTrue)
 		})
 
-		Convey("Extreme scarcity at threshold fires a market entry", func() {
-			context := productionContext(
-				flatPosition(),
-				[]types.Measurement{
-					signalSnapshot(types.CategoryExtremeScarcity, 1.0, 100),
-				},
-			)
+		Convey("A pump then dip fires a market entry", func() {
+			context := productionContext(flatPosition(), pumpDipEntrySnapshots())
 
 			act, found := EvaluateStateful(playbook, context, NewReasonState())
 
@@ -139,27 +168,65 @@ func TestProductionPlaybookContract(testingObject *testing.T) {
 			So(act.Fraction, ShouldEqual, 0.25)
 		})
 
-		Convey("Extreme scarcity below threshold does not enter", func() {
-			context := productionContext(
-				flatPosition(),
-				[]types.Measurement{
-					signalSnapshot(types.CategoryExtremeScarcity, 0.5, 100),
-				},
-			)
+		Convey("A pump without a dip does not enter", func() {
+			snapshots := pumpDipEntrySnapshots()
+			for index := range snapshots {
+				snapshots[index].Last = 100 + float64(index)*0.2
+			}
+
+			context := productionContext(flatPosition(), snapshots)
 
 			_, found := EvaluateStateful(playbook, context, NewReasonState())
 
 			So(found, ShouldBeFalse)
 		})
 
-		Convey("A held position receives the tuned trailing stop", func() {
+		Convey("A fresh held position arms the protective stop on has_started", func() {
 			context := productionContext(heldPosition(), nil)
+
+			act, found := EvaluateStateful(playbook, context, NewReasonState())
+
+			So(found, ShouldBeTrue)
+			So(act.Type, ShouldEqual, ActionStopLoss)
+			So(act.Offset, ShouldEqual, 0.012)
+		})
+
+		Convey("A continued held position arms the trailing stop", func() {
+			context := productionContext(heldPositionContinued(), nil)
 
 			act, found := EvaluateStateful(playbook, context, NewReasonState())
 
 			So(found, ShouldBeTrue)
 			So(act.Type, ShouldEqual, ActionTrailingStop)
 			So(act.Offset, ShouldEqual, 0.01)
+		})
+
+		Convey("Active reversal exits a held position", func() {
+			context := productionContext(
+				heldPositionContinued(),
+				[]types.Measurement{
+					signalSnapshot(types.CategoryActiveReversal, 1.2, 100),
+				},
+			)
+
+			act, found := EvaluateStateful(playbook, context, NewReasonState())
+
+			So(found, ShouldBeTrue)
+			So(act.Type, ShouldEqual, ActionSettlePosition)
+		})
+
+		Convey("Faded exhaustion exits a held position", func() {
+			context := productionContext(
+				heldPositionContinued(),
+				[]types.Measurement{
+					signalSnapshot(types.CategoryFadedExhaustion, 1.1, 100),
+				},
+			)
+
+			act, found := EvaluateStateful(playbook, context, NewReasonState())
+
+			So(found, ShouldBeTrue)
+			So(act.Type, ShouldEqual, ActionSettlePosition)
 		})
 	})
 }

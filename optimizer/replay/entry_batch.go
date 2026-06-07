@@ -128,7 +128,7 @@ func (ledger *replayLedger) reserveReplayEntry(item batchedReplayEntry) bool {
 		return false
 	}
 
-	return ledger.canReserveEntry(fraction, 0)
+	return ledger.canReserveEntry(fraction, 0, quoteCurrency(item.measurement.Symbol))
 }
 
 func (ledger *replayLedger) dispatchReplayEntry(item batchedReplayEntry) {
