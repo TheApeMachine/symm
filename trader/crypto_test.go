@@ -396,7 +396,8 @@ func TestRecordPositionCloseAudit(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := audit.OpenWriter()
+		writerPool := audit.NewWriterPool()
+		writer, err := writerPool.OpenConfigured()
 		So(err, ShouldBeNil)
 
 		crypto := newTestCrypto()
@@ -421,7 +422,8 @@ func TestPublishDecisionAudit(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := audit.OpenWriter()
+		writerPool := audit.NewWriterPool()
+		writer, err := writerPool.OpenConfigured()
 		So(err, ShouldBeNil)
 
 		crypto := newTestCrypto()

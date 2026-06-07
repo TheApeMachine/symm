@@ -35,7 +35,9 @@ func TestNewStory(t *testing.T) {
 
 		sentiment.NewSignal(ctx, pool)
 
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 
 		convey.So(story.subscribers["measurements"], convey.ShouldNotBeNil)
 
@@ -99,7 +101,9 @@ func TestStoryPublishActionOnRaw(t *testing.T) {
 		viper.Set("trading.audit.file", auditPath)
 		defer viper.Set("trading.audit.file", "")
 
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		subscriber := story.raw.Subscribe("test:story:raw", 4)
 
 		done := make(chan struct{})
@@ -155,7 +159,9 @@ func TestStoryPublishMarketRegime(t *testing.T) {
 		defer viper.Set("market.default_symbols", nil)
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		ui := pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
 		subscriber := ui.Subscribe("test:story:regime", 8)
 
@@ -231,7 +237,9 @@ func TestStoryFixturePlaybook(t *testing.T) {
 		defer viper.Set("market.perspectives.fixture_playbook", false)
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		subscriber := story.raw.Subscribe("test:story:fixture:raw", 4)
 
 		done := make(chan struct{})
@@ -273,7 +281,9 @@ func TestStoryPositionState(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		held := map[string]struct{}{"BTC/EUR": {}}
 		story.SetPositionHeld(func(symbol string) bool {
 			_, ok := held[symbol]
@@ -348,7 +358,9 @@ func TestStorySkipsShortActWithoutMargin(t *testing.T) {
 		convey.So(os.WriteFile(path, encoded, 0o644), convey.ShouldBeNil)
 		t.Setenv("SYMM_PERSPECTIVES_FILE", path)
 
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		subscriber := story.raw.Subscribe("test:story:short", 1)
 
 		done := make(chan struct{})

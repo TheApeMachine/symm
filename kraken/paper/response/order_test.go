@@ -15,7 +15,6 @@ func paperOrders(ctx context.Context, pool *qpool.Q[any], cache *broker.QuoteCac
 	configurePaperWallet()
 
 	if cache == nil {
-		broker.ResetQuoteCacheForTest()
 		cache = broker.NewQuoteCache(ctx, pool)
 	}
 
@@ -130,7 +129,6 @@ func drainUntilFill(sub *qpool.BroadcastConsumer) {
 
 func TestPaperStopRestsThenFills(t *testing.T) {
 	convey.Convey("Given a paper order handler with a seeded quote", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -170,7 +168,6 @@ func TestPaperStopRestsThenFills(t *testing.T) {
 
 func TestPaperTrailingStopTracksPeak(t *testing.T) {
 	convey.Convey("Given an armed trailing stop", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -214,7 +211,6 @@ func TestPaperAddOrderAck(t *testing.T) {
 	configurePaperWallet()
 
 	convey.Convey("Given a paper order handler", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

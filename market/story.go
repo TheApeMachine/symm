@@ -66,10 +66,21 @@ type Story struct {
 	condHeld        map[string][]int
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
-	auditWriter, _ := audit.OpenWriter()
+func NewStory(ctx context.Context, pool *qpool.Q[any]) (*Story, error) {
+	auditPool := audit.NewWriterPool()
+	auditWriter, err := auditPool.OpenConfigured()
 
-	return NewStoryWithAudit(ctx, pool, auditWriter)
+	if err != nil {
+		return nil, fmt.Errorf("market/story: audit: %w", err)
+	}
+
+	story := NewStoryWithAudit(ctx, pool, auditWriter)
+
+	if story == nil {
+		return nil, fmt.Errorf("market/story: construction failed")
+	}
+
+	return story, nil
 }
 
 func NewStoryWithAudit(ctx context.Context, pool *qpool.Q[any], auditWriter *audit.Writer) *Story {

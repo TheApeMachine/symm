@@ -18,6 +18,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/runtime"
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -72,8 +73,50 @@ func NewHarness(parent context.Context, capture io.Reader, auditPath string) (*H
 	replaySocket := paper.NewWebSocket(systemCtx, pool)
 
 	streams := focus.NewSet()
-	crypto := trader.NewCrypto(systemCtx, pool, streams)
-	story := market.NewStory(systemCtx, pool)
+	services, err := runtime.New(systemCtx, pool)
+
+	if err != nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: runtime: %w", err)
+	}
+
+	auditWriter, err := services.OpenAudit()
+
+	if err != nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: audit: %w", err)
+	}
+
+	crypto := trader.NewCryptoWithCaches(
+		systemCtx,
+		pool,
+		streams,
+		services.Quotes,
+		services.Stress,
+		services.Rules,
+		auditWriter,
+	)
+
+	if crypto == nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: trader construction failed")
+	}
+
+	story := market.NewStoryWithAudit(systemCtx, pool, auditWriter)
+
+	if story == nil {
+		cancel()
+		pool.Close()
+
+		return nil, fmt.Errorf("integration harness: story construction failed")
+	}
+
 	story.SetPositionHeld(crypto.SymbolHeld)
 
 	if err := engine.AddSystems(

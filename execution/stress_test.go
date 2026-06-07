@@ -4,11 +4,14 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/market/perspectives"
 	"github.com/theapemachine/symm/market/perspectives/types"
 )
 
 func TestStressMultiplier(t *testing.T) {
+	testconfig.Load(t)
+
 	Convey("Given turbulent snapshot readings", t, func() {
 		snapshots := []types.Measurement{
 			{Category: types.CategoryTurbulent, SNR: 2},

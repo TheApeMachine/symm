@@ -38,15 +38,6 @@ type writerFailure struct {
 	err error
 }
 
-var defaultWriterPool = NewWriterPool()
-
-/*
-OpenWriter opens the configured audit path via the process-default writer pool.
-Prefer injecting audit.WriterPool from runtime.Runtime in new code.
-*/
-func OpenWriter() (*Writer, error) {
-	return defaultWriterPool.OpenConfigured()
-}
 
 func openWriter(path string) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

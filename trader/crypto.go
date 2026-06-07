@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/execution"
 	"github.com/theapemachine/symm/focus"
+	"github.com/theapemachine/symm/runtime"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives/reasoning"
 )
@@ -75,13 +76,34 @@ type Crypto struct {
 // symbol, so the dashboard shows real-time unrealized P&L on open positions.
 const markInterval = 500 * time.Millisecond
 
-func NewCrypto(ctx context.Context, pool *qpool.Q[any], streams *focus.Set) *Crypto {
-	quotes := broker.EnsureQuoteCache(ctx, pool)
-	stress := broker.EnsureStressCache(ctx, pool)
-	rules := broker.EnsureInstrumentRulesCache(ctx, pool)
-	auditWriter, _ := audit.OpenWriter()
+func NewCrypto(ctx context.Context, pool *qpool.Q[any], streams *focus.Set) (*Crypto, error) {
+	services, err := runtime.New(ctx, pool)
 
-	return NewCryptoWithCaches(ctx, pool, streams, quotes, stress, rules, auditWriter)
+	if err != nil {
+		return nil, err
+	}
+
+	auditWriter, err := services.OpenAudit()
+
+	if err != nil {
+		return nil, err
+	}
+
+	crypto := NewCryptoWithCaches(
+		ctx,
+		pool,
+		streams,
+		services.Quotes,
+		services.Stress,
+		services.Rules,
+		auditWriter,
+	)
+
+	if crypto == nil {
+		return nil, fmt.Errorf("trader/crypto: construction failed")
+	}
+
+	return crypto, nil
 }
 
 /*

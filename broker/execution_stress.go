@@ -49,7 +49,9 @@ func StressedSlippageReplayFill(
 		return fill, nil
 	}
 
-	return applyExecutionStress(fill, quote, side, execution.StressMultiplier(snapshots)), nil
+	stressed, err := applyExecutionStress(fill, quote, side, execution.StressMultiplier(snapshots))
+
+	return stressed, err
 }
 
 func applyExecutionStress(
@@ -57,7 +59,7 @@ func applyExecutionStress(
 	quote Quote,
 	side trading.Side,
 	multiplier float64,
-) FillQuote {
+) (FillQuote, error) {
 	reference := quote.Last
 
 	if reference <= 0 && quote.Bid > 0 && quote.Ask > 0 {
@@ -71,7 +73,7 @@ func applyExecutionStress(
 		depthCoverage = 1
 	}
 
-	price, slippageBps := execution.StressedFillQuote(
+	price, slippageBps, err := execution.StressedFillQuote(
 		side,
 		reference,
 		fill.SlippageBps,
@@ -80,11 +82,15 @@ func applyExecutionStress(
 		defaultPaperSlippagePct(),
 	)
 
+	if err != nil {
+		return FillQuote{}, err
+	}
+
 	return FillQuote{
 		Price:         price,
 		SlippageBps:   slippageBps,
 		DepthCoverage: fill.DepthCoverage,
-	}
+	}, nil
 }
 
 /*
@@ -107,7 +113,7 @@ func StressedSlippageFill(
 		return fill, nil
 	}
 
-	return applyExecutionStress(fill, quote, side, ExecutionStressFromSymbol(stress)), nil
+	return applyExecutionStress(fill, quote, side, ExecutionStressFromSymbol(stress))
 }
 
 func defaultPaperSlippagePct() float64 {

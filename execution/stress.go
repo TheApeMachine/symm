@@ -1,6 +1,8 @@
 package execution
 
 import (
+	"fmt"
+
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/market/perspectives"
@@ -99,7 +101,7 @@ func StressedFillQuote(
 	depthCoverage float64,
 	multiplier float64,
 	defaultSlippagePct float64,
-) (price float64, slippageBps float64) {
+) (price float64, slippageBps float64, err error) {
 	slippagePct := baseSlippageBps / 10_000
 	slippagePct *= multiplier
 
@@ -111,26 +113,34 @@ func StressedFillQuote(
 			base = defaultSlippagePct
 		}
 
-		slippagePct += shortfall * base * multiplier * depthShortfallStressMultiplier()
+		shortfallMultiplier, multiplierErr := requiredDepthShortfallStressMultiplier()
+
+		if multiplierErr != nil {
+			return 0, 0, multiplierErr
+		}
+
+		slippagePct += shortfall * base * multiplier * shortfallMultiplier
 	}
 
 	if reference <= 0 {
-		return 0, slippagePct * 10_000
+		return 0, slippagePct * 10_000, nil
 	}
 
 	if side == trading.Sell {
-		return reference * (1 - slippagePct), slippagePct * 10_000
+		return reference * (1 - slippagePct), slippagePct * 10_000, nil
 	}
 
-	return reference * (1 + slippagePct), slippagePct * 10_000
+	return reference * (1 + slippagePct), slippagePct * 10_000, nil
 }
 
-func depthShortfallStressMultiplier() float64 {
+func requiredDepthShortfallStressMultiplier() (float64, error) {
 	multiplier := viper.GetFloat64("trading.replay.depth_shortfall_stress")
 
-	if multiplier > 0 {
-		return multiplier
+	if multiplier <= 0 {
+		return 0, fmt.Errorf(
+			"execution: trading.replay.depth_shortfall_stress must be > 0",
+		)
 	}
 
-	return 8
+	return multiplier, nil
 }

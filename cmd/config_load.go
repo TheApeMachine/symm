@@ -21,7 +21,7 @@ func mergeConfigFiles(paths ...string) error {
 		path = strings.TrimSpace(path)
 
 		if path == "" {
-			continue
+			return fmt.Errorf("config: empty path")
 		}
 
 		file, err := os.Open(path)
@@ -48,7 +48,7 @@ func mergeEmbeddedConfig(readers ...io.Reader) error {
 
 	for index, reader := range readers {
 		if reader == nil {
-			continue
+			return fmt.Errorf("config: embedded reader[%d] is nil", index)
 		}
 
 		if err := viper.MergeConfig(reader); err != nil {
@@ -67,56 +67,52 @@ func defaultConfigDir() string {
 	}
 
 	for _, directory := range paths {
-		if _, err := os.Stat(filepath.Join(directory, "infra.yml")); err == nil {
-			return directory
+		infraPath := filepath.Join(directory, "infra.yml")
+		strategyPath := filepath.Join(directory, "strategy.yml")
+
+		if _, infraErr := os.Stat(infraPath); infraErr != nil {
+			continue
 		}
+
+		if _, strategyErr := os.Stat(strategyPath); strategyErr != nil {
+			continue
+		}
+
+		return directory
 	}
 
-	return "cmd/cfg"
+	return ""
 }
 
 func loadDefaultConfigs() error {
 	directory := defaultConfigDir()
+
+	if directory == "" {
+		return loadEmbeddedConfigs()
+	}
+
 	infraPath := filepath.Join(directory, "infra.yml")
 	strategyPath := filepath.Join(directory, "strategy.yml")
 
-	if _, infraErr := os.Stat(infraPath); infraErr == nil {
-		if _, strategyErr := os.Stat(strategyPath); strategyErr == nil {
-			return mergeConfigFiles(infraPath, strategyPath)
-		}
-	}
+	return mergeConfigFiles(infraPath, strategyPath)
+}
 
-	legacyPaths := []string{
-		filepath.Join(directory, "config.yml"),
-		"cmd/cfg/config.yml",
-		"config.yml",
-	}
-
-	for _, path := range legacyPaths {
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-
-		return mergeConfigFiles(path)
-	}
-
+func loadEmbeddedConfigs() error {
 	infraReader, infraErr := embedded.Open("cfg/infra.yml")
 	strategyReader, strategyErr := embedded.Open("cfg/strategy.yml")
 
-	if infraErr == nil && strategyErr == nil {
-		defer infraReader.Close()
-		defer strategyReader.Close()
-
-		return mergeEmbeddedConfig(infraReader, strategyReader)
+	if infraErr != nil {
+		return fmt.Errorf("embedded infra.yml: %w", infraErr)
 	}
 
-	configReader, err := embedded.Open("cfg/config.yml")
+	if strategyErr != nil {
+		_ = infraReader.Close()
 
-	if err != nil {
-		return fmt.Errorf("no config files found")
+		return fmt.Errorf("embedded strategy.yml: %w", strategyErr)
 	}
 
-	defer configReader.Close()
+	defer infraReader.Close()
+	defer strategyReader.Close()
 
-	return mergeEmbeddedConfig(configReader)
+	return mergeEmbeddedConfig(infraReader, strategyReader)
 }

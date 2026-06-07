@@ -26,11 +26,6 @@ type InstrumentRulesCache struct {
 }
 
 /*
-ResetInstrumentRulesCacheForTest is a no-op; caches are constructed per runtime.Runtime.
-*/
-func ResetInstrumentRulesCacheForTest() {}
-
-/*
 EnsureInstrumentRulesCache constructs a fresh instrument-rules cache. Prefer
 runtime.Runtime at the process root so live components share one instance.
 */

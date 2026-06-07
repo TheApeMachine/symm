@@ -1,7 +1,8 @@
 package broker
 
 import (
-	"github.com/theapemachine/errnie"
+	"fmt"
+
 	"github.com/theapemachine/symm/market/perspectives/types"
 	"github.com/theapemachine/symm/market/settings"
 )
@@ -12,18 +13,15 @@ measurements before they are written to the optimizer capture tape.
 */
 func MeasurementBookEnricher(
 	quotes *QuoteCache,
-) func(types.Measurement) types.Measurement {
+) (func(types.Measurement) types.Measurement, error) {
+	if quotes == nil {
+		return nil, fmt.Errorf("broker: quote cache is required")
+	}
+
 	depth, err := settings.RequiredBookDepthLevels()
 
 	if err != nil {
-		errnie.Error(
-			err,
-			"broker: settings.RequiredBookDepthLevels failed, returning no-op measurement enricher",
-		)
-
-		return func(measurement types.Measurement) types.Measurement {
-			return measurement
-		}
+		return nil, fmt.Errorf("broker: book depth: %w", err)
 	}
 
 	return func(measurement types.Measurement) types.Measurement {
@@ -45,5 +43,5 @@ func MeasurementBookEnricher(
 			quote.Book,
 			depth,
 		)
-	}
+	}, nil
 }

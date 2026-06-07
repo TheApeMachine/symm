@@ -17,7 +17,8 @@ func TestWriterWrite(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := OpenWriter()
+		pool := NewWriterPool()
+		writer, err := pool.OpenConfigured()
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(writer, convey.ShouldNotBeNil)
@@ -48,7 +49,8 @@ func TestWriterRotate(t *testing.T) {
 		defer viper.Set("trading.audit.file", "")
 		defer viper.Set("trading.audit.max_bytes", 0)
 
-		writer, err := OpenWriter()
+		pool := NewWriterPool()
+		writer, err := pool.OpenConfigured()
 
 		convey.So(err, convey.ShouldBeNil)
 
@@ -72,7 +74,8 @@ func TestWriterMissingPath(t *testing.T) {
 		viper.Set("trading.audit.file", "")
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := OpenWriter()
+		pool := NewWriterPool()
+		writer, err := pool.OpenConfigured()
 
 		convey.Convey("It should not install a writer", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -88,7 +91,8 @@ func TestWriterClose(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := OpenWriter()
+		pool := NewWriterPool()
+		writer, err := pool.OpenConfigured()
 
 		convey.So(err, convey.ShouldBeNil)
 
@@ -120,7 +124,8 @@ func BenchmarkWriterWrite(b *testing.B) {
 	viper.Set("trading.audit.file", path)
 	defer viper.Set("trading.audit.file", "")
 
-	writer, err := OpenWriter()
+	pool := NewWriterPool()
+	writer, err := pool.OpenConfigured()
 
 	if err != nil || writer == nil {
 		b.Fatal(err)

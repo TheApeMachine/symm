@@ -34,11 +34,6 @@ type StressCache struct {
 }
 
 /*
-ResetStressCacheForTest is a no-op; caches are constructed per runtime.Runtime.
-*/
-func ResetStressCacheForTest() {}
-
-/*
 EnsureStressCache constructs a fresh stress cache. Prefer runtime.Runtime at the
 process root so live components share one instance via dependency injection.
 */

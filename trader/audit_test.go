@@ -21,7 +21,8 @@ func TestWriteDecisionAuditQuoteFields(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := audit.OpenWriter()
+		pool := audit.NewWriterPool()
+		writer, err := pool.OpenConfigured()
 		So(err, ShouldBeNil)
 
 		quotes := broker.NewQuoteCache(t.Context(), nil)
@@ -66,7 +67,8 @@ func TestWriteFillAndPositionOpenAudit(t *testing.T) {
 		viper.Set("trading.audit.file", path)
 		defer viper.Set("trading.audit.file", "")
 
-		writer, err := audit.OpenWriter()
+		pool := audit.NewWriterPool()
+		writer, err := pool.OpenConfigured()
 		So(err, ShouldBeNil)
 
 		crypto := newTestCrypto()

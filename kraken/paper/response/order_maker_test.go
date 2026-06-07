@@ -16,7 +16,6 @@ func TestOnTradeQueueDepletion(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a resting post-only order with queue ahead", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
@@ -72,7 +71,6 @@ func TestPostOnlyMakerRestsUntilTradeDepletesQueue(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a post-only buy resting behind L2 queue depth", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
@@ -131,7 +129,6 @@ func TestPostOnlyRejectsCrossingLimit(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a post-only buy that would cross the ask", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
@@ -180,7 +177,6 @@ func TestTakerFillUsesSlippageFill(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given an L2 book and a market buy", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)
@@ -231,7 +227,6 @@ func TestTakerFillDefersUntilLatencyElapses(t *testing.T) {
 	configurePaperWallet()
 
 	Convey("Given a positive one-way latency", t, func() {
-		broker.ResetQuoteCacheForTest()
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		cache := broker.NewQuoteCache(ctx, pool)

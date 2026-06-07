@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/focus"
 	kraken "github.com/theapemachine/symm/kraken/market"
@@ -96,7 +97,16 @@ var (
 				services.Rules,
 				auditWriter,
 			)
-			story := newStoryWithBookCapture(systemCtx, pool, services, crypto)
+
+			if crypto == nil {
+				return fmt.Errorf("engine: trader construction failed")
+			}
+
+			story, err := newStoryWithBookCapture(systemCtx, pool, services, crypto, auditWriter)
+
+			if err != nil {
+				return err
+			}
 
 			errnie.Info(
 				"engine registering systems trading.model="+viper.GetString("trading.model"),
@@ -194,16 +204,21 @@ func newStoryWithBookCapture(
 	pool *qpool.Q[any],
 	services *runtime.Runtime,
 	crypto *trader.Crypto,
-) *market.Story {
-	auditWriter, err := services.OpenAudit()
+	auditWriter *audit.Writer,
+) (*market.Story, error) {
+	bookEnricher, err := broker.MeasurementBookEnricher(services.Quotes)
 
 	if err != nil {
-		errnie.Error(err, "engine: audit")
-		return nil
+		return nil, fmt.Errorf("engine: measurement book enricher: %w", err)
 	}
 
 	story := market.NewStoryWithAudit(ctx, pool, auditWriter)
-	story.SetBookEnricher(broker.MeasurementBookEnricher(services.Quotes))
+
+	if story == nil {
+		return nil, fmt.Errorf("engine: story construction failed")
+	}
+
+	story.SetBookEnricher(bookEnricher)
 	story.SetQuoteReady(func(symbol string) bool {
 		_, ok := services.Quotes.Snapshot(symbol)
 
@@ -211,7 +226,7 @@ func newStoryWithBookCapture(
 	})
 	story.SetPositionHeld(crypto.SymbolHeld)
 
-	return story
+	return story, nil
 }
 
 const rootLong = `

@@ -116,7 +116,9 @@ func TestStoryObservePredictionFeedback(t *testing.T) {
 		t.Setenv("SYMM_PERSPECTIVES_FILE", filepath.Join(tempDir, "missing.yaml"))
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		story := NewStory(ctx, pool)
+		story, storyErr := NewStory(ctx, pool)
+
+		convey.So(storyErr, convey.ShouldBeNil)
 		convey.So(story, convey.ShouldNotBeNil)
 		defer func() {
 			convey.So(story.Close(), convey.ShouldBeNil)
