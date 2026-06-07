@@ -6,22 +6,26 @@ branches:
               lifecycle: not_holding
               op: equals
             - any:
+                - subject: price
+                  unit: percentage
+                  ago: 30
+                  op: rose_by
+                  value: 8
                 - subject: signal
                   category: vertical_ignition
                   unit: snr
-                  ago: 1
-                  op: crossed_up
-                  value: 1.5
+                  op: at_least
+                  value: 1
                 - subject: signal
-                  category: organic_trend
+                  category: coiled_compression
                   unit: snr
                   op: at_least
                   value: 1
             - subject: price
               unit: percentage
-              ago: 20
+              ago: 8
               op: fell_by
-              value: 2
+              value: 3
       do:
         type: market
         fraction: 0.25

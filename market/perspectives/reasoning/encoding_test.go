@@ -27,11 +27,14 @@ func TestParseThoughtsPlaybook(t *testing.T) {
 			So(entry.Do.Type, ShouldEqual, ActionMarket)
 			So(entry.Do.Fraction, ShouldEqual, 0.25)
 			So(entry.When.All[0].Lifecycle, ShouldEqual, types.ObservationNotHolding)
-			So(len(entry.When.All[1].Any), ShouldEqual, 2)
-			So(entry.When.All[1].Any[0].Category, ShouldEqual, types.CategoryVerticalIgnition)
-			So(entry.When.All[1].Any[1].Category, ShouldEqual, types.CategoryOrganicTrend)
+			So(len(entry.When.All[1].Any), ShouldEqual, 3)
+			So(entry.When.All[1].Any[0].Subject, ShouldEqual, SubjectPrice)
+			So(entry.When.All[1].Any[0].Op, ShouldEqual, ComparisonRoseBy)
+			So(entry.When.All[1].Any[1].Category, ShouldEqual, types.CategoryVerticalIgnition)
+			So(entry.When.All[1].Any[2].Category, ShouldEqual, types.CategoryCoiledCompression)
 			So(entry.When.All[2].Subject, ShouldEqual, SubjectPrice)
 			So(entry.When.All[2].Op, ShouldEqual, ComparisonFellBy)
+			So(entry.When.All[2].Value, ShouldEqual, 3)
 		})
 
 		Convey("The exit branch settles on reversal or exhaustion while holding", func() {

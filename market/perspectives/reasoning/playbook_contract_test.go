@@ -102,13 +102,9 @@ func pumpDipEntrySnapshots() []types.Measurement {
 
 	for index, last := range prices {
 		snapshots[index] = types.Measurement{
-			Last:       last,
-			SpreadBPS:  30,
-			Volume:     1_000_000,
-			Category:   types.CategoryOrganicTrend,
-			Source:     types.SourcePumpDump,
-			Confidence: 0.5,
-			SNR:        1.5,
+			Last:      last,
+			SpreadBPS: 30,
+			Volume:    1_000_000,
 		}
 	}
 

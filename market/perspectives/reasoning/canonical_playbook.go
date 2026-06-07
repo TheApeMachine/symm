@@ -4,6 +4,10 @@ import "github.com/theapemachine/symm/market/perspectives/types"
 
 /*
 CanonicalPlaybook returns the version-controlled production playbook contract tests expect.
+
+Entry semantics: flat AND (pump evidence via rose_by OR ignition/compression signals)
+AND (recent dip via fell_by). The pump and dip legs use different lookbacks so both
+can hold on the dip bar without requiring vertical ignition to fire while price falls.
 */
 func CanonicalPlaybook() []Thought {
 	return []Thought{
@@ -16,16 +20,22 @@ func CanonicalPlaybook() []Thought {
 				},
 				{Any: []Predicate{
 					{
-						Subject:  SubjectSignal,
-						Category: types.CategoryVerticalIgnition,
-						Unit:     UnitSNR,
-						Ago:      1,
-						Op:       ComparisonCrossedUp,
-						Value:    1.5,
+						Subject: SubjectPrice,
+						Unit:    UnitPercentage,
+						Ago:     30,
+						Op:      ComparisonRoseBy,
+						Value:   8,
 					},
 					{
 						Subject:  SubjectSignal,
-						Category: types.CategoryOrganicTrend,
+						Category: types.CategoryVerticalIgnition,
+						Unit:     UnitSNR,
+						Op:       ComparisonAtLeast,
+						Value:    1,
+					},
+					{
+						Subject:  SubjectSignal,
+						Category: types.CategoryCoiledCompression,
 						Unit:     UnitSNR,
 						Op:       ComparisonAtLeast,
 						Value:    1,
@@ -34,9 +44,9 @@ func CanonicalPlaybook() []Thought {
 				{
 					Subject: SubjectPrice,
 					Unit:    UnitPercentage,
-					Ago:     20,
+					Ago:     8,
 					Op:      ComparisonFellBy,
-					Value:   2,
+					Value:   3,
 				},
 			}},
 			Do: Act{Type: ActionMarket, Fraction: 0.25},
