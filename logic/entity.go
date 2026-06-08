@@ -11,7 +11,7 @@ const (
 )
 
 type Entity struct {
-	Type EntityType
+	Type EntityType `yaml:"type"`
 }
 
 func NewEntity(entityType EntityType) *Entity {

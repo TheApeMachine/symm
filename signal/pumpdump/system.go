@@ -15,6 +15,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/telemetry"
 )
 
 type System struct {
@@ -24,23 +25,36 @@ type System struct {
 	pool     *qpool.Q[any]
 	bus      *internal.Bus
 	signals  sync.Map
+	gauge    *telemetry.Gauge
 	feedback *market.Feedback
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	ctx, cancel := context.WithCancel(ctx)
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]string{"measurements", "ui"},
+		[]string{"raw"},
+	)
+
+	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourcePumpDump)
+
+	if gaugeErr != nil {
+		cancel()
+		errnie.Error(gaugeErr)
+
+		return nil
+	}
+
 	return &System{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]string{"raw"},
-			[]string{"measurements"},
-		),
+		ctx:     ctx,
+		cancel:  cancel,
+		pool:    pool,
+		bus:     bus,
 		signals: sync.Map{},
+		gauge:   gauge,
 	}
 }
 
@@ -138,6 +152,8 @@ func (system *System) Tick() error {
 			"measurements",
 			measurement,
 		)
+
+		errnie.Error(system.gauge.Publish(measurement))
 	}
 }
 
@@ -153,8 +169,6 @@ func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal
 	fastWindow := viper.GetInt("signals.pumpdump.fast_window")
 	volumeEpsilon := viper.GetFloat64("signals.pumpdump.volume_epsilon")
 
-	// Fix clobber bug: Use a composite map key (entity + symbol) to avoid Trade, Ticker, and Book
-	// overriding each other's Signal structures inside the sync.Map.
 	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
 
 	raw, _ = system.signals.LoadOrStore(

@@ -5,6 +5,10 @@ system:
     ttl: 1024
     buffer: 1024
 
+telemetry:
+  gauge:
+    readings_capacity: 1024
+
 story:
   measurements:
     buffer: 1024

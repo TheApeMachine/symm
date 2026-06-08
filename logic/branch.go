@@ -1,21 +1,36 @@
 package logic
 
+import "github.com/theapemachine/errnie"
+
 type Branch struct {
-	conditionGroup *ConditionGroup
-	action         *Action
+	Branches       []*Branch       `yaml:"branches"`
+	ConditionGroup *ConditionGroup `yaml:"condition_group"`
+	Action         *Action         `yaml:"action"`
 }
 
 func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 	return &Branch{
-		conditionGroup: conditionGroup,
-		action:         action,
+		ConditionGroup: conditionGroup,
+		Action:         action,
 	}
 }
 
 func (branch *Branch) Evaluate(measurements []Measurement) (*Action, error) {
-	if !branch.conditionGroup.Evaluate(measurements) {
-		return &Action{Type: ActionNone}, nil
+	if branch.ConditionGroup == nil || !branch.ConditionGroup.Evaluate(measurements) {
+		return nil, nil
 	}
 
-	return branch.action, nil
+	for _, child := range branch.Branches {
+		action, err := child.Evaluate(measurements)
+
+		if errnie.Error(err) != nil {
+			continue
+		}
+
+		if action != nil {
+			return action, nil
+		}
+	}
+
+	return branch.Action, nil
 }

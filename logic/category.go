@@ -52,9 +52,9 @@ const (
 )
 
 type Category struct {
-	Type       CategoryType
-	Confidence float64
-	Surprise   float64
+	Type       CategoryType `yaml:"type"`
+	Confidence float64      `yaml:"confidence"`
+	Surprise   float64      `yaml:"surprise"`
 }
 
 func NewCategory(

@@ -1,19 +1,39 @@
 package logic
 
-import "github.com/theapemachine/errnie"
+import (
+	"embed"
+
+	"github.com/theapemachine/errnie"
+	"go.yaml.in/yaml/v3"
+)
+
+//go:embed rules/tree.yml
+var embedded embed.FS
 
 type Tree struct {
-	branches []*Branch
+	Branches []*Branch `yaml:"branches"`
 }
 
-func NewTree() *Tree {
-	return &Tree{
-		branches: make([]*Branch, 0),
+func NewTree() (*Tree, error) {
+	reader, err := embedded.Open("rules/tree.yml")
+
+	if err != nil {
+		return nil, err
 	}
+
+	defer reader.Close()
+
+	tree := &Tree{}
+
+	if err := yaml.NewDecoder(reader).Decode(tree); errnie.Error(err) != nil {
+		return tree, err
+	}
+
+	return tree, nil
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement) *Action {
-	for _, branch := range tree.branches {
+	for _, branch := range tree.Branches {
 		action, err := branch.Evaluate(measurements)
 
 		if errnie.Error(err) != nil {

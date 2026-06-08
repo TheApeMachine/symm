@@ -96,7 +96,11 @@ func (ws *WebSocket) Connect(
 	if ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
 		string(endpoint), http.Header{},
 	); ws.err != nil {
-		errnie.Error(ws.err, response.StatusCode, response.Status)
+		if response != nil {
+			errnie.Error(ws.err, response.StatusCode, response.Status)
+		} else {
+			errnie.Error(ws.err)
+		}
 
 		// Fibonacci gives us a good exponential backoff.
 		n = uint64(
@@ -128,7 +132,7 @@ func (ws *WebSocket) Tick() (err error) {
 	defer ticker.Stop()
 
 	for {
-		if ws.err = errnie.Error(ws.Connect(public.BaseURL, 0)); ws.err != nil {
+		if ws.err = errnie.Error(ws.Connect(public.WebSocketAuthURL, 0)); ws.err != nil {
 			continue
 		}
 

@@ -3,6 +3,7 @@ package market
 import (
 	"container/ring"
 	"context"
+	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -52,11 +53,14 @@ type Story struct {
 	err          error
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
-	measurements map[string]*MeasurementWindow
+	measurements *sync.Map
+	tree         *logic.Tree
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 	ctx, cancel := context.WithCancel(ctx)
+
+	tree, err := logic.NewTree()
 
 	return &Story{
 		ctx:    ctx,
@@ -65,10 +69,12 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		bus: internal.NewBus(
 			ctx,
 			pool,
+			[]string{"raw"},
 			[]string{"measurements"},
-			[]string{},
 		),
-		measurements: make(map[string]*MeasurementWindow),
+		measurements: &sync.Map{},
+		tree:         tree,
+		err:          err,
 	}
 }
 
@@ -82,6 +88,10 @@ cross-sectional means on the timer — then reset the window so each gauge frame
 reflects the last interval, not the lifetime of the process.
 */
 func (story *Story) Tick() error {
+	if story.err != nil {
+		return story.err
+	}
+
 	for {
 		select {
 		case <-story.ctx.Done():
@@ -95,17 +105,26 @@ func (story *Story) Tick() error {
 
 			measurement := GetMeasurement(row)
 
-			if _, ok := story.measurements[measurement.Symbol]; !ok {
-				story.measurements[measurement.Symbol] = NewMeasurementWindow(
-					viper.GetInt("market.story.window.capacity"),
-				)
-			}
+			raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
+				viper.GetInt("market.story.window.capacity"),
+			))
 
-			measurements := story.measurements[measurement.Symbol].Push(measurement)
+			measurements := raw.(*MeasurementWindow).Push(measurement)
+
+			var action *logic.Action
 
 			if len(measurements) > 0 {
-				tree := logic.NewTree()
-				tree.Evaluate(measurements)
+				action = story.tree.Evaluate(measurements)
+			}
+
+			if action != nil {
+				if action.Symbol == "" {
+					stamped := *action
+					stamped.Symbol = measurement.Symbol
+					action = &stamped
+				}
+
+				story.bus.Send("raw", "actions", action)
 			}
 		}
 	}

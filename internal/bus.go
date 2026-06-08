@@ -41,6 +41,12 @@ func NewBus(
 	}
 
 	for _, subscriber := range subscribers {
+		if bus.broadcasts[subscriber] == nil {
+			bus.broadcasts[subscriber] = pool.CreateBroadcastGroup(
+				subscriber, viper.GetDuration("system.queue.ttl"),
+			)
+		}
+
 		bus.subscribers[subscriber] = bus.broadcasts[subscriber].Subscribe(
 			subscriber, viper.GetInt("system.queue.buffer"),
 		)

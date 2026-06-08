@@ -1,18 +1,18 @@
 package logic
 
-type RegimeType uint8
+type RegimeType string
 
 const (
-	RegimeTypeNone RegimeType = iota
-	RegimeTypeDead
-	RegimeTypeChoppy
-	RegimeTypeTrending
-	RegimeTypeBullish
-	RegimeTypeBearish
+	RegimeTypeNone     RegimeType = ""
+	RegimeTypeDead     RegimeType = "dead"
+	RegimeTypeChoppy   RegimeType = "choppy"
+	RegimeTypeTrending RegimeType = "trending"
+	RegimeTypeBullish  RegimeType = "bullish"
+	RegimeTypeBearish  RegimeType = "bearish"
 )
 
 type Regime struct {
-	Type RegimeType
+	Type RegimeType `yaml:"type"`
 }
 
 func NewRegime(regimeType RegimeType) *Regime {

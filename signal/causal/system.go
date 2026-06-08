@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	symmring "github.com/theapemachine/symm/ring"
+	"github.com/theapemachine/symm/telemetry"
 )
 
 type System struct {
@@ -27,6 +28,7 @@ type System struct {
 	bus             *internal.Bus
 	signals         sync.Map
 	symbols         sync.Map
+	gauge           *telemetry.Gauge
 	feedback        *market.Feedback
 	crossSection    *crossSection
 	contagionSpread symmring.FloatRing
@@ -36,18 +38,30 @@ type System struct {
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	ctx, cancel := context.WithCancel(ctx)
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]string{"measurements", "ui"},
+		[]string{"raw"},
+	)
+
+	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourceCausal)
+
+	if gaugeErr != nil {
+		cancel()
+		errnie.Error(gaugeErr)
+
+		return nil
+	}
+
 	return &System{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]string{"raw"},
-			[]string{"measurements"},
-		),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		bus:          bus,
 		signals:      sync.Map{},
 		symbols:      sync.Map{},
+		gauge:        gauge,
 		crossSection: &crossSection{},
 	}
 }
@@ -148,6 +162,8 @@ func (system *System) Tick() error {
 			"measurements",
 			measurement,
 		)
+
+		errnie.Error(system.gauge.Publish(measurement))
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
+	"github.com/theapemachine/symm/telemetry"
 )
 
 type System struct {
@@ -26,6 +27,7 @@ type System struct {
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
 	signals      sync.Map
+	gauge        *telemetry.Gauge
 	feedback     *market.Feedback
 	crossSection *crossSection
 }
@@ -45,17 +47,29 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		historyCapacity = 24
 	}
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]string{"measurements", "ui"},
+		[]string{"raw"},
+	)
+
+	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourceExhaustion)
+
+	if gaugeErr != nil {
+		cancel()
+		errnie.Error(gaugeErr)
+
+		return nil
+	}
+
 	return &System{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]string{"raw"},
-			[]string{"measurements"},
-		),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		bus:          bus,
 		signals:      sync.Map{},
+		gauge:        gauge,
 		crossSection: newCrossSection(historyCapacity),
 	}
 }
@@ -148,6 +162,8 @@ func (system *System) Tick() error {
 			"measurements",
 			measurement,
 		)
+
+		errnie.Error(system.gauge.Publish(measurement))
 	}
 }
 

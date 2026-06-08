@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/telemetry"
 )
 
 const (
@@ -37,6 +38,7 @@ type System struct {
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
 	signals      sync.Map
+	gauge        *telemetry.Gauge
 	feedback     *market.Feedback
 	crossSection *crossSection
 	lastPublish  time.Time
@@ -45,17 +47,29 @@ type System struct {
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	ctx, cancel := context.WithCancel(ctx)
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]string{"measurements", "ui"},
+		[]string{"raw"},
+	)
+
+	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourceLeadLag)
+
+	if gaugeErr != nil {
+		cancel()
+		errnie.Error(gaugeErr)
+
+		return nil
+	}
+
 	return &System{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]string{"raw"},
-			[]string{"measurements"},
-		),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		bus:          bus,
 		signals:      sync.Map{},
+		gauge:        gauge,
 		crossSection: newCrossSection(),
 	}
 }
@@ -156,6 +170,8 @@ func (system *System) Tick() error {
 			"measurements",
 			measurement,
 		)
+
+		errnie.Error(system.gauge.Publish(measurement))
 	}
 }
 
