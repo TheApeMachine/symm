@@ -1,5 +1,12 @@
 package market
 
+import (
+	"encoding/json"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
+)
+
 /*
 TickerParams is the Kraken WebSocket v2 subscribe payload for the ticker channel.
 */
@@ -8,6 +15,22 @@ type TickerParams struct {
 	Symbol       []string `json:"symbol"`
 	Snapshot     bool     `json:"snapshot"`
 	EventTrigger string   `json:"event_trigger,omitempty"`
+}
+
+func NewTickerParams(symbols []string) json.RawMessage {
+	params := &TickerParams{
+		Channel:  "ticker",
+		Symbol:   symbols,
+		Snapshot: true,
+	}
+
+	raw, err := sonic.Marshal(params)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return json.RawMessage(raw)
 }
 
 /*

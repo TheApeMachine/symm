@@ -72,7 +72,7 @@ func NewWebSocket(
 				ctx,
 				pool,
 				[]string{"raw", "level3", "kraken:public", "ui"},
-				[]string{"raw", "level3", "kraken:public"},
+				[]string{"raw", "level3", "kraken:public", "kraken:private"},
 			),
 			streams:   &sync.Map{},
 			latencies: ring.New(64),

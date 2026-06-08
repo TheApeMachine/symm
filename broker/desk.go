@@ -19,7 +19,7 @@ type Desk struct {
 	bus    *internal.Bus
 }
 
-func NewDesk(ctx context.Context, pool *qpool.Q[any]) (*Desk, error) {
+func NewDesk(ctx context.Context, pool *qpool.Q[any]) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Desk{
@@ -32,10 +32,10 @@ func NewDesk(ctx context.Context, pool *qpool.Q[any]) (*Desk, error) {
 			[]string{"kraken:private"},
 			[]string{},
 		),
-	}, nil
+	}
 }
 
-func (desk *Desk) AddOrder(action logic.Action) error {
+func (desk *Desk) AddOrder(action *logic.Action) error {
 	order := trading.AddParams{
 		OrderType:  trading.Limit,
 		Side:       trading.Side(action.Side),

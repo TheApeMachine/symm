@@ -1,7 +1,11 @@
 package market
 
 import (
+	"encoding/json"
 	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -11,6 +15,21 @@ type TradeParams struct {
 	Channel  string   `json:"channel"`
 	Symbol   []string `json:"symbol"`
 	Snapshot bool     `json:"snapshot"`
+}
+
+func NewTradeParams(symbols []string) json.RawMessage {
+	params := &TradeParams{
+		Channel: "trade",
+		Symbol:  symbols,
+	}
+
+	raw, err := sonic.Marshal(params)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return json.RawMessage(raw)
 }
 
 /*

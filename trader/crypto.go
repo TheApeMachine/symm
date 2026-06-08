@@ -2,11 +2,16 @@ package trader
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -30,10 +35,10 @@ func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"raw", "ui"},
+			[]string{"kraken:public", "ui"},
 			[]string{"raw"},
 		),
-		desk: nil,
+		desk: broker.NewDesk(ctx, pool),
 	}
 }
 
@@ -42,7 +47,7 @@ Tick consumes the raw bus. Story emits Action structs (entry/exit verdicts) and
 the paper desk emits execution maps. Actions submit orders; executions update
 inventory and the shared focus set so the not-holding gate sees open positions.
 */
-func (crypto *Crypto) Tick() error {
+func (crypto *Crypto) Tick() (err error) {
 	for {
 		select {
 		case <-crypto.ctx.Done():
@@ -50,23 +55,61 @@ func (crypto *Crypto) Tick() error {
 		default:
 			message, err := crypto.bus.Receive("raw")
 
-			if err != nil {
-				return err
-			}
-
-			if message == nil {
+			if errnie.Error(err) != nil || message == nil {
 				continue
 			}
 
-			envelope, ok := message.Value.(map[string]any)
+			var (
+				ok bool
+			)
 
-			if !ok {
-				continue
-			}
+			switch message.Type {
+			case "instrument":
+				var (
+					instrument *market.InstrumentUpdate
+				)
 
-			switch envelope["channel"] {
+				if instrument, ok = message.Value.(*market.InstrumentUpdate); !ok {
+					errnie.Error(errors.New("crypto: invalid instrument"), "crypto: invalid instrument")
+					continue
+				}
+
+				pairs := make([]string, 0)
+
+				for _, pair := range instrument.Pairs {
+					if pair.Quote == viper.GetString("market.quote_currency") {
+						pairs = append(pairs, pair.Symbol)
+					}
+				}
+
+				crypto.bus.Send("kraken:public", "ticker", types.KrakenMessage{
+					Method: "subscribe",
+					Params: market.NewTickerParams(pairs),
+					ReqID:  time.Now().UnixNano(),
+				})
+
+				crypto.bus.Send("kraken:public", "book", types.KrakenMessage{
+					Method: "subscribe",
+					Params: market.NewBookParams(pairs, viper.GetInt("market.book_depth_levels")),
+					ReqID:  time.Now().UnixNano(),
+				})
+
+				crypto.bus.Send("kraken:public", "trade", types.KrakenMessage{
+					Method: "subscribe",
+					Params: market.NewTradeParams(pairs),
+					ReqID:  time.Now().UnixNano(),
+				})
 			case "actions":
-				crypto.desk.AddOrder(envelope["action"].(logic.Action))
+				var (
+					action *logic.Action
+				)
+
+				if action, ok = message.Value.(*logic.Action); !ok {
+					errnie.Error(errors.New("crypto: invalid action"), "crypto: invalid action")
+					continue
+				}
+
+				crypto.desk.AddOrder(action)
 			}
 		}
 	}

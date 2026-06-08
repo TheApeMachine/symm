@@ -1,9 +1,13 @@
 package market
 
 import (
+	"encoding/json"
 	"hash"
 	"hash/crc32"
 	"sort"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 // BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
@@ -22,6 +26,22 @@ type BookParams struct {
 	Symbol   []string `json:"symbol"`
 	Depth    int      `json:"depth"`
 	Snapshot bool     `json:"snapshot"`
+}
+
+func NewBookParams(symbols []string, depth int) json.RawMessage {
+	params := &BookParams{
+		Channel: "book",
+		Symbol:  symbols,
+		Depth:   depth,
+	}
+
+	raw, err := sonic.Marshal(params)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return json.RawMessage(raw)
 }
 
 /*

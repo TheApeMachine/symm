@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 type System interface {
@@ -20,6 +24,7 @@ type Engine struct {
 	cancel  context.CancelFunc
 	err     error
 	pool    *qpool.Q[any]
+	bus     *internal.Bus
 	systems []System
 }
 
@@ -27,9 +32,15 @@ func NewEngine(ctx context.Context, pool *qpool.Q[any]) (*Engine, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	engine := &Engine{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]string{"kraken:public"},
+			[]string{},
+		),
 		systems: make([]System, 0),
 	}
 
@@ -50,6 +61,12 @@ func (engine *Engine) Start() (err error) {
 			}
 		})
 	}
+
+	engine.bus.Send("kraken:public", "instrument", types.KrakenMessage{
+		Method: "subscribe",
+		Params: market.NewInstrumentParams(),
+		ReqID: time.Now().UnixNano(),
+	})
 
 	wg.Wait()
 	return nil

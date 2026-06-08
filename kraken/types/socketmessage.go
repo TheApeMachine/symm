@@ -36,3 +36,9 @@ func (sm *SocketMessage) Unmarshal(model any) error {
 func (sm *SocketMessage) Release() {
 	socketMessagePool.Put(sm)
 }
+
+type KrakenMessage struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+	ReqID  int64           `json:"reqid"`
+}
