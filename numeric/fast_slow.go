@@ -52,10 +52,6 @@ func (ratio *FastSlowRatio) Next(
 	return FastSlowRate(values, ratio.fastWindow, ratio.epsilon), nil
 }
 
-func (ratio *FastSlowRatio) Reset() error {
-	return nil
-}
-
 func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	sampleCount := len(samples)
 
@@ -116,22 +112,4 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	}
 
 	return olderRate / recentRate
-}
-
-func (ratio *FastSlowRatio) FastWindow() int {
-	return ratio.fastWindow
-}
-
-func (ratio *FastSlowRatio) Epsilon() float64 {
-	return ratio.epsilon
-}
-
-func (ratio *FastSlowRatio) SetEpsilon(epsilon float64) error {
-	if epsilon <= 0 {
-		return fmt.Errorf("numeric: FastSlowRatio epsilon must be positive")
-	}
-
-	ratio.epsilon = epsilon
-
-	return nil
 }

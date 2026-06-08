@@ -142,24 +142,3 @@ func (ema *EMA) Reset() error {
 	ema.max = 0
 	return nil
 }
-
-/*
-Clone returns an independent EMA with the same internal state. Used when
-snapshotting numeric.Derived chains so callers cannot mutate the original
-via Dynamic.Next.
-*/
-func (ema *EMA) Clone() *EMA {
-	if ema == nil {
-		return nil
-	}
-
-	return &EMA{
-		value:     ema.value,
-		rate:      ema.rate,
-		meanDelta: ema.meanDelta,
-		observed:  ema.observed,
-		min:       ema.min,
-		max:       ema.max,
-		count:     ema.count,
-	}
-}

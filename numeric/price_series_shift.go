@@ -3,17 +3,8 @@ package numeric
 import "time"
 
 /*
-ShiftPriceSamples moves timestamps by offset without changing prices. Lead-lag
-scoring uses this to test whether an anchor path explains a later follower path.
-*/
-func ShiftPriceSamples(samples []PriceSample, offset time.Duration) []PriceSample {
-	return ShiftPriceSamplesInto(nil, samples, offset)
-}
-
-/*
 ShiftPriceSamplesInto writes samples with timestamps moved by offset into
-destination. It preserves ShiftPriceSamples semantics while allowing hot callers to
-reuse storage across lag scans.
+destination. Lead-lag scoring reuses caller storage across lag scans.
 */
 func ShiftPriceSamplesInto(
 	destination []PriceSample,

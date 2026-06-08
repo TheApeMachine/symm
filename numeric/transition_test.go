@@ -39,16 +39,13 @@ func TestTransitionMatrixPadObserved(t *testing.T) {
 	})
 }
 
-func TestTransitionMatrixNext(t *testing.T) {
-	Convey("Given a transition dynamic call", t, func() {
+func TestTransitionMatrixUpdate(t *testing.T) {
+	Convey("Given a transition update", t, func() {
 		matrix := NewTransitionMatrix(5, 0.1)
-		observed := matrix.PadObserved([]float64{0.5, 0.2, 0.2, 0.1}, 1e-6)
 
-		surprise, err := matrix.Next(0, append([]float64{2}, observed...)...)
+		matrix.Update(2)
 
-		Convey("It should score and advance state", func() {
-			So(err, ShouldBeNil)
-			So(math.IsNaN(surprise), ShouldBeFalse)
+		Convey("It should advance last category", func() {
 			So(matrix.lastCategory, ShouldEqual, 2)
 		})
 	})

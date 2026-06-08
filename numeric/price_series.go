@@ -57,20 +57,6 @@ func (sampleRing *PriceSampleRing) Push(at time.Time, price float64) {
 }
 
 /*
-Ordered returns the window contents from oldest to newest.
-*/
-func (sampleRing PriceSampleRing) Ordered() []PriceSample {
-	if sampleRing.count == 0 {
-		return nil
-	}
-
-	ordered := make([]PriceSample, sampleRing.count)
-	sampleRing.AppendOrdered(ordered[:0])
-
-	return ordered
-}
-
-/*
 AppendOrdered appends the window contents from oldest to newest into destination.
 Callers on hot paths can pass reusable storage to avoid per-read heap churn.
 */
@@ -101,56 +87,6 @@ func (sampleRing PriceSampleRing) startIndex() int {
 	}
 
 	return sampleRing.head
-}
-
-/*
-SynchronizedLogReturns aligns two price windows on a shared time grid and emits
-paired log-returns for the bars where both sides saw a fresh observation.
-*/
-func SynchronizedLogReturns(
-	left, right []PriceSample,
-	interval time.Duration,
-) ([]float64, []float64, bool) {
-	if interval <= 0 || len(left) < 2 || len(right) < 2 {
-		return nil, nil, false
-	}
-
-	overlapStart := left[0].At
-
-	if right[0].At.After(overlapStart) {
-		overlapStart = right[0].At
-	}
-
-	overlapEnd := left[len(left)-1].At
-
-	if right[len(right)-1].At.Before(overlapEnd) {
-		overlapEnd = right[len(right)-1].At
-	}
-
-	if !overlapStart.Before(overlapEnd) {
-		return nil, nil, false
-	}
-
-	gridStart := overlapStart.Truncate(interval)
-
-	if gridStart.Before(overlapStart) {
-		gridStart = gridStart.Add(interval)
-	}
-
-	leftPrices, leftPresent := observedGrid(left, gridStart, overlapEnd, interval)
-	rightPrices, rightPresent := observedGrid(right, gridStart, overlapEnd, interval)
-
-	if len(leftPrices) != len(rightPrices) || len(leftPrices) < 2 {
-		return nil, nil, false
-	}
-
-	leftReturns, rightReturns := alignedLogReturns(leftPrices, rightPrices, leftPresent, rightPresent)
-
-	if len(leftReturns) < 2 {
-		return nil, nil, false
-	}
-
-	return leftReturns, rightReturns, true
 }
 
 /*
@@ -254,73 +190,6 @@ func validHYInterval(previous, current PriceSample) bool {
 	}
 
 	return current.At.Sub(previous.At) <= maxHayashiYoshidaInterval
-}
-
-/*
-observedGrid carries the last seen price across the grid for indexing and
-returns a parallel slice of "this bar saw a fresh sample" flags, so callers can
-skip bars that had no fresh observation rather than fabricating a zero return.
-*/
-func observedGrid(samples []PriceSample, start, end time.Time, interval time.Duration) ([]float64, []bool) {
-	prices := make([]float64, 0)
-	present := make([]bool, 0)
-	sampleIndex := 0
-	currentPrice := 0.0
-
-	for grid := start; !grid.After(end); grid = grid.Add(interval) {
-		freshThisBar := false
-
-		for sampleIndex < len(samples) && !samples[sampleIndex].At.After(grid) {
-			if samples[sampleIndex].Price > 0 {
-				currentPrice = samples[sampleIndex].Price
-				freshThisBar = true
-			}
-
-			sampleIndex++
-		}
-
-		if currentPrice <= 0 {
-			continue
-		}
-
-		prices = append(prices, currentPrice)
-		present = append(present, freshThisBar)
-	}
-
-	return prices, present
-}
-
-/*
-alignedLogReturns emits a log-return only when both sides saw a fresh
-observation across the bar pair that spans the return, so the resulting series
-reflects genuinely observed comovement rather than forward-filled zeros.
-*/
-func alignedLogReturns(left, right []float64, leftPresent, rightPresent []bool) ([]float64, []float64) {
-	if len(left) != len(right) || len(left) < 2 {
-		return nil, nil
-	}
-
-	leftReturns := make([]float64, 0, len(left)-1)
-	rightReturns := make([]float64, 0, len(right)-1)
-
-	for index := 1; index < len(left); index++ {
-		if !leftPresent[index] || !rightPresent[index] {
-			continue
-		}
-
-		if !leftPresent[index-1] || !rightPresent[index-1] {
-			continue
-		}
-
-		if left[index-1] <= 0 || right[index-1] <= 0 {
-			continue
-		}
-
-		leftReturns = append(leftReturns, math.Log(left[index]/left[index-1]))
-		rightReturns = append(rightReturns, math.Log(right[index]/right[index-1]))
-	}
-
-	return leftReturns, rightReturns
 }
 
 /*

@@ -66,13 +66,3 @@ func (tuner *FeedbackTuner) Apply(
 
 	return true, nil
 }
-
-func (tuner *FeedbackTuner) LastSamples() int {
-	return tuner.lastSamples
-}
-
-func (tuner *FeedbackTuner) Reset() error {
-	tuner.lastSamples = 0
-
-	return nil
-}

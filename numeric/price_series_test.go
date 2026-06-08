@@ -17,15 +17,7 @@ func TestPriceSampleRingPush(t *testing.T) {
 		ring.Push(now.Add(2*time.Second), 102)
 		ring.Push(now.Add(3*time.Second), 103)
 
-		Convey("It should retain the newest samples in order", func() {
-			ordered := ring.Ordered()
-
-			So(len(ordered), ShouldEqual, 3)
-			So(ordered[0].Price, ShouldEqual, 101)
-			So(ordered[2].Price, ShouldEqual, 103)
-		})
-
-		Convey("AppendOrdered should reuse caller storage", func() {
+		Convey("AppendOrdered should return the newest samples in order", func() {
 			buffer := make([]PriceSample, 0, 3)
 			ordered := ring.AppendOrdered(buffer)
 
@@ -33,30 +25,6 @@ func TestPriceSampleRingPush(t *testing.T) {
 			So(cap(ordered), ShouldEqual, cap(buffer))
 			So(ordered[0].Price, ShouldEqual, 101)
 			So(ordered[2].Price, ShouldEqual, 103)
-		})
-	})
-}
-
-func TestSynchronizedLogReturns(t *testing.T) {
-	Convey("Given overlapping price windows", t, func() {
-		start := time.Now().Truncate(time.Minute)
-		left := []PriceSample{
-			{At: start, Price: 100},
-			{At: start.Add(time.Minute), Price: 101},
-			{At: start.Add(2 * time.Minute), Price: 102},
-		}
-		right := []PriceSample{
-			{At: start, Price: 200},
-			{At: start.Add(time.Minute), Price: 202},
-			{At: start.Add(2 * time.Minute), Price: 204},
-		}
-
-		leftReturns, rightReturns, ok := SynchronizedLogReturns(left, right, time.Minute)
-
-		Convey("It should emit paired log returns", func() {
-			So(ok, ShouldBeTrue)
-			So(len(leftReturns), ShouldEqual, len(rightReturns))
-			So(len(leftReturns), ShouldBeGreaterThan, 0)
 		})
 	})
 }

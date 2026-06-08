@@ -46,10 +46,6 @@ func (matrix *TransitionMatrix) Update(stateIndex int) {
 	matrix.lastCategory = stateIndex
 }
 
-func (matrix *TransitionMatrix) NumStates() int {
-	return matrix.numStates
-}
-
 /*
 PadObserved maps an N-category distribution into a numStates vector with a
 leading none-state mass, then normalizes.
@@ -89,36 +85,4 @@ func (matrix *TransitionMatrix) PadObserved(
 	}
 
 	return padded
-}
-
-func (matrix *TransitionMatrix) Reset() error {
-	alpha := matrix.counts[0][0]
-
-	for row := range matrix.counts {
-		for column := range matrix.counts[row] {
-			matrix.counts[row][column] = alpha
-		}
-	}
-
-	matrix.lastCategory = 0
-
-	return nil
-}
-
-func (matrix *TransitionMatrix) Next(
-	out float64, values ...float64,
-) (float64, error) {
-	_ = out
-
-	if len(values) == 0 {
-		return 0, nil
-	}
-
-	stateIndex := int(values[0])
-	observed := values[1:]
-
-	surprise := matrix.Surprise(observed)
-	matrix.Update(stateIndex)
-
-	return surprise, nil
 }

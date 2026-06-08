@@ -131,29 +131,6 @@ func Quartiles(values []float64) (lower, upper float64) {
 }
 
 /*
-MedianAbsoluteDeviation returns MAD around median on a sorted slice.
-*/
-func MedianAbsoluteDeviation(sorted []float64, median float64) float64 {
-	if len(sorted) == 0 {
-		return 0
-	}
-
-	deviations := make([]float64, len(sorted))
-
-	for index, value := range sorted {
-		delta := value - median
-
-		if delta < 0 {
-			delta = -delta
-		}
-
-		deviations[index] = delta
-	}
-
-	return Median(deviations)
-}
-
-/*
 MedianAbsolute returns the median absolute value.
 */
 func MedianAbsolute(values []float64) float64 {

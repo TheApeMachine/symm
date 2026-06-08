@@ -74,39 +74,6 @@ func TestEMAReset(t *testing.T) {
 	})
 }
 
-func TestEMAClone(t *testing.T) {
-	t.Parallel()
-
-	Convey("Given a cloned EMA", t, func() {
-		orig := NewEMA(0.35)
-
-		_, _ = orig.Next(0, 5)
-		_, _ = orig.Next(0, 10)
-
-		snapshot := orig.value
-
-		copied := orig.Clone()
-
-		Convey("Clone should preserve internal state", func() {
-			So(copied.value, ShouldEqual, snapshot)
-			So(copied.observed, ShouldBeTrue)
-		})
-
-		Convey("Mutating the clone should not move the original", func() {
-			_, _ = copied.Next(0, 999)
-
-			So(orig.value, ShouldEqual, snapshot)
-			So(copied.value, ShouldNotEqual, snapshot)
-		})
-	})
-
-	Convey("Clone on nil receiver returns nil", t, func() {
-		var nilEMA *EMA
-
-		So(nilEMA.Clone(), ShouldBeNil)
-	})
-}
-
 func BenchmarkEMANext(b *testing.B) {
 	ema := NewEMA(0.35)
 

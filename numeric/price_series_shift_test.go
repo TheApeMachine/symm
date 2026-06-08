@@ -24,10 +24,6 @@ func TestShiftPriceSamplesInto(t *testing.T) {
 			So(shifted[0].At, ShouldResemble, samples[0].At.Add(time.Minute))
 			So(shifted[1].Price, ShouldEqual, samples[1].Price)
 		})
-
-		Convey("The allocating wrapper should match the reusable path", func() {
-			So(ShiftPriceSamples(samples, time.Minute), ShouldResemble, shifted)
-		})
 	})
 }
 

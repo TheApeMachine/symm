@@ -18,15 +18,6 @@ func TestPercentileSorted(t *testing.T) {
 	}
 }
 
-func TestMedianAbsoluteDeviation(t *testing.T) {
-	sorted := CopySorted([]float64{1, 2, 3, 100})
-	mad := MedianAbsoluteDeviation(sorted, Median(sorted))
-
-	if mad <= 0 {
-		t.Fatalf("expected positive MAD, got %v", mad)
-	}
-}
-
 func BenchmarkMedian(b *testing.B) {
 	values := CopySorted([]float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 
