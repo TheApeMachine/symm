@@ -1,281 +1,338 @@
 package correlation
 
 import (
-	"context"
-	"math/rand"
-	"sync"
-	"time"
+	"container/ring"
+	"fmt"
+	"math"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	signalpool "github.com/theapemachine/symm/signal"
 )
-
-const (
-	// gridBars is how many recent bar returns feed each SimHash hyperplane dot product.
-	gridBars = 32
-	// hashBits is the fingerprint width: one uint64 signature per coin per batch.
-	hashBits = 64
-	// correlationBatchInterval is the cross-section window. Trades accumulate per
-	// symbol and the herd pass runs once per interval — correlation is a property
-	// of the cross-section, not of a single print.
-	correlationBatchInterval = 250 * time.Millisecond
-	// energyFloor excludes coins whose variance is below this fraction of the slow
-	// market-energy baseline — dead-flat and illiquid coins cannot vote as herd.
-	energyFloor     = 0.0625
-	rawSubscriberID = "signal/correlation:raw"
-
-	defaultCalibratorWindow        = 8192
-	defaultCalibratorRefitInterval = 256
-	defaultCalibratorWarmup        = 512
-	defaultCalibratorBlend         = 0.3
-)
-
-// correlationBandEdges seed the herd bands; self-calibration adapts them to the
-// live pooled distribution from there: divergent_stress | stochastic_noise |
-// decoupled_alpha | systemic_herd.
-var correlationBandEdges = []float64{-0.30, 0.40, 2.00}
-
-func calibratorConfig() (window, refitInterval, warmup int, blend float64) {
-	window = viper.GetInt("signals.correlation.calibrator.window")
-
-	if window <= 0 {
-		window = defaultCalibratorWindow
-	}
-
-	refitInterval = viper.GetInt("signals.correlation.calibrator.refit_interval")
-
-	if refitInterval <= 0 {
-		refitInterval = defaultCalibratorRefitInterval
-	}
-
-	warmup = viper.GetInt("signals.correlation.calibrator.warmup")
-
-	if warmup <= 0 {
-		warmup = defaultCalibratorWarmup
-	}
-
-	blend = viper.GetFloat64("signals.correlation.calibrator.blend")
-
-	if blend <= 0 {
-		blend = defaultCalibratorBlend
-	}
-
-	return window, refitInterval, warmup, blend
-}
 
 /*
-Signal measuring cross-asset "herd behavior" via the dominant eigenmode of the
-return field — read cheaply as bit-agreement with the market's majority
-fingerprint, so the whole universe is classified in one O(n) pass per tick with
-no pairwise correlation matrix.
+Signal measures how each symbol's return stream correlates with the cross-section median.
 
-  - Fingerprint: each coin's recent movement is stamped into one 64-bit
-    signature through a fixed set of random hyperplanes (SimHash).
-  - Market mode: the bit-by-bit majority vote across all signatures is the
-    dominant shared direction — "the market."
-  - Correlation: a coin's bit-agreement with that majority (a single popcount)
-    is how hard it is herding; anti-agreement is divergence.
-  - Energy: each coin's exponentially-weighted return variance, normalised by a
-    slow market-energy baseline, separates active regimes from quiet noise.
+Rolling Correlation : Pearson correlation between a symbol's log-return window and the peer median return series.
+Return Energy       : Median absolute log return — separates idle noise from symbols that are actually moving.
+Peer Quartiles      : Correlation and energy ranks are scored against the live universe, not fixed constants.
 
-| Category         | Correlation | Variance | Market "Feel"   |
-|:-----------------|:------------|:---------|:----------------|
-| Systemic Herd    | High >0.85  | High     | Global Beta     |
-| Decoupled Alpha  | Low         | High     | Unique Driver   |
-| Stochastic Noise | Low         | Low      | Quiet           |
-| Divergent Stress | Negative    | High     | Contrarian Move |
+The "Herd" Story      : A symbol moving in lockstep with the market — beta exposure, not alpha.
+The "Lone Wolf" Story : High movement with low correlation — idiosyncratic flow the crowd is not sharing.
+
+| Category          | Correlation | Energy  | Market "Feel"           |
+|-------------------|-------------|---------|-------------------------|
+| Systemic Herd     | High +      | High    | Beta / Crowded Move     |
+| Decoupled Alpha   | Low         | High    | Idiosyncratic / Alpha   |
+| Stochastic Noise  | Any         | Low     | Idle / Choppy           |
+| Divergent Stress  | High -      | High    | Counter-Herd / Stress   |
 */
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q[any]
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map
-	planes        [hashBits][gridBars]float64
-	marketEnergy  *adaptive.EMA
-	categories    map[string]types.CategoryType
-	activeScratch []live
-	surpriseField *types.CategorySurpriseField
-	classifier    *adaptive.Classifier
-	calibrator    *numeric.BandCalibrator
-	rawDump       *rawdump.Writer
+	symbol       string
+	entity       *logic.Entity
+	measurements *ring.Ring
+	crossSection *crossSection
+	transition   *numeric.TransitionMatrix
+	weights      numeric.ClassifierWeights
+	tuner        *numeric.FeedbackTuner
 }
 
-/*
-NewSignal wires the measurements broadcast and installs one fixed random
-hyperplane set. The seed is fixed so every coin is stamped with the same
-projection — otherwise bit agreement would be meaningless.
-*/
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	crossSection *crossSection,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:       symbol,
+		entity:       entity,
+		measurements: measurements,
+		crossSection: crossSection,
+		transition:   numeric.NewTransitionMatrix(5, alpha),
+		weights:      numeric.DefaultClassifierWeights(threshold),
+		tuner:        numeric.NewFeedbackTuner(),
+	}
+}
 
-	// One classifier and one calibrator shared by every coin, so the herd bands
-	// reflect the whole universe's pooled fused-score distribution with a single
-	// sample count, instead of fragmenting into a per-coin state.
-	calibratorWindow, calibratorRefitInterval, calibratorWarmup, calibratorBlend := calibratorConfig()
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		correlationBandEdges,
-		[]float64{0, 1, 2, 3},
-		[]string{
-			"divergent_stress",
-			"stochastic_noise",
-			"decoupled_alpha",
-			"systemic_herd",
-		},
-		[]float64{0.15, 0.45, 0.25, 0.15},
-		numeric.CalibratorConfig{
-			Window:     calibratorWindow,
-			RefitEvery: calibratorRefitInterval,
-			MinSamples: calibratorWarmup,
-			Blend:      calibratorBlend,
-			SeedField:  "strength",
-		},
-		"correlation",
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
+		)
+
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	}
+
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("correlation: unsupported entity %d", signal.entity.Type),
+		)
+	}
+}
+
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	var (
+		price float64
+		err   error
+		seen  bool
 	)
 
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategoryDivergentStress,
-		types.CategoryStochasticNoise,
-		types.CategoryDecoupledAlpha,
-		types.CategorySystemicHerd,
-	}, types.DefaultCategorySurpriseAlpha)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/correlation")
-		return nil
-	}
-
-	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		broadcasts:   make(map[string]*qpool.BroadcastGroup),
-		subscribers:  make(map[string]*qpool.BroadcastConsumer),
-		marketEnergy: adaptive.NewEMA(0),
-		categories: map[string]types.CategoryType{
-			"divergent_stress": types.CategoryDivergentStress,
-			"stochastic_noise": types.CategoryStochasticNoise,
-			"decoupled_alpha":  types.CategoryDecoupledAlpha,
-			"systemic_herd":    types.CategorySystemicHerd,
-		},
-		surpriseField: surpriseField,
-		classifier:    pooledCalibrator.Classifier,
-		calibrator:    pooledCalibrator.Calibrator,
-		rawDump:       rawdump.Open("correlation"),
-	}
-
-	// Fixed seed: one shared projection for the whole universe.
-	rng := rand.New(rand.NewSource(1))
-
-	for planeIndex := range signal.planes {
-		for barIndex := range signal.planes[planeIndex] {
-			signal.planes[planeIndex][barIndex] = float64(rng.Intn(2)*2 - 1)
-		}
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	errnie.Info("signal/correlation ready", "signal/correlation")
-
-	return signal
-}
-
-/*
-Tick accumulates the latest trade price per symbol and runs one herd pass per
-batch tick. Per-trade processing would restamp fingerprints on every print;
-correlationBatchInterval batches enough cross-section activity to be stable.
-*/
-func (signal *Signal) Tick() error {
-	batch := time.NewTicker(correlationBatchInterval)
-	defer batch.Stop()
-
-	latest := make(map[string]float64)
-	raw := signal.subscribers["raw"]
-
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return signal.ctx.Err()
-		case <-batch.C:
-			if len(latest) == 0 {
-				continue
-			}
-
-			if err := signal.process(latest); err != nil {
-				errnie.Error(err, "correlation: process")
-				continue
-			}
-
-			clear(latest)
-		default:
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
 		}
 
-		message, err := raw.Wait(signal.ctx)
-		if err != nil {
-			return err
-		}
-
-		if message == nil {
-			select {
-			case <-signal.ctx.Done():
-				return signal.ctx.Err()
-			case <-batch.C:
-				if len(latest) == 0 {
-					continue
-				}
-
-				if err := signal.process(latest); err != nil {
-					errnie.Error(err, "correlation: process")
-					continue
-				}
-
-				clear(latest)
-			case <-time.After(2 * time.Millisecond):
-			}
-
-			continue
-		}
-
-		errnie.Debug("signal/correlation: Tick()", "type", message.Type)
-
-		if message.Value == nil {
-			continue
-		}
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		trade, ok := item.(*krakenmarket.TradeUpdate)
 
 		if !ok {
-			continue
+			err = fmt.Errorf("correlation: expected trade update")
+			return
 		}
 
-		if sm.Channel != public.TradesChannel {
-			continue
-		}
+		price = trade.Price
+		seen = true
+	})
 
-		for _, trade := range signalpool.GetTrades(sm) {
-			if trade.Price > 0 {
-				latest[trade.Symbol] = trade.Price
-			}
-		}
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
+
+	if !seen || price <= 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	return signal.fromCrossSection(price)
 }
 
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	var (
+		ticker *krakenmarket.TickerUpdate
+		err    error
+		seen   bool
+	)
+
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		update, ok := item.(*krakenmarket.TickerUpdate)
+
+		if !ok {
+			err = fmt.Errorf("correlation: expected ticker update")
+			return
+		}
+
+		ticker = update
+		seen = true
+	})
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if !seen || ticker == nil {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	price := ticker.Last
+
+	if price <= 0 {
+		price = (ticker.Ask + ticker.Bid) / 2
+	}
+
+	if price <= 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	return signal.fromCrossSection(price)
+}
+
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
+}
+
+func (signal *Signal) fromCrossSection(price float64) (logic.Measurement, error) {
+	signal.crossSection.publishPrice(signal.symbol, price)
+
+	window := signal.crossSection.minBarsRequired()
+	symbolReturns := signal.crossSection.symbolReturns(signal.symbol, window)
+	marketReturns := signal.crossSection.marketReturns(window)
+
+	if len(symbolReturns) < window || len(marketReturns) < window {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	peerCorrelations := signal.crossSection.peerCorrelations(window)
+	peerEnergies := signal.crossSection.peerEnergies(window)
+
+	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	correlation := numeric.Pearson(symbolReturns, marketReturns)
+	energy := numeric.MedianAbsolute(symbolReturns)
+
+	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies)
+
+	herdScore := 0.0
+
+	if category == logic.CategorySystemicHerd {
+		herdScore = correlation * energy
+	}
+
+	alphaScore := 0.0
+
+	if category == logic.CategoryDecoupledAlpha {
+		alphaScore = energy * (1 - math.Abs(correlation))
+	}
+
+	noiseScore := 0.0
+
+	if category == logic.CategoryStochasticNoise {
+		noiseScore = 1 - energy
+	}
+
+	stressScore := 0.0
+
+	if category == logic.CategoryDivergentStress {
+		stressScore = math.Abs(correlation) * energy
+	}
+
+	probabilities := numeric.SoftmaxScores([]float64{
+		herdScore,
+		alphaScore,
+		noiseScore,
+		stressScore,
+	})
+
+	categoryIndex := signal.categoryIndex(category)
+
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
+
+	signal.transition.Update(categoryIndex)
+
+	confidence := 0.0
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = probabilities[categoryIndex-1]
+	}
+
+	strength := math.Abs(correlation)
+
+	if category == logic.CategoryDecoupledAlpha {
+		strength = alphaScore
+	}
+
+	return logic.Measurement{
+		Source:     logic.SourceCorrelation,
+		Symbol:     signal.symbol,
+		Price:      price,
+		Strength:   strength,
+		Volume:     0,
+		Spread:     0,
+		Elapsed:    0,
+		Category:   category,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   surprise,
+	}, nil
+}
+
+func (signal *Signal) classify(
+	correlation, energy float64,
+	peerCorrelations, peerEnergies []float64,
+) logic.CategoryType {
+	sortedCorrelations := numeric.CopySorted(peerCorrelations)
+	sortedEnergies := numeric.CopySorted(peerEnergies)
+
+	upperCorrelation := numeric.PercentileSorted(sortedCorrelations, 0.75)
+	lowerCorrelation := numeric.PercentileSorted(sortedCorrelations, 0.25)
+	upperEnergy := numeric.PercentileSorted(sortedEnergies, 0.75)
+	lowerEnergy := numeric.PercentileSorted(sortedEnergies, 0.25)
+	medianEnergy := numeric.Median(peerEnergies)
+
+	energySpread := upperEnergy - lowerEnergy
+	lowEnergy := false
+
+	if energySpread > 0 {
+		lowEnergy = energy <= lowerEnergy
+	}
+
+	if !lowEnergy && medianEnergy > 0 {
+		lowEnergy = energy <= medianEnergy/4
+	}
+
+	if lowEnergy {
+		return logic.CategoryStochasticNoise
+	}
+
+	correlationSpread := upperCorrelation - lowerCorrelation
+	highPositiveCorrelation := correlation >= upperCorrelation
+
+	if correlationSpread <= 0 {
+		highPositiveCorrelation = correlation > 0
+	}
+
+	lowMagnitudeCorrelation := math.Abs(correlation) <= lowerCorrelation
+
+	if correlationSpread <= 0 {
+		lowMagnitudeCorrelation = math.Abs(correlation) < 0.5
+	}
+
+	highEnergy := energy >= upperEnergy
+
+	if energySpread <= 0 {
+		highEnergy = energy >= medianEnergy
+	}
+
+	if correlation < 0 && highEnergy && math.Abs(correlation) >= math.Abs(lowerCorrelation) {
+		return logic.CategoryDivergentStress
+	}
+
+	if highPositiveCorrelation && highEnergy {
+		return logic.CategorySystemicHerd
+	}
+
+	if lowMagnitudeCorrelation && highEnergy {
+		return logic.CategoryDecoupledAlpha
+	}
+
+	return logic.CategoryStochasticNoise
+}
+
+func (signal *Signal) categoryIndex(category logic.CategoryType) int {
+	switch category {
+	case logic.CategorySystemicHerd:
+		return 1
+	case logic.CategoryDecoupledAlpha:
+		return 2
+	case logic.CategoryStochasticNoise:
+		return 3
+	case logic.CategoryDivergentStress:
+		return 4
+	default:
+		return 0
+	}
 }

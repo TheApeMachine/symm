@@ -34,6 +34,19 @@ func Median(values []float64) float64 {
 }
 
 /*
+Sum returns the total of values.
+*/
+func Sum(values []float64) float64 {
+	total := 0.0
+
+	for _, value := range values {
+		total += value
+	}
+
+	return total
+}
+
+/*
 Mean returns the arithmetic mean of values.
 */
 func Mean(values []float64) float64 {

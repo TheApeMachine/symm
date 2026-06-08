@@ -1,356 +1,191 @@
 package hawkes
 
 import (
-	"context"
-	"errors"
+	"container/ring"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	signalpool "github.com/theapemachine/symm/signal"
-)
-
-var hawkesDefaultBandEdges = []float64{0.5, 1.0, 1.5}
-
-const (
-	tickCapacity    = 4096
-	rawSubscriberID = "signal/hawkes:raw"
 )
 
 /*
 Signal detects trade-cluster excitation via a bivariate self-exciting Hawkes
-model and maps the fitted state onto the thermal perspective (Frenzy /
-Saturation / Organic / Exhaustion). It consumes the executed trade tape; the
-per-symbol fit is cooldown-throttled inside HawkesSymbol.
+model from the executed trade tape.
+
+| Category   | Spectral Radius   | Asymmetry    | Market "Feel"          |
+|:-----------|:------------------|:-------------|:-----------------------|
+| Frenzy     | Moderate          | High         | Aggressive/Directional |
+| Saturation | High (→ 1.0)      | Low/Moderate | Contested/Unstable     |
+| Organic    | Low               | Low          | Healthy/Quiet          |
+| Exhaustion | Very Low          | Low          | Stalled/Dying          |
 */
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q[any]
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map
-	tradeScratch  []tradeTouch
-	surpriseField *types.CategorySurpriseField
-	classifier    *adaptive.Classifier
-	calibrator    *numeric.BandCalibrator
-	categories    map[string]types.CategoryType
-	rawDump       *rawdump.Writer
+	symbol       string
+	entity       *logic.Entity
+	measurements *ring.Ring
+	system       *System
+	transition   *numeric.TransitionMatrix
+	weights      numeric.ClassifierWeights
+	tuner        *numeric.FeedbackTuner
 }
 
-type tradeTouch struct {
-	symbol string
-	state  *symbolState
-	last   float64
-}
-
-/*
-symbolState pairs one symbol's rolling trade window with its Hawkes fitter.
-*/
-type symbolState struct {
-	mu     sync.Mutex
-	hawkes *HawkesSymbol
-	ticks  []market.TradeUpdate
-}
-
-func newSymbolState(categories map[string]types.CategoryType, classifier *adaptive.Classifier) *symbolState {
-	return &symbolState{hawkes: NewHawkesSymbol(classifier, categories)}
-}
-
-func (state *symbolState) append(trade market.TradeUpdate) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if len(state.ticks) >= tickCapacity {
-		state.ticks = append(state.ticks[len(state.ticks)-tickCapacity+1:], trade)
-		return
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	system *System,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:       symbol,
+		entity:       entity,
+		measurements: measurements,
+		system:       system,
+		transition:   numeric.NewTransitionMatrix(5, alpha),
+		weights:      numeric.DefaultClassifierWeights(threshold),
+		tuner:        numeric.NewFeedbackTuner(),
 	}
-
-	state.ticks = append(state.ticks, trade)
 }
 
-func (state *symbolState) measure(now time.Time) (types.Measurement, float64, error) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
+		)
 
-	return state.hawkes.Measure(state.ticks, now)
-}
-
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		hawkesDefaultBandEdges,
-		[]float64{0, 1, 2, 3},
-		[]string{"organic", "frenzy", "saturation", "exhaustion"},
-		[]float64{0.40, 0.30, 0.20, 0.10},
-		numeric.DefaultCalibratorConfig("strength"),
-		"hawkes",
-	)
-
-	categories := map[string]types.CategoryType{
-		"organic":    types.CategoryOrganic,
-		"frenzy":     types.CategoryFrenzy,
-		"saturation": types.CategorySaturation,
-		"exhaustion": types.CategoryExhaustion,
-	}
-
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategoryOrganic,
-		types.CategoryFrenzy,
-		types.CategorySaturation,
-		types.CategoryExhaustion,
-	}, types.DefaultCategorySurpriseAlpha)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/hawkes")
-		return nil
-	}
-
-	signal := &Signal{
-		ctx:           ctx,
-		cancel:        cancel,
-		pool:          pool,
-		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.BroadcastConsumer),
-		surpriseField: surpriseField,
-		classifier:    pooledCalibrator.Classifier,
-		calibrator:    pooledCalibrator.Calibrator,
-		categories:    categories,
-		rawDump:       rawdump.Open("hawkes"),
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	errnie.Info("signal/hawkes ready", "signal/hawkes")
-
-	return signal
-}
-
-func (signal *Signal) Tick() error {
-	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
 		if err != nil {
-			return err
-		}
-
-		if message == nil {
-			continue
-		}
-
-		errnie.Debug("signal/hawkes: Tick()", "type", message.Type)
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
-
-		if !ok {
-			continue
-		}
-
-		switch sm.Channel {
-		case public.TradesChannel:
-			trades := signalpool.GetTrades(sm)
-
-			if err := signal.observeTrades(trades); err != nil {
-				errnie.Error(err, "hawkes: observe trades")
-			}
-		case public.TickerChannel:
-			tickers := signalpool.GetTickers(sm)
-
-			if err := signal.observeTickers(tickers); err != nil {
-				errnie.Error(err, "hawkes: observe tickers")
-			}
+			return logic.Measurement{}, errnie.Error(err)
 		}
 	}
-}
 
-func (signal *Signal) observeTickers(tickers []market.TickerUpdate) error {
-	var err error
-
-	for _, ticker := range tickers {
-		if ticker.Last <= 0 {
-			continue
-		}
-
-		raw, ok := signal.symbols.Load(ticker.Symbol)
-
-		if !ok {
-			continue
-		}
-
-		at, parseErr := hawkesTickerTime(ticker)
-
-		if parseErr != nil {
-			err = errors.Join(err, parseErr)
-			continue
-		}
-
-		err = errors.Join(
-			err,
-			signal.publishMeasurement(ticker.Symbol, raw.(*symbolState), ticker.Last, at),
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("hawkes: unsupported entity %d", signal.entity.Type),
 		)
 	}
-
-	return err
 }
 
-func (signal *Signal) observeTrades(trades []market.TradeUpdate) error {
-	touches := signal.tradeScratch[:0]
-	indexBySymbol := make(map[string]int, len(trades))
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	var (
+		trades []krakenmarket.TradeUpdate
+		err    error
+	)
 
-	for _, trade := range trades {
-		if trade.Price <= 0 || trade.Qty <= 0 {
-			continue
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
 		}
 
-		stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newSymbolState(signal.categories, signal.classifier))
-		state := stored.(*symbolState)
-		state.append(trade)
+		trade, ok := item.(*krakenmarket.TradeUpdate)
 
-		if touchIndex, ok := indexBySymbol[trade.Symbol]; ok {
-			touches[touchIndex].last = trade.Price
-			continue
+		if !ok {
+			err = fmt.Errorf("hawkes: expected trade update")
+			return
 		}
 
-		indexBySymbol[trade.Symbol] = len(touches)
-		touches = append(touches, tradeTouch{
-			symbol: trade.Symbol,
-			state:  state,
-			last:   trade.Price,
-		})
-	}
-
-	signal.tradeScratch = touches
-
-	if len(touches) == 0 {
-		return nil
-	}
-
-	return signal.publishTouches(touches)
-}
-
-func (signal *Signal) publishTouches(touches []tradeTouch) error {
-	var err error
-
-	for _, touch := range touches {
-		// Inline, not pooled: the previous fan-out scheduled every item under
-		// ONE shared job id (%p of the same local), so results overwrote each
-		// other and Get parked this signal's goroutine forever — the silent
-		// signal deaths of 2026-06-07.
-		runItem := func() (any, error) {
-		now := touchLastTime(touch.state)
-		return nil, signal.publishMeasurement(touch.symbol, touch.state, touch.last, now)
-		}
-
-		if _, runErr := runItem(); runErr != nil {
-			err = errors.Join(err, runErr)
-		}
-
-	}
-
-	
-
-	return err
-}
-
-func (signal *Signal) publishMeasurement(
-	symbol string,
-	state *symbolState,
-	last float64,
-	at time.Time,
-) error {
-	measurement, standout, err := state.measure(at)
+		trades = append(trades, *trade)
+	})
 
 	if err != nil {
-		return err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if measurement.Source == types.SourceNone {
-		return nil
+	if len(trades) == 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	measurement.Symbol = symbol
-	measurement.Last = last
+	state := signal.system.loadSymbol(signal.symbol)
+	reading, ok := state.Measure(trades, time.Now())
 
-	signal.calibrator.Observe(measurement.Strength, signal.classifier)
-
-	telemetry := signal.calibrator.Snapshot(signal.classifier)
-	telemetry.Observation = measurement.Strength
-	if err := types.AssignCategorySurpriseSNR(
-		&measurement, signal.surpriseField, measurement.Category,
-	); err != nil {
-		return err
+	if !ok {
+		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	if err := signal.rawDump.Write(rawRecord{
-		TimestampUnixNano: at.UnixNano(),
-		Symbol:            measurement.Symbol,
-		Category:          measurement.Category,
-		Strength:          measurement.Strength,
-		Confidence:        measurement.Confidence,
-		SNR:               measurement.SNR,
-		Standout:          standout,
-		Last:              measurement.Last,
-		SpreadBPS:         measurement.SpreadBPS,
-	}); err != nil {
-		return err
-	}
-
-	if err := measurement.Send(signal.pool); err != nil {
-		return err
-	}
-
-	if ui := signal.broadcasts["ui"]; ui != nil {
-		ui.Send(&qpool.QValue[any]{
-			Value: numeric.GaugePayload(
-				measurement.Source.String(),
-				measurement.Symbol,
-				measurement.Category,
-				measurement,
-				telemetry,
-			),
-		})
-	}
-
-	return nil
+	return signal.publish(reading)
 }
 
-func hawkesTickerTime(ticker market.TickerUpdate) (time.Time, error) {
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
-		if at, err := time.Parse(layout, ticker.Timestamp); err == nil {
-			return at, nil
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
+}
+
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
+}
+
+func (signal *Signal) publish(reading hawkesReading) (logic.Measurement, error) {
+	probabilities := numeric.SoftmaxScores([]float64{
+		reading.frenzy,
+		reading.saturation,
+		reading.organic,
+		reading.exhaustion,
+	})
+
+	categoryIndex := signal.categoryIndex(reading.category)
+
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
+
+	signal.transition.Update(categoryIndex)
+
+	confidence := reading.confidence
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = probabilities[categoryIndex-1]
+	}
+
+	price := 0.0
+
+	if signal.measurements != nil && signal.measurements.Value != nil {
+		if trade, ok := signal.measurements.Value.(*krakenmarket.TradeUpdate); ok {
+			price = trade.Price
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("hawkes: ticker timestamp is required for %s", ticker.Symbol)
+	return logic.Measurement{
+		Source:     logic.SourceHawkes,
+		Symbol:     signal.symbol,
+		Price:      price,
+		Strength:   reading.strength,
+		Volume:     0,
+		Spread:     0,
+		Elapsed:    0,
+		Category:   reading.category,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   surprise,
+	}, nil
 }
 
-func touchLastTime(state *symbolState) time.Time {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if tickCount := len(state.ticks); tickCount > 0 {
-		return state.ticks[tickCount-1].Timestamp
+func (signal *Signal) categoryIndex(category logic.CategoryType) int {
+	switch category {
+	case logic.CategoryFrenzy:
+		return 1
+	case logic.CategorySaturation:
+		return 2
+	case logic.CategoryOrganic:
+		return 3
+	case logic.CategoryExhaustion:
+		return 4
+	default:
+		return 0
 	}
-
-	return time.Now()
-}
-
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
 }

@@ -1,0 +1,241 @@
+package causal
+
+import (
+	"container/ring"
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"sync"
+	"time"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
+	symmring "github.com/theapemachine/symm/ring"
+)
+
+type System struct {
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	bus             *internal.Bus
+	signals         sync.Map
+	symbols         sync.Map
+	feedback        *market.Feedback
+	crossSection    *crossSection
+	contagionSpread symmring.FloatRing
+	lastPublish     time.Time
+}
+
+func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &System{
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]string{"raw"},
+			[]string{"measurements"},
+		),
+		signals:      sync.Map{},
+		symbols:      sync.Map{},
+		crossSection: &crossSection{},
+	}
+}
+
+func (system *System) Tick() error {
+	for {
+		message, err := system.bus.Receive("raw")
+
+		if errnie.Error(err) != nil || message == nil {
+			continue
+		}
+
+		var (
+			signal *Signal
+			ok     bool
+		)
+
+		switch message.Type {
+		case "trades":
+			var trade *krakenmarket.TradeUpdate
+
+			if trade, ok = message.Value.(*krakenmarket.TradeUpdate); !ok {
+				errnie.Error(errors.New("causal: invalid trade"), "causal: invalid trade")
+				continue
+			}
+
+			system.feedTrade(trade)
+
+			signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("causal: symbol not found"), "causal: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = trade
+			signal.measurements = signal.measurements.Next()
+		case "ticker":
+			var ticker *krakenmarket.TickerUpdate
+
+			if ticker, ok = message.Value.(*krakenmarket.TickerUpdate); !ok {
+				errnie.Error(errors.New("causal: invalid ticker"), "causal: invalid ticker")
+				continue
+			}
+
+			system.feedTicker(ticker)
+
+			signal = system.LoadSignal(logic.EntityTick, ticker.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("causal: symbol not found"), "causal: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = ticker
+			signal.measurements = signal.measurements.Next()
+		case "book":
+			var book *krakenmarket.Book
+
+			if book, ok = message.Value.(*krakenmarket.Book); !ok {
+				errnie.Error(errors.New("causal: invalid book"), "causal: invalid book")
+				continue
+			}
+
+			system.feedBook(book)
+
+			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("causal: symbol not found"), "causal: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = book
+			signal.measurements = signal.measurements.Next()
+		case "feedback":
+			var feedback *market.Feedback
+
+			if feedback, ok = message.Value.(*market.Feedback); !ok {
+				errnie.Error(errors.New("causal: invalid feedback"), "causal: invalid feedback")
+				continue
+			}
+
+			system.feedback = feedback
+			continue
+		default:
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback)
+
+		if errnie.Error(measureErr) != nil {
+			continue
+		}
+
+		system.bus.Send(
+			"measurements",
+			"measurements",
+			measurement,
+		)
+	}
+}
+
+func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) {
+	state := system.loadSymbol(trade.Symbol)
+
+	if err := state.FeedTrade(*trade); err != nil {
+		errnie.Error(err)
+	}
+}
+
+func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) {
+	state := system.loadSymbol(ticker.Symbol)
+	state.FeedTicker(*ticker)
+	system.crossSection.publishChangePct(ticker.Symbol, ticker.ChangePct)
+}
+
+func (system *System) feedBook(book *krakenmarket.Book) {
+	state := system.loadSymbol(book.Symbol)
+	state.FeedBook(*book)
+}
+
+func (system *System) loadSymbol(symbol string) *CausalSymbol {
+	raw, _ := system.symbols.LoadOrStore(symbol, NewCausalSymbol())
+
+	state, ok := raw.(*CausalSymbol)
+
+	if !ok {
+		return nil
+	}
+
+	return state
+}
+
+func (system *System) shouldPublish(now time.Time) bool {
+	interval := viper.GetDuration("signals.causal.publish_interval")
+
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	if now.Sub(system.lastPublish) < interval {
+		return false
+	}
+
+	system.lastPublish = now
+
+	return true
+}
+
+func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal {
+	var (
+		raw    any
+		signal *Signal
+		ok     bool
+	)
+
+	threshold := math.Min(math.Max(viper.GetFloat64("signals.causal.surprise_threshold"), 1.0), 5.0)
+	alpha := math.Min(math.Max(viper.GetFloat64("signals.causal.alpha"), 0.1), 1.0)
+
+	measurementsCapacity := viper.GetInt("signals.causal.measurements_capacity")
+
+	if measurementsCapacity <= 0 {
+		measurementsCapacity = 64
+	}
+
+	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
+
+	raw, _ = system.signals.LoadOrStore(
+		mapKey, NewSignal(
+			symbol,
+			logic.NewEntity(entity),
+			ring.New(measurementsCapacity),
+			system,
+			threshold,
+			alpha,
+		),
+	)
+
+	if signal, ok = raw.(*Signal); !ok {
+		errnie.Error(errors.New("causal: symbol is not a Signal"), "causal: symbol is not a Signal")
+		return nil
+	}
+
+	return signal
+}
+
+func (system *System) Close() error {
+	system.cancel()
+	return system.bus.Close()
+}

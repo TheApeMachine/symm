@@ -2,11 +2,10 @@ package causal
 
 import (
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -21,7 +20,6 @@ ladder or fallback path; SNR is how surprising that selection is versus the symb
 own recent baseline, not how large the strength is.
 */
 type CausalSymbol struct {
-	mu             sync.RWMutex
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
 	hy             *hyWindowSet
@@ -33,26 +31,21 @@ type CausalSymbol struct {
 	changePct      float64
 	spreadBPS      float64
 	imbalance      float64
-	buyPressure    float64
-	volumeWindow   *adaptive.Window
-	pressure       *adaptive.EMA
-	tracked        *types.Category
+	buyPressure  float64
+	volumeWindow *adaptive.Window
+	pressure     *adaptive.EMA
 }
 
 func NewCausalSymbol() *CausalSymbol {
 	return &CausalSymbol{
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure:     adaptive.NewEMA(0),
-		hy:           newHYWindowSet(),
-		tracked:      types.NewCategory(types.CategoryTypeNone),
+		pressure: adaptive.NewEMA(0),
+		hy:       newHYWindowSet(),
 	}
 }
 
 func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	if row.Last > 0 {
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
@@ -70,9 +63,6 @@ func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
 }
 
 func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	_, _ = state.volumeWindow.Next(
 		0,
 		float64(tick.Timestamp.UnixNano()),
@@ -103,9 +93,6 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 }
 
 func (state *CausalSymbol) FeedBook(delta market.Book) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
 		return
 	}
@@ -135,12 +122,9 @@ func (state *CausalSymbol) FeedBook(delta market.Book) {
 func (state *CausalSymbol) Measure(
 	macroMomentum, contagion float64,
 	now time.Time,
-) (types.Measurement, float64, error) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
+) (logic.Measurement, error) {
 	if state.lastPrice <= 0 {
-		return types.Measurement{}, 0, nil
+		return logic.Measurement{}, nil
 	}
 
 	state.resolvePendingLocked(now)
@@ -157,29 +141,19 @@ func (state *CausalSymbol) Measure(
 		outcome := state.evaluate(currentSample, contagion)
 
 		if outcome.raw > 0 {
-			outcome.raw = types.AdjustSourceValue(types.SourceCausal, outcome.raw) // top-down prediction feedback
 			category := causalCategory(outcome.reason)
-			// confidence is how decisively the Pearl-ladder read lands in its
-			// structural category (the intervention/inversion margin); standout is the
-			// magnitude of the causal effect itself, which SNR scores against this
-			// symbol's own history. A clean read of a faint effect has high confidence,
-			// low standout.
 			confidence := causalEvidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
-			standout := types.UnitMagnitudeMargin(outcome.raw)
 
-			if err := state.tracked.Observe(category, confidence); err != nil {
-				return types.Measurement{}, 0, err
-			}
-
-			return types.Measurement{
-				Source:     types.SourceCausal,
+			return logic.Measurement{
+				Source:     logic.SourceCausal,
+				Symbol:     "",
 				Category:   category,
 				Strength:   outcome.raw,
 				Confidence: confidence,
-				Last:       state.lastPrice,
-			}, standout, nil
+				Price:      state.lastPrice,
+			}, nil
 		}
 	}
 
@@ -190,35 +164,25 @@ func (state *CausalSymbol) Measure(
 	}
 
 	if state.changePct == 0 && macroMomentum == 0 && state.buyPressure == 0 {
-		return types.Measurement{}, 0, nil
+		return logic.Measurement{}, nil
 	}
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
-	// confidence is how decisively the association beats the alternative; standout is
-	// the magnitude of the macro/flow move itself, scored by SNR against history.
 	confidence := causalEvidence(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
-	standout := types.UnitMagnitudeMargin(fallbackRaw)
 
-	if err := state.tracked.Observe(category, confidence); err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	return types.Measurement{
-		Source:     types.SourceCausal,
+	return logic.Measurement{
+		Source:     logic.SourceCausal,
 		Category:   category,
 		Strength:   fallbackRaw,
 		Confidence: confidence,
-		Last:       state.lastPrice,
-	}, standout, nil
+		Price:      state.lastPrice,
+	}, nil
 }
 
 func (state *CausalSymbol) ChangePct() float64 {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	return state.changePct
 }
 
@@ -228,9 +192,6 @@ series so the signal can compute cross-asset correlation without holding this
 symbol's lock during the sweep.
 */
 func (state *CausalSymbol) HYSnapshot() *hyReturns {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	if state.hy == nil {
 		return nil
 	}
@@ -239,9 +200,6 @@ func (state *CausalSymbol) HYSnapshot() *hyReturns {
 }
 
 func (state *CausalSymbol) HYWindowSnapshot() *hyWindowSet {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	return state.hy.clone()
 }
 

@@ -1,6 +1,9 @@
 package public
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 type EndpointType string
 
@@ -42,4 +45,18 @@ SignPath returns the URI path Kraken uses when computing API-Sign.
 */
 func (endpoint EndpointType) SignPath() string {
 	return strings.TrimPrefix(string(endpoint), "https://api.kraken.com")
+}
+
+type PingMessage struct {
+	Method string `json:"method"`
+	ReqID  int64  `json:"reqid"`
+}
+
+type PongMessage struct {
+	Method  string    `json:"method"`
+	ReqID   int64     `json:"reqid"`
+	Error   string    `json:"error"`
+	Success bool      `json:"success"`
+	TimeIn  time.Time `json:"time_in"`
+	TimeOut time.Time `json:"time_out"`
 }

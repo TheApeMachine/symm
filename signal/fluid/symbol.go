@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -8,10 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	symmarket "github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
-	"github.com/theapemachine/symm/market/settings"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -29,27 +26,36 @@ in, not between consecutive raw deltas, so it reflects genuine book churn rather
 the size of whatever slice the feed happened to send.
 */
 type FluidSymbol struct {
-	mu           sync.RWMutex
-	symbol       string
+	mu             sync.RWMutex
+	symbol         string
 	book           krakenmarket.Book
 	bookReady      bool
 	bookDiverged   bool
 	divergedLogged bool
-	bookDepth    int
-	buyPressure  float64
-	changePct    float64
-	volume       float64
-	last         float64
-	bid          float64
-	ask          float64
-	pressure     *adaptive.EMA
-	spreadBPS    float64
-	flux         *fluxAccumulator
-	priceFD      *adaptive.FracDiff
-	fracScale    adaptive.AlphaEMA
-	fracReturn   float64
-	tracked      *types.Category
-	pipe         *numeric.Classed
+	bookDepth      int
+	buyPressure    float64
+	changePct      float64
+	volume         float64
+	last           float64
+	bid            float64
+	ask            float64
+	pressure       *adaptive.EMA
+	spreadBPS      float64
+	flux           *fluxAccumulator
+	priceFD        *adaptive.FracDiff
+	fracScale      adaptive.AlphaEMA
+	fracReturn     float64
+}
+
+type fluidReading struct {
+	symbol     string
+	price      float64
+	spreadBPS  float64
+	reynolds   float64
+	divergence float64
+	vorticity  float64
+	turbulence float64
+	viscosity  float64
 }
 
 var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
@@ -58,11 +64,11 @@ var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
 // the baseline against which turbulence is measured as an excess over the norm.
 const fracScaleAlpha = 0.05
 
-func NewFluidSymbol(symbol string, classifier *adaptive.Classifier) (*FluidSymbol, error) {
-	depth, err := symmarket.RequiredBookDepthLevels()
+func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
+	depth := viper.GetInt("market.book_depth_levels")
 
-	if err != nil {
-		return nil, err
+	if depth <= 0 {
+		depth = 10
 	}
 
 	state := &FluidSymbol{
@@ -74,11 +80,6 @@ func NewFluidSymbol(symbol string, classifier *adaptive.Classifier) (*FluidSymbo
 			viper.GetFloat64("signals.fractional_diff_order"),
 			viper.GetInt("signals.fractional_diff_width"),
 		),
-		tracked: types.NewCategory(types.CategoryTypeNone),
-	}
-
-	if classifier != nil {
-		state.pipe = numeric.NewClassed(classifier)
 	}
 
 	return state, nil
@@ -92,10 +93,10 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate) error {
 	state.volume = row.Volume
 
 	if row.Volume > 0 {
-		barsPerDay, err := settings.RequiredFloat("signals.volume_clock_bars_per_day")
+		barsPerDay := viper.GetFloat64("signals.volume_clock_bars_per_day")
 
-		if err != nil {
-			return err
+		if barsPerDay <= 0 {
+			return errnie.Error(fmt.Errorf("fluid: signals.volume_clock_bars_per_day must be positive"))
 		}
 
 		if err := state.flux.setTarget(row.Volume / barsPerDay); err != nil {
@@ -279,61 +280,43 @@ func (state *FluidSymbol) Row() map[string]any {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
+	if state.bookDiverged {
+		return nil
+	}
+
 	return state.wireRowLocked()
 }
 
-func (state *FluidSymbol) Measure(
-	categories map[string]types.CategoryType,
-) (types.Measurement, float64, error) {
+func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+
+	if state.bookDiverged || state.last <= 0 {
+		return fluidReading{}, false
+	}
 
 	row := state.wireRowLocked()
 
 	if row == nil {
-		return types.Measurement{}, 0, nil
+		return fluidReading{}, false
 	}
 
-	re, ok := row["re"].(float64)
+	re, _ := row["re"].(float64)
+	divergence, _ := row["div"].(float64)
+	vorticity, _ := row["vort"].(float64)
+	turbulence, _ := row["turb_fd"].(float64)
+	viscosity, _ := row["visc"].(float64)
 
-	if !ok || state.pipe == nil {
-		return types.Measurement{}, 0, nil
-	}
-
-	re = types.AdjustSourceValue(types.SourceFluid, re) // top-down prediction feedback
-	code, err := state.pipe.Push(re)
-
-	if err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	category := categories[state.pipe.Label(code)]
-	confidence := state.pipe.Confidence()
-	standout := state.pipe.Standout()
-
-	if confidence <= 0 {
-		divergence, _ := row["div"].(float64)
-		turbulence, _ := row["turb_fd"].(float64)
-		activity := math.Max(math.Abs(divergence), math.Max(turbulence, re))
-
-		if activity > 0 {
-			confidence = types.UnitMagnitudeMargin(activity)
-		}
-	}
-
-	if err := state.tracked.Observe(category, confidence); err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	return types.Measurement{
-		Symbol:     state.symbol,
-		Source:     types.SourceFluid,
-		Category:   category,
-		Last:       state.last,
-		SpreadBPS:  state.spreadBPS,
-		Strength:   re,
-		Confidence: confidence,
-	}, standout, nil
+	return fluidReading{
+		symbol:     state.symbol,
+		price:      state.last,
+		spreadBPS:  state.spreadBPS,
+		reynolds:   re,
+		divergence: divergence,
+		vorticity:  vorticity,
+		turbulence: turbulence,
+		viscosity:  viscosity,
+	}, true
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {

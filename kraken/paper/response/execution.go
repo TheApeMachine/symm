@@ -1,14 +1,13 @@
 package response
 
 import (
-	"fmt"
-	"strings"
+	"context"
 	"sync/atomic"
-	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/paper/types"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
@@ -44,226 +43,86 @@ Executions simulates the Kraken executions channel and publishes the same raw
 frames and derived envelopes as the live private websocket.
 */
 type Executions struct {
-	balances *Balances
-	ids      *Identifier
-	raw      *qpool.BroadcastGroup
-	sequence int64
-	tradeID  int64
+	ctx       context.Context
+	cancel    context.CancelFunc
+	err       error
+	pool      *qpool.Q[any]
+	isActive  atomic.Bool
+	model     map[string]user.Execution
+	observers []types.Socket
 }
 
-func NewExecutions(
-	raw *qpool.BroadcastGroup,
-	balances *Balances,
-	ids *Identifier,
-) *Executions {
+func NewExecutions(ctx context.Context, pool *qpool.Q[any]) *Executions {
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &Executions{
-		balances: balances,
-		ids:      ids,
-		raw:      raw,
+		ctx:       ctx,
+		cancel:    cancel,
+		err:       nil,
+		pool:      pool,
+		isActive:  atomic.Bool{},
+		model:     make(map[string]user.Execution),
+		observers: make([]types.Socket, 0),
 	}
 }
 
-func (executions *Executions) Send(message *qpool.QValue[any]) map[string]any {
-	switch message.Type {
-	case noticeFill:
-		notice, ok := message.Value.(FillNotice)
+func (executions *Executions) Send(message *qpool.QValue[any]) *types.SocketMessage {
+	var (
+		out   *types.SocketMessage
+		inMsg map[string]any
+		ok    bool
+	)
 
-		if ok {
-			executions.publishFill(notice)
-		}
-
-		return nil
-	case noticeArm:
-		notice, ok := message.Value.(ArmNotice)
-
-		if ok {
-			executions.publishArmed(notice)
-		}
-
+	if inMsg, ok = message.Value.(map[string]any); !ok {
 		return nil
 	}
 
-	switch frame := message.Value.(type) {
-	case user.ExecutionSubscribeFrame:
-		return executions.subscribeAck(frame)
-	case map[string]any:
-		if frame["method"] == "subscribe" {
-			return executions.subscribeAckMap(frame)
+	switch inMsg["method"].(string) {
+	case "subscribe":
+		executions.isActive.Store(true)
+	case "unsubscribe":
+		executions.isActive.Store(false)
+		out = &types.SocketMessage{
+			Method:  "unsubscribe",
+			Success: &[]bool{true}[0],
+		}
+	case "add_order":
+		for _, execution := range executions.model {
+			if execution.OrderID == inMsg["order_id"].(string) {
+				execution.OrderID = inMsg["order_id"].(string)
+				break
+			}
+		}
+	case "cancel_order":
+		for _, execution := range executions.model {
+			if execution.OrderID == inMsg["order_id"].(string) {
+				execution.OrderID = inMsg["order_id"].(string)
+				break
+			}
 		}
 	}
 
-	return nil
-}
-
-func (executions *Executions) Observe(_ types.Socket) {}
-
-func (executions *Executions) subscribeAck(frame user.ExecutionSubscribeFrame) map[string]any {
-	user.PublishExecutionsRaw(executions.raw, user.ExecutionSnapshot, nil)
-
-	return map[string]any{
-		"method":   frame.Method,
-		"success":  true,
-		"result":   map[string]any{"channel": "executions", "snap_orders": frame.Params.SnapOrders, "snap_trades": frame.Params.SnapTrades},
-		"time_out": time.Now(),
-	}
-}
-
-func (executions *Executions) subscribeAckMap(frame map[string]any) map[string]any {
-	user.PublishExecutionsRaw(executions.raw, user.ExecutionSnapshot, nil)
-
-	return map[string]any{
-		"method":   frame["method"],
-		"req_id":   frame["req_id"],
-		"success":  true,
-		"time_in":  frame["time_in"],
-		"time_out": time.Now(),
-		"result":   map[string]any{"channel": "executions", "snap_orders": true, "snap_trades": true},
-	}
-}
-
-func (executions *Executions) publishArmed(notice ArmNotice) {
-	stamp := time.Now().UTC().Format(time.RFC3339Nano)
-	params := notice.Params
-
-	pending := user.Execution{
-		OrderID:     notice.OrderID,
-		ClOrdID:     params.ClOrdID,
-		Symbol:      params.Symbol,
-		Side:        string(params.Side),
-		OrderType:   string(params.OrderType),
-		OrderQty:    params.OrderQty,
-		ExecType:    "pending_new",
-		OrderStatus: "pending_new",
-		Timestamp:   stamp,
-	}
-
-	live := pending
-	live.ExecType = "new"
-	live.OrderStatus = "new"
-
-	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{pending})
-	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{live})
-}
-
-func (executions *Executions) publishFill(notice FillNotice) {
-	if notice.Reason != "" {
-		user.PublishExecutionRejectDerived(
-			executions.raw, notice.Params.Symbol, string(notice.Params.Side), notice.Reason,
-		)
-
-		return
-	}
-
-	execID := executions.ids.ExecID()
-	outcome := FillOutcome{}
-
-	if executions.balances != nil {
-		applied, err := executions.balances.ApplyFill(
-			notice.Params.Symbol,
-			string(notice.Params.Side),
-			notice.Params.OrderQty,
-			notice.Price,
-			notice.Fee,
-			execID,
-		)
-
-		if err != nil {
-			user.PublishExecutionRejectDerived(
-				executions.raw, notice.Params.Symbol, string(notice.Params.Side), err.Error(),
-			)
-
-			return
-		}
-
-		outcome = applied
-	}
-
-	executions.emitTrade(notice, execID)
-
-	if outcome.Settled {
-		executions.publishOutcome(notice, outcome)
-	}
-}
-
-/*
-publishOutcome ships the wallet-truth round-trip result for a settling sell so the
-trader can audit it. This fires for EVERY close — trader-initiated, protective
-trigger, preemption — which is what makes position_outcome frames complete; the
-trader's own path only saw the closes it initiated itself.
-*/
-func (executions *Executions) publishOutcome(notice FillNotice, outcome FillOutcome) {
-	executions.raw.Send(&qpool.QValue[any]{Value: map[string]any{
-		"channel":     "position_outcome",
-		"symbol":      notice.Params.Symbol,
-		"side":        string(notice.Params.Side),
-		"qty":         notice.Params.OrderQty,
-		"exit_price":  notice.Price,
-		"fee":         notice.Fee,
-		"realized":    outcome.Realized,
-		"entry_basis": outcome.EntryBasis,
-	}})
-}
-
-func (executions *Executions) emitTrade(notice FillNotice, execID string) {
-	stamp := time.Now().UTC().Format(time.RFC3339Nano)
-	params := notice.Params
-	cost := params.OrderQty * notice.Price
-	tradeID := atomic.AddInt64(&executions.tradeID, 1)
-	feeAsset, err := quoteAsset(params.Symbol)
+	data, err := sonic.Marshal(executions.model)
 
 	if err != nil {
-		user.PublishExecutionRejectDerived(
-			executions.raw, params.Symbol, string(params.Side), err.Error(),
-		)
-
-		return
+		return nil
 	}
 
-	orderStatus := "filled"
-
-	if notice.Partial {
-		orderStatus = "partially_filled"
+	out = &types.SocketMessage{
+		Method:  "executions",
+		Success: &[]bool{true}[0],
+		Data:    data,
 	}
 
-	trade := user.Execution{
-		OrderID:      notice.OrderID,
-		ClOrdID:      params.ClOrdID,
-		Symbol:       params.Symbol,
-		Side:         string(params.Side),
-		OrderType:    string(params.OrderType),
-		OrderQty:     params.OrderQty,
-		ExecType:     "trade",
-		ExecID:       execID,
-		TradeID:      tradeID,
-		LastQty:      params.OrderQty,
-		LastPrice:    notice.Price,
-		AvgPrice:     notice.Price,
-		CumQty:       params.OrderQty,
-		CumCost:      cost,
-		Cost:         cost,
-		LiquidityInd: notice.LiquidityInd,
-		OrderStatus:  orderStatus,
-		Fees:         []user.ExecutionFee{{Asset: feeAsset, Qty: notice.Fee}},
-		Timestamp:    stamp,
+	for _, observer := range executions.observers {
+		observer.Send(&qpool.QValue[any]{Value: out})
 	}
 
-	filled := trade
-	filled.ExecType = "filled"
-
-	if notice.Partial {
-		filled.OrderStatus = "partially_filled"
-	}
-
-	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{trade})
-	user.PublishExecutionsRaw(executions.raw, "update", []user.Execution{filled})
+	return out
 }
 
-func quoteAsset(symbol string) (string, error) {
-	slash := strings.IndexByte(symbol, '/')
-
-	if slash < 0 || slash >= len(symbol)-1 {
-		return "", fmt.Errorf("paper fill: malformed symbol %q", symbol)
+func (executions *Executions) Observe(sockets ...types.Socket) {
+	for _, socket := range sockets {
+		executions.observers = append(executions.observers, socket)
 	}
-
-	return symbol[slash+1:], nil
 }

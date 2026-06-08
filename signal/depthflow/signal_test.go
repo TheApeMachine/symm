@@ -1,117 +1,152 @@
 package depthflow
 
 import (
-	"context"
-
+	"container/ring"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
 )
 
-func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
-	update := market.Book{
-		Symbol: symbol,
-		Bids:   []market.BookLevel{{Price: bidPrice, Qty: bidQty}},
-		Asks:   []market.BookLevel{{Price: askPrice, Qty: askQty}},
-	}
-	update.SetEnvelopeType(market.BookSnapshot)
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a bid-heavy book", t, func() {
+		crossSection := &crossSection{}
+		crossSection.publishTradePressure("BTC/EUR", 0.8)
 
-	return update
-}
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityBook),
+			ring.New(4),
+			crossSection,
+			2.0,
+			0.5,
+		)
 
-func TestNewSignal(t *testing.T) {
-	Convey("Given a qpool", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
+		signal.measurements.Value = &krakenmarket.Book{
+			Symbol: "BTC/EUR",
+			Type:   krakenmarket.BookSnapshot,
+			Bids: []krakenmarket.BookLevel{
+				{Price: 99, Qty: 10},
+				{Price: 98, Qty: 20},
+			},
+			Asks: []krakenmarket.BookLevel{
+				{Price: 101, Qty: 1},
+				{Price: 102, Qty: 1},
+			},
+		}
+		signal.measurements = signal.measurements.Next()
 
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
+		measurement, err := signal.Measure(nil)
 
-		Convey("It should expose a measurements broadcast", func() {
-			So(signal.broadcasts["measurements"], ShouldNotBeNil)
+		Convey("It should classify loaded imbalance", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
+			So(measurement.Category, ShouldEqual, logic.CategoryLoadedImbalance)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given deep bid wall with bearish touch", t, func() {
+		crossSection := &crossSection{}
+
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityBook),
+			ring.New(4),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		signal.measurements.Value = &krakenmarket.Book{
+			Symbol: "ETH/EUR",
+			Type:   krakenmarket.BookSnapshot,
+			Bids: []krakenmarket.BookLevel{
+				{Price: 49, Qty: 1},
+				{Price: 48, Qty: 30},
+			},
+			Asks: []krakenmarket.BookLevel{
+				{Price: 51, Qty: 8},
+				{Price: 52, Qty: 8},
+			},
+		}
+		signal.measurements = signal.measurements.Next()
+
+		measurement, err := signal.Measure(nil)
+
+		Convey("It should classify spoof trap", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategorySpoofTrap)
+		})
+	})
+
+	Convey("Given trade pressure update", t, func() {
+		crossSection := &crossSection{}
+
+		signal := NewSignal(
+			"SOL/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			ring.New(4),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		signal.measurements.Value = &krakenmarket.TradeUpdate{
+			Symbol: "SOL/EUR",
+			Side:   "buy",
+			Price:  25,
+			Qty:    3,
+		}
+		signal.measurements = signal.measurements.Next()
+
+		signal.measurements.Value = &krakenmarket.TradeUpdate{
+			Symbol: "SOL/EUR",
+			Side:   "buy",
+			Price:  25.1,
+			Qty:    2,
+		}
+		signal.measurements = signal.measurements.Next()
+
+		measurement, err := signal.Measure(nil)
+
+		Convey("It should publish trade pressure without category", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Symbol, ShouldEqual, "SOL/EUR")
+			So(crossSection.tradePressureFor("SOL/EUR"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestObserveTrade(t *testing.T) {
-	Convey("Given a depthflow signal with a measurements subscriber", t, func() {
-		t.Cleanup(viper.Reset)
-		viper.Set("market.book_depth_levels", 10)
+func BenchmarkSignalMeasure(b *testing.B) {
+	crossSection := &crossSection{}
+	signal := NewSignal(
+		"BTC/EUR",
+		logic.NewEntity(logic.EntityBook),
+		ring.New(64),
+		crossSection,
+		2.0,
+		0.5,
+	)
 
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:depthflow", 64)
-		symbol := "ETH/EUR"
-		now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-		state, err := signal.state(symbol)
-		So(err, ShouldBeNil)
-		state.ApplyBook(bookSnapshot(symbol, 99, 8, 101, 4))
-		state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
-
-		Convey("When buy pressure aligns with bid-heavy depth", func() {
-			signal.observeTrade(market.TradeUpdate{
-				Symbol: symbol, Side: "buy", Price: 100, Qty: 3, Timestamp: now,
-			})
-
-			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-			defer waitCancel()
-
-			value, err := measurements.Wait(waitCtx)
-			if err != nil {
-				t.Fatal("timed out waiting for depthflow measurement")
-			}
-
-			measurement, _ := value.Value.(types.Measurement)
-
-			Convey("It publishes a depthflow reading", func() {
-				So(measurement.Source, ShouldEqual, types.SourceDepthFlow)
-				So(measurement.Symbol, ShouldEqual, symbol)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
-			})
-		})
-	})
-}
-
-func BenchmarkObserveTrade(b *testing.B) {
-	viper.Set("market.book_depth_levels", 10)
-
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
-
-	signal := NewSignal(ctx, pool)
-	defer signal.Close()
-
-	signal.broadcasts["measurements"].Subscribe("bench:depthflow", 1024)
-
-	symbol := "ETH/EUR"
-	state, err := signal.state(symbol)
-	if err != nil {
-		b.Fatal(err)
+	signal.measurements.Value = &krakenmarket.Book{
+		Symbol: "BTC/EUR",
+		Type:   krakenmarket.BookSnapshot,
+		Bids: []krakenmarket.BookLevel{
+			{Price: 99, Qty: 10},
+			{Price: 98, Qty: 20},
+		},
+		Asks: []krakenmarket.BookLevel{
+			{Price: 101, Qty: 1},
+			{Price: 102, Qty: 1},
+		},
 	}
-	state.ApplyBook(bookSnapshot(symbol, 99, 8, 101, 4))
-	state.FeedTicker(market.TickerUpdate{Symbol: symbol, Last: 100, Bid: 99, Ask: 101})
+	signal.measurements = signal.measurements.Next()
 
-	trade := market.TradeUpdate{
-		Symbol: symbol, Side: "buy", Price: 100, Qty: 3,
-		Timestamp: time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
-	}
-
-	b.ReportAllocs()
+	b.ResetTimer()
 
 	for b.Loop() {
-		signal.observeTrade(trade)
+		_, _ = signal.Measure(nil)
 	}
 }

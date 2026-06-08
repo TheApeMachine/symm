@@ -1,10 +1,8 @@
-# Legacy merged config. Prefer cmd/cfg/infra.yml (engine mechanics) +
-# cmd/cfg/strategy.yml (optimizer sandbox). The engine loads infra then strategy.
 system:
   log:
     level: info
   queue:
-    ttl: 10ms
+    ttl: 1024
     buffer: 1024
 
 story:
@@ -21,167 +19,166 @@ market:
     - BTC/EUR
   max_scan_symbols: 1024
   book_depth_levels: 10
-  # Live authenticated L3 feed while trading.model is paper (needs API credentials).
   l3_enabled: true
   l3_depth: 10
-  subscribe_pace: 50ms
+  # Pace between subscribe BATCHES (Kraken v2 takes symbol arrays; one batch =
+  # four channel requests). Per-symbol pacing sprayed ~1,600 messages per
+  # (re)connect across a ~400-pair universe — Kraken kills that with close 1008.
+  subscribe_pace: 250ms
+  subscribe_batch: 100
   ws_reconnect_initial: 1s
   ws_reconnect_max: 2m
   ws_reconnect_multiplier: 2
   ws_ping_interval: 15s
+  story:
+    window_capacity: 1024
+
+ui:
+  addr: 127.0.0.1:8765
+  heartbeat_interval: 1s
 
 trading:
   order_ack_timeout: 500ms
-  reasoning:
-    # How long a fired playbook node keeps its `then:` children armed. Without
-    # a bound, "saw compression, then ignition" could fire an entry minutes
-    # after the setup that justified it — on a fast pump, that buys the top.
-    # Aged on the tape clock, so live and replay behave identically.
-    latch_ttl: 90s
-  # Pump microcaps on the EUR long tail often quote wide and tick slowly; the
-  # playbook targets those names, so preflight must not use major-only limits.
   max_quote_age: 15s
   max_spread_bps: 120
   max_slippage_bps: 80
   model: paper
   margin_enabled: false
-  record:
-    file: runs/capture.jsonl
   replay:
-    file: runs/capture.jsonl
-    # Derive 50–200ms latency from tape when unset; set explicitly to override.
     execution_latency_ms: 100
     execution_stress_enabled: true
-    # L2 depth replay: require full book coverage before opening; shortfall books a penalty.
     min_depth_coverage: 1.0
     depth_shortfall_stress: 8
-    # Scale entry fraction by structural regime during optimizer replay and live entries.
     none_size_scale: 1.0
     dead_size_scale: 1.0
     trending_size_scale: 1.0
     bullish_size_scale: 1.0
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
-  # Fraction of capital base deployed per entry slot (not concurrent count).
-  # Concurrent entries are capped by max_concurrent_positions and remaining cash.
   position_fraction: 0.2
   max_concurrent_positions: 16
   entry:
-    # Hold concurrent entry signals for this window, rank by SNR×confidence, then deploy.
-    # Defaults to market.subscribe_pace when unset.
     batch_window: 50ms
-    # When capacity is full, exit the weakest open position if the new signal beats it
-    # by preemption_margin (a full round trip of costs demands a decisive challenger).
     preemption_enabled: true
-    # Base value — scaled at runtime by regime: ×1.5 in choppy/bearish (churn
-    # pays full taker round trips with no momentum), ×0.85 in trending/bullish.
-    preemption_margin: 1.5
   paper:
     wallet_eur: 200
-    # Optimizer replay drag (percent per side). Limit entries use maker_fee_pct.
     taker_fee_pct: 0.26
     maker_fee_pct: 0.16
     slippage_bps: 5
     latency_profile: runs/network_latency.json
-  # Protective-exit trigger offsets (percent). A long exits when price falls
-  # stop_loss_pct below entry, rises take_profit_pct above entry, or falls
-  # trailing_volatility_multiple realized-volatility units below its peak since
-  # entry. Explicit playbook offsets override the dynamic trailing distance.
   exit:
     stop_loss_pct: 1.2
     take_profit_pct: 2.4
     trailing_volatility_multiple: 2.5
-  audit:
-    file: runs/audit.jsonl
 
 optimizer:
   tune:
-    # Fetch Kraken AssetPairs at tune start so replay enforces the same minimums as the desk.
     load_instrument_rules: true
     candidate_report: ""
-    # Walk-forward holdout: tail fraction reserved for out-of-sample validation;
-    # the winner must reproduce there (and under +50% costs) before publishing.
+    # Cap the train tape before search (0 = default 500k subsample; -1 = full train).
+    max_measurements: 0
+    search_train_rows: 0
+    beam_width: 0
+    max_rounds: 0
+    max_nodes: 0
+    patience: 0
+    workers: 0
+    # Walk-forward validation: the chronological tail is held out of the search
+    # and the winning forest must reproduce on it (and survive +50% costs)
+    # before it is written to the live playbook. 0 disables (in-sample only —
+    # the playbook will be marked unvalidated in the tune log).
     holdout_fraction: 0.25
+    # Largest tolerated train→holdout per-trade PnL decay (0.5 = holdout keeps
+    # at least half the train edge).
     max_holdout_decay: 0.5
   search:
-    # Explore "in regime X do Y" branches. When off, the regime axis collapses to
-    # RegimeNone (legacy behaviour) and the MCTS move set shrinks ~6x.
     regime_aware: true
 
-# Price-action regime classification (market/perspectives.ClassifyRegime).
-# Computed identically on the live and replay paths from the recent distinct-price
-# path, so a regime edge the optimizer discovers reproduces when traded live.
 regime:
-  window: 256          # most-recent measurements to classify over
-  min_samples: 16      # price-bearing measurements required before a regime is claimed
-  dead_vol: 0.0005     # realized-vol floor; below it a non-trending market reads as Dead
-  trend_threshold: 1.25 # trend t-stat for RegimeTrending
-  strong_trend: 2.5    # trend t-stat for signed RegimeBullish / RegimeBearish
-  vol_scale: 0.01      # dashboard radar volatility full-scale normalization
+  window: 256
+  min_samples: 16
+  dead_vol: 0.0005
+  trend_threshold: 1.25
+  strong_trend: 2.5
+  vol_scale: 0.01
 
 signals:
-  # 24h ticker volume / volume_clock_bars_per_day closes one fluid flux bar.
   volume_clock_bars_per_day: 288
   spoof_weighted_threshold: 0.5
   min_fill_to_cancel_ratio: 0.1
   hawkes_fit_cooldown: 5
+  raw_dump: true
+  diagnostics:
+    dead_dispersion: 0.0001
+    flicker_crossing: 0.40
+    flicker_autocorr: 0.20
+    smooth_autocorr: 0.50
+    flat_excursion_ratio: 1.05
+    unstable_switch_rate: 0.50
   causal:
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
+    publish_interval: 1s
     contagion_break: 0.8
     condition_switch: 1000
-    # Adaptive HY tiers (fast/medium/slow). contagion_window in code is only a
-    # fallback when a tier key is unset (slow=window, medium=window/2, fast=window/8).
     contagion_window_fast: 16
     contagion_window_medium: 64
     contagion_window_slow: 128
     contagion_adaptive_sigma: 2
     contagion_volatility_reset_sigma: 5
-    raw_dump: false
-
-  # Raw diagnostic dumps. When enabled, a signal writes its richest
-  # pre-classification record to <dir>/<name>_raw.jsonl, which the Signal Insight
-  # page (and `go test ./analyze`) reads to certify the signal behaves sensibly.
-  # These files grow fast — a deliberate diagnostic mode. `raw_dump` here is the
-  # default for any signal that does not set its own; a per-signal raw_dump below
-  # wins in BOTH directions (false silences a signal even when this is true). As
-  # shipped every signal sets false, so nothing dumps until you flip one on.
-  raw_dump: true           # default for signals with no per-signal override
-  raw_dump_max_mb: 64       # rotate each dump after this many megabytes
-  raw_dump_backup_count: 3  # how many rotated files to keep (<name>_raw.jsonl.1 ...)
-  # raw_dump_dir: runs      # directory for dumps; the writer and Signal Insight share it
-  # raw_dump_max_bytes: 0   # exact rotation size in bytes; overrides raw_dump_max_mb when > 0
-  # Per signal you may also set signals.<name>.raw_dump_file to redirect its dump.
-
-  # Online self-calibration: pumpdump, correlation, cvd, fluid, and hawkes pool every
-  # symbol into one shared BandCalibrator that retunes classifier band edges to the
-  # live distribution each tick. Target shares shift with the price-action regime;
-  # edge blending tightens in choppy regimes; cold-start reads prior raw JSONL dumps.
-
-  # Per-signal overrides (win over the global default in either direction):
   pumpdump:
     raw_dump: true
     window: 1m
+    fast_window: 3
+    volume_epsilon: 0
   exhaust:
     raw_dump: true
+    measurements_capacity: 64
+    history_capacity: 24
+    surprise_threshold: 2.0
+    alpha: 0.5
   cvd:
     raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   depthflow:
     raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   hawkes:
-    raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   fluid:
-    raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   leadlag:
     raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
+    publish_interval: 200ms
   liquidity:
     raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   sentiment:
     raw_dump: true
+    measurements_capacity: 64
+    breadth_history_capacity: 64
+    surge_threshold: 2.0
+    alpha: 0.5
   correlation:
     raw_dump: true
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   toxicity:
-    raw_dump: true
-
-ui:
-  addr: 127.0.0.1:8765
-  heartbeat_interval: 1s
-
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5

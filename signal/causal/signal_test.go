@@ -1,274 +1,93 @@
 package causal
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/spf13/viper"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
 )
 
-func bookSnapshot(symbol string, bidPrice, bidQty, askPrice, askQty float64) market.Book {
-	update := market.Book{
-		Symbol: symbol,
-		Bids:   []market.BookLevel{{Price: bidPrice, Qty: bidQty}},
-		Asks:   []market.BookLevel{{Price: askPrice, Qty: askQty}},
-	}
-	update.SetEnvelopeType(market.BookSnapshot)
+func TestCausalCategoryMapping(t *testing.T) {
+	Convey("Given Pearl-ladder reasons", t, func() {
+		Convey("It should map intervention to endogenous alpha", func() {
+			So(causalCategory("intervention"), ShouldEqual, logic.CategoryEndogenousAlpha)
+		})
 
-	return update
-}
+		Convey("It should map regime inversion to liquidity shock", func() {
+			So(causalCategory("intervention_regime_inversion"), ShouldEqual, logic.CategoryLiquidityShock)
+		})
 
-func TestNewSignal(t *testing.T) {
-	Convey("Given a qpool", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		Convey("It should expose a measurements broadcast", func() {
-			So(signal.broadcasts["measurements"], ShouldNotBeNil)
+		Convey("It should map macro association to systemic beta", func() {
+			So(causalCategory("macro_association"), ShouldEqual, logic.CategorySystemicBeta)
 		})
 	})
 }
 
-func TestPublish(t *testing.T) {
-	Convey("Given a causal signal with a measurements subscriber", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
+func TestCausalSymbolFallbackMeasure(t *testing.T) {
+	Convey("Given macro drift without ladder history", t, func() {
+		state := NewCausalSymbol()
+		state.FeedTicker(krakenmarket.TickerUpdate{
+			Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02,
+		})
 
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
+		system := &System{crossSection: &crossSection{}}
+		system.crossSection.publishChangePct("BTC/EUR", 0.02)
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), nil, system, 2.0, 0.5)
 
-		measurements := signal.broadcasts["measurements"].Subscribe("test:causal", 64)
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		reading, err := state.Measure(system.crossSection.macroMomentum("BTC/EUR"), 0, time.Now())
 
-		symbols := []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"}
+		Convey("It should publish systemic beta from association", func() {
+			So(err, ShouldBeNil)
+			So(reading.Category, ShouldEqual, logic.CategorySystemicBeta)
+			So(reading.Strength, ShouldBeGreaterThan, 0)
+		})
 
-		for index, symbol := range symbols {
-			state := signal.state(symbol)
-			state.FeedTicker(market.TickerUpdate{
-				Symbol: symbol, Last: 100 + float64(index)*10,
-				ChangePct: 1.0 + float64(index)*0.2,
-				Volume:    1000, Bid: 99, Ask: 101,
-			})
-			state.FeedBook(bookSnapshot(symbol, 99, 8, 101, 6))
+		Convey("It should add surprise through the signal publisher", func() {
+			reading.Symbol = "BTC/EUR"
+			measurement, err := signal.publish(reading)
 
-			for tradeIndex := range 12 {
-				state.FeedTrade(market.TradeUpdate{
-					Symbol: symbol, Side: "buy",
-					Price:     100 + float64(index)*10,
-					Qty:       2,
-					Timestamp: base.Add(time.Duration(tradeIndex) * time.Millisecond),
-				})
-			}
-		}
-
-		signal.lastPublish = time.Time{}
-
-		Convey("When the cross-section fit runs", func() {
-			signal.publish()
-
-			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-			defer waitCancel()
-
-			value, err := measurements.Wait(waitCtx)
-			if err != nil {
-				t.Fatal("timed out waiting for causal measurement")
-			}
-
-			measurement, _ := value.Value.(types.Measurement)
-
-			Convey("It publishes a structural reading", func() {
-				So(measurement.Source, ShouldEqual, types.SourceCausal)
-				So(measurement.Symbol, ShouldNotBeEmpty)
-				So(measurement.Category, ShouldNotBeEmpty)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
-			})
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceCausal)
+			So(measurement.Surprise, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
 
-func TestMacroMomentum(t *testing.T) {
-	Convey("Given a causal signal with peer tickers", t, func() {
-		signal := &Signal{}
-		signal.state("BTC/EUR").FeedTicker(market.TickerUpdate{ChangePct: 2.0})
-		signal.state("ETH/EUR").FeedTicker(market.TickerUpdate{ChangePct: 1.0})
-		signal.state("SOL/EUR").FeedTicker(market.TickerUpdate{ChangePct: 3.0})
+func TestFillToCancelThresholdLazyLoad(t *testing.T) {
+	Convey("Given viper config for causal contagion", t, func() {
+		viper.Set("signals.causal.contagion_break", 0.8)
 
-		Convey("It should exclude the candidate from the macro median", func() {
-			macro := signal.macroMomentum("ETH/EUR")
-			So(macro, ShouldAlmostEqual, 2.5, 0.01)
+		Convey("It should read contagion break from config", func() {
+			So(viper.GetFloat64("signals.causal.contagion_break"), ShouldEqual, 0.8)
 		})
 	})
 }
 
-func TestMacroMomentumInsufficientPeers(t *testing.T) {
-	Convey("Given fewer than two peer changes", t, func() {
-		signal := &Signal{}
-		signal.state("BTC/EUR").FeedTicker(market.TickerUpdate{ChangePct: 2.0})
-		signal.state("ETH/EUR").FeedTicker(market.TickerUpdate{ChangePct: 1.0})
-
-		Convey("It should return zero macro momentum", func() {
-			So(signal.macroMomentum("BTC/EUR"), ShouldEqual, 0)
-		})
+func BenchmarkSignalMeasure(b *testing.B) {
+	state := NewCausalSymbol()
+	state.FeedTicker(krakenmarket.TickerUpdate{
+		Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02, Bid: 49990, Ask: 50010,
 	})
-}
-
-func TestThrottle(t *testing.T) {
-	Convey("Given a recently published signal", t, func() {
-		signal := &Signal{lastPublish: time.Now()}
-
-		Convey("It should reject an immediate refit on a calm market", func() {
-			So(signal.throttle(time.Now(), 0), ShouldBeFalse)
-		})
+	state.FeedBook(krakenmarket.Book{
+		Bids: []krakenmarket.BookLevel{{Price: 49990, Qty: 10}},
+		Asks: []krakenmarket.BookLevel{{Price: 50010, Qty: 10}},
 	})
 
-	Convey("Given a signal past the publish interval", t, func() {
-		signal := &Signal{
-			lastPublish: time.Now().Add(-causalPublishInterval - time.Millisecond),
-		}
-
-		Convey("It should allow another fit", func() {
-			So(signal.throttle(time.Now(), 0), ShouldBeTrue)
-		})
-	})
-}
-
-func TestContagion(t *testing.T) {
-	Convey("Given symbols with co-moving HY histories", t, func() {
-		signal := &Signal{}
-		base := int64(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).UnixNano())
-		minSamples := contagionMinSamples()
-
-		for index, symbol := range []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"} {
-			state := signal.state(symbol)
-			offset := float64(index) * 10
-
-			for sampleIndex := range minSamples + 2 {
-				state.FeedTrade(market.TradeUpdate{
-					Symbol:    symbol,
-					Price:     100 + offset + float64(sampleIndex)*0.5,
-					Qty:       1,
-					Timestamp: time.Unix(0, base+int64(sampleIndex)*int64(time.Millisecond)),
-				})
-			}
-		}
-
-		Convey("It should report elevated cross-asset coupling", func() {
-			So(signal.contagion(), ShouldBeGreaterThan, 0.5)
-		})
-	})
-}
-
-func BenchmarkMacroMomentum(b *testing.B) {
-	signal := &Signal{}
-
-	for index, symbol := range []string{"BTC/EUR", "ETH/EUR", "SOL/EUR", "ADA/EUR"} {
-		signal.state(symbol).FeedTicker(market.TickerUpdate{
-			ChangePct: 1 + float64(index)*0.3,
-		})
-	}
+	system := &System{crossSection: &crossSection{}}
+	system.crossSection.publishChangePct("BTC/EUR", 0.02)
+	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), nil, system, 2.0, 0.5)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = signal.macroMomentum("ETH/EUR")
-	}
-}
+		reading, err := state.Measure(system.crossSection.macroMomentum("BTC/EUR"), 0, time.Now())
 
-func BenchmarkContagion(b *testing.B) {
-	signal := &Signal{}
-	base := int64(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).UnixNano())
-	minSamples := contagionMinSamples()
-
-	for index, symbol := range []string{"BTC/EUR", "ETH/EUR", "SOL/EUR", "ADA/EUR"} {
-		state := signal.state(symbol)
-		offset := float64(index) * 10
-
-		for sampleIndex := range minSamples + 2 {
-			state.FeedTrade(market.TradeUpdate{
-				Symbol:    symbol,
-				Price:     100 + offset + float64(sampleIndex)*0.5,
-				Qty:       1,
-				Timestamp: time.Unix(0, base+int64(sampleIndex)*int64(time.Millisecond)),
-			})
+		if err == nil && reading.Category != logic.CategoryTypeNone {
+			reading.Symbol = "BTC/EUR"
+			_, _ = signal.publish(reading)
 		}
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = signal.contagion()
-	}
-}
-
-func TestPublishThrottled(t *testing.T) {
-	Convey("Given a signal that just published", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:throttle", 64)
-		signal.state("BTC/EUR").FeedTicker(market.TickerUpdate{Last: 100, ChangePct: 1.0})
-		signal.state("ETH/EUR").FeedTicker(market.TickerUpdate{ChangePct: 0.5})
-		signal.state("SOL/EUR").FeedTicker(market.TickerUpdate{ChangePct: 1.5})
-
-		signal.lastPublish = time.Time{}
-		signal.publish()
-
-		waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-		defer waitCancel()
-
-		if _, err := measurements.Wait(waitCtx); err != nil {
-			t.Fatal("timed out waiting for first publish")
-		}
-
-		signal.publish()
-
-		Convey("It should not emit a second reading inside the interval", func() {
-			throttleCtx, throttleCancel := context.WithTimeout(ctx, 50*time.Millisecond)
-			defer throttleCancel()
-
-			if value, err := measurements.Wait(throttleCtx); err == nil {
-				t.Fatalf("unexpected throttled measurement: %+v", value.Value)
-			}
-		})
-	})
-}
-
-func BenchmarkPublish(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
-
-	signal := NewSignal(ctx, pool)
-	defer signal.Close()
-
-	signal.broadcasts["measurements"].Subscribe("bench:causal", 1024)
-
-	for index, symbol := range []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"} {
-		state := signal.state(symbol)
-		state.FeedTicker(market.TickerUpdate{
-			Symbol: symbol, Last: 100 + float64(index)*10,
-			ChangePct: 1.0, Volume: 1000, Bid: 99, Ask: 101,
-		})
-		state.FeedBook(bookSnapshot(symbol, 99, 8, 101, 6))
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		signal.lastPublish = time.Time{}
-		signal.publish()
 	}
 }

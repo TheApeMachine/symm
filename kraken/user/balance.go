@@ -2,10 +2,6 @@ package user
 
 import (
 	"context"
-	"time"
-
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 const (
@@ -73,33 +69,4 @@ type Balance struct {
 
 type Balances struct {
 	Asset []Balance `json:"asset"`
-}
-
-func NewBalance(pool *qpool.Q[any], tokenSource TokenSource) error {
-	params := BalanceParams{
-		Channel:  public.BalancesChannel,
-		Snapshot: true,
-	}
-
-	if tokenSource != nil {
-		token, err := tokenSource.Token(context.Background())
-
-		if err != nil {
-			return err
-		}
-
-		params.Token = token
-	}
-
-	pool.CreateBroadcastGroup(
-		"kraken:private", 10*time.Millisecond,
-	).Send(&qpool.QValue[any]{
-		Type: "balances",
-		Value: SubscribeFrame{
-			Method: "subscribe",
-			Params: params,
-		},
-	})
-
-	return nil
 }

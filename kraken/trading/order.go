@@ -4,9 +4,28 @@ import (
 	"context"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
+
+/*
+EntryTransitTTL is how long a market/limit ENTRY stays trustworthy between the
+desk's decision and the venue's ears. Five seconds default: the signals that
+justify entries (ignition, flow dominance, flash dips) live on that scale, and
+nobody should trust a market entry ten seconds old. Both the live private
+socket and the paper emulator enforce it, so transit staleness behaves the
+same in every trading model.
+*/
+func EntryTransitTTL() time.Duration {
+	configured := viper.GetDuration("trading.entry.transit_ttl")
+
+	if configured <= 0 {
+		return 5 * time.Second
+	}
+
+	return configured
+}
 
 const (
 	MethodAddOrder             = "add_order"
@@ -34,6 +53,7 @@ const (
 	TakeProfitLimit   OrderType = "take-profit-limit"
 	TrailingStop      OrderType = "trailing-stop"
 	TrailingStopLimit OrderType = "trailing-stop-limit"
+	Iceberg           OrderType = "iceberg"
 )
 
 type Side string
@@ -65,6 +85,15 @@ type AddParams struct {
 	PostOnly   bool      `json:"post_only,omitempty"`
 	Triggers   *Triggers `json:"triggers,omitempty"`
 	Token      string    `json:"token,omitempty"`
+
+	// EntryQueuedAt is when the desk decided this ENTRY — zero for exits, which
+	// must survive any delay (an exit is valid forever; an entry is not). It
+	// rides with the params but never reaches Kraken: the delivery layer holds
+	// frames across reconnects and queue pressure, and a market entry written
+	// long after its signal executes a decision whose justification is dead —
+	// on a pump, that buys the top. The transit gate drops entries older than
+	// trading.entry.transit_ttl instead of writing them.
+	EntryQueuedAt time.Time `json:"-"`
 }
 
 type AmendParams struct {

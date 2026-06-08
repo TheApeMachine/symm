@@ -1,0 +1,66 @@
+package logic
+
+type CategoryType string
+
+const (
+	CategoryTypeNone           CategoryType = ""
+	CategoryLaminar            CategoryType = "laminar"
+	CategoryTurbulent          CategoryType = "turbulent"
+	CategoryInertial           CategoryType = "inertial"
+	CategoryViscous            CategoryType = "viscous"
+	CategoryFrenzy             CategoryType = "frenzy"
+	CategorySaturation         CategoryType = "saturation"
+	CategoryOrganic            CategoryType = "organic"
+	CategoryExhaustion         CategoryType = "exhaustion"
+	CategoryHiddenAbsorption   CategoryType = "hidden_absorption"
+	CategoryAggressiveDrive    CategoryType = "aggressive_drive"
+	CategoryStochasticBalance  CategoryType = "stochastic_balance"
+	CategoryVolumeStarvation   CategoryType = "volume_starvation"
+	CategoryLoadedImbalance    CategoryType = "loaded_imbalance"
+	CategorySpoofTrap          CategoryType = "spoof_trap"
+	CategoryBookThinning       CategoryType = "book_thinning"
+	CategoryDenseNeutrality    CategoryType = "dense_neutrality"
+	CategoryInefficientLag     CategoryType = "inefficient_lag"
+	CategorySynchronizedDrift  CategoryType = "synchronized_drift"
+	CategoryDecoupledMove      CategoryType = "decoupled_move"
+	CategoryAnchorStall        CategoryType = "anchor_stall"
+	CategoryVerticalIgnition   CategoryType = "vertical_ignition"
+	CategoryCoiledCompression  CategoryType = "coiled_compression"
+	CategoryOrganicTrend       CategoryType = "organic_trend"
+	CategoryFadedExhaustion    CategoryType = "faded_exhaustion"
+	CategoryExtremeScarcity    CategoryType = "extreme_scarcity"
+	CategoryMedianDepth        CategoryType = "median_depth"
+	CategoryRobustLiquidity    CategoryType = "robust_liquidity"
+	CategoryRiskOnSurge        CategoryType = "risk_on_surge"
+	CategoryDivergentMove      CategoryType = "divergent_move"
+	CategorySystemicSlump      CategoryType = "systemic_slump"
+	CategoryLiquidityVacuum    CategoryType = "liquidity_vacuum"
+	CategoryToxicBluff         CategoryType = "toxic_bluff"
+	CategoryHardSupport        CategoryType = "hard_support"
+	CategorySystemicHerd       CategoryType = "systemic_herd"
+	CategoryDecoupledAlpha     CategoryType = "decoupled_alpha"
+	CategoryStochasticNoise    CategoryType = "stochastic_noise"
+	CategoryDivergentStress    CategoryType = "divergent_stress"
+	CategoryEndogenousAlpha    CategoryType = "endogenous_alpha"
+	CategorySystemicBeta       CategoryType = "systemic_beta"
+	CategoryLiquidityShock     CategoryType = "liquidity_shock"
+	CategoryCausalNoise        CategoryType = "causal_noise"
+	CategoryMechanicalCollapse CategoryType = "mechanical_collapse"
+	CategoryThermalExhaustion  CategoryType = "thermal_exhaustion"
+	CategoryFragileExpansion   CategoryType = "fragile_expansion"
+	CategoryActiveReversal     CategoryType = "active_reversal"
+)
+
+type Category struct {
+	Type       CategoryType
+	Confidence float64
+	Surprise   float64
+}
+
+func NewCategory(
+	categoryType CategoryType, confidence float64, surprise float64,
+) *Category {
+	return &Category{
+		Type: categoryType, Confidence: confidence, Surprise: surprise,
+	}
+}

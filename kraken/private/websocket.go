@@ -1,458 +1,322 @@
 package private
 
 import (
+	"container/ring"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/broker"
-	krakenpaper "github.com/theapemachine/symm/kraken/paper"
+	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const privateSubscriberID = "kraken/private:private"
+var socket *WebSocket
+var socketOnce sync.Once
 
-/*
-WebSocket maintains the authenticated Kraken WebSocket for public.WebSocket conns.
-*/
 type WebSocket struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	provider         *TokenProvider
-	pool             *qpool.Q[any]
-	raw              *qpool.BroadcastGroup
-	ui               *qpool.BroadcastGroup
-	private          *qpool.BroadcastGroup
-	level3           *qpool.BroadcastGroup
-	subscriber       *qpool.BroadcastConsumer
-	rawSubscriber    *qpool.BroadcastConsumer
-	conn             *websocket.Conn
-	dialer           websocket.Dialer
-	outboundMu       sync.Mutex
-	outbound         map[string]outboundOrder
-	dataOnly         bool
-	l3Symbols        map[string]struct{}
-	reconnectAttempt uint64
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	conn          *websocket.Conn
+	tokenProvider *TokenProvider
+	bus           *internal.Bus
+	recorder      io.Writer
+	streams       *sync.Map
+	latencies     *ring.Ring
+	isConnected   atomic.Bool
 }
 
-/*
-NewWebSocket returns paper simulation or a live authenticated connection holder.
-*/
 func NewWebSocket(
-	ctx context.Context, pool *qpool.Q[any], apiKey, apiSecret string,
-) public.WebSocketClient {
-	return NewWebSocketWithQuoteCache(
-		ctx,
-		pool,
-		apiKey,
-		apiSecret,
-		broker.EnsureQuoteCache(ctx, pool),
-	)
-}
-
-/*
-NewWebSocketWithQuoteCache returns paper or live private websocket with explicit
-quote state for the paper exchange emulator.
-*/
-func NewWebSocketWithQuoteCache(
 	ctx context.Context,
 	pool *qpool.Q[any],
-	apiKey string,
-	apiSecret string,
-	quotes *broker.QuoteCache,
-) public.WebSocketClient {
-	paperMode := viper.GetViper().GetString("trading.model") == "paper"
-
-	if paperMode {
-		errnie.Info("kraken/private paper websocket", "kraken/private paper websocket")
-		return krakenpaper.NewWebSocketWithQuoteCache(ctx, pool, quotes)
-	}
-
-	errnie.Info("kraken/private live websocket", "kraken/private live websocket")
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
-	provider, err := NewTokenProvider(ctx, apiKey, apiSecret)
 
-	if err != nil {
-		return &WebSocket{ctx: ctx, cancel: cancel, pool: pool, err: err}
-	}
-
-	websocketClient := &WebSocket{
-		ctx:      ctx,
-		cancel:   cancel,
-		provider: provider,
-		pool:     pool,
-		raw:      pool.CreateBroadcastGroup("raw", 10*time.Millisecond),
-		ui:       pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
-		private:  pool.CreateBroadcastGroup("kraken:private", 10*time.Millisecond),
-		dialer:   *websocket.DefaultDialer,
-		outbound: make(map[string]outboundOrder),
-	}
-	websocketClient.subscriber = websocketClient.private.Subscribe(privateSubscriberID, 1024)
-
-	if balanceErr := user.NewBalance(pool, provider); balanceErr != nil {
-		errnie.Error(balanceErr)
-	}
-
-	if executionErr := user.NewExecution(pool, provider); executionErr != nil {
-		errnie.Error(executionErr)
-		websocketClient.err = executionErr
-	}
-
-	return websocketClient
-}
-
-/*
-Connect dials the authenticated endpoint and registers the conn on public.WebSocket.
-*/
-func (websocketClient *WebSocket) Connect(
-	endpoint public.EndpointType, channel string, n uint64,
-) error {
-	if websocketClient.dataOnly {
-		endpoint = public.WebSocketL3URL
-	}
-
-	if endpoint == "" {
-		endpoint = public.WebSocketAuthURL
-	}
-
-	conn, _, err := websocketClient.dialer.Dial(string(endpoint), nil)
-
-	if err != nil {
-		websocketClient.err = err
-		return err
-	}
-
-	websocketClient.conn = conn
-	errnie.Info("kraken/private websocket connected", "kraken/private websocket connected")
-
-	return nil
-}
-
-/*
-Tick blocks until the authenticated session context is cancelled.
-*/
-func (websocketClient *WebSocket) Tick() error {
-	if websocketClient.err != nil && websocketClient.ctx.Err() != nil {
-		return websocketClient.err
-	}
-
-	if websocketClient.dataOnly {
-		return websocketClient.tickDataOnly(public.WebSocketL3URL)
-	}
-
-	return websocketClient.tickLive(public.WebSocketAuthURL)
-}
-
-func (websocketClient *WebSocket) tickDataOnly(endpoint public.EndpointType) error {
-	for {
-		if websocketClient.ctx.Err() != nil {
-			return websocketClient.ctx.Err()
-		}
-
-		if websocketClient.conn == nil {
-			if err := websocketClient.ensureConnected(endpoint); err != nil {
-				errnie.Error(err, "kraken/private: L3 connect")
-
-				continue
-			}
-
-			websocketClient.seedLevel3Symbols()
-			websocketClient.resubscribeLevel3()
-
-			continue
-		}
-
-		message, err := websocketClient.rawSubscriber.Wait(websocketClient.ctx)
-		if err != nil {
-			return err
-		}
-
-		if message == nil {
-			continue
-		}
-
-		if message.Value != nil {
-			websocketClient.ingestInstrumentForL3(message.Value)
-
-			continue
-		}
-
-		if err := websocketClient.readFrame(); err != nil {
-			websocketClient.markDisconnected()
-
-			if websocketClient.ctx.Err() != nil {
-				return websocketClient.ctx.Err()
-			}
-
-			errnie.Error(err, "kraken/private: L3 read")
-		}
-	}
-}
-
-func (websocketClient *WebSocket) tickLive(endpoint public.EndpointType) error {
-	for {
-		if websocketClient.ctx.Err() != nil {
-			return websocketClient.ctx.Err()
-		}
-
-		if websocketClient.conn == nil {
-			if err := websocketClient.ensureConnected(endpoint); err != nil {
-				errnie.Error(err, "kraken/private: connect")
-			}
-
-			continue
-		}
-
-		if message := websocketClient.subscriber.Poll(); message != nil {
-			if err := websocketClient.writePrivate(message.Value); err != nil {
-				websocketClient.markDisconnected()
-
-				if websocketClient.ctx.Err() != nil {
-					return websocketClient.ctx.Err()
-				}
-
-				errnie.Error(err, "kraken/private: write")
-			}
-
-			continue
-		}
-
-		if err := websocketClient.readFrame(); err != nil {
-			websocketClient.markDisconnected()
-
-			if websocketClient.ctx.Err() != nil {
-				return websocketClient.ctx.Err()
-			}
-
-			errnie.Error(err, "kraken/private: read")
-		}
-	}
-}
-
-/*
-Close shuts down the authenticated connection holder.
-*/
-func (websocketClient *WebSocket) Close() error {
-	websocketClient.cancel()
-
-	if websocketClient.private != nil && websocketClient.subscriber != nil {
-		websocketClient.private.Unsubscribe(privateSubscriberID)
-	}
-
-	if websocketClient.raw != nil && websocketClient.rawSubscriber != nil {
-		websocketClient.raw.Unsubscribe("kraken/private:l3-instrument")
-	}
-
-	if websocketClient.conn == nil {
-		return websocketClient.err
-	}
-
-	if err := websocketClient.conn.Close(); err != nil && websocketClient.err == nil {
-		websocketClient.err = err
-	}
-
-	return websocketClient.err
-}
-
-type authFrame struct {
-	Channel string          `json:"channel"`
-	Type    string          `json:"type"`
-	Method  string          `json:"method"`
-	Success bool            `json:"success"`
-	Error   string          `json:"error"`
-	Data    json.RawMessage `json:"data"`
-}
-
-func (websocketClient *WebSocket) readFrame() error {
-	if websocketClient.conn == nil {
-		return fmt.Errorf("kraken/private websocket not connected")
-	}
-
-	var raw json.RawMessage
-
-	if err := websocketClient.conn.ReadJSON(&raw); err != nil {
-		return err
-	}
-
-	var probe struct {
-		Channel string `json:"channel"`
-		Method  string `json:"method"`
-	}
-
-	if err := sonic.Unmarshal(raw, &probe); err != nil {
-		return err
-	}
-
-	if probe.Method != "" && probe.Channel == "" {
-		websocketClient.handleMethodResponse(raw)
-
-		return nil
-	}
-
-	if probe.Channel == "" {
-		return nil
-	}
-
-	frame := authFrame{}
-
-	if err := sonic.Unmarshal(raw, &frame); err != nil {
-		return err
-	}
-
-	websocketClient.publishRaw(frame)
-	websocketClient.publishDerived(frame)
-
-	return nil
-}
-
-func (websocketClient *WebSocket) publishRaw(frame authFrame) {
-	if websocketClient.dataOnly {
-		if frame.Channel != public.Level3Channel {
-			return
-		}
-
-		websocketClient.publishLevel3(frame)
-
-		return
-	}
-
-	user.PublishRaw(
-		websocketClient.raw,
-		frame.Channel,
-		frame.Type,
-		frame.Data,
+	tokenProvider, err := NewTokenProvider(
+		ctx,
+		os.Getenv("SYMM_KRAKEN_API_KEY"),
+		os.Getenv("SYMM_KRAKEN_API_SECRET"),
 	)
-}
 
-func (websocketClient *WebSocket) publishDerived(frame authFrame) {
-	if websocketClient.dataOnly {
-		return
+	if err != nil {
+		errnie.Error(err)
+		return nil
 	}
 
-	switch frame.Channel {
-	case public.BalancesChannel:
-		var rows []user.Balance
-
-		if err := sonic.Unmarshal(frame.Data, &rows); err != nil {
-			errnie.Error(err)
-			return
+	socketOnce.Do(func() {
+		socket = &WebSocket{
+			ctx:           ctx,
+			cancel:        cancel,
+			pool:          pool,
+			tokenProvider: tokenProvider,
+			bus: internal.NewBus(
+				ctx,
+				pool,
+				[]string{"raw", "level3", "kraken:public", "ui"},
+				[]string{"raw", "level3", "kraken:public"},
+			),
+			streams:   &sync.Map{},
+			latencies: ring.New(64),
 		}
 
-		user.PublishWalletFromBalances(websocketClient.ui, rows)
+		errnie.Info("kraken/public websocket ready")
+	})
 
-		// On a snapshot, hand the trader the full held set so it can reconcile
-		// positions it did not open this session (e.g. across a reconnect). Updates
-		// are this session's own fills, owned by the executions path.
-		if frame.Type == user.BalanceSnapshot {
-			user.PublishHoldingsDerived(websocketClient.raw, rows)
+	return socket
+}
+
+func (ws *WebSocket) Connect(
+	endpoint public.EndpointType, n uint64,
+) error {
+	if ws.isConnected.Load() {
+		return nil
+	}
+
+	var response *http.Response
+
+	if ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
+		string(endpoint), http.Header{},
+	); ws.err != nil {
+		errnie.Error(ws.err, response.StatusCode, response.Status)
+
+		// Fibonacci gives us a good exponential backoff.
+		n = uint64(
+			math.Round((math.Pow(
+				math.Phi, float64(n),
+			) + math.Pow(
+				math.Phi-1, float64(n),
+			)) / math.Sqrt(5)),
+		)
+
+		time.Sleep(time.Duration(n) * time.Second)
+		return ws.Connect(endpoint, n)
+	}
+
+	ws.isConnected.Store(true)
+	return nil
+}
+
+var qvaluePool = sync.Pool{
+	New: func() any {
+		return &qpool.QValue[any]{}
+	},
+}
+
+func (ws *WebSocket) Tick() (err error) {
+	ticker := time.NewTicker(
+		viper.GetDuration("market.ws_ping_interval"),
+	)
+	defer ticker.Stop()
+
+	for {
+		if ws.err = errnie.Error(ws.Connect(public.BaseURL, 0)); ws.err != nil {
+			continue
 		}
-	case public.ExecutionsChannel:
-		var rows []user.Execution
 
-		if err := sonic.Unmarshal(frame.Data, &rows); err != nil {
-			errnie.Error(err)
-			return
-		}
+		select {
+		case <-ws.ctx.Done():
+			return ws.err
+		case <-ticker.C:
+			errnie.Error(ws.conn.WriteJSON(public.PingMessage{
+				Method: "ping",
+				ReqID:  time.Now().UnixNano(),
+			}))
+		default:
+			message := qvaluePool.Get().(*qpool.QValue[any])
 
-		for _, execution := range rows {
-			if execution.Symbol == "" || execution.ExecType != "trade" {
+			if message, ws.err = ws.bus.Receive(
+				"kraken:private",
+			); errnie.Error(ws.err) != nil {
+				qvaluePool.Put(message)
 				continue
 			}
 
-			user.PublishExecutionDerived(websocketClient.raw, execution)
+			if viper.GetString("trading.model") == "paper" {
+				if slices.Contains(
+					[]string{"balances", "orders", "executions"},
+					message.Value.(map[string]any)["channel"].(string),
+				) {
+					// The paper emulation will pick up the message.
+					qvaluePool.Put(message)
+					continue
+				}
+			}
+
+			token, err := ws.tokenProvider.Token(ws.ctx)
+
+			if errnie.Error(err) != nil {
+				qvaluePool.Put(message)
+				continue
+			}
+
+			message.Value.(map[string]any)["token"] = token
+			errnie.Error(ws.conn.WriteJSON(message.Value))
+
+			qvaluePool.Put(message)
+		}
+
+		message := types.NewSocketMessage()
+
+		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
+			message.Release()
+			continue
+		}
+
+		if len(message.Errors) > 0 || (message.Success != nil && !*message.Success) {
+			ws.handleErrors(message)
+			message.Release()
+			continue
+		}
+
+		switch message.Channel {
+		case "pong":
+			pong := public.PongMessage{}
+
+			if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
+				message.Release()
+				continue
+			}
+
+			ws.latencies.Value = time.Since(pong.TimeIn)
+			ws.latencies.Next()
+		case "heartbeat":
+			ws.isConnected.Store(true)
+		case "balances":
+			balances := user.Balances{}
+
+			if err := errnie.Error(message.Unmarshal(&balances)); err != nil {
+				message.Release()
+				continue
+			}
+
+			ws.bus.Send("raw", "balances", balances)
+		case "orders":
+			orders := []trading.OrderUpdate{}
+
+			if err := errnie.Error(message.Unmarshal(&orders)); err != nil {
+				message.Release()
+				continue
+			}
+
+			ws.bus.Send("raw", "orders", orders)
+		case "executions":
+			executions := []user.Execution{}
+
+			if err := errnie.Error(message.Unmarshal(&executions)); err != nil {
+				message.Release()
+				continue
+			}
+
+			ws.bus.Send("raw", "executions", executions)
+		case "level3":
+			level3 := market.Level3Update{}
+
+			if err := errnie.Error(message.Unmarshal(&level3)); err != nil {
+				message.Release()
+				continue
+			}
+
+			ws.bus.Send("raw", "level3", level3)
+		}
+
+		message.Release()
+	}
+}
+
+func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
+	for _, err := range message.Errors {
+		switch strings.Split(err, ":")[0] {
+		case "EOrder":
+			time.Sleep(1 * time.Second)
+		case "EService":
+			unixTimestamp, err := strconv.ParseInt(strings.Split(err, ":")[1], 10, 64)
+
+			if errnie.Error(err) != nil {
+				continue
+			}
+
+			time.Sleep(time.Until(time.Unix(unixTimestamp, 0)))
+		default:
+			errnie.Error(errors.New(err))
 		}
 	}
 }
 
-func (websocketClient *WebSocket) writePrivate(value any) error {
-	websocketClient.trackOutbound(value)
+func (ws *WebSocket) recordLatency() {
+	// Atomic replace (temp + rename) with truncation: the previous O_WRONLY
+	// overwrite-in-place could leave stale trailing bytes, and the file was only
+	// ever written on a 1-in-64 coin flip of the wall clock.
+	path := "runs/network_latency.json"
+	tempPath := path + ".tmp"
 
-	frame, err := websocketClient.authorize(value)
-
-	if err != nil {
-		return err
-	}
-
-	if websocketClient.conn == nil {
-		return fmt.Errorf("kraken/private websocket not connected")
-	}
-
-	return websocketClient.conn.WriteJSON(frame)
-}
-
-func (websocketClient *WebSocket) authorize(value any) (any, error) {
-	token, err := websocketClient.provider.Token(websocketClient.ctx)
+	latencyFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 
 	if err != nil {
-		return nil, err
+		errnie.Error(err)
+		return
 	}
 
-	switch frame := value.(type) {
-	case user.SubscribeFrame:
-		frame.Params.Token = token
-		return frame, nil
-	case user.ExecutionSubscribeFrame:
-		frame.Params.Token = token
-		return frame, nil
-	case map[string]any:
-		return authorizeMap(frame, token), nil
-	default:
-		return value, nil
+	ws.latencies.Do(func(value any) {
+		duration, _ := value.(time.Duration)
+		fmt.Fprintf(latencyFile, "%d\n", duration)
+	})
+
+	if err := latencyFile.Close(); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		errnie.Error(err)
 	}
 }
 
-func authorizeMap(frame map[string]any, token string) map[string]any {
-	params, ok := frame["params"]
+func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
+	var candles []market.CandleUpdate
 
-	if !ok {
-		return frame
+	if err := errnie.Error(
+		message.Unmarshal(&candles),
+	); err != nil {
+		return
 	}
 
-	frame["params"] = authorizeParams(params, token)
+	for _, candle := range candles {
+		ws.streams.Range(func(key, value any) bool {
+			if key == candle.Symbol {
+				ws.bus.Send("ui", "ohlc", candle)
+			}
 
-	return frame
+			return true
+		})
+	}
 }
 
-func authorizeParams(params any, token string) any {
-	switch typed := params.(type) {
-	case trading.AddParams:
-		typed.Token = token
-		return typed
-	case trading.AmendParams:
-		typed.Token = token
-		return typed
-	case trading.CancelParams:
-		typed.Token = token
-		return typed
-	case trading.CancelAllParams:
-		typed.Token = token
-		return typed
-	case trading.CancelAllOrdersAfterParams:
-		typed.Token = token
-		return typed
-	case trading.BatchAddParams:
-		typed.Token = token
-		return typed
-	case trading.BatchCancelParams:
-		typed.Token = token
-		return typed
-	case trading.EditParams:
-		typed.Token = token
-		return typed
-	case map[string]any:
-		typed["token"] = token
-		return typed
-	default:
-		return params
+func (ws *WebSocket) Close() error {
+	if ws.conn != nil {
+		errnie.Error(ws.conn.Close())
 	}
+
+	ws.isConnected.Store(false)
+	ws.cancel()
+
+	return nil
 }

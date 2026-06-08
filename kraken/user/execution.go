@@ -2,16 +2,11 @@ package user
 
 import (
 	"context"
-	"time"
-
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 const (
-	executionTokenTimeout = 5 * time.Second
-	ExecutionSnapshot     = "snapshot"
-	ExecutionUpdate       = "update"
+	ExecutionSnapshot = "snapshot"
+	ExecutionUpdate   = "update"
 )
 
 /*
@@ -79,38 +74,4 @@ type Execution struct {
 	FeeCcyPref   string         `json:"fee_ccy_pref,omitempty"`
 	Fees         []ExecutionFee `json:"fees,omitempty"`
 	Timestamp    string         `json:"timestamp,omitempty"`
-}
-
-func NewExecution(pool *qpool.Q[any], tokenSource ExecutionTokenSource) error {
-	params := ExecutionParams{
-		Channel:     public.ExecutionsChannel,
-		SnapOrders:  true,
-		SnapTrades:  true,
-		OrderStatus: true,
-	}
-
-	if tokenSource != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), executionTokenTimeout)
-		defer cancel()
-
-		token, err := tokenSource.Token(ctx)
-
-		if err != nil {
-			return err
-		}
-
-		params.Token = token
-	}
-
-	pool.CreateBroadcastGroup(
-		"kraken:private", 10*time.Millisecond,
-	).Send(&qpool.QValue[any]{
-		Type: "executions",
-		Value: ExecutionSubscribeFrame{
-			Method: "subscribe",
-			Params: params,
-		},
-	})
-
-	return nil
 }

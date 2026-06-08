@@ -41,58 +41,18 @@ func (engine *Engine) Context() context.Context {
 }
 
 func (engine *Engine) Start() (err error) {
-	var wg sync.WaitGroup
-	errs := make(chan error, len(engine.systems))
+	wg := sync.WaitGroup{}
 
 	for _, system := range engine.systems {
-		system := system
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			errs <- system.Tick()
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(errs)
-	}()
-
-	closing := false
-
-	for tickErr := range errs {
-		if tickErr == nil {
-			continue
-		}
-
-		if engine.ctx.Err() != nil && errors.Is(tickErr, engine.ctx.Err()) {
-			if !closing {
-				closing = true
-				if closeErr := engine.Close(); closeErr != nil {
-					engine.err = errors.Join(engine.err, closeErr)
-				}
+		wg.Go(func() {
+			if err := system.Tick(); err != nil {
+				errnie.Error(err, "%T: %w", system, err)
 			}
-
-			continue
-		}
-
-		if engine.err == nil {
-			engine.err = tickErr
-			errnie.Error(tickErr)
-		}
-
-		if closing {
-			continue
-		}
-
-		closing = true
-		if closeErr := engine.Close(); closeErr != nil && !errors.Is(closeErr, tickErr) {
-			engine.err = errors.Join(engine.err, closeErr)
-		}
+		})
 	}
 
-	return engine.err
+	wg.Wait()
+	return nil
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
@@ -106,16 +66,14 @@ func (engine *Engine) AddSystems(systems ...System) error {
 	return nil
 }
 
-func (engine *Engine) Close() error {
+func (engine *Engine) Close() (err error) {
 	engine.cancel()
-
-	var closeErr error
 
 	for _, system := range engine.systems {
 		if err := system.Close(); err != nil {
-			closeErr = errors.Join(closeErr, fmt.Errorf("%T: %w", system, err))
+			err = errors.Join(err, fmt.Errorf("%T: %w", system, err))
 		}
 	}
 
-	return errors.Join(engine.err, closeErr)
+	return errnie.Error(err)
 }

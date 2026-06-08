@@ -1,301 +1,302 @@
 package cvd
 
 import (
-	"context"
+	"container/ring"
+	"fmt"
 	"math"
-	"sync"
-	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	signalpool "github.com/theapemachine/symm/signal"
 )
-
-const (
-	cvdWindow          = 15 * time.Minute
-	minCVDFusedSamples = 12
-	rawSubscriberID    = "signal/cvd:raw"
-)
-
-var cvdDefaultBandEdges = []float64{-0.10, 0.50, 2.00}
 
 /*
-Signal measuring executed-flow absorption (cumulative volume delta).
+Signal measures cumulative volume delta (CVD) from executed trade flow.
 
-Every threshold is self-scaling on the input axes; classification bands are pooled
-across the universe via BandCalibrator so illiquid pairs inherit a coherent
-distribution instead of hyper-sensitive per-symbol quartiles.
+Net Flow Fraction  : Signed buy-minus-sell volume over gross executed volume in the ring window.
+Price Drift        : End-to-end price change across the same window.
+Flow Divergence    : Large net flow with muted price response flags hidden absorption.
+
+The "Iceberg" Story    : Aggressive buying that does not lift price — liquidity is being absorbed off-screen.
+The "Steamroller" Story: One-sided aggression that price is actually following — directional conviction.
+
+| Category            | Net Fraction | Price vs Flow | Market "Feel"           |
+|---------------------|--------------|---------------|-------------------------|
+| Hidden Absorption   | High         | Divergent     | Iceberg / Passive Depth |
+| Aggressive Drive    | High         | Aligned       | Steamroller / Trend     |
+| Stochastic Balance  | Low          | Mixed         | Two-Sided / Choppy      |
+| Volume Starvation   | N/A          | Thin          | No Flow / Idle          |
 */
-type cvdState struct {
-	signed    *adaptive.Window
-	gross     *adaptive.Window
-	count     *adaptive.Window
-	convBase  *adaptive.EMA
-	volBase   *adaptive.EMA
-	actBase   *adaptive.EMA
-	driftBase *adaptive.EMA
-	pipe      *numeric.Classed
-	last      float64
-}
-
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q[any]
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map
-	categories    map[string]types.CategoryType
-	surpriseField *types.CategorySurpriseField
-	classifier    *adaptive.Classifier
-	calibrator    *numeric.BandCalibrator
-	rawDump       *rawdump.Writer
+	symbol       string
+	entity       *logic.Entity
+	measurements *ring.Ring
+	transition   *numeric.TransitionMatrix
+	weights      numeric.ClassifierWeights
+	tuner        *numeric.FeedbackTuner
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:       symbol,
+		entity:       entity,
+		measurements: measurements,
+		transition:   numeric.NewTransitionMatrix(5, alpha),
+		weights:      numeric.DefaultClassifierWeights(threshold),
+		tuner:        numeric.NewFeedbackTuner(),
+	}
+}
 
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		cvdDefaultBandEdges,
-		[]float64{0, 1, 2, 3},
-		[]string{
-			"volume_starvation",
-			"stochastic_balance",
-			"hidden_absorption",
-			"aggressive_drive",
-		},
-		[]float64{0.40, 0.30, 0.20, 0.10},
-		numeric.DefaultCalibratorConfig("fused"),
-		"cvd",
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
+		)
+
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	}
+
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("cvd: unsupported entity %d", signal.entity.Type),
+		)
+	}
+}
+
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	var (
+		buyVolume  float64
+		sellVolume float64
+		prices     []float64
+		tradeCount int
+		err        error
 	)
 
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategoryVolumeStarvation,
-		types.CategoryStochasticBalance,
-		types.CategoryHiddenAbsorption,
-		types.CategoryAggressiveDrive,
-	}, types.DefaultCategorySurpriseAlpha)
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		trade, ok := item.(*krakenmarket.TradeUpdate)
+
+		if !ok {
+			err = fmt.Errorf("cvd: expected trade update")
+			return
+		}
+
+		tradeCount++
+
+		if trade.Side == "buy" {
+			buyVolume += trade.Qty
+		}
+
+		if trade.Side == "sell" {
+			sellVolume += trade.Qty
+		}
+
+		prices = append(prices, trade.Price)
+	})
 
 	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/cvd")
-		return nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.BroadcastConsumer),
-		categories: map[string]types.CategoryType{
-			"volume_starvation":  types.CategoryVolumeStarvation,
-			"stochastic_balance": types.CategoryStochasticBalance,
-			"hidden_absorption":  types.CategoryHiddenAbsorption,
-			"aggressive_drive":   types.CategoryAggressiveDrive,
-		},
-		surpriseField: surpriseField,
-		classifier:    pooledCalibrator.Classifier,
-		calibrator:    pooledCalibrator.Calibrator,
-		rawDump:       rawdump.Open("cvd"),
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, viper.GetDuration("system.queue.ttl"))
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", viper.GetDuration("system.queue.ttl"))
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", viper.GetDuration("system.queue.ttl"))
-
-	errnie.Info("signal/cvd ready", "signal/cvd")
-
-	return signal
+	return signal.fromSeries(buyVolume, sellVolume, prices, tradeCount)
 }
 
-func newCVDState(classifier *adaptive.Classifier) *cvdState {
-	return &cvdState{
-		signed:    adaptive.NewWindow(cvdWindow),
-		gross:     adaptive.NewWindow(cvdWindow),
-		count:     adaptive.NewWindow(cvdWindow),
-		convBase:  adaptive.NewEMA(0),
-		volBase:   adaptive.NewEMA(0),
-		actBase:   adaptive.NewEMA(0),
-		driftBase: adaptive.NewEMA(0),
-		pipe: numeric.NewClassed(
-			classifier,
-		),
-	}
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
-func (state *cvdState) scale(value float64, base *adaptive.EMA) float64 {
-	norm := base.Value()
-	_, _ = base.Next(0, value)
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
+}
 
-	if norm <= 0 {
+func (signal *Signal) fromSeries(
+	buyVolume, sellVolume float64,
+	prices []float64,
+	tradeCount int,
+) (logic.Measurement, error) {
+	gross := buyVolume + sellVolume
+
+	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
+		return signal.publish(
+			logic.CategoryVolumeStarvation,
+			0,
+			0,
+			gross,
+			0,
+			0,
+			0,
+			0,
+			0,
+		)
+	}
+
+	net := buyVolume - sellVolume
+	netFraction := math.Abs(net) / gross
+	priceDrift := prices[len(prices)-1] - prices[0]
+	priceMoves := signal.priceMoves(prices)
+	flatThreshold := numeric.MedianAbsolute(priceMoves)
+	driveThreshold := signal.driveThreshold(tradeCount)
+
+	highNet := netFraction >= driveThreshold
+	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
+	flatPrice := math.Abs(priceDrift) <= flatThreshold
+
+	category := signal.classify(highNet, flowAligned, flatPrice)
+
+	absorptionScore := 0.0
+
+	if highNet && flatPrice {
+		absorptionScore = netFraction
+	}
+
+	driveScore := 0.0
+
+	if highNet && flowAligned && !flatPrice {
+		driveScore = netFraction
+	}
+
+	balanceScore := 0.0
+
+	if !highNet {
+		balanceScore = 1 - netFraction
+	}
+
+	starvationScore := 0.0
+
+	if category == logic.CategoryVolumeStarvation {
+		starvationScore = 1
+	}
+
+	probabilities := numeric.SoftmaxScores([]float64{
+		absorptionScore,
+		driveScore,
+		balanceScore,
+		starvationScore,
+	})
+
+	categoryIndex := signal.categoryIndex(category)
+
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
+
+	signal.transition.Update(categoryIndex)
+
+	confidence := 0.0
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = probabilities[categoryIndex-1]
+	}
+
+	strength := netFraction
+
+	if category == logic.CategoryStochasticBalance {
+		strength = balanceScore
+	}
+
+	return signal.publish(
+		category,
+		prices[len(prices)-1],
+		strength,
+		gross,
+		0,
+		confidence,
+		surprise,
+		netFraction,
+		math.Abs(priceDrift),
+	)
+}
+
+func (signal *Signal) publish(
+	category logic.CategoryType,
+	price, strength, volume, spread, confidence, surprise float64,
+	netFraction, priceDrift float64,
+) (logic.Measurement, error) {
+	_ = netFraction
+	_ = priceDrift
+
+	return logic.Measurement{
+		Source:     logic.SourceCVD,
+		Symbol:     signal.symbol,
+		Price:      price,
+		Strength:   strength,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    0,
+		Category:   category,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   surprise,
+	}, nil
+}
+
+func (signal *Signal) priceMoves(prices []float64) []float64 {
+	moves := make([]float64, 0, len(prices)-1)
+
+	for index := 1; index < len(prices); index++ {
+		moves = append(moves, prices[index]-prices[index-1])
+	}
+
+	return moves
+}
+
+func (signal *Signal) driveThreshold(tradeCount int) float64 {
+	if tradeCount <= 0 {
 		return 1
 	}
 
-	return value / norm
+	return 0.5 + 1/(2*math.Sqrt(float64(tradeCount)))
 }
 
-func (signal *Signal) Tick() error {
-	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
-		if err != nil {
-			return err
-		}
-
-		if message == nil {
-			continue
-		}
-
-		errnie.Debug("signal/cvd: Tick()", "type", message.Type)
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
-
-		if !ok {
-			continue
-		}
-
-		switch sm.Channel {
-		case public.TradesChannel:
-			trades := signalpool.GetTrades(sm)
-
-			for _, trade := range trades {
-				if err := signal.observe(trade); err != nil {
-					errnie.Error(err, "cvd: observe %s", trade.Symbol)
-					continue
-				}
-			}
-		}
+func (signal *Signal) classify(highNet, flowAligned, flatPrice bool) logic.CategoryType {
+	if highNet && flatPrice {
+		return logic.CategoryHiddenAbsorption
 	}
+
+	if highNet && flowAligned {
+		return logic.CategoryAggressiveDrive
+	}
+
+	return logic.CategoryStochasticBalance
 }
 
-func (signal *Signal) observe(trade market.TradeUpdate) error {
-	if trade.Price <= 0 || trade.Qty <= 0 {
-		return nil
+func (signal *Signal) categoryIndex(category logic.CategoryType) int {
+	switch category {
+	case logic.CategoryHiddenAbsorption:
+		return 1
+	case logic.CategoryAggressiveDrive:
+		return 2
+	case logic.CategoryStochasticBalance:
+		return 3
+	case logic.CategoryVolumeStarvation:
+		return 4
+	default:
+		return 0
 	}
-
-	stored, _ := signal.symbols.LoadOrStore(trade.Symbol, newCVDState(signal.classifier))
-	state := stored.(*cvdState)
-
-	signed := trade.Qty
-
-	if trade.Side != "buy" {
-		signed = -trade.Qty
-	}
-
-	nanos := float64(trade.Timestamp.UnixNano())
-	state.signed.Next(0, nanos, signed, trade.Price)
-	state.gross.Next(0, nanos, trade.Qty)
-	state.count.Next(0, nanos, 1)
-	state.last = trade.Price
-
-	gross := state.gross.Sum()
-	anchor := state.signed.Anchor()
-
-	if gross <= 0 || anchor <= 0 {
-		return nil
-	}
-
-	conviction := state.scale(math.Abs(state.signed.Sum()/gross), state.convBase)
-	tempo := state.scale(state.count.Sum(), state.actBase)
-	volume := state.scale(gross, state.volBase)
-	activity := math.Sqrt(tempo * volume)
-	drift := state.scale(math.Abs((state.last-anchor)/anchor), state.driftBase)
-	fused := activity * conviction * (1 + drift)
-
-	// Top-down prediction feedback retunes the fused observation before
-	// banding — the market.Signal loop: inputs tuned, outputs never limited.
-	fused = types.AdjustSourceValue(types.SourceCVD, fused)
-	code, err := state.pipe.Push(fused)
-
-	if err != nil {
-		return err
-	}
-
-	signal.calibrator.Observe(state.pipe.Observation(), signal.classifier)
-
-	telemetry := signal.calibrator.Snapshot(signal.classifier)
-	telemetry.Observation = state.pipe.Observation()
-
-	if telemetry.Samples < minCVDFusedSamples {
-		numeric.PublishGaugeUI(
-			signal.broadcasts["ui"],
-			types.SourceCVD.String(),
-			types.Measurement{Source: types.SourceCVD, Symbol: trade.Symbol},
-			telemetry,
-		)
-
-		return nil
-	}
-
-	category := signal.categories[state.pipe.Label(code)]
-	clarity := state.pipe.Confidence()
-	categoryStandout := state.pipe.Standout()
-
-	measurement := types.Measurement{
-		Symbol:     trade.Symbol,
-		Source:     types.SourceCVD,
-		Category:   category,
-		Last:       trade.Price,
-		Strength:   fused,
-		Confidence: clarity,
-	}
-
-	if err := types.AssignCategorySurpriseSNR(&measurement, signal.surpriseField, category); err != nil {
-		return err
-	}
-
-	if err := signal.rawDump.Write(rawRecord{
-		TimestampUnixNano: trade.Timestamp.UnixNano(),
-		Symbol:            trade.Symbol,
-		Price:             trade.Price,
-		Category:          measurement.Category,
-		Signed:            state.signed.Sum(),
-		Gross:             gross,
-		Count:             state.count.Sum(),
-		Conviction:        conviction,
-		Tempo:             tempo,
-		Volume:            volume,
-		Activity:          activity,
-		Drift:             drift,
-		Fused:             fused,
-		Standout:          categoryStandout,
-		Confidence:        clarity,
-		SNR:               measurement.SNR,
-	}); err != nil {
-		return err
-	}
-
-	if err := measurement.Send(signal.pool); err != nil {
-		return err
-	}
-
-	if ui := signal.broadcasts["ui"]; ui != nil {
-		ui.Send(&qpool.QValue[any]{
-			Value: numeric.GaugePayload(
-				measurement.Source.String(),
-				measurement.Symbol,
-				measurement.Category,
-				measurement,
-				telemetry,
-			),
-		})
-	}
-
-	return nil
-}
-
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
 }

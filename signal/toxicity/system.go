@@ -1,0 +1,290 @@
+package toxicity
+
+import (
+	"container/ring"
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"sync"
+	"time"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
+)
+
+type System struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	pool     *qpool.Q[any]
+	bus      *internal.Bus
+	signals  sync.Map
+	feedback *market.Feedback
+	tracker  *Tracker
+}
+
+func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
+	ctx, cancel := context.WithCancel(ctx)
+
+	measurementsCapacity := viper.GetInt("signals.toxicity.measurements_capacity")
+
+	if measurementsCapacity <= 0 {
+		measurementsCapacity = 64
+	}
+
+	return &System{
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]string{"raw"},
+			[]string{"measurements"},
+		),
+		signals: sync.Map{},
+		tracker: Default(),
+	}
+}
+
+func (system *System) Tick() error {
+	for {
+		message, err := system.bus.Receive("raw")
+
+		if errnie.Error(err) != nil || message == nil {
+			continue
+		}
+
+		var (
+			signal *Signal
+			ok     bool
+		)
+
+		switch message.Type {
+		case "trades":
+			var trade *krakenmarket.TradeUpdate
+
+			if trade, ok = message.Value.(*krakenmarket.TradeUpdate); !ok {
+				errnie.Error(errors.New("toxicity: invalid trade"), "toxicity: invalid trade")
+				continue
+			}
+
+			system.feedTrade(trade)
+
+			signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("toxicity: symbol not found"), "toxicity: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = trade
+			signal.measurements = signal.measurements.Next()
+		case "ticker":
+			var ticker *krakenmarket.TickerUpdate
+
+			if ticker, ok = message.Value.(*krakenmarket.TickerUpdate); !ok {
+				errnie.Error(errors.New("toxicity: invalid ticker"), "toxicity: invalid ticker")
+				continue
+			}
+
+			system.feedTicker(ticker)
+
+			signal = system.LoadSignal(logic.EntityTick, ticker.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("toxicity: symbol not found"), "toxicity: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = ticker
+			signal.measurements = signal.measurements.Next()
+		case "book":
+			var book *krakenmarket.Book
+
+			if book, ok = message.Value.(*krakenmarket.Book); !ok {
+				errnie.Error(errors.New("toxicity: invalid book"), "toxicity: invalid book")
+				continue
+			}
+
+			system.feedBook(book)
+
+			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("toxicity: symbol not found"), "toxicity: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = book
+			signal.measurements = signal.measurements.Next()
+		case "level3":
+			var update *krakenmarket.Level3Update
+
+			switch value := message.Value.(type) {
+			case *krakenmarket.Level3Update:
+				update = value
+			case krakenmarket.Level3Update:
+				update = &value
+			default:
+				errnie.Error(errors.New("toxicity: invalid level3"), "toxicity: invalid level3")
+				continue
+			}
+
+			system.feedLevel3(update)
+
+			signal = system.LoadSignal(logic.EntityBook, update.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("toxicity: symbol not found"), "toxicity: symbol not found")
+				continue
+			}
+
+			signal.measurements.Value = update
+			signal.measurements = signal.measurements.Next()
+		case "feedback":
+			var feedback *market.Feedback
+
+			if feedback, ok = message.Value.(*market.Feedback); !ok {
+				errnie.Error(errors.New("toxicity: invalid feedback"), "toxicity: invalid feedback")
+				continue
+			}
+
+			system.feedback = feedback
+			continue
+		default:
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback)
+
+		if errnie.Error(measureErr) != nil {
+			continue
+		}
+
+		system.bus.Send(
+			"measurements",
+			"measurements",
+			measurement,
+		)
+	}
+}
+
+func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) {
+	system.tracker.ObserveTrade(
+		trade.Symbol,
+		krakenmarket.Pair{},
+		trade.Price,
+		trade.Qty,
+		time.Now(),
+	)
+}
+
+func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) {
+	pair := krakenmarket.Pair{}
+
+	if ticker.Bid > 0 && ticker.Ask > 0 {
+		system.tracker.ObserveMid(ticker.Symbol, pair, (ticker.Bid+ticker.Ask)/2)
+	}
+
+	if ticker.Last > 0 {
+		system.tracker.ObserveLast(ticker.Symbol, pair, ticker.Last)
+	}
+}
+
+func (system *System) feedBook(book *krakenmarket.Book) {
+	system.tracker.ApplyBookFrame(book.Symbol, krakenmarket.Pair{}, book, time.Now())
+}
+
+func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
+	now := time.Now()
+	pair := krakenmarket.Pair{}
+
+	for _, bid := range update.Bids {
+		event := bid.Event
+
+		if event == "" {
+			event = "add"
+		}
+
+		system.tracker.ApplyOrder(
+			update.Symbol,
+			pair,
+			event,
+			bid.OrderID,
+			SideBid,
+			bid.LimitPrice,
+			bid.OrderQty,
+			bid.Timestamp,
+			now,
+		)
+	}
+
+	for _, ask := range update.Asks {
+		event := ask.Event
+
+		if event == "" {
+			event = "add"
+		}
+
+		system.tracker.ApplyOrder(
+			update.Symbol,
+			pair,
+			event,
+			ask.OrderID,
+			SideAsk,
+			ask.LimitPrice,
+			ask.OrderQty,
+			ask.Timestamp,
+			now,
+		)
+	}
+}
+
+func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal {
+	var (
+		raw    any
+		signal *Signal
+		ok     bool
+	)
+
+	threshold := math.Min(math.Max(viper.GetFloat64("signals.toxicity.surprise_threshold"), 1.0), 5.0)
+	alpha := math.Min(math.Max(viper.GetFloat64("signals.toxicity.alpha"), 0.1), 1.0)
+
+	measurementsCapacity := viper.GetInt("signals.toxicity.measurements_capacity")
+
+	if measurementsCapacity <= 0 {
+		measurementsCapacity = 64
+	}
+
+	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
+
+	raw, _ = system.signals.LoadOrStore(
+		mapKey, NewSignal(
+			symbol,
+			logic.NewEntity(entity),
+			ring.New(measurementsCapacity),
+			system.tracker,
+			threshold,
+			alpha,
+		),
+	)
+
+	if signal, ok = raw.(*Signal); !ok {
+		errnie.Error(errors.New("toxicity: symbol is not a Signal"), "toxicity: symbol is not a Signal")
+		return nil
+	}
+
+	return signal
+}
+
+func (system *System) Close() error {
+	system.cancel()
+	return system.bus.Close()
+}

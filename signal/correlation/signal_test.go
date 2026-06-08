@@ -1,172 +1,161 @@
 package correlation
 
 import (
-	"context"
+	"container/ring"
+	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
 )
 
-func TestNewSignal(t *testing.T) {
-	Convey("Given a qpool", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a correlated cross-section", t, func() {
+		crossSection := newCrossSection(4, 16)
 
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		Convey("It should wire herd categories", func() {
-			So(signal.categories["systemic_herd"], ShouldEqual, types.CategorySystemicHerd)
-			So(signal.categories["decoupled_alpha"], ShouldEqual, types.CategoryDecoupledAlpha)
-		})
-	})
-}
-
-func TestFingerprintColdHist(t *testing.T) {
-	Convey("Given an all-zero return ring", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		state := &symbolState{}
-
-		Convey("It should degenerate to all-ones under the >= 0 tie-break", func() {
-			So(signal.fingerprint(state), ShouldEqual, ^uint64(0))
-		})
-	})
-}
-
-func TestProcessColdStart(t *testing.T) {
-	Convey("Given a correlation signal before the ring is full", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:cold", 64)
-
-		signal.process(map[string]float64{
-			"BTC/EUR": 100,
-			"ETH/EUR": 50,
-			"SOL/EUR": 25,
-		})
-		signal.process(map[string]float64{
-			"BTC/EUR": 101,
-			"ETH/EUR": 50.5,
-			"SOL/EUR": 25.25,
-		})
-
-		Convey("It should not publish false herd readings", func() {
-			waitCtx, waitCancel := context.WithTimeout(ctx, 50*time.Millisecond)
-			defer waitCancel()
-
-			if value, err := measurements.Wait(waitCtx); err == nil {
-				t.Fatalf("unexpected measurement during warm-up: %+v", value.Value)
-			}
-		})
-	})
-}
-
-func TestProcess(t *testing.T) {
-	Convey("Given a correlation signal with a measurements subscriber", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:correlation", 64)
-
+		symbols := []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"}
 		prices := map[string]float64{
 			"BTC/EUR": 100,
 			"ETH/EUR": 50,
 			"SOL/EUR": 25,
 		}
 
-		Convey("When the cross-section moves together after warm-up", func() {
-			for range gridBars + 1 {
-				signal.process(prices)
-				prices = map[string]float64{
-					"BTC/EUR": prices["BTC/EUR"] * 1.01,
-					"ETH/EUR": prices["ETH/EUR"] * 1.01,
-					"SOL/EUR": prices["SOL/EUR"] * 1.01,
-				}
+		shocks := []float64{1.005, 1.01, 1.015, 1.02, 1.025}
+
+		for _, shock := range shocks {
+			for _, symbol := range symbols {
+				prices[symbol] *= shock
+				crossSection.publishPrice(symbol, prices[symbol])
 			}
+		}
 
-			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-			defer waitCancel()
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			ring.New(8),
+			crossSection,
+			2.0,
+			0.5,
+		)
 
-			value, err := measurements.Wait(waitCtx)
-			if err != nil {
-				t.Fatal("timed out waiting for correlation measurement")
-			}
+		signal.measurements.Value = &krakenmarket.TradeUpdate{
+			Symbol: "BTC/EUR",
+			Price:  prices["BTC/EUR"],
+			Qty:    1,
+		}
+		signal.measurements = signal.measurements.Next()
 
-			measurement, _ := value.Value.(types.Measurement)
+		measurement, err := signal.Measure(nil)
 
-			Convey("It publishes a herd-behavior reading", func() {
-				So(measurement.Source, ShouldEqual, types.SourceCorrelation)
-				So(measurement.Symbol, ShouldNotBeEmpty)
-				So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
-				So(measurement.Strength, ShouldBeGreaterThan, 0)
-			})
+		Convey("It should classify systemic herd", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceCorrelation)
+			So(measurement.Category, ShouldEqual, logic.CategorySystemicHerd)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a decoupled mover", t, func() {
+		crossSection := newCrossSection(4, 16)
+
+		herdPrices := map[string]float64{
+			"BTC/EUR": 100,
+			"ETH/EUR": 50,
+		}
+
+		shocks := []float64{1.005, 1.01, 1.015, 1.02, 1.025}
+		altPrices := []float64{10.2, 9.8, 10.5, 9.5, 14.0}
+
+		for index, shock := range shocks {
+			herdPrices["BTC/EUR"] *= shock
+			herdPrices["ETH/EUR"] *= shock
+			crossSection.publishPrice("BTC/EUR", herdPrices["BTC/EUR"])
+			crossSection.publishPrice("ETH/EUR", herdPrices["ETH/EUR"])
+			crossSection.publishPrice("ALT/EUR", altPrices[index])
+		}
+
+		signal := NewSignal(
+			"ALT/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			ring.New(8),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		signal.measurements.Value = &krakenmarket.TradeUpdate{
+			Symbol: "ALT/EUR",
+			Price:  14,
+			Qty:    1,
+		}
+		signal.measurements = signal.measurements.Next()
+
+		measurement, err := signal.Measure(nil)
+
+		Convey("It should classify decoupled alpha", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryDecoupledAlpha)
+		})
+	})
+
+	Convey("Given insufficient warmup", t, func() {
+		crossSection := newCrossSection(8, 16)
+
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			ring.New(8),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		crossSection.publishPrice("BTC/EUR", 100)
+		signal.measurements.Value = &krakenmarket.TradeUpdate{
+			Symbol: "BTC/EUR",
+			Price:  100,
+			Qty:    1,
+		}
+		signal.measurements = signal.measurements.Next()
+
+		measurement, err := signal.Measure(nil)
+
+		Convey("It should withhold until the window is full", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
 		})
 	})
 }
 
-func TestMarketMode(t *testing.T) {
-	Convey("Given fingerprints from three coins", t, func() {
-		signal := &Signal{}
-		active := []live{
-			{sig: 0b101},
-			{sig: 0b111},
-			{sig: 0b110},
-		}
+func BenchmarkSignalMeasure(b *testing.B) {
+	crossSection := newCrossSection(4, 64)
 
-		mode := signal.marketMode(active)
-
-		Convey("It should vote the majority bit pattern", func() {
-			So(mode, ShouldEqual, uint64(0b111))
-		})
-	})
-}
-
-func BenchmarkProcess(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
-
-	signal := NewSignal(ctx, pool)
-	defer signal.Close()
-
-	signal.broadcasts["measurements"].Subscribe("bench:correlation", 1024)
-
-	prices := map[string]float64{"BTC/EUR": 100, "ETH/EUR": 50, "SOL/EUR": 25}
-
-	for range gridBars + 1 {
-		signal.process(prices)
-		prices = map[string]float64{
-			"BTC/EUR": prices["BTC/EUR"] * 1.01,
-			"ETH/EUR": prices["ETH/EUR"] * 1.01,
-			"SOL/EUR": prices["SOL/EUR"] * 1.01,
-		}
+	for step := 0; step < 8; step++ {
+		crossSection.publishPrice("BTC/EUR", 100*math.Pow(1.01, float64(step)))
+		crossSection.publishPrice("ETH/EUR", 50*math.Pow(1.01, float64(step)))
+		crossSection.publishPrice("SOL/EUR", 25*math.Pow(1.01, float64(step)))
 	}
 
-	b.ReportAllocs()
+	signal := NewSignal(
+		"BTC/EUR",
+		logic.NewEntity(logic.EntityTrade),
+		ring.New(64),
+		crossSection,
+		2.0,
+		0.5,
+	)
+
+	signal.measurements.Value = &krakenmarket.TradeUpdate{
+		Symbol: "BTC/EUR",
+		Price:  100 * math.Pow(1.01, 8),
+		Qty:    1,
+	}
+	signal.measurements = signal.measurements.Next()
+
+	b.ResetTimer()
 
 	for b.Loop() {
-		signal.process(prices)
-		prices["BTC/EUR"] *= 1.01
-		prices["ETH/EUR"] *= 1.01
-		prices["SOL/EUR"] *= 1.01
+		_, _ = signal.Measure(nil)
 	}
 }

@@ -1,427 +1,341 @@
 package sentiment
 
 import (
-	"context"
-	"errors"
+	"container/ring"
+	"fmt"
 	"math"
-	"sync"
-	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	"github.com/theapemachine/symm/ring"
-	signalpool "github.com/theapemachine/symm/signal"
 )
-
-const (
-	sentimentBreadthHistory = 64
-	rawSubscriberID         = "signal/sentiment:raw"
-)
-
-var sentimentDefaultBandEdges = []float64{-0.10, 0.10}
 
 /*
-Signal measures cross-section bullish breadth from ticker change percentages and
-maps it onto the sentiment perspective. It is cross-asset: the verdict for one
-symbol depends on how much of the universe is green. Confidence is classification
-clarity — margin to the surge threshold or leadership boundary; SNR is how
-surprising that clarity is versus the symbol's own recent baseline.
+Signal measures global market conviction by looking at the behavior of the entire universe simultaneously.
 
-| Category        | Cross-section                                  |
-|:----------------|:-----------------------------------------------|
-| Risk-On Surge   | majority of the universe rising (>= 55%)       |
-| Divergent Move  | this symbol leads while breadth is weak        |
-| Systemic Slump  | breadth weak and this symbol is not a leader   |
+Market Breadth         : The ratio of symbols with a positive $changePct$ versus the total number of symbols.
+Leadership Performance : Tracks the median performance of the "top" symbols to see if the leaders are actually leading.
+
+The "Rising Tide" Story : It tells you if an asset's move is a solo effort or if it is being carried by a global "risk-on" regime where every asset is moving in unison.
+The "Conviction" Story  : It distinguishes between a "fake" leader move (where only one asset is up) and a high-conviction market environment (breadth $> 0.55$).
+
+| Category           | Breadth | Leader Strength | Market "Feel"                |
+|--------------------|---------|-----------------|------------------------------|
+| Risk-On Surge      | High    | Strong          | Rising Tide / Global Buy     |
+| Divergent Move     | Low     | Strong          | Idiosyncratic Alpha          |
+| Systemic Slump     | Low     | Weak            | Global Risk-Off              |
 */
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q[any]
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map // symbol -> float64 (change percent)
-	tracked       sync.Map // symbol -> *types.Category
-	breadthHist   ring.FloatRing
-	surpriseField *types.CategorySurpriseField
-	classifier    *adaptive.Classifier
-	calibrator    *numeric.BandCalibrator
-	rawDump       *rawdump.Writer
+	symbol            string
+	entity            *logic.Entity
+	measurements      *ring.Ring
+	crossSection      *crossSection
+	transition        *numeric.TransitionMatrix
+	weights           numeric.ClassifierWeights
+	tuner             *numeric.FeedbackTuner
+	baselineThreshold float64
+	surgeBias         float64
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	crossSection *crossSection,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:            symbol,
+		entity:            entity,
+		measurements:      measurements,
+		crossSection:      crossSection,
+		transition:        numeric.NewTransitionMatrix(4, alpha),
+		weights:           numeric.DefaultClassifierWeights(threshold),
+		tuner:             numeric.NewFeedbackTuner(),
+		baselineThreshold: threshold,
+	}
+}
 
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		sentimentDefaultBandEdges,
-		[]float64{0, 1, 2},
-		[]string{"systemic_slump", "divergent_move", "risk_on_surge"},
-		[]float64{0.25, 0.35, 0.40},
-		numeric.DefaultCalibratorConfig("strength"),
-		"sentiment",
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
+		)
+
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+
+		signal.surgeBias = math.Min(
+			math.Max(signal.weights.Threshold-signal.baselineThreshold, -0.25),
+			0.25,
+		)
+	}
+
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("sentiment: unsupported entity %d", signal.entity.Type),
+		)
+	}
+}
+
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	var (
+		prices  []float64
+		volumes []float64
+		err     error
 	)
 
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategorySystemicSlump,
-		types.CategoryDivergentMove,
-		types.CategoryRiskOnSurge,
-	}, types.DefaultCategorySurpriseAlpha)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/sentiment")
-		return nil
-	}
-
-	signal := &Signal{
-		ctx:           ctx,
-		cancel:        cancel,
-		pool:          pool,
-		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.BroadcastConsumer),
-		breadthHist:   ring.NewFloatRing(sentimentBreadthHistory),
-		surpriseField: surpriseField,
-		classifier:    pooledCalibrator.Classifier,
-		calibrator:    pooledCalibrator.Calibrator,
-		rawDump:       rawdump.Open("sentiment"),
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	errnie.Info("signal/sentiment ready", "signal/sentiment")
-
-	return signal
-}
-
-func (signal *Signal) Tick() error {
-	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
-		if err != nil {
-			return err
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
 		}
 
-		if message == nil {
-			continue
-		}
-
-		errnie.Debug("signal/sentiment: Tick()", "type", message.Type)
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		trade, ok := item.(*krakenmarket.TradeUpdate)
 
 		if !ok {
-			continue
+			err = fmt.Errorf("sentiment: expected trade update")
+			return
 		}
 
-		switch sm.Channel {
-		case public.TickerChannel:
-			tickers := signalpool.GetTickers(sm)
+		prices = append(prices, trade.Price)
+		volumes = append(volumes, trade.Qty)
+	})
 
-			if err := signal.publishTickers(tickers); err != nil {
-				errnie.Error(err, "sentiment: publish tickers")
-			}
-		}
-	}
-}
-
-/*
-sentimentSnapshot is one cross-section read shared by every symbol in a ticker
-batch so breadth and leadership thresholds are not recomputed per coin.
-*/
-type sentimentSnapshot struct {
-	breadth         float64
-	universe        int
-	surgeThreshold  float64
-	leaderThreshold float64
-}
-
-func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
-	rows := make([]market.TickerUpdate, 0, len(tickers))
-
-	for _, ticker := range tickers {
-		if ticker.Last <= 0 {
-			continue
-		}
-
-		signal.symbols.Store(ticker.Symbol, ticker.ChangePct)
-		rows = append(rows, ticker)
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if len(rows) == 0 {
-		return nil
+	if len(prices) == 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	snapshot, ok := signal.snapshot()
+	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
 
-	if !ok {
-		return nil
-	}
-
-	signal.breadthHist.Push(snapshot.breadth)
-
-	var err error
-
-	for _, row := range rows {
-		// Inline, not pooled: the previous fan-out scheduled every item under
-		// ONE shared job id (%p of the same local), so results overwrote each
-		// other and Get parked this signal's goroutine forever — the silent
-		// signal deaths of 2026-06-07.
-		runItem := func() (any, error) {
-		measurement, standout, err := signal.measureFromSnapshot(
-			row.Symbol, row.ChangePct, snapshot,
-		)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if measurement.Source == types.SourceNone {
-			return nil, nil
-		}
-
-		measurement.Symbol = row.Symbol
-		measurement.Last = row.Last
-
-		telemetry, _ := numeric.ObserveGaugeTelemetry(
-			signal.calibrator,
-			signal.classifier,
-			measurement.Strength,
-			standout,
-		)
-
-		if err := types.AssignCategorySurpriseSNR(
-			&measurement, signal.surpriseField, measurement.Category,
-		); err != nil {
-			return nil, err
-		}
-
-		if err := signal.rawDump.Write(rawRecord{
-			Symbol:     measurement.Symbol,
-			Category:   measurement.Category,
-			Strength:   measurement.Strength,
-			Confidence: measurement.Confidence,
-			SNR:        measurement.SNR,
-			Standout:   standout,
-			Last:       measurement.Last,
-			SpreadBPS:  measurement.SpreadBPS,
-		}); err != nil {
-			return nil, err
-		}
-
-		if err := measurement.Send(signal.pool); err != nil {
-			return nil, err
-		}
-
-		if ui := signal.broadcasts["ui"]; ui != nil {
-			ui.Send(&qpool.QValue[any]{
-				Value: numeric.GaugePayload(
-					measurement.Source.String(),
-					measurement.Symbol,
-					measurement.Category,
-					measurement,
-					telemetry,
-				),
-			})
-		}
-
-		return nil, nil
-		}
-
-		if _, runErr := runItem(); runErr != nil {
-			err = errors.Join(err, runErr)
-		}
-
-	}
-
-	
-
-	return err
-}
-
-// measure classifies one symbol against the live cross-section breadth.
-func (signal *Signal) measure(symbol string, change float64) (types.Measurement, float64, error) {
-	snapshot, ok := signal.snapshot()
-
-	if !ok {
-		return types.Measurement{}, 0, nil
-	}
-
-	signal.breadthHist.Push(snapshot.breadth)
-
-	return signal.measureFromSnapshot(symbol, change, snapshot)
-}
-
-func (signal *Signal) measureFromSnapshot(
-	symbol string,
-	change float64,
-	snapshot sentimentSnapshot,
-) (types.Measurement, float64, error) {
-	change = types.AdjustSourceValue(types.SourceSentiment, change) // top-down prediction feedback
-	category, confidence := sentimentReading(
-		snapshot.breadth,
+	return signal.fromCrossSection(
+		prices[len(prices)-1],
+		numeric.Sum(volumes),
+		0,
 		change,
-		snapshot.surgeThreshold,
-		math.Abs(change) >= snapshot.leaderThreshold && change != 0,
+		move,
+	)
+}
+
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	var (
+		ticker  *krakenmarket.TickerUpdate
+		err     error
+		seen    bool
+		spreads []float64
 	)
 
-	// confidence is which category the breadth selects and how decisively; standout is
-	// the strength of the cross-sectional sentiment itself — how far breadth swings
-	// from a balanced 0.5 — which SNR scores against this symbol's own history. They
-	// are different questions: a lopsided tape can still sit cleanly inside one band,
-	// and a near-balanced one can sit right on a boundary. Neutral breadth (0.5) is
-	// genuinely no signal, so its standout is 0.
-	standout := math.Min(1, math.Abs(snapshot.breadth-0.5)*2)
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
 
-	trackedRaw, _ := signal.tracked.LoadOrStore(
-		symbol,
-		types.NewCategory(types.CategoryTypeNone),
-	)
-	tracked := trackedRaw.(*types.Category)
+		update, ok := item.(*krakenmarket.TickerUpdate)
 
-	if err := tracked.Observe(category, confidence); err != nil {
-		return types.Measurement{}, 0, err
+		if !ok {
+			err = fmt.Errorf("sentiment: expected ticker update")
+			return
+		}
+
+		ticker = update
+		seen = true
+		spreads = append(spreads, update.Ask-update.Bid)
+	})
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return types.Measurement{
-		Source:     types.SourceSentiment,
+	if !seen || ticker == nil {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	spread := 0.0
+
+	if len(spreads) > 0 {
+		spread = spreads[len(spreads)-1]
+	}
+
+	price := ticker.Ask + ticker.Bid
+	volume := ticker.AskQty + ticker.BidQty
+	change := ticker.ChangePct
+
+	return signal.fromCrossSection(price, volume, spread, change, change)
+}
+
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	var (
+		prices  []float64
+		volumes []float64
+		spreads []float64
+		err     error
+	)
+
+	folded := krakenmarket.Book{}
+
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		frame, ok := item.(*krakenmarket.Book)
+
+		if !ok {
+			err = fmt.Errorf("sentiment: expected book update")
+			return
+		}
+
+		folded.Fold(*frame, 0)
+
+		mid, spread, depth, touchOK := folded.TouchQuote()
+
+		if !touchOK {
+			return
+		}
+
+		prices = append(prices, mid)
+		volumes = append(volumes, depth)
+		spreads = append(spreads, spread)
+	})
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if len(prices) == 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	spread := 0.0
+
+	if len(spreads) > 0 {
+		spread = spreads[len(spreads)-1]
+	}
+
+	return signal.fromCrossSection(
+		prices[len(prices)-1],
+		numeric.Sum(volumes),
+		spread,
+		change,
+		move,
+	)
+}
+
+func (signal *Signal) fromCrossSection(
+	price, volume, spread, change, move float64,
+) (logic.Measurement, error) {
+	signal.crossSection.publishChange(signal.symbol, change)
+
+	breadth := signal.crossSection.breadth()
+
+	signal.crossSection.recordBreadth(breadth)
+
+	surgeThreshold := signal.crossSection.majorityThreshold() + signal.surgeBias
+	surgeThreshold = math.Min(math.Max(surgeThreshold, 0.5), 1)
+
+	leader := signal.crossSection.isLeader(change)
+
+	category := signal.classify(breadth, change, surgeThreshold, leader)
+
+	leaderScore := 0.0
+
+	if leader {
+		leaderScore = 1
+	}
+
+	scores := []float64{
+		breadth,
+		math.Abs(change),
+		leaderScore,
+	}
+	probabilities := numeric.SoftmaxScores(scores)
+
+	categoryIndex := 0
+
+	switch category {
+	case logic.CategoryRiskOnSurge:
+		categoryIndex = 1
+	case logic.CategoryDivergentMove:
+		categoryIndex = 2
+	case logic.CategorySystemicSlump:
+		categoryIndex = 3
+	}
+
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
+
+	signal.transition.Update(categoryIndex)
+
+	confidence := 0.0
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = probabilities[categoryIndex-1]
+	}
+
+	strength := breadth
+
+	if category == logic.CategoryDivergentMove {
+		strength = math.Abs(change)
+	}
+
+	position := logic.PositionTypeNone
+
+	if move > 0 {
+		position = logic.PositionTypeLong
+	}
+
+	if move < 0 {
+		position = logic.PositionTypeShort
+	}
+
+	return logic.Measurement{
+		Source:     logic.SourceSentiment,
+		Symbol:     signal.symbol,
+		Price:      price,
+		Strength:   strength,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    0,
 		Category:   category,
-		Strength:   signal.breadthOdds(snapshot.breadth),
+		Regime:     logic.RegimeTypeNone,
+		Position:   position,
 		Confidence: confidence,
-	}, standout, nil
+		Surprise:   surprise,
+	}, nil
 }
 
-func (signal *Signal) snapshot() (sentimentSnapshot, bool) {
-	breadth, _, universe, ok := signal.breadth()
-
-	if !ok {
-		return sentimentSnapshot{}, false
+func (signal *Signal) classify(
+	breadth, change, surgeThreshold float64,
+	leader bool,
+) logic.CategoryType {
+	if breadth >= surgeThreshold {
+		return logic.CategoryRiskOnSurge
 	}
 
-	magnitudes := make([]float64, 0, 16)
-
-	signal.symbols.Range(func(_, value any) bool {
-		magnitudes = append(magnitudes, math.Abs(value.(float64)))
-
-		return true
-	})
-
-	leaderThreshold := 0.0
-
-	if len(magnitudes) >= 2 {
-		leaderThreshold = numeric.PercentileSorted(numeric.CopySorted(magnitudes), 0.90)
+	if leader && change != 0 {
+		return logic.CategoryDivergentMove
 	}
 
-	return sentimentSnapshot{
-		breadth:         breadth,
-		universe:        universe,
-		surgeThreshold:  signal.surgeThreshold(universe),
-		leaderThreshold: leaderThreshold,
-	}, true
-}
-
-// breadth returns the fraction of the universe that is rising and the strongest
-// positive change observed.
-func (signal *Signal) breadth() (fraction, topChange float64, universe int, ok bool) {
-	positive := 0
-	total := 0
-
-	signal.symbols.Range(func(_, value any) bool {
-		change := value.(float64)
-
-		if change == 0 {
-			return true
-		}
-
-		total++
-
-		if change > topChange {
-			topChange = change
-		}
-
-		if change > 0 {
-			positive++
-		}
-
-		return true
-	})
-
-	if total == 0 {
-		return 0, 0, 0, false
-	}
-
-	return float64(positive) / float64(total), topChange, total, true
-}
-
-// category maps breadth and this symbol's leadership onto the sentiment perspective.
-func (signal *Signal) category(breadth, change float64, universe int) types.CategoryType {
-	signal.breadthHist.Push(breadth)
-	category, _ := sentimentReading(
-		breadth, change, signal.surgeThreshold(universe), signal.isLeader(change),
-	)
-
-	return category
-}
-
-func (signal *Signal) surgeThreshold(universe int) float64 {
-	samples := signal.breadthHist.Ordered()
-
-	if len(samples) >= 8 {
-		return numeric.PercentileSorted(numeric.CopySorted(samples), 0.75)
-	}
-
-	if universe <= 0 {
-		return 0.5
-	}
-
-	return 0.5 + 0.5/float64(universe)
-}
-
-func (signal *Signal) isLeader(change float64) bool {
-	if change == 0 {
-		return false
-	}
-
-	magnitudes := make([]float64, 0, 16)
-
-	signal.symbols.Range(func(_, value any) bool {
-		magnitudes = append(magnitudes, math.Abs(value.(float64)))
-
-		return true
-	})
-
-	if len(magnitudes) < 2 {
-		return math.Abs(change) > 0
-	}
-
-	threshold := numeric.PercentileSorted(numeric.CopySorted(magnitudes), 0.90)
-
-	return math.Abs(change) >= threshold
-}
-
-// breadthOdds is the decisiveness of the breadth split — its odds away from 50/50.
-func (signal *Signal) breadthOdds(breadth float64) float64 {
-	if breadth <= 0 || breadth >= 1 {
-		return 1
-	}
-
-	if breadth >= 0.5 {
-		return breadth / (1 - breadth)
-	}
-
-	return (1 - breadth) / breadth
-}
-
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
+	return logic.CategorySystemicSlump
 }

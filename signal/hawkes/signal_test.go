@@ -1,19 +1,16 @@
 package hawkes
 
 import (
-	"context"
-
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
 )
 
-func tradeBurst(symbol string, base time.Time, count int) []market.TradeUpdate {
-	trades := make([]market.TradeUpdate, count)
+func tradeBurst(symbol string, base time.Time, count int) []krakenmarket.TradeUpdate {
+	trades := make([]krakenmarket.TradeUpdate, count)
 
 	for index := range count {
 		side := "buy"
@@ -22,7 +19,7 @@ func tradeBurst(symbol string, base time.Time, count int) []market.TradeUpdate {
 			side = "sell"
 		}
 
-		trades[index] = market.TradeUpdate{
+		trades[index] = krakenmarket.TradeUpdate{
 			Symbol:    symbol,
 			Side:      side,
 			Price:     100 + float64(index)*0.01,
@@ -34,115 +31,59 @@ func tradeBurst(symbol string, base time.Time, count int) []market.TradeUpdate {
 	return trades
 }
 
-func TestNewSignal(t *testing.T) {
-	Convey("Given a qpool", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		Convey("It should expose a measurements broadcast", func() {
-			So(signal.broadcasts["measurements"], ShouldNotBeNil)
-		})
-	})
-}
-
-func TestMeasure(t *testing.T) {
+func TestHawkesSymbolMeasure(t *testing.T) {
 	Convey("Given a Hawkes symbol with a clustered buy burst", t, func() {
-		symbol := NewHawkesSymbol(nil, hawkesTestCategories())
+		symbol := NewHawkesSymbol()
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		ticks := tradeBurst("ALT/EUR", base, 128)
 		now := base.Add(128 * 100 * time.Millisecond)
 
 		Convey("When enough arrivals exist to fit", func() {
-			measurement, _, err := symbol.Measure(ticks, now)
+			reading, ok := symbol.Measure(ticks, now)
 
 			Convey("It should publish a thermal perspective reading", func() {
-				So(err, ShouldBeNil)
-				So(measurement.Source, ShouldEqual, types.SourceHawkes)
-				So(measurement.Strength, ShouldBeGreaterThan, 0)
+				So(ok, ShouldBeTrue)
+				So(reading.strength, ShouldBeGreaterThan, 0)
+				So(reading.category, ShouldNotEqual, logic.CategoryTypeNone)
 			})
 		})
 	})
 }
 
-func TestObserveTrades(t *testing.T) {
-	Convey("Given a hawkes signal with a measurements subscriber", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:hawkes", 64)
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		trades := tradeBurst("ALT/EUR", base, 128)
-
-		Convey("When a multi-print burst is observed", func() {
-			err := signal.observeTrades(trades)
-
-			So(err, ShouldBeNil)
-
-			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-			defer waitCancel()
-
-			value, err := measurements.Wait(waitCtx)
-			if err != nil {
-				t.Fatal("timed out waiting for hawkes measurement")
-			}
-
-			measurement, _ := value.Value.(types.Measurement)
-
-			Convey("It publishes one thermal reading for the symbol", func() {
-				So(measurement.Source, ShouldEqual, types.SourceHawkes)
-				So(measurement.Symbol, ShouldEqual, "ALT/EUR")
-				So(measurement.Strength, ShouldBeGreaterThan, 0)
-			})
-		})
-	})
-}
-
-func BenchmarkObserveTrades(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
-
-	signal := NewSignal(ctx, pool)
-	defer signal.Close()
-
-	signal.broadcasts["measurements"].Subscribe("bench:hawkes", 1024)
-
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	trades := tradeBurst("ALT/EUR", base, 128)
-
-	if err := signal.observeTrades(trades); err != nil {
-		b.Fatal(err)
-	}
-
-	touches := append([]tradeTouch(nil), signal.tradeScratch...)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for b.Loop() {
-		if err := signal.publishTouches(touches); err != nil {
-			b.Fatal(err)
+func TestClassifyHawkesSaturation(t *testing.T) {
+	Convey("Given a fit at critical spectral radius", t, func() {
+		fit := BivariateFit{
+			MuBuy:          1,
+			MuSell:         1,
+			BuyIntensity:   2,
+			SellIntensity:  2,
+			SpectralRadius: 0.9,
 		}
-	}
+
+		category, confidence, _, saturation, _, _ := classifyHawkes(fit, 0.05, false)
+
+		Convey("It should classify saturation", func() {
+			So(category, ShouldEqual, logic.CategorySaturation)
+			So(confidence, ShouldBeGreaterThan, 0)
+			So(saturation, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
-func BenchmarkMeasure(b *testing.B) {
-	symbol := NewHawkesSymbol(nil, hawkesTestCategories())
+func BenchmarkSignalMeasure(b *testing.B) {
+	symbolState := NewHawkesSymbol()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	ticks := tradeBurst("ALT/EUR", base, 128)
+	ticks := tradeBurst("BTC/EUR", base, 128)
 	now := base.Add(128 * 100 * time.Millisecond)
+	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), nil, nil, 2.0, 0.5)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = symbol.Measure(ticks, now)
+		reading, ok := symbolState.Measure(ticks, now)
+
+		if ok {
+			_, _ = signal.publish(reading)
+		}
 	}
 }

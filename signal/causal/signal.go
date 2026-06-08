@@ -1,38 +1,22 @@
 package causal
 
 import (
-	"context"
-	"errors"
+	"container/ring"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	"github.com/theapemachine/symm/ring"
-	signalpool "github.com/theapemachine/symm/signal"
 )
 
 /*
 Signal scores Pearl's ladder — association, intervention (backdoor-adjusted),
 counterfactual uplift — over a DAG of MacroMomentum → PriceVelocity ← LocalFlow
 with Liquidity as a backdoor control, switching to a panic regime when
-cross-asset contagion or collinearity spikes. It consumes trades (flow), ticks
-(macro change), and book (liquidity); the heavy fit lives in CausalSymbol.
-
-causalPublishInterval throttles the cross-sectional causal fit. The fit is
-O(symbols²) (each symbol's reading depends on the macro median of the rest), so
-running it on every trade saturates a core; the structural picture does not
-change meaningfully faster than this.
+cross-asset contagion or collinearity spikes.
 
 | Category         | Active Regime | Dominant Factor       | Market "Feel"      |
 |:-----------------|:--------------|:----------------------|:-------------------|
@@ -41,502 +25,179 @@ change meaningfully faster than this.
 | Liquidity Shock  | Panic         | Liquidity Void        | Fragile/Inverted   |
 | Causal Noise     | Variable      | None                  | Stochastic/Unclear |
 */
-const (
-	causalPublishInterval = 500 * time.Millisecond
-	rawSubscriberID       = "signal/causal:raw"
-
-	// contagionCheckInterval bounds how often the cheap Hayashi-Yoshida contagion
-	// tripwire is recomputed — far faster than the heavy fit, but not every tick.
-	contagionCheckInterval = 100 * time.Millisecond
-	// causalEmergencyBackoffBase/Max bound the escalating circuit breaker after a
-	// velocity-triggered refit, so a violent contagion ramp cannot refit every tick
-	// and drive the core into a death spiral.
-	causalEmergencyBackoffBase = 100 * time.Millisecond
-	causalEmergencyBackoffMax  = 2 * time.Second
-)
-
-var causalDefaultBandEdges = []float64{0.5, 1.5, 3.0}
-
 type Signal struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	pool             *qpool.Q[any]
-	broadcasts       map[string]*qpool.BroadcastGroup
-	subscribers      map[string]*qpool.BroadcastConsumer
-	symbols          sync.Map
-	lastPublish      time.Time
-	contagionAt      time.Time
-	cachedContagion  float64
-	contagionSpread  ring.FloatRing
-	fitContagion     float64
-	emergencyBackoff time.Duration
-	backoffUntil     time.Time
-	publishScratch   []publishEntry
-	surpriseField    *types.CategorySurpriseField
-	classifier       *adaptive.Classifier
-	calibrator       *numeric.BandCalibrator
-	rawDump          *rawdump.Writer
+	symbol       string
+	entity       *logic.Entity
+	measurements *ring.Ring
+	system       *System
+	transition   *numeric.TransitionMatrix
+	weights      numeric.ClassifierWeights
+	tuner        *numeric.FeedbackTuner
 }
 
-type publishEntry struct {
-	symbol string
-	state  *CausalSymbol
-	change float64
-}
-
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		causalDefaultBandEdges,
-		[]float64{0, 1, 2, 3},
-		[]string{"causal_noise", "systemic_beta", "endogenous_alpha", "liquidity_shock"},
-		[]float64{0.40, 0.30, 0.20, 0.10},
-		numeric.DefaultCalibratorConfig("strength"),
-		"causal",
-	)
-
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategoryCausalNoise,
-		types.CategorySystemicBeta,
-		types.CategoryEndogenousAlpha,
-		types.CategoryLiquidityShock,
-	}, types.DefaultCategorySurpriseAlpha)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/causal")
-		return nil
-	}
-
-	signal := &Signal{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		broadcasts:      make(map[string]*qpool.BroadcastGroup),
-		subscribers:     make(map[string]*qpool.BroadcastConsumer),
-		surpriseField:   surpriseField,
-		classifier:      pooledCalibrator.Classifier,
-		calibrator:      pooledCalibrator.Calibrator,
-		contagionSpread: ring.NewFloatRing(64),
-		rawDump:         rawdump.Open("causal"),
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	errnie.Info("signal/causal ready", "signal/causal")
-
-	return signal
-}
-
-func (signal *Signal) state(symbol string) *CausalSymbol {
-	if stored, ok := signal.symbols.Load(symbol); ok {
-		return stored.(*CausalSymbol)
-	}
-
-	created := NewCausalSymbol()
-	stored, loaded := signal.symbols.LoadOrStore(symbol, created)
-
-	if loaded {
-		return stored.(*CausalSymbol)
-	}
-
-	return created
-}
-
-func (signal *Signal) Tick() error {
-	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
-
-		if err != nil {
-			return err
-		}
-
-		if message == nil {
-			continue
-		}
-
-		errnie.Debug("signal/causal: Tick()", "type", message.Type)
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
-
-		if !ok {
-			continue
-		}
-
-		switch sm.Channel {
-		case public.TradesChannel:
-			trades := signalpool.GetTrades(sm)
-			publishAt := time.Time{}
-
-			for _, trade := range trades {
-				if trade.Timestamp.IsZero() {
-					errnie.Error(
-						fmt.Errorf("causal: trade timestamp is required"),
-						"causal: feed trade %s",
-						trade.Symbol,
-					)
-					continue
-				}
-
-				if err := signal.state(trade.Symbol).FeedTrade(trade); err != nil {
-					errnie.Error(err, "causal: feed trade %s", trade.Symbol)
-					continue
-				}
-
-				if trade.Timestamp.After(publishAt) {
-					publishAt = trade.Timestamp
-				}
-			}
-
-			if publishAt.IsZero() {
-				continue
-			}
-
-			if err := signal.publishAt(publishAt); err != nil {
-				errnie.Error(err, "causal: publish")
-				continue
-			}
-		case public.TickerChannel:
-			tickers := signalpool.GetTickers(sm)
-			publishAt := time.Time{}
-
-			for _, ticker := range tickers {
-				at, err := causalTickerTime(ticker)
-
-				if err != nil {
-					errnie.Error(err, "causal: feed ticker %s", ticker.Symbol)
-					continue
-				}
-
-				signal.state(ticker.Symbol).FeedTicker(ticker)
-
-				if at.After(publishAt) {
-					publishAt = at
-				}
-			}
-
-			if publishAt.IsZero() {
-				continue
-			}
-
-			if err := signal.publishAt(publishAt); err != nil {
-				errnie.Error(err, "causal: publish")
-				continue
-			}
-		case public.BookChannel:
-			books := signalpool.GetBooks(sm)
-			publishAt := time.Time{}
-
-			for _, delta := range books {
-				at, err := causalBookTime(delta)
-
-				if err != nil {
-					errnie.Error(err, "causal: feed book %s", delta.Symbol)
-					continue
-				}
-
-				signal.state(delta.Symbol).FeedBook(delta)
-
-				if at.After(publishAt) {
-					publishAt = at
-				}
-			}
-
-			if publishAt.IsZero() {
-				continue
-			}
-
-			if err := signal.publishAt(publishAt); err != nil {
-				errnie.Error(err, "causal: publish")
-				continue
-			}
-		}
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	system *System,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:       symbol,
+		entity:       entity,
+		measurements: measurements,
+		system:       system,
+		transition:   numeric.NewTransitionMatrix(5, alpha),
+		weights:      numeric.DefaultClassifierWeights(threshold),
+		tuner:        numeric.NewFeedbackTuner(),
 	}
 }
 
-// causalContagionShift is how far cross-asset contagion must move since the last
-// fit to bypass the time gate. A liquidation cascade flips the causal structure in
-// milliseconds — faster than a rigid timer would catch.
-func causalContagionShift() float64 {
-	shift := viper.GetViper().GetFloat64("signals.causal.contagion_shift")
-
-	if shift > 0 {
-		return shift
-	}
-
-	return 0.2
-}
-
-// causalPublishIntervalForRegime shortens the fit cadence in calm regimes and
-// lengthens it during hostile price action so O(symbols²) work concentrates when
-// the structural picture is stable.
-func causalPublishIntervalForRegime(regime types.Regime) time.Duration {
-	switch regime {
-	case types.RegimeDead, types.RegimeTrending, types.RegimeBullish:
-		return causalPublishInterval / 2
-	case types.RegimeChoppy, types.RegimeBearish:
-		return causalPublishInterval * 2
-	default:
-		return causalPublishInterval
-	}
-}
-
-/*
-throttle decides whether to rerun the O(symbols²) causal fit. It fires on the time
-gate as before, OR immediately when contagion has broken away since the last fit
-(the Hayashi-Yoshida liquidation signature) — velocity-aware, not blindly
-time-based, so the structural model is not navigating on a stale snapshot during a
-flash crash. An exponential backoff then caps how often the emergency refit can
-re-fire: the freshly computed panic DAG is relied on for an escalating window so a
-sustained spike cannot saturate the core. now is passed in so the gate is testable.
-*/
-func (signal *Signal) throttle(now time.Time, contagion float64) bool {
-	interval := causalPublishIntervalForRegime(perspectives.CurrentRegime())
-
-	if now.Sub(signal.lastPublish) >= interval {
-		signal.commitFit(now, contagion, false)
-
-		return true
-	}
-
-	shift := math.Abs(contagion - signal.fitContagion)
-
-	if shift >= causalContagionShift() && !now.Before(signal.backoffUntil) {
-		signal.commitFit(now, contagion, true)
-
-		return true
-	}
-
-	return false
-}
-
-// commitFit records a fit and, for a velocity-triggered emergency, escalates the
-// backoff circuit breaker; a normal time-gated fit means the storm (if any) has
-// passed, so the backoff resets.
-func (signal *Signal) commitFit(now time.Time, contagion float64, emergency bool) {
-	signal.lastPublish = now
-	signal.fitContagion = contagion
-
-	if !emergency {
-		signal.emergencyBackoff = 0
-
-		return
-	}
-
-	if signal.emergencyBackoff == 0 {
-		signal.emergencyBackoff = causalEmergencyBackoffBase
-	} else {
-		signal.emergencyBackoff *= 2
-
-		if signal.emergencyBackoff > causalEmergencyBackoffMax {
-			signal.emergencyBackoff = causalEmergencyBackoffMax
-		}
-	}
-
-	signal.backoffUntil = now.Add(signal.emergencyBackoff)
-}
-
-// publish runs the causal fit for every symbol against the current cross-asset
-// macro momentum and contagion, emitting one structural reading each.
-func (signal *Signal) publish() error {
-	return signal.publishAt(time.Now())
-}
-
-func (signal *Signal) publishAt(now time.Time) error {
-
-	// Recompute the cheap Hayashi-Yoshida contagion tripwire at a fast cadence —
-	// far quicker than the heavy O(symbols²) fit, but not on every single tick.
-	if now.Sub(signal.contagionAt) >= contagionCheckInterval {
-		signal.cachedContagion = signal.contagion()
-		signal.contagionAt = now
-	}
-
-	if !signal.throttle(now, signal.cachedContagion) {
-		return nil
-	}
-
-	contagion := signal.cachedContagion
-	entries := signal.snapshotEntries()
-	macros := macroMedians(entries)
-
-	var err error
-
-	for _, entry := range entries {
-		// Inline, not pooled: the previous fan-out scheduled every item under
-		// ONE shared job id (%p of the same local), so results overwrote each
-		// other and Get parked this signal's goroutine forever — the silent
-		// signal deaths of 2026-06-07.
-		runItem := func() (any, error) {
-		measurement, standout, err := entry.state.Measure(macros[entry.symbol], contagion, now)
-
-		if err != nil {
-			return nil, fmt.Errorf("causal: measure %s: %w", entry.symbol, err)
-		}
-
-		if measurement.Source == types.SourceNone {
-			return nil, nil
-		}
-
-		measurement.Symbol = entry.symbol
-
-		telemetry, _ := numeric.ObserveGaugeTelemetry(
-			signal.calibrator,
-			signal.classifier,
-			measurement.Strength,
-			standout,
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
 		)
 
-		if err := types.AssignCategorySurpriseSNR(
-			&measurement, signal.surpriseField, measurement.Category,
-		); err != nil {
-			return nil, fmt.Errorf("causal: snr %s: %w", entry.symbol, err)
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
 		}
-
-		if err := signal.rawDump.Write(rawRecord{
-			Symbol:     measurement.Symbol,
-			Category:   measurement.Category,
-			Strength:   measurement.Strength,
-			Confidence: measurement.Confidence,
-			SNR:        measurement.SNR,
-			Standout:   standout,
-			Last:       measurement.Last,
-			SpreadBPS:  measurement.SpreadBPS,
-		}); err != nil {
-			return nil, err
-		}
-
-		if err := measurement.Send(signal.pool); err != nil {
-			return nil, err
-		}
-
-		if ui := signal.broadcasts["ui"]; ui != nil {
-			ui.Send(&qpool.QValue[any]{
-				Value: numeric.GaugePayload(
-					measurement.Source.String(),
-					measurement.Symbol,
-					measurement.Category,
-					measurement,
-					telemetry,
-				),
-			})
-		}
-
-		return nil, nil
-		}
-
-		if _, runErr := runItem(); runErr != nil {
-			err = errors.Join(err, runErr)
-		}
-
 	}
 
-	
-
-	return err
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("causal: unsupported entity %d", signal.entity.Type),
+		)
+	}
 }
 
-func causalTickerTime(row market.TickerUpdate) (time.Time, error) {
-	if row.Timestamp == "" {
-		return time.Time{}, fmt.Errorf("causal: ticker timestamp is required for %s", row.Symbol)
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	if !signal.system.shouldPublish(time.Now()) {
+		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000000Z"} {
-		if at, err := time.Parse(layout, row.Timestamp); err == nil {
-			return at, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("causal: ticker timestamp %s is invalid for %s", row.Timestamp, row.Symbol)
+	return signal.fromSymbol(time.Now())
 }
 
-func causalBookTime(row market.Book) (time.Time, error) {
-	if row.Timestamp == "" {
-		return time.Time{}, fmt.Errorf("causal: book timestamp is required for %s", row.Symbol)
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	return logic.Measurement{Symbol: signal.symbol}, nil
+}
+
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	return signal.fromSymbol(time.Now())
+}
+
+func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
+	state := signal.system.loadSymbol(signal.symbol)
+
+	if state == nil {
+		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	at, err := time.Parse(time.RFC3339Nano, row.Timestamp)
+	macroMomentum := signal.system.crossSection.macroMomentum(signal.symbol)
+	contagion := signal.system.contagion()
+
+	reading, err := state.Measure(macroMomentum, contagion, now)
 
 	if err != nil {
-		return time.Time{}, fmt.Errorf("causal: book timestamp %s is invalid for %s: %w", row.Timestamp, row.Symbol, err)
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return at, nil
+	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	reading.Symbol = signal.symbol
+
+	return signal.publish(reading)
 }
 
-func (signal *Signal) snapshotEntries() []publishEntry {
-	entries := signal.publishScratch[:0]
+func (signal *Signal) publish(reading logic.Measurement) (logic.Measurement, error) {
+	alphaScore := 0.0
+	shockScore := 0.0
+	betaScore := 0.0
+	noiseScore := 0.0
 
-	signal.symbols.Range(func(key, value any) bool {
-		state := value.(*CausalSymbol)
-		entries = append(entries, publishEntry{
-			symbol: key.(string),
-			state:  state,
-			change: state.ChangePct(),
-		})
+	switch reading.Category {
+	case logic.CategoryEndogenousAlpha:
+		alphaScore = reading.Confidence
+	case logic.CategoryLiquidityShock:
+		shockScore = reading.Confidence
+	case logic.CategorySystemicBeta:
+		betaScore = reading.Confidence
+	case logic.CategoryCausalNoise:
+		noiseScore = reading.Confidence
+	}
 
-		return true
+	if alphaScore <= 0 && shockScore <= 0 && betaScore <= 0 && noiseScore <= 0 {
+		score := magnitudeMargin(reading.Strength)
+
+		if score > 0 {
+			alphaScore = score
+		}
+	}
+
+	probabilities := numeric.SoftmaxScores([]float64{
+		alphaScore,
+		shockScore,
+		betaScore,
+		noiseScore,
 	})
 
-	signal.publishScratch = entries
+	categoryIndex := signal.categoryIndex(reading.Category)
 
-	return entries
-}
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
 
-func macroMedians(entries []publishEntry) map[string]float64 {
-	macros := make(map[string]float64, len(entries))
-	changes := make([]float64, 0, len(entries))
+	signal.transition.Update(categoryIndex)
 
-	for _, entry := range entries {
-		if entry.change != 0 {
-			changes = append(changes, entry.change)
-		}
+	confidence := reading.Confidence
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = math.Max(confidence, probabilities[categoryIndex-1])
 	}
 
-	for entryIndex, candidate := range entries {
-		peerChanges := changes[:0]
+	return logic.Measurement{
+		Source:     logic.SourceCausal,
+		Symbol:     reading.Symbol,
+		Price:      reading.Price,
+		Strength:   reading.Strength,
+		Volume:     0,
+		Spread:     0,
+		Elapsed:    0,
+		Category:   reading.Category,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   surprise,
+	}, nil
+}
 
-		for peerIndex, peer := range entries {
-			if peerIndex == entryIndex || peer.change == 0 {
-				continue
-			}
-
-			peerChanges = append(peerChanges, peer.change)
-		}
-
-		if len(peerChanges) < 2 {
-			continue
-		}
-
-		macros[candidate.symbol] = numeric.PercentileSorted(
-			numeric.CopySorted(peerChanges),
-			0.5,
-		)
+func (signal *Signal) categoryIndex(category logic.CategoryType) int {
+	switch category {
+	case logic.CategoryEndogenousAlpha:
+		return 1
+	case logic.CategoryLiquidityShock:
+		return 2
+	case logic.CategorySystemicBeta:
+		return 3
+	case logic.CategoryCausalNoise:
+		return 4
+	default:
+		return 0
 	}
-
-	return macros
-}
-
-/*
-macroMomentum returns the median change_pct across every symbol other than
-candidate. The candidate's own change is excluded so it cannot appear on both
-sides of the structural regression (outcome and macro regressor), which would
-inject contemporaneous self-correlation into the backdoor estimand.
-*/
-func (signal *Signal) macroMomentum(candidate string) float64 {
-	entries := signal.snapshotEntries()
-	macros := macroMedians(entries)
-
-	return macros[candidate]
-}
-
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
 }

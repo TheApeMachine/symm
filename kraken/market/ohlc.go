@@ -1,15 +1,10 @@
 package market
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/gofiber/fiber/v3"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
@@ -181,28 +176,4 @@ func jsonInt64(raw json.RawMessage) (int64, error) {
 	}
 
 	return strconv.ParseInt(text, 10, 64)
-}
-
-/*
-NewOHLC fetches OHLC data. intervalMinutes is the candle width in minutes.
-Pass since 0 to omit the since parameter.
-*/
-func NewOHLC(
-	ctx context.Context,
-	client *public.Rest,
-	pair string,
-	intervalMinutes int,
-	since int64,
-) (*OHLC, error) {
-	ohlc := &OHLC{}
-	params := fiber.Map{
-		"pair":     pair,
-		"interval": intervalMinutes,
-	}
-
-	if since > 0 {
-		params["since"] = since
-	}
-
-	return ohlc, errnie.Error(client.Get(ctx, params, ohlc))
 }

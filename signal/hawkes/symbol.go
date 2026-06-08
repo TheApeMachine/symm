@@ -5,21 +5,10 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
-/*
-HawkesSymbol fits a bivariate self-exciting Hawkes process to one symbol's
-buy/sell trade arrivals and classifies the excitation state onto the thermal
-perspective. The fit is cooldown-throttled and refreshed in place between
-refits — a full MLE per tick would saturate a core.
-
-Confidence is classification clarity — margin to the saturation, exhaustion, or
-frenzy boundary; SNR is how surprising that clarity is versus the symbol's own
-recent baseline, not intensity-over-μ.
-*/
 type HawkesSymbol struct {
 	fit             BivariateFit
 	hasFit          bool
@@ -28,9 +17,17 @@ type HawkesSymbol struct {
 	fitCooldown     time.Duration
 	minFitEvents    int
 	rawBase         *adaptive.EMA
-	tracked         *types.Category
-	pipe            *numeric.Classed
-	categories      map[string]types.CategoryType
+	lastCategory    logic.CategoryType
+}
+
+type hawkesReading struct {
+	category   logic.CategoryType
+	strength   float64
+	confidence float64
+	frenzy     float64
+	saturation float64
+	organic    float64
+	exhaustion float64
 }
 
 func hawkesFitCooldown() time.Duration {
@@ -47,23 +44,12 @@ func hawkesFitCooldown() time.Duration {
 	return viper.GetDuration("signals.hawkes_fit_cooldown")
 }
 
-func NewHawkesSymbol(
-	classifier *adaptive.Classifier,
-	categories map[string]types.CategoryType,
-) *HawkesSymbol {
-	symbol := &HawkesSymbol{
+func NewHawkesSymbol() *HawkesSymbol {
+	return &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  hawkesFitCooldown(),
 		rawBase:      adaptive.NewEMA(0),
-		tracked:      types.NewCategory(types.CategoryTypeNone),
-		categories:   categories,
 	}
-
-	if classifier != nil {
-		symbol.pipe = numeric.NewClassed(classifier)
-	}
-
-	return symbol
 }
 
 func (sym *HawkesSymbol) FitBivariate(stream ArrivalStream, horizon time.Time) BivariateFit {
@@ -113,24 +99,20 @@ func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (
 	return fit, true
 }
 
-/*
-Measure fits the arrival stream and emits the thermal reading. Confidence is
-category clarity — how decisively the fitted state lands in its assigned category.
-*/
 func (sym *HawkesSymbol) Measure(
 	ticks []market.TradeUpdate, now time.Time,
-) (types.Measurement, float64, error) {
+) (hawkesReading, bool) {
 	context, stream, ok := FitContextFromTicks(ticks, time.Time{}, now)
 
 	if !ok || !context.EnoughEvents(stream) {
 		if !sym.hasFit {
-			return types.Measurement{}, 0, nil
+			return hawkesReading{}, false
 		}
 
 		stream = ArrivalStreamFromTicks(ticks, time.Time{}, now)
 
 		if len(stream.Marked()) == 0 {
-			return types.Measurement{}, 0, nil
+			return hawkesReading{}, false
 		}
 
 		return sym.measureFit(sym.fit.WithIntensitiesAt(stream, now))
@@ -139,13 +121,13 @@ func (sym *HawkesSymbol) Measure(
 	fit, ok := sym.fitForEvents(stream, now)
 
 	if !ok {
-		return types.Measurement{}, 0, nil
+		return hawkesReading{}, false
 	}
 
 	return sym.measureFit(fit)
 }
 
-func (sym *HawkesSymbol) measureFit(fit BivariateFit) (types.Measurement, float64, error) {
+func (sym *HawkesSymbol) measureFit(fit BivariateFit) (hawkesReading, bool) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
 
@@ -161,68 +143,43 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (types.Measurement, float6
 		raw = intensity / mu
 	}
 
-	// confidence (evidence) is how decisively the fitted state lands in its category
-	// (the boundary margin); standout is the strength of the self-exciting process
-	// itself — the intensity ratio above baseline — which SNR scores against this
-	// symbol's own history. They are different questions, so they are different
-	// numbers: a weak excitation can still land cleanly in a category, and a violent
-	// one can sit right on a boundary.
-	category := types.CategoryOrganic
-	evidence := 0.0
+	category, confidence, frenzy, saturation, organic, exhaustion := classifyHawkes(
+		fit, asymmetry, sellSide,
+	)
 
-	if sym.pipe != nil && sym.categories != nil {
-		// Apply learned prediction feedback scale to raw intensity before banding;
-		// category and confidence are derived from this adjusted value, not the raw
-		// Hawkes ratio, so settled forecast error can sharpen or soften the signal.
-		raw = types.AdjustSourceValue(types.SourceHawkes, raw)
-		code, err := sym.pipe.Push(raw)
-
-		if err == nil {
-			category = sym.categories[sym.pipe.Label(code)]
-			evidence = sym.pipe.Confidence()
-		}
-	}
-
-	if sym.pipe == nil {
-		category, evidence = hawkesReading(fit, asymmetry, sellSide)
-	}
 	rawNorm := sym.rawBase.Value()
 	_, _ = sym.rawBase.Next(0, raw)
 
 	if rawNorm > 0 {
-		saturationEvidence := types.UnitCompetitionMargin(raw-rawNorm, rawNorm) *
-			(1 - asymmetry)
+		saturationEvidence := competitionMargin(raw-rawNorm, rawNorm) * (1 - asymmetry)
 
-		if saturationEvidence > evidence {
-			category = types.CategorySaturation
-			evidence = saturationEvidence
+		if saturationEvidence > confidence {
+			category = logic.CategorySaturation
+			confidence = saturationEvidence
+			saturation = saturationEvidence
 		}
 	}
 
-	if sym.tracked.Type == types.CategoryFrenzy ||
-		sym.tracked.Type == types.CategorySaturation {
-		exhaustionEvidence := types.UnitCompetitionMargin(rawNorm-raw, rawNorm)
+	if sym.lastCategory == logic.CategoryFrenzy ||
+		sym.lastCategory == logic.CategorySaturation {
+		exhaustionEvidence := competitionMargin(rawNorm-raw, rawNorm)
 
-		if exhaustionEvidence > 0 {
-			category = types.CategoryExhaustion
-			evidence = exhaustionEvidence
+		if exhaustionEvidence > confidence {
+			category = logic.CategoryExhaustion
+			confidence = exhaustionEvidence
+			exhaustion = exhaustionEvidence
 		}
 	}
 
-	standout := types.UnitMagnitudeMargin(raw)
+	sym.lastCategory = category
 
-	if sym.pipe != nil {
-		standout = sym.pipe.Standout()
-	}
-
-	if err := sym.tracked.Observe(category, evidence); err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	return types.Measurement{
-		Source:     types.SourceHawkes,
-		Category:   category,
-		Strength:   raw,
-		Confidence: evidence,
-	}, standout, nil
+	return hawkesReading{
+		category:   category,
+		strength:   raw,
+		confidence: confidence,
+		frenzy:     frenzy,
+		saturation: saturation,
+		organic:    organic,
+		exhaustion: exhaustion,
+	}, true
 }

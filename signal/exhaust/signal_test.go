@@ -1,106 +1,187 @@
 package exhaust
 
 import (
-	"context"
-
+	"container/ring"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/numeric/adaptive"
+	floatring "github.com/theapemachine/symm/ring"
 )
 
-func thinningBook(symbol string, bidDepth float64, askPrice float64) market.Book {
-	update := market.Book{
+func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.Book {
+	return &krakenmarket.Book{
 		Symbol: symbol,
-		Bids:   []market.BookLevel{{Price: 100, Qty: bidDepth}},
-		Asks:   []market.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
+		Type:   krakenmarket.BookSnapshot,
+		Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
+		Asks:   []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
 	}
-	update.SetEnvelopeType(market.BookSnapshot)
-
-	return update
 }
 
-func TestNewSignal(t *testing.T) {
-	Convey("Given a qpool", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		Convey("It should expose a measurements broadcast", func() {
-			So(signal.broadcasts["measurements"], ShouldNotBeNil)
-		})
-	})
-}
-
-func TestObserveBook(t *testing.T) {
-	Convey("Given an exhaust signal with a measurements subscriber", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
-		signal := NewSignal(ctx, pool)
-		defer signal.Close()
-
-		measurements := signal.broadcasts["measurements"].Subscribe("test:exhaust", 64)
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given deteriorating long-side book history", t, func() {
+		crossSection := newCrossSection(24)
 		symbol := "ETH/EUR"
 
-		Convey("When bid depth thins and spreads widen over successive frames", func() {
-			for index := range 8 {
-				depth := 20.0 - float64(index)*2
-				askPrice := 101.0 + float64(index)*0.5
-				signal.observeBook(thinningBook(symbol, depth, askPrice))
+		for index := range 8 {
+			depth := 20.0 - float64(index)*2
+			askPrice := 101.0 + float64(index)*0.5
+			crossSection.observeBook(symbol, thinningBook(symbol, depth, askPrice))
+		}
 
-				if err := signal.emit(symbol); err != nil {
-					t.Fatalf("emit: %v", err)
-				}
-			}
+		signal := NewSignal(
+			symbol,
+			logic.NewEntity(logic.EntityBook),
+			ring.New(8),
+			crossSection,
+			2.0,
+			0.5,
+		)
 
-			waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
-			defer waitCancel()
+		signal.measurements.Value = thinningBook(symbol, 4, 105)
+		signal.measurements = signal.measurements.Next()
 
-			value, err := measurements.Wait(waitCtx)
-			if err != nil {
-				t.Fatal("timed out waiting for exhaust measurement")
-			}
+		measurement, err := signal.Measure(nil)
 
-			measurement, _ := value.Value.(types.Measurement)
+		Convey("It should publish an exhaustion reading", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceExhaustion)
+			So(measurement.Symbol, ShouldEqual, symbol)
+			So(measurement.Price, ShouldBeGreaterThan, 0)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
+			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		})
+	})
 
-			Convey("It publishes an exhaustion reading", func() {
-				So(measurement.Source, ShouldEqual, types.SourceExhaustion)
-				So(measurement.Symbol, ShouldEqual, symbol)
-				So(measurement.Last, ShouldBeGreaterThan, 0)
-				So(measurement.Strength, ShouldBeGreaterThan, 0)
-			})
+	Convey("Given smoothed pressure fade on the long side", t, func() {
+		crossSection := newCrossSection(24)
+		state := crossSection.ensure("BTC/EUR")
+		state.pressureEMA = adaptive.NewEMA(0)
+
+		for _, sign := range []float64{1, 1, 1, 1, 1, -1, -1, -1} {
+			smoothed, err := state.pressureEMA.Next(0, sign)
+			So(err, ShouldBeNil)
+			state.pressures.Push(smoothed)
+		}
+
+		state.lastPrice = 100
+
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			ring.New(4),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		measurement, err := signal.fromFeatures()
+
+		Convey("It should classify thermal exhaustion from pressure fade", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryThermalExhaustion)
+		})
+	})
+
+	Convey("Given insufficient decay features", t, func() {
+		crossSection := newCrossSection(24)
+
+		signal := NewSignal(
+			"SOL/EUR",
+			logic.NewEntity(logic.EntityBook),
+			ring.New(4),
+			crossSection,
+			2.0,
+			0.5,
+		)
+
+		measurement, err := signal.Measure(nil)
+
+		Convey("It should withhold until history is populated", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
 		})
 	})
 }
 
-func BenchmarkObserveBook(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-	defer pool.Close()
+func TestDepthTrend(t *testing.T) {
+	Convey("Given shrinking depth samples", t, func() {
+		samples := floatring.NewFloatRing(24)
 
-	signal := NewSignal(ctx, pool)
-	defer signal.Close()
+		for _, value := range []float64{10, 10, 10, 10, 8, 6} {
+			samples.Push(value)
+		}
 
-	signal.broadcasts["measurements"].Subscribe("bench:exhaust", 1024)
+		signal := NewSignal("X/EUR", logic.NewEntity(logic.EntityBook), ring.New(4), newCrossSection(24), 2, 0.5)
 
+		Convey("It should report positive thinning trend", func() {
+			So(signal.depthTrend(samples), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestExitScorePicksStrongerSide(t *testing.T) {
+	Convey("Given ask-side thinning stronger than bid-side", t, func() {
+		history := featureState{
+			bidDepths:  floatring.NewFloatRing(24),
+			askDepths:  floatring.NewFloatRing(24),
+			spreads:    floatring.NewFloatRing(24),
+			pressures:  floatring.NewFloatRing(24),
+			imbalances: floatring.NewFloatRing(24),
+			densities:  floatring.NewFloatRing(24),
+			lastPrice:  100,
+		}
+
+		for _, value := range []float64{10, 10, 10, 10, 9, 9} {
+			history.bidDepths.Push(value)
+			history.spreads.Push(4)
+			history.pressures.Push(0.2)
+			history.imbalances.Push(0.1)
+			history.densities.Push(8)
+		}
+
+		for _, value := range []float64{10, 10, 10, 10, 8, 2} {
+			history.askDepths.Push(value)
+		}
+
+		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook), ring.New(4), newCrossSection(24), 2, 0.5)
+		longUrgency, _, _ := signal.exitScore(history, 1)
+		shortUrgency, shortCategory, _ := signal.exitScore(history, -1)
+
+		Convey("It should let the stronger short-side score win", func() {
+			So(shortUrgency, ShouldBeGreaterThan, longUrgency)
+			So(shortCategory, ShouldEqual, logic.CategoryMechanicalCollapse)
+		})
+	})
+}
+
+func BenchmarkSignalMeasure(b *testing.B) {
+	crossSection := newCrossSection(24)
 	symbol := "ETH/EUR"
-	delta := thinningBook(symbol, 12, 103)
 
-	b.ReportAllocs()
+	for index := range 12 {
+		depth := 20.0 - float64(index)
+		crossSection.observeBook(symbol, thinningBook(symbol, depth, 101+float64(index)*0.25))
+	}
+
+	signal := NewSignal(
+		symbol,
+		logic.NewEntity(logic.EntityBook),
+		ring.New(64),
+		crossSection,
+		2.0,
+		0.5,
+	)
+
+	signal.measurements.Value = thinningBook(symbol, 6, 104)
+	signal.measurements = signal.measurements.Next()
+
+	b.ResetTimer()
 
 	for b.Loop() {
-		signal.observeBook(delta)
-
-		if err := signal.emit(symbol); err != nil {
-			b.Fatalf("emit: %v", err)
-		}
+		_, _ = signal.Measure(nil)
 	}
 }

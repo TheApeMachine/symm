@@ -13,9 +13,9 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -48,21 +48,19 @@ open position at the source, so the hub does no filtering — it only buffers
 per client; the frontend never sends frames.
 */
 type Hub struct {
-	ctx                context.Context
-	cancel             context.CancelFunc
-	pool               *qpool.Q[any]
-	broadcasts         map[string]*qpool.BroadcastGroup
-	subscribers        map[string]*qpool.BroadcastConsumer
-	clients            *sync.Map
-	server             *http.Server
-	diagnosticsWatcher *diagnosticsWatcher
-	nextConnID         uint64
-	lastWallet         atomic.Pointer[map[string]any]
-	lastPositions      atomic.Pointer[map[string]any]
-	lastEquity         atomic.Pointer[map[string]any]
-	lastDecisionTree   atomic.Pointer[map[string]any]
-	lastDumps          atomic.Pointer[map[string]any]
-	lastGauges         sync.Map
+	ctx              context.Context
+	cancel           context.CancelFunc
+	pool             *qpool.Q[any]
+	bus              *internal.Bus
+	clients          *sync.Map
+	server           *http.Server
+	nextConnID       uint64
+	lastWallet       atomic.Pointer[map[string]any]
+	lastPositions    atomic.Pointer[map[string]any]
+	lastEquity       atomic.Pointer[map[string]any]
+	lastDecisionTree atomic.Pointer[map[string]any]
+	lastDumps        atomic.Pointer[map[string]any]
+	lastGauges       sync.Map
 }
 
 /*
@@ -75,24 +73,18 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.BroadcastConsumer),
-		clients:     &sync.Map{},
-	}
-
-	for _, channel := range []string{"ui"} {
-		hub.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 500*time.Millisecond)
-		hub.subscribers[channel] = hub.broadcasts[channel].Subscribe(channel, 4096)
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus: internal.NewBus(
+			ctx, pool, []string{"ui"}, []string{},
+		),
+		clients: &sync.Map{},
 	}
 
 	addr := viper.GetViper().GetString("ui.addr")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.handleWS)
-	mux.HandleFunc("/api/dumps", hub.handleListDumps)
-	mux.HandleFunc("/api/analyze", hub.handleAnalyze)
 
 	listener := errnie.Does(func() (net.Listener, error) {
 		return net.Listen("tcp", addr)
@@ -122,28 +114,12 @@ func NewHub(
 		}
 	}()
 
-	hub.diagnosticsWatcher = startDiagnosticsWatcher(hub)
-
-	if dumps, err := listRawDumps(); err == nil {
-		payload := map[string]any{
-			"event": "dumps",
-			"dumps": dumps,
-		}
-		hub.lastDumps.Store(&payload)
-	}
-
 	return hub
 }
 
 func (hub *Hub) Close() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-
-	if hub.diagnosticsWatcher != nil {
-		if err := hub.diagnosticsWatcher.Close(); err != nil {
-			errnie.Error(err)
-		}
-	}
 
 	if hub.server != nil {
 		if err := hub.server.Shutdown(shutdownCtx); err != nil {
@@ -152,10 +128,10 @@ func (hub *Hub) Close() error {
 	}
 
 	hub.clients.Range(func(key, value any) bool {
-		client, ok := value.(*wsClient)
+		client, ok := value.(*websocket.Conn)
 
 		if ok {
-			if err := client.close(); err != nil {
+			if err := client.Close(); err != nil {
 				errnie.Error(err)
 			}
 		}
@@ -178,53 +154,19 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	client := newWSClient(conn)
-
 	hello := map[string]any{
 		"event": "hello",
 		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	if err := client.writeJSON(hello); err != nil {
+	if err := conn.WriteJSON(hello); err != nil {
 		errnie.Error(err)
-		errnie.Error(client.close())
+		errnie.Error(conn.Close())
 		return
 	}
 
-	if w := hub.lastWallet.Load(); w != nil {
-		_ = client.writeJSON(*w)
-	}
-
-	if positions := hub.lastPositions.Load(); positions != nil {
-		_ = client.writeJSON(*positions)
-	}
-
-	if equity := hub.lastEquity.Load(); equity != nil {
-		_ = client.writeJSON(*equity)
-	}
-
-	if decisionTree := hub.lastDecisionTree.Load(); decisionTree != nil {
-		_ = client.writeJSON(*decisionTree)
-	}
-
-	if dumps := hub.lastDumps.Load(); dumps != nil {
-		_ = client.writeJSON(*dumps)
-	}
-
-	hub.lastGauges.Range(func(key, value any) bool {
-		frame, ok := value.(*map[string]any)
-
-		if !ok || frame == nil {
-			return true
-		}
-
-		_ = client.writeJSON(*frame)
-
-		return true
-	})
-
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
-	hub.clients.Store(connID, client)
+	hub.clients.Store(connID, conn)
 }
 
 /*
@@ -232,91 +174,28 @@ Tick drains qpool into the lossy telemetry ring and fanout to websocket clients.
 from that ring so the qpool subscriber never waits on browser pressure.
 */
 func (hub *Hub) Tick() error {
-	ui := hub.subscribers["ui"]
-
 	for {
-		value, err := ui.Wait(hub.ctx)
+		value, err := hub.bus.Receive("ui")
 
-		if err != nil {
-			return err
-		}
-
-		if value == nil || value.Value == nil {
+		if errnie.Error(err) != nil || value == nil {
 			continue
 		}
 
-		out, ok := wireJSONObject(value.Value)
+		hub.clients.Range(func(key, value any) bool {
+			client, ok := value.(*websocket.Conn)
 
-		if !ok {
-			continue
-		}
-
-		if out["event"] == "wallet" {
-			cached := cloneWireMap(out)
-			hub.lastWallet.Store(&cached)
-		}
-
-		if out["event"] == "positions" {
-			cached := cloneWireMap(out)
-			hub.lastPositions.Store(&cached)
-		}
-
-		if out["event"] == "equity" {
-			cached := cloneWireMap(out)
-			hub.lastEquity.Store(&cached)
-		}
-
-		if out["chart"] == "decision_tree" {
-			cached := cloneWireMap(out)
-			hub.lastDecisionTree.Store(&cached)
-		}
-
-		if out["chart"] == "gauge" {
-			source, _ := out["source"].(string)
-
-			if source != "" {
-				cached := cloneWireMap(out)
-				hub.lastGauges.Store(source, &cached)
+			if !ok {
+				hub.clients.Delete(key)
+				return true
 			}
-		}
 
-		hub.broadcastJSON(out)
-	}
-}
-
-func (hub *Hub) broadcastJSON(out map[string]any) {
-	// Serialize ONCE per frame; each client gets the same bytes. The hub used
-	// to re-marshal the identical map inside WriteJSON for every connected
-	// client — CPU spent on N-1 redundant serializations per frame.
-	raw, err := sonic.Marshal(out)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return
-	}
-
-	hub.clients.Range(func(key, value any) bool {
-		client, ok := value.(*wsClient)
-
-		if !ok {
-			hub.clients.Delete(key)
+			if err := client.WriteJSON(value); err != nil {
+				errnie.Error(err)
+				hub.clients.Delete(key)
+				return true
+			}
 
 			return true
-		}
-
-		if err := client.writeRaw(raw); err != nil {
-			if !isBenignWriteError(err) {
-				errnie.Error(err)
-			}
-
-			if closeErr := client.close(); closeErr != nil && !isBenignWriteError(closeErr) {
-				errnie.Error(closeErr)
-			}
-
-			hub.clients.Delete(key)
-		}
-
-		return true
-	})
+		})
+	}
 }

@@ -1,7 +1,7 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/theapemachine/symm/logic"
 )
 
 const (
@@ -9,15 +9,13 @@ const (
 	hawkesFrenzyAsymmetry  = 0.15
 )
 
-// uniformHawkesConfidence is the 1/N floor across the four hawkes categories
-// (saturation, exhaustion, frenzy, organic): a degenerate read with no margin is a
-// uniform guess, never 0. This fallback path runs only when no classifier is wired.
 const uniformHawkesConfidence = 1.0 / 4.0
 
-/*
-hawkesReading classifies the fitted Hawkes state and returns shift evidence.
-*/
-func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.CategoryType, float64) {
+func classifyHawkes(
+	fit BivariateFit,
+	asymmetry float64,
+	sellSide bool,
+) (logic.CategoryType, float64, float64, float64, float64, float64) {
 	intensity, baseline := fit.BuyIntensity, fit.MuBuy
 
 	if sellSide {
@@ -30,62 +28,78 @@ func hawkesReading(fit BivariateFit, asymmetry float64, sellSide bool) (types.Ca
 		span := 1 - hawkesSaturationRadius
 
 		if margin <= 0 || span <= 0 {
-			return types.CategorySaturation, uniformHawkesConfidence
+			return logic.CategorySaturation, uniformHawkesConfidence, 0, uniformHawkesConfidence, 0, 0
 		}
 
-		return types.CategorySaturation, types.UnitCompetitionMargin(margin, span)
+		score := competitionMargin(margin, span)
+
+		return logic.CategorySaturation, score, 0, score, 0, 0
 	case baseline > 0 && intensity < baseline:
 		margin := baseline - intensity
 
 		if margin <= 0 {
-			return types.CategoryExhaustion, uniformHawkesConfidence
+			return logic.CategoryExhaustion, uniformHawkesConfidence, 0, 0, uniformHawkesConfidence, 0
 		}
 
-		return types.CategoryExhaustion, types.UnitCompetitionMargin(margin, baseline)
+		score := competitionMargin(margin, baseline)
+
+		return logic.CategoryExhaustion, score, 0, 0, 0, score
 	case asymmetry >= hawkesFrenzyAsymmetry:
 		margin := asymmetry - hawkesFrenzyAsymmetry
 		span := 1 - hawkesFrenzyAsymmetry
 
 		if margin <= 0 || span <= 0 {
-			return types.CategoryFrenzy, uniformHawkesConfidence
+			return logic.CategoryFrenzy, uniformHawkesConfidence, uniformHawkesConfidence, 0, 0, 0
 		}
 
-		return types.CategoryFrenzy, types.UnitCompetitionMargin(margin, span)
+		score := competitionMargin(margin, span)
+
+		return logic.CategoryFrenzy, score, score, 0, 0, 0
 	default:
 		headroom := -1.0
+		saturationHead := 0.0
+		organicHead := 0.0
+		frenzyHead := 0.0
 
 		if fit.SpectralRadius < hawkesSaturationRadius {
 			margin := hawkesSaturationRadius - fit.SpectralRadius
+			saturationHead = competitionMargin(margin, hawkesSaturationRadius)
 
-			score := types.UnitCompetitionMargin(margin, hawkesSaturationRadius)
-
-			if score > headroom {
-				headroom = score
+			if saturationHead > headroom {
+				headroom = saturationHead
 			}
 		}
 
 		if baseline > 0 && intensity >= baseline {
 			margin := intensity - baseline
-			score := margin / (margin + baseline)
+			organicHead = margin / (margin + baseline)
 
-			if score > headroom {
-				headroom = score
+			if organicHead > headroom {
+				headroom = organicHead
 			}
 		}
 
 		if asymmetry < hawkesFrenzyAsymmetry {
 			margin := hawkesFrenzyAsymmetry - asymmetry
-			score := types.UnitCompetitionMargin(margin, hawkesFrenzyAsymmetry)
+			frenzyHead = competitionMargin(margin, hawkesFrenzyAsymmetry)
 
-			if score > headroom {
-				headroom = score
+			if frenzyHead > headroom {
+				headroom = frenzyHead
 			}
 		}
 
 		if headroom < 0 {
-			return types.CategoryOrganic, uniformHawkesConfidence
+			return logic.CategoryOrganic, uniformHawkesConfidence, 0, 0, uniformHawkesConfidence, 0
 		}
 
-		return types.CategoryOrganic, headroom
+		return logic.CategoryOrganic, headroom, frenzyHead, saturationHead, organicHead, 0
 	}
+}
+
+func competitionMargin(excess, span float64) float64 {
+	if excess <= 0 || span <= 0 {
+		return 0
+	}
+
+	return excess / (excess + span)
 }

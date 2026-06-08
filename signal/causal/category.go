@@ -4,7 +4,7 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	"github.com/theapemachine/symm/logic"
 )
 
 const confoundFraction = 0.25
@@ -31,16 +31,16 @@ type causalOutcome struct {
 /*
 causalCategory maps the causal reason onto the structural-origin perspective.
 */
-func causalCategory(reason string) types.CategoryType {
+func causalCategory(reason string) logic.CategoryType {
 	switch reason {
 	case "intervention", "counterfactual_like":
-		return types.CategoryEndogenousAlpha
+		return logic.CategoryEndogenousAlpha
 	case "intervention_regime_inversion", "counterfactual_like_regime_inversion":
-		return types.CategoryLiquidityShock
+		return logic.CategoryLiquidityShock
 	case "macro_association":
-		return types.CategorySystemicBeta
+		return logic.CategorySystemicBeta
 	default:
-		return types.CategoryCausalNoise
+		return logic.CategoryCausalNoise
 	}
 }
 
@@ -51,7 +51,7 @@ categories. It is distinct from the SNR standout, which carries the raw magnitud
 the causal effect.
 */
 func causalEvidence(
-	category types.CategoryType,
+	category logic.CategoryType,
 	outcome causalOutcome,
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
@@ -67,7 +67,7 @@ func causalEvidence(
 	return math.Max(evidence, uniformCausalConfidence)
 }
 
-func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 {
+func ladderEvidence(category logic.CategoryType, outcome causalOutcome) float64 {
 	interventionMargin := ladderInterventionEvidence(outcome)
 
 	if interventionMargin <= 0 {
@@ -75,9 +75,9 @@ func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 
 	}
 
 	switch category {
-	case types.CategoryLiquidityShock:
+	case logic.CategoryLiquidityShock:
 		return math.Min(interventionMargin, inversionMarginAbove(outcome))
-	case types.CategoryEndogenousAlpha:
+	case logic.CategoryEndogenousAlpha:
 		return math.Min(interventionMargin, inversionMarginBelow(outcome))
 	default:
 		return 0
@@ -85,13 +85,13 @@ func ladderEvidence(category types.CategoryType, outcome causalOutcome) float64 
 }
 
 func associationEvidence(
-	category types.CategoryType,
+	category logic.CategoryType,
 	macroMomentum, changePct, buyPressure float64,
 ) float64 {
 	switch category {
-	case types.CategorySystemicBeta:
+	case logic.CategorySystemicBeta:
 		return betaEvidence(macroMomentum, changePct, buyPressure)
-	case types.CategoryCausalNoise:
+	case logic.CategoryCausalNoise:
 		return noiseEvidence(macroMomentum, changePct, buyPressure)
 	default:
 		return 0
@@ -118,7 +118,7 @@ func betaEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 		alignment = shared / (shared + gap)
 	}
 
-	return alignment * types.UnitMagnitudeMargin(shared)
+	return alignment * magnitudeMargin(shared)
 }
 
 func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
@@ -134,7 +134,7 @@ func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 		alignment = flow / (flow + macro)
 	}
 
-	return alignment * types.UnitMagnitudeMargin(flow)
+	return alignment * magnitudeMargin(flow)
 }
 
 func ladderInterventionEvidence(outcome causalOutcome) float64 {
@@ -151,7 +151,23 @@ func ladderInterventionEvidence(outcome causalOutcome) float64 {
 		alignment = intervention / (intervention + runner)
 	}
 
-	return alignment * types.UnitMagnitudeMargin(intervention)
+	return alignment * magnitudeMargin(intervention)
+}
+
+func competitionMargin(excess, span float64) float64 {
+	if excess <= 0 || span <= 0 {
+		return 0
+	}
+
+	return excess / (excess + span)
+}
+
+func magnitudeMargin(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+
+	return value / (1 + value)
 }
 
 func inversionMarginBelow(outcome causalOutcome) float64 {
@@ -164,7 +180,7 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 		headroom := contagionBreak - outcome.contagion
 
 		if headroom < margin {
-			margin = types.UnitCompetitionMargin(headroom, contagionBreak)
+			margin = competitionMargin(headroom, contagionBreak)
 		}
 	}
 
@@ -178,7 +194,7 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 			if headroom <= 0 {
 				margin = 0
 			} else {
-				margin = types.UnitCompetitionMargin(headroom, span)
+				margin = competitionMargin(headroom, span)
 			}
 		}
 	}
@@ -206,7 +222,7 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 		span := 1 - contagionBreak
 
 		if span > 0 {
-			margin = math.Max(margin, types.UnitCompetitionMargin(excess, span))
+			margin = math.Max(margin, competitionMargin(excess, span))
 		}
 	}
 
@@ -214,10 +230,10 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 		(math.IsInf(outcome.condition, 1) ||
 			outcome.condition >= conditionSwitch) {
 		if math.IsInf(outcome.condition, 1) {
-			margin = math.Max(margin, types.UnitMagnitudeMargin(math.Abs(outcome.intervention)))
+			margin = math.Max(margin, magnitudeMargin(math.Abs(outcome.intervention)))
 		} else {
 			excess := outcome.condition - conditionSwitch
-			score := types.UnitCompetitionMargin(excess, conditionSwitch)
+			score := competitionMargin(excess, conditionSwitch)
 
 			margin = math.Max(margin, score)
 		}

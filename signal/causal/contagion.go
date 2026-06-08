@@ -49,27 +49,27 @@ Adaptive windowing compares fast, medium, and slow tiers: when the fast tier div
 above the slow baseline the estimator surfaces the fast reading immediately; otherwise the
 medium tier anchors the estimate so momentary blips do not false-trigger panic.
 */
-func (signal *Signal) contagion() float64 {
-	if signal.contagionSpread.Cap() == 0 {
-		signal.contagionSpread = ring.NewFloatRing(64)
+func (system *System) contagion() float64 {
+	if system.contagionSpread.Cap() == 0 {
+		system.contagionSpread = ring.NewFloatRing(64)
 	}
 
-	tier := signal.contagionTiers()
+	tier := system.contagionTiers()
 
 	if tier.medium <= 0 && tier.fast <= 0 && tier.slow <= 0 {
 		return 0
 	}
 
-	return adaptiveContagion(tier, &signal.contagionSpread)
+	return adaptiveContagion(tier, &system.contagionSpread)
 }
 
-func (signal *Signal) contagionTiers() contagionTier {
+func (system *System) contagionTiers() contagionTier {
 	fastSnapshots := make([]*hyReturns, 0, contagionSymbolCap)
 	mediumSnapshots := make([]*hyReturns, 0, contagionSymbolCap)
 	slowSnapshots := make([]*hyReturns, 0, contagionSymbolCap)
 	minSamples := contagionMinSamples()
 
-	signal.symbols.Range(func(key, value any) bool {
+	system.symbols.Range(func(key, value any) bool {
 		state := value.(*CausalSymbol)
 		windows := state.HYWindowSnapshot()
 

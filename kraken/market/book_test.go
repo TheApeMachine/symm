@@ -149,6 +149,34 @@ func TestBookFold(t *testing.T) {
 	})
 }
 
+func TestBookTouchQuote(t *testing.T) {
+	Convey("Given a folded book with both sides", t, func() {
+		book := Book{
+			Bids: []BookLevel{bookLevel(99, 8), bookLevel(98, 2)},
+			Asks: []BookLevel{bookLevel(101, 4), bookLevel(102, 1)},
+		}
+
+		mid, spread, depth, ok := book.TouchQuote()
+
+		Convey("It should return touch metrics", func() {
+			So(ok, ShouldBeTrue)
+			So(mid, ShouldEqual, 200)
+			So(spread, ShouldEqual, 2)
+			So(depth, ShouldEqual, 15)
+		})
+	})
+
+	Convey("Given an empty ask side", t, func() {
+		book := Book{Bids: []BookLevel{bookLevel(99, 8)}}
+
+		_, _, _, ok := book.TouchQuote()
+
+		Convey("It should report unavailable", func() {
+			So(ok, ShouldBeFalse)
+		})
+	})
+}
+
 func BenchmarkBookFold(b *testing.B) {
 	bids := []BookLevel{bookLevel(99, 8)}
 	asks := []BookLevel{bookLevel(101, 4)}

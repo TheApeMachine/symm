@@ -1,9 +1,9 @@
 package market
 
 import (
+	"hash"
 	"hash/crc32"
 	"sort"
-	"strings"
 )
 
 // BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
@@ -100,33 +100,70 @@ func (book *Book) Fold(update Book, depth int) {
 }
 
 /*
+TouchQuote returns mid proxy, spread, and total resting depth from the folded
+top of book. The second return is false when either side is empty.
+*/
+func (book *Book) TouchQuote() (mid float64, spread float64, depth float64, ok bool) {
+	if len(book.Asks) == 0 || len(book.Bids) == 0 {
+		return 0, 0, 0, false
+	}
+
+	for _, level := range book.Bids {
+		depth += level.Qty
+	}
+
+	for _, level := range book.Asks {
+		depth += level.Qty
+	}
+
+	mid = book.Asks[0].Price + book.Bids[0].Price
+	spread = book.Asks[0].Price - book.Bids[0].Price
+
+	return mid, spread, depth, true
+}
+
+/*
 ComputedChecksum returns the Kraken WebSocket v2 CRC32 for this frame's levels.
 */
 func (book Book) ComputedChecksum() int64 {
-	var builder strings.Builder
+	hasher := crc32.NewIEEE()
 
 	for index := range min(bookChecksumLevels, len(book.Asks)) {
-		builder.WriteString(checksumField(book.Asks[index].PriceRaw))
-		builder.WriteString(checksumField(book.Asks[index].QtyRaw))
+		writeChecksumField(hasher, book.Asks[index].PriceRaw)
+		writeChecksumField(hasher, book.Asks[index].QtyRaw)
 	}
 
 	for index := range min(bookChecksumLevels, len(book.Bids)) {
-		builder.WriteString(checksumField(book.Bids[index].PriceRaw))
-		builder.WriteString(checksumField(book.Bids[index].QtyRaw))
+		writeChecksumField(hasher, book.Bids[index].PriceRaw)
+		writeChecksumField(hasher, book.Bids[index].QtyRaw)
 	}
 
-	return int64(crc32.ChecksumIEEE([]byte(builder.String())))
+	return int64(hasher.Sum32())
 }
 
-func checksumField(raw string) string {
-	raw = strings.ReplaceAll(raw, ".", "")
-	raw = strings.TrimLeft(raw, "0")
+func writeChecksumField(hasher hash.Hash32, raw string) {
+	started := false
+	scratch := []byte{0}
 
-	if raw == "" {
-		return "0"
+	for index := range len(raw) {
+		character := raw[index]
+
+		if character == '.' {
+			continue
+		}
+
+		if character == '0' && !started {
+			continue
+		}
+
+		started = true
+		scratch[0] = character
+		hasher.Write(scratch)
 	}
 
-	return raw
+	if !started {
+		hasher.Write([]byte{'0'})
+	}
 }
 
 func (book *Book) sortSides() {
@@ -161,41 +198,64 @@ func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
 }
 
 func (book *Book) mergeBookSide(existing, delta []BookLevel, askSide bool) []BookLevel {
-	byPrice := make(map[float64]BookLevel, len(existing)+len(delta))
+	levels := existing
 
-	for _, level := range existing {
-		if level.Qty > 0 {
-			byPrice[level.Price] = level
-		}
+	for _, change := range delta {
+		levels = book.applyLevelChange(levels, change, askSide)
 	}
 
-	for _, level := range delta {
-		if level.Qty <= 0 {
-			delete(byPrice, level.Price)
+	return levels
+}
+
+func (book *Book) applyLevelChange(
+	levels []BookLevel, change BookLevel, askSide bool,
+) []BookLevel {
+	index := book.levelIndex(levels, change.Price, askSide)
+
+	if change.Qty <= 0 {
+		if index < len(levels) && levels[index].Price == change.Price {
+			return append(levels[:index], levels[index+1:]...)
+		}
+
+		return levels
+	}
+
+	if index < len(levels) && levels[index].Price == change.Price {
+		levels[index] = change
+
+		return levels
+	}
+
+	levels = append(levels, BookLevel{})
+	copy(levels[index+1:], levels[index:])
+	levels[index] = change
+
+	return levels
+}
+
+func (book *Book) levelIndex(levels []BookLevel, price float64, askSide bool) int {
+	low := 0
+	high := len(levels)
+
+	for low < high {
+		mid := low + (high-low)/2
+
+		if askSide {
+			if levels[mid].Price < price {
+				low = mid + 1
+			} else {
+				high = mid
+			}
 
 			continue
 		}
 
-		byPrice[level.Price] = level
-	}
-
-	return book.levelsFromMap(byPrice, askSide)
-}
-
-func (book *Book) levelsFromMap(byPrice map[float64]BookLevel, askSide bool) []BookLevel {
-	levels := make([]BookLevel, 0, len(byPrice))
-
-	for _, level := range byPrice {
-		levels = append(levels, level)
-	}
-
-	sort.Slice(levels, func(left, right int) bool {
-		if askSide {
-			return levels[left].Price < levels[right].Price
+		if levels[mid].Price > price {
+			low = mid + 1
+		} else {
+			high = mid
 		}
+	}
 
-		return levels[left].Price > levels[right].Price
-	})
-
-	return levels
+	return low
 }

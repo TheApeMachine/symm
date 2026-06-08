@@ -1,325 +1,343 @@
 package liquidity
 
 import (
-	"context"
-	"errors"
+	"container/ring"
 	"fmt"
-	"sync"
-	"time"
+	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market/perspectives/types"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/rawdump"
-	signalpool "github.com/theapemachine/symm/signal"
 )
-
-const (
-	minLiquidityPeers = 2
-	rawSubscriberID   = "signal/liquidity:raw"
-)
-
-var liquidityDefaultBandEdges = []float64{0.75, 1.25}
 
 /*
-Signal ranks a symbol's quote volume against the live cross-section of its peers
-and maps the standing onto the scarcity perspective. It is a cross-asset signal:
-the verdict for one symbol depends on where its quote volume sits in the peer
-median. Confidence is classification clarity — margin to the nearest peer
-quartile; SNR scores category standout — peer deviation from the median — against
-the symbol's own recent baseline.
+Signal identifies opportunities in thin markets by ranking a symbol's quote volume against the broader market.
 
-| Category          | Quote Volume vs peer median | Market "Feel"     |
-|:------------------|:----------------------------|:------------------|
-| Robust Liquidity  | well above (>= 1.25x)       | Deep / easy fills |
-| Median Depth      | around the median           | Normal            |
-| Extreme Scarcity  | well below (< 0.75x)        | Thin / fragile    |
+Cross-Section Ranking : Ranks the daily quote volume of all subscribed symbols.
+Illiquidity Score     : Identifies symbols trading strictly below the cross-section median of their peers.
+Peak Scarcity         : Uses a peak gate to find symbols that are currently the most illiquid in the universe.
+
+The "Convexity" Story : It signals where a small amount of order flow will cause the largest price displacement — the thinnest pipes on the exchange.
+The "Neglect" Story   : It identifies assets ignored by the broader market, prime for sudden volatility once flow arrives.
+
+| Category         | Rank vs. Peers   | Volume   | Market "Feel"                |
+|------------------|------------------|----------|------------------------------|
+| Extreme Scarcity | Peak Illiquidity | Very Low | High Convexity / Fragile     |
+| Median Depth     | Middle           | Normal   | Standard Efficiency          |
+| Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
 */
 type Signal struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pool          *qpool.Q[any]
-	broadcasts    map[string]*qpool.BroadcastGroup
-	subscribers   map[string]*qpool.BroadcastConsumer
-	symbols       sync.Map // symbol -> float64 (daily quote volume)
-	tracked       sync.Map // symbol -> *types.Category
-	surpriseField *types.CategorySurpriseField
-	classifier    *adaptive.Classifier
-	calibrator    *numeric.BandCalibrator
-	rawDump       *rawdump.Writer
+	symbol       string
+	entity       *logic.Entity
+	measurements *ring.Ring
+	crossSection *crossSection
+	transition   *numeric.TransitionMatrix
+	weights      numeric.ClassifierWeights
+	tuner        *numeric.FeedbackTuner
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q[any]) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
+func NewSignal(
+	symbol string,
+	entity *logic.Entity,
+	measurements *ring.Ring,
+	crossSection *crossSection,
+	threshold float64,
+	alpha float64,
+) *Signal {
+	return &Signal{
+		symbol:       symbol,
+		entity:       entity,
+		measurements: measurements,
+		crossSection: crossSection,
+		transition:   numeric.NewTransitionMatrix(4, alpha),
+		weights:      numeric.DefaultClassifierWeights(threshold),
+		tuner:        numeric.NewFeedbackTuner(),
+	}
+}
 
-	pooledCalibrator := numeric.NewSignalCalibrator(
-		liquidityDefaultBandEdges,
-		[]float64{0, 1, 2},
-		[]string{"extreme_scarcity", "median_depth", "robust_liquidity"},
-		[]float64{0.20, 0.50, 0.30},
-		numeric.DefaultCalibratorConfig("strength"),
-		"liquidity",
+func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+	if feedback != nil {
+		_, err := signal.tuner.Apply(
+			signal.symbol,
+			feedback.Symbol,
+			feedback.Samples,
+			feedback.MSE,
+			feedback.Scale,
+			feedback.Bias,
+			&signal.weights,
+		)
+
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	}
+
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		return signal.measureTrade()
+	case logic.EntityTick:
+		return signal.measureTick()
+	case logic.EntityBook:
+		return signal.measureBook()
+	default:
+		return logic.Measurement{}, errnie.Error(
+			fmt.Errorf("liquidity: unsupported entity %d", signal.entity.Type),
+		)
+	}
+}
+
+func (signal *Signal) measureTrade() (logic.Measurement, error) {
+	var (
+		price    float64
+		quoteVol float64
+		err      error
 	)
 
-	surpriseField, err := types.NewCategorySurpriseField([]types.CategoryType{
-		types.CategoryExtremeScarcity,
-		types.CategoryMedianDepth,
-		types.CategoryRobustLiquidity,
-	}, types.DefaultCategorySurpriseAlpha)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err, "signal/liquidity")
-		return nil
-	}
-
-	signal := &Signal{
-		ctx:           ctx,
-		cancel:        cancel,
-		pool:          pool,
-		broadcasts:    make(map[string]*qpool.BroadcastGroup),
-		subscribers:   make(map[string]*qpool.BroadcastConsumer),
-		surpriseField: surpriseField,
-		classifier:    pooledCalibrator.Classifier,
-		calibrator:    pooledCalibrator.Calibrator,
-		rawDump:       rawdump.Open("liquidity"),
-	}
-
-	for _, channel := range []string{"raw"} {
-		signal.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		signal.subscribers[channel] = signal.broadcasts[channel].Subscribe(rawSubscriberID, 1024)
-	}
-
-	signal.broadcasts["measurements"] = pool.CreateBroadcastGroup("measurements", 10*time.Millisecond)
-	signal.broadcasts["ui"] = pool.CreateBroadcastGroup("ui", 10*time.Millisecond)
-
-	errnie.Info("signal/liquidity ready", "signal/liquidity")
-
-	return signal
-}
-
-func (signal *Signal) Tick() error {
-	for {
-		message, err := signal.subscribers["raw"].Wait(signal.ctx)
-		if err != nil {
-			return err
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
 		}
 
-		if message == nil {
-			continue
-		}
-
-		errnie.Debug("signal/liquidity: Tick()", "type", message.Type)
-
-		sm, ok := signalpool.SocketMessageFromValue(message.Value)
+		trade, ok := item.(*krakenmarket.TradeUpdate)
 
 		if !ok {
-			continue
+			err = fmt.Errorf("liquidity: expected trade update")
+			return
 		}
 
-		switch sm.Channel {
-		case public.TickerChannel:
-			tickers := signalpool.GetTickers(sm)
-
-			if err := signal.publishTickers(tickers); err != nil {
-				errnie.Error(err, "liquidity: publish tickers")
-			}
-		}
-	}
-}
-
-/*
-measure records the latest quote volume for the ticking symbol and ranks it
-against the live peer cross-section.
-*/
-func (signal *Signal) publishTickers(tickers []market.TickerUpdate) error {
-	rows := make([]market.TickerUpdate, 0, len(tickers))
-
-	for _, ticker := range tickers {
-		if ticker.Last <= 0 {
-			continue
-		}
-
-		signal.symbols.Store(ticker.Symbol, ticker.Volume*ticker.Last)
-		rows = append(rows, ticker)
-	}
-
-	if len(rows) == 0 {
-		return nil
-	}
-
-	volumes := signal.volumeSnapshot()
-	var err error
-
-	for _, row := range rows {
-		// Inline, not pooled: the previous fan-out scheduled every item under
-		// ONE shared job id (%p of the same local), so results overwrote each
-		// other and Get parked this signal's goroutine forever — the silent
-		// signal deaths of 2026-06-07.
-		runItem := func(ctx context.Context) (any, error) {
-		measurement, standout, err := signal.measureFromVolumes(row, volumes)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if measurement.Symbol == "" {
-			return nil, nil
-		}
-
-		telemetry, _ := numeric.ObserveGaugeTelemetry(
-			signal.calibrator,
-			signal.classifier,
-			measurement.Strength,
-			standout,
-		)
-
-		if err := types.AssignCategorySurpriseSNR(
-			&measurement, signal.surpriseField, measurement.Category,
-		); err != nil {
-			return nil, err
-		}
-
-		if err := signal.rawDump.Write(rawRecord{
-			TimestampUnixNano: time.Now().UTC().UnixNano(),
-			Symbol:            measurement.Symbol,
-			Category:          measurement.Category,
-			Strength:          measurement.Strength,
-			Confidence:        measurement.Confidence,
-			SNR:               measurement.SNR,
-			Standout:          standout,
-			Last:              measurement.Last,
-			SpreadBPS:         measurement.SpreadBPS,
-		}); err != nil {
-			return nil, err
-		}
-
-		if err := measurement.Send(signal.pool); err != nil {
-			return nil, err
-		}
-
-		if ui := signal.broadcasts["ui"]; ui != nil {
-			ui.Send(&qpool.QValue[any]{
-				Value: numeric.GaugePayload(
-					measurement.Source.String(),
-					measurement.Symbol,
-					measurement.Category,
-					measurement,
-					telemetry,
-				),
-			})
-		}
-
-		return nil, nil
-		}
-
-		if _, runErr := runItem(signal.ctx); runErr != nil {
-			err = errors.Join(err, runErr)
-		}
-
-	}
-
-	
-
-	return err
-}
-
-func (signal *Signal) measure(row market.TickerUpdate) (types.Measurement, float64, error) {
-	signal.symbols.Store(row.Symbol, row.Volume*row.Last)
-
-	volumes := signal.volumeSnapshot()
-
-	return signal.measureFromVolumes(row, volumes)
-}
-
-func (signal *Signal) measureFromVolumes(
-	row market.TickerUpdate,
-	volumes map[string]float64,
-) (types.Measurement, float64, error) {
-	quoteVol := volumes[row.Symbol]
-
-	peers := make([]float64, 0, len(volumes)-1)
-
-	for symbol, volume := range volumes {
-		if symbol == row.Symbol || volume <= 0 {
-			continue
-		}
-
-		peers = append(peers, volume)
-	}
-
-	if quoteVol <= 0 || len(peers) < minLiquidityPeers {
-		return types.Measurement{}, 0, nil
-	}
-
-	median := numeric.PercentileSorted(numeric.CopySorted(peers), 0.5)
-
-	if median <= 0 {
-		return types.Measurement{}, 0, fmt.Errorf(
-			"liquidity: non-positive peer median for %s",
-			row.Symbol,
-		)
-	}
-
-	ratio := quoteVol / median
-	raw := signal.strength(ratio)
-	quoteVol = types.AdjustSourceValue(types.SourceLiquidity, quoteVol) // top-down prediction feedback
-	category, confidence, standout, err := liquidityReading(quoteVol, peers)
-
-	if err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	trackedRaw, _ := signal.tracked.LoadOrStore(
-		row.Symbol,
-		types.NewCategory(types.CategoryTypeNone),
-	)
-	tracked := trackedRaw.(*types.Category)
-
-	if err := tracked.Observe(category, confidence); err != nil {
-		return types.Measurement{}, 0, err
-	}
-
-	return types.Measurement{
-		Symbol:     row.Symbol,
-		Source:     types.SourceLiquidity,
-		Category:   category,
-		Last:       row.Last,
-		Volume:     quoteVol,
-		Strength:   raw,
-		Confidence: confidence,
-	}, standout, nil
-}
-
-func (signal *Signal) volumeSnapshot() map[string]float64 {
-	volumes := make(map[string]float64)
-
-	signal.symbols.Range(func(key, value any) bool {
-		volumes[key.(string)] = value.(float64)
-
-		return true
+		price = trade.Price
+		quoteVol += trade.Price * trade.Qty
 	})
 
-	return volumes
-}
-
-/*
-strength is the raw distance of quote volume from the peer median, in either
-direction, for dashboard gauges only.
-*/
-func (signal *Signal) strength(ratio float64) float64 {
-	if ratio < 1 {
-		return 1 / ratio
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return ratio
+	if quoteVol <= 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	return signal.fromCrossSection(price, quoteVol, 0)
 }
 
-func (signal *Signal) Close() error {
-	signal.cancel()
-	return signal.rawDump.Close()
+func (signal *Signal) measureTick() (logic.Measurement, error) {
+	var (
+		ticker  *krakenmarket.TickerUpdate
+		err     error
+		seen    bool
+		spreads []float64
+	)
+
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		update, ok := item.(*krakenmarket.TickerUpdate)
+
+		if !ok {
+			err = fmt.Errorf("liquidity: expected ticker update")
+			return
+		}
+
+		ticker = update
+		seen = true
+		spreads = append(spreads, update.Ask-update.Bid)
+	})
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if !seen || ticker == nil {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	spread := 0.0
+
+	if len(spreads) > 0 {
+		spread = spreads[len(spreads)-1]
+	}
+
+	price := ticker.Last
+
+	if price <= 0 {
+		price = (ticker.Ask + ticker.Bid) / 2
+	}
+
+	quoteVol := ticker.Volume * price
+
+	return signal.fromCrossSection(price, quoteVol, spread)
+}
+
+func (signal *Signal) measureBook() (logic.Measurement, error) {
+	var (
+		prices  []float64
+		depths  []float64
+		spreads []float64
+		err     error
+	)
+
+	folded := krakenmarket.Book{}
+
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		frame, ok := item.(*krakenmarket.Book)
+
+		if !ok {
+			err = fmt.Errorf("liquidity: expected book update")
+			return
+		}
+
+		folded.Fold(*frame, 0)
+
+		mid, spread, depth, touchOK := folded.TouchQuote()
+
+		if !touchOK {
+			return
+		}
+
+		prices = append(prices, mid)
+		depths = append(depths, depth)
+		spreads = append(spreads, spread)
+	})
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if len(prices) == 0 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	price := prices[len(prices)-1] / 2
+	quoteVol := depths[len(depths)-1] * price
+	spread := 0.0
+
+	if len(spreads) > 0 {
+		spread = spreads[len(spreads)-1]
+	}
+
+	return signal.fromCrossSection(price, quoteVol, spread)
+}
+
+func (signal *Signal) fromCrossSection(
+	price, quoteVol, spread float64,
+) (logic.Measurement, error) {
+	signal.crossSection.publishQuoteVol(signal.symbol, quoteVol)
+
+	peers := signal.crossSection.snapshot()
+
+	if len(peers) < 2 {
+		return logic.Measurement{Symbol: signal.symbol}, nil
+	}
+
+	lower, upper := signal.quartiles(peers)
+	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
+	median := numeric.Median(peers)
+
+	category := signal.classify(quoteVol, lower, upper, peakScarcity)
+
+	scarcityScore := 0.0
+
+	if median > 0 {
+		scarcityScore = math.Max(0, (median-quoteVol)/median)
+	}
+
+	depthScore := 0.0
+
+	if median > 0 {
+		depthScore = math.Max(0, (quoteVol-median)/median)
+	}
+
+	peakScore := 0.0
+
+	if peakScarcity {
+		peakScore = 1
+	}
+
+	probabilities := numeric.SoftmaxScores([]float64{
+		scarcityScore,
+		depthScore,
+		peakScore,
+	})
+
+	categoryIndex := 0
+
+	switch category {
+	case logic.CategoryExtremeScarcity:
+		categoryIndex = 1
+	case logic.CategoryMedianDepth:
+		categoryIndex = 2
+	case logic.CategoryRobustLiquidity:
+		categoryIndex = 3
+	}
+
+	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surprise := signal.transition.Surprise(surpriseVector)
+
+	signal.transition.Update(categoryIndex)
+
+	confidence := 0.0
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		confidence = probabilities[categoryIndex-1]
+	}
+
+	strength := scarcityScore
+
+	if category == logic.CategoryRobustLiquidity {
+		strength = depthScore
+	}
+
+	return logic.Measurement{
+		Source:     logic.SourceLiquidity,
+		Symbol:     signal.symbol,
+		Price:      price,
+		Strength:   strength,
+		Volume:     quoteVol,
+		Spread:     spread,
+		Elapsed:    0,
+		Category:   category,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   surprise,
+	}, nil
+}
+
+func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {
+	sorted := numeric.CopySorted(volumes)
+
+	return numeric.PercentileSorted(sorted, 0.25), numeric.PercentileSorted(sorted, 0.75)
+}
+
+func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {
+	if len(volumes) == 0 {
+		return false
+	}
+
+	sorted := numeric.CopySorted(volumes)
+
+	return quoteVol <= sorted[0]
+}
+
+func (signal *Signal) classify(
+	quoteVol, lower, upper float64,
+	peakScarcity bool,
+) logic.CategoryType {
+	if peakScarcity || quoteVol <= lower {
+		return logic.CategoryExtremeScarcity
+	}
+
+	if quoteVol >= upper {
+		return logic.CategoryRobustLiquidity
+	}
+
+	return logic.CategoryMedianDepth
 }

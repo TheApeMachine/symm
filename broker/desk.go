@@ -2,404 +2,78 @@ package broker
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
-	"time"
 
+	"github.com/google/uuid"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/market/perspectives/reasoning"
+	"github.com/theapemachine/symm/logic"
 )
 
-const defaultHaltCooldown = 5 * time.Minute
-
 type Desk struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q[any]
-	quotes       *QuoteCache
-	stress       *StressCache
-	rules        *InstrumentRulesCache
-	halted       atomic.Bool
-	haltedAt     atomic.Pointer[time.Time]
-	haltCooldown time.Duration
-	err          error
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	pool   *qpool.Q[any]
+	bus    *internal.Bus
 }
 
 func NewDesk(ctx context.Context, pool *qpool.Q[any]) (*Desk, error) {
-	quotes := NewQuoteCache(ctx, pool)
-	quotes.Start(pool)
-
-	stress := NewStressCache(ctx, pool)
-	stress.Start(pool)
-
-	rules := NewInstrumentRulesCache(ctx)
-	rules.Start(pool)
-
-	return NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
-}
-
-/*
-NewDeskWithCaches builds a desk with explicit quote and stress dependencies.
-*/
-func NewDeskWithCaches(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	quotes *QuoteCache,
-	stress *StressCache,
-) (*Desk, error) {
-	rules := NewInstrumentRulesCache(ctx)
-	rules.Start(pool)
-
-	return NewDeskWithAllCaches(ctx, pool, quotes, stress, rules)
-}
-
-/*
-NewDeskWithAllCaches builds a desk with explicit quote, stress, and instrument caches.
-*/
-func NewDeskWithAllCaches(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	quotes *QuoteCache,
-	stress *StressCache,
-	rules *InstrumentRulesCache,
-) (*Desk, error) {
-	if quotes == nil {
-		return nil, fmt.Errorf("broker desk: quote cache is required")
-	}
-
-	if stress == nil {
-		return nil, fmt.Errorf("broker desk: stress cache is required")
-	}
-
-	if rules == nil {
-		return nil, fmt.Errorf("broker desk: instrument rules cache is required")
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 
-	desk := &Desk{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		quotes:       quotes,
-		stress:       stress,
-		rules:        rules,
-		haltCooldown: defaultHaltCooldown,
-	}
-
-	return desk, nil
-}
-
-func (desk *Desk) Halted() bool {
-	if !desk.halted.Load() {
-		return false
-	}
-
-	haltTime := desk.haltedAt.Load()
-
-	if haltTime != nil && desk.haltCooldown > 0 && time.Since(*haltTime) >= desk.haltCooldown {
-		desk.ResetHalt()
-
-		return false
-	}
-
-	return true
-}
-
-/*
-TripHalt trips the order circuit breaker and cancels all resting exchange orders.
-*/
-func (desk *Desk) TripHalt() {
-	if !desk.halted.CompareAndSwap(false, true) {
-		return
-	}
-
-	now := time.Now()
-	desk.haltedAt.Store(&now)
-
-	if desk.pool == nil {
-		return
-	}
-
-	_ = trading.NewOrderClient(desk.ctx, desk.pool).CancelAll(trading.CancelAllParams{})
-}
-
-/*
-ResetHalt clears the order circuit breaker so the desk accepts orders again.
-*/
-func (desk *Desk) ResetHalt() {
-	desk.halted.Store(false)
-	desk.haltedAt.Store(nil)
-}
-
-func (desk *Desk) AddOrder(action reasoning.Action) (reasoning.Action, error) {
-	if desk.Halted() {
-		return action, fmt.Errorf("order circuit breaker tripped")
-	}
-
-	orderType, err := reasoning.OrderTypeFromActionType(action.Type)
-
-	if err != nil {
-		return action, err
-	}
-
-	quote, ok := desk.quotes.Snapshot(action.Symbol)
-
-	if !ok {
-		return action, fmt.Errorf("preflight: no quote for %s", action.Symbol)
-	}
-
-	stress := desk.stress.Snapshot(action.Symbol)
-	action, err = resolveAction(action, quote, stress)
-
-	if err != nil {
-		return action, err
-	}
-
-	if reasoning.IsEntryAction(action.Type) {
-		action.Quantity, action.Price, err = desk.rules.PrepareEntryOrder(
-			action.Symbol,
-			action.Quantity,
-			action.Price,
-			orderType,
-		)
-	} else {
-		action.Quantity, action.Price, err = desk.rules.PrepareOrder(
-			action.Symbol,
-			action.Quantity,
-			action.Price,
-			orderType,
-		)
-	}
-
-	if err != nil {
-		return action, err
-	}
-
-	request := PreflightRequest{
-		Quote:      quote,
-		Side:       action.Side,
-		Quantity:   action.Quantity,
-		OrderType:  orderType,
-		ActionType: action.Type,
-		Stress:     stress,
-	}
-
-	if err := PreflightGates(request); err != nil {
-		return action, err
-	}
-
-	if orderType == trading.Limit && reasoning.IsMakerAction(action.Type) {
-		if WouldCrossPostOnly(quote, action.Side, action.Price) {
-			return action, fmt.Errorf(
-				"preflight: post-only limit would cross for %s",
-				action.Symbol,
-			)
-		}
-	}
-
-	clOrdID := desk.NextClOrdID()
-	action.ClOrdID = clOrdID
-	triggers, err := desk.triggersFor(action, quote)
-
-	if err != nil {
-		return action, err
-	}
-
-	addParams := trading.AddParams{
-		OrderType: orderType,
-		Side:      action.Side,
-		Symbol:    action.Symbol,
-		OrderQty:  action.Quantity,
-		ClOrdID:   clOrdID,
-		Triggers:  triggers,
-	}
-
-	// A protective market exit rests at the level carried in Triggers; a protective
-	// limit exit also needs a concrete limit price when the trigger fires. Plain
-	// entries/exits post their limit/reference price directly.
-	if !reasoning.IsProtectiveExit(action.Type) {
-		addParams.LimitPrice = action.Price
-	} else if reasoning.ExitRestsAsLimit(action.Type) &&
-		!reasoning.IsTrailingExit(action.Type) &&
-		triggers != nil {
-		addParams.LimitPrice = triggers.Price
-	}
-
-	if reasoning.IsMakerAction(action.Type) {
-		addParams.PostOnly = true
-	}
-
-	if addErr := trading.NewOrderClient(desk.ctx, desk.pool).AddOrder(addParams); addErr != nil {
-		return action, addErr
-	}
-
-	return action, nil
-}
-
-/*
-ResolveAction applies live quote and stress data to an action before submission.
-*/
-func (desk *Desk) ResolveAction(action reasoning.Action) (reasoning.Action, error) {
-	quote, ok := desk.quotes.Snapshot(action.Symbol)
-
-	if !ok {
-		return action, fmt.Errorf("preflight: no quote for %s", action.Symbol)
-	}
-
-	return resolveAction(action, quote, desk.stress.Snapshot(action.Symbol))
-}
-
-func resolveAction(
-	action reasoning.Action,
-	quote Quote,
-	stress SymbolStress,
-) (reasoning.Action, error) {
-	if reasoning.IsEntryAction(action.Type) {
-		action.Quantity = stress.EntryQuantity(action.Quantity)
-	}
-
-	if !reasoning.IsProtectiveExit(action.Type) {
-		return action, nil
-	}
-
-	offset, err := triggerOffset(action, quote)
-
-	if err != nil {
-		return action, err
-	}
-
-	action.Offset = offset
-
-	return action, nil
-}
-
-/*
-triggersFor builds the Kraken trigger params for a protective exit, or nil for an
-ordinary order. Stop/take rest at a fixed level measured from the entry price
-(action.Price); a trailing stop carries a negative-percent offset and Kraken (or the
-paper emulator) trails it from the market price at placement. The per-node offset
-overrides the account default. Returns nil for entries and immediate settles.
-*/
-func (desk *Desk) triggersFor(
-	action reasoning.Action,
-	quote Quote,
-) (*trading.Triggers, error) {
-	if !reasoning.IsProtectiveExit(action.Type) {
-		return nil, nil
-	}
-
-	offset, err := triggerOffset(action, quote)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if reasoning.IsTrailingExit(action.Type) {
-		return &trading.Triggers{Reference: "last", PriceType: "pct", Price: -offset * 100}, nil
-	}
-
-	positionSide := action.Side
-	if reasoning.IsExitAction(action.Type) {
-		if action.Side == trading.Buy {
-			positionSide = trading.Sell
-		} else {
-			positionSide = trading.Buy
-		}
-	}
-
-	return &trading.Triggers{
-		Reference: "last",
-		Price:     reasoning.ProtectiveLevelForSide(positionSide, action.Type, action.Price, 0, offset),
+	return &Desk{
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]string{"kraken:private"},
+			[]string{},
+		),
 	}, nil
 }
 
-func triggerOffset(action reasoning.Action, quote Quote) (float64, error) {
-	if action.Offset > 0 && action.Offset < 1 {
-		return action.Offset, nil
-	}
-
-	if reasoning.IsTrailingExit(action.Type) {
-		return dynamicTrailingOffset(quote)
+func (desk *Desk) AddOrder(action logic.Action) error {
+	order := trading.AddParams{
+		OrderType:  trading.Limit,
+		Side:       trading.Side(action.Side),
+		Symbol:     action.Symbol,
+		LimitPrice: action.Price,
+		OrderQty:   action.Quantity,
+		ClOrdID:    uuid.New().String(),
 	}
 
 	switch action.Type {
-	case reasoning.ActionStopLoss, reasoning.ActionStopLossLimit:
-		return requiredPercent("trading.exit.stop_loss_pct")
-	case reasoning.ActionTakeProfit, reasoning.ActionTakeProfitLimit:
-		return requiredPercent("trading.exit.take_profit_pct")
-	default:
-		return 0, nil
-	}
-}
-
-func dynamicTrailingOffset(quote Quote) (float64, error) {
-	multiple, err := market.RequiredFloat("trading.exit.trailing_volatility_multiple")
-
-	if err != nil {
-		return 0, fmt.Errorf("preflight: %w", err)
-	}
-
-	if quote.Volatility <= 0 {
-		return 0, fmt.Errorf(
-			"preflight: trailing stop needs realized volatility for %s",
-			quote.Symbol,
-		)
-	}
-
-	return quote.Volatility * multiple, nil
-}
-
-func requiredPercent(key string) (float64, error) {
-	percent, err := market.RequiredFloat(key)
-
-	if err != nil {
-		return 0, fmt.Errorf("preflight: %w", err)
+	case logic.ActionLimit:
+		order.OrderType = trading.Limit
+	case logic.ActionMarket:
+		order.OrderType = trading.Market
+	case logic.ActionIceberg:
+		order.OrderType = trading.Iceberg
+	case logic.ActionStopLoss:
+		order.OrderType = trading.StopLoss
+	case logic.ActionStopLossLimit:
+		order.OrderType = trading.StopLossLimit
+	case logic.ActionTakeProfit:
+		order.OrderType = trading.TakeProfit
+	case logic.ActionTakeProfitLimit:
+		order.OrderType = trading.TakeProfitLimit
+	case logic.ActionTrailingStop:
+		order.OrderType = trading.TrailingStop
+	case logic.ActionTrailingStopLimit:
+		order.OrderType = trading.TrailingStopLimit
+	case logic.ActionSettlePosition:
+		order.OrderType = trading.Market
 	}
 
-	return percent / 100, nil
-}
-
-var (
-	clOrdCounter atomic.Uint64
-	// clOrdEpoch namespaces client order ids per process start. A bare counter
-	// repeats s…0001 on every restart, and the exchange treats client order ids
-	// as the caller's to deconflict across sessions.
-	clOrdEpoch = uint64(time.Now().Unix())
-)
-
-func (desk *Desk) NextClOrdID() string {
-	return fmt.Sprintf("s%08x-%010x", clOrdEpoch, clOrdCounter.Add(1))
-}
-
-/*
-CancelByClOrdID cancels resting exchange orders by client order id — the desk-side
-half of "closing a position must also pull its protective orders". A real venue
-keeps a stop working after the position it protected is gone; that stray order
-would fire later as an unintended naked trade.
-*/
-func (desk *Desk) CancelByClOrdID(clOrdIDs ...string) error {
-	ids := make([]string, 0, len(clOrdIDs))
-
-	for _, id := range clOrdIDs {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-
-	if len(ids) == 0 {
-		return nil
-	}
-
-	return trading.NewOrderClient(desk.ctx, desk.pool).CancelOrder(trading.CancelParams{
-		ClOrdID: ids,
-	})
+	return errnie.Error(
+		desk.bus.Send("kraken:private", "orders", order),
+	)
 }
 
 func (desk *Desk) Close() error {
 	desk.cancel()
-
 	return desk.err
 }

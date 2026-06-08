@@ -1,13 +1,7 @@
 package market
 
 import (
-	"context"
 	"fmt"
-	"strings"
-
-	"github.com/gofiber/fiber/v3"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/public"
 )
 
 /*
@@ -54,25 +48,6 @@ order has to respect.
 See https://docs.kraken.com/api/docs/rest-api/get-tradable-asset-pairs
 */
 type AssetPairs map[string]*Pair
-
-/*
-NewAssetPairs fetches tradable pair metadata. Pass no pairNames to load the full
-catalog; pass one or more internal names (e.g. XXBTZUSD) to filter.
-*/
-func NewAssetPairs(
-	ctx context.Context,
-	client *public.Rest,
-	pairNames ...string,
-) (AssetPairs, error) {
-	pairs := AssetPairs{}
-	params := fiber.Map{}
-
-	if len(pairNames) > 0 {
-		params["pair"] = strings.Join(pairNames, ",")
-	}
-
-	return pairs, errnie.Error(client.Get(ctx, params, &pairs))
-}
 
 /*
 PairByWsname returns the pair whose wsname matches the WebSocket v2 symbol (e.g. BTC/USD).
