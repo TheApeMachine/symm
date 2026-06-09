@@ -1,9 +1,5 @@
 package user
 
-import (
-	"context"
-)
-
 const (
 	BalanceSnapshot = "snapshot"
 	BalanceUpdate   = "update"
@@ -19,21 +15,14 @@ type SubscribeFrame struct {
 }
 
 /*
-TokenSource supplies short-lived authenticated WebSocket tokens for balances.
-*/
-type TokenSource interface {
-	Token(context.Context) (string, error)
-}
-
-/*
 BalanceParams is the Kraken WebSocket v2 subscribe payload for the balances channel.
 */
 type BalanceParams struct {
 	Channel  string `json:"channel"`
 	Snapshot bool   `json:"snapshot"`
-	Token    string `json:"token"`
 	Rebased  bool   `json:"rebased,omitempty"`
 	Users    string `json:"users,omitempty"`
+	Token    string `json:"token,omitempty"`
 }
 
 /*

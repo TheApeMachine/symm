@@ -1,29 +1,12 @@
 package trading
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/qpool"
 )
-
-func TestNewOrderClient(t *testing.T) {
-	t.Cleanup(viper.Reset)
-	viper.Set("trading.order_ack_timeout", time.Second)
-
-	Convey("Given an order client", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		client := NewOrderClient(ctx, pool)
-
-		So(client, ShouldNotBeNil)
-	})
-}
 
 func TestAddParamsJSONTags(t *testing.T) {
 	Convey("Given order params", t, func() {
@@ -44,13 +27,26 @@ func TestAddParamsJSONTags(t *testing.T) {
 	})
 }
 
-func BenchmarkNewOrder(b *testing.B) {
-	ctx := context.Background()
-	viper.Set("trading.order_ack_timeout", time.Second)
+func TestEntryTransitTTL(t *testing.T) {
+	t.Cleanup(viper.Reset)
 
+	Convey("Given no configured transit ttl", t, func() {
+		Convey("It should default to five seconds", func() {
+			So(EntryTransitTTL(), ShouldEqual, 5*time.Second)
+		})
+	})
+
+	Convey("Given a configured transit ttl", t, func() {
+		viper.Set("trading.entry.transit_ttl", 12*time.Second)
+
+		Convey("It should return the configured duration", func() {
+			So(EntryTransitTTL(), ShouldEqual, 12*time.Second)
+		})
+	})
+}
+
+func BenchmarkEntryTransitTTL(b *testing.B) {
 	for b.Loop() {
-		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		_ = NewOrderClient(ctx, pool)
-		pool.Close()
+		_ = EntryTransitTTL()
 	}
 }

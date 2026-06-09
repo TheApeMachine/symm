@@ -24,8 +24,9 @@ type ConditionOperand struct {
 
 func (conditionOperand *ConditionOperand) Evaluate(
 	measurement Measurement,
-) bool {
-	return conditionOperand.Subject.Evaluate(measurement)
+	evalContext *EvalContext,
+) (bool, error) {
+	return conditionOperand.Subject.Evaluate(measurement, evalContext)
 }
 
 type Condition struct {
@@ -42,7 +43,10 @@ func NewCondition(
 	}
 }
 
-func (condition *Condition) Evaluate(measurements []Measurement) bool {
+func (condition *Condition) Evaluate(
+	measurements []Measurement,
+	evalContext *EvalContext,
+) (bool, error) {
 	switch condition.Type {
 	case ConditionIsTrue:
 		for _, measurement := range measurements {
@@ -51,12 +55,18 @@ func (condition *Condition) Evaluate(measurements []Measurement) bool {
 				continue
 			}
 
-			if condition.Left.Subject.Evaluate(measurement) {
-				return true
+			matched, err := condition.Left.Subject.Evaluate(measurement, evalContext)
+
+			if err != nil {
+				return false, err
+			}
+
+			if matched {
+				return true, nil
 			}
 		}
 
-		return false
+		return false, nil
 	case ConditionIsFalse:
 		for _, measurement := range measurements {
 			if condition.Left.Subject.Source != SourceNone &&
@@ -64,40 +74,55 @@ func (condition *Condition) Evaluate(measurements []Measurement) bool {
 				continue
 			}
 
-			return !condition.Left.Subject.Evaluate(measurement)
+			matched, err := condition.Left.Subject.Evaluate(measurement, evalContext)
+
+			if err != nil {
+				return false, err
+			}
+
+			return !matched, nil
 		}
 
-		return false
+		return false, nil
 	case ConditionIsEqual:
-		return condition.evaluateEqual(measurements)
+		return condition.evaluateEqual(measurements, evalContext)
 	case ConditionIsNotEqual:
-		return !condition.evaluateEqual(measurements)
+		matched, err := condition.evaluateEqual(measurements, evalContext)
+
+		if err != nil {
+			return false, err
+		}
+
+		return !matched, nil
 	case ConditionIsGreaterThan:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalars(measurements, evalContext, func(left, right float64) bool {
 			return left > right
 		})
 	case ConditionIsLessThan:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalars(measurements, evalContext, func(left, right float64) bool {
 			return left < right
 		})
 	case ConditionIsGreaterThanOrEqual:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalars(measurements, evalContext, func(left, right float64) bool {
 			return left >= right
 		})
 	case ConditionIsLessThanOrEqual:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalars(measurements, evalContext, func(left, right float64) bool {
 			return left <= right
 		})
 	case ConditionIsWithin:
-		return condition.evaluateWithin(measurements, true)
+		return condition.evaluateWithin(measurements, evalContext, true)
 	case ConditionIsNotWithin:
-		return condition.evaluateWithin(measurements, false)
+		return condition.evaluateWithin(measurements, evalContext, false)
 	default:
-		return false
+		return false, nil
 	}
 }
 
-func (condition *Condition) evaluateEqual(measurements []Measurement) bool {
+func (condition *Condition) evaluateEqual(
+	measurements []Measurement,
+	evalContext *EvalContext,
+) (bool, error) {
 	for _, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
@@ -105,31 +130,36 @@ func (condition *Condition) evaluateEqual(measurements []Measurement) bool {
 		}
 
 		if condition.Left.Subject.isEnumerated() {
-			return condition.Right.Subject.enumMatches(measurement)
+			return condition.Right.Subject.Evaluate(measurement, evalContext)
 		}
 
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false
+			return false, nil
 		}
 
-		rightValue, ok := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, evalContext)
 
-		if !ok {
-			return false
+		if err != nil {
+			return false, err
 		}
 
-		return leftValue == rightValue
+		if !rightOK {
+			return false, nil
+		}
+
+		return leftValue == rightValue, nil
 	}
 
-	return false
+	return false, nil
 }
 
 func (condition *Condition) compareScalars(
 	measurements []Measurement,
+	evalContext *EvalContext,
 	compare func(left float64, right float64) bool,
-) bool {
+) (bool, error) {
 	for _, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
@@ -139,25 +169,30 @@ func (condition *Condition) compareScalars(
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false
+			return false, nil
 		}
 
-		rightValue, ok := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, evalContext)
 
-		if !ok {
-			return false
+		if err != nil {
+			return false, err
 		}
 
-		return compare(leftValue, rightValue)
+		if !rightOK {
+			return false, nil
+		}
+
+		return compare(leftValue, rightValue), nil
 	}
 
-	return false
+	return false, nil
 }
 
 func (condition *Condition) evaluateWithin(
 	measurements []Measurement,
+	evalContext *EvalContext,
 	within bool,
-) bool {
+) (bool, error) {
 	for _, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
@@ -167,46 +202,69 @@ func (condition *Condition) evaluateWithin(
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false
+			return false, nil
 		}
 
-		rightValue, ok := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, evalContext)
 
-		if !ok {
-			return false
+		if err != nil {
+			return false, err
+		}
+
+		if !rightOK {
+			return false, nil
 		}
 
 		tolerance := condition.Right.Subject.Spread
 
 		if tolerance <= 0 {
-			return false
+			return false, nil
 		}
 
 		distance := math.Abs(leftValue - rightValue)
 		matches := distance <= tolerance
 
 		if within {
-			return matches
+			return matches, nil
 		}
 
-		return !matches
+		return !matches, nil
 	}
 
-	return false
+	return false, nil
 }
 
-func (condition *Condition) rightScalar(measurements []Measurement) (float64, bool) {
+func (condition *Condition) rightScalar(
+	measurements []Measurement,
+	evalContext *EvalContext,
+) (float64, bool, error) {
 	if condition.Right.Subject.Source != SourceNone {
 		for _, measurement := range measurements {
 			if measurement.Source == condition.Right.Subject.Source {
-				return condition.Right.Subject.valueFrom(measurement)
+				value, ok := condition.Right.Subject.valueFrom(measurement)
+
+				return value, ok, nil
 			}
 		}
 
-		return 0, false
+		return 0, false, nil
 	}
 
-	return condition.Right.Subject.threshold()
+	if condition.Right.Subject.Type == SubjectConfidence &&
+		condition.Right.Subject.Category != nil &&
+		condition.Right.Subject.Category.confidenceRef != "" {
+		value, err := condition.Right.Subject.Category.confidenceFloor(evalContext)
+
+		if err != nil {
+			return 0, false, err
+		}
+
+		return value, true, nil
+	}
+
+	value, ok := condition.Right.Subject.threshold()
+
+	return value, ok, nil
 }
 
 type BooleanType uint8
@@ -228,25 +286,40 @@ func NewConditionGroup(
 	return &ConditionGroup{Boolean: boolean, Conditions: conditions}
 }
 
-func (conditionGroup *ConditionGroup) Evaluate(measurements []Measurement) bool {
+func (conditionGroup *ConditionGroup) Evaluate(
+	measurements []Measurement,
+	evalContext *EvalContext,
+) (bool, error) {
 	switch conditionGroup.Boolean {
 	case BooleanTypeAnd:
 		for _, condition := range conditionGroup.Conditions {
-			if !condition.Evaluate(measurements) {
-				return false
+			matched, err := condition.Evaluate(measurements, evalContext)
+
+			if err != nil {
+				return false, err
+			}
+
+			if !matched {
+				return false, nil
 			}
 		}
 
-		return true
+		return true, nil
 	case BooleanTypeOr:
 		for _, condition := range conditionGroup.Conditions {
-			if condition.Evaluate(measurements) {
-				return true
+			matched, err := condition.Evaluate(measurements, evalContext)
+
+			if err != nil {
+				return false, err
+			}
+
+			if matched {
+				return true, nil
 			}
 		}
 
-		return false
+		return false, nil
 	default:
-		return false
+		return false, nil
 	}
 }

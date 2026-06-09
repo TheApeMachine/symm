@@ -1,5 +1,12 @@
 package logic
 
+import (
+	"fmt"
+	"strings"
+
+	"go.yaml.in/yaml/v3"
+)
+
 type CategoryType string
 
 const (
@@ -52,9 +59,10 @@ const (
 )
 
 type Category struct {
-	Type       CategoryType `yaml:"type"`
-	Confidence float64      `yaml:"confidence"`
-	Surprise   float64      `yaml:"surprise"`
+	Type          CategoryType `yaml:"type"`
+	Confidence    float64      `yaml:"confidence"`
+	Surprise      float64      `yaml:"surprise"`
+	confidenceRef string       `yaml:"-"`
 }
 
 func NewCategory(
@@ -63,4 +71,54 @@ func NewCategory(
 	return &Category{
 		Type: categoryType, Confidence: confidence, Surprise: surprise,
 	}
+}
+
+func (category *Category) UnmarshalYAML(node *yaml.Node) error {
+	type categoryFields struct {
+		Type       CategoryType `yaml:"type"`
+		Confidence yaml.Node    `yaml:"confidence"`
+		Surprise   float64      `yaml:"surprise"`
+	}
+
+	fields := categoryFields{}
+
+	if err := node.Decode(&fields); err != nil {
+		return err
+	}
+
+	category.Type = fields.Type
+	category.Surprise = fields.Surprise
+
+	if fields.Confidence.Kind == yaml.ScalarNode {
+		raw := strings.TrimSpace(fields.Confidence.Value)
+
+		if after, ok := strings.CutPrefix(raw, "$"); ok {
+			category.confidenceRef = after
+			category.Confidence = 0
+
+			return nil
+		}
+	}
+
+	if err := fields.Confidence.Decode(&category.Confidence); err != nil {
+		return fmt.Errorf("logic: category confidence: %w", err)
+	}
+
+	return nil
+}
+
+func (category *Category) confidenceFloor(evalContext *EvalContext) (float64, error) {
+	if category == nil {
+		return 0, fmt.Errorf("logic: category is nil")
+	}
+
+	if category.confidenceRef == "" {
+		return category.Confidence, nil
+	}
+
+	if evalContext == nil {
+		return 0, fmt.Errorf("logic: eval context required for ref %q", category.confidenceRef)
+	}
+
+	return evalContext.Resolve(category.confidenceRef)
 }

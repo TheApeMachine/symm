@@ -13,6 +13,7 @@ import {
 	XyDataSeries,
 } from "scichart";
 import { appTheme } from "#/components/charts/spider/theme";
+import { ensureSciChartWasm } from "#/lib/utils";
 
 export type SpiderControls = { update: (values: number[]) => void };
 
@@ -25,9 +26,14 @@ export const drawSignalSpider = async (
 	rootElement: string | HTMLDivElement,
 	labels: string[],
 ) => {
+	await ensureSciChartWasm();
+
 	const { sciChartSurface, wasmContext } = await SciChartPolarSurface.create(
 		rootElement,
-		{ theme: appTheme.SciChartJsTheme },
+		{
+			theme: appTheme.SciChartJsTheme,
+			freezeWhenOutOfView: true,
+		},
 	);
 
 	const radialYAxis = new PolarNumericAxis(wasmContext, {
@@ -76,6 +82,9 @@ export const drawSignalSpider = async (
 		xValues,
 		yValues: new Array(labels.length + 1).fill(0),
 		dataSeriesName: "Confidence",
+		dataIsSortedInX: true,
+		dataEvenlySpacedInX: true,
+		containsNaN: false,
 	});
 
 	sciChartSurface.renderableSeries.add(

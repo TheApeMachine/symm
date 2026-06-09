@@ -1,7 +1,6 @@
 package leadlag
 
 import (
-	
 	"context"
 	"errors"
 	"fmt"
@@ -90,7 +89,10 @@ func (system *System) Tick() error {
 
 		switch message.Type {
 		case "symbols":
-			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			symbols, symbolOk := message.Value.([]string)
+			if symbolOk {
+				system.gauge.RegisterSymbols(symbols)
+			}
 			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
@@ -159,17 +161,29 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		measurement, measureErr := signal.Measure(system.feedback)
+		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
+
+		if errnie.Error(eventErr) != nil {
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback, eventAt)
 
 		if errnie.Error(measureErr) != nil {
 			continue
 		}
 
+		errnie.Error(system.gauge.Publish(
+			measurement,
+			signal.symbol,
+			warmed,
+		))
+
 		if measurement.Category == logic.CategoryTypeNone {
 			continue
 		}
 
-		if !system.throttle() {
+		if !system.throttle(eventAt) {
 			continue
 		}
 
@@ -178,29 +192,27 @@ func (system *System) Tick() error {
 			"measurements",
 			measurement,
 		)
-
-		errnie.Error(system.gauge.Publish(
-			measurement,
-			signal.symbol,
-			warmed,
-		))
 	}
 }
 
-func (system *System) throttle() bool {
+func (system *System) throttle(eventAt time.Time) bool {
 	interval := viper.GetDuration("signals.leadlag.publish_interval")
 
 	if interval <= 0 {
-		interval = 200 * time.Millisecond
-	}
-
-	now := time.Now()
-
-	if now.Sub(system.lastPublish) < interval {
+		errnie.Error(fmt.Errorf("signals.leadlag.publish_interval must be positive"))
 		return false
 	}
 
-	system.lastPublish = now
+	if eventAt.IsZero() {
+		errnie.Error(fmt.Errorf("leadlag: event time is zero"))
+		return false
+	}
+
+	if !system.lastPublish.IsZero() && eventAt.Sub(system.lastPublish) < interval {
+		return false
+	}
+
+	system.lastPublish = eventAt
 
 	return true
 }

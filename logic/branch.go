@@ -15,13 +15,26 @@ func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 	}
 }
 
-func (branch *Branch) Evaluate(measurements []Measurement) (*Action, error) {
-	if branch.ConditionGroup == nil || !branch.ConditionGroup.Evaluate(measurements) {
+func (branch *Branch) Evaluate(
+	measurements []Measurement,
+	evalContext *EvalContext,
+) (*Action, error) {
+	if branch.ConditionGroup == nil {
+		return nil, nil
+	}
+
+	matched, err := branch.ConditionGroup.Evaluate(measurements, evalContext)
+
+	if errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	if !matched {
 		return nil, nil
 	}
 
 	for _, child := range branch.Branches {
-		action, err := child.Evaluate(measurements)
+		action, err := child.Evaluate(measurements, evalContext)
 
 		if errnie.Error(err) != nil {
 			continue

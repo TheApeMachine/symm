@@ -45,7 +45,10 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			So(condition.Evaluate(measurements), ShouldBeTrue)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 
 		Convey("ConditionIsFalse should pass when category does not match", func() {
@@ -68,7 +71,10 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			So(condition.Evaluate(measurements), ShouldBeTrue)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 
 		Convey("ConditionIsGreaterThan should compare live surprise to threshold", func() {
@@ -104,7 +110,10 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			So(condition.Evaluate(measurements), ShouldBeTrue)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 
 		Convey("ConditionIsWithin should use right spread as tolerance", func() {
@@ -140,7 +149,10 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			So(condition.Evaluate(measurements), ShouldBeTrue)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 	})
 
@@ -209,7 +221,10 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			So(condition.Evaluate(measurements), ShouldBeTrue)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 	})
 }
@@ -300,13 +315,19 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		})
 
 		Convey("It should pass when every condition passes", func() {
-			So(group.Evaluate(measurements), ShouldBeTrue)
+			matched, err := group.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 
 		Convey("It should fail when one condition fails", func() {
 			measurements[1].Surprise = 0.5
 
-			So(group.Evaluate(measurements), ShouldBeFalse)
+			matched, err := group.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeFalse)
 		})
 	})
 }

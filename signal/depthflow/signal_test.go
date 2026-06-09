@@ -6,6 +6,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	"time"
 )
 
 func TestSignalMeasure(t *testing.T) {
@@ -35,7 +36,7 @@ func TestSignalMeasure(t *testing.T) {
 			},
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify loaded imbalance", func() {
 			So(err, ShouldBeNil)
@@ -70,7 +71,7 @@ func TestSignalMeasure(t *testing.T) {
 			},
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify spoof trap", func() {
 			So(err, ShouldBeNil)
@@ -104,7 +105,7 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    2,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish trade pressure without category", func() {
 			So(err, ShouldBeNil)
@@ -141,6 +142,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(nil)
+		_, _ =  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }

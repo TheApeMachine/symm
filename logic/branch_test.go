@@ -61,7 +61,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements)
+			result, err := branch.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)
@@ -85,7 +85,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements)
+			result, err := branch.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldEqual, action)
@@ -196,7 +196,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldEqual, childAction)
@@ -220,7 +220,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldEqual, parentAction)

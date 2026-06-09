@@ -2,9 +2,9 @@ package fluid
 
 import (
 	"container/ring"
-	
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
@@ -12,30 +12,23 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
+var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
+
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
 
-Reynolds Number : Maximum absolute field activity across divergence, vorticity, turbulence.
-Divergence      : Trusted touch imbalance excluding toxic resting size.
-Vorticity       : Aggressor pressure amplified by volume-clocked churn when flux is clean.
-Viscosity       : Inverse spread — tight markets resist displacement.
-
-| Category  | Visc (Spread) | Dominant Metric            | Market "Feel"     |
-|:----------|:--------------|:---------------------------|:------------------|
-| Laminar   | High (Tight)  | None (Low Activity)        | Smooth/Consistent |
-| Turbulent | Variable      | Turbulence / Vorticity     | Shattered/Fragile |
-| Inertial  | Moderate      | Reynolds / Divergence      | Direct/Heavy      |
-| Viscous   | Low (Wide)    | Divergence (at walls)      | Resistant/Grinding|
+Reynolds classifies laminar versus turbulent flow. Divergence is momentum flux
+expansion at the touch. Viscosity is replenishment resistance after consumption.
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	system       *System
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	system          *System
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -47,18 +40,18 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		system:       system,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		system:          system,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -77,11 +70,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("fluid: unsupported entity %d", signal.entity.Type),
@@ -89,19 +82,19 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
-	return signal.MeasureFromSymbol()
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	return signal.measureFromSymbol(at)
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
-	return signal.MeasureFromSymbol()
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	return signal.measureFromSymbol(at)
 }
 
-func (signal *Signal) MeasureFromSymbol() (logic.Measurement, error) {
+func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
 
 	if state == nil {
@@ -114,10 +107,10 @@ func (signal *Signal) MeasureFromSymbol() (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	return signal.publish(reading)
+	return signal.publish(reading, at)
 }
 
-func (signal *Signal) publish(reading fluidReading) (logic.Measurement, error) {
+func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measurement, error) {
 	category, laminarScore, turbulentScore, inertialScore, viscousScore := signal.classify(reading)
 
 	probabilities := numeric.SoftmaxScores([]float64{
@@ -153,6 +146,7 @@ func (signal *Signal) publish(reading fluidReading) (logic.Measurement, error) {
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -165,23 +159,28 @@ func (signal *Signal) classify(
 	float64,
 	float64,
 ) {
-	activity := math.Max(
-		math.Abs(reading.divergence),
-		math.Max(reading.turbulence, math.Max(reading.vorticity, reading.reynolds)),
-	)
+	reynolds := reading.reynolds
+	divergence := math.Abs(reading.divergence)
+	viscosity := reading.viscosity
 
 	laminarScore := 0.0
 
-	if activity <= fluidDefaultBandEdges[0] {
-		laminarScore = reading.viscosity * (1 - activity)
+	if reynolds < laminarReynoldsCeiling && divergence < fluidDefaultBandEdges[0] {
+		laminarScore = viscosity * (1 - divergence/fluidDefaultBandEdges[0])
 	}
 
-	turbulentScore := math.Max(reading.turbulence, reading.vorticity)
-	inertialScore := math.Max(reading.reynolds, math.Abs(reading.divergence))
+	turbulentScore := 0.0
+
+	if reynolds >= turbulentReynoldsFloor {
+		turbulentScore = reynolds / turbulentReynoldsFloor
+	}
+
+	inertialScore := divergence
+
 	viscousScore := 0.0
 
-	if reading.viscosity < 0.5 {
-		viscousScore = (1 - reading.viscosity) * math.Abs(reading.divergence)
+	if viscosity > 0 {
+		viscousScore = divergence / viscosity
 	}
 
 	best := laminarScore
@@ -201,9 +200,9 @@ func (signal *Signal) classify(
 		category = logic.CategoryViscous
 	}
 
-	if best <= 0 && reading.price > 0 {
+	if best <= 0 && reading.price > 0 && reynolds < laminarReynoldsCeiling {
 		category = logic.CategoryLaminar
-		laminarScore = reading.viscosity
+		laminarScore = viscosity
 	}
 
 	return category, laminarScore, turbulentScore, inertialScore, viscousScore
@@ -241,4 +240,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

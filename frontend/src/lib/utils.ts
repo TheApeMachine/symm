@@ -63,7 +63,10 @@ export const ensureSciChartWasm = async (): Promise<void> => {
 
 	wasmReady = (async () => {
 		SciChartSurface.UseCommunityLicense();
-		SciChartDefaults.performanceWarnings = false;
+		SciChartDefaults.performanceWarnings = import.meta.env.DEV;
+		SciChartDefaults.useSharedCache = true;
+		SciChartSurface.autoDisposeWasmContext = true;
+		SciChartSurface.wasmContextDisposeTimeout = 100;
 
 		if (import.meta.env.VITE_SCICHART_WASM_CDN === "true") {
 			SciChartSurface.loadWasmFromCDN();

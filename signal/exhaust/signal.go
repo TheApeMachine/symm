@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	floatring "github.com/theapemachine/symm/ring"
+	"time"
 )
 
 /*
@@ -63,7 +64,7 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -82,11 +83,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("exhaust: unsupported entity %d", signal.entity.Type),
@@ -94,7 +95,7 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok {
@@ -106,7 +107,7 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 	return signal.fromFeatures()
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
@@ -118,7 +119,7 @@ func (signal *Signal) measureTick() (logic.Measurement, error) {
 	return signal.fromFeatures()
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	book, ok := signal.latest().(*krakenmarket.Book)
 
 	if !ok {

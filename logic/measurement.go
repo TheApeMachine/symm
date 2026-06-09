@@ -1,5 +1,7 @@
 package logic
 
+import "time"
+
 type SourceType string
 
 const (
@@ -32,6 +34,7 @@ type Measurement struct {
 	Position   PositionType
 	Confidence float64
 	Surprise   float64
+	ObservedAt time.Time
 }
 
 func NewMeasurement(

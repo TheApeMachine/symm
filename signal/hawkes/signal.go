@@ -2,7 +2,7 @@ package hawkes
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"time"
 
@@ -25,14 +25,14 @@ model from the executed trade tape.
 | Exhaustion | Very Low          | Low          | Stalled/Dying          |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	system       *System
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	system          *System
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -44,18 +44,18 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		system:       system,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		system:          system,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -74,11 +74,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("hawkes: unsupported entity %d", signal.entity.Type),
@@ -86,7 +86,7 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
 		trades []krakenmarket.TradeUpdate
 		err    error
@@ -116,7 +116,7 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
-	reading, ok := state.Measure(trades, time.Now())
+	reading, ok := state.Measure(trades, at)
 
 	if !ok {
 		return logic.Measurement{Symbol: signal.symbol}, nil
@@ -125,11 +125,11 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 	return signal.publish(reading)
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
@@ -210,4 +210,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

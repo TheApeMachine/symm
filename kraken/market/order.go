@@ -1,12 +1,22 @@
 package market
 
-import "time"
+import (
+	"time"
+)
 
 type Level3Params struct {
 	Channel  string   `json:"channel"`
 	Symbol   []string `json:"symbol"`
 	Snapshot bool     `json:"snapshot"`
-	Token    string   `json:"token"`
+	Token    string   `json:"token,omitempty"`
+}
+
+func NewLevel3Params(symbols []string) *Level3Params {
+	return &Level3Params{
+		Channel:  "level3",
+		Symbol:   symbols,
+		Snapshot: true,
+	}
 }
 
 type Bid struct {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 
+	"time"
+
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -30,8 +32,8 @@ The "Conviction" Story  : It distinguishes between a "fake" leader move (where o
 type Signal struct {
 	symbol            string
 	entity            *logic.Entity
-	measurements    *ring.Ring
-	warmupRemaining int
+	measurements      *ring.Ring
+	warmupRemaining   int
 	crossSection      *crossSection
 	transition        *numeric.TransitionMatrix
 	weights           numeric.ClassifierWeights
@@ -51,8 +53,8 @@ func NewSignal(
 	return &Signal{
 		symbol:            symbol,
 		entity:            entity,
-		measurements:    ring.New(capacity),
-		warmupRemaining: capacity,
+		measurements:      ring.New(capacity),
+		warmupRemaining:   capacity,
 		crossSection:      crossSection,
 		transition:        numeric.NewTransitionMatrix(4, alpha),
 		weights:           numeric.DefaultClassifierWeights(threshold),
@@ -61,7 +63,7 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -85,11 +87,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("sentiment: unsupported entity %d", signal.entity.Type),
@@ -97,7 +99,7 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
 		prices  []float64
 		volumes []float64
@@ -136,10 +138,11 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 		0,
 		change,
 		move,
+		at,
 	)
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	var (
 		ticker  *krakenmarket.TickerUpdate
 		err     error
@@ -182,10 +185,10 @@ func (signal *Signal) measureTick() (logic.Measurement, error) {
 	volume := ticker.AskQty + ticker.BidQty
 	change := ticker.ChangePct
 
-	return signal.fromCrossSection(price, volume, spread, change, change)
+	return signal.fromCrossSection(price, volume, spread, change, change, at)
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	var (
 		prices  []float64
 		volumes []float64
@@ -241,22 +244,24 @@ func (signal *Signal) measureBook() (logic.Measurement, error) {
 		spread,
 		change,
 		move,
+		at,
 	)
 }
 
 func (signal *Signal) fromCrossSection(
 	price, volume, spread, change, move float64,
+	at time.Time,
 ) (logic.Measurement, error) {
-	signal.crossSection.publishChange(signal.symbol, change)
+	signal.crossSection.publishChange(signal.symbol, change, at)
 
-	breadth := signal.crossSection.breadth()
+	breadth := signal.crossSection.breadth(at)
 
 	signal.crossSection.recordBreadth(breadth)
 
-	surgeThreshold := signal.crossSection.majorityThreshold() + signal.surgeBias
+	surgeThreshold := signal.crossSection.majorityThreshold(at) + signal.surgeBias
 	surgeThreshold = math.Min(math.Max(surgeThreshold, 0.5), 1)
 
-	leader := signal.crossSection.isLeader(change)
+	leader := signal.crossSection.isLeader(signal.symbol, change, at)
 
 	category := signal.classify(breadth, change, surgeThreshold, leader)
 
@@ -359,4 +364,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/internal"
@@ -28,6 +29,7 @@ type Gauge struct {
 	warmupSamples    int
 	minWarmupSamples int
 	expectedSymbols  map[string]struct{}
+	lastPublishAt    time.Time
 }
 
 /*
@@ -90,9 +92,15 @@ func (gauge *Gauge) Publish(
 
 	gauge.recordWarmup(symbol, warmed)
 
+	if gauge.publishThrottled() {
+		return nil
+	}
+
 	meanConfidence, meanSurprise := gauge.readingMeans()
 
 	samples, minSamples, calibrating, calibrated := gauge.warmupState()
+
+	gauge.lastPublishAt = time.Now()
 
 	return gauge.bus.Send("ui", "gauge", map[string]any{
 		"chart":              "gauge",
@@ -174,6 +182,20 @@ func (gauge *Gauge) warmupState() (
 	calibrating = !calibrated
 
 	return samples, minSamples, calibrating, calibrated
+}
+
+func (gauge *Gauge) publishThrottled() bool {
+	interval := viper.GetDuration("telemetry.gauge.publish_interval")
+
+	if interval <= 0 {
+		interval = 100 * time.Millisecond
+	}
+
+	if gauge.lastPublishAt.IsZero() {
+		return false
+	}
+
+	return time.Since(gauge.lastPublishAt) < interval
 }
 
 func (gauge *Gauge) surpriseThreshold() float64 {

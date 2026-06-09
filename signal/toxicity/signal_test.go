@@ -46,7 +46,7 @@ func warmSignalSurprise(t *testing.T, signal *Signal, symbol string) {
 	state.fillBid = 0.1
 
 	for range 15 {
-		_, err := signal.Measure(nil)
+		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		So(err, ShouldBeNil)
 	}
 
@@ -209,7 +209,7 @@ func TestSignalMeasureToxicBluffChurnStrength(t *testing.T) {
 		state.toxic[priceKey(100, krakenmarket.Pair{})] = now.Add(time.Minute)
 		state.toxicChurn[priceKey(100, krakenmarket.Pair{})] = 4.5
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should retain churn ratio as strength with confidence and surprise", func() {
 			So(err, ShouldBeNil)
@@ -237,7 +237,7 @@ func TestSignalMeasureToxicBluffSaturatedEvidence(t *testing.T) {
 		state.toxic[key] = now.Add(time.Minute)
 		state.toxicChurn[key] = math.MaxFloat64
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish without rejecting unit-band confidence", func() {
 			So(err, ShouldBeNil)
@@ -261,7 +261,7 @@ func TestSignalMeasureToxicBluff(t *testing.T) {
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish toxic bluff with measurable strength", func() {
 			So(err, ShouldBeNil)
@@ -290,7 +290,7 @@ func TestSignalMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		state.fillBid = 0.1
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 50000)
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish bounded strength with confidence and surprise", func() {
 			So(err, ShouldBeNil)
@@ -319,7 +319,7 @@ func TestSignalMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 		state.cancelBid = 1
 		state.fillBid = 0
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should not publish an incomplete asymmetry reading", func() {
 			So(err, ShouldBeNil)
@@ -339,7 +339,7 @@ func TestSignalMeasureHardSupport(t *testing.T) {
 		signal.tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideBid, 99.5, 80, now)
 		signal.tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideAsk, 100.5, 80, now)
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify hard support", func() {
 			So(err, ShouldBeNil)
@@ -357,8 +357,13 @@ func TestSystemFeedLevel3(t *testing.T) {
 		defer pool.Close()
 
 		ResetDefault()
+		viper.Set("signals.toxicity.measurements_capacity", 64)
+		viper.Set("telemetry.gauge.readings_capacity", 1024)
+
 		system := NewSystem(ctx, pool)
-		now := time.Now()
+		So(system, ShouldNotBeNil)
+
+		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		system.tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
 		state := system.tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
@@ -405,7 +410,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	for b.Loop() {
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
-		_, _ = signal.Measure(nil)
+		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }
 

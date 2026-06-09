@@ -3,6 +3,7 @@ package telemetry
 import (
 	"container/ring"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -166,6 +167,21 @@ func TestNewGauge(t *testing.T) {
 		Convey("It should return an error", func() {
 			So(gauge, ShouldBeNil)
 			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestGaugePublishThrottled(t *testing.T) {
+	Convey("Given a recent ui publish", t, func() {
+		viper.Set("telemetry.gauge.publish_interval", 100*time.Millisecond)
+
+		gauge := &Gauge{
+			readings:      ring.New(8),
+			lastPublishAt: time.Now(),
+		}
+
+		Convey("It should suppress back-to-back ui frames", func() {
+			So(gauge.publishThrottled(), ShouldBeTrue)
 		})
 	})
 }

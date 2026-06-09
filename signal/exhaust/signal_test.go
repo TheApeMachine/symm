@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
+	"time"
 )
 
 func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.Book {
@@ -41,7 +42,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(thinningBook(symbol, 4, 105))
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish an exhaustion reading", func() {
 			So(err, ShouldBeNil)
@@ -96,7 +97,7 @@ func TestSignalMeasure(t *testing.T) {
 			0.5,
 		)
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should withhold until history is populated", func() {
 			So(err, ShouldBeNil)
@@ -179,6 +180,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(nil)
+		_, _ =  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }

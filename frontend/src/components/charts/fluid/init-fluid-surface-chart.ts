@@ -37,6 +37,7 @@ export const initFluidSurfaceChart = async (
 		rootElement,
 		{
 			theme: appTheme.SciChartJsTheme,
+			freezeWhenOutOfView: true,
 		},
 	);
 

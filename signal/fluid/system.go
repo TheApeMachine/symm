@@ -1,14 +1,15 @@
 package fluid
 
 import (
-	
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	disruptor "github.com/smarty/go-disruptor"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -33,6 +34,11 @@ type System struct {
 	resyncLastFlush time.Time
 	gauge           *telemetry.Gauge
 	feedback        *market.Feedback
+	ingest          disruptor.Disruptor
+	ingestHandler   *ingestHandler
+	ingestRing      []ingestEvent
+	ingestWaitGroup sync.WaitGroup
+	ingestErr       atomic.Value
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -54,7 +60,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		return nil
 	}
 
-	return &System{
+	system := &System{
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    pool,
@@ -63,6 +69,15 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		symbols: sync.Map{},
 		gauge:   gauge,
 	}
+
+	if ingestErr := system.startIngest(); ingestErr != nil {
+		cancel()
+		errnie.Error(ingestErr)
+
+		return nil
+	}
+
+	return system
 }
 
 func (system *System) Tick() error {
@@ -83,7 +98,10 @@ func (system *System) Tick() error {
 
 		switch message.Type {
 		case "symbols":
-			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			symbols, symbolOk := message.Value.([]string)
+			if symbolOk {
+				system.gauge.RegisterSymbols(symbols)
+			}
 			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
@@ -138,7 +156,14 @@ func (system *System) Tick() error {
 				errnie.Error(feedErr)
 			}
 
-			continue
+			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
+
+			if signal == nil {
+				errnie.Error(errors.New("fluid: symbol not found"), "fluid: symbol not found")
+				continue
+			}
+
+			warmed = signal.Record(book)
 		case "feedback":
 			var feedback *market.Feedback
 
@@ -157,7 +182,13 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		measurement, measureErr := signal.Measure(system.feedback)
+		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
+
+		if errnie.Error(eventErr) != nil {
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback, eventAt)
 
 		if errnie.Error(measureErr) != nil {
 			continue
@@ -174,28 +205,58 @@ func (system *System) Tick() error {
 			signal.symbol,
 			warmed,
 		))
+
+		errnie.Error(system.publishFieldSnapshot(eventAt))
 	}
 }
 
 func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) {
-	state := system.loadSymbol(trade.Symbol)
-
-	if err := state.FeedTradeSide(trade.Timestamp, trade.Qty, trade.Side); err != nil {
+	if err := system.publishIngest(ingestEvent{
+		symbol:    trade.Symbol,
+		kind:      ingestTrade,
+		tradeAt:   trade.Timestamp,
+		tradeQty:  trade.Qty,
+		tradeSide: trade.Side,
+	}); err != nil {
 		errnie.Error(err)
 	}
 }
 
 func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) error {
-	state := system.loadSymbol(ticker.Symbol)
+	tickerAt, tickerErr := krakenmarket.EventTimeFromTicker(ticker)
 
-	return state.FeedTicker(*ticker)
+	if tickerErr != nil {
+		return tickerErr
+	}
+
+	return system.publishIngest(ingestEvent{
+		symbol:   ticker.Symbol,
+		kind:     ingestTicker,
+		ticker:   *ticker,
+		tickerAt: tickerAt,
+	})
 }
 
 func (system *System) feedBook(book *krakenmarket.Book) error {
+	bookAt, bookErr := krakenmarket.EventTimeFromBook(book)
+
+	if bookErr != nil {
+		return bookErr
+	}
+
+	if err := system.publishIngest(ingestEvent{
+		symbol: book.Symbol,
+		kind:   ingestBook,
+		book:   *book,
+		bookAt: bookAt,
+	}); err != nil {
+		return err
+	}
+
 	state := system.loadSymbol(book.Symbol)
 
-	if err := state.FeedBook(*book); err != nil {
-		return err
+	if state == nil {
+		return errnie.Error(fmt.Errorf("fluid: symbol %q not found", book.Symbol))
 	}
 
 	if !state.Diverged() {
@@ -317,5 +378,7 @@ func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal
 
 func (system *System) Close() error {
 	system.cancel()
+	system.closeIngest()
+
 	return system.bus.Close()
 }

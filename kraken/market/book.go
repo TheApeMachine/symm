@@ -2,6 +2,7 @@ package market
 
 import (
 	"encoding/json"
+	"fmt"
 	"hash"
 	"hash/crc32"
 	"sort"
@@ -70,6 +71,8 @@ type Book struct {
 	Checksum  int64       `json:"checksum"`
 	Timestamp string      `json:"timestamp"`
 	Type      string      `json:"-"`
+	bidSide   *bookSide
+	askSide   *bookSide
 }
 
 /*
@@ -86,6 +89,21 @@ func (book *Book) IsSnapshot() bool {
 	return book.Type == BookSnapshot
 }
 
+func (book *Book) ensureSides() {
+	if book.bidSide == nil {
+		book.bidSide = newBidSide()
+	}
+
+	if book.askSide == nil {
+		book.askSide = newAskSide()
+	}
+}
+
+func (book *Book) refreshSlices(depth int) {
+	book.Bids = book.bidSide.levels(depth)
+	book.Asks = book.askSide.levels(depth)
+}
+
 /*
 Fold merges one Kraken book frame into the receiver per the v2 book channel guide.
 
@@ -97,12 +115,13 @@ func (book *Book) Fold(update Book, depth int) {
 		depth = bookChecksumLevels
 	}
 
+	book.ensureSides()
+
 	if update.IsSnapshot() {
 		book.Symbol = update.Symbol
-		book.Bids = book.cloneLevels(update.Bids)
-		book.Asks = book.cloneLevels(update.Asks)
-		book.sortSides()
-		book.truncate(depth)
+		book.bidSide.reset(update.Bids)
+		book.askSide.reset(update.Asks)
+		book.refreshSlices(depth)
 		book.Checksum = update.Checksum
 		book.Timestamp = update.Timestamp
 
@@ -113,9 +132,15 @@ func (book *Book) Fold(update Book, depth int) {
 		book.Symbol = update.Symbol
 	}
 
-	book.Bids = book.mergeBookSide(book.Bids, update.Bids, false)
-	book.Asks = book.mergeBookSide(book.Asks, update.Asks, true)
-	book.truncate(depth)
+	for _, change := range update.Bids {
+		book.bidSide.apply(change)
+	}
+
+	for _, change := range update.Asks {
+		book.askSide.apply(change)
+	}
+
+	book.refreshSlices(depth)
 	book.Checksum = update.Checksum
 	book.Timestamp = update.Timestamp
 }
@@ -129,6 +154,11 @@ func (book *Book) TouchQuote() (mid float64, spread float64, depth float64, ok b
 		return 0, 0, 0, false
 	}
 
+	bid := book.Bids[0].Price
+	ask := book.Asks[0].Price
+	mid = (bid + ask) / 2
+	spread = ask - bid
+
 	for _, level := range book.Bids {
 		depth += level.Qty
 	}
@@ -137,54 +167,7 @@ func (book *Book) TouchQuote() (mid float64, spread float64, depth float64, ok b
 		depth += level.Qty
 	}
 
-	mid = book.Asks[0].Price + book.Bids[0].Price
-	spread = book.Asks[0].Price - book.Bids[0].Price
-
 	return mid, spread, depth, true
-}
-
-/*
-ComputedChecksum returns the Kraken WebSocket v2 CRC32 for this frame's levels.
-*/
-func (book Book) ComputedChecksum() int64 {
-	hasher := crc32.NewIEEE()
-
-	for index := range min(bookChecksumLevels, len(book.Asks)) {
-		writeChecksumField(hasher, book.Asks[index].PriceRaw)
-		writeChecksumField(hasher, book.Asks[index].QtyRaw)
-	}
-
-	for index := range min(bookChecksumLevels, len(book.Bids)) {
-		writeChecksumField(hasher, book.Bids[index].PriceRaw)
-		writeChecksumField(hasher, book.Bids[index].QtyRaw)
-	}
-
-	return int64(hasher.Sum32())
-}
-
-func writeChecksumField(hasher hash.Hash32, raw string) {
-	started := false
-	scratch := []byte{0}
-
-	for index := range len(raw) {
-		character := raw[index]
-
-		if character == '.' {
-			continue
-		}
-
-		if character == '0' && !started {
-			continue
-		}
-
-		started = true
-		scratch[0] = character
-		hasher.Write(scratch)
-	}
-
-	if !started {
-		hasher.Write([]byte{'0'})
-	}
 }
 
 func (book *Book) sortSides() {
@@ -198,13 +181,63 @@ func (book *Book) sortSides() {
 }
 
 func (book *Book) truncate(depth int) {
-	if len(book.Bids) > depth {
-		book.Bids = book.Bids[:depth]
+	if depth <= 0 || len(book.Bids) <= depth {
+		return
 	}
+
+	book.Bids = book.Bids[:depth]
 
 	if len(book.Asks) > depth {
 		book.Asks = book.Asks[:depth]
 	}
+}
+
+/*
+ComputedChecksum returns the CRC32 over the top ten levels per side.
+*/
+func (book *Book) ComputedChecksum() int64 {
+	return int64(book.checksum())
+}
+
+func (book *Book) checksum() uint32 {
+	hasher := crc32.NewIEEE()
+
+	book.writeChecksumSide(hasher, book.Bids, bookChecksumLevels)
+	book.writeChecksumSide(hasher, book.Asks, bookChecksumLevels)
+
+	return hasher.Sum32()
+}
+
+func (book *Book) writeChecksumSide(hasher hash.Hash32, levels []BookLevel, depth int) {
+	limit := depth
+
+	if len(levels) < limit {
+		limit = len(levels)
+	}
+
+	for index := 0; index < limit; index++ {
+		level := levels[index]
+		priceRaw := level.PriceRaw
+		qtyRaw := level.QtyRaw
+
+		if priceRaw == "" {
+			priceRaw = formatChecksumFloat(level.Price)
+		}
+
+		if qtyRaw == "" {
+			qtyRaw = formatChecksumFloat(level.Qty)
+		}
+
+		_, err := fmt.Fprintf(hasher, "%s%s", priceRaw, qtyRaw)
+
+		if errnie.Error(err) != nil {
+			return
+		}
+	}
+}
+
+func formatChecksumFloat(value float64) string {
+	return fmt.Sprintf("%.10f", value)
 }
 
 func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
@@ -216,67 +249,4 @@ func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
 	copy(out, levels)
 
 	return out
-}
-
-func (book *Book) mergeBookSide(existing, delta []BookLevel, askSide bool) []BookLevel {
-	levels := existing
-
-	for _, change := range delta {
-		levels = book.applyLevelChange(levels, change, askSide)
-	}
-
-	return levels
-}
-
-func (book *Book) applyLevelChange(
-	levels []BookLevel, change BookLevel, askSide bool,
-) []BookLevel {
-	index := book.levelIndex(levels, change.Price, askSide)
-
-	if change.Qty <= 0 {
-		if index < len(levels) && levels[index].Price == change.Price {
-			return append(levels[:index], levels[index+1:]...)
-		}
-
-		return levels
-	}
-
-	if index < len(levels) && levels[index].Price == change.Price {
-		levels[index] = change
-
-		return levels
-	}
-
-	levels = append(levels, BookLevel{})
-	copy(levels[index+1:], levels[index:])
-	levels[index] = change
-
-	return levels
-}
-
-func (book *Book) levelIndex(levels []BookLevel, price float64, askSide bool) int {
-	low := 0
-	high := len(levels)
-
-	for low < high {
-		mid := low + (high-low)/2
-
-		if askSide {
-			if levels[mid].Price < price {
-				low = mid + 1
-			} else {
-				high = mid
-			}
-
-			continue
-		}
-
-		if levels[mid].Price > price {
-			low = mid + 1
-		} else {
-			high = mid
-		}
-	}
-
-	return low
 }

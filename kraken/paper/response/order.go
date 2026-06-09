@@ -55,7 +55,16 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 	case trading.MethodAddOrder:
 		var params trading.AddParams
 
-		if err := sonic.Unmarshal(frame.Params, &params); err != nil || params.ClOrdID == "" {
+		switch typed := frame.Params.(type) {
+		case trading.AddParams:
+			params = typed
+		case *trading.AddParams:
+			params = *typed
+		default:
+			return nil
+		}
+
+		if params.ClOrdID == "" {
 			return nil
 		}
 
@@ -65,7 +74,16 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 	case trading.MethodCancelOrder:
 		var params trading.CancelParams
 
-		if err := sonic.Unmarshal(frame.Params, &params); err != nil || len(params.OrderID) == 0 {
+		switch typed := frame.Params.(type) {
+		case trading.CancelParams:
+			params = typed
+		case *trading.CancelParams:
+			params = *typed
+		default:
+			return nil
+		}
+
+		if len(params.OrderID) == 0 {
 			return nil
 		}
 
@@ -75,7 +93,16 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 	case trading.MethodAmendOrder:
 		var params trading.AmendParams
 
-		if err := sonic.Unmarshal(frame.Params, &params); err != nil || params.OrderID == "" {
+		switch typed := frame.Params.(type) {
+		case trading.AmendParams:
+			params = typed
+		case *trading.AmendParams:
+			params = *typed
+		default:
+			return nil
+		}
+
+		if params.OrderID == "" {
 			return nil
 		}
 

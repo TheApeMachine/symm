@@ -1,12 +1,12 @@
 package correlation
 
 import (
-	
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -56,17 +56,26 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		return nil
 	}
 
+	crossSection, crossSectionErr := newCrossSection(
+		minReturnBars(measurementsCapacity),
+		measurementsCapacity,
+	)
+
+	if crossSectionErr != nil {
+		cancel()
+		errnie.Error(crossSectionErr)
+
+		return nil
+	}
+
 	return &System{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		bus:     bus,
-		signals: sync.Map{},
-		gauge:   gauge,
-		crossSection: newCrossSection(
-			minReturnBars(measurementsCapacity),
-			measurementsCapacity,
-		),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		bus:          bus,
+		signals:      sync.Map{},
+		gauge:        gauge,
+		crossSection: crossSection,
 	}
 }
 
@@ -96,7 +105,10 @@ func (system *System) Tick() error {
 
 		switch message.Type {
 		case "symbols":
-			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			symbols, symbolOk := message.Value.([]string)
+			if symbolOk {
+				system.gauge.RegisterSymbols(symbols)
+			}
 			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
@@ -165,7 +177,13 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		measurement, measureErr := signal.Measure(system.feedback)
+		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
+
+		if errnie.Error(eventErr) != nil {
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback, eventAt)
 
 		if errnie.Error(measureErr) != nil {
 			continue
@@ -228,24 +246,33 @@ func (system *System) Close() error {
 }
 
 type crossSection struct {
-	universe sync.Map
-	minBars  int
-	capacity int
+	universe    sync.Map
+	minBars     int
+	capacity    int
+	matchWindow time.Duration
 }
 
 type symbolState struct {
-	lastPrice float64
-	returns   []float64
+	lastPrice  float64
+	lastTickAt time.Time
+	returns    []float64
 }
 
-func newCrossSection(minBars, capacity int) *crossSection {
-	return &crossSection{
-		minBars:  minBars,
-		capacity: capacity,
+func newCrossSection(minBars, capacity int) (*crossSection, error) {
+	matchWindow := viper.GetDuration("signals.trade_match_window")
+
+	if matchWindow <= 0 {
+		return nil, fmt.Errorf("signals.trade_match_window must be positive")
 	}
+
+	return &crossSection{
+		minBars:     minBars,
+		capacity:    capacity,
+		matchWindow: matchWindow,
+	}, nil
 }
 
-func (crossSection *crossSection) publishPrice(symbol string, price float64) {
+func (crossSection *crossSection) publishPrice(symbol string, price float64, at time.Time) {
 	if price <= 0 {
 		return
 	}
@@ -256,6 +283,12 @@ func (crossSection *crossSection) publishPrice(symbol string, price float64) {
 	if !ok {
 		return
 	}
+
+	if at.IsZero() {
+		return
+	}
+
+	state.lastTickAt = at
 
 	if state.lastPrice <= 0 {
 		state.lastPrice = price
@@ -273,6 +306,24 @@ func (crossSection *crossSection) publishPrice(symbol string, price float64) {
 	if len(state.returns) > crossSection.capacity {
 		state.returns = state.returns[len(state.returns)-crossSection.capacity:]
 	}
+}
+
+func (crossSection *crossSection) stalenessWeight(updatedAt time.Time, now time.Time) float64 {
+	elapsed := now.Sub(updatedAt)
+
+	if elapsed >= crossSection.matchWindow {
+		return 0
+	}
+
+	return math.Exp(-float64(elapsed) / float64(crossSection.matchWindow))
+}
+
+func (crossSection *crossSection) symbolFresh(state *symbolState, now time.Time) bool {
+	if state == nil || state.lastTickAt.IsZero() {
+		return false
+	}
+
+	return crossSection.stalenessWeight(state.lastTickAt, now) > 0
 }
 
 func (crossSection *crossSection) symbolReturns(symbol string, window int) []float64 {
@@ -293,13 +344,13 @@ func (crossSection *crossSection) symbolReturns(symbol string, window int) []flo
 	return append([]float64(nil), state.returns[start:]...)
 }
 
-func (crossSection *crossSection) marketReturns(window int) []float64 {
+func (crossSection *crossSection) marketReturns(window int, at time.Time) []float64 {
 	series := make([][]float64, 0)
 
 	crossSection.universe.Range(func(_, value any) bool {
 		state, ok := value.(*symbolState)
 
-		if !ok || len(state.returns) < window {
+		if !ok || len(state.returns) < window || !crossSection.symbolFresh(state, at) {
 			return true
 		}
 
@@ -328,8 +379,8 @@ func (crossSection *crossSection) marketReturns(window int) []float64 {
 	return market
 }
 
-func (crossSection *crossSection) peerCorrelations(window int) []float64 {
-	market := crossSection.marketReturns(window)
+func (crossSection *crossSection) peerCorrelations(window int, at time.Time) []float64 {
+	market := crossSection.marketReturns(window, at)
 
 	if len(market) < window {
 		return nil
@@ -341,6 +392,18 @@ func (crossSection *crossSection) peerCorrelations(window int) []float64 {
 		symbol, ok := key.(string)
 
 		if !ok {
+			return true
+		}
+
+		raw, loaded := crossSection.universe.Load(symbol)
+
+		if !loaded {
+			return true
+		}
+
+		state, ok := raw.(*symbolState)
+
+		if !ok || !crossSection.symbolFresh(state, at) {
 			return true
 		}
 
@@ -358,13 +421,25 @@ func (crossSection *crossSection) peerCorrelations(window int) []float64 {
 	return correlations
 }
 
-func (crossSection *crossSection) peerEnergies(window int) []float64 {
+func (crossSection *crossSection) peerEnergies(window int, at time.Time) []float64 {
 	energies := make([]float64, 0)
 
 	crossSection.universe.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 
 		if !ok {
+			return true
+		}
+
+		raw, loaded := crossSection.universe.Load(symbol)
+
+		if !loaded {
+			return true
+		}
+
+		state, ok := raw.(*symbolState)
+
+		if !ok || !crossSection.symbolFresh(state, at) {
 			return true
 		}
 
@@ -380,6 +455,22 @@ func (crossSection *crossSection) peerEnergies(window int) []float64 {
 	})
 
 	return energies
+}
+
+func (crossSection *crossSection) symbolAge(symbol string, now time.Time) time.Duration {
+	raw, ok := crossSection.universe.Load(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	state, ok := raw.(*symbolState)
+
+	if !ok || state.lastTickAt.IsZero() {
+		return 0
+	}
+
+	return now.Sub(state.lastTickAt)
 }
 
 func (crossSection *crossSection) minBarsRequired() int {

@@ -3,15 +3,29 @@ package correlation
 import (
 	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
+func testCrossSection(minBars, capacity int) *crossSection {
+	viper.Set("signals.trade_match_window", time.Minute)
+
+	crossSection, err := newCrossSection(minBars, capacity)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return crossSection
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a correlated cross-section", t, func() {
-		crossSection := newCrossSection(4, 16)
+		crossSection := testCrossSection(4, 16)
 
 		symbols := []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"}
 		prices := map[string]float64{
@@ -25,7 +39,7 @@ func TestSignalMeasure(t *testing.T) {
 		for _, shock := range shocks {
 			for _, symbol := range symbols {
 				prices[symbol] *= shock
-				crossSection.publishPrice(symbol, prices[symbol])
+				crossSection.publishPrice(symbol, prices[symbol], time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 			}
 		}
 
@@ -44,7 +58,7 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    1,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify systemic herd", func() {
 			So(err, ShouldBeNil)
@@ -55,7 +69,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a decoupled mover", t, func() {
-		crossSection := newCrossSection(4, 16)
+		crossSection := testCrossSection(4, 16)
 
 		herdPrices := map[string]float64{
 			"BTC/EUR": 100,
@@ -68,9 +82,9 @@ func TestSignalMeasure(t *testing.T) {
 		for index, shock := range shocks {
 			herdPrices["BTC/EUR"] *= shock
 			herdPrices["ETH/EUR"] *= shock
-			crossSection.publishPrice("BTC/EUR", herdPrices["BTC/EUR"])
-			crossSection.publishPrice("ETH/EUR", herdPrices["ETH/EUR"])
-			crossSection.publishPrice("ALT/EUR", altPrices[index])
+			crossSection.publishPrice("BTC/EUR", herdPrices["BTC/EUR"], time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			crossSection.publishPrice("ETH/EUR", herdPrices["ETH/EUR"], time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			crossSection.publishPrice("ALT/EUR", altPrices[index], time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		}
 
 		signal := NewSignal(
@@ -88,7 +102,7 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    1,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify decoupled alpha", func() {
 			So(err, ShouldBeNil)
@@ -97,7 +111,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given insufficient warmup", t, func() {
-		crossSection := newCrossSection(8, 16)
+		crossSection := testCrossSection(8, 16)
 
 		signal := NewSignal(
 			"BTC/EUR",
@@ -108,14 +122,14 @@ func TestSignalMeasure(t *testing.T) {
 			0.5,
 		)
 
-		crossSection.publishPrice("BTC/EUR", 100)
+		crossSection.publishPrice("BTC/EUR", 100, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "BTC/EUR",
 			Price:  100,
 			Qty:    1,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should withhold until the window is full", func() {
 			So(err, ShouldBeNil)
@@ -125,12 +139,13 @@ func TestSignalMeasure(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	crossSection := newCrossSection(4, 64)
+	crossSection := testCrossSection(4, 64)
 
 	for step := 0; step < 8; step++ {
-		crossSection.publishPrice("BTC/EUR", 100*math.Pow(1.01, float64(step)))
-		crossSection.publishPrice("ETH/EUR", 50*math.Pow(1.01, float64(step)))
-		crossSection.publishPrice("SOL/EUR", 25*math.Pow(1.01, float64(step)))
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		crossSection.publishPrice("BTC/EUR", 100*math.Pow(1.01, float64(step)), eventAt)
+		crossSection.publishPrice("ETH/EUR", 50*math.Pow(1.01, float64(step)), eventAt)
+		crossSection.publishPrice("SOL/EUR", 25*math.Pow(1.01, float64(step)), eventAt)
 	}
 
 	signal := NewSignal(
@@ -151,6 +166,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(nil)
+		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -32,44 +32,48 @@ var socket *WebSocket
 var socketOnce sync.Once
 
 type WebSocket struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q[any]
-	conn          *websocket.Conn
-	tokenProvider *TokenProvider
-	bus           *internal.Bus
-	recorder      io.Writer
-	streams       *sync.Map
-	latencies     *ring.Ring
-	isConnected   atomic.Bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	conn        *websocket.Conn
+	rest        *Rest
+	bus         *internal.Bus
+	recorder    io.Writer
+	streams     *sync.Map
+	latencies   *ring.Ring
+	isConnected atomic.Bool
 }
 
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	ctx, cancel := context.WithCancel(ctx)
-
-	tokenProvider, err := NewTokenProvider(
-		ctx,
-		os.Getenv("SYMM_KRAKEN_API_KEY"),
-		os.Getenv("SYMM_KRAKEN_API_SECRET"),
-	)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
+	var initErr error
 
 	socketOnce.Do(func() {
+		wsCtx, cancel := context.WithCancel(ctx)
+
+		apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
+		apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
+
+		rest, err := NewRest(wsCtx, apiKey, apiSecret, public.EndpointWebSocketsToken)
+
+		if err != nil {
+			cancel()
+			initErr = err
+			return
+		}
+
+		types.BindTokenRest(rest)
+
 		socket = &WebSocket{
-			ctx:           ctx,
-			cancel:        cancel,
-			pool:          pool,
-			tokenProvider: tokenProvider,
+			ctx:    wsCtx,
+			cancel: cancel,
+			pool:   pool,
+			rest:   rest,
 			bus: internal.NewBus(
-				ctx,
+				wsCtx,
 				pool,
 				[]string{"raw", "level3", "kraken:public", "ui"},
 				[]string{"raw", "level3", "kraken:public", "kraken:private"},
@@ -78,8 +82,13 @@ func NewWebSocket(
 			latencies: ring.New(64),
 		}
 
-		errnie.Info("kraken/public websocket ready")
+		errnie.Info("kraken/private websocket ready")
 	})
+
+	if initErr != nil {
+		errnie.Error(initErr)
+		return nil
+	}
 
 	return socket
 }
@@ -87,9 +96,11 @@ func NewWebSocket(
 func (ws *WebSocket) Connect(
 	endpoint public.EndpointType, n uint64,
 ) error {
-	if ws.isConnected.Load() {
+	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
+
+	ws.isConnected.Store(false)
 
 	var response *http.Response
 
@@ -143,7 +154,26 @@ func (ws *WebSocket) Tick() (err error) {
 	defer ticker.Stop()
 
 	for {
-		if ws.err = errnie.Error(ws.Connect(public.WebSocketAuthURL, 0)); ws.err != nil {
+		paperLevel3 := viper.GetString("trading.model") == "paper" && viper.GetBool("market.l3_enabled")
+
+		if paperLevel3 || viper.GetString("trading.model") != "paper" {
+			endpoint := public.WebSocketAuthURL
+
+			if paperLevel3 {
+				endpoint = public.WebSocketL3URL
+			}
+
+			if ws.err = errnie.Error(ws.Connect(endpoint, 0)); ws.err != nil {
+				continue
+			}
+		} else {
+			select {
+			case <-ws.ctx.Done():
+				return ws.ctx.Err()
+			default:
+				time.Sleep(viper.GetDuration("market.ws_ping_interval"))
+			}
+
 			continue
 		}
 
@@ -172,8 +202,12 @@ func (ws *WebSocket) Tick() (err error) {
 			qvaluePool.Put(slot)
 
 			if viper.GetString("trading.model") == "paper" {
-				qvaluePool.Put(message)
-				continue
+				switch message.Type {
+				case public.Level3Channel, "unsubscribe":
+				default:
+					qvaluePool.Put(message)
+					continue
+				}
 			}
 
 			frame, ok := message.Value.(types.KrakenMessage)
@@ -183,21 +217,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			token, err := ws.tokenProvider.Token(ws.ctx)
-
-			if errnie.Error(err) != nil {
-				qvaluePool.Put(message)
-				continue
-			}
-
-			outbound, frameErr := frameWithToken(frame, token)
-
-			if errnie.Error(frameErr) != nil {
-				qvaluePool.Put(message)
-				continue
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(outbound)) != nil {
+			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
 				qvaluePool.Put(message)
 				ws.disconnect()
 				continue
@@ -206,14 +226,30 @@ func (ws *WebSocket) Tick() (err error) {
 			qvaluePool.Put(message)
 		}
 
-		if !ws.isConnected.Load() {
+		if !ws.isConnected.Load() || ws.conn == nil {
 			continue
 		}
 
 		message := types.NewSocketMessage()
 
-		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
+		readWait := viper.GetDuration("market.ws_ping_interval")
+
+		if ws.err = ws.conn.SetReadDeadline(time.Now().Add(readWait)); ws.err != nil {
 			message.Release()
+			errnie.Error(ws.err)
+			ws.disconnect()
+			continue
+		}
+
+		if ws.err = ws.conn.ReadJSON(message); ws.err != nil {
+			message.Release()
+
+			var netErr net.Error
+
+			if !errors.As(ws.err, &netErr) || !netErr.Timeout() {
+				errnie.Error(ws.err)
+			}
+
 			ws.disconnect()
 			continue
 		}
@@ -266,14 +302,17 @@ func (ws *WebSocket) Tick() (err error) {
 
 			ws.bus.Send("raw", "executions", executions)
 		case "level3":
-			level3 := market.Level3Update{}
+			level3Updates := make([]market.Level3Update, 0)
 
-			if err := errnie.Error(message.Unmarshal(&level3)); err != nil {
+			if err := errnie.Error(message.Unmarshal(&level3Updates)); err != nil || len(level3Updates) == 0 {
 				message.Release()
 				continue
 			}
 
-			ws.bus.Send("raw", "level3", level3)
+			for index := range level3Updates {
+				update := level3Updates[index]
+				ws.bus.Send("raw", "level3", &update)
+			}
 		}
 
 		message.Release()
@@ -346,28 +385,6 @@ func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
 			return true
 		})
 	}
-}
-
-func frameWithToken(frame types.KrakenMessage, token string) (types.KrakenMessage, error) {
-	var params map[string]any
-
-	if err := sonic.Unmarshal(frame.Params, &params); err != nil {
-		return types.KrakenMessage{}, err
-	}
-
-	params["token"] = token
-
-	raw, err := sonic.Marshal(params)
-
-	if err != nil {
-		return types.KrakenMessage{}, err
-	}
-
-	return types.KrakenMessage{
-		Method: frame.Method,
-		Params: raw,
-		ReqID:  frame.ReqID,
-	}, nil
 }
 
 func (ws *WebSocket) Close() error {

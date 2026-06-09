@@ -8,6 +8,7 @@ const (
 	EntityTrade
 	EntityTick
 	EntityBook
+	EntityMeasurement
 )
 
 type Entity struct {

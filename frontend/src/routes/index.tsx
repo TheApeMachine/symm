@@ -27,11 +27,8 @@ import {
 	ingestFluidWire,
 } from "#/components/charts/fluid/fluid-push-bridge";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
-import {
-	type PredictionBridge,
-	PredictionChart,
-} from "#/components/charts/prediction/PredictionChart";
-import { ingestPredictionWire } from "#/components/charts/prediction/prediction-wire";
+import { PredictionChart } from "#/components/charts/prediction/PredictionChart";
+import { ingestPredictionWire } from "#/components/charts/prediction/prediction-chart-wire";
 import { SpiderChart } from "#/components/charts/spider/spider";
 import {
 	createSpiderBridge,
@@ -102,14 +99,12 @@ const WsFeed = ({
 	heatmapRef,
 	surpriseRef,
 	spiderRef,
-	predictionRef,
 }: {
 	fluidRef: RefObject<FluidPushBridge>;
 	gaugeRefs: RefObject<Record<string, SignalGaugeBridge>>;
 	heatmapRef: RefObject<SignalHeatmapBridge>;
 	surpriseRef: RefObject<SignalSurpriseHeatmapBridge>;
 	spiderRef: RefObject<SpiderBridge>;
-	predictionRef: RefObject<PredictionBridge>;
 }) => {
 	useWebSocket(socketUrl, {
 		...statusSocketHandlers,
@@ -140,7 +135,7 @@ const WsFeed = ({
 				}
 
 				if (raw.chart === "prediction") {
-					ingestPredictionWire(predictionRef.current, raw);
+					ingestPredictionWire(raw);
 
 					return;
 				}
@@ -192,12 +187,6 @@ const DashboardLayout = () => {
 		ready: false,
 	});
 	const spiderRef = useRef<SpiderBridge>(createSpiderBridge());
-	const predictionRef = useRef<PredictionBridge>({
-		append: () => {},
-		ready: false,
-		pending: [],
-	});
-
 	return (
 		<Flex.Column gap={2} fullWidth fullHeight>
 			<WsFeed
@@ -206,7 +195,6 @@ const DashboardLayout = () => {
 				heatmapRef={heatmapRef}
 				surpriseRef={surpriseRef}
 				spiderRef={spiderRef}
-				predictionRef={predictionRef}
 			/>
 			<div className="flex w-full shrink-0 gap-2" style={{ height: "180px" }}>
 				{TOP.map((source) => (
@@ -219,7 +207,7 @@ const DashboardLayout = () => {
 			</div>
 			<Flex.Row gap={2} fullWidth fullHeight>
 				<div
-					className="flex flex-col h-full gap-2 shrink-0"
+					className="flex h-full shrink-0 flex-col gap-2"
 					style={{ width: "180px" }}
 				>
 					{LEFT.map((source) => (
@@ -230,7 +218,7 @@ const DashboardLayout = () => {
 						/>
 					))}
 				</div>
-				<CardFrame className="w-full h-full">
+				<CardFrame className="h-full w-full">
 					<CardFrameHeader className="w-full">
 						<CardFrameAction className="w-full"></CardFrameAction>
 					</CardFrameHeader>
@@ -258,7 +246,7 @@ const DashboardLayout = () => {
 												size={16}
 											/>
 										),
-										component: <PredictionChart bridgeRef={predictionRef} />,
+										component: <PredictionChart />,
 									},
 									{
 										label: "Signal",
@@ -332,7 +320,7 @@ const DashboardLayout = () => {
 					</Card>
 				</CardFrame>
 				<div
-					className="flex flex-col h-full gap-2 shrink-0"
+					className="flex h-full shrink-0 flex-col gap-2"
 					style={{ width: "180px" }}
 				>
 					{RIGHT.map((source) => (

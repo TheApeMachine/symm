@@ -218,7 +218,7 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 			0.5,
 		)
 
-		measurement, err := signal.fromLag()
+		measurement, err := signal.fromLag(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish anchor stall on the anchor symbol", func() {
 			So(err, ShouldBeNil)

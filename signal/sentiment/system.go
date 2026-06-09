@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -15,7 +16,6 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/telemetry"
 )
 
@@ -62,6 +62,15 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		return nil
 	}
 
+	matchWindow := viper.GetDuration("signals.trade_match_window")
+
+	if matchWindow <= 0 {
+		cancel()
+		errnie.Error(fmt.Errorf("signals.trade_match_window must be positive"))
+
+		return nil
+	}
+
 	return &System{
 		ctx:     ctx,
 		cancel:  cancel,
@@ -71,6 +80,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		gauge:   gauge,
 		crossSection: &crossSection{
 			breadthHistory: ring.New(breadthHistoryCapacity),
+			matchWindow:    matchWindow,
 		},
 	}
 }
@@ -91,7 +101,10 @@ func (system *System) Tick() error {
 
 		switch message.Type {
 		case "symbols":
-			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			symbols, symbolOk := message.Value.([]string)
+			if symbolOk {
+				system.gauge.RegisterSymbols(symbols)
+			}
 			continue
 		case "trades":
 			var (
@@ -166,7 +179,13 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		measurement, measureErr := signal.Measure(system.feedback)
+		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
+
+		if errnie.Error(eventErr) != nil {
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback, eventAt)
 
 		if errnie.Error(measureErr) != nil {
 			continue
@@ -231,46 +250,85 @@ func (system *System) Close() error {
 type crossSection struct {
 	universe       sync.Map
 	breadthHistory *ring.Ring
+	matchWindow    time.Duration
 }
 
-func (crossSection *crossSection) publishChange(symbol string, change float64) {
-	crossSection.universe.Store(symbol, change)
+type changeSnapshot struct {
+	change    float64
+	updatedAt time.Time
 }
 
-func (crossSection *crossSection) snapshot() []float64 {
+func (crossSection *crossSection) publishChange(symbol string, change float64, at time.Time) {
+	if at.IsZero() {
+		return
+	}
+
+	crossSection.universe.Store(symbol, changeSnapshot{
+		change:    change,
+		updatedAt: at,
+	})
+}
+
+func (crossSection *crossSection) stalenessWeight(updatedAt time.Time, now time.Time) float64 {
+	elapsed := now.Sub(updatedAt)
+
+	if elapsed >= crossSection.matchWindow {
+		return 0
+	}
+
+	return math.Exp(-float64(elapsed) / float64(crossSection.matchWindow))
+}
+
+func (crossSection *crossSection) weightedSnapshot(now time.Time) ([]float64, []float64) {
 	changes := make([]float64, 0)
+	weights := make([]float64, 0)
 
 	crossSection.universe.Range(func(_, value any) bool {
-		change, ok := value.(float64)
+		entry, ok := value.(changeSnapshot)
 
-		if !ok {
+		if !ok || entry.updatedAt.IsZero() {
 			return true
 		}
 
-		changes = append(changes, change)
+		weight := crossSection.stalenessWeight(entry.updatedAt, now)
+
+		if weight <= 0 {
+			return true
+		}
+
+		changes = append(changes, entry.change)
+		weights = append(weights, weight)
 
 		return true
 	})
 
-	return changes
+	return changes, weights
 }
 
-func (crossSection *crossSection) breadth() float64 {
-	changes := crossSection.snapshot()
+func (crossSection *crossSection) breadth(at time.Time) float64 {
+	changes, weights := crossSection.weightedSnapshot(at)
 
 	if len(changes) == 0 {
 		return 0
 	}
 
-	positive := 0
+	positiveWeight := 0.0
+	totalWeight := 0.0
 
-	for _, change := range changes {
+	for index, change := range changes {
+		weight := weights[index]
+		totalWeight += weight
+
 		if change > 0 {
-			positive++
+			positiveWeight += weight
 		}
 	}
 
-	return float64(positive) / float64(len(changes))
+	if totalWeight <= 0 {
+		return 0
+	}
+
+	return positiveWeight / totalWeight
 }
 
 func (crossSection *crossSection) recordBreadth(breadth float64) {
@@ -278,25 +336,53 @@ func (crossSection *crossSection) recordBreadth(breadth float64) {
 	crossSection.breadthHistory = crossSection.breadthHistory.Next()
 }
 
-func (crossSection *crossSection) majorityThreshold() float64 {
-	changes := crossSection.snapshot()
-	universeSize := len(changes)
+func (crossSection *crossSection) majorityThreshold(at time.Time) float64 {
+	_, weights := crossSection.weightedSnapshot(at)
+	freshCount := len(weights)
 
-	if universeSize <= 0 {
+	if freshCount <= 0 {
 		return 1
 	}
 
-	required := universeSize/2 + 1
+	required := freshCount/2 + 1
 
-	return float64(required) / float64(universeSize)
+	return float64(required) / float64(freshCount)
 }
 
-func (crossSection *crossSection) isLeader(symbolChange float64) bool {
-	changes := crossSection.snapshot()
-
-	if symbolChange <= 0 || len(changes) == 0 {
+func (crossSection *crossSection) isLeader(symbol string, symbolChange float64, at time.Time) bool {
+	if symbolChange <= 0 {
 		return false
 	}
 
-	return symbolChange >= numeric.Max(changes)
+	raw, ok := crossSection.universe.Load(symbol)
+
+	if !ok {
+		return false
+	}
+
+	entry, ok := raw.(changeSnapshot)
+
+	if !ok {
+		return false
+	}
+
+	ownWeight := crossSection.stalenessWeight(entry.updatedAt, at)
+
+	if ownWeight <= 0 {
+		return false
+	}
+
+	leaderScore := symbolChange * ownWeight
+	changes, weights := crossSection.weightedSnapshot(at)
+	best := 0.0
+
+	for index, change := range changes {
+		score := change * weights[index]
+
+		if score > best {
+			best = score
+		}
+	}
+
+	return leaderScore >= best
 }

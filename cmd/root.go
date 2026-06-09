@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
@@ -24,6 +25,7 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/prediction"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
@@ -78,11 +80,13 @@ var (
 				hawkes.NewSystem(systemCtx, pool),
 				leadlag.NewSystem(systemCtx, pool),
 				liquidity.NewSystem(systemCtx, pool),
+				prediction.NewSystem(systemCtx, pool),
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
 				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
+				broker.NewDesk(systemCtx, pool),
 				ui.NewHub(systemCtx, pool),
 			); err != nil {
 				return errnie.Error(err)

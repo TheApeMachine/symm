@@ -2,7 +2,7 @@ package leadlag
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"math"
 	"time"
@@ -54,14 +54,14 @@ The "Beta Drift" Story   : Tight synchronization with the anchor — no idiosync
 | Anchor Stall          | Low             | Low          | Leadership Exhaustion    |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection *crossSection
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	crossSection    *crossSection
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -73,18 +73,18 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		crossSection:    crossSection,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -103,11 +103,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("leadlag: unsupported entity %d", signal.entity.Type),
@@ -115,25 +115,23 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(eventAt time.Time) (logic.Measurement, error) {
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok || trade.Price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: eventAt}, nil
 	}
 
-	at := trade.Timestamp
-
-	if at.IsZero() {
-		at = time.Now()
+	if eventAt.IsZero() {
+		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: trade event time is zero"))
 	}
 
-	signal.crossSection.observePrice(signal.symbol, trade.Price, at)
+	signal.crossSection.observePrice(signal.symbol, trade.Price, eventAt)
 
-	return signal.fromLag()
+	return signal.fromLag(eventAt)
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
@@ -150,12 +148,16 @@ func (signal *Signal) measureTick() (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	signal.crossSection.observePrice(signal.symbol, price, time.Now())
+	if at.IsZero() {
+		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: ticker event time is zero"))
+	}
 
-	return signal.fromLag()
+	signal.crossSection.observePrice(signal.symbol, price, at)
+
+	return signal.fromLag(at)
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
@@ -171,7 +173,7 @@ func (signal *Signal) latest() any {
 	return latest
 }
 
-func (signal *Signal) fromLag() (logic.Measurement, error) {
+func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 	move := signal.crossSection.anchorMove()
 	anchor := signal.crossSection.anchorState()
 
@@ -582,4 +584,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

@@ -3,34 +3,28 @@ import {
 	DiscontinuousDateAxis,
 	EAutoRange,
 	EAxisAlignment,
-	EBaseType,
 	ECursorStyle,
-	EFillPaletteMode,
 	ENumericFormat,
-	EPaletteProviderType,
 	EXyDirection,
 	FastCandlestickRenderableSeries,
 	FastColumnRenderableSeries,
-	type IFillPaletteProvider,
-	type IPointMetadata,
-	type IRenderableSeries,
 	MouseWheelZoomModifier,
 	NumberRange,
 	NumericAxis,
 	OhlcDataSeries,
-	parseColorToUIntArgb,
-	registerType,
 	SciChartSurface,
 	Thickness,
-	type TPaletteProviderDefinition,
 	type TSciChart,
 	XyDataSeries,
 	ZoomExtentsModifier,
 } from "scichart";
 import { SciTraderDarkTheme } from "scichart-financial-tools";
 
+import { VolumePaletteProvider } from "#/components/charts/shared/volume-palette-provider";
+
 export const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
 export const VISIBLE_CANDLE_COUNT = 300;
+const TRADE_FIFO_CAPACITY = VISIBLE_CANDLE_COUNT * 2;
 const DEFAULT_BAR_STEP_SEC = 60;
 const DEFAULT_PAD_SEC = 60;
 export const DEFAULT_RANGE_MATCH_EPSILON_SEC = 1;
@@ -141,8 +135,6 @@ export const resolveFollowVisibleRange = (
 	return new NumberRange(min, max);
 };
 
-const VOLUME_PALETTE_PROVIDER_TYPE = "TradingAnnotationVolumePaletteProvider";
-
 const FOREGROUND_COLOR = "#F5F5F5";
 const VIVID_GREEN = "#67BDAF";
 const VIVID_RED = "#C52E60";
@@ -156,8 +148,6 @@ export type FinancialChartContext = {
 	volumeSeries: FastColumnRenderableSeries;
 	ohlc: OhlcDataSeries;
 	volume: XyDataSeries;
-	openValues: number[];
-	closeValues: number[];
 };
 
 export const createFinancialChartSurface = async (
@@ -169,6 +159,7 @@ export const createFinancialChartSurface = async (
 		{
 			theme: new SciTraderDarkTheme(),
 			padding: new Thickness(10, 10, 10, 10),
+			freezeWhenOutOfView: true,
 		},
 	);
 
@@ -205,17 +196,20 @@ export const createFinancialChartSurface = async (
 	const ohlc = new OhlcDataSeries(wasmContext, {
 		dataSeriesName: title,
 		dataIsSortedInX: true,
+		dataEvenlySpacedInX: true,
 		containsNaN: false,
+		fifoCapacity: TRADE_FIFO_CAPACITY,
+		capacity: TRADE_FIFO_CAPACITY,
 	});
 
 	const volume = new XyDataSeries(wasmContext, {
 		dataSeriesName: "Volume",
 		dataIsSortedInX: true,
+		dataEvenlySpacedInX: true,
 		containsNaN: false,
+		fifoCapacity: TRADE_FIFO_CAPACITY,
+		capacity: TRADE_FIFO_CAPACITY,
 	});
-
-	const openValues: number[] = [];
-	const closeValues: number[] = [];
 
 	const candlestickSeries = new FastCandlestickRenderableSeries(wasmContext, {
 		id: "Candles",
@@ -235,8 +229,7 @@ export const createFinancialChartSurface = async (
 		dataPointWidth: 0.65,
 		yAxisId: Y_AXIS_VOLUME_ID,
 		paletteProvider: new VolumePaletteProvider(
-			openValues,
-			closeValues,
+			ohlc,
 			`${VIVID_GREEN}66`,
 			`${VIVID_RED}66`,
 		),
@@ -255,8 +248,6 @@ export const createFinancialChartSurface = async (
 		volumeSeries,
 		ohlc,
 		volume,
-		openValues,
-		closeValues,
 	};
 };
 
@@ -353,88 +344,3 @@ const configureFinancialPriceAxis = (
 ) => {
 	refreshFinancialPriceAxis(yAxis, ohlc);
 };
-
-class VolumePaletteProvider implements IFillPaletteProvider {
-	public readonly fillPaletteMode: EFillPaletteMode = EFillPaletteMode.SOLID;
-	private readonly openValues: number[];
-	private readonly closeValues: number[];
-	private readonly upColorArgb: number;
-	private readonly downColorArgb: number;
-
-	constructor(
-		openValues: number[],
-		closeValues: number[],
-		upColor: string,
-		downColor: string,
-	) {
-		this.openValues = openValues;
-		this.closeValues = closeValues;
-		this.upColorArgb = parseColorToUIntArgb(upColor);
-		this.downColorArgb = parseColorToUIntArgb(downColor);
-	}
-
-	public onAttached(_parentSeries: IRenderableSeries): void {}
-
-	public onDetached(): void {}
-
-	public overrideFillArgb(
-		_xValue: number,
-		_yValue: number,
-		index: number,
-		_opacity?: number,
-		_metadata?: IPointMetadata,
-	): number {
-		const open = this.openValues[index];
-		const close = this.closeValues[index] ?? open;
-
-		if (close >= open) {
-			return this.upColorArgb;
-		}
-
-		return this.downColorArgb;
-	}
-
-	public overrideStrokeArgb(
-		xValue: number,
-		yValue: number,
-		index: number,
-		opacity?: number,
-		metadata?: IPointMetadata,
-	): number {
-		return this.overrideFillArgb(xValue, yValue, index, opacity, metadata);
-	}
-
-	public toJSON(): TPaletteProviderDefinition {
-		const isUpByIndex = this.openValues.map(
-			(open, index) => (this.closeValues[index] ?? open) >= open,
-		);
-
-		return {
-			type: EPaletteProviderType.Custom,
-			customType: VOLUME_PALETTE_PROVIDER_TYPE,
-			options: {
-				isUpByIndex,
-				upColor: `${VIVID_GREEN}66`,
-				downColor: `${VIVID_RED}66`,
-			},
-		};
-	}
-}
-
-registerType(
-	EBaseType.PaletteProvider,
-	VOLUME_PALETTE_PROVIDER_TYPE,
-	(options?: { isUpByIndex?: boolean[] }) => {
-		const isUpByIndex = options?.isUpByIndex ?? [];
-		const openValues = isUpByIndex.map((isUp) => (isUp ? 0 : 1));
-		const closeValues = isUpByIndex.map((isUp) => (isUp ? 1 : 0));
-
-		return new VolumePaletteProvider(
-			openValues,
-			closeValues,
-			`${VIVID_GREEN}66`,
-			`${VIVID_RED}66`,
-		);
-	},
-	true,
-);

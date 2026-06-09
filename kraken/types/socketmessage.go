@@ -35,15 +35,26 @@ func (sm *SocketMessage) Unmarshal(model any) error {
 }
 
 func (sm *SocketMessage) Release() {
+	sm.Channel = ""
+	sm.Type = ""
+	sm.Method = ""
+	sm.Errors = nil
+	sm.Success = nil
+	sm.Data = nil
+	sm.TimeIn = nil
+	sm.TimeOut = nil
 	socketMessagePool.Put(sm)
 }
 
 type KrakenMessage struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
-	ReqID  int64           `json:"req_id,omitempty"`
+	Method string `json:"method"`
+	Params any    `json:"params"`
+	ReqID  int64  `json:"req_id,omitempty"`
 }
 
+/*
+NewKrakenMessage marshals params for the wire.
+*/
 func NewKrakenMessage(method string, params any, reqID int64) (KrakenMessage, error) {
 	raw, err := sonic.Marshal(params)
 
@@ -53,7 +64,7 @@ func NewKrakenMessage(method string, params any, reqID int64) (KrakenMessage, er
 
 	return KrakenMessage{
 		Method: method,
-		Params: raw,
+		Params: json.RawMessage(raw),
 		ReqID:  reqID,
 	}, nil
 }

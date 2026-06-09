@@ -12,11 +12,10 @@ import {
 	ZoomPanModifier,
 } from "scichart";
 
-import type {
-	PredictionReading,
-	PredictionSeriesKind,
-} from "#/components/charts/prediction/predictions-data-provider";
+import type { PredictionReading } from "#/components/charts/prediction/prediction-chart-wire";
 import { ensureSciChartWasm } from "#/lib/utils";
+
+type PredictionSeriesKind = PredictionReading["kind"];
 
 const SERIES_STYLE: Record<
 	PredictionSeriesKind,
@@ -45,15 +44,22 @@ const SERIES_STYLE: Record<
 	},
 };
 
-export type PredictionsChartControls = {
+export type TPredictionChartInitResult = {
+	sciChartSurface: SciChartSurface;
 	appendReading: (reading: PredictionReading) => void;
 };
 
-export const drawExample = async (rootElement: string | HTMLDivElement) => {
+const PREDICTION_FIFO_CAPACITY = 3600;
+
+export const initPredictionChart = async (
+	rootElement: HTMLDivElement,
+): Promise<TPredictionChartInitResult> => {
 	await ensureSciChartWasm();
 
-	const { wasmContext, sciChartSurface } =
-		await SciChartSurface.create(rootElement);
+	const { wasmContext, sciChartSurface } = await SciChartSurface.create(
+		rootElement,
+		{ freezeWhenOutOfView: true },
+	);
 
 	const xAxis = new NumericAxis(wasmContext, {
 		labelFormat: ENumericFormat.Date_HHMMSS,
@@ -85,8 +91,11 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		const style = SERIES_STYLE[kind];
 		const dataSeries = new XyDataSeries(wasmContext, {
 			dataSeriesName: style.name,
+			dataIsSortedInX: true,
+			dataEvenlySpacedInX: false,
 			containsNaN: false,
-			isSorted: false,
+			fifoCapacity: PREDICTION_FIFO_CAPACITY,
+			capacity: PREDICTION_FIFO_CAPACITY,
 		});
 
 		sciChartSurface.renderableSeries.add(
@@ -106,40 +115,47 @@ export const drawExample = async (rootElement: string | HTMLDivElement) => {
 		new ZoomPanModifier({ modifierGroup: "chart" }),
 	);
 
-	let minX = Number.POSITIVE_INFINITY;
-	let maxX = Number.NEGATIVE_INFINITY;
-	let hasVisibleRange = false;
+	let horizonSec = 60;
+	let rightEdge = Math.floor(Date.now() / 1000) + 60;
 
 	const appendReading = (reading: PredictionReading) => {
+		if (!Number.isFinite(reading.x) || !Number.isFinite(reading.value)) {
+			return;
+		}
+
 		const dataSeries = seriesByKind.get(reading.kind);
 
 		if (!dataSeries) {
 			return;
 		}
 
-		dataSeries.append(reading.x, reading.value);
+		const nativeX = dataSeries.getNativeXValues();
+		const lastIndex = dataSeries.count() - 1;
+		const priorLastX = lastIndex >= 0 ? nativeX.get(lastIndex) : null;
+
+		if (priorLastX === reading.x) {
+			dataSeries.update(lastIndex, reading.value);
+		} else {
+			dataSeries.append(reading.x, reading.value);
+		}
+
+		if (reading.horizon != null && reading.horizon > 0) {
+			horizonSec = reading.horizon;
+		}
+
+		if (reading.kind === "prediction") {
+			rightEdge = reading.x;
+			xAxis.visibleRange = new NumberRange(
+				rightEdge - 2 * horizonSec,
+				rightEdge,
+			);
+		}
+
 		sciChartSurface.invalidateElement();
-
-		if (!Number.isFinite(reading.x) || !Number.isFinite(reading.value)) {
-			return;
-		}
-
-		const priorMaxX = maxX;
-
-		minX = Math.min(minX, reading.x);
-		maxX = Math.max(maxX, reading.x);
-
-		if (!hasVisibleRange || reading.x >= priorMaxX) {
-			const pad = Math.max(2, (maxX - minX) * 0.05);
-
-			xAxis.visibleRange = new NumberRange(minX - pad, maxX + pad);
-			hasVisibleRange = true;
-		}
 	};
 
 	return {
-		wasmContext,
 		sciChartSurface,
-		controls: { appendReading },
+		appendReading,
 	};
 };

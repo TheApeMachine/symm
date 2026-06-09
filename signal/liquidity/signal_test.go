@@ -8,6 +8,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"time"
 )
 
 func TestSignalMeasure(t *testing.T) {
@@ -33,7 +34,7 @@ func TestSignalMeasure(t *testing.T) {
 			Bid:    9.9,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish robust liquidity", func() {
 			So(err, ShouldBeNil)
@@ -66,7 +67,7 @@ func TestSignalMeasure(t *testing.T) {
 			Bid:    4.9,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify extreme scarcity", func() {
 			So(err, ShouldBeNil)
@@ -91,7 +92,7 @@ func TestSignalMeasure(t *testing.T) {
 			Volume: 100,
 		})
 
-		measurement, err := signal.Measure(nil)
+		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should withhold the reading", func() {
 			So(err, ShouldBeNil)
@@ -111,7 +112,7 @@ func TestSignalMeasure(t *testing.T) {
 		)
 		feedback := market.NewFeedback("ALT/EUR", 0.5, 1.0, 0.2, 3)
 
-		_, err := signal.Measure(feedback)
+		_, err :=  signal.Measure(feedback, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
@@ -132,7 +133,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ALT/EUR"})
 
-		_, err := signal.Measure(nil)
+		_, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should return a type error", func() {
 			So(err, ShouldNotBeNil)
@@ -189,7 +190,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(nil)
+		_, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		if err != nil {
 			b.Fatal(err)

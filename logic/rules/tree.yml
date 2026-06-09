@@ -109,7 +109,7 @@ branches:
               type: category
               category:
                 type: vertical_ignition
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
                 surprise: 1.0
         - type: is_true
           left:
@@ -118,7 +118,7 @@ branches:
               type: category
               category:
                 type: coiled_compression
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
                 surprise: 1.0
     branches:
       - condition_group:
@@ -131,7 +131,7 @@ branches:
                   type: category
                   category:
                     type: frenzy
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_false
               left:
                 subject:
@@ -139,7 +139,7 @@ branches:
                   type: category
                   category:
                     type: toxic_bluff
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_false
               left:
                 subject:
@@ -147,7 +147,7 @@ branches:
                   type: category
                   category:
                     type: spoof_trap
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_false
               left:
                 subject:
@@ -155,7 +155,7 @@ branches:
                   type: category
                   category:
                     type: turbulent
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: or
@@ -167,7 +167,7 @@ branches:
                       type: category
                       category:
                         type: endogenous_alpha
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
                 - type: is_true
                   left:
                     subject:
@@ -175,7 +175,7 @@ branches:
                       type: category
                       category:
                         type: decoupled_alpha
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
             branches:
               - condition_group:
                   boolean: or
@@ -187,7 +187,7 @@ branches:
                           type: category
                           category:
                             type: aggressive_drive
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                     - type: is_true
                       left:
                         subject:
@@ -195,7 +195,7 @@ branches:
                           type: category
                           category:
                             type: loaded_imbalance
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                     - type: is_true
                       left:
                         subject:
@@ -203,7 +203,7 @@ branches:
                           type: category
                           category:
                             type: hard_support
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                 branches:
                   - condition_group:
                       boolean: or
@@ -215,7 +215,7 @@ branches:
                               type: category
                               category:
                                 type: laminar
-                                confidence: 0.55
+                                confidence: $confidence.regime_adjusted_baseline
                         - type: is_true
                           left:
                             subject:
@@ -223,7 +223,7 @@ branches:
                               type: category
                               category:
                                 type: inertial
-                                confidence: 0.55
+                                confidence: $confidence.regime_adjusted_baseline
                     action:
                       type: market
                       side: buy
@@ -241,7 +241,7 @@ branches:
               type: category
               category:
                 type: inefficient_lag
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
         - type: is_false
           left:
             subject:
@@ -249,7 +249,7 @@ branches:
               type: category
               category:
                 type: anchor_stall
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
     branches:
       - condition_group:
           boolean: or
@@ -261,7 +261,7 @@ branches:
                   type: category
                   category:
                     type: endogenous_alpha
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_true
               left:
                 subject:
@@ -269,7 +269,7 @@ branches:
                   type: category
                   category:
                     type: decoupled_alpha
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: or
@@ -281,7 +281,7 @@ branches:
                       type: category
                       category:
                         type: risk_on_surge
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
                 - type: is_true
                   left:
                     subject:
@@ -289,7 +289,7 @@ branches:
                       type: category
                       category:
                         type: divergent_move
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
             branches:
               - condition_group:
                   boolean: or
@@ -301,7 +301,7 @@ branches:
                           type: category
                           category:
                             type: aggressive_drive
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                     - type: is_true
                       left:
                         subject:
@@ -309,7 +309,7 @@ branches:
                           type: category
                           category:
                             type: hidden_absorption
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                 branches:
                   - condition_group:
                       boolean: or
@@ -321,7 +321,7 @@ branches:
                               type: category
                               category:
                                 type: frenzy
-                                confidence: 0.55
+                                confidence: $confidence.regime_adjusted_baseline
                         - type: is_true
                           left:
                             subject:
@@ -329,7 +329,7 @@ branches:
                               type: category
                               category:
                                 type: organic
-                                confidence: 0.55
+                                confidence: $confidence.regime_adjusted_baseline
                     branches:
                       - condition_group:
                           boolean: and
@@ -359,7 +359,7 @@ branches:
               type: category
               category:
                 type: organic_trend
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
         - type: is_false
           left:
             subject:
@@ -367,7 +367,7 @@ branches:
               type: category
               category:
                 type: systemic_slump
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
     branches:
       - condition_group:
           boolean: and
@@ -379,7 +379,7 @@ branches:
                   type: category
                   category:
                     type: aggressive_drive
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_false
               left:
                 subject:
@@ -387,7 +387,7 @@ branches:
                   type: category
                   category:
                     type: systemic_beta
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: or
@@ -399,7 +399,7 @@ branches:
                       type: category
                       category:
                         type: laminar
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
                 - type: is_true
                   left:
                     subject:
@@ -407,7 +407,7 @@ branches:
                       type: category
                       category:
                         type: organic
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
             branches:
               - condition_group:
                   boolean: or
@@ -419,7 +419,7 @@ branches:
                           type: category
                           category:
                             type: risk_on_surge
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                     - type: is_true
                       left:
                         subject:
@@ -427,7 +427,7 @@ branches:
                           type: category
                           category:
                             type: synchronized_drift
-                            confidence: 0.55
+                            confidence: $confidence.regime_adjusted_baseline
                 action:
                   type: market
                   side: buy
@@ -445,7 +445,7 @@ branches:
               type: category
               category:
                 type: hidden_absorption
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
         - type: is_true
           left:
             subject:
@@ -453,7 +453,7 @@ branches:
               type: category
               category:
                 type: loaded_imbalance
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
     branches:
       - condition_group:
           boolean: or
@@ -465,7 +465,7 @@ branches:
                   type: category
                   category:
                     type: coiled_compression
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
                     surprise: 1.0
             - type: is_true
               left:
@@ -474,7 +474,7 @@ branches:
                   type: category
                   category:
                     type: vertical_ignition
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
                     surprise: 1.0
         branches:
           - condition_group:
@@ -487,7 +487,7 @@ branches:
                       type: category
                       category:
                         type: inertial
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
                 - type: is_false
                   left:
                     subject:
@@ -495,7 +495,7 @@ branches:
                       type: category
                       category:
                         type: toxic_bluff
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
                 - type: is_false
                   left:
                     subject:
@@ -503,7 +503,7 @@ branches:
                       type: category
                       category:
                         type: spoof_trap
-                        confidence: 0.55
+                        confidence: $confidence.regime_adjusted_baseline
             action:
               type: market
               side: buy
@@ -521,7 +521,7 @@ branches:
               type: category
               category:
                 type: extreme_scarcity
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
         - type: is_true
           left:
             subject:
@@ -529,7 +529,7 @@ branches:
               type: category
               category:
                 type: coiled_compression
-                confidence: 0.55
+                confidence: $confidence.regime_adjusted_baseline
                 surprise: 1.0
     branches:
       - condition_group:
@@ -542,7 +542,7 @@ branches:
                   type: category
                   category:
                     type: frenzy
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_true
               left:
                 subject:
@@ -550,7 +550,7 @@ branches:
                   type: category
                   category:
                     type: endogenous_alpha
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
             - type: is_false
               left:
                 subject:
@@ -558,7 +558,7 @@ branches:
                   type: category
                   category:
                     type: liquidity_vacuum
-                    confidence: 0.55
+                    confidence: $confidence.regime_adjusted_baseline
         action:
           type: market
           side: buy

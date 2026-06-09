@@ -315,3 +315,12 @@ A very subtle failure mode you will encounter is that you will look at the git h
 ## dropg Linker Error
 
 Read the Makefile!
+
+## The Non-Negotiable Rules, Repeated
+
+1. No fallbacks, no silent errors
+2. Always provide the most accurate, pricipled, and best-in-class solutions and implementations
+3. No loose functions, no needless abstractions, no needless helper methods, no needless files
+4. Complexity is earned, it is not the default
+5. After accuracy, performance is the number 1 priority
+6. Never disregard the established patterns and coding style, and don't blindly overwrite what is there, build on top of it whenever possible

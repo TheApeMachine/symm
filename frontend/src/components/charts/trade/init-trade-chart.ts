@@ -34,15 +34,7 @@ export const initTradeChart = async (
 	await ensureSciChartWasm();
 
 	const chart = await createFinancialChartSurface(rootElement, symbol);
-	const {
-		sciChartSurface,
-		xAxis,
-		yAxis,
-		ohlc,
-		volume,
-		openValues,
-		closeValues,
-	} = chart;
+	const { sciChartSurface, xAxis, yAxis, ohlc, volume } = chart;
 
 	const appendBar = (bar: OhlcCandle) => {
 		const nativeX = ohlc.getNativeXValues();
@@ -56,13 +48,9 @@ export const initTradeChart = async (
 		if (priorLastX === bar.sec) {
 			ohlc.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
 			volume.update(lastIndex, bar.volume);
-			openValues[lastIndex] = bar.open;
-			closeValues[lastIndex] = bar.close;
 		} else {
 			ohlc.append(bar.sec, bar.open, bar.high, bar.low, bar.close);
 			volume.append(bar.sec, bar.volume);
-			openValues.push(bar.open);
-			closeValues.push(bar.close);
 		}
 
 		refreshFinancialPriceAxis(yAxis, ohlc);

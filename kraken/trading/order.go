@@ -1,13 +1,9 @@
 package trading
 
 import (
-	"context"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -125,8 +121,8 @@ type CancelAllOrdersAfterParams struct {
 type BatchAddParams struct {
 	Symbol   string      `json:"symbol"`
 	Orders   []AddParams `json:"orders"`
-	Token    string      `json:"token,omitempty"`
 	Validate bool        `json:"validate,omitempty"`
+	Token    string      `json:"token,omitempty"`
 }
 
 type BatchCancelParams struct {
@@ -143,106 +139,7 @@ type EditParams struct {
 	Token      string  `json:"token,omitempty"`
 }
 
-/*
-Ack is the add_order method response envelope.
-*/
-type Ack struct {
-	Method  string `json:"method"`
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
-	ReqID   int    `json:"req_id"`
-	Result  struct {
-		OrderID string `json:"order_id"`
-		ClOrdID string `json:"cl_ord_id"`
-	} `json:"result"`
-}
-
 type OrderUpdate struct {
 	OrderID      string `json:"order_id"`
 	OrderUserref int    `json:"order_userref"`
-}
-
-type OrderClient struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q[any]
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.BroadcastConsumer
-}
-
-func NewOrderClient(ctx context.Context, pool *qpool.Q[any]) *OrderClient {
-	ctx, cancel := context.WithCancel(ctx)
-
-	client := &OrderClient{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.BroadcastConsumer),
-	}
-
-	for _, channel := range []string{"kraken:private"} {
-		client.broadcasts[channel] = pool.CreateBroadcastGroup(channel, 10*time.Millisecond)
-		client.subscribers[channel] = client.broadcasts[channel].Subscribe(channel, 1024)
-	}
-
-	return client
-}
-
-func (client *OrderClient) send(method string, params any) error {
-	frame, err := types.NewKrakenMessage(method, params, time.Now().UnixNano())
-
-	if errnie.Error(err) != nil {
-		return err
-	}
-
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type:  "orders",
-		Value: frame,
-	})
-
-	return nil
-}
-
-func (client *OrderClient) AddOrder(params AddParams) error {
-	if params.ClOrdID == "" {
-		return errnie.Error(errnie.Require(map[string]any{
-			"params.ClOrdID": params.ClOrdID,
-		}))
-	}
-
-	return client.send(MethodAddOrder, params)
-}
-
-func (client *OrderClient) AmendOrder(params AmendParams) error {
-	return client.send(MethodAmendOrder, params)
-}
-
-func (client *OrderClient) CancelOrder(params CancelParams) error {
-	return client.send(MethodCancelOrder, params)
-}
-
-func (client *OrderClient) CancelAll(params CancelAllParams) error {
-	return client.send(MethodCancelAll, params)
-}
-
-func (client *OrderClient) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
-	return client.send(MethodCancelAllOrdersAfter, params)
-}
-
-func (client *OrderClient) BatchAdd(params BatchAddParams) error {
-	return client.send(MethodBatchAdd, params)
-}
-
-func (client *OrderClient) BatchCancel(params BatchCancelParams) error {
-	return client.send(MethodBatchCancel, params)
-}
-
-func (client *OrderClient) EditOrder(params EditParams) error {
-	return client.send(MethodEditOrder, params)
-}
-
-func (client *OrderClient) Close() error {
-	client.cancel()
-	return nil
 }

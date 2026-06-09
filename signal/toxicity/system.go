@@ -93,7 +93,9 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			system.feedTrade(trade)
+			if errnie.Error(system.feedTrade(trade)) != nil {
+				continue
+			}
 
 			signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
 
@@ -131,7 +133,9 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			system.feedBook(book)
+			if errnie.Error(system.feedBook(book)) != nil {
+				continue
+			}
 
 			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
 
@@ -155,7 +159,9 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			system.feedLevel3(update)
+			if errnie.Error(system.feedLevel3(update)) != nil {
+				continue
+			}
 
 			signal = system.LoadSignal(logic.EntityBook, update.Symbol)
 
@@ -184,7 +190,13 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		measurement, measureErr := signal.Measure(system.feedback)
+		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
+
+		if errnie.Error(eventErr) != nil {
+			continue
+		}
+
+		measurement, measureErr := signal.Measure(system.feedback, eventAt)
 
 		if errnie.Error(measureErr) != nil {
 			continue
@@ -204,14 +216,22 @@ func (system *System) Tick() error {
 	}
 }
 
-func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) {
+func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) error {
+	eventAt, err := krakenmarket.EventTimeFromTrade(trade)
+
+	if err != nil {
+		return err
+	}
+
 	system.tracker.ObserveTrade(
 		trade.Symbol,
 		krakenmarket.Pair{},
 		trade.Price,
 		trade.Qty,
-		time.Now(),
+		eventAt,
 	)
+
+	return nil
 }
 
 func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) {
@@ -226,12 +246,19 @@ func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) {
 	}
 }
 
-func (system *System) feedBook(book *krakenmarket.Book) {
-	system.tracker.ApplyBookFrame(book.Symbol, krakenmarket.Pair{}, book, time.Now())
+func (system *System) feedBook(book *krakenmarket.Book) error {
+	eventAt, err := krakenmarket.EventTimeFromBook(book)
+
+	if err != nil {
+		return err
+	}
+
+	system.tracker.ApplyBookFrame(book.Symbol, krakenmarket.Pair{}, book, eventAt)
+
+	return nil
 }
 
-func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
-	now := time.Now()
+func (system *System) feedLevel3(update *krakenmarket.Level3Update) error {
 	pair := krakenmarket.Pair{}
 
 	for _, bid := range update.Bids {
@@ -239,6 +266,10 @@ func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
 
 		if event == "" {
 			event = "add"
+		}
+
+		if bid.Timestamp.IsZero() {
+			return fmt.Errorf("toxicity: level3 bid %q timestamp is zero", bid.OrderID)
 		}
 
 		system.tracker.ApplyOrder(
@@ -250,7 +281,7 @@ func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
 			bid.LimitPrice,
 			bid.OrderQty,
 			bid.Timestamp,
-			now,
+			bid.Timestamp,
 		)
 	}
 
@@ -259,6 +290,10 @@ func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
 
 		if event == "" {
 			event = "add"
+		}
+
+		if ask.Timestamp.IsZero() {
+			return fmt.Errorf("toxicity: level3 ask %q timestamp is zero", ask.OrderID)
 		}
 
 		system.tracker.ApplyOrder(
@@ -270,9 +305,11 @@ func (system *System) feedLevel3(update *krakenmarket.Level3Update) {
 			ask.LimitPrice,
 			ask.OrderQty,
 			ask.Timestamp,
-			now,
+			ask.Timestamp,
 		)
 	}
+
+	return nil
 }
 
 func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal {

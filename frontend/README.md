@@ -4,9 +4,9 @@ The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots 
 
 The **Signal Insight** page (`/diagnostics`) lists `runs/<name>_raw.jsonl` dumps through `/api/dumps`, runs a full-file analysis on selection through `/api/analyze`, and then streams debounced tail analyses over the websocket as `chart: "diagnostic"` frames whenever a dump grows. Dump inventory refreshes on `event: "dumps"`. Refresh still forces a full-file re-read.
 
-The prediction chart consumes `chart: "prediction"` frames. Dashed orange `prediction` points are written at `measurement.at + story.prediction.horizon`; green `actual` and red `error` points are written to that same target time when future price catches up. The backend treats each signal confidence as a forward movement-intensity forecast over the horizon; settled error updates a per-source scale that signals consume upstream while scoring feature values.
+The prediction chart consumes `chart: "prediction"` frames with optional `horizon` (seconds). Dashed orange `prediction` is the cross-symbol mean forecast at `now + story.prediction.horizon`; green `actual` and red `error` are cross-symbol means at the same target timestamp when price catches up. The visible x-range keeps the latest forecast on the right edge and spans `2 × horizon` into the past so ground truth and error lines visibly catch up.
 
-The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
+The top strip and side rails render thirteen signal gauges, each on its own SciChart surface (`create()` shares one WebGL context across all of them). The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
 
 ## Source layout
 

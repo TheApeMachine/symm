@@ -2,9 +2,10 @@ package correlation
 
 import (
 	"container/ring"
-	
 	"fmt"
 	"math"
+
+	"time"
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
@@ -31,14 +32,14 @@ The "Lone Wolf" Story : High movement with low correlation — idiosyncratic flo
 | Divergent Stress  | High -      | High    | Counter-Herd / Stress   |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection *crossSection
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	crossSection    *crossSection
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -50,18 +51,18 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		crossSection:    crossSection,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, error) {
+func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -80,11 +81,11 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade()
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		return signal.measureTick()
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		return signal.measureBook()
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("correlation: unsupported entity %d", signal.entity.Type),
@@ -92,7 +93,7 @@ func (signal *Signal) Measure(feedback *market.Feedback) (logic.Measurement, err
 	}
 }
 
-func (signal *Signal) measureTrade() (logic.Measurement, error) {
+func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
 		price float64
 		err   error
@@ -123,10 +124,10 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	return signal.fromCrossSection(price)
+	return signal.fromCrossSection(price, at)
 }
 
-func (signal *Signal) measureTick() (logic.Measurement, error) {
+func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	var (
 		ticker *krakenmarket.TickerUpdate
 		err    error
@@ -167,26 +168,26 @@ func (signal *Signal) measureTick() (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol}, nil
 	}
 
-	return signal.fromCrossSection(price)
+	return signal.fromCrossSection(price, at)
 }
 
-func (signal *Signal) measureBook() (logic.Measurement, error) {
+func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol}, nil
 }
 
-func (signal *Signal) fromCrossSection(price float64) (logic.Measurement, error) {
-	signal.crossSection.publishPrice(signal.symbol, price)
+func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measurement, error) {
+	signal.crossSection.publishPrice(signal.symbol, price, at)
 
 	window := signal.crossSection.minBarsRequired()
 	symbolReturns := signal.crossSection.symbolReturns(signal.symbol, window)
-	marketReturns := signal.crossSection.marketReturns(window)
+	marketReturns := signal.crossSection.marketReturns(window, at)
 
 	if len(symbolReturns) < window || len(marketReturns) < window {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	peerCorrelations := signal.crossSection.peerCorrelations(window)
-	peerEnergies := signal.crossSection.peerEnergies(window)
+	peerCorrelations := signal.crossSection.peerCorrelations(window, at)
+	peerEnergies := signal.crossSection.peerEnergies(window, at)
 
 	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
 		return logic.Measurement{Symbol: signal.symbol}, nil
@@ -357,4 +358,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

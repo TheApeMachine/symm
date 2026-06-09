@@ -196,63 +196,10 @@ func ols(target []float64, predictors ...[]float64) ([]float64, bool) {
 		}
 	}
 
-	return ridgeSolve(normal, targetVec)
-}
+	solution, err := NewRidgeSolver().Solve(normal, targetVec)
 
-func gaussianSolve(matrix [][]float64, vector []float64) ([]float64, bool) {
-	size := len(vector)
-	augmented := make([][]float64, size)
-
-	for row := 0; row < size; row++ {
-		augmented[row] = make([]float64, size+1)
-		copy(augmented[row], matrix[row])
-		augmented[row][size] = vector[row]
-	}
-
-	for pivot := 0; pivot < size; pivot++ {
-		maxRow := pivot
-		maxMag := math.Abs(augmented[pivot][pivot])
-
-		for row := pivot + 1; row < size; row++ {
-			magnitude := math.Abs(augmented[row][pivot])
-
-			if magnitude > maxMag {
-				maxMag = magnitude
-				maxRow = row
-			}
-		}
-
-		if maxMag <= solverPivotFloor {
-			return nil, false
-		}
-
-		if maxRow != pivot {
-			augmented[pivot], augmented[maxRow] = augmented[maxRow], augmented[pivot]
-		}
-
-		pivotValue := augmented[pivot][pivot]
-
-		for col := pivot; col <= size; col++ {
-			augmented[pivot][col] /= pivotValue
-		}
-
-		for row := 0; row < size; row++ {
-			if row == pivot {
-				continue
-			}
-
-			factor := augmented[row][pivot]
-
-			for col := pivot; col <= size; col++ {
-				augmented[row][col] -= factor * augmented[pivot][col]
-			}
-		}
-	}
-
-	solution := make([]float64, size)
-
-	for row := 0; row < size; row++ {
-		solution[row] = augmented[row][size]
+	if err != nil {
+		return nil, false
 	}
 
 	return solution, true

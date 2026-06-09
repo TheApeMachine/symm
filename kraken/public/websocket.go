@@ -77,9 +77,11 @@ func NewWebSocket(
 func (ws *WebSocket) Connect(
 	endpoint EndpointType, n uint64,
 ) error {
-	if ws.isConnected.Load() {
+	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
+
+	ws.isConnected.Store(false)
 
 	var response *http.Response
 
@@ -141,6 +143,11 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
+			if ws.conn == nil {
+				ws.disconnect()
+				break
+			}
+
 			if errnie.Error(ws.conn.WriteJSON(PingMessage{
 				Method: "ping",
 				ReqID:  time.Now().UnixNano(),
@@ -170,7 +177,8 @@ func (ws *WebSocket) Tick() (err error) {
 			qvaluePool.Put(message)
 		}
 
-		if !ws.isConnected.Load() {
+		if !ws.isConnected.Load() || ws.conn == nil {
+			ws.disconnect()
 			continue
 		}
 
@@ -201,10 +209,8 @@ func (ws *WebSocket) Tick() (err error) {
 			ws.latencies.Next()
 		case "heartbeat":
 			ws.isConnected.Store(true)
-			message.Release()
 		case "ohlc":
 			ws.publishOhlc(message)
-			message.Release()
 		case "instrument":
 			instrumentUpdate := market.InstrumentUpdate{}
 

@@ -16,13 +16,11 @@ func TestOrdersSend(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		orders := NewOrders(ctx, pool)
 
-		frame, frameErr := types.NewKrakenMessage(
-			trading.MethodAddOrder,
-			trading.AddParams{ClOrdID: "d7ce4944-f4df-4447-8314-14f020"},
-			0,
-		)
-
-		So(frameErr, ShouldBeNil)
+		frame := types.KrakenMessage{
+			Method: trading.MethodAddOrder,
+			Params: &trading.AddParams{ClOrdID: "d7ce4944-f4df-4447-8314-14f020"},
+			ReqID:  0,
+		}
 
 		response := orders.Send(&qpool.QValue[any]{Value: frame})
 

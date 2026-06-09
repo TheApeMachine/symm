@@ -28,8 +28,10 @@ const initSignalSurpriseHeatmap = async (
 ) => {
 	await ensureSciChartWasm();
 
-	const { sciChartSurface, wasmContext } =
-		await SciChartSurface.create(rootElement);
+	const { sciChartSurface, wasmContext } = await SciChartSurface.create(
+		rootElement,
+		{ freezeWhenOutOfView: true },
+	);
 	const rowCount = sources.length;
 	const zValues = zeroArray2D([rowCount, TIME_COLS]);
 

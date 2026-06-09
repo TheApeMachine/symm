@@ -47,7 +47,7 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 
 		Convey("It should add surprise through the signal publisher", func() {
 			reading.Symbol = "BTC/EUR"
-			measurement, err := signal.publish(reading)
+			measurement, err := signal.publish(reading, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceCausal)
@@ -87,7 +87,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		if err == nil && reading.Category != logic.CategoryTypeNone {
 			reading.Symbol = "BTC/EUR"
-			_, _ = signal.publish(reading)
+			_, _ = signal.publish(reading, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		}
 	}
 }

@@ -13,9 +13,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -31,45 +30,12 @@ type Rest struct {
 }
 
 /*
-NewRest builds a signed client for one private endpoint.
+NewRest builds a signed client for one private Kraken endpoint.
 */
 func NewRest(
 	ctx context.Context,
 	apiKey, apiSecret string,
 	endpoint public.EndpointType,
-) (*Rest, error) {
-	client, err := restClientForModel(ctx, endpoint)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return newSignedRest(ctx, apiKey, apiSecret, endpoint, client)
-}
-
-/*
-NewLiveRest builds a signed client that always talks to Kraken, even when
-trading.model is paper. Used for L3 auth tokens while execution stays simulated.
-*/
-func NewLiveRest(
-	ctx context.Context,
-	apiKey, apiSecret string,
-	endpoint public.EndpointType,
-) (*Rest, error) {
-	return newSignedRest(
-		ctx,
-		apiKey,
-		apiSecret,
-		endpoint,
-		public.NewRest(ctx, endpoint),
-	)
-}
-
-func newSignedRest(
-	ctx context.Context,
-	apiKey, apiSecret string,
-	endpoint public.EndpointType,
-	client public.RestClient,
 ) (*Rest, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf("kraken api key and secret are required")
@@ -83,51 +49,20 @@ func newSignedRest(
 
 	return &Rest{
 		ctx:      ctx,
-		client:   client,
+		client:   public.NewRest(ctx, endpoint),
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		secret:   secret,
 	}, nil
 }
 
-func restClientForModel(
-	ctx context.Context,
-	endpoint public.EndpointType,
-) (public.RestClient, error) {
-	if viper.GetViper().GetString("trading.model") == "paper" {
-		paperRest, paperErr := paper.NewRest(ctx)
-
-		if paperErr != nil {
-			return nil, fmt.Errorf("kraken/private: paper rest: %w", paperErr)
-		}
-
-		return paperRest, nil
-	}
-
-	return public.NewRest(ctx, endpoint), nil
-}
-
 /*
 ForEndpoint returns a client with the same credentials on another endpoint.
 */
 func (rest *Rest) ForEndpoint(endpoint public.EndpointType) (*Rest, error) {
-	var client public.RestClient
-
-	if viper.GetViper().GetString("trading.model") == "paper" {
-		paperRest, err := paper.NewRest(rest.ctx)
-
-		if err != nil {
-			return nil, fmt.Errorf("kraken/private: paper rest for %s: %w", endpoint, err)
-		}
-
-		client = paperRest
-	} else {
-		client = public.NewRest(rest.ctx, endpoint)
-	}
-
 	return &Rest{
 		ctx:      rest.ctx,
-		client:   client,
+		client:   public.NewRest(rest.ctx, endpoint),
 		endpoint: endpoint,
 		apiKey:   rest.apiKey,
 		secret:   rest.secret,
@@ -176,42 +111,8 @@ func (rest *Rest) Post(
 	})
 }
 
-/*
-WebSocketToken returns a short-lived token for the authenticated WebSocket v2 API.
-*/
-func (rest *Rest) WebSocketToken(ctx context.Context) (token string, expires time.Duration, err error) {
-	var result struct {
-		Token   string `json:"token"`
-		Expires int    `json:"expires"`
-	}
-
-	tokenRest := rest
-
-	if rest.endpoint != public.EndpointWebSocketsToken {
-		var endpointErr error
-
-		tokenRest, endpointErr = rest.ForEndpoint(public.EndpointWebSocketsToken)
-
-		if endpointErr != nil {
-			return "", 0, endpointErr
-		}
-	}
-
-	if err := tokenRest.Post(ctx, fiber.Map{}, &result); err != nil {
-		return "", 0, err
-	}
-
-	if result.Token == "" {
-		return "", 0, fmt.Errorf("kraken: empty websockets token")
-	}
-
-	expires = time.Duration(result.Expires) * time.Second
-
-	if expires <= 0 {
-		expires = 15 * time.Minute
-	}
-
-	return result.Token, expires, nil
+func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error {
+	return rest.Post(ctx, fiber.Map{}, token)
 }
 
 func (rest *Rest) Error() error {

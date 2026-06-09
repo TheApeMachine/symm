@@ -39,7 +39,10 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			So(subject.Evaluate(measurement), ShouldBeTrue)
+			matched, err := subject.Evaluate(measurement, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
 		})
 
 		Convey("It should not match when confidence is below the subject floor", func() {
@@ -73,7 +76,10 @@ func TestSubjectEvaluate(t *testing.T) {
 				2.5,
 			)
 
-			So(subject.Evaluate(weak), ShouldBeFalse)
+			matched, err := subject.Evaluate(weak, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeFalse)
 		})
 
 		Convey("It should not match a different category subject", func() {
@@ -92,7 +98,10 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			So(subject.Evaluate(measurement), ShouldBeFalse)
+			matched, err := subject.Evaluate(measurement, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeFalse)
 		})
 	})
 }

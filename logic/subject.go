@@ -70,61 +70,66 @@ func (subject *Subject) isEnumerated() bool {
 	}
 }
 
-func (subject *Subject) Evaluate(measurement Measurement) bool {
+func (subject *Subject) Evaluate(
+	measurement Measurement,
+	evalContext *EvalContext,
+) (bool, error) {
 	switch subject.Type {
 	case SubjectCategory:
 		if subject.Category == nil {
-			return false
+			return false, nil
 		}
 
 		if subject.Category.Type != measurement.Category {
-			return false
+			return false, nil
 		}
 
-		if subject.Category.Confidence > 0 &&
-			measurement.Confidence < subject.Category.Confidence {
-			return false
+		confidenceFloor, floorErr := subject.Category.confidenceFloor(evalContext)
+
+		if floorErr != nil {
+			return false, floorErr
+		}
+
+		if confidenceFloor > 0 &&
+			measurement.Confidence < confidenceFloor {
+			return false, nil
 		}
 
 		if subject.Category.Surprise > 0 &&
 			measurement.Surprise < subject.Category.Surprise {
-			return false
+			return false, nil
 		}
 
-		return true
+		return true, nil
 	case SubjectRegime:
 		if subject.Regime == nil {
-			return false
+			return false, nil
 		}
 
-		return subject.Regime.Type == measurement.Regime
+		return subject.Regime.Type == measurement.Regime, nil
 	case SubjectPosition:
 		if subject.Position == nil {
-			return false
+			return false, nil
 		}
 
-		return subject.Position.Type == measurement.Position
+		return subject.Position.Type == measurement.Position, nil
 	case SubjectPrice:
-		return subject.Price == measurement.Price
+		return subject.Price == measurement.Price, nil
 	case SubjectVolume:
-		return subject.Volume == measurement.Volume
+		return subject.Volume == measurement.Volume, nil
 	case SubjectSpread:
-		return subject.Spread == measurement.Spread
+		return subject.Spread == measurement.Spread, nil
 	case SubjectElapsed:
-		return subject.Elapsed == measurement.Elapsed
+		return subject.Elapsed == measurement.Elapsed, nil
 	case SubjectStrength:
-		return subject.Strength == measurement.Strength
+		return subject.Strength == measurement.Strength, nil
 	case SubjectConfidence:
-		return subject.Confidence == measurement.Confidence
+		return subject.Confidence == measurement.Confidence, nil
 	case SubjectSurprise:
-		return subject.Surprise == measurement.Surprise
+		return subject.Surprise == measurement.Surprise, nil
 	}
 
-	return false
-}
-
-func (subject *Subject) enumMatches(measurement Measurement) bool {
-	return subject.Evaluate(measurement)
+	return false, nil
 }
 
 func (subject *Subject) valueFrom(measurement Measurement) (float64, bool) {

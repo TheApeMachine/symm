@@ -1,6 +1,11 @@
 package causal
 
-import "math"
+import (
+	"fmt"
+	"math"
+
+	"gonum.org/v1/gonum/mat"
+)
 
 const (
 	minConditionRatio = 100.0
@@ -9,28 +14,95 @@ const (
 )
 
 /*
-ridgeSolve solves (X'X + λI)β = X'y with intercept left unpenalized.
-λ scales with estimated condition number of the normal matrix.
+RidgeSolver solves regularized normal equations with Gonum LAPACK backends.
 */
-func ridgeSolve(normal [][]float64, vector []float64) ([]float64, bool) {
-	size := len(vector)
-	regularized := make([][]float64, size)
+type RidgeSolver struct{}
 
-	for row := 0; row < size; row++ {
-		regularized[row] = make([]float64, size)
-		copy(regularized[row], normal[row])
-	}
-
-	lambda := ridgeLambda(normal)
-
-	for row := 1; row < size; row++ {
-		regularized[row][row] += lambda
-	}
-
-	return gaussianSolve(regularized, vector)
+func NewRidgeSolver() *RidgeSolver {
+	return &RidgeSolver{}
 }
 
-func ridgeLambda(normal [][]float64) float64 {
+func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float64, error) {
+	size := len(vector)
+
+	if size == 0 || len(normal) != size {
+		return nil, fmt.Errorf("causal: ridge system size mismatch")
+	}
+
+	for row := 0; row < size; row++ {
+		if len(normal[row]) != size {
+			return nil, fmt.Errorf("causal: ridge normal matrix is not square")
+		}
+	}
+
+	lambda := solver.ridgeLambda(normal)
+	symmetric := mat.NewSymDense(size, nil)
+
+	for row := 0; row < size; row++ {
+		for col := row; col < size; col++ {
+			value := normal[row][col]
+
+			if row == col && row > 0 {
+				value += lambda
+			}
+
+			symmetric.SetSym(row, col, value)
+		}
+	}
+
+	rightHand := mat.NewVecDense(size, vector)
+
+	var cholesky mat.Cholesky
+
+	if cholesky.Factorize(symmetric) {
+		var solution mat.VecDense
+
+		if solveErr := cholesky.SolveVecTo(&solution, rightHand); solveErr != nil {
+			return nil, fmt.Errorf("causal: cholesky solve: %w", solveErr)
+		}
+
+		out := make([]float64, size)
+
+		for index := range out {
+			out[index] = solution.AtVec(index)
+		}
+
+		return out, nil
+	}
+
+	var qr mat.QR
+
+	if qr.Factorize(mat.NewDense(size, size, flattenSquare(normal))) {
+		var solution mat.VecDense
+
+		if solveErr := qr.SolveVecTo(&solution, false, rightHand); solveErr != nil {
+			return nil, fmt.Errorf("causal: qr solve: %w", solveErr)
+		}
+
+		out := make([]float64, size)
+
+		for index := range out {
+			out[index] = solution.AtVec(index)
+		}
+
+		return out, nil
+	}
+
+	return nil, fmt.Errorf("causal: ridge factorization failed")
+}
+
+func flattenSquare(matrix [][]float64) []float64 {
+	size := len(matrix)
+	flat := make([]float64, size*size)
+
+	for row := 0; row < size; row++ {
+		copy(flat[row*size:(row+1)*size], matrix[row])
+	}
+
+	return flat
+}
+
+func (solver *RidgeSolver) ridgeLambda(normal [][]float64) float64 {
 	trace := 0.0
 	size := float64(len(normal))
 
@@ -43,7 +115,7 @@ func ridgeLambda(normal [][]float64) float64 {
 	}
 
 	base := trace / size
-	condition := conditionEstimate(normal)
+	condition := solver.conditionEstimate(normal)
 	extra := 0.0
 
 	if condition > minConditionRatio || math.IsInf(condition, 0) {
@@ -53,7 +125,7 @@ func ridgeLambda(normal [][]float64) float64 {
 	return base*1e-8 + extra
 }
 
-func conditionEstimate(normal [][]float64) float64 {
+func (solver *RidgeSolver) conditionEstimate(normal [][]float64) float64 {
 	size := len(normal)
 
 	if size == 0 {

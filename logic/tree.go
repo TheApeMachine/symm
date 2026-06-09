@@ -33,8 +33,10 @@ func NewTree() (*Tree, error) {
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement) *Action {
+	evalContext := NewEvalContext(measurements)
+
 	for _, branch := range tree.Branches {
-		action, err := branch.Evaluate(measurements)
+		action, err := branch.Evaluate(measurements, evalContext)
 
 		if errnie.Error(err) != nil {
 			continue

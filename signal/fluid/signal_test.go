@@ -36,11 +36,14 @@ func TestFluidSymbolIgnoresFluxBeforeVolumeClock(t *testing.T) {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
 		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
-		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6)), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
 		So(state.FeedTradeSide(time.Now(), 1, "buy"), ShouldBeNil)
 
 		Convey("It should wait for ticker volume before folding flux", func() {
@@ -54,13 +57,16 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
 		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		delta := fixture.snapshot(99, 10, 101, 6)
 		delta.SetEnvelopeType("update")
-		So(state.FeedBook(delta), ShouldBeNil)
+		So(state.FeedBook(delta, feedAt), ShouldBeNil)
 
 		Convey("It should not treat the book as ready", func() {
 			So(state.HasBook(), ShouldBeFalse)
@@ -79,14 +85,17 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 		symbol := "ETH/EUR"
 		viper.Set("market.book_depth_levels", 10)
 		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		So(state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		}), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6)), ShouldBeNil)
+		}, feedAt), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
 
 		_, ok := state.Reading()
 
@@ -98,7 +107,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta := fixture.snapshot(98, 10, 101, 6)
 			badDelta.SetEnvelopeType("update")
 			badDelta.Checksum = 1
-			So(state.FeedBook(badDelta), ShouldBeNil)
+			So(state.FeedBook(badDelta, feedAt), ShouldBeNil)
 
 			_, ok := state.Reading()
 
@@ -118,14 +127,17 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		symbol := "BTC/EUR"
 		viper.Set("market.book_depth_levels", 10)
 		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		So(state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 100, Ask: 100, Volume: 1000,
-		}), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(100, 5, 100, 5)), ShouldBeNil)
+		}, feedAt), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(100, 5, 100, 5), feedAt), ShouldBeNil)
 
 		reading, ok := state.Reading()
 		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
@@ -142,6 +154,9 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
 	viper.Set("market.book_depth_levels", 10)
 	viper.Set("signals.volume_clock_bars_per_day", 288)
+	viper.Set("signals.fluid.tick_size", 0.01)
+	viper.Set("signals.fluid.grid_half_width", 10)
+	feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	state, err := NewFluidSymbol(symbol)
 
 	if err != nil {
@@ -152,11 +167,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	if err := state.FeedTicker(krakenmarket.TickerUpdate{
 		Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-	}); err != nil {
+	}, feedAt); err != nil {
 		b.Fatal(err)
 	}
 
-	if err := state.FeedBook(fixture.snapshot(99, 10, 101, 6)); err != nil {
+	if err := state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt); err != nil {
 		b.Fatal(err)
 	}
 
@@ -168,7 +183,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		reading, ok := state.Reading()
 
 		if ok {
-			_, _ = signal.publish(reading)
+			_, _ = signal.publish(reading, feedAt)
 		}
 	}
 }

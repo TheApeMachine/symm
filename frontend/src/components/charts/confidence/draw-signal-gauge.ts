@@ -32,6 +32,7 @@ export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 		{
 			padding: new Thickness(0, 0, 0, 0),
 			background: appTheme.Background,
+			freezeWhenOutOfView: true,
 		},
 	);
 

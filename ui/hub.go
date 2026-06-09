@@ -55,13 +55,15 @@ type Hub struct {
 	pool             *qpool.Q[any]
 	bus              *internal.Bus
 	clients          *sync.Map
+	sessions         *sync.Map
 	server           *http.Server
 	nextConnID       uint64
 	lastPositions    atomic.Pointer[map[string]any]
 	lastEquity       atomic.Pointer[map[string]any]
 	lastDecisionTree atomic.Pointer[map[string]any]
 	lastDumps        atomic.Pointer[map[string]any]
-	lastGauges       sync.Map
+	lastGauges        sync.Map
+	lastBalances     atomic.Pointer[user.Balances]
 }
 
 /*
@@ -74,13 +76,12 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx, pool, []string{"kraken:private"}, []string{"ui"},
-		),
-		clients: &sync.Map{},
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		bus:      internal.NewBus(ctx, pool, []string{"kraken:private"}, []string{"ui"}),
+		clients:  &sync.Map{},
+		sessions: &sync.Map{},
 	}
 
 	addr := viper.GetViper().GetString("ui.addr")
@@ -98,10 +99,6 @@ func NewHub(
 	}
 
 	if listener == nil {
-		// The UI port could not be bound — almost always a stale instance still
-		// holding it. The dashboard is non-essential to trading, so degrade to
-		// headless rather than handing a nil listener to Serve, which panics and
-		// takes the whole trading process down with it.
 		errnie.Error(errors.New("ui: dashboard disabled — could not bind " + addr + " (running headless)"))
 
 		return hub
@@ -114,8 +111,6 @@ func NewHub(
 			errnie.Error(serveErr)
 		}
 	}()
-
-	hub.subscribeBalances()
 
 	return hub
 }
@@ -130,16 +125,12 @@ func (hub *Hub) Close() error {
 		}
 	}
 
-	hub.clients.Range(func(key, value any) bool {
-		client, ok := value.(*websocket.Conn)
+	hub.sessions.Range(func(key, value any) bool {
+		connID, ok := key.(uint64)
 
 		if ok {
-			if err := client.Close(); err != nil {
-				errnie.Error(err)
-			}
+			hub.detachClient(connID)
 		}
-
-		hub.clients.Delete(key)
 
 		return true
 	})
@@ -170,28 +161,64 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 
 	connID := atomic.AddUint64(&hub.nextConnID, 1)
 	hub.clients.Store(connID, conn)
-}
 
-func (hub *Hub) subscribeBalances() {
-	frame, err := types.NewKrakenMessage(
-		"subscribe",
-		user.BalanceParams{
-			Channel:  "balances",
-			Snapshot: true,
-		},
-		time.Now().UnixNano(),
-	)
+	if attachErr := hub.attachClient(connID, conn); attachErr != nil {
+		errnie.Error(attachErr)
+		hub.clients.Delete(connID)
+		errnie.Error(conn.Close())
 
-	if errnie.Error(err) != nil {
 		return
 	}
 
-	errnie.Error(hub.bus.Send("kraken:private", "balances", frame))
+	hub.subscribeBalances()
+	hub.replayBalances(conn)
+}
+
+func (hub *Hub) subscribeBalances() {
+	params := &user.BalanceParams{
+		Channel:  "balances",
+		Snapshot: true,
+	}
+
+	token, tokenErr := types.NewToken(hub.ctx)
+
+	if errnie.Error(tokenErr) == nil {
+		params.Token = token
+	}
+
+	errnie.Error(hub.bus.Send("kraken:private", "balances", types.KrakenMessage{
+		Method: "subscribe",
+		Params: params,
+		ReqID:  time.Now().UnixNano(),
+	}))
+}
+
+func (hub *Hub) rememberBalances(value any) {
+	balances, ok := value.(user.Balances)
+
+	if !ok {
+		return
+	}
+
+	stored := balances
+	hub.lastBalances.Store(&stored)
+}
+
+func (hub *Hub) replayBalances(conn *websocket.Conn) {
+	snapshot := hub.lastBalances.Load()
+
+	if snapshot == nil {
+		return
+	}
+
+	if err := conn.WriteJSON(snapshot); err != nil {
+		errnie.Error(err)
+	}
 }
 
 /*
-Tick drains qpool into the lossy telemetry ring and fanout to websocket clients.
-from that ring so the qpool subscriber never waits on browser pressure.
+Tick drains qpool into per-client outbound disruptors so the bus subscriber never
+waits on browser pressure. Saturated client rings drop the oldest frame.
 */
 func (hub *Hub) Tick() error {
 	for {
@@ -201,21 +228,10 @@ func (hub *Hub) Tick() error {
 			continue
 		}
 
-		hub.clients.Range(func(key, stored any) bool {
-			client, ok := stored.(*websocket.Conn)
+		if row.Type == "balances" {
+			hub.rememberBalances(row.Value)
+		}
 
-			if !ok {
-				hub.clients.Delete(key)
-				return true
-			}
-
-			if err := client.WriteJSON(row.Value); err != nil {
-				errnie.Error(err)
-				hub.clients.Delete(key)
-				return true
-			}
-
-			return true
-		})
+		hub.publishToClients(row.Value)
 	}
 }

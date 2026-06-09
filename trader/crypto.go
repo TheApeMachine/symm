@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
@@ -23,7 +22,6 @@ type Crypto struct {
 	pool   *qpool.Q[any]
 	ui     *qpool.BroadcastGroup
 	bus    *internal.Bus
-	desk   *broker.Desk
 	pairs  *sync.Map
 }
 
@@ -38,18 +36,16 @@ func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:public", "ui"},
+			[]string{"kraken:public", "kraken:private", "ui", "raw"},
 			[]string{"raw"},
 		),
-		desk:  broker.NewDesk(ctx, pool),
 		pairs: &sync.Map{},
 	}
 }
 
 /*
-Tick consumes the raw bus. Story emits Action structs (entry/exit verdicts) and
-the paper desk emits execution maps. Actions submit orders; executions update
-inventory and the shared focus set so the not-holding gate sees open positions.
+Tick consumes the raw bus. Story emits actions; crypto forwards them as order
+messages on raw for the desk, and handles instruments and subscriptions here.
 */
 func (crypto *Crypto) Tick() (err error) {
 	for {
@@ -83,11 +79,7 @@ func (crypto *Crypto) Tick() (err error) {
 				pairs := make([]string, 0)
 
 				for _, pair := range instrument.Pairs {
-					if pair.Status != "online" {
-						continue
-					}
-
-					if pair.Quote != quoteCurrency {
+					if pair.Status != "online" || pair.Quote != quoteCurrency {
 						continue
 					}
 
@@ -124,6 +116,23 @@ func (crypto *Crypto) Tick() (err error) {
 					ReqID:  time.Now().UnixNano(),
 				}))
 
+				if viper.GetBool("market.l3_enabled") {
+					token, err := types.NewToken(crypto.ctx)
+
+					if errnie.Error(err) != nil {
+						continue
+					}
+
+					level3Params := market.NewLevel3Params(pairs)
+					level3Params.Token = token
+
+					errnie.Error(crypto.bus.Send("kraken:private", "level3", types.KrakenMessage{
+						Method: "subscribe",
+						Params: level3Params,
+						ReqID:  time.Now().UnixNano(),
+					}))
+				}
+
 				for _, symbol := range pairs {
 					crypto.pairs.Store(symbol, true)
 				}
@@ -137,7 +146,7 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
-				errnie.Error(crypto.desk.AddOrder(action))
+				errnie.Error(crypto.bus.Send("raw", "order", action))
 			}
 		}
 	}

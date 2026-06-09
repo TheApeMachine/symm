@@ -1,5 +1,5 @@
 import { CircleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
 import {
 	drawSignalGauge,
@@ -30,8 +30,6 @@ export type SignalGaugeBridge = {
 	latest: Record<string, unknown>;
 };
 
-// Keys rendered by the rich tooltip below, excluded from the generic key/value
-// fallback so they are not shown twice.
 const TELEMETRY_KEYS = new Set([
 	"chart",
 	"event",
@@ -188,15 +186,15 @@ const SignalGaugeTooltip = ({
 	);
 };
 
-export const SignalGauge = ({
+export const SignalGauge = memo(function SignalGauge({
 	bridge,
 	label,
 }: {
 	bridge: SignalGaugeBridge;
 	label: string;
-}) => {
+}) {
 	const [hovered, setHovered] = useState(false);
-	const [warmupPercent, setWarmupPercent] = useState(0);
+	const [warmupPercent, setWarmupPercent] = useState(-1);
 	const [tooltipPayload, setTooltipPayload] = useState<Record<
 		string,
 		unknown
@@ -252,7 +250,7 @@ export const SignalGauge = ({
 				bridge.ready = false;
 				bridge.pending = [];
 				bridge.latest = {};
-				setWarmupPercent(0);
+				setWarmupPercent(-1);
 			};
 		},
 		[bridge, pushGaugeWire],
@@ -325,4 +323,4 @@ export const SignalGauge = ({
 			</FrameFooter>
 		</Frame>
 	);
-};
+});
