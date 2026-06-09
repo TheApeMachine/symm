@@ -15,7 +15,7 @@ import (
 func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.Book {
 	return &krakenmarket.Book{
 		Symbol: symbol,
-		Type:   krakenmarket.BookSnapshot,
+		Type:   "snapshot",
 		Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
 		Asks:   []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
 	}

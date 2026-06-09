@@ -85,6 +85,14 @@ const krakenBookChecksumSampleNumeric = `{
 
 func TestBookChecksumNumericWire(t *testing.T) {
 	Convey("Given the documented sample in live numeric wire form", t, func() {
+		SharedInstrumentCatalog().Apply(InstrumentUpdate{
+			Pairs: []InstrumentPair{{
+				Symbol:         "BTC/USD",
+				PricePrecision: 1,
+				QtyPrecision:   8,
+			}},
+		})
+
 		var book Book
 
 		err := sonic.Unmarshal([]byte(krakenBookChecksumSampleNumeric), &book)
@@ -97,13 +105,63 @@ func TestBookChecksumNumericWire(t *testing.T) {
 	})
 }
 
+const krakenBookChecksumSampleLossyNumeric = `{
+	"symbol": "BTC/USD",
+	"bids": [
+		{"price": 45283.5, "qty": 0.1},
+		{"price": 45283.4, "qty": 1.54582015},
+		{"price": 45282.1, "qty": 0.1},
+		{"price": 45281.0, "qty": 0.1},
+		{"price": 45280.3, "qty": 1.54592586},
+		{"price": 45279.0, "qty": 0.0799},
+		{"price": 45277.6, "qty": 0.03310103},
+		{"price": 45277.5, "qty": 0.3},
+		{"price": 45277.3, "qty": 1.54602737},
+		{"price": 45276.6, "qty": 0.15445238}
+	],
+	"asks": [
+		{"price": 45285.2, "qty": 0.001},
+		{"price": 45286.4, "qty": 1.54571953},
+		{"price": 45286.6, "qty": 1.54571109},
+		{"price": 45289.6, "qty": 1.54560911},
+		{"price": 45290.2, "qty": 0.15890660},
+		{"price": 45291.8, "qty": 1.54553491},
+		{"price": 45294.7, "qty": 0.04454749},
+		{"price": 45296.1, "qty": 0.3538},
+		{"price": 45297.5, "qty": 0.09945542},
+		{"price": 45299.5, "qty": 0.18772827}
+	],
+	"checksum": 3310070434
+}`
+
+func TestBookChecksumLossyNumericWire(t *testing.T) {
+	Convey("Given lossy numeric book levels and instrument precision rules", t, func() {
+		SharedInstrumentCatalog().Apply(InstrumentUpdate{
+			Pairs: []InstrumentPair{{
+				Symbol:         "BTC/USD",
+				PricePrecision: 1,
+				QtyPrecision:   8,
+			}},
+		})
+
+		var book Book
+
+		err := sonic.Unmarshal([]byte(krakenBookChecksumSampleLossyNumeric), &book)
+
+		Convey("It should format checksum decimals from instrument precision", func() {
+			So(err, ShouldBeNil)
+			So(book.ComputedChecksum(), ShouldEqual, int64(3310070434))
+		})
+	})
+}
+
 func TestBookFold(t *testing.T) {
 	Convey("Given a book fed an update frame", t, func() {
 		book := Book{}
 		bids := []BookLevel{bookLevel(99, 8)}
 		asks := []BookLevel{bookLevel(101, 4)}
 		delta := Book{Bids: bids, Asks: asks}
-		delta.SetEnvelopeType(BookUpdate)
+		delta.SetEnvelopeType("update")
 		book.Fold(delta, 10)
 
 		Convey("It should merge the delta levels", func() {
@@ -134,7 +192,7 @@ func TestBookFold(t *testing.T) {
 			Bids:   bids,
 			Asks:   asks,
 		}
-		snapshot.SetEnvelopeType(BookSnapshot)
+		snapshot.SetEnvelopeType("snapshot")
 		snapshot.Checksum = snapshot.ComputedChecksum()
 		book.Fold(snapshot, 10)
 
@@ -181,7 +239,7 @@ func BenchmarkBookFold(b *testing.B) {
 	bids := []BookLevel{bookLevel(99, 8)}
 	asks := []BookLevel{bookLevel(101, 4)}
 	update := Book{Symbol: "ETH/EUR", Bids: bids, Asks: asks}
-	update.SetEnvelopeType(BookSnapshot)
+	update.SetEnvelopeType("snapshot")
 
 	b.ReportAllocs()
 

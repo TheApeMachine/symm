@@ -25,7 +25,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.Book{
 			Symbol: "BTC/EUR",
-			Type:   krakenmarket.BookSnapshot,
+			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 99, Qty: 10},
 				{Price: 98, Qty: 20},
@@ -60,7 +60,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.Book{
 			Symbol: "ETH/EUR",
-			Type:   krakenmarket.BookSnapshot,
+			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 49, Qty: 1},
 				{Price: 48, Qty: 30},
@@ -128,7 +128,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	signal.Record(&krakenmarket.Book{
 		Symbol: "BTC/EUR",
-		Type:   krakenmarket.BookSnapshot,
+		Type:   "snapshot",
 		Bids: []krakenmarket.BookLevel{
 			{Price: 99, Qty: 10},
 			{Price: 98, Qty: 20},

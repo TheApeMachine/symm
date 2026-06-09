@@ -27,8 +27,6 @@ type FluidSymbol struct {
 	symbol         string
 	book           krakenmarket.Book
 	bookReady      bool
-	bookDiverged   bool
-	divergedLogged bool
 	bookDepth      int
 	changePct      float64
 	volume         float64
@@ -154,7 +152,6 @@ func (state *FluidSymbol) FeedBook(update krakenmarket.Book, at time.Time) error
 func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time) error {
 	if update.IsSnapshot() {
 		state.bookReady = true
-		state.bookDiverged = false
 	} else if !state.bookReady {
 		return nil
 	}
@@ -162,8 +159,15 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time)
 	beforeBids := state.cloneBookLevels(state.book.Bids)
 	beforeAsks := state.cloneBookLevels(state.book.Asks)
 
+	maintained := state.book.CloneMaintained(state.bookDepth)
+
 	state.book.Fold(update, state.bookDepth)
-	state.verifyBookChecksumLocked(update.Checksum)
+
+	if update.Checksum != 0 && state.book.ComputedChecksum() != update.Checksum {
+		state.book = maintained
+
+		return fmt.Errorf("fluid: book checksum diverged for %s", state.symbol)
+	}
 
 	if at.IsZero() {
 		return fmt.Errorf("fluid: book event time is zero")
@@ -191,26 +195,6 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time)
 	}
 
 	return state.flux.addBook(flux)
-}
-
-func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
-	if expected == 0 {
-		return
-	}
-
-	if state.book.ComputedChecksum() == expected {
-		state.bookDiverged = false
-		state.divergedLogged = false
-
-		return
-	}
-
-	state.bookDiverged = true
-
-	if !state.divergedLogged {
-		state.divergedLogged = true
-		errnie.Warn("fluid: book checksum diverged for " + state.symbol + " — field degraded, continuing")
-	}
 }
 
 func (state *FluidSymbol) cloneBookLevels(levels []krakenmarket.BookLevel) []krakenmarket.BookLevel {
@@ -317,19 +301,11 @@ func (state *FluidSymbol) flushBufferedTrades() error {
 	return nil
 }
 
-func (state *FluidSymbol) Diverged() bool {
-	return state.bookDiverged
-}
-
 func (state *FluidSymbol) HasBook() bool {
 	return state.bookReady
 }
 
 func (state *FluidSymbol) Row() map[string]any {
-	if state.bookDiverged {
-		return nil
-	}
-
 	if state.lastEventAt.IsZero() {
 		return nil
 	}
@@ -338,7 +314,7 @@ func (state *FluidSymbol) Row() map[string]any {
 }
 
 func (state *FluidSymbol) Reading() (fluidReading, bool) {
-	if state.bookDiverged || state.last <= 0 || state.lastEventAt.IsZero() {
+	if state.last <= 0 || state.lastEventAt.IsZero() {
 		return fluidReading{}, false
 	}
 
@@ -392,7 +368,6 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 
 	return WireRow(map[string]any{
 		"symbol":     state.symbol,
-		"diverged":   state.bookDiverged,
 		"change_pct": state.changePct,
 		"vol":        state.volume,
 		"div":        divergence,

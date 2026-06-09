@@ -54,7 +54,7 @@ func BookFromSnapshot(message bookSnapshotMessage) (market.Book, error) {
 		Asks:      levelsFromSnapshot(message.Asks),
 		Timestamp: timestampString(message.Timestamp),
 	}
-	book.SetEnvelopeType(market.BookSnapshot)
+	book.SetEnvelopeType("snapshot")
 	book.SetInstrumentIdentity(identity)
 
 	return book, nil
@@ -88,7 +88,7 @@ func BookFromDelta(message bookDeltaMessage) (market.Book, error) {
 		book.Bids = []market.BookLevel{level}
 	}
 
-	book.SetEnvelopeType(market.BookUpdate)
+	book.SetEnvelopeType("update")
 	book.SetInstrumentIdentity(identity)
 
 	return book, nil

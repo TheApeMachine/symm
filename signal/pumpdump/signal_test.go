@@ -106,7 +106,7 @@ func TestSignalMeasure(t *testing.T) {
 			Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
 			Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
 		}
-		snapshot.SetEnvelopeType(krakenmarket.BookSnapshot)
+		snapshot.SetEnvelopeType("snapshot")
 
 		updates := []*krakenmarket.Book{
 			{
@@ -120,7 +120,7 @@ func TestSignalMeasure(t *testing.T) {
 		}
 
 		for _, frame := range updates {
-			frame.SetEnvelopeType(krakenmarket.BookUpdate)
+			frame.SetEnvelopeType("update")
 		}
 
 		frames := append([]*krakenmarket.Book{snapshot}, updates...)

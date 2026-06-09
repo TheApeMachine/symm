@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -274,25 +275,14 @@ func (system *System) feedBook(book *krakenmarket.Book) error {
 		book:   *book,
 		bookAt: bookAt,
 	}); err != nil {
+		if strings.Contains(err.Error(), "checksum diverged") {
+			system.resyncPending.Store(book.Symbol, struct{}{})
+		}
+
 		return err
 	}
 
-	state := system.loadSymbol(book.Symbol)
-
-	if state == nil {
-		return errnie.Error(fmt.Errorf("fluid: symbol %q not found", book.Symbol))
-	}
-
-	if !state.Diverged() {
-		system.resyncing.Delete(book.Symbol)
-		return nil
-	}
-
-	if _, pending := system.resyncing.Load(book.Symbol); pending {
-		return nil
-	}
-
-	system.resyncPending.Store(book.Symbol, struct{}{})
+	system.resyncing.Delete(book.Symbol)
 
 	return nil
 }

@@ -38,6 +38,9 @@ market:
   ws_ping_interval: 15s
   story:
     window_capacity: 1024
+  book:
+    checksum:
+      levels: 10
 
 ui:
   addr: 127.0.0.1:8765
@@ -69,7 +72,9 @@ trading:
     confidence_baseline: 0.55
     turbulence_confidence_scale: 0.30
   paper:
-    wallet_eur: 200
+    wallet:
+      usd: 200
+      eur: 200
     taker_fee_pct: 0.26
     maker_fee_pct: 0.16
     slippage_bps: 5

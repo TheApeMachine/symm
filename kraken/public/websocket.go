@@ -219,6 +219,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
+			market.SharedInstrumentCatalog().Apply(instrumentUpdate)
 			ws.bus.Send("raw", "instrument", &instrumentUpdate)
 		case "ticker":
 			tickerUpdates := make([]market.TickerUpdate, 0)

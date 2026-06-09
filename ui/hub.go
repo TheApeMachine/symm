@@ -44,20 +44,18 @@ func allowLocalhostOrigin(request *http.Request) bool {
 
 /*
 Hub subscribes to the "ui" broadcast group and ships whatever lands there to the
-websocket clients. Producers decide what to publish and gate per-symbol frames by
-open position at the source, so the hub does no filtering — it only buffers
-(lossy telemetry ring) and fans out. There is intentionally no reader goroutine
-per client; the frontend never sends frames.
+dashboard frontend over one websocket. Producers decide what to publish and gate
+per-symbol frames by open position at the source, so the hub does no filtering —
+it only buffers (lossy telemetry ring) and forwards. The frontend never sends
+frames upstream.
 */
 type Hub struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	pool             *qpool.Q[any]
 	bus              *internal.Bus
-	clients          *sync.Map
-	sessions         *sync.Map
+	frontend         atomic.Pointer[frontendLink]
 	server           *http.Server
-	nextConnID       uint64
 	lastPositions    atomic.Pointer[map[string]any]
 	lastEquity       atomic.Pointer[map[string]any]
 	lastDecisionTree atomic.Pointer[map[string]any]
@@ -76,12 +74,10 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		bus:      internal.NewBus(ctx, pool, []string{"kraken:private"}, []string{"ui"}),
-		clients:  &sync.Map{},
-		sessions: &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		bus:    internal.NewBus(ctx, pool, []string{"kraken:private"}, []string{"ui"}),
 	}
 
 	addr := viper.GetViper().GetString("ui.addr")
@@ -125,15 +121,9 @@ func (hub *Hub) Close() error {
 		}
 	}
 
-	hub.sessions.Range(func(key, value any) bool {
-		connID, ok := key.(uint64)
-
-		if ok {
-			hub.detachClient(connID)
-		}
-
-		return true
-	})
+	if link := hub.frontend.Load(); link != nil {
+		hub.detachFrontend(link)
+	}
 
 	hub.cancel()
 
@@ -159,15 +149,17 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	connID := atomic.AddUint64(&hub.nextConnID, 1)
-	hub.clients.Store(connID, conn)
+	link, linkErr := hub.newFrontendLink(conn)
 
-	if attachErr := hub.attachClient(connID, conn); attachErr != nil {
-		errnie.Error(attachErr)
-		hub.clients.Delete(connID)
+	if linkErr != nil {
+		errnie.Error(linkErr)
 		errnie.Error(conn.Close())
 
 		return
+	}
+
+	if previous := hub.frontend.Swap(link); previous != nil {
+		previous.close()
 	}
 
 	hub.subscribeBalances()
@@ -217,8 +209,8 @@ func (hub *Hub) replayBalances(conn *websocket.Conn) {
 }
 
 /*
-Tick drains qpool into per-client outbound disruptors so the bus subscriber never
-waits on browser pressure. Saturated client rings drop the oldest frame.
+Tick drains qpool into the frontend outbound disruptor so the bus subscriber never
+waits on browser pressure. A saturated ring drops the oldest frame.
 */
 func (hub *Hub) Tick() error {
 	for {
@@ -232,6 +224,6 @@ func (hub *Hub) Tick() error {
 			hub.rememberBalances(row.Value)
 		}
 
-		hub.publishToClients(row.Value)
+		hub.publishToFrontend(row.Value)
 	}
 }

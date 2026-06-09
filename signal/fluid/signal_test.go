@@ -26,7 +26,7 @@ func (fixture symbolBookFixture) snapshot(
 		Asks:   asks,
 	}
 	update.Checksum = update.ComputedChecksum()
-	update.SetEnvelopeType(krakenmarket.BookSnapshot)
+	update.SetEnvelopeType("snapshot")
 
 	return update
 }
@@ -216,20 +216,21 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			So(ok, ShouldBeTrue)
 		})
 
-		Convey("When the maintained book diverges from the exchange checksum", func() {
+		Convey("When the exchange checksum does not match the maintained book", func() {
 			badDelta := fixture.snapshot(98, 10, 101, 6)
 			badDelta.SetEnvelopeType("update")
 			badDelta.Checksum = 1
-			So(state.FeedBook(badDelta, feedAt.Add(200*time.Millisecond)), ShouldBeNil)
+			So(state.FeedBook(badDelta, feedAt.Add(200*time.Millisecond)), ShouldNotBeNil)
 
-			_, ok := state.Reading()
+			reading, ok := state.Reading()
 
-			Convey("It should suppress field emission", func() {
-				So(ok, ShouldBeFalse)
+			Convey("It should keep the last verified reading", func() {
+				So(ok, ShouldBeTrue)
+				So(reading.symbol, ShouldEqual, symbol)
 			})
 
-			Convey("It should suppress dashboard rows", func() {
-				So(state.Row(), ShouldBeNil)
+			Convey("It should still publish dashboard rows", func() {
+				So(state.Row(), ShouldNotBeNil)
 			})
 		})
 	})
@@ -254,7 +255,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
 
 		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
-		replenish.SetEnvelopeType(krakenmarket.BookUpdate)
+		replenish.SetEnvelopeType("update")
 		So(state.FeedBook(replenish, feedAt.Add(100*time.Millisecond)), ShouldBeNil)
 
 		reading, ok := state.Reading()

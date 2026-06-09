@@ -5,19 +5,13 @@ import (
 	"fmt"
 	"hash/crc32"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
-
-// BookSnapshot is the envelope type tag for a full L2 book frame after subscribe.
-const BookSnapshot = "snapshot"
-
-// BookUpdate is the envelope type tag for an incremental L2 book frame.
-const BookUpdate = "update"
-
-const bookChecksumLevels = 10
 
 /*
 BookParams is the Kraken WebSocket v2 subscribe payload for the book channel.
@@ -109,7 +103,7 @@ func (book *Book) SetEnvelopeType(kind string) {
 IsSnapshot reports whether this frame is a full book snapshot.
 */
 func (book *Book) IsSnapshot() bool {
-	return book.Type == BookSnapshot
+	return book.Type == "snapshot"
 }
 
 func (book *Book) ensureSides() {
@@ -135,7 +129,7 @@ with qty zero, then truncate to depth.
 */
 func (book *Book) Fold(update Book, depth int) {
 	if depth <= 0 {
-		depth = bookChecksumLevels
+		depth = viper.GetInt("market.book.checksum.levels")
 	}
 
 	book.ensureSides()
@@ -144,6 +138,8 @@ func (book *Book) Fold(update Book, depth int) {
 		book.Symbol = update.Symbol
 		book.bidSide.reset(update.Bids)
 		book.askSide.reset(update.Asks)
+		book.bidSide.pruneBeyond(depth)
+		book.askSide.pruneBeyond(depth)
 		book.refreshSlices(depth)
 		book.Checksum = update.Checksum
 		book.Timestamp = update.Timestamp
@@ -163,6 +159,8 @@ func (book *Book) Fold(update Book, depth int) {
 		book.askSide.apply(change)
 	}
 
+	book.bidSide.pruneBeyond(depth)
+	book.askSide.pruneBeyond(depth)
 	book.refreshSlices(depth)
 	book.Checksum = update.Checksum
 	book.Timestamp = update.Timestamp
@@ -216,23 +214,49 @@ func (book *Book) truncate(depth int) {
 }
 
 /*
+CloneMaintained copies the folded L2 state for rollback when a checksum fails.
+*/
+func (book *Book) CloneMaintained(depth int) Book {
+	clone := Book{
+		Symbol:    book.Symbol,
+		Checksum:  book.Checksum,
+		Timestamp: book.Timestamp,
+		Type:      book.Type,
+	}
+
+	clone.ensureSides()
+
+	if book.bidSide != nil {
+		book.bidSide.tree.Ascend(func(level BookLevel) bool {
+			clone.bidSide.tree.ReplaceOrInsert(level)
+			return true
+		})
+	}
+
+	if book.askSide != nil {
+		book.askSide.tree.Ascend(func(level BookLevel) bool {
+			clone.askSide.tree.ReplaceOrInsert(level)
+			return true
+		})
+	}
+
+	clone.refreshSlices(depth)
+	return clone
+}
+
+/*
 ComputedChecksum returns the CRC32 over the top ten levels per side.
 */
 func (book *Book) ComputedChecksum() int64 {
-	return int64(book.checksum())
-}
-
-func (book *Book) checksum() uint32 {
-	payload := book.checksumPayload()
-
-	return crc32.ChecksumIEEE([]byte(payload))
+	return int64(crc32.ChecksumIEEE([]byte(book.checksumPayload())))
 }
 
 func (book *Book) checksumPayload() string {
 	var builder strings.Builder
+	depth := viper.GetInt("market.book.checksum.levels")
 
-	book.appendChecksumSide(&builder, book.Asks, bookChecksumLevels)
-	book.appendChecksumSide(&builder, book.Bids, bookChecksumLevels)
+	book.appendChecksumSide(&builder, book.Asks, depth)
+	book.appendChecksumSide(&builder, book.Bids, depth)
 
 	return builder.String()
 }
@@ -246,44 +270,31 @@ func (book *Book) appendChecksumSide(builder *strings.Builder, levels []BookLeve
 
 	for index := 0; index < limit; index++ {
 		level := levels[index]
-		priceRaw := level.PriceRaw
-		qtyRaw := level.QtyRaw
+		priceRaw, qtyRaw := book.checksumTokens(level)
 
-		if priceRaw == "" {
-			priceRaw = strconvFormatChecksum(level.Price)
-		}
-
-		if qtyRaw == "" {
-			qtyRaw = strconvFormatChecksum(level.Qty)
-		}
-
-		builder.WriteString(formatChecksumToken(priceRaw))
-		builder.WriteString(formatChecksumToken(qtyRaw))
+		builder.WriteString(strings.ReplaceAll(priceRaw, ".", ""))
+		builder.WriteString(strings.ReplaceAll(qtyRaw, ".", ""))
 	}
 }
 
-func formatChecksumToken(raw string) string {
-	withoutDot := strings.ReplaceAll(raw, ".", "")
-	trimmed := strings.TrimLeft(withoutDot, "0")
+func (book *Book) checksumTokens(level BookLevel) (priceRaw, qtyRaw string) {
+	pair, ok := SharedInstrumentCatalog().Pair(book.Symbol)
 
-	if trimmed == "" {
-		return "0"
+	if ok {
+		return strconv.FormatFloat(level.Price, 'f', pair.PricePrecision, 64),
+			strconv.FormatFloat(level.Qty, 'f', pair.QtyPrecision, 64)
 	}
 
-	return trimmed
-}
+	priceRaw = level.PriceRaw
+	qtyRaw = level.QtyRaw
 
-func strconvFormatChecksum(value float64) string {
-	return fmt.Sprintf("%g", value)
-}
-
-func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {
-	if len(levels) == 0 {
-		return nil
+	if priceRaw == "" {
+		priceRaw = fmt.Sprintf("%g", level.Price)
 	}
 
-	out := make([]BookLevel, len(levels))
-	copy(out, levels)
+	if qtyRaw == "" {
+		qtyRaw = fmt.Sprintf("%g", level.Qty)
+	}
 
-	return out
+	return priceRaw, qtyRaw
 }

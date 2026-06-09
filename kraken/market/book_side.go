@@ -77,3 +77,26 @@ func (side *bookSide) levels(depth int) []BookLevel {
 
 	return out
 }
+
+func (side *bookSide) pruneBeyond(depth int) {
+	if depth <= 0 {
+		return
+	}
+
+	remove := make([]BookLevel, 0)
+	seen := 0
+
+	side.tree.Ascend(func(level BookLevel) bool {
+		seen++
+
+		if seen > depth {
+			remove = append(remove, level)
+		}
+
+		return true
+	})
+
+	for _, level := range remove {
+		side.tree.Delete(level)
+	}
+}

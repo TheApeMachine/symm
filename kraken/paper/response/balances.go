@@ -52,13 +52,13 @@ func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 					Asset:      viper.GetViper().GetString("market.quote_currency"),
 					AssetClass: "currency",
 					Balance: viper.GetFloat64(
-						"trading.paper.wallet_" + strings.ToLower(
+						"trading.paper.wallet." + strings.ToLower(
 							viper.GetViper().GetString("market.quote_currency"),
 						),
 					),
 					Wallets: []user.BalanceWallet{{
 						Balance: viper.GetFloat64(
-							"trading.paper.wallet_" + strings.ToLower(
+							"trading.paper.wallet." + strings.ToLower(
 								viper.GetViper().GetString("market.quote_currency"),
 							),
 						),
