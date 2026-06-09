@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"container/ring"
+
 	"fmt"
 
 	"github.com/theapemachine/errnie"
@@ -37,20 +38,21 @@ The "Coiled Spring" Story : By tracking spread compression and book-side strengt
 | Faded Exhaustion   | Falling     | Flat            | Leg is Dead          |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
-	measurements *ring.Ring
-	transition   *numeric.TransitionMatrix
-	rvol         *numeric.FastSlowRatio
-	compression  *numeric.FastSlowRatio
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	symbol          string
+	entity          *logic.Entity
+	measurements    *ring.Ring
+	warmupRemaining int
+	transition      *numeric.TransitionMatrix
+	rvol            *numeric.FastSlowRatio
+	compression     *numeric.FastSlowRatio
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	measurements *ring.Ring,
+	capacity int,
 	threshold float64,
 	alpha float64,
 	fastWindow int,
@@ -65,14 +67,15 @@ func NewSignal(
 	}
 
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
-		measurements: measurements,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		rvol:         numeric.NewFastSlowRatio(fastWindow, volumeEpsilon),
-		compression:  numeric.NewInvertedFastSlowRatio(fastWindow, volumeEpsilon),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		symbol:          symbol,
+		entity:          entity,
+		measurements:    ring.New(capacity),
+		warmupRemaining: capacity,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		rvol:            numeric.NewFastSlowRatio(fastWindow, volumeEpsilon),
+		compression:     numeric.NewInvertedFastSlowRatio(fastWindow, volumeEpsilon),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
@@ -126,6 +129,10 @@ func (signal *Signal) measureTrade() (logic.Measurement, error) {
 			return
 		}
 
+		if trade.Price <= 0 || trade.Qty <= 0 {
+			return
+		}
+
 		prices = append(prices, trade.Price)
 		volumes = append(volumes, trade.Qty)
 	})
@@ -154,6 +161,10 @@ func (signal *Signal) measureTick() (logic.Measurement, error) {
 
 		if !ok {
 			err = fmt.Errorf("pumpdump: expected ticker update")
+			return
+		}
+
+		if tick.Bid <= 0 || tick.Ask <= tick.Bid {
 			return
 		}
 
@@ -195,7 +206,7 @@ func (signal *Signal) measureBook() (logic.Measurement, error) {
 
 		mid, spread, depth, touchOK := folded.TouchQuote()
 
-		if !touchOK {
+		if !touchOK || spread <= 0 {
 			return
 		}
 
@@ -266,16 +277,6 @@ func (signal *Signal) fromSeries(
 
 	signal.transition.Update(categoryIndex)
 
-	if surprise >= signal.weights.Threshold {
-		sampleCount := signal.measurements.Len()
-		current := signal.measurements
-
-		for range sampleCount {
-			current.Value = nil
-			current = current.Next()
-		}
-	}
-
 	confidence := 0.0
 
 	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
@@ -306,4 +307,22 @@ func (signal *Signal) fromSeries(
 		Confidence: confidence,
 		Surprise:   surprise,
 	}, nil
+}
+
+func (signal *Signal) Record(raw any) bool {
+	warmed := false
+
+	if signal.warmupRemaining > 0 {
+		signal.warmupRemaining--
+		warmed = true
+	}
+
+	signal.measurements.Value = raw
+	signal.measurements = signal.measurements.Next()
+
+	return warmed
+}
+
+func (signal *Signal) WarmupFilled() int {
+	return signal.measurements.Len() - signal.warmupRemaining
 }

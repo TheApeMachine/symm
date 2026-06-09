@@ -1,33 +1,38 @@
 package fluid
 
 import (
-	"container/ring"
+	
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/telemetry"
 )
 
 type System struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	pool     *qpool.Q[any]
-	bus      *internal.Bus
-	signals  sync.Map
-	symbols  sync.Map
-	gauge    *telemetry.Gauge
-	feedback *market.Feedback
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	bus             *internal.Bus
+	signals         sync.Map
+	symbols         sync.Map
+	resyncing       sync.Map
+	resyncPending   sync.Map
+	resyncLastFlush time.Time
+	gauge           *telemetry.Gauge
+	feedback        *market.Feedback
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -36,7 +41,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	bus := internal.NewBus(
 		ctx,
 		pool,
-		[]string{"measurements", "ui"},
+		[]string{"measurements", "ui", "kraken:public"},
 		[]string{"raw"},
 	)
 
@@ -62,6 +67,8 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 
 func (system *System) Tick() error {
 	for {
+		system.flushBookResyncs()
+
 		message, err := system.bus.Receive("raw")
 
 		if errnie.Error(err) != nil || message == nil {
@@ -71,9 +78,13 @@ func (system *System) Tick() error {
 		var (
 			signal *Signal
 			ok     bool
+			warmed bool
 		)
 
 		switch message.Type {
+		case "symbols":
+			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
 
@@ -91,8 +102,8 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal.measurements.Value = trade
-			signal.measurements = signal.measurements.Next()
+			warmed = signal.Record(trade)
+
 		case "ticker":
 			var ticker *krakenmarket.TickerUpdate
 
@@ -113,8 +124,8 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal.measurements.Value = ticker
-			signal.measurements = signal.measurements.Next()
+			warmed = signal.Record(ticker)
+
 		case "book":
 			var book *krakenmarket.Book
 
@@ -125,18 +136,9 @@ func (system *System) Tick() error {
 
 			if feedErr := system.feedBook(book); feedErr != nil {
 				errnie.Error(feedErr)
-				continue
 			}
 
-			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("fluid: symbol not found"), "fluid: symbol not found")
-				continue
-			}
-
-			signal.measurements.Value = book
-			signal.measurements = signal.measurements.Next()
+			continue
 		case "feedback":
 			var feedback *market.Feedback
 
@@ -148,6 +150,10 @@ func (system *System) Tick() error {
 			system.feedback = feedback
 			continue
 		default:
+			continue
+		}
+
+		if signal == nil {
 			continue
 		}
 
@@ -163,7 +169,11 @@ func (system *System) Tick() error {
 			measurement,
 		)
 
-		errnie.Error(system.gauge.Publish(measurement))
+		errnie.Error(system.gauge.Publish(
+			measurement,
+			signal.symbol,
+			warmed,
+		))
 	}
 }
 
@@ -184,7 +194,66 @@ func (system *System) feedTicker(ticker *krakenmarket.TickerUpdate) error {
 func (system *System) feedBook(book *krakenmarket.Book) error {
 	state := system.loadSymbol(book.Symbol)
 
-	return state.FeedBook(*book)
+	if err := state.FeedBook(*book); err != nil {
+		return err
+	}
+
+	if !state.Diverged() {
+		system.resyncing.Delete(book.Symbol)
+		return nil
+	}
+
+	if _, pending := system.resyncing.Load(book.Symbol); pending {
+		return nil
+	}
+
+	system.resyncPending.Store(book.Symbol, struct{}{})
+
+	return nil
+}
+
+func (system *System) flushBookResyncs() {
+	pace := viper.GetDuration("market.subscribe_pace")
+
+	if time.Since(system.resyncLastFlush) < pace {
+		return
+	}
+
+	batchSize := viper.GetInt("market.subscribe_batch")
+	symbols := make([]string, 0, batchSize)
+
+	system.resyncPending.Range(func(key, value any) bool {
+		symbols = append(symbols, key.(string))
+		system.resyncPending.Delete(key)
+
+		return len(symbols) < batchSize
+	})
+
+	if len(symbols) == 0 {
+		return
+	}
+
+	system.resyncLastFlush = time.Now()
+
+	for _, symbol := range symbols {
+		system.resyncing.Store(symbol, true)
+	}
+
+	bookDepth := viper.GetInt("market.book_depth_levels")
+	params := krakenmarket.NewBookParams(symbols, bookDepth)
+	requestID := time.Now().UnixNano()
+
+	errnie.Error(system.bus.Send("kraken:public", "unsubscribe", types.KrakenMessage{
+		Method: "unsubscribe",
+		Params: params,
+		ReqID:  requestID,
+	}))
+
+	errnie.Error(system.bus.Send("kraken:public", "book", types.KrakenMessage{
+		Method: "subscribe",
+		Params: params,
+		ReqID:  requestID + 1,
+	}))
 }
 
 func (system *System) loadSymbol(symbol string) *FluidSymbol {
@@ -231,7 +300,7 @@ func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal
 		mapKey, NewSignal(
 			symbol,
 			logic.NewEntity(entity),
-			ring.New(measurementsCapacity),
+			measurementsCapacity,
 			system,
 			threshold,
 			alpha,

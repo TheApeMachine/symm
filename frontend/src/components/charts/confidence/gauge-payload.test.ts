@@ -5,7 +5,47 @@ import {
 	formatGaugePayloadValue,
 	gaugePayloadEntries,
 	gaugeWarmupPercent,
+	surpriseFromGaugePayload,
+	surpriseScaleMax,
+	surpriseThresholdFromGaugePayload,
 } from "#/components/charts/confidence/gauge-payload";
+
+describe("surpriseFromGaugePayload", () => {
+	it("reads surprise for the linear gauge", () => {
+		expect(surpriseFromGaugePayload({ surprise: 2.5 })).toBe(2.5);
+	});
+
+	it("falls back to snr for older frames", () => {
+		expect(surpriseFromGaugePayload({ snr: 1.75 })).toBe(1.75);
+	});
+
+	it("returns zero when surprise is missing", () => {
+		expect(surpriseFromGaugePayload({ confidence: 1 })).toBe(0);
+	});
+});
+
+describe("surpriseThresholdFromGaugePayload", () => {
+	it("reads the configured threshold", () => {
+		expect(surpriseThresholdFromGaugePayload({ surprise_threshold: 2 })).toBe(
+			2,
+		);
+	});
+
+	it("returns null when threshold is missing", () => {
+		expect(surpriseThresholdFromGaugePayload({ surprise: 1 })).toBeNull();
+	});
+});
+
+describe("surpriseScaleMax", () => {
+	it("uses three thresholds as a fixed range", () => {
+		expect(surpriseScaleMax({ surprise_threshold: 2 }, 1.5)).toBe(6);
+		expect(surpriseScaleMax({ surprise_threshold: 2 }, 6)).toBe(6);
+	});
+
+	it("defaults to six when threshold is missing", () => {
+		expect(surpriseScaleMax({}, 3)).toBe(6);
+	});
+});
 
 describe("confidenceFromGaugePayload", () => {
 	it("reads confidence for the needle", () => {

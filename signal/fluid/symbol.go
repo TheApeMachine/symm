@@ -176,6 +176,7 @@ func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
 
 	if state.book.ComputedChecksum() == expected {
 		state.bookDiverged = false
+		state.divergedLogged = false
 
 		return
 	}
@@ -183,13 +184,9 @@ func (state *FluidSymbol) verifyBookChecksumLocked(expected int64) {
 	state.bookDiverged = true
 
 	// Divergence is telemetry, not a death sentence. On a drop-oldest bus a
-	// missed delta makes a checksum mismatch inevitable within minutes, and
-	// Kraken only resends a snapshot on resubscribe — which nothing requests —
-	// so the old hard latch silently killed every symbol's field one by one
-	// ("evolving surface, then flat forever"). The field keeps measuring off
-	// the approximate book, flagged; the signal layer requests a per-symbol
-	// book resync (unsubscribe + resubscribe → fresh snapshot) which clears
-	// this flag.
+	// missed delta makes a checksum mismatch inevitable within minutes.
+	// Kraken only resends a snapshot on resubscribe; the fluid system requests
+	// a per-symbol book resync (unsubscribe + resubscribe) which clears this.
 	if !state.divergedLogged {
 		state.divergedLogged = true
 		errnie.Warn("fluid: book checksum diverged for " + state.symbol + " — field degraded, continuing")

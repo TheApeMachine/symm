@@ -1,7 +1,6 @@
 package depthflow
 
 import (
-	"container/ring"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -17,13 +16,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityBook),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.Book{
+		signal.Record(&krakenmarket.Book{
 			Symbol: "BTC/EUR",
 			Type:   krakenmarket.BookSnapshot,
 			Bids: []krakenmarket.BookLevel{
@@ -34,8 +33,7 @@ func TestSignalMeasure(t *testing.T) {
 				{Price: 101, Qty: 1},
 				{Price: 102, Qty: 1},
 			},
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -53,13 +51,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.Book{
+		signal.Record(&krakenmarket.Book{
 			Symbol: "ETH/EUR",
 			Type:   krakenmarket.BookSnapshot,
 			Bids: []krakenmarket.BookLevel{
@@ -70,8 +68,7 @@ func TestSignalMeasure(t *testing.T) {
 				{Price: 51, Qty: 8},
 				{Price: 52, Qty: 8},
 			},
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -87,27 +84,25 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "SOL/EUR",
 			Side:   "buy",
 			Price:  25,
 			Qty:    3,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "SOL/EUR",
 			Side:   "buy",
 			Price:  25.1,
 			Qty:    2,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -124,13 +119,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"BTC/EUR",
 		logic.NewEntity(logic.EntityBook),
-		ring.New(64),
+		64,
 		crossSection,
 		2.0,
 		0.5,
 	)
 
-	signal.measurements.Value = &krakenmarket.Book{
+	signal.Record(&krakenmarket.Book{
 		Symbol: "BTC/EUR",
 		Type:   krakenmarket.BookSnapshot,
 		Bids: []krakenmarket.BookLevel{
@@ -141,8 +136,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			{Price: 101, Qty: 1},
 			{Price: 102, Qty: 1},
 		},
-	}
-	signal.measurements = signal.measurements.Next()
+	})
 
 	b.ResetTimer()
 

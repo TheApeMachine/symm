@@ -1,7 +1,6 @@
 package leadlag
 
 import (
-	"container/ring"
 	"testing"
 	"time"
 
@@ -213,7 +212,7 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTick),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,

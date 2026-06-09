@@ -1,7 +1,6 @@
 package exhaust
 
 import (
-	"container/ring"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -34,14 +33,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			symbol,
 			logic.NewEntity(logic.EntityBook),
-			ring.New(8),
+			8,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = thinningBook(symbol, 4, 105)
-		signal.measurements = signal.measurements.Next()
+		signal.Record(thinningBook(symbol, 4, 105))
 
 		measurement, err := signal.Measure(nil)
 
@@ -72,7 +70,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
@@ -92,7 +90,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityBook),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
@@ -115,7 +113,7 @@ func TestDepthTrend(t *testing.T) {
 			samples.Push(value)
 		}
 
-		signal := NewSignal("X/EUR", logic.NewEntity(logic.EntityBook), ring.New(4), newCrossSection(24), 2, 0.5)
+		signal := NewSignal("X/EUR", logic.NewEntity(logic.EntityBook), 4, newCrossSection(24), 2, 0.5)
 
 		Convey("It should report positive thinning trend", func() {
 			So(signal.depthTrend(samples), ShouldBeGreaterThan, 0)
@@ -147,7 +145,7 @@ func TestExitScorePicksStrongerSide(t *testing.T) {
 			history.askDepths.Push(value)
 		}
 
-		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook), ring.New(4), newCrossSection(24), 2, 0.5)
+		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook), 4, newCrossSection(24), 2, 0.5)
 		longUrgency, _, _ := signal.exitScore(history, 1)
 		shortUrgency, shortCategory, _ := signal.exitScore(history, -1)
 
@@ -170,14 +168,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		symbol,
 		logic.NewEntity(logic.EntityBook),
-		ring.New(64),
+		64,
 		crossSection,
 		2.0,
 		0.5,
 	)
 
-	signal.measurements.Value = thinningBook(symbol, 6, 104)
-	signal.measurements = signal.measurements.Next()
+	signal.Record(thinningBook(symbol, 6, 104))
 
 	b.ResetTimer()
 

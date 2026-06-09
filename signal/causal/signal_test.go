@@ -35,7 +35,7 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 
 		system := &System{crossSection: &crossSection{}}
 		system.crossSection.publishChangePct("BTC/EUR", 0.02)
-		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), nil, system, 2.0, 0.5)
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), 8, system, 2.0, 0.5)
 
 		reading, err := state.Measure(system.crossSection.macroMomentum("BTC/EUR"), 0, time.Now())
 
@@ -78,7 +78,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	system := &System{crossSection: &crossSection{}}
 	system.crossSection.publishChangePct("BTC/EUR", 0.02)
-	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), nil, system, 2.0, 0.5)
+	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), 64, system, 2.0, 0.5)
 
 	b.ReportAllocs()
 

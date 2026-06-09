@@ -1,7 +1,6 @@
 package correlation
 
 import (
-	"container/ring"
 	"math"
 	"testing"
 
@@ -33,18 +32,17 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "BTC/EUR",
 			Price:  prices["BTC/EUR"],
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -78,18 +76,17 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "ALT/EUR",
 			Price:  14,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -105,19 +102,18 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
 		crossSection.publishPrice("BTC/EUR", 100)
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "BTC/EUR",
 			Price:  100,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -140,18 +136,17 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"BTC/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		ring.New(64),
+		64,
 		crossSection,
 		2.0,
 		0.5,
 	)
 
-	signal.measurements.Value = &krakenmarket.TradeUpdate{
+	signal.Record(&krakenmarket.TradeUpdate{
 		Symbol: "BTC/EUR",
 		Price:  100 * math.Pow(1.01, 8),
 		Qty:    1,
-	}
-	signal.measurements = signal.measurements.Next()
+	})
 
 	b.ResetTimer()
 

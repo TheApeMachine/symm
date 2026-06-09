@@ -1,11 +1,17 @@
 import { CircleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SciChartReact, type TResolvedReturnType } from "scichart-react";
-import { drawSignalGauge } from "#/components/charts/confidence/draw-signal-gauge";
+import {
+	drawSignalGauge,
+	type SignalGaugeControls,
+} from "#/components/charts/confidence/draw-signal-gauge";
 import {
 	confidenceFromGaugePayload,
 	gaugePayloadEntries,
 	gaugeWarmupPercent,
+	surpriseFromGaugePayload,
+	surpriseScaleMax,
+	surpriseThresholdFromGaugePayload,
 } from "#/components/charts/confidence/gauge-payload";
 import { Card, CardPanel } from "#/components/ui/card";
 import { Frame, FrameFooter } from "#/components/ui/frame";
@@ -42,6 +48,8 @@ const TELEMETRY_KEYS = new Set([
 	"min_samples",
 	"entropy_trust",
 	"confidence",
+	"surprise",
+	"surprise_threshold",
 	"snr",
 ]);
 
@@ -69,7 +77,7 @@ const SignalGaugeTooltip = ({
 	const category =
 		typeof payload.category === "string" ? payload.category : null;
 	const confidence = finiteNumber(payload.confidence);
-	const snr = finiteNumber(payload.snr);
+	const surprise = finiteNumber(payload.surprise) ?? finiteNumber(payload.snr);
 	const observation = finiteNumber(payload.observation);
 	const samples = finiteNumber(payload.samples);
 	const minSamples = finiteNumber(payload.min_samples);
@@ -103,14 +111,16 @@ const SignalGaugeTooltip = ({
 			) : null}
 
 			{confidence !== null ||
-			snr !== null ||
+			surprise !== null ||
 			observation !== null ||
 			entropyTrust !== null ? (
 				<div className="flex gap-3 text-[11px] text-muted-foreground">
 					{confidence !== null ? (
 						<span>conf {confidence.toFixed(2)}</span>
 					) : null}
-					{snr !== null ? <span>snr {snr.toFixed(2)}</span> : null}
+					{surprise !== null ? (
+						<span>surprise {surprise.toFixed(2)}</span>
+					) : null}
 					{observation !== null ? (
 						<span>obs {observation.toFixed(3)}</span>
 					) : null}
@@ -192,28 +202,52 @@ export const SignalGauge = ({
 		unknown
 	> | null>(null);
 
-	const onInit = useCallback(
+	const gaugeControlsRef = useRef<SignalGaugeControls | null>(null);
+
+	const pushGaugeWire = useCallback(
+		(wire: Record<string, unknown>) => {
+			bridge.latest = wire;
+
+			const controls = gaugeControlsRef.current;
+
+			if (!controls) {
+				return;
+			}
+
+			controls.updateConfidence(confidenceFromGaugePayload(wire));
+
+			const surprise = surpriseFromGaugePayload(wire);
+			const threshold = surpriseThresholdFromGaugePayload(wire) ?? 2;
+
+			controls.updateSurprise(
+				surprise,
+				surpriseScaleMax(wire, surprise),
+				threshold,
+			);
+
+			const percent = gaugeWarmupPercent(wire);
+
+			setWarmupPercent(percent === null ? -1 : percent);
+		},
+		[bridge],
+	);
+
+	const onGaugeInit = useCallback(
 		(result: TResolvedReturnType<typeof drawSignalGauge>) => {
 			bridge.latest = {};
+			gaugeControlsRef.current = result.controls;
 
-			bridge.update = (wire) => {
-				bridge.latest = wire;
-				result.controls.update(confidenceFromGaugePayload(wire));
-
-				const percent = gaugeWarmupPercent(wire);
-
-				setWarmupPercent(percent === null ? -1 : percent);
-			};
-
+			bridge.update = pushGaugeWire;
 			bridge.ready = true;
 
 			for (const pendingWire of bridge.pending) {
-				bridge.update(pendingWire);
+				pushGaugeWire(pendingWire);
 			}
 
 			bridge.pending = [];
 
 			return () => {
+				gaugeControlsRef.current = null;
 				bridge.update = () => {};
 				bridge.ready = false;
 				bridge.pending = [];
@@ -221,11 +255,9 @@ export const SignalGauge = ({
 				setWarmupPercent(0);
 			};
 		},
-		[bridge],
+		[bridge, pushGaugeWire],
 	);
 
-	// While hovering, re-read the bridge's latest payload on an interval so the
-	// tooltip updates live with each incoming frame instead of freezing on enter.
 	useEffect(() => {
 		if (!hovered) {
 			setTooltipPayload(null);
@@ -256,11 +288,11 @@ export const SignalGauge = ({
 					>
 						<SciChartReact
 							initChart={drawSignalGauge}
-							onInit={onInit}
+							onInit={onGaugeInit}
 							style={{ height: "100%", width: "100%" }}
 						/>
 						{warmupPercent >= 0 ? (
-							<div className="absolute inset-x-2 bottom-2 z-20 rounded-md bg-background/90 px-2 py-1.5">
+							<div className="absolute inset-x-2 bottom-[15%] z-20 rounded-md bg-background/90 px-2 py-1.5">
 								<Progress value={warmupPercent} className="gap-1">
 									<div className="flex items-center justify-between gap-2">
 										<ProgressLabel className="font-normal text-[10px] text-muted-foreground">

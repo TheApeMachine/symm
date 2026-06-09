@@ -30,9 +30,10 @@ type BookParams struct {
 
 func NewBookParams(symbols []string, depth int) json.RawMessage {
 	params := &BookParams{
-		Channel: "book",
-		Symbol:  symbols,
-		Depth:   depth,
+		Channel:  "book",
+		Symbol:   symbols,
+		Depth:    depth,
+		Snapshot: true,
 	}
 
 	raw, err := sonic.Marshal(params)

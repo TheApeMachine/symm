@@ -128,7 +128,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		So(state.FeedBook(fixture.snapshot(100, 5, 100, 5)), ShouldBeNil)
 
 		reading, ok := state.Reading()
-		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), nil, nil, 2.0, 0.5)
+		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
 		category, _, _, _, _ := signal.classify(reading)
 
 		Convey("It should still publish a laminar reading", func() {
@@ -160,7 +160,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), nil, nil, 2.0, 0.5)
+	signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
 
 	b.ReportAllocs()
 

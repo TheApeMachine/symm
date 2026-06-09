@@ -3,7 +3,7 @@ system:
     level: debug
   queue:
     ttl: 1024
-    buffer: 1024
+    buffer: 65536
 
 telemetry:
   gauge:
@@ -25,9 +25,7 @@ market:
   book_depth_levels: 10
   l3_enabled: true
   l3_depth: 10
-  # Pace between subscribe BATCHES (Kraken v2 takes symbol arrays; one batch =
-  # four channel requests). Per-symbol pacing sprayed ~1,600 messages per
-  # (re)connect across a ~400-pair universe — Kraken kills that with close 1008.
+  # Fluid book resync still batches unsub/subscribe to avoid close 1008.
   subscribe_pace: 250ms
   subscribe_batch: 100
   ws_reconnect_initial: 1s
@@ -136,6 +134,9 @@ signals:
     window: 1m
     fast_window: 3
     volume_epsilon: 0
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
   exhaust:
     raw_dump: true
     measurements_capacity: 64

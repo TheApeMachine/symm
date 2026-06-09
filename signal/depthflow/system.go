@@ -1,7 +1,7 @@
 package depthflow
 
 import (
-	"container/ring"
+	
 	"context"
 	"errors"
 	"fmt"
@@ -77,9 +77,13 @@ func (system *System) Tick() error {
 		var (
 			signal *Signal
 			ok     bool
+			warmed bool
 		)
 
 		switch message.Type {
+		case "symbols":
+			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
 
@@ -95,8 +99,8 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal.measurements.Value = trade
-			signal.measurements = signal.measurements.Next()
+			warmed = signal.Record(trade)
+
 		case "ticker":
 			var ticker *krakenmarket.TickerUpdate
 
@@ -112,8 +116,8 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal.measurements.Value = ticker
-			signal.measurements = signal.measurements.Next()
+			warmed = signal.Record(ticker)
+
 		case "book":
 			var book *krakenmarket.Book
 
@@ -129,8 +133,8 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal.measurements.Value = book
-			signal.measurements = signal.measurements.Next()
+			warmed = signal.Record(book)
+
 		case "feedback":
 			var feedback *market.Feedback
 
@@ -140,6 +144,10 @@ func (system *System) Tick() error {
 			}
 
 			system.feedback = feedback
+			continue
+		}
+
+		if signal == nil {
 			continue
 		}
 
@@ -155,7 +163,11 @@ func (system *System) Tick() error {
 			measurement,
 		)
 
-		errnie.Error(system.gauge.Publish(measurement))
+		errnie.Error(system.gauge.Publish(
+			measurement,
+			signal.symbol,
+			warmed,
+		))
 	}
 }
 
@@ -181,7 +193,7 @@ func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal
 		mapKey, NewSignal(
 			symbol,
 			logic.NewEntity(entity),
-			ring.New(measurementsCapacity),
+			measurementsCapacity,
 			system.crossSection,
 			threshold,
 			alpha,

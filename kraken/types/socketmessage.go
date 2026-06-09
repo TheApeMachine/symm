@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,5 +41,19 @@ func (sm *SocketMessage) Release() {
 type KrakenMessage struct {
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
-	ReqID  int64           `json:"reqid"`
+	ReqID  int64           `json:"req_id,omitempty"`
+}
+
+func NewKrakenMessage(method string, params any, reqID int64) (KrakenMessage, error) {
+	raw, err := sonic.Marshal(params)
+
+	if err != nil {
+		return KrakenMessage{}, fmt.Errorf("types: marshal %s params: %w", method, err)
+	}
+
+	return KrakenMessage{
+		Method: method,
+		Params: raw,
+		ReqID:  reqID,
+	}, nil
 }

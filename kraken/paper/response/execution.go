@@ -109,7 +109,7 @@ func (executions *Executions) Send(message *qpool.QValue[any]) *types.SocketMess
 	}
 
 	out = &types.SocketMessage{
-		Method:  "executions",
+		Channel: "executions",
 		Success: &[]bool{true}[0],
 		Data:    data,
 	}

@@ -3,6 +3,7 @@ package market
 import (
 	"container/ring"
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -33,7 +34,16 @@ func (window *MeasurementWindow) Push(measurement logic.Measurement) []logic.Mea
 
 	if window.ptr >= window.ring.Len()-1 {
 		window.ring.Do(func(value any) {
-			measurement := value.(logic.Measurement)
+			if value == nil {
+				return
+			}
+
+			measurement, ok := value.(logic.Measurement)
+
+			if !ok {
+				return
+			}
+
 			measurements = append(measurements, measurement)
 		})
 
@@ -103,10 +113,18 @@ func (story *Story) Tick() error {
 				continue
 			}
 
-			measurement := GetMeasurement(row)
+			var (
+				measurement logic.Measurement
+				ok          bool
+			)
+
+			if measurement, ok = row.Value.(logic.Measurement); !ok {
+				errnie.Error(errors.New("story: invalid measurement"))
+				continue
+			}
 
 			raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
-				viper.GetInt("market.story.window.capacity"),
+				viper.GetInt("market.story.window_capacity"),
 			))
 
 			measurements := raw.(*MeasurementWindow).Push(measurement)

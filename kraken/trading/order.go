@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -188,6 +189,21 @@ func NewOrderClient(ctx context.Context, pool *qpool.Q[any]) *OrderClient {
 	return client
 }
 
+func (client *OrderClient) send(method string, params any) error {
+	frame, err := types.NewKrakenMessage(method, params, time.Now().UnixNano())
+
+	if errnie.Error(err) != nil {
+		return err
+	}
+
+	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
+		Type:  "orders",
+		Value: frame,
+	})
+
+	return nil
+}
+
 func (client *OrderClient) AddOrder(params AddParams) error {
 	if params.ClOrdID == "" {
 		return errnie.Error(errnie.Require(map[string]any{
@@ -195,99 +211,35 @@ func (client *OrderClient) AddOrder(params AddParams) error {
 		}))
 	}
 
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodAddOrder,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodAddOrder, params)
 }
 
 func (client *OrderClient) AmendOrder(params AmendParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodAmendOrder,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodAmendOrder, params)
 }
 
 func (client *OrderClient) CancelOrder(params CancelParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodCancelOrder,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodCancelOrder, params)
 }
 
 func (client *OrderClient) CancelAll(params CancelAllParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodCancelAll,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodCancelAll, params)
 }
 
 func (client *OrderClient) CancelAllOrdersAfter(params CancelAllOrdersAfterParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodCancelAllOrdersAfter,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodCancelAllOrdersAfter, params)
 }
 
 func (client *OrderClient) BatchAdd(params BatchAddParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodBatchAdd,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodBatchAdd, params)
 }
 
 func (client *OrderClient) BatchCancel(params BatchCancelParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodBatchCancel,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodBatchCancel, params)
 }
 
 func (client *OrderClient) EditOrder(params EditParams) error {
-	client.broadcasts["kraken:private"].Send(&qpool.QValue[any]{
-		Type: "orders",
-		Value: map[string]any{
-			"method": MethodEditOrder,
-			"params": params,
-		},
-	})
-
-	return nil
+	return client.send(MethodEditOrder, params)
 }
 
 func (client *OrderClient) Close() error {

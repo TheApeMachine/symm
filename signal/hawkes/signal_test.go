@@ -75,7 +75,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	ticks := tradeBurst("BTC/EUR", base, 128)
 	now := base.Add(128 * 100 * time.Millisecond)
-	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), nil, nil, 2.0, 0.5)
+	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), 64, nil, 2.0, 0.5)
 
 	b.ReportAllocs()
 

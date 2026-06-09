@@ -73,39 +73,25 @@ func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 }
 
 func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage {
-	var (
-		out   *types.SocketMessage
-		inMsg map[string]any
-		ok    bool
-	)
+	frame, ok := message.Value.(types.KrakenMessage)
 
-	if inMsg, ok = message.Value.(map[string]any); !ok {
+	if !ok {
 		return nil
 	}
 
-	switch inMsg["method"].(string) {
+	var out *types.SocketMessage
+
+	switch frame.Method {
 	case "subscribe":
 		balances.isActive.Store(true)
 	case "unsubscribe":
 		balances.isActive.Store(false)
 		out = &types.SocketMessage{
-			Method:  "unsubscribe",
+			Channel: "balances",
 			Success: &[]bool{true}[0],
 		}
-	case "add_order":
-		for _, asset := range balances.model.Asset {
-			if asset.Asset == inMsg["symbol"].(string) {
-				asset.Balance -= inMsg["qty"].(float64)
-				break
-			}
-		}
-	case "cancel_order":
-		for _, asset := range balances.model.Asset {
-			if asset.Asset == inMsg["symbol"].(string) {
-				asset.Balance += inMsg["qty"].(float64)
-				break
-			}
-		}
+	default:
+		return nil
 	}
 
 	data, err := sonic.Marshal(balances.model)
@@ -115,7 +101,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 	}
 
 	out = &types.SocketMessage{
-		Method:  "balances",
+		Channel: "balances",
 		Success: &[]bool{true}[0],
 		Data:    data,
 	}

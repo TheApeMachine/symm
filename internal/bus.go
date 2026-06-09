@@ -60,21 +60,21 @@ func (bus *Bus) Receive(channel string) (*qpool.QValue[any], error) {
 		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
 	}
 
-	errnie.Debug(fmt.Sprintf(
-		"waiting for message on channel %s", channel,
-	))
-
 	return bus.subscribers[channel].Wait(bus.ctx)
+}
+
+func (bus *Bus) Poll(channel string) (*qpool.QValue[any], error) {
+	if bus.subscribers[channel] == nil {
+		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
+	}
+
+	return bus.subscribers[channel].Poll(), nil
 }
 
 func (bus *Bus) Send(channel, t string, value any) error {
 	if bus.broadcasts[channel] == nil {
 		return errnie.Error(fmt.Errorf("channel %s not found", channel))
 	}
-
-	errnie.Debug(fmt.Sprintf(
-		"sending message on channel %s", channel,
-	))
 
 	bus.broadcasts[channel].Send(&qpool.QValue[any]{
 		Type:  t,

@@ -9,13 +9,13 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -119,6 +119,17 @@ func (ws *WebSocket) Connect(
 	return nil
 }
 
+func (ws *WebSocket) disconnect() {
+	ws.isConnected.Store(false)
+
+	if ws.conn == nil {
+		return
+	}
+
+	errnie.Error(ws.conn.Close())
+	ws.conn = nil
+}
+
 var qvaluePool = sync.Pool{
 	New: func() any {
 		return &qpool.QValue[any]{}
@@ -140,29 +151,36 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
-			errnie.Error(ws.conn.WriteJSON(public.PingMessage{
+			if errnie.Error(ws.conn.WriteJSON(public.PingMessage{
 				Method: "ping",
 				ReqID:  time.Now().UnixNano(),
-			}))
+			})) != nil {
+				ws.disconnect()
+			}
 		default:
-			message := qvaluePool.Get().(*qpool.QValue[any])
+			slot := qvaluePool.Get().(*qpool.QValue[any])
 
-			if message, ws.err = ws.bus.Receive(
+			var message *qpool.QValue[any]
+
+			if message, ws.err = ws.bus.Poll(
 				"kraken:private",
-			); errnie.Error(ws.err) != nil {
+			); errnie.Error(ws.err) != nil || message == nil {
+				qvaluePool.Put(slot)
+				break
+			}
+
+			qvaluePool.Put(slot)
+
+			if viper.GetString("trading.model") == "paper" {
 				qvaluePool.Put(message)
 				continue
 			}
 
-			if viper.GetString("trading.model") == "paper" {
-				if slices.Contains(
-					[]string{"balances", "orders", "executions"},
-					message.Value.(map[string]any)["channel"].(string),
-				) {
-					// The paper emulation will pick up the message.
-					qvaluePool.Put(message)
-					continue
-				}
+			frame, ok := message.Value.(types.KrakenMessage)
+
+			if !ok {
+				qvaluePool.Put(message)
+				continue
 			}
 
 			token, err := ws.tokenProvider.Token(ws.ctx)
@@ -172,16 +190,31 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			message.Value.(map[string]any)["token"] = token
-			errnie.Error(ws.conn.WriteJSON(message.Value))
+			outbound, frameErr := frameWithToken(frame, token)
+
+			if errnie.Error(frameErr) != nil {
+				qvaluePool.Put(message)
+				continue
+			}
+
+			if errnie.Error(ws.conn.WriteJSON(outbound)) != nil {
+				qvaluePool.Put(message)
+				ws.disconnect()
+				continue
+			}
 
 			qvaluePool.Put(message)
+		}
+
+		if !ws.isConnected.Load() {
+			continue
 		}
 
 		message := types.NewSocketMessage()
 
 		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
 			message.Release()
+			ws.disconnect()
 			continue
 		}
 
@@ -213,6 +246,7 @@ func (ws *WebSocket) Tick() (err error) {
 			}
 
 			ws.bus.Send("raw", "balances", balances)
+			ws.bus.Send("ui", "balances", balances)
 		case "orders":
 			orders := []trading.OrderUpdate{}
 
@@ -312,6 +346,28 @@ func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
 			return true
 		})
 	}
+}
+
+func frameWithToken(frame types.KrakenMessage, token string) (types.KrakenMessage, error) {
+	var params map[string]any
+
+	if err := sonic.Unmarshal(frame.Params, &params); err != nil {
+		return types.KrakenMessage{}, err
+	}
+
+	params["token"] = token
+
+	raw, err := sonic.Marshal(params)
+
+	if err != nil {
+		return types.KrakenMessage{}, err
+	}
+
+	return types.KrakenMessage{
+		Method: frame.Method,
+		Params: raw,
+		ReqID:  frame.ReqID,
+	}, nil
 }
 
 func (ws *WebSocket) Close() error {

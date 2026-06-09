@@ -109,6 +109,17 @@ func (ws *WebSocket) Connect(
 	return nil
 }
 
+func (ws *WebSocket) disconnect() {
+	ws.isConnected.Store(false)
+
+	if ws.conn == nil {
+		return
+	}
+
+	errnie.Error(ws.conn.Close())
+	ws.conn = nil
+}
+
 var qvaluePool = sync.Pool{
 	New: func() any {
 		return &qpool.QValue[any]{}
@@ -130,28 +141,44 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
-			errnie.Error(ws.conn.WriteJSON(PingMessage{
+			if errnie.Error(ws.conn.WriteJSON(PingMessage{
 				Method: "ping",
 				ReqID:  time.Now().UnixNano(),
-			}))
+			})) != nil {
+				ws.disconnect()
+			}
 		default:
-			message := qvaluePool.Get().(*qpool.QValue[any])
+			slot := qvaluePool.Get().(*qpool.QValue[any])
 
-			if message, ws.err = ws.bus.Receive(
+			var message *qpool.QValue[any]
+
+			if message, ws.err = ws.bus.Poll(
 				"kraken:public",
-			); errnie.Error(ws.err) != nil {
+			); errnie.Error(ws.err) != nil || message == nil {
+				qvaluePool.Put(slot)
+				break
+			}
+
+			qvaluePool.Put(slot)
+
+			if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
 				qvaluePool.Put(message)
+				ws.disconnect()
 				continue
 			}
 
-			errnie.Error(ws.conn.WriteJSON(message.Value))
 			qvaluePool.Put(message)
+		}
+
+		if !ws.isConnected.Load() {
+			continue
 		}
 
 		message := types.NewSocketMessage()
 
 		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
 			message.Release()
+			ws.disconnect()
 			continue
 		}
 
@@ -186,34 +213,42 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send("raw", "instrument", instrumentUpdate)
+			ws.bus.Send("raw", "instrument", &instrumentUpdate)
 		case "ticker":
-			tickerUpdate := market.TickerUpdate{}
+			tickerUpdates := make([]market.TickerUpdate, 0)
 
-			if err := errnie.Error(message.Unmarshal(&tickerUpdate)); err != nil {
+			if err := errnie.Error(message.Unmarshal(&tickerUpdates)); err != nil || len(tickerUpdates) == 0 {
 				message.Release()
 				continue
 			}
 
-			ws.bus.Send("raw", "ticker", tickerUpdate)
+			tickerUpdate := tickerUpdates[0]
+			tickerUpdate.SetEnvelopeType(message.Type)
+			ws.bus.Send("raw", "ticker", &tickerUpdate)
 		case "book":
-			book := market.Book{}
+			books := make([]market.Book, 0)
 
-			if err := errnie.Error(message.Unmarshal(&book)); err != nil {
+			if err := errnie.Error(message.Unmarshal(&books)); err != nil || len(books) == 0 {
 				message.Release()
 				continue
 			}
 
-			ws.bus.Send("raw", "book", book)
+			book := books[0]
+			book.SetEnvelopeType(message.Type)
+			ws.bus.Send("raw", "book", &book)
 		case "trade":
-			tradeUpdate := market.TradeUpdate{}
+			tradeUpdates := make([]market.TradeUpdate, 0)
 
-			if err := errnie.Error(message.Unmarshal(&tradeUpdate)); err != nil {
+			if err := errnie.Error(message.Unmarshal(&tradeUpdates)); err != nil || len(tradeUpdates) == 0 {
 				message.Release()
 				continue
 			}
 
-			ws.bus.Send("raw", "trade", tradeUpdate)
+			for index := range tradeUpdates {
+				tradeUpdate := tradeUpdates[index]
+				tradeUpdate.SetEnvelopeType(message.Type)
+				ws.bus.Send("raw", "trades", &tradeUpdate)
+			}
 		case "execution":
 			execution := user.Execution{}
 

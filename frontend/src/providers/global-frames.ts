@@ -36,6 +36,30 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		return true;
 	}
 
+	if (Array.isArray(raw.asset)) {
+		let cash = 0;
+
+		for (const row of raw.asset) {
+			if (typeof row !== "object" || row === null) {
+				continue;
+			}
+
+			const asset = row as Record<string, unknown>;
+			const name = asset.asset;
+
+			if (name !== "EUR" && name !== "ZEUR") {
+				continue;
+			}
+
+			if (typeof asset.balance === "number" && Number.isFinite(asset.balance)) {
+				cash = asset.balance;
+			}
+		}
+
+		dispatch.setWallet(cash);
+		return true;
+	}
+
 	if (raw.event === "equity") {
 		dispatch.setEquity(
 			(raw.exit_balance as number) ?? 0,

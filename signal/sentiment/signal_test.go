@@ -14,11 +14,10 @@ import (
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a bullish cross-section on trades", t, func() {
 		crossSection := &crossSection{breadthHistory: ring.New(8)}
-		measurements := ring.New(4)
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			measurements,
+			8,
 			crossSection,
 			2.0,
 			0.5,
@@ -37,36 +36,33 @@ func TestSignalMeasure(t *testing.T) {
 			entrySignal := NewSignal(
 				entry.symbol,
 				logic.NewEntity(logic.EntityTrade),
-				ring.New(4),
+				4,
 				crossSection,
 				2.0,
 				0.5,
 			)
 
 			for _, price := range entry.prices {
-				entrySignal.measurements.Value = &krakenmarket.TradeUpdate{
+				entrySignal.Record(&krakenmarket.TradeUpdate{
 					Symbol: entry.symbol,
 					Price:  price,
 					Qty:    1,
-				}
-				entrySignal.measurements = entrySignal.measurements.Next()
+				})
 			}
 
 			crossSection.publishChange(entry.symbol, 2.0)
 		}
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "A/EUR",
 			Price:  102,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		})
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "A/EUR",
 			Price:  104,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -83,7 +79,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"LEAD/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
@@ -93,18 +89,16 @@ func TestSignalMeasure(t *testing.T) {
 		crossSection.publishChange("LAG/EUR", -2.0)
 		crossSection.publishChange("FLAT/EUR", -1.0)
 
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "LEAD/EUR",
 			Price:  100,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		})
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "LEAD/EUR",
 			Price:  104,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -119,7 +113,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
@@ -139,14 +133,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(2),
+			2,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{Symbol: "A/EUR"}
-		signal.measurements = signal.measurements.Next()
+		signal.Record(&krakenmarket.TickerUpdate{Symbol: "A/EUR"})
 
 		_, err := signal.Measure(nil)
 
@@ -164,23 +157,21 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		crossSection.publishChange(symbol, float64(index%5)+0.5)
 	}
 
-	measurements := ring.New(8)
 	signal := NewSignal(
 		"SYM0/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		measurements,
+		8,
 		crossSection,
 		2.0,
 		0.5,
 	)
 
 	for index := range 8 {
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "SYM0/EUR",
 			Price:  100 + float64(index),
 			Qty:    float64(index%5) + 1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 	}
 
 	b.ReportAllocs()

@@ -1,7 +1,6 @@
 package pumpdump
 
 import (
-	"container/ring"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -10,13 +9,34 @@ import (
 	"github.com/theapemachine/symm/market"
 )
 
-func TestSignalMeasure(t *testing.T) {
-	Convey("Given trade samples with a volume spike", t, func() {
-		measurements := ring.New(8)
+func TestSignalRecord(t *testing.T) {
+	Convey("Given a new signal", t, func() {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			measurements,
+			4,
+			2.0,
+			0.5,
+			3,
+			0,
+		)
+
+		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1}), ShouldBeTrue)
+		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 101, Qty: 1}), ShouldBeTrue)
+
+		Convey("It should count down warmup without scanning the ring", func() {
+			So(signal.warmupRemaining, ShouldEqual, 2)
+			So(signal.WarmupFilled(), ShouldEqual, 2)
+		})
+	})
+}
+
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given trade samples with a volume spike", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			8,
 			2.0,
 			0.5,
 			3,
@@ -34,8 +54,7 @@ func TestSignalMeasure(t *testing.T) {
 		}
 
 		for _, trade := range trades {
-			signal.measurements.Value = trade
-			signal.measurements = signal.measurements.Next()
+			signal.Record(trade)
 		}
 
 		measurement, err := signal.Measure(nil)
@@ -50,11 +69,10 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given feedback for the same symbol", t, func() {
-		measurements := ring.New(4)
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			measurements,
+			8,
 			2.0,
 			0.5,
 			3,
@@ -71,11 +89,10 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given folded book snapshots with tightening spread", t, func() {
-		measurements := ring.New(6)
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
-			measurements,
+			8,
 			2.0,
 			0.5,
 			3,
@@ -106,8 +123,7 @@ func TestSignalMeasure(t *testing.T) {
 		frames := append([]*krakenmarket.Book{snapshot}, updates...)
 
 		for _, frame := range frames {
-			signal.measurements.Value = frame
-			signal.measurements = signal.measurements.Next()
+			signal.Record(frame)
 		}
 
 		measurement, err := signal.Measure(nil)
@@ -121,19 +137,17 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		measurements := ring.New(2)
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			measurements,
+			8,
 			2.0,
 			0.5,
 			3,
 			0,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{Symbol: "ETH/EUR"}
-		signal.measurements = signal.measurements.Next()
+		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ETH/EUR"})
 
 		_, err := signal.Measure(nil)
 
@@ -144,11 +158,10 @@ func TestSignalMeasure(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	measurements := ring.New(32)
 	signal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		measurements,
+		8,
 		2.0,
 		0.5,
 		3,
@@ -156,12 +169,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	)
 
 	for index := range 32 {
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "ETH/EUR",
 			Price:  100 + float64(index),
 			Qty:    float64(index%5) + 1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 	}
 
 	b.ReportAllocs()

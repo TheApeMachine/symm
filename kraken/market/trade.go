@@ -19,8 +19,9 @@ type TradeParams struct {
 
 func NewTradeParams(symbols []string) json.RawMessage {
 	params := &TradeParams{
-		Channel: "trade",
-		Symbol:  symbols,
+		Channel:  "trade",
+		Symbol:   symbols,
+		Snapshot: true,
 	}
 
 	raw, err := sonic.Marshal(params)

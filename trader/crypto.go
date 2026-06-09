@@ -3,6 +3,8 @@ package trader
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -22,6 +24,7 @@ type Crypto struct {
 	ui     *qpool.BroadcastGroup
 	bus    *internal.Bus
 	desk   *broker.Desk
+	pairs  *sync.Map
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
@@ -38,7 +41,8 @@ func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
 			[]string{"kraken:public", "ui"},
 			[]string{"raw"},
 		),
-		desk: broker.NewDesk(ctx, pool),
+		desk:  broker.NewDesk(ctx, pool),
+		pairs: &sync.Map{},
 	}
 }
 
@@ -74,31 +78,55 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
+				quoteCurrency := viper.GetString("market.quote_currency")
+				bookDepth := viper.GetInt("market.book_depth_levels")
 				pairs := make([]string, 0)
 
 				for _, pair := range instrument.Pairs {
-					if pair.Quote == viper.GetString("market.quote_currency") {
-						pairs = append(pairs, pair.Symbol)
+					if pair.Status != "online" {
+						continue
 					}
+
+					if pair.Quote != quoteCurrency {
+						continue
+					}
+
+					if _, subscribed := crypto.pairs.Load(pair.Symbol); subscribed {
+						continue
+					}
+
+					pairs = append(pairs, pair.Symbol)
 				}
 
-				crypto.bus.Send("kraken:public", "ticker", types.KrakenMessage{
+				if len(pairs) == 0 {
+					continue
+				}
+
+				errnie.Info(fmt.Sprintf("subscribing to %d pairs", len(pairs)))
+
+				errnie.Error(crypto.bus.Send("raw", "symbols", pairs))
+
+				errnie.Error(crypto.bus.Send("kraken:public", "ticker", types.KrakenMessage{
 					Method: "subscribe",
 					Params: market.NewTickerParams(pairs),
 					ReqID:  time.Now().UnixNano(),
-				})
+				}))
 
-				crypto.bus.Send("kraken:public", "book", types.KrakenMessage{
+				errnie.Error(crypto.bus.Send("kraken:public", "book", types.KrakenMessage{
 					Method: "subscribe",
-					Params: market.NewBookParams(pairs, viper.GetInt("market.book_depth_levels")),
+					Params: market.NewBookParams(pairs, bookDepth),
 					ReqID:  time.Now().UnixNano(),
-				})
+				}))
 
-				crypto.bus.Send("kraken:public", "trade", types.KrakenMessage{
+				errnie.Error(crypto.bus.Send("kraken:public", "trade", types.KrakenMessage{
 					Method: "subscribe",
 					Params: market.NewTradeParams(pairs),
 					ReqID:  time.Now().UnixNano(),
-				})
+				}))
+
+				for _, symbol := range pairs {
+					crypto.pairs.Store(symbol, true)
+				}
 			case "actions":
 				var (
 					action *logic.Action
@@ -109,7 +137,7 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
-				crypto.desk.AddOrder(action)
+				errnie.Error(crypto.desk.AddOrder(action))
 			}
 		}
 	}

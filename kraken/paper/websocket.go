@@ -147,14 +147,18 @@ func (ws *WebSocket) Tick() (err error) {
 				) * time.Millisecond,
 			)
 		default:
-			message := qvaluePool.Get().(*qpool.QValue[any])
-			defer qvaluePool.Put(message)
+			slot := qvaluePool.Get().(*qpool.QValue[any])
 
-			if message, ws.err = ws.bus.Receive(
+			var message *qpool.QValue[any]
+
+			if message, ws.err = ws.bus.Poll(
 				"kraken:private",
-			); errnie.Error(ws.err) != nil {
-				continue
+			); errnie.Error(ws.err) != nil || message == nil {
+				qvaluePool.Put(slot)
+				break
 			}
+
+			qvaluePool.Put(slot)
 
 			// TODO: Use latency profile.
 			time.Sleep(
@@ -163,8 +167,7 @@ func (ws *WebSocket) Tick() (err error) {
 				) * time.Millisecond,
 			)
 
-			response := &types.SocketMessage{}
-			defer response.Release()
+			var response *types.SocketMessage
 
 			switch message.Type {
 			case "balances":
@@ -173,6 +176,14 @@ func (ws *WebSocket) Tick() (err error) {
 				response = ws.sockets["orders"].Send(message)
 			case "executions":
 				response = ws.sockets["executions"].Send(message)
+			default:
+				qvaluePool.Put(message)
+				continue
+			}
+
+			if response == nil {
+				qvaluePool.Put(message)
+				continue
 			}
 
 			switch response.Channel {
@@ -180,27 +191,37 @@ func (ws *WebSocket) Tick() (err error) {
 				balances := user.Balances{}
 
 				if err := errnie.Error(response.Unmarshal(&balances)); err != nil {
+					response.Release()
+					qvaluePool.Put(message)
 					continue
 				}
 
 				ws.bus.Send("raw", "balances", balances)
+				ws.bus.Send("ui", "balances", balances)
 			case "orders":
 				orders := []trading.OrderUpdate{}
 
 				if err := errnie.Error(response.Unmarshal(&orders)); err != nil {
+					response.Release()
+					qvaluePool.Put(message)
 					continue
 				}
 
 				ws.bus.Send("raw", "orders", orders)
-			case "execution":
-				execution := user.Execution{}
+			case "executions":
+				executions := []user.Execution{}
 
-				if err := errnie.Error(response.Unmarshal(&execution)); err != nil {
+				if err := errnie.Error(response.Unmarshal(&executions)); err != nil {
+					response.Release()
+					qvaluePool.Put(message)
 					continue
 				}
 
-				ws.bus.Send("raw", "execution", execution)
+				ws.bus.Send("raw", "executions", executions)
 			}
+
+			response.Release()
+			qvaluePool.Put(message)
 		}
 	}
 }

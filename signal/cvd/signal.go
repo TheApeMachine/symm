@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"container/ring"
+	
 	"fmt"
 	"math"
 
@@ -32,7 +33,8 @@ The "Steamroller" Story: One-sided aggression that price is actually following â
 type Signal struct {
 	symbol       string
 	entity       *logic.Entity
-	measurements *ring.Ring
+	measurements    *ring.Ring
+	warmupRemaining int
 	transition   *numeric.TransitionMatrix
 	weights      numeric.ClassifierWeights
 	tuner        *numeric.FeedbackTuner
@@ -41,14 +43,15 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	measurements *ring.Ring,
+	capacity int,
 	threshold float64,
 	alpha float64,
 ) *Signal {
 	return &Signal{
 		symbol:       symbol,
 		entity:       entity,
-		measurements: measurements,
+		measurements:    ring.New(capacity),
+		warmupRemaining: capacity,
 		transition:   numeric.NewTransitionMatrix(5, alpha),
 		weights:      numeric.DefaultClassifierWeights(threshold),
 		tuner:        numeric.NewFeedbackTuner(),
@@ -300,3 +303,22 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 		return 0
 	}
 }
+
+func (signal *Signal) Record(raw any) bool {
+	warmed := false
+
+	if signal.warmupRemaining > 0 {
+		signal.warmupRemaining--
+		warmed = true
+	}
+
+	signal.measurements.Value = raw
+	signal.measurements = signal.measurements.Next()
+
+	return warmed
+}
+
+func (signal *Signal) WarmupFilled() int {
+	return signal.measurements.Len() - signal.warmupRemaining
+}
+

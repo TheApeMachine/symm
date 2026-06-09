@@ -49,12 +49,12 @@ func (endpoint EndpointType) SignPath() string {
 
 type PingMessage struct {
 	Method string `json:"method"`
-	ReqID  int64  `json:"reqid"`
+	ReqID  int64  `json:"req_id,omitempty"`
 }
 
 type PongMessage struct {
 	Method  string    `json:"method"`
-	ReqID   int64     `json:"reqid"`
+	ReqID   int64     `json:"req_id,omitempty"`
 	Error   string    `json:"error"`
 	Success bool      `json:"success"`
 	TimeIn  time.Time `json:"time_in"`

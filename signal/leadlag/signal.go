@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"container/ring"
+	
 	"fmt"
 	"math"
 	"time"
@@ -55,7 +56,8 @@ The "Beta Drift" Story   : Tight synchronization with the anchor — no idiosync
 type Signal struct {
 	symbol       string
 	entity       *logic.Entity
-	measurements *ring.Ring
+	measurements    *ring.Ring
+	warmupRemaining int
 	crossSection *crossSection
 	transition   *numeric.TransitionMatrix
 	weights      numeric.ClassifierWeights
@@ -65,7 +67,7 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	measurements *ring.Ring,
+	capacity int,
 	crossSection *crossSection,
 	threshold float64,
 	alpha float64,
@@ -73,7 +75,8 @@ func NewSignal(
 	return &Signal{
 		symbol:       symbol,
 		entity:       entity,
-		measurements: measurements,
+		measurements:    ring.New(capacity),
+		warmupRemaining: capacity,
 		crossSection: crossSection,
 		transition:   numeric.NewTransitionMatrix(5, alpha),
 		weights:      numeric.DefaultClassifierWeights(threshold),
@@ -561,3 +564,22 @@ func (signal *Signal) measureFollower(anchor, follower *symbolState) (logic.Meas
 
 	return signal.publishContemporaneous(price, contemporaneous)
 }
+
+func (signal *Signal) Record(raw any) bool {
+	warmed := false
+
+	if signal.warmupRemaining > 0 {
+		signal.warmupRemaining--
+		warmed = true
+	}
+
+	signal.measurements.Value = raw
+	signal.measurements = signal.measurements.Next()
+
+	return warmed
+}
+
+func (signal *Signal) WarmupFilled() int {
+	return signal.measurements.Len() - signal.warmupRemaining
+}
+

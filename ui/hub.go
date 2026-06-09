@@ -16,6 +16,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -55,7 +57,6 @@ type Hub struct {
 	clients          *sync.Map
 	server           *http.Server
 	nextConnID       uint64
-	lastWallet       atomic.Pointer[map[string]any]
 	lastPositions    atomic.Pointer[map[string]any]
 	lastEquity       atomic.Pointer[map[string]any]
 	lastDecisionTree atomic.Pointer[map[string]any]
@@ -77,7 +78,7 @@ func NewHub(
 		cancel: cancel,
 		pool:   pool,
 		bus: internal.NewBus(
-			ctx, pool, []string{"ui"}, []string{},
+			ctx, pool, []string{"kraken:private"}, []string{"ui"},
 		),
 		clients: &sync.Map{},
 	}
@@ -113,6 +114,8 @@ func NewHub(
 			errnie.Error(serveErr)
 		}
 	}()
+
+	hub.subscribeBalances()
 
 	return hub
 }
@@ -169,27 +172,44 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	hub.clients.Store(connID, conn)
 }
 
+func (hub *Hub) subscribeBalances() {
+	frame, err := types.NewKrakenMessage(
+		"subscribe",
+		user.BalanceParams{
+			Channel:  "balances",
+			Snapshot: true,
+		},
+		time.Now().UnixNano(),
+	)
+
+	if errnie.Error(err) != nil {
+		return
+	}
+
+	errnie.Error(hub.bus.Send("kraken:private", "balances", frame))
+}
+
 /*
 Tick drains qpool into the lossy telemetry ring and fanout to websocket clients.
 from that ring so the qpool subscriber never waits on browser pressure.
 */
 func (hub *Hub) Tick() error {
 	for {
-		value, err := hub.bus.Receive("ui")
+		row, err := hub.bus.Receive("ui")
 
-		if errnie.Error(err) != nil || value == nil {
+		if errnie.Error(err) != nil || row == nil {
 			continue
 		}
 
-		hub.clients.Range(func(key, value any) bool {
-			client, ok := value.(*websocket.Conn)
+		hub.clients.Range(func(key, stored any) bool {
+			client, ok := stored.(*websocket.Conn)
 
 			if !ok {
 				hub.clients.Delete(key)
 				return true
 			}
 
-			if err := client.WriteJSON(value); err != nil {
+			if err := client.WriteJSON(row.Value); err != nil {
 				errnie.Error(err)
 				hub.clients.Delete(key)
 				return true

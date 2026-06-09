@@ -1,7 +1,6 @@
 package liquidity
 
 import (
-	"container/ring"
 	"fmt"
 	"testing"
 
@@ -20,20 +19,19 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTick),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{
+		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "ALT/EUR",
 			Last:   10,
 			Volume: 125,
 			Ask:    10.1,
 			Bid:    9.9,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -54,20 +52,19 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"THIN/EUR",
 			logic.NewEntity(logic.EntityTick),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{
+		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "THIN/EUR",
 			Last:   5,
 			Volume: 50,
 			Ask:    5.1,
 			Bid:    4.9,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -82,18 +79,17 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"SOLO/EUR",
 			logic.NewEntity(logic.EntityTick),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{
+		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "SOLO/EUR",
 			Last:   5,
 			Volume: 100,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 
 		measurement, err := signal.Measure(nil)
 
@@ -108,7 +104,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			crossSection,
 			2.0,
 			0.5,
@@ -128,14 +124,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(2),
+			2,
 			crossSection,
 			2.0,
 			0.5,
 		)
 
-		signal.measurements.Value = &krakenmarket.TickerUpdate{Symbol: "ALT/EUR"}
-		signal.measurements = signal.measurements.Next()
+		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ALT/EUR"})
 
 		_, err := signal.Measure(nil)
 
@@ -150,7 +145,7 @@ func TestSignalClassify(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTick),
-			ring.New(4),
+			4,
 			&crossSection{},
 			2.0,
 			0.5,
@@ -177,20 +172,19 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"SYM0/EUR",
 		logic.NewEntity(logic.EntityTick),
-		ring.New(4),
+		4,
 		crossSection,
 		2.0,
 		0.5,
 	)
 
-	signal.measurements.Value = &krakenmarket.TickerUpdate{
+	signal.Record(&krakenmarket.TickerUpdate{
 		Symbol: "SYM0/EUR",
 		Last:   10,
 		Volume: 125,
 		Ask:    10.1,
 		Bid:    9.9,
-	}
-	signal.measurements = signal.measurements.Next()
+	})
 
 	b.ReportAllocs()
 

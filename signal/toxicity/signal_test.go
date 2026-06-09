@@ -25,7 +25,7 @@ func newTestSignal(t testing.TB, symbol string, entity logic.EntityType) *Signal
 	return NewSignal(
 		symbol,
 		logic.NewEntity(entity),
-		nil,
+		8,
 		newTestTracker(t),
 		2.0,
 		0.5,

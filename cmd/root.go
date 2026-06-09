@@ -28,6 +28,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -82,6 +83,7 @@ var (
 				toxicity.NewSystem(systemCtx, pool),
 				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
+				ui.NewHub(systemCtx, pool),
 			); err != nil {
 				return errnie.Error(err)
 			}

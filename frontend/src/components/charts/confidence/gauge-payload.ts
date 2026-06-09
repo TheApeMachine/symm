@@ -10,6 +10,39 @@ export const confidenceFromGaugePayload = (
 	return confidence;
 };
 
+export const surpriseFromGaugePayload = (
+	payload: Record<string, unknown>,
+): number => {
+	const surprise = payload.surprise ?? payload.snr;
+
+	if (typeof surprise !== "number" || !Number.isFinite(surprise)) {
+		return 0;
+	}
+
+	return Math.max(0, surprise);
+};
+
+export const surpriseThresholdFromGaugePayload = (
+	payload: Record<string, unknown>,
+): number | null => {
+	const threshold = payload.surprise_threshold;
+
+	if (typeof threshold !== "number" || !Number.isFinite(threshold)) {
+		return null;
+	}
+
+	return Math.max(0.1, threshold);
+};
+
+export const surpriseScaleMax = (
+	payload: Record<string, unknown>,
+	_surprise: number,
+): number => {
+	const threshold = surpriseThresholdFromGaugePayload(payload) ?? 2;
+
+	return threshold * 3;
+};
+
 export const gaugeWarmupPercent = (
 	payload: Record<string, unknown>,
 ): number | null => {

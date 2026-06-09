@@ -35,46 +35,76 @@ func NewOrders(ctx context.Context, pool *qpool.Q[any]) *Orders {
 		err:       nil,
 		pool:      pool,
 		isActive:  atomic.Bool{},
+		model:     make(map[string]trading.OrderUpdate),
 		observers: make([]types.Socket, 0),
 	}
 }
 
 func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
-	var (
-		out   *types.SocketMessage
-		inMsg map[string]any
-		ok    bool
-	)
+	frame, ok := message.Value.(types.KrakenMessage)
 
-	if inMsg, ok = message.Value.(map[string]any); !ok {
+	if !ok {
 		return nil
 	}
 
-	switch inMsg["method"].(string) {
+	switch frame.Method {
 	case "subscribe":
 		orders.isActive.Store(true)
 	case "unsubscribe":
 		orders.isActive.Store(false)
-	case "add_order":
-		orders.model[inMsg["order_id"].(string)] = trading.OrderUpdate{
-			OrderID: inMsg["order_id"].(string),
+	case trading.MethodAddOrder:
+		var params trading.AddParams
+
+		if err := sonic.Unmarshal(frame.Params, &params); err != nil || params.ClOrdID == "" {
+			return nil
 		}
-	case "cancel_order":
-		delete(orders.model, inMsg["order_id"].(string))
-	case "amend_order":
-		orders.model[inMsg["order_id"].(string)] = trading.OrderUpdate{
-			OrderID: inMsg["order_id"].(string),
+
+		orders.model[params.ClOrdID] = trading.OrderUpdate{
+			OrderID: params.ClOrdID,
+		}
+	case trading.MethodCancelOrder:
+		var params trading.CancelParams
+
+		if err := sonic.Unmarshal(frame.Params, &params); err != nil || len(params.OrderID) == 0 {
+			return nil
+		}
+
+		for _, orderID := range params.OrderID {
+			delete(orders.model, orderID)
+		}
+	case trading.MethodAmendOrder:
+		var params trading.AmendParams
+
+		if err := sonic.Unmarshal(frame.Params, &params); err != nil || params.OrderID == "" {
+			return nil
+		}
+
+		orders.model[params.OrderID] = trading.OrderUpdate{
+			OrderID: params.OrderID,
 		}
 	}
 
-	data, err := sonic.Marshal(orders.model)
+	var (
+		out     *types.SocketMessage
+		data    []byte
+		err     error
+		updates []trading.OrderUpdate
+	)
+
+	updates = make([]trading.OrderUpdate, 0, len(orders.model))
+
+	for _, update := range orders.model {
+		updates = append(updates, update)
+	}
+
+	data, err = sonic.Marshal(updates)
 
 	if err != nil {
 		return nil
 	}
 
 	out = &types.SocketMessage{
-		Method:  "orders",
+		Channel: "orders",
 		Success: &[]bool{true}[0],
 		Data:    data,
 	}

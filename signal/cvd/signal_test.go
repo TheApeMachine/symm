@@ -1,7 +1,6 @@
 package cvd
 
 import (
-	"container/ring"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,19 +13,18 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			2.0,
 			0.5,
 		)
 
 		for _, price := range []float64{100, 101, 102, 103, 104} {
-			signal.measurements.Value = &krakenmarket.TradeUpdate{
+			signal.Record(&krakenmarket.TradeUpdate{
 				Symbol: "BTC/EUR",
 				Side:   "buy",
 				Price:  price,
 				Qty:    1,
-			}
-			signal.measurements = signal.measurements.Next()
+			})
 		}
 
 		measurement, err := signal.Measure(nil)
@@ -44,19 +42,18 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			2.0,
 			0.5,
 		)
 
 		for range 4 {
-			signal.measurements.Value = &krakenmarket.TradeUpdate{
+			signal.Record(&krakenmarket.TradeUpdate{
 				Symbol: "ETH/EUR",
 				Side:   "buy",
 				Price:  50,
 				Qty:    2,
-			}
-			signal.measurements = signal.measurements.Next()
+			})
 		}
 
 		measurement, err := signal.Measure(nil)
@@ -71,7 +68,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(8),
+			8,
 			2.0,
 			0.5,
 		)
@@ -87,13 +84,12 @@ func TestSignalMeasure(t *testing.T) {
 		}
 
 		for _, trade := range trades {
-			signal.measurements.Value = &krakenmarket.TradeUpdate{
+			signal.Record(&krakenmarket.TradeUpdate{
 				Symbol: "SOL/EUR",
 				Side:   trade.side,
 				Price:  trade.price,
 				Qty:    1,
-			}
-			signal.measurements = signal.measurements.Next()
+			})
 		}
 
 		measurement, err := signal.Measure(nil)
@@ -108,7 +104,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"XRP/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			ring.New(4),
+			4,
 			2.0,
 			0.5,
 		)
@@ -126,19 +122,18 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"BTC/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		ring.New(64),
+		64,
 		2.0,
 		0.5,
 	)
 
 	for index := 0; index < 64; index++ {
-		signal.measurements.Value = &krakenmarket.TradeUpdate{
+		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "BTC/EUR",
 			Side:   "buy",
 			Price:  100 + float64(index)*0.1,
 			Qty:    1,
-		}
-		signal.measurements = signal.measurements.Next()
+		})
 	}
 
 	b.ResetTimer()

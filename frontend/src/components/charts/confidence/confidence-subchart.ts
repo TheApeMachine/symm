@@ -1,0 +1,212 @@
+import {
+	EAxisAlignment,
+	ECoordinateMode,
+	EHorizontalAnchorPoint,
+	EPolarAxisMode,
+	EPolarLabelMode,
+	EStrokeLineJoin,
+	EVerticalAnchorPoint,
+	NativeTextAnnotation,
+	NumberRange,
+	PolarArcAnnotation,
+	PolarNumericAxis,
+	PolarPointerAnnotation,
+	type SciChartPolarSubSurface,
+	Thickness,
+} from "scichart";
+
+import { appTheme } from "#/components/charts/shared/theme";
+
+const GAUGE_BANDS = [50, 75, 100] as const;
+const GRADIENT_COLORS = [
+	appTheme.VividGreen,
+	appTheme.VividOrange,
+	appTheme.VividPink,
+] as const;
+
+type GaugeArcSet = {
+	valueArcs: PolarArcAnnotation[];
+	pointer: PolarPointerAnnotation;
+	label: NativeTextAnnotation;
+};
+
+const applyGaugeNeedle = (
+	gaugeArcs: GaugeArcSet,
+	needlePercent: number,
+): void => {
+	const pointerValue = Math.max(0, Math.min(100, needlePercent));
+	let hasPointerPassedValue = false;
+
+	gaugeArcs.pointer.x1 = pointerValue;
+
+	for (let index = 0; index < gaugeArcs.valueArcs.length; index += 1) {
+		const bandTop = GAUGE_BANDS[index];
+		const bandBottom = GAUGE_BANDS[index - 1] ?? 0;
+		const arcEnd = hasPointerPassedValue
+			? bandBottom
+			: bandTop > pointerValue
+				? pointerValue
+				: bandTop;
+
+		gaugeArcs.valueArcs[index].y1 = bandBottom;
+		gaugeArcs.valueArcs[index].y2 = arcEnd;
+
+		if (bandTop >= pointerValue) {
+			hasPointerPassedValue = true;
+		}
+	}
+};
+
+const buildGaugeArcs = (
+	subChart: SciChartPolarSubSurface,
+	pointerValue: number,
+): GaugeArcSet => {
+	const valueArcs: PolarArcAnnotation[] = [];
+	let hasPointerPassedValue = false;
+
+	for (let index = 0; index < GAUGE_BANDS.length; index += 1) {
+		const bandTop = GAUGE_BANDS[index];
+		const bandBottom = GAUGE_BANDS[index - 1] ?? 0;
+
+		subChart.annotations.add(
+			new PolarArcAnnotation({
+				x2: 7.6,
+				x1: 7.9,
+				y1: bandBottom,
+				y2: bandTop,
+				fill: GRADIENT_COLORS[index],
+				strokeThickness: 0,
+			}),
+		);
+
+		const valueArc = new PolarArcAnnotation({
+			id: `arc${index}`,
+			x2: 8.1,
+			x1: 10,
+			y1: bandBottom,
+			y2: hasPointerPassedValue
+				? bandBottom
+				: bandTop > pointerValue
+					? pointerValue
+					: bandTop,
+			fill: GRADIENT_COLORS[index],
+			strokeThickness: 0,
+		});
+
+		valueArcs.push(valueArc);
+		subChart.annotations.add(valueArc);
+
+		if (bandTop >= pointerValue) {
+			hasPointerPassedValue = true;
+		}
+	}
+
+	const pointer = new PolarPointerAnnotation({
+		x1: pointerValue,
+		y1: 7.6,
+		xCoordinateMode: ECoordinateMode.DataValue,
+		yCoordinateMode: ECoordinateMode.DataValue,
+		pointerStyle: {
+			baseSize: 0,
+			strokeWidth: 0,
+		},
+		pointerArrowStyle: {
+			strokeWidth: 2,
+			stroke: "white",
+			fill: "none",
+			height: 0.4,
+			width: 0.25,
+		},
+		strokeLineJoin: EStrokeLineJoin.Miter,
+	});
+
+	const label = new NativeTextAnnotation({
+		text: "0",
+		x1: 0,
+		y1: 0,
+		textColor: "#FFFFFF",
+		fontSize: 12,
+		padding: new Thickness(0, 0, 16, 0),
+		xCoordinateMode: ECoordinateMode.DataValue,
+		yCoordinateMode: ECoordinateMode.DataValue,
+		verticalAnchorPoint: EVerticalAnchorPoint.Center,
+		horizontalAnchorPoint: EHorizontalAnchorPoint.Center,
+	});
+
+	subChart.annotations.add(pointer, label);
+
+	return { valueArcs, pointer, label };
+};
+
+export type ConfidenceSubChartControls = {
+	update: (confidence: number) => void;
+};
+
+export const createConfidenceSubChart = (
+	subChart: SciChartPolarSubSurface,
+): ConfidenceSubChartControls => {
+	const wasmContext = subChart.webAssemblyContext2D;
+
+	subChart.xAxes.add(
+		new PolarNumericAxis(wasmContext, {
+			polarAxisMode: EPolarAxisMode.Radial,
+			axisAlignment: EAxisAlignment.Right,
+			startAngle: (Math.PI * 3) / 2 + Math.PI / 4,
+			drawLabels: false,
+			drawMinorGridLines: false,
+			drawMajorGridLines: false,
+			drawMajorTickLines: false,
+			drawMinorTickLines: false,
+			labelStyle: {
+				fontSize: 8,
+			},
+		}),
+	);
+
+	subChart.yAxes.add(
+		new PolarNumericAxis(wasmContext, {
+			polarAxisMode: EPolarAxisMode.Angular,
+			axisAlignment: EAxisAlignment.Top,
+			polarLabelMode: EPolarLabelMode.Perpendicular,
+			visibleRange: new NumberRange(0, 100),
+			zoomExtentsToInitialRange: true,
+			flippedCoordinates: true,
+			useNativeText: true,
+			totalAngleDegrees: 220,
+			startAngleDegrees: -20,
+			drawMinorGridLines: false,
+			drawMajorGridLines: false,
+			drawMinorTickLines: false,
+			drawMajorTickLines: false,
+			labelPrecision: 0,
+			labelStyle: {
+				fontSize: 8,
+			},
+		}),
+	);
+
+	subChart.annotations.add(
+		new PolarArcAnnotation({
+			x2: 8.1,
+			x1: 10,
+			y1: 0,
+			y2: 100,
+			fill: "#88888844",
+			strokeThickness: 0,
+		}),
+	);
+
+	const gaugeArcs = buildGaugeArcs(subChart, 0);
+
+	return {
+		update(confidence: number) {
+			if (subChart.isDeleted) {
+				return;
+			}
+
+			applyGaugeNeedle(gaugeArcs, confidence * 100);
+			gaugeArcs.label.text = confidence.toFixed(2).toString();
+			subChart.invalidateElement();
+		},
+	};
+};
