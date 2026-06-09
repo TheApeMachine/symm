@@ -23,15 +23,16 @@ const (
 const ingestBufferSize = 1024 * 64
 
 type ingestEvent struct {
-	symbol    string
-	kind      ingestKind
-	ticker    krakenmarket.TickerUpdate
-	book      krakenmarket.Book
-	tickerAt  time.Time
-	bookAt    time.Time
-	tradeAt   time.Time
-	tradeQty  float64
-	tradeSide string
+	symbol     string
+	kind       ingestKind
+	ticker     krakenmarket.TickerUpdate
+	book       krakenmarket.Book
+	tickerAt   time.Time
+	bookAt     time.Time
+	tradeAt    time.Time
+	tradePrice float64
+	tradeQty   float64
+	tradeSide  string
 }
 
 type ingestHandler struct {
@@ -44,7 +45,7 @@ func (handler *ingestHandler) Handle(lowerSequence, upperSequence int64) {
 		event := handler.system.ingestRing[sequence&(ingestBufferSize-1)]
 
 		if applyErr := handler.system.applyIngest(event); applyErr != nil {
-			handler.system.ingestErr.Store(applyErr)
+			handler.system.ingestErr.Store(&applyErr)
 		}
 
 		handler.processed.Store(sequence)
@@ -101,14 +102,13 @@ func (system *System) publishIngest(event ingestEvent) error {
 		case disruptor.ErrReservationSize:
 			return errnie.Error(fmt.Errorf("fluid: invalid ingest reservation"))
 		default:
+			system.ingestErr.Swap(nil)
 			system.ingestRing[upperSequence&(ingestBufferSize-1)] = event
 			system.ingest.Commit(upperSequence, upperSequence)
 			system.awaitIngest(upperSequence)
 
 			if stored := system.ingestErr.Load(); stored != nil {
-				if applyErr, ok := stored.(error); ok {
-					return applyErr
-				}
+				return *stored
 			}
 
 			return nil
@@ -150,7 +150,7 @@ func (system *System) applyIngest(event ingestEvent) error {
 	case ingestBook:
 		return state.FeedBook(event.book, event.bookAt)
 	case ingestTrade:
-		return state.FeedTradeSide(event.tradeAt, event.tradeQty, event.tradeSide)
+		return state.FeedTrade(event.tradeAt, event.tradePrice, event.tradeQty, event.tradeSide)
 	default:
 		return errnie.Error(fmt.Errorf("fluid: unknown ingest kind %d", event.kind))
 	}

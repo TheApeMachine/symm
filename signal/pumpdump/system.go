@@ -1,7 +1,6 @@
 package pumpdump
 
 import (
-	
 	"context"
 	"errors"
 	"fmt"
@@ -74,7 +73,10 @@ func (system *System) Tick() error {
 
 		switch message.Type {
 		case "symbols":
-			symbols, symbolOk := message.Value.([]string); if symbolOk { system.gauge.RegisterSymbols(symbols) }
+			symbols, symbolOk := message.Value.([]string)
+			if symbolOk {
+				system.gauge.RegisterSymbols(symbols)
+			}
 			continue
 		case "trades":
 			var (
@@ -161,11 +163,9 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		system.bus.Send(
-			"measurements",
-			"measurements",
-			measurement,
-		)
+		if publishErr := measurement.Publish(system.bus); errnie.Error(publishErr) != nil {
+			continue
+		}
 
 		errnie.Error(system.gauge.Publish(
 			measurement,

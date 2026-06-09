@@ -103,26 +103,26 @@ func (signal *Signal) fromQuality(at time.Time) (logic.Measurement, error) {
 	snapshot, lastPrice, ok := signal.tracker.Snapshot(signal.symbol, at)
 
 	if !ok || lastPrice <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	category, strength, bluffScore, vacuumScore, supportScore := signal.classify(snapshot)
 
 	if category == logic.CategoryTypeNone || strength <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
 
 	if evidence <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.publish(category, lastPrice, strength, bluffScore, vacuumScore, supportScore)
+	return signal.publish(category, lastPrice, strength, bluffScore, vacuumScore, supportScore, at)
 }
 
 func (signal *Signal) classify(
@@ -201,6 +201,7 @@ func (signal *Signal) publish(
 	category logic.CategoryType,
 	price, strength float64,
 	bluffScore, vacuumScore, supportScore float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	probabilities := numeric.SoftmaxScores([]float64{
 		bluffScore,
@@ -238,6 +239,7 @@ func (signal *Signal) publish(
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 

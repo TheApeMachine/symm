@@ -5,12 +5,13 @@ import (
 
 	"fmt"
 
+	"time"
+
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"time"
 )
 
 var pumpDumpCategories = []logic.CategoryType{
@@ -142,7 +143,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return signal.fromSeries(prices, volumes, nil)
+	return signal.fromSeries(prices, volumes, nil, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -178,7 +179,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return signal.fromSeries(prices, volumes, spreads)
+	return signal.fromSeries(prices, volumes, spreads, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -220,16 +221,17 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return signal.fromSeries(prices, volumes, spreads)
+	return signal.fromSeries(prices, volumes, spreads, at)
 }
 
 func (signal *Signal) fromSeries(
 	prices []float64,
 	volumes []float64,
 	spreads []float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	price := prices[len(prices)-1]
@@ -307,6 +309,7 @@ func (signal *Signal) fromSeries(
 		Position:   position,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 

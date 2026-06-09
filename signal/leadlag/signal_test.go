@@ -16,7 +16,7 @@ func TestSignalMeasureStall(t *testing.T) {
 			transition: numeric.NewTransitionMatrix(5, 0.5),
 		}
 
-		measurement, err := signal.measureStall(0.6)
+		measurement, err := signal.measureStall(0.6, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify an anchor stall on the unit interval", func() {
 			So(err, ShouldBeNil)
@@ -46,7 +46,7 @@ func TestSignalMeasureFollower(t *testing.T) {
 			anchor.observeTicker(50000, time.Now())
 			follower.observeTicker(100, time.Now())
 
-			measurement, err := signal.measureFollower(anchor, follower)
+			measurement, err := signal.measureFollower(anchor, follower, time.Now())
 
 			Convey("It should withhold the reading", func() {
 				So(err, ShouldBeNil)
@@ -81,7 +81,7 @@ func TestSignalMeasureFollower(t *testing.T) {
 			anchor.observeTicker(116, finalAt)
 			follower.observeTicker(93.5, finalAt)
 			move := crossSection.anchorMove()
-			measurement, err := signal.measureFollower(anchor, follower)
+			measurement, err := signal.measureFollower(anchor, follower, time.Now())
 
 			Convey("It should clear the anchor move gate and classify decoupling", func() {
 				So(err, ShouldBeNil)
@@ -253,6 +253,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.measureFollower(anchor, follower)
+		_, _ = signal.measureFollower(anchor, follower, time.Now())
 	}
 }

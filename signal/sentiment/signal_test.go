@@ -72,6 +72,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
 			So(measurement.Category, ShouldEqual, logic.CategoryRiskOnSurge)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
+			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		})
 	})
 

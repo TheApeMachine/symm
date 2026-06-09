@@ -1,6 +1,10 @@
 package logic
 
-import "time"
+import (
+	"time"
+
+	"github.com/theapemachine/symm/internal"
+)
 
 type SourceType string
 
@@ -19,6 +23,7 @@ const (
 	SourcePrediction  SourceType = "prediction"
 	SourceCVD         SourceType = "cvd"
 	SourceToxicity    SourceType = "toxicity"
+	SourceManifold    SourceType = "manifold"
 )
 
 type Measurement struct {
@@ -35,6 +40,29 @@ type Measurement struct {
 	Confidence float64
 	Surprise   float64
 	ObservedAt time.Time
+}
+
+/*
+Publishable reports whether a measurement is complete enough for downstream consumers.
+Warmup stubs must not be published on the measurements bus.
+*/
+func (measurement Measurement) Publishable() bool {
+	if measurement.Source == "" || measurement.Symbol == "" {
+		return false
+	}
+
+	return !measurement.ObservedAt.IsZero()
+}
+
+/*
+Publish sends a complete measurement to the measurements bus.
+*/
+func (measurement Measurement) Publish(bus *internal.Bus) error {
+	if !measurement.Publishable() {
+		return nil
+	}
+
+	return bus.Send("measurements", "measurements", measurement)
 }
 
 func NewMeasurement(

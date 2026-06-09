@@ -112,28 +112,28 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(trades) == 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
 	reading, ok := state.Measure(trades, at)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.publish(reading)
+	return signal.publish(reading, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
-func (signal *Signal) publish(reading hawkesReading) (logic.Measurement, error) {
+func (signal *Signal) publish(reading hawkesReading, at time.Time) (logic.Measurement, error) {
 	probabilities := numeric.SoftmaxScores([]float64{
 		reading.frenzy,
 		reading.saturation,
@@ -175,6 +175,7 @@ func (signal *Signal) publish(reading hawkesReading) (logic.Measurement, error) 
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 

@@ -25,15 +25,18 @@ TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rou
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune replay dump profile profile-stack profile-report profile-tune strip-trailing-newlines
+.PHONY: build physics-metallib test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune replay dump profile profile-stack profile-report profile-tune strip-trailing-newlines
 
-build:
+physics-metallib:
+	cd numeric/physics && go run ./metallibgen
+
+build: physics-metallib
 	@mkdir -p $(LOG_DIR)
 	go build -o $(SYMM_BIN) .
 
 test: test-go test-race test-frontend
 
-test-go:
+test-go: physics-metallib
 	go test ./...
 
 test-e2e:
@@ -51,7 +54,7 @@ test-cover:
 test-frontend:
 	cd frontend && pnpm exec tsc --noEmit -p tsconfig.lib.json && pnpm test --run
 
-bench:
+bench: physics-metallib
 	go test $(LDFLAGS) -bench=. -benchmem ./...
 
 PROFILE_DIR ?= runs/profiles

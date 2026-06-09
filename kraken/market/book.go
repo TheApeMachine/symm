@@ -3,9 +3,9 @@ package market
 import (
 	"encoding/json"
 	"fmt"
-	"hash"
 	"hash/crc32"
 	"sort"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -71,8 +71,31 @@ type Book struct {
 	Checksum  int64       `json:"checksum"`
 	Timestamp string      `json:"timestamp"`
 	Type      string      `json:"-"`
+	identity  InstrumentIdentity
 	bidSide   *bookSide
 	askSide   *bookSide
+}
+
+/*
+SetInstrumentIdentity records the manifold axis mapping for this book feed.
+*/
+func (book *Book) SetInstrumentIdentity(identity InstrumentIdentity) {
+	book.identity = identity
+}
+
+/*
+InstrumentIdentity returns the manifold axis mapping for this book feed.
+*/
+func (book *Book) InstrumentIdentity() InstrumentIdentity {
+	if book.identity.Symbol == "" && book.Symbol != "" {
+		identity, err := SpotIdentityFromPair(book.Symbol)
+
+		if err == nil {
+			book.identity = identity
+		}
+	}
+
+	return book.identity
 }
 
 /*
@@ -156,7 +179,7 @@ func (book *Book) TouchQuote() (mid float64, spread float64, depth float64, ok b
 
 	bid := book.Bids[0].Price
 	ask := book.Asks[0].Price
-	mid = (bid + ask) / 2
+	mid = bid + ask
 	spread = ask - bid
 
 	for _, level := range book.Bids {
@@ -200,15 +223,21 @@ func (book *Book) ComputedChecksum() int64 {
 }
 
 func (book *Book) checksum() uint32 {
-	hasher := crc32.NewIEEE()
+	payload := book.checksumPayload()
 
-	book.writeChecksumSide(hasher, book.Bids, bookChecksumLevels)
-	book.writeChecksumSide(hasher, book.Asks, bookChecksumLevels)
-
-	return hasher.Sum32()
+	return crc32.ChecksumIEEE([]byte(payload))
 }
 
-func (book *Book) writeChecksumSide(hasher hash.Hash32, levels []BookLevel, depth int) {
+func (book *Book) checksumPayload() string {
+	var builder strings.Builder
+
+	book.appendChecksumSide(&builder, book.Asks, bookChecksumLevels)
+	book.appendChecksumSide(&builder, book.Bids, bookChecksumLevels)
+
+	return builder.String()
+}
+
+func (book *Book) appendChecksumSide(builder *strings.Builder, levels []BookLevel, depth int) {
 	limit := depth
 
 	if len(levels) < limit {
@@ -221,23 +250,31 @@ func (book *Book) writeChecksumSide(hasher hash.Hash32, levels []BookLevel, dept
 		qtyRaw := level.QtyRaw
 
 		if priceRaw == "" {
-			priceRaw = formatChecksumFloat(level.Price)
+			priceRaw = strconvFormatChecksum(level.Price)
 		}
 
 		if qtyRaw == "" {
-			qtyRaw = formatChecksumFloat(level.Qty)
+			qtyRaw = strconvFormatChecksum(level.Qty)
 		}
 
-		_, err := fmt.Fprintf(hasher, "%s%s", priceRaw, qtyRaw)
-
-		if errnie.Error(err) != nil {
-			return
-		}
+		builder.WriteString(formatChecksumToken(priceRaw))
+		builder.WriteString(formatChecksumToken(qtyRaw))
 	}
 }
 
-func formatChecksumFloat(value float64) string {
-	return fmt.Sprintf("%.10f", value)
+func formatChecksumToken(raw string) string {
+	withoutDot := strings.ReplaceAll(raw, ".", "")
+	trimmed := strings.TrimLeft(withoutDot, "0")
+
+	if trimmed == "" {
+		return "0"
+	}
+
+	return trimmed
+}
+
+func strconvFormatChecksum(value float64) string {
+	return fmt.Sprintf("%g", value)
 }
 
 func (book *Book) cloneLevels(levels []BookLevel) []BookLevel {

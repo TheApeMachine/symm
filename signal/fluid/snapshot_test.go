@@ -19,6 +19,7 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 		viper.Set("signals.fluid.measurements_capacity", 16)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		ctx := context.Background()
@@ -39,7 +40,7 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 			Ask:    101,
 			Volume: 1000,
 		}, feedAt), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
+		So(advanceFluidGrid(state, fixture, feedAt, 99, 10, 101, 6), ShouldBeNil)
 
 		Convey("It should publish a fluid field snapshot on the ui bus", func() {
 			received := make(chan map[string]any, 1)

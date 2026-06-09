@@ -41,6 +41,10 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".tsx",
     ".yaml",
     ".yml",
+    ".metal",
+    ".mm",
+    ".m",
+    ".h"
 )
 
 

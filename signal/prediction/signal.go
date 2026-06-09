@@ -26,6 +26,7 @@ var featureSources = []logic.SourceType{
 	logic.SourceExhaustion,
 	logic.SourceCVD,
 	logic.SourceToxicity,
+	logic.SourceManifold,
 }
 
 type pendingForecast struct {
@@ -490,20 +491,6 @@ func (signal *Signal) scaledResidualScale() float64 {
 	}
 
 	return scale
-}
-
-func (signal *Signal) scaledResidual(residual float64) float64 {
-	scale := signal.realizedMagnitudeEMA
-
-	if scale <= 0 {
-		scale = signal.featureIntensityBaseline()
-	}
-
-	if scale <= 0 {
-		return residual
-	}
-
-	return residual / (1 + math.Abs(residual)/scale)
 }
 
 func (signal *Signal) updateRealizedMagnitude(magnitude float64) {

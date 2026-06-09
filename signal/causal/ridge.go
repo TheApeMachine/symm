@@ -70,25 +70,24 @@ func (solver *RidgeSolver) Solve(normal [][]float64, vector []float64) ([]float6
 		return out, nil
 	}
 
+	dense := mat.NewDense(size, size, flattenSquare(normal))
 	var qr mat.QR
 
-	if qr.Factorize(mat.NewDense(size, size, flattenSquare(normal))) {
-		var solution mat.VecDense
+	qr.Factorize(dense)
 
-		if solveErr := qr.SolveVecTo(&solution, false, rightHand); solveErr != nil {
-			return nil, fmt.Errorf("causal: qr solve: %w", solveErr)
-		}
+	var solution mat.VecDense
 
-		out := make([]float64, size)
-
-		for index := range out {
-			out[index] = solution.AtVec(index)
-		}
-
-		return out, nil
+	if solveErr := qr.SolveVecTo(&solution, false, rightHand); solveErr != nil {
+		return nil, fmt.Errorf("causal: qr solve: %w", solveErr)
 	}
 
-	return nil, fmt.Errorf("causal: ridge factorization failed")
+	out := make([]float64, size)
+
+	for index := range out {
+		out[index] = solution.AtVec(index)
+	}
+
+	return out, nil
 }
 
 func flattenSquare(matrix [][]float64) []float64 {

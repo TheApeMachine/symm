@@ -2,9 +2,11 @@ package exhaust
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"math"
+
+	"time"
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
@@ -12,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	floatring "github.com/theapemachine/symm/ring"
-	"time"
 )
 
 /*
@@ -34,14 +35,14 @@ The "Trap" Story          : Price still drifts while the bid wall thins — reve
 | Active Reversal       | Imbalance Flip  | High     | Sentiment Flip / Counter-Move |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection *crossSection
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	crossSection    *crossSection
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -53,14 +54,14 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		crossSection:    crossSection,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
@@ -99,36 +100,36 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	signal.crossSection.observeTrade(signal.symbol, trade)
 
-	return signal.fromFeatures()
+	return signal.fromFeatures(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	signal.crossSection.observeTick(signal.symbol, ticker)
 
-	return signal.fromFeatures()
+	return signal.fromFeatures(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	book, ok := signal.latest().(*krakenmarket.Book)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	signal.crossSection.observeBook(signal.symbol, book)
 
-	return signal.fromFeatures()
+	return signal.fromFeatures(at)
 }
 
 func (signal *Signal) latest() any {
@@ -143,11 +144,11 @@ func (signal *Signal) latest() any {
 	return latest
 }
 
-func (signal *Signal) fromFeatures() (logic.Measurement, error) {
+func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	history, ok := signal.crossSection.snapshot(signal.symbol)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	longUrgency, longCategory, longScores := signal.exitScore(history, 1)
@@ -164,7 +165,7 @@ func (signal *Signal) fromFeatures() (logic.Measurement, error) {
 	}
 
 	if urgency <= 0 || category == logic.CategoryTypeNone {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	probabilities := numeric.SoftmaxScores(scores)
@@ -194,6 +195,7 @@ func (signal *Signal) fromFeatures() (logic.Measurement, error) {
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -390,4 +392,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

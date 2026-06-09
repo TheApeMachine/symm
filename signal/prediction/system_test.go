@@ -45,3 +45,32 @@ func TestSystemIngestMeasurement(t *testing.T) {
 		So(featureSignal.features[pumpDumpIndex], ShouldEqual, 0.75)
 	})
 }
+
+func TestSystemProcessIncompleteMeasurement(t *testing.T) {
+	Convey("Given prediction subscribed to the measurements bus", t, func() {
+		viper.Set("signals.prediction.measurements_capacity", 8)
+		viper.Set("story.prediction.horizon", time.Minute)
+		viper.Set("story.prediction.alpha", 0.1)
+		viper.Set("story.prediction.rls_initial_variance", 1000.0)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 2, 8, nil)
+		publisher := internal.NewBus(ctx, pool, []string{"measurements"}, nil)
+		system := NewSystem(ctx, pool)
+
+		system.LoadSignal(logic.EntityMeasurement, "BTC/USD")
+
+		So(publisher.Send("measurements", "measurements", logic.Measurement{
+			Symbol: "BTC/USD",
+		}), ShouldBeNil)
+
+		measurementRow, pollErr := system.bus.Poll("measurements")
+
+		So(pollErr, ShouldBeNil)
+		So(measurementRow, ShouldNotBeNil)
+
+		Convey("It should record without observed_at validation error", func() {
+			So(system.processMessage(measurementRow), ShouldBeNil)
+		})
+	})
+}

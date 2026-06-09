@@ -31,6 +31,116 @@ func (fixture symbolBookFixture) snapshot(
 	return update
 }
 
+func advanceFluidGrid(
+	state *FluidSymbol,
+	fixture symbolBookFixture,
+	at time.Time,
+	bidPrice, bidQty, askPrice, askQty float64,
+) error {
+	if err := state.FeedBook(fixture.snapshot(bidPrice, bidQty, askPrice, askQty), at); err != nil {
+		return err
+	}
+
+	return state.FeedBook(
+		fixture.snapshot(bidPrice, bidQty, askPrice, askQty),
+		at.Add(100*time.Millisecond),
+	)
+}
+
+func TestFluidSymbolBuffersTradeBeforeBookSnapshot(t *testing.T) {
+	Convey("Given a trade before the first book snapshot", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
+		fixture := symbolBookFixture{symbol: symbol}
+		tradeAt := feedAt.Add(10 * time.Millisecond)
+
+		So(state.FeedTrade(tradeAt, 100, 1.5, "buy"), ShouldBeNil)
+
+		Convey("It should buffer the trade until mid price exists", func() {
+			So(len(state.bufferedTrades), ShouldEqual, 1)
+			So(state.grid.lastMidPrice, ShouldEqual, 0)
+		})
+
+		Convey("When the first snapshot arrives", func() {
+			So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
+
+			Convey("It should flush the buffered trade into the grid", func() {
+				So(len(state.bufferedTrades), ShouldEqual, 0)
+				So(state.grid.lastMidPrice, ShouldBeGreaterThan, 0)
+
+				index := state.grid.priceIndex(state.grid.lastMidPrice, 100)
+				So(index, ShouldBeGreaterThanOrEqualTo, 0)
+				So(state.grid.tradeExecuteAccumulator[index], ShouldEqual, 1.5)
+			})
+		})
+	})
+}
+
+func TestFluidSymbolConfigureTick(t *testing.T) {
+	Convey("Given a symbol before its first book snapshot", t, func() {
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		state, err := NewFluidSymbol("BTC/USD")
+		So(err, ShouldBeNil)
+
+		Convey("When the exchange price increment arrives", func() {
+			So(state.ConfigureTick(0.1), ShouldBeNil)
+			So(state.grid.tickSize, ShouldEqual, 0.1)
+		})
+	})
+}
+
+func TestFluidSymbolBuffersTradeOutsideGridSpan(t *testing.T) {
+	Convey("Given a trade outside the current grid span", t, func() {
+		symbol := "BTC/USD"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
+		fixture := symbolBookFixture{symbol: symbol}
+
+		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
+		So(state.FeedTrade(feedAt.Add(10*time.Millisecond), 105, 1.5, "buy"), ShouldBeNil)
+
+		Convey("It should buffer the trade instead of erroring", func() {
+			So(len(state.bufferedTrades), ShouldEqual, 1)
+
+			total := 0.0
+
+			for _, qty := range state.grid.tradeExecuteAccumulator {
+				total += qty
+			}
+
+			So(total, ShouldEqual, 0)
+		})
+
+		Convey("When a later book update recenters mid near the trade", func() {
+			So(state.FeedBook(fixture.snapshot(104.5, 10, 105.5, 6), feedAt.Add(20*time.Millisecond)), ShouldBeNil)
+
+			Convey("It should flush the buffered trade into the grid", func() {
+				So(len(state.bufferedTrades), ShouldEqual, 0)
+
+				index := state.grid.priceIndex(state.grid.lastMidPrice, 105)
+				So(index, ShouldBeGreaterThanOrEqualTo, 0)
+				So(state.grid.tradeExecuteAccumulator[index], ShouldEqual, 1.5)
+			})
+		})
+	})
+}
+
 func TestFluidSymbolIgnoresFluxBeforeVolumeClock(t *testing.T) {
 	Convey("Given book and trade updates before the volume clock is seeded", t, func() {
 		symbol := "ETH/EUR"
@@ -38,13 +148,14 @@ func TestFluidSymbolIgnoresFluxBeforeVolumeClock(t *testing.T) {
 		viper.Set("signals.volume_clock_bars_per_day", 288)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
-		So(state.FeedTradeSide(time.Now(), 1, "buy"), ShouldBeNil)
+		So(state.FeedTrade(feedAt, 100, 1, "buy"), ShouldBeNil)
 
 		Convey("It should wait for ticker volume before folding flux", func() {
 			So(state.flux.hasTarget(), ShouldBeFalse)
@@ -59,6 +170,7 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		viper.Set("signals.volume_clock_bars_per_day", 288)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
@@ -87,6 +199,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 		viper.Set("signals.volume_clock_bars_per_day", 288)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
@@ -95,7 +208,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 		So(state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
 		}, feedAt), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
+		So(advanceFluidGrid(state, fixture, feedAt, 99, 10, 101, 6), ShouldBeNil)
 
 		_, ok := state.Reading()
 
@@ -107,7 +220,7 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 			badDelta := fixture.snapshot(98, 10, 101, 6)
 			badDelta.SetEnvelopeType("update")
 			badDelta.Checksum = 1
-			So(state.FeedBook(badDelta, feedAt), ShouldBeNil)
+			So(state.FeedBook(badDelta, feedAt.Add(200*time.Millisecond)), ShouldBeNil)
 
 			_, ok := state.Reading()
 
@@ -129,15 +242,20 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		viper.Set("signals.volume_clock_bars_per_day", 288)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
 		So(state.FeedTicker(krakenmarket.TickerUpdate{
-			Symbol: symbol, Last: 100, Bid: 100, Ask: 100, Volume: 1000,
+			Symbol: symbol, Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000,
 		}, feedAt), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(100, 5, 100, 5), feedAt), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
+
+		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
+		replenish.SetEnvelopeType(krakenmarket.BookUpdate)
+		So(state.FeedBook(replenish, feedAt.Add(100*time.Millisecond)), ShouldBeNil)
 
 		reading, ok := state.Reading()
 		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
@@ -171,7 +289,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	if err := state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt); err != nil {
+	if err := advanceFluidGrid(state, fixture, feedAt, 99, 10, 101, 6); err != nil {
 		b.Fatal(err)
 	}
 

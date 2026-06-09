@@ -135,7 +135,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	price := ticker.Last
@@ -145,7 +145,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	if at.IsZero() {
@@ -158,7 +158,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) latest() any {
@@ -178,19 +178,19 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 	anchor := signal.crossSection.anchorState()
 
 	if anchor == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	if signal.symbol == anchorSymbol() {
-		return signal.fromAnchor(move, anchor.lastPrice())
+		return signal.fromAnchor(move, anchor.lastPrice(), at)
 	}
 
-	return signal.fromFollower(move, anchor)
+	return signal.fromFollower(move, anchor, at)
 }
 
-func (signal *Signal) fromAnchor(move anchorMove, price float64) (logic.Measurement, error) {
+func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (logic.Measurement, error) {
 	if !move.ready || move.moved || price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	return signal.publish(
@@ -200,42 +200,43 @@ func (signal *Signal) fromAnchor(move anchorMove, price float64) (logic.Measurem
 		signal.componentMargin(move.stallMargin),
 		0,
 		0,
+		at,
 	)
 }
 
-func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState) (logic.Measurement, error) {
+func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time.Time) (logic.Measurement, error) {
 	if !move.ready || !move.moved {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	follower := signal.crossSection.ensure(signal.symbol)
 
 	if follower == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	price := follower.lastPrice()
 
 	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	lagBars, corr, lagOK := follower.crossLag(anchor)
 
 	if lagOK {
-		return signal.publishLag(price, lagBars, corr)
+		return signal.publishLag(price, lagBars, corr, at)
 	}
 
 	contemporaneous, corrOK := follower.contemporaneous(anchor)
 
 	if !corrOK {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.publishContemporaneous(price, contemporaneous)
+	return signal.publishContemporaneous(price, contemporaneous, at)
 }
 
-func (signal *Signal) publishLag(price float64, lagBars int, corr float64) (logic.Measurement, error) {
+func (signal *Signal) publishLag(price float64, lagBars int, corr float64, at time.Time) (logic.Measurement, error) {
 	lagFraction := float64(lagBars) / float64(maxLagBars)
 	threshold := minLagFraction()
 
@@ -259,10 +260,11 @@ func (signal *Signal) publishLag(price float64, lagBars int, corr float64) (logi
 		inefficientScore,
 		syncScore,
 		0,
+		at,
 	)
 }
 
-func (signal *Signal) publishContemporaneous(price, corr float64) (logic.Measurement, error) {
+func (signal *Signal) publishContemporaneous(price, corr float64, at time.Time) (logic.Measurement, error) {
 	sampleCount := minLagSamples
 	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
 
@@ -283,6 +285,7 @@ func (signal *Signal) publishContemporaneous(price, corr float64) (logic.Measure
 		0,
 		syncScore,
 		decoupledScore,
+		at,
 	)
 }
 
@@ -290,6 +293,7 @@ func (signal *Signal) publish(
 	category logic.CategoryType,
 	price, strength float64,
 	inefficientScore, syncScore, decoupledScore float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	stallScore := 0.0
 
@@ -334,6 +338,7 @@ func (signal *Signal) publish(
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -527,7 +532,7 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 }
 
 // measureStall supports direct stall classification tests.
-func (signal *Signal) measureStall(stallMargin float64) (logic.Measurement, error) {
+func (signal *Signal) measureStall(stallMargin float64, at time.Time) (logic.Measurement, error) {
 	return signal.publish(
 		logic.CategoryAnchorStall,
 		1,
@@ -535,11 +540,12 @@ func (signal *Signal) measureStall(stallMargin float64) (logic.Measurement, erro
 		0,
 		0,
 		0,
+		at,
 	)
 }
 
 // measureFollower supports follower classification tests against explicit states.
-func (signal *Signal) measureFollower(anchor, follower *symbolState) (logic.Measurement, error) {
+func (signal *Signal) measureFollower(anchor, follower *symbolState, at time.Time) (logic.Measurement, error) {
 	move := signal.crossSection.anchorMove()
 
 	if !move.ready || !move.moved {
@@ -555,7 +561,7 @@ func (signal *Signal) measureFollower(anchor, follower *symbolState) (logic.Meas
 	lagBars, corr, lagOK := follower.crossLag(anchor)
 
 	if lagOK {
-		return signal.publishLag(price, lagBars, corr)
+		return signal.publishLag(price, lagBars, corr, at)
 	}
 
 	contemporaneous, corrOK := follower.contemporaneous(anchor)
@@ -564,7 +570,7 @@ func (signal *Signal) measureFollower(anchor, follower *symbolState) (logic.Meas
 		return logic.Measurement{}, nil
 	}
 
-	return signal.publishContemporaneous(price, contemporaneous)
+	return signal.publishContemporaneous(price, contemporaneous, at)
 }
 
 func (signal *Signal) Record(raw any) bool {

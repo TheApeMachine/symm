@@ -3,10 +3,11 @@ package cvd
 import (
 	"testing"
 
+	"time"
+
 	. "github.com/smartystreets/goconvey/convey"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"time"
 )
 
 func TestSignalMeasure(t *testing.T) {
@@ -28,7 +29,7 @@ func TestSignalMeasure(t *testing.T) {
 			})
 		}
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify aggressive drive", func() {
 			So(err, ShouldBeNil)
@@ -36,6 +37,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Category, ShouldEqual, logic.CategoryAggressiveDrive)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		})
 	})
 
@@ -57,7 +59,7 @@ func TestSignalMeasure(t *testing.T) {
 			})
 		}
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify hidden absorption", func() {
 			So(err, ShouldBeNil)
@@ -93,7 +95,7 @@ func TestSignalMeasure(t *testing.T) {
 			})
 		}
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify stochastic balance", func() {
 			So(err, ShouldBeNil)
@@ -110,7 +112,7 @@ func TestSignalMeasure(t *testing.T) {
 			0.5,
 		)
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify volume starvation", func() {
 			So(err, ShouldBeNil)
@@ -140,6 +142,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ =  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }

@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ func TestPublishIngestAppliesTicker(t *testing.T) {
 		viper.Set("signals.fluid.measurements_capacity", 64)
 		viper.Set("signals.fluid.tick_size", 0.01)
 		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -62,6 +64,38 @@ func TestPublishIngestAppliesTicker(t *testing.T) {
 			So(state, ShouldNotBeNil)
 			So(state.last, ShouldEqual, 100)
 			So(state.changePct, ShouldEqual, 1.2)
+		})
+	})
+}
+
+func TestPublishIngestDoesNotLeakIngestErr(t *testing.T) {
+	Convey("Given a failed ingest followed by a book update", t, func() {
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.measurements_capacity", 64)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		system := NewSystem(ctx, pool)
+
+		So(system, ShouldNotBeNil)
+		defer system.Close()
+
+		staleErr := fmt.Errorf("fluid: stale ingest failure")
+		system.ingestErr.Store(&staleErr)
+
+		book := symbolBookFixture{symbol: "BTC/EUR"}.snapshot(99, 10, 101, 6)
+		book.Timestamp = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+
+		feedErr := system.feedBook(&book)
+
+		Convey("It should not return the stale failure", func() {
+			So(feedErr, ShouldBeNil)
 		})
 	})
 }

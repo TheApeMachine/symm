@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
 	ActivityIcon,
+	BoxIcon,
 	Dice6Icon,
 	PentagonIcon,
 	SparklesIcon,
@@ -25,8 +26,15 @@ import {
 import {
 	type FluidPushBridge,
 	ingestFluidWire,
+	isFieldSnapshot,
 } from "#/components/charts/fluid/fluid-push-bridge";
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
+import { ManifoldSurfaceChart } from "#/components/charts/manifold/ManifoldSurfaceChart";
+import {
+	ingestManifoldWire,
+	isManifoldSnapshot,
+	type ManifoldPushBridge,
+} from "#/components/charts/manifold/manifold-push-bridge";
 import { PredictionChart } from "#/components/charts/prediction/PredictionChart";
 import { ingestPredictionWire } from "#/components/charts/prediction/prediction-chart-wire";
 import { SpiderChart } from "#/components/charts/spider/spider";
@@ -68,6 +76,7 @@ const SOURCES: Record<string, string> = {
 	exhaustion: "Exhaust",
 	prediction: "Pred",
 	cvd: "CVD",
+	manifold: "Manifold",
 };
 
 const ALL_SOURCES = Object.keys(SOURCES);
@@ -95,12 +104,14 @@ const emptyGaugeBridge = (): SignalGaugeBridge => ({
 
 const WsFeed = ({
 	fluidRef,
+	manifoldRef,
 	gaugeRefs,
 	heatmapRef,
 	surpriseRef,
 	spiderRef,
 }: {
 	fluidRef: RefObject<FluidPushBridge>;
+	manifoldRef: RefObject<ManifoldPushBridge>;
 	gaugeRefs: RefObject<Record<string, SignalGaugeBridge>>;
 	heatmapRef: RefObject<SignalHeatmapBridge>;
 	surpriseRef: RefObject<SignalSurpriseHeatmapBridge>;
@@ -155,7 +166,17 @@ const WsFeed = ({
 					return;
 				}
 
-				ingestFluidWire(fluidRef.current, raw);
+				if (isManifoldSnapshot(raw)) {
+					ingestManifoldWire(manifoldRef.current, raw);
+
+					return;
+				}
+
+				if (isFieldSnapshot(raw)) {
+					ingestFluidWire(fluidRef.current, raw);
+
+					return;
+				}
 			} catch {
 				return;
 			}
@@ -167,6 +188,12 @@ const WsFeed = ({
 
 const DashboardLayout = () => {
 	const fluidRef = useRef<FluidPushBridge>({
+		push: () => {},
+		ready: false,
+		pending: null,
+	});
+
+	const manifoldRef = useRef<ManifoldPushBridge>({
 		push: () => {},
 		ready: false,
 		pending: null,
@@ -191,6 +218,7 @@ const DashboardLayout = () => {
 		<Flex.Column gap={2} fullWidth fullHeight>
 			<WsFeed
 				fluidRef={fluidRef}
+				manifoldRef={manifoldRef}
 				gaugeRefs={gaugeRefs}
 				heatmapRef={heatmapRef}
 				surpriseRef={surpriseRef}
@@ -279,6 +307,17 @@ const DashboardLayout = () => {
 											/>
 										),
 										component: <FluidFieldSurfaceChart bridgeRef={fluidRef} />,
+									},
+									{
+										label: "Manifold",
+										icon: (
+											<BoxIcon
+												aria-hidden="true"
+												className="opacity-60"
+												size={16}
+											/>
+										),
+										component: <ManifoldSurfaceChart bridgeRef={manifoldRef} />,
 									},
 									{
 										label: "Regime",

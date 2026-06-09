@@ -71,6 +71,22 @@ branches:
         - type: is_true
           left:
             subject:
+              source: manifold
+              type: category
+              category:
+                type: liquidity_shock
+                confidence: 0.50
+    action:
+      type: settle_position
+      side: sell
+      fraction: 1.0
+
+  - condition_group:
+      boolean: or
+      conditions:
+        - type: is_true
+          left:
+            subject:
               source: exhaust
               type: category
               category:
@@ -156,6 +172,22 @@ branches:
                   category:
                     type: turbulent
                     confidence: $confidence.regime_adjusted_baseline
+            - type: is_false
+              left:
+                subject:
+                  source: manifold
+                  type: category
+                  category:
+                    type: liquidity_shock
+                    confidence: $confidence.regime_adjusted_baseline
+            - type: is_false
+              left:
+                subject:
+                  source: manifold
+                  type: category
+                  category:
+                    type: stochastic_noise
+                    confidence: $confidence.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: or
@@ -223,6 +255,14 @@ branches:
                               type: category
                               category:
                                 type: inertial
+                                confidence: $confidence.regime_adjusted_baseline
+                        - type: is_true
+                          left:
+                            subject:
+                              source: manifold
+                              type: category
+                              category:
+                                type: synchronized_drift
                                 confidence: $confidence.regime_adjusted_baseline
                     action:
                       type: market
@@ -342,6 +382,14 @@ branches:
                                   category:
                                     type: mechanical_collapse
                                     confidence: 0.50
+                            - type: is_false
+                              left:
+                                subject:
+                                  source: manifold
+                                  type: category
+                                  category:
+                                    type: liquidity_shock
+                                    confidence: $confidence.regime_adjusted_baseline
                         action:
                           type: market
                           side: buy
@@ -407,6 +455,14 @@ branches:
                       type: category
                       category:
                         type: organic
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_true
+                  left:
+                    subject:
+                      source: manifold
+                      type: category
+                      category:
+                        type: synchronized_drift
                         confidence: $confidence.regime_adjusted_baseline
             branches:
               - condition_group:
@@ -504,10 +560,72 @@ branches:
                       category:
                         type: spoof_trap
                         confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: manifold
+                      type: category
+                      category:
+                        type: liquidity_shock
+                        confidence: $confidence.regime_adjusted_baseline
             action:
               type: market
               side: buy
               fraction: 0.20
+
+  # --- manifold herd: crowded pilot-wave beta ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              source: manifold
+              type: category
+              category:
+                type: systemic_herd
+                confidence: $confidence.regime_adjusted_baseline
+        - type: is_true
+          left:
+            subject:
+              source: correlation
+              type: category
+              category:
+                type: systemic_herd
+                confidence: $confidence.regime_adjusted_baseline
+        - type: is_true
+          left:
+            subject:
+              source: sentiment
+              type: category
+              category:
+                type: risk_on_surge
+                confidence: $confidence.regime_adjusted_baseline
+    branches:
+      - condition_group:
+          boolean: and
+          conditions:
+            - type: is_false
+              left:
+                subject:
+                  source: exhaust
+                  type: category
+                  category:
+                    type: mechanical_collapse
+                    confidence: 0.50
+            - type: is_false
+              left:
+                subject:
+                  source: manifold
+                  type: category
+                  category:
+                    type: liquidity_shock
+                    confidence: $confidence.regime_adjusted_baseline
+        action:
+          type: market
+          side: buy
+          fraction: 0.15
 
   # --- scarcity: thin market convexity ---
 

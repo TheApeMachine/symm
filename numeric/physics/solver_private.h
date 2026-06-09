@@ -1,0 +1,422 @@
+#pragma once
+
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include "bridge.h"
+#include <math.h>
+#include <string.h>
+
+static const uint32_t kMaxCarriersForTG = 128u;
+static const uint32_t kScanThreads = 256u;
+static const uint32_t kParallelHashCellThreshold = 256u;
+
+typedef struct GasGridParamsHost {
+    uint32_t num_cells;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float dx;
+    float dt;
+    float gamma;
+    float c_v;
+    float rho_min;
+    float p_min;
+    float mu;
+    float k_thermal;
+} GasGridParamsHost;
+
+typedef struct BinParamsHost {
+    float omega_min;
+    float inv_bin_width;
+} BinParamsHost;
+
+typedef struct CoherenceParamsHost {
+    uint32_t num_osc;
+    uint32_t max_carriers;
+    uint32_t num_carriers;
+    float dt;
+    float coupling_scale;
+    float carrier_reg;
+    uint32_t rng_seed;
+    float conflict_threshold;
+    float offender_weight_floor;
+    float gate_width_min;
+    float gate_width_max;
+    float ema_alpha;
+    float recenter_alpha;
+    uint32_t mode;
+    float anchor_random_eps;
+    float stable_amp_threshold;
+    float crystallize_amp_threshold;
+    float crystallize_conflict_threshold;
+    uint32_t crystallize_age;
+    float crystallized_coupling_boost;
+    float volatile_decay_mul;
+    float stable_decay_mul;
+    float crystallized_decay_mul;
+    float topdown_phase_scale;
+    float topdown_energy_scale;
+    float topdown_random_energy_eps;
+    float repulsion_scale;
+    float domain_x;
+    float domain_y;
+    float domain_z;
+    float spatial_sigma;
+    float metabolic_rate;
+} CoherenceParamsHost;
+
+typedef struct GPEParamsHost {
+    float dt;
+    float hbar_eff;
+    float mass_eff;
+    float g_interaction;
+    float energy_decay;
+    float chemical_potential;
+    float inv_domega2;
+    uint32_t anchors;
+    uint32_t rng_seed;
+    float anchor_eps;
+} GPEParamsHost;
+
+typedef struct CarrierAccumHost {
+    float force_r;
+    float force_i;
+    float w_sum;
+    float w_omega_sum;
+    float w_omega2_sum;
+    float w_amp_sum;
+    uint32_t offender_score;
+    uint32_t offender_idx;
+} CarrierAccumHost;
+
+typedef struct SortScatterParamsHost {
+    uint32_t num_particles;
+    uint32_t num_cells;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float grid_spacing;
+    float inv_grid_spacing;
+} SortScatterParamsHost;
+
+typedef struct PicGatherParamsHost {
+    uint32_t num_particles;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float grid_spacing;
+    float inv_grid_spacing;
+    float dt;
+    float domain_x;
+    float domain_y;
+    float domain_z;
+    float gamma;
+    float R_specific;
+    float c_v;
+    float rho_min;
+    float p_min;
+    float gravity_enabled;
+} PicGatherParamsHost;
+
+typedef struct SpatialHashParamsHost {
+    uint32_t num_particles;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float cell_size;
+    float inv_cell_size;
+    float domain_min_x;
+    float domain_min_y;
+    float domain_min_z;
+} SpatialHashParamsHost;
+
+typedef struct SpatialCollisionParamsHost {
+    uint32_t num_particles;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float cell_size;
+    float inv_cell_size;
+    float domain_min_x;
+    float domain_min_y;
+    float domain_min_z;
+    float dt;
+    float particle_radius;
+    float young_modulus;
+    float thermal_conductivity;
+    float specific_heat;
+    float restitution;
+} SpatialCollisionParamsHost;
+
+typedef struct ParticleInteractionParamsHost {
+    uint32_t num_particles;
+    float dt;
+    float particle_radius;
+    float young_modulus;
+    float thermal_conductivity;
+    float specific_heat;
+    float restitution;
+} ParticleInteractionParamsHost;
+
+typedef struct ModeProjectParamsHost {
+    uint32_t num_modes;
+    uint32_t num_particles;
+    uint32_t anchors_per_mode;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float grid_spacing;
+    float inv_grid_spacing;
+} ModeProjectParamsHost;
+
+typedef struct PilotWaveParamsHost {
+    uint32_t num_particles;
+    uint32_t grid_x;
+    uint32_t grid_y;
+    uint32_t grid_z;
+    float grid_spacing;
+    float inv_grid_spacing;
+    float dt;
+    float domain_x;
+    float domain_y;
+    float domain_z;
+    float hbar_eff;
+    float eps_denom;
+    float mass_min;
+} PilotWaveParamsHost;
+
+typedef struct ParticleGenParamsHost {
+    uint32_t num_particles;
+    float grid_x;
+    float grid_y;
+    float grid_z;
+    float energy_scale;
+    uint32_t pattern;
+    float center_x;
+    float center_y;
+    float center_z;
+    float spread;
+    float dir_x;
+    float dir_y;
+    float dir_z;
+} ParticleGenParamsHost;
+
+void manifold_write_error(char *err_out, int err_cap, NSString *message);
+uint32_t manifold_cell_index(uint32_t x, uint32_t y, uint32_t z, uint32_t gx, uint32_t gy, uint32_t gz);
+float manifold_pressure_at(
+    float *eData,
+    float gamma,
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    uint32_t gx,
+    uint32_t gy,
+    uint32_t gz
+);
+void manifold_velocity_at(
+    float *rhoData,
+    float *momData,
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    uint32_t gx,
+    uint32_t gy,
+    uint32_t gz,
+    float *ux,
+    float *uy,
+    float *uz
+);
+
+@interface ManifoldSolver : NSObject
+@property(nonatomic, strong) id<MTLDevice> device;
+@property(nonatomic, strong) id<MTLCommandQueue> queue;
+@property(nonatomic, strong) id<MTLLibrary> library;
+@property(nonatomic, strong) id<MTLComputePipelineState> clearField;
+@property(nonatomic, strong) id<MTLComputePipelineState> gasStage1;
+@property(nonatomic, strong) id<MTLComputePipelineState> gasStage2;
+@property(nonatomic, strong) id<MTLComputePipelineState> reduceOmegaMinMax;
+@property(nonatomic, strong) id<MTLComputePipelineState> computeBinParams;
+@property(nonatomic, strong) id<MTLComputePipelineState> binCountCarriers;
+@property(nonatomic, strong) id<MTLComputePipelineState> binScatterCarriers;
+@property(nonatomic, strong) id<MTLComputePipelineState> scanPass1;
+@property(nonatomic, strong) id<MTLComputePipelineState> scanAddBlockOffsets;
+@property(nonatomic, strong) id<MTLComputePipelineState> scanFinalizeTotal;
+@property(nonatomic, strong) id<MTLComputePipelineState> accumulateForces;
+@property(nonatomic, strong) id<MTLComputePipelineState> gpeStep;
+@property(nonatomic, strong) id<MTLComputePipelineState> updatePhases;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterComputeCellIdx;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterCountCells;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterPrefixUpsweep;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterPrefixDownsweep;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterReorderParticles;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterSorted;
+@property(nonatomic, strong) id<MTLComputePipelineState> picGatherUpdate;
+@property(nonatomic, strong) id<MTLComputePipelineState> picGatherPilotWave;
+@property(nonatomic, strong) id<MTLComputePipelineState> projectModesToSpatialPsi;
+@property(nonatomic, strong) id<MTLComputePipelineState> particleInteractions;
+@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashAssign;
+@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashPrefixSum;
+@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashScatter;
+@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashCollisions;
+@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashPrefixSumParallel;
+@property(nonatomic, strong) id<MTLComputePipelineState> reduceFloatStatsPass1;
+@property(nonatomic, strong) id<MTLComputePipelineState> reduceFloatStatsFinalize;
+@property(nonatomic, strong) id<MTLComputePipelineState> generateParticlePositions;
+@property(nonatomic, strong) id<MTLComputePipelineState> initializeParticleProperties;
+@property(nonatomic, assign) BOOL gravityReady;
+@property(nonatomic, assign) ManifoldConfig config;
+@property(nonatomic, assign) uint32_t numCells;
+@property(nonatomic, assign) uint32_t numOsc;
+@property(nonatomic, assign) uint32_t numBins;
+@property(nonatomic, strong) id<MTLBuffer> rho;
+@property(nonatomic, strong) id<MTLBuffer> mom;
+@property(nonatomic, strong) id<MTLBuffer> eInt;
+@property(nonatomic, strong) id<MTLBuffer> rhoStage;
+@property(nonatomic, strong) id<MTLBuffer> momStage;
+@property(nonatomic, strong) id<MTLBuffer> eStage;
+@property(nonatomic, strong) id<MTLBuffer> k1Rho;
+@property(nonatomic, strong) id<MTLBuffer> k1Mom;
+@property(nonatomic, strong) id<MTLBuffer> k1E;
+@property(nonatomic, strong) id<MTLBuffer> gasParams;
+@property(nonatomic, strong) id<MTLBuffer> dbgCap;
+@property(nonatomic, strong) id<MTLBuffer> dbgHead;
+@property(nonatomic, strong) id<MTLBuffer> dbgWords;
+@property(nonatomic, strong) id<MTLBuffer> oscPhase;
+@property(nonatomic, strong) id<MTLBuffer> oscOmega;
+@property(nonatomic, strong) id<MTLBuffer> oscAmp;
+@property(nonatomic, strong) id<MTLBuffer> oscHeat;
+@property(nonatomic, strong) id<MTLBuffer> particlePos;
+@property(nonatomic, strong) id<MTLBuffer> particleVel;
+@property(nonatomic, strong) id<MTLBuffer> particleMass;
+@property(nonatomic, strong) id<MTLBuffer> particleEnergy;
+@property(nonatomic, strong) id<MTLBuffer> particlePosSorted;
+@property(nonatomic, strong) id<MTLBuffer> particleVelSorted;
+@property(nonatomic, strong) id<MTLBuffer> particleMassSorted;
+@property(nonatomic, strong) id<MTLBuffer> particleHeatSorted;
+@property(nonatomic, strong) id<MTLBuffer> particleEnergySorted;
+@property(nonatomic, strong) id<MTLBuffer> particleCellIdx;
+@property(nonatomic, strong) id<MTLBuffer> scatterCellCounts;
+@property(nonatomic, strong) id<MTLBuffer> scatterCellStarts;
+@property(nonatomic, strong) id<MTLBuffer> scatterCellOffsets;
+@property(nonatomic, strong) id<MTLBuffer> sortedOriginalIdx;
+@property(nonatomic, strong) id<MTLBuffer> rhoAtomic;
+@property(nonatomic, strong) id<MTLBuffer> momAtomic;
+@property(nonatomic, strong) id<MTLBuffer> eAtomic;
+@property(nonatomic, strong) id<MTLBuffer> gravityPotential;
+@property(nonatomic, strong) id<MTLBuffer> sortScatterParams;
+@property(nonatomic, strong) id<MTLBuffer> picGatherParams;
+@property(nonatomic, strong) id<MTLBuffer> particleExcitation;
+@property(nonatomic, strong) id<MTLBuffer> particleVelIn;
+@property(nonatomic, strong) id<MTLBuffer> particleHeatIn;
+@property(nonatomic, strong) id<MTLBuffer> hashCellCounts;
+@property(nonatomic, strong) id<MTLBuffer> hashCellStarts;
+@property(nonatomic, strong) id<MTLBuffer> hashCellOffsets;
+@property(nonatomic, strong) id<MTLBuffer> hashSortedIdx;
+@property(nonatomic, strong) id<MTLBuffer> hashParticleCellIdx;
+@property(nonatomic, strong) id<MTLBuffer> hashNumCellsBuf;
+@property(nonatomic, strong) id<MTLBuffer> hashNumParticlesBuf;
+@property(nonatomic, strong) id<MTLBuffer> spatialHashParams;
+@property(nonatomic, strong) id<MTLBuffer> spatialCollisionParams;
+@property(nonatomic, strong) id<MTLBuffer> particleInteractionParams;
+@property(nonatomic, strong) id<MTLBuffer> psiReField;
+@property(nonatomic, strong) id<MTLBuffer> psiImField;
+@property(nonatomic, strong) id<MTLBuffer> psiReAtomic;
+@property(nonatomic, strong) id<MTLBuffer> psiImAtomic;
+@property(nonatomic, strong) id<MTLBuffer> modeProjectParams;
+@property(nonatomic, strong) id<MTLBuffer> pilotWaveParams;
+@property(nonatomic, strong) id<MTLBuffer> particleGenParams;
+@property(nonatomic, strong) id<MTLBuffer> particleRandomVals;
+@property(nonatomic, strong) id<MTLBuffer> reduceGroupStats;
+@property(nonatomic, strong) id<MTLBuffer> reduceStatsOut;
+@property(nonatomic, strong) id<MTLBuffer> hashBlockSums;
+@property(nonatomic, strong) id<MTLBuffer> modeReal;
+@property(nonatomic, strong) id<MTLBuffer> modeImag;
+@property(nonatomic, strong) id<MTLBuffer> modeOmega;
+@property(nonatomic, strong) id<MTLBuffer> modeGate;
+@property(nonatomic, strong) id<MTLBuffer> modeAnchorIdx;
+@property(nonatomic, strong) id<MTLBuffer> modeAnchorWeight;
+@property(nonatomic, strong) id<MTLBuffer> accums;
+@property(nonatomic, strong) id<MTLBuffer> numCarriers;
+@property(nonatomic, strong) id<MTLBuffer> omegaMinKey;
+@property(nonatomic, strong) id<MTLBuffer> omegaMaxKey;
+@property(nonatomic, strong) id<MTLBuffer> binCounts;
+@property(nonatomic, strong) id<MTLBuffer> binStarts;
+@property(nonatomic, strong) id<MTLBuffer> binOffsets;
+@property(nonatomic, strong) id<MTLBuffer> carrierBinnedIdx;
+@property(nonatomic, strong) id<MTLBuffer> binParams;
+@property(nonatomic, strong) id<MTLBuffer> numBinsBuf;
+@property(nonatomic, strong) id<MTLBuffer> gateWidthMaxBuf;
+@property(nonatomic, strong) id<MTLBuffer> scanBlockSums;
+@property(nonatomic, strong) id<MTLBuffer> scanBlockPrefix;
+@property(nonatomic, strong) id<MTLBuffer> scanBlockScratch;
+@property(nonatomic, strong) id<MTLBuffer> coherenceParams;
+@property(nonatomic, strong) id<MTLBuffer> gpeParams;
+- (instancetype)initWithConfig:(const ManifoldConfig *)config
+                 metallibBytes:(const void *)metallibBytes
+                metallibLength:(size_t)metallibLength
+                         error:(NSString **)error;
+- (void)resetDepositsInternal;
+- (BOOL)depositCell:(uint32_t)cellX cellY:(uint32_t)cellY cellZ:(uint32_t)cellZ
+                rho:(float)rho momX:(float)momX momY:(float)momY momZ:(float)momZ eInt:(float)eInt error:(NSString **)error;
+- (BOOL)setOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count error:(NSString **)error;
+- (BOOL)runGasStep:(NSString **)error;
+- (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error;
+- (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error;
+- (BOOL)step:(ManifoldReading *)reading error:(NSString **)error;
+@end
+
+@interface ManifoldSolver (DispatchPrivate)
+- (void)dispatchGridKernel:(id<MTLComputePipelineState>)pipeline
+                   buffers:(NSArray<id<MTLBuffer>> *)buffers
+               threadCount:(NSUInteger)threadCount;
+- (void)dispatchThreadgroupKernel:(id<MTLComputePipelineState>)pipeline
+                          buffers:(NSArray<id<MTLBuffer>> *)buffers
+                    threadgroupSize:(NSUInteger)threadgroupSize
+                    threadgroupCount:(NSUInteger)threadgroupCount
+            threadgroupMemoryLength:(NSUInteger)threadgroupMemoryLength;
+@end
+
+@interface ManifoldSolver (CoherencePrivate)
+- (id<MTLComputePipelineState>)pipelineNamed:(NSString *)name error:(NSError **)error;
+- (BOOL)runCoherenceStep:(NSString **)error;
+@end
+
+@interface ManifoldSolver (GravityPrivate)
+- (BOOL)runGravityPoisson:(NSString **)error;
+@end
+
+@interface ManifoldSolver (ParticlesPrivate)
+- (void)configureSpatialHashParams;
+- (void)configureSpatialCollisionParams;
+- (void)configureParticleInteractionParams;
+- (BOOL)runDirectParticleInteractions:(NSString **)error;
+- (BOOL)runSpatialHashCollisions:(NSString **)error;
+- (BOOL)runParticleCollisions:(NSString **)error;
+- (void)configureModeProjectParams;
+- (void)configurePilotWaveParams;
+- (void)clearPsiFields;
+- (void)copyPsiAtomicsToFields;
+- (BOOL)runProjectModesToSpatialPsi:(NSString **)error;
+- (BOOL)runPilotWaveGather:(NSString **)error;
+@end
+
+@interface ManifoldSolver (UtilPrivate)
+- (void)runClearField:(id<MTLBuffer>)field count:(uint32_t)count;
+- (void)runReduceFloatStats:(id<MTLBuffer>)values length:(uint32_t)length statsOut:(float *)statsOut;
+- (void)configureParticleGenParams;
+- (void)seedRandomValuesFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
+- (void)runInitializeParticleProperties:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
+- (BOOL)runSpatialHashPrefixSumParallel:(NSString **)error;
+@end
+
+@interface ManifoldSolver (PicPrivate)
+- (float)gridSpacing;
+- (void)initializeParticleStateFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
+- (void)configureSortScatterParams;
+- (void)configurePicGatherParams;
+- (void)copyConservedFieldToAtomics;
+- (void)copyAtomicsToConservedField;
+- (BOOL)runScatterPrefixSum:(NSString **)error;
+- (BOOL)runPicScatter:(NSString **)error;
+- (BOOL)runPicGather:(NSString **)error;
+@end

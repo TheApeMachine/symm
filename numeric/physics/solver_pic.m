@@ -1,0 +1,215 @@
+#import "solver_private.h"
+
+@implementation ManifoldSolver (PicPrivate)
+
+- (float)gridSpacing {
+    float cellVolume = (self.config.domain_x / (float)self.config.grid_x) *
+        (self.config.domain_y / (float)self.config.grid_y) *
+        (self.config.domain_z / (float)self.config.grid_z);
+
+    return powf(cellVolume, 1.0f / 3.0f);
+}
+
+- (void)initializeParticleStateFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count {
+    float *velData = (float *)self.particleVel.contents;
+    float *massData = (float *)self.particleMass.contents;
+    float *energyData = (float *)self.particleEnergy.contents;
+
+    for (uint32_t index = 0; index < count; index++) {
+        const ManifoldOscillator *oscillator = &oscillators[index];
+        float mass = oscillator->amplitude * self.config.rho_min;
+
+        if (!(mass > 0.0f)) {
+            mass = self.config.rho_min;
+        }
+
+        massData[index] = mass;
+        energyData[index] = oscillator->heat;
+        velData[index * 3 + 0] = 0.0f;
+        velData[index * 3 + 1] = 0.0f;
+        velData[index * 3 + 2] = 0.0f;
+    }
+}
+
+- (void)configureSortScatterParams {
+    SortScatterParamsHost *params = (SortScatterParamsHost *)self.sortScatterParams.contents;
+    float spacing = [self gridSpacing];
+
+    params->num_particles = self.numOsc;
+    params->num_cells = self.numCells;
+    params->grid_x = self.config.grid_x;
+    params->grid_y = self.config.grid_y;
+    params->grid_z = self.config.grid_z;
+    params->grid_spacing = spacing;
+    params->inv_grid_spacing = 1.0f / spacing;
+}
+
+- (void)configurePicGatherParams {
+    PicGatherParamsHost *params = (PicGatherParamsHost *)self.picGatherParams.contents;
+    float spacing = [self gridSpacing];
+
+    params->num_particles = self.numOsc;
+    params->grid_x = self.config.grid_x;
+    params->grid_y = self.config.grid_y;
+    params->grid_z = self.config.grid_z;
+    params->grid_spacing = spacing;
+    params->inv_grid_spacing = 1.0f / spacing;
+    params->dt = self.config.dt;
+    params->domain_x = self.config.domain_x;
+    params->domain_y = self.config.domain_y;
+    params->domain_z = self.config.domain_z;
+    params->gamma = self.config.gamma;
+    params->R_specific = (self.config.gamma - 1.0f) * self.config.c_v;
+    params->c_v = self.config.c_v;
+    params->rho_min = self.config.rho_min;
+    params->p_min = self.config.p_min;
+    params->gravity_enabled = self.gravityReady ? 1.0f : 0.0f;
+}
+
+- (void)copyConservedFieldToAtomics {
+    float *rhoData = (float *)self.rho.contents;
+    float *momData = (float *)self.mom.contents;
+    float *eData = (float *)self.eInt.contents;
+    uint32_t *rhoAtomic = (uint32_t *)self.rhoAtomic.contents;
+    uint32_t *momAtomic = (uint32_t *)self.momAtomic.contents;
+    uint32_t *eAtomic = (uint32_t *)self.eAtomic.contents;
+
+    for (uint32_t index = 0; index < self.numCells; index++) {
+        memcpy(&rhoAtomic[index], &rhoData[index], sizeof(uint32_t));
+        memcpy(&eAtomic[index], &eData[index], sizeof(uint32_t));
+
+        uint32_t momBase = index * 3u;
+        memcpy(&momAtomic[momBase + 0], &momData[momBase + 0], sizeof(uint32_t));
+        memcpy(&momAtomic[momBase + 1], &momData[momBase + 1], sizeof(uint32_t));
+        memcpy(&momAtomic[momBase + 2], &momData[momBase + 2], sizeof(uint32_t));
+    }
+}
+
+- (void)copyAtomicsToConservedField {
+    float *rhoData = (float *)self.rho.contents;
+    float *momData = (float *)self.mom.contents;
+    float *eData = (float *)self.eInt.contents;
+    uint32_t *rhoAtomic = (uint32_t *)self.rhoAtomic.contents;
+    uint32_t *momAtomic = (uint32_t *)self.momAtomic.contents;
+    uint32_t *eAtomic = (uint32_t *)self.eAtomic.contents;
+
+    for (uint32_t index = 0; index < self.numCells; index++) {
+        memcpy(&rhoData[index], &rhoAtomic[index], sizeof(float));
+        memcpy(&eData[index], &eAtomic[index], sizeof(float));
+
+        uint32_t momBase = index * 3u;
+        memcpy(&momData[momBase + 0], &momAtomic[momBase + 0], sizeof(float));
+        memcpy(&momData[momBase + 1], &momAtomic[momBase + 1], sizeof(float));
+        memcpy(&momData[momBase + 2], &momAtomic[momBase + 2], sizeof(float));
+    }
+}
+
+- (BOOL)runScatterPrefixSum:(NSString **)error {
+    (void)error;
+    uint32_t numCells = self.numCells;
+
+    if (numCells == 0) {
+        return YES;
+    }
+
+    memcpy(self.scatterCellStarts.contents, self.scatterCellCounts.contents, (size_t)numCells * sizeof(uint32_t));
+
+    for (uint32_t stride = 1; stride < numCells; stride <<= 1) {
+        id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> numCellsBuf = [self.device newBufferWithBytes:&numCells length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+        [self dispatchGridKernel:self.scatterPrefixUpsweep
+                         buffers:@[self.scatterCellStarts, strideBuf, numCellsBuf]
+                     threadCount:numCells];
+    }
+
+    uint32_t *starts = (uint32_t *)self.scatterCellStarts.contents;
+    starts[numCells - 1] = 0;
+
+    for (uint32_t stride = numCells >> 1; stride > 0; stride >>= 1) {
+        id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> numCellsBuf = [self.device newBufferWithBytes:&numCells length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+        [self dispatchGridKernel:self.scatterPrefixDownsweep
+                         buffers:@[self.scatterCellStarts, strideBuf, numCellsBuf]
+                     threadCount:numCells];
+    }
+
+    return YES;
+}
+
+- (BOOL)runPicScatter:(NSString **)error {
+    (void)error;
+
+    if (self.numOsc == 0) {
+        return YES;
+    }
+
+    [self configureSortScatterParams];
+    [self copyConservedFieldToAtomics];
+
+    memset(self.scatterCellCounts.contents, 0, self.scatterCellCounts.length);
+
+    [self dispatchGridKernel:self.scatterComputeCellIdx
+                     buffers:@[self.particlePos, self.particleCellIdx, self.sortScatterParams]
+                 threadCount:self.numOsc];
+
+    [self dispatchGridKernel:self.scatterCountCells
+                     buffers:@[self.particleCellIdx, self.scatterCellCounts, self.sortScatterParams]
+                 threadCount:self.numOsc];
+
+    if (![self runScatterPrefixSum:error]) {
+        return NO;
+    }
+
+    memcpy(self.scatterCellOffsets.contents, self.scatterCellStarts.contents, (size_t)self.numCells * sizeof(uint32_t));
+
+    [self dispatchGridKernel:self.scatterReorderParticles
+                     buffers:@[
+                         self.particlePos, self.particleVel, self.particleMass, self.oscHeat, self.particleEnergy,
+                         self.particleCellIdx, self.scatterCellStarts, self.scatterCellOffsets,
+                         self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
+                         self.particleHeatSorted, self.particleEnergySorted, self.sortedOriginalIdx,
+                         self.sortScatterParams
+                     ]
+                 threadCount:self.numOsc];
+
+    [self dispatchGridKernel:self.scatterSorted
+                     buffers:@[
+                         self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
+                         self.particleHeatSorted, self.particleEnergySorted,
+                         self.rhoAtomic, self.momAtomic, self.eAtomic, self.sortScatterParams
+                     ]
+                 threadCount:self.numOsc];
+
+    [self copyAtomicsToConservedField];
+
+    return YES;
+}
+
+- (BOOL)runPicGather:(NSString **)error {
+    (void)error;
+
+    if (self.numOsc == 0) {
+        return YES;
+    }
+
+    [self configurePicGatherParams];
+
+    [self dispatchGridKernel:self.picGatherUpdate
+                     buffers:@[
+                         self.particlePos, self.particleMass,
+                         self.particlePosSorted, self.particleVel,
+                         self.oscHeat,
+                         self.rho, self.mom, self.eInt,
+                         self.gravityPotential, self.picGatherParams,
+                         self.dbgHead, self.dbgWords, self.dbgCap
+                     ]
+                 threadCount:self.numOsc];
+
+    memcpy(self.particlePos.contents, self.particlePosSorted.contents, (size_t)self.numOsc * 3 * sizeof(float));
+
+    return YES;
+}
+
+@end

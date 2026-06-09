@@ -122,7 +122,10 @@ func (system *System) processMessage(message *qpool.QValue[any]) error {
 			return nil
 		}
 
-		warmed = signal.Record(measurement)
+		signal.Record(measurement)
+		signal.rebuildFeaturesFromRing()
+
+		return nil
 	case "trades":
 		var trade *krakenmarket.TradeUpdate
 
@@ -211,11 +214,9 @@ func (system *System) processMessage(message *qpool.QValue[any]) error {
 		return nil
 	}
 
-	system.bus.Send(
-		"measurements",
-		"measurements",
-		measurement,
-	)
+	if publishErr := measurement.Publish(system.bus); errnie.Error(publishErr) != nil {
+		return nil
+	}
 
 	errnie.Error(system.gauge.Publish(
 		measurement,

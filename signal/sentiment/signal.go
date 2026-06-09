@@ -127,7 +127,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
@@ -172,7 +172,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	spread := 0.0
@@ -228,7 +228,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
@@ -329,6 +329,7 @@ func (signal *Signal) fromCrossSection(
 		Position:   position,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 

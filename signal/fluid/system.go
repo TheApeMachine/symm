@@ -38,7 +38,7 @@ type System struct {
 	ingestHandler   *ingestHandler
 	ingestRing      []ingestEvent
 	ingestWaitGroup sync.WaitGroup
-	ingestErr       atomic.Value
+	ingestErr       atomic.Pointer[error]
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -102,6 +102,31 @@ func (system *System) Tick() error {
 			if symbolOk {
 				system.gauge.RegisterSymbols(symbols)
 			}
+			continue
+		case "instrument":
+			var catalog *krakenmarket.InstrumentUpdate
+
+			if catalog, ok = message.Value.(*krakenmarket.InstrumentUpdate); !ok {
+				errnie.Error(errors.New("fluid: invalid instrument"), "fluid: invalid instrument")
+				continue
+			}
+
+			for _, pair := range catalog.Pairs {
+				if pair.PriceIncrement <= 0 {
+					continue
+				}
+
+				state := system.loadSymbol(pair.Symbol)
+
+				if state == nil {
+					continue
+				}
+
+				if configureErr := state.ConfigureTick(pair.PriceIncrement); configureErr != nil {
+					errnie.Error(configureErr)
+				}
+			}
+
 			continue
 		case "trades":
 			var trade *krakenmarket.TradeUpdate
@@ -194,11 +219,9 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		system.bus.Send(
-			"measurements",
-			"measurements",
-			measurement,
-		)
+		if publishErr := measurement.Publish(system.bus); errnie.Error(publishErr) != nil {
+			continue
+		}
 
 		errnie.Error(system.gauge.Publish(
 			measurement,
@@ -212,11 +235,12 @@ func (system *System) Tick() error {
 
 func (system *System) feedTrade(trade *krakenmarket.TradeUpdate) {
 	if err := system.publishIngest(ingestEvent{
-		symbol:    trade.Symbol,
-		kind:      ingestTrade,
-		tradeAt:   trade.Timestamp,
-		tradeQty:  trade.Qty,
-		tradeSide: trade.Side,
+		symbol:     trade.Symbol,
+		kind:       ingestTrade,
+		tradeAt:    trade.Timestamp,
+		tradePrice: trade.Price,
+		tradeQty:   trade.Qty,
+		tradeSide:  trade.Side,
 	}); err != nil {
 		errnie.Error(err)
 	}

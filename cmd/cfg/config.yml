@@ -19,12 +19,14 @@ story:
     rls_initial_variance: 1000.0
 
 market:
-  quote_currency: EUR
-  anchor_symbol: BTC/EUR
+  quote_currency: USD
+  anchor_symbol: BTC/USD
   default_symbols:
-    - BTC/EUR
+    - BTC/USD
   max_scan_symbols: 1024
   book_depth_levels: 10
+  futures_enabled: true
+  futures_ws_ping_interval: 30s
   l3_enabled: true
   l3_depth: 10
   # Fluid book resync still batches unsub/subscribe to avoid close 1008.
@@ -170,6 +172,7 @@ signals:
     alpha: 0.5
     tick_size: 0.01
     grid_half_width: 100
+    integration_interval: 100ms
   leadlag:
     raw_dump: true
     measurements_capacity: 64
@@ -192,6 +195,17 @@ signals:
     measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
+  manifold:
+    measurements_capacity: 64
+    surprise_threshold: 2.0
+    alpha: 0.5
+    tick_size: 0.01
+    grid_half_width: 32
+    grid_x: 32
+    grid_y: 3
+    grid_z: 16
+    max_modes: 32
+    integration_interval: 100ms
   toxicity:
     measurements_capacity: 64
     surprise_threshold: 2.0

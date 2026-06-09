@@ -2,16 +2,17 @@ package cvd
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"math"
+
+	"time"
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"time"
 )
 
 /*
@@ -32,13 +33,13 @@ The "Steamroller" Story: One-sided aggression that price is actually following â
 | Volume Starvation   | N/A          | Thin          | No Flow / Idle          |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -49,13 +50,13 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
@@ -128,21 +129,22 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return signal.fromSeries(buyVolume, sellVolume, prices, tradeCount)
+	return signal.fromSeries(buyVolume, sellVolume, prices, tradeCount, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) fromSeries(
 	buyVolume, sellVolume float64,
 	prices []float64,
 	tradeCount int,
+	at time.Time,
 ) (logic.Measurement, error) {
 	gross := buyVolume + sellVolume
 
@@ -157,6 +159,7 @@ func (signal *Signal) fromSeries(
 			0,
 			0,
 			0,
+			at,
 		)
 	}
 
@@ -233,6 +236,7 @@ func (signal *Signal) fromSeries(
 		surprise,
 		netFraction,
 		math.Abs(priceDrift),
+		at,
 	)
 }
 
@@ -240,6 +244,7 @@ func (signal *Signal) publish(
 	category logic.CategoryType,
 	price, strength, volume, spread, confidence, surprise float64,
 	netFraction, priceDrift float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	_ = netFraction
 	_ = priceDrift
@@ -257,6 +262,7 @@ func (signal *Signal) publish(
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -322,4 +328,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

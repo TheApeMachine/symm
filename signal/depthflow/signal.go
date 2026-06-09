@@ -2,16 +2,17 @@ package depthflow
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"math"
+
+	"time"
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"time"
 )
 
 /*
@@ -32,14 +33,14 @@ The "Trap" Story   : Deep liquidity on one side while the touch disagrees — a 
 | Dense Neutrality  | Balanced depth    | Low            | Thick / Two-Sided    |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection *crossSection
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	crossSection    *crossSection
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -51,14 +52,14 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(5, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		crossSection:    crossSection,
+		transition:      numeric.NewTransitionMatrix(5, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
@@ -134,11 +135,11 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 	signal.crossSection.publishTradePressure(signal.symbol, pressure)
 
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -214,12 +215,13 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !weightedOK || !level1OK || mid <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	return signal.fromBook(
 		weighted, level1, flat, flatOK, mid, spread,
 		weightedHistory, level1History, flatHistory,
+		at,
 	)
 }
 
@@ -228,6 +230,7 @@ func (signal *Signal) fromBook(
 	flatOK bool,
 	mid, spread float64,
 	weightedHistory, level1History, flatHistory []float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	weightedThreshold := numeric.MedianAbsolute(weightedHistory)
 	level1Threshold := numeric.MedianAbsolute(level1History)
@@ -323,6 +326,7 @@ func (signal *Signal) fromBook(
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -465,4 +469,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

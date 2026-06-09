@@ -2,16 +2,17 @@ package liquidity
 
 import (
 	"container/ring"
-	
+
 	"fmt"
 	"math"
+
+	"time"
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"time"
 )
 
 /*
@@ -31,14 +32,14 @@ The "Neglect" Story   : It identifies assets ignored by the broader market, prim
 | Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
 */
 type Signal struct {
-	symbol       string
-	entity       *logic.Entity
+	symbol          string
+	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection *crossSection
-	transition   *numeric.TransitionMatrix
-	weights      numeric.ClassifierWeights
-	tuner        *numeric.FeedbackTuner
+	crossSection    *crossSection
+	transition      *numeric.TransitionMatrix
+	weights         numeric.ClassifierWeights
+	tuner           *numeric.FeedbackTuner
 }
 
 func NewSignal(
@@ -50,14 +51,14 @@ func NewSignal(
 	alpha float64,
 ) *Signal {
 	return &Signal{
-		symbol:       symbol,
-		entity:       entity,
+		symbol:          symbol,
+		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(4, alpha),
-		weights:      numeric.DefaultClassifierWeights(threshold),
-		tuner:        numeric.NewFeedbackTuner(),
+		crossSection:    crossSection,
+		transition:      numeric.NewTransitionMatrix(4, alpha),
+		weights:         numeric.DefaultClassifierWeights(threshold),
+		tuner:           numeric.NewFeedbackTuner(),
 	}
 }
 
@@ -120,10 +121,10 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if quoteVol <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.fromCrossSection(price, quoteVol, 0)
+	return signal.fromCrossSection(price, quoteVol, 0, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -156,7 +157,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	spread := 0.0
@@ -173,7 +174,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 
 	quoteVol := ticker.Volume * price
 
-	return signal.fromCrossSection(price, quoteVol, spread)
+	return signal.fromCrossSection(price, quoteVol, spread, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -216,7 +217,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	price := prices[len(prices)-1] / 2
@@ -227,18 +228,19 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	return signal.fromCrossSection(price, quoteVol, spread)
+	return signal.fromCrossSection(price, quoteVol, spread, at)
 }
 
 func (signal *Signal) fromCrossSection(
 	price, quoteVol, spread float64,
+	at time.Time,
 ) (logic.Measurement, error) {
 	signal.crossSection.publishQuoteVol(signal.symbol, quoteVol)
 
 	peers := signal.crossSection.snapshot()
 
 	if len(peers) < 2 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	lower, upper := signal.quartiles(peers)
@@ -312,6 +314,7 @@ func (signal *Signal) fromCrossSection(
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 
@@ -363,4 +366,3 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
 }
-

@@ -189,11 +189,9 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		system.bus.Send(
-			"measurements",
-			"measurements",
-			measurement,
-		)
+		if publishErr := measurement.Publish(system.bus); errnie.Error(publishErr) != nil {
+			continue
+		}
 
 		errnie.Error(system.gauge.Publish(
 			measurement,

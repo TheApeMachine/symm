@@ -1,0 +1,132 @@
+#import "solver_private.h"
+
+static const uint32_t kReduceThreads = 256u;
+
+@implementation ManifoldSolver (UtilPrivate)
+
+- (void)runClearField:(id<MTLBuffer>)field count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.clearField
+                     buffers:@[field, countBuf]
+                 threadCount:count];
+}
+
+- (void)runReduceFloatStats:(id<MTLBuffer>)values length:(uint32_t)length statsOut:(float *)statsOut {
+    if (length == 0) {
+        statsOut[0] = 0.0f;
+        statsOut[1] = 0.0f;
+        statsOut[2] = 0.0f;
+        statsOut[3] = 0.0f;
+        return;
+    }
+
+    uint32_t numGroups = (length + kReduceThreads - 1u) / kReduceThreads;
+    size_t groupBytes = (size_t)numGroups * 4u * sizeof(float);
+
+    if (self.reduceGroupStats.length < groupBytes) {
+        self.reduceGroupStats = [self.device newBufferWithLength:groupBytes options:MTLResourceStorageModeShared];
+    }
+
+    id<MTLBuffer> lengthBuf = [self.device newBufferWithBytes:&length length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> numGroupsBuf = [self.device newBufferWithBytes:&numGroups length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchThreadgroupKernel:self.reduceFloatStatsPass1
+                            buffers:@[values, self.reduceGroupStats, lengthBuf]
+                      threadgroupSize:kReduceThreads
+                     threadgroupCount:numGroups
+             threadgroupMemoryLength:kReduceThreads * 4u * sizeof(float)];
+
+    [self dispatchGridKernel:self.reduceFloatStatsFinalize
+                     buffers:@[self.reduceGroupStats, self.reduceStatsOut, numGroupsBuf]
+                 threadCount:1];
+
+    float *statsData = (float *)self.reduceStatsOut.contents;
+    statsOut[0] = statsData[0];
+    statsOut[1] = statsData[1];
+    statsOut[2] = statsData[2];
+    statsOut[3] = statsData[3];
+}
+
+- (void)configureParticleGenParams {
+    ParticleGenParamsHost *params = (ParticleGenParamsHost *)self.particleGenParams.contents;
+    float spacing = [self gridSpacing];
+
+    params->num_particles = self.numOsc;
+    params->grid_x = (float)self.config.grid_x;
+    params->grid_y = (float)self.config.grid_y;
+    params->grid_z = (float)self.config.grid_z;
+    params->energy_scale = self.config.rho_min;
+    params->pattern = 3u;
+    params->center_x = 0.5f * self.config.domain_x;
+    params->center_y = 0.5f * self.config.domain_y;
+    params->center_z = 0.5f * self.config.domain_z;
+    params->spread = spacing;
+    params->dir_x = 1.0f;
+    params->dir_y = 0.0f;
+    params->dir_z = 0.0f;
+}
+
+- (void)seedRandomValuesFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count {
+    float *randomData = (float *)self.particleRandomVals.contents;
+
+    for (uint32_t index = 0; index < count; index++) {
+        const ManifoldOscillator *oscillator = &oscillators[index];
+        randomData[index * 4 + 0] = fmodf(fabsf(oscillator->phase), 1.0f);
+        randomData[index * 4 + 1] = fmodf(fabsf(oscillator->omega) / (float)(2.0 * M_PI), 1.0f);
+        randomData[index * 4 + 2] = fmodf(fabsf(oscillator->amplitude), 1.0f);
+        randomData[index * 4 + 3] = fmodf(fabsf(oscillator->heat), 1.0f);
+    }
+}
+
+- (void)runInitializeParticleProperties:(const ManifoldOscillator *)oscillators count:(uint32_t)count {
+    [self configureParticleGenParams];
+    [self seedRandomValuesFromOscillators:oscillators count:count];
+
+    float centerX = 0.0f;
+    float centerY = 0.0f;
+    float centerZ = 0.0f;
+
+    for (uint32_t index = 0; index < count; index++) {
+        centerX += oscillators[index].pos_x;
+        centerY += oscillators[index].pos_y;
+        centerZ += oscillators[index].pos_z;
+    }
+
+    centerX /= (float)count;
+    centerY /= (float)count;
+    centerZ /= (float)count;
+
+    id<MTLBuffer> centerXBuf = [self.device newBufferWithBytes:&centerX length:sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> centerYBuf = [self.device newBufferWithBytes:&centerY length:sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> centerZBuf = [self.device newBufferWithBytes:&centerZ length:sizeof(float) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.initializeParticleProperties
+                     buffers:@[
+                         self.particlePos, self.particleVel, self.particleEnergy, self.oscHeat,
+                         self.particleExcitation, self.particleMass, self.particleRandomVals,
+                         self.particleGenParams, centerXBuf, centerYBuf, centerZBuf
+                     ]
+                 threadCount:count];
+}
+
+- (BOOL)runSpatialHashPrefixSumParallel:(NSString **)error {
+    (void)error;
+    uint32_t numCells = self.numCells;
+    uint32_t blockSize = kReduceThreads;
+    uint32_t numBlocks = (numCells + blockSize - 1u) / blockSize;
+
+    if (self.hashBlockSums.length < (size_t)numBlocks * sizeof(uint32_t)) {
+        self.hashBlockSums = [self.device newBufferWithLength:(size_t)numBlocks * sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    }
+
+    [self dispatchThreadgroupKernel:self.spatialHashPrefixSumParallel
+                            buffers:@[self.hashCellCounts, self.hashBlockSums, self.hashNumCellsBuf]
+                      threadgroupSize:blockSize
+                     threadgroupCount:numBlocks
+             threadgroupMemoryLength:blockSize * sizeof(uint32_t)];
+
+    return YES;
+}
+
+@end

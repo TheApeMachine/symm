@@ -3,12 +3,13 @@ package exhaust
 import (
 	"testing"
 
+	"time"
+
 	. "github.com/smartystreets/goconvey/convey"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
-	"time"
 )
 
 func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.Book {
@@ -42,7 +43,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(thinningBook(symbol, 4, 105))
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish an exhaustion reading", func() {
 			So(err, ShouldBeNil)
@@ -52,6 +53,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		})
 	})
 
@@ -77,7 +79,7 @@ func TestSignalMeasure(t *testing.T) {
 			0.5,
 		)
 
-		measurement, err := signal.fromFeatures()
+		measurement, err := signal.fromFeatures(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify thermal exhaustion from pressure fade", func() {
 			So(err, ShouldBeNil)
@@ -97,7 +99,7 @@ func TestSignalMeasure(t *testing.T) {
 			0.5,
 		)
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should withhold until history is populated", func() {
 			So(err, ShouldBeNil)
@@ -180,6 +182,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ =  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
 }

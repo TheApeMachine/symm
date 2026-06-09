@@ -121,7 +121,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	return signal.fromCrossSection(price, at)
@@ -155,7 +155,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	price := ticker.Last
@@ -165,14 +165,14 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	return signal.fromCrossSection(price, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measurement, error) {
@@ -190,7 +190,7 @@ func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measu
 	peerEnergies := signal.crossSection.peerEnergies(window, at)
 
 	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
 	correlation := numeric.Pearson(symbolReturns, marketReturns)
@@ -261,6 +261,7 @@ func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measu
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
+		ObservedAt: at,
 	}, nil
 }
 

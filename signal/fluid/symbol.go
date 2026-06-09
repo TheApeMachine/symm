@@ -8,15 +8,21 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 /*
 FluidSymbol models one symbol's order book as a 1D reaction-diffusion fluid field.
 
-Divergence is ∇·(ρv) at the touch. Viscosity is the near-touch replenishment
+Divergence is ∇·v at the touch. Viscosity is the near-touch replenishment
 rate after consumption. Reynolds is |v|·L/ν with L equal to the bid-ask spread.
 */
+type bufferedTrade struct {
+	at    time.Time
+	price float64
+	qty   float64
+	side  string
+}
+
 type FluidSymbol struct {
 	symbol         string
 	book           krakenmarket.Book
@@ -24,26 +30,26 @@ type FluidSymbol struct {
 	bookDiverged   bool
 	divergedLogged bool
 	bookDepth      int
-	buyPressure    float64
 	changePct      float64
 	volume         float64
 	last           float64
 	bid            float64
 	ask            float64
-	pressure       *adaptive.EMA
 	spreadBPS      float64
 	flux           *fluxAccumulator
 	grid           *FluidGrid
+	bufferedTrades []bufferedTrade
 	lastEventAt    time.Time
 }
 
 type fluidReading struct {
-	symbol     string
-	price      float64
-	spreadBPS  float64
-	reynolds   float64
-	divergence float64
-	viscosity  float64
+	symbol        string
+	price         float64
+	spreadBPS     float64
+	reynolds      float64
+	divergence    float64
+	viscosity     float64
+	sourceBalance float64
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
@@ -62,10 +68,48 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 	return &FluidSymbol{
 		symbol:    symbol,
 		bookDepth: depth,
-		pressure:  adaptive.NewEMA(0),
 		flux:      newFluxAccumulator(),
 		grid:      grid,
 	}, nil
+}
+
+/*
+ConfigureTick rebuilds the price lattice from the exchange price increment before the first book snapshot.
+*/
+func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
+	if priceIncrement <= 0 {
+		return fmt.Errorf("fluid: %s price increment must be positive", state.symbol)
+	}
+
+	if state.bookReady {
+		return nil
+	}
+
+	if state.grid != nil && state.grid.tickSize == priceIncrement {
+		return nil
+	}
+
+	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
+
+	if halfWidth <= 0 {
+		return fmt.Errorf("fluid: signals.fluid.grid_half_width must be positive")
+	}
+
+	integrationInterval := viper.GetDuration("signals.fluid.integration_interval")
+
+	if integrationInterval <= 0 {
+		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
+	}
+
+	grid, gridErr := newFluidGrid(priceIncrement, halfWidth, integrationInterval)
+
+	if gridErr != nil {
+		return gridErr
+	}
+
+	state.grid = grid
+
+	return nil
 }
 
 func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
@@ -134,8 +178,12 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time)
 
 	mid := (state.bid + state.ask) / 2
 
-	if stepErr := state.grid.step(state.book.Bids, state.book.Asks, mid, at); stepErr != nil {
-		return stepErr
+	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
+		return ingestErr
+	}
+
+	if flushErr := state.flushBufferedTrades(); flushErr != nil {
+		return flushErr
 	}
 
 	if flux <= 0 || !state.flux.hasTarget() {
@@ -197,30 +245,74 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel)
 	}
 }
 
-func (state *FluidSymbol) FeedTradeSide(at time.Time, qty float64, side string) error {
+func (state *FluidSymbol) FeedTrade(
+	at time.Time,
+	price, qty float64,
+	side string,
+) error {
 	if !at.IsZero() {
 		state.lastEventAt = at
 	}
 
+	if !state.bookReady || state.grid.lastMidPrice <= 0 {
+		state.bufferTrade(at, price, qty, side)
+
+		return nil
+	}
+
+	if state.grid.priceIndex(state.grid.lastMidPrice, price) < 0 {
+		state.bufferTrade(at, price, qty, side)
+
+		return nil
+	}
+
+	return state.applyTrade(at, price, qty, side)
+}
+
+func (state *FluidSymbol) bufferTrade(
+	at time.Time,
+	price, qty float64,
+	side string,
+) {
+	state.bufferedTrades = append(state.bufferedTrades, bufferedTrade{
+		at:    at,
+		price: price,
+		qty:   qty,
+		side:  side,
+	})
+}
+
+func (state *FluidSymbol) applyTrade(
+	at time.Time,
+	price, qty float64,
+	_ string,
+) error {
 	if qty > 0 && state.flux.hasTarget() {
 		if err := state.flux.addTrade(qty); err != nil {
 			return err
 		}
 	}
 
-	sign := -1.0
+	return state.grid.ingestTrade(price, qty, at)
+}
 
-	if side == "buy" {
-		sign = 1.0
+func (state *FluidSymbol) flushBufferedTrades() error {
+	if len(state.bufferedTrades) == 0 || state.grid.lastMidPrice <= 0 {
+		return nil
 	}
 
-	value, err := state.pressure.Next(0, sign)
+	pending := state.bufferedTrades
+	state.bufferedTrades = nil
 
-	if err != nil {
-		return err
+	for _, trade := range pending {
+		if state.grid.priceIndex(state.grid.lastMidPrice, trade.price) < 0 {
+			continue
+		}
+
+		if err := state.applyTrade(trade.at, trade.price, trade.qty, trade.side); err != nil {
+			return err
+		}
 	}
-
-	state.buyPressure = value
 
 	return nil
 }
@@ -260,7 +352,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
-	divergence := state.grid.midMomentumDivergence()
+	divergence := state.grid.midVelocityDivergence()
 	viscosity := state.grid.viscosity()
 	reynolds := state.grid.reynolds(spread)
 
@@ -269,12 +361,13 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	}
 
 	return fluidReading{
-		symbol:     state.symbol,
-		price:      state.last,
-		spreadBPS:  state.spreadBPS,
-		reynolds:   reynolds,
-		divergence: divergence,
-		viscosity:  viscosity,
+		symbol:        state.symbol,
+		price:         state.last,
+		spreadBPS:     state.spreadBPS,
+		reynolds:      reynolds,
+		divergence:    divergence,
+		viscosity:     viscosity,
+		sourceBalance: state.grid.midSourceBalance(),
 	}, true
 }
 
@@ -289,7 +382,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		return nil
 	}
 
-	divergence := state.grid.midMomentumDivergence()
+	divergence := state.grid.midVelocityDivergence()
 	viscosity := state.grid.viscosity()
 	reynolds := state.grid.reynolds(spread)
 
@@ -305,5 +398,6 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"div":        divergence,
 		"visc":       viscosity,
 		"re":         reynolds,
+		"src_bal":    state.grid.midSourceBalance(),
 	})
 }

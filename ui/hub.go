@@ -62,7 +62,7 @@ type Hub struct {
 	lastEquity       atomic.Pointer[map[string]any]
 	lastDecisionTree atomic.Pointer[map[string]any]
 	lastDumps        atomic.Pointer[map[string]any]
-	lastGauges        sync.Map
+	lastGauges       sync.Map
 	lastBalances     atomic.Pointer[user.Balances]
 }
 

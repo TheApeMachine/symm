@@ -44,6 +44,54 @@ func EventTimeFromTicker(ticker *TickerUpdate) (time.Time, error) {
 	return parseFeedTimestamp(ticker.Symbol, "ticker", ticker.Timestamp)
 }
 
+/*
+EventTimeFromLevel3 returns the latest exchange timestamp across all orders in a level3 frame.
+*/
+func EventTimeFromLevel3(update *Level3Update) (time.Time, error) {
+	if update == nil {
+		return time.Time{}, fmt.Errorf("kraken/market: level3 update is nil")
+	}
+
+	var latest time.Time
+
+	for _, bid := range update.Bids {
+		if bid.Timestamp.IsZero() {
+			return time.Time{}, fmt.Errorf(
+				"kraken/market: level3 %q bid %q timestamp is zero",
+				update.Symbol,
+				bid.OrderID,
+			)
+		}
+
+		if latest.IsZero() || bid.Timestamp.After(latest) {
+			latest = bid.Timestamp
+		}
+	}
+
+	for _, ask := range update.Asks {
+		if ask.Timestamp.IsZero() {
+			return time.Time{}, fmt.Errorf(
+				"kraken/market: level3 %q ask %q timestamp is zero",
+				update.Symbol,
+				ask.OrderID,
+			)
+		}
+
+		if latest.IsZero() || ask.Timestamp.After(latest) {
+			latest = ask.Timestamp
+		}
+	}
+
+	if latest.IsZero() {
+		return time.Time{}, fmt.Errorf(
+			"kraken/market: level3 %q has no order timestamps",
+			update.Symbol,
+		)
+	}
+
+	return latest, nil
+}
+
 func parseFeedTimestamp(symbol, channel, raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Time{}, fmt.Errorf(
@@ -103,6 +151,15 @@ func EventTimeFromBus(messageType string, value any) (time.Time, error) {
 		}
 
 		return EventTimeFromBook(book)
+	case "level3":
+		switch update := value.(type) {
+		case *Level3Update:
+			return EventTimeFromLevel3(update)
+		case Level3Update:
+			return EventTimeFromLevel3(&update)
+		default:
+			return time.Time{}, fmt.Errorf("kraken/market: bus level3 value is not Level3Update")
+		}
 	case "measurements":
 		measurement, ok := value.(logic.Measurement)
 

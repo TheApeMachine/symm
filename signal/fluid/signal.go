@@ -17,8 +17,8 @@ var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
 
-Reynolds classifies laminar versus turbulent flow. Divergence is momentum flux
-expansion at the touch. Viscosity is replenishment resistance after consumption.
+Reynolds classifies laminar versus turbulent flow. Divergence is ∇·v at the
+touch. Viscosity is replenishment resistance after consumption.
 */
 type Signal struct {
 	symbol          string

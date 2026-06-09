@@ -83,7 +83,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		reading, ok := symbolState.Measure(ticks, now)
 
 		if ok {
-			_, _ = signal.publish(reading)
+			_, _ = signal.publish(reading, now)
 		}
 	}
 }

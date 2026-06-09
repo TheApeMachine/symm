@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/logic"
@@ -36,7 +37,7 @@ func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:public", "kraken:private", "ui", "raw"},
+			[]string{"kraken:public", "kraken:private", "kraken:futures", "ui", "raw"},
 			[]string{"raw"},
 		),
 		pairs: &sync.Map{},
@@ -136,6 +137,48 @@ func (crypto *Crypto) Tick() (err error) {
 				for _, symbol := range pairs {
 					crypto.pairs.Store(symbol, true)
 				}
+
+				if !viper.GetBool("market.futures_enabled") {
+					continue
+				}
+
+				catalog := futures.SharedCatalog()
+
+				if loadErr := catalog.EnsureLoaded(crypto.ctx); loadErr != nil {
+					errnie.Error(loadErr)
+					continue
+				}
+
+				productSet := make(map[string]struct{})
+
+				for _, symbol := range pairs {
+					products, productErr := catalog.ProductsForSpotPair(symbol)
+
+					if productErr != nil {
+						errnie.Error(productErr)
+						continue
+					}
+
+					for _, productID := range products {
+						productSet[productID] = struct{}{}
+					}
+				}
+
+				if len(productSet) == 0 {
+					continue
+				}
+
+				futuresProducts := make([]string, 0, len(productSet))
+
+				for productID := range productSet {
+					futuresProducts = append(futuresProducts, productID)
+				}
+
+				errnie.Error(crypto.bus.Send("kraken:futures", "book", futures.SubscribeMessage{
+					Event:      "subscribe",
+					Feed:       futures.BookFeed,
+					ProductIDs: futuresProducts,
+				}))
 			case "actions":
 				var (
 					action *logic.Action

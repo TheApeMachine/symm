@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
@@ -25,6 +26,7 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/prediction"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
@@ -67,8 +69,15 @@ var (
 
 			systemCtx := engine.Context()
 
-			if err := engine.AddSystems(
+			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
+			}
+
+			if viper.GetBool("market.futures_enabled") {
+				systems = append(systems, futures.NewWebSocket(systemCtx, pool))
+			}
+
+			systems = append(systems,
 				paper.NewWebSocket(systemCtx, pool),
 				private.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
@@ -79,6 +88,7 @@ var (
 				fluid.NewSystem(systemCtx, pool),
 				hawkes.NewSystem(systemCtx, pool),
 				leadlag.NewSystem(systemCtx, pool),
+				manifold.NewSystem(systemCtx, pool),
 				liquidity.NewSystem(systemCtx, pool),
 				prediction.NewSystem(systemCtx, pool),
 				pumpdump.NewSystem(systemCtx, pool),
@@ -88,7 +98,9 @@ var (
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
 				ui.NewHub(systemCtx, pool),
-			); err != nil {
+			)
+
+			if err := engine.AddSystems(systems...); err != nil {
 				return errnie.Error(err)
 			}
 
