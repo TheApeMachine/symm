@@ -15,9 +15,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
 		)
 
 		for _, price := range []float64{100, 101, 102, 103, 104} {
@@ -45,9 +42,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
 		)
 
 		for range 4 {
@@ -71,9 +65,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
 		)
 
 		trades := []struct {
@@ -107,9 +98,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"XRP/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			2.0,
-			0.5,
 		)
 
 		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -125,9 +113,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"BTC/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		64,
-		2.0,
-		0.5,
 	)
 
 	for index := 0; index < 64; index++ {

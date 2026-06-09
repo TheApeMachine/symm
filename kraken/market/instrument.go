@@ -5,6 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -77,4 +78,8 @@ precision changes the moment they happen.
 type InstrumentUpdate struct {
 	Assets []InstrumentAsset `json:"assets"`
 	Pairs  []InstrumentPair  `json:"pairs"`
+}
+
+func (instrument *InstrumentUpdate) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, instrument)
 }

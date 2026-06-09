@@ -29,7 +29,7 @@ func TestFieldSnapshotPayload(t *testing.T) {
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
 			state.bookReady = true
-			state.book = krakenmarket.Book{
+			state.book = krakenmarket.BookUpdate{
 				Symbol: "XBT/USD",
 				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},

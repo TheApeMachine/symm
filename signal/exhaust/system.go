@@ -2,229 +2,56 @@ package exhaust
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"math"
 	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
-	"github.com/theapemachine/symm/telemetry"
+	"github.com/theapemachine/symm/signal"
 )
 
 type System struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	bus          *internal.Bus
-	signals      sync.Map
-	gauge        *telemetry.Gauge
-	feedback     *market.Feedback
-	crossSection *crossSection
+	base *signal.System
 }
 
+var exhaustSection *crossSection
+
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	ctx, cancel := context.WithCancel(ctx)
+	capacity := viper.GetInt("signals.exhaust.history_capacity")
 
-	measurementsCapacity := viper.GetInt("signals.exhaust.measurements_capacity")
-
-	if measurementsCapacity <= 0 {
-		measurementsCapacity = 64
+	if capacity <= 0 {
+		capacity = 24
 	}
 
-	historyCapacity := viper.GetInt("signals.exhaust.history_capacity")
+	exhaustSection = newCrossSection(capacity)
 
-	if historyCapacity <= 0 {
-		historyCapacity = 24
-	}
-
-	bus := internal.NewBus(
+	base := signal.NewSystem(
 		ctx,
 		pool,
-		[]string{"measurements", "ui"},
-		[]string{"raw"},
+		logic.SourceExhaustion,
+		func(symbol string, entity *logic.Entity) market.Signal {
+			return NewSignal(symbol, entity)
+		},
 	)
 
-	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourceExhaustion)
-
-	if gaugeErr != nil {
-		cancel()
-		errnie.Error(gaugeErr)
-
+	if base == nil {
 		return nil
 	}
 
-	return &System{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		bus:          bus,
-		signals:      sync.Map{},
-		gauge:        gauge,
-		crossSection: newCrossSection(historyCapacity),
-	}
+	return &System{base: base}
 }
 
 func (system *System) Tick() error {
-	for {
-		message, err := system.bus.Receive("raw")
-
-		if errnie.Error(err) != nil || message == nil {
-			continue
-		}
-
-		var (
-			signal *Signal
-			ok     bool
-			warmed bool
-		)
-
-		switch message.Type {
-		case "symbols":
-			symbols, symbolOk := message.Value.([]string)
-			if symbolOk {
-				system.gauge.RegisterSymbols(symbols)
-			}
-			continue
-		case "trades":
-			var trade *krakenmarket.TradeUpdate
-
-			if trade, ok = message.Value.(*krakenmarket.TradeUpdate); !ok {
-				errnie.Error(errors.New("exhaust: invalid trade"), "exhaust: invalid trade")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("exhaust: symbol not found"), "exhaust: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(trade)
-
-		case "ticker":
-			var ticker *krakenmarket.TickerUpdate
-
-			if ticker, ok = message.Value.(*krakenmarket.TickerUpdate); !ok {
-				errnie.Error(errors.New("exhaust: invalid ticker"), "exhaust: invalid ticker")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityTick, ticker.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("exhaust: symbol not found"), "exhaust: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(ticker)
-
-		case "book":
-			var book *krakenmarket.Book
-
-			if book, ok = message.Value.(*krakenmarket.Book); !ok {
-				errnie.Error(errors.New("exhaust: invalid book"), "exhaust: invalid book")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("exhaust: symbol not found"), "exhaust: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(book)
-
-		case "feedback":
-			var feedback *market.Feedback
-
-			if feedback, ok = message.Value.(*market.Feedback); !ok {
-				errnie.Error(errors.New("exhaust: invalid feedback"), "exhaust: invalid feedback")
-				continue
-			}
-
-			system.feedback = feedback
-			continue
-		}
-
-		if signal == nil {
-			continue
-		}
-
-		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
-
-		if errnie.Error(eventErr) != nil {
-			continue
-		}
-
-		measurement, measureErr := signal.Measure(system.feedback, eventAt)
-
-		if errnie.Error(measureErr) != nil {
-			continue
-		}
-
-		if publishErr := measurement.Publish(system.bus); errnie.Error(publishErr) != nil {
-			continue
-		}
-
-		errnie.Error(system.gauge.Publish(
-			measurement,
-			signal.symbol,
-			warmed,
-		))
-	}
-}
-
-func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal {
-	var (
-		raw    any
-		signal *Signal
-		ok     bool
-	)
-
-	threshold := math.Min(math.Max(viper.GetFloat64("signals.exhaust.surprise_threshold"), 1.0), 5.0)
-	alpha := math.Min(math.Max(viper.GetFloat64("signals.exhaust.alpha"), 0.1), 1.0)
-
-	measurementsCapacity := viper.GetInt("signals.exhaust.measurements_capacity")
-
-	if measurementsCapacity <= 0 {
-		measurementsCapacity = 64
-	}
-
-	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
-
-	raw, _ = system.signals.LoadOrStore(
-		mapKey, NewSignal(
-			symbol,
-			logic.NewEntity(entity),
-			measurementsCapacity,
-			system.crossSection,
-			threshold,
-			alpha,
-		),
-	)
-
-	if signal, ok = raw.(*Signal); !ok {
-		errnie.Error(errors.New("exhaust: symbol is not a Signal"), "exhaust: symbol is not a Signal")
-		return nil
-	}
-
-	return signal
+	return system.base.Tick()
 }
 
 func (system *System) Close() error {
-	system.cancel()
-	return system.bus.Close()
+	return system.base.Close()
 }
 
 type crossSection struct {
@@ -267,21 +94,25 @@ func (crossSection *crossSection) ensure(symbol string) *featureState {
 	return state
 }
 
-func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.Book) {
+func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.BookUpdate) {
 	if book == nil {
 		return
 	}
 
-	folded := krakenmarket.Book{}
-	folded.Fold(*book, 0)
+	folded := krakenmarket.BookUpdate{}
 
-	touchMid, touchSpread, depth, touchOK := folded.TouchQuote()
-
-	if !touchOK || touchMid <= 0 {
-		return
+	for _, bid := range book.Bids {
+		if bid.Qty > 0 {
+			folded.Bids = append(folded.Bids, bid)
+		}
 	}
 
-	midPrice := touchMid / 2
+	for _, ask := range book.Asks {
+		if ask.Qty > 0 {
+			folded.Asks = append(folded.Asks, ask)
+		}
+	}
+
 	state := crossSection.ensure(symbol)
 
 	if state == nil {
@@ -290,6 +121,14 @@ func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.
 
 	bidDepth := crossSection.sideDepth(folded.Bids)
 	askDepth := crossSection.sideDepth(folded.Asks)
+
+	if len(folded.Bids) == 0 || len(folded.Asks) == 0 {
+		return
+	}
+
+	midPrice := (folded.Bids[0].Price + folded.Asks[0].Price) / 2
+	touchSpread := folded.Asks[0].Price - folded.Bids[0].Price
+	depth := folded.Bids[0].Qty + folded.Asks[0].Qty
 
 	if bidDepth > 0 {
 		state.bidDepths.Push(bidDepth)

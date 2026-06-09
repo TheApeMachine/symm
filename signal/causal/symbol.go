@@ -92,7 +92,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 	return nil
 }
 
-func (state *CausalSymbol) FeedBook(delta market.Book) {
+func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
 	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
 		return
 	}

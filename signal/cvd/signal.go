@@ -8,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -45,10 +46,22 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.cvd.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.cvd.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.cvd.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
@@ -58,6 +71,10 @@ func NewSignal(
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {

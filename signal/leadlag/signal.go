@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -58,7 +59,6 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection    *crossSection
 	transition      *numeric.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
@@ -67,21 +67,35 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.leadlag.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.leadlag.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.leadlag.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection:    crossSection,
 		transition:      numeric.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -126,7 +140,7 @@ func (signal *Signal) measureTrade(eventAt time.Time) (logic.Measurement, error)
 		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: trade event time is zero"))
 	}
 
-	signal.crossSection.observePrice(signal.symbol, trade.Price, eventAt)
+	leadLagSection.observePrice(signal.symbol, trade.Price, eventAt)
 
 	return signal.fromLag(eventAt)
 }
@@ -152,7 +166,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: ticker event time is zero"))
 	}
 
-	signal.crossSection.observePrice(signal.symbol, price, at)
+	leadLagSection.observePrice(signal.symbol, price, at)
 
 	return signal.fromLag(at)
 }
@@ -174,8 +188,8 @@ func (signal *Signal) latest() any {
 }
 
 func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
-	move := signal.crossSection.anchorMove()
-	anchor := signal.crossSection.anchorState()
+	move := leadLagSection.anchorMove()
+	anchor := leadLagSection.anchorState()
 
 	if anchor == nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
@@ -209,7 +223,7 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	follower := signal.crossSection.ensure(signal.symbol)
+	follower := leadLagSection.ensure(signal.symbol)
 
 	if follower == nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
@@ -546,7 +560,7 @@ func (signal *Signal) measureStall(stallMargin float64, at time.Time) (logic.Mea
 
 // measureFollower supports follower classification tests against explicit states.
 func (signal *Signal) measureFollower(anchor, follower *symbolState, at time.Time) (logic.Measurement, error) {
-	move := signal.crossSection.anchorMove()
+	move := leadLagSection.anchorMove()
 
 	if !move.ready || !move.moved {
 		return logic.Measurement{}, nil

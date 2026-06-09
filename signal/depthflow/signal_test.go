@@ -2,30 +2,47 @@ package depthflow
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"time"
+	"github.com/theapemachine/symm/market"
 )
+
+func initCrossSection(cfg *market.CrossSectionConfig) {
+	section, err := market.NewCrossSection(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	crossSection = section
+}
+
+func useCrossSection(t *testing.T) {
+	t.Helper()
+
+	initCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
+}
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a bid-heavy book", t, func() {
-		crossSection := &crossSection{}
-		crossSection.publishTradePressure("BTC/EUR", 0.8)
+		useCrossSection(t)
+
+		crossSection.Observe(&krakenmarket.Symbol{Name: "BTC/EUR", Pressure: 0.8})
 
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityBook),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
-		signal.Record(&krakenmarket.Book{
+		signal.Record(&krakenmarket.BookUpdate{
 			Symbol: "BTC/EUR",
-			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 99, Qty: 10},
 				{Price: 98, Qty: 20},
@@ -36,7 +53,7 @@ func TestSignalMeasure(t *testing.T) {
 			},
 		})
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify loaded imbalance", func() {
 			So(err, ShouldBeNil)
@@ -47,20 +64,15 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given deep bid wall with bearish touch", t, func() {
-		crossSection := &crossSection{}
+		useCrossSection(t)
 
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
-		signal.Record(&krakenmarket.Book{
+		signal.Record(&krakenmarket.BookUpdate{
 			Symbol: "ETH/EUR",
-			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 49, Qty: 1},
 				{Price: 48, Qty: 30},
@@ -71,7 +83,7 @@ func TestSignalMeasure(t *testing.T) {
 			},
 		})
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should classify spoof trap", func() {
 			So(err, ShouldBeNil)
@@ -80,15 +92,11 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given trade pressure update", t, func() {
-		crossSection := &crossSection{}
+		useCrossSection(t)
 
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TradeUpdate{
@@ -105,43 +113,15 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    2,
 		})
 
-		measurement, err :=  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should publish trade pressure without category", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Symbol, ShouldEqual, "SOL/EUR")
-			So(crossSection.tradePressureFor("SOL/EUR"), ShouldBeGreaterThan, 0)
+
+			pressure, pressureErr := crossSection.Pressure("SOL/EUR")
+			So(pressureErr, ShouldBeNil)
+			So(pressure, ShouldBeGreaterThan, 0)
 		})
 	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	crossSection := &crossSection{}
-	signal := NewSignal(
-		"BTC/EUR",
-		logic.NewEntity(logic.EntityBook),
-		64,
-		crossSection,
-		2.0,
-		0.5,
-	)
-
-	signal.Record(&krakenmarket.Book{
-		Symbol: "BTC/EUR",
-		Type:   "snapshot",
-		Bids: []krakenmarket.BookLevel{
-			{Price: 99, Qty: 10},
-			{Price: 98, Qty: 20},
-		},
-		Asks: []krakenmarket.BookLevel{
-			{Price: 101, Qty: 1},
-			{Price: 102, Qty: 1},
-		},
-	})
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		_, _ =  signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	}
 }

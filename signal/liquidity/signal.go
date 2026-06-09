@@ -8,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -36,7 +37,6 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection    *crossSection
 	transition      *numeric.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
@@ -45,21 +45,35 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.liquidity.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.liquidity.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.liquidity.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection:    crossSection,
 		transition:      numeric.NewTransitionMatrix(4, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -185,27 +199,25 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err     error
 	)
 
-	folded := krakenmarket.Book{}
-
 	signal.measurements.Do(func(item any) {
 		if item == nil {
 			return
 		}
 
-		frame, ok := item.(*krakenmarket.Book)
+		frame, ok := item.(*krakenmarket.BookUpdate)
 
 		if !ok {
 			err = fmt.Errorf("liquidity: expected book update")
 			return
 		}
 
-		folded.Fold(*frame, 0)
-
-		mid, spread, depth, touchOK := folded.TouchQuote()
-
-		if !touchOK {
+		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
 			return
 		}
+
+		mid := (frame.Bids[0].Price + frame.Asks[0].Price) / 2
+		spread := frame.Asks[0].Price - frame.Bids[0].Price
+		depth := frame.Bids[0].Qty + frame.Asks[0].Qty
 
 		prices = append(prices, mid)
 		depths = append(depths, depth)
@@ -235,9 +247,11 @@ func (signal *Signal) fromCrossSection(
 	price, quoteVol, spread float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	signal.crossSection.publishQuoteVol(signal.symbol, quoteVol)
+	crossSection.Observe(&krakenmarket.Symbol{
+		Name: signal.symbol, Volume: quoteVol,
+	})
 
-	peers := signal.crossSection.snapshot()
+	peers := crossSection.Volumes()
 
 	if len(peers) < 2 {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil

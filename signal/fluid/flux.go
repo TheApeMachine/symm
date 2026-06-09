@@ -10,13 +10,10 @@ a consistent quantum of activity. Book churn accumulates continuously within the
 open bar and is paired with trade volume when the bar closes.
 */
 type fluxAccumulator struct {
-	target      float64
-	progress    float64
-	bookOpen    float64
-	tradeOpen   float64
-	bookClosed  float64
-	tradeClosed float64
-	haveClosed  bool
+	target    float64
+	progress  float64
+	bookOpen  float64
+	tradeOpen float64
 }
 
 func newFluxAccumulator() *fluxAccumulator {
@@ -80,26 +77,7 @@ func (flux *fluxAccumulator) addTrade(qty float64) error {
 }
 
 func (flux *fluxAccumulator) close() {
-	flux.bookClosed = flux.bookOpen
-	flux.tradeClosed = flux.tradeOpen
-	flux.haveClosed = true
 	flux.bookOpen = 0
 	flux.tradeOpen = 0
 	flux.progress = 0
-}
-
-/*
-completedBar returns the last volume-closed bar. Open or partial bars are not
-substituted.
-*/
-func (flux *fluxAccumulator) completedBar() (bookFlux, tradeFlux float64, err error) {
-	if !flux.haveClosed {
-		return 0, 0, fmt.Errorf("fluid: flux bar has not completed")
-	}
-
-	if flux.tradeClosed <= 0 {
-		return 0, 0, fmt.Errorf("fluid: completed flux bar has no trade volume")
-	}
-
-	return flux.bookClosed, flux.tradeClosed, nil
 }

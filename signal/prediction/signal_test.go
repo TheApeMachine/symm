@@ -12,13 +12,9 @@ import (
 
 func TestSignalMeasureMeasurement(t *testing.T) {
 	Convey("Given upstream measurements in the ring", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.Record(logic.Measurement{
@@ -37,13 +33,9 @@ func TestSignalMeasureMeasurement(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1})
@@ -58,13 +50,9 @@ func TestSignalMeasureMeasurement(t *testing.T) {
 
 func TestSignalRecord(t *testing.T) {
 	Convey("Given a new signal", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1}), ShouldBeTrue)
@@ -79,22 +67,14 @@ func TestSignalRecord(t *testing.T) {
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given source confidences and trade prices", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
-		featureSignal, _ := NewSignal(
+		featureSignal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		featureSignal.Record(logic.Measurement{
@@ -139,13 +119,9 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a matured pending forecast", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.features[0] = 1.0
@@ -186,13 +162,9 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ETH/EUR"})
@@ -205,13 +177,9 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a ticker entity signal", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTick),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{
@@ -233,13 +201,9 @@ func TestSignalMeasure(t *testing.T) {
 
 func TestSignalSettlePendingUsesForecastScale(t *testing.T) {
 	Convey("Given a matured forecast with a frozen movement scale", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -266,13 +230,9 @@ func TestSignalSettlePendingUsesForecastScale(t *testing.T) {
 
 func TestSignalMovementScale(t *testing.T) {
 	Convey("Given a calibrated realized magnitude EMA", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.realizedMagnitudeEMA = 0.000001
@@ -284,13 +244,9 @@ func TestSignalMovementScale(t *testing.T) {
 	})
 
 	Convey("Given no settled horizon magnitude yet", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		Convey("It should withhold chart normalization", func() {
@@ -301,13 +257,9 @@ func TestSignalMovementScale(t *testing.T) {
 
 func TestSignalChartWaitsForMagnitudeEMA(t *testing.T) {
 	Convey("Given trade measurements before the first settlement", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.features[0] = 0.5
@@ -332,13 +284,9 @@ func TestSignalChartWaitsForMagnitudeEMA(t *testing.T) {
 
 func TestSignalFlatTapeNormalizedForecast(t *testing.T) {
 	Convey("Given calibrated horizon scale and micro-tick drift", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -367,13 +315,9 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 	Convey("Given a matured forecast and a spike print on the tape", t, func() {
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.pending = append(signal.pending, &pendingForecast{
@@ -406,13 +350,9 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 
 func TestSignalMovementUnits(t *testing.T) {
 	Convey("Given an extreme raw forecast", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -426,13 +366,9 @@ func TestSignalMovementUnits(t *testing.T) {
 
 func TestSignalMovementConfidence(t *testing.T) {
 	Convey("Given a realized movement scale", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -456,13 +392,9 @@ func TestSignalMovementConfidence(t *testing.T) {
 
 func TestSignalLearn(t *testing.T) {
 	Convey("Given repeated settlement residuals", t, func() {
-		signal, _ := NewSignal(
+		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			time.Minute,
-			0.1,
-			1000.0,
 		)
 
 		for featureIndex := range signal.features {
@@ -484,22 +416,14 @@ func TestSignalLearn(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal, _ := NewSignal(
+	signal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		8,
-		time.Minute,
-		0.1,
-		1000.0,
 	)
 
-	featureSignal, _ := NewSignal(
+	featureSignal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityMeasurement),
-		8,
-		time.Minute,
-		0.1,
-		1000.0,
 	)
 
 	featureSignal.Record(logic.Measurement{

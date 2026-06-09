@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,7 +13,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
@@ -60,7 +60,31 @@ var (
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
 
-			pool := qpool.NewQ[any](cmd.Context(), 1, 4, nil)
+			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU()*2, &qpool.Config{
+				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
+				Regulators: []qpool.Regulator{
+					qpool.NewRegulator(qpool.NewCircuitBreaker(
+						viper.GetInt("system.qpool.regulators.circuit_breaker.max_failures"),
+						viper.GetDuration("system.qpool.regulators.circuit_breaker.reset_timeout"),
+						viper.GetInt("system.qpool.regulators.circuit_breaker.max_half_open"),
+					)),
+					qpool.NewRegulator(qpool.NewRateLimiter(
+						viper.GetInt("system.qpool.regulators.rate_limiter.max_requests"),
+						viper.GetDuration("system.qpool.regulators.rate_limiter.interval"),
+					)),
+					qpool.NewRegulator(qpool.NewBackPressureRegulator(
+						viper.GetInt("system.qpool.regulators.back_pressure.max_queue_size"),
+						viper.GetDuration("system.qpool.regulators.back_pressure.interval"),
+						viper.GetDuration("system.qpool.regulators.back_pressure.timeout"),
+					)),
+					qpool.NewRegulator(qpool.NewResourceGovernorRegulator(
+						viper.GetFloat64("system.qpool.regulators.resource_governor.max_cpu_percent"),
+						viper.GetFloat64("system.qpool.regulators.resource_governor.max_memory_percent"),
+						viper.GetDuration("system.qpool.regulators.resource_governor.interval"),
+					)),
+				},
+			})
+
 			engine, err := NewEngine(cmd.Context(), pool)
 
 			if err != nil {
@@ -69,15 +93,8 @@ var (
 
 			systemCtx := engine.Context()
 
-			systems := []System{
+			if err := engine.AddSystems(
 				public.NewWebSocket(systemCtx, pool),
-			}
-
-			if viper.GetBool("market.futures_enabled") {
-				systems = append(systems, futures.NewWebSocket(systemCtx, pool))
-			}
-
-			systems = append(systems,
 				paper.NewWebSocket(systemCtx, pool),
 				private.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
@@ -98,9 +115,7 @@ var (
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
 				ui.NewHub(systemCtx, pool),
-			)
-
-			if err := engine.AddSystems(systems...); err != nil {
+			); err != nil {
 				return errnie.Error(err)
 			}
 

@@ -16,11 +16,6 @@ func TestSignalRecord(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			2.0,
-			0.5,
-			3,
-			0,
 		)
 
 		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1}), ShouldBeTrue)
@@ -38,11 +33,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
-			3,
-			0,
 		)
 
 		trades := []*krakenmarket.TradeUpdate{
@@ -75,11 +65,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
-			3,
-			0,
 		)
 		feedback := market.NewFeedback("ETH/EUR", 0.5, 1.0, 0.2, 3)
 
@@ -95,20 +80,14 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
-			8,
-			2.0,
-			0.5,
-			3,
-			0,
 		)
 
-		snapshot := &krakenmarket.Book{
+		snapshot := &krakenmarket.BookUpdate{
 			Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
 			Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
 		}
-		snapshot.SetEnvelopeType("snapshot")
 
-		updates := []*krakenmarket.Book{
+		updates := []*krakenmarket.BookUpdate{
 			{
 				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
 				Asks: []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
@@ -119,11 +98,7 @@ func TestSignalMeasure(t *testing.T) {
 			},
 		}
 
-		for _, frame := range updates {
-			frame.SetEnvelopeType("update")
-		}
-
-		frames := append([]*krakenmarket.Book{snapshot}, updates...)
+		frames := append([]*krakenmarket.BookUpdate{snapshot}, updates...)
 
 		for _, frame := range frames {
 			signal.Record(frame)
@@ -143,11 +118,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			2.0,
-			0.5,
-			3,
-			0,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ETH/EUR"})
@@ -164,11 +134,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		8,
-		2.0,
-		0.5,
-		3,
-		0,
 	)
 
 	for index := range 32 {

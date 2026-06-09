@@ -2,6 +2,9 @@ package market
 
 import (
 	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 type Level3Params struct {
@@ -40,4 +43,8 @@ type Level3Update struct {
 	Checksum int    `json:"checksum"`
 	Bids     []Bid  `json:"bids"`
 	Asks     []Ask  `json:"asks"`
+}
+
+func (level3 *Level3Update) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, level3)
 }

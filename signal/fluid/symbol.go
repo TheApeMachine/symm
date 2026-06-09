@@ -25,7 +25,7 @@ type bufferedTrade struct {
 
 type FluidSymbol struct {
 	symbol         string
-	book           krakenmarket.Book
+	book           krakenmarket.BookUpdate
 	bookReady      bool
 	bookDepth      int
 	changePct      float64
@@ -145,15 +145,17 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time
 	return nil
 }
 
-func (state *FluidSymbol) FeedBook(update krakenmarket.Book, at time.Time) error {
+func (state *FluidSymbol) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time) error {
-	if update.IsSnapshot() {
+func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time.Time) error {
+	if !state.bookReady {
+		if update.Type != "snapshot" {
+			return nil
+		}
+
 		state.bookReady = true
-	} else if !state.bookReady {
-		return nil
 	}
 
 	beforeBids := state.cloneBookLevels(state.book.Bids)
@@ -163,7 +165,9 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.Book, at time.Time)
 
 	state.book.Fold(update, state.bookDepth)
 
-	if update.Checksum != 0 && state.book.ComputedChecksum() != update.Checksum {
+	computed := state.book.ComputedChecksum()
+
+	if update.Checksum != 0 && computed != update.Checksum {
 		state.book = maintained
 
 		return fmt.Errorf("fluid: book checksum diverged for %s", state.symbol)

@@ -1,14 +1,12 @@
 package toxicity
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -22,14 +20,10 @@ func newTestTracker(t testing.TB) *Tracker {
 func newTestSignal(t testing.TB, symbol string, entity logic.EntityType) *Signal {
 	t.Helper()
 
-	return NewSignal(
-		symbol,
-		logic.NewEntity(entity),
-		8,
-		newTestTracker(t),
-		2.0,
-		0.5,
-	)
+	signal := NewSignal(symbol, logic.NewEntity(entity))
+	signal.tracker = newTestTracker(t)
+
+	return signal
 }
 
 func warmSignalSurprise(t *testing.T, signal *Signal, symbol string) {
@@ -350,47 +344,22 @@ func TestSignalMeasureHardSupport(t *testing.T) {
 	})
 }
 
-func TestSystemFeedLevel3(t *testing.T) {
+func TestTrackerLevel3Churn(t *testing.T) {
 	Convey("Given a level3 update with add/delete events", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, qpool.NewConfig())
-		defer pool.Close()
-
 		ResetDefault()
-		viper.Set("signals.toxicity.measurements_capacity", 64)
-		viper.Set("telemetry.gauge.readings_capacity", 1024)
-
-		system := NewSystem(ctx, pool)
-		So(system, ShouldNotBeNil)
+		tracker := newTestTracker(t)
 
 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		system.tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
-		state := system.tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
+		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
+		state := tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
 		state.bidTotal = 100
 
-		system.feedLevel3(&krakenmarket.Level3Update{
-			Symbol: "BTC/EUR",
-			Bids: []krakenmarket.Bid{
-				{
-					Event:      "add",
-					OrderID:    "l3-2",
-					LimitPrice: 100,
-					OrderQty:   15,
-					Timestamp:  now,
-				},
-				{
-					Event:      "delete",
-					OrderID:    "l3-2",
-					LimitPrice: 100,
-					OrderQty:   15,
-					Timestamp:  now,
-				},
-			},
-		})
+		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "add", "l3-2", SideBid, 100, 15, now, now)
+		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "delete", "l3-2", SideBid, 100, 15, now, now)
 
 		Convey("It should classify per-order churn as toxic", func() {
-			So(system.tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
+			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
 		})
 	})
 }

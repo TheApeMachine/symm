@@ -2,12 +2,13 @@ package causal
 
 import (
 	"container/ring"
-
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
@@ -18,13 +19,6 @@ Signal scores Pearl's ladder — association, intervention (backdoor-adjusted),
 counterfactual uplift — over a DAG of MacroMomentum → PriceVelocity ← LocalFlow
 with Liquidity as a backdoor control, switching to a panic regime when
 cross-asset contagion or collinearity spikes.
-
-| Category         | Active Regime | Dominant Factor       | Market "Feel"      |
-|:-----------------|:--------------|:----------------------|:-------------------|
-| Endogenous Alpha | Normal        | Counterfactual Uplift | Driven/Independent |
-| Systemic Beta    | Normal        | Macro Momentum        | Drifting/Passive   |
-| Liquidity Shock  | Panic         | Liquidity Void        | Fragile/Inverted   |
-| Causal Noise     | Variable      | None                  | Stochastic/Unclear |
 */
 type Signal struct {
 	symbol          string
@@ -40,21 +34,24 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
 	system *System,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.causal.measurements_capacity")
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		system:          system,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
-		weights:         numeric.DefaultClassifierWeights(threshold),
+		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.causal.alpha")),
+		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.causal.surprise_threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -93,25 +90,55 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		trade, ok := item.(*krakenmarket.TradeUpdate)
+		if !ok {
+			return
+		}
+
+		errnie.Error(state.FeedTrade(*trade))
+	})
+
 	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		ticker, ok := item.(*krakenmarket.TickerUpdate)
+		if !ok {
+			return
+		}
+
+		state.FeedTicker(*ticker)
+		signal.system.observeChange(signal.symbol, ticker.ChangePct, at)
+	})
+
 	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		book, ok := item.(*krakenmarket.BookUpdate)
+		if !ok {
+			return
+		}
+
+		state.FeedBook(*book)
+	})
+
 	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
 
-	if state == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
-	}
-
-	macroMomentum := signal.system.crossSection.macroMomentum(signal.symbol)
+	macroMomentum := crossSection.MacroMomentum(signal.symbol)
 	contagion := signal.system.contagion()
 
 	reading, err := state.Measure(macroMomentum, contagion, now)

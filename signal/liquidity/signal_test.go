@@ -3,28 +3,45 @@ package liquidity
 import (
 	"fmt"
 	"testing"
-
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
+func initCrossSection(cfg *market.CrossSectionConfig) {
+	section, err := market.NewCrossSection(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	crossSection = section
+}
+
+func useCrossSection(t *testing.T) {
+	t.Helper()
+
+	initCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a cross-section with deep and thin peers", t, func() {
-		crossSection := &crossSection{}
-		crossSection.publishQuoteVol("COIN/EUR", 800)
-		crossSection.publishQuoteVol("PEER/EUR", 900)
+		useCrossSection(t)
+
+		crossSection.Observe(&krakenmarket.Symbol{Name: "COIN/EUR", Volume: 800})
+		crossSection.Observe(&krakenmarket.Symbol{Name: "PEER/EUR", Volume: 900})
 
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTick),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{
@@ -48,17 +65,14 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a peak-scarcity symbol", t, func() {
-		crossSection := &crossSection{}
-		crossSection.publishQuoteVol("DEEP/EUR", 1100)
-		crossSection.publishQuoteVol("MID/EUR", 950)
+		useCrossSection(t)
+
+		crossSection.Observe(&krakenmarket.Symbol{Name: "DEEP/EUR", Volume: 1100})
+		crossSection.Observe(&krakenmarket.Symbol{Name: "MID/EUR", Volume: 950})
 
 		signal := NewSignal(
 			"THIN/EUR",
 			logic.NewEntity(logic.EntityTick),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{
@@ -78,14 +92,11 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given fewer than two universe symbols", t, func() {
-		crossSection := &crossSection{}
+		useCrossSection(t)
+
 		signal := NewSignal(
 			"SOLO/EUR",
 			logic.NewEntity(logic.EntityTick),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{
@@ -103,14 +114,12 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given feedback for the same symbol", t, func() {
-		crossSection := &crossSection{}
+		useCrossSection(t)
+		viper.Set("signals.liquidity.surprise_threshold", 2.0)
+
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 		feedback := market.NewFeedback("ALT/EUR", 0.5, 1.0, 0.2, 3)
 
@@ -123,14 +132,11 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		crossSection := &crossSection{}
+		useCrossSection(t)
+
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			2,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ALT/EUR"})
@@ -148,10 +154,6 @@ func TestSignalClassify(t *testing.T) {
 		signal := NewSignal(
 			"ALT/EUR",
 			logic.NewEntity(logic.EntityTick),
-			4,
-			&crossSection{},
-			2.0,
-			0.5,
 		)
 		peers := []float64{800, 900, 1000, 1100}
 		lower, upper := signal.quartiles(peers)
@@ -165,20 +167,23 @@ func TestSignalClassify(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	crossSection := &crossSection{}
+	initCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
 
 	for index := range 16 {
 		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		crossSection.publishQuoteVol(symbol, float64(500+index*50))
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: symbol, Volume: float64(500 + index*50),
+		})
 	}
 
 	signal := NewSignal(
 		"SYM0/EUR",
 		logic.NewEntity(logic.EntityTick),
-		4,
-		crossSection,
-		2.0,
-		0.5,
 	)
 
 	signal.Record(&krakenmarket.TickerUpdate{

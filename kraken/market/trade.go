@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -53,9 +54,12 @@ type TradeUpdate struct {
 	Type      string    `json:"-"`
 }
 
-/*
-SetEnvelopeType records the channel envelope tag (snapshot or update).
-*/
-func (trade *TradeUpdate) SetEnvelopeType(kind string) {
-	trade.Type = kind
+func (trade *TradeUpdate) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, trade)
+}
+
+type TradeUpdates []*TradeUpdate
+
+func (trades *TradeUpdates) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, trades)
 }

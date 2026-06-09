@@ -12,10 +12,9 @@ import (
 	floatring "github.com/theapemachine/symm/ring"
 )
 
-func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.Book {
-	return &krakenmarket.Book{
+func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.BookUpdate {
+	return &krakenmarket.BookUpdate{
 		Symbol: symbol,
-		Type:   "snapshot",
 		Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
 		Asks:   []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
 	}
@@ -23,22 +22,18 @@ func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmark
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given deteriorating long-side book history", t, func() {
-		crossSection := newCrossSection(24)
+		exhaustSection = newCrossSection(24)
 		symbol := "ETH/EUR"
 
 		for index := range 8 {
 			depth := 20.0 - float64(index)*2
 			askPrice := 101.0 + float64(index)*0.5
-			crossSection.observeBook(symbol, thinningBook(symbol, depth, askPrice))
+			exhaustSection.observeBook(symbol, thinningBook(symbol, depth, askPrice))
 		}
 
 		signal := NewSignal(
 			symbol,
 			logic.NewEntity(logic.EntityBook),
-			8,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(thinningBook(symbol, 4, 105))
@@ -58,8 +53,8 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given smoothed pressure fade on the long side", t, func() {
-		crossSection := newCrossSection(24)
-		state := crossSection.ensure("BTC/EUR")
+		exhaustSection = newCrossSection(24)
+		state := exhaustSection.ensure("BTC/EUR")
 		state.pressureEMA = adaptive.NewEMA(0)
 
 		for _, sign := range []float64{1, 1, 1, 1, 1, -1, -1, -1} {
@@ -73,10 +68,6 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		measurement, err := signal.fromFeatures(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -88,15 +79,9 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given insufficient decay features", t, func() {
-		crossSection := newCrossSection(24)
-
 		signal := NewSignal(
 			"SOL/EUR",
 			logic.NewEntity(logic.EntityBook),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -116,7 +101,7 @@ func TestDepthTrend(t *testing.T) {
 			samples.Push(value)
 		}
 
-		signal := NewSignal("X/EUR", logic.NewEntity(logic.EntityBook), 4, newCrossSection(24), 2, 0.5)
+		signal := NewSignal("X/EUR", logic.NewEntity(logic.EntityBook))
 
 		Convey("It should report positive thinning trend", func() {
 			So(signal.depthTrend(samples), ShouldBeGreaterThan, 0)
@@ -148,7 +133,7 @@ func TestExitScorePicksStrongerSide(t *testing.T) {
 			history.askDepths.Push(value)
 		}
 
-		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook), 4, newCrossSection(24), 2, 0.5)
+		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook))
 		longUrgency, _, _ := signal.exitScore(history, 1)
 		shortUrgency, shortCategory, _ := signal.exitScore(history, -1)
 
@@ -160,21 +145,17 @@ func TestExitScorePicksStrongerSide(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	crossSection := newCrossSection(24)
+	exhaustSection = newCrossSection(24)
 	symbol := "ETH/EUR"
 
 	for index := range 12 {
 		depth := 20.0 - float64(index)
-		crossSection.observeBook(symbol, thinningBook(symbol, depth, 101+float64(index)*0.25))
+		exhaustSection.observeBook(symbol, thinningBook(symbol, depth, 101+float64(index)*0.25))
 	}
 
 	signal := NewSignal(
 		symbol,
 		logic.NewEntity(logic.EntityBook),
-		64,
-		crossSection,
-		2.0,
-		0.5,
 	)
 
 	signal.Record(thinningBook(symbol, 6, 104))

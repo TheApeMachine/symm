@@ -16,17 +16,23 @@ type symbolBookFixture struct {
 
 func (fixture symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
-) krakenmarket.Book {
+) krakenmarket.BookUpdate {
 	bids := []krakenmarket.BookLevel{{Price: bidPrice, Qty: bidQty}}
 	asks := []krakenmarket.BookLevel{{Price: askPrice, Qty: askQty}}
 
-	update := krakenmarket.Book{
+	return krakenmarket.BookUpdate{
 		Symbol: fixture.symbol,
+		Type:   "snapshot",
 		Bids:   bids,
 		Asks:   asks,
 	}
-	update.Checksum = update.ComputedChecksum()
-	update.SetEnvelopeType("snapshot")
+}
+
+func (fixture symbolBookFixture) delta(
+	bidPrice, bidQty, askPrice, askQty float64,
+) krakenmarket.BookUpdate {
+	update := fixture.snapshot(bidPrice, bidQty, askPrice, askQty)
+	update.Type = ""
 
 	return update
 }
@@ -176,8 +182,7 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
-		delta := fixture.snapshot(99, 10, 101, 6)
-		delta.SetEnvelopeType("update")
+		delta := fixture.delta(99, 10, 101, 6)
 		So(state.FeedBook(delta, feedAt), ShouldBeNil)
 
 		Convey("It should not treat the book as ready", func() {
@@ -218,7 +223,6 @@ func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
 
 		Convey("When the exchange checksum does not match the maintained book", func() {
 			badDelta := fixture.snapshot(98, 10, 101, 6)
-			badDelta.SetEnvelopeType("update")
 			badDelta.Checksum = 1
 			So(state.FeedBook(badDelta, feedAt.Add(200*time.Millisecond)), ShouldNotBeNil)
 
@@ -255,11 +259,10 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
 
 		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
-		replenish.SetEnvelopeType("update")
 		So(state.FeedBook(replenish, feedAt.Add(100*time.Millisecond)), ShouldBeNil)
 
 		reading, ok := state.Reading()
-		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
+		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), nil)
 		category, _, _, _, _ := signal.classify(reading)
 
 		Convey("It should still publish a laminar reading", func() {
@@ -275,6 +278,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	viper.Set("signals.volume_clock_bars_per_day", 288)
 	viper.Set("signals.fluid.tick_size", 0.01)
 	viper.Set("signals.fluid.grid_half_width", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 	feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	state, err := NewFluidSymbol(symbol)
 
@@ -294,7 +298,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), 8, nil, 2.0, 0.5)
+	signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), nil)
 
 	b.ReportAllocs()
 

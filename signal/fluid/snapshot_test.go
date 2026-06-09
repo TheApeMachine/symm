@@ -29,8 +29,8 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 
 		So(system, ShouldNotBeNil)
 
-		uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
 		state := system.loadSymbol("ETH/EUR")
+		uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
 		fixture := symbolBookFixture{symbol: "ETH/EUR"}
 
 		So(state.FeedTicker(krakenmarket.TickerUpdate{

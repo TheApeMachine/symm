@@ -127,23 +127,38 @@ func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) erro
 	return nil
 }
 
-func (field *Field) FeedBook(update krakenmarket.Book, at time.Time) error {
-	return field.feedBookIdentity(update, at)
+func (field *Field) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
+	identity, err := krakenmarket.SpotIdentityFromPair(update.Symbol)
+
+	if err != nil {
+		return fmt.Errorf("manifold: spot identity for %q: %w", update.Symbol, err)
+	}
+
+	return field.feedBookIdentity(identity, update, at)
 }
 
-func (field *Field) FeedFuturesBook(update krakenmarket.Book, at time.Time) error {
-	return field.feedBookIdentity(update, at)
+func (field *Field) FeedFuturesBook(update krakenmarket.BookUpdate, at time.Time) error {
+	identity, err := krakenmarket.FuturesIdentityFromProduct(update.Symbol)
+
+	if err != nil {
+		return fmt.Errorf("manifold: futures identity for %q: %w", update.Symbol, err)
+	}
+
+	return field.feedBookIdentity(identity, update, at)
 }
 
-func (field *Field) feedBookIdentity(update krakenmarket.Book, at time.Time) error {
-	identity := update.InstrumentIdentity()
+func (field *Field) feedBookIdentity(
+	identity krakenmarket.InstrumentIdentity,
+	update krakenmarket.BookUpdate,
+	at time.Time,
+) error {
 	state := field.universe.loadIdentity(identity)
 
 	if state == nil {
 		return fmt.Errorf("manifold: instrument %q unavailable", identity.Symbol)
 	}
 
-	if update.IsSnapshot() {
+	if update.Type == "snapshot" {
 		state.bookReady = true
 	}
 

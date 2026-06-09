@@ -42,7 +42,7 @@ type UniverseState struct {
 	returns     []float64
 	tradeQtys   []float64
 	bookReady   bool
-	book        krakenmarket.Book
+	book        krakenmarket.BookUpdate
 	bookDepth   int
 }
 

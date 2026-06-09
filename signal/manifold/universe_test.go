@@ -53,7 +53,7 @@ func TestUniverseWhaleQtyThreshold(t *testing.T) {
 			returns:   []float64{0.01, -0.008, 0.012},
 			bookReady: true,
 			midPrice:  50000,
-			book: krakenmarket.Book{
+			book: krakenmarket.BookUpdate{
 				Bids: []krakenmarket.BookLevel{{Price: 49999, Qty: 1}, {Price: 49998, Qty: 2}},
 				Asks: []krakenmarket.BookLevel{{Price: 50001, Qty: 1.5}, {Price: 50002, Qty: 2.5}},
 			},

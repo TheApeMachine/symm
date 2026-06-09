@@ -8,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -37,7 +38,6 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection    *crossSection
 	transition      *numeric.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
@@ -46,21 +46,35 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.depthflow.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.depthflow.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.depthflow.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection:    crossSection,
 		transition:      numeric.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -133,7 +147,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		pressure = (buyVolume - sellVolume) / gross
 	}
 
-	signal.crossSection.publishTradePressure(signal.symbol, pressure)
+	crossSection.Observe(&krakenmarket.Symbol{
+		Name: signal.symbol, Pressure: pressure,
+	})
 
 	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
@@ -150,7 +166,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err             error
 	)
 
-	folded := krakenmarket.Book{}
+	folded := krakenmarket.BookUpdate{}
 	weighted := 0.0
 	level1 := 0.0
 	flat := 0.0
@@ -165,25 +181,25 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
-		frame, ok := item.(*krakenmarket.Book)
+		frame, ok := item.(*krakenmarket.BookUpdate)
 
 		if !ok {
 			err = fmt.Errorf("depthflow: expected book update")
 			return
 		}
 
-		folded.Fold(*frame, 0)
-
-		touchMid, touchSpread, _, touchOK := folded.TouchQuote()
-
-		if !touchOK {
+		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
 			return
 		}
 
-		midPrice := touchMid / 2
+		touchMid := (frame.Bids[0].Price + frame.Asks[0].Price) / 2
+		touchSpread := frame.Asks[0].Price - frame.Bids[0].Price
+
+		folded.Bids = append(folded.Bids, frame.Bids...)
+		folded.Asks = append(folded.Asks, frame.Asks...)
 
 		frameWeighted, frameWeightedOK := signal.weightedImbalance(
-			folded.Bids, folded.Asks, midPrice, touchSpread,
+			folded.Bids, folded.Asks, touchMid, touchSpread,
 		)
 		frameLevel1, frameLevel1OK := signal.level1Imbalance(folded.Bids, folded.Asks)
 		frameFlat, frameFlatOK := signal.flatImbalance(folded.Bids, folded.Asks)
@@ -206,7 +222,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		level1OK = frameLevel1OK
 		flat = frameFlat
 		flatOK = frameFlatOK
-		mid = midPrice
+		mid = touchMid
 		spread = touchSpread
 	})
 
@@ -234,7 +250,11 @@ func (signal *Signal) fromBook(
 ) (logic.Measurement, error) {
 	weightedThreshold := numeric.MedianAbsolute(weightedHistory)
 	level1Threshold := numeric.MedianAbsolute(level1History)
-	tradePressure := signal.crossSection.tradePressureFor(signal.symbol)
+	tradePressure, err := crossSection.Pressure(signal.symbol)
+
+	if err != nil {
+		tradePressure = 0
+	}
 
 	spoofed := signal.isSpoofSkew(weighted, level1, weightedThreshold, level1Threshold)
 

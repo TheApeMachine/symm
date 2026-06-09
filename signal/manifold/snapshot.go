@@ -7,20 +7,6 @@ import (
 	"github.com/theapemachine/symm/numeric/physics"
 )
 
-func (system *System) publishSnapshot(eventAt time.Time) error {
-	payload, err := system.field.snapshotPayload(eventAt)
-
-	if err != nil {
-		return err
-	}
-
-	if payload == nil {
-		return nil
-	}
-
-	return system.bus.Send("ui", "field_snapshot", payload)
-}
-
 func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 	if eventAt.IsZero() {
 		return nil, fmt.Errorf("manifold: snapshot event time is zero")

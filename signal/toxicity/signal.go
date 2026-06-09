@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -39,21 +40,36 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	tracker *Tracker,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.toxicity.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.toxicity.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.toxicity.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		tracker:         tracker,
+		tracker:         Default(),
 		transition:      numeric.NewTransitionMatrix(4, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -136,7 +152,6 @@ func (signal *Signal) classify(
 ) {
 	if snapshot.toxicNear {
 		bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength)
-
 		return logic.CategoryToxicBluff, snapshot.toxicBluffStrength, bluffScore, 0, 0
 	}
 

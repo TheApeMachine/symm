@@ -38,7 +38,7 @@ func (system *System) publishFieldSnapshot(eventAt time.Time) error {
 		return fmt.Errorf("fluid: field snapshot event time is zero")
 	}
 
-	return system.bus.Send("ui", "field_snapshot", map[string]any{
+	return system.base.Bus().Send("ui", "field_snapshot", map[string]any{
 		"type":         "fluid",
 		"ts":           eventAt.UTC().Format(time.RFC3339Nano),
 		"symbol_count": len(symbols),

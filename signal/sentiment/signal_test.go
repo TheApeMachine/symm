@@ -1,27 +1,45 @@
 package sentiment
 
 import (
-	"container/ring"
 	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
+func initCrossSection(cfg *market.CrossSectionConfig) {
+	section, err := market.NewCrossSection(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	crossSection = section
+}
+
+func useCrossSection(t *testing.T) {
+	t.Helper()
+
+	initCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 8,
+	})
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a bullish cross-section on trades", t, func() {
-		crossSection := &crossSection{breadthHistory: ring.New(8), matchWindow: time.Minute}
+		useCrossSection(t)
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			8,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		universe := []struct {
@@ -37,10 +55,6 @@ func TestSignalMeasure(t *testing.T) {
 			entrySignal := NewSignal(
 				entry.symbol,
 				logic.NewEntity(logic.EntityTrade),
-				4,
-				crossSection,
-				2.0,
-				0.5,
 			)
 
 			for _, price := range entry.prices {
@@ -51,7 +65,9 @@ func TestSignalMeasure(t *testing.T) {
 				})
 			}
 
-			crossSection.publishChange(entry.symbol, 2.0, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			crossSection.Observe(&krakenmarket.Symbol{
+				Name: entry.symbol, Value: 2.0, Updated: eventAt,
+			})
 		}
 
 		signal.Record(&krakenmarket.TradeUpdate{
@@ -65,31 +81,35 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    1,
 		})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, eventAt)
 
 		Convey("It should classify a risk-on surge", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
 			So(measurement.Category, ShouldEqual, logic.CategoryRiskOnSurge)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			So(measurement.ObservedAt, ShouldEqual, eventAt)
 		})
 	})
 
 	Convey("Given a weak cross-section with a local leader", t, func() {
-		crossSection := &crossSection{breadthHistory: ring.New(8), matchWindow: time.Minute}
+		useCrossSection(t)
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 		signal := NewSignal(
 			"LEAD/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
-		crossSection.publishChange("LEAD/EUR", 4.0, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-		crossSection.publishChange("LAG/EUR", -2.0, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-		crossSection.publishChange("FLAT/EUR", -1.0, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: "LEAD/EUR", Value: 4.0, Updated: eventAt,
+		})
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: "LAG/EUR", Value: -2.0, Updated: eventAt,
+		})
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: "FLAT/EUR", Value: -1.0, Updated: eventAt,
+		})
 
 		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "LEAD/EUR",
@@ -102,7 +122,7 @@ func TestSignalMeasure(t *testing.T) {
 			Qty:    1,
 		})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, eventAt)
 
 		Convey("It should classify a divergent move", func() {
 			So(err, ShouldBeNil)
@@ -111,14 +131,12 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given feedback for the same symbol", t, func() {
-		crossSection := &crossSection{breadthHistory: ring.New(4), matchWindow: time.Minute}
+		useCrossSection(t)
+		viper.Set("signals.sentiment.surge_threshold", 2.0)
+
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 		feedback := market.NewFeedback("A/EUR", 0.5, 1.0, 0.2, 3)
 
@@ -131,14 +149,11 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		crossSection := &crossSection{breadthHistory: ring.New(4), matchWindow: time.Minute}
+		useCrossSection(t)
+
 		signal := NewSignal(
 			"A/EUR",
 			logic.NewEntity(logic.EntityTrade),
-			2,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "A/EUR"})
@@ -152,20 +167,25 @@ func TestSignalMeasure(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	crossSection := &crossSection{breadthHistory: ring.New(32), matchWindow: time.Minute}
+	initCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 32,
+	})
+
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	for index := range 16 {
 		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		crossSection.publishChange(symbol, float64(index%5)+0.5, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: symbol, Value: float64(index%5) + 0.5, Updated: eventAt,
+		})
 	}
 
 	signal := NewSignal(
 		"SYM0/EUR",
 		logic.NewEntity(logic.EntityTrade),
-		8,
-		crossSection,
-		2.0,
-		0.5,
 	)
 
 	for index := range 8 {
@@ -179,7 +199,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, eventAt)
 
 		if err != nil {
 			b.Fatal(err)

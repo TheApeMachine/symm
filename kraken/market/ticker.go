@@ -2,9 +2,11 @@ package market
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -42,25 +44,22 @@ percent change. It is the lowest-latency at-a-glance state of a market, already
 reduced to the day's move and activity without computing it from the tape.
 */
 type TickerUpdate struct {
-	Symbol    string  `json:"symbol"`
-	Ask       float64 `json:"ask"`
-	AskQty    float64 `json:"ask_qty"`
-	Bid       float64 `json:"bid"`
-	BidQty    float64 `json:"bid_qty"`
-	Change    float64 `json:"change"`
-	ChangePct float64 `json:"change_pct"`
-	High      float64 `json:"high"`
-	Last      float64 `json:"last"`
-	Low       float64 `json:"low"`
-	Volume    float64 `json:"volume"`
-	VWAP      float64 `json:"vwap"`
-	Timestamp string  `json:"timestamp"`
-	Type      string  `json:"-"`
+	Symbol    string    `json:"symbol"`
+	Ask       float64   `json:"ask"`
+	AskQty    float64   `json:"ask_qty"`
+	Bid       float64   `json:"bid"`
+	BidQty    float64   `json:"bid_qty"`
+	Change    float64   `json:"change"`
+	ChangePct float64   `json:"change_pct"`
+	High      float64   `json:"high"`
+	Last      float64   `json:"last"`
+	Low       float64   `json:"low"`
+	Volume    float64   `json:"volume"`
+	VWAP      float64   `json:"vwap"`
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"-"`
 }
 
-/*
-SetEnvelopeType records the channel envelope tag (snapshot or update).
-*/
-func (ticker *TickerUpdate) SetEnvelopeType(kind string) {
-	ticker.Type = kind
+func (ticker *TickerUpdate) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, ticker)
 }

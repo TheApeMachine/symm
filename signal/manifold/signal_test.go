@@ -57,7 +57,7 @@ func TestUniverseCoords(t *testing.T) {
 
 func TestSignalClassify(t *testing.T) {
 	convey.Convey("Given manifold readings", t, func() {
-		signal := NewSignal("BTC/USD", nil, 8, nil, 2, 0.5)
+		signal := NewSignal("BTC/USD", logic.NewEntity(logic.EntityBook), nil)
 
 		convey.Convey("It should classify high coherence as systemic herd", func() {
 			category, _, _, _, _ := signal.classify(physics.Reading{

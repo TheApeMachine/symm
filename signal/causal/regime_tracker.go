@@ -49,7 +49,3 @@ func (tracker *regimeTracker) apply(rawInverted bool, hysteresis int) bool {
 
 	return tracker.inverted
 }
-
-func (tracker *regimeTracker) invertedNow() bool {
-	return tracker.inverted
-}

@@ -186,6 +186,8 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
+			ws.handleErrors(response)
+
 			switch response.Channel {
 			case "balances":
 				balances := user.Balances{}

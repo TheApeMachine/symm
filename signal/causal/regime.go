@@ -48,32 +48,6 @@ func (roles causalRoles) predictors() []int {
 	return append(append([]int(nil), roles.controls...), roles.treatment)
 }
 
-/*
-selectRoles chooses the structural regime for the current sample history. The normal regime
-holds unless severe instability is detected through either channel the critique identified:
-
-  - liquidity and local flow collapsing onto a single axis — the condition number of their 2x2
-    correlation matrix exploding, the linear-algebra signature of the two edges no longer being
-    separately identifiable; or
-  - a cross-asset contagion break, where the Hayashi-Yoshida correlation across the universe
-    spikes toward one as a liquidation cascade drags every venue together.
-
-Either trip flips the engine to the pre-computed panic roles. The boolean reason it returns is
-empty in the normal regime and names the inversion otherwise, so the measurement can explain
-itself downstream.
-*/
-func selectRoles(samples []causalSample, contagion float64) (causalRoles, bool) {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return normalRoles(), false
-	}
-
-	roles, inverted, _ := selectRolesFromTable(nodeTable, contagion)
-
-	return roles, inverted
-}
-
 func selectRolesFromTable(
 	nodeTable dagNodeTable,
 	contagion float64,

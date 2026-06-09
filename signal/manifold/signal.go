@@ -6,7 +6,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
@@ -35,21 +37,37 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
 	system *System,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.manifold.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.manifold.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.manifold.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
+		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		system:          system,
 		transition:      numeric.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -84,6 +102,39 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 }
 
 func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) {
+	signal.measurements.Do(func(item any) {
+		if item == nil {
+			return
+		}
+
+		switch signal.entity.Type {
+		case logic.EntityTrade:
+			trade, ok := item.(*krakenmarket.TradeUpdate)
+
+			if !ok {
+				return
+			}
+
+			errnie.Error(signal.system.field.FeedTrade(trade, at))
+		case logic.EntityTick:
+			ticker, ok := item.(*krakenmarket.TickerUpdate)
+
+			if !ok {
+				return
+			}
+
+			errnie.Error(signal.system.field.FeedTicker(*ticker, at))
+		case logic.EntityBook:
+			book, ok := item.(*krakenmarket.BookUpdate)
+
+			if !ok {
+				return
+			}
+
+			errnie.Error(signal.system.field.FeedBook(*book, at))
+		}
+	})
+
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
 	if !ok {

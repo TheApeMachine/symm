@@ -1,5 +1,10 @@
 package market
 
+import (
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/kraken/types"
+)
+
 /*
 CandleParams is the Kraken WebSocket v2 subscribe payload for the ohlc channel.
 */
@@ -24,4 +29,8 @@ type CandleUpdate struct {
 	Volume        float64 `json:"volume"`
 	IntervalBegin string  `json:"interval_begin"`
 	Interval      int     `json:"interval"`
+}
+
+func (candle *CandleUpdate) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, candle)
 }

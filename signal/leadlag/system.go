@@ -2,21 +2,15 @@ package leadlag
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/telemetry"
+	"github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -31,230 +25,36 @@ const (
 )
 
 type System struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	bus          *internal.Bus
-	signals      sync.Map
-	gauge        *telemetry.Gauge
-	feedback     *market.Feedback
-	crossSection *crossSection
-	lastPublish  time.Time
+	base *signal.System
 }
 
-func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	ctx, cancel := context.WithCancel(ctx)
+var leadLagSection *crossSection
 
-	bus := internal.NewBus(
+func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
+	leadLagSection = newCrossSection()
+
+	base := signal.NewSystem(
 		ctx,
 		pool,
-		[]string{"measurements", "ui"},
-		[]string{"raw"},
+		logic.SourceLeadLag,
+		func(symbol string, entity *logic.Entity) market.Signal {
+			return NewSignal(symbol, entity)
+		},
 	)
 
-	gauge, gaugeErr := telemetry.NewGauge(bus, logic.SourceLeadLag)
-
-	if gaugeErr != nil {
-		cancel()
-		errnie.Error(gaugeErr)
-
+	if base == nil {
 		return nil
 	}
 
-	return &System{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		bus:          bus,
-		signals:      sync.Map{},
-		gauge:        gauge,
-		crossSection: newCrossSection(),
-	}
+	return &System{base: base}
 }
 
 func (system *System) Tick() error {
-	for {
-		message, err := system.bus.Receive("raw")
-
-		if errnie.Error(err) != nil || message == nil {
-			continue
-		}
-
-		var (
-			signal *Signal
-			ok     bool
-			warmed bool
-		)
-
-		switch message.Type {
-		case "symbols":
-			symbols, symbolOk := message.Value.([]string)
-			if symbolOk {
-				system.gauge.RegisterSymbols(symbols)
-			}
-			continue
-		case "trades":
-			var trade *krakenmarket.TradeUpdate
-
-			if trade, ok = message.Value.(*krakenmarket.TradeUpdate); !ok {
-				errnie.Error(errors.New("leadlag: invalid trade"), "leadlag: invalid trade")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("leadlag: symbol not found"), "leadlag: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(trade)
-
-		case "ticker":
-			var ticker *krakenmarket.TickerUpdate
-
-			if ticker, ok = message.Value.(*krakenmarket.TickerUpdate); !ok {
-				errnie.Error(errors.New("leadlag: invalid ticker"), "leadlag: invalid ticker")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityTick, ticker.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("leadlag: symbol not found"), "leadlag: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(ticker)
-
-		case "book":
-			var book *krakenmarket.Book
-
-			if book, ok = message.Value.(*krakenmarket.Book); !ok {
-				errnie.Error(errors.New("leadlag: invalid book"), "leadlag: invalid book")
-				continue
-			}
-
-			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
-
-			if signal == nil {
-				errnie.Error(errors.New("leadlag: symbol not found"), "leadlag: symbol not found")
-				continue
-			}
-
-			warmed = signal.Record(book)
-
-		case "feedback":
-			var feedback *market.Feedback
-
-			if feedback, ok = message.Value.(*market.Feedback); !ok {
-				errnie.Error(errors.New("leadlag: invalid feedback"), "leadlag: invalid feedback")
-				continue
-			}
-
-			system.feedback = feedback
-			continue
-		}
-
-		if signal == nil {
-			continue
-		}
-
-		eventAt, eventErr := krakenmarket.EventTimeFromBus(message.Type, message.Value)
-
-		if errnie.Error(eventErr) != nil {
-			continue
-		}
-
-		measurement, measureErr := signal.Measure(system.feedback, eventAt)
-
-		if errnie.Error(measureErr) != nil {
-			continue
-		}
-
-		errnie.Error(system.gauge.Publish(
-			measurement,
-			signal.symbol,
-			warmed,
-		))
-
-		if measurement.Category == logic.CategoryTypeNone {
-			continue
-		}
-
-		if !system.throttle(eventAt) {
-			continue
-		}
-
-		if errnie.Error(measurement.Publish(system.bus)) != nil {
-			continue
-		}
-	}
-}
-
-func (system *System) throttle(eventAt time.Time) bool {
-	interval := viper.GetDuration("signals.leadlag.publish_interval")
-
-	if interval <= 0 {
-		errnie.Error(fmt.Errorf("signals.leadlag.publish_interval must be positive"))
-		return false
-	}
-
-	if eventAt.IsZero() {
-		errnie.Error(fmt.Errorf("leadlag: event time is zero"))
-		return false
-	}
-
-	if !system.lastPublish.IsZero() && eventAt.Sub(system.lastPublish) < interval {
-		return false
-	}
-
-	system.lastPublish = eventAt
-
-	return true
-}
-
-func (system *System) LoadSignal(entity logic.EntityType, symbol string) *Signal {
-	var (
-		raw    any
-		signal *Signal
-		ok     bool
-	)
-
-	threshold := math.Min(math.Max(viper.GetFloat64("signals.leadlag.surprise_threshold"), 1.0), 5.0)
-	alpha := math.Min(math.Max(viper.GetFloat64("signals.leadlag.alpha"), 0.1), 1.0)
-
-	measurementsCapacity := viper.GetInt("signals.leadlag.measurements_capacity")
-
-	if measurementsCapacity <= 0 {
-		measurementsCapacity = 64
-	}
-
-	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
-
-	raw, _ = system.signals.LoadOrStore(
-		mapKey, NewSignal(
-			symbol,
-			logic.NewEntity(entity),
-			measurementsCapacity,
-			system.crossSection,
-			threshold,
-			alpha,
-		),
-	)
-
-	if signal, ok = raw.(*Signal); !ok {
-		errnie.Error(errors.New("leadlag: symbol is not a Signal"), "leadlag: symbol is not a Signal")
-		return nil
-	}
-
-	return signal
+	return system.base.Tick()
 }
 
 func (system *System) Close() error {
-	system.cancel()
-	return system.bus.Close()
+	return system.base.Close()
 }
 
 func anchorSymbol() string {

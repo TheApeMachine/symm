@@ -33,10 +33,11 @@ func TestSignalMeasureFollower(t *testing.T) {
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 
 		crossSection := newCrossSection()
+		leadLagSection = crossSection
+
 		signal := &Signal{
-			symbol:       "ETH/EUR",
-			crossSection: crossSection,
-			transition:   numeric.NewTransitionMatrix(5, 0.5),
+			symbol:     "ETH/EUR",
+			transition: numeric.NewTransitionMatrix(5, 0.5),
 		}
 
 		anchor := crossSection.ensure("BTC/EUR")
@@ -198,6 +199,7 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 		viper.Set("market.anchor_symbol", "BTC/EUR")
 
 		crossSection := newCrossSection()
+		leadLagSection = crossSection
 		start := time.Now().Add(-time.Duration(maxLagBars) * barInterval)
 
 		for index := range anchorMoveMinObs + minLagSamples {
@@ -212,10 +214,6 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTick),
-			4,
-			crossSection,
-			2.0,
-			0.5,
 		)
 
 		measurement, err := signal.fromLag(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -230,10 +228,11 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 
 func BenchmarkSignalMeasure(b *testing.B) {
 	crossSection := newCrossSection()
+	leadLagSection = crossSection
+
 	signal := &Signal{
-		symbol:       "ETH/EUR",
-		crossSection: crossSection,
-		transition:   numeric.NewTransitionMatrix(5, 0.5),
+		symbol:     "ETH/EUR",
+		transition: numeric.NewTransitionMatrix(5, 0.5),
 	}
 
 	anchor := crossSection.ensure("BTC/EUR")

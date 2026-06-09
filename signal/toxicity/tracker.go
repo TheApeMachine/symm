@@ -219,7 +219,7 @@ func (tracker *Tracker) ApplyBookLevel(
 }
 
 func (tracker *Tracker) ApplyBookFrame(
-	symbol string, pair krakenmarket.Pair, book *krakenmarket.Book, now time.Time,
+	symbol string, pair krakenmarket.Pair, book *krakenmarket.BookUpdate, now time.Time,
 ) {
 	if book == nil {
 		return
@@ -230,11 +230,9 @@ func (tracker *Tracker) ApplyBookFrame(
 
 	state := tracker.stateLocked(symbol, pair)
 
-	if book.IsSnapshot() {
-		state.levels = make(map[l2Key]*l2Level)
-		state.bidTotal = 0
-		state.askTotal = 0
-	}
+	state.levels = make(map[l2Key]*l2Level)
+	state.bidTotal = 0
+	state.askTotal = 0
 
 	for _, level := range book.Bids {
 		tracker.applyBookLevelLocked(state, SideBid, level.Price, level.Qty, now)

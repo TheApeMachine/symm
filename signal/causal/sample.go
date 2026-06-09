@@ -33,10 +33,6 @@ func newCausalSample(
 	}
 }
 
-func (sample causalSample) value(node int) float64 {
-	return sample.nodes[node]
-}
-
 // minSpreadBPSFloor caps the effective denominator in bookLiquidity. Without
 // it, a 1e-4 bps spread on a tight pair generates a feature value four orders
 // of magnitude above the typical sample and dominates the normal matrix's

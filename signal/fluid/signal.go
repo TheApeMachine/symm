@@ -6,7 +6,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
@@ -34,21 +36,24 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
 	system *System,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.fluid.measurements_capacity")
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
+		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		system:          system,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
-		weights:         numeric.DefaultClassifierWeights(threshold),
+		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.fluid.alpha")),
+		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.fluid.surprise_threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -83,14 +88,50 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol}, nil
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		trade, ok := item.(*krakenmarket.TradeUpdate)
+
+		if !ok {
+			return
+		}
+
+		errnie.Error(state.FeedTrade(trade.Timestamp, trade.Price, trade.Qty, trade.Side))
+	})
+
+	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		ticker, ok := item.(*krakenmarket.TickerUpdate)
+
+		if !ok {
+			return
+		}
+
+		errnie.Error(state.FeedTicker(*ticker, at))
+	})
+
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	state := signal.system.loadSymbol(signal.symbol)
+
+	signal.measurements.Do(func(item any) {
+		book, ok := item.(*krakenmarket.BookUpdate)
+
+		if !ok {
+			return
+		}
+
+		errnie.Error(state.FeedBook(*book, at))
+	})
+
 	return signal.measureFromSymbol(at)
 }
 

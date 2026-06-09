@@ -4,6 +4,24 @@ system:
   queue:
     ttl: 1024
     buffer: 65536
+  qpool:
+    scheduling_timeout: 1s
+    regulators:
+      circuit_breaker:
+        max_failures: 10
+        reset_timeout: 10s
+        max_half_open: 10
+      rate_limiter:
+        max_requests: 100
+        interval: 1s
+      back_pressure:
+        max_queue_size: 1000
+        interval: 1s
+        timeout: 1s
+      resource_governor:
+        max_cpu_percent: 90
+        max_memory_percent: 90
+        interval: 1s
 
 telemetry:
   gauge:
@@ -117,6 +135,10 @@ regime:
 
 signals:
   trade_match_window: 60s
+  cross_section:
+    return_capacity: 64
+    min_bars: 8
+    breadth_history_capacity: 64
   volume_clock_bars_per_day: 288
   spoof_weighted_threshold: 0.5
   min_fill_to_cancel_ratio: 0.1
@@ -147,9 +169,17 @@ signals:
     raw_dump: true
     window: 1m
     fast_window: 3
-    volume_epsilon: 0
-    measurements_capacity: 64
-    surprise_threshold: 2.0
+    volume:
+      epsilon: 0
+    measurements:
+      capacity: 64
+    surprise:
+      matrix:
+        order: 5
+        alpha: 0.5
+      threshold: 2.0
+      weights:
+        threshold: 0.5
     alpha: 0.5
   exhaust:
     raw_dump: true

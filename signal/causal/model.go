@@ -6,27 +6,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
-/*
-structuralCoef holds fitted SCM coefficients for price velocity.
-*/
-type structuralCoef struct {
-	model dagLinearModel
-}
-
 const minBackdoorDenominator = 1e-9
-
-/*
-associationEffectFor reads observational correlation P(velocity | treatment) for a regime.
-*/
-func associationEffectFor(samples []causalSample, roles causalRoles) float64 {
-	nodeTable, err := causalTableWithMin(samples, 1)
-
-	if err != nil {
-		return 0
-	}
-
-	return associationEffectFromTable(nodeTable, roles)
-}
 
 func associationEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {
 	association, err := nodeTable.Association(roles.treatment)
@@ -36,76 +16,6 @@ func associationEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float
 	}
 
 	return association
-}
-
-/*
-backdoorEffectFor is rung-2 P(velocity | do(treatment)) via backdoor adjustment for a regime.
-*/
-func backdoorEffectFor(samples []causalSample, roles causalRoles) float64 {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return 0
-	}
-
-	effect, err := nodeTable.BackdoorEffect(roles.treatment, roles.controls...)
-
-	if err != nil {
-		return 0
-	}
-
-	return effect
-}
-
-/*
-fitStructuralFor estimates the SCM velocity = a + Σ b*predictors for a regime.
-*/
-func fitStructuralFor(samples []causalSample, roles causalRoles) (structuralCoef, bool) {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return structuralCoef{}, false
-	}
-
-	model, err := nodeTable.LinearModel(roles.predictors()...)
-
-	if err != nil {
-		return structuralCoef{}, false
-	}
-
-	return structuralCoef{model: model}, true
-}
-
-/*
-counterfactualUpliftFor is rung-3 uplift from do(treatment = intervention) vs observed treatment.
-*/
-func counterfactualUpliftFor(
-	current causalSample,
-	coef structuralCoef,
-	interventionFlow float64,
-	roles causalRoles,
-) float64 {
-	uplift, err := coef.model.CounterfactualUplift(
-		current.nodes[:],
-		roles.treatment,
-		interventionFlow,
-	)
-
-	if err != nil {
-		return 0
-	}
-
-	return uplift
-}
-
-func flowInterventionLevelFor(samples []causalSample, roles causalRoles) float64 {
-	nodeTable, err := causalTableWithMin(samples, 1)
-
-	if err != nil {
-		return 0
-	}
-
-	return flowInterventionLevelFromTable(nodeTable, roles)
 }
 
 func flowInterventionLevelFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {

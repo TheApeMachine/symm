@@ -8,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -39,7 +40,6 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection    *crossSection
 	transition      *numeric.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
@@ -48,21 +48,35 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.exhaust.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.exhaust.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.exhaust.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection:    crossSection,
 		transition:      numeric.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -103,7 +117,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	signal.crossSection.observeTrade(signal.symbol, trade)
+	exhaustSection.observeTrade(signal.symbol, trade)
 
 	return signal.fromFeatures(at)
 }
@@ -115,19 +129,19 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	signal.crossSection.observeTick(signal.symbol, ticker)
+	exhaustSection.observeTick(signal.symbol, ticker)
 
 	return signal.fromFeatures(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	book, ok := signal.latest().(*krakenmarket.Book)
+	book, ok := signal.latest().(*krakenmarket.BookUpdate)
 
 	if !ok {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	signal.crossSection.observeBook(signal.symbol, book)
+	exhaustSection.observeBook(signal.symbol, book)
 
 	return signal.fromFeatures(at)
 }
@@ -145,7 +159,7 @@ func (signal *Signal) latest() any {
 }
 
 func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
-	history, ok := signal.crossSection.snapshot(signal.symbol)
+	history, ok := exhaustSection.snapshot(signal.symbol)
 
 	if !ok {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil

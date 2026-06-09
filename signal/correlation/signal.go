@@ -7,6 +7,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -36,7 +37,6 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	crossSection    *crossSection
 	transition      *numeric.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
@@ -45,21 +45,35 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.correlation.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.correlation.surprise_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.correlation.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		crossSection:    crossSection,
 		transition:      numeric.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -176,18 +190,20 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measurement, error) {
-	signal.crossSection.publishPrice(signal.symbol, price, at)
+	crossSection.Observe(&krakenmarket.Symbol{
+		Name: signal.symbol, Price: price, Updated: at,
+	})
 
-	window := signal.crossSection.minBarsRequired()
-	symbolReturns := signal.crossSection.symbolReturns(signal.symbol, window)
-	marketReturns := signal.crossSection.marketReturns(window, at)
+	window := crossSection.MinBarsRequired()
+	symbolReturns := crossSection.SymbolReturns(signal.symbol, window)
+	marketReturns := crossSection.MarketReturns(window, at)
 
 	if len(symbolReturns) < window || len(marketReturns) < window {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	peerCorrelations := signal.crossSection.peerCorrelations(window, at)
-	peerEnergies := signal.crossSection.peerEnergies(window, at)
+	peerCorrelations := crossSection.PeerCorrelations(window, at)
+	peerEnergies := crossSection.PeerEnergies(window, at)
 
 	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil

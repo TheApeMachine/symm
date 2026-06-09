@@ -2,6 +2,9 @@ package user
 
 import (
 	"context"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 const (
@@ -74,4 +77,8 @@ type Execution struct {
 	FeeCcyPref   string         `json:"fee_ccy_pref,omitempty"`
 	Fees         []ExecutionFee `json:"fees,omitempty"`
 	Timestamp    string         `json:"timestamp,omitempty"`
+}
+
+func (execution *Execution) Unmarshal(message *types.SocketMessage) error {
+	return sonic.Unmarshal(message.Data, execution)
 }

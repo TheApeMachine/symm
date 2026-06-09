@@ -7,6 +7,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -34,7 +35,6 @@ type Signal struct {
 	entity            *logic.Entity
 	measurements      *ring.Ring
 	warmupRemaining   int
-	crossSection      *crossSection
 	transition        *numeric.TransitionMatrix
 	weights           numeric.ClassifierWeights
 	tuner             *numeric.FeedbackTuner
@@ -45,22 +45,36 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	crossSection *crossSection,
-	threshold float64,
-	alpha float64,
 ) *Signal {
+	capacity := viper.GetInt("signals.sentiment.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	threshold := math.Min(
+		math.Max(viper.GetFloat64("signals.sentiment.surge_threshold"), 1.0),
+		5.0,
+	)
+	alpha := math.Min(
+		math.Max(viper.GetFloat64("signals.sentiment.alpha"), 0.1),
+		1.0,
+	)
+
 	return &Signal{
 		symbol:            symbol,
 		entity:            entity,
 		measurements:      ring.New(capacity),
 		warmupRemaining:   capacity,
-		crossSection:      crossSection,
 		transition:        numeric.NewTransitionMatrix(4, alpha),
 		weights:           numeric.DefaultClassifierWeights(threshold),
 		tuner:             numeric.NewFeedbackTuner(),
 		baselineThreshold: threshold,
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -196,31 +210,33 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err     error
 	)
 
-	folded := krakenmarket.Book{}
-
 	signal.measurements.Do(func(item any) {
 		if item == nil {
 			return
 		}
 
-		frame, ok := item.(*krakenmarket.Book)
+		frame, ok := item.(*krakenmarket.BookUpdate)
 
 		if !ok {
 			err = fmt.Errorf("sentiment: expected book update")
 			return
 		}
 
-		folded.Fold(*frame, 0)
-
-		mid, spread, depth, touchOK := folded.TouchQuote()
-
-		if !touchOK {
-			return
+		for _, bid := range frame.Bids {
+			if bid.Qty > 0 {
+				prices = append(prices, bid.Price)
+				volumes = append(volumes, bid.Qty)
+				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
+			}
 		}
 
-		prices = append(prices, mid)
-		volumes = append(volumes, depth)
-		spreads = append(spreads, spread)
+		for _, ask := range frame.Asks {
+			if ask.Qty > 0 {
+				prices = append(prices, ask.Price)
+				volumes = append(volumes, ask.Qty)
+				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
+			}
+		}
 	})
 
 	if err != nil {
@@ -252,16 +268,18 @@ func (signal *Signal) fromCrossSection(
 	price, volume, spread, change, move float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	signal.crossSection.publishChange(signal.symbol, change, at)
+	crossSection.Observe(&krakenmarket.Symbol{
+		Name: signal.symbol, Value: change, Updated: at,
+	})
 
-	breadth := signal.crossSection.breadth(at)
+	breadth := crossSection.Breadth(at)
 
-	signal.crossSection.recordBreadth(breadth)
+	crossSection.RecordBreadth(breadth)
 
-	surgeThreshold := signal.crossSection.majorityThreshold(at) + signal.surgeBias
+	surgeThreshold := crossSection.MajorityThreshold(at) + signal.surgeBias
 	surgeThreshold = math.Min(math.Max(surgeThreshold, 0.5), 1)
 
-	leader := signal.crossSection.isLeader(signal.symbol, change, at)
+	leader := crossSection.IsLeader(signal.symbol, change, at)
 
 	category := signal.classify(breadth, change, surgeThreshold, leader)
 

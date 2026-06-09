@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 func TestCausalCategoryMapping(t *testing.T) {
@@ -33,11 +34,24 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 			Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02,
 		})
 
-		system := &System{crossSection: &crossSection{}}
-		system.crossSection.publishChangePct("BTC/EUR", 0.02)
-		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), 8, system, 2.0, 0.5)
+		crossSection, err := market.NewCrossSection(&market.CrossSectionConfig{
+			MatchWindow: time.Minute,
+			ReturnCap:   64,
+			MinBars:     8,
+			BreadthHist: 64,
+		})
 
-		reading, err := state.Measure(system.crossSection.macroMomentum("BTC/EUR"), 0, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		crossSection.Observe(&krakenmarket.Symbol{
+			Name: "BTC/EUR", Value: 0.02, Updated: time.Now(),
+		})
+
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), &System{})
+
+		reading, err := state.Measure(crossSection.MacroMomentum("BTC/EUR"), 0, time.Now())
 
 		Convey("It should publish systemic beta from association", func() {
 			So(err, ShouldBeNil)
@@ -71,19 +85,32 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	state.FeedTicker(krakenmarket.TickerUpdate{
 		Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02, Bid: 49990, Ask: 50010,
 	})
-	state.FeedBook(krakenmarket.Book{
+	state.FeedBook(krakenmarket.BookUpdate{
 		Bids: []krakenmarket.BookLevel{{Price: 49990, Qty: 10}},
 		Asks: []krakenmarket.BookLevel{{Price: 50010, Qty: 10}},
 	})
 
-	system := &System{crossSection: &crossSection{}}
-	system.crossSection.publishChangePct("BTC/EUR", 0.02)
-	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), 64, system, 2.0, 0.5)
+	system := &System{}
+	crossSection, err := market.NewCrossSection(&market.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	crossSection.Observe(&krakenmarket.Symbol{
+		Name: "BTC/EUR", Value: 0.02, Updated: time.Now(),
+	})
+	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), system)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		reading, err := state.Measure(system.crossSection.macroMomentum("BTC/EUR"), 0, time.Now())
+		reading, err := state.Measure(crossSection.MacroMomentum("BTC/EUR"), 0, time.Now())
 
 		if err == nil && reading.Category != logic.CategoryTypeNone {
 			reading.Symbol = "BTC/EUR"

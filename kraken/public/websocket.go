@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,8 +136,10 @@ func (ws *WebSocket) Tick() (err error) {
 	defer ticker.Stop()
 
 	for {
-		if ws.err = errnie.Error(ws.Connect(WebSocketURL, 0)); ws.err != nil {
-			continue
+		for !ws.isConnected.Load() || ws.conn == nil {
+			if ws.err = errnie.Error(ws.Connect(WebSocketURL, 0)); ws.err != nil {
+				continue
+			}
 		}
 
 		select {
@@ -177,11 +180,6 @@ func (ws *WebSocket) Tick() (err error) {
 			qvaluePool.Put(message)
 		}
 
-		if !ws.isConnected.Load() || ws.conn == nil {
-			ws.disconnect()
-			continue
-		}
-
 		message := types.NewSocketMessage()
 
 		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
@@ -196,6 +194,8 @@ func (ws *WebSocket) Tick() (err error) {
 			continue
 		}
 
+		var object types.Unmarshaler
+
 		switch message.Channel {
 		case "pong":
 			pong := PongMessage{}
@@ -207,66 +207,29 @@ func (ws *WebSocket) Tick() (err error) {
 
 			ws.latencies.Value = time.Since(pong.TimeIn)
 			ws.latencies.Next()
+			ws.recordLatency()
 		case "heartbeat":
 			ws.isConnected.Store(true)
 		case "ohlc":
-			ws.publishOhlc(message)
+			object = &market.CandleUpdate{}
 		case "instrument":
-			instrumentUpdate := market.InstrumentUpdate{}
-
-			if err := errnie.Error(message.Unmarshal(&instrumentUpdate)); err != nil {
-				message.Release()
-				continue
-			}
-
-			market.SharedInstrumentCatalog().Apply(instrumentUpdate)
-			ws.bus.Send("raw", "instrument", &instrumentUpdate)
+			object = &market.InstrumentUpdate{}
 		case "ticker":
-			tickerUpdates := make([]market.TickerUpdate, 0)
-
-			if err := errnie.Error(message.Unmarshal(&tickerUpdates)); err != nil || len(tickerUpdates) == 0 {
-				message.Release()
-				continue
-			}
-
-			tickerUpdate := tickerUpdates[0]
-			tickerUpdate.SetEnvelopeType(message.Type)
-			ws.bus.Send("raw", "ticker", &tickerUpdate)
+			object = &market.TickerUpdate{}
 		case "book":
-			books := make([]market.Book, 0)
-
-			if err := errnie.Error(message.Unmarshal(&books)); err != nil || len(books) == 0 {
-				message.Release()
-				continue
-			}
-
-			book := books[0]
-			book.SetEnvelopeType(message.Type)
-			ws.bus.Send("raw", "book", &book)
+			object = &market.BookUpdate{}
 		case "trade":
-			tradeUpdates := make([]market.TradeUpdate, 0)
-
-			if err := errnie.Error(message.Unmarshal(&tradeUpdates)); err != nil || len(tradeUpdates) == 0 {
-				message.Release()
-				continue
-			}
-
-			for index := range tradeUpdates {
-				tradeUpdate := tradeUpdates[index]
-				tradeUpdate.SetEnvelopeType(message.Type)
-				ws.bus.Send("raw", "trades", &tradeUpdate)
-			}
+			object = &market.TradeUpdates{}
 		case "execution":
-			execution := user.Execution{}
-
-			if err := errnie.Error(message.Unmarshal(&execution)); err != nil {
-				message.Release()
-				continue
-			}
-
-			ws.bus.Send("raw", "execution", execution)
+			object = &user.Execution{}
 		}
 
+		if err := errnie.Error(object.Unmarshal(message)); err != nil {
+			message.Release()
+			continue
+		}
+
+		ws.bus.Send("raw", message.Channel, object)
 		message.Release()
 	}
 }
@@ -291,16 +254,13 @@ func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
 }
 
 func (ws *WebSocket) recordLatency() {
-	// Atomic replace (temp + rename) with truncation: the previous O_WRONLY
-	// overwrite-in-place could leave stale trailing bytes, and the file was only
-	// ever written on a 1-in-64 coin flip of the wall clock.
-	path := "runs/network_latency.json"
-	tempPath := path + ".tmp"
+	latencyFile, err := os.OpenFile(filepath.Join(
+		"runs", "network_latency.json"),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+		0644,
+	)
 
-	latencyFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-
-	if err != nil {
-		errnie.Error(err)
+	if errnie.Error(err) != nil {
 		return
 	}
 
@@ -309,33 +269,8 @@ func (ws *WebSocket) recordLatency() {
 		fmt.Fprintf(latencyFile, "%d\n", duration)
 	})
 
-	if err := latencyFile.Close(); err != nil {
-		errnie.Error(err)
+	if errnie.Error(latencyFile.Close()) != nil {
 		return
-	}
-
-	if err := os.Rename(tempPath, path); err != nil {
-		errnie.Error(err)
-	}
-}
-
-func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
-	var candles []market.CandleUpdate
-
-	if err := errnie.Error(
-		message.Unmarshal(&candles),
-	); err != nil {
-		return
-	}
-
-	for _, candle := range candles {
-		ws.streams.Range(func(key, value any) bool {
-			if key == candle.Symbol {
-				ws.bus.Send("ui", "ohlc", candle)
-			}
-
-			return true
-		})
 	}
 }
 

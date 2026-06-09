@@ -23,19 +23,6 @@ type nonLinearModel struct {
 	stumps    []stumpSplit
 }
 
-/*
-fitNonLinearStructuralFor estimates a non-linear SCM for price velocity for a regime.
-*/
-func fitNonLinearStructuralFor(samples []causalSample, roles causalRoles) (nonLinearModel, bool) {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return nonLinearModel{}, false
-	}
-
-	return fitNonLinearTable(nodeTable, roles.predictors())
-}
-
 func fitNonLinearTable(
 	nodeTable dagNodeTable,
 	features []int,
@@ -82,19 +69,6 @@ func numericMean(values []float64) float64 {
 	}
 
 	return sum / float64(len(values))
-}
-
-/*
-kernelBackdoorEffectFor estimates rung-2 uplift with Nadaraya-Watson kernel regression for a regime.
-*/
-func kernelBackdoorEffectFor(samples []causalSample, roles causalRoles) float64 {
-	nodeTable, err := causalTable(samples)
-
-	if err != nil {
-		return 0
-	}
-
-	return kernelBackdoorEffectFromTable(nodeTable, roles)
 }
 
 func kernelBackdoorEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {

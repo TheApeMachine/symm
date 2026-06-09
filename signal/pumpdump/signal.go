@@ -7,6 +7,7 @@ import (
 
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -54,31 +55,22 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	threshold float64,
-	alpha float64,
-	fastWindow int,
-	volumeEpsilon float64,
 ) *Signal {
-	if fastWindow <= 0 {
-		fastWindow = 3
-	}
-
-	if volumeEpsilon <= 0 {
-		volumeEpsilon = alpha * 1e-5
-	}
-
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(capacity),
-		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
-		rvol:            numeric.NewFastSlowRatio(fastWindow, volumeEpsilon),
-		compression:     numeric.NewInvertedFastSlowRatio(fastWindow, volumeEpsilon),
-		weights:         numeric.DefaultClassifierWeights(threshold),
+		measurements:    ring.New(viper.GetInt("signals.pumpdump.measurements.capacity")),
+		warmupRemaining: viper.GetInt("signals.pumpdump.measurements.capacity"),
+		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
+		rvol:            numeric.NewFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
+		compression:     numeric.NewInvertedFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
+		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.pumpdump.surprise.weights.threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -190,31 +182,33 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err     error
 	)
 
-	folded := krakenmarket.Book{}
-
 	signal.measurements.Do(func(item any) {
 		if item == nil {
 			return
 		}
 
-		frame, ok := item.(*krakenmarket.Book)
+		frame, ok := item.(*krakenmarket.BookUpdate)
 
 		if !ok {
 			err = fmt.Errorf("pumpdump: expected book update")
 			return
 		}
 
-		folded.Fold(*frame, 0)
-
-		mid, spread, depth, touchOK := folded.TouchQuote()
-
-		if !touchOK || spread <= 0 {
-			return
+		for _, bid := range frame.Bids {
+			if bid.Qty > 0 {
+				prices = append(prices, bid.Price)
+				volumes = append(volumes, bid.Qty)
+				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
+			}
 		}
 
-		prices = append(prices, mid)
-		volumes = append(volumes, depth)
-		spreads = append(spreads, spread)
+		for _, ask := range frame.Asks {
+			if ask.Qty > 0 {
+				prices = append(prices, ask.Price)
+				volumes = append(volumes, ask.Qty)
+				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
+			}
+		}
 	})
 
 	if err != nil {

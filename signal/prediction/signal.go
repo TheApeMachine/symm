@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -66,29 +67,26 @@ type Signal struct {
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
-	capacity int,
-	horizon time.Duration,
-	learningRate float64,
-	initialVariance float64,
-) (*Signal, error) {
-	if horizon <= 0 {
-		return nil, fmt.Errorf("prediction: horizon must be positive")
+) *Signal {
+	capacity := viper.GetInt("signals.prediction.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
 	}
 
-	if learningRate <= 0 {
-		return nil, fmt.Errorf("prediction: learning rate must be positive")
-	}
+	horizon := viper.GetDuration("story.prediction.horizon")
+	learningRate := math.Min(
+		math.Max(viper.GetFloat64("story.prediction.alpha"), 0.01),
+		1.0,
+	)
+	initialVariance := viper.GetFloat64("story.prediction.rls_initial_variance")
 
 	if initialVariance <= 0 {
-		return nil, fmt.Errorf("prediction: rls initial variance must be positive")
+		initialVariance = 1.0
 	}
 
 	featureCount := len(featureSources)
-	learner, learnerErr := numeric.NewRLSFilter(featureCount, initialVariance)
-
-	if learnerErr != nil {
-		return nil, learnerErr
-	}
+	learner, _ := numeric.NewRLSFilter(featureCount, initialVariance)
 
 	return &Signal{
 		symbol:          symbol,
@@ -99,7 +97,11 @@ func NewSignal(
 		learningRate:    learningRate,
 		learner:         learner,
 		features:        make([]float64, featureCount),
-	}, nil
+	}
+}
+
+func (signal *Signal) Symbol() string {
+	return signal.symbol
 }
 
 func (signal *Signal) Measure(_ *market.Feedback, at time.Time) (logic.Measurement, error) {
@@ -221,31 +223,33 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err     error
 	)
 
-	folded := krakenmarket.Book{}
-
 	signal.measurements.Do(func(item any) {
 		if item == nil {
 			return
 		}
 
-		frame, ok := item.(*krakenmarket.Book)
+		frame, ok := item.(*krakenmarket.BookUpdate)
 
 		if !ok {
 			err = fmt.Errorf("prediction: expected book update")
 			return
 		}
 
-		folded.Fold(*frame, 0)
-
-		mid, spread, depth, touchOK := folded.TouchQuote()
-
-		if !touchOK || spread <= 0 {
-			return
+		for _, bid := range frame.Bids {
+			if bid.Qty > 0 {
+				prices = append(prices, bid.Price)
+				volumes = append(volumes, bid.Qty)
+				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
+			}
 		}
 
-		prices = append(prices, mid)
-		volumes = append(volumes, depth)
-		spreads = append(spreads, spread)
+		for _, ask := range frame.Asks {
+			if ask.Qty > 0 {
+				prices = append(prices, ask.Price)
+				volumes = append(volumes, ask.Qty)
+				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
+			}
+		}
 	})
 
 	if err != nil {
