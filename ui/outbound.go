@@ -2,12 +2,7 @@ package ui
 
 import (
 	"github.com/fasthttp/websocket"
-	"github.com/theapemachine/errnie"
 )
-
-type outboundEvent struct {
-	value any
-}
 
 func (hub *Hub) publishToClients(value any) {
 	hub.sessions.Range(func(key, stored any) bool {
@@ -25,9 +20,7 @@ func (hub *Hub) publishToClients(value any) {
 			return true
 		}
 
-		if err := session.publish(value); err != nil {
-			errnie.Error(err)
-		}
+		_ = session.publish(value)
 
 		return true
 	})
