@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
+	applyDecisionTreeStats,
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
@@ -358,6 +359,8 @@ const DiagnosticsPage = () => {
 		onMessage: (event) => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
+
+				applyDecisionTreeStats(raw);
 
 				if (applyGlobalFrame(raw)) {
 					return;

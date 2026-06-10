@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -58,16 +59,17 @@ func (window *MeasurementWindow) Push(measurement logic.Measurement) []logic.Mea
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	bus          *internal.Bus
-	measurements *sync.Map
-	tree         *logic.Tree
-	crossSection *CrossSection
-	regime       *RegimeClassifier
-	holdings     *logic.Holdings
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	bus             *internal.Bus
+	measurements    *sync.Map
+	tree            *logic.Tree
+	crossSection    *CrossSection
+	regime          *RegimeClassifier
+	holdings        *logic.Holdings
+	lastTreePublish time.Time
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings) *Story {
@@ -148,6 +150,10 @@ func (story *Story) Tick() error {
 			story.regime.Observe(measurement)
 		}
 
+		if stats := story.tree.Stats(); stats != nil {
+			stats.ObserveStoryTick()
+		}
+
 		raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
 			viper.GetInt("market.story.window_capacity"),
 		))
@@ -183,6 +189,10 @@ func (story *Story) Tick() error {
 }
 
 func (story *Story) publishDecisionTree() {
+	if !story.shouldPublishDecisionTree(time.Now()) {
+		return
+	}
+
 	stats := story.tree.Stats()
 
 	if stats == nil {
@@ -190,6 +200,22 @@ func (story *Story) publishDecisionTree() {
 	}
 
 	errnie.Error(story.bus.Send("ui", "decision_tree", stats.DecisionTreeFrame()))
+}
+
+func (story *Story) shouldPublishDecisionTree(now time.Time) bool {
+	interval := viper.GetDuration("market.story.ui_interval")
+
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	if !story.lastTreePublish.IsZero() && now.Sub(story.lastTreePublish) < interval {
+		return false
+	}
+
+	story.lastTreePublish = now
+
+	return true
 }
 
 func (story *Story) publishMarketRegime() {

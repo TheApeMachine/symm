@@ -23,10 +23,11 @@ type nodeStat struct {
 }
 
 /*
-TreeStats accumulates playbook reach/hold counts between UI publishes.
+TreeStats accumulates session reach/hold counts for the decision-tree dashboard.
 */
 type TreeStats struct {
 	mu          sync.Mutex
+	storyTicks  int64
 	evaluations int64
 	nodes       map[string]*nodeStat
 	staticNodes []map[string]any
@@ -42,6 +43,13 @@ func NewTreeStats(branches []*Branch, maxRecent int) *TreeStats {
 	}
 
 	return stats
+}
+
+func (stats *TreeStats) ObserveStoryTick() {
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	stats.storyTicks++
 }
 
 func (stats *TreeStats) BeginEvaluation() {
@@ -123,7 +131,7 @@ func (stats *TreeStats) RecordAction(symbol string, evaluation *Evaluation, verd
 }
 
 /*
-DecisionTreeFrame flushes interval stats and returns the dashboard payload.
+DecisionTreeFrame returns the cumulative dashboard payload.
 */
 func (stats *TreeStats) DecisionTreeFrame() map[string]any {
 	stats.mu.Lock()
@@ -175,17 +183,13 @@ func (stats *TreeStats) DecisionTreeFrame() map[string]any {
 		nodes = append(nodes, frame)
 	}
 
-	frame := map[string]any{
+	return map[string]any{
 		"chart":       "decision_tree",
+		"story_ticks": stats.storyTicks,
 		"evaluations": stats.evaluations,
 		"nodes":       nodes,
-		"recent":      append([]map[string]any(nil), stats.recent...),
+		"recent":      append([]map[string]any{}, stats.recent...),
 	}
-
-	stats.evaluations = 0
-	stats.nodes = make(map[string]*nodeStat)
-
-	return frame
 }
 
 func (stats *TreeStats) node(key string) *nodeStat {

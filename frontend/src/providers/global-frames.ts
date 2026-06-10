@@ -17,7 +17,6 @@ export const statusSocketHandlers = {
 	shouldReconnect: () => true,
 	onOpen: () => wsDispatchRef.current?.setOnline(true),
 	onClose: () => wsDispatchRef.current?.setOnline(false),
-	onError: () => wsDispatchRef.current?.setOnline(false),
 };
 
 // applyGlobalFrame dispatches the cross-route frames (wallet, positions, decision
@@ -31,7 +30,13 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		return false;
 	}
 
+	if (raw.event === "hello") {
+		dispatch.setOnline(true);
+		return true;
+	}
+
 	if (raw.event === "wallet") {
+		dispatch.setOnline(true);
 		dispatch.setWallet((raw.balance as number) ?? 0);
 
 		if (typeof raw.currency === "string") {
@@ -107,4 +112,30 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 	}
 
 	return false;
+};
+
+// applyDecisionTreeStats updates header playbook counters from decision_tree
+// frames without consuming them — route handlers still render the full tree.
+export const applyDecisionTreeStats = (raw: Record<string, unknown>): void => {
+	if (raw.chart !== "decision_tree") {
+		return;
+	}
+
+	const dispatch = wsDispatchRef.current;
+
+	if (!dispatch) {
+		return;
+	}
+
+	if (
+		typeof raw.story_ticks !== "number" ||
+		typeof raw.evaluations !== "number"
+	) {
+		return;
+	}
+
+	dispatch.setPlaybookStats({
+		storyTicks: raw.story_ticks,
+		evaluations: raw.evaluations,
+	});
 };

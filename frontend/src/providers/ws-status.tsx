@@ -50,6 +50,12 @@ type WsStatusContextValue = {
 	positionViews: PositionView[];
 	actions: ActionEvent[];
 	pushAction: (action: ActionEvent) => void;
+	storyTicks: number;
+	playbookEvaluations: number;
+	setPlaybookStats: (stats: {
+		storyTicks: number;
+		evaluations: number;
+	}) => void;
 };
 
 const WsStatusContext = createContext<WsStatusContextValue | null>(null);
@@ -65,6 +71,8 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [positions, setPositions] = useState<Position[]>([]);
 	const [marks, setMarks] = useState<Record<string, number>>({});
 	const [actions, setActions] = useState<ActionEvent[]>([]);
+	const [storyTicks, setStoryTicks] = useState(0);
+	const [playbookEvaluations, setPlaybookEvaluations] = useState(0);
 
 	// The wallet frame carries cash only; the open-position count is derived from the
 	// trader's positions list (published in both paper and live) rather than a count
@@ -104,6 +112,14 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		);
 	}, []);
 
+	const setPlaybookStats = useCallback(
+		(stats: { storyTicks: number; evaluations: number }) => {
+			setStoryTicks(stats.storyTicks);
+			setPlaybookEvaluations(stats.evaluations);
+		},
+		[],
+	);
+
 	const positionViews = useMemo<PositionView[]>(
 		() =>
 			positions.map((position) => {
@@ -130,6 +146,7 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			setPositions,
 			setMark,
 			pushAction,
+			setPlaybookStats,
 		};
 	});
 
@@ -152,6 +169,9 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			positionViews,
 			actions,
 			pushAction,
+			storyTicks,
+			playbookEvaluations,
+			setPlaybookStats,
 		}),
 		[
 			online,
@@ -168,6 +188,9 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			positionViews,
 			actions,
 			pushAction,
+			storyTicks,
+			playbookEvaluations,
+			setPlaybookStats,
 		],
 	);
 

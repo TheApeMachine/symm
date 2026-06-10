@@ -56,6 +56,7 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { useMarketWatchSymbol } from "#/lib/symm/use-symm-ui";
 import {
+	applyDecisionTreeStats,
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
@@ -123,6 +124,8 @@ const WsFeed = ({
 		onMessage: (event) => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
+
+				applyDecisionTreeStats(raw);
 
 				if (applyGlobalFrame(raw)) {
 					return;

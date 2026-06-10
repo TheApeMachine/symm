@@ -51,8 +51,16 @@ const currencySymbol = (currency: string | null | undefined): string => {
 };
 
 const PageHeader = () => {
-	const { balance, currency, openPositions, exitBalance, capitalBase } =
-		useWsStatus();
+	const {
+		balance,
+		currency,
+		openPositions,
+		exitBalance,
+		capitalBase,
+		online,
+		storyTicks,
+		playbookEvaluations,
+	} = useWsStatus();
 	const [showPositions, setShowPositions] = useState(false);
 	const inProfit =
 		exitBalance !== null && capitalBase > 0 && exitBalance >= capitalBase;
@@ -64,55 +72,73 @@ const PageHeader = () => {
 
 	return (
 		<Page.Header>
-			<div className="relative">
-				<Popover>
-					<PopoverTrigger
-						render={
-							<Button
-								className="h-auto! gap-4 px-4 py-3 text-left"
-								variant="outline"
-								onClick={() => setShowPositions((open) => !open)}
-							/>
-						}
-					>
-						<div className="flex flex-col gap-0.5">
-							<h3 className="flex flex-wrap items-baseline gap-x-1.5">
-								<span>{balanceLabel}</span>
-								{openPositions > 0 && exitBalance !== null ? (
-									<span
-										className={cn(
-											"text-base font-normal",
-											inProfit ? "text-emerald-400" : "text-red-400",
-										)}
-									>
-										(
-										{symbol.length === 1
-											? `${symbol}${exitBalance.toFixed(2)}`
-											: `${symbol} ${exitBalance.toFixed(2)}`}
+			<div className="flex flex-wrap items-center gap-2">
+				<div className="relative">
+					<Popover>
+						<PopoverTrigger
+							render={
+								<Button
+									className="h-auto! gap-4 px-4 py-3 text-left"
+									variant="outline"
+									onClick={() => setShowPositions((open) => !open)}
+								/>
+							}
+						>
+							<div className="flex flex-col gap-0.5">
+								<h3 className="flex flex-wrap items-baseline gap-x-1.5">
+									<span>{balanceLabel}</span>
+									{openPositions > 0 && exitBalance !== null ? (
+										<span
+											className={cn(
+												"text-base font-normal",
+												inProfit ? "text-emerald-400" : "text-red-400",
+											)}
+										>
+											(
+											{symbol.length === 1
+												? `${symbol}${exitBalance.toFixed(2)}`
+												: `${symbol} ${exitBalance.toFixed(2)}`}
+											)
+										</span>
+									) : null}
+									{openPositions > 0 && exitBalance !== null ? (
+										inProfit ? (
+											<img
+												src="/lambo.png"
+												alt="Lambo"
+												className="size-4 drop-shadow-[0_0_8px_rgba(239,68,68,1)]"
+											/>
+										) : (
+											<span>💀</span>
 										)
-									</span>
-								) : null}
-								{openPositions > 0 && exitBalance !== null ? (
-									inProfit ? (
-										<img
-											src="/lambo.png"
-											alt="Lambo"
-											className="size-4 drop-shadow-[0_0_8px_rgba(239,68,68,1)]"
-										/>
-									) : (
-										<span>💀</span>
-									)
-								) : null}
-							</h3>
-							<p className="whitespace-break-spaces font-normal text-muted-foreground">
-								{openPositions} open position{openPositions === 1 ? "" : "s"}
-							</p>
-						</div>
-					</PopoverTrigger>
-					<PopoverPopup className="w-80">
-						<PositionsPanel />
-					</PopoverPopup>
-				</Popover>
+									) : null}
+								</h3>
+								<p className="whitespace-break-spaces font-normal text-muted-foreground">
+									{openPositions} open position{openPositions === 1 ? "" : "s"}
+								</p>
+							</div>
+						</PopoverTrigger>
+						<PopoverPopup className="w-80">
+							<PositionsPanel />
+						</PopoverPopup>
+					</Popover>
+				</div>
+
+				<Button className="h-auto! px-4 py-3 text-left" variant="outline">
+					<div className="flex flex-col gap-0.5">
+						<h3 className="tabular-nums">
+							{online ? playbookEvaluations.toLocaleString() : "…"}
+						</h3>
+						<p className="font-normal text-muted-foreground">
+							playbook evaluations
+						</p>
+						<p className="text-xs font-normal text-muted-foreground">
+							{online
+								? `${storyTicks.toLocaleString()} story ticks`
+								: "story ticks"}
+						</p>
+					</div>
+				</Button>
 			</div>
 			<ConnectionBadge />
 		</Page.Header>

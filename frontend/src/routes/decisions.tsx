@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
+	applyDecisionTreeStats,
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
@@ -79,7 +80,7 @@ const isDecisionFrame = (value: unknown): value is DecisionFrame => {
 		return false;
 	}
 
-	if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.recent)) {
+	if (!Array.isArray(candidate.nodes)) {
 		return false;
 	}
 
@@ -109,12 +110,17 @@ const DecisionsPage = () => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
+				applyDecisionTreeStats(raw);
+
 				if (applyGlobalFrame(raw)) {
 					return;
 				}
 
 				if (isDecisionFrame(raw)) {
-					setFrame(raw);
+					setFrame({
+						...raw,
+						recent: Array.isArray(raw.recent) ? raw.recent : [],
+					});
 				}
 			} catch (error) {
 				console.error(
@@ -134,7 +140,8 @@ const DecisionsPage = () => {
 		const byDepth: TreeNodeFrame[][] = [];
 
 		for (const node of frame.nodes) {
-			(byDepth[node.depth] ??= []).push(node);
+			byDepth[node.depth] = byDepth[node.depth] ?? [];
+			byDepth[node.depth].push(node);
 		}
 
 		for (const row of byDepth) {
@@ -252,7 +259,7 @@ const DecisionsPage = () => {
 					</p>
 				</div>
 				<div className="text-xs text-muted-foreground">
-					{evaluations.toLocaleString()} evaluations ·{" "}
+					{evaluations.toLocaleString()} session evaluations ·{" "}
 					<span className="text-emerald-400">holds</span> /{" "}
 					<span className="text-rose-400">bottleneck</span> /{" "}
 					<span className="text-zinc-500">never reached</span>

@@ -161,10 +161,6 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 		}
 	}
 
-	if err := signal.system.publishSnapshot(eventAt); errnie.Error(err) != nil {
-		return logic.Measurement{}, err
-	}
-
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
 	if !ok {

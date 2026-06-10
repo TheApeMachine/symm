@@ -27,6 +27,7 @@ type Field struct {
 	pendingDeposits []cellDeposit
 	pendingWhales   []whaleCarrier
 	stepMu          sync.Mutex
+	snapshotPublish func(time.Time) error
 }
 
 type whaleCarrier struct {
@@ -308,11 +309,46 @@ func (field *Field) maybeStep(at time.Time) error {
 
 	_, err := field.integrate(at)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	if field.snapshotPublish != nil && field.hasPublishableSnapshot() {
+		errnie.Error(field.snapshotPublish(at))
+	}
+
+	return nil
 }
 
 func (field *Field) hasPublishableSnapshot() bool {
-	return !field.lastStepAt.IsZero() && len(field.lastCarriers) > 0
+	return !field.lastStepAt.IsZero() &&
+		len(field.lastCarriers) > 0 &&
+		readingFinite(field.lastReading)
+}
+
+func readingFinite(reading physics.Reading) bool {
+	values := []float64{
+		reading.PressureGradX,
+		reading.PressureGradY,
+		reading.PressureGradZ,
+		reading.PressureGradNorm,
+		reading.Divergence,
+		reading.CoherenceMag2,
+		reading.GuidanceSpeed,
+		reading.ViscosityProxy,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (field *Field) SetSnapshotPublisher(publish func(time.Time) error) {
+	field.snapshotPublish = publish
 }
 
 func (field *Field) integrate(at time.Time) (bool, error) {
