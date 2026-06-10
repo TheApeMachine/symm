@@ -15,19 +15,21 @@ import (
 
 /*
 Field owns the shared GPU manifold solver and projects the live universe into it.
+All mutations run on the manifold System tick goroutine; readings publish through sync.Map.
 */
 type Field struct {
-	config          physics.Config
-	solver          *physics.Solver
-	universe        *universe
-	lastStepAt      time.Time
-	lastReading     physics.Reading
-	lastCarriers    []fieldCarrier
-	readings        sync.Map
-	pendingDeposits []cellDeposit
-	pendingWhales   []whaleCarrier
-	stepMu          sync.Mutex
-	snapshotPublish func(time.Time) error
+	config              physics.Config
+	solver              *physics.Solver
+	universe            *universe
+	lastStepAt          time.Time
+	lastReading         physics.Reading
+	lastCarriers        []fieldCarrier
+	readings            sync.Map
+	pendingDeposits     []cellDeposit
+	pendingWhales       []whaleCarrier
+	activeWhales        []whaleCarrier
+	lastSnapshotPublish time.Time
+	snapshotPublish     func(time.Time) error
 }
 
 type whaleCarrier struct {
@@ -194,6 +196,7 @@ func (field *Field) feedBookIdentity(
 	}
 
 	state.midPrice = midPrice
+	state.configureTickFromBook(bids, asks)
 
 	if state.lane == krakenmarket.InstrumentLaneSpot {
 		field.recordPrice(state, midPrice, at)
@@ -218,6 +221,10 @@ func (field *Field) FeedTrade(trade *krakenmarket.TradeUpdate, at time.Time) err
 
 	if state.midPrice <= 0 {
 		state.midPrice = trade.Price
+	}
+
+	if state.tickSize <= 0 {
+		return fmt.Errorf("manifold: tick size must be positive for %q", trade.Symbol)
 	}
 
 	offsetTicks := (trade.Price - state.midPrice) / state.tickSize
@@ -301,20 +308,43 @@ func (field *Field) maybeStep(at time.Time) error {
 		return fmt.Errorf("manifold: step event time must be set")
 	}
 
-	interval := field.config.IntegrationInterval()
+	stepInterval := field.config.IntegrationInterval()
+	shouldIntegrate := field.lastStepAt.IsZero() || at.Sub(field.lastStepAt) >= stepInterval
 
-	if !field.lastStepAt.IsZero() && at.Sub(field.lastStepAt) < interval {
+	if !shouldIntegrate {
 		return nil
 	}
 
-	_, err := field.integrate(at)
+	integrated, err := field.integrate(at)
 
 	if err != nil {
 		return err
 	}
 
-	if field.snapshotPublish != nil && field.hasPublishableSnapshot() {
-		errnie.Error(field.snapshotPublish(at))
+	if !integrated {
+		return nil
+	}
+
+	return field.publishSnapshot(at)
+}
+
+func (field *Field) publishSnapshot(at time.Time) error {
+	if field.snapshotPublish == nil || !field.hasPublishableSnapshot() {
+		return nil
+	}
+
+	publishInterval := field.config.SnapshotPublishInterval()
+
+	if publishInterval > 0 &&
+		!field.lastSnapshotPublish.IsZero() &&
+		at.Sub(field.lastSnapshotPublish) < publishInterval {
+		return nil
+	}
+
+	field.lastSnapshotPublish = at
+
+	if err := field.snapshotPublish(at); err != nil {
+		errnie.Error(err)
 	}
 
 	return nil
@@ -352,9 +382,6 @@ func (field *Field) SetSnapshotPublisher(publish func(time.Time) error) {
 }
 
 func (field *Field) integrate(at time.Time) (bool, error) {
-	field.stepMu.Lock()
-	defer field.stepMu.Unlock()
-
 	if err := field.solver.ResetDeposits(); err != nil {
 		return false, errnie.Error(err)
 	}
@@ -404,28 +431,38 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return true
 	})
 
-	if len(oscillators) == 0 && len(field.pendingWhales) == 0 {
+	if len(oscillators) == 0 && len(field.activeWhales) == 0 && len(field.pendingWhales) == 0 {
 		return false, nil
 	}
 
-	for _, whale := range field.pendingWhales {
-		oscillators = append(oscillators, whale.oscillator)
-		carriers = append(carriers, fieldCarrier{
+	field.activeWhales = append(field.activeWhales, field.pendingWhales...)
+	field.pendingWhales = field.pendingWhales[:0]
+
+	whaleOscillators := make([]physics.Oscillator, 0, len(field.activeWhales))
+	whaleCarriers := make([]fieldCarrier, 0, len(field.activeWhales))
+
+	for _, whale := range field.activeWhales {
+		whaleOscillators = append(whaleOscillators, whale.oscillator)
+		whaleCarriers = append(whaleCarriers, fieldCarrier{
 			role:       "whale",
 			symbol:     whale.symbol,
 			oscillator: whale.oscillator,
 		})
 	}
 
-	field.pendingWhales = field.pendingWhales[:0]
+	solverOscillators, solverCarriers := capSolverCarriers(
+		oscillators,
+		carriers,
+		whaleOscillators,
+		whaleCarriers,
+		field.config.MaxModes,
+	)
 
-	oscillators, carriers = capCarriers(oscillators, carriers, field.config.MaxModes)
-
-	if len(oscillators) == 0 {
+	if len(solverOscillators) == 0 {
 		return false, nil
 	}
 
-	if err := field.solver.SetOscillators(oscillators); err != nil {
+	if err := field.solver.SetOscillators(solverOscillators); err != nil {
 		return false, errnie.Error(err)
 	}
 
@@ -435,9 +472,16 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, errnie.Error(stepErr)
 	}
 
+	readOscillators, readErr := field.solver.ReadOscillators(len(solverOscillators))
+
+	if readErr != nil {
+		return false, errnie.Error(readErr)
+	}
+
+	field.activeWhales = field.whalesFromSolverReadback(solverCarriers, readOscillators)
 	field.lastReading = reading
 	field.lastStepAt = at
-	field.lastCarriers = carriers
+	field.lastCarriers = field.displayCarriers(carriers, solverCarriers, readOscillators)
 
 	field.universe.states.Range(func(_, value any) bool {
 		state, ok := value.(*UniverseState)
@@ -459,6 +503,10 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 }
 
 func (field *Field) depositBook(state *UniverseState) error {
+	if state.tickSize <= 0 {
+		return fmt.Errorf("manifold: tick size must be positive for %q", state.symbol)
+	}
+
 	bids := truncateLevels(state.book.Bids, state.bookDepth)
 	asks := truncateLevels(state.book.Asks, state.bookDepth)
 	midPrice := state.midPrice
@@ -492,6 +540,113 @@ func (field *Field) depositBook(state *UniverseState) error {
 	}
 
 	return depositSide(asks, 1)
+}
+
+func (field *Field) whalesFromSolverReadback(
+	solverCarriers []fieldCarrier,
+	readOscillators []physics.Oscillator,
+) []whaleCarrier {
+	whales := make([]whaleCarrier, 0)
+
+	for index, carrier := range solverCarriers {
+		if carrier.role != "whale" || index >= len(readOscillators) {
+			continue
+		}
+
+		oscillator := readOscillators[index]
+
+		if !oscillatorStateFinite(oscillator) {
+			continue
+		}
+
+		whales = append(whales, whaleCarrier{
+			symbol:     carrier.symbol,
+			oscillator: oscillator,
+		})
+	}
+
+	return whales
+}
+
+func displayOscillator(fallback, read physics.Oscillator) physics.Oscillator {
+	if oscillatorStateFinite(read) {
+		return read
+	}
+
+	return fallback
+}
+
+func oscillatorStateFinite(oscillator physics.Oscillator) bool {
+	coords := []float64{
+		oscillator.PosX,
+		oscillator.PosY,
+		oscillator.PosZ,
+		oscillator.VelX,
+		oscillator.VelY,
+		oscillator.VelZ,
+	}
+
+	for _, value := range coords {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (field *Field) displayCarriers(
+	symbolCarriers []fieldCarrier,
+	solverCarriers []fieldCarrier,
+	readOscillators []physics.Oscillator,
+) []fieldCarrier {
+	solverSymbols := make(map[string]physics.Oscillator, len(solverCarriers))
+	whaleDisplay := make([]fieldCarrier, 0)
+
+	for index, carrier := range solverCarriers {
+		if index >= len(readOscillators) {
+			break
+		}
+
+		readOscillator := readOscillators[index]
+
+		if carrier.role == "whale" {
+			if !oscillatorStateFinite(readOscillator) {
+				continue
+			}
+
+			whaleDisplay = append(whaleDisplay, fieldCarrier{
+				role:       "whale",
+				symbol:     carrier.symbol,
+				oscillator: readOscillator,
+			})
+
+			continue
+		}
+
+		solverSymbols[carrier.symbol] = readOscillator
+	}
+
+	display := make([]fieldCarrier, 0, len(symbolCarriers)+len(whaleDisplay))
+
+	for _, carrier := range symbolCarriers {
+		oscillator, inSolver := solverSymbols[carrier.symbol]
+
+		if !inSolver {
+			display = append(display, carrier)
+			continue
+		}
+
+		display = append(display, fieldCarrier{
+			role:       "symbol",
+			symbol:     carrier.symbol,
+			oscillator: displayOscillator(carrier.oscillator, oscillator),
+		})
+	}
+
+	display = append(display, whaleDisplay...)
+
+	return display
 }
 
 func (field *Field) whaleOscillatorFromTrade(
@@ -579,6 +734,43 @@ func truncateLevels(levels []krakenmarket.BookLevel, depth int) []krakenmarket.B
 	}
 
 	return levels[:depth]
+}
+
+func capSolverCarriers(
+	symbolOscillators []physics.Oscillator,
+	symbolCarriers []fieldCarrier,
+	whaleOscillators []physics.Oscillator,
+	whaleCarriers []fieldCarrier,
+	maxModes uint32,
+) ([]physics.Oscillator, []fieldCarrier) {
+	limit := int(maxModes)
+	solverOscillators := make([]physics.Oscillator, 0, limit)
+	solverCarriers := make([]fieldCarrier, 0, limit)
+
+	for index := range symbolOscillators {
+		if len(solverOscillators) >= limit {
+			break
+		}
+
+		solverOscillators = append(solverOscillators, symbolOscillators[index])
+		solverCarriers = append(solverCarriers, symbolCarriers[index])
+	}
+
+	if len(solverOscillators) >= limit {
+		return solverOscillators, solverCarriers
+	}
+
+	remaining := uint32(limit - len(solverOscillators))
+	trimmedWhaleOscillators, trimmedWhaleCarriers := capCarriers(
+		whaleOscillators,
+		whaleCarriers,
+		remaining,
+	)
+
+	solverOscillators = append(solverOscillators, trimmedWhaleOscillators...)
+	solverCarriers = append(solverCarriers, trimmedWhaleCarriers...)
+
+	return solverOscillators, solverCarriers
 }
 
 func capCarriers(

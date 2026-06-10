@@ -1,12 +1,13 @@
 package paper
 
 import (
+	"bufio"
 	"container/ring"
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,12 +18,12 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/rawbus"
 )
 
 var baseURL = "wss://symm.kraken.com/v1/ws"
@@ -40,40 +41,21 @@ type WebSocket struct {
 	err         error
 	pool        *qpool.Q[any]
 	bus         *internal.Bus
-	bookStore   *krakenmarket.BookStore
 	sockets     map[string]types.Socket
-	balances    *response.Balances
-	orders      *response.Orders
-	executions  *response.Executions
 	latencies   *ring.Ring
 	isConnected atomic.Bool
 }
 
 func NewWebSocket(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	bookStore *krakenmarket.BookStore,
-	catalog *response.PairCatalog,
-) (*WebSocket, error) {
-	if catalog == nil {
-		return nil, fmt.Errorf("paper websocket: nil pair catalog")
-	}
-
+	ctx context.Context, pool *qpool.Q[any],
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
-
-	balances, balancesErr := response.NewBalances(ctx, pool, catalog)
-
-	if balancesErr != nil {
-		cancel()
-
-		return nil, balancesErr
-	}
+	catalog := response.NewPairCatalog(ctx)
 
 	ws := &WebSocket{
-		ctx:       ctx,
-		cancel:    cancel,
-		pool:      pool,
-		bookStore: bookStore,
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
 		bus: internal.NewBus(
 			ctx,
 			pool,
@@ -83,11 +65,17 @@ func NewWebSocket(
 			},
 		),
 		sockets: map[string]types.Socket{
-			"balances":   balances,
-			"orders":     response.NewOrders(ctx, pool, bookStore),
+			"balances":   response.NewBalances(ctx, pool, catalog),
+			"orders":     response.NewOrders(ctx, pool, catalog),
 			"executions": response.NewExecutions(ctx, pool),
 		},
 		isConnected: atomic.Bool{},
+	}
+
+	ws.latencies, ws.err = ws.loadLatencyProfile()
+
+	if errnie.Error(ws.err) != nil {
+		return nil
 	}
 
 	ws.sockets["orders"].Observe(
@@ -98,7 +86,7 @@ func NewWebSocket(
 		ws.sockets["balances"],
 	)
 
-	return ws, nil
+	return ws
 }
 
 /*
@@ -113,11 +101,7 @@ func (ws *WebSocket) Connect(
 		return nil
 	}
 
-	time.Sleep(
-		time.Duration(
-			rand.Intn(3)+rand.Intn(1000),
-		) * time.Millisecond,
-	)
+	ws.emulateLatency()
 
 	// Fail the connection randomly 10% of the time.
 	if rand.Intn(10) == 0 {
@@ -138,6 +122,11 @@ func (ws *WebSocket) Connect(
 
 	ws.isConnected.Store(true)
 	return ws.err
+}
+
+func (ws *WebSocket) disconnect() {
+	ws.isConnected.Store(false)
+	ws.err = errors.New("simulated network disconnect")
 }
 
 var qvaluePool = sync.Pool{
@@ -163,12 +152,12 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ws.ctx.Done():
 			return ws.err
 		case <-ticker.C:
-			// Simulate the ping message.
-			time.Sleep(
-				time.Duration(
-					rand.Intn(3)+rand.Intn(100),
-				) * time.Millisecond,
-			)
+			ws.emulateLatency()
+
+			if rand.Intn(10) == 0 {
+				ws.disconnect()
+				break
+			}
 		default:
 			slot := qvaluePool.Get().(*qpool.QValue[any])
 
@@ -183,12 +172,8 @@ func (ws *WebSocket) Tick() (err error) {
 
 			qvaluePool.Put(slot)
 
-			// TODO: Use latency profile.
-			time.Sleep(
-				time.Duration(
-					rand.Intn(3)+rand.Intn(100),
-				) * time.Millisecond,
-			)
+			// Emulate network latency for the message.
+			ws.emulateLatency()
 
 			var socketMessage *types.SocketMessage
 
@@ -196,29 +181,7 @@ func (ws *WebSocket) Tick() (err error) {
 			case "balances":
 				socketMessage = ws.sockets["balances"].Send(message)
 			case "orders":
-				if frame, frameOK := message.Value.(types.KrakenMessage); frameOK &&
-					frame.Method == trading.MethodAddOrder {
-					params, paramsOK := addPaperParams(frame.Params)
-
-					if paramsOK {
-						if transitErr := trading.RejectStaleEntry(&params); transitErr != nil {
-							errnie.Error(transitErr)
-							qvaluePool.Put(message)
-							continue
-						}
-					}
-				}
-
 				socketMessage = ws.sockets["orders"].Send(message)
-
-				if orderSocket, ok := ws.sockets["orders"].(*response.Orders); ok {
-					for _, execution := range orderSocket.DrainExecutions() {
-						ws.bus.Send(internal.ChannelRaw, "executions", []user.Execution{execution})
-					}
-
-					ws.bus.Send(internal.ChannelRaw, "balances", orderSocket.Wallet())
-					ws.bus.Send(internal.ChannelUI, "balances", orderSocket.Wallet())
-				}
 			case "executions":
 				socketMessage = ws.sockets["executions"].Send(message)
 			default:
@@ -243,7 +206,7 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send(internal.ChannelRaw, "balances", balances)
+				rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
 				ws.bus.Send(internal.ChannelUI, "balances", balances)
 			case "orders":
 				orders := []trading.OrderUpdate{}
@@ -254,7 +217,7 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send(internal.ChannelRaw, "orders", orders)
+				rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
 			case "executions":
 				executions := []user.Execution{}
 
@@ -264,7 +227,7 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send(internal.ChannelRaw, "executions", executions)
+				rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
 			}
 
 			socketMessage.Release()
@@ -299,17 +262,58 @@ func (ws *WebSocket) Close() error {
 	return nil
 }
 
-func addPaperParams(value any) (trading.AddParams, bool) {
-	switch typed := value.(type) {
-	case trading.AddParams:
-		return typed, true
-	case *trading.AddParams:
-		if typed == nil {
-			return trading.AddParams{}, false
+func (ws *WebSocket) emulateLatency() {
+	latency := ws.latencies.Value.(time.Duration)
+	ws.latencies = ws.latencies.Next()
+	time.Sleep(latency)
+}
+
+func (ws *WebSocket) loadLatencyProfile() (*ring.Ring, error) {
+	profilePath := viper.GetString("trading.paper.latency_profile")
+
+	if profilePath == "" {
+		profilePath = "runs/network_latency.json"
+	}
+
+	profileBytes, err := os.ReadFile(profilePath)
+
+	if errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	samples := make([]time.Duration, 0)
+	scanner := bufio.NewScanner(strings.NewReader(string(profileBytes)))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" {
+			return nil, errnie.Error(errors.New("paper websocket: empty latency profile"))
 		}
 
-		return *typed, true
-	default:
-		return trading.AddParams{}, false
+		nanoseconds, err := strconv.ParseInt(line, 10, 64)
+
+		if errnie.Error(err) != nil || nanoseconds <= 0 {
+			return nil, errnie.Error(errors.New("paper websocket: invalid latency profile"))
+		}
+
+		samples = append(samples, time.Duration(nanoseconds))
 	}
+
+	if errnie.Error(scanner.Err()) != nil {
+		return nil, scanner.Err()
+	}
+
+	if len(samples) == 0 {
+		return nil, errnie.Error(errors.New("paper websocket: empty latency profile"))
+	}
+
+	ring := ring.New(len(samples))
+
+	for _, sample := range samples {
+		ring.Value = sample
+		ring = ring.Next()
+	}
+
+	return ring, nil
 }

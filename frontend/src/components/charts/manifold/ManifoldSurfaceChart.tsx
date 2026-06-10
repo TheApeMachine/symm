@@ -34,8 +34,9 @@ export const ManifoldSurfaceChart = ({
 			}
 
 			const push = (frame: ManifoldFieldSnapshot) => {
-				result.controls.push(frame);
-				setSnapshot(frame);
+				if (result.controls.push(frame)) {
+					setSnapshot(frame);
+				}
 			};
 
 			attachManifoldPush(bridge, push);

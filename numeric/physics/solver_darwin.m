@@ -453,6 +453,147 @@
     return YES;
 }
 
+- (BOOL)computeProjectionReading:(ManifoldReading *)reading error:(NSString **)error {
+    if (reading == NULL) {
+        if (error != NULL) {
+            *error = @"projection reading is required";
+        }
+
+        return NO;
+    }
+
+    uint32_t gx = self.config.grid_x;
+    uint32_t gz = self.config.grid_z;
+
+    if (gx < 3 || gz < 3) {
+        if (error != NULL) {
+            *error = @"projection reading requires at least a 3x3 rho lattice";
+        }
+
+        return NO;
+    }
+
+    float spacing = self.config.domain_x / (float)gx;
+
+    if (spacing <= 0.0f) {
+        if (error != NULL) {
+            *error = @"projection reading requires positive grid spacing";
+        }
+
+        return NO;
+    }
+
+    uint32_t expected = gx * gz;
+    float *projection = (float *)calloc(expected, sizeof(float));
+
+    if (projection == NULL) {
+        if (error != NULL) {
+            *error = @"projection reading buffer allocation failed";
+        }
+
+        return NO;
+    }
+
+    if (![self readRhoMaxProjection:projection length:expected error:error]) {
+        free(projection);
+
+        return NO;
+    }
+
+    float gradSumSq = 0.0f;
+    float curvatureSum = 0.0f;
+    uint32_t sampleCount = 0;
+
+    for (uint32_t zIndex = 1; zIndex + 1 < gz; zIndex++) {
+        for (uint32_t xIndex = 1; xIndex + 1 < gx; xIndex++) {
+            uint32_t centerIndex = xIndex + zIndex * gx;
+            float center = projection[centerIndex];
+            float dRhoDx = (projection[(xIndex + 1) + zIndex * gx] -
+                            projection[(xIndex - 1) + zIndex * gx]) /
+                           (2.0f * spacing);
+            float dRhoDz = (projection[xIndex + (zIndex + 1) * gx] -
+                            projection[xIndex + (zIndex - 1) * gx]) /
+                           (2.0f * spacing);
+
+            gradSumSq += dRhoDx * dRhoDx + dRhoDz * dRhoDz;
+
+            float laplacian = (projection[(xIndex + 1) + zIndex * gx] +
+                                 projection[(xIndex - 1) + zIndex * gx] +
+                                 projection[xIndex + (zIndex + 1) * gx] +
+                                 projection[xIndex + (zIndex - 1) * gx] -
+                                 4.0f * center) /
+                                (spacing * spacing);
+
+            curvatureSum += fabsf(laplacian);
+            sampleCount++;
+        }
+    }
+
+    free(projection);
+
+    if (sampleCount == 0) {
+        if (error != NULL) {
+            *error = @"projection reading has no interior samples";
+        }
+
+        return NO;
+    }
+
+    float gradNorm = sqrtf(gradSumSq / (float)sampleCount);
+    float curvature = curvatureSum / (float)sampleCount;
+
+    reading->pressure_grad_x = 0.0f;
+    reading->pressure_grad_y = 0.0f;
+    reading->pressure_grad_z = 0.0f;
+    reading->pressure_grad_norm = gradNorm;
+    reading->divergence = curvature;
+    reading->coherence_mag2 = 0.0f;
+    reading->guidance_speed = 0.0f;
+    reading->viscosity_proxy = (curvature > 0.0f) ? (1.0f / curvature) : 0.0f;
+
+    return YES;
+}
+
+- (BOOL)readOscillators:(ManifoldOscillator *)out count:(uint32_t)count error:(NSString **)error {
+    if (out == NULL) {
+        if (error != NULL) {
+            *error = @"oscillator read buffer is required";
+        }
+
+        return NO;
+    }
+
+    if (count < self.numOsc) {
+        if (error != NULL) {
+            *error = @"oscillator read buffer is too small";
+        }
+
+        return NO;
+    }
+
+    float *phaseData = (float *)self.oscPhase.contents;
+    float *omegaData = (float *)self.oscOmega.contents;
+    float *ampData = (float *)self.oscAmp.contents;
+    float *heatData = (float *)self.oscHeat.contents;
+    float *posData = (float *)self.particlePos.contents;
+    float *velData = (float *)self.particleVel.contents;
+
+    for (uint32_t index = 0; index < self.numOsc; index++) {
+        out[index].phase = phaseData[index];
+        out[index].omega = omegaData[index];
+        out[index].amplitude = ampData[index];
+        out[index].heat = heatData[index];
+        out[index].pos_x = posData[index * 3 + 0];
+        out[index].pos_y = posData[index * 3 + 1];
+        out[index].pos_z = posData[index * 3 + 2];
+        out[index].vel_x = velData[index * 3 + 0];
+        out[index].vel_y = velData[index * 3 + 1];
+        out[index].vel_z = velData[index * 3 + 2];
+    }
+
+    return YES;
+}
+
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error {
     if (out == NULL) {
         if (error != NULL) {
@@ -529,7 +670,28 @@
         return NO;
     }
 
-    return [self computeReading:reading error:error];
+    ManifoldReading modeReading;
+
+    if (![self computeReading:&modeReading error:error]) {
+        return NO;
+    }
+
+    ManifoldReading bulkReading;
+
+    if (![self computeProjectionReading:&bulkReading error:error]) {
+        return NO;
+    }
+
+    reading->pressure_grad_x = bulkReading.pressure_grad_x;
+    reading->pressure_grad_y = bulkReading.pressure_grad_y;
+    reading->pressure_grad_z = bulkReading.pressure_grad_z;
+    reading->pressure_grad_norm = bulkReading.pressure_grad_norm;
+    reading->divergence = bulkReading.divergence;
+    reading->viscosity_proxy = bulkReading.viscosity_proxy;
+    reading->coherence_mag2 = modeReading.coherence_mag2;
+    reading->guidance_speed = modeReading.guidance_speed;
+
+    return YES;
 }
 
 @end
@@ -673,6 +835,51 @@ int manifold_solver_read_rho_projection(
 
     *grid_x = solver.config.grid_x;
     *grid_z = solver.config.grid_z;
+
+    return 0;
+}
+
+int manifold_solver_read_projection_reading(
+    void *handle,
+    ManifoldReading *reading,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL || reading == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle and projection reading are required");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver computeProjectionReading:reading error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"projection reading failed");
+        return 1;
+    }
+
+    return 0;
+}
+
+int manifold_solver_read_oscillators(
+    void *handle,
+    ManifoldOscillator *out,
+    uint32_t count,
+    char *err_out,
+    int err_cap
+) {
+    if (handle == NULL || out == NULL) {
+        manifold_write_error(err_out, err_cap, @"solver handle and oscillator buffer are required");
+        return 1;
+    }
+
+    ManifoldSolver *solver = (__bridge ManifoldSolver *)handle;
+    NSString *error = nil;
+
+    if (![solver readOscillators:out count:count error:&error]) {
+        manifold_write_error(err_out, err_cap, error ?: @"oscillator read failed");
+        return 1;
+    }
 
     return 0;
 }

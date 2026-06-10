@@ -8,12 +8,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
@@ -104,36 +102,9 @@ var (
 			}
 
 			systemCtx := engine.Context()
-			runtime := NewRuntime()
 
-			captureWriter, captureErr := record.NewWriter(systemCtx)
-
-			if captureErr != nil {
-				return errnie.Error(captureErr)
-			}
-
-			executionSystems, executionErr := WireExecutionAdapter(systemCtx, pool, runtime.Books)
-
-			if executionErr != nil {
-				return errnie.Error(executionErr)
-			}
-
-			ledger := broker.NewLedger(systemCtx, pool)
-
-			auditWriter, auditErr := audit.NewWriter(systemCtx)
-
-			if auditErr != nil {
-				return errnie.Error(auditErr)
-			}
-
-			story := market.NewStory(systemCtx, pool, ledger.Holdings(), auditWriter)
-
-			systems := []System{
-				public.NewWebSocket(systemCtx, pool, runtime.Books),
-			}
-
-			systems = append(systems, executionSystems...)
-			systems = append(systems,
+			engine.AddSystems(
+				public.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
 				cvd.NewSystem(systemCtx, pool),
@@ -148,24 +119,11 @@ var (
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
-				ledger,
-				story,
-				trader.NewCrypto(systemCtx, pool, runtime.Instruments),
-				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter, runtime.Instruments, story.Regime()),
+				market.NewStory(systemCtx, pool),
+				trader.NewCrypto(systemCtx, pool),
+				broker.NewDesk(systemCtx, pool),
 				ui.NewHub(systemCtx, pool),
 			)
-
-			if captureWriter != nil {
-				systems = append(systems, record.NewCapture(systemCtx, pool, captureWriter))
-			}
-
-			if auditWriter != nil {
-				systems = append(systems, auditWriter)
-			}
-
-			if err := engine.AddSystems(systems...); err != nil {
-				return errnie.Error(err)
-			}
 
 			errnie.Info("engine.Start", "engine")
 			return errnie.Error(engine.Start())
@@ -253,12 +211,6 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
-	viper.OnConfigChange(func(_ fsnotify.Event) {
-		broker.RefreshRiskContext()
-	})
-
-	broker.RefreshRiskContext()
-
 	if auditPath := os.Getenv("SYMM_AUDIT_FILE"); auditPath != "" {
 		viper.Set("trading.audit.file", auditPath)
 	}

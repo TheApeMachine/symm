@@ -1,6 +1,7 @@
 package numeric
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -8,7 +9,7 @@ import (
 
 func TestSoftmaxScores(t *testing.T) {
 	Convey("Given raw logits", t, func() {
-		probabilities := SoftmaxScores([]float64{1, 2, 3})
+		probabilities, err := SoftmaxScores([]float64{1, 2, 3})
 
 		sum := 0.0
 
@@ -17,8 +18,17 @@ func TestSoftmaxScores(t *testing.T) {
 		}
 
 		Convey("It should normalize to unity", func() {
+			So(err, ShouldBeNil)
 			So(sum, ShouldAlmostEqual, 1.0, 1e-9)
 			So(ArgmaxIndex(probabilities), ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given non-finite logits", t, func() {
+		_, err := SoftmaxScores([]float64{1, math.NaN(), 3})
+
+		Convey("It should return an error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -29,6 +39,6 @@ func BenchmarkSoftmaxScores(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = SoftmaxScores(scores)
+		_, _ = SoftmaxScores(scores)
 	}
 }

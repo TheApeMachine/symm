@@ -238,17 +238,25 @@ func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measu
 		stressScore = math.Abs(correlation) * energy
 	}
 
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		herdScore,
 		alphaScore,
 		noiseScore,
 		stressScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 
@@ -295,15 +303,7 @@ func (signal *Signal) classify(
 	medianEnergy := numeric.Median(peerEnergies)
 
 	energySpread := upperEnergy - lowerEnergy
-	lowEnergy := false
-
-	if energySpread > 0 {
-		lowEnergy = energy <= lowerEnergy
-	}
-
-	if !lowEnergy && medianEnergy > 0 {
-		lowEnergy = energy <= medianEnergy/4
-	}
+	lowEnergy := energySpread > 0 && energy <= lowerEnergy
 
 	if lowEnergy {
 		return logic.CategoryStochasticNoise
@@ -316,11 +316,12 @@ func (signal *Signal) classify(
 		highPositiveCorrelation = correlation > 0
 	}
 
-	lowMagnitudeCorrelation := math.Abs(correlation) <= lowerCorrelation
-
-	if correlationSpread <= 0 {
-		lowMagnitudeCorrelation = math.Abs(correlation) < 0.5
-	}
+	lowMagnitudeCorrelation := peerLowMagnitudeCorrelation(
+		correlation,
+		lowerCorrelation,
+		correlationSpread,
+		peerCorrelations,
+	)
 
 	highEnergy := energy >= upperEnergy
 

@@ -315,17 +315,25 @@ func (signal *Signal) publish(
 		stallScore = strength
 	}
 
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		inefficientScore,
 		syncScore,
 		decoupledScore,
 		stallScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 

@@ -3,10 +3,8 @@ package response
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,24 +36,17 @@ type Balances struct {
 	pool          *qpool.Q[any]
 	isActive      atomic.Bool
 	observers     []types.Socket
-	mu            sync.Mutex
 	quoteCurrency string
-	catalog       *PairCatalog
 	model         user.Balances
+	catalog       *PairCatalog
 	realized      *big.Rat // running net realized P&L over the session
 	holdings      map[string]*big.Rat
 	costBasis     map[string]*big.Rat // fee-inclusive average cost per base asset
 }
 
 func NewBalances(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	catalog *PairCatalog,
-) (*Balances, error) {
-	if catalog == nil {
-		return nil, fmt.Errorf("paper balances: nil pair catalog")
-	}
-
+	ctx context.Context, pool *qpool.Q[any], catalog *PairCatalog,
+) *Balances {
 	ctx, cancel := context.WithCancel(ctx)
 
 	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
@@ -67,7 +58,6 @@ func NewBalances(
 		pool:          pool,
 		observers:     make([]types.Socket, 0),
 		quoteCurrency: quote,
-		catalog:       catalog,
 		model: user.Balances{
 			Asset: []user.Balance{
 				{
@@ -86,10 +76,11 @@ func NewBalances(
 				},
 			},
 		},
+		catalog:   catalog,
 		realized:  new(big.Rat),
 		holdings:  make(map[string]*big.Rat),
 		costBasis: make(map[string]*big.Rat),
-	}, nil
+	}
 }
 
 func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage {
@@ -114,9 +105,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 		return nil
 	}
 
-	balances.mu.Lock()
 	data, err := sonic.Marshal(balances.model)
-	balances.mu.Unlock()
 
 	if err != nil {
 		return nil
@@ -151,9 +140,6 @@ func (balances *Balances) ApplyFill(
 	if params.OrderQty <= 0 || fillPrice <= 0 {
 		return user.Execution{}, ErrInvalidFillParams
 	}
-
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
 
 	notional := params.OrderQty * fillPrice
 
@@ -221,16 +207,10 @@ func (balances *Balances) ApplyFill(
 }
 
 func (balances *Balances) Wallet() user.Balances {
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
-
 	return balances.model
 }
 
 func (balances *Balances) ModelJSON() ([]byte, error) {
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
-
 	return sonic.Marshal(balances.model)
 }
 

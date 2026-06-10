@@ -15,25 +15,22 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/rawbus"
 	"github.com/theapemachine/symm/ui"
 )
 
 type Crypto struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q[any]
-	ui          *qpool.BroadcastGroup
-	bus         *internal.Bus
-	pairs       *sync.Map
-	instruments *market.InstrumentRegistry
-	chart       sync.Once
+	ctx    context.Context
+	cancel context.CancelFunc
+	pool   *qpool.Q[any]
+	ui     *qpool.BroadcastGroup
+	bus    *internal.Bus
+	pairs  *sync.Map
+	chart  sync.Once
 }
 
 func NewCrypto(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	instruments *market.InstrumentRegistry,
+	ctx context.Context, pool *qpool.Q[any],
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -50,8 +47,7 @@ func NewCrypto(
 				internal.Subscribe(internal.ChannelRaw, "trader:crypto"),
 			},
 		),
-		pairs:       &sync.Map{},
-		instruments: instruments,
+		pairs: &sync.Map{},
 	}
 }
 
@@ -73,12 +69,8 @@ func (crypto *Crypto) Tick() (err error) {
 				continue
 			}
 
-			var (
-				ok bool
-			)
-
-			switch message.Type {
-			case "balances":
+			switch rawbus.TypeFrom(message.Type) {
+			case rawbus.TypeBalances:
 				balances, ok := message.Value.(user.Balances)
 
 				if !ok {
@@ -94,18 +86,12 @@ func (crypto *Crypto) Tick() (err error) {
 				}
 
 				errnie.Error(crypto.bus.Send(internal.ChannelUI, "wallet", frame))
-			case "instrument":
-				var (
-					instrument *market.InstrumentUpdate
-				)
+			case rawbus.TypeInstrument:
+				instrument, ok := message.Value.(*market.InstrumentUpdate)
 
-				if instrument, ok = message.Value.(*market.InstrumentUpdate); !ok {
-					errnie.Error(errors.New("crypto: invalid instrument"), "crypto: invalid instrument")
+				if !ok {
+					errnie.Error(errors.New("crypto: invalid instrument"))
 					continue
-				}
-
-				if crypto.instruments != nil {
-					crypto.instruments.Observe(instrument)
 				}
 
 				quoteCurrency := viper.GetString("market.quote_currency")
@@ -130,7 +116,7 @@ func (crypto *Crypto) Tick() (err error) {
 
 				errnie.Info(fmt.Sprintf("subscribing to %d pairs", len(pairs)))
 
-				errnie.Error(crypto.bus.Send(internal.ChannelRaw, "symbols", pairs))
+				errnie.Error(rawbus.Send(crypto.bus, rawbus.TypeSymbols, pairs))
 
 				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "ticker", types.KrakenMessage{
 					Method: "subscribe",
@@ -212,17 +198,15 @@ func (crypto *Crypto) Tick() (err error) {
 					Feed:       futures.BookFeed,
 					ProductIDs: futuresProducts,
 				}))
-			case "actions":
-				var (
-					action *logic.Action
-				)
+			case rawbus.TypeActions:
+				action, decodeErr := rawbus.DecodeAction(message)
 
-				if action, ok = message.Value.(*logic.Action); !ok {
-					errnie.Error(errors.New("crypto: invalid action"), "crypto: invalid action")
+				if decodeErr != nil {
+					errnie.Error(decodeErr)
 					continue
 				}
 
-				errnie.Error(crypto.bus.Send(internal.ChannelRaw, "order", action))
+				errnie.Error(rawbus.Send(crypto.bus, rawbus.TypeOrder, action))
 			}
 		}
 	}

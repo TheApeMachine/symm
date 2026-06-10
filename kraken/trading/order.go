@@ -1,44 +1,8 @@
 package trading
 
 import (
-	"fmt"
 	"time"
-
-	"github.com/spf13/viper"
 )
-
-/*
-EntryTransitTTL is how long a market/limit ENTRY stays trustworthy between the
-desk's decision and the venue's ears. Five seconds default: the signals that
-justify entries (ignition, flow dominance, flash dips) live on that scale, and
-nobody should trust a market entry ten seconds old. Both the live private
-socket and the paper emulator enforce it, so transit staleness behaves the
-same in every trading model.
-*/
-func EntryTransitTTL() time.Duration {
-	configured := viper.GetDuration("trading.entry.transit_ttl")
-
-	if configured <= 0 {
-		return 5 * time.Second
-	}
-
-	return configured
-}
-
-/*
-RejectStaleEntry drops entries whose desk decision aged beyond transit TTL.
-*/
-func RejectStaleEntry(params *AddParams) error {
-	if params == nil || params.EntryQueuedAt.IsZero() {
-		return nil
-	}
-
-	if time.Since(params.EntryQueuedAt) > EntryTransitTTL() {
-		return fmt.Errorf("trading: entry transit ttl exceeded")
-	}
-
-	return nil
-}
 
 const (
 	MethodAddOrder             = "add_order"

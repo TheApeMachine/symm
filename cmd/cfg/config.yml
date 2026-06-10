@@ -1,6 +1,9 @@
 system:
   log:
     level: debug
+  audit:
+    enabled: true
+    file: runs/audit.jsonl
   queue:
     ttl: 1024
     buffer: 65536
@@ -100,10 +103,7 @@ trading:
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     slippage_bps: 5
     latency_profile: runs/network_latency.json
-  exit:
-    stop_loss_pct: 1.2
-    take_profit_pct: 2.4
-    trailing_volatility_multiple: 2.5
+  exit: {}
   audit:
     file: runs/audit.jsonl
     gate_cooldown: 60s

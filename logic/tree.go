@@ -2,7 +2,6 @@ package logic
 
 import (
 	"embed"
-	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"go.yaml.in/yaml/v3"
@@ -37,38 +36,16 @@ func NewTree() (*Tree, error) {
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Evaluation {
-	return tree.EvaluateTraced(measurements, holdings, nil)
-}
-
-/*
-EvaluateTraced runs the playbook and optionally records the gate path for audit.
-Entry-path traces are collected per branch; the deepest blocking gate wins.
-*/
-func (tree *Tree) EvaluateTraced(
-	measurements []Measurement,
-	holdings *Holdings,
-	trace *EvalTrace,
-) *Evaluation {
 	evalContext := NewEvalContext(measurements, holdings)
 
 	if tree.stats != nil {
 		tree.stats.BeginEvaluation()
 	}
 
-	bestDepth := 0
-	bestBranchIndex := 999
-	var bestAudit *EvalTrace
-
 	for branchIndex, branch := range tree.Branches {
-		branchKey := strconv.Itoa(branchIndex)
-		branchTrace := traceForBranch(trace, branchIndex)
-
-		evaluation, err := branch.evaluate(
+		evaluation, err := branch.Evaluate(
 			measurements,
 			evalContext,
-			tree.stats,
-			branchTrace,
-			branchKey,
 		)
 
 		if errnie.Error(err) != nil {
@@ -76,36 +53,15 @@ func (tree *Tree) EvaluateTraced(
 		}
 
 		if evaluation != nil {
-			if trace != nil && branchTrace != nil {
-				trace.Adopt(branchTrace)
-			}
-
 			return evaluation
 		}
 
-		if trace == nil || branchIndex < firstEntryBranchIndex || branchTrace == nil {
+		if branchIndex < firstEntryBranchIndex {
 			continue
 		}
-
-		if bestAudit == nil || branchTrace.BeatsAuditScore(bestDepth, bestBranchIndex) {
-			bestAudit = branchTrace
-			bestDepth, bestBranchIndex = branchTrace.AuditScore()
-		}
-	}
-
-	if trace != nil && bestAudit != nil {
-		trace.Adopt(bestAudit)
 	}
 
 	return nil
-}
-
-func traceForBranch(auditTrace *EvalTrace, branchIndex int) *EvalTrace {
-	if auditTrace == nil {
-		return nil
-	}
-
-	return &EvalTrace{}
 }
 
 /*

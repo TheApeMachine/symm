@@ -13,9 +13,6 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 		return nil, fmt.Errorf("manifold: snapshot event time is zero")
 	}
 
-	field.stepMu.Lock()
-	defer field.stepMu.Unlock()
-
 	rho, rhoErr := field.solver.ReadRhoProjection()
 
 	if rhoErr != nil {
@@ -30,7 +27,9 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 		return nil, err
 	}
 
-	reading, readingErr := readingRow(snapshotReading(field.lastReading, field.lastCarriers))
+	snapshotReading := field.lastReading
+
+	reading, readingErr := readingRow(snapshotReading)
 
 	if readingErr != nil {
 		return nil, readingErr
@@ -65,40 +64,6 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 	return payload, nil
 }
 
-/*
-snapshotReading merges the GPU bulk-field observables with cross-section carrier
-mode statistics. The dashboard overlay and scatter particles are driven by the
-same carrier list; mode amplitudes and velocities must appear there even when the
-post-step GPU mode buffers have decayed to zero.
-*/
-func snapshotReading(
-	gpu physics.Reading,
-	carriers []fieldCarrier,
-) physics.Reading {
-	if len(carriers) == 0 {
-		return gpu
-	}
-
-	coherenceSum := 0.0
-	guidanceSum := 0.0
-
-	for _, carrier := range carriers {
-		amplitude := carrier.oscillator.Amplitude
-		coherenceSum += amplitude * amplitude
-		guidanceSum += math.Hypot(
-			carrier.oscillator.VelX,
-			math.Hypot(carrier.oscillator.VelY, carrier.oscillator.VelZ),
-		)
-	}
-
-	count := float64(len(carriers))
-	reading := gpu
-	reading.CoherenceMag2 = coherenceSum / count
-	reading.GuidanceSpeed = guidanceSum / count
-
-	return reading
-}
-
 func readingRow(reading physics.Reading) (map[string]any, error) {
 	fields := map[string]float64{
 		"pressure_grad_x":    reading.PressureGradX,
@@ -128,7 +93,7 @@ func carrierRow(config physics.Config, carrier fieldCarrier) (map[string]any, er
 	spacing := config.GridSpacing()
 
 	if spacing <= 0 {
-		spacing = 1
+		return nil, fmt.Errorf("manifold: grid spacing must be positive")
 	}
 
 	cellX := int(carrier.oscillator.PosX/spacing+0.5) % int(config.GridX)

@@ -1,73 +1,85 @@
 # AGENTS.md
 
-This document defines how coding agents work on this platform. It is a contract, not a style guide. Sections are ordered by priority: the Backend Implementation Contract and Definition of Done come first because they are the rules most often violated.
+This document defines how coding agents operate on this platform. It is a strict contract, not a style guide. Sections are ordered by execution priority.
 
 ---
 
-## 1. Backend Implementation Contract
+## 1. Sequence of Operations (Before Writing Code)
 
-This platform is a crypto trading system, using the Kraken API.
+When a task is assigned, follow these steps in order before modifying any files:
 
----
-
-## 2. Definition of Done
-
-Work is not complete until verified. Verification means:
-
-- The tests that would catch the bug you are claiming to have fixed have been written and pass.
-- For signals, they are correct (no magic numbers, or guessed values, only dynamically derived to respond to market conditions), and actually being used.
-- A benchmark exists and has been run.
-- The actual test and benchmark output is pasted in the message claiming completion.
-
-Do not say "done" without the proof. Do not say "implemented" without the proof. If a path is incomplete, say so plainly and describe what is missing.
+1. **Code Inventory:** Identify and name the exact files and types involved in the change.
+2. **Refactoring Identification:** Explicitly state what can be removed or simplified before writing new code.
+3. **Approach Evaluation:** Formulate three distinct solution approaches. Select the approach that maximizes execution performance and structural correctness.
+4. **Scope Control:** Execute the literal request. Do not implement generalized abstractions, auxiliary helper files, or out-of-scope modifications.
 
 ---
 
-## 3. Interaction
+## 2. Backend Implementation Contract
 
-1. Do not explain the system back to the user. They built it. If you need to confirm understanding, do it by naming specific files and types, not by summarizing the architecture.
+This platform is a cryptocurrency trading system integrated with the Kraken API.
 
-2. Execute the literal request. Not a generalized version, not a "while we're here" expansion, not a smaller version because the full thing seems like a lot. The literal request.
+### Signal Integrity and Dynamic Calculations
 
-3. Opinions only on request. If the user asks "should I do X", answer. Otherwise do X.
+Hardcoded thresholds, static multipliers, or guessed parameters are not permitted. All logic must dynamically adjust to real-time market data.
 
-4. Existing structure is load-bearing until proven otherwise. Before replacing or rewriting something, read it and identify what it does. If you cannot explain why the existing code is wrong, do not replace it.
+#### Incorrect (Magic Numbers)
 
-5. Never run `git checkout`, `git reset --hard`, `git restore` against files with uncommitted changes, or any command that discards working tree state. History goes backward; the work goes forward. If you think you need to revert, stop and ask.
+```go
+// This uses an arbitrary, hardcoded percentage threshold
+func (signalCalculator *SignalCalculator) IsSignalTriggered() bool {
+    threshold := 0.015 
+    return (signalCalculator.CurrentPrice - signalCalculator.EntryPrice) / signalCalculator.EntryPrice > threshold
+}
+```
 
-6. If you are lost, drifting, or about to do something you are not sure about: stop and say so. Do not paper over uncertainty with confident prose.
+#### Correct (Dynamically Derived)
 
-7. Do not declare work complete unless you have verified it per Section 2. Paste the output.
+```go
+// This derives the threshold dynamically using Average True Range (ATR) to adjust to market volatility
+func (signalCalculator *SignalCalculator) IsSignalTriggered(averageTrueRange float64) bool {
+    if signalCalculator.EntryPrice == 0 {
+        return false
+    }
+
+    volatilityMultiplier := averageTrueRange / signalCalculator.EntryPrice
+    percentageChange := (signalCalculator.CurrentPrice - signalCalculator.EntryPrice) / signalCalculator.EntryPrice
+
+    return percentageChange > volatilityMultiplier
+}
+```
 
 ---
 
-## 4. Before Writing Code
+## 3. Definition of Done & Verification
 
-In order:
+Work is complete only when verified. You must provide proof of execution in your completion message.
 
-1. Read the relevant existing code. Do not propose changes until you can name the files and types involved.
-2. Identify what can be removed or refactored to achieve the goal. State this explicitly before adding anything new.
-3. Generate at least three solution approaches internally. Discard the first two. Implement the third unless you can explain why an earlier one is strictly better on correctness and performance.
-4. If the best solution is large, write it in full. Do not stage it as "minimal version now, real version later." There is no later.
+* **Automated Tests:** Corresponding test coverage must exist, run, and pass for the exact code path changed.
+* **Benchmarks:** A performance benchmark must exist and be executed for any data-processing or signal-calculation changes.
+* **Verification Output:** You must paste the literal, unmodified stdout output of the test and benchmark runs in your response.
 
-Time-to-deliver, implementation complexity, and scope size are not valid reasons to choose a worse solution. Correctness and performance are the only tiebreakers.
+### Preventative Rules:
 
-You can write substantial, complete code in one pass when the design is clear. Do so when appropriate. "Fully realized" means correct and verified, not "looks plausible." If the design is not clear, or if you are about to fabricate a part you do not actually know how to write, stop and surface that instead of generating something that resembles the answer.
+* **No Fabrication:** If tool or environment limitations prevent you from executing tests or benchmarks, state: `VERIFICATION LIMITATION: UNABLE TO RUN TESTS` and list the exact terminal commands you would run. Do not write mock or simulated test results.
+* **Failing Tests:** If tests fail, you must stop and fix the code. Do not proceed or mark a task complete if any suite is failing.
 
 ---
 
-## 5. Code Style
+## 4. Code Style & Architecture
 
 ### Structure
 
-Prefer methods over functions. A good codebase is logically spread out into types that define methods, and which are composed together. Objects should look like this:
+Prefer methods over functions. Compose types to represent logical units.
+
+#### Go Structural Pattern
 
 ```go
 package packagename
 
 /*
-ObjectName is something descriptive.
-It also has a reason why it was implemented.
+ObjectName manages specialized domain logic.
+It handles state updates for our trade calculations.
 */
 type ObjectName struct {
     ctx    context.Context
@@ -76,11 +88,10 @@ type ObjectName struct {
 }
 
 /*
-NewObjectName instantiates a new ObjectName.
-It also has a reason for being instantiated.
+NewObjectName instantiates a new ObjectName with a canceled context.
 */
 func NewObjectName(ctx context.Context) *ObjectName {
-    ctx, cancel := ctx.WithCancel(ctx)
+    ctx, cancel := context.WithCancel(ctx)
 
     return &ObjectName{
         ctx:    ctx,
@@ -89,40 +100,18 @@ func NewObjectName(ctx context.Context) *ObjectName {
 }
 
 /*
-MethodName.
+MethodName performs a state operation.
 */
 func (objectName *ObjectName) MethodName() {
     return
 }
 ```
 
-When it comes to TypeScript:
+#### TypeScript Structural Pattern
+* Use `const` arrow functions rather than standard function declarations.
+* Use designated system flex, grid, and typography components instead of standard HTML equivalents.
 
 ```tsx
-/*
-Incorrect
-*/
-export function PaperEditorApp() {
-	return (
-		<PaperEditorProvider>
-			<PaperContextSnapshot />
-
-			<DragDropProvider>
-				<Flex.Column className="box-border min-h-0 bg-background" fullHeight>
-					<LatexToolbar />
-
-					<Flex.Column className="min-h-0 flex-1" fullHeight>
-						<WritingCanvas />
-					</Flex.Column>
-				</Flex.Column>
-			</DragDropProvider>
-		</PaperEditorProvider>
-	);
-};
-
-/*
-Correct
-*/
 export const PaperEditorApp = () => {
 	return (
 		<PaperEditorProvider>
@@ -142,185 +131,42 @@ export const PaperEditorApp = () => {
 };
 ```
 
-Use `const` over `function` and always use the `flex`, `grid`, and `typography` components, over the standard HTML versions.
+### Size Limits
 
-### Size limits
+* **File Size:** Target 200 lines; hard ceiling of 400 lines. Split files exceeding 400 lines into separate types/files.
+* **Method Size:** Target under 30 lines. Methods exceeding 60 lines must be split into sub-methods, unless the operation is atomic (e.g., assembly kernels).
+* **Type Size:** Limit types to a maximum of 10 methods.
 
-- **File size:** target 200 lines, hard ceiling 400. At 400+, split before adding more. This does not apply to documentation or custom compute kernels.
-- **Method size:** target under 30 lines. Methods over 60 lines must be decomposed unless the operation is genuinely atomic (e.g. a single assembly kernel body).
-- **Type size:** if a type has more than ~10 methods, it is doing more than one thing.
+### Control Flow
 
-### Control flow
+* **Early Returns:** Write guard clauses with early returns. Keep the primary logic path at indentation level 1.
+* **No Else Blocks:** Do not use `else`. Invert conditions to return early or exit.
+* **Nesting Ceiling:** Do not nest `if` blocks deeper than two levels. Extract deeply nested logic into a helper method.
+* **No Silent Failures:** If a precondition fails or an unexpected state occurs, return a descriptive error. Substituting default fallbacks or silently skipping errors is prohibited.
 
-- Guard clauses with early return. The happy path stays at indent level 1.
-- `else` is not used. If you reach for `else`, invert the condition and return early, or restructure.
-- Nested `if` beyond two levels is not allowed. Extract a method or restructure the data so the branch disappears.
-- No silent fallbacks. If a precondition fails, return an error. Do not substitute a default and continue.
-- Treat `if` as something to minimize. Many branches disappear once you reverse the condition or restructure the data.
+### Naming & Formatting
 
-### Naming and formatting
-
-- Never use single-character variable names. Receivers included.
-- Separate logical code blocks with an empty newline.
-- Long function signatures break across lines so that no line crosses the vertical split-view boundary.
-- Use modern Go: `maps.Copy`, `for range N`, `for b.Loop()`, etc.
-
-### Density
-
-Prefer compact code that a reader fluent in Go and the relevant ISA can follow. Density is fine. Obscurity for its own sake is not. Less code is better than more code, but only when correctness and performance hold.
-
-If less code means less performance, choose performance.
-
-### Fallbacks or Silent Failures/Errors
-
-Never ever use a fallback or silent errors/faliures. If things are not as they are supposed to be, then return an error properly, and let the code fail. That is the only way we become aware of them so we can fix things.
-
-### Capping or Artificial Bounds
-
-When dealing with things like exploding values, or other ways that values are not behaving as they should, any use of hard limits/caps, or other artificial "solutions" that hide, rather than solve the problems are **strictly forbidden**. You must solve the actual problem, always.
+* **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`).
+* **Block Separation:** Insert an empty newline between distinct logical code blocks.
+* **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries.
 
 ---
 
-## 6. Testing
+## 5. Environment & Tooling Constraints
 
-Every code file has a `_test.go` mirror. Test function names mirror method names with a `Test` prefix. If you want to test something that does not correspond to a method, the test belongs at the calling site, not in a new free-floating test function.
+### Git State Integrity
 
-**Structure:** GoConvey-based, "Given X" / "It should Y", nested.
+* Do not read, query, or reference git history, commit logs, or previous branches to solve bugs. Base your solution entirely on the current state of the codebase.
+* Never run `git checkout`, `git reset`, `git restore`, or any command that discards working tree changes. If a revert is required, stop and request user intervention.
 
-**Coverage requirements:**
+### Compiler Configuration & Linker Errors
 
-- Mocks are a last resort. Prefer real subsystems wired up in test setup. If you find yourself writing a mock, ask whether the real thing is available; it usually is.
-
-A test that does not meaningfully exercise the code is worse than no test because it provides false confidence. If you cannot articulate what a test proves, delete it.
-
-Keep the README.md up to date alongside test and code changes.
+* **dropg Linker Error:** If you encounter a `dropg` linker error, refer to the `Makefile` located in the project root to ensure environment flags and compiler options match the project targets. Do not bypass build constraints with temporary flags.
 
 ---
 
-## 8. Common Failure Modes
+## 6. Interaction Protocol
 
-Concrete before/after examples of patterns that have caused regressions on this platform. Read these as the literal list of things not to do.
-
-### Dismissing failing tests as unrelated
-
-```
-// Incorrect:
-"The X tests are failing but appear unrelated to my changes."
-
-// Correct — all failing tests are in scope. Investigate before continuing.
-// It does not matter why a test is failing, what matters is that we don't
-// ignore it.
-```
-
-### Block separation
-
-```go
-// Incorrect
-sensoriumOutputs, ok := results.Value.([]*tensors.Tensor)
-if !ok || len(sensoriumOutputs) == 0 {
-    return "", validate.Require(map[string]any{
-        "sensorium_outputs": sensoriumOutputs,
-    })
-}
-
-// Correct — separate logical blocks with an empty newline
-sensoriumOutputs, ok := results.Value.([]*tensors.Tensor)
-
-if !ok || len(sensoriumOutputs) == 0 {
-    return "", validate.Require(map[string]any{
-        "sensorium_outputs": sensoriumOutputs,
-    })
-}
-```
-
-### Single-character receivers
-
-```go
-// Incorrect
-func (o *ObjectName) MethodName() { return }
-
-// Correct
-func (objectName *ObjectName) MethodName() { return }
-```
-
-### Manual loops where the stdlib has it
-
-```go
-// Incorrect
-for identifier, binding := range rawMap {
-    parser.vars[identifier] = binding
-}
-
-// Correct
-maps.Copy(parser.vars, rawMap)
-```
-
-### Long signatures running off-screen
-
-```go
-// Incorrect
-func (operationRegistry *OperationRegistry) Build(operationID string, config map[string]any) (operation.Operation, error) {
-
-// Correct
-func (operationRegistry *OperationRegistry) Build(
-    operationID string, config map[string]any,
-) (operation.Operation, error) {
-```
-
-### Outdated Go idioms
-
-```go
-// Incorrect
-for range b.N {
-    _ = NewErrnieConfig()
-}
-
-// Correct
-for b.Loop() {
-    _ = NewErrnieConfig()
-}
-```
-
----
-
-## 9. Reading Order
-
-When starting a task on this codebase, read in this order:
-
-1. This document.
-2. `README.md` in the repo root.
-3. The package(s) directly relevant to the task.
-4. The test files for those packages, to understand the existing contract.
-
-Then reason through the task before writing code. If something in the existing code looks wrong, read it carefully before concluding it is wrong — the user is building toward a goal and existing structure is usually load-bearing.
-
-## 10. Ambiguity Resolution
-
-Always keep the following non-negotiable rules in mind.
-
-1. Accuracy and Performance are the primary concerns, always. If we compromise on Accuracy or Performance, there is no point for anyone to use this framework.
-2. You should NOT optimize for the path of least resistance, just to get tests green, or compiler errors resolved. Optimize for Accuracy, Performance, and Maintainability.
-3. If you notice you are drifting to any kind of escape hatch, or less than optimal solution, stop, reconsider, and make better choices.
-
-## GIT HISTORY (VERY IMPORTANT)
-
-Git history, like the name suggests, is a backwards look in time. It is extremely unlikely that the right solution to a problem can be found by looking backwards in time.
-Even considering using any code from the git history should be treated with extreme suspicion and scrutiny, and requires multiple rounds of reasoning through the code to verify we are not introducing regression, disguised as a quick-fix to a local problem.
-There is a reason we moved away from the history, and we always should be looking forward.
-By default, you should ALWAYS reason from the code, look at the current code, and solve the problem the current code presents.
-You should NOT, under any circumstance, resort to using the git history to just redefine the problem by reverting to some previous version of the code and call it a fix.
-
-A very subtle failure mode you will encounter is that you will look at the git history, and not clearly mark that knowledge as coming from git. Then your context will show that information and you will believe that is a source of truth, so ALWAYS clearly mark information coming from the git history. The best way to deal with this is by just NOT looking at the git history at all, or at least not to start with that, and first look at the actual current reality of the code.
-
-## dropg Linker Error
-
-Read the Makefile!
-
-## The Non-Negotiable Rules, Repeated
-
-1. No fallbacks, no silent errors
-2. Always provide the most accurate, pricipled, and best-in-class solutions and implementations
-3. No loose functions, no needless abstractions, no needless helper methods, no needless files
-4. Complexity is earned, it is not the default
-5. After accuracy, performance is the number 1 priority
-6. Never disregard the established patterns and coding style, and don't blindly overwrite what is there, build on top of it whenever possible
+1. **No Summarization:** Do not explain the existing system architecture back to the user. Reference specific file names and types when discussing changes.
+2. **Opinions on Request Only:** Provide design opinions or alternative paradigms only when explicitly asked. Otherwise, implement the requested change directly according to this contract.
+3. **Preserve Load-Bearing Structure:** Read and trace existing code paths before proposing modifications. Do not rewrite structural components unless you can document exactly why the existing implementation is broken or incorrect.

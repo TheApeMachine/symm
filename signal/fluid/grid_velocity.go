@@ -53,7 +53,7 @@ func (grid *FluidGrid) inferVelocityField(currentMid, dt float64) {
 
 		velocityCorrection := 0.0
 
-		gradFloor := math.Max(rhoFloor, 0.01*grid.observedRho[index])
+		gradFloor := math.Max(rhoFloor, grid.rhoGradFloor(index))
 
 		if math.Abs(gradRho) > gradFloor {
 			sourceRate := grid.sourceAccumulator[index] * invDt

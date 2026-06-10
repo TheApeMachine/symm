@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -26,6 +27,36 @@ func TestMeasurementPublishable(t *testing.T) {
 			stub := Measurement{Symbol: "BTC/USD"}
 
 			So(stub.Publishable(), ShouldBeFalse)
+		})
+
+		Convey("Publish should reject non-finite floats", func() {
+			ctx := context.Background()
+			pool := qpool.NewQ[any](ctx, 2, 8, nil)
+			bus := internal.NewBus(
+				ctx,
+				pool,
+				[]internal.Channel{internal.ChannelMeasurements},
+				[]internal.Subscription{
+					internal.Subscribe(internal.ChannelMeasurements, "test-measurements"),
+				},
+			)
+
+			invalid := Measurement{
+				Source:     SourceDepthFlow,
+				Symbol:     "ETH/USD",
+				Price:      1600,
+				Strength:   math.NaN(),
+				Confidence: 0.8,
+				Surprise:   1.2,
+				ObservedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			}
+
+			So(invalid.Publish(bus), ShouldNotBeNil)
+
+			row, pollErr := bus.Poll("measurements")
+
+			So(pollErr, ShouldBeNil)
+			So(row, ShouldBeNil)
 		})
 
 		Convey("Publish should not send incomplete measurements", func() {

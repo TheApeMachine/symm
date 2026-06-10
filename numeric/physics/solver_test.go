@@ -70,6 +70,104 @@ func TestSolverStep(t *testing.T) {
 	})
 }
 
+func TestReadProjectionReading(t *testing.T) {
+	convey.Convey("Given a deposited rho lattice", t, func() {
+		config := Config{
+			GridX:    8,
+			GridY:    1,
+			GridZ:    8,
+			DomainX:  0.16,
+			DomainY:  1,
+			DomainZ:  8,
+			DeltaT:   0.1,
+			Gamma:    5.0 / 3.0,
+			CV:       0.5,
+			RhoMin:   1e-3,
+			PMin:     1e-6,
+			KThermal: 1e-2,
+			MaxModes: 4,
+		}
+
+		solver, err := NewSolver(config)
+
+		convey.Convey("It should derive bulk observables from the rho projection", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
+
+			defer solver.Close()
+
+			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+			convey.So(solver.DepositCell(4, 0, 4, 1, 0, 0, 0, 1), convey.ShouldBeNil)
+			convey.So(solver.SetOscillators([]Oscillator{{
+				Amplitude: 0.2,
+				Heat:      0.2,
+			}}), convey.ShouldBeNil)
+			_, stepErr := solver.Step()
+
+			convey.So(stepErr, convey.ShouldBeNil)
+
+			reading, projectionErr := solver.ReadProjectionReading()
+
+			convey.So(projectionErr, convey.ShouldBeNil)
+			convey.So(reading.PressureGradNorm, convey.ShouldBeGreaterThan, 0)
+			convey.So(reading.Divergence, convey.ShouldBeGreaterThan, 0)
+			convey.So(reading.ViscosityProxy, convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestReadOscillators(t *testing.T) {
+	convey.Convey("Given a stepped solver with oscillators", t, func() {
+		config := Config{
+			GridX:    8,
+			GridY:    1,
+			GridZ:    8,
+			DomainX:  0.16,
+			DomainY:  1,
+			DomainZ:  8,
+			DeltaT:   0.1,
+			Gamma:    5.0 / 3.0,
+			CV:       0.5,
+			RhoMin:   1e-3,
+			PMin:     1e-6,
+			KThermal: 1e-2,
+			MaxModes: 4,
+		}
+
+		solver, err := NewSolver(config)
+
+		convey.Convey("It should read post-step particle state from Metal", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(solver, convey.ShouldNotBeNil)
+
+			defer solver.Close()
+
+			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+			convey.So(solver.DepositCell(4, 0, 4, 0.5, 0, 0, 0, 0.5), convey.ShouldBeNil)
+			convey.So(solver.SetOscillators([]Oscillator{{
+				Phase:     0.5,
+				Omega:     6.28,
+				Amplitude: 0.2,
+				PosX:      0.4,
+				PosY:      0,
+				PosZ:      1.2,
+				Heat:      0.2,
+				VelX:      0.4,
+			}}), convey.ShouldBeNil)
+
+			_, stepErr := solver.Step()
+
+			convey.So(stepErr, convey.ShouldBeNil)
+
+			oscillators, readErr := solver.ReadOscillators(1)
+
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(len(oscillators), convey.ShouldEqual, 1)
+			convey.So(oscillators[0].Heat, convey.ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestSolverWhaleParticleVelocity(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
 		config := Config{

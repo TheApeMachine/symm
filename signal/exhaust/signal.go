@@ -165,8 +165,17 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	longUrgency, longCategory, longScores := signal.exitScore(history, 1)
-	shortUrgency, shortCategory, shortScores := signal.exitScore(history, -1)
+	longUrgency, longCategory, longScores, longErr := signal.exitScore(history, 1)
+
+	if longErr != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, longErr
+	}
+
+	shortUrgency, shortCategory, shortScores, shortErr := signal.exitScore(history, -1)
+
+	if shortErr != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, shortErr
+	}
 
 	urgency := longUrgency
 	category := longCategory
@@ -182,11 +191,20 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	probabilities := numeric.SoftmaxScores(scores)
+	probabilities, err := numeric.SoftmaxScores(scores)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 
@@ -216,7 +234,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 func (signal *Signal) exitScore(
 	history featureState,
 	side int,
-) (urgency float64, category logic.CategoryType, scores []float64) {
+) (urgency float64, category logic.CategoryType, scores []float64, err error) {
 	thinning := 0.0
 	fade := 0.0
 	flip := 0.0
@@ -244,7 +262,11 @@ func (signal *Signal) exitScore(
 		signal.componentMargin(collapse),
 	}
 
-	fusionWeights := numeric.SoftmaxScores(margins)
+	fusionWeights, err := numeric.SoftmaxScores(margins)
+
+	if err != nil {
+		return 0, logic.CategoryTypeNone, nil, err
+	}
 
 	for index, weight := range fusionWeights {
 		urgency += weight * margins[index]
@@ -253,7 +275,7 @@ func (signal *Signal) exitScore(
 	category = signal.classify(thinning, widen, fade, flip)
 	scores = margins[:4]
 
-	return urgency, category, scores
+	return urgency, category, scores, nil
 }
 
 func (signal *Signal) depthTrend(depths floatring.FloatRing) float64 {

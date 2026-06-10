@@ -4,7 +4,6 @@ import (
 	"container/ring"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net"
@@ -26,6 +25,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/rawbus"
 )
 
 var socket *WebSocket
@@ -222,18 +222,6 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			if frame.Method == trading.MethodAddOrder {
-				params, paramsOK := addParams(frame.Params)
-
-				if paramsOK {
-					if transitErr := trading.RejectStaleEntry(&params); transitErr != nil {
-						errnie.Error(transitErr)
-						qvaluePool.Put(message)
-						continue
-					}
-				}
-			}
-
 			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
 				qvaluePool.Put(message)
 				ws.disconnect()
@@ -298,7 +286,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send(internal.ChannelRaw, "balances", balances)
+			rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
 			ws.bus.Send(internal.ChannelUI, "balances", balances)
 		case "orders":
 			orders := []trading.OrderUpdate{}
@@ -308,7 +296,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send(internal.ChannelRaw, "orders", orders)
+			rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
 		case "executions":
 			executions := []user.Execution{}
 
@@ -317,7 +305,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send(internal.ChannelRaw, "executions", executions)
+			rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
 		case "level3":
 			level3Updates := make([]market.Level3Update, 0)
 
@@ -328,7 +316,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 			for index := range level3Updates {
 				update := level3Updates[index]
-				ws.bus.Send(internal.ChannelRaw, "level3", &update)
+				rawbus.Send(ws.bus, rawbus.TypeLevel3, &update)
 			}
 		}
 
@@ -352,55 +340,6 @@ func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
 		default:
 			errnie.Error(errors.New(err))
 		}
-	}
-}
-
-func (ws *WebSocket) recordLatency() {
-	// Atomic replace (temp + rename) with truncation: the previous O_WRONLY
-	// overwrite-in-place could leave stale trailing bytes, and the file was only
-	// ever written on a 1-in-64 coin flip of the wall clock.
-	path := "runs/network_latency.json"
-	tempPath := path + ".tmp"
-
-	latencyFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	ws.latencies.Do(func(value any) {
-		duration, _ := value.(time.Duration)
-		fmt.Fprintf(latencyFile, "%d\n", duration)
-	})
-
-	if err := latencyFile.Close(); err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	if err := os.Rename(tempPath, path); err != nil {
-		errnie.Error(err)
-	}
-}
-
-func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
-	var candles []market.CandleUpdate
-
-	if err := errnie.Error(
-		message.Unmarshal(&candles),
-	); err != nil {
-		return
-	}
-
-	for _, candle := range candles {
-		ws.streams.Range(func(key, value any) bool {
-			if key == candle.Symbol {
-				ws.bus.Send(internal.ChannelUI, "ohlc", candle)
-			}
-
-			return true
-		})
 	}
 }
 

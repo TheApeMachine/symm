@@ -1,7 +1,6 @@
 package public
 
 import (
-	"container/ring"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/rawbus"
 )
 
 var socket *WebSocket
@@ -42,26 +42,22 @@ type WebSocket struct {
 	pool        *qpool.Q[any]
 	conn        *websocket.Conn
 	bus         *internal.Bus
-	bookStore   *market.BookStore
 	recorder    io.Writer
 	streams     *sync.Map
-	latencies   *ring.Ring
 	isConnected atomic.Bool
 }
 
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
-	bookStore *market.BookStore,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
 		socket = &WebSocket{
-			ctx:       ctx,
-			cancel:    cancel,
-			pool:      pool,
-			bookStore: bookStore,
+			ctx:    ctx,
+			cancel: cancel,
+			pool:   pool,
 			bus: internal.NewBus(
 				ctx,
 				pool,
@@ -72,8 +68,7 @@ func NewWebSocket(
 					internal.Subscribe(internal.ChannelKrakenPublic, "kraken:public:bus"),
 				},
 			),
-			streams:   &sync.Map{},
-			latencies: ring.New(64),
+			streams: &sync.Map{},
 		}
 
 		errnie.Info("kraken/public websocket ready")
@@ -150,15 +145,7 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 
 	switch message.Channel {
 	case "pong":
-		pong := PongMessage{}
-
-		if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
-			return
-		}
-
-		ws.latencies.Value = time.Since(pong.TimeIn)
-		ws.latencies.Next()
-		ws.recordLatency()
+		ws.recordLatency(message)
 		return
 	case "heartbeat":
 		ws.isConnected.Store(true)
@@ -189,41 +176,7 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 		return
 	}
 
-	if message.Channel == "book" && ws.bookStore != nil {
-		updates := object.(*market.BookUpdates)
-
-		for _, update := range *updates {
-			if update == nil {
-				continue
-			}
-
-			if applyErr := ws.bookStore.Apply(update); applyErr != nil {
-				errnie.Error(applyErr)
-				continue
-			}
-		}
-	}
-
-	ws.bus.Send(internal.ChannelRaw, message.Channel, object)
-
-	if message.Channel == "ohlc" {
-		candles := object.(*market.CandleUpdates)
-		anchor := viper.GetString("market.anchor_symbol")
-
-		for _, candle := range *candles {
-			if candle == nil || candle.Symbol != anchor {
-				continue
-			}
-
-			frame, frameErr := candle.UIFrame()
-
-			if errnie.Error(frameErr) != nil {
-				continue
-			}
-
-			ws.bus.Send(internal.ChannelUI, "ohlc", frame)
-		}
-	}
+	rawbus.Send(ws.bus, rawbus.Type(message.Channel), object)
 }
 
 func (ws *WebSocket) Tick() (err error) {
@@ -309,21 +262,51 @@ func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
 	}
 }
 
-func (ws *WebSocket) recordLatency() {
-	latencyFile, err := os.OpenFile(filepath.Join(
-		"runs", "network_latency.json"),
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
-		0644,
+func (ws *WebSocket) recordLatency(message *types.SocketMessage) {
+	pong := PongMessage{}
+
+	if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
+		return
+	}
+
+	if pong.TimeIn.IsZero() || pong.TimeOut.IsZero() {
+		return
+	}
+
+	serverLatency := pong.TimeOut.Sub(pong.TimeIn)
+	inboundLatency := time.Since(pong.TimeOut)
+
+	if inboundLatency < 0 {
+		return
+	}
+
+	roundTrip := inboundLatency + serverLatency + inboundLatency
+
+	if roundTrip <= 0 {
+		return
+	}
+
+	profilePath := viper.GetString("trading.paper.latency_profile")
+
+	if profilePath == "" {
+		profilePath = "runs/network_latency.json"
+	}
+
+	if errnie.Error(os.MkdirAll(filepath.Dir(profilePath), 0o755)) != nil {
+		return
+	}
+
+	latencyFile, err := os.OpenFile(
+		profilePath,
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY,
+		0o644,
 	)
 
 	if errnie.Error(err) != nil {
 		return
 	}
 
-	ws.latencies.Do(func(value any) {
-		duration, _ := value.(time.Duration)
-		fmt.Fprintf(latencyFile, "%d\n", duration)
-	})
+	fmt.Fprintf(latencyFile, "%d\n", roundTrip.Nanoseconds())
 
 	if errnie.Error(latencyFile.Close()) != nil {
 		return

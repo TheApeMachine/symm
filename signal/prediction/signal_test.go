@@ -380,8 +380,13 @@ func TestSignalMovementUnits(t *testing.T) {
 		signal.realizedMagnitudeEMA = 0.01
 
 		Convey("It should stay inside the signed unit band", func() {
-			So(math.Abs(signal.movementUnits(610, 0.01)), ShouldBeLessThanOrEqualTo, 1)
-			So(math.Abs(signal.movementUnits(-610, 0.01)), ShouldBeLessThanOrEqualTo, 1)
+			positiveUnits, positiveErr := signal.movementUnits(610, 0.01)
+			negativeUnits, negativeErr := signal.movementUnits(-610, 0.01)
+
+			So(positiveErr, ShouldBeNil)
+			So(negativeErr, ShouldBeNil)
+			So(math.Abs(positiveUnits), ShouldBeLessThanOrEqualTo, 1)
+			So(math.Abs(negativeUnits), ShouldBeLessThanOrEqualTo, 1)
 		})
 	})
 }
@@ -399,16 +404,22 @@ func TestSignalMovementConfidence(t *testing.T) {
 		prices := []float64{100, 100.01, 100.02}
 
 		Convey("It should stay inside the unit band", func() {
-			So(signal.movementConfidence(610, prices), ShouldBeLessThanOrEqualTo, 1)
-			So(signal.movementConfidence(0, prices), ShouldBeLessThan, 0.35)
+			largeConfidence, largeErr := signal.movementConfidence(610, prices)
+			zeroConfidence, zeroErr := signal.movementConfidence(0, prices)
+
+			So(largeErr, ShouldBeNil)
+			So(zeroErr, ShouldBeNil)
+			So(largeConfidence, ShouldBeLessThanOrEqualTo, 1)
+			So(zeroConfidence, ShouldBeLessThan, 0.35)
 		})
 
 		Convey("It should rise with forecast intensity", func() {
-			So(
-				signal.movementConfidence(0.02, prices),
-				ShouldBeGreaterThan,
-				signal.movementConfidence(0.002, prices),
-			)
+			strongConfidence, strongErr := signal.movementConfidence(0.02, prices)
+			weakConfidence, weakErr := signal.movementConfidence(0.002, prices)
+
+			So(strongErr, ShouldBeNil)
+			So(weakErr, ShouldBeNil)
+			So(strongConfidence, ShouldBeGreaterThan, weakConfidence)
 		})
 	})
 }

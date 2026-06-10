@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -59,6 +60,162 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			convey.So(field.pendingWhales[0].oscillator.PosY, convey.ShouldEqual, 0)
 
 			field.Close()
+		})
+	})
+}
+
+func TestFieldIntegrateWhaleReadback(t *testing.T) {
+	convey.Convey("Given a whale carrier integrated through Metal PIC", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.max_modes", 32)
+		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := newField()
+
+		convey.Convey("It should read whale positions back from the solver", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			field.RegisterSymbols([]string{"XBT/USD"})
+			state := field.universe.loadSymbol("XBT/USD")
+			state.midPrice = 50000
+			state.bookReady = true
+			state.book = krakenmarket.BookUpdate{
+				Symbol: "XBT/USD",
+				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
+				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+			}
+			state.tradeQtys = []float64{0.1, 0.2, 0.15, 0.12, 0.18}
+			state.returns = []float64{0.01, -0.008, 0.012}
+
+			field.pendingWhales = []whaleCarrier{{
+				symbol: "XBT/USD",
+				oscillator: field.whaleOscillatorFromTrade(
+					state,
+					&krakenmarket.TradeUpdate{
+						Symbol: "XBT/USD",
+						Price:  50010,
+						Qty:    50,
+						Side:   "buy",
+					},
+					field.universe.coords(state, 0),
+					50/state.midPrice,
+				),
+			}}
+
+			at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			field.lastStepAt = at.Add(-time.Second)
+
+			stepped, integrateErr := field.integrate(at)
+
+			convey.So(integrateErr, convey.ShouldBeNil)
+			convey.So(stepped, convey.ShouldBeTrue)
+			convey.So(len(field.activeWhales), convey.ShouldBeGreaterThan, 0)
+			convey.So(len(field.lastCarriers), convey.ShouldBeGreaterThan, 0)
+
+			whaleCount := 0
+
+			for _, carrier := range field.lastCarriers {
+				if carrier.role != "whale" {
+					continue
+				}
+
+				whaleCount++
+				convey.So(oscillatorStateFinite(carrier.oscillator), convey.ShouldBeTrue)
+			}
+
+			convey.So(whaleCount, convey.ShouldBeGreaterThan, 0)
+
+			field.Close()
+		})
+	})
+}
+
+func TestFieldPublishSnapshot(t *testing.T) {
+	convey.Convey("Given a field with snapshot publish interval", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.max_modes", 32)
+		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("signals.manifold.snapshot_interval", "500ms")
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := newField()
+
+		convey.Convey("It should throttle ui snapshots to the configured interval", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			publishCount := 0
+			field.SetSnapshotPublisher(func(time.Time) error {
+				publishCount++
+
+				return nil
+			})
+
+			field.lastStepAt = time.Now()
+			field.lastCarriers = []fieldCarrier{{role: "symbol", symbol: "XBT/USD"}}
+			field.lastReading = physics.Reading{PressureGradNorm: 1}
+
+			firstAt := time.Now()
+			secondAt := firstAt.Add(100 * time.Millisecond)
+
+			convey.So(field.publishSnapshot(firstAt), convey.ShouldBeNil)
+			convey.So(field.publishSnapshot(secondAt), convey.ShouldBeNil)
+			convey.So(publishCount, convey.ShouldEqual, 1)
+
+			field.Close()
+		})
+	})
+}
+
+func TestCapSolverCarriersPreservesSymbols(t *testing.T) {
+	convey.Convey("Given symbols and hotter whales than max modes", t, func() {
+		symbolOscillators := make([]physics.Oscillator, 4)
+		symbolCarriers := make([]fieldCarrier, 4)
+
+		for index := range symbolOscillators {
+			symbolOscillators[index] = physics.Oscillator{Heat: 0.001}
+			symbolCarriers[index] = fieldCarrier{
+				role:       "symbol",
+				symbol:     fmt.Sprintf("SYM-%d", index),
+				oscillator: symbolOscillators[index],
+			}
+		}
+
+		whaleOscillators := make([]physics.Oscillator, 40)
+		whaleCarriers := make([]fieldCarrier, 40)
+
+		for index := range whaleOscillators {
+			whaleOscillators[index] = physics.Oscillator{Heat: float64(index + 1)}
+			whaleCarriers[index] = fieldCarrier{
+				role:       "whale",
+				symbol:     "XBT/USD",
+				oscillator: whaleOscillators[index],
+			}
+		}
+
+		convey.Convey("It should keep every symbol carrier for the solver first", func() {
+			trimmedOscillators, trimmedCarriers := capSolverCarriers(
+				symbolOscillators,
+				symbolCarriers,
+				whaleOscillators,
+				whaleCarriers,
+				8,
+			)
+
+			convey.So(len(trimmedOscillators), convey.ShouldEqual, 8)
+			convey.So(len(trimmedCarriers), convey.ShouldEqual, 8)
+
+			for index := range symbolCarriers {
+				convey.So(trimmedCarriers[index].role, convey.ShouldEqual, "symbol")
+			}
 		})
 	})
 }

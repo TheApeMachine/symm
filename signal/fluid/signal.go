@@ -14,8 +14,6 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
-var fluidDefaultBandEdges = []float64{0.2, 0.5, 1.5}
-
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
 
@@ -195,17 +193,25 @@ func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error)
 func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measurement, error) {
 	category, laminarScore, turbulentScore, inertialScore, viscousScore := signal.classify(reading)
 
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		laminarScore,
 		turbulentScore,
 		inertialScore,
 		viscousScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 
@@ -244,17 +250,24 @@ func (signal *Signal) classify(
 	reynolds := reading.reynolds
 	divergence := math.Abs(reading.divergence)
 	viscosity := reading.viscosity
+	laminarCeiling := reading.dynamics.laminarReynoldsCeiling(reynolds)
+	turbulentFloor := reading.dynamics.turbulentReynoldsFloor(reynolds)
+	divergenceEdge := reading.dynamics.laminarDivergenceEdge()
+
+	if divergenceEdge <= 0 && divergence > 0 {
+		divergenceEdge = divergence
+	}
 
 	laminarScore := 0.0
 
-	if reynolds < laminarReynoldsCeiling && divergence < fluidDefaultBandEdges[0] {
-		laminarScore = viscosity * (1 - divergence/fluidDefaultBandEdges[0])
+	if reynolds < laminarCeiling && divergenceEdge > 0 && divergence < divergenceEdge {
+		laminarScore = viscosity * (1 - divergence/divergenceEdge)
 	}
 
 	turbulentScore := 0.0
 
-	if reynolds >= turbulentReynoldsFloor {
-		turbulentScore = reynolds / turbulentReynoldsFloor
+	if turbulentFloor > 0 && reynolds >= turbulentFloor {
+		turbulentScore = reynolds / turbulentFloor
 	}
 
 	inertialScore := divergence
@@ -282,7 +295,7 @@ func (signal *Signal) classify(
 		category = logic.CategoryViscous
 	}
 
-	if best <= 0 && reading.price > 0 && reynolds < laminarReynoldsCeiling {
+	if best <= 0 && reading.price > 0 && reynolds < laminarCeiling {
 		category = logic.CategoryLaminar
 		laminarScore = viscosity
 	}

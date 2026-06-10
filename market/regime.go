@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -116,6 +117,56 @@ func (classifier *RegimeClassifier) Observe(measurement logic.Measurement) {
 		Price:   measurement.Price,
 		Updated: measurement.ObservedAt,
 	})
+}
+
+func (classifier *RegimeClassifier) SymbolVolatility(symbol string) float64 {
+	stopPct, _, ok := classifier.SymbolExitMoves(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	return stopPct
+}
+
+func (classifier *RegimeClassifier) SymbolExitMoves(symbol string) (stopPct float64, profitPct float64, ok bool) {
+	if classifier == nil || classifier.crossSection == nil || symbol == "" {
+		return 0, 0, false
+	}
+
+	returns := classifier.crossSection.SymbolReturns(symbol, classifier.config.Window)
+
+	if len(returns) < classifier.config.MinSamples {
+		return 0, 0, false
+	}
+
+	stopPct = numeric.MedianAbsolute(returns)
+
+	if stopPct <= 0 {
+		stopPct = returnVolatility(returns)
+	}
+
+	if stopPct <= 0 {
+		return 0, 0, false
+	}
+
+	positives := make([]float64, 0, len(returns))
+
+	for _, value := range returns {
+		if value > 0 {
+			positives = append(positives, value)
+		}
+	}
+
+	if len(positives) >= classifier.config.MinSamples/2 {
+		profitPct = numeric.Median(positives)
+	}
+
+	if profitPct <= 0 {
+		profitPct = stopPct
+	}
+
+	return stopPct, profitPct, true
 }
 
 func (classifier *RegimeClassifier) MarketMean() RegimeStrengths {

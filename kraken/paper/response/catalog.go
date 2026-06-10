@@ -13,48 +13,62 @@ import (
 )
 
 /*
-PairCatalog holds Kraken AssetPairs metadata for paper fill simulation.
-Fee rates always come from the published tier tables, never from config guesses.
+PairCatalog resolves Kraken AssetPairs metadata through REST when paper fills need it.
+
+The only session state kept locally is the simulated fee-tier volume ledger.
 */
 type PairCatalog struct {
-	pairs   market.AssetPairs
-	volumes sync.Map
+	ctx           context.Context
+	volumes       sync.Map
+	assetPairsAPI public.EndpointType
+	depthAPI      public.EndpointType
 }
 
 /*
-LoadPairCatalog fetches tradable asset pairs from Kraken REST.
+NewPairCatalog builds a REST-backed pair resolver for paper simulation.
 */
-func LoadPairCatalog(ctx context.Context) (*PairCatalog, error) {
-	rest := public.NewRest(ctx, public.EndpointTypeAssetPairs)
-
-	var pairs market.AssetPairs
-
-	if err := rest.Get(ctx, fiber.Map{}, &pairs); err != nil {
-		return nil, fmt.Errorf("paper pair catalog: %w", err)
-	}
-
-	return NewPairCatalog(pairs)
-}
-
-/*
-NewPairCatalog builds a catalog from an in-memory AssetPairs snapshot.
-*/
-func NewPairCatalog(pairs market.AssetPairs) (*PairCatalog, error) {
-	if len(pairs) == 0 {
-		return nil, fmt.Errorf("paper pair catalog: empty asset pairs")
-	}
-
+func NewPairCatalog(ctx context.Context) *PairCatalog {
 	return &PairCatalog{
-		pairs: pairs,
-	}, nil
+		ctx: ctx,
+	}
 }
 
-func (catalog *PairCatalog) pair(symbol string) (*market.Pair, error) {
+/*
+RestPair returns the Kraken REST pair identifier for one ws symbol.
+*/
+func (catalog *PairCatalog) RestPair(symbol string) (string, error) {
+	pair, err := catalog.fetchPair(symbol)
+
+	if err != nil {
+		return "", err
+	}
+
+	if pair.Altname == "" {
+		return "", fmt.Errorf("paper pair catalog: altname missing for %s", symbol)
+	}
+
+	return pair.Altname, nil
+}
+
+func (catalog *PairCatalog) fetchPair(symbol string) (*market.Pair, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("paper pair catalog: nil catalog")
 	}
 
-	return catalog.pairs.PairByWsname(symbol)
+	endpoint := catalog.assetPairsAPI
+
+	if endpoint == "" {
+		endpoint = public.EndpointTypeAssetPairs
+	}
+
+	rest := public.NewRest(catalog.ctx, endpoint)
+	pairs := market.AssetPairs{}
+
+	if err := rest.Get(catalog.ctx, fiber.Map{}, &pairs); err != nil {
+		return nil, fmt.Errorf("paper pair catalog: fetch asset pairs: %w", err)
+	}
+
+	return pairs.PairByWsname(symbol)
 }
 
 func (catalog *PairCatalog) feeVolume(pair *market.Pair) float64 {
@@ -91,7 +105,7 @@ func (catalog *PairCatalog) RecordFill(symbol string, notional float64) error {
 		return fmt.Errorf("paper pair catalog: fill notional must be positive")
 	}
 
-	pair, err := catalog.pair(symbol)
+	pair, err := catalog.fetchPair(symbol)
 
 	if err != nil {
 		return err
@@ -118,7 +132,7 @@ func (catalog *PairCatalog) FeeRate(
 	symbol string,
 	orderType trading.OrderType,
 ) (float64, error) {
-	pair, err := catalog.pair(symbol)
+	pair, err := catalog.fetchPair(symbol)
 
 	if err != nil {
 		return 0, err
@@ -137,7 +151,7 @@ func (catalog *PairCatalog) FeeRate(
 TickSize returns the published tick size for one ws symbol.
 */
 func (catalog *PairCatalog) TickSize(symbol string) (float64, error) {
-	pair, err := catalog.pair(symbol)
+	pair, err := catalog.fetchPair(symbol)
 
 	if err != nil {
 		return 0, err

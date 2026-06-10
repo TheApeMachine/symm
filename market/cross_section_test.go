@@ -122,6 +122,25 @@ func TestCrossSectionPressure(t *testing.T) {
 	})
 }
 
+func TestCrossSectionTrailingSymbolReturns(t *testing.T) {
+	Convey("Given a symbol with fewer returns than the requested window", t, func() {
+		crossSection := &CrossSection{returnCap: 64}
+		crossSection.universe.Store("BTC/EUR", &market.Symbol{
+			Name: "BTC/EUR",
+			Returns: []float64{0.01, -0.008, 0.012, 0.005, 0.003, 0.002, 0.004, 0.001,
+				0.006, 0.002, -0.001, 0.003, 0.002, 0.004, 0.001, 0.002},
+		})
+
+		Convey("It should return the available trailing window", func() {
+			returns := crossSection.trailingSymbolReturns("BTC/EUR", 256)
+
+			So(len(returns), ShouldEqual, 16)
+			So(returns[0], ShouldAlmostEqual, 0.01, 1e-12)
+			So(returns[len(returns)-1], ShouldAlmostEqual, 0.002, 1e-12)
+		})
+	})
+}
+
 func BenchmarkCrossSectionObserve(b *testing.B) {
 	crossSection := &CrossSection{returnCap: 64, matchWindow: time.Minute}
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)

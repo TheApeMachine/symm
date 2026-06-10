@@ -165,10 +165,11 @@ export const createFinancialChartSurface = async (
 
 	const xAxis = new DiscontinuousDateAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Bottom,
-		autoRange: EAutoRange.Never,
+		autoRange: EAutoRange.Always,
 		cursorLabelFormat: ENumericFormat.Date_HHMM,
 		drawMajorBands: false,
 		drawMinorGridLines: false,
+		useNativeText: true,
 	});
 
 	const yAxis = new NumericAxis(wasmContext, {
@@ -179,6 +180,7 @@ export const createFinancialChartSurface = async (
 		autoRange: EAutoRange.Always,
 		drawMajorBands: false,
 		drawMinorGridLines: false,
+		useNativeText: true,
 	});
 
 	sciChartSurface.xAxes.add(xAxis);

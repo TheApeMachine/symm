@@ -272,13 +272,16 @@ func (signal *Signal) fromBook(
 		tradePressure = 0
 	}
 
-	spoofed := signal.isSpoofSkew(weighted, level1, weightedThreshold, level1Threshold)
+	spoofContrast := spoofContrastRatio(weightedHistory, level1History)
+	depthGate := thinningDepthGate(weightedHistory, flatHistory)
+
+	spoofed := signal.isSpoofSkew(weighted, level1, weightedThreshold, level1Threshold, spoofContrast)
 
 	if flatOK {
-		spoofed = spoofed || signal.isSpoofSkew(flat, level1, weightedThreshold, level1Threshold)
+		spoofed = spoofed || signal.isSpoofSkew(flat, level1, weightedThreshold, level1Threshold, spoofContrast)
 	}
 
-	thinning := signal.isBookThinning(weighted, flat, flatOK)
+	thinning := signal.isBookThinning(weighted, flat, flatOK, depthGate)
 	loaded := !spoofed && !thinning &&
 		math.Abs(weighted) >= weightedThreshold &&
 		weightedThreshold > 0
@@ -290,12 +293,10 @@ func (signal *Signal) fromBook(
 	if loaded {
 		loadedScore = math.Abs(weighted)
 
-		if tradePressure > 0 && weighted > 0 {
-			loadedScore *= (1 + tradePressure) / 2
-		}
+		pressureScale := loadedPressureScale(tradePressure, weightedThreshold)
 
-		if tradePressure < 0 && weighted < 0 {
-			loadedScore *= (1 - tradePressure) / 2
+		if pressureScale > 0 {
+			loadedScore *= pressureScale
 		}
 	}
 
@@ -317,17 +318,25 @@ func (signal *Signal) fromBook(
 		neutralScore = 1 - math.Abs(weighted)
 	}
 
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		loadedScore,
 		spoofScore,
 		thinScore,
 		neutralScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 
@@ -346,8 +355,6 @@ func (signal *Signal) fromBook(
 	if category == logic.CategoryBookThinning {
 		strength = thinScore
 	}
-
-	_ = flatHistory
 
 	return logic.Measurement{
 		Source:     logic.SourceDepthFlow,
@@ -436,7 +443,7 @@ func (signal *Signal) weightedImbalance(
 }
 
 func (signal *Signal) isSpoofSkew(
-	weighted, level1, weightedThreshold, level1Threshold float64,
+	weighted, level1, weightedThreshold, level1Threshold, spoofContrast float64,
 ) bool {
 	if math.Abs(weighted) < weightedThreshold {
 		return false
@@ -446,15 +453,27 @@ func (signal *Signal) isSpoofSkew(
 		return false
 	}
 
-	return math.Abs(level1) >= level1Threshold/2
+	if spoofContrast <= 0 {
+		spoofContrast = 0.5
+	}
+
+	return math.Abs(level1) >= level1Threshold*spoofContrast
 }
 
-func (signal *Signal) isBookThinning(weighted, flat float64, flatOK bool) bool {
+func (signal *Signal) isBookThinning(
+	weighted, flat float64,
+	flatOK bool,
+	depthGate float64,
+) bool {
 	if !flatOK || math.Abs(weighted) <= 0 {
 		return false
 	}
 
-	return math.Abs(flat) < math.Abs(weighted)/2
+	if depthGate <= 0 {
+		depthGate = 0.5
+	}
+
+	return math.Abs(flat) < depthGate*math.Abs(weighted)
 }
 
 func (signal *Signal) classify(spoofed, thinning, loaded bool) logic.CategoryType {

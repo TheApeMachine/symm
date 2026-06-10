@@ -84,5 +84,6 @@ describe("parseManifoldSnapshot", () => {
 
 		expect(lines[0]).toContain("4.20e-3");
 		expect(lines[1]).toContain("0.1500");
+		expect(lines[2]).toContain("carrier guidance");
 	});
 });

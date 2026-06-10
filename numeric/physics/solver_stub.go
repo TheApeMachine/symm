@@ -50,3 +50,11 @@ func (solver *Solver) Step() (Reading, error) {
 func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 	return nil, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
 }
+
+func (solver *Solver) ReadProjectionReading() (Reading, error) {
+	return Reading{}, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}
+
+func (solver *Solver) ReadOscillators(count int) ([]Oscillator, error) {
+	return nil, fmt.Errorf("physics: Metal manifold solver unavailable on this platform")
+}

@@ -12,9 +12,10 @@ func TestTransitionMatrixSurprise(t *testing.T) {
 		matrix := NewTransitionMatrix(5, 0.1)
 		observed := matrix.PadObserved([]float64{0.25, 0.25, 0.25, 0.25}, 1e-6)
 
-		surprise := matrix.Surprise(observed)
+		surprise, err := matrix.Surprise(observed)
 
 		Convey("It should not return NaN", func() {
+			So(err, ShouldBeNil)
 			So(math.IsNaN(surprise), ShouldBeFalse)
 		})
 	})
@@ -58,6 +59,6 @@ func BenchmarkTransitionMatrixSurprise(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = matrix.Surprise(observed)
+		_, _ = matrix.Surprise(observed)
 	}
 }

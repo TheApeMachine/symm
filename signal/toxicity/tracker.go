@@ -11,18 +11,12 @@ import (
 )
 
 const (
-	tradeMatchWindow         = 2 * time.Second
-	priceMatchTol            = 0.0002
-	fillCoverage             = 0.5
-	toxicMaxAge              = 10 * time.Second
-	toxicProximityPct        = 0.005
-	largeBlockFrac           = 0.10
-	toxicCooldown            = 30 * time.Second
-	flowAlpha                = 0.05
-	tradeRingCap             = 512
-	flashChurnWindow         = 50 * time.Millisecond
-	flashChurnRatioThreshold = 0.85
-	priceKeyScale            = 100_000
+	tradeMatchWindow = 2 * time.Second
+	toxicMaxAge      = 10 * time.Second
+	toxicCooldown    = 30 * time.Second
+	tradeRingCap     = 512
+	flashChurnWindow = 50 * time.Millisecond
+	priceKeyScale    = 100_000
 )
 
 const (
@@ -60,22 +54,29 @@ type levelChurnWindow struct {
 }
 
 type symbolState struct {
-	pair          krakenmarket.Pair
-	orders        map[string]*orderState
-	levels        map[l2Key]*l2Level
-	churn         map[l2Key]*levelChurnWindow
-	bidTotal      float64
-	askTotal      float64
-	toxic         map[int64]time.Time
-	toxicChurn    map[int64]float64
-	toxicEvidence map[int64]float64
-	trades        []tradePrint
-	mid           float64
-	lastPrice     float64
-	cancelBid     float64
-	fillBid       float64
-	cancelAsk     float64
-	fillAsk       float64
+	pair            krakenmarket.Pair
+	orders          map[string]*orderState
+	levels          map[l2Key]*l2Level
+	churn           map[l2Key]*levelChurnWindow
+	bidTotal        float64
+	askTotal        float64
+	toxic           map[int64]time.Time
+	toxicChurn      map[int64]float64
+	toxicEvidence   map[int64]float64
+	trades          []tradePrint
+	mid             float64
+	lastPrice       float64
+	cancelBid       float64
+	fillBid         float64
+	cancelAsk       float64
+	fillAsk         float64
+	levelSizeFracs  []float64
+	cancelQtys      []float64
+	churnRatios     []float64
+	fillMatchRatios []float64
+	vacuumRatios    []float64
+	spreadPctEMA    float64
+	peakVacuumRatio float64
 }
 
 type bookQualitySnapshot struct {
@@ -175,6 +176,7 @@ func (tracker *Tracker) ObserveTrade(symbol string, pair krakenmarket.Pair, pric
 
 	state := tracker.stateLocked(symbol, pair)
 	state.lastPrice = price
+	state.observeSpreadPct(price)
 	state.trades = append(state.trades, tradePrint{at: at, price: price, volume: volume})
 
 	if len(state.trades) > tradeRingCap {
@@ -268,16 +270,19 @@ func (tracker *Tracker) applyBookLevelLocked(
 		delete(state.levels, key)
 
 	case qty > prevQty:
-		state.addDepth(side, qty-prevQty)
-		tracker.observeLevelChurnLocked(state, side, price, qty-prevQty, 0, now)
+		added := qty - prevQty
+		state.addDepth(side, added)
+		tracker.observeLevelChurnLocked(state, side, price, added, 0, now)
 
 		if level == nil {
 			state.levels[key] = &l2Level{qty: qty, firstSeen: now}
+			state.recordLevelSizeFrac(added, state.sideDepth(side))
 
 			return
 		}
 
 		level.qty = qty
+		state.recordLevelSizeFrac(added, state.sideDepth(side))
 
 	case qty < prevQty:
 		tracker.observeLevelChurnLocked(state, side, price, 0, prevQty-qty, now)
@@ -308,6 +313,7 @@ func (tracker *Tracker) ApplyOrder(
 
 		state.orders[orderID] = &orderState{side: side, price: price, qty: qty, addTs: ts}
 		state.addDepth(side, qty)
+		state.recordLevelSizeFrac(qty, state.sideDepth(side))
 		tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
 
 	case "delete":
@@ -363,6 +369,14 @@ func (state *symbolState) addDepth(side byte, delta float64) {
 	state.askTotal = math.Max(0, state.askTotal+delta)
 }
 
+func (state *symbolState) sideDepth(side byte) float64 {
+	if side == 'b' {
+		return state.bidTotal
+	}
+
+	return state.askTotal
+}
+
 func (tracker *Tracker) classifyRemovalLocked(
 	state *symbolState, side byte, price, qty float64, addTs, now time.Time,
 ) {
@@ -374,38 +388,46 @@ func (tracker *Tracker) classifyRemovalLocked(
 			continue
 		}
 
-		if math.Abs(trade.price-price)/price <= priceMatchTol {
+		if math.Abs(trade.price-price)/price <= state.priceMatchTolerance(price) {
 			matched += trade.volume
 		}
 	}
 
-	if matched >= fillCoverage*qty {
-		tracker.addFlowLocked(state, side, qty, 0)
+	fillGate := state.fillCoverageGate()
+
+	if qty > 0 && matched/qty >= fillGate {
+		state.recordFillCoverage(matched, qty)
+		tracker.addFlowLocked(state, side, qty, 0, now)
 
 		return
 	}
 
-	tracker.addFlowLocked(state, side, 0, qty)
+	tracker.addFlowLocked(state, side, 0, qty, now)
 
-	sideDepth := state.askTotal
+	state.recordCancelQty(qty)
 
-	if side == 'b' {
-		sideDepth = state.bidTotal
-	}
-
-	large := sideDepth > 0 && qty >= largeBlockFrac*sideDepth
+	sideDepth := state.sideDepth(side)
+	largeThreshold := state.largeBlockQtyThreshold(sideDepth)
+	large := sideDepth > 0 && qty >= largeThreshold
+	proximityPct := state.touchProximityPct()
 	distancePct := math.Inf(1)
 
 	if state.mid > 0 {
 		distancePct = math.Abs(price-state.mid) / state.mid
 	}
 
-	near := distancePct <= toxicProximityPct
+	near := proximityPct > 0 && distancePct <= proximityPct
 	age := now.Sub(addTs)
 	young := age <= toxicMaxAge
 
 	if large && near && young {
-		evidence := toxicCancelEvidence(qty, sideDepth, distancePct, age)
+		evidence := toxicCancelEvidence(
+			qty,
+			largeThreshold,
+			distancePct,
+			proximityPct,
+			age,
+		)
 
 		tracker.flagToxicLocked(state, price, 0, evidence, now)
 	}
@@ -434,46 +456,61 @@ func (tracker *Tracker) observeLevelChurnLocked(
 	}
 
 	ratio := window.deleteVol / window.addVol
+	churnGate := state.churnRatioGate()
 
-	if ratio < flashChurnRatioThreshold {
+	if ratio < churnGate {
 		return
 	}
+
+	state.recordChurnRatio(ratio)
 
 	if state.mid <= 0 {
 		return
 	}
 
 	distancePct := math.Abs(price-state.mid) / state.mid
+	proximityPct := state.touchProximityPct()
 
-	if distancePct > toxicProximityPct {
+	if proximityPct <= 0 || distancePct > proximityPct {
 		return
 	}
 
-	sideDepth := state.askTotal
+	sideDepth := state.sideDepth(side)
+	largeThreshold := state.largeBlockQtyThreshold(sideDepth)
 
-	if side == 'b' {
-		sideDepth = state.bidTotal
-	}
-
-	if sideDepth <= 0 || window.addVol < largeBlockFrac*sideDepth {
+	if sideDepth <= 0 || window.addVol < largeThreshold {
 		return
 	}
 
-	evidence := toxicChurnEvidence(ratio, window.addVol, sideDepth, distancePct)
+	evidence := toxicChurnEvidence(
+		ratio,
+		churnGate,
+		window.addVol,
+		largeThreshold,
+		distancePct,
+		proximityPct,
+	)
 
 	tracker.flagToxicLocked(state, price, ratio, evidence, now)
 }
 
-func (tracker *Tracker) addFlowLocked(state *symbolState, side byte, fill, cancel float64) {
+func (tracker *Tracker) addFlowLocked(
+	state *symbolState,
+	side byte,
+	fill, cancel float64,
+	at time.Time,
+) {
+	alpha := state.flowSmoothingAlpha(at)
+
 	if side == 'b' {
-		state.fillBid += flowAlpha * (fill - state.fillBid)
-		state.cancelBid += flowAlpha * (cancel - state.cancelBid)
+		state.fillBid += alpha * (fill - state.fillBid)
+		state.cancelBid += alpha * (cancel - state.cancelBid)
 
 		return
 	}
 
-	state.fillAsk += flowAlpha * (fill - state.fillAsk)
-	state.cancelAsk += flowAlpha * (cancel - state.cancelAsk)
+	state.fillAsk += alpha * (fill - state.fillAsk)
+	state.cancelAsk += alpha * (cancel - state.cancelAsk)
 }
 
 func (tracker *Tracker) flagToxicLocked(
@@ -523,6 +560,52 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 	return true
 }
 
+func (tracker *Tracker) vacuumStrengthLimit(symbol string, threshold, maxRatio float64) float64 {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	state := tracker.symbols[symbol]
+
+	if state == nil || threshold <= 0 {
+		if threshold <= 0 {
+			return 1
+		}
+
+		return math.Max(2, maxRatio/threshold)
+	}
+
+	state.recordVacuumRatio(maxRatio)
+	state.peakVacuumRatio = math.Max(state.peakVacuumRatio, maxRatio)
+
+	return state.vacuumStrengthLimit(threshold)
+}
+
+func (tracker *Tracker) churnRatioGate(symbol string) float64 {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	state := tracker.symbols[symbol]
+
+	if state == nil {
+		return 1
+	}
+
+	return state.churnRatioGate()
+}
+
+func (tracker *Tracker) supportRatioGate(symbol string, threshold float64) float64 {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	state := tracker.symbols[symbol]
+
+	if state == nil {
+		return 0
+	}
+
+	return state.supportRatioGate(threshold)
+}
+
 func (tracker *Tracker) Snapshot(symbol string, at time.Time) (bookQualitySnapshot, float64, bool) {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
@@ -557,7 +640,10 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 
 		price := priceFromKey(key, state.pair)
 
-		if state.mid > 0 && math.Abs(price-state.mid)/state.mid <= toxicProximityPct {
+		proximityPct := state.touchProximityPct()
+
+		if state.mid > 0 && proximityPct > 0 &&
+			math.Abs(price-state.mid)/state.mid <= proximityPct {
 			snapshot.toxicNear = true
 			snapshot.toxicBluffStrength = math.Max(
 				snapshot.toxicBluffStrength,
@@ -571,22 +657,21 @@ func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnap
 
 func toxicCancelEvidence(
 	qty float64,
-	sideDepth float64,
+	sizeThreshold float64,
 	distancePct float64,
+	proximityPct float64,
 	age time.Duration,
 ) float64 {
-	sizeThreshold := largeBlockFrac * sideDepth
-
 	if sizeThreshold <= 0 || qty < sizeThreshold {
 		return 0
 	}
 
-	if distancePct > toxicProximityPct || age > toxicMaxAge {
+	if proximityPct <= 0 || distancePct > proximityPct || age > toxicMaxAge {
 		return 0
 	}
 
 	sizeEvidence := competitionMargin(qty-sizeThreshold, sizeThreshold)
-	proximityEvidence := competitionMargin(toxicProximityPct-distancePct, toxicProximityPct)
+	proximityEvidence := competitionMargin(proximityPct-distancePct, proximityPct)
 	ageEvidence := competitionMargin(float64(toxicMaxAge-age), float64(toxicMaxAge))
 
 	return evidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence)
@@ -594,23 +679,23 @@ func toxicCancelEvidence(
 
 func toxicChurnEvidence(
 	ratio float64,
+	churnGate float64,
 	addVol float64,
-	sideDepth float64,
+	sizeThreshold float64,
 	distancePct float64,
+	proximityPct float64,
 ) float64 {
-	sizeThreshold := largeBlockFrac * sideDepth
-
-	if ratio <= flashChurnRatioThreshold || sizeThreshold <= 0 || addVol < sizeThreshold {
+	if ratio <= churnGate || sizeThreshold <= 0 || addVol < sizeThreshold {
 		return 0
 	}
 
-	if distancePct > toxicProximityPct {
+	if proximityPct <= 0 || distancePct > proximityPct {
 		return 0
 	}
 
-	ratioEvidence := competitionMargin(ratio-flashChurnRatioThreshold, flashChurnRatioThreshold)
+	ratioEvidence := competitionMargin(ratio-churnGate, churnGate)
 	sizeEvidence := competitionMargin(addVol-sizeThreshold, sizeThreshold)
-	proximityEvidence := competitionMargin(toxicProximityPct-distancePct, toxicProximityPct)
+	proximityEvidence := competitionMargin(proximityPct-distancePct, proximityPct)
 
 	return evidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence)
 }

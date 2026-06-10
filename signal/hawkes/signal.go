@@ -152,17 +152,25 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) publish(reading hawkesReading, at time.Time) (logic.Measurement, error) {
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		reading.frenzy,
 		reading.saturation,
 		reading.organic,
 		reading.exhaustion,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(reading.category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 

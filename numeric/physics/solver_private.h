@@ -362,6 +362,8 @@ void manifold_velocity_at(
 - (BOOL)runGasStep:(NSString **)error;
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error;
 - (BOOL)readRhoMaxProjection:(float *)out length:(uint32_t)length error:(NSString **)error;
+- (BOOL)computeProjectionReading:(ManifoldReading *)reading error:(NSString **)error;
+- (BOOL)readOscillators:(ManifoldOscillator *)out count:(uint32_t)count error:(NSString **)error;
 - (BOOL)step:(ManifoldReading *)reading error:(NSString **)error;
 @end
 

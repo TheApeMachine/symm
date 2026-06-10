@@ -15,19 +15,20 @@ Domain extents are derived from book depth (X), venue lanes (Y), and universe ra
 Time step comes from the integration interval — the same exchange-time lattice fluid uses.
 */
 type Config struct {
-	GridX    uint32
-	GridY    uint32
-	GridZ    uint32
-	DomainX  float64
-	DomainY  float64
-	DomainZ  float64
-	DeltaT   float64
-	Gamma    float64
-	CV       float64
-	RhoMin   float64
-	PMin     float64
-	KThermal float64
-	MaxModes uint32
+	GridX                   uint32
+	GridY                   uint32
+	GridZ                   uint32
+	DomainX                 float64
+	DomainY                 float64
+	DomainZ                 float64
+	DeltaT                  float64
+	Gamma                   float64
+	CV                      float64
+	RhoMin                  float64
+	PMin                    float64
+	KThermal                float64
+	MaxModes                uint32
+	snapshotPublishInterval time.Duration
 }
 
 /*
@@ -94,19 +95,20 @@ func NewConfigFromViper() (Config, error) {
 	}
 
 	return Config{
-		GridX:    gridX,
-		GridY:    gridY,
-		GridZ:    gridZ,
-		DomainX:  float64(halfWidth*2+1) * tickSize,
-		DomainY:  float64(gridY),
-		DomainZ:  float64(gridZ),
-		DeltaT:   deltaT,
-		Gamma:    gamma,
-		CV:       1.0 / (gamma - 1.0),
-		RhoMin:   rhoMin,
-		PMin:     pMin,
-		KThermal: rhoMin / deltaT,
-		MaxModes: maxModes,
+		GridX:                   gridX,
+		GridY:                   gridY,
+		GridZ:                   gridZ,
+		DomainX:                 float64(halfWidth*2+1) * tickSize,
+		DomainY:                 float64(gridY),
+		DomainZ:                 float64(gridZ),
+		DeltaT:                  deltaT,
+		Gamma:                   gamma,
+		CV:                      1.0 / (gamma - 1.0),
+		RhoMin:                  rhoMin,
+		PMin:                    pMin,
+		KThermal:                rhoMin / deltaT,
+		MaxModes:                maxModes,
+		snapshotPublishInterval: viper.GetDuration("signals.manifold.snapshot_interval"),
 	}, nil
 }
 
@@ -150,4 +152,8 @@ func (config Config) GateWidthMax() float64 {
 
 func (config Config) IntegrationInterval() time.Duration {
 	return time.Duration(config.DeltaT * float64(time.Second))
+}
+
+func (config Config) SnapshotPublishInterval() time.Duration {
+	return config.snapshotPublishInterval
 }

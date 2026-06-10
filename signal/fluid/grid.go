@@ -7,13 +7,9 @@ import (
 
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 )
 
-const (
-	laminarReynoldsCeiling = 2000
-	turbulentReynoldsFloor = 4000
-	touchBandFraction      = 0.25
-)
 
 /*
 FluidGrid is a 1D finite-volume LOB hydrodynamics solver.
@@ -137,6 +133,7 @@ func (grid *FluidGrid) ingestBook(
 	}
 
 	grid.projectObserved(bids, asks, midPrice)
+	touchSpread := touchSpreadFromBook(bids, asks)
 
 	if !grid.lastBookAt.IsZero() {
 		if !at.After(grid.lastBookAt) {
@@ -165,7 +162,7 @@ func (grid *FluidGrid) ingestBook(
 		grid.inferVelocityField(midPrice, dt)
 		grid.diffusionCoeff = grid.estimateDiffusionCoefficient()
 		grid.integrateRK2(dt)
-		grid.measureReplenishment(dt)
+		grid.measureReplenishment(dt, touchSpread)
 		grid.measureMidDivergence()
 
 		grid.lastIntegrateAt = grid.lastIntegrateAt.Add(grid.integrationInterval)
@@ -261,13 +258,9 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 	}
 }
 
-func (grid *FluidGrid) measureReplenishment(dt float64) {
+func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	positive := 0.0
-	touchBand := int(float64(grid.halfWidth) * touchBandFraction)
-
-	if touchBand < 1 {
-		touchBand = 1
-	}
+	touchBand := numeric.TouchBandCells(spread, grid.tickSize, grid.halfWidth)
 
 	for index, rate := range grid.sources {
 		if rate <= 0 {
@@ -303,6 +296,60 @@ func (grid *FluidGrid) midVelocityDivergence() float64 {
 
 func (grid *FluidGrid) viscosity() float64 {
 	return grid.replenishmentRate
+}
+
+func touchSpreadFromBook(bids, asks []krakenmarket.BookLevel) float64 {
+	if len(bids) == 0 || len(asks) == 0 {
+		return 0
+	}
+
+	return asks[0].Price - bids[0].Price
+}
+
+func (grid *FluidGrid) rhoGradFloor(index int) float64 {
+	if index < 0 || index >= len(grid.observedRho) {
+		return rhoFloor
+	}
+
+	medianRho := grid.medianObservedRho()
+
+	if medianRho <= 0 {
+		return rhoFloor
+	}
+
+	local := grid.observedRho[index]
+
+	if local <= 0 {
+		local = medianRho
+	}
+
+	floor := local * local / (local + medianRho)
+
+	if floor < rhoFloor {
+		return rhoFloor
+	}
+
+	return floor
+}
+
+func (grid *FluidGrid) medianObservedRho() float64 {
+	if len(grid.observedRho) == 0 {
+		return 0
+	}
+
+	total := 0.0
+
+	for _, value := range grid.observedRho {
+		if value > 0 {
+			total += value
+		}
+	}
+
+	if total <= 0 {
+		return 0
+	}
+
+	return total / float64(len(grid.observedRho))
 }
 
 func (grid *FluidGrid) reynolds(spread float64) float64 {

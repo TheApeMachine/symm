@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/futures"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/physics"
 )
 
@@ -339,6 +340,29 @@ func visibleBookQty(state *UniverseState) float64 {
 	}
 
 	return total
+}
+
+func (state *UniverseState) configureTickFromBook(
+	bids, asks []krakenmarket.BookLevel,
+) {
+	bidPrices := make([]float64, len(bids))
+	askPrices := make([]float64, len(asks))
+
+	for index, level := range bids {
+		bidPrices[index] = level.Price
+	}
+
+	for index, level := range asks {
+		askPrices[index] = level.Price
+	}
+
+	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
+
+	if tickSize <= 0 {
+		return
+	}
+
+	state.tickSize = tickSize
 }
 
 func (state *UniverseState) whaleQtyThreshold() float64 {

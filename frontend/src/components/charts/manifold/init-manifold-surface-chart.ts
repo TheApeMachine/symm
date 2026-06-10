@@ -20,7 +20,6 @@ import { appTheme } from "#/components/charts/fluid/theme";
 import {
 	manifoldCameraFrame,
 	manifoldHeightExtent,
-	normalizeCarrierWeights,
 } from "#/components/charts/manifold/manifold-camera";
 import {
 	isDegenerateHeightmap,
@@ -79,22 +78,50 @@ const fitManifoldCamera = (
 	sciChart3DSurface.yAxis.visibleRange = new NumberRange(yMin, yMax);
 };
 
+const sampleSurfaceHeight = (
+	heights: number[][],
+	chartX: number,
+	chartZ: number,
+): number | null => {
+	const gridZ = heights.length;
+	const gridX = gridZ > 0 ? (heights[0]?.length ?? 0) : 0;
+
+	if (gridX === 0 || gridZ === 0) {
+		return null;
+	}
+
+	const xIndex = Math.min(Math.max(Math.round(chartX), 0), gridX - 1);
+	const zIndex = Math.min(Math.max(Math.round(chartZ), 0), gridZ - 1);
+	const value = heights[zIndex]?.[xIndex];
+
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return null;
+	}
+
+	return value;
+};
+
 const updateCarrierSeries = (
 	series: ScatterRenderableSeries3D,
 	carriers: ManifoldCarrierRow[],
-	yMin: number,
-	yMax: number,
+	grid: ManifoldFieldSnapshot["grid"],
+	heights: number[][],
 ) => {
 	const dataSeries = series.dataSeries as XyzDataSeries3D;
-	const weights = normalizeCarrierWeights(carriers);
+	const spacing = grid.spacing;
 
 	dataSeries.clear();
 
 	for (const carrier of carriers) {
-		const normalizedWeight = weights.get(carrier.symbol) ?? 0;
-		const height = yMin + normalizedWeight * (yMax - yMin) * 0.92;
+		const chartX = carrier.x / spacing;
+		const chartZ = carrier.z / spacing;
+		const chartY = sampleSurfaceHeight(heights, chartX, chartZ);
 
-		dataSeries.append(carrier.cell_x, height, carrier.cell_z);
+		if (chartY === null) {
+			continue;
+		}
+
+		dataSeries.append(chartX, chartY, chartZ);
 	}
 };
 
@@ -134,6 +161,7 @@ export const initManifoldSurfaceChart = async (
 	let gridZ = MANIFOLD_GRID_Z;
 	let surfaceYMin = 0;
 	let surfaceYMax = 1;
+	let cameraFitted = false;
 	let heightmapArray = zeroArray2D([gridZ, gridX]);
 
 	let dataSeries = new UniformGridDataSeries3D(wasmContext, {
@@ -214,6 +242,10 @@ export const initManifoldSurfaceChart = async (
 	);
 
 	const push = (frame: ManifoldFieldSnapshot): boolean => {
+		if (!(frame.grid.spacing > 0)) {
+			return false;
+		}
+
 		const projected = projectManifoldHeightmap(frame, 0, 1);
 		const heights = projected.heights;
 
@@ -274,24 +306,22 @@ export const initManifoldSurfaceChart = async (
 		updateCarrierSeries(
 			symbolCarrierSeries,
 			symbolCarriers,
-			surfaceYMin,
-			surfaceYMax,
+			frame.grid,
+			heights,
 		);
-		updateCarrierSeries(
-			whaleCarrierSeries,
-			whaleCarriers,
-			surfaceYMin,
-			surfaceYMax,
-		);
+		updateCarrierSeries(whaleCarrierSeries, whaleCarriers, frame.grid, heights);
 
-		fitManifoldCamera(
-			sciChart3DSurface,
-			wasmContext,
-			gridX,
-			gridZ,
-			surfaceYMin,
-			surfaceYMax,
-		);
+		if (gridChanged || !cameraFitted) {
+			fitManifoldCamera(
+				sciChart3DSurface,
+				wasmContext,
+				gridX,
+				gridZ,
+				surfaceYMin,
+				surfaceYMax,
+			);
+			cameraFitted = true;
+		}
 		sciChart3DSurface.invalidateElement();
 
 		return true;

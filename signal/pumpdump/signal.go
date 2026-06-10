@@ -265,7 +265,12 @@ func (signal *Signal) fromSeries(
 		}
 	}
 
-	probabilities := numeric.SoftmaxScores(signal.weights.Scores(rvol, precursor, compression))
+	probabilities, err := numeric.SoftmaxScores(signal.weights.Scores(rvol, precursor, compression))
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	category := pumpDumpCategories[numeric.ArgmaxIndex(probabilities)]
 
 	categoryIndex := 0
@@ -282,7 +287,11 @@ func (signal *Signal) fromSeries(
 	}
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 

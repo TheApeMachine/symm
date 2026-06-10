@@ -13,6 +13,7 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/rawbus"
 	"github.com/theapemachine/symm/telemetry"
 )
 
@@ -72,8 +73,8 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		switch message.Type {
-		case "symbols":
+		switch rawbus.TypeFrom(message.Type) {
+		case rawbus.TypeSymbols:
 			symbols, symbolOk := message.Value.([]string)
 
 			if symbolOk {
@@ -81,7 +82,7 @@ func (system *System) Tick() error {
 			}
 
 			continue
-		case "trade":
+		case rawbus.TypeTrade:
 			trades, ok := tradeUpdates(message.Value)
 
 			if !ok {
@@ -113,7 +114,7 @@ func (system *System) Tick() error {
 					trade.Timestamp,
 				)
 			}
-		case "ticker":
+		case rawbus.TypeTicker:
 			tickers, ok := tickerUpdates(message.Value)
 
 			if !ok {
@@ -145,7 +146,7 @@ func (system *System) Tick() error {
 					ticker.Timestamp,
 				)
 			}
-		case "book":
+		case rawbus.TypeBook:
 			books, ok := bookUpdates(message.Value)
 
 			if !ok {
@@ -179,7 +180,7 @@ func (system *System) Tick() error {
 					eventAt,
 				)
 			}
-		case "feedback":
+		case rawbus.TypeFeedback:
 			feedback, ok := message.Value.(*market.Feedback)
 
 			if !ok {

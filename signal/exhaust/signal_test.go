@@ -135,10 +135,12 @@ func TestExitScorePicksStrongerSide(t *testing.T) {
 		}
 
 		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityBook))
-		longUrgency, _, _ := signal.exitScore(history, 1)
-		shortUrgency, shortCategory, _ := signal.exitScore(history, -1)
+		longUrgency, _, _, longErr := signal.exitScore(history, 1)
+		shortUrgency, shortCategory, _, shortErr := signal.exitScore(history, -1)
 
 		Convey("It should let the stronger short-side score win", func() {
+			So(longErr, ShouldBeNil)
+			So(shortErr, ShouldBeNil)
 			So(shortUrgency, ShouldBeGreaterThan, longUrgency)
 			So(shortCategory, ShouldEqual, logic.CategoryMechanicalCollapse)
 		})

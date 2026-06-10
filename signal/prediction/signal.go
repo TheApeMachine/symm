@@ -325,10 +325,16 @@ func (signal *Signal) fromSeries(
 
 		signal.enqueueForecast(at, anchorPrice, forecast, normalizeScale)
 
+		forecastUnits, forecastUnitsErr := signal.movementUnits(forecast, normalizeScale)
+
+		if forecastUnitsErr != nil {
+			return logic.Measurement{}, forecastUnitsErr
+		}
+
 		chartEvents := ChartEvents{
 			Settlements:    settlements,
 			ForecastTarget: float64(at.Add(signal.horizon).Unix()),
-			Forecast:       signal.movementUnits(forecast, normalizeScale),
+			Forecast:       forecastUnits,
 			HasForecast:    true,
 			EventAt:        at,
 		}
@@ -337,7 +343,11 @@ func (signal *Signal) fromSeries(
 		signal.publishChartEvents()
 	}
 
-	confidence := signal.movementConfidence(forecast, prices)
+	confidence, confidenceErr := signal.movementConfidence(forecast, prices)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
 	strength := confidence
 
 	position := logic.PositionTypeNone
@@ -498,16 +508,28 @@ func (signal *Signal) settlePending(
 			continue
 		}
 
+		forecastUnits, forecastUnitsErr := signal.movementUnits(
+			pending.forecast,
+			pending.movementScale,
+		)
+
+		if forecastUnitsErr != nil {
+			return nil, forecastUnitsErr
+		}
+
+		actualUnits, actualUnitsErr := signal.movementUnits(
+			realized,
+			pending.movementScale,
+		)
+
+		if actualUnitsErr != nil {
+			return nil, actualUnitsErr
+		}
+
 		settlements = append(settlements, ChartSettlement{
 			TargetUnix: float64(pending.matureAt.Unix()),
-			Forecast: signal.movementUnits(
-				pending.forecast,
-				pending.movementScale,
-			),
-			Actual: signal.movementUnits(
-				realized,
-				pending.movementScale,
-			),
+			Forecast:   forecastUnits,
+			Actual:     actualUnits,
 		})
 	}
 
@@ -584,9 +606,9 @@ func (signal *Signal) movementScale(prices []float64) float64 {
 	return scale
 }
 
-func (signal *Signal) movementUnits(value, scale float64) float64 {
+func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
 	if scale <= 0 || value == 0 {
-		return 0
+		return 0, nil
 	}
 
 	sign := 1.0
@@ -596,23 +618,29 @@ func (signal *Signal) movementUnits(value, scale float64) float64 {
 	}
 
 	forwardScore := math.Abs(value) / scale
-	probabilities := numeric.SoftmaxScores([]float64{forwardScore, 1.0})
+	probabilities, err := numeric.SoftmaxScores([]float64{forwardScore, 1.0})
 
-	if len(probabilities) == 0 {
-		return 0
+	if err != nil {
+		return 0, err
 	}
 
-	return sign * probabilities[0]
+	return sign * probabilities[0], nil
 }
 
-func (signal *Signal) movementConfidence(forecast float64, prices []float64) float64 {
+func (signal *Signal) movementConfidence(forecast float64, prices []float64) (float64, error) {
 	scale := signal.movementScale(prices)
 
 	if scale <= 0 {
-		return 0
+		return 0, nil
 	}
 
-	return math.Abs(signal.movementUnits(forecast, scale))
+	units, err := signal.movementUnits(forecast, scale)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return math.Abs(units), nil
 }
 
 func spanReturnScale(prices []float64) float64 {

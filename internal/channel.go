@@ -14,6 +14,7 @@ const (
 	ChannelKrakenPrivate Channel = "kraken:private"
 	ChannelKrakenFutures Channel = "kraken:futures"
 	ChannelLevel3        Channel = "level3"
+	ChannelAudit         Channel = "audit"
 )
 
 func (channel Channel) String() string {

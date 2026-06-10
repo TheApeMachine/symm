@@ -86,3 +86,18 @@ int manifold_solver_read_rho_projection(
     char *err_out,
     int err_cap
 );
+
+int manifold_solver_read_projection_reading(
+    void *handle,
+    ManifoldReading *reading,
+    char *err_out,
+    int err_cap
+);
+
+int manifold_solver_read_oscillators(
+    void *handle,
+    ManifoldOscillator *out,
+    uint32_t count,
+    char *err_out,
+    int err_cap
+);

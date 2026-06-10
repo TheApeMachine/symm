@@ -287,7 +287,15 @@ func (signal *Signal) fromCrossSection(
 	crossSection.RecordBreadth(breadth)
 
 	surgeThreshold := crossSection.MajorityThreshold(at) + signal.surgeBias
-	surgeThreshold = math.Min(math.Max(surgeThreshold, 0.5), 1)
+	majorityFloor := crossSection.MajorityThreshold(at)
+
+	if surgeThreshold < majorityFloor {
+		surgeThreshold = majorityFloor
+	}
+
+	if surgeThreshold > 1 {
+		surgeThreshold = 1
+	}
 
 	leader := crossSection.IsLeader(signal.symbol, change, at)
 
@@ -304,7 +312,11 @@ func (signal *Signal) fromCrossSection(
 		math.Abs(change),
 		leaderScore,
 	}
-	probabilities := numeric.SoftmaxScores(scores)
+	probabilities, err := numeric.SoftmaxScores(scores)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	categoryIndex := 0
 
@@ -318,7 +330,11 @@ func (signal *Signal) fromCrossSection(
 	}
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 

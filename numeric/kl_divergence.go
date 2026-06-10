@@ -1,9 +1,12 @@
 package numeric
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 /*
-KLDivergence returns sum(q_i * log(q_i / p_i)) for aligned distributions.
+KLDivergence returns sum(q_i * log(q_i / p_i) for aligned distributions.
 Lengths may differ: missing indices use floor on q and p. rowSum <= 0 on the
 expected side is lifted to floor before normalization.
 */
@@ -12,9 +15,25 @@ func KLDivergence(
 	expected []float64,
 	expectedSum float64,
 	floor float64,
-) float64 {
+) (float64, error) {
 	if floor <= 0 {
 		floor = 1e-6
+	}
+
+	for index, value := range observed {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, fmt.Errorf("numeric: observed[%d] is non-finite", index)
+		}
+	}
+
+	for index, value := range expected {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, fmt.Errorf("numeric: expected[%d] is non-finite", index)
+		}
+	}
+
+	if math.IsNaN(expectedSum) || math.IsInf(expectedSum, 0) {
+		return 0, fmt.Errorf("numeric: expected sum is non-finite")
 	}
 
 	if expectedSum <= 0 {
@@ -30,6 +49,10 @@ func KLDivergence(
 
 	for index := range len(observed) {
 		observedSum += observed[index]
+	}
+
+	if math.IsNaN(observedSum) || math.IsInf(observedSum, 0) {
+		return 0, fmt.Errorf("numeric: observed sum is non-finite")
 	}
 
 	if observedSum <= 0 {
@@ -64,5 +87,9 @@ func KLDivergence(
 		divergence += observedProbability * math.Log(observedProbability/expectedProbability)
 	}
 
-	return divergence
+	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
+		return 0, fmt.Errorf("numeric: kl divergence is non-finite")
+	}
+
+	return divergence, nil
 }

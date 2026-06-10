@@ -2,6 +2,7 @@ package physics
 
 import (
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -15,6 +16,7 @@ func TestNewConfigFromViper(t *testing.T) {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("signals.manifold.snapshot_interval", "250ms")
 		viper.Set("signals.manifold.max_modes", 8)
 
 		config, err := NewConfigFromViper()
@@ -25,6 +27,7 @@ func TestNewConfigFromViper(t *testing.T) {
 			convey.So(config.CellVolume(), convey.ShouldBeGreaterThan, 0)
 			convey.So(config.HbarEffective(), convey.ShouldBeGreaterThan, 0)
 			convey.So(config.GInteraction(), convey.ShouldBeGreaterThan, 0)
+			convey.So(config.SnapshotPublishInterval(), convey.ShouldEqual, 250*time.Millisecond)
 		})
 	})
 }

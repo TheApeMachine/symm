@@ -326,7 +326,7 @@ func TestTreeEvaluateTracedIgnitionBottleneck(t *testing.T) {
 		trace := &EvalTrace{}
 
 		Convey("It should keep the ignition-path bottleneck for audit", func() {
-			So(tree.EvaluateTraced(measurements, NewHoldings(), trace), ShouldBeNil)
+			So(tree.Evaluate(measurements, NewHoldings()), ShouldBeNil)
 
 			bottleneck := trace.Bottleneck()
 

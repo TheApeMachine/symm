@@ -14,8 +14,6 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
-const vacuumStrengthCap = 100.0
-
 /*
 Signal classifies book-quality into toxicity perspective categories.
 
@@ -151,7 +149,9 @@ func (signal *Signal) classify(
 	float64,
 ) {
 	if snapshot.toxicNear {
-		bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength)
+		churnGate := signal.tracker.churnRatioGate(signal.symbol)
+		bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength, churnGate)
+
 		return logic.CategoryToxicBluff, snapshot.toxicBluffStrength, bluffScore, 0, 0
 	}
 
@@ -179,14 +179,21 @@ func (signal *Signal) classify(
 	if bidVacuum || askVacuum {
 		margin := maxRatio - threshold
 		vacuumScore := competitionMargin(margin, threshold)
-		strength := math.Min(maxRatio/threshold, vacuumStrengthCap)
+		strengthCap := signal.tracker.vacuumStrengthLimit(signal.symbol, threshold, maxRatio)
+		strength := math.Min(maxRatio/threshold, strengthCap)
 
 		return logic.CategoryLiquidityVacuum, strength, 0, vacuumScore, 0
 	}
 
+	supportGate := threshold * signal.tracker.supportRatioGate(signal.symbol, threshold)
+
+	if supportGate <= 0 && bidRatio > 0 && askRatio > 0 {
+		supportGate = math.Min(bidRatio, askRatio)
+	}
+
 	if bidRatio > 0 && askRatio > 0 &&
-		bidRatio < threshold/2 && askRatio < threshold/2 {
-		half := threshold / 2
+		bidRatio < supportGate && askRatio < supportGate {
+		half := supportGate
 		margin := half - maxRatio
 		supportScore := competitionMargin(margin, half)
 		strength := supportScore
@@ -197,19 +204,20 @@ func (signal *Signal) classify(
 	return logic.CategoryTypeNone, 0, 0, 0, 0
 }
 
-func toxicBluffEvidence(churnRatio float64) float64 {
+func toxicBluffEvidence(churnRatio float64, churnGate float64) float64 {
 	if churnRatio <= 0 {
 		return 0
 	}
 
-	if churnRatio <= flashChurnRatioThreshold {
+	if churnGate <= 0 {
 		return magnitudeMargin(churnRatio)
 	}
 
-	margin := churnRatio - flashChurnRatioThreshold
-	span := 1 - flashChurnRatioThreshold
+	if churnRatio <= churnGate {
+		return magnitudeMargin(churnRatio)
+	}
 
-	return competitionMargin(margin, span)
+	return competitionMargin(churnRatio-churnGate, churnGate)
 }
 
 func (signal *Signal) publish(
@@ -218,16 +226,24 @@ func (signal *Signal) publish(
 	bluffScore, vacuumScore, supportScore float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		bluffScore,
 		vacuumScore,
 		supportScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 

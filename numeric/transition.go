@@ -30,7 +30,7 @@ func NewTransitionMatrix(numStates int, alpha float64) *TransitionMatrix {
 	}
 }
 
-func (matrix *TransitionMatrix) Surprise(observed []float64) float64 {
+func (matrix *TransitionMatrix) Surprise(observed []float64) (float64, error) {
 	row := matrix.counts[matrix.lastCategory]
 	rowSum := 0.0
 

@@ -177,10 +177,20 @@ export const formatManifoldReading = (
 					0,
 				) / frame.carriers.length;
 
+	const carrierGuidance =
+		frame.carriers.length === 0
+			? 0
+			: frame.carriers.reduce(
+					(total, carrier) =>
+						total +
+						Math.hypot(carrier.vel_x, Math.hypot(carrier.vel_y, carrier.vel_z)),
+					0,
+				) / frame.carriers.length;
+
 	return [
-		`∇p norm ${formatMetric(reading.pressure_grad_norm)}`,
+		`∇ρ norm ${formatMetric(reading.pressure_grad_norm)}`,
 		`mean |Ψ| ${formatMetric(meanCarrierAmplitude)}`,
-		`guidance ${formatMetric(reading.guidance_speed)}`,
+		`carrier guidance ${formatMetric(carrierGuidance)}`,
 		`viscosity ${formatMetric(reading.viscosity_proxy)}`,
 		`div ${formatMetric(reading.divergence)}`,
 		`carriers ${symbols} symbols · ${whales} whales`,

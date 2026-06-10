@@ -3,7 +3,6 @@ package market
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/kraken/types"
@@ -60,46 +59,4 @@ type CandleUpdates []*CandleUpdate
 
 func (updates *CandleUpdates) Unmarshal(message *types.SocketMessage) error {
 	return sonic.Unmarshal(message.Data, updates)
-}
-
-/*
-IntervalSec parses interval_begin into unix seconds for the trade chart wire.
-*/
-func (candle *CandleUpdate) IntervalSec() (int64, error) {
-	if candle.IntervalBegin == "" {
-		return 0, fmt.Errorf("candle: empty interval_begin")
-	}
-
-	parsed, err := time.Parse(time.RFC3339Nano, candle.IntervalBegin)
-
-	if err != nil {
-		parsed, err = time.Parse(time.RFC3339, candle.IntervalBegin)
-	}
-
-	if err != nil {
-		return 0, fmt.Errorf("candle: interval_begin: %w", err)
-	}
-
-	return parsed.Unix(), nil
-}
-
-/*
-UIFrame is the websocket payload expected by the trade chart adapter.
-*/
-func (candle *CandleUpdate) UIFrame() (map[string]any, error) {
-	sec, err := candle.IntervalSec()
-
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]any{
-		"symbol": candle.Symbol,
-		"sec":    sec,
-		"open":   candle.Open,
-		"high":   candle.High,
-		"low":    candle.Low,
-		"close":  candle.Close,
-		"volume": candle.Volume,
-	}, nil
 }

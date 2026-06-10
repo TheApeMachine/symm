@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -37,6 +38,7 @@ type FluidSymbol struct {
 	grid           *FluidGrid
 	bufferedTrades []bufferedTrade
 	lastEventAt    time.Time
+	dynamics       fluidDynamics
 }
 
 type fluidReading struct {
@@ -47,6 +49,30 @@ type fluidReading struct {
 	divergence    float64
 	viscosity     float64
 	sourceBalance float64
+	dynamics      fluidDynamics
+}
+
+func (state *FluidSymbol) configureTickFromBook(
+	bids, asks []krakenmarket.BookLevel,
+) {
+	bidPrices := make([]float64, len(bids))
+	askPrices := make([]float64, len(asks))
+
+	for index, level := range bids {
+		bidPrices[index] = level.Price
+	}
+
+	for index, level := range asks {
+		askPrices[index] = level.Price
+	}
+
+	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
+
+	if tickSize <= 0 {
+		return
+	}
+
+	_ = state.ConfigureTick(tickSize)
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
@@ -176,6 +202,10 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	}
 
 	state.updateTouchLocked(bids, asks)
+
+	if update.Type == "snapshot" {
+		state.configureTickFromBook(bids, asks)
+	}
 
 	mid := (state.bid + state.ask) / 2
 
@@ -322,6 +352,9 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
+	state.dynamics.recordReynolds(reynolds)
+	state.dynamics.recordDivergence(math.Abs(divergence))
+
 	return fluidReading{
 		symbol:        state.symbol,
 		price:         state.last,
@@ -330,6 +363,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		divergence:    divergence,
 		viscosity:     viscosity,
 		sourceBalance: state.grid.midSourceBalance(),
+		dynamics:      state.dynamics,
 	}, true
 }
 

@@ -2,15 +2,22 @@ package response
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/gofiber/fiber/v3"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 )
+
+var errMissingFillBook = errors.New("paper orders: pair catalog required for market fill")
 
 /*
 Orders simulates Kraken private order methods. Market orders fill immediately at
@@ -27,13 +34,13 @@ type Orders struct {
 	pendingExec []user.Execution
 	observers   []types.Socket
 	fillHandler *Balances
-	bookStore   *market.BookStore
+	catalog     *PairCatalog
 }
 
 func NewOrders(
 	ctx context.Context,
 	pool *qpool.Q[any],
-	bookStore *market.BookStore,
+	catalog *PairCatalog,
 ) *Orders {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -46,7 +53,7 @@ func NewOrders(
 		model:      make(map[string]trading.OrderUpdate),
 		executions: make(map[string]user.Execution),
 		observers:  make([]types.Socket, 0),
-		bookStore:  bookStore,
+		catalog:    catalog,
 	}
 }
 
@@ -153,13 +160,15 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 
 	fillPrice := params.LimitPrice
 
-	if orders.bookStore != nil {
-		side := string(params.Side)
-		vwapPrice, _, vwapErr := orders.bookStore.VWAP(params.Symbol, side, params.OrderQty)
+	if fillPrice <= 0 {
+		marketPrice, marketErr := orders.marketFillPrice(params)
 
-		if vwapErr == nil {
-			fillPrice = vwapPrice
+		if marketErr != nil {
+			delete(orders.model, params.ClOrdID)
+			return
 		}
+
+		fillPrice = marketPrice
 	}
 
 	if fillPrice <= 0 {
@@ -193,6 +202,99 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	for _, observer := range orders.observers {
 		observer.Send(&qpool.QValue[any]{Value: balanceMessage})
 	}
+}
+
+func (orders *Orders) marketFillPrice(params trading.AddParams) (float64, error) {
+	if orders.catalog == nil {
+		return 0, errMissingFillBook
+	}
+
+	restPair, pairErr := orders.catalog.RestPair(params.Symbol)
+
+	if pairErr != nil {
+		return 0, pairErr
+	}
+
+	count := viper.GetInt("market.book_depth_levels")
+
+	if count <= 0 {
+		return 0, fmt.Errorf("paper orders: book depth must be positive")
+	}
+
+	endpoint := orders.catalog.depthAPI
+
+	if endpoint == "" {
+		endpoint = public.EndpointTypeDepth
+	}
+
+	rest := public.NewRest(orders.ctx, endpoint)
+	books := map[string]struct {
+		Bids [][]string `json:"bids"`
+		Asks [][]string `json:"asks"`
+	}{}
+
+	if err := rest.Get(orders.ctx, fiber.Map{
+		"pair":  restPair,
+		"count": count,
+	}, &books); err != nil {
+		return 0, fmt.Errorf("paper orders: fetch depth for %s: %w", restPair, err)
+	}
+
+	for _, book := range books {
+		levels := book.Asks
+
+		if params.Side == trading.Sell {
+			levels = book.Bids
+		}
+
+		return depthVWAP(levels, params.OrderQty)
+	}
+
+	return 0, fmt.Errorf("paper orders: empty depth for %s", restPair)
+}
+
+func depthVWAP(levels [][]string, quantity float64) (float64, error) {
+	if quantity <= 0 {
+		return 0, fmt.Errorf("paper orders: quantity must be positive")
+	}
+
+	remaining := quantity
+	cost := 0.0
+	filled := 0.0
+
+	for _, level := range levels {
+		if remaining <= 0 || len(level) < 2 {
+			break
+		}
+
+		price, priceErr := strconv.ParseFloat(level[0], 64)
+
+		if priceErr != nil {
+			return 0, fmt.Errorf("paper orders: depth price: %w", priceErr)
+		}
+
+		qty, qtyErr := strconv.ParseFloat(level[1], 64)
+
+		if qtyErr != nil {
+			return 0, fmt.Errorf("paper orders: depth qty: %w", qtyErr)
+		}
+
+		take := qty
+
+		if take > remaining {
+			take = remaining
+		}
+
+		cost += take * price
+		filled += take
+		remaining -= take
+	}
+
+	if filled <= 0 {
+		return 0, fmt.Errorf("paper orders: insufficient depth")
+	}
+
+	return cost / filled, nil
 }
 
 func (orders *Orders) Observe(sockets ...types.Socket) {

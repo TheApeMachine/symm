@@ -13,19 +13,10 @@ SYMM_BIN := bin/symm
 CONFIG ?=
 CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
-# Tune knobs — these are now actually passed to the binary; they were previously
-# defined here and never used, so beam width silently ran at the code default.
-TUNE_WORKERS ?= 0
-TUNE_BEAM_WIDTH ?= 0
-TUNE_MAX_ROUNDS ?= 0
-TUNE_MAX_NODES ?= 0
-TUNE_PATIENCE ?= 0
-TUNE_MAX_MEASUREMENTS ?= 0
-TUNE_FLAGS = --workers $(TUNE_WORKERS) --beam-width $(TUNE_BEAM_WIDTH) --max-rounds $(TUNE_MAX_ROUNDS) --max-nodes $(TUNE_MAX_NODES) --patience $(TUNE_PATIENCE) --max-measurements $(TUNE_MAX_MEASUREMENTS)
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build physics-metallib test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report tune replay dump profile profile-stack profile-report profile-tune strip-trailing-newlines
+.PHONY: build physics-metallib test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines
 
 physics-metallib:
 	cd numeric/physics && go run ./metallibgen
@@ -76,13 +67,6 @@ profile-report:
 	@chmod +x scripts/profile-report.sh
 	PROFILE_DIR=$(PROFILE_DIR) ./scripts/profile-report.sh
 
-profile-tune: build
-	@mkdir -p $(PROFILE_DIR)
-	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it, then 'make tune'." && exit 1)
-	@echo "=== profile tune ==="
-	@echo "Live pprof index: http://127.0.0.1:6060/debug/pprof/"
-	SYMM_PPROF=1 ./$(SYMM_BIN) tune $(CONFIG_FLAG) $(TUNE_FLAGS)
-
 run: build
 	@mkdir -p $(LOG_DIR)
 	@echo "symm running — collecting run data → runs/capture.jsonl  (Ctrl+C to stop)"
@@ -103,18 +87,6 @@ audit-report:
 run-profile: build
 	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	SYMM_PPROF=1 ./$(SYMM_BIN) $(CONFIG_FLAG)
-
-tune: build
-	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it (Ctrl+C when you have enough), then 'make tune'." && exit 1)
-	./$(SYMM_BIN) tune $(CONFIG_FLAG) $(TUNE_FLAGS)
-
-# Manual workbench: score a hand-written playbook against the capture, per-setup.
-#   make replay                              (live playbook vs default capture)
-#   make replay PLAYBOOK=my-ideas.yaml       (your experiment)
-PLAYBOOK ?=
-replay: build
-	@test -f runs/capture.jsonl || (echo "No run data yet — do 'make run' to collect it first." && exit 1)
-	./$(SYMM_BIN) replay $(CONFIG_FLAG) $(if $(PLAYBOOK),--playbook $(PLAYBOOK),)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

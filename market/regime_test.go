@@ -163,6 +163,34 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 	})
 }
 
+func TestRegimeClassifierMarketMeanWithLargeWindow(t *testing.T) {
+	Convey("Given regime.window larger than return capacity", t, func() {
+		configureRegimeViper()
+		viper.Set("regime.window", 256)
+
+		crossSection := &CrossSection{returnCap: 64}
+		classifier, err := NewRegimeClassifier(crossSection)
+
+		So(err, ShouldBeNil)
+
+		classifier.Observe(logic.Measurement{
+			Symbol:     "BTC/EUR",
+			Price:      100,
+			ObservedAt: time.Unix(1_700_000_000, 0),
+		})
+
+		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
+		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
+
+		mean := classifier.MarketMean()
+
+		Convey("It should still classify from available returns", func() {
+			So(mean.Volatility, ShouldBeGreaterThan, 0)
+			So(mean.Bullish+mean.Bearish, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestRegimeBaselineShift(t *testing.T) {
 	Convey("Given a volatility regime break", t, func() {
 		configureRegimeViper()

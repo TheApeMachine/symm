@@ -13,9 +13,10 @@ func TestKLDivergence(t *testing.T) {
 		expected := []float64{0.25, 0.25, 0.25, 0.25}
 		sum := 1.0
 
-		divergence := KLDivergence(observed, expected, sum, 1e-6)
+		divergence, err := KLDivergence(observed, expected, sum, 1e-6)
 
 		Convey("It should be near zero", func() {
+			So(err, ShouldBeNil)
 			So(divergence, ShouldAlmostEqual, 0, 1e-6)
 		})
 	})
@@ -24,10 +25,19 @@ func TestKLDivergence(t *testing.T) {
 		observed := []float64{0.5, 0.5}
 		expected := []float64{0, 0}
 
-		divergence := KLDivergence(observed, expected, 0, 1e-6)
+		divergence, err := KLDivergence(observed, expected, 0, 1e-6)
 
 		Convey("It should not return NaN", func() {
+			So(err, ShouldBeNil)
 			So(math.IsNaN(divergence), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a non-finite observation", t, func() {
+		_, err := KLDivergence([]float64{math.NaN()}, []float64{0.5}, 1.0, 1e-6)
+
+		Convey("It should return an error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -39,6 +49,6 @@ func BenchmarkKLDivergence(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = KLDivergence(observed, expected, 1.0, 1e-6)
+		_, _ = KLDivergence(observed, expected, 1.0, 1e-6)
 	}
 }

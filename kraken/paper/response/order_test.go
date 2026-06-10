@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 )
@@ -15,7 +14,7 @@ func TestOrdersSend(t *testing.T) {
 	Convey("Given an add_order frame", t, func() {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		orders := NewOrders(ctx, pool, krakenmarket.NewBookStore(10))
+		orders := NewOrders(ctx, pool, NewPairCatalog(ctx))
 
 		frame := types.KrakenMessage{
 			Method: trading.MethodAddOrder,

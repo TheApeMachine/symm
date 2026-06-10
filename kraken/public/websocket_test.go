@@ -3,6 +3,11 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +128,37 @@ func TestWebSocketDispatchOhlcUIFrame(t *testing.T) {
 			So(frame["symbol"], ShouldEqual, "BTC/USD")
 			So(frame["sec"], ShouldEqual, expected.Unix())
 			So(frame["close"], ShouldEqual, 105.0)
+		})
+	})
+}
+
+func TestWebSocketDispatchPongLatency(t *testing.T) {
+	Convey("Given a pong with Kraken time_in and time_out", t, func() {
+		profilePath := filepath.Join(t.TempDir(), "network_latency.json")
+		viper.Set("trading.paper.latency_profile", profilePath)
+
+		ws := &WebSocket{}
+
+		timeIn := time.Now().Add(-40 * time.Millisecond)
+		timeOut := timeIn.Add(2 * time.Millisecond)
+		message := types.NewSocketMessage()
+		message.Channel = "pong"
+		message.Data = []byte(fmt.Sprintf(
+			`{"method":"pong","success":true,"time_in":%q,"time_out":%q}`,
+			timeIn.Format(time.RFC3339Nano),
+			timeOut.Format(time.RFC3339Nano),
+		))
+
+		Convey("It should append round-trip latency to the profile file", func() {
+			ws.dispatch(message)
+
+			profileBytes, readErr := os.ReadFile(profilePath)
+			So(readErr, ShouldBeNil)
+
+			line := strings.TrimSpace(string(profileBytes))
+			nanoseconds, parseErr := strconv.ParseInt(line, 10, 64)
+			So(parseErr, ShouldBeNil)
+			So(nanoseconds, ShouldBeGreaterThan, 0)
 		})
 	})
 }

@@ -2,41 +2,43 @@ package response
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestBalancesApplyFillUsesAssetPairFees(t *testing.T) {
-	Convey("Given a paper wallet backed by AssetPairs", t, func() {
+	Convey("Given a paper wallet backed by AssetPairs REST", t, func() {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("trading.paper.wallet.usd", 200)
+
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {
+					"XXBTZUSD": {
+						"wsname": "BTC/USD",
+						"fees": [[0, 0.26]],
+						"fees_maker": [[0, 0.16]]
+					}
+				}
+			}`))
+		}))
+		defer server.Close()
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
-		catalog, err := NewPairCatalog(market.AssetPairs{
-			"XXBTZUSD": {
-				Wsname: "BTC/USD",
-				Fees: [][]float64{
-					{0, 0.26},
-				},
-				FeesMaker: [][]float64{
-					{0, 0.16},
-				},
-			},
-		})
+		catalog := NewPairCatalog(ctx)
+		catalog.assetPairsAPI = public.EndpointType(server.URL)
 
-		So(err, ShouldBeNil)
-
-		balances, err := NewBalances(ctx, pool, catalog)
-
-		So(err, ShouldBeNil)
-
+		balances := NewBalances(ctx, pool, catalog)
 		execution, fillErr := balances.ApplyFill(trading.AddParams{
 			ClOrdID:   "order-1",
 			Symbol:    "BTC/USD",
@@ -52,28 +54,4 @@ func TestBalancesApplyFillUsesAssetPairFees(t *testing.T) {
 			So(balances.Wallet().Asset[0].Balance, ShouldAlmostEqual, 200-50-0.13, 1e-9)
 		})
 	})
-}
-
-func BenchmarkPairCatalogFeeRate(b *testing.B) {
-	catalog, err := NewPairCatalog(market.AssetPairs{
-		"XXBTZUSD": {
-			Wsname: "BTC/USD",
-			Fees: [][]float64{
-				{0, 0.26},
-			},
-			FeesMaker: [][]float64{
-				{0, 0.16},
-			},
-		},
-	})
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_, _ = catalog.FeeRate("BTC/USD", trading.Market)
-	}
 }

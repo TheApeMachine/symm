@@ -7,14 +7,13 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func TestNewCryptoRegistersFuturesChannel(t *testing.T) {
 	convey.Convey("Given a crypto trader bus", t, func() {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 8, nil)
-		crypto := NewCrypto(ctx, pool, krakenmarket.NewInstrumentRegistry())
+		crypto := NewCrypto(ctx, pool)
 
 		defer crypto.cancel()
 

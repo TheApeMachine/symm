@@ -155,13 +155,17 @@ func adaptiveContagion(tier contagionTier, spreadHistory *ring.FloatRing) float6
 
 func contagionAdaptiveThreshold(spreadHistory *ring.FloatRing, slowBaseline float64) float64 {
 	sigma := contagionAdaptiveSigma()
-	floor := slowBaseline * 0.05
 
 	if spreadHistory == nil || spreadHistory.Len() < 4 {
-		return math.Max(floor, 0.15)
+		if slowBaseline > 0 {
+			return slowBaseline
+		}
+
+		return 0
 	}
 
 	mean, stddev := spreadHistory.MeanStdDev()
+	floor := mean * mean / (mean + slowBaseline)
 
 	if stddev <= 0 {
 		return math.Max(floor, mean)

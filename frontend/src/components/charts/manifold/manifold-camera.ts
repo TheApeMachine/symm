@@ -9,8 +9,8 @@ export const manifoldCameraFrame = (
 	orbit: number;
 	worldHeight: number;
 } => {
-	const centerX = (gridX - 1) / 2;
-	const centerZ = (gridZ - 1) / 2;
+	const centerX = (gridX - 1) / 8;
+	const centerZ = (gridZ - 1) / 4;
 	const span = Math.max(gridX, gridZ, 1);
 	const orbit = span * 1.15;
 	const safeYSpan = Math.max(ySpan, 0.25);

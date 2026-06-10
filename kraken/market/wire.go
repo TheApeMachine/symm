@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"strconv"
 	"strings"
 
@@ -58,50 +57,4 @@ func (level BookLevel) priceChecksumToken() string {
 	}
 
 	return wireChecksumToken(wire)
-}
-
-func (level BookLevel) qtyChecksumToken() string {
-	wire := level.qtyWire
-
-	if wire == "" {
-		wire = floatWire(level.Qty)
-	}
-
-	return wireChecksumToken(wire)
-}
-
-/*
-checksumBook computes Kraken v2 CRC32 over the top N ask then bid levels.
-Wire strings from the feed must be preserved; float round-trips break the hash.
-*/
-func checksumBook(book *BookUpdate, levels int) uint32 {
-	if book == nil {
-		return 0
-	}
-
-	builder := strings.Builder{}
-
-	askCount := len(book.Asks)
-
-	if askCount > levels {
-		askCount = levels
-	}
-
-	for index := range askCount {
-		builder.WriteString(book.Asks[index].priceChecksumToken())
-		builder.WriteString(book.Asks[index].qtyChecksumToken())
-	}
-
-	bidCount := len(book.Bids)
-
-	if bidCount > levels {
-		bidCount = levels
-	}
-
-	for index := range bidCount {
-		builder.WriteString(book.Bids[index].priceChecksumToken())
-		builder.WriteString(book.Bids[index].qtyChecksumToken())
-	}
-
-	return crc32.ChecksumIEEE([]byte(builder.String()))
 }

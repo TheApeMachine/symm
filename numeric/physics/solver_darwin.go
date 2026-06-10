@@ -240,6 +240,78 @@ func (solver *Solver) ReadRhoProjection() ([][]float64, error) {
 	return rows, nil
 }
 
+func (solver *Solver) ReadProjectionReading() (Reading, error) {
+	if solver == nil || solver.handle == nil {
+		return Reading{}, fmt.Errorf("physics: solver is not initialized")
+	}
+
+	var cReading C.ManifoldReading
+
+	err := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_projection_reading(
+			solver.handle,
+			&cReading,
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+
+	if err != nil {
+		return Reading{}, err
+	}
+
+	return Reading{
+		PressureGradNorm: float64(cReading.pressure_grad_norm),
+		Divergence:       float64(cReading.divergence),
+		ViscosityProxy:   float64(cReading.viscosity_proxy),
+	}, nil
+}
+
+func (solver *Solver) ReadOscillators(count int) ([]Oscillator, error) {
+	if solver == nil || solver.handle == nil {
+		return nil, fmt.Errorf("physics: solver is not initialized")
+	}
+
+	if count <= 0 {
+		return nil, fmt.Errorf("physics: oscillator count must be positive")
+	}
+
+	cOscillators := make([]C.ManifoldOscillator, count)
+
+	err := solver.call(func(errBuf []byte) C.int {
+		return C.manifold_solver_read_oscillators(
+			solver.handle,
+			(*C.ManifoldOscillator)(unsafe.Pointer(&cOscillators[0])),
+			C.uint32_t(count),
+			(*C.char)(unsafe.Pointer(&errBuf[0])),
+			C.int(len(errBuf)),
+		)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	oscillators := make([]Oscillator, count)
+
+	for index := range cOscillators {
+		oscillators[index] = Oscillator{
+			Phase:     float64(cOscillators[index].phase),
+			Omega:     float64(cOscillators[index].omega),
+			Amplitude: float64(cOscillators[index].amplitude),
+			PosX:      float64(cOscillators[index].pos_x),
+			PosY:      float64(cOscillators[index].pos_y),
+			PosZ:      float64(cOscillators[index].pos_z),
+			Heat:      float64(cOscillators[index].heat),
+			VelX:      float64(cOscillators[index].vel_x),
+			VelY:      float64(cOscillators[index].vel_y),
+			VelZ:      float64(cOscillators[index].vel_z),
+		}
+	}
+
+	return oscillators, nil
+}
+
 func (solver *Solver) call(run func(errBuf []byte) C.int) error {
 	errBuf := make([]byte, 512)
 

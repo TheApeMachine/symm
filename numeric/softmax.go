@@ -1,15 +1,22 @@
 package numeric
 
 import (
+	"fmt"
 	"math"
 )
 
 /*
 SoftmaxScores maps raw scores to a normalized probability vector.
 */
-func SoftmaxScores(scores []float64) []float64 {
+func SoftmaxScores(scores []float64) ([]float64, error) {
 	if len(scores) == 0 {
-		return nil
+		return nil, fmt.Errorf("numeric: softmax requires at least one score")
+	}
+
+	for index, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return nil, fmt.Errorf("numeric: softmax score[%d] is non-finite", index)
+		}
 	}
 
 	probabilities := make([]float64, len(scores))
@@ -30,14 +37,14 @@ func SoftmaxScores(scores []float64) []float64 {
 	}
 
 	if expSum <= 0 {
-		return probabilities
+		return nil, fmt.Errorf("numeric: softmax normalization sum is non-positive")
 	}
 
 	for index := range probabilities {
 		probabilities[index] /= expSum
 	}
 
-	return probabilities
+	return probabilities, nil
 }
 
 /*

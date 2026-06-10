@@ -91,6 +91,7 @@ LoadCrossSection builds the shared cross-section for a signal system.
 */
 func LoadCrossSection(loader *CrossSectionOnce) (*CrossSection, error) {
 	cfg, err := CrossSectionConfigFromViper()
+	
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
@@ -453,9 +454,15 @@ func (crossSection *CrossSection) trailingSymbolReturns(symbol string, window in
 
 	row := raw.(*market.Symbol)
 
-	if len(row.Returns) < window {
+	if len(row.Returns) == 0 {
 		return nil
 	}
 
-	return row.Returns[len(row.Returns)-window:]
+	sampleCount := window
+
+	if sampleCount <= 0 || sampleCount > len(row.Returns) {
+		sampleCount = len(row.Returns)
+	}
+
+	return row.Returns[len(row.Returns)-sampleCount:]
 }

@@ -173,17 +173,25 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 func (signal *Signal) publish(reading physics.Reading, price float64, at time.Time) (logic.Measurement, error) {
 	category, herdScore, shockScore, driftScore, noiseScore := signal.classify(reading)
 
-	probabilities := numeric.SoftmaxScores([]float64{
+	probabilities, err := numeric.SoftmaxScores([]float64{
 		herdScore,
 		shockScore,
 		driftScore,
 		noiseScore,
 	})
 
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise := signal.transition.Surprise(surpriseVector)
+	surprise, err := signal.transition.Surprise(surpriseVector)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	signal.transition.Update(categoryIndex)
 
