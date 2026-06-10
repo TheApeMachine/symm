@@ -160,23 +160,33 @@ func (field *Field) feedBookIdentity(
 
 	if update.Type == "snapshot" {
 		state.bookReady = true
+		state.book = update
 	}
 
 	if !state.bookReady {
 		return nil
 	}
 
-	state.book.Fold(update, state.bookDepth)
-
 	if !at.IsZero() {
 		state.lastEventAt = at
 	}
 
-	if len(state.book.Bids) == 0 || len(state.book.Asks) == 0 {
+	bids := update.Bids
+	asks := update.Asks
+
+	if len(bids) == 0 {
+		bids = state.book.Bids
+	}
+
+	if len(asks) == 0 {
+		asks = state.book.Asks
+	}
+
+	if len(bids) == 0 || len(asks) == 0 {
 		return nil
 	}
 
-	midPrice := (state.book.Bids[0].Price + state.book.Asks[0].Price) / 2
+	midPrice := (bids[0].Price + asks[0].Price) / 2
 
 	if midPrice <= 0 {
 		return fmt.Errorf("manifold: mid price must be positive for %q", update.Symbol)
@@ -296,15 +306,21 @@ func (field *Field) maybeStep(at time.Time) error {
 		return nil
 	}
 
-	return field.integrate(at)
+	_, err := field.integrate(at)
+
+	return err
 }
 
-func (field *Field) integrate(at time.Time) error {
+func (field *Field) hasPublishableSnapshot() bool {
+	return !field.lastStepAt.IsZero() && len(field.lastCarriers) > 0
+}
+
+func (field *Field) integrate(at time.Time) (bool, error) {
 	field.stepMu.Lock()
 	defer field.stepMu.Unlock()
 
 	if err := field.solver.ResetDeposits(); err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
 	for _, deposit := range field.pendingDeposits {
@@ -318,7 +334,7 @@ func (field *Field) integrate(at time.Time) error {
 			deposit.momZ,
 			deposit.eInt,
 		); depositErr != nil {
-			return errnie.Error(depositErr)
+			return false, errnie.Error(depositErr)
 		}
 	}
 
@@ -353,7 +369,7 @@ func (field *Field) integrate(at time.Time) error {
 	})
 
 	if len(oscillators) == 0 && len(field.pendingWhales) == 0 {
-		return nil
+		return false, nil
 	}
 
 	for _, whale := range field.pendingWhales {
@@ -370,17 +386,17 @@ func (field *Field) integrate(at time.Time) error {
 	oscillators, carriers = capCarriers(oscillators, carriers, field.config.MaxModes)
 
 	if len(oscillators) == 0 {
-		return nil
+		return false, nil
 	}
 
 	if err := field.solver.SetOscillators(oscillators); err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
 	reading, stepErr := field.solver.Step()
 
 	if stepErr != nil {
-		return errnie.Error(stepErr)
+		return false, errnie.Error(stepErr)
 	}
 
 	field.lastReading = reading
@@ -403,7 +419,7 @@ func (field *Field) integrate(at time.Time) error {
 		return true
 	})
 
-	return nil
+	return true, nil
 }
 
 func (field *Field) depositBook(state *UniverseState) error {

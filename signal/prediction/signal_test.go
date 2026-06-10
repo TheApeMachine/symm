@@ -6,15 +6,22 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
+
+func init() {
+	viper.Set("signals.prediction.measurements_capacity", 4)
+	viper.Set("story.prediction.horizon", time.Minute)
+}
 
 func TestSignalMeasureMeasurement(t *testing.T) {
 	Convey("Given upstream measurements in the ring", t, func() {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
+			nil,
 		)
 
 		signal.Record(logic.Measurement{
@@ -36,6 +43,7 @@ func TestSignalMeasureMeasurement(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
+			nil,
 		)
 
 		signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1})
@@ -53,6 +61,7 @@ func TestSignalRecord(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 100, Qty: 1}), ShouldBeTrue)
@@ -70,11 +79,13 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		featureSignal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityMeasurement),
+			nil,
 		)
 
 		featureSignal.Record(logic.Measurement{
@@ -122,6 +133,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.features[0] = 1.0
@@ -165,6 +177,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ETH/EUR"})
@@ -180,6 +193,7 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTick),
+			nil,
 		)
 
 		signal.Record(&krakenmarket.TickerUpdate{
@@ -204,6 +218,7 @@ func TestSignalSettlePendingUsesForecastScale(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -233,6 +248,7 @@ func TestSignalMovementScale(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.realizedMagnitudeEMA = 0.000001
@@ -247,6 +263,7 @@ func TestSignalMovementScale(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		Convey("It should withhold chart normalization", func() {
@@ -255,11 +272,12 @@ func TestSignalMovementScale(t *testing.T) {
 	})
 }
 
-func TestSignalChartWaitsForMagnitudeEMA(t *testing.T) {
+func TestSignalChartUsesBaselineScaleBeforeMagnitudeEMA(t *testing.T) {
 	Convey("Given trade measurements before the first settlement", t, func() {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.features[0] = 0.5
@@ -275,9 +293,10 @@ func TestSignalChartWaitsForMagnitudeEMA(t *testing.T) {
 		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		events := signal.DrainChartEvents()
 
-		Convey("It should not publish chart frames yet", func() {
+		Convey("It should publish forecast using the feature baseline scale", func() {
 			So(err, ShouldBeNil)
-			So(events.HasForecast, ShouldBeFalse)
+			So(events.HasForecast, ShouldBeTrue)
+			So(events.ForecastTarget, ShouldEqual, float64(time.Date(2024, 1, 1, 0, 1, 0, 0, time.UTC).Unix()))
 		})
 	})
 }
@@ -287,6 +306,7 @@ func TestSignalFlatTapeNormalizedForecast(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -318,6 +338,7 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.pending = append(signal.pending, &pendingForecast{
@@ -353,6 +374,7 @@ func TestSignalMovementUnits(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -369,6 +391,7 @@ func TestSignalMovementConfidence(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		signal.realizedMagnitudeEMA = 0.01
@@ -395,6 +418,7 @@ func TestSignalLearn(t *testing.T) {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
+			nil,
 		)
 
 		for featureIndex := range signal.features {
@@ -419,11 +443,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityTrade),
+		nil,
 	)
 
 	featureSignal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityMeasurement),
+		nil,
 	)
 
 	featureSignal.Record(logic.Measurement{

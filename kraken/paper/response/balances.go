@@ -6,10 +6,12 @@ import (
 	"math/big"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -68,7 +70,9 @@ func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 				},
 			},
 		},
-		realized: new(big.Rat),
+		realized:  new(big.Rat),
+		holdings:  make(map[string]*big.Rat),
+		costBasis: make(map[string]*big.Rat),
 	}
 }
 
@@ -116,5 +120,95 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 func (balances *Balances) Observe(sockets ...types.Socket) {
 	for _, socket := range sockets {
 		balances.observers = append(balances.observers, socket)
+	}
+}
+
+/*
+ApplyFill mutates the paper wallet for a taker fill and returns the execution row.
+*/
+func (balances *Balances) ApplyFill(
+	params trading.AddParams,
+	fillPrice float64,
+) (user.Execution, error) {
+	if params.OrderQty <= 0 || fillPrice <= 0 {
+		return user.Execution{}, ErrInsufficientFunds
+	}
+
+	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
+	feeRate := viper.GetFloat64("trading.paper.taker_fee_pct") / 100
+	notional := params.OrderQty * fillPrice
+	fee := notional * feeRate
+
+	switch params.Side {
+	case trading.Buy:
+		cost := notional + fee
+		cash := quoteBalance(&balances.model, quote)
+
+		if cash < cost {
+			return user.Execution{}, ErrInsufficientFunds
+		}
+
+		setQuoteBalance(&balances.model, quote, cash-cost)
+	case trading.Sell:
+		proceeds := notional - fee
+		setQuoteBalance(&balances.model, quote, quoteBalance(&balances.model, quote)+proceeds)
+	default:
+		return user.Execution{}, ErrInsufficientFunds
+	}
+
+	execution := user.Execution{
+		OrderID:      params.ClOrdID,
+		ClOrdID:      params.ClOrdID,
+		Symbol:       params.Symbol,
+		Side:         string(params.Side),
+		OrderType:    string(params.OrderType),
+		OrderQty:     params.OrderQty,
+		LimitPrice:   params.LimitPrice,
+		OrderStatus:  "filled",
+		ExecType:     "trade",
+		ExecID:       params.ClOrdID + "-fill",
+		LastQty:      params.OrderQty,
+		LastPrice:    fillPrice,
+		AvgPrice:     fillPrice,
+		CumQty:       params.OrderQty,
+		CumCost:      notional,
+		Cost:         notional,
+		LiquidityInd: "t",
+		FeeUsdEquiv:  fee,
+		Timestamp:    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	return execution, nil
+}
+
+func quoteBalance(balances *user.Balances, quote string) float64 {
+	for index, asset := range balances.Asset {
+		name := strings.ToUpper(asset.Asset)
+
+		if name != quote && name != "Z"+quote {
+			continue
+		}
+
+		return balances.Asset[index].Balance
+	}
+
+	return 0
+}
+
+func setQuoteBalance(balances *user.Balances, quote string, amount float64) {
+	for index, asset := range balances.Asset {
+		name := strings.ToUpper(asset.Asset)
+
+		if name != quote && name != "Z"+quote {
+			continue
+		}
+
+		balances.Asset[index].Balance = amount
+
+		if len(balances.Asset[index].Wallets) > 0 {
+			balances.Asset[index].Wallets[0].Balance = amount
+		}
+
+		return
 	}
 }

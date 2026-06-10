@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -65,12 +66,27 @@ type Story struct {
 	bus          *internal.Bus
 	measurements *sync.Map
 	tree         *logic.Tree
+	crossSection *CrossSection
+	regime       *RegimeClassifier
+	holdings     *logic.Holdings
+	uiInterval   time.Duration
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
+func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree, err := logic.NewTree()
+	crossSection, crossSectionErr := LoadCrossSection(&CrossSectionOnce{})
+
+	if crossSectionErr != nil {
+		err = crossSectionErr
+	}
+
+	regime, regimeErr := NewRegimeClassifier(crossSection)
+
+	if regimeErr != nil {
+		err = regimeErr
+	}
 
 	return &Story{
 		ctx:    ctx,
@@ -79,19 +95,23 @@ func NewStory(ctx context.Context, pool *qpool.Q[any]) *Story {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"raw"},
+			[]string{"raw", "ui"},
 			[]string{"measurements"},
 		),
 		measurements: &sync.Map{},
 		tree:         tree,
+		crossSection: crossSection,
+		regime:       regime,
+		holdings:     holdings,
 		err:          err,
+		uiInterval:   viper.GetDuration("market.story.ui_interval"),
 	}
 }
 
 /*
 Tick joins the latest measurements from the perspective signals and publishes them to the story.
 
-UI events are rate-limited to storyUIInterval. Measurements flood the channel at high frequency
+UI events are rate-limited to market.story.ui_interval. Measurements flood the channel at high frequency
 and selecting one "publish" case per measurement would starve the timer and flood the WebSocket.
 Instead, we accumulate per-source/symbol readings between UI ticks and flush
 cross-sectional means on the timer — then reset the window so each gauge frame
@@ -102,50 +122,93 @@ func (story *Story) Tick() error {
 		return story.err
 	}
 
+	uiTicker := time.NewTicker(story.uiInterval)
+	defer uiTicker.Stop()
+
 	for {
 		select {
 		case <-story.ctx.Done():
 			return story.ctx.Err()
+		case <-uiTicker.C:
+			story.publishMarketRegime()
+			story.publishDecisionTree()
 		default:
-			row, err := story.bus.Receive("measurements")
-
-			if errnie.Error(err) != nil || row == nil {
-				continue
-			}
-
-			var (
-				measurement logic.Measurement
-				ok          bool
-			)
-
-			if measurement, ok = row.Value.(logic.Measurement); !ok {
-				errnie.Error(errors.New("story: invalid measurement"))
-				continue
-			}
-
-			raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
-				viper.GetInt("market.story.window_capacity"),
-			))
-
-			measurements := raw.(*MeasurementWindow).Push(measurement)
-
-			var action *logic.Action
-
-			if len(measurements) > 0 {
-				action = story.tree.Evaluate(measurements)
-			}
-
-			if action != nil {
-				if action.Symbol == "" {
-					stamped := *action
-					stamped.Symbol = measurement.Symbol
-					action = &stamped
-				}
-
-				story.bus.Send("raw", "actions", action)
-			}
 		}
+
+		row, err := story.bus.Poll("measurements")
+
+		if errnie.Error(err) != nil || row == nil {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+
+		measurement, ok := row.Value.(logic.Measurement)
+
+		if !ok {
+			errnie.Error(errors.New("story: invalid measurement"))
+			continue
+		}
+
+		if story.regime != nil {
+			story.regime.Observe(measurement)
+		}
+
+		raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
+			viper.GetInt("market.story.window_capacity"),
+		))
+
+		measurements := raw.(*MeasurementWindow).Push(measurement)
+
+		var evaluation *logic.Evaluation
+
+		if len(measurements) > 0 {
+			evaluation = story.tree.Evaluate(measurements, story.holdings)
+		}
+
+		if evaluation == nil || evaluation.Action == nil {
+			continue
+		}
+
+		action := evaluation.Action
+
+		if action.Symbol == "" {
+			stamped := *action
+			stamped.Symbol = measurement.Symbol
+			action = &stamped
+			evaluation.Action = action
+		}
+
+		errnie.Error(story.bus.Send("raw", "actions", action))
 	}
+}
+
+func (story *Story) publishDecisionTree() {
+	stats := story.tree.Stats()
+
+	if stats == nil {
+		return
+	}
+
+	errnie.Error(story.bus.Send("ui", "decision_tree", stats.DecisionTreeFrame()))
+}
+
+func (story *Story) publishMarketRegime() {
+	if story.regime == nil {
+		return
+	}
+
+	errnie.Error(story.regime.PublishFrame(story.bus))
+}
+
+/*
+TreeStats exposes playbook instrumentation for dashboards and decision recording.
+*/
+func (story *Story) TreeStats() *logic.TreeStats {
+	if story.tree == nil {
+		return nil
+	}
+
+	return story.tree.Stats()
 }
 
 /*

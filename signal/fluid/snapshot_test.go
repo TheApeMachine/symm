@@ -36,13 +36,16 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 		So(state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: "ETH/EUR",
 			Last:   100,
-			Bid:    99,
-			Ask:    101,
+			Bid:    99.99,
+			Ask:    100.01,
 			Volume: 1000,
 		}, feedAt), ShouldBeNil)
-		So(advanceFluidGrid(state, fixture, feedAt, 99, 10, 101, 6), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99.99, 8, 100.01, 8), feedAt.Add(100*time.Millisecond)), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(100.01, 8, 100.03, 8), feedAt.Add(200*time.Millisecond)), ShouldBeNil)
 
 		Convey("It should publish a fluid field snapshot on the ui bus", func() {
+			So(state.Row(), ShouldNotBeNil)
 			received := make(chan map[string]any, 1)
 
 			go func() {
@@ -93,12 +96,16 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 				first, firstOk := rawRows[0].(map[string]any)
 				So(firstOk, ShouldBeTrue)
 				So(first["symbol"], ShouldEqual, "ETH/EUR")
+				So(first["vort"], ShouldNotBeNil)
+				So(first["turb"], ShouldNotBeNil)
 
 				return
 			}
 
 			So(len(rows), ShouldEqual, 1)
 			So(rows[0]["symbol"], ShouldEqual, "ETH/EUR")
+			So(rows[0]["vort"], ShouldNotBeNil)
+			So(rows[0]["turb"], ShouldNotBeNil)
 		})
 	})
 }

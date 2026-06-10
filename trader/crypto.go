@@ -14,7 +14,9 @@ import (
 	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Crypto struct {
@@ -24,6 +26,7 @@ type Crypto struct {
 	ui     *qpool.BroadcastGroup
 	bus    *internal.Bus
 	pairs  *sync.Map
+	chart  sync.Once
 }
 
 func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
@@ -54,6 +57,8 @@ func (crypto *Crypto) Tick() (err error) {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
 		default:
+			crypto.ensureAnchorChart()
+
 			message, err := crypto.bus.Receive("raw")
 
 			if errnie.Error(err) != nil || message == nil {
@@ -65,6 +70,15 @@ func (crypto *Crypto) Tick() (err error) {
 			)
 
 			switch message.Type {
+			case "balances":
+				balances, ok := message.Value.(user.Balances)
+
+				if !ok {
+					errnie.Error(errors.New("crypto: invalid balances"))
+					continue
+				}
+
+				errnie.Error(crypto.bus.Send("ui", "wallet", ui.WalletFrame(balances)))
 			case "instrument":
 				var (
 					instrument *market.InstrumentUpdate
@@ -201,4 +215,20 @@ func (crypto *Crypto) Close() error {
 	}
 
 	return nil
+}
+
+func (crypto *Crypto) ensureAnchorChart() {
+	crypto.chart.Do(func() {
+		anchor := viper.GetString("market.anchor_symbol")
+
+		if anchor == "" {
+			return
+		}
+
+		errnie.Error(crypto.bus.Send("kraken:public", "ohlc", types.KrakenMessage{
+			Method: "subscribe",
+			Params: market.NewCandleParams([]string{anchor}, 1),
+			ReqID:  time.Now().UnixNano(),
+		}))
+	})
 }

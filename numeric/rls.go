@@ -9,9 +9,10 @@ import (
 RLSFilter is a recursive least-squares linear predictor for online feature regression.
 */
 type RLSFilter struct {
-	dimension  int
-	beta       []float64
-	covariance [][]float64
+	dimension        int
+	beta             []float64
+	covariance       [][]float64
+	forgettingFactor float64
 }
 
 /*
@@ -36,16 +37,51 @@ func NewRLSFilter(dimension int, initialVariance float64) (*RLSFilter, error) {
 	}
 
 	return &RLSFilter{
-		dimension:  dimension,
-		beta:       make([]float64, size),
-		covariance: covariance,
+		dimension:        dimension,
+		beta:             make([]float64, size),
+		covariance:       covariance,
+		forgettingFactor: 1,
 	}, nil
+}
+
+/*
+SetForgettingFactor sets lambda in (0, 1]. Values below one inflate covariance
+before each update so older observations decay faster.
+*/
+func (filter *RLSFilter) SetForgettingFactor(lambda float64) error {
+	if lambda <= 0 || lambda > 1 {
+		return fmt.Errorf("numeric: rls forgetting factor must be in (0,1], got %g", lambda)
+	}
+
+	filter.forgettingFactor = lambda
+
+	return nil
+}
+
+func (filter *RLSFilter) applyForgetting() error {
+	if filter.forgettingFactor >= 1 {
+		return nil
+	}
+
+	scale := 1 / filter.forgettingFactor
+
+	for row := range filter.covariance {
+		for col := range filter.covariance[row] {
+			filter.covariance[row][col] *= scale
+		}
+	}
+
+	return nil
 }
 
 /*
 Observe ingests one feature vector and scalar target, updating coefficients in place.
 */
 func (filter *RLSFilter) Observe(features []float64, target float64) error {
+	if err := filter.applyForgetting(); err != nil {
+		return err
+	}
+
 	if len(features) != filter.dimension {
 		return fmt.Errorf(
 			"numeric: rls expected %d features, got %d",

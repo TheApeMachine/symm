@@ -7,6 +7,7 @@ import {
 	detachManifoldPush,
 	type ManifoldPushBridge,
 } from "#/components/charts/manifold/manifold-push-bridge";
+import { formatManifoldReading } from "#/components/charts/manifold/manifold-snapshot";
 import type { ManifoldFieldSnapshot } from "#/components/charts/manifold/types";
 
 const formatReading = (frame: ManifoldFieldSnapshot | null): string[] => {
@@ -14,22 +15,7 @@ const formatReading = (frame: ManifoldFieldSnapshot | null): string[] => {
 		return ["Awaiting manifold field snapshot…"];
 	}
 
-	const reading = frame.reading;
-	const whales = frame.carriers.filter(
-		(carrier) => carrier.role === "whale",
-	).length;
-	const symbols = frame.carriers.filter(
-		(carrier) => carrier.role === "symbol",
-	).length;
-
-	return [
-		`∇p norm ${reading.pressure_grad_norm.toExponential(2)}`,
-		`|Ψ|² ${reading.coherence_mag2.toExponential(2)}`,
-		`guidance ${reading.guidance_speed.toExponential(2)}`,
-		`viscosity ${reading.viscosity_proxy.toExponential(2)}`,
-		`div ${reading.divergence.toExponential(2)}`,
-		`carriers ${symbols} symbols · ${whales} whales`,
-	];
+	return formatManifoldReading(frame);
 };
 
 export const ManifoldSurfaceChart = ({
@@ -71,8 +57,8 @@ export const ManifoldSurfaceChart = ({
 				onInit={onInit}
 				style={{ height: "100%", width: "100%" }}
 			/>
-			<div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/10 bg-black/55 px-3 py-2 font-mono text-[11px] leading-5 text-white/90">
-				<div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-white/60">
+			<div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/10 bg-black/55 px-2.5 py-1.5 font-mono text-[9px] leading-4 text-white/90">
+				<div className="mb-0.5 text-[8px] uppercase tracking-[0.16em] text-white/60">
 					Manifold dynamics
 				</div>
 				{formatReading(snapshot).map((line) => (

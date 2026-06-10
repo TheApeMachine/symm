@@ -6,13 +6,24 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
+func setPumpDumpTestConfig() {
+	viper.Set("signals.pumpdump.measurements_capacity", 4)
+	viper.Set("signals.pumpdump.fast_window", 3)
+	viper.Set("signals.pumpdump.volume.epsilon", 0)
+	viper.Set("signals.pumpdump.surprise.matrix.alpha", 0.5)
+	viper.Set("signals.pumpdump.surprise.weights.threshold", 0.5)
+}
+
 func TestSignalRecord(t *testing.T) {
 	Convey("Given a new signal", t, func() {
+		setPumpDumpTestConfig()
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
@@ -30,6 +41,8 @@ func TestSignalRecord(t *testing.T) {
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given trade samples with a volume spike", t, func() {
+		setPumpDumpTestConfig()
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
@@ -62,6 +75,9 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given feedback for the same symbol", t, func() {
+		setPumpDumpTestConfig()
+		viper.Set("signals.pumpdump.surprise.weights.threshold", 2.0)
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
@@ -76,7 +92,47 @@ func TestSignalMeasure(t *testing.T) {
 		})
 	})
 
+	Convey("Given book frames with valid touch spread", t, func() {
+		setPumpDumpTestConfig()
+
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityBook),
+		)
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: "BTC/EUR",
+			Bids:   []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
+			Asks:   []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
+		})
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: "BTC/EUR",
+			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
+			Asks:   []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
+		})
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: "BTC/EUR",
+			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
+			Asks:   []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
+		})
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: "BTC/EUR",
+			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
+			Asks:   []krakenmarket.BookLevel{{Price: 100.05, Qty: 6}},
+		})
+
+		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		Convey("It should measure spread compression without error", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
+			So(measurement.Spread, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given folded book snapshots with tightening spread", t, func() {
+		setPumpDumpTestConfig()
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
@@ -115,6 +171,8 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
+		setPumpDumpTestConfig()
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
@@ -131,6 +189,8 @@ func TestSignalMeasure(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	setPumpDumpTestConfig()
+
 	signal := NewSignal(
 		"ETH/EUR",
 		logic.NewEntity(logic.EntityTrade),

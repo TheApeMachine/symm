@@ -60,6 +60,7 @@ type crossSection struct {
 }
 
 type featureState struct {
+	snapshot    *krakenmarket.BookUpdate
 	bidDepths   floatring.FloatRing
 	askDepths   floatring.FloatRing
 	densities   floatring.FloatRing
@@ -99,36 +100,41 @@ func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.
 		return
 	}
 
-	folded := krakenmarket.BookUpdate{}
-
-	for _, bid := range book.Bids {
-		if bid.Qty > 0 {
-			folded.Bids = append(folded.Bids, bid)
-		}
-	}
-
-	for _, ask := range book.Asks {
-		if ask.Qty > 0 {
-			folded.Asks = append(folded.Asks, ask)
-		}
-	}
-
 	state := crossSection.ensure(symbol)
 
 	if state == nil {
 		return
 	}
 
-	bidDepth := crossSection.sideDepth(folded.Bids)
-	askDepth := crossSection.sideDepth(folded.Asks)
+	if book.Type == "snapshot" {
+		state.snapshot = book
+	}
 
-	if len(folded.Bids) == 0 || len(folded.Asks) == 0 {
+	if state.snapshot == nil {
 		return
 	}
 
-	midPrice := (folded.Bids[0].Price + folded.Asks[0].Price) / 2
-	touchSpread := folded.Asks[0].Price - folded.Bids[0].Price
-	depth := folded.Bids[0].Qty + folded.Asks[0].Qty
+	bids := book.Bids
+	asks := book.Asks
+
+	if len(bids) == 0 {
+		bids = state.snapshot.Bids
+	}
+
+	if len(asks) == 0 {
+		asks = state.snapshot.Asks
+	}
+
+	if len(bids) == 0 || len(asks) == 0 {
+		return
+	}
+
+	bidDepth := crossSection.sideDepth(state.snapshot.Bids)
+	askDepth := crossSection.sideDepth(state.snapshot.Asks)
+
+	midPrice := (bids[0].Price + asks[0].Price) / 2
+	touchSpread := asks[0].Price - bids[0].Price
+	depth := bids[0].Qty + asks[0].Qty
 
 	if bidDepth > 0 {
 		state.bidDepths.Push(bidDepth)
@@ -148,7 +154,7 @@ func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.
 		state.spreads.Push(spreadBPS)
 	}
 
-	imbalance, imbalanceOK := crossSection.level1Imbalance(folded.Bids, folded.Asks)
+	imbalance, imbalanceOK := crossSection.level1Imbalance(bids, asks)
 
 	if imbalanceOK {
 		state.imbalances.Push(imbalance)

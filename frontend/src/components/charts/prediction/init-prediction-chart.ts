@@ -11,45 +11,24 @@ import {
 	ZoomExtentsModifier,
 	ZoomPanModifier,
 } from "scichart";
-
-import type { PredictionReading } from "#/components/charts/prediction/prediction-chart-wire";
+import {
+	PREDICTION_VALUE_MAX,
+	PREDICTION_VALUE_MIN,
+	predictionVisibleXRange,
+	pruneSeriesBefore,
+	seriesEarliestX,
+	seriesLatestX,
+	upsertSortedPoint,
+} from "#/components/charts/prediction/prediction-chart-series";
+import type { PredictionPoint } from "#/components/charts/prediction/prediction-chart-wire";
 import { ensureSciChartWasm } from "#/lib/utils";
-
-type PredictionSeriesKind = PredictionReading["kind"];
-
-const SERIES_STYLE: Record<
-	PredictionSeriesKind,
-	{
-		name: string;
-		stroke: string;
-		strokeDashArray?: number[];
-		strokeThickness: number;
-	}
-> = {
-	actual: {
-		name: "Actual forward movement",
-		stroke: "#4EC385",
-		strokeThickness: 2,
-	},
-	prediction: {
-		name: "Forward forecast",
-		stroke: "#FBA55A",
-		strokeDashArray: [8, 5],
-		strokeThickness: 2,
-	},
-	error: {
-		name: "Catch-up forecast miss",
-		stroke: "#E85D75",
-		strokeThickness: 1,
-	},
-};
 
 export type TPredictionChartInitResult = {
 	sciChartSurface: SciChartSurface;
-	appendReading: (reading: PredictionReading) => void;
+	appendPoint: (point: PredictionPoint) => void;
 };
 
-const PREDICTION_FIFO_CAPACITY = 3600;
+const SERIES_CAPACITY = 600;
 
 export const initPredictionChart = async (
 	rootElement: HTMLDivElement,
@@ -63,11 +42,7 @@ export const initPredictionChart = async (
 
 	const xAxis = new NumericAxis(wasmContext, {
 		labelFormat: ENumericFormat.Date_HHMMSS,
-		visibleRange: new NumberRange(
-			Math.floor(Date.now() / 1000) - 60,
-			Math.floor(Date.now() / 1000) + 60,
-		),
-		growBy: new NumberRange(0.05, 0.05),
+		growBy: new NumberRange(0.02, 0),
 		labelStyle: {
 			fontSize: 10,
 		},
@@ -75,8 +50,9 @@ export const initPredictionChart = async (
 
 	const yAxis = new NumericAxis(wasmContext, {
 		axisAlignment: EAxisAlignment.Left,
-		autoRange: EAutoRange.Always,
-		growBy: new NumberRange(0.15, 0.15),
+		autoRange: EAutoRange.Never,
+		visibleRange: new NumberRange(PREDICTION_VALUE_MIN, PREDICTION_VALUE_MAX),
+		growBy: new NumberRange(0.05, 0.05),
 		labelStyle: {
 			fontSize: 10,
 		},
@@ -85,29 +61,45 @@ export const initPredictionChart = async (
 	sciChartSurface.xAxes.add(xAxis);
 	sciChartSurface.yAxes.add(yAxis);
 
-	const seriesByKind = new Map<PredictionSeriesKind, XyDataSeries>();
+	const forecastSeries = new XyDataSeries(wasmContext, {
+		dataSeriesName: "Mean forecast (60s)",
+		dataIsSortedInX: true,
+		containsNaN: false,
+		capacity: SERIES_CAPACITY,
+	});
 
-	for (const kind of ["actual", "prediction", "error"] as const) {
-		const style = SERIES_STYLE[kind];
-		const dataSeries = new XyDataSeries(wasmContext, {
-			dataSeriesName: style.name,
-			dataIsSortedInX: true,
-			dataEvenlySpacedInX: false,
-			containsNaN: false,
-			fifoCapacity: PREDICTION_FIFO_CAPACITY,
-			capacity: PREDICTION_FIFO_CAPACITY,
-		});
+	const actualSeries = new XyDataSeries(wasmContext, {
+		dataSeriesName: "Mean actual",
+		dataIsSortedInX: true,
+		containsNaN: false,
+		capacity: SERIES_CAPACITY,
+	});
 
-		sciChartSurface.renderableSeries.add(
-			new FastLineRenderableSeries(wasmContext, {
-				dataSeries,
-				stroke: style.stroke,
-				strokeThickness: style.strokeThickness,
-				strokeDashArray: style.strokeDashArray,
-			}),
-		);
-		seriesByKind.set(kind, dataSeries);
-	}
+	const errorSeries = new XyDataSeries(wasmContext, {
+		dataSeriesName: "Mean error",
+		dataIsSortedInX: true,
+		containsNaN: false,
+		capacity: SERIES_CAPACITY,
+	});
+
+	sciChartSurface.renderableSeries.add(
+		new FastLineRenderableSeries(wasmContext, {
+			dataSeries: forecastSeries,
+			stroke: "#FBA55A",
+			strokeThickness: 2,
+			strokeDashArray: [6, 4],
+		}),
+		new FastLineRenderableSeries(wasmContext, {
+			dataSeries: actualSeries,
+			stroke: "#4EC385",
+			strokeThickness: 2,
+		}),
+		new FastLineRenderableSeries(wasmContext, {
+			dataSeries: errorSeries,
+			stroke: "#E85D75",
+			strokeThickness: 2,
+		}),
+	);
 
 	sciChartSurface.chartModifiers.add(
 		new ZoomExtentsModifier({ modifierGroup: "chart" }),
@@ -116,46 +108,57 @@ export const initPredictionChart = async (
 	);
 
 	let horizonSec = 60;
-	let rightEdge = Math.floor(Date.now() / 1000) + 60;
 
-	const appendReading = (reading: PredictionReading) => {
-		if (!Number.isFinite(reading.x) || !Number.isFinite(reading.value)) {
+	const visibleXRange = (): { minX: number; maxX: number } =>
+		predictionVisibleXRange(
+			horizonSec,
+			seriesLatestX(forecastSeries),
+			seriesEarliestX(actualSeries),
+			seriesEarliestX(errorSeries),
+			Math.floor(Date.now() / 1000),
+		);
+
+	const syncXRange = (): void => {
+		const { minX, maxX } = visibleXRange();
+
+		xAxis.visibleRange = new NumberRange(minX, maxX);
+	};
+
+	syncXRange();
+
+	const appendPoint = (point: PredictionPoint) => {
+		if (!Number.isFinite(point.x) || !Number.isFinite(point.value)) {
 			return;
 		}
 
-		const dataSeries = seriesByKind.get(reading.kind);
-
-		if (!dataSeries) {
-			return;
+		if (point.horizon != null && point.horizon > 0) {
+			horizonSec = point.horizon;
 		}
 
-		const nativeX = dataSeries.getNativeXValues();
-		const lastIndex = dataSeries.count() - 1;
-		const priorLastX = lastIndex >= 0 ? nativeX.get(lastIndex) : null;
+		const { minX } = visibleXRange();
 
-		if (priorLastX === reading.x) {
-			dataSeries.update(lastIndex, reading.value);
-		} else {
-			dataSeries.append(reading.x, reading.value);
+		if (point.kind === "prediction") {
+			upsertSortedPoint(forecastSeries, point.x, point.value);
 		}
 
-		if (reading.horizon != null && reading.horizon > 0) {
-			horizonSec = reading.horizon;
+		if (point.kind === "actual") {
+			upsertSortedPoint(actualSeries, point.x, point.value);
 		}
 
-		if (reading.kind === "prediction") {
-			rightEdge = reading.x;
-			xAxis.visibleRange = new NumberRange(
-				rightEdge - 2 * horizonSec,
-				rightEdge,
-			);
+		if (point.kind === "error") {
+			upsertSortedPoint(errorSeries, point.x, point.value);
 		}
 
+		pruneSeriesBefore(forecastSeries, minX);
+		pruneSeriesBefore(actualSeries, minX);
+		pruneSeriesBefore(errorSeries, minX);
+
+		syncXRange();
 		sciChartSurface.invalidateElement();
 	};
 
 	return {
 		sciChartSurface,
-		appendReading,
+		appendPoint,
 	};
 };

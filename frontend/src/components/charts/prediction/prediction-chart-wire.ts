@@ -1,36 +1,24 @@
-export type PredictionSeriesKind = "actual" | "prediction" | "error";
-
-export type PredictionReading = {
-	kind: PredictionSeriesKind;
+export type PredictionPoint = {
+	kind: "actual" | "prediction" | "error";
 	x: number;
 	value: number;
 	horizon?: number;
 };
 
-export type PredictionWire = PredictionReading & {
+export type PredictionWire = PredictionPoint & {
 	chart: "prediction";
 };
 
-type ReadingSink = (reading: PredictionReading) => void;
+type PointSink = (point: PredictionPoint) => void;
 
-let chartSink: ReadingSink | null = null;
-const pendingReadings: PredictionReading[] = [];
+let chartSink: PointSink | null = null;
+const pendingPoints: PredictionPoint[] = [];
 
-const predictionSeriesKinds = new Set<PredictionSeriesKind>([
+const predictionKinds = new Set<PredictionPoint["kind"]>([
 	"actual",
 	"prediction",
 	"error",
 ]);
-
-const isPredictionSeriesKind = (
-	value: unknown,
-): value is PredictionSeriesKind => {
-	if (typeof value !== "string") {
-		return false;
-	}
-
-	return predictionSeriesKinds.has(value as PredictionSeriesKind);
-};
 
 export const isPredictionWire = (raw: unknown): raw is PredictionWire => {
 	if (typeof raw !== "object" || raw === null) {
@@ -43,7 +31,10 @@ export const isPredictionWire = (raw: unknown): raw is PredictionWire => {
 		return false;
 	}
 
-	if (!isPredictionSeriesKind(row.kind)) {
+	if (
+		typeof row.kind !== "string" ||
+		!predictionKinds.has(row.kind as PredictionPoint["kind"])
+	) {
 		return false;
 	}
 
@@ -55,8 +46,8 @@ export const isPredictionWire = (raw: unknown): raw is PredictionWire => {
 	);
 };
 
-const readingFromWire = (wire: PredictionWire): PredictionReading => {
-	const reading: PredictionReading = {
+const pointFromWire = (wire: PredictionWire): PredictionPoint => {
+	const point: PredictionPoint = {
 		kind: wire.kind,
 		x: wire.x,
 		value: wire.value,
@@ -67,32 +58,28 @@ const readingFromWire = (wire: PredictionWire): PredictionReading => {
 		Number.isFinite(wire.horizon) &&
 		wire.horizon > 0
 	) {
-		reading.horizon = wire.horizon;
+		point.horizon = wire.horizon;
 	}
 
-	return reading;
+	return point;
 };
 
-const flushPending = (sink: ReadingSink): void => {
-	for (const reading of pendingReadings) {
-		sink(reading);
+const flushPending = (sink: PointSink): void => {
+	for (const point of pendingPoints) {
+		sink(point);
 	}
 
-	pendingReadings.length = 0;
+	pendingPoints.length = 0;
 };
 
-/*
-registerPredictionChart connects a mounted chart appendReading to prediction frames.
-ingestPredictionWire routes backend chart rows to the registered sink only.
-*/
 export const registerPredictionChart = (
-	appendReading: ReadingSink,
+	appendPoint: PointSink,
 ): (() => void) => {
-	chartSink = appendReading;
-	flushPending(appendReading);
+	chartSink = appendPoint;
+	flushPending(appendPoint);
 
 	return () => {
-		if (chartSink === appendReading) {
+		if (chartSink === appendPoint) {
 			chartSink = null;
 		}
 	};
@@ -103,16 +90,16 @@ export const ingestPredictionWire = (raw: unknown): void => {
 		return;
 	}
 
-	const reading = readingFromWire(raw);
+	const point = pointFromWire(raw);
 
 	if (chartSink) {
-		chartSink(reading);
+		chartSink(point);
 		return;
 	}
 
-	pendingReadings.push(reading);
+	pendingPoints.push(point);
 
-	if (pendingReadings.length > 400) {
-		pendingReadings.splice(0, pendingReadings.length - 400);
+	if (pendingPoints.length > 400) {
+		pendingPoints.splice(0, pendingPoints.length - 400);
 	}
 };

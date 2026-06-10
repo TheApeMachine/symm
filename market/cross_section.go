@@ -416,3 +416,52 @@ func (crossSection *CrossSection) staleness(updatedAt, at time.Time) float64 {
 
 	return math.Exp(-float64(elapsed) / float64(crossSection.matchWindow))
 }
+
+func (crossSection *CrossSection) eachSymbolReturns(
+	window int,
+	visit func(symbol string, returns []float64),
+) {
+	if visit == nil {
+		return
+	}
+
+	crossSection.universe.Range(func(_, value any) bool {
+		symbolState, ok := value.(*market.Symbol)
+
+		if !ok || symbolState == nil {
+			return true
+		}
+
+		returns := crossSection.trailingSymbolReturns(symbolState.Name, window)
+
+		if len(returns) == 0 {
+			return true
+		}
+
+		visit(symbolState.Name, returns)
+
+		return true
+	})
+}
+
+func (crossSection *CrossSection) trailingSymbolReturns(symbol string, window int) []float64 {
+	raw, ok := crossSection.universe.Load(symbol)
+
+	if !ok {
+		return nil
+	}
+
+	row := raw.(*market.Symbol)
+
+	if len(row.Returns) == 0 {
+		return nil
+	}
+
+	start := len(row.Returns) - window
+
+	if start < 0 {
+		start = 0
+	}
+
+	return row.Returns[start:]
+}

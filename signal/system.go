@@ -70,13 +70,6 @@ func (system *System) Tick() error {
 			continue
 		}
 
-		var (
-			ok      bool
-			warmed  bool
-			eventAt time.Time
-			signal  market.Signal
-		)
-
 		switch message.Type {
 		case "symbols":
 			symbols, symbolOk := message.Value.([]string)
@@ -86,10 +79,10 @@ func (system *System) Tick() error {
 			}
 
 			continue
-		case "trades":
-			var trades []*krakenmarket.TradeUpdate
+		case "trade":
+			trades, ok := tradeUpdates(message.Value)
 
-			if trades, ok = message.Value.([]*krakenmarket.TradeUpdate); !ok {
+			if !ok {
 				errnie.Error(errors.New(
 					string(system.source) + ": invalid trade",
 				))
@@ -97,12 +90,12 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			if len(trades) == 0 {
-				continue
-			}
-
 			for _, trade := range trades {
-				signal = system.LoadSignal(logic.EntityTrade, trade.Symbol)
+				if trade == nil {
+					continue
+				}
+
+				signal := system.LoadSignal(logic.EntityTrade, trade.Symbol)
 
 				if signal == nil {
 					errnie.Error(errors.New(
@@ -112,13 +105,16 @@ func (system *System) Tick() error {
 					continue
 				}
 
-				warmed = signal.Record(trade)
-				eventAt = trade.Timestamp
+				system.publishMeasurement(
+					signal,
+					signal.Record(trade),
+					trade.Timestamp,
+				)
 			}
 		case "ticker":
-			var ticker *krakenmarket.TickerUpdate
+			tickers, ok := tickerUpdates(message.Value)
 
-			if ticker, ok = message.Value.(*krakenmarket.TickerUpdate); !ok {
+			if !ok {
 				errnie.Error(errors.New(
 					string(system.source) + ": invalid ticker",
 				))
@@ -126,22 +122,31 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal = system.LoadSignal(logic.EntityTick, ticker.Symbol)
+			for _, ticker := range tickers {
+				if ticker == nil {
+					continue
+				}
 
-			if signal == nil {
-				errnie.Error(errors.New(
-					string(system.source) + ": symbol not found",
-				))
+				signal := system.LoadSignal(logic.EntityTick, ticker.Symbol)
 
-				continue
+				if signal == nil {
+					errnie.Error(errors.New(
+						string(system.source) + ": symbol not found",
+					))
+
+					continue
+				}
+
+				system.publishMeasurement(
+					signal,
+					signal.Record(ticker),
+					ticker.Timestamp,
+				)
 			}
-
-			warmed = signal.Record(ticker)
-			eventAt = ticker.Timestamp
 		case "book":
-			var book *krakenmarket.BookUpdate
+			books, ok := bookUpdates(message.Value)
 
-			if book, ok = message.Value.(*krakenmarket.BookUpdate); !ok {
+			if !ok {
 				errnie.Error(errors.New(
 					string(system.source) + ": invalid book",
 				))
@@ -149,22 +154,33 @@ func (system *System) Tick() error {
 				continue
 			}
 
-			signal = system.LoadSignal(logic.EntityBook, book.Symbol)
+			for _, book := range books {
+				if book == nil {
+					continue
+				}
 
-			if signal == nil {
-				errnie.Error(errors.New(
-					string(system.source) + ": symbol not found",
-				))
+				signal := system.LoadSignal(logic.EntityBook, book.Symbol)
 
-				continue
+				if signal == nil {
+					errnie.Error(errors.New(
+						string(system.source) + ": symbol not found",
+					))
+
+					continue
+				}
+
+				eventAt := book.Timestamp
+
+				system.publishMeasurement(
+					signal,
+					signal.Record(book),
+					eventAt,
+				)
 			}
-
-			warmed = signal.Record(book)
-			eventAt = book.Timestamp
 		case "feedback":
-			var feedback *market.Feedback
+			feedback, ok := message.Value.(*market.Feedback)
 
-			if feedback, ok = message.Value.(*market.Feedback); !ok {
+			if !ok {
 				errnie.Error(errors.New(
 					string(system.source) + ": invalid feedback",
 				))
@@ -173,30 +189,80 @@ func (system *System) Tick() error {
 			}
 
 			system.feedback = feedback
-			continue
 		default:
 			continue
 		}
+	}
+}
 
-		if signal == nil {
-			continue
+func (system *System) publishMeasurement(
+	signal market.Signal,
+	warmed bool,
+	eventAt time.Time,
+) {
+	if signal == nil {
+		return
+	}
+
+	measurement, err := signal.Measure(system.feedback, eventAt)
+
+	if errnie.Error(err) != nil {
+		return
+	}
+
+	if err := measurement.Publish(system.bus); errnie.Error(err) != nil {
+		return
+	}
+
+	errnie.Error(system.gauge.Publish(
+		measurement,
+		signal.Symbol(),
+		warmed,
+	))
+}
+
+func tradeUpdates(value any) (krakenmarket.TradeUpdates, bool) {
+	switch updates := value.(type) {
+	case krakenmarket.TradeUpdates:
+		return updates, true
+	case *krakenmarket.TradeUpdates:
+		if updates == nil {
+			return nil, false
 		}
 
-		measurement, err := signal.Measure(system.feedback, eventAt)
+		return *updates, true
+	default:
+		return nil, false
+	}
+}
 
-		if errnie.Error(err) != nil {
-			continue
+func tickerUpdates(value any) (krakenmarket.TickerUpdates, bool) {
+	switch updates := value.(type) {
+	case krakenmarket.TickerUpdates:
+		return updates, true
+	case *krakenmarket.TickerUpdates:
+		if updates == nil {
+			return nil, false
 		}
 
-		if err := measurement.Publish(system.bus); errnie.Error(err) != nil {
-			continue
+		return *updates, true
+	default:
+		return nil, false
+	}
+}
+
+func bookUpdates(value any) (krakenmarket.BookUpdates, bool) {
+	switch updates := value.(type) {
+	case krakenmarket.BookUpdates:
+		return updates, true
+	case *krakenmarket.BookUpdates:
+		if updates == nil {
+			return nil, false
 		}
 
-		errnie.Error(system.gauge.Publish(
-			measurement,
-			signal.Symbol(),
-			warmed,
-		))
+		return *updates, true
+	default:
+		return nil, false
 	}
 }
 

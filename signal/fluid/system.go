@@ -37,6 +37,9 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	return system
 }
 
+/*
+Tick runs the shared signal bus loop. Field snapshots publish from market feeds.
+*/
 func (system *System) Tick() error {
 	return system.base.Tick()
 }

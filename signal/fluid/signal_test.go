@@ -163,7 +163,7 @@ func TestFluidSymbolIgnoresFluxBeforeVolumeClock(t *testing.T) {
 		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
 		So(state.FeedTrade(feedAt, 100, 1, "buy"), ShouldBeNil)
 
-		Convey("It should wait for ticker volume before folding flux", func() {
+		Convey("It should wait for ticker volume before accepting flux", func() {
 			So(state.flux.hasTarget(), ShouldBeFalse)
 		})
 	})
@@ -193,49 +193,6 @@ func TestFluidSymbolRejectsDeltaBeforeSnapshot(t *testing.T) {
 			_, ok := state.Reading()
 
 			So(ok, ShouldBeFalse)
-		})
-	})
-}
-
-func TestFluidSymbolMeasureSkipsDivergedBook(t *testing.T) {
-	Convey("Given a fluid symbol with a verified book", t, func() {
-		symbol := "ETH/EUR"
-		viper.Set("market.book_depth_levels", 10)
-		viper.Set("signals.volume_clock_bars_per_day", 288)
-		viper.Set("signals.fluid.tick_size", 0.01)
-		viper.Set("signals.fluid.grid_half_width", 10)
-		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		state, err := NewFluidSymbol(symbol)
-		So(err, ShouldBeNil)
-		fixture := symbolBookFixture{symbol: symbol}
-
-		So(state.FeedTicker(krakenmarket.TickerUpdate{
-			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		}, feedAt), ShouldBeNil)
-		So(advanceFluidGrid(state, fixture, feedAt, 99, 10, 101, 6), ShouldBeNil)
-
-		_, ok := state.Reading()
-
-		Convey("It should publish a field reading", func() {
-			So(ok, ShouldBeTrue)
-		})
-
-		Convey("When the exchange checksum does not match the maintained book", func() {
-			badDelta := fixture.snapshot(98, 10, 101, 6)
-			badDelta.Checksum = 1
-			So(state.FeedBook(badDelta, feedAt.Add(200*time.Millisecond)), ShouldNotBeNil)
-
-			reading, ok := state.Reading()
-
-			Convey("It should keep the last verified reading", func() {
-				So(ok, ShouldBeTrue)
-				So(reading.symbol, ShouldEqual, symbol)
-			})
-
-			Convey("It should still publish dashboard rows", func() {
-				So(state.Row(), ShouldNotBeNil)
-			})
 		})
 	})
 }

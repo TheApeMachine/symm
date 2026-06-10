@@ -1,10 +1,5 @@
 import type { SignalGaugeBridge } from "#/components/charts/confidence/Gauges";
 
-export const isGaugeWire = (
-	raw: Record<string, unknown>,
-): raw is Record<string, unknown> & { chart: "gauge"; source: string } =>
-	raw.chart === "gauge" && typeof raw.source === "string";
-
 export const ingestGaugeWire = (
 	bridge: SignalGaugeBridge | undefined,
 	raw: Record<string, unknown>,

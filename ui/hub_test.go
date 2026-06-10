@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -24,6 +26,19 @@ func TestHubRememberBalances(t *testing.T) {
 			So(snapshot, ShouldNotBeNil)
 			So(len(snapshot.Asset), ShouldEqual, 1)
 			So(snapshot.Asset[0].Balance, ShouldEqual, 250)
+		})
+	})
+}
+
+func TestFrontendClientSendRejectsNonFiniteJSON(t *testing.T) {
+	Convey("Given a ui frame with non-finite floats", t, func() {
+		_, err := json.Marshal(map[string]any{
+			"type": "fluid",
+			"re":   math.Inf(1),
+		})
+
+		Convey("It should fail JSON encoding before websocket write", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

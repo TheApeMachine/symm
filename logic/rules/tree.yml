@@ -2,56 +2,82 @@ branches:
   # --- exits: checked before any entry path ---
 
   - condition_group:
-      boolean: or
+      boolean: and
       conditions:
         - type: is_true
           left:
             subject:
-              source: exhaust
-              type: category
-              category:
-                type: mechanical_collapse
-                confidence: 0.50
-        - type: is_true
-          left:
-            subject:
-              source: exhaust
-              type: category
-              category:
-                type: active_reversal
-                confidence: 0.50
-    action:
-      type: settle_position
-      side: sell
-      fraction: 1.0
-
-  - condition_group:
-      boolean: or
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              source: hawkes
-              type: category
-              category:
-                type: saturation
-                confidence: 0.50
-        - type: is_true
-          left:
-            subject:
-              source: fluid
-              type: category
-              category:
-                type: turbulent
-                confidence: 0.50
-    action:
-      type: settle_position
-      side: sell
-      fraction: 1.0
+              type: holding
+              holding:
+                held: true
+    branches:
+      - condition_group:
+          boolean: or
+          conditions:
+            - type: is_true
+              left:
+                subject:
+                  source: exhaustion
+                  type: category
+                  category:
+                    type: mechanical_collapse
+                    confidence: 0.50
+            - type: is_true
+              left:
+                subject:
+                  source: exhaustion
+                  type: category
+                  category:
+                    type: active_reversal
+                    confidence: 0.50
+        action:
+          type: settle_position
+          side: sell
+          fraction: 1.0
 
   - condition_group:
       boolean: and
       conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: true
+    branches:
+      - condition_group:
+          boolean: or
+          conditions:
+            - type: is_true
+              left:
+                subject:
+                  source: hawkes
+                  type: category
+                  category:
+                    type: saturation
+                    confidence: 0.50
+            - type: is_true
+              left:
+                subject:
+                  source: fluid
+                  type: category
+                  category:
+                    type: turbulent
+                    confidence: 0.50
+        action:
+          type: settle_position
+          side: sell
+          fraction: 1.0
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: true
         - type: is_true
           left:
             subject:
@@ -66,8 +92,14 @@ branches:
       fraction: 1.0
 
   - condition_group:
-      boolean: or
+      boolean: and
       conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: true
         - type: is_true
           left:
             subject:
@@ -82,113 +114,133 @@ branches:
       fraction: 1.0
 
   - condition_group:
-      boolean: or
+      boolean: and
       conditions:
         - type: is_true
           left:
             subject:
-              source: exhaust
-              type: category
-              category:
-                type: thermal_exhaustion
-                confidence: 0.50
-        - type: is_true
-          left:
-            subject:
-              source: pumpdump
-              type: category
-              category:
-                type: faded_exhaustion
-                confidence: 0.50
-        - type: is_true
-          left:
-            subject:
-              source: causal
-              type: category
-              category:
-                type: systemic_beta
-                confidence: 0.50
-    action:
-      type: take_profit
-      side: sell
-      fraction: 1.0
-
-  # --- ignition: vertical pump / coiled compression ---
-
-  - condition_group:
-      boolean: or
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              source: pumpdump
-              type: category
-              category:
-                type: vertical_ignition
-                confidence: $confidence.regime_adjusted_baseline
-                surprise: 1.0
-        - type: is_true
-          left:
-            subject:
-              source: pumpdump
-              type: category
-              category:
-                type: coiled_compression
-                confidence: $confidence.regime_adjusted_baseline
-                surprise: 1.0
+              type: holding
+              holding:
+                held: true
     branches:
       - condition_group:
-          boolean: and
+          boolean: or
           conditions:
             - type: is_true
               left:
                 subject:
-                  source: hawkes
+                  source: exhaustion
                   type: category
                   category:
-                    type: frenzy
-                    confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
+                    type: thermal_exhaustion
+                    confidence: 0.50
+            - type: is_true
               left:
                 subject:
-                  source: toxicity
+                  source: pumpdump
                   type: category
                   category:
-                    type: toxic_bluff
-                    confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
+                    type: faded_exhaustion
+                    confidence: 0.50
+            - type: is_true
               left:
                 subject:
-                  source: depthflow
+                  source: causal
                   type: category
                   category:
-                    type: spoof_trap
-                    confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
+                    type: systemic_beta
+                    confidence: 0.50
+        action:
+          type: take_profit
+          side: sell
+          fraction: 1.0
+
+  # --- ignition: vertical pump / coiled compression ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
+    branches:
+      - condition_group:
+          boolean: or
+          conditions:
+            - type: is_true
               left:
                 subject:
-                  source: fluid
+                  source: pumpdump
                   type: category
                   category:
-                    type: turbulent
+                    type: vertical_ignition
                     confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
+                    surprise: 1.0
+            - type: is_true
               left:
                 subject:
-                  source: manifold
+                  source: pumpdump
                   type: category
                   category:
-                    type: liquidity_shock
+                    type: coiled_compression
                     confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
-              left:
-                subject:
-                  source: manifold
-                  type: category
-                  category:
-                    type: stochastic_noise
-                    confidence: $confidence.regime_adjusted_baseline
+                    surprise: 1.0
         branches:
+          - condition_group:
+              boolean: and
+              conditions:
+                - type: is_true
+                  left:
+                    subject:
+                      source: hawkes
+                      type: category
+                      category:
+                        type: frenzy
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: toxicity
+                      type: category
+                      category:
+                        type: toxic_bluff
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: depthflow
+                      type: category
+                      category:
+                        type: spoof_trap
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: fluid
+                      type: category
+                      category:
+                        type: turbulent
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: manifold
+                      type: category
+                      category:
+                        type: liquidity_shock
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: manifold
+                      type: category
+                      category:
+                        type: stochastic_noise
+                        confidence: $confidence.regime_adjusted_baseline
+            branches:
           - condition_group:
               boolean: or
               conditions:
@@ -274,6 +326,12 @@ branches:
   - condition_group:
       boolean: and
       conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
         - type: is_true
           left:
             subject:
@@ -377,7 +435,7 @@ branches:
                             - type: is_false
                               left:
                                 subject:
-                                  source: exhaust
+                                  source: exhaustion
                                   type: category
                                   category:
                                     type: mechanical_collapse
@@ -400,6 +458,12 @@ branches:
   - condition_group:
       boolean: and
       conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
         - type: is_true
           left:
             subject:
@@ -497,6 +561,12 @@ branches:
         - type: is_true
           left:
             subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_true
+          left:
+            subject:
               source: cvd
               type: category
               category:
@@ -581,6 +651,12 @@ branches:
         - type: is_true
           left:
             subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_true
+          left:
+            subject:
               source: manifold
               type: category
               category:
@@ -609,7 +685,7 @@ branches:
             - type: is_false
               left:
                 subject:
-                  source: exhaust
+                  source: exhaustion
                   type: category
                   category:
                     type: mechanical_collapse
@@ -632,6 +708,12 @@ branches:
   - condition_group:
       boolean: and
       conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
         - type: is_true
           left:
             subject:

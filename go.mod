@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.1
+	github.com/davecgh/go-spew v1.1.1
 	github.com/google/uuid v1.6.0
 	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1

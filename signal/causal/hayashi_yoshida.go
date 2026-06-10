@@ -169,6 +169,26 @@ func (series *hyReturns) clone() *hyReturns {
 	}
 }
 
+func (series *hyReturns) cloneTail(window int) *hyReturns {
+	cloned := series.clone()
+
+	if cloned == nil {
+		return nil
+	}
+
+	if window <= 0 {
+		cloned.intervals = cloned.intervals[:0]
+
+		return cloned
+	}
+
+	if len(cloned.intervals) > window {
+		cloned.intervals = cloned.intervals[len(cloned.intervals)-window:]
+	}
+
+	return cloned
+}
+
 /*
 realisedVariance is the Hayashi-Yoshida variance of the series against itself. Consecutive
 intervals share only their endpoints (zero-width overlap), so only self-products survive and

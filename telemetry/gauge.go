@@ -102,12 +102,16 @@ func (gauge *Gauge) Publish(
 
 	gauge.lastPublishAt = time.Now()
 
+	threshold := gauge.surpriseThreshold()
+
+	RecordSurpriseRatio(gauge.source, meanSurprise, threshold)
+
 	return gauge.bus.Send("ui", "gauge", map[string]any{
 		"chart":              "gauge",
 		"source":             gauge.source,
 		"confidence":         meanConfidence,
 		"surprise":           meanSurprise,
-		"surprise_threshold": gauge.surpriseThreshold(),
+		"surprise_threshold": threshold,
 		"samples":            samples,
 		"min_samples":        minSamples,
 		"calibrating":        calibrating,

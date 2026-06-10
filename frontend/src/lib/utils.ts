@@ -65,8 +65,10 @@ export const ensureSciChartWasm = async (): Promise<void> => {
 		SciChartSurface.UseCommunityLicense();
 		SciChartDefaults.performanceWarnings = import.meta.env.DEV;
 		SciChartDefaults.useSharedCache = true;
-		SciChartSurface.autoDisposeWasmContext = true;
-		SciChartSurface.wasmContextDisposeTimeout = 100;
+		// Dashboard mounts many 2D/3D surfaces at once; tab switches unmount
+		// individual charts while gauges stay mounted. Auto-dispose races that
+		// lifecycle and leaves every surface dead or stuck loading.
+		SciChartSurface.autoDisposeWasmContext = false;
 
 		if (import.meta.env.VITE_SCICHART_WASM_CDN === "true") {
 			SciChartSurface.loadWasmFromCDN();

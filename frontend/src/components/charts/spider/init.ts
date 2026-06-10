@@ -18,9 +18,8 @@ import { ensureSciChartWasm } from "#/lib/utils";
 export type SpiderControls = { update: (values: number[]) => void };
 
 /*
-drawSignalSpider renders a live radar of the current signal landscape: one axis
-per signal, the radius is that signal's confidence (0-100). controls.update
-replaces the petal values each frame to show the present shape of the market.
+drawSignalSpider renders a live radar of cross-section mean regime strengths:
+volatility, trend, bullish, bearish, and choppiness on a 0-100 radius.
 */
 export const drawSignalSpider = async (
 	rootElement: string | HTMLDivElement,

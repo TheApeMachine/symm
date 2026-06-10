@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
@@ -18,15 +19,22 @@ import (
 )
 
 type Desk struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	pool   *qpool.Q[any]
-	bus    *internal.Bus
-	orders *sync.Map
+	ctx       context.Context
+	cancel    context.CancelFunc
+	err       error
+	pool      *qpool.Q[any]
+	bus       *internal.Bus
+	ledger    *Ledger
+	treeStats *logic.TreeStats
+	orders    *sync.Map
 }
 
-func NewDesk(ctx context.Context, pool *qpool.Q[any]) *Desk {
+func NewDesk(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	ledger *Ledger,
+	treeStats *logic.TreeStats,
+) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Desk{
@@ -36,10 +44,12 @@ func NewDesk(ctx context.Context, pool *qpool.Q[any]) *Desk {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:private"},
+			[]string{"kraken:private", "ui"},
 			[]string{"raw"},
 		),
-		orders: &sync.Map{},
+		ledger:    ledger,
+		treeStats: treeStats,
+		orders:    &sync.Map{},
 	}
 }
 
@@ -60,7 +70,7 @@ func (desk *Desk) Tick() error {
 				continue
 			}
 
-			if errnie.Error(desk.addOrder(action)) != nil {
+			if errnie.Error(desk.submitAction(action)) != nil {
 				continue
 			}
 		case "orders":
@@ -86,36 +96,133 @@ func (desk *Desk) Tick() error {
 				if execution.ClOrdID != "" {
 					desk.orders.Delete(execution.ClOrdID)
 				}
+
+				if execution.ExecType == "trade" && execution.LastQty > 0 {
+					desk.publishDecision(
+						&logic.Action{
+							Type:      logic.ActionMarket,
+							Symbol:    execution.Symbol,
+							BranchKey: execution.ClOrdID,
+						},
+						"filled",
+						"",
+					)
+				}
 			}
 		}
 	}
 }
 
-func (desk *Desk) addOrder(action *logic.Action) error {
-	token, err := types.NewToken(desk.ctx)
+func (desk *Desk) submitAction(action *logic.Action) error {
+	if action == nil {
+		return errnie.Error(errors.New("desk: nil action"))
+	}
 
-	if err != nil {
-		return errnie.Error(err)
+	orderType, typeErr := action.Type.KrakenOrderType()
+
+	if typeErr != nil {
+		desk.publishDecision(action, "rejected", typeErr.Error())
+		return errnie.Error(typeErr)
+	}
+
+	heldQty := desk.ledger.HeldQuantity(action.Symbol)
+
+	if action.Type.IsExit() && heldQty <= 0 {
+		desk.publishDecision(action, "rejected", "no open position")
+		return errnie.Error(ErrNoPosition)
+	}
+
+	if !action.Type.IsExit() && desk.ledger.OpenCount() >= viper.GetInt("trading.max_concurrent_positions") {
+		if heldQty <= 0 {
+			desk.publishDecision(action, "rejected", "max concurrent positions")
+
+			return errnie.Error(errors.New("desk: max concurrent positions"))
+		}
+	}
+
+	mark, markOK := desk.ledger.Mark(action.Symbol)
+
+	if !markOK {
+		desk.publishDecision(action, "rejected", "no mark price")
+		return errnie.Error(ErrNoMark)
+	}
+
+	quantity, sizeErr := SizeOrder(action, desk.ledger.QuoteCash(), heldQty, mark)
+
+	if sizeErr != nil {
+		desk.publishDecision(action, "rejected", sizeErr.Error())
+		return errnie.Error(sizeErr)
+	}
+
+	token, tokenErr := types.NewToken(desk.ctx)
+
+	if tokenErr != nil {
+		desk.publishDecision(action, "rejected", tokenErr.Error())
+		return errnie.Error(tokenErr)
 	}
 
 	clOrdID := uuid.New().String()
+	limitPrice := action.Price
+
+	if limitPrice <= 0 {
+		limitPrice = mark
+	}
+
+	params := &trading.AddParams{
+		OrderType:  orderType,
+		Side:       action.Side,
+		Symbol:     action.Symbol,
+		LimitPrice: limitPrice,
+		OrderQty:   quantity,
+		ClOrdID:    clOrdID,
+		Token:      token,
+	}
+
+	if !action.Type.IsExit() {
+		params.EntryQueuedAt = time.Now()
+	}
+
 	frame := types.KrakenMessage{
 		Method: trading.MethodAddOrder,
-		Params: &trading.AddParams{
-			OrderType:  trading.OrderType(action.Type),
-			Side:       trading.Side(action.Side),
-			Symbol:     action.Symbol,
-			LimitPrice: action.Price,
-			OrderQty:   action.Quantity,
-			ClOrdID:    clOrdID,
-			Token:      token,
-		},
-		ReqID: time.Now().UnixNano(),
+		Params: params,
+		ReqID:  time.Now().UnixNano(),
 	}
 
 	desk.orders.Store(clOrdID, frame)
+	desk.publishDecision(action, "submitted", "")
 
 	return errnie.Error(desk.bus.Send("kraken:private", "orders", frame))
+}
+
+func (desk *Desk) publishDecision(
+	action *logic.Action,
+	verdict string,
+	reason string,
+) {
+	if action == nil {
+		return
+	}
+
+	if desk.treeStats != nil {
+		desk.treeStats.RecordAction(
+			action.Symbol,
+			&logic.Evaluation{Action: action, Key: action.BranchKey},
+			verdict,
+			reason,
+		)
+	}
+
+	errnie.Error(desk.bus.Send("ui", "decision", map[string]any{
+		"event":      "decision",
+		"type":       action.Type.String(),
+		"symbol":     action.Symbol,
+		"key":        action.BranchKey,
+		"verdict":    verdict,
+		"reason":     reason,
+		"chart":      "decision_tree",
+		"decision":   true,
+		"branch_key": action.BranchKey,
+	}))
 }
 
 func (desk *Desk) CheckOrder(orderID string) error {

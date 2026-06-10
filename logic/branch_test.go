@@ -88,7 +88,10 @@ func TestBranchEvaluate(t *testing.T) {
 			result, err := branch.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
-			So(result, ShouldEqual, action)
+			So(result, ShouldNotBeNil)
+			So(result.Action.Type, ShouldEqual, action.Type)
+			So(result.Action.Side, ShouldEqual, action.Side)
+			So(result.Action.Symbol, ShouldEqual, action.Symbol)
 		})
 	})
 
@@ -199,7 +202,8 @@ func TestBranchEvaluate(t *testing.T) {
 			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
-			So(result, ShouldEqual, childAction)
+			So(result, ShouldNotBeNil)
+			So(result.Action, ShouldEqual, childAction)
 		})
 
 		Convey("It should fall back to the parent action when no child matches", func() {
@@ -223,7 +227,8 @@ func TestBranchEvaluate(t *testing.T) {
 			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
-			So(result, ShouldEqual, parentAction)
+			So(result, ShouldNotBeNil)
+			So(result.Action, ShouldEqual, parentAction)
 		})
 	})
 }

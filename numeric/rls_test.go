@@ -44,4 +44,27 @@ func TestRLSFilterObserve(t *testing.T) {
 			So(forecast, ShouldAlmostEqual, 2, 0.25)
 		})
 	})
+
+	Convey("Given a forgetting factor", t, func() {
+		filter, err := NewRLSFilter(1, 1000)
+		So(err, ShouldBeNil)
+		So(filter.SetForgettingFactor(0.5), ShouldBeNil)
+
+		for step := 0; step < 16; step++ {
+			observeErr := filter.Observe([]float64{1}, 1)
+			So(observeErr, ShouldBeNil)
+		}
+
+		for step := 0; step < 16; step++ {
+			observeErr := filter.Observe([]float64{1}, 5)
+			So(observeErr, ShouldBeNil)
+		}
+
+		forecast, predictErr := filter.Predict([]float64{1})
+
+		Convey("It should adapt faster to the new target", func() {
+			So(predictErr, ShouldBeNil)
+			So(forecast, ShouldBeGreaterThan, 2.5)
+		})
+	})
 }

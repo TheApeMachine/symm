@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -65,7 +66,7 @@ func (engine *Engine) Start() (err error) {
 	engine.bus.Send("kraken:public", "instrument", types.KrakenMessage{
 		Method: "subscribe",
 		Params: market.NewInstrumentParams(),
-		ReqID: time.Now().UnixNano(),
+		ReqID:  time.Now().UnixNano(),
 	})
 
 	wg.Wait()
@@ -74,13 +75,24 @@ func (engine *Engine) Start() (err error) {
 
 func (engine *Engine) AddSystems(systems ...System) error {
 	for _, system := range systems {
-		if system == nil {
+		if systemNil(system) {
 			return fmt.Errorf("engine: nil system")
 		}
 	}
 
 	engine.systems = append(engine.systems, systems...)
+
 	return nil
+}
+
+func systemNil(system System) bool {
+	if system == nil {
+		return true
+	}
+
+	value := reflect.ValueOf(system)
+
+	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
 func (engine *Engine) Close() (err error) {

@@ -167,33 +167,42 @@ func (ws *WebSocket) Tick() (err error) {
 				) * time.Millisecond,
 			)
 
-			var response *types.SocketMessage
+			var socketMessage *types.SocketMessage
 
 			switch message.Type {
 			case "balances":
-				response = ws.sockets["balances"].Send(message)
+				socketMessage = ws.sockets["balances"].Send(message)
 			case "orders":
-				response = ws.sockets["orders"].Send(message)
+				socketMessage = ws.sockets["orders"].Send(message)
+
+				if orderSocket, ok := ws.sockets["orders"].(*response.Orders); ok {
+					for _, execution := range orderSocket.DrainExecutions() {
+						ws.bus.Send("raw", "executions", []user.Execution{execution})
+					}
+
+					ws.bus.Send("raw", "balances", orderSocket.Wallet())
+					ws.bus.Send("ui", "balances", orderSocket.Wallet())
+				}
 			case "executions":
-				response = ws.sockets["executions"].Send(message)
+				socketMessage = ws.sockets["executions"].Send(message)
 			default:
 				qvaluePool.Put(message)
 				continue
 			}
 
-			if response == nil {
+			if socketMessage == nil {
 				qvaluePool.Put(message)
 				continue
 			}
 
-			ws.handleErrors(response)
+			ws.handleErrors(socketMessage)
 
-			switch response.Channel {
+			switch socketMessage.Channel {
 			case "balances":
 				balances := user.Balances{}
 
-				if err := errnie.Error(response.Unmarshal(&balances)); err != nil {
-					response.Release()
+				if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
+					socketMessage.Release()
 					qvaluePool.Put(message)
 					continue
 				}
@@ -203,8 +212,8 @@ func (ws *WebSocket) Tick() (err error) {
 			case "orders":
 				orders := []trading.OrderUpdate{}
 
-				if err := errnie.Error(response.Unmarshal(&orders)); err != nil {
-					response.Release()
+				if err := errnie.Error(socketMessage.Unmarshal(&orders)); err != nil {
+					socketMessage.Release()
 					qvaluePool.Put(message)
 					continue
 				}
@@ -213,8 +222,8 @@ func (ws *WebSocket) Tick() (err error) {
 			case "executions":
 				executions := []user.Execution{}
 
-				if err := errnie.Error(response.Unmarshal(&executions)); err != nil {
-					response.Release()
+				if err := errnie.Error(socketMessage.Unmarshal(&executions)); err != nil {
+					socketMessage.Release()
 					qvaluePool.Put(message)
 					continue
 				}
@@ -222,7 +231,7 @@ func (ws *WebSocket) Tick() (err error) {
 				ws.bus.Send("raw", "executions", executions)
 			}
 
-			response.Release()
+			socketMessage.Release()
 			qvaluePool.Put(message)
 		}
 	}

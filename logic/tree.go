@@ -2,6 +2,7 @@ package logic
 
 import (
 	"embed"
+	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"go.yaml.in/yaml/v3"
@@ -12,6 +13,7 @@ var embedded embed.FS
 
 type Tree struct {
 	Branches []*Branch `yaml:"branches"`
+	stats    *TreeStats
 }
 
 func NewTree() (*Tree, error) {
@@ -29,23 +31,41 @@ func NewTree() (*Tree, error) {
 		return tree, err
 	}
 
+	tree.stats = NewTreeStats(tree.Branches, 32)
+
 	return tree, nil
 }
 
-func (tree *Tree) Evaluate(measurements []Measurement) *Action {
-	evalContext := NewEvalContext(measurements)
+func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Evaluation {
+	evalContext := NewEvalContext(measurements, holdings)
 
-	for _, branch := range tree.Branches {
-		action, err := branch.Evaluate(measurements, evalContext)
+	if tree.stats != nil {
+		tree.stats.BeginEvaluation()
+	}
+
+	for branchIndex, branch := range tree.Branches {
+		evaluation, err := branch.evaluate(
+			measurements,
+			evalContext,
+			tree.stats,
+			strconv.Itoa(branchIndex),
+		)
 
 		if errnie.Error(err) != nil {
 			continue
 		}
 
-		if action != nil {
-			return action
+		if evaluation != nil {
+			return evaluation
 		}
 	}
 
 	return nil
+}
+
+/*
+Stats exposes playbook instrumentation for dashboard publishing.
+*/
+func (tree *Tree) Stats() *TreeStats {
+	return tree.stats
 }

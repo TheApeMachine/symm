@@ -56,6 +56,7 @@ func (subjectType *SubjectType) UnmarshalYAML(node *yaml.Node) error {
 		"category":   uint8(SubjectCategory),
 		"regime":     uint8(SubjectRegime),
 		"position":   uint8(SubjectPosition),
+		"holding":    uint8(SubjectHolding),
 		"price":      uint8(SubjectPrice),
 		"volume":     uint8(SubjectVolume),
 		"spread":     uint8(SubjectSpread),

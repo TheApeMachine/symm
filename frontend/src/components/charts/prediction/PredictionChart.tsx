@@ -16,11 +16,9 @@ export const PredictionChart = memo(function PredictionChart() {
 		return initPredictionChart(rootElement);
 	}, []);
 
-	const onInit = useCallback(
-		(result: TPredictionChartInitResult) =>
-			registerPredictionChart(result.appendReading),
-		[],
-	);
+	const onInit = useCallback((result: TPredictionChartInitResult) => {
+		return registerPredictionChart(result.appendPoint);
+	}, []);
 
 	return (
 		<SciChartReact

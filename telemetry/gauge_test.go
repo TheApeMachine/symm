@@ -145,9 +145,11 @@ func TestNewGauge(t *testing.T) {
 		viper.Set("telemetry.gauge.readings_capacity", 32)
 		viper.Set("signals.fluid.measurements_capacity", 16)
 		viper.Set("signals.exhaust.measurements_capacity", 48)
+		viper.Set("signals.pumpdump.measurements_capacity", 64)
 
 		fluidGauge, fluidErr := NewGauge(nil, logic.SourceFluid)
 		exhaustGauge, exhaustErr := NewGauge(nil, logic.SourceExhaustion)
+		pumpdumpGauge, pumpdumpErr := NewGauge(nil, logic.SourcePumpDump)
 
 		Convey("It should allocate the reading ring and warmup capacity", func() {
 			So(fluidErr, ShouldBeNil)
@@ -156,6 +158,9 @@ func TestNewGauge(t *testing.T) {
 
 			So(exhaustErr, ShouldBeNil)
 			So(exhaustGauge.warmupCapacity, ShouldEqual, 48)
+
+			So(pumpdumpErr, ShouldBeNil)
+			So(pumpdumpGauge.warmupCapacity, ShouldEqual, 64)
 		})
 	})
 

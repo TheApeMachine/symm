@@ -33,11 +33,20 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 
 	if (raw.event === "wallet") {
 		dispatch.setWallet((raw.balance as number) ?? 0);
+
+		if (typeof raw.currency === "string") {
+			dispatch.setCurrency(raw.currency);
+		}
+
 		return true;
 	}
 
 	if (Array.isArray(raw.asset)) {
 		let cash = 0;
+		const quote = (
+			import.meta.env.VITE_QUOTE_CURRENCY?.trim() || "USD"
+		).toUpperCase();
+		const accepted = new Set([quote, `Z${quote}`, "EUR", "ZEUR"]);
 
 		for (const row of raw.asset) {
 			if (typeof row !== "object" || row === null) {
@@ -45,9 +54,9 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 			}
 
 			const asset = row as Record<string, unknown>;
-			const name = asset.asset;
+			const name = String(asset.asset ?? "").toUpperCase();
 
-			if (name !== "EUR" && name !== "ZEUR") {
+			if (!accepted.has(name)) {
 				continue;
 			}
 
@@ -89,6 +98,7 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		dispatch.pushAction({
 			type: raw.type as string,
 			symbol: raw.symbol as string,
+			key: (raw.key as string) ?? (raw.branch_key as string) ?? "",
 			ts: Date.now(),
 			verdict: (raw.verdict as ActionVerdict) ?? "rejected",
 			reason: (raw.reason as string) ?? "",

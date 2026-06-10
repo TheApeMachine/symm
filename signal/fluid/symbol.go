@@ -27,7 +27,6 @@ type FluidSymbol struct {
 	symbol         string
 	book           krakenmarket.BookUpdate
 	bookReady      bool
-	bookDepth      int
 	changePct      float64
 	volume         float64
 	last           float64
@@ -51,12 +50,6 @@ type fluidReading struct {
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
-	depth := viper.GetInt("market.book_depth_levels")
-
-	if depth <= 0 {
-		return nil, fmt.Errorf("fluid: market.book_depth_levels must be positive")
-	}
-
 	grid, gridErr := NewFluidGrid()
 
 	if gridErr != nil {
@@ -64,10 +57,9 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 	}
 
 	return &FluidSymbol{
-		symbol:    symbol,
-		bookDepth: depth,
-		flux:      newFluxAccumulator(),
-		grid:      grid,
+		symbol: symbol,
+		flux:   newFluxAccumulator(),
+		grid:   grid,
 	}, nil
 }
 
@@ -150,27 +142,13 @@ func (state *FluidSymbol) FeedBook(update krakenmarket.BookUpdate, at time.Time)
 }
 
 func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time.Time) error {
-	if !state.bookReady {
-		if update.Type != "snapshot" {
-			return nil
-		}
-
+	if update.Type == "snapshot" {
+		state.book = update
 		state.bookReady = true
 	}
 
-	beforeBids := state.cloneBookLevels(state.book.Bids)
-	beforeAsks := state.cloneBookLevels(state.book.Asks)
-
-	maintained := state.book.CloneMaintained(state.bookDepth)
-
-	state.book.Fold(update, state.bookDepth)
-
-	computed := state.book.ComputedChecksum()
-
-	if update.Checksum != 0 && computed != update.Checksum {
-		state.book = maintained
-
-		return fmt.Errorf("fluid: book checksum diverged for %s", state.symbol)
+	if !state.bookReady {
+		return nil
 	}
 
 	if at.IsZero() {
@@ -179,10 +157,25 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 
 	state.lastEventAt = at
 
-	flux := state.trustedSideChangeFlux(beforeBids, state.book.Bids, at) +
-		state.trustedSideChangeFlux(beforeAsks, state.book.Asks, at)
+	flux := 0.0
 
-	state.updateTouchLocked(state.book.Bids, state.book.Asks)
+	if update.Type != "snapshot" {
+		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids, at) +
+			state.trustedSideChangeFlux(state.book.Asks, update.Asks, at)
+	}
+
+	bids := update.Bids
+	asks := update.Asks
+
+	if len(bids) == 0 {
+		bids = state.book.Bids
+	}
+
+	if len(asks) == 0 {
+		asks = state.book.Asks
+	}
+
+	state.updateTouchLocked(bids, asks)
 
 	mid := (state.bid + state.ask) / 2
 
@@ -199,17 +192,6 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	}
 
 	return state.flux.addBook(flux)
-}
-
-func (state *FluidSymbol) cloneBookLevels(levels []krakenmarket.BookLevel) []krakenmarket.BookLevel {
-	if len(levels) == 0 {
-		return nil
-	}
-
-	out := make([]krakenmarket.BookLevel, len(levels))
-	copy(out, levels)
-
-	return out
 }
 
 func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel) {
@@ -336,7 +318,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	viscosity := state.grid.viscosity()
 	reynolds := state.grid.reynolds(spread)
 
-	if math.IsNaN(reynolds) {
+	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
 		return fluidReading{}, false
 	}
 
@@ -366,7 +348,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	viscosity := state.grid.viscosity()
 	reynolds := state.grid.reynolds(spread)
 
-	if math.IsNaN(reynolds) {
+	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
 		return nil
 	}
 
@@ -375,6 +357,8 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"change_pct": state.changePct,
 		"vol":        state.volume,
 		"div":        divergence,
+		"vort":       state.grid.midVorticity(),
+		"turb":       state.grid.turbulenceIntensity(),
 		"visc":       viscosity,
 		"re":         reynolds,
 		"src_bal":    state.grid.midSourceBalance(),

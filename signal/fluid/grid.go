@@ -317,6 +317,57 @@ func (grid *FluidGrid) reynolds(spread float64) float64 {
 	return math.Abs(grid.midPriceVelocity) * spread / grid.replenishmentRate
 }
 
+/*
+midVorticity is |d²v/dx²| at the touch — the rotational stress proxy on the 1D book lattice.
+*/
+func (grid *FluidGrid) midVorticity() float64 {
+	index := grid.midIndex
+
+	if index <= 0 || index >= len(grid.velocity)-1 {
+		return 0
+	}
+
+	denominator := grid.tickSize * grid.tickSize
+
+	if denominator <= 0 {
+		return 0
+	}
+
+	laplacian := grid.velocity[index+1] - 2*grid.velocity[index] + grid.velocity[index-1]
+
+	return math.Abs(laplacian) / denominator
+}
+
+/*
+turbulenceIntensity is the RMS velocity fluctuation across the projected book field.
+*/
+func (grid *FluidGrid) turbulenceIntensity() float64 {
+	cellCount := len(grid.velocity)
+
+	if cellCount == 0 {
+		return 0
+	}
+
+	mean := 0.0
+
+	for _, velocity := range grid.velocity {
+		mean += velocity
+	}
+
+	mean /= float64(cellCount)
+
+	variance := 0.0
+
+	for _, velocity := range grid.velocity {
+		delta := velocity - mean
+		variance += delta * delta
+	}
+
+	variance /= float64(cellCount)
+
+	return math.Sqrt(variance)
+}
+
 func absInt(value int) int {
 	if value < 0 {
 		return -value

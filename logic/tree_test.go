@@ -126,7 +126,14 @@ func TestTreeEvaluate(t *testing.T) {
 				),
 			}
 
-			So(tree.Evaluate(measurements), ShouldEqual, firstAction)
+			evaluation := tree.Evaluate(measurements, NewHoldings())
+
+			So(evaluation, ShouldNotBeNil)
+			So(evaluation.Key, ShouldEqual, "0")
+			So(evaluation.Action.Type, ShouldEqual, firstAction.Type)
+			So(evaluation.Action.Side, ShouldEqual, firstAction.Side)
+			So(evaluation.Action.Symbol, ShouldEqual, firstAction.Symbol)
+			So(evaluation.Action.Quantity, ShouldEqual, firstAction.Quantity)
 		})
 
 		Convey("It should return nil when no branch matches", func() {
@@ -147,7 +154,7 @@ func TestTreeEvaluate(t *testing.T) {
 				),
 			}
 
-			So(tree.Evaluate(measurements), ShouldBeNil)
+			So(tree.Evaluate(measurements, NewHoldings()), ShouldBeNil)
 		})
 	})
 }
@@ -255,6 +262,6 @@ func BenchmarkTreeEvaluate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		tree.Evaluate(measurements)
+		tree.Evaluate(measurements, NewHoldings())
 	}
 }

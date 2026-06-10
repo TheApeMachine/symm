@@ -7,6 +7,7 @@ const (
 	SubjectCategory
 	SubjectRegime
 	SubjectPosition
+	SubjectHolding
 	SubjectPrice
 	SubjectVolume
 	SubjectSpread
@@ -17,18 +18,19 @@ const (
 )
 
 type Subject struct {
-	Source     SourceType  `yaml:"source"`
-	Type       SubjectType `yaml:"type"`
-	Category   *Category   `yaml:"category"`
-	Regime     *Regime     `yaml:"regime"`
-	Position   *Position   `yaml:"position"`
-	Price      float64     `yaml:"price"`
-	Volume     float64     `yaml:"volume"`
-	Spread     float64     `yaml:"spread"`
-	Elapsed    float64     `yaml:"elapsed"`
-	Strength   float64     `yaml:"strength"`
-	Confidence float64     `yaml:"confidence"`
-	Surprise   float64     `yaml:"surprise"`
+	Source     SourceType      `yaml:"source"`
+	Type       SubjectType     `yaml:"type"`
+	Category   *Category       `yaml:"category"`
+	Regime     *Regime         `yaml:"regime"`
+	Position   *Position       `yaml:"position"`
+	Holding    *HoldingSubject `yaml:"holding"`
+	Price      float64         `yaml:"price"`
+	Volume     float64         `yaml:"volume"`
+	Spread     float64         `yaml:"spread"`
+	Elapsed    float64         `yaml:"elapsed"`
+	Strength   float64         `yaml:"strength"`
+	Confidence float64         `yaml:"confidence"`
+	Surprise   float64         `yaml:"surprise"`
 }
 
 func NewSubject(
@@ -63,7 +65,7 @@ func NewSubject(
 
 func (subject *Subject) isEnumerated() bool {
 	switch subject.Type {
-	case SubjectCategory, SubjectRegime, SubjectPosition:
+	case SubjectCategory, SubjectRegime, SubjectPosition, SubjectHolding:
 		return true
 	default:
 		return false
@@ -113,6 +115,14 @@ func (subject *Subject) Evaluate(
 		}
 
 		return subject.Position.Type == measurement.Position, nil
+	case SubjectHolding:
+		if subject.Holding == nil || evalContext == nil || evalContext.holdings == nil {
+			return false, nil
+		}
+
+		held := evalContext.holdings.IsHolding(measurement.Symbol)
+
+		return held == subject.Holding.Held, nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

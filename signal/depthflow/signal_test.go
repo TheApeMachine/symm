@@ -43,6 +43,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.BookUpdate{
 			Symbol: "BTC/EUR",
+			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 99, Qty: 10},
 				{Price: 98, Qty: 20},
@@ -73,6 +74,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.BookUpdate{
 			Symbol: "ETH/EUR",
+			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
 				{Price: 49, Qty: 1},
 				{Price: 48, Qty: 30},

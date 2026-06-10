@@ -27,7 +27,7 @@ func TestEvalContextRegimeAdjustedConfidenceBaseline(t *testing.T) {
 				0.7,
 				0,
 			),
-		})
+		}, nil)
 
 		turbulent := NewEvalContext([]Measurement{
 			*NewMeasurement(
@@ -44,7 +44,7 @@ func TestEvalContextRegimeAdjustedConfidenceBaseline(t *testing.T) {
 				0.7,
 				0,
 			),
-		})
+		}, nil)
 
 		calmBaseline, calmErr := calm.Resolve("confidence.regime_adjusted_baseline")
 		turbulentBaseline, turbulentErr := turbulent.Resolve("confidence.regime_adjusted_baseline")
@@ -64,7 +64,7 @@ func TestEvalContextResolveRequiresConfig(t *testing.T) {
 		viper.Set("trading.entry.confidence_baseline", 0.0)
 		viper.Set("trading.entry.turbulence_confidence_scale", 0.0)
 
-		evalContext := NewEvalContext(nil)
+		evalContext := NewEvalContext(nil, nil)
 
 		_, err := evalContext.Resolve("confidence.regime_adjusted_baseline")
 
@@ -95,7 +95,7 @@ func TestCategoryDynamicConfidence(t *testing.T) {
 				0.7,
 				0,
 			),
-		})
+		}, nil)
 
 		subject := NewSubject(
 			SourceHawkes,

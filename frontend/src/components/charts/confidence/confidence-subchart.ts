@@ -160,6 +160,7 @@ export const createConfidenceSubChart = (
 			labelStyle: {
 				fontSize: 8,
 			},
+			useNativeText: true,
 		}),
 	);
 
@@ -171,7 +172,6 @@ export const createConfidenceSubChart = (
 			visibleRange: new NumberRange(0, 100),
 			zoomExtentsToInitialRange: true,
 			flippedCoordinates: true,
-			useNativeText: true,
 			totalAngleDegrees: 220,
 			startAngleDegrees: -20,
 			drawMinorGridLines: false,
@@ -182,6 +182,7 @@ export const createConfidenceSubChart = (
 			labelStyle: {
 				fontSize: 8,
 			},
+			useNativeText: true,
 		}),
 	);
 

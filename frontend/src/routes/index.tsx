@@ -54,6 +54,7 @@ import {
 	CardPanel,
 } from "#/components/ui/card";
 import { Flex } from "#/components/ui/flex";
+import { useMarketWatchSymbol } from "#/lib/symm/use-symm-ui";
 import {
 	applyGlobalFrame,
 	statusSocketHandlers,
@@ -129,18 +130,20 @@ const WsFeed = ({
 
 				if (raw.chart === "regime") {
 					ingestRegimeWire(spiderRef.current, raw, REGIME_AXIS_KEYS);
-
 					return;
 				}
 
 				if (raw.chart === "gauge") {
-					const source = raw.source as string;
-					const confidence = (raw.confidence as number) ?? 0;
-					const snr = (raw.snr as number) ?? 0;
+					ingestGaugeWire(gaugeRefs.current?.[raw.source as string], raw);
 
-					ingestGaugeWire(gaugeRefs.current?.[source], raw);
-					heatmapRef.current?.set(source, confidence);
-					surpriseRef.current?.set(source, snr);
+					heatmapRef.current?.set(
+						raw.source as string,
+						raw.confidence as number,
+					);
+					surpriseRef.current?.set(
+						raw.source as string,
+						(raw.surprise ?? raw.snr) as number,
+					);
 
 					return;
 				}
@@ -187,6 +190,7 @@ const WsFeed = ({
 };
 
 const DashboardLayout = () => {
+	const anchorSymbol = useMarketWatchSymbol();
 	const fluidRef = useRef<FluidPushBridge>({
 		push: () => {},
 		ready: false,
@@ -263,7 +267,7 @@ const DashboardLayout = () => {
 												size={16}
 											/>
 										),
-										component: <TradeChartGrid symbols={["BTC/EUR"]} />,
+										component: <TradeChartGrid symbols={[anchorSymbol]} />,
 									},
 									{
 										label: "Prediction",

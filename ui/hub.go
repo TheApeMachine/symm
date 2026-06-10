@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -43,25 +44,24 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 /*
-Hub subscribes to the "ui" broadcast group and ships whatever lands there to the
-dashboard frontend over one websocket. Producers decide what to publish and gate
-per-symbol frames by open position at the source, so the hub does no filtering —
-it only buffers (lossy telemetry ring) and forwards. The frontend never sends
-frames upstream.
+Hub subscribes to the ui broadcast group and forwards frames to one dashboard
+websocket client. Balance snapshots are retained so reconnects replay the last
+known state. The frontend never sends frames upstream.
 */
 type Hub struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	pool             *qpool.Q[any]
-	bus              *internal.Bus
-	frontend         atomic.Pointer[frontendLink]
-	server           *http.Server
-	lastPositions    atomic.Pointer[map[string]any]
-	lastEquity       atomic.Pointer[map[string]any]
-	lastDecisionTree atomic.Pointer[map[string]any]
-	lastDumps        atomic.Pointer[map[string]any]
-	lastGauges       sync.Map
-	lastBalances     atomic.Pointer[user.Balances]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q[any]
+	bus          *internal.Bus
+	frontend     atomic.Pointer[frontendClient]
+	server       *http.Server
+	lastBalances atomic.Pointer[user.Balances]
+}
+
+type frontendClient struct {
+	hub  *Hub
+	conn *websocket.Conn
+	mu   sync.Mutex
 }
 
 /*
@@ -121,8 +121,8 @@ func (hub *Hub) Close() error {
 		}
 	}
 
-	if link := hub.frontend.Load(); link != nil {
-		hub.detachFrontend(link)
+	if client := hub.frontend.Load(); client != nil {
+		hub.detachFrontend(client)
 	}
 
 	hub.cancel()
@@ -146,24 +146,21 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 	if err := conn.WriteJSON(hello); err != nil {
 		errnie.Error(err)
 		errnie.Error(conn.Close())
-		return
-	}
-
-	link, linkErr := hub.newFrontendLink(conn)
-
-	if linkErr != nil {
-		errnie.Error(linkErr)
-		errnie.Error(conn.Close())
 
 		return
 	}
 
-	if previous := hub.frontend.Swap(link); previous != nil {
+	client := &frontendClient{
+		hub:  hub,
+		conn: conn,
+	}
+
+	if previous := hub.frontend.Swap(client); previous != nil {
 		previous.close()
 	}
 
 	hub.subscribeBalances()
-	hub.replayBalances(conn)
+	hub.replayBalances(client)
 }
 
 func (hub *Hub) subscribeBalances() {
@@ -196,21 +193,62 @@ func (hub *Hub) rememberBalances(value any) {
 	hub.lastBalances.Store(&stored)
 }
 
-func (hub *Hub) replayBalances(conn *websocket.Conn) {
+func (hub *Hub) replayBalances(client *frontendClient) {
 	snapshot := hub.lastBalances.Load()
 
 	if snapshot == nil {
 		return
 	}
 
-	if err := conn.WriteJSON(snapshot); err != nil {
+	client.send(WalletFrame(*snapshot))
+}
+
+func (hub *Hub) detachFrontend(client *frontendClient) {
+	if client == nil {
+		return
+	}
+
+	if hub.frontend.CompareAndSwap(client, nil) {
+		client.close()
+
+		return
+	}
+
+	client.close()
+}
+
+func (client *frontendClient) send(value any) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.conn == nil {
+		return
+	}
+
+	if _, err := json.Marshal(value); err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	if err := client.conn.WriteJSON(value); err != nil {
+		client.hub.detachFrontend(client)
 		errnie.Error(err)
 	}
 }
 
+func (client *frontendClient) close() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.conn != nil {
+		errnie.Error(client.conn.Close())
+		client.conn = nil
+	}
+}
+
 /*
-Tick drains qpool into the frontend outbound disruptor so the bus subscriber never
-waits on browser pressure. A saturated ring drops the oldest frame.
+Tick drains the ui bus and forwards each frame to the connected frontend client.
 */
 func (hub *Hub) Tick() error {
 	for {
@@ -224,6 +262,20 @@ func (hub *Hub) Tick() error {
 			hub.rememberBalances(row.Value)
 		}
 
-		hub.publishToFrontend(row.Value)
+		client := hub.frontend.Load()
+
+		if client == nil {
+			continue
+		}
+
+		value := row.Value
+
+		if row.Type == "balances" {
+			if balances, ok := value.(user.Balances); ok {
+				value = WalletFrame(balances)
+			}
+		}
+
+		client.send(value)
 	}
 }

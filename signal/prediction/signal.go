@@ -62,11 +62,13 @@ type Signal struct {
 	feedbackBias         float64
 	realizedMagnitudeEMA float64
 	chartEvents          ChartEvents
+	chart                *Chart
 }
 
 func NewSignal(
 	symbol string,
 	entity *logic.Entity,
+	chart *Chart,
 ) *Signal {
 	capacity := viper.GetInt("signals.prediction.measurements_capacity")
 
@@ -91,6 +93,7 @@ func NewSignal(
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
+		chart:           chart,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		horizon:         horizon,
@@ -235,11 +238,22 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
+		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
+			return
+		}
+
+		touchSpread := frame.Asks[0].Price - frame.Bids[0].Price
+
+		if touchSpread <= 0 {
+			return
+		}
+
+		spreads = append(spreads, touchSpread)
+
 		for _, bid := range frame.Bids {
 			if bid.Qty > 0 {
 				prices = append(prices, bid.Price)
 				volumes = append(volumes, bid.Qty)
-				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
 			}
 		}
 
@@ -247,7 +261,6 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			if ask.Qty > 0 {
 				prices = append(prices, ask.Price)
 				volumes = append(volumes, ask.Qty)
-				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
 			}
 		}
 	})
@@ -298,19 +311,30 @@ func (signal *Signal) fromSeries(
 			return logic.Measurement{}, errnie.Error(settleErr)
 		}
 
-		signal.enqueueForecast(at, anchorPrice, forecast, movementScale)
+		normalizeScale := movementScale
 
-		chartEvents := ChartEvents{
-			Settlements: settlements,
+		if normalizeScale <= 0 {
+			normalizeScale = signal.scaledResidualScale()
 		}
 
-		if movementScale > 0 {
-			chartEvents.ForecastTarget = float64(at.Add(signal.horizon).Unix())
-			chartEvents.Forecast = signal.movementUnits(forecast, movementScale)
-			chartEvents.HasForecast = true
+		if normalizeScale <= 0 {
+			return logic.Measurement{}, errnie.Error(
+				fmt.Errorf("prediction: movement scale must be positive"),
+			)
+		}
+
+		signal.enqueueForecast(at, anchorPrice, forecast, normalizeScale)
+
+		chartEvents := ChartEvents{
+			Settlements:    settlements,
+			ForecastTarget: float64(at.Add(signal.horizon).Unix()),
+			Forecast:       signal.movementUnits(forecast, normalizeScale),
+			HasForecast:    true,
+			EventAt:        at,
 		}
 
 		signal.chartEvents = chartEvents
+		signal.publishChartEvents()
 	}
 
 	confidence := signal.movementConfidence(forecast, prices)
@@ -360,6 +384,21 @@ func (signal *Signal) DrainChartEvents() ChartEvents {
 	signal.chartEvents = ChartEvents{}
 
 	return events
+}
+
+func (signal *Signal) publishChartEvents() {
+	if signal.chart == nil {
+		return
+	}
+
+	if !signal.chartEvents.HasForecast && len(signal.chartEvents.Settlements) == 0 {
+		return
+	}
+
+	events := signal.chartEvents
+	signal.chartEvents = ChartEvents{}
+
+	errnie.Error(signal.chart.Apply(signal.symbol, events))
 }
 
 func (signal *Signal) DrainFeedback() *market.Feedback {
@@ -479,6 +518,20 @@ func (signal *Signal) settlePending(
 
 func (signal *Signal) learn(features []float64, realized float64) error {
 	target := realized / (1 + math.Abs(realized)/signal.scaledResidualScale())
+
+	adaptation, adaptationErr := market.LoadAdaptation()
+
+	if adaptationErr == nil {
+		forgettingFactor := 1 - adaptation.Alpha()
+
+		if forgettingFactor < 0.01 {
+			forgettingFactor = 0.01
+		}
+
+		if setErr := signal.learner.SetForgettingFactor(forgettingFactor); setErr != nil {
+			return setErr
+		}
+	}
 
 	if observeErr := signal.learner.Observe(features, target); observeErr != nil {
 		return observeErr

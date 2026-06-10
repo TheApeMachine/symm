@@ -222,11 +222,22 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
+		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
+			return
+		}
+
+		touchSpread := frame.Asks[0].Price - frame.Bids[0].Price
+
+		if touchSpread <= 0 {
+			return
+		}
+
+		spreads = append(spreads, touchSpread)
+
 		for _, bid := range frame.Bids {
 			if bid.Qty > 0 {
 				prices = append(prices, bid.Price)
 				volumes = append(volumes, bid.Qty)
-				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
 			}
 		}
 
@@ -234,7 +245,6 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			if ask.Qty > 0 {
 				prices = append(prices, ask.Price)
 				volumes = append(volumes, ask.Qty)
-				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
 			}
 		}
 	})

@@ -31,17 +31,17 @@ type CausalSymbol struct {
 	changePct      float64
 	spreadBPS      float64
 	imbalance      float64
-	buyPressure  float64
-	volumeWindow *adaptive.Window
-	pressure     *adaptive.EMA
+	buyPressure    float64
+	volumeWindow   *adaptive.Window
+	pressure       *adaptive.EMA
 }
 
 func NewCausalSymbol() *CausalSymbol {
 	return &CausalSymbol{
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure: adaptive.NewEMA(0),
-		hy:       newHYWindowSet(),
+		pressure:     adaptive.NewEMA(0),
+		hy:           newHYWindowSet(),
 	}
 }
 
@@ -192,11 +192,13 @@ series so the signal can compute cross-asset correlation without holding this
 symbol's lock during the sweep.
 */
 func (state *CausalSymbol) HYSnapshot() *hyReturns {
-	if state.hy == nil {
+	if state.hy == nil || state.hy.series == nil {
 		return nil
 	}
 
-	return state.hy.medium.clone()
+	_, mediumWindow, _ := contagionWindowsFromAdaptation()
+
+	return state.hy.series.cloneTail(mediumWindow)
 }
 
 func (state *CausalSymbol) HYWindowSnapshot() *hyWindowSet {
@@ -204,12 +206,12 @@ func (state *CausalSymbol) HYWindowSnapshot() *hyWindowSet {
 }
 
 func (state *CausalSymbol) maybeResetHYOnShock() {
-	if state.hy == nil {
+	if state.hy == nil || state.hy.series == nil {
 		return
 	}
 
-	lastMove := state.hy.fast.lastReturnMagnitude()
-	baseline := state.hy.slow.realizedVolatilityExcludingLast()
+	lastMove := state.hy.series.lastReturnMagnitude()
+	baseline := state.hy.series.realizedVolatilityExcludingLast()
 
 	if baseline <= 0 {
 		return
@@ -219,16 +221,9 @@ func (state *CausalSymbol) maybeResetHYOnShock() {
 		return
 	}
 
-	keep := contagionMinSamples()
-	fastKeep := keep / 4
+	_, _, slowWindow := contagionWindowsFromAdaptation()
 
-	if fastKeep < 4 {
-		fastKeep = 4
-	}
-
-	state.hy.fast.trim(fastKeep)
-	state.hy.medium.trim(keep)
-	state.hy.slow.trim(keep * 2)
+	state.hy.series.trim(slowWindow)
 }
 
 func (state *CausalSymbol) evaluate(current causalSample, contagion float64) causalOutcome {

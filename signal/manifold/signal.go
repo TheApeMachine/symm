@@ -102,38 +102,62 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 }
 
 func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) {
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
+	item := signal.latest()
+
+	if item == nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	}
+
+	switch signal.entity.Type {
+	case logic.EntityTrade:
+		trade, ok := item.(*krakenmarket.TradeUpdate)
+
+		if !ok || trade == nil {
+			break
 		}
 
-		switch signal.entity.Type {
-		case logic.EntityTrade:
-			trade, ok := item.(*krakenmarket.TradeUpdate)
+		eventAt := trade.Timestamp
 
-			if !ok {
-				return
-			}
-
-			errnie.Error(signal.system.field.FeedTrade(trade, at))
-		case logic.EntityTick:
-			ticker, ok := item.(*krakenmarket.TickerUpdate)
-
-			if !ok {
-				return
-			}
-
-			errnie.Error(signal.system.field.FeedTicker(*ticker, at))
-		case logic.EntityBook:
-			book, ok := item.(*krakenmarket.BookUpdate)
-
-			if !ok {
-				return
-			}
-
-			errnie.Error(signal.system.field.FeedBook(*book, at))
+		if eventAt.IsZero() {
+			eventAt = at
 		}
-	})
+
+		if err := signal.system.field.FeedTrade(trade, eventAt); err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	case logic.EntityTick:
+		ticker, ok := item.(*krakenmarket.TickerUpdate)
+
+		if !ok || ticker == nil {
+			break
+		}
+
+		eventAt := ticker.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = at
+		}
+
+		if err := signal.system.field.FeedTicker(*ticker, eventAt); err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	case logic.EntityBook:
+		book, ok := item.(*krakenmarket.BookUpdate)
+
+		if !ok || book == nil {
+			break
+		}
+
+		eventAt := book.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = at
+		}
+
+		if err := signal.system.field.FeedBook(*book, eventAt); err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	}
 
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
@@ -242,6 +266,18 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 	default:
 		return 0
 	}
+}
+
+func (signal *Signal) latest() any {
+	var latest any
+
+	signal.measurements.Do(func(item any) {
+		if item != nil {
+			latest = item
+		}
+	})
+
+	return latest
 }
 
 func (signal *Signal) Record(raw any) bool {

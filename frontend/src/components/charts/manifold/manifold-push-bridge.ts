@@ -1,3 +1,4 @@
+import { parseManifoldSnapshot } from "#/components/charts/manifold/manifold-snapshot";
 import type { ManifoldFieldSnapshot } from "#/components/charts/manifold/types";
 
 export type ManifoldPushBridge = {
@@ -14,36 +15,24 @@ export const createManifoldPushBridge = (): ManifoldPushBridge => ({
 
 export const isManifoldSnapshot = (
 	raw: unknown,
-): raw is ManifoldFieldSnapshot => {
-	if (typeof raw !== "object" || raw === null) {
-		return false;
-	}
-
-	const row = raw as Record<string, unknown>;
-
-	return (
-		row.type === "manifold" &&
-		Array.isArray(row.rho) &&
-		(row.rho as unknown[]).length > 0 &&
-		typeof row.reading === "object" &&
-		row.reading !== null
-	);
-};
+): raw is ManifoldFieldSnapshot => parseManifoldSnapshot(raw) !== null;
 
 export const ingestManifoldWire = (
 	bridge: ManifoldPushBridge | null | undefined,
 	raw: unknown,
 ): void => {
-	if (!bridge || !isManifoldSnapshot(raw)) {
+	const frame = parseManifoldSnapshot(raw);
+
+	if (!bridge || frame === null) {
 		return;
 	}
 
 	if (bridge.ready) {
-		bridge.push(raw);
+		bridge.push(frame);
 		return;
 	}
 
-	bridge.pending = raw;
+	bridge.pending = frame;
 };
 
 export const attachManifoldPush = (

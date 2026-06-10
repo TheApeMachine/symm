@@ -12,16 +12,6 @@ import (
 // universe-level computation O(cap^2) regardless of how many symbols are subscribed.
 const contagionSymbolCap = 16
 
-func contagionWindow() int {
-	window := viper.GetViper().GetInt("signals.causal.contagion_window")
-
-	if window > 0 {
-		return window
-	}
-
-	return 128
-}
-
 func contagionMinSamples() int {
 	minSamples := viper.GetViper().GetInt("signals.causal.contagion_min_samples")
 

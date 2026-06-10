@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Tabs } from "#/components/ui/tabs";
 
 interface TabbedChartProps {
@@ -10,11 +11,13 @@ interface TabbedChartProps {
 
 export const TabbedChart = ({ tabs }: TabbedChartProps) => {
 	const defaultTab = tabs[0]?.label ?? "";
+	const [activeTab, setActiveTab] = useState(defaultTab);
 
 	return (
 		<Tabs
 			className="w-full h-full items-center p-0 gap-0"
-			defaultValue={defaultTab}
+			value={activeTab}
+			onValueChange={setActiveTab}
 		>
 			<div className="border-b w-full">
 				<Tabs.List variant="underline" className="gap-2">
@@ -31,7 +34,13 @@ export const TabbedChart = ({ tabs }: TabbedChartProps) => {
 			</div>
 			{tabs.map((tab) => (
 				<Tabs.Panel value={tab.label} key={tab.label} className="w-full h-full">
-					{tab.component}
+					<div
+						className="h-full w-full"
+						hidden={activeTab !== tab.label}
+						aria-hidden={activeTab !== tab.label}
+					>
+						{tab.component}
+					</div>
 				</Tabs.Panel>
 			))}
 		</Tabs>

@@ -33,7 +33,15 @@ type TreeNodeFrame = {
 	conditions: ConditionFrame[];
 };
 
-type RecentDecision = { symbol: string; action: string; ts: string };
+type RecentDecision = {
+	symbol: string;
+	action: string;
+	side: string;
+	key: string;
+	verdict: string;
+	reason: string;
+	ts: string;
+};
 
 type DecisionFrame = {
 	evaluations: number;
@@ -191,6 +199,10 @@ const DecisionsPage = () => {
 	const evaluations = frame?.evaluations ?? 0;
 	const recent = frame?.recent ?? [];
 	const reversedRecent = useMemo(() => [...recent].reverse(), [recent]);
+	const firedKeys = useMemo(
+		() => new Set(recent.map((decision) => decision.key).filter(Boolean)),
+		[recent],
+	);
 
 	// Default the breakdown to the worst bottleneck: a compound node reached often
 	// but whose condition rarely holds — the one starving the desk of trades.
@@ -318,6 +330,7 @@ const DecisionsPage = () => {
 										: "border-emerald-500/40 bg-emerald-500/10";
 
 								const selected = node.key === activeKey;
+								const fired = firedKeys.has(node.key);
 
 								return (
 									<foreignObject
@@ -332,7 +345,7 @@ const DecisionsPage = () => {
 											onClick={() => setSelectedKey(node.key)}
 											className={`flex h-full w-full flex-col justify-between rounded-lg border px-2 py-1.5 text-left ${tone} ${
 												selected ? "ring-2 ring-sky-400" : ""
-											}`}
+											} ${fired ? "ring-1 ring-amber-400/80" : ""}`}
 										>
 											<div className="flex items-start justify-between gap-1">
 												<span className="line-clamp-2 font-mono text-[11px] leading-tight">
@@ -442,15 +455,32 @@ const DecisionsPage = () => {
 							</p>
 						) : (
 							reversedRecent.map((decision, index) => (
-								<div
+								<button
+									type="button"
 									key={`${decision.ts}-${index}`}
-									className="flex items-center justify-between rounded border border-border bg-card px-2 py-1 text-[11px]"
+									onClick={() => {
+										if (decision.key) {
+											setSelectedKey(decision.key);
+										}
+									}}
+									className="flex flex-col gap-0.5 rounded border border-border bg-card px-2 py-1 text-left text-[11px]"
 								>
-									<span className="font-mono">{decision.action}</span>
-									<span className="truncate text-muted-foreground">
-										{decision.symbol}
+									<div className="flex items-center justify-between gap-2">
+										<span className="font-mono">{decision.action}</span>
+										<span className="truncate text-muted-foreground">
+											{decision.symbol}
+										</span>
+									</div>
+									<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+										{decision.verdict || "submitted"}
+										{decision.key ? ` · node ${decision.key}` : ""}
 									</span>
-								</div>
+									{decision.reason ? (
+										<span className="truncate text-[10px] text-rose-400">
+											{decision.reason}
+										</span>
+									) : null}
+								</button>
 							))
 						)}
 					</div>

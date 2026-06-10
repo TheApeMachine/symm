@@ -166,7 +166,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		err             error
 	)
 
-	folded := krakenmarket.BookUpdate{}
+	var snapshot *krakenmarket.BookUpdate
 	weighted := 0.0
 	level1 := 0.0
 	flat := 0.0
@@ -188,21 +188,37 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
-		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
+		if frame.Type == "snapshot" {
+			snapshot = frame
+		}
+
+		if snapshot == nil {
 			return
 		}
 
-		touchMid := (frame.Bids[0].Price + frame.Asks[0].Price) / 2
-		touchSpread := frame.Asks[0].Price - frame.Bids[0].Price
+		bids := frame.Bids
+		asks := frame.Asks
 
-		folded.Bids = append(folded.Bids, frame.Bids...)
-		folded.Asks = append(folded.Asks, frame.Asks...)
+		if len(bids) == 0 {
+			bids = snapshot.Bids
+		}
+
+		if len(asks) == 0 {
+			asks = snapshot.Asks
+		}
+
+		if len(bids) == 0 || len(asks) == 0 {
+			return
+		}
+
+		touchMid := (bids[0].Price + asks[0].Price) / 2
+		touchSpread := asks[0].Price - bids[0].Price
 
 		frameWeighted, frameWeightedOK := signal.weightedImbalance(
-			folded.Bids, folded.Asks, touchMid, touchSpread,
+			snapshot.Bids, snapshot.Asks, touchMid, touchSpread,
 		)
-		frameLevel1, frameLevel1OK := signal.level1Imbalance(folded.Bids, folded.Asks)
-		frameFlat, frameFlatOK := signal.flatImbalance(folded.Bids, folded.Asks)
+		frameLevel1, frameLevel1OK := signal.level1Imbalance(bids, asks)
+		frameFlat, frameFlatOK := signal.flatImbalance(snapshot.Bids, snapshot.Asks)
 
 		if frameWeightedOK {
 			weightedHistory = append(weightedHistory, math.Abs(frameWeighted))

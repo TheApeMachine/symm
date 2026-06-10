@@ -7,6 +7,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -36,6 +37,17 @@ func (rest *Rest) Get(
 	headers ...map[string]string,
 ) error {
 	return fmt.Errorf("paper rest: GET not supported")
+}
+
+/*
+WebSocketToken returns a short-lived paper websocket token.
+*/
+func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return rest.webSocketsToken(token)
 }
 
 /*

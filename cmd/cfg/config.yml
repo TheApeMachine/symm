@@ -56,6 +56,7 @@ market:
   ws_ping_interval: 15s
   story:
     window_capacity: 1024
+    ui_interval: 1s
   book:
     checksum:
       levels: 10
@@ -90,9 +91,9 @@ trading:
     confidence_baseline: 0.55
     turbulence_confidence_scale: 0.30
   paper:
-    wallet:
-      usd: 200
-      eur: 200
+    wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
+      usd: 200 # As such, it will be the only amount I am willing to trade with.
+      eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     taker_fee_pct: 0.26
     maker_fee_pct: 0.16
     slippage_bps: 5
@@ -128,10 +129,15 @@ optimizer:
 regime:
   window: 256
   min_samples: 16
-  dead_vol: 0.0005
-  trend_threshold: 1.25
-  strong_trend: 2.5
-  vol_scale: 0.01
+  baseline:
+    alpha_min: 0.01
+    alpha_max: 0.25
+    min_obs: 16
+    trend_sigma: 1.25
+    strong_trend_sigma: 2.5
+    vol_floor_sigma: 3.0
+    vol_scale_floor: 0.000001
+    seed_vol_scale: 0.01
 
 signals:
   trade_match_window: 60s
@@ -158,15 +164,16 @@ signals:
     publish_interval: 1s
     contagion_break: 0.8
     condition_switch: 1000
-    contagion_window_fast: 16
-    contagion_window_medium: 64
-    contagion_window_slow: 128
+    contagion_window_slow_max: 128
+    contagion_window_slow_min: 16
+    contagion_window_vol_floor: 0.000001
     contagion_adaptive_sigma: 2
     contagion_volatility_reset_sigma: 5
   prediction:
     measurements_capacity: 64
   pumpdump:
     raw_dump: true
+    measurements_capacity: 64
     window: 1m
     fast_window: 3
     volume:
@@ -241,6 +248,7 @@ signals:
     grid_z: 16
     max_modes: 32
     integration_interval: 100ms
+    snapshot_interval: 500ms
   toxicity:
     measurements_capacity: 64
     surprise_threshold: 2.0

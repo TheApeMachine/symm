@@ -33,11 +33,24 @@ const ConnectionBadge = () => {
 	);
 };
 
+const currencySymbol = (currency: string) => {
+	switch (currency.toUpperCase()) {
+		case "USD":
+			return "$";
+		case "EUR":
+			return "€";
+		default:
+			return `${currency.toUpperCase()} `;
+	}
+};
+
 const PageHeader = () => {
-	const { balance, openPositions, exitBalance, capitalBase } = useWsStatus();
+	const { balance, currency, openPositions, exitBalance, capitalBase } =
+		useWsStatus();
 	const [showPositions, setShowPositions] = useState(false);
 	const inProfit =
 		exitBalance !== null && capitalBase > 0 && exitBalance >= capitalBase;
+	const symbol = currencySymbol(currency);
 
 	return (
 		<Page.Header>
@@ -54,7 +67,10 @@ const PageHeader = () => {
 					>
 						<div className="flex flex-col gap-0.5">
 							<h3 className="flex flex-wrap items-baseline gap-x-1.5">
-								<span>€{balance.toFixed(2)}</span>
+								<span>
+									{symbol}
+									{balance.toFixed(2)}
+								</span>
 								{openPositions > 0 && exitBalance !== null ? (
 									<span
 										className={cn(
@@ -62,7 +78,8 @@ const PageHeader = () => {
 											inProfit ? "text-emerald-400" : "text-red-400",
 										)}
 									>
-										(€{exitBalance.toFixed(2)})
+										({symbol}
+										{exitBalance.toFixed(2)})
 									</span>
 								) : null}
 								{openPositions > 0 && exitBalance !== null ? (

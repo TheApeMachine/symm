@@ -90,6 +90,8 @@ const buildBandSeries = (
 			yValues,
 			x1Values,
 			y1Values,
+			containsNaN: false,
+			dataIsSortedInX: true,
 		}),
 		columnXMode: EColumnMode.StartEnd,
 		columnYMode: EColumnYMode.TopBottom,
@@ -111,6 +113,7 @@ export const createSurpriseSubChart = (
 		isVisible: false,
 		growBy: new NumberRange(0, 0),
 		visibleRange: new NumberRange(0, 6),
+		useNativeText: true,
 	});
 
 	const yAxis = new NumericAxis(wasmContext, {

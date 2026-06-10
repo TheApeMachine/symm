@@ -8,35 +8,38 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 )
 
 /*
-Orders simulates Kraken private order methods. Taker orders fill through
-broker.SlippageFill after one-way latency; post-only limits rest with L2 queue
-position and fill when aggressor trades deplete queue ahead via broker.MakerQueueState.
-Protective orders REST until price breaches, then use the same fill helpers.
+Orders simulates Kraken private order methods. Market orders fill immediately at
+the desk-provided reference price; resting limits remain tracked until cancelled.
 */
 type Orders struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	pool      *qpool.Q[any]
-	isActive  atomic.Bool
-	model     map[string]trading.OrderUpdate
-	observers []types.Socket
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	isActive    atomic.Bool
+	model       map[string]trading.OrderUpdate
+	executions  map[string]user.Execution
+	pendingExec []user.Execution
+	observers   []types.Socket
+	fillHandler *Balances
 }
 
 func NewOrders(ctx context.Context, pool *qpool.Q[any]) *Orders {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Orders{
-		ctx:       ctx,
-		cancel:    cancel,
-		err:       nil,
-		pool:      pool,
-		isActive:  atomic.Bool{},
-		model:     make(map[string]trading.OrderUpdate),
-		observers: make([]types.Socket, 0),
+		ctx:        ctx,
+		cancel:     cancel,
+		err:        nil,
+		pool:       pool,
+		isActive:   atomic.Bool{},
+		model:      make(map[string]trading.OrderUpdate),
+		executions: make(map[string]user.Execution),
+		observers:  make([]types.Socket, 0),
 	}
 }
 
@@ -71,6 +74,10 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 		orders.model[params.ClOrdID] = trading.OrderUpdate{
 			OrderID: params.ClOrdID,
 		}
+
+		if params.OrderType == trading.Market && params.OrderQty > 0 && params.LimitPrice > 0 {
+			orders.fillMarket(params)
+		}
 	case trading.MethodCancelOrder:
 		var params trading.CancelParams
 
@@ -80,10 +87,6 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 		case *trading.CancelParams:
 			params = *typed
 		default:
-			return nil
-		}
-
-		if len(params.OrderID) == 0 {
 			return nil
 		}
 
@@ -111,26 +114,19 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 		}
 	}
 
-	var (
-		out     *types.SocketMessage
-		data    []byte
-		err     error
-		updates []trading.OrderUpdate
-	)
-
-	updates = make([]trading.OrderUpdate, 0, len(orders.model))
+	updates := make([]trading.OrderUpdate, 0, len(orders.model))
 
 	for _, update := range orders.model {
 		updates = append(updates, update)
 	}
 
-	data, err = sonic.Marshal(updates)
+	data, err := sonic.Marshal(updates)
 
 	if err != nil {
 		return nil
 	}
 
-	out = &types.SocketMessage{
+	out := &types.SocketMessage{
 		Channel: "orders",
 		Success: &[]bool{true}[0],
 		Data:    data,
@@ -143,8 +139,68 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 	return out
 }
 
+func (orders *Orders) fillMarket(params trading.AddParams) {
+	if orders.fillHandler == nil {
+		return
+	}
+
+	execution, fillErr := orders.fillHandler.ApplyFill(params, params.LimitPrice)
+
+	if fillErr != nil {
+		delete(orders.model, params.ClOrdID)
+		return
+	}
+
+	orders.executions[execution.ExecID] = execution
+	orders.pendingExec = append(orders.pendingExec, execution)
+	delete(orders.model, params.ClOrdID)
+
+	if orders.fillHandler == nil {
+		return
+	}
+
+	balancePayload, err := sonic.Marshal(orders.fillHandler.model)
+
+	if err != nil {
+		return
+	}
+
+	balanceMessage := &types.SocketMessage{
+		Channel: "balances",
+		Success: &[]bool{true}[0],
+		Data:    balancePayload,
+	}
+
+	for _, observer := range orders.observers {
+		observer.Send(&qpool.QValue[any]{Value: balanceMessage})
+	}
+}
+
 func (orders *Orders) Observe(sockets ...types.Socket) {
 	for _, socket := range sockets {
+		if balances, ok := socket.(*Balances); ok {
+			orders.fillHandler = balances
+		}
+
 		orders.observers = append(orders.observers, socket)
 	}
+}
+
+func (orders *Orders) DrainExecutions() []user.Execution {
+	if len(orders.pendingExec) == 0 {
+		return nil
+	}
+
+	rows := append([]user.Execution(nil), orders.pendingExec...)
+	orders.pendingExec = orders.pendingExec[:0]
+
+	return rows
+}
+
+func (orders *Orders) Wallet() user.Balances {
+	if orders.fillHandler == nil {
+		return user.Balances{}
+	}
+
+	return orders.fillHandler.model
 }

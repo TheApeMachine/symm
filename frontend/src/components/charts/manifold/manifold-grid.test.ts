@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { projectManifoldHeightmap } from "#/components/charts/manifold/manifold-grid";
+import {
+	isDegenerateHeightmap,
+	projectManifoldHeightmap,
+} from "#/components/charts/manifold/manifold-grid";
 import type { ManifoldFieldSnapshot } from "#/components/charts/manifold/types";
 
 const sampleFrame = (): ManifoldFieldSnapshot => ({
@@ -48,5 +51,12 @@ describe("projectManifoldHeightmap", () => {
 		expect(projected.gridX).toBe(3);
 		expect(projected.gridZ).toBe(2);
 		expect(projected.heights[1][1]).toBeGreaterThan(projected.heights[0][0]);
+	});
+});
+
+describe("isDegenerateHeightmap", () => {
+	it("detects flat surfaces", () => {
+		expect(isDegenerateHeightmap([[0.5, 0.5]])).toBe(true);
+		expect(isDegenerateHeightmap([[0, 0.5, 1]])).toBe(false);
 	});
 });

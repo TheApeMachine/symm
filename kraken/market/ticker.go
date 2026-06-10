@@ -61,5 +61,29 @@ type TickerUpdate struct {
 }
 
 func (ticker *TickerUpdate) Unmarshal(message *types.SocketMessage) error {
-	return sonic.Unmarshal(message.Data, ticker)
+	if err := sonic.Unmarshal(message.Data, ticker); err != nil {
+		return err
+	}
+
+	ticker.Type = message.Type
+
+	return nil
+}
+
+type TickerUpdates []*TickerUpdate
+
+func (updates *TickerUpdates) Unmarshal(message *types.SocketMessage) error {
+	if err := sonic.Unmarshal(message.Data, updates); err != nil {
+		return err
+	}
+
+	for _, update := range *updates {
+		if update == nil {
+			continue
+		}
+
+		update.Type = message.Type
+	}
+
+	return nil
 }

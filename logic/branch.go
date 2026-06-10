@@ -1,6 +1,10 @@
 package logic
 
-import "github.com/theapemachine/errnie"
+import (
+	"strconv"
+
+	"github.com/theapemachine/errnie"
+)
 
 type Branch struct {
 	Branches       []*Branch       `yaml:"branches"`
@@ -18,9 +22,23 @@ func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 func (branch *Branch) Evaluate(
 	measurements []Measurement,
 	evalContext *EvalContext,
-) (*Action, error) {
+) (*Evaluation, error) {
+	return branch.evaluate(measurements, evalContext, nil, "")
+}
+
+func (branch *Branch) evaluate(
+	measurements []Measurement,
+	evalContext *EvalContext,
+	stats *TreeStats,
+	key string,
+) (*Evaluation, error) {
 	if branch.ConditionGroup == nil {
 		return nil, nil
+	}
+
+	if stats != nil && key != "" {
+		stats.Reach(key)
+		stats.RecordConditions(key, branch.ConditionGroup, measurements, evalContext)
 	}
 
 	matched, err := branch.ConditionGroup.Evaluate(measurements, evalContext)
@@ -29,12 +47,22 @@ func (branch *Branch) Evaluate(
 		return nil, err
 	}
 
+	if stats != nil && key != "" && matched {
+		stats.Hold(key)
+	}
+
 	if !matched {
 		return nil, nil
 	}
 
-	for _, child := range branch.Branches {
-		action, err := child.Evaluate(measurements, evalContext)
+	for childIndex, child := range branch.Branches {
+		childKey := key
+
+		if stats != nil && key != "" {
+			childKey = key + "/" + strconv.Itoa(childIndex)
+		}
+
+		action, err := child.evaluate(measurements, evalContext, stats, childKey)
 
 		if errnie.Error(err) != nil {
 			continue
@@ -45,5 +73,15 @@ func (branch *Branch) Evaluate(
 		}
 	}
 
-	return branch.Action, nil
+	if branch.Action == nil {
+		return nil, nil
+	}
+
+	stamped := *branch.Action
+	stamped.BranchKey = key
+
+	return &Evaluation{
+		Action: &stamped,
+		Key:    key,
+	}, nil
 }

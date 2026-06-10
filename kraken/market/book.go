@@ -70,3 +70,21 @@ func (book *BookUpdate) Unmarshal(message *types.SocketMessage) error {
 
 	return nil
 }
+
+type BookUpdates []*BookUpdate
+
+func (updates *BookUpdates) Unmarshal(message *types.SocketMessage) error {
+	if err := sonic.Unmarshal(message.Data, updates); err != nil {
+		return err
+	}
+
+	for _, update := range *updates {
+		if update == nil {
+			continue
+		}
+
+		update.Type = message.Type
+	}
+
+	return nil
+}

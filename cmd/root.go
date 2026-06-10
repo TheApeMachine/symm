@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -93,10 +94,22 @@ var (
 
 			systemCtx := engine.Context()
 
-			if err := engine.AddSystems(
+			if viper.GetString("trading.model") == "paper" {
+				paperRest, restErr := paper.NewRest(systemCtx)
+
+				if restErr != nil {
+					return errnie.Error(restErr)
+				}
+
+				types.BindTokenRest(paperRest)
+			}
+
+			ledger := broker.NewLedger(systemCtx, pool)
+			story := market.NewStory(systemCtx, pool, ledger.Holdings())
+
+			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
 				paper.NewWebSocket(systemCtx, pool),
-				private.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
 				cvd.NewSystem(systemCtx, pool),
@@ -111,11 +124,24 @@ var (
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
-				market.NewStory(systemCtx, pool),
+				ledger,
+				story,
 				trader.NewCrypto(systemCtx, pool),
-				broker.NewDesk(systemCtx, pool),
+				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats()),
 				ui.NewHub(systemCtx, pool),
-			); err != nil {
+			}
+
+			if os.Getenv("SYMM_KRAKEN_API_KEY") != "" {
+				systems = append(
+					systems[:2],
+					append(
+						[]System{private.NewWebSocket(systemCtx, pool)},
+						systems[2:]...,
+					)...,
+				)
+			}
+
+			if err := engine.AddSystems(systems...); err != nil {
 				return errnie.Error(err)
 			}
 

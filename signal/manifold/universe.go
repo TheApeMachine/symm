@@ -49,6 +49,7 @@ type UniverseState struct {
 type universe struct {
 	states      sync.Map
 	config      physics.Config
+	rankMu      sync.RWMutex
 	ranks       map[string]uint32
 	rankVersion uint64
 }
@@ -175,6 +176,9 @@ func (universe *universe) registerSymbols(symbols []string) {
 }
 
 func (universe *universe) recomputeRanks() {
+	universe.rankMu.Lock()
+	defer universe.rankMu.Unlock()
+
 	type rankedBase struct {
 		base   string
 		energy float64
@@ -228,7 +232,9 @@ func (universe *universe) recomputeRanks() {
 }
 
 func (universe *universe) coords(state *UniverseState, priceOffsetTicks float64) Coords {
+	universe.rankMu.RLock()
 	rank, ok := universe.ranks[state.base]
+	universe.rankMu.RUnlock()
 
 	if !ok {
 		rank = 0

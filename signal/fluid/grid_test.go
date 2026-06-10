@@ -39,6 +39,8 @@ func TestFluidGridIngestBook(t *testing.T) {
 			So(ingestErr, ShouldBeNil)
 			So(grid.ready(), ShouldBeTrue)
 			So(grid.reynolds(0.02), ShouldBeGreaterThanOrEqualTo, 0)
+			So(grid.midVorticity(), ShouldBeGreaterThanOrEqualTo, 0)
+			So(grid.turbulenceIntensity(), ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }

@@ -100,7 +100,9 @@ func TestUniverseCoordsLanes(t *testing.T) {
 				Lane:   krakenmarket.InstrumentLaneDatedFuture,
 			})
 
+			universe.rankMu.Lock()
 			universe.ranks["XBT"] = 2
+			universe.rankMu.Unlock()
 
 			spotCoords := universe.coords(spot, 0)
 			perpCoords := universe.coords(perp, 0)
@@ -111,6 +113,46 @@ func TestUniverseCoordsLanes(t *testing.T) {
 			convey.So(datedCoords.cellY, convey.ShouldEqual, uint32(2))
 			convey.So(spotCoords.cellZ, convey.ShouldEqual, uint32(2))
 			convey.So(perpCoords.cellZ, convey.ShouldEqual, uint32(2))
+		})
+	})
+}
+
+func TestUniverseRanksConcurrent(t *testing.T) {
+	convey.Convey("Given concurrent rank updates and coordinate lookups", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("market.book_depth_levels", 10)
+
+		universe, err := newUniverse(physics.Config{
+			GridX: 32,
+			GridY: 3,
+			GridZ: 16,
+		})
+
+		convey.Convey("It should not race on the rank map", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			universe.registerSymbols([]string{"XBT/USD", "ETH/USD", "SOL/USD"})
+			state := universe.loadSymbol("XBT/USD")
+
+			convey.So(state, convey.ShouldNotBeNil)
+
+			done := make(chan struct{})
+
+			go func() {
+				defer close(done)
+
+				for index := 0; index < 200; index++ {
+					state.returns = append(state.returns, 0.001*float64(index%5))
+					universe.recomputeRanks()
+				}
+			}()
+
+			for index := 0; index < 200; index++ {
+				_ = universe.coords(state, float64(index%7))
+			}
+
+			<-done
 		})
 	})
 }

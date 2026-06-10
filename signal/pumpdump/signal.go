@@ -56,11 +56,13 @@ func NewSignal(
 	symbol string,
 	entity *logic.Entity,
 ) *Signal {
+	capacity := viper.GetInt("signals.pumpdump.measurements_capacity")
+
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(viper.GetInt("signals.pumpdump.measurements.capacity")),
-		warmupRemaining: viper.GetInt("signals.pumpdump.measurements.capacity"),
+		measurements:    ring.New(capacity),
+		warmupRemaining: capacity,
 		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
 		rvol:            numeric.NewFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
 		compression:     numeric.NewInvertedFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
@@ -194,11 +196,22 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
+		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
+			return
+		}
+
+		touchSpread := frame.Asks[0].Price - frame.Bids[0].Price
+
+		if touchSpread <= 0 {
+			return
+		}
+
+		spreads = append(spreads, touchSpread)
+
 		for _, bid := range frame.Bids {
 			if bid.Qty > 0 {
 				prices = append(prices, bid.Price)
 				volumes = append(volumes, bid.Qty)
-				spreads = append(spreads, bid.Price-frame.Asks[0].Price)
 			}
 		}
 
@@ -206,7 +219,6 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			if ask.Qty > 0 {
 				prices = append(prices, ask.Price)
 				volumes = append(volumes, ask.Qty)
-				spreads = append(spreads, ask.Price-frame.Bids[0].Price)
 			}
 		}
 	})

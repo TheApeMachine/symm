@@ -1,3 +1,7 @@
+import {
+	carrierDisplayWeight,
+	normalizeCarrierWeights,
+} from "#/components/charts/manifold/manifold-camera";
 import type {
 	ManifoldCarrierRow,
 	ManifoldFieldSnapshot,
@@ -13,6 +17,29 @@ export type ManifoldHeightmap = {
 
 const clamp = (value: number, lower: number, upper: number): number =>
 	Math.min(upper, Math.max(lower, value));
+
+export const isDegenerateHeightmap = (heights: number[][]): boolean => {
+	if (heights.length === 0 || (heights[0]?.length ?? 0) === 0) {
+		return true;
+	}
+
+	let min = Number.POSITIVE_INFINITY;
+	let max = Number.NEGATIVE_INFINITY;
+
+	for (const row of heights) {
+		for (const value of row) {
+			if (value < min) {
+				min = value;
+			}
+
+			if (value > max) {
+				max = value;
+			}
+		}
+	}
+
+	return !Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-4;
+};
 
 export const projectManifoldHeightmap = (
 	frame: ManifoldFieldSnapshot,
@@ -73,11 +100,17 @@ const applyCarrierBumps = (
 		return;
 	}
 
+	const weights = normalizeCarrierWeights(carriers);
+
 	for (const carrier of carriers) {
 		const cellX = clamp(carrier.cell_x, 0, grid.x - 1);
 		const cellZ = clamp(carrier.cell_z, 0, grid.z - 1);
-		const bump = carrier.role === "whale" ? carrier.heat : carrier.amplitude;
-		const peak = yMin + clamp(bump, 0, 1) * (yMax - yMin) * 0.35;
+		const normalizedWeight = weights.get(carrier.symbol) ?? 0;
+		const peak =
+			yMin +
+			normalizedWeight *
+				(yMax - yMin) *
+				Math.max(0.12, 0.28 * normalizedWeight);
 
 		for (let zOffset = -1; zOffset <= 1; zOffset += 1) {
 			for (let xOffset = -1; xOffset <= 1; xOffset += 1) {
@@ -95,8 +128,13 @@ const applyCarrierBumps = (
 				}
 
 				const weight = 1 / (1 + Math.abs(xOffset) + Math.abs(zOffset));
-				row[xIndex] = Math.max(row[xIndex] ?? yMin, peak * weight);
+				row[xIndex] = Math.max(
+					row[xIndex] ?? yMin,
+					yMin + (peak - yMin) * weight,
+				);
 			}
 		}
 	}
 };
+
+export { carrierDisplayWeight };

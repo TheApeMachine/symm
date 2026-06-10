@@ -28,8 +28,9 @@ export const TradeChart = memo(function TradeChart({
 	);
 
 	const onInit = useCallback(
-		(result: TTradeChartInitResult) =>
-			registerTradeChart(symbol, result.appendBar),
+		(result: TTradeChartInitResult) => {
+			return registerTradeChart(symbol, result.appendBar);
+		},
 		[symbol],
 	);
 

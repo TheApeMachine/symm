@@ -11,10 +11,14 @@ EvalContext resolves dynamic playbook thresholds against the live measurement wi
 */
 type EvalContext struct {
 	measurements []Measurement
+	holdings     *Holdings
 }
 
-func NewEvalContext(measurements []Measurement) *EvalContext {
-	return &EvalContext{measurements: measurements}
+func NewEvalContext(measurements []Measurement, holdings *Holdings) *EvalContext {
+	return &EvalContext{
+		measurements: measurements,
+		holdings:     holdings,
+	}
 }
 
 func (evalContext *EvalContext) Resolve(ref string) (float64, error) {

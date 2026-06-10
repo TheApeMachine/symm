@@ -129,6 +129,77 @@ var qvaluePool = sync.Pool{
 	},
 }
 
+func (ws *WebSocket) dispatch(message *types.SocketMessage) {
+	if len(message.Errors) > 0 || (message.Success != nil && !*message.Success) {
+		ws.handleErrors(message)
+		return
+	}
+
+	if message.Success != nil {
+		return
+	}
+
+	var object types.Unmarshaler
+
+	switch message.Channel {
+	case "pong":
+		pong := PongMessage{}
+
+		if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
+			return
+		}
+
+		ws.latencies.Value = time.Since(pong.TimeIn)
+		ws.latencies.Next()
+		ws.recordLatency()
+		return
+	case "heartbeat":
+		ws.isConnected.Store(true)
+		return
+	case "ohlc":
+		object = &market.CandleUpdates{}
+	case "instrument":
+		object = &market.InstrumentUpdate{}
+	case "ticker":
+		object = &market.TickerUpdates{}
+	case "book":
+		object = &market.BookUpdates{}
+	case "trade":
+		object = &market.TradeUpdates{}
+	case "execution":
+		object = &user.Execution{}
+	}
+
+	if object == nil {
+		return
+	}
+
+	if err := errnie.Error(object.Unmarshal(message)); err != nil {
+		return
+	}
+
+	ws.bus.Send("raw", message.Channel, object)
+
+	if message.Channel == "ohlc" {
+		candles := object.(*market.CandleUpdates)
+		anchor := viper.GetString("market.anchor_symbol")
+
+		for _, candle := range *candles {
+			if candle == nil || candle.Symbol != anchor {
+				continue
+			}
+
+			frame, frameErr := candle.UIFrame()
+
+			if errnie.Error(frameErr) != nil {
+				continue
+			}
+
+			ws.bus.Send("ui", "ohlc", frame)
+		}
+	}
+}
+
 func (ws *WebSocket) Tick() (err error) {
 	ticker := time.NewTicker(
 		viper.GetDuration("market.ws_ping_interval"),
@@ -188,48 +259,7 @@ func (ws *WebSocket) Tick() (err error) {
 			continue
 		}
 
-		if len(message.Errors) > 0 || (message.Success != nil && !*message.Success) {
-			ws.handleErrors(message)
-			message.Release()
-			continue
-		}
-
-		var object types.Unmarshaler
-
-		switch message.Channel {
-		case "pong":
-			pong := PongMessage{}
-
-			if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
-				message.Release()
-				continue
-			}
-
-			ws.latencies.Value = time.Since(pong.TimeIn)
-			ws.latencies.Next()
-			ws.recordLatency()
-		case "heartbeat":
-			ws.isConnected.Store(true)
-		case "ohlc":
-			object = &market.CandleUpdate{}
-		case "instrument":
-			object = &market.InstrumentUpdate{}
-		case "ticker":
-			object = &market.TickerUpdate{}
-		case "book":
-			object = &market.BookUpdate{}
-		case "trade":
-			object = &market.TradeUpdates{}
-		case "execution":
-			object = &user.Execution{}
-		}
-
-		if err := errnie.Error(object.Unmarshal(message)); err != nil {
-			message.Release()
-			continue
-		}
-
-		ws.bus.Send("raw", message.Channel, object)
+		ws.dispatch(message)
 		message.Release()
 	}
 }

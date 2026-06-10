@@ -89,50 +89,83 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
+	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
-	signal.measurements.Do(func(item any) {
-		trade, ok := item.(*krakenmarket.TradeUpdate)
+	if !ok || trade == nil {
+		return signal.measureFromSymbol(at)
+	}
 
-		if !ok {
-			return
-		}
+	eventAt := trade.Timestamp
 
-		errnie.Error(state.FeedTrade(trade.Timestamp, trade.Price, trade.Qty, trade.Side))
-	})
+	if eventAt.IsZero() {
+		eventAt = at
+	}
+
+	if err := state.FeedTrade(eventAt, trade.Price, trade.Qty, trade.Side); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
 
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
+	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
-	signal.measurements.Do(func(item any) {
-		ticker, ok := item.(*krakenmarket.TickerUpdate)
+	if !ok || ticker == nil {
+		return signal.measureFromSymbol(at)
+	}
 
-		if !ok {
-			return
-		}
+	eventAt := ticker.Timestamp
 
-		errnie.Error(state.FeedTicker(*ticker, at))
-	})
+	if eventAt.IsZero() {
+		eventAt = at
+	}
+
+	if err := state.FeedTicker(*ticker, eventAt); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
 
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
+	book, ok := signal.latest().(*krakenmarket.BookUpdate)
 
-	signal.measurements.Do(func(item any) {
-		book, ok := item.(*krakenmarket.BookUpdate)
+	if !ok || book == nil {
+		return signal.measureFromSymbol(at)
+	}
 
-		if !ok {
-			return
-		}
+	eventAt := book.Timestamp
 
-		errnie.Error(state.FeedBook(*book, at))
-	})
+	if eventAt.IsZero() {
+		eventAt = at
+	}
+
+	if err := state.FeedBook(*book, eventAt); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
 
 	return signal.measureFromSymbol(at)
+}
+
+func (signal *Signal) latest() any {
+	var latest any
+
+	signal.measurements.Do(func(item any) {
+		if item != nil {
+			latest = item
+		}
+	})
+
+	return latest
 }
 
 func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error) {

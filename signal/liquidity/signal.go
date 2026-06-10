@@ -217,6 +217,11 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 
 		mid := (frame.Bids[0].Price + frame.Asks[0].Price) / 2
 		spread := frame.Asks[0].Price - frame.Bids[0].Price
+
+		if spread <= 0 {
+			return
+		}
+
 		depth := frame.Bids[0].Qty + frame.Asks[0].Qty
 
 		prices = append(prices, mid)

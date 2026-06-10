@@ -14,6 +14,7 @@ export type ActionVerdict = "submitted" | "filled" | "rejected";
 export type ActionEvent = {
 	type: string;
 	symbol: string;
+	key: string;
 	ts: number;
 	verdict: ActionVerdict;
 	reason: string;
@@ -35,10 +36,12 @@ type WsStatusContextValue = {
 	online: boolean;
 	setOnline: (online: boolean) => void;
 	balance: number;
+	currency: string;
 	exitBalance: number | null;
 	capitalBase: number;
 	openPositions: number;
 	setWallet: (balance: number) => void;
+	setCurrency: (currency: string) => void;
 	setEquity: (exitBalance: number, capitalBase: number) => void;
 	positions: Position[];
 	setPositions: (positions: Position[]) => void;
@@ -54,6 +57,9 @@ const WsStatusContext = createContext<WsStatusContextValue | null>(null);
 export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	const [online, setOnline] = useState(false);
 	const [balance, setBalance] = useState(0);
+	const [currency, setCurrency] = useState(
+		(import.meta.env.VITE_QUOTE_CURRENCY?.trim() || "USD").toUpperCase(),
+	);
 	const [exitBalance, setExitBalance] = useState<number | null>(null);
 	const [capitalBase, setCapitalBase] = useState(0);
 	const [positions, setPositions] = useState<Position[]>([]);
@@ -66,6 +72,10 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 	// consistent the moment the paper connection is swapped for the live one.
 	const setWallet = useCallback((nextBalance: number) => {
 		setBalance(nextBalance);
+	}, []);
+
+	const setCurrencyCode = useCallback((nextCurrency: string) => {
+		setCurrency(nextCurrency.toUpperCase());
 	}, []);
 
 	const setEquity = useCallback(
@@ -115,6 +125,7 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		wsDispatchRef.current = {
 			setOnline,
 			setWallet,
+			setCurrency: setCurrencyCode,
 			setEquity,
 			setPositions,
 			setMark,
@@ -127,10 +138,12 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 			online,
 			setOnline,
 			balance,
+			currency,
 			exitBalance,
 			capitalBase,
 			openPositions: positions.length,
 			setWallet,
+			setCurrency: setCurrencyCode,
 			setEquity,
 			positions,
 			setPositions,
@@ -143,9 +156,11 @@ export const WsStatusProvider = ({ children }: { children: ReactNode }) => {
 		[
 			online,
 			balance,
+			currency,
 			exitBalance,
 			capitalBase,
 			setWallet,
+			setCurrencyCode,
 			setEquity,
 			positions,
 			marks,

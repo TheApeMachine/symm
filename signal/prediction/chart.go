@@ -14,31 +14,37 @@ type ChartSettlement struct {
 }
 
 type ChartEvents struct {
+	EventAt        time.Time
 	ForecastTarget float64
 	Forecast       float64
 	HasForecast    bool
 	Settlements    []ChartSettlement
 }
 
+type forecastBucket struct {
+	forecasts map[string]float64
+}
+
 type settlementBucket struct {
 	forecastSum float64
 	actualSum   float64
 	symbols     map[string]struct{}
+	published   bool
 }
 
 /*
-Chart turns per-pair normalized predictions and ground truth into cross-section
-means for the dashboard. Live frames publish the latest mean forecast; catch-up
-frames publish mean forecast, mean actual, and their difference at maturity.
+Chart publishes cross-section means for the prediction dashboard. Forecast,
+actual, and error share the same x: the forecast maturity unix second
+(event time + horizon). Settlements accumulate through the maturity second and
+publish once after it closes so ground truth and error do not revise in the
+past as later symbols settle.
 */
 type Chart struct {
-	bus                 *internal.Bus
-	horizonSeconds      float64
-	forecasts           map[string]float64
-	forecastTargets     map[string]float64
-	settlements         map[int64]*settlementBucket
-	lastLiveTarget      float64
-	lastLiveSymbolCount int
+	bus               *internal.Bus
+	horizonSeconds    float64
+	symbolForecast    map[string]int64
+	forecastBuckets   map[int64]*forecastBucket
+	settlementBuckets map[int64]*settlementBucket
 }
 
 func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
@@ -49,80 +55,96 @@ func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
 	}
 
 	return &Chart{
-		bus:             bus,
-		horizonSeconds:  horizonSeconds,
-		forecasts:       make(map[string]float64),
-		forecastTargets: make(map[string]float64),
-		settlements:     make(map[int64]*settlementBucket),
+		bus:               bus,
+		horizonSeconds:    horizonSeconds,
+		symbolForecast:    make(map[string]int64),
+		forecastBuckets:   make(map[int64]*forecastBucket),
+		settlementBuckets: make(map[int64]*settlementBucket),
 	}
 }
 
 func (chart *Chart) Apply(symbol string, events ChartEvents) error {
 	if events.HasForecast {
-		chart.forecasts[symbol] = events.Forecast
-		chart.forecastTargets[symbol] = events.ForecastTarget
-
-		if publishErr := chart.publishLatestPrediction(); publishErr != nil {
+		if publishErr := chart.publishForecast(symbol, events); publishErr != nil {
 			return publishErr
 		}
 	}
 
 	for _, settlement := range events.Settlements {
-		if publishErr := chart.publishCatchUp(symbol, settlement); publishErr != nil {
-			return publishErr
+		if accumulateErr := chart.accumulateSettlement(symbol, settlement); accumulateErr != nil {
+			return accumulateErr
 		}
 	}
 
-	return nil
+	return chart.flushReadySettlements(events.EventAt)
 }
 
-func (chart *Chart) publishLatestPrediction() error {
-	forecastSum := 0.0
-	forecastCount := 0
-	rightEdge := 0.0
+func (chart *Chart) publishForecast(symbol string, events ChartEvents) error {
+	targetKey := int64(events.ForecastTarget)
 
-	for symbol, forecast := range chart.forecasts {
-		forecastSum += forecast
-		forecastCount++
+	if targetKey <= 0 {
+		return nil
+	}
 
-		targetUnix := chart.forecastTargets[symbol]
+	chart.symbolForecast[symbol] = targetKey
 
-		if targetUnix > rightEdge {
-			rightEdge = targetUnix
+	bucket := chart.forecastBuckets[targetKey]
+
+	if bucket == nil {
+		bucket = &forecastBucket{
+			forecasts: make(map[string]float64),
 		}
+		chart.forecastBuckets[targetKey] = bucket
 	}
 
-	if forecastCount == 0 || rightEdge <= 0 {
+	bucket.forecasts[symbol] = events.Forecast
+
+	mean, count := chart.forecastBucketMean(bucket)
+
+	if count == 0 {
 		return nil
 	}
-
-	if rightEdge == chart.lastLiveTarget &&
-		forecastCount == chart.lastLiveSymbolCount {
-		return nil
-	}
-
-	chart.lastLiveTarget = rightEdge
-	chart.lastLiveSymbolCount = forecastCount
 
 	return chart.sendFrame(
 		"prediction",
-		rightEdge,
-		forecastSum/float64(forecastCount),
+		float64(targetKey),
+		mean,
+		count,
 	)
 }
 
-func (chart *Chart) publishCatchUp(
+func (chart *Chart) forecastBucketMean(bucket *forecastBucket) (float64, int) {
+	forecastSum := 0.0
+	forecastCount := 0
+
+	for _, forecast := range bucket.forecasts {
+		forecastSum += forecast
+		forecastCount++
+	}
+
+	if forecastCount == 0 {
+		return 0, 0
+	}
+
+	return forecastSum / float64(forecastCount), forecastCount
+}
+
+func (chart *Chart) accumulateSettlement(
 	symbol string,
 	settlement ChartSettlement,
 ) error {
 	targetKey := int64(settlement.TargetUnix)
-	bucket, exists := chart.settlements[targetKey]
+	bucket, exists := chart.settlementBuckets[targetKey]
 
 	if !exists {
 		bucket = &settlementBucket{
 			symbols: make(map[string]struct{}),
 		}
-		chart.settlements[targetKey] = bucket
+		chart.settlementBuckets[targetKey] = bucket
+	}
+
+	if bucket.published {
+		return nil
 	}
 
 	if _, seen := bucket.symbols[symbol]; seen {
@@ -133,31 +155,69 @@ func (chart *Chart) publishCatchUp(
 	bucket.forecastSum += settlement.Forecast
 	bucket.actualSum += settlement.Actual
 
+	return nil
+}
+
+func (chart *Chart) flushReadySettlements(eventAt time.Time) error {
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	nowUnix := eventAt.Unix()
+
+	for targetKey, bucket := range chart.settlementBuckets {
+		if bucket.published || len(bucket.symbols) == 0 {
+			continue
+		}
+
+		if nowUnix <= targetKey {
+			continue
+		}
+
+		if publishErr := chart.publishSettlementBucket(targetKey, bucket); publishErr != nil {
+			return publishErr
+		}
+
+		bucket.published = true
+	}
+
+	return nil
+}
+
+func (chart *Chart) publishSettlementBucket(
+	targetKey int64,
+	bucket *settlementBucket,
+) error {
 	sampleCount := float64(len(bucket.symbols))
 	meanForecast := bucket.forecastSum / sampleCount
 	meanActual := bucket.actualSum / sampleCount
 	meanError := math.Abs(meanActual - meanForecast)
+	sampleCountInt := int(sampleCount)
+	targetUnix := float64(targetKey)
 
 	if publishErr := chart.sendFrame(
 		"prediction",
-		settlement.TargetUnix,
+		targetUnix,
 		meanForecast,
+		sampleCountInt,
 	); publishErr != nil {
 		return publishErr
 	}
 
 	if publishErr := chart.sendFrame(
 		"actual",
-		settlement.TargetUnix,
+		targetUnix,
 		meanActual,
+		sampleCountInt,
 	); publishErr != nil {
 		return publishErr
 	}
 
 	return chart.sendFrame(
 		"error",
-		settlement.TargetUnix,
+		targetUnix,
 		meanError,
+		sampleCountInt,
 	)
 }
 
@@ -165,16 +225,23 @@ func (chart *Chart) sendFrame(
 	kind string,
 	targetUnix float64,
 	value float64,
+	samples int,
 ) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return nil
 	}
 
-	return chart.bus.Send("ui", "prediction", map[string]any{
+	frame := map[string]any{
 		"chart":   "prediction",
 		"kind":    kind,
 		"x":       targetUnix,
 		"value":   value,
 		"horizon": chart.horizonSeconds,
-	})
+	}
+
+	if samples > 0 {
+		frame["samples"] = samples
+	}
+
+	return chart.bus.Send("ui", "prediction", frame)
 }

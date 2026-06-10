@@ -25,6 +25,21 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "target",
         "vendor",
         "venv",
+        ".claude",
+        ".cursor",
+        ".vscode",
+        ".idea",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".venv",
+        ".pnpm-store"
+        "bin",
+        "runs"
+        "scripts"
     }
 )
 
