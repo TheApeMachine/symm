@@ -84,21 +84,21 @@ func (story *Story) Tick() error {
 	}
 
 	for {
-		if errnie.Error(story.ctx.Err()) != nil {
+		if story.ctx.Err() != nil {
 			return story.ctx.Err()
 		}
 
 		row, err := story.bus.Poll("measurements")
 
-		if errnie.Error(err) != nil || row == nil {
+		if internal.ReportError(err) != nil || row == nil {
 			row, err = story.bus.Receive("measurements")
 		}
 
-		if errnie.Error(err) != nil {
-			if errnie.Error(story.ctx.Err()) != nil {
-				return story.ctx.Err()
-			}
+		if internal.IsShutdown(err) {
+			return err
+		}
 
+		if internal.ReportError(err) != nil {
 			continue
 		}
 

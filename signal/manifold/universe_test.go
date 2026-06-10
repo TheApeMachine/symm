@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -40,7 +41,6 @@ func TestUniverseRegisterSymbols(t *testing.T) {
 
 			convey.So(spot, convey.ShouldNotBeNil)
 			convey.So(perp, convey.ShouldNotBeNil)
-			convey.So(spotSymbolForBase(universe, "XBT"), convey.ShouldEqual, "XBT/USD")
 		})
 	})
 }
@@ -117,6 +117,48 @@ func TestUniverseCoordsLanes(t *testing.T) {
 	})
 }
 
+func TestUniverseRankSpread(t *testing.T) {
+	convey.Convey("Given more spot bases than grid Z", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("market.book_depth_levels", 10)
+
+		universe, err := newUniverse(physics.Config{
+			GridX: 32,
+			GridY: 3,
+			GridZ: 16,
+		})
+
+		convey.Convey("It should spread ranks across every Z slice", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			for index := 0; index < 648; index++ {
+				base := fmt.Sprintf("SYM%d", index)
+
+				universe.loadIdentity(krakenmarket.InstrumentIdentity{
+					Symbol: fmt.Sprintf("%s/USD", base),
+					Base:   base,
+					Lane:   krakenmarket.InstrumentLaneSpot,
+				})
+			}
+
+			universe.recomputeRanks()
+
+			used := make(map[uint32]struct{})
+
+			universe.rankMu.RLock()
+
+			for _, rank := range universe.ranks {
+				used[rank] = struct{}{}
+			}
+
+			universe.rankMu.RUnlock()
+
+			convey.So(len(used), convey.ShouldEqual, 16)
+		})
+	})
+}
+
 func TestUniverseRanksConcurrent(t *testing.T) {
 	convey.Convey("Given concurrent rank updates and coordinate lookups", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
@@ -155,4 +197,38 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 			<-done
 		})
 	})
+}
+
+func BenchmarkUniverseRecomputeRanks(b *testing.B) {
+	viper.Set("signals.manifold.tick_size", 0.01)
+	viper.Set("signals.manifold.grid_half_width", 16)
+	viper.Set("market.book_depth_levels", 10)
+
+	universe, err := newUniverse(physics.Config{
+		GridX: 32,
+		GridY: 3,
+		GridZ: 16,
+	})
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for index := 0; index < 648; index++ {
+		base := fmt.Sprintf("SYM%d", index)
+
+		universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			Symbol: fmt.Sprintf("%s/USD", base),
+			Base:   base,
+			Lane:   krakenmarket.InstrumentLaneSpot,
+		})
+	}
+
+	universe.recomputeRanks()
+
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		universe.recomputeRanks()
+	}
 }

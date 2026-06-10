@@ -219,11 +219,19 @@ func (universe *universe) recomputeRanks() {
 
 	universe.ranks = make(map[string]uint32, len(ranked))
 
-	for index, row := range ranked {
-		rank := uint32(index)
+	symbolCount := len(ranked)
+	gridZ := universe.config.GridZ
 
-		if rank >= universe.config.GridZ {
-			rank = universe.config.GridZ - 1
+	for index, row := range ranked {
+		var rank uint32
+
+		switch {
+		case symbolCount <= 1:
+			rank = 0
+		case symbolCount <= int(gridZ):
+			rank = uint32(index)
+		default:
+			rank = uint32(uint64(index) * uint64(gridZ-1) / uint64(symbolCount-1))
 		}
 
 		universe.ranks[row.base] = rank
@@ -271,27 +279,6 @@ func wrapCell(value, modulus int) int {
 	}
 
 	return remainder
-}
-
-func spotSymbolForBase(universe *universe, base string) string {
-	if base == "" {
-		return ""
-	}
-
-	key := fmt.Sprintf("%s:%d", base, krakenmarket.InstrumentLaneSpot)
-	raw, ok := universe.states.Load(key)
-
-	if !ok {
-		return ""
-	}
-
-	state, stateOk := raw.(*UniverseState)
-
-	if !stateOk || state.symbol == "" {
-		return ""
-	}
-
-	return state.symbol
 }
 
 func medianAbsolute(values []float64) float64 {
@@ -344,7 +331,7 @@ func visibleBookQty(state *UniverseState) float64 {
 
 func (state *UniverseState) configureTickFromBook(
 	bids, asks []krakenmarket.BookLevel,
-) {
+) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
 
@@ -359,10 +346,12 @@ func (state *UniverseState) configureTickFromBook(
 	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
 
 	if tickSize <= 0 {
-		return
+		return fmt.Errorf("manifold: tick size is zero")
 	}
 
 	state.tickSize = tickSize
+
+	return nil
 }
 
 func (state *UniverseState) whaleQtyThreshold() float64 {

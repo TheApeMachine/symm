@@ -2726,10 +2726,11 @@ inline float spatial_overlap_from_anchors_simple(
 // 2. Threads accumulate to threadgroup memory (fast local atomics)
 // 3. After barrier, one flush to global per carrier per threadgroup
 //
-// Memory layout: max_carriers * 6 floats + 2 uints per threadgroup
-// For 64 carriers: 64 * 8 * 4 = 2KB threadgroup memory (well within limits)
+// Threadgroup memory: num_carriers * 8 atomic_uint fields (32 bytes each).
+// Host sets threadgroup memory length to num_carriers * 32; capacity is capped at
+// min(maxThreadgroupMemoryLength / 32, maxThreadsPerThreadgroup, 1024).
 
-constant uint kMaxCarriersForTG = 128u;  // Max carriers for threadgroup reduction
+constant uint kMaxCarriersForTG = 1024u;  // compile-time ceiling for TG carrier slots
 
 struct CarrierAccumulators {
     atomic_float force_r;
@@ -3299,14 +3300,20 @@ kernel void initialize_particle_properties(
         energy = random_vals[gid * 4 + 3] * p.energy_scale * 0.5f + 0.5f;
     }
     
-    // Heat: starts at zero
-    float heat = 0.0f;
+    // Heat: preserve host-provided entropic store from SetOscillators
+    float heat = heats[gid];
+    float mass;
+    
+    if (heat > 0.0f) {
+        energy = heat;
+        mass = heat;
+    } else {
+        heat = 0.0f;
+        mass = energy;
+    }
     
     // Excitation: small random
     float exc = random_vals[gid * 4 + 2] * 0.1f;
-    
-    // Mass: proportional to energy
-    float mass = energy;
     
     velocities[gid * 3 + 0] = vel.x;
     velocities[gid * 3 + 1] = vel.y;

@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -10,6 +11,38 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric/physics"
 )
+
+func TestLiquidityRho(t *testing.T) {
+	convey.Convey("Given visible book liquidity", t, func() {
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := newField()
+
+		convey.Convey("It should scale deposits against visible depth and rho_min", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			state := field.universe.loadSymbol("XBT/USD")
+			state.bookReady = true
+			state.book = krakenmarket.BookUpdate{
+				Bids: []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
+				Asks: []krakenmarket.BookLevel{{Price: 50010, Qty: 3}},
+			}
+
+			rho, rhoErr := field.liquidityRho(state, 2.5, 1)
+
+			convey.So(rhoErr, convey.ShouldBeNil)
+			convey.So(rho, convey.ShouldAlmostEqual, 0.5*field.config.RhoMin, 0.0001)
+
+			field.Close()
+		})
+	})
+}
 
 func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 	convey.Convey("Given a manifold field", t, func() {
@@ -244,4 +277,30 @@ func TestCapCarriers(t *testing.T) {
 			convey.So(trimmedOscillators[31].Heat, convey.ShouldEqual, oscillators[8].Heat)
 		})
 	})
+}
+
+func TestNormalizeOscillatorsForSolver(t *testing.T) {
+	rhoMin := 49.0
+	oscillators := []physics.Oscillator{
+		{Heat: 0, Amplitude: 10},
+		{Heat: 1, Amplitude: 5},
+	}
+
+	normalized := normalizeOscillatorsForSolver(oscillators, rhoMin)
+
+	if len(normalized) != 2 {
+		t.Fatalf("len = %d, want 2", len(normalized))
+	}
+
+	wantHeat := rhoMin / 2.0
+
+	if normalized[0].Heat != wantHeat {
+		t.Fatalf("heat[0] = %g, want %g", normalized[0].Heat, wantHeat)
+	}
+
+	wantAmplitude := math.Sqrt(wantHeat)
+
+	if normalized[0].Amplitude != wantAmplitude {
+		t.Fatalf("amplitude[0] = %g, want %g", normalized[0].Amplitude, wantAmplitude)
+	}
 }

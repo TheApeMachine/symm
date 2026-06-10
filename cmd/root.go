@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/record"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -43,10 +42,6 @@ which allows a developer to easily override the config file.
 //go:embed cfg/config.yml
 var embedded embed.FS
 
-// defaultCapturePath is where `make run --record` writes measurements and where
-// `make tune` reads them back — the single capture file the two commands share.
-const defaultCapturePath = "runs/capture.jsonl"
-
 var (
 	cfgFile   string
 	recordRun bool
@@ -56,12 +51,6 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if recordRun {
-				if err := record.BindCapturePath(defaultCapturePath); err != nil {
-					return errnie.Error(err)
-				}
-			}
-
 			if _, err := config.LoadTradingConfig(); err != nil {
 				return errnie.Error(err)
 			}
@@ -148,13 +137,6 @@ func init() {
 		"",
 		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
 	)
-
-	rootCmd.PersistentFlags().BoolVar(
-		&recordRun,
-		"record",
-		false,
-		"record run measurements to "+defaultCapturePath+" so `make tune` can optimize on them",
-	)
 }
 
 func initConfig() {
@@ -211,13 +193,6 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
-	if auditPath := os.Getenv("SYMM_AUDIT_FILE"); auditPath != "" {
-		viper.Set("trading.audit.file", auditPath)
-	}
-
-	if recordPath := os.Getenv("SYMM_RECORD_FILE"); recordPath != "" {
-		viper.Set("trading.record.file", recordPath)
-	}
 }
 
 const rootLong = `

@@ -232,7 +232,7 @@ signals:
     grid_x: 32
     grid_y: 3
     grid_z: 16
-    max_modes: 32
+    max_modes: 128
     integration_interval: 100ms
     snapshot_interval: 500ms
   toxicity:

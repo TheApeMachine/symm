@@ -196,7 +196,7 @@
         return YES;
     }
 
-    if (self.numOsc > kMaxCarriersForTG) {
+    if (self.numOsc > self.maxCarriersForTG) {
         if (error != nil) {
             *error = @"oscillator count exceeds coherence threadgroup capacity";
         }
@@ -212,18 +212,17 @@
         return NO;
     }
 
-    NSUInteger tgAccumBytes = (NSUInteger)kMaxCarriersForTG * 8u * sizeof(uint32_t);
-    NSUInteger tgWidth = self.accumulateForces.threadExecutionWidth;
+    NSUInteger tgAccumBytes = (NSUInteger)self.numOsc * kCarrierAccumThreadgroupBytes;
+    NSUInteger tgWidth = manifold_simd_threadgroup_width(
+        self.numOsc,
+        self.simdWidth,
+        self.maxThreadsPerThreadgroup
+    );
+    NSUInteger tgCount = 1;
 
-    if (tgWidth > self.numOsc) {
-        tgWidth = self.numOsc;
+    if (self.numOsc > tgWidth) {
+        tgCount = (self.numOsc + tgWidth - 1) / tgWidth;
     }
-
-    if (tgWidth == 0) {
-        tgWidth = 1;
-    }
-
-    NSUInteger tgCount = (self.numOsc + tgWidth - 1) / tgWidth;
 
     [self dispatchThreadgroupKernel:self.accumulateForces
                             buffers:@[

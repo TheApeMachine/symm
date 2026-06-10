@@ -3,6 +3,7 @@
 package physics
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -286,6 +287,203 @@ func TestSolverProductionConfig(t *testing.T) {
 	})
 }
 
+func TestSolverCarrierThreshold(t *testing.T) {
+	config := productionTestConfig()
+	deltaT := config.DeltaT
+
+	for _, count := range []int{32, 48, 64, 96, 128} {
+		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
+			solver, err := NewSolver(config)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer solver.Close()
+
+			if err := solver.ResetDeposits(); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := solver.DepositCell(1, 0, 1, 0.05, 0, 0, 0, 0.05); err != nil {
+				t.Fatal(err)
+			}
+
+			omega := 2 * math.Pi / deltaT
+			osc := make([]Oscillator, count)
+
+			for index := range osc {
+				perCarrierEnergy := config.RhoMin / float64(count)
+				osc[index] = Oscillator{
+					Phase:     float64(index) * 0.1,
+					Omega:     omega,
+					Amplitude: math.Sqrt(perCarrierEnergy),
+					Heat:      perCarrierEnergy,
+					PosX:      1,
+					PosY:      0,
+					PosZ:      1,
+				}
+			}
+
+			if err := solver.SetOscillators(osc); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := solver.Step(); err != nil {
+				t.Fatal(err)
+			}
+
+			read, err := solver.ReadOscillators(count)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if math.IsNaN(read[0].Phase) {
+				t.Fatalf("phase NaN at count %d", count)
+			}
+		})
+	}
+}
+
+func TestSolverProduction128Oscillators(t *testing.T) {
+	convey.Convey("Given production rho_min and 128 startup oscillators", t, func() {
+		config := productionTestConfig()
+		carrierCount := 128
+
+		solver, err := NewSolver(config)
+
+		convey.Convey("It should return finite oscillator readback after step", func() {
+			convey.So(err, convey.ShouldBeNil)
+			defer solver.Close()
+
+			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
+			convey.So(
+				solver.DepositCell(1, 0, 1, 0.05, 0, 0, 0, 0.05),
+				convey.ShouldBeNil,
+			)
+
+			omega := 2 * math.Pi / config.DeltaT
+			oscillators := make([]Oscillator, carrierCount)
+
+			for index := range oscillators {
+				perCarrierEnergy := config.RhoMin / float64(carrierCount)
+				oscillators[index] = Oscillator{
+					Phase:     float64(index) * 0.1,
+					Omega:     omega,
+					Amplitude: math.Sqrt(perCarrierEnergy),
+					PosX:      1,
+					PosY:      0,
+					PosZ:      1,
+					Heat:      perCarrierEnergy,
+				}
+			}
+
+			convey.So(solver.SetOscillators(oscillators), convey.ShouldBeNil)
+
+			_, stepErr := solver.Step()
+
+			convey.So(stepErr, convey.ShouldBeNil)
+
+			readback, readErr := solver.ReadOscillators(len(oscillators))
+
+			convey.So(readErr, convey.ShouldBeNil)
+			convey.So(len(readback), convey.ShouldEqual, carrierCount)
+			convey.So(math.IsNaN(readback[0].Phase), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(readback[0].Heat), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(readback[0].Amplitude), convey.ShouldBeFalse)
+		})
+	})
+}
+
+func productionTestConfig() Config {
+	tickSize := 0.01
+	halfWidth := 32
+	gamma := 5.0 / 3.0
+	deltaT := 0.1
+
+	config := Config{
+		GridX:    32,
+		GridY:    3,
+		GridZ:    16,
+		DomainX:  float64(halfWidth*2+1) * tickSize,
+		DomainY:  3,
+		DomainZ:  16,
+		DeltaT:   deltaT,
+		Gamma:    gamma,
+		MaxModes: 128,
+	}
+
+	cellVolume := config.CellVolume()
+	rhoMin := 1.0 / cellVolume
+
+	config.CV = 1.0 / (gamma - 1.0)
+	config.RhoMin = rhoMin
+	config.PMin = (gamma - 1.0) * rhoMin * cellVolume
+	config.KThermal = rhoMin / deltaT
+
+	return config
+}
+
+func TestSolverMultiSymbolDeposits(t *testing.T) {
+	config := productionTestConfig()
+	carrierCount := 128
+
+	solver, err := NewSolver(config)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer solver.Close()
+
+	if err := solver.ResetDeposits(); err != nil {
+		t.Fatal(err)
+	}
+
+	for symbolIndex := 0; symbolIndex < carrierCount; symbolIndex++ {
+		rho := 0.05 / float64(carrierCount)
+
+		if depositErr := solver.DepositCell(1, 0, 1, rho, rho, 0, 0, rho*config.CV); depositErr != nil {
+			t.Fatal(depositErr)
+		}
+	}
+
+	omega := 2 * math.Pi / config.DeltaT
+	oscillators := make([]Oscillator, carrierCount)
+
+	for index := range oscillators {
+		perCarrierEnergy := config.RhoMin / float64(carrierCount)
+		oscillators[index] = Oscillator{
+			Phase:     float64(index) * 0.1,
+			Omega:     omega,
+			Amplitude: math.Sqrt(perCarrierEnergy),
+			PosX:      1,
+			PosY:      0,
+			PosZ:      1,
+			Heat:      perCarrierEnergy,
+		}
+	}
+
+	if err := solver.SetOscillators(oscillators); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := solver.Step(); err != nil {
+		t.Fatal(err)
+	}
+
+	readback, err := solver.ReadOscillators(carrierCount)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if math.IsNaN(readback[0].Phase) {
+		t.Fatalf("phase NaN with scaled multi-symbol deposits")
+	}
+}
+
 func BenchmarkSolverStep(b *testing.B) {
 	config := Config{
 		GridX:    16,
@@ -347,5 +545,71 @@ func BenchmarkSolverStep(b *testing.B) {
 		if _, err := solver.Step(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestMaxModesVsOscCount(t *testing.T) {
+	for _, testCase := range []struct {
+		maxModes int
+		numOsc   int
+	}{
+		{32, 32},
+		{128, 32},
+		{128, 128},
+	} {
+		t.Run(fmt.Sprintf("max=%d-osc=%d", testCase.maxModes, testCase.numOsc), func(t *testing.T) {
+			config := productionTestConfig()
+			config.MaxModes = uint32(testCase.maxModes)
+
+			solver, err := NewSolver(config)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer solver.Close()
+
+			if err := solver.ResetDeposits(); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := solver.DepositCell(1, 0, 1, 0.05, 0, 0, 0, 0.05); err != nil {
+				t.Fatal(err)
+			}
+
+			omega := 2 * math.Pi / config.DeltaT
+			oscillators := make([]Oscillator, testCase.numOsc)
+
+			for index := range oscillators {
+				perCarrierEnergy := config.RhoMin / float64(testCase.numOsc)
+				oscillators[index] = Oscillator{
+					Phase:     float64(index) * 0.1,
+					Omega:     omega,
+					Amplitude: math.Sqrt(perCarrierEnergy),
+					PosX:      1,
+					PosY:      0,
+					PosZ:      1,
+					Heat:      perCarrierEnergy,
+				}
+			}
+
+			if err := solver.SetOscillators(oscillators); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := solver.Step(); err != nil {
+				t.Fatal(err)
+			}
+
+			readback, err := solver.ReadOscillators(testCase.numOsc)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if math.IsNaN(readback[0].Phase) {
+				t.Fatalf("phase NaN")
+			}
+		})
 	}
 }

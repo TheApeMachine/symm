@@ -55,6 +55,26 @@
         return nil;
     }
 
+    self.simdWidth = (uint32_t)self.accumulateForces.threadExecutionWidth;
+
+    if (self.simdWidth == 0) {
+        self.simdWidth = 32;
+    }
+
+    self.maxThreadsPerThreadgroup = self.device.maxThreadsPerThreadgroup.width;
+    self.maxCarriersForTG = manifold_max_carriers_for_threadgroup(self.device);
+
+    if (self.config.max_carriers > self.maxCarriersForTG) {
+        if (error != nil) {
+            *error = [NSString stringWithFormat:
+                @"max_carriers %u exceeds device threadgroup capacity %u",
+                self.config.max_carriers,
+                self.maxCarriersForTG];
+        }
+
+        return nil;
+    }
+
     if (![self allocateBuffers:error]) {
         return nil;
     }

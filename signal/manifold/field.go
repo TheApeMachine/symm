@@ -100,10 +100,6 @@ func (field *Field) RegisterSymbols(symbols []string) {
 	field.universe.registerSymbols(symbols)
 }
 
-func (field *Field) SpotSymbolForIdentity(identity krakenmarket.InstrumentIdentity) string {
-	return spotSymbolForBase(field.universe, identity.Base)
-}
-
 func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
 	state := field.universe.loadSymbol(row.Symbol)
 
@@ -196,7 +192,9 @@ func (field *Field) feedBookIdentity(
 	}
 
 	state.midPrice = midPrice
-	state.configureTickFromBook(bids, asks)
+	if err := state.configureTickFromBook(bids, asks); err != nil {
+		return err
+	}
 
 	if state.lane == krakenmarket.InstrumentLaneSpot {
 		field.recordPrice(state, midPrice, at)
@@ -229,8 +227,12 @@ func (field *Field) FeedTrade(trade *krakenmarket.TradeUpdate, at time.Time) err
 
 	offsetTicks := (trade.Price - state.midPrice) / state.tickSize
 	coords := field.universe.coords(state, offsetTicks)
-	cellVolume := field.config.CellVolume()
-	rho := trade.Qty / cellVolume
+
+	rho, rhoErr := field.liquidityRho(state, trade.Qty, 1)
+
+	if rhoErr != nil {
+		return rhoErr
+	}
 
 	if trade.Qty >= state.whaleQtyThreshold() {
 		field.pendingWhales = append(field.pendingWhales, whaleCarrier{
@@ -344,7 +346,7 @@ func (field *Field) publishSnapshot(at time.Time) error {
 	field.lastSnapshotPublish = at
 
 	if err := field.snapshotPublish(at); err != nil {
-		errnie.Error(err)
+		return err
 	}
 
 	return nil
@@ -386,50 +388,46 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, errnie.Error(err)
 	}
 
-	for _, deposit := range field.pendingDeposits {
-		if depositErr := field.solver.DepositCell(
-			deposit.cellX,
-			deposit.cellY,
-			deposit.cellZ,
-			deposit.rho,
-			deposit.momX,
-			deposit.momY,
-			deposit.momZ,
-			deposit.eInt,
-		); depositErr != nil {
-			return false, errnie.Error(depositErr)
-		}
+	type spotCandidate struct {
+		state      *UniverseState
+		oscillator physics.Oscillator
+		carrier    fieldCarrier
 	}
 
-	field.pendingDeposits = field.pendingDeposits[:0]
-
-	oscillators := make([]physics.Oscillator, 0)
-	carriers := make([]fieldCarrier, 0)
+	candidates := make([]spotCandidate, 0)
 
 	field.universe.states.Range(func(_, value any) bool {
 		state, ok := value.(*UniverseState)
 
-		if !ok || !state.bookReady || state.midPrice <= 0 {
+		if !ok || !state.bookReady || state.midPrice <= 0 || state.tickSize <= 0 {
 			return true
 		}
 
-		if depositErr := field.depositBook(state); depositErr != nil {
-			errnie.Error(depositErr)
+		if state.lane != krakenmarket.InstrumentLaneSpot {
 			return true
 		}
 
-		if state.lane == krakenmarket.InstrumentLaneSpot {
-			oscillator := field.oscillatorFromState(state)
-			oscillators = append(oscillators, oscillator)
-			carriers = append(carriers, fieldCarrier{
+		oscillator := field.oscillatorFromState(state)
+		candidates = append(candidates, spotCandidate{
+			state:      state,
+			oscillator: oscillator,
+			carrier: fieldCarrier{
 				role:       "symbol",
 				symbol:     state.symbol,
 				oscillator: oscillator,
-			})
-		}
+			},
+		})
 
 		return true
 	})
+
+	oscillators := make([]physics.Oscillator, len(candidates))
+	carriers := make([]fieldCarrier, len(candidates))
+
+	for index, candidate := range candidates {
+		oscillators[index] = candidate.oscillator
+		carriers[index] = candidate.carrier
+	}
 
 	if len(oscillators) == 0 && len(field.activeWhales) == 0 && len(field.pendingWhales) == 0 {
 		return false, nil
@@ -462,7 +460,47 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, nil
 	}
 
-	if err := field.solver.SetOscillators(solverOscillators); err != nil {
+	activeCarriers := len(solverOscillators)
+	carrierScale := 1.0 / float64(activeCarriers)
+
+	for _, deposit := range field.pendingDeposits {
+		if depositErr := field.solver.DepositCell(
+			deposit.cellX,
+			deposit.cellY,
+			deposit.cellZ,
+			deposit.rho*carrierScale,
+			deposit.momX*carrierScale,
+			deposit.momY*carrierScale,
+			deposit.momZ*carrierScale,
+			deposit.eInt*carrierScale,
+		); depositErr != nil {
+			return false, errnie.Error(depositErr)
+		}
+	}
+
+	field.pendingDeposits = field.pendingDeposits[:0]
+
+	selectedSymbols := make(map[string]struct{}, len(solverCarriers))
+
+	for _, carrier := range solverCarriers {
+		if carrier.role != "symbol" {
+			continue
+		}
+
+		selectedSymbols[carrier.symbol] = struct{}{}
+	}
+
+	for _, candidate := range candidates {
+		if _, selected := selectedSymbols[candidate.state.symbol]; !selected {
+			continue
+		}
+
+		if depositErr := field.depositBook(candidate.state, activeCarriers); depositErr != nil {
+			return false, errnie.Error(depositErr)
+		}
+	}
+
+	if err := field.solver.SetOscillators(normalizeOscillatorsForSolver(solverOscillators, field.config.RhoMin)); err != nil {
 		return false, errnie.Error(err)
 	}
 
@@ -472,10 +510,20 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, errnie.Error(stepErr)
 	}
 
+	if !readingFinite(reading) {
+		return false, fmt.Errorf("manifold: solver reading is non-finite")
+	}
+
 	readOscillators, readErr := field.solver.ReadOscillators(len(solverOscillators))
 
 	if readErr != nil {
 		return false, errnie.Error(readErr)
+	}
+
+	for index, oscillator := range readOscillators {
+		if !oscillatorFullyFinite(oscillator) {
+			return false, fmt.Errorf("manifold: solver oscillator[%d] is non-finite", index)
+		}
 	}
 
 	field.activeWhales = field.whalesFromSolverReadback(solverCarriers, readOscillators)
@@ -490,33 +538,56 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 			return true
 		}
 
-		field.readings.Store(state.symbol, symbolReading{
-			reading: reading,
-			price:   state.lastPrice,
-			at:      at,
-		})
+		field.readings.Delete(state.symbol)
 
 		return true
 	})
 
+	for _, carrier := range solverCarriers {
+		if carrier.role != "symbol" {
+			continue
+		}
+
+		state := field.universe.loadSymbol(carrier.symbol)
+		price := 0.0
+
+		if state != nil {
+			price = state.lastPrice
+		}
+
+		field.readings.Store(carrier.symbol, symbolReading{
+			reading: reading,
+			price:   price,
+			at:      at,
+		})
+	}
+
 	return true, nil
 }
 
-func (field *Field) depositBook(state *UniverseState) error {
+func (field *Field) depositBook(state *UniverseState, activeCarriers int) error {
 	if state.tickSize <= 0 {
 		return fmt.Errorf("manifold: tick size must be positive for %q", state.symbol)
+	}
+
+	if activeCarriers <= 0 {
+		return fmt.Errorf("manifold: active carrier count must be positive")
 	}
 
 	bids := truncateLevels(state.book.Bids, state.bookDepth)
 	asks := truncateLevels(state.book.Asks, state.bookDepth)
 	midPrice := state.midPrice
-	cellVolume := field.config.CellVolume()
 
 	depositSide := func(levels []krakenmarket.BookLevel, sign float64) error {
 		for _, level := range levels {
 			offsetTicks := (level.Price - midPrice) / state.tickSize
 			coords := field.universe.coords(state, offsetTicks)
-			rho := level.Qty / cellVolume
+
+			rho, rhoErr := field.liquidityRho(state, level.Qty, activeCarriers)
+
+			if rhoErr != nil {
+				return rhoErr
+			}
 
 			if depositErr := field.solver.DepositCell(
 				coords.cellX,
@@ -569,7 +640,7 @@ func (field *Field) whalesFromSolverReadback(
 }
 
 func displayOscillator(fallback, read physics.Oscillator) physics.Oscillator {
-	if oscillatorStateFinite(read) {
+	if oscillatorFullyFinite(read) {
 		return read
 	}
 
@@ -577,22 +648,52 @@ func displayOscillator(fallback, read physics.Oscillator) physics.Oscillator {
 }
 
 func oscillatorStateFinite(oscillator physics.Oscillator) bool {
-	coords := []float64{
+	return oscillatorFullyFinite(oscillator)
+}
+
+func oscillatorFullyFinite(oscillator physics.Oscillator) bool {
+	values := []float64{
 		oscillator.PosX,
 		oscillator.PosY,
 		oscillator.PosZ,
 		oscillator.VelX,
 		oscillator.VelY,
 		oscillator.VelZ,
+		oscillator.Phase,
+		oscillator.Omega,
+		oscillator.Amplitude,
+		oscillator.Heat,
 	}
 
-	for _, value := range coords {
+	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func (field *Field) liquidityRho(state *UniverseState, qty float64, activeCarriers int) (float64, error) {
+	if qty <= 0 {
+		return 0, fmt.Errorf("manifold: qty must be positive for %q", state.symbol)
+	}
+
+	if activeCarriers <= 0 {
+		return 0, fmt.Errorf("manifold: active carrier count must be positive")
+	}
+
+	reference := visibleBookQty(state)
+
+	if reference <= 0 && len(state.tradeQtys) > 0 {
+		reference = median(state.tradeQtys) * float64(len(state.tradeQtys))
+	}
+
+	if reference <= 0 {
+		return 0, fmt.Errorf("manifold: liquidity reference unavailable for %q", state.symbol)
+	}
+
+	return (qty / reference) * field.config.RhoMin / float64(activeCarriers), nil
 }
 
 func (field *Field) displayCarriers(
@@ -691,6 +792,25 @@ func (field *Field) oscillatorFromState(state *UniverseState) physics.Oscillator
 	}
 }
 
+func normalizeOscillatorsForSolver(oscillators []physics.Oscillator, rhoMin float64) []physics.Oscillator {
+	carrierCount := float64(len(oscillators))
+
+	if carrierCount <= 0 {
+		return oscillators
+	}
+
+	normalized := make([]physics.Oscillator, len(oscillators))
+
+	for index, oscillator := range oscillators {
+		normalized[index] = oscillator
+		perCarrierEnergy := math.Max(oscillator.Heat, rhoMin) / carrierCount
+		normalized[index].Amplitude = math.Sqrt(perCarrierEnergy)
+		normalized[index].Heat = perCarrierEnergy
+	}
+
+	return normalized
+}
+
 func returnFrequency(returns []float64, deltaT float64) float64 {
 	if len(returns) < 2 || deltaT <= 0 {
 		return 2 * math.Pi / deltaT
@@ -744,17 +864,11 @@ func capSolverCarriers(
 	maxModes uint32,
 ) ([]physics.Oscillator, []fieldCarrier) {
 	limit := int(maxModes)
-	solverOscillators := make([]physics.Oscillator, 0, limit)
-	solverCarriers := make([]fieldCarrier, 0, limit)
-
-	for index := range symbolOscillators {
-		if len(solverOscillators) >= limit {
-			break
-		}
-
-		solverOscillators = append(solverOscillators, symbolOscillators[index])
-		solverCarriers = append(solverCarriers, symbolCarriers[index])
-	}
+	solverOscillators, solverCarriers := capCarriers(
+		symbolOscillators,
+		symbolCarriers,
+		uint32(limit),
+	)
 
 	if len(solverOscillators) >= limit {
 		return solverOscillators, solverCarriers

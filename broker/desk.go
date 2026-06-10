@@ -56,7 +56,11 @@ func (desk *Desk) Tick() error {
 
 		message, err := desk.bus.Receive(internal.ChannelRaw)
 
-		if errnie.Error(err) != nil || message == nil {
+		if internal.IsShutdown(err) {
+			return err
+		}
+
+		if internal.ReportError(err) != nil || message == nil {
 			continue
 		}
 

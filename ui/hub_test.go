@@ -3,94 +3,108 @@ package ui
 import (
 	"context"
 	"math"
-	"net"
-	"sync/atomic"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fasthttp/websocket"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/user"
-	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttputil"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 )
 
-func TestHubRememberBalances(t *testing.T) {
-	Convey("Given a balances ui frame", t, func() {
-		hub := &Hub{}
+func TestHubTickForwardsUIFrames(t *testing.T) {
+	Convey("Given a connected frontend client", t, func() {
+		viper.Set("system.queue.buffer", 64)
 
-		hub.rememberBalances(user.Balances{
-			Asset: []user.Balance{{
-				Asset:   "EUR",
-				Balance: 250,
-			}},
-		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		Convey("It should retain the latest snapshot for replay", func() {
-			snapshot := hub.lastBalances.Load()
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 
-			So(snapshot, ShouldNotBeNil)
-			So(len(snapshot.Asset), ShouldEqual, 1)
-			So(snapshot.Asset[0].Balance, ShouldEqual, 250)
-		})
-	})
-}
-
-func TestFrontendClientSendRejectsNonFiniteJSON(t *testing.T) {
-	Convey("Given a ui frame with non-finite floats", t, func() {
-		listener := fasthttputil.NewInmemoryListener()
-		var writeCalls atomic.Int32
-
-		server := &fasthttp.Server{
-			Handler: func(requestCtx *fasthttp.RequestCtx) {
-				var upgrader websocket.FastHTTPUpgrader
-
-				upgrader.Upgrade(requestCtx, func(conn *websocket.Conn) {
-					for {
-						if _, _, readErr := conn.ReadMessage(); readErr != nil {
-							return
-						}
-
-						writeCalls.Add(1)
-					}
-				})
-			},
+		hub := &Hub{
+			ctx: ctx,
+			bus: internal.NewBus(
+				ctx,
+				pool,
+				[]internal.Channel{internal.ChannelUI},
+				[]internal.Subscription{
+					internal.Subscribe(internal.ChannelUI, "ui:test"),
+				},
+			),
 		}
 
-		go func() {
-			_ = server.Serve(listener)
-		}()
+		server := httptest.NewServer(http.HandlerFunc(hub.handleWS))
+		defer server.Close()
 
-		t.Cleanup(func() {
-			_ = server.Shutdown()
-		})
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
 
-		dialer := websocket.DefaultDialer
-		dialer.NetDialContext = func(context.Context, string, string) (net.Conn, error) {
-			return listener.Dial()
-		}
-
-		conn, _, dialErr := dialer.Dial("ws://symm.test/ws", nil)
+		conn, _, dialErr := websocket.DefaultDialer.Dial(wsURL, nil)
 
 		So(dialErr, ShouldBeNil)
 		So(conn, ShouldNotBeNil)
 
-		t.Cleanup(func() {
-			_ = conn.Close()
+		defer conn.Close()
+
+		_, helloPayload, readErr := conn.ReadMessage()
+
+		So(readErr, ShouldBeNil)
+		So(string(helloPayload), ShouldContainSubstring, `"event":"hello"`)
+
+		go func() {
+			_ = hub.Tick()
+		}()
+
+		sendErr := hub.bus.Send(internal.ChannelUI, "gauge", map[string]any{
+			"chart":      "gauge",
+			"source":     "cvd",
+			"confidence": 0.75,
 		})
 
-		client := startFrontendClient(&Hub{}, conn)
+		So(sendErr, ShouldBeNil)
 
-		t.Cleanup(func() {
-			client.close()
-		})
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 
-		client.send(map[string]any{
+		_, framePayload, frameErr := conn.ReadMessage()
+
+		So(frameErr, ShouldBeNil)
+		So(string(framePayload), ShouldContainSubstring, `"source":"cvd"`)
+	})
+}
+
+func TestHubWriteRejectsNonFiniteJSON(t *testing.T) {
+	Convey("Given a ui frame with non-finite floats", t, func() {
+		hub := &Hub{}
+
+		server := httptest.NewServer(http.HandlerFunc(hub.handleWS))
+		defer server.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+
+		conn, _, dialErr := websocket.DefaultDialer.Dial(wsURL, nil)
+
+		So(dialErr, ShouldBeNil)
+
+		defer conn.Close()
+
+		_, _, readErr := conn.ReadMessage()
+
+		So(readErr, ShouldBeNil)
+
+		hub.write(map[string]any{
 			"type": "fluid",
 			"re":   math.Inf(1),
 		})
 
+		_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+
+		_, _, frameErr := conn.ReadMessage()
+
 		Convey("It should fail JSON encoding before websocket write", func() {
-			So(writeCalls.Load(), ShouldEqual, 0)
+			So(frameErr, ShouldNotBeNil)
 		})
 	})
 }

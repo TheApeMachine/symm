@@ -17,15 +17,16 @@ import (
 )
 
 type System struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	pool     *qpool.Q[any]
-	bus      *internal.Bus
-	signals  sync.Map
-	gauge    *telemetry.Gauge
-	feedback *market.Feedback
-	source   logic.SourceType
-	signal   func(string, *logic.Entity) market.Signal
+	ctx       context.Context
+	cancel    context.CancelFunc
+	pool      *qpool.Q[any]
+	bus       *internal.Bus
+	signals   sync.Map
+	gauge     *telemetry.Gauge
+	feedback  *market.Feedback
+	source    logic.SourceType
+	signal    func(string, *logic.Entity) market.Signal
+	onSymbols func([]string)
 }
 
 func NewSystem(
@@ -68,7 +69,7 @@ func (system *System) Tick() error {
 	for {
 		message, err := system.bus.Receive(internal.ChannelRaw)
 
-		if errnie.Error(err) != nil {
+		if internal.ReportError(err) != nil {
 			return err
 		}
 
@@ -82,17 +83,21 @@ func (system *System) Tick() error {
 
 			if ok {
 				system.gauge.RegisterSymbols(symbols)
+
+				if system.onSymbols != nil {
+					system.onSymbols(symbols)
+				}
 			}
 
 			continue
 		case rawbus.TypeTrade:
-			trades, ok := message.Value.([]*krakenmarket.TradeUpdate)
+			trades, ok := message.Value.(*krakenmarket.TradeUpdates)
 
-			if !ok {
+			if !ok || trades == nil {
 				return fmt.Errorf("%s: invalid trade", system.source)
 			}
 
-			for _, trade := range trades {
+			for _, trade := range *trades {
 				if trade == nil {
 					continue
 				}
@@ -112,13 +117,13 @@ func (system *System) Tick() error {
 				}
 			}
 		case rawbus.TypeTicker:
-			tickers, ok := message.Value.([]*krakenmarket.TickerUpdate)
+			tickers, ok := message.Value.(*krakenmarket.TickerUpdates)
 
-			if !ok {
+			if !ok || tickers == nil {
 				return fmt.Errorf("%s: invalid ticker", system.source)
 			}
 
-			for _, ticker := range tickers {
+			for _, ticker := range *tickers {
 				if ticker == nil {
 					continue
 				}
@@ -138,13 +143,13 @@ func (system *System) Tick() error {
 				}
 			}
 		case rawbus.TypeBook:
-			books, ok := message.Value.([]*krakenmarket.BookUpdate)
+			books, ok := message.Value.(*krakenmarket.BookUpdates)
 
-			if !ok {
+			if !ok || books == nil {
 				return fmt.Errorf("%s: invalid book", system.source)
 			}
 
-			for _, book := range books {
+			for _, book := range *books {
 				if book == nil {
 					continue
 				}
@@ -231,6 +236,10 @@ func (system *System) LoadSignal(
 
 func (system *System) Bus() *internal.Bus {
 	return system.bus
+}
+
+func (system *System) OnSymbols(onSymbols func([]string)) {
+	system.onSymbols = onSymbols
 }
 
 func (system *System) Close() error {

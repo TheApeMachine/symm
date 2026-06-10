@@ -6,9 +6,47 @@
 #include <math.h>
 #include <string.h>
 
-static const uint32_t kMaxCarriersForTG = 128u;
+static const uint32_t kMaxCarriersForTG = 1024u;
+static const uint32_t kCarrierAccumThreadgroupBytes = 8u * (uint32_t)sizeof(uint32_t);
 static const uint32_t kScanThreads = 256u;
 static const uint32_t kParallelHashCellThreshold = 256u;
+
+static inline uint32_t manifold_max_carriers_for_threadgroup(id<MTLDevice> device) {
+    uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
+    uint32_t threadLimit = (uint32_t)device.maxThreadsPerThreadgroup.width;
+
+    if (memoryLimit > kMaxCarriersForTG) {
+        memoryLimit = kMaxCarriersForTG;
+    }
+
+    if (threadLimit > kMaxCarriersForTG) {
+        threadLimit = kMaxCarriersForTG;
+    }
+
+    return memoryLimit < threadLimit ? memoryLimit : threadLimit;
+}
+
+static inline NSUInteger manifold_simd_threadgroup_width(
+    NSUInteger count,
+    NSUInteger simdWidth,
+    NSUInteger maxThreadsPerThreadgroup
+) {
+    if (simdWidth == 0) {
+        simdWidth = 32;
+    }
+
+    if (count == 0) {
+        return simdWidth;
+    }
+
+    NSUInteger aligned = ((count + simdWidth - 1) / simdWidth) * simdWidth;
+
+    if (aligned > maxThreadsPerThreadgroup) {
+        return maxThreadsPerThreadgroup;
+    }
+
+    return aligned;
+}
 
 typedef struct GasGridParamsHost {
     uint32_t num_cells;
@@ -268,6 +306,9 @@ void manifold_velocity_at(
 @property(nonatomic, assign) uint32_t numCells;
 @property(nonatomic, assign) uint32_t numOsc;
 @property(nonatomic, assign) uint32_t numBins;
+@property(nonatomic, assign) uint32_t maxCarriersForTG;
+@property(nonatomic, assign) uint32_t simdWidth;
+@property(nonatomic, assign) NSUInteger maxThreadsPerThreadgroup;
 @property(nonatomic, strong) id<MTLBuffer> rho;
 @property(nonatomic, strong) id<MTLBuffer> mom;
 @property(nonatomic, strong) id<MTLBuffer> eInt;

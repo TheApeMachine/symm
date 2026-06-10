@@ -28,14 +28,10 @@ build: physics-metallib
 test: test-go test-race test-frontend
 
 test-go: physics-metallib
-	go test ./...
-
-test-e2e:
-	@mkdir -p runs
-	go test $(LDFLAGS) ./integration/... -count=1 -timeout 360s
+	go test $(LDFLAGS) ./...
 
 test-race:
-	go test -race ./...
+	go test $(LDFLAGS) -race ./...
 
 test-cover:
 	@mkdir -p runs
@@ -48,45 +44,11 @@ test-frontend:
 bench: physics-metallib
 	go test $(LDFLAGS) -bench=. -benchmem ./...
 
-PROFILE_DIR ?= runs/profiles
-
-profile:
-	@mkdir -p $(PROFILE_DIR)
-	go test $(LDFLAGS) -cpuprofile=$(PROFILE_DIR)/bench-cpu.prof -memprofile=$(PROFILE_DIR)/bench-mem.prof -bench=. ./...
-
-profile-stack:
-	@mkdir -p $(PROFILE_DIR)
-	go test \
-		-cpuprofile=$(PROFILE_DIR)/stack-cpu.prof \
-		-memprofile=$(PROFILE_DIR)/stack-mem.prof \
-		-bench=BenchmarkProfileStack \
-		-benchtime=15s \
-		./profile/...
-
-profile-report:
-	@chmod +x scripts/profile-report.sh
-	PROFILE_DIR=$(PROFILE_DIR) ./scripts/profile-report.sh
-
 run: build
 	@mkdir -p $(LOG_DIR)
-	@echo "symm running — collecting run data → runs/capture.jsonl  (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) $(CONFIG_FLAG) --record
-
-audit: build
-	@mkdir -p $(LOG_DIR)
-	@echo "symm running with desk audit log (trading.audit.file in $(CONFIG))"
-	@echo "  gate_reject deduped (60s), rotates at 32MB × 3 files"
+	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	./$(SYMM_BIN) $(CONFIG_FLAG)
-
-audit-report:
-	@test -f $(LOG_DIR)/audit.jsonl || (echo "No audit log yet — run 'make audit' or 'make run' first." && exit 1)
-	go run ./scripts/auditreport $(LOG_DIR)/audit.jsonl
-
-run-profile: build
-	@echo "symm running (Ctrl+C to stop). UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	SYMM_PPROF=1 ./$(SYMM_BIN) $(CONFIG_FLAG)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

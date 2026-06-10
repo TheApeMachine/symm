@@ -39,6 +39,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
+	system.base.OnSymbols(system.field.RegisterSymbols)
 	system.field.SetSnapshotPublisher(system.publishSnapshot)
 
 	return system

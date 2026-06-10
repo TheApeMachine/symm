@@ -42,7 +42,13 @@ func NewCrypto(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]internal.Channel{internal.ChannelKrakenPublic, internal.ChannelKrakenPrivate, internal.ChannelKrakenFutures, internal.ChannelUI, internal.ChannelRaw},
+			[]internal.Channel{
+				internal.ChannelKrakenPublic,
+				internal.ChannelKrakenPrivate,
+				internal.ChannelKrakenFutures,
+				internal.ChannelUI,
+				internal.ChannelRaw,
+			},
 			[]internal.Subscription{
 				internal.Subscribe(internal.ChannelRaw, "trader:crypto"),
 			},
@@ -65,7 +71,11 @@ func (crypto *Crypto) Tick() (err error) {
 
 			message, err := crypto.bus.Receive(internal.ChannelRaw)
 
-			if errnie.Error(err) != nil || message == nil {
+			if internal.IsShutdown(err) {
+				return err
+			}
+
+			if internal.ReportError(err) != nil || message == nil {
 				continue
 			}
 
@@ -137,20 +147,18 @@ func (crypto *Crypto) Tick() (err error) {
 				}))
 
 				if viper.GetBool("market.l3_enabled") {
-					token, err := types.NewToken(crypto.ctx)
+					token, tokenErr := types.NewToken(crypto.ctx)
 
-					if errnie.Error(err) != nil {
-						continue
+					if tokenErr == nil {
+						level3Params := market.NewLevel3Params(pairs)
+						level3Params.Token = token
+
+						errnie.Error(crypto.bus.Send(internal.ChannelKrakenPrivate, "level3", types.KrakenMessage{
+							Method: "subscribe",
+							Params: level3Params,
+							ReqID:  time.Now().UnixNano(),
+						}))
 					}
-
-					level3Params := market.NewLevel3Params(pairs)
-					level3Params.Token = token
-
-					errnie.Error(crypto.bus.Send(internal.ChannelKrakenPrivate, "level3", types.KrakenMessage{
-						Method: "subscribe",
-						Params: level3Params,
-						ReqID:  time.Now().UnixNano(),
-					}))
 				}
 
 				for _, symbol := range pairs {
@@ -164,6 +172,10 @@ func (crypto *Crypto) Tick() (err error) {
 				catalog := futures.SharedCatalog()
 
 				if loadErr := catalog.EnsureLoaded(crypto.ctx); loadErr != nil {
+					if internal.IsShutdown(loadErr) {
+						return loadErr
+					}
+
 					errnie.Error(loadErr)
 					continue
 				}

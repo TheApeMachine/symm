@@ -1,33 +1,27 @@
 package physics
 
 import (
+	"math"
 	"testing"
-	"time"
-
-	"github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 )
 
-func TestNewConfigFromViper(t *testing.T) {
-	convey.Convey("Given manifold signal config", t, func() {
-		viper.Set("signals.manifold.grid_x", 16)
-		viper.Set("signals.manifold.grid_y", 1)
-		viper.Set("signals.manifold.grid_z", 8)
-		viper.Set("signals.manifold.tick_size", 0.01)
-		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("signals.manifold.snapshot_interval", "250ms")
-		viper.Set("signals.manifold.max_modes", 8)
+func TestCellVolumeRhoMin(t *testing.T) {
+	config := productionTestConfig()
+	cellVolume := config.CellVolume()
 
-		config, err := NewConfigFromViper()
+	if cellVolume <= 0 {
+		t.Fatalf("cell volume must be positive, got %g", cellVolume)
+	}
 
-		convey.Convey("It should derive a positive cell volume and quantum scales", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(config.GridX, convey.ShouldEqual, uint32(16))
-			convey.So(config.CellVolume(), convey.ShouldBeGreaterThan, 0)
-			convey.So(config.HbarEffective(), convey.ShouldBeGreaterThan, 0)
-			convey.So(config.GInteraction(), convey.ShouldBeGreaterThan, 0)
-			convey.So(config.SnapshotPublishInterval(), convey.ShouldEqual, 250*time.Millisecond)
-		})
-	})
+	expectedRhoMin := 1.0 / cellVolume
+
+	if math.Abs(config.RhoMin-expectedRhoMin) > 1e-12 {
+		t.Fatalf("rhoMin = %g, want %g", config.RhoMin, expectedRhoMin)
+	}
+
+	expectedPMin := (config.Gamma - 1.0) * config.RhoMin * cellVolume
+
+	if math.Abs(config.PMin-expectedPMin) > 1e-12 {
+		t.Fatalf("pMin = %g, want %g", config.PMin, expectedPMin)
+	}
 }

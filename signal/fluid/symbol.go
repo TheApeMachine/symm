@@ -54,7 +54,7 @@ type fluidReading struct {
 
 func (state *FluidSymbol) configureTickFromBook(
 	bids, asks []krakenmarket.BookLevel,
-) {
+) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
 
@@ -69,17 +69,21 @@ func (state *FluidSymbol) configureTickFromBook(
 	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
 
 	if tickSize <= 0 {
-		return
+		return fmt.Errorf("fluid: tick size is zero")
 	}
 
-	_ = state.ConfigureTick(tickSize)
+	if err := state.ConfigureTick(tickSize); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
-	grid, gridErr := NewFluidGrid()
+	grid, err := NewFluidGrid()
 
-	if gridErr != nil {
-		return nil, gridErr
+	if err != nil {
+		return nil, err
 	}
 
 	return &FluidSymbol{
@@ -117,10 +121,10 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
 	}
 
-	grid, gridErr := newFluidGrid(priceIncrement, halfWidth, integrationInterval)
+	grid, err := newFluidGrid(priceIncrement, halfWidth, integrationInterval)
 
-	if gridErr != nil {
-		return gridErr
+	if err != nil {
+		return err
 	}
 
 	state.grid = grid
@@ -129,9 +133,11 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 }
 
 func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
-	if !at.IsZero() {
-		state.lastEventAt = at
+	if at.IsZero() {
+		return fmt.Errorf("fluid: ticker event time is zero")
 	}
+
+	state.lastEventAt = at
 
 	state.changePct = row.ChangePct
 	state.volume = row.Volume
@@ -204,7 +210,9 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	state.updateTouchLocked(bids, asks)
 
 	if update.Type == "snapshot" {
-		state.configureTickFromBook(bids, asks)
+		if err := state.configureTickFromBook(bids, asks); err != nil {
+			return err
+		}
 	}
 
 	mid := (state.bid + state.ask) / 2
@@ -349,6 +357,14 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	reynolds := state.grid.reynolds(spread)
 
 	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
+		return fluidReading{}, false
+	}
+
+	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
+		return fluidReading{}, false
+	}
+
+	if math.IsNaN(viscosity) || math.IsInf(viscosity, 0) || viscosity <= 0 {
 		return fluidReading{}, false
 	}
 

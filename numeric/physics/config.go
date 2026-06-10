@@ -84,9 +84,6 @@ func NewConfigFromViper() (Config, error) {
 	}
 
 	gamma := 5.0 / 3.0
-	cellVolume := tickSize
-	rhoMin := 1.0 / cellVolume
-	pMin := (gamma - 1.0) * rhoMin * cellVolume
 
 	maxModes := uint32(viper.GetInt("signals.manifold.max_modes"))
 
@@ -94,7 +91,7 @@ func NewConfigFromViper() (Config, error) {
 		maxModes = gridZ
 	}
 
-	return Config{
+	config := Config{
 		GridX:                   gridX,
 		GridY:                   gridY,
 		GridZ:                   gridZ,
@@ -103,13 +100,25 @@ func NewConfigFromViper() (Config, error) {
 		DomainZ:                 float64(gridZ),
 		DeltaT:                  deltaT,
 		Gamma:                   gamma,
-		CV:                      1.0 / (gamma - 1.0),
-		RhoMin:                  rhoMin,
-		PMin:                    pMin,
-		KThermal:                rhoMin / deltaT,
 		MaxModes:                maxModes,
 		snapshotPublishInterval: viper.GetDuration("signals.manifold.snapshot_interval"),
-	}, nil
+	}
+
+	cellVolume := config.CellVolume()
+
+	if cellVolume <= 0 {
+		return Config{}, fmt.Errorf("signals.manifold grid produced non-positive cell volume")
+	}
+
+	rhoMin := 1.0 / cellVolume
+	pMin := (gamma - 1.0) * rhoMin * cellVolume
+
+	config.CV = 1.0 / (gamma - 1.0)
+	config.RhoMin = rhoMin
+	config.PMin = pMin
+	config.KThermal = rhoMin / deltaT
+
+	return config, nil
 }
 
 func (config Config) CellVolume() float64 {

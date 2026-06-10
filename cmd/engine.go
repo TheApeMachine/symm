@@ -60,7 +60,8 @@ func (engine *Engine) Start() error {
 
 	for _, system := range engine.systems {
 		waitGroup.Go(func() {
-			if err := errnie.Error(system.Tick()); err != nil {
+			if err := system.Tick(); err != nil && !internal.IsShutdown(err) {
+				errnie.Error(err)
 				engine.cancel()
 			}
 		})
