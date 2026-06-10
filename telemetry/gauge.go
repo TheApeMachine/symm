@@ -58,7 +58,9 @@ func NewGauge(bus *internal.Bus, source logic.SourceType) (*Gauge, error) {
 }
 
 /*
-RegisterSymbols fixes the warmup denominator to the subscribed symbol universe.
+RegisterSymbols is retained for callers that batch-announce the universe.
+Warmup denominators are fixed lazily when a symbol first contributes a
+warmed Record so inactive pairs do not stall the gauge.
 */
 func (gauge *Gauge) RegisterSymbols(symbols []string) {
 	for _, symbol := range symbols {
@@ -66,13 +68,25 @@ func (gauge *Gauge) RegisterSymbols(symbols []string) {
 			continue
 		}
 
-		if _, exists := gauge.expectedSymbols[symbol]; exists {
-			continue
-		}
+		gauge.expectedSymbols[symbol] = struct{}{}
+	}
+}
 
+/*
+RecordWarmup counts a warmed signal write toward the dashboard gauge bar.
+It must run for every Record, even when Measure fails afterward.
+*/
+func (gauge *Gauge) RecordWarmup(symbol string, warmed bool) {
+	if symbol == "" || !warmed {
+		return
+	}
+
+	if _, registered := gauge.expectedSymbols[symbol]; !registered {
 		gauge.expectedSymbols[symbol] = struct{}{}
 		gauge.minWarmupSamples += gauge.warmupCapacity
 	}
+
+	gauge.warmupSamples++
 }
 
 /*
@@ -81,7 +95,6 @@ Publish records the symbol reading and rebroadcasts mean confidence and SNR.
 func (gauge *Gauge) Publish(
 	measurement logic.Measurement,
 	symbol string,
-	warmed bool,
 ) error {
 	gauge.readings.Value = &Reading{
 		Confidence: measurement.Confidence,
@@ -89,8 +102,6 @@ func (gauge *Gauge) Publish(
 	}
 
 	gauge.readings = gauge.readings.Next()
-
-	gauge.recordWarmup(symbol, warmed)
 
 	if gauge.publishThrottled() {
 		return nil
@@ -154,18 +165,6 @@ func (gauge *Gauge) readingMeans() (meanConfidence float64, meanSurprise float64
 	}
 
 	return meanConfidence, meanSurprise
-}
-
-func (gauge *Gauge) recordWarmup(symbol string, warmed bool) {
-	if !warmed || symbol == "" {
-		return
-	}
-
-	if _, registered := gauge.expectedSymbols[symbol]; !registered {
-		return
-	}
-
-	gauge.warmupSamples++
 }
 
 func (gauge *Gauge) warmupState() (

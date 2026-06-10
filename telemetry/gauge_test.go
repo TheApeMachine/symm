@@ -123,19 +123,49 @@ func TestGaugeWarmupState(t *testing.T) {
 	})
 }
 
-func TestGaugeRecordWarmup(t *testing.T) {
-	Convey("Given a registered symbol", t, func() {
+func TestGaugeRegisterSymbols(t *testing.T) {
+	Convey("Given a symbol batch announcement", t, func() {
 		gauge := &Gauge{
-			warmupCapacity:   4,
-			expectedSymbols:  map[string]struct{}{"BTC/EUR": {}},
-			minWarmupSamples: 4,
+			warmupCapacity:  64,
+			expectedSymbols: make(map[string]struct{}),
 		}
 
-		gauge.recordWarmup("BTC/EUR", true)
-		gauge.recordWarmup("BTC/EUR", true)
+		gauge.RegisterSymbols([]string{"BTC/USD", "ETH/USD"})
 
-		Convey("It should increment warmup on each warmed write", func() {
+		Convey("It should track symbols without inflating the warmup denominator", func() {
+			So(len(gauge.expectedSymbols), ShouldEqual, 2)
+			So(gauge.minWarmupSamples, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestGaugeRecordWarmup(t *testing.T) {
+	Convey("Given a warmed write for a new symbol", t, func() {
+		gauge := &Gauge{
+			warmupCapacity:  4,
+			expectedSymbols: make(map[string]struct{}),
+		}
+
+		gauge.RecordWarmup("BTC/EUR", true)
+		gauge.RecordWarmup("BTC/EUR", true)
+
+		Convey("It should register the symbol and count warmed writes", func() {
 			So(gauge.warmupSamples, ShouldEqual, 2)
+			So(gauge.minWarmupSamples, ShouldEqual, 4)
+		})
+	})
+
+	Convey("Given a measure failure after Record", t, func() {
+		gauge := &Gauge{
+			warmupCapacity:  4,
+			expectedSymbols: make(map[string]struct{}),
+		}
+
+		gauge.RecordWarmup("ETH/EUR", true)
+
+		Convey("It should still advance warmup before any gauge publish", func() {
+			So(gauge.warmupSamples, ShouldEqual, 1)
+			So(gauge.minWarmupSamples, ShouldEqual, 4)
 		})
 	})
 }

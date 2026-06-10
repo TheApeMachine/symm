@@ -204,6 +204,8 @@ func (system *System) publishMeasurement(
 		return
 	}
 
+	system.gauge.RecordWarmup(signal.Symbol(), warmed)
+
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
 	if errnie.Error(err) != nil {
@@ -217,7 +219,6 @@ func (system *System) publishMeasurement(
 	errnie.Error(system.gauge.Publish(
 		measurement,
 		signal.Symbol(),
-		warmed,
 	))
 }
 
