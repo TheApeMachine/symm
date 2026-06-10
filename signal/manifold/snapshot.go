@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -61,10 +60,6 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 		"rho":      rho,
 		"reading":  reading,
 		"carriers": carriers,
-	}
-
-	if _, marshalErr := json.Marshal(payload); marshalErr != nil {
-		return nil, fmt.Errorf("manifold: snapshot not json-safe: %w", marshalErr)
 	}
 
 	return payload, nil

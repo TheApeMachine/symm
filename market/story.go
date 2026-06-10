@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -69,7 +68,6 @@ type Story struct {
 	crossSection *CrossSection
 	regime       *RegimeClassifier
 	holdings     *logic.Holdings
-	uiInterval   time.Duration
 }
 
 func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings) *Story {
@@ -79,13 +77,13 @@ func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings)
 	crossSection, crossSectionErr := LoadCrossSection(&CrossSectionOnce{})
 
 	if crossSectionErr != nil {
-		err = crossSectionErr
+		err = errors.Join(err, crossSectionErr)
 	}
 
 	regime, regimeErr := NewRegimeClassifier(crossSection)
 
 	if regimeErr != nil {
-		err = regimeErr
+		err = errors.Join(err, regimeErr)
 	}
 
 	return &Story{
@@ -104,41 +102,38 @@ func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings)
 		regime:       regime,
 		holdings:     holdings,
 		err:          err,
-		uiInterval:   viper.GetDuration("market.story.ui_interval"),
 	}
 }
 
 /*
-Tick joins the latest measurements from the perspective signals and publishes them to the story.
-
-UI events are rate-limited to market.story.ui_interval. Measurements flood the channel at high frequency
-and selecting one "publish" case per measurement would starve the timer and flood the WebSocket.
-Instead, we accumulate per-source/symbol readings between UI ticks and flush
-cross-sectional means on the timer — then reset the window so each gauge frame
-reflects the last interval, not the lifetime of the process.
+Tick joins measurements from perspective signals, evaluates the playbook, and
+streams regime and decision-tree frames to the UI as measurements arrive.
 */
 func (story *Story) Tick() error {
-	if story.err != nil {
+	if errnie.Error(story.err) != nil {
 		return story.err
 	}
 
-	uiTicker := time.NewTicker(story.uiInterval)
-	defer uiTicker.Stop()
-
 	for {
-		select {
-		case <-story.ctx.Done():
+		if errnie.Error(story.ctx.Err()) != nil {
 			return story.ctx.Err()
-		case <-uiTicker.C:
-			story.publishMarketRegime()
-			story.publishDecisionTree()
-		default:
 		}
 
 		row, err := story.bus.Poll("measurements")
 
 		if errnie.Error(err) != nil || row == nil {
-			time.Sleep(time.Millisecond)
+			row, err = story.bus.Receive("measurements")
+		}
+
+		if errnie.Error(err) != nil {
+			if errnie.Error(story.ctx.Err()) != nil {
+				return story.ctx.Err()
+			}
+
+			continue
+		}
+
+		if row == nil {
 			continue
 		}
 
@@ -166,6 +161,8 @@ func (story *Story) Tick() error {
 		}
 
 		if evaluation == nil || evaluation.Action == nil {
+			story.publishMarketRegime()
+			story.publishDecisionTree()
 			continue
 		}
 
@@ -179,6 +176,9 @@ func (story *Story) Tick() error {
 		}
 
 		errnie.Error(story.bus.Send("raw", "actions", action))
+
+		story.publishMarketRegime()
+		story.publishDecisionTree()
 	}
 }
 

@@ -129,8 +129,8 @@ func (crossSection *crossSection) observeBook(symbol string, book *krakenmarket.
 		return
 	}
 
-	bidDepth := crossSection.sideDepth(state.snapshot.Bids)
-	askDepth := crossSection.sideDepth(state.snapshot.Asks)
+	bidDepth := crossSection.sideDepth(bids)
+	askDepth := crossSection.sideDepth(asks)
 
 	midPrice := (bids[0].Price + asks[0].Price) / 2
 	touchSpread := asks[0].Price - bids[0].Price

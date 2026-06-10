@@ -16,7 +16,14 @@ func TestAdaptationControllerAlpha(t *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		telemetry.SharedSurpriseIndex().Reset()
+		surpriseIndex := telemetry.SharedSurpriseIndex()
+		savedRatios := surpriseIndex.SnapshotRatios()
+
+		t.Cleanup(func() {
+			surpriseIndex.RestoreRatios(savedRatios)
+		})
+
+		surpriseIndex.Reset()
 		telemetry.RecordSurpriseRatio("fluid", 4, 2)
 
 		Convey("It should raise alpha when surprise spikes", func() {
@@ -60,6 +67,8 @@ func BenchmarkAdaptationControllerObserveRegimeSamples(b *testing.B) {
 	viper.Set("regime.baseline.vol_floor_sigma", 3.0)
 	viper.Set("regime.baseline.vol_scale_floor", 0.000001)
 	viper.Set("regime.baseline.seed_vol_scale", 0.01)
+	viper.Set("signals.causal.contagion_window_slow_max", 128)
+	viper.Set("signals.causal.contagion_window_slow_min", 16)
 
 	controller, err := NewAdaptationController()
 

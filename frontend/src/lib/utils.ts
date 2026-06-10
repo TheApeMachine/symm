@@ -28,6 +28,10 @@ const DEFAULT_WASM_BASE = "/scichart";
 let wasmReady: Promise<void> | null = null;
 let configured = false;
 
+type SciChartSurfaceWithWasmCleanup = typeof SciChartSurface & {
+	disposeWasmContext?: () => void;
+};
+
 const sciChartWasmBase = (): string => {
 	const custom = import.meta.env.VITE_SCICHART_WASM_BASE?.trim();
 
@@ -80,4 +84,14 @@ export const ensureSciChartWasm = async (): Promise<void> => {
 	})();
 
 	return wasmReady;
+};
+
+export const releaseSciChartWasm = (): void => {
+	if (typeof window === "undefined") {
+		return;
+	}
+
+	const surface = SciChartSurface as SciChartSurfaceWithWasmCleanup;
+	surface.disposeWasmContext?.();
+	wasmReady = null;
 };

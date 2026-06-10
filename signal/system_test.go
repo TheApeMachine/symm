@@ -39,11 +39,21 @@ func TestSystemTickBookUpdates(t *testing.T) {
 		viper.Set("signals.fluid.measurements_capacity", 4)
 
 		recorded := make(chan any, 2)
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 		defer pool.Close()
 
-		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
+		var system *System
+
+		t.Cleanup(func() {
+			cancel()
+
+			if system != nil {
+				_ = system.Close()
+			}
+		})
+
+		system = NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
 			return &bookRecordStub{
 				symbol:   symbol,
 				recorded: recorded,

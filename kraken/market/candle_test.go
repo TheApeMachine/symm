@@ -9,6 +9,18 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 )
 
+func TestNewCandleParams(t *testing.T) {
+	Convey("Given symbols and interval", t, func() {
+		raw, err := NewCandleParams([]string{"BTC/USD"}, 1)
+
+		Convey("It should marshal subscribe params", func() {
+			So(err, ShouldBeNil)
+			So(raw, ShouldNotBeNil)
+			So(string(raw), ShouldContainSubstring, `"channel":"ohlc"`)
+		})
+	})
+}
+
 func TestCandleUpdatesUnmarshal(t *testing.T) {
 	Convey("Given a Kraken ohlc batch frame", t, func() {
 		message := types.NewSocketMessage()

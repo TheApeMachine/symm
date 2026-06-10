@@ -12,12 +12,14 @@ func TestWalletFrame(t *testing.T) {
 	Convey("Given USD quote currency config", t, func() {
 		viper.Set("market.quote_currency", "USD")
 
-		frame := WalletFrame(user.Balances{
+		frame, frameErr := WalletFrame(user.Balances{
 			Asset: []user.Balance{{
 				Asset:   "USD",
 				Balance: 200,
 			}},
 		})
+
+		So(frameErr, ShouldBeNil)
 
 		Convey("It should publish a wallet event with the configured currency", func() {
 			So(frame["event"], ShouldEqual, "wallet")

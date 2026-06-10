@@ -9,19 +9,21 @@ func AlphaFromSurprise(surpriseIndex, alphaMin, alphaMax float64) float64 {
 		return alphaMin
 	}
 
-	if alphaMin <= 0 {
-		alphaMin = 0.001
+	safeAlphaMin := alphaMin
+
+	if safeAlphaMin <= 0 {
+		safeAlphaMin = 0.001
 	}
 
 	excess := surpriseIndex - 1
 
 	if excess <= 0 {
-		return alphaMin
+		return safeAlphaMin
 	}
 
 	if excess >= 1 {
 		return alphaMax
 	}
 
-	return alphaMin + (alphaMax-alphaMin)*excess
+	return safeAlphaMin + (alphaMax-safeAlphaMin)*excess
 }

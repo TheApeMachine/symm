@@ -98,7 +98,7 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		dispatch.pushAction({
 			type: raw.type as string,
 			symbol: raw.symbol as string,
-			key: (raw.key as string) ?? (raw.branch_key as string) ?? "",
+			key: (raw.key as string) ?? "",
 			ts: Date.now(),
 			verdict: (raw.verdict as ActionVerdict) ?? "rejected",
 			reason: (raw.reason as string) ?? "",

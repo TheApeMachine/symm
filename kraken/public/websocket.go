@@ -135,7 +135,8 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 		return
 	}
 
-	if message.Success != nil {
+	if message.Success != nil && *message.Success {
+		errnie.Info(fmt.Sprintf("kraken/public: subscription confirmed channel=%q", message.Channel))
 		return
 	}
 
@@ -168,9 +169,8 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 		object = &market.TradeUpdates{}
 	case "execution":
 		object = &user.Execution{}
-	}
-
-	if object == nil {
+	default:
+		errnie.Info(fmt.Sprintf("kraken/public: ignored channel %q", message.Channel))
 		return
 	}
 

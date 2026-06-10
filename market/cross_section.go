@@ -453,15 +453,9 @@ func (crossSection *CrossSection) trailingSymbolReturns(symbol string, window in
 
 	row := raw.(*market.Symbol)
 
-	if len(row.Returns) == 0 {
+	if len(row.Returns) < window {
 		return nil
 	}
 
-	start := len(row.Returns) - window
-
-	if start < 0 {
-		start = 0
-	}
-
-	return row.Returns[start:]
+	return row.Returns[len(row.Returns)-window:]
 }

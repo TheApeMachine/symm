@@ -106,7 +106,10 @@ func NewAdaptationController() (*AdaptationController, error) {
 	}
 
 	if adaptationConfig.SlowWindowMin > adaptationConfig.SlowWindowMax {
-		adaptationConfig.SlowWindowMin = adaptationConfig.SlowWindowMax
+		return nil, errnie.Error(errnie.Require(map[string]any{
+			"signals.causal.contagion_window_slow_min": adaptationConfig.SlowWindowMin,
+			"signals.causal.contagion_window_slow_max": adaptationConfig.SlowWindowMax,
+		}))
 	}
 
 	if adaptationConfig.VolScaleFloor <= 0 {

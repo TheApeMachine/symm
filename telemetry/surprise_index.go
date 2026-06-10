@@ -62,6 +62,30 @@ func (index *SurpriseIndex) Reset() {
 	index.mu.Unlock()
 }
 
+func (index *SurpriseIndex) SnapshotRatios() map[string]float64 {
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+
+	snapshot := make(map[string]float64, len(index.ratios))
+
+	for source, ratio := range index.ratios {
+		snapshot[source] = ratio
+	}
+
+	return snapshot
+}
+
+func (index *SurpriseIndex) RestoreRatios(ratios map[string]float64) {
+	index.mu.Lock()
+	defer index.mu.Unlock()
+
+	index.ratios = make(map[string]float64, len(ratios))
+
+	for source, ratio := range ratios {
+		index.ratios[source] = ratio
+	}
+}
+
 var sharedSurpriseIndex = NewSurpriseIndex()
 
 func SharedSurpriseIndex() *SurpriseIndex {

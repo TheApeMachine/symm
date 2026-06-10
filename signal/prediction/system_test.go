@@ -18,9 +18,16 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 		viper.Set("signals.prediction.measurements_capacity", 16)
 		viper.Set("story.prediction.horizon", time.Minute)
 
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 		defer pool.Close()
+
+		system := NewSystem(ctx, pool)
+
+		So(system, ShouldNotBeNil)
+		So(system.chart, ShouldNotBeNil)
 
 		uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
 		receiveDone := make(chan map[string]any, 1)
@@ -30,7 +37,11 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 				row, receiveErr := uiBus.Receive("ui")
 
 				if receiveErr != nil {
-					return
+					if ctx.Err() != nil {
+						return
+					}
+
+					continue
 				}
 
 				if row == nil {
@@ -46,11 +57,6 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 				receiveDone <- payload
 			}
 		}()
-
-		system := NewSystem(ctx, pool)
-
-		So(system, ShouldNotBeNil)
-		So(system.chart, ShouldNotBeNil)
 
 		Convey("It should publish prediction chart frames on the ui bus", func() {
 			applyErr := system.chart.Apply("BTC/USD", ChartEvents{
@@ -116,7 +122,9 @@ func BenchmarkSystemPublishChartOnTrade(b *testing.B) {
 	viper.Set("signals.prediction.measurements_capacity", 16)
 	viper.Set("story.prediction.horizon", time.Minute)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	pool := qpool.NewQ[any](ctx, 2, 4, nil)
 	defer pool.Close()
 
@@ -125,6 +133,24 @@ func BenchmarkSystemPublishChartOnTrade(b *testing.B) {
 	if system == nil {
 		b.Fatal("system is nil")
 	}
+
+	uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
+
+	go func() {
+		for {
+			row, receiveErr := uiBus.Receive("ui")
+
+			if receiveErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+
+				continue
+			}
+
+			_ = row
+		}
+	}()
 
 	signal := NewSignal(
 		"BTC/USD",

@@ -5,14 +5,14 @@ import (
 	"fmt"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 )
 
 var (
-	ErrNoPosition       = errors.New("broker: no open position")
-	ErrNoMark           = errors.New("broker: no mark price")
-	ErrInsufficientCash = errors.New("broker: insufficient quote cash")
+	ErrNoPosition        = errors.New("broker: no open position")
+	ErrNoMark            = errors.New("broker: no mark price")
+	ErrInsufficientCash  = errors.New("broker: insufficient quote cash")
+	ErrNegativeQuoteCash = errors.New("broker: negative quote cash")
 )
 
 /*
@@ -33,12 +33,15 @@ func SizeOrder(
 		return 0, fmt.Errorf("broker: action fraction must be positive")
 	}
 
-	switch {
-	case action.Type.IsExit() || action.Side == trading.Sell:
-		if heldQty <= 0 {
-			return 0, ErrNoPosition
-		}
+	if action.Type.IsExit() {
+		return sizeExit(action, heldQty)
+	}
 
+	return sizeEntry(action, quoteCash, mark)
+}
+
+func sizeExit(action *logic.Action, heldQty float64) (float64, error) {
+	if heldQty > 0 {
 		quantity := heldQty * action.Fraction
 
 		if quantity <= 0 {
@@ -46,29 +49,51 @@ func SizeOrder(
 		}
 
 		return quantity, nil
-	default:
-		if mark <= 0 {
-			return 0, ErrNoMark
-		}
+	}
 
-		positionFraction := viper.GetFloat64("trading.position_fraction")
-
-		if positionFraction <= 0 {
-			return 0, fmt.Errorf("broker: trading.position_fraction must be positive")
-		}
-
-		notional := quoteCash * positionFraction * action.Fraction
-
-		if notional <= 0 {
-			return 0, ErrInsufficientCash
-		}
-
-		quantity := notional / mark
+	if heldQty < 0 {
+		quantity := -heldQty * action.Fraction
 
 		if quantity <= 0 {
-			return 0, fmt.Errorf("broker: entry quantity rounds to zero")
+			return 0, fmt.Errorf("broker: exit quantity rounds to zero")
 		}
 
 		return quantity, nil
 	}
+
+	return 0, ErrNoPosition
+}
+
+func sizeEntry(
+	action *logic.Action,
+	quoteCash float64,
+	mark float64,
+) (float64, error) {
+	if quoteCash < 0 {
+		return 0, ErrNegativeQuoteCash
+	}
+
+	if mark <= 0 {
+		return 0, ErrNoMark
+	}
+
+	positionFraction := viper.GetFloat64("trading.position_fraction")
+
+	if positionFraction <= 0 {
+		return 0, fmt.Errorf("broker: trading.position_fraction must be positive")
+	}
+
+	notional := quoteCash * positionFraction * action.Fraction
+
+	if notional <= 0 {
+		return 0, ErrInsufficientCash
+	}
+
+	quantity := notional / mark
+
+	if quantity <= 0 {
+		return 0, fmt.Errorf("broker: entry quantity rounds to zero")
+	}
+
+	return quantity, nil
 }

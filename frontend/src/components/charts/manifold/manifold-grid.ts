@@ -18,6 +18,11 @@ export type ManifoldHeightmap = {
 const clamp = (value: number, lower: number, upper: number): number =>
 	Math.min(upper, Math.max(lower, value));
 
+// Minimum carrier peak as a fraction of the chart y-range.
+const MIN_CARRIER_PEAK_SCALE = 0.12;
+// Scales weight-derived peak contribution before the minimum floor applies.
+const WEIGHT_PEAK_MULTIPLIER = 0.28;
+
 export const isDegenerateHeightmap = (heights: number[][]): boolean => {
 	if (heights.length === 0 || (heights[0]?.length ?? 0) === 0) {
 		return true;
@@ -110,7 +115,10 @@ const applyCarrierBumps = (
 			yMin +
 			normalizedWeight *
 				(yMax - yMin) *
-				Math.max(0.12, 0.28 * normalizedWeight);
+				Math.max(
+					MIN_CARRIER_PEAK_SCALE,
+					WEIGHT_PEAK_MULTIPLIER * normalizedWeight,
+				);
 
 		for (let zOffset = -1; zOffset <= 1; zOffset += 1) {
 			for (let xOffset = -1; xOffset <= 1; xOffset += 1) {

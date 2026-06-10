@@ -1,37 +1,45 @@
 package logic
 
+import "sync"
+
 /*
 Holdings tracks desk inventory consulted by playbook holding conditions.
 */
 type Holdings struct {
-	quantities map[string]float64
+	quantities sync.Map
 }
 
 func NewHoldings() *Holdings {
-	return &Holdings{
-		quantities: make(map[string]float64),
-	}
+	return &Holdings{}
 }
 
 func (holdings *Holdings) SetQuantity(symbol string, quantity float64) {
-	if holdings.quantities == nil {
-		holdings.quantities = make(map[string]float64)
-	}
-
 	if quantity <= 0 {
-		delete(holdings.quantities, symbol)
+		holdings.quantities.Delete(symbol)
 		return
 	}
 
-	holdings.quantities[symbol] = quantity
+	holdings.quantities.Store(symbol, quantity)
 }
 
 func (holdings *Holdings) Quantity(symbol string) float64 {
-	if holdings == nil || holdings.quantities == nil {
+	if holdings == nil {
 		return 0
 	}
 
-	return holdings.quantities[symbol]
+	raw, ok := holdings.quantities.Load(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	quantity, ok := raw.(float64)
+
+	if !ok {
+		return 0
+	}
+
+	return quantity
 }
 
 func (holdings *Holdings) IsHolding(symbol string) bool {
@@ -39,17 +47,21 @@ func (holdings *Holdings) IsHolding(symbol string) bool {
 }
 
 func (holdings *Holdings) OpenCount() int {
-	if holdings == nil || holdings.quantities == nil {
+	if holdings == nil {
 		return 0
 	}
 
 	count := 0
 
-	for _, quantity := range holdings.quantities {
-		if quantity > 0 {
+	holdings.quantities.Range(func(_, value any) bool {
+		quantity, ok := value.(float64)
+
+		if ok && quantity > 0 {
 			count++
 		}
-	}
+
+		return true
+	})
 
 	return count
 }

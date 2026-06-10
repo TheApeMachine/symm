@@ -60,3 +60,21 @@ func TestSizeOrderExitRequiresInventory(t *testing.T) {
 		})
 	})
 }
+
+func TestSizeOrderNegativeQuoteCash(t *testing.T) {
+	Convey("Given negative quote cash", t, func() {
+		viper.Set("trading.position_fraction", 0.2)
+
+		action := &logic.Action{
+			Type:     logic.ActionMarket,
+			Side:     trading.Buy,
+			Fraction: 0.25,
+		}
+
+		_, err := SizeOrder(action, -1, 0, 50_000)
+
+		Convey("It should return a distinct error", func() {
+			So(err, ShouldEqual, ErrNegativeQuoteCash)
+		})
+	})
+}

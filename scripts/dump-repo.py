@@ -32,14 +32,11 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         ".pytest_cache",
         ".ruff_cache",
         ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
         ".venv",
-        ".pnpm-store"
+        ".pnpm-store",
         "bin",
-        "runs"
-        "scripts"
+        "runs",
+        "scripts",
     }
 )
 

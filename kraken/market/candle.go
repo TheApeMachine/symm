@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -36,7 +35,7 @@ type CandleUpdate struct {
 	Interval      int     `json:"interval"`
 }
 
-func NewCandleParams(symbols []string, intervalMinutes int) json.RawMessage {
+func NewCandleParams(symbols []string, intervalMinutes int) (json.RawMessage, error) {
 	params := &CandleParams{
 		Channel:  "ohlc",
 		Symbol:   symbols,
@@ -46,11 +45,11 @@ func NewCandleParams(symbols []string, intervalMinutes int) json.RawMessage {
 
 	raw, err := sonic.Marshal(params)
 
-	if errnie.Error(err) != nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("market: marshal ohlc params: %w", err)
 	}
 
-	return json.RawMessage(raw)
+	return json.RawMessage(raw), nil
 }
 
 func (candle *CandleUpdate) Unmarshal(message *types.SocketMessage) error {

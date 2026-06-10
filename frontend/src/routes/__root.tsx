@@ -4,14 +4,14 @@ import {
 	HeadContent,
 	Scripts,
 } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Page } from "#/components/layout/page";
 import { PositionsPanel } from "#/components/panels/positions";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "#/components/ui/popover";
 import { ToastProvider } from "#/components/ui/toast";
-import { cn } from "#/lib/utils";
+import { cn, releaseSciChartWasm } from "#/lib/utils";
 import { ThemeProvider } from "#/providers/theme";
 import { useWsStatus, WsStatusProvider } from "#/providers/ws-status";
 import appCss from "../styles.css?url";
@@ -33,14 +33,20 @@ const ConnectionBadge = () => {
 	);
 };
 
-const currencySymbol = (currency: string) => {
-	switch (currency.toUpperCase()) {
+const currencySymbol = (currency: string | null | undefined): string => {
+	if (!currency) {
+		return "";
+	}
+
+	const normalized = currency.toUpperCase();
+
+	switch (normalized) {
 		case "USD":
 			return "$";
 		case "EUR":
 			return "€";
 		default:
-			return `${currency.toUpperCase()} `;
+			return normalized;
 	}
 };
 
@@ -51,6 +57,10 @@ const PageHeader = () => {
 	const inProfit =
 		exitBalance !== null && capitalBase > 0 && exitBalance >= capitalBase;
 	const symbol = currencySymbol(currency);
+	const balanceLabel =
+		symbol.length === 1
+			? `${symbol}${balance.toFixed(2)}`
+			: `${symbol} ${balance.toFixed(2)}`;
 
 	return (
 		<Page.Header>
@@ -67,10 +77,7 @@ const PageHeader = () => {
 					>
 						<div className="flex flex-col gap-0.5">
 							<h3 className="flex flex-wrap items-baseline gap-x-1.5">
-								<span>
-									{symbol}
-									{balance.toFixed(2)}
-								</span>
+								<span>{balanceLabel}</span>
 								{openPositions > 0 && exitBalance !== null ? (
 									<span
 										className={cn(
@@ -78,8 +85,11 @@ const PageHeader = () => {
 											inProfit ? "text-emerald-400" : "text-red-400",
 										)}
 									>
-										({symbol}
-										{exitBalance.toFixed(2)})
+										(
+										{symbol.length === 1
+											? `${symbol}${exitBalance.toFixed(2)}`
+											: `${symbol} ${exitBalance.toFixed(2)}`}
+										)
 									</span>
 								) : null}
 								{openPositions > 0 && exitBalance !== null ? (
@@ -110,6 +120,12 @@ const PageHeader = () => {
 };
 
 const RootDocument = ({ children }: { children: React.ReactNode }) => {
+	useEffect(() => {
+		return () => {
+			releaseSciChartWasm();
+		};
+	}, []);
+
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>

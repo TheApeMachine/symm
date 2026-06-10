@@ -65,3 +65,19 @@ describe("predictionVisibleXRange", () => {
 		});
 	});
 });
+
+describe("predictionVisibleXRange validation", () => {
+	it("rejects non-positive horizonSec", () => {
+		expect(() =>
+			predictionVisibleXRange(0, 1_710_000_090, null, null, 1_710_000_000),
+		).toThrow(RangeError);
+	});
+});
+
+describe("predictionVisibleXRange validation", () => {
+	it("rejects non-positive horizonSec", () => {
+		expect(() =>
+			predictionVisibleXRange(0, 1_710_000_090, null, null, 1_710_000_000),
+		).toThrow(RangeError);
+	});
+});

@@ -200,7 +200,15 @@ func (hub *Hub) replayBalances(client *frontendClient) {
 		return
 	}
 
-	client.send(WalletFrame(*snapshot))
+	frame, err := WalletFrame(*snapshot)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	client.send(frame)
 }
 
 func (hub *Hub) detachFrontend(client *frontendClient) {
@@ -210,11 +218,7 @@ func (hub *Hub) detachFrontend(client *frontendClient) {
 
 	if hub.frontend.CompareAndSwap(client, nil) {
 		client.close()
-
-		return
 	}
-
-	client.close()
 }
 
 func (client *frontendClient) send(value any) {
@@ -225,13 +229,15 @@ func (client *frontendClient) send(value any) {
 		return
 	}
 
-	if _, err := json.Marshal(value); err != nil {
+	buf, err := json.Marshal(value)
+
+	if err != nil {
 		errnie.Error(err)
 
 		return
 	}
 
-	if err := client.conn.WriteJSON(value); err != nil {
+	if err := client.conn.WriteMessage(websocket.TextMessage, buf); err != nil {
 		client.hub.detachFrontend(client)
 		errnie.Error(err)
 	}
@@ -272,7 +278,14 @@ func (hub *Hub) Tick() error {
 
 		if row.Type == "balances" {
 			if balances, ok := value.(user.Balances); ok {
-				value = WalletFrame(balances)
+				frame, frameErr := WalletFrame(balances)
+
+				if frameErr != nil {
+					errnie.Error(frameErr)
+					continue
+				}
+
+				value = frame
 			}
 		}
 

@@ -21,7 +21,6 @@ import (
 type Desk struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	err       error
 	pool      *qpool.Q[any]
 	bus       *internal.Bus
 	ledger    *Ledger
@@ -213,15 +212,14 @@ func (desk *Desk) publishDecision(
 	}
 
 	errnie.Error(desk.bus.Send("ui", "decision", map[string]any{
-		"event":      "decision",
-		"type":       action.Type.String(),
-		"symbol":     action.Symbol,
-		"key":        action.BranchKey,
-		"verdict":    verdict,
-		"reason":     reason,
-		"chart":      "decision_tree",
-		"decision":   true,
-		"branch_key": action.BranchKey,
+		"event":    "decision",
+		"type":     action.Type.String(),
+		"symbol":   action.Symbol,
+		"key":      action.BranchKey,
+		"verdict":  verdict,
+		"reason":   reason,
+		"chart":    "decision_tree",
+		"decision": true,
 	}))
 }
 
@@ -237,5 +235,5 @@ func (desk *Desk) CheckOrder(orderID string) error {
 
 func (desk *Desk) Close() error {
 	desk.cancel()
-	return desk.err
+	return nil
 }

@@ -108,6 +108,8 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
+	eventAt := at
+
 	switch signal.entity.Type {
 	case logic.EntityTrade:
 		trade, ok := item.(*krakenmarket.TradeUpdate)
@@ -116,7 +118,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			break
 		}
 
-		eventAt := trade.Timestamp
+		eventAt = trade.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = at
@@ -132,7 +134,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			break
 		}
 
-		eventAt := ticker.Timestamp
+		eventAt = ticker.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = at
@@ -148,7 +150,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			break
 		}
 
-		eventAt := book.Timestamp
+		eventAt = book.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = at
@@ -157,6 +159,10 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 		if err := signal.system.field.FeedBook(*book, eventAt); err != nil {
 			return logic.Measurement{}, errnie.Error(err)
 		}
+	}
+
+	if err := signal.system.publishSnapshot(eventAt); errnie.Error(err) != nil {
+		return logic.Measurement{}, err
 	}
 
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
@@ -269,15 +275,17 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 }
 
 func (signal *Signal) latest() any {
-	var latest any
+	if signal.measurements == nil {
+		return nil
+	}
 
-	signal.measurements.Do(func(item any) {
-		if item != nil {
-			latest = item
-		}
-	})
+	prev := signal.measurements.Prev()
 
-	return latest
+	if prev == nil || prev.Value == nil {
+		return nil
+	}
+
+	return prev.Value
 }
 
 func (signal *Signal) Record(raw any) bool {

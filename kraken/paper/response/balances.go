@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 // ErrInsufficientFunds rejects a fill that the wallet cannot fund in the spent currency.
 var ErrInsufficientFunds = errors.New("paper balances: insufficient funds")
 
+// ErrInvalidFillParams rejects fills with non-positive quantity or price.
+var ErrInvalidFillParams = errors.New("paper balances: invalid fill params")
+
 /*
 Balances simulates the Kraken balances channel on the shared raw bus.
 
@@ -27,27 +31,34 @@ tick (resting triggers, pending takers) and from the quote cache's trade-listene
 goroutine (maker queue fills), so wallet state is mutated from two goroutines.
 */
 type Balances struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	pool      *qpool.Q[any]
-	isActive  atomic.Bool
-	observers []types.Socket
-	model     user.Balances
-	realized  *big.Rat // running net realized P&L over the session
-	holdings  map[string]*big.Rat
-	costBasis map[string]*big.Rat // fee-inclusive average cost per base asset
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	isActive      atomic.Bool
+	observers     []types.Socket
+	mu            sync.Mutex
+	quoteCurrency string
+	takerFeeRate  float64
+	model         user.Balances
+	realized      *big.Rat // running net realized P&L over the session
+	holdings      map[string]*big.Rat
+	costBasis     map[string]*big.Rat // fee-inclusive average cost per base asset
 }
 
 func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 	ctx, cancel := context.WithCancel(ctx)
 
+	quote := viper.GetViper().GetString("market.quote_currency")
+
 	return &Balances{
-		ctx:       ctx,
-		cancel:    cancel,
-		err:       nil,
-		pool:      pool,
-		observers: make([]types.Socket, 0),
+		ctx:           ctx,
+		cancel:        cancel,
+		err:           nil,
+		pool:          pool,
+		observers:     make([]types.Socket, 0),
+		quoteCurrency: strings.ToUpper(quote),
+		takerFeeRate:  viper.GetFloat64("trading.paper.taker_fee_pct") / 100,
 		model: user.Balances{
 			Asset: []user.Balance{
 				{
@@ -98,7 +109,9 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 		return nil
 	}
 
+	balances.mu.Lock()
 	data, err := sonic.Marshal(balances.model)
+	balances.mu.Unlock()
 
 	if err != nil {
 		return nil
@@ -131,29 +144,34 @@ func (balances *Balances) ApplyFill(
 	fillPrice float64,
 ) (user.Execution, error) {
 	if params.OrderQty <= 0 || fillPrice <= 0 {
-		return user.Execution{}, ErrInsufficientFunds
+		return user.Execution{}, ErrInvalidFillParams
 	}
 
-	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
-	feeRate := viper.GetFloat64("trading.paper.taker_fee_pct") / 100
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	notional := params.OrderQty * fillPrice
-	fee := notional * feeRate
+	fee := notional * balances.takerFeeRate
 
 	switch params.Side {
 	case trading.Buy:
 		cost := notional + fee
-		cash := quoteBalance(&balances.model, quote)
+		cash := quoteBalance(&balances.model, balances.quoteCurrency)
 
 		if cash < cost {
 			return user.Execution{}, ErrInsufficientFunds
 		}
 
-		setQuoteBalance(&balances.model, quote, cash-cost)
+		setQuoteBalance(&balances.model, balances.quoteCurrency, cash-cost)
 	case trading.Sell:
 		proceeds := notional - fee
-		setQuoteBalance(&balances.model, quote, quoteBalance(&balances.model, quote)+proceeds)
+		setQuoteBalance(
+			&balances.model,
+			balances.quoteCurrency,
+			quoteBalance(&balances.model, balances.quoteCurrency)+proceeds,
+		)
 	default:
-		return user.Execution{}, ErrInsufficientFunds
+		return user.Execution{}, ErrInvalidFillParams
 	}
 
 	execution := user.Execution{
@@ -179,6 +197,20 @@ func (balances *Balances) ApplyFill(
 	}
 
 	return execution, nil
+}
+
+func (balances *Balances) Wallet() user.Balances {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	return balances.model
+}
+
+func (balances *Balances) ModelJSON() ([]byte, error) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	return sonic.Marshal(balances.model)
 }
 
 func quoteBalance(balances *user.Balances, quote string) float64 {

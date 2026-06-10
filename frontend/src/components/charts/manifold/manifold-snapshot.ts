@@ -68,6 +68,34 @@ const parseCarrier = (raw: unknown): ManifoldCarrierRow | null => {
 	};
 };
 
+const parseRhoMatrix = (raw: unknown): number[][] | null => {
+	if (!Array.isArray(raw) || raw.length === 0) {
+		return null;
+	}
+
+	const matrix: number[][] = [];
+
+	for (const row of raw) {
+		if (!Array.isArray(row) || row.length === 0) {
+			return null;
+		}
+
+		const parsedRow: number[] = [];
+
+		for (const value of row) {
+			if (typeof value !== "number" || !Number.isFinite(value)) {
+				return null;
+			}
+
+			parsedRow.push(value);
+		}
+
+		matrix.push(parsedRow);
+	}
+
+	return matrix;
+};
+
 export const parseManifoldSnapshot = (
 	raw: unknown,
 ): ManifoldFieldSnapshot | null => {
@@ -96,6 +124,13 @@ export const parseManifoldSnapshot = (
 				.filter((carrier): carrier is ManifoldCarrierRow => carrier !== null)
 		: [];
 
+	const rho = parseRhoMatrix(row.rho);
+
+	if (rho === null) {
+		console.error("manifold snapshot: invalid rho matrix", row.rho);
+		return null;
+	}
+
 	return {
 		type: "manifold",
 		ts: typeof row.ts === "string" ? row.ts : "",
@@ -105,7 +140,7 @@ export const parseManifoldSnapshot = (
 			z: readNumber(gridRaw.z),
 			spacing: readNumber(gridRaw.spacing),
 		},
-		rho: row.rho as number[][],
+		rho,
 		reading: parseReading(row.reading),
 		carriers,
 	};

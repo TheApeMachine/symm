@@ -1,7 +1,10 @@
 package causal
 
 import (
+	"fmt"
+
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -59,6 +62,11 @@ func contagionWindowsFromAdaptation() (fastWindow, mediumWindow, slowWindow int)
 	adaptation, err := market.LoadAdaptation()
 
 	if err != nil {
+		errnie.Debug(fmt.Sprintf(
+			"causal: LoadAdaptation failed, falling back to static windows: %s",
+			err.Error(),
+		))
+
 		return contagionWindowFast(), contagionWindowMedium(), contagionWindowSlow()
 	}
 

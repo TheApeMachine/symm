@@ -28,6 +28,29 @@ func configureRegimeViper() {
 	viper.Set("signals.causal.contagion_window_slow_min", 16)
 }
 
+func observeRegimePrices(
+	classifier *RegimeClassifier,
+	symbol string,
+	startPrice float64,
+	step float64,
+	returnCount int,
+	baseUnix int64,
+) {
+	classifier.Observe(logic.Measurement{
+		Symbol:     symbol,
+		Price:      startPrice,
+		ObservedAt: time.Unix(baseUnix, 0),
+	})
+
+	for index := range returnCount {
+		classifier.Observe(logic.Measurement{
+			Symbol:     symbol,
+			Price:      startPrice + step*float64(index+1),
+			ObservedAt: time.Unix(baseUnix+10+int64(index), 0),
+		})
+	}
+}
+
 func warmedRegimeDynamics() RegimeDynamics {
 	volBaseline := adaptive.NewBaseline(0.000001, 4)
 	trendBaseline := adaptive.NewBaseline(0.05, 4)
@@ -80,7 +103,7 @@ func TestRegimeClassifierMarketMean(t *testing.T) {
 	Convey("Given symbol return histories", t, func() {
 		configureRegimeViper()
 
-		crossSection := &CrossSection{returnCap: 8}
+		crossSection := &CrossSection{returnCap: 32}
 		classifier, err := NewRegimeClassifier(crossSection)
 
 		So(err, ShouldBeNil)
@@ -91,21 +114,8 @@ func TestRegimeClassifierMarketMean(t *testing.T) {
 			ObservedAt: time.Unix(1_700_000_000, 0),
 		})
 
-		for index, price := range []float64{100.2, 100.4, 100.6, 100.8, 101.0} {
-			classifier.Observe(logic.Measurement{
-				Symbol:     "BTC/EUR",
-				Price:      price,
-				ObservedAt: time.Unix(1_700_000_010+int64(index), 0),
-			})
-		}
-
-		for index, price := range []float64{50.0, 49.8, 49.6, 49.4, 49.2} {
-			classifier.Observe(logic.Measurement{
-				Symbol:     "ETH/EUR",
-				Price:      price,
-				ObservedAt: time.Unix(1_700_000_020+int64(index), 0),
-			})
-		}
+		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
+		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
 
 		mean := classifier.MarketMean()
 
@@ -125,7 +135,7 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 		bus := internal.NewBus(ctx, pool, []string{"ui"}, nil)
 		subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
 
-		crossSection := &CrossSection{returnCap: 8}
+		crossSection := &CrossSection{returnCap: 32}
 		classifier, err := NewRegimeClassifier(crossSection)
 
 		So(err, ShouldBeNil)
@@ -136,13 +146,7 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 			ObservedAt: time.Unix(1_700_000_000, 0),
 		})
 
-		for index, price := range []float64{100.2, 100.4, 100.6, 100.8, 101.0} {
-			classifier.Observe(logic.Measurement{
-				Symbol:     "BTC/EUR",
-				Price:      price,
-				ObservedAt: time.Unix(1_700_000_010+int64(index), 0),
-			})
-		}
+		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 
 		So(classifier.PublishFrame(bus), ShouldBeNil)
 
@@ -179,7 +183,7 @@ func TestRegimeBaselineShift(t *testing.T) {
 		)
 
 		for range 32 {
-			controller.ObserveRegimeSamples([]float64{0.01}, []float64{4.0})
+			controller.ObserveRegimeSamples([]float64{0.01}, []float64{12.0})
 		}
 
 		dynamics = controller.RegimeDynamics()

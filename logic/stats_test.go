@@ -13,20 +13,11 @@ func TestTreeStatsDecisionTreeFrame(t *testing.T) {
 			NewConditionGroup(BooleanTypeAnd, []Condition{
 				*NewCondition(
 					ConditionIsTrue,
-					ConditionOperand{Subject: *NewSubject(
-						SourceHawkes,
-						SubjectCategory,
-						NewCategory(CategoryFrenzy, 0, 0),
-						nil,
-						nil,
-						0,
-						0,
-						0,
-						0,
-						0,
-						0,
-						0,
-					)},
+					ConditionOperand{Subject: Subject{
+						Source:   SourceHawkes,
+						Type:     SubjectCategory,
+						Category: NewCategory(CategoryFrenzy, 0, 0),
+					}},
 					ConditionOperand{},
 				),
 			}),

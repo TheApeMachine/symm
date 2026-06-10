@@ -105,7 +105,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
+	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
+		return logic.Measurement{}, err
+	}
 
 	return signal.measureFromSymbol(at)
 }
@@ -128,7 +130,9 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
+	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
+		return logic.Measurement{}, err
+	}
 
 	return signal.measureFromSymbol(at)
 }
@@ -151,21 +155,25 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	errnie.Error(signal.system.publishFieldSnapshot(eventAt))
+	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
+		return logic.Measurement{}, err
+	}
 
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) latest() any {
-	var latest any
+	if signal.measurements == nil {
+		return nil
+	}
 
-	signal.measurements.Do(func(item any) {
-		if item != nil {
-			latest = item
-		}
-	})
+	prev := signal.measurements.Prev()
 
-	return latest
+	if prev == nil || prev.Value == nil {
+		return nil
+	}
+
+	return prev.Value
 }
 
 func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error) {

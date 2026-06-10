@@ -132,13 +132,7 @@ var (
 			}
 
 			if os.Getenv("SYMM_KRAKEN_API_KEY") != "" {
-				systems = append(
-					systems[:2],
-					append(
-						[]System{private.NewWebSocket(systemCtx, pool)},
-						systems[2:]...,
-					)...,
-				)
+				systems = append(systems, private.NewWebSocket(systemCtx, pool))
 			}
 
 			if err := engine.AddSystems(systems...); err != nil {

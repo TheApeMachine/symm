@@ -78,7 +78,14 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
-				errnie.Error(crypto.bus.Send("ui", "wallet", ui.WalletFrame(balances)))
+				frame, frameErr := ui.WalletFrame(balances)
+
+				if frameErr != nil {
+					errnie.Error(frameErr)
+					continue
+				}
+
+				errnie.Error(crypto.bus.Send("ui", "wallet", frame))
 			case "instrument":
 				var (
 					instrument *market.InstrumentUpdate
@@ -225,9 +232,15 @@ func (crypto *Crypto) ensureAnchorChart() {
 			return
 		}
 
+		candleParams, paramsErr := market.NewCandleParams([]string{anchor}, 1)
+
+		if errnie.Error(paramsErr) != nil {
+			return
+		}
+
 		errnie.Error(crypto.bus.Send("kraken:public", "ohlc", types.KrakenMessage{
 			Method: "subscribe",
-			Params: market.NewCandleParams([]string{anchor}, 1),
+			Params: candleParams,
 			ReqID:  time.Now().UnixNano(),
 		}))
 	})

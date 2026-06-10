@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/errnie"
 )
 
 type conditionStat struct {
@@ -135,7 +137,7 @@ func (stats *TreeStats) DecisionTreeFrame() map[string]any {
 
 		reached := int64(0)
 		held := int64(0)
-		conditions := static["conditions"].([]map[string]any)
+		conditions := staticConditions(static)
 
 		if node != nil {
 			reached = node.reached
@@ -386,4 +388,22 @@ func scalarLabel(subject Subject) string {
 	}
 
 	return subjectLabel(subject)
+}
+
+func staticConditions(static map[string]any) []map[string]any {
+	raw, ok := static["conditions"]
+
+	if !ok {
+		return nil
+	}
+
+	conditions, ok := raw.([]map[string]any)
+
+	if !ok {
+		errnie.Error(fmt.Errorf("logic: static node conditions type mismatch"))
+
+		return nil
+	}
+
+	return conditions
 }

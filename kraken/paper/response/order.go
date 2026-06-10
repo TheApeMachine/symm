@@ -155,11 +155,7 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	orders.pendingExec = append(orders.pendingExec, execution)
 	delete(orders.model, params.ClOrdID)
 
-	if orders.fillHandler == nil {
-		return
-	}
-
-	balancePayload, err := sonic.Marshal(orders.fillHandler.model)
+	balancePayload, err := orders.fillHandler.ModelJSON()
 
 	if err != nil {
 		return
@@ -202,5 +198,5 @@ func (orders *Orders) Wallet() user.Balances {
 		return user.Balances{}
 	}
 
-	return orders.fillHandler.model
+	return orders.fillHandler.Wallet()
 }

@@ -134,16 +134,26 @@ const WsFeed = ({
 				}
 
 				if (raw.chart === "gauge") {
+					const confidence =
+						typeof raw.confidence === "number" &&
+						Number.isFinite(raw.confidence)
+							? raw.confidence
+							: null;
+					const surpriseValue = raw.surprise ?? raw.snr;
+					const surprise =
+						typeof surpriseValue === "number" && Number.isFinite(surpriseValue)
+							? surpriseValue
+							: null;
+
 					ingestGaugeWire(gaugeRefs.current?.[raw.source as string], raw);
 
-					heatmapRef.current?.set(
-						raw.source as string,
-						raw.confidence as number,
-					);
-					surpriseRef.current?.set(
-						raw.source as string,
-						(raw.surprise ?? raw.snr) as number,
-					);
+					if (confidence !== null) {
+						heatmapRef.current?.set(raw.source as string, confidence);
+					}
+
+					if (surprise !== null) {
+						surpriseRef.current?.set(raw.source as string, surprise);
+					}
 
 					return;
 				}
