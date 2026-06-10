@@ -117,7 +117,7 @@ func (gauge *Gauge) Publish(
 
 	RecordSurpriseRatio(gauge.source, meanSurprise, threshold)
 
-	return gauge.bus.Send("ui", "gauge", map[string]any{
+	return gauge.bus.Send(internal.ChannelUI, "gauge", map[string]any{
 		"chart":              "gauge",
 		"source":             gauge.source,
 		"confidence":         meanConfidence,

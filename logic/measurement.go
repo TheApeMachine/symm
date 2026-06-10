@@ -62,7 +62,7 @@ func (measurement Measurement) Publish(bus *internal.Bus) error {
 		return nil
 	}
 
-	return bus.Send("measurements", "measurements", measurement)
+	return bus.Send(internal.ChannelMeasurements, "measurements", measurement)
 }
 
 func NewMeasurement(

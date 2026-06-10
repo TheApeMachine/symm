@@ -119,9 +119,9 @@ func NewHub(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:private"},
+			[]internal.Channel{internal.ChannelKrakenPrivate},
 			[]internal.Subscription{
-				internal.Subscribe("ui", "ui:hub"),
+				internal.Subscribe(internal.ChannelUI, "ui:hub"),
 			},
 		),
 	}
@@ -219,7 +219,7 @@ func (hub *Hub) subscribeBalances() {
 		params.Token = token
 	}
 
-	errnie.Error(hub.bus.Send("kraken:private", "balances", types.KrakenMessage{
+	errnie.Error(hub.bus.Send(internal.ChannelKrakenPrivate, "balances", types.KrakenMessage{
 		Method: "subscribe",
 		Params: params,
 		ReqID:  time.Now().UnixNano(),
@@ -367,7 +367,7 @@ func (hub *Hub) prepareUIFrame(row *qpool.QValue[any]) (string, any, bool) {
 }
 
 func (hub *Hub) drainUI() {
-	first, err := hub.bus.Receive("ui")
+	first, err := hub.bus.Receive(internal.ChannelUI)
 
 	if errnie.Error(err) != nil || first == nil {
 		return
@@ -380,7 +380,7 @@ func (hub *Hub) drainUI() {
 	}
 
 	for {
-		row, pollErr := hub.bus.Poll("ui")
+		row, pollErr := hub.bus.Poll(internal.ChannelUI)
 
 		if pollErr != nil || row == nil {
 			break

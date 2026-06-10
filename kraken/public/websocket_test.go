@@ -41,9 +41,9 @@ func TestWebSocketDispatchBookUpdates(t *testing.T) {
 			bus: internal.NewBus(
 				ctx,
 				pool,
-				[]string{"raw"},
+				[]internal.Channel{internal.ChannelRaw},
 				[]internal.Subscription{
-					internal.Subscribe("raw", "test-raw"),
+					internal.Subscribe(internal.ChannelRaw, "test-raw"),
 				},
 			),
 		}
@@ -62,7 +62,7 @@ func TestWebSocketDispatchBookUpdates(t *testing.T) {
 		Convey("It should publish one raw book batch without fan-out in dispatch", func() {
 			ws.dispatch(message)
 
-			raw, err := ws.bus.Receive("raw")
+			raw, err := ws.bus.Receive(internal.ChannelRaw)
 			So(err, ShouldBeNil)
 			So(raw, ShouldNotBeNil)
 
@@ -88,9 +88,9 @@ func TestWebSocketDispatchOhlcUIFrame(t *testing.T) {
 			bus: internal.NewBus(
 				ctx,
 				pool,
-				[]string{"raw", "ui"},
+				[]internal.Channel{internal.ChannelRaw, internal.ChannelUI},
 				[]internal.Subscription{
-					internal.Subscribe("ui", "test-ui"),
+					internal.Subscribe(internal.ChannelUI, "test-ui"),
 				},
 			),
 		}
@@ -114,7 +114,7 @@ func TestWebSocketDispatchOhlcUIFrame(t *testing.T) {
 
 			ws.dispatch(message)
 
-			row, err := ws.bus.Receive("ui")
+			row, err := ws.bus.Receive(internal.ChannelUI)
 			So(err, ShouldBeNil)
 			So(row, ShouldNotBeNil)
 

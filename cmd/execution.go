@@ -8,10 +8,11 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper"
+	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -36,7 +37,19 @@ func WireExecutionAdapter(
 
 		types.BindTokenRest(paperRest)
 
-		return []System{paper.NewWebSocket(ctx, pool, bookStore)}, nil
+		catalog, catalogErr := response.LoadPairCatalog(ctx)
+
+		if catalogErr != nil {
+			return nil, catalogErr
+		}
+
+		paperWebSocket, paperErr := paper.NewWebSocket(ctx, pool, bookStore, catalog)
+
+		if paperErr != nil {
+			return nil, paperErr
+		}
+
+		return []System{paperWebSocket}, nil
 	case "live":
 		apiKey := strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_KEY"))
 		apiSecret := strings.TrimSpace(os.Getenv("SYMM_KRAKEN_API_SECRET"))

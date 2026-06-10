@@ -6,6 +6,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -18,7 +19,7 @@ func TestNewCryptoRegistersFuturesChannel(t *testing.T) {
 		defer crypto.cancel()
 
 		convey.Convey("It should accept kraken:futures publish", func() {
-			err := crypto.bus.Send("kraken:futures", "book", map[string]string{"event": "subscribe"})
+			err := crypto.bus.Send(internal.ChannelKrakenFutures, "book", map[string]string{"event": "subscribe"})
 			convey.So(err, convey.ShouldBeNil)
 		})
 	})

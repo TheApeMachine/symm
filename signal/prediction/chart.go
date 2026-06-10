@@ -243,5 +243,5 @@ func (chart *Chart) sendFrame(
 		frame["samples"] = samples
 	}
 
-	return chart.bus.Send("ui", "prediction", frame)
+	return chart.bus.Send(internal.ChannelUI, "prediction", frame)
 }

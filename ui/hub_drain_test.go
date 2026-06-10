@@ -24,15 +24,15 @@ func TestHubDrainCoalescesUI(t *testing.T) {
 			bus: internal.NewBus(
 				ctx,
 				pool,
-				[]string{"ui"},
+				[]internal.Channel{internal.ChannelUI},
 				[]internal.Subscription{
-					internal.Subscribe("ui", "ui:test"),
+					internal.Subscribe(internal.ChannelUI, "ui:test"),
 				},
 			),
 		}
 
 		for index := 0; index < 8; index++ {
-			err := hub.bus.Send("ui", "gauge", map[string]any{
+			err := hub.bus.Send(internal.ChannelUI, "gauge", map[string]any{
 				"source":     "cvd",
 				"confidence": float64(index),
 			})
@@ -41,7 +41,7 @@ func TestHubDrainCoalescesUI(t *testing.T) {
 		}
 
 		Convey("It should keep only the latest frame per coalesce key", func() {
-			first, receiveErr := hub.bus.Receive("ui")
+			first, receiveErr := hub.bus.Receive(internal.ChannelUI)
 
 			So(receiveErr, ShouldBeNil)
 			So(first, ShouldNotBeNil)
@@ -54,7 +54,7 @@ func TestHubDrainCoalescesUI(t *testing.T) {
 			pending[key] = value
 
 			for {
-				row, pollErr := hub.bus.Poll("ui")
+				row, pollErr := hub.bus.Poll(internal.ChannelUI)
 
 				if pollErr != nil || row == nil {
 					break

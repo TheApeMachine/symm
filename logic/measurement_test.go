@@ -31,7 +31,7 @@ func TestMeasurementPublishable(t *testing.T) {
 		Convey("Publish should not send incomplete measurements", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			bus := internal.NewBus(ctx, pool, []string{"measurements"}, []internal.Subscription{internal.Subscribe("measurements", "test-measurements")})
+			bus := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})
 
 			So(complete.Publish(bus), ShouldBeNil)
 

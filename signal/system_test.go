@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -69,7 +70,7 @@ func TestSystemTickBookUpdates(t *testing.T) {
 			{Symbol: "ETH/USD"},
 		}
 
-		So(system.bus.Send("raw", "book", &updates), ShouldBeNil)
+		So(system.bus.Send(internal.ChannelRaw, "book", &updates), ShouldBeNil)
 
 		Convey("It should deliver each BookUpdate to Record", func() {
 			first := readRecordedBook(recorded)

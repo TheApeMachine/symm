@@ -38,7 +38,7 @@ func NewCapture(
 			pool,
 			nil,
 			[]internal.Subscription{
-				internal.Subscribe("raw", "capture"),
+				internal.Subscribe(internal.ChannelRaw, "capture"),
 			},
 		),
 		writer: writer,
@@ -51,7 +51,7 @@ func (capture *Capture) Tick() error {
 			return capture.ctx.Err()
 		}
 
-		message, err := capture.bus.Receive("raw")
+		message, err := capture.bus.Receive(internal.ChannelRaw)
 
 		if errnie.Error(err) != nil {
 			if errors.Is(err, context.Canceled) {

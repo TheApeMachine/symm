@@ -14,14 +14,14 @@ type Bus struct {
 	cancel      context.CancelFunc
 	err         error
 	pool        *qpool.Q[any]
-	broadcasts  map[string]*qpool.BroadcastGroup
-	subscribers map[string]*qpool.BroadcastConsumer
+	broadcasts  map[Channel]*qpool.BroadcastGroup
+	subscribers map[Channel]*qpool.BroadcastConsumer
 }
 
 func NewBus(
 	ctx context.Context,
 	pool *qpool.Q[any],
-	broadcasts []string,
+	broadcasts []Channel,
 	subscriptions []Subscription,
 ) *Bus {
 	ctx, cancel := context.WithCancel(ctx)
@@ -30,27 +30,27 @@ func NewBus(
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
-		broadcasts:  make(map[string]*qpool.BroadcastGroup),
-		subscribers: make(map[string]*qpool.BroadcastConsumer),
+		broadcasts:  make(map[Channel]*qpool.BroadcastGroup),
+		subscribers: make(map[Channel]*qpool.BroadcastConsumer),
 	}
 
 	for _, broadcast := range broadcasts {
 		bus.broadcasts[broadcast] = pool.CreateBroadcastGroup(
-			broadcast, viper.GetDuration("system.queue.ttl"),
+			broadcast.String(), viper.GetDuration("system.queue.ttl"),
 		)
 	}
 
 	for _, subscription := range subscriptions {
 		if bus.broadcasts[subscription.Channel] == nil {
 			bus.broadcasts[subscription.Channel] = pool.CreateBroadcastGroup(
-				subscription.Channel, viper.GetDuration("system.queue.ttl"),
+				subscription.Channel.String(), viper.GetDuration("system.queue.ttl"),
 			)
 		}
 
 		subscriberName := subscription.Name
 
 		if subscriberName == "" {
-			subscriberName = subscription.Channel
+			subscriberName = subscription.Channel.String()
 		}
 
 		bus.subscribers[subscription.Channel] = bus.broadcasts[subscription.Channel].Subscribe(
@@ -61,7 +61,7 @@ func NewBus(
 	return bus
 }
 
-func (bus *Bus) Receive(channel string) (*qpool.QValue[any], error) {
+func (bus *Bus) Receive(channel Channel) (*qpool.QValue[any], error) {
 	if bus.subscribers[channel] == nil {
 		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
 	}
@@ -69,7 +69,7 @@ func (bus *Bus) Receive(channel string) (*qpool.QValue[any], error) {
 	return bus.subscribers[channel].Wait(bus.ctx)
 }
 
-func (bus *Bus) Poll(channel string) (*qpool.QValue[any], error) {
+func (bus *Bus) Poll(channel Channel) (*qpool.QValue[any], error) {
 	if bus.subscribers[channel] == nil {
 		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
 	}
@@ -77,13 +77,13 @@ func (bus *Bus) Poll(channel string) (*qpool.QValue[any], error) {
 	return bus.subscribers[channel].Poll(), nil
 }
 
-func (bus *Bus) Send(channel, t string, value any) error {
+func (bus *Bus) Send(channel Channel, messageType string, value any) error {
 	if bus.broadcasts[channel] == nil {
 		return errnie.Error(fmt.Errorf("channel %s not found", channel))
 	}
 
 	bus.broadcasts[channel].Send(&qpool.QValue[any]{
-		Type:  t,
+		Type:  messageType,
 		Value: value,
 	})
 

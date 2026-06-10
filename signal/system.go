@@ -39,9 +39,9 @@ func NewSystem(
 	bus := internal.NewBus(
 		ctx,
 		pool,
-		[]string{"measurements", "ui"},
+		[]internal.Channel{internal.ChannelMeasurements, internal.ChannelUI},
 		[]internal.Subscription{
-			internal.Subscribe("raw", "signal:"+string(source)),
+			internal.Subscribe(internal.ChannelRaw, "signal:"+string(source)),
 		},
 	)
 
@@ -66,7 +66,7 @@ func NewSystem(
 
 func (system *System) Tick() error {
 	for {
-		message, err := system.bus.Receive("raw")
+		message, err := system.bus.Receive(internal.ChannelRaw)
 
 		if errnie.Error(err) != nil || message == nil {
 			continue

@@ -61,9 +61,9 @@ func NewStory(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"raw", "ui"},
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelUI},
 			[]internal.Subscription{
-				internal.Subscribe("measurements", "story"),
+				internal.Subscribe(internal.ChannelMeasurements, "story"),
 			},
 		),
 		measurements: &sync.Map{},
@@ -154,7 +154,7 @@ func (story *Story) Tick() error {
 			evaluation.Action = action
 		}
 
-		errnie.Error(story.bus.Send("raw", "actions", action))
+		errnie.Error(story.bus.Send(internal.ChannelRaw, "actions", action))
 
 		story.publishUIFrames()
 	}
@@ -227,7 +227,7 @@ func (story *Story) publishDecisionTree() {
 		return
 	}
 
-	errnie.Error(story.bus.Send("ui", "decision_tree", stats.DecisionTreeFrame()))
+	errnie.Error(story.bus.Send(internal.ChannelUI, "decision_tree", stats.DecisionTreeFrame()))
 }
 
 func (story *Story) shouldPublishUI(now time.Time) bool {
@@ -252,6 +252,13 @@ func (story *Story) publishMarketRegime() {
 	}
 
 	errnie.Error(story.regime.PublishFrame(story.bus))
+}
+
+/*
+Regime exposes the cross-section regime classifier for desk sizing.
+*/
+func (story *Story) Regime() *RegimeClassifier {
+	return story.regime
 }
 
 /*

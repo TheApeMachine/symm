@@ -65,11 +65,11 @@ func NewWebSocket(
 			bus: internal.NewBus(
 				ctx,
 				pool,
-				[]string{"raw", "level3", "kraken:public", "ui"},
+				[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
 				[]internal.Subscription{
-					internal.Subscribe("raw", "kraken:public:raw"),
-					internal.Subscribe("level3", "kraken:public:level3"),
-					internal.Subscribe("kraken:public", "kraken:public:bus"),
+					internal.Subscribe(internal.ChannelRaw, "kraken:public:raw"),
+					internal.Subscribe(internal.ChannelLevel3, "kraken:public:level3"),
+					internal.Subscribe(internal.ChannelKrakenPublic, "kraken:public:bus"),
 				},
 			),
 			streams:   &sync.Map{},
@@ -204,7 +204,7 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 		}
 	}
 
-	ws.bus.Send("raw", message.Channel, object)
+	ws.bus.Send(internal.ChannelRaw, message.Channel, object)
 
 	if message.Channel == "ohlc" {
 		candles := object.(*market.CandleUpdates)
@@ -221,7 +221,7 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 				continue
 			}
 
-			ws.bus.Send("ui", "ohlc", frame)
+			ws.bus.Send(internal.ChannelUI, "ohlc", frame)
 		}
 	}
 }

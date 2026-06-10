@@ -39,7 +39,7 @@ func NewEngine(ctx context.Context, pool *qpool.Q[any]) (*Engine, error) {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:public"},
+			[]internal.Channel{internal.ChannelKrakenPublic},
 			nil,
 		),
 		systems: make([]System, 0),
@@ -84,7 +84,7 @@ func (engine *Engine) Start() error {
 		}(system)
 	}
 
-	errnie.Error(engine.bus.Send("kraken:public", "instrument", types.KrakenMessage{
+	errnie.Error(engine.bus.Send(internal.ChannelKrakenPublic, "instrument", types.KrakenMessage{
 		Method: "subscribe",
 		Params: market.NewInstrumentParams(),
 		ReqID:  time.Now().UnixNano(),

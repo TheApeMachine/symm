@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -22,6 +21,8 @@ cash, inventory, and mark.
 */
 func SizeOrder(
 	action *logic.Action,
+	risk RiskContext,
+	entryScale float64,
 	quoteCash float64,
 	heldQty float64,
 	mark float64,
@@ -47,7 +48,7 @@ func SizeOrder(
 	if action.Type.IsExit() {
 		quantity, sizeErr = sizeExit(action, heldQty)
 	} else {
-		quantity, sizeErr = sizeEntry(action, quoteCash, mark)
+		quantity, sizeErr = sizeEntry(action, risk, entryScale, quoteCash, mark)
 	}
 
 	if sizeErr != nil {
@@ -87,6 +88,8 @@ func sizeExit(action *logic.Action, heldQty float64) (float64, error) {
 
 func sizeEntry(
 	action *logic.Action,
+	risk RiskContext,
+	entryScale float64,
 	quoteCash float64,
 	mark float64,
 ) (float64, error) {
@@ -98,13 +101,15 @@ func sizeEntry(
 		return 0, ErrNoMark
 	}
 
-	positionFraction := viper.GetFloat64("trading.position_fraction")
-
-	if positionFraction <= 0 {
+	if risk.PositionFraction <= 0 {
 		return 0, fmt.Errorf("broker: trading.position_fraction must be positive")
 	}
 
-	notional := quoteCash * positionFraction * action.Fraction
+	if entryScale <= 0 {
+		return 0, fmt.Errorf("broker: entry size scale must be positive")
+	}
+
+	notional := quoteCash * risk.PositionFraction * action.Fraction * entryScale
 
 	if notional <= 0 {
 		return 0, ErrInsufficientCash

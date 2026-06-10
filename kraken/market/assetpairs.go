@@ -2,6 +2,7 @@ package market
 
 import (
 	"fmt"
+	"strconv"
 )
 
 /*
@@ -64,4 +65,105 @@ func (pairs AssetPairs) PairByWsname(wsname string) (*Pair, error) {
 	}
 
 	return nil, fmt.Errorf("kraken asset pairs: wsname %q not found", wsname)
+}
+
+/*
+FeePercentAtVolume returns the fee percent for a tiered schedule at the given
+30-day volume in the pair's fee_volume_currency.
+*/
+func FeePercentAtVolume(tiers [][]float64, volume float64) (float64, error) {
+	if len(tiers) == 0 {
+		return 0, fmt.Errorf("kraken asset pairs: fee schedule is empty")
+	}
+
+	if len(tiers[0]) < 2 {
+		return 0, fmt.Errorf("kraken asset pairs: fee tier is malformed")
+	}
+
+	selected := tiers[0][1]
+
+	for _, tier := range tiers {
+		if len(tier) < 2 {
+			return 0, fmt.Errorf("kraken asset pairs: fee tier is malformed")
+		}
+
+		if volume >= tier[0] {
+			selected = tier[1]
+		}
+	}
+
+	return selected, nil
+}
+
+/*
+TakerFeePercent returns the published taker fee percent for one volume level.
+*/
+func (pair *Pair) TakerFeePercent(volume float64) (float64, error) {
+	if pair == nil {
+		return 0, fmt.Errorf("kraken asset pairs: nil pair")
+	}
+
+	return FeePercentAtVolume(pair.Fees, volume)
+}
+
+/*
+MakerFeePercent returns the published maker fee percent for one volume level.
+*/
+func (pair *Pair) MakerFeePercent(volume float64) (float64, error) {
+	if pair == nil {
+		return 0, fmt.Errorf("kraken asset pairs: nil pair")
+	}
+
+	return FeePercentAtVolume(pair.FeesMaker, volume)
+}
+
+/*
+TakerFeeRate returns the decimal taker fee rate (0.0026 for 0.26%).
+*/
+func (pair *Pair) TakerFeeRate(volume float64) (float64, error) {
+	percent, err := pair.TakerFeePercent(volume)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return percent / 100, nil
+}
+
+/*
+MakerFeeRate returns the decimal maker fee rate.
+*/
+func (pair *Pair) MakerFeeRate(volume float64) (float64, error) {
+	percent, err := pair.MakerFeePercent(volume)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return percent / 100, nil
+}
+
+/*
+TickSizeFloat parses the published tick size for one pair.
+*/
+func (pair *Pair) TickSizeFloat() (float64, error) {
+	if pair == nil {
+		return 0, fmt.Errorf("kraken asset pairs: nil pair")
+	}
+
+	if pair.TickSize == "" {
+		return 0, fmt.Errorf("kraken asset pairs: tick size missing for %s", pair.Wsname)
+	}
+
+	tickSize, err := strconv.ParseFloat(pair.TickSize, 64)
+
+	if err != nil {
+		return 0, fmt.Errorf("kraken asset pairs: tick size for %s: %w", pair.Wsname, err)
+	}
+
+	if tickSize <= 0 {
+		return 0, fmt.Errorf("kraken asset pairs: tick size must be positive for %s", pair.Wsname)
+	}
+
+	return tickSize, nil
 }

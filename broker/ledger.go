@@ -50,7 +50,7 @@ type Ledger struct {
 func NewLedger(ctx context.Context, pool *qpool.Q[any]) *Ledger {
 	ctx, cancel := context.WithCancel(ctx)
 
-	quote := viper.GetString("market.quote_currency")
+	quote := QuoteAsset()
 
 	return &Ledger{
 		ctx:    ctx,
@@ -59,29 +59,18 @@ func NewLedger(ctx context.Context, pool *qpool.Q[any]) *Ledger {
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"ui"},
+			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{
-				internal.Subscribe("raw", "ledger"),
+				internal.Subscribe(internal.ChannelRaw, "ledger"),
 			},
 		),
 		quoteCash: viper.GetFloat64(
-			"trading.paper.wallet." + quoteKey(quote),
+			"trading.paper.wallet." + QuoteWalletKey(quote),
 		),
 		positions:   make(map[string]inventory),
 		marks:       make(map[string]float64),
 		quotes:      make(map[string]quoteRow),
 		seenExecIDs: make(map[string]struct{}),
-	}
-}
-
-func quoteKey(quote string) string {
-	switch quote {
-	case "USD", "usd":
-		return "usd"
-	case "EUR", "eur":
-		return "eur"
-	default:
-		return quote
 	}
 }
 
@@ -98,7 +87,7 @@ func (ledger *Ledger) Tick() error {
 			return ledger.ctx.Err()
 		}
 
-		message, err := ledger.bus.Receive("raw")
+		message, err := ledger.bus.Receive(internal.ChannelRaw)
 
 		if errnie.Error(err) != nil {
 			if errors.Is(err, context.Canceled) {
@@ -146,7 +135,7 @@ func (ledger *Ledger) Tick() error {
 }
 
 func (ledger *Ledger) applyBalances(balances user.Balances) {
-	quote := viper.GetString("market.quote_currency")
+	quote := QuoteAsset()
 
 	ledger.mu.Lock()
 	ledger.quoteCash = quoteCashFromBalances(balances, quote)
@@ -160,7 +149,7 @@ func (ledger *Ledger) applyBalances(balances user.Balances) {
 }
 
 func (ledger *Ledger) reconcileCash(balances user.Balances) error {
-	quote := viper.GetString("market.quote_currency")
+	quote := QuoteAsset()
 	expected := quoteCashFromBalances(balances, quote)
 
 	ledger.mu.RLock()
@@ -342,7 +331,7 @@ func (ledger *Ledger) publishPositions() {
 
 	ledger.mu.RUnlock()
 
-	errnie.Error(ledger.bus.Send("ui", "positions", map[string]any{
+	errnie.Error(ledger.bus.Send(internal.ChannelUI, "positions", map[string]any{
 		"event":     "positions",
 		"positions": rows,
 	}))
@@ -355,7 +344,7 @@ func (ledger *Ledger) publishPositions() {
 			continue
 		}
 
-		errnie.Error(ledger.bus.Send("ui", "mark", map[string]any{
+		errnie.Error(ledger.bus.Send(internal.ChannelUI, "mark", map[string]any{
 			"event":  "mark",
 			"symbol": symbol,
 			"price":  mark,
@@ -370,9 +359,7 @@ func (ledger *Ledger) Close() error {
 
 func quoteCashFromBalances(balances user.Balances, quote string) float64 {
 	for _, asset := range balances.Asset {
-		name := asset.Asset
-
-		if name == quote || name == "Z"+quote {
+		if BalanceMatchesQuote(asset.Asset, quote) {
 			return asset.Balance
 		}
 	}

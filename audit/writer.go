@@ -91,6 +91,98 @@ func NewWriter(ctx context.Context) (*Writer, error) {
 }
 
 /*
+TryEnqueueFrame appends one typed audit frame without blocking.
+*/
+func (writer *Writer) TryEnqueueFrame(frame Frame) bool {
+	if writer == nil {
+		return true
+	}
+
+	payload := framePayload(frame)
+
+	if payload == nil {
+		errnie.Error(errors.New("audit: nil frame"))
+		return false
+	}
+
+	select {
+	case writer.queue <- auditJob{frame: payload}:
+		return true
+	default:
+		writer.drops.Add(1)
+		return false
+	}
+}
+
+/*
+TryEnqueueDedupedFrame is the non-blocking variant for deduped typed frames.
+*/
+func (writer *Writer) TryEnqueueDedupedFrame(frame DedupedFrame) bool {
+	if writer == nil {
+		return true
+	}
+
+	payload := framePayload(frame)
+
+	if payload == nil {
+		errnie.Error(errors.New("audit: nil frame"))
+		return false
+	}
+
+	select {
+	case writer.queue <- auditJob{dedupeKey: frame.DedupeKey(), frame: payload}:
+		return true
+	default:
+		writer.drops.Add(1)
+		return false
+	}
+}
+
+/*
+EnqueueFrame appends one typed audit frame.
+*/
+func (writer *Writer) EnqueueFrame(frame Frame) error {
+	if writer == nil {
+		return nil
+	}
+
+	payload := framePayload(frame)
+
+	if payload == nil {
+		return errnie.Error(errors.New("audit: nil frame"))
+	}
+
+	select {
+	case writer.queue <- auditJob{frame: payload}:
+		return nil
+	case <-writer.ctx.Done():
+		return errnie.Error(writer.ctx.Err())
+	}
+}
+
+/*
+EnqueueDedupedFrame suppresses duplicate typed gate lines inside the cooldown window.
+*/
+func (writer *Writer) EnqueueDedupedFrame(frame DedupedFrame) error {
+	if writer == nil {
+		return nil
+	}
+
+	payload := framePayload(frame)
+
+	if payload == nil {
+		return errnie.Error(errors.New("audit: nil frame"))
+	}
+
+	select {
+	case writer.queue <- auditJob{dedupeKey: frame.DedupeKey(), frame: payload}:
+		return nil
+	case <-writer.ctx.Done():
+		return errnie.Error(writer.ctx.Err())
+	}
+}
+
+/*
 TryEnqueue appends one audit frame without blocking. Returns false when full.
 */
 func (writer *Writer) TryEnqueue(frame map[string]any) bool {

@@ -96,6 +96,7 @@ func TestPreTradeGateCheckEntry(t *testing.T) {
 		viper.Set("trading.max_slippage_bps", 80.0)
 
 		gate := &PreTradeGate{}
+		risk := LoadRiskContext()
 		action := logic.NewAction(
 			logic.ActionMarket,
 			trading.Buy,
@@ -116,14 +117,14 @@ func TestPreTradeGateCheckEntry(t *testing.T) {
 		}
 
 		Convey("It should allow fresh tight quotes", func() {
-			So(gate.CheckEntry(action, freshQuote), ShouldBeNil)
+			So(gate.CheckEntry(action, risk, freshQuote), ShouldBeNil)
 		})
 
 		Convey("It should reject stale quotes", func() {
 			stale := freshQuote
 			stale.UpdatedAt = time.Now().Add(-30 * time.Second)
 
-			So(gate.CheckEntry(action, stale), ShouldEqual, ErrQuoteStale)
+			So(gate.CheckEntry(action, risk, stale), ShouldEqual, ErrQuoteStale)
 		})
 
 		Convey("It should bypass gates for exits", func() {
@@ -140,7 +141,7 @@ func TestPreTradeGateCheckEntry(t *testing.T) {
 			stale := freshQuote
 			stale.UpdatedAt = time.Now().Add(-30 * time.Second)
 
-			So(gate.CheckEntry(exit, stale), ShouldBeNil)
+			So(gate.CheckEntry(exit, risk, stale), ShouldBeNil)
 		})
 	})
 }

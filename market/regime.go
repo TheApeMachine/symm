@@ -344,7 +344,7 @@ func (classifier *RegimeClassifier) PublishFrame(bus *internal.Bus) error {
 
 	mean := classifier.MarketMean()
 
-	return bus.Send("ui", "regime", map[string]any{
+	return bus.Send(internal.ChannelUI, "regime", map[string]any{
 		"chart":      "regime",
 		"symbol":     MarketRegimeSymbol,
 		"volatility": mean.Volatility,

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -33,6 +32,7 @@ type PreTradeGate struct{}
 
 func (gate *PreTradeGate) CheckEntry(
 	action *logic.Action,
+	risk RiskContext,
 	quote QuoteSnapshot,
 ) error {
 	if action == nil {
@@ -43,32 +43,26 @@ func (gate *PreTradeGate) CheckEntry(
 		return nil
 	}
 
-	maxQuoteAge := viper.GetDuration("trading.max_quote_age")
-
-	if maxQuoteAge > 0 {
+	if risk.MaxQuoteAge > 0 {
 		if quote.UpdatedAt.IsZero() {
 			return ErrQuoteStale
 		}
 
-		if time.Since(quote.UpdatedAt) > maxQuoteAge {
+		if time.Since(quote.UpdatedAt) > risk.MaxQuoteAge {
 			return ErrQuoteStale
 		}
 	}
 
 	spreadBps := spreadBps(quote)
 
-	maxSpreadBps := viper.GetFloat64("trading.max_spread_bps")
-
-	if maxSpreadBps > 0 && spreadBps > maxSpreadBps {
+	if risk.MaxSpreadBps > 0 && spreadBps > risk.MaxSpreadBps {
 		return ErrSpreadTooWide
 	}
 
-	maxSlippageBps := viper.GetFloat64("trading.max_slippage_bps")
-
-	if maxSlippageBps > 0 {
+	if risk.MaxSlippageBps > 0 {
 		estimatedSlippageBps := spreadBps / 2
 
-		if estimatedSlippageBps > maxSlippageBps {
+		if estimatedSlippageBps > risk.MaxSlippageBps {
 			return ErrSlippageTooHigh
 		}
 	}

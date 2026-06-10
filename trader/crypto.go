@@ -45,9 +45,9 @@ func NewCrypto(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:public", "kraken:private", "kraken:futures", "ui", "raw"},
+			[]internal.Channel{internal.ChannelKrakenPublic, internal.ChannelKrakenPrivate, internal.ChannelKrakenFutures, internal.ChannelUI, internal.ChannelRaw},
 			[]internal.Subscription{
-				internal.Subscribe("raw", "trader:crypto"),
+				internal.Subscribe(internal.ChannelRaw, "trader:crypto"),
 			},
 		),
 		pairs:       &sync.Map{},
@@ -67,7 +67,7 @@ func (crypto *Crypto) Tick() (err error) {
 		default:
 			crypto.ensureAnchorChart()
 
-			message, err := crypto.bus.Receive("raw")
+			message, err := crypto.bus.Receive(internal.ChannelRaw)
 
 			if errnie.Error(err) != nil || message == nil {
 				continue
@@ -93,7 +93,7 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
-				errnie.Error(crypto.bus.Send("ui", "wallet", frame))
+				errnie.Error(crypto.bus.Send(internal.ChannelUI, "wallet", frame))
 			case "instrument":
 				var (
 					instrument *market.InstrumentUpdate
@@ -130,21 +130,21 @@ func (crypto *Crypto) Tick() (err error) {
 
 				errnie.Info(fmt.Sprintf("subscribing to %d pairs", len(pairs)))
 
-				errnie.Error(crypto.bus.Send("raw", "symbols", pairs))
+				errnie.Error(crypto.bus.Send(internal.ChannelRaw, "symbols", pairs))
 
-				errnie.Error(crypto.bus.Send("kraken:public", "ticker", types.KrakenMessage{
+				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "ticker", types.KrakenMessage{
 					Method: "subscribe",
 					Params: market.NewTickerParams(pairs),
 					ReqID:  time.Now().UnixNano(),
 				}))
 
-				errnie.Error(crypto.bus.Send("kraken:public", "book", types.KrakenMessage{
+				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "book", types.KrakenMessage{
 					Method: "subscribe",
 					Params: market.NewBookParams(pairs, bookDepth),
 					ReqID:  time.Now().UnixNano(),
 				}))
 
-				errnie.Error(crypto.bus.Send("kraken:public", "trade", types.KrakenMessage{
+				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "trade", types.KrakenMessage{
 					Method: "subscribe",
 					Params: market.NewTradeParams(pairs),
 					ReqID:  time.Now().UnixNano(),
@@ -160,7 +160,7 @@ func (crypto *Crypto) Tick() (err error) {
 					level3Params := market.NewLevel3Params(pairs)
 					level3Params.Token = token
 
-					errnie.Error(crypto.bus.Send("kraken:private", "level3", types.KrakenMessage{
+					errnie.Error(crypto.bus.Send(internal.ChannelKrakenPrivate, "level3", types.KrakenMessage{
 						Method: "subscribe",
 						Params: level3Params,
 						ReqID:  time.Now().UnixNano(),
@@ -207,7 +207,7 @@ func (crypto *Crypto) Tick() (err error) {
 					futuresProducts = append(futuresProducts, productID)
 				}
 
-				errnie.Error(crypto.bus.Send("kraken:futures", "book", futures.SubscribeMessage{
+				errnie.Error(crypto.bus.Send(internal.ChannelKrakenFutures, "book", futures.SubscribeMessage{
 					Event:      "subscribe",
 					Feed:       futures.BookFeed,
 					ProductIDs: futuresProducts,
@@ -222,7 +222,7 @@ func (crypto *Crypto) Tick() (err error) {
 					continue
 				}
 
-				errnie.Error(crypto.bus.Send("raw", "order", action))
+				errnie.Error(crypto.bus.Send(internal.ChannelRaw, "order", action))
 			}
 		}
 	}
@@ -250,7 +250,7 @@ func (crypto *Crypto) ensureAnchorChart() {
 			return
 		}
 
-		errnie.Error(crypto.bus.Send("kraken:public", "ohlc", types.KrakenMessage{
+		errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "ohlc", types.KrakenMessage{
 			Method: "subscribe",
 			Params: candleParams,
 			ReqID:  time.Now().UnixNano(),

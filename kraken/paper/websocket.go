@@ -4,6 +4,7 @@ import (
 	"container/ring"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"strconv"
@@ -52,8 +53,21 @@ func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	bookStore *krakenmarket.BookStore,
-) *WebSocket {
+	catalog *response.PairCatalog,
+) (*WebSocket, error) {
+	if catalog == nil {
+		return nil, fmt.Errorf("paper websocket: nil pair catalog")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
+
+	balances, balancesErr := response.NewBalances(ctx, pool, catalog)
+
+	if balancesErr != nil {
+		cancel()
+
+		return nil, balancesErr
+	}
 
 	ws := &WebSocket{
 		ctx:       ctx,
@@ -63,13 +77,13 @@ func NewWebSocket(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"raw", "kraken:private", "ui"},
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenPrivate, internal.ChannelUI},
 			[]internal.Subscription{
-				internal.Subscribe("kraken:private", "kraken:paper"),
+				internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:paper"),
 			},
 		),
 		sockets: map[string]types.Socket{
-			"balances":   response.NewBalances(ctx, pool),
+			"balances":   balances,
 			"orders":     response.NewOrders(ctx, pool, bookStore),
 			"executions": response.NewExecutions(ctx, pool),
 		},
@@ -84,7 +98,7 @@ func NewWebSocket(
 		ws.sockets["balances"],
 	)
 
-	return ws
+	return ws, nil
 }
 
 /*
@@ -161,7 +175,7 @@ func (ws *WebSocket) Tick() (err error) {
 			var message *qpool.QValue[any]
 
 			if message, ws.err = ws.bus.Poll(
-				"kraken:private",
+				internal.ChannelKrakenPrivate,
 			); errnie.Error(ws.err) != nil || message == nil {
 				qvaluePool.Put(slot)
 				break
@@ -199,11 +213,11 @@ func (ws *WebSocket) Tick() (err error) {
 
 				if orderSocket, ok := ws.sockets["orders"].(*response.Orders); ok {
 					for _, execution := range orderSocket.DrainExecutions() {
-						ws.bus.Send("raw", "executions", []user.Execution{execution})
+						ws.bus.Send(internal.ChannelRaw, "executions", []user.Execution{execution})
 					}
 
-					ws.bus.Send("raw", "balances", orderSocket.Wallet())
-					ws.bus.Send("ui", "balances", orderSocket.Wallet())
+					ws.bus.Send(internal.ChannelRaw, "balances", orderSocket.Wallet())
+					ws.bus.Send(internal.ChannelUI, "balances", orderSocket.Wallet())
 				}
 			case "executions":
 				socketMessage = ws.sockets["executions"].Send(message)
@@ -229,8 +243,8 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send("raw", "balances", balances)
-				ws.bus.Send("ui", "balances", balances)
+				ws.bus.Send(internal.ChannelRaw, "balances", balances)
+				ws.bus.Send(internal.ChannelUI, "balances", balances)
 			case "orders":
 				orders := []trading.OrderUpdate{}
 
@@ -240,7 +254,7 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send("raw", "orders", orders)
+				ws.bus.Send(internal.ChannelRaw, "orders", orders)
 			case "executions":
 				executions := []user.Execution{}
 
@@ -250,7 +264,7 @@ func (ws *WebSocket) Tick() (err error) {
 					continue
 				}
 
-				ws.bus.Send("raw", "executions", executions)
+				ws.bus.Send(internal.ChannelRaw, "executions", executions)
 			}
 
 			socketMessage.Release()

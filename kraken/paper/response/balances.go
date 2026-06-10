@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"sync"
@@ -39,17 +40,25 @@ type Balances struct {
 	observers     []types.Socket
 	mu            sync.Mutex
 	quoteCurrency string
-	takerFeeRate  float64
+	catalog       *PairCatalog
 	model         user.Balances
 	realized      *big.Rat // running net realized P&L over the session
 	holdings      map[string]*big.Rat
 	costBasis     map[string]*big.Rat // fee-inclusive average cost per base asset
 }
 
-func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
+func NewBalances(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	catalog *PairCatalog,
+) (*Balances, error) {
+	if catalog == nil {
+		return nil, fmt.Errorf("paper balances: nil pair catalog")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
-	quote := viper.GetViper().GetString("market.quote_currency")
+	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
 
 	return &Balances{
 		ctx:           ctx,
@@ -57,23 +66,19 @@ func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 		err:           nil,
 		pool:          pool,
 		observers:     make([]types.Socket, 0),
-		quoteCurrency: strings.ToUpper(quote),
-		takerFeeRate:  viper.GetFloat64("trading.paper.taker_fee_pct") / 100,
+		quoteCurrency: quote,
+		catalog:       catalog,
 		model: user.Balances{
 			Asset: []user.Balance{
 				{
-					Asset:      viper.GetViper().GetString("market.quote_currency"),
+					Asset:      viper.GetString("market.quote_currency"),
 					AssetClass: "currency",
 					Balance: viper.GetFloat64(
-						"trading.paper.wallet." + strings.ToLower(
-							viper.GetViper().GetString("market.quote_currency"),
-						),
+						"trading.paper.wallet." + strings.ToLower(quote),
 					),
 					Wallets: []user.BalanceWallet{{
 						Balance: viper.GetFloat64(
-							"trading.paper.wallet." + strings.ToLower(
-								viper.GetViper().GetString("market.quote_currency"),
-							),
+							"trading.paper.wallet." + strings.ToLower(quote),
 						),
 						Type: "spot",
 						ID:   "main",
@@ -84,7 +89,7 @@ func NewBalances(ctx context.Context, pool *qpool.Q[any]) *Balances {
 		realized:  new(big.Rat),
 		holdings:  make(map[string]*big.Rat),
 		costBasis: make(map[string]*big.Rat),
-	}
+	}, nil
 }
 
 func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage {
@@ -151,7 +156,23 @@ func (balances *Balances) ApplyFill(
 	defer balances.mu.Unlock()
 
 	notional := params.OrderQty * fillPrice
-	fee := notional * balances.takerFeeRate
+
+	feeRate, feeErr := balances.catalog.FeeRate(params.Symbol, params.OrderType)
+
+	if feeErr != nil {
+		return user.Execution{}, feeErr
+	}
+
+	fee := notional * feeRate
+	liquidity := "t"
+
+	if params.OrderType == trading.Limit {
+		liquidity = "m"
+	}
+
+	if recordErr := balances.catalog.RecordFill(params.Symbol, notional); recordErr != nil {
+		return user.Execution{}, recordErr
+	}
 
 	switch params.Side {
 	case trading.Buy:
@@ -191,7 +212,7 @@ func (balances *Balances) ApplyFill(
 		CumQty:       params.OrderQty,
 		CumCost:      notional,
 		Cost:         notional,
-		LiquidityInd: "t",
+		LiquidityInd: liquidity,
 		FeeUsdEquiv:  fee,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339Nano),
 	}

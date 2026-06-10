@@ -75,12 +75,12 @@ func NewWebSocket(
 			bus: internal.NewBus(
 				wsCtx,
 				pool,
-				[]string{"raw", "level3", "kraken:public", "ui"},
+				[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
 				[]internal.Subscription{
-					internal.Subscribe("raw", "kraken:private:raw"),
-					internal.Subscribe("level3", "kraken:private:level3"),
-					internal.Subscribe("kraken:public", "kraken:private:public"),
-					internal.Subscribe("kraken:private", "kraken:private:bus"),
+					internal.Subscribe(internal.ChannelRaw, "kraken:private:raw"),
+					internal.Subscribe(internal.ChannelLevel3, "kraken:private:level3"),
+					internal.Subscribe(internal.ChannelKrakenPublic, "kraken:private:public"),
+					internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:private:bus"),
 				},
 			),
 			streams:   &sync.Map{},
@@ -298,8 +298,8 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send("raw", "balances", balances)
-			ws.bus.Send("ui", "balances", balances)
+			ws.bus.Send(internal.ChannelRaw, "balances", balances)
+			ws.bus.Send(internal.ChannelUI, "balances", balances)
 		case "orders":
 			orders := []trading.OrderUpdate{}
 
@@ -308,7 +308,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send("raw", "orders", orders)
+			ws.bus.Send(internal.ChannelRaw, "orders", orders)
 		case "executions":
 			executions := []user.Execution{}
 
@@ -317,7 +317,7 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bus.Send("raw", "executions", executions)
+			ws.bus.Send(internal.ChannelRaw, "executions", executions)
 		case "level3":
 			level3Updates := make([]market.Level3Update, 0)
 
@@ -328,7 +328,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 			for index := range level3Updates {
 				update := level3Updates[index]
-				ws.bus.Send("raw", "level3", &update)
+				ws.bus.Send(internal.ChannelRaw, "level3", &update)
 			}
 		}
 
@@ -396,7 +396,7 @@ func (ws *WebSocket) publishOhlc(message *types.SocketMessage) {
 	for _, candle := range candles {
 		ws.streams.Range(func(key, value any) bool {
 			if key == candle.Symbol {
-				ws.bus.Send("ui", "ohlc", candle)
+				ws.bus.Send(internal.ChannelUI, "ohlc", candle)
 			}
 
 			return true

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
@@ -17,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 type Desk struct {
@@ -28,8 +28,10 @@ type Desk struct {
 	treeStats   *logic.TreeStats
 	orders      *OrderRegistry
 	audit       *audit.Writer
+	deadLetter  *DeadLetter
 	gate        PreTradeGate
 	instruments *krakenmarket.InstrumentRegistry
+	regime      *market.RegimeClassifier
 }
 
 func NewDesk(
@@ -39,6 +41,7 @@ func NewDesk(
 	treeStats *logic.TreeStats,
 	auditWriter *audit.Writer,
 	instruments *krakenmarket.InstrumentRegistry,
+	regime *market.RegimeClassifier,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -49,16 +52,18 @@ func NewDesk(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]string{"kraken:private", "ui"},
+			[]internal.Channel{internal.ChannelKrakenPrivate, internal.ChannelUI},
 			[]internal.Subscription{
-				internal.Subscribe("raw", "desk"),
+				internal.Subscribe(internal.ChannelRaw, "desk"),
 			},
 		),
 		ledger:      ledger,
 		treeStats:   treeStats,
 		orders:      NewOrderRegistry(),
 		audit:       auditWriter,
+		deadLetter:  NewDeadLetter(auditWriter),
 		instruments: instruments,
+		regime:      regime,
 	}
 }
 
@@ -72,7 +77,7 @@ func (desk *Desk) Tick() error {
 			desk.orders.Delete(clOrdID)
 		}
 
-		message, err := desk.bus.Receive("raw")
+		message, err := desk.bus.Receive(internal.ChannelRaw)
 
 		if errnie.Error(err) != nil {
 			if errors.Is(err, context.Canceled) {
@@ -91,17 +96,23 @@ func (desk *Desk) Tick() error {
 			action, ok := message.Value.(*logic.Action)
 
 			if !ok {
+				desk.deadLetter.Record("order", "invalid action payload", map[string]any{
+					"message_type": message.Type,
+				})
 				errnie.Error(errors.New("desk: invalid order action"))
 				continue
 			}
 
-			if errnie.Error(desk.submitAction(action)) != nil {
+			if submitErr := desk.submitAction(action); submitErr != nil {
+				desk.deadLetter.Record("order", submitErr.Error(), desk.actionDetail(action))
+				errnie.Error(submitErr)
 				continue
 			}
 		case "orders":
 			updates, ok := message.Value.([]trading.OrderUpdate)
 
 			if !ok {
+				desk.deadLetter.Record("orders", "invalid payload", nil)
 				errnie.Error(errors.New("desk: invalid orders"))
 				continue
 			}
@@ -113,6 +124,7 @@ func (desk *Desk) Tick() error {
 			updates, ok := message.Value.([]user.Execution)
 
 			if !ok {
+				desk.deadLetter.Record("executions", "invalid payload", nil)
 				errnie.Error(errors.New("desk: invalid executions"))
 				continue
 			}
@@ -135,7 +147,24 @@ func (desk *Desk) Tick() error {
 					)
 				}
 			}
+		default:
+			desk.deadLetter.Record("bus", "unknown message type", map[string]any{
+				"message_type": message.Type,
+			})
 		}
+	}
+}
+
+func (desk *Desk) actionDetail(action *logic.Action) map[string]any {
+	if action == nil {
+		return nil
+	}
+
+	return map[string]any{
+		"symbol":   action.Symbol,
+		"type":     action.Type.String(),
+		"side":     string(action.Side),
+		"fraction": action.Fraction,
 	}
 }
 
@@ -144,6 +173,7 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		return errnie.Error(errors.New("desk: nil action"))
 	}
 
+	risk := CurrentRiskContext()
 	heldQty := desk.ledger.HeldQuantity(action.Symbol)
 
 	if action.Type.IsExit() && heldQty <= 0 {
@@ -151,7 +181,7 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		return errnie.Error(ErrNoPosition)
 	}
 
-	if !action.Type.IsExit() && desk.ledger.OpenCount() >= viper.GetInt("trading.max_concurrent_positions") {
+	if !action.Type.IsExit() && desk.ledger.OpenCount() >= risk.MaxConcurrentPositions {
 		if heldQty <= 0 {
 			desk.publishDecision(action, "rejected", "max concurrent positions")
 
@@ -173,7 +203,7 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		return errnie.Error(ErrNoMark)
 	}
 
-	if gateErr := desk.gate.CheckEntry(action, quote); gateErr != nil {
+	if gateErr := desk.gate.CheckEntry(action, risk, quote); gateErr != nil {
 		desk.publishDecision(action, "rejected", gateErr.Error())
 		return errnie.Error(gateErr)
 	}
@@ -191,8 +221,16 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		constraintsPtr = &constraints
 	}
 
+	entryScale := 1.0
+
+	if !action.Type.IsExit() && desk.regime != nil {
+		entryScale = risk.EntryScaleForRegime(desk.regime.MarketMean())
+	}
+
 	quantity, sizeErr := SizeOrder(
 		action,
+		risk,
+		entryScale,
 		desk.ledger.QuoteCash(),
 		heldQty,
 		mark,
@@ -245,7 +283,7 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 	desk.orders.Store(clOrdID, frame)
 	desk.publishDecision(action, "submitted", "")
 
-	return errnie.Error(desk.bus.Send("kraken:private", "orders", frame))
+	return errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", frame))
 }
 
 func (desk *Desk) instrumentConstraints(symbol string) (krakenmarket.InstrumentConstraints, bool) {
@@ -262,6 +300,7 @@ func (desk *Desk) publishDecision(
 	reason string,
 ) {
 	if action == nil {
+		desk.deadLetter.Record("decision", "nil action", nil)
 		return
 	}
 
@@ -274,7 +313,7 @@ func (desk *Desk) publishDecision(
 		)
 	}
 
-	errnie.Error(desk.bus.Send("ui", "decision", map[string]any{
+	errnie.Error(desk.bus.Send(internal.ChannelUI, "decision", map[string]any{
 		"event":    "decision",
 		"type":     action.Type.String(),
 		"symbol":   action.Symbol,
@@ -297,26 +336,23 @@ func (desk *Desk) recordDeskDecision(
 		return
 	}
 
-	frame := map[string]any{
-		"event":   "desk_decision",
-		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-		"symbol":  action.Symbol,
-		"type":    action.Type.String(),
-		"side":    string(action.Side),
-		"key":     action.BranchKey,
-		"verdict": verdict,
-		"reason":  reason,
+	frame := audit.DeskDecisionFrame{
+		RecordedAt: time.Now().UTC(),
+		Symbol:     action.Symbol,
+		ActionType: action.Type.String(),
+		Side:       string(action.Side),
+		BranchKey:  action.BranchKey,
+		Verdict:    verdict,
+		Reason:     reason,
 	}
 
 	if verdict == "rejected" && reason != "" {
-		dedupeKey := fmt.Sprintf("desk_reject:%s:%s:%s", action.Symbol, action.Type.String(), reason)
-
-		errnie.Error(desk.audit.EnqueueDeduped(dedupeKey, frame))
+		errnie.Error(desk.audit.EnqueueDedupedFrame(frame))
 
 		return
 	}
 
-	errnie.Error(desk.audit.Enqueue(frame))
+	errnie.Error(desk.audit.EnqueueFrame(frame))
 }
 
 func (desk *Desk) CheckOrder(orderID string) error {
@@ -326,7 +362,7 @@ func (desk *Desk) CheckOrder(orderID string) error {
 		return errnie.Error(fmt.Errorf("desk: order not found: %s", orderID))
 	}
 
-	return errnie.Error(desk.bus.Send("kraken:private", "orders", frame))
+	return errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", frame))
 }
 
 func (desk *Desk) Close() error {

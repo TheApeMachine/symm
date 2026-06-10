@@ -24,7 +24,7 @@ func TestWireExecutionAdapter(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(len(systems), ShouldEqual, 1)
-			So(systems[0], ShouldHaveSameTypeAs, paper.NewWebSocket(ctx, pool, bookStore))
+			So(systems[0], ShouldHaveSameTypeAs, (*paper.WebSocket)(nil))
 		})
 
 		Convey("It should fail closed for live without credentials", func() {

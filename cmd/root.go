@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -150,7 +151,7 @@ var (
 				ledger,
 				story,
 				trader.NewCrypto(systemCtx, pool, runtime.Instruments),
-				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter, runtime.Instruments),
+				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter, runtime.Instruments, story.Regime()),
 				ui.NewHub(systemCtx, pool),
 			)
 
@@ -252,6 +253,11 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
+	viper.OnConfigChange(func(_ fsnotify.Event) {
+		broker.RefreshRiskContext()
+	})
+
+	broker.RefreshRiskContext()
 
 	if auditPath := os.Getenv("SYMM_AUDIT_FILE"); auditPath != "" {
 		viper.Set("trading.audit.file", auditPath)

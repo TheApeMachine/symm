@@ -29,12 +29,12 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 		So(system, ShouldNotBeNil)
 		So(system.chart, ShouldNotBeNil)
 
-		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
 		receiveDone := make(chan map[string]any, 1)
 
 		go func() {
 			for {
-				row, receiveErr := uiBus.Receive("ui")
+				row, receiveErr := uiBus.Receive(internal.ChannelUI)
 
 				if receiveErr != nil {
 					if ctx.Err() != nil {
@@ -134,11 +134,11 @@ func BenchmarkSystemPublishChartOnTrade(b *testing.B) {
 		b.Fatal("system is nil")
 	}
 
-	uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+	uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
 
 	go func() {
 		for {
-			row, receiveErr := uiBus.Receive("ui")
+			row, receiveErr := uiBus.Receive(internal.ChannelUI)
 
 			if receiveErr != nil {
 				if ctx.Err() != nil {

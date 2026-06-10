@@ -51,14 +51,14 @@ func TestSystemPublishSnapshot(t *testing.T) {
 		So(integrateErr, ShouldBeNil)
 		So(stepped, ShouldBeTrue)
 
-		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
 
 		Convey("It should publish a manifold field snapshot on the ui bus", func() {
 			received := make(chan map[string]any, 1)
 
 			go func() {
 				for {
-					row, receiveErr := uiBus.Receive("ui")
+					row, receiveErr := uiBus.Receive(internal.ChannelUI)
 
 					if receiveErr != nil {
 						return
