@@ -40,7 +40,9 @@ func NewSystem(
 		ctx,
 		pool,
 		[]string{"measurements", "ui"},
-		[]string{"raw"},
+		[]internal.Subscription{
+			internal.Subscribe("raw", "signal:"+string(source)),
+		},
 	)
 
 	gauge, err := telemetry.NewGauge(bus, source)

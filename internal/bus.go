@@ -22,7 +22,7 @@ func NewBus(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	broadcasts []string,
-	subscribers []string,
+	subscriptions []Subscription,
 ) *Bus {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -40,15 +40,21 @@ func NewBus(
 		)
 	}
 
-	for _, subscriber := range subscribers {
-		if bus.broadcasts[subscriber] == nil {
-			bus.broadcasts[subscriber] = pool.CreateBroadcastGroup(
-				subscriber, viper.GetDuration("system.queue.ttl"),
+	for _, subscription := range subscriptions {
+		if bus.broadcasts[subscription.Channel] == nil {
+			bus.broadcasts[subscription.Channel] = pool.CreateBroadcastGroup(
+				subscription.Channel, viper.GetDuration("system.queue.ttl"),
 			)
 		}
 
-		bus.subscribers[subscriber] = bus.broadcasts[subscriber].Subscribe(
-			subscriber, viper.GetInt("system.queue.buffer"),
+		subscriberName := subscription.Name
+
+		if subscriberName == "" {
+			subscriberName = subscription.Channel
+		}
+
+		bus.subscribers[subscription.Channel] = bus.broadcasts[subscription.Channel].Subscribe(
+			subscriberName, viper.GetInt("system.queue.buffer"),
 		)
 	}
 

@@ -74,6 +74,58 @@ func TestEvalContextResolveRequiresConfig(t *testing.T) {
 	})
 }
 
+func TestEvalContextRegimeAdjustedSurpriseBaseline(t *testing.T) {
+	Convey("Given calm and turbulent fluid measurements", t, func() {
+		viper.Set("trading.entry.surprise_baseline", 1.0)
+		viper.Set("trading.entry.turbulence_surprise_scale", 0.25)
+
+		calm := NewEvalContext([]Measurement{
+			*NewMeasurement(
+				SourceFluid,
+				"BTC/EUR",
+				0,
+				0.1,
+				0,
+				0,
+				0,
+				CategoryLaminar,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.7,
+				0,
+			),
+		}, nil)
+
+		turbulent := NewEvalContext([]Measurement{
+			*NewMeasurement(
+				SourceFluid,
+				"BTC/EUR",
+				0,
+				0.9,
+				0,
+				0,
+				0,
+				CategoryTurbulent,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.7,
+				0,
+			),
+		}, nil)
+
+		calmFloor, calmErr := calm.Resolve("surprise.regime_adjusted_baseline")
+		turbulentFloor, turbulentErr := turbulent.Resolve("surprise.regime_adjusted_baseline")
+
+		Convey("It should lower the surprise floor when turbulence is high", func() {
+			So(calmErr, ShouldBeNil)
+			So(turbulentErr, ShouldBeNil)
+			So(calmFloor, ShouldAlmostEqual, 0.975, 1e-9)
+			So(turbulentFloor, ShouldAlmostEqual, 0.775, 1e-9)
+			So(turbulentFloor, ShouldBeLessThan, calmFloor)
+		})
+	})
+}
+
 func TestCategoryDynamicConfidence(t *testing.T) {
 	Convey("Given a category subject with a dynamic confidence ref", t, func() {
 		category := &Category{

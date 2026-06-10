@@ -70,8 +70,10 @@ func (actionType ActionType) KrakenOrderType() (trading.OrderType, error) {
 	switch actionType {
 	case ActionLimit:
 		return trading.Limit, nil
-	case ActionMarket, ActionSettlePosition:
+	case ActionMarket:
 		return trading.Market, nil
+	case ActionSettlePosition:
+		return trading.SettlePosition, nil
 	case ActionIceberg:
 		return trading.Iceberg, nil
 	case ActionStopLoss:

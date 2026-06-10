@@ -2,7 +2,11 @@ package logic
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 )
+
+const firstEntryBranchIndex = 5
 
 /*
 TraceNode is one playbook gate visited during an evaluation.
@@ -18,9 +22,9 @@ type TraceNode struct {
 TraceCondition records whether a single leaf held at a gate.
 */
 type TraceCondition struct {
-	Label string
+	Label   string
 	Negated bool
-	Held  bool
+	Held    bool
 }
 
 /*
@@ -161,4 +165,59 @@ func (trace *EvalTrace) PathKey() string {
 	}
 
 	return bottleneck.Key
+}
+
+/*
+Adopt replaces this trace with the nodes from another trace.
+*/
+func (trace *EvalTrace) Adopt(other *EvalTrace) {
+	if trace == nil || other == nil {
+		return
+	}
+
+	trace.Nodes = append([]TraceNode(nil), other.Nodes...)
+}
+
+/*
+AuditScore ranks how far an entry-path evaluation progressed before blocking.
+Higher depth wins; ties prefer earlier entry branches (ignition first).
+*/
+func (trace *EvalTrace) AuditScore() (depth int, branchIndex int) {
+	if trace == nil || len(trace.Nodes) == 0 || !trace.Nodes[0].Held {
+		return 0, 999
+	}
+
+	rootKey := strings.Split(trace.Nodes[0].Key, "/")[0]
+	branchIndex, err := strconv.Atoi(rootKey)
+
+	if err != nil {
+		return 0, 999
+	}
+
+	bottleneck := trace.Bottleneck()
+
+	if bottleneck == nil {
+		return 0, branchIndex
+	}
+
+	depth = strings.Count(bottleneck.Key, "/") + 1
+
+	if !bottleneck.Held {
+		return depth, branchIndex
+	}
+
+	return len(trace.Nodes), branchIndex
+}
+
+/*
+BeatsAuditScore reports whether this trace is a better audit candidate.
+*/
+func (trace *EvalTrace) BeatsAuditScore(depth int, branchIndex int) bool {
+	candidateDepth, candidateBranch := trace.AuditScore()
+
+	if candidateDepth != depth {
+		return candidateDepth > depth
+	}
+
+	return candidateBranch < branchIndex
 }

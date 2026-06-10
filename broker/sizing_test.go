@@ -19,7 +19,7 @@ func TestSizeOrderEntry(t *testing.T) {
 			Fraction: 0.25,
 		}
 
-		quantity, err := SizeOrder(action, 200, 0, 50_000)
+		quantity, err := SizeOrder(action, 200, 0, 50_000, nil)
 
 		Convey("It should size from cash fraction and mark", func() {
 			So(err, ShouldBeNil)
@@ -36,7 +36,7 @@ func TestSizeOrderExit(t *testing.T) {
 			Fraction: 1.0,
 		}
 
-		quantity, err := SizeOrder(action, 200, 0.5, 50_000)
+		quantity, err := SizeOrder(action, 200, 0.5, 50_000, nil)
 
 		Convey("It should size from inventory fraction", func() {
 			So(err, ShouldBeNil)
@@ -53,7 +53,7 @@ func TestSizeOrderExitRequiresInventory(t *testing.T) {
 			Fraction: 1.0,
 		}
 
-		_, err := SizeOrder(action, 200, 0, 50_000)
+		_, err := SizeOrder(action, 200, 0, 50_000, nil)
 
 		Convey("It should reject the exit", func() {
 			So(err, ShouldEqual, ErrNoPosition)
@@ -71,7 +71,7 @@ func TestSizeOrderNegativeQuoteCash(t *testing.T) {
 			Fraction: 0.25,
 		}
 
-		_, err := SizeOrder(action, -1, 0, 50_000)
+		_, err := SizeOrder(action, -1, 0, 50_000, nil)
 
 		Convey("It should return a distinct error", func() {
 			So(err, ShouldEqual, ErrNegativeQuoteCash)

@@ -30,15 +30,13 @@ func TestRootCommand(t *testing.T) {
 }
 
 func TestEmbeddedConfig(t *testing.T) {
-	Convey("Given embedded split configs", t, func() {
-		infra, infraErr := embedded.ReadFile("cfg/infra.yml")
-		strategy, strategyErr := embedded.ReadFile("cfg/strategy.yml")
+	Convey("Given embedded config", t, func() {
+		configBytes, configErr := embedded.ReadFile("cfg/config.yml")
 
-		Convey("It should ship infra.yml and strategy.yml in the binary", func() {
-			So(infraErr, ShouldBeNil)
-			So(strategyErr, ShouldBeNil)
-			So(string(infra), ShouldContainSubstring, "quote_currency")
-			So(string(strategy), ShouldContainSubstring, "position_fraction")
+		Convey("It should ship config.yml in the binary", func() {
+			So(configErr, ShouldBeNil)
+			So(string(configBytes), ShouldContainSubstring, "quote_currency")
+			So(string(configBytes), ShouldContainSubstring, "position_fraction")
 		})
 	})
 }

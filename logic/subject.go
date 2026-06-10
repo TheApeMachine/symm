@@ -97,8 +97,14 @@ func (subject *Subject) Evaluate(
 			return false, nil
 		}
 
-		if subject.Category.Surprise > 0 &&
-			measurement.Surprise < subject.Category.Surprise {
+		surpriseFloor, surpriseErr := subject.Category.surpriseFloor(evalContext)
+
+		if surpriseErr != nil {
+			return false, surpriseErr
+		}
+
+		if surpriseFloor > 0 &&
+			measurement.Surprise < surpriseFloor {
 			return false, nil
 		}
 

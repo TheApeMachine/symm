@@ -42,6 +42,7 @@ type WebSocket struct {
 	pool        *qpool.Q[any]
 	conn        *websocket.Conn
 	bus         *internal.Bus
+	bookStore   *market.BookStore
 	recorder    io.Writer
 	streams     *sync.Map
 	latencies   *ring.Ring
@@ -51,19 +52,25 @@ type WebSocket struct {
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	bookStore *market.BookStore,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
 		socket = &WebSocket{
-			ctx:    ctx,
-			cancel: cancel,
-			pool:   pool,
+			ctx:       ctx,
+			cancel:    cancel,
+			pool:      pool,
+			bookStore: bookStore,
 			bus: internal.NewBus(
 				ctx,
 				pool,
 				[]string{"raw", "level3", "kraken:public", "ui"},
-				[]string{"raw", "level3", "kraken:public"},
+				[]internal.Subscription{
+					internal.Subscribe("raw", "kraken:public:raw"),
+					internal.Subscribe("level3", "kraken:public:level3"),
+					internal.Subscribe("kraken:public", "kraken:public:bus"),
+				},
 			),
 			streams:   &sync.Map{},
 			latencies: ring.New(64),
@@ -180,6 +187,21 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 
 	if err := errnie.Error(object.Unmarshal(message)); err != nil {
 		return
+	}
+
+	if message.Channel == "book" && ws.bookStore != nil {
+		updates := object.(*market.BookUpdates)
+
+		for _, update := range *updates {
+			if update == nil {
+				continue
+			}
+
+			if applyErr := ws.bookStore.Apply(update); applyErr != nil {
+				errnie.Error(applyErr)
+				continue
+			}
+		}
 	}
 
 	ws.bus.Send("raw", message.Channel, object)

@@ -40,7 +40,7 @@ func NewEngine(ctx context.Context, pool *qpool.Q[any]) (*Engine, error) {
 			ctx,
 			pool,
 			[]string{"kraken:public"},
-			[]string{},
+			nil,
 		),
 		systems: make([]System, 0),
 	}
@@ -52,25 +52,53 @@ func (engine *Engine) Context() context.Context {
 	return engine.ctx
 }
 
-func (engine *Engine) Start() (err error) {
-	wg := sync.WaitGroup{}
+func (engine *Engine) Start() error {
+	var (
+		waitGroup sync.WaitGroup
+		errorMu   sync.Mutex
+		firstErr  error
+	)
 
-	for _, system := range engine.systems {
-		wg.Go(func() {
-			if err := system.Tick(); err != nil {
-				errnie.Error(err, "%T: %w", system, err)
-			}
-		})
+	recordErr := func(tickErr error) {
+		if tickErr == nil || errors.Is(tickErr, context.Canceled) {
+			return
+		}
+
+		errorMu.Lock()
+
+		if firstErr == nil {
+			firstErr = tickErr
+		}
+
+		errorMu.Unlock()
+		engine.cancel()
 	}
 
-	engine.bus.Send("kraken:public", "instrument", types.KrakenMessage{
+	for _, system := range engine.systems {
+		waitGroup.Add(1)
+
+		go func(running System) {
+			defer waitGroup.Done()
+
+			recordErr(running.Tick())
+		}(system)
+	}
+
+	errnie.Error(engine.bus.Send("kraken:public", "instrument", types.KrakenMessage{
 		Method: "subscribe",
 		Params: market.NewInstrumentParams(),
 		ReqID:  time.Now().UnixNano(),
-	})
+	}))
 
-	wg.Wait()
-	return nil
+	waitGroup.Wait()
+
+	closeErr := engine.Close()
+
+	if firstErr != nil {
+		return firstErr
+	}
+
+	return errnie.Error(closeErr)
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
@@ -99,8 +127,8 @@ func (engine *Engine) Close() (err error) {
 	engine.cancel()
 
 	for _, system := range engine.systems {
-		if err := system.Close(); err != nil {
-			err = errors.Join(err, fmt.Errorf("%T: %w", system, err))
+		if closeErr := system.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("%T: %w", system, closeErr))
 		}
 	}
 

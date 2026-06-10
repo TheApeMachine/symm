@@ -24,19 +24,9 @@ func configDir() string {
 func loadMergedConfig() error {
 	viper.Reset()
 	viper.SetConfigType("yaml")
+	viper.SetConfigFile(filepath.Join(configDir(), "config.yml"))
 
-	infraPath := filepath.Join(configDir(), "infra.yml")
-	strategyPath := filepath.Join(configDir(), "strategy.yml")
-
-	viper.SetConfigFile(infraPath)
-
-	if err := viper.MergeInConfig(); err != nil {
-		return err
-	}
-
-	viper.SetConfigFile(strategyPath)
-
-	return viper.MergeInConfig()
+	return viper.ReadInConfig()
 }
 
 /*

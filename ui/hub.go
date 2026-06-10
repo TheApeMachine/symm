@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -44,29 +45,67 @@ func allowLocalhostOrigin(request *http.Request) bool {
 }
 
 /*
-Hub subscribes to the ui broadcast group and forwards frames to one dashboard
-websocket client. Balance snapshots are retained so reconnects replay the last
-known state. The frontend never sends frames upstream.
+Hub subscribes to the ui broadcast group and forwards frames to all connected
+dashboard websocket clients.
 */
 type Hub struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
-	frontend     atomic.Pointer[frontendClient]
+	clients      sync.Map
 	server       *http.Server
 	lastBalances atomic.Pointer[user.Balances]
 }
 
 type frontendClient struct {
-	hub  *Hub
-	conn *websocket.Conn
-	mu   sync.Mutex
+	hub      *Hub
+	conn     atomic.Pointer[websocket.Conn]
+	client   string
+	outbound chan []byte
+	closed   atomic.Bool
 }
 
-/*
-NewHub subscribes to all broadcast groups on pool.
-*/
+func startFrontendClient(hub *Hub, conn *websocket.Conn) *frontendClient {
+	bufferSize := viper.GetInt("ui.outbound_buffer")
+
+	if bufferSize <= 0 {
+		bufferSize = 512
+	}
+
+	client := &frontendClient{
+		hub:      hub,
+		client:   uuid.NewString(),
+		outbound: make(chan []byte, bufferSize),
+	}
+
+	client.conn.Store(conn)
+	go client.pump()
+
+	return client
+}
+
+func (client *frontendClient) pump() {
+	for payload := range client.outbound {
+		if client.closed.Load() {
+			return
+		}
+
+		conn := client.conn.Load()
+
+		if conn == nil {
+			return
+		}
+
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			client.hub.detachFrontend(client)
+			errnie.Error(err)
+
+			return
+		}
+	}
+}
+
 func NewHub(
 	ctx context.Context,
 	pool *qpool.Q[any],
@@ -77,7 +116,14 @@ func NewHub(
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
-		bus:    internal.NewBus(ctx, pool, []string{"kraken:private"}, []string{"ui"}),
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]string{"kraken:private"},
+			[]internal.Subscription{
+				internal.Subscribe("ui", "ui:hub"),
+			},
+		),
 	}
 
 	addr := viper.GetViper().GetString("ui.addr")
@@ -121,9 +167,13 @@ func (hub *Hub) Close() error {
 		}
 	}
 
-	if client := hub.frontend.Load(); client != nil {
-		hub.detachFrontend(client)
-	}
+	hub.clients.Range(func(key any, value any) bool {
+		if client, ok := value.(*frontendClient); ok {
+			hub.detachFrontend(client)
+		}
+
+		return true
+	})
 
 	hub.cancel()
 
@@ -150,15 +200,9 @@ func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	client := &frontendClient{
-		hub:  hub,
-		conn: conn,
-	}
+	client := startFrontendClient(hub, conn)
 
-	if previous := hub.frontend.Swap(client); previous != nil {
-		previous.close()
-	}
-
+	hub.clients.Store(client.client, client)
 	hub.subscribeBalances()
 	hub.replayBalances(client)
 }
@@ -216,16 +260,12 @@ func (hub *Hub) detachFrontend(client *frontendClient) {
 		return
 	}
 
-	if hub.frontend.CompareAndSwap(client, nil) {
-		client.close()
-	}
+	hub.clients.Delete(client.client)
+	client.close()
 }
 
 func (client *frontendClient) send(value any) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	if client.conn == nil {
+	if client.closed.Load() {
 		return
 	}
 
@@ -237,58 +277,135 @@ func (client *frontendClient) send(value any) {
 		return
 	}
 
-	if err := client.conn.WriteMessage(websocket.TextMessage, buf); err != nil {
-		client.hub.detachFrontend(client)
-		errnie.Error(err)
+	client.enqueue(buf)
+}
+
+func (client *frontendClient) enqueue(payload []byte) {
+	if client.closed.Load() {
+		return
+	}
+
+	select {
+	case client.outbound <- payload:
+		return
+	default:
+	}
+
+	select {
+	case <-client.outbound:
+	default:
+	}
+
+	select {
+	case client.outbound <- payload:
+	default:
 	}
 }
 
 func (client *frontendClient) close() {
-	client.mu.Lock()
-	defer client.mu.Unlock()
+	if client.closed.Swap(true) {
+		return
+	}
 
-	if client.conn != nil {
-		errnie.Error(client.conn.Close())
-		client.conn = nil
+	close(client.outbound)
+
+	if conn := client.conn.Swap(nil); conn != nil {
+		errnie.Error(conn.Close())
+	}
+}
+
+func (hub *Hub) broadcast(value any) {
+	payload, err := json.Marshal(value)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	hub.broadcastBytes(payload)
+}
+
+func (hub *Hub) broadcastBytes(payload []byte) {
+	hub.clients.Range(func(key any, stored any) bool {
+		if client, ok := stored.(*frontendClient); ok {
+			client.enqueue(payload)
+		}
+
+		return true
+	})
+}
+
+func (hub *Hub) prepareUIFrame(row *qpool.QValue[any]) (string, any, bool) {
+	if row == nil {
+		return "", nil, false
+	}
+
+	value := row.Value
+
+	if row.Type == "balances" {
+		hub.rememberBalances(value)
+
+		balances, ok := value.(user.Balances)
+
+		if !ok {
+			return "", nil, false
+		}
+
+		frame, frameErr := WalletFrame(balances)
+
+		if frameErr != nil {
+			errnie.Error(frameErr)
+
+			return "", nil, false
+		}
+
+		return coalesceKey("wallet", frame), frame, true
+	}
+
+	return coalesceKey(row.Type, value), value, true
+}
+
+func (hub *Hub) drainUI() {
+	first, err := hub.bus.Receive("ui")
+
+	if errnie.Error(err) != nil || first == nil {
+		return
+	}
+
+	pending := make(map[string]any)
+
+	if key, value, ok := hub.prepareUIFrame(first); ok {
+		pending[key] = value
+	}
+
+	for {
+		row, pollErr := hub.bus.Poll("ui")
+
+		if pollErr != nil || row == nil {
+			break
+		}
+
+		key, value, ok := hub.prepareUIFrame(row)
+
+		if !ok {
+			continue
+		}
+
+		pending[key] = value
+	}
+
+	for _, value := range pending {
+		hub.broadcast(value)
 	}
 }
 
 /*
-Tick drains the ui bus and forwards each frame to the connected frontend client.
+Tick drains the ui bus, coalesces high-frequency telemetry, and forwards the
+latest frame per key to connected frontend clients without blocking producers.
 */
 func (hub *Hub) Tick() error {
 	for {
-		row, err := hub.bus.Receive("ui")
-
-		if errnie.Error(err) != nil || row == nil {
-			continue
-		}
-
-		if row.Type == "balances" {
-			hub.rememberBalances(row.Value)
-		}
-
-		client := hub.frontend.Load()
-
-		if client == nil {
-			continue
-		}
-
-		value := row.Value
-
-		if row.Type == "balances" {
-			if balances, ok := value.(user.Balances); ok {
-				frame, frameErr := WalletFrame(balances)
-
-				if frameErr != nil {
-					errnie.Error(frameErr)
-					continue
-				}
-
-				value = frame
-			}
-		}
-
-		client.send(value)
+		hub.drainUI()
 	}
 }

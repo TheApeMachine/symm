@@ -14,11 +14,10 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/private"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/record"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -58,6 +57,16 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if recordRun {
+				if err := record.BindCapturePath(defaultCapturePath); err != nil {
+					return errnie.Error(err)
+				}
+			}
+
+			if _, err := config.LoadTradingConfig(); err != nil {
+				return errnie.Error(err)
+			}
+
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
@@ -94,15 +103,18 @@ var (
 			}
 
 			systemCtx := engine.Context()
+			runtime := NewRuntime()
 
-			if viper.GetString("trading.model") == "paper" {
-				paperRest, restErr := paper.NewRest(systemCtx)
+			captureWriter, captureErr := record.NewWriter(systemCtx)
 
-				if restErr != nil {
-					return errnie.Error(restErr)
-				}
+			if captureErr != nil {
+				return errnie.Error(captureErr)
+			}
 
-				types.BindTokenRest(paperRest)
+			executionSystems, executionErr := WireExecutionAdapter(systemCtx, pool, runtime.Books)
+
+			if executionErr != nil {
+				return errnie.Error(executionErr)
 			}
 
 			ledger := broker.NewLedger(systemCtx, pool)
@@ -116,8 +128,11 @@ var (
 			story := market.NewStory(systemCtx, pool, ledger.Holdings(), auditWriter)
 
 			systems := []System{
-				public.NewWebSocket(systemCtx, pool),
-				paper.NewWebSocket(systemCtx, pool),
+				public.NewWebSocket(systemCtx, pool, runtime.Books),
+			}
+
+			systems = append(systems, executionSystems...)
+			systems = append(systems,
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
 				cvd.NewSystem(systemCtx, pool),
@@ -134,17 +149,17 @@ var (
 				toxicity.NewSystem(systemCtx, pool),
 				ledger,
 				story,
-				trader.NewCrypto(systemCtx, pool),
-				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter),
+				trader.NewCrypto(systemCtx, pool, runtime.Instruments),
+				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter, runtime.Instruments),
 				ui.NewHub(systemCtx, pool),
+			)
+
+			if captureWriter != nil {
+				systems = append(systems, record.NewCapture(systemCtx, pool, captureWriter))
 			}
 
 			if auditWriter != nil {
 				systems = append(systems, auditWriter)
-			}
-
-			if os.Getenv("SYMM_KRAKEN_API_KEY") != "" {
-				systems = append(systems, private.NewWebSocket(systemCtx, pool))
 			}
 
 			if err := engine.AddSystems(systems...); err != nil {
@@ -237,6 +252,14 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
+
+	if auditPath := os.Getenv("SYMM_AUDIT_FILE"); auditPath != "" {
+		viper.Set("trading.audit.file", auditPath)
+	}
+
+	if recordPath := os.Getenv("SYMM_RECORD_FILE"); recordPath != "" {
+		viper.Set("trading.record.file", recordPath)
+	}
 }
 
 const rootLong = `

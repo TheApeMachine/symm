@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -38,6 +39,7 @@ type WebSocket struct {
 	err         error
 	pool        *qpool.Q[any]
 	bus         *internal.Bus
+	bookStore   *krakenmarket.BookStore
 	sockets     map[string]types.Socket
 	balances    *response.Balances
 	orders      *response.Orders
@@ -46,22 +48,29 @@ type WebSocket struct {
 	isConnected atomic.Bool
 }
 
-func NewWebSocket(ctx context.Context, pool *qpool.Q[any]) *WebSocket {
+func NewWebSocket(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	bookStore *krakenmarket.BookStore,
+) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ws := &WebSocket{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		bookStore: bookStore,
 		bus: internal.NewBus(
 			ctx,
 			pool,
 			[]string{"raw", "kraken:private", "ui"},
-			[]string{"kraken:private"},
+			[]internal.Subscription{
+				internal.Subscribe("kraken:private", "kraken:paper"),
+			},
 		),
 		sockets: map[string]types.Socket{
 			"balances":   response.NewBalances(ctx, pool),
-			"orders":     response.NewOrders(ctx, pool),
+			"orders":     response.NewOrders(ctx, pool, bookStore),
 			"executions": response.NewExecutions(ctx, pool),
 		},
 		isConnected: atomic.Bool{},
@@ -173,6 +182,19 @@ func (ws *WebSocket) Tick() (err error) {
 			case "balances":
 				socketMessage = ws.sockets["balances"].Send(message)
 			case "orders":
+				if frame, frameOK := message.Value.(types.KrakenMessage); frameOK &&
+					frame.Method == trading.MethodAddOrder {
+					params, paramsOK := addPaperParams(frame.Params)
+
+					if paramsOK {
+						if transitErr := trading.RejectStaleEntry(&params); transitErr != nil {
+							errnie.Error(transitErr)
+							qvaluePool.Put(message)
+							continue
+						}
+					}
+				}
+
 				socketMessage = ws.sockets["orders"].Send(message)
 
 				if orderSocket, ok := ws.sockets["orders"].(*response.Orders); ok {
@@ -261,4 +283,19 @@ func (ws *WebSocket) Close() error {
 	ws.cancel()
 
 	return nil
+}
+
+func addPaperParams(value any) (trading.AddParams, bool) {
+	switch typed := value.(type) {
+	case trading.AddParams:
+		return typed, true
+	case *trading.AddParams:
+		if typed == nil {
+			return trading.AddParams{}, false
+		}
+
+		return *typed, true
+	default:
+		return trading.AddParams{}, false
+	}
 }

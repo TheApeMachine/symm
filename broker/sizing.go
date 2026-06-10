@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/viper"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -24,6 +25,7 @@ func SizeOrder(
 	quoteCash float64,
 	heldQty float64,
 	mark float64,
+	constraints *krakenmarket.InstrumentConstraints,
 ) (float64, error) {
 	if action == nil {
 		return 0, fmt.Errorf("broker: nil action")
@@ -33,11 +35,30 @@ func SizeOrder(
 		return 0, fmt.Errorf("broker: action fraction must be positive")
 	}
 
-	if action.Type.IsExit() {
-		return sizeExit(action, heldQty)
+	if action.Fraction > 1 {
+		return 0, fmt.Errorf("broker: action fraction must not exceed 1")
 	}
 
-	return sizeEntry(action, quoteCash, mark)
+	var (
+		quantity float64
+		sizeErr  error
+	)
+
+	if action.Type.IsExit() {
+		quantity, sizeErr = sizeExit(action, heldQty)
+	} else {
+		quantity, sizeErr = sizeEntry(action, quoteCash, mark)
+	}
+
+	if sizeErr != nil {
+		return 0, sizeErr
+	}
+
+	if constraints == nil {
+		return quantity, nil
+	}
+
+	return ApplyInstrumentConstraints(action, quantity, mark, *constraints)
 }
 
 func sizeExit(action *logic.Action, heldQty float64) (float64, error) {

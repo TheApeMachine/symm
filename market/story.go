@@ -1,7 +1,6 @@
 package market
 
 import (
-	"container/ring"
 	"context"
 	"errors"
 	"fmt"
@@ -16,63 +15,22 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
-type MeasurementWindow struct {
-	ring *ring.Ring
-	ptr  int
-}
-
-func NewMeasurementWindow(capacity int) *MeasurementWindow {
-	return &MeasurementWindow{
-		ring: ring.New(capacity),
-		ptr:  0,
-	}
-}
-
-func (window *MeasurementWindow) Push(measurement logic.Measurement) []logic.Measurement {
-	window.ring.Value = measurement
-	window.ring = window.ring.Next()
-	window.ptr++
-
-	measurements := make([]logic.Measurement, 0, window.ring.Len())
-
-	if window.ptr >= window.ring.Len()-1 {
-		window.ring.Do(func(value any) {
-			if value == nil {
-				return
-			}
-
-			measurement, ok := value.(logic.Measurement)
-
-			if !ok {
-				return
-			}
-
-			measurements = append(measurements, measurement)
-		})
-
-		window.ring = ring.New(window.ring.Len())
-		window.ptr = 0
-	}
-
-	return measurements
-}
-
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q[any]
-	bus             *internal.Bus
-	measurements    *sync.Map
-	tree            *logic.Tree
-	crossSection    *CrossSection
-	regime          *RegimeClassifier
-	holdings        *logic.Holdings
-	lastTreePublish time.Time
-	audit           *audit.Writer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	bus           *internal.Bus
+	measurements  *sync.Map
+	tree          *logic.Tree
+	crossSection  *CrossSection
+	regime        *RegimeClassifier
+	holdings      *logic.Holdings
+	lastUIPublish time.Time
+	audit         *audit.Writer
 }
 
 func NewStory(
@@ -104,7 +62,9 @@ func NewStory(
 			ctx,
 			pool,
 			[]string{"raw", "ui"},
-			[]string{"measurements"},
+			[]internal.Subscription{
+				internal.Subscribe("measurements", "story"),
+			},
 		),
 		measurements: &sync.Map{},
 		tree:         tree,
@@ -163,11 +123,9 @@ func (story *Story) Tick() error {
 			stats.ObserveStoryTick()
 		}
 
-		raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewMeasurementWindow(
-			viper.GetInt("market.story.window_capacity"),
-		))
+		raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewSymbolState())
 
-		measurements := raw.(*MeasurementWindow).Push(measurement)
+		measurements := raw.(*SymbolState).Observe(measurement)
 
 		var evaluation *logic.Evaluation
 
@@ -183,8 +141,7 @@ func (story *Story) Tick() error {
 		}
 
 		if evaluation == nil || evaluation.Action == nil {
-			story.publishMarketRegime()
-			story.publishDecisionTree()
+			story.publishUIFrames()
 			continue
 		}
 
@@ -199,8 +156,7 @@ func (story *Story) Tick() error {
 
 		errnie.Error(story.bus.Send("raw", "actions", action))
 
-		story.publishMarketRegime()
-		story.publishDecisionTree()
+		story.publishUIFrames()
 	}
 }
 
@@ -231,7 +187,9 @@ func (story *Story) recordPlaybookEval(
 
 	dedupeKey := fmt.Sprintf("playbook_eval:%s:%s", symbol, bottleneck.Key)
 
-	errnie.Error(story.audit.EnqueueDeduped(dedupeKey, frame))
+	if !story.audit.TryEnqueueDeduped(dedupeKey, frame) {
+		errnie.Error(errors.New("story: audit queue full"))
+	}
 }
 
 func (story *Story) recordPlaybookAction(symbol string, evaluation *logic.Evaluation) {
@@ -253,11 +211,16 @@ func (story *Story) recordPlaybookAction(symbol string, evaluation *logic.Evalua
 	errnie.Error(story.audit.Enqueue(frame))
 }
 
-func (story *Story) publishDecisionTree() {
-	if !story.shouldPublishDecisionTree(time.Now()) {
+func (story *Story) publishUIFrames() {
+	if !story.shouldPublishUI(time.Now()) {
 		return
 	}
 
+	story.publishMarketRegime()
+	story.publishDecisionTree()
+}
+
+func (story *Story) publishDecisionTree() {
 	stats := story.tree.Stats()
 
 	if stats == nil {
@@ -267,18 +230,18 @@ func (story *Story) publishDecisionTree() {
 	errnie.Error(story.bus.Send("ui", "decision_tree", stats.DecisionTreeFrame()))
 }
 
-func (story *Story) shouldPublishDecisionTree(now time.Time) bool {
+func (story *Story) shouldPublishUI(now time.Time) bool {
 	interval := viper.GetDuration("market.story.ui_interval")
 
 	if interval <= 0 {
 		interval = time.Second
 	}
 
-	if !story.lastTreePublish.IsZero() && now.Sub(story.lastTreePublish) < interval {
+	if !story.lastUIPublish.IsZero() && now.Sub(story.lastUIPublish) < interval {
 		return false
 	}
 
-	story.lastTreePublish = now
+	story.lastUIPublish = now
 
 	return true
 }

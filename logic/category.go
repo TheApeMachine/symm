@@ -63,6 +63,7 @@ type Category struct {
 	Confidence    float64      `yaml:"confidence"`
 	Surprise      float64      `yaml:"surprise"`
 	confidenceRef string       `yaml:"-"`
+	surpriseRef   string       `yaml:"-"`
 }
 
 func NewCategory(
@@ -77,7 +78,7 @@ func (category *Category) UnmarshalYAML(node *yaml.Node) error {
 	type categoryFields struct {
 		Type       CategoryType `yaml:"type"`
 		Confidence yaml.Node    `yaml:"confidence"`
-		Surprise   float64      `yaml:"surprise"`
+		Surprise   yaml.Node    `yaml:"surprise"`
 	}
 
 	fields := categoryFields{}
@@ -87,10 +88,17 @@ func (category *Category) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	category.Type = fields.Type
-	category.Surprise = fields.Surprise
 
-	if fields.Confidence.Kind == yaml.ScalarNode {
-		raw := strings.TrimSpace(fields.Confidence.Value)
+	if err := category.decodeConfidence(fields.Confidence); err != nil {
+		return err
+	}
+
+	return category.decodeSurprise(fields.Surprise)
+}
+
+func (category *Category) decodeConfidence(node yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		raw := strings.TrimSpace(node.Value)
 
 		if after, ok := strings.CutPrefix(raw, "$"); ok {
 			category.confidenceRef = after
@@ -100,8 +108,31 @@ func (category *Category) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 
-	if err := fields.Confidence.Decode(&category.Confidence); err != nil {
+	if err := node.Decode(&category.Confidence); err != nil {
 		return fmt.Errorf("logic: category confidence: %w", err)
+	}
+
+	return nil
+}
+
+func (category *Category) decodeSurprise(node yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		raw := strings.TrimSpace(node.Value)
+
+		if after, ok := strings.CutPrefix(raw, "$"); ok {
+			category.surpriseRef = after
+			category.Surprise = 0
+
+			return nil
+		}
+	}
+
+	if node.IsZero() {
+		return nil
+	}
+
+	if err := node.Decode(&category.Surprise); err != nil {
+		return fmt.Errorf("logic: category surprise: %w", err)
 	}
 
 	return nil
@@ -121,4 +152,20 @@ func (category *Category) confidenceFloor(evalContext *EvalContext) (float64, er
 	}
 
 	return evalContext.Resolve(category.confidenceRef)
+}
+
+func (category *Category) surpriseFloor(evalContext *EvalContext) (float64, error) {
+	if category == nil {
+		return 0, fmt.Errorf("logic: category is nil")
+	}
+
+	if category.surpriseRef == "" {
+		return category.Surprise, nil
+	}
+
+	if evalContext == nil {
+		return 0, fmt.Errorf("logic: eval context required for ref %q", category.surpriseRef)
+	}
+
+	return evalContext.Resolve(category.surpriseRef)
 }

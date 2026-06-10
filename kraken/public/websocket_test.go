@@ -42,7 +42,9 @@ func TestWebSocketDispatchBookUpdates(t *testing.T) {
 				ctx,
 				pool,
 				[]string{"raw"},
-				[]string{"raw"},
+				[]internal.Subscription{
+					internal.Subscribe("raw", "test-raw"),
+				},
 			),
 		}
 
@@ -87,7 +89,9 @@ func TestWebSocketDispatchOhlcUIFrame(t *testing.T) {
 				ctx,
 				pool,
 				[]string{"raw", "ui"},
-				[]string{"ui"},
+				[]internal.Subscription{
+					internal.Subscribe("ui", "test-ui"),
+				},
 			),
 		}
 

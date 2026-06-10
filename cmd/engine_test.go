@@ -39,7 +39,7 @@ func TestNewEngine(t *testing.T) {
 			engine.systems = append(engine.systems, stub)
 
 			So(engine.Start(), ShouldBeNil)
-			So(stub.closed, ShouldBeFalse)
+			So(stub.closed, ShouldBeTrue)
 		})
 
 		Convey("It should surface tick errors", func() {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/trading"
 )
 
@@ -264,4 +265,74 @@ func BenchmarkTreeEvaluate(b *testing.B) {
 	for b.Loop() {
 		tree.Evaluate(measurements, NewHoldings())
 	}
+}
+
+func TestTreeEvaluateTracedIgnitionBottleneck(t *testing.T) {
+	Convey("Given measurements that pass ignition pump but fail hawkes", t, func() {
+		viper.Set("trading.entry.confidence_baseline", 0.55)
+		viper.Set("trading.entry.turbulence_confidence_scale", 0.30)
+		viper.Set("trading.entry.surprise_baseline", 1.0)
+		viper.Set("trading.entry.turbulence_surprise_scale", 0.25)
+
+		tree, err := NewTree()
+
+		So(err, ShouldBeNil)
+
+		measurements := []Measurement{
+			*NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryVerticalIgnition,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.72,
+				1.4,
+			),
+			*NewMeasurement(
+				SourceHawkes,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryOrganic,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.35,
+				0.39,
+			),
+			*NewMeasurement(
+				SourceLiquidity,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryMedianDepth,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.33,
+				1.97,
+			),
+		}
+
+		trace := &EvalTrace{}
+
+		Convey("It should keep the ignition-path bottleneck for audit", func() {
+			So(tree.EvaluateTraced(measurements, NewHoldings(), trace), ShouldBeNil)
+
+			bottleneck := trace.Bottleneck()
+
+			So(bottleneck, ShouldNotBeNil)
+			So(bottleneck.Key, ShouldEqual, "5/0/0")
+			So(trace.FailedConditionLabels(), ShouldContain, "hawkes.frenzy")
+		})
+	})
 }

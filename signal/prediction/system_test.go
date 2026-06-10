@@ -29,7 +29,7 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 		So(system, ShouldNotBeNil)
 		So(system.chart, ShouldNotBeNil)
 
-		uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
+		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
 		receiveDone := make(chan map[string]any, 1)
 
 		go func() {
@@ -134,7 +134,7 @@ func BenchmarkSystemPublishChartOnTrade(b *testing.B) {
 		b.Fatal("system is nil")
 	}
 
-	uiBus := internal.NewBus(ctx, pool, nil, []string{"ui"})
+	uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
 
 	go func() {
 		for {

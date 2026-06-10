@@ -3,7 +3,9 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -20,20 +22,29 @@ type inventory struct {
 	avgEntry float64
 }
 
+type quoteRow struct {
+	mark      float64
+	bid       float64
+	ask       float64
+	updatedAt time.Time
+}
+
 /*
 Ledger tracks quote cash, open inventory, and marks for sizing and playbook
 holding conditions.
 */
 type Ledger struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pool      *qpool.Q[any]
-	bus       *internal.Bus
-	mu        sync.RWMutex
-	quoteCash float64
-	positions map[string]inventory
-	marks     map[string]float64
-	holdings  logic.Holdings
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q[any]
+	bus         *internal.Bus
+	mu          sync.RWMutex
+	quoteCash   float64
+	positions   map[string]inventory
+	marks       map[string]float64
+	quotes      map[string]quoteRow
+	seenExecIDs map[string]struct{}
+	holdings    logic.Holdings
 }
 
 func NewLedger(ctx context.Context, pool *qpool.Q[any]) *Ledger {
@@ -49,13 +60,17 @@ func NewLedger(ctx context.Context, pool *qpool.Q[any]) *Ledger {
 			ctx,
 			pool,
 			[]string{"ui"},
-			[]string{"raw"},
+			[]internal.Subscription{
+				internal.Subscribe("raw", "ledger"),
+			},
 		),
 		quoteCash: viper.GetFloat64(
 			"trading.paper.wallet." + quoteKey(quote),
 		),
-		positions: make(map[string]inventory),
-		marks:     make(map[string]float64),
+		positions:   make(map[string]inventory),
+		marks:       make(map[string]float64),
+		quotes:      make(map[string]quoteRow),
+		seenExecIDs: make(map[string]struct{}),
 	}
 }
 
@@ -79,9 +94,21 @@ func (ledger *Ledger) Holdings() *logic.Holdings {
 
 func (ledger *Ledger) Tick() error {
 	for {
+		if errnie.Error(ledger.ctx.Err()) != nil {
+			return ledger.ctx.Err()
+		}
+
 		message, err := ledger.bus.Receive("raw")
 
-		if errnie.Error(err) != nil || message == nil {
+		if errnie.Error(err) != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+
+			continue
+		}
+
+		if message == nil {
 			continue
 		}
 
@@ -125,7 +152,36 @@ func (ledger *Ledger) applyBalances(balances user.Balances) {
 	ledger.quoteCash = quoteCashFromBalances(balances, quote)
 	ledger.mu.Unlock()
 
+	if reconcileErr := ledger.reconcileCash(balances); reconcileErr != nil {
+		errnie.Error(reconcileErr)
+	}
+
 	ledger.publishPositions()
+}
+
+func (ledger *Ledger) reconcileCash(balances user.Balances) error {
+	quote := viper.GetString("market.quote_currency")
+	expected := quoteCashFromBalances(balances, quote)
+
+	ledger.mu.RLock()
+	actual := ledger.quoteCash
+	ledger.mu.RUnlock()
+
+	if expected <= 0 && actual <= 0 {
+		return nil
+	}
+
+	delta := expected - actual
+
+	if delta < -0.01 || delta > 0.01 {
+		return fmt.Errorf(
+			"ledger: quote cash mismatch expected %.8f actual %.8f",
+			expected,
+			actual,
+		)
+	}
+
+	return nil
 }
 
 func (ledger *Ledger) applyTicker(updates krakenmarket.TickerUpdates) {
@@ -137,6 +193,19 @@ func (ledger *Ledger) applyTicker(updates krakenmarket.TickerUpdates) {
 		}
 
 		ledger.marks[update.Symbol] = update.Last
+
+		quote := ledger.quotes[update.Symbol]
+		quote.mark = update.Last
+		quote.bid = update.Bid
+		quote.ask = update.Ask
+
+		if !update.Timestamp.IsZero() {
+			quote.updatedAt = update.Timestamp
+		} else {
+			quote.updatedAt = time.Now().UTC()
+		}
+
+		ledger.quotes[update.Symbol] = quote
 	}
 
 	ledger.mu.Unlock()
@@ -148,6 +217,15 @@ func (ledger *Ledger) applyExecution(execution user.Execution) {
 	}
 
 	ledger.mu.Lock()
+
+	if execution.ExecID != "" {
+		if _, seen := ledger.seenExecIDs[execution.ExecID]; seen {
+			ledger.mu.Unlock()
+			return
+		}
+
+		ledger.seenExecIDs[execution.ExecID] = struct{}{}
+	}
 
 	switch trading.Side(execution.Side) {
 	case trading.Buy:
@@ -207,6 +285,28 @@ func (ledger *Ledger) Mark(symbol string) (float64, bool) {
 	mark, ok := ledger.marks[symbol]
 
 	return mark, ok && mark > 0
+}
+
+/*
+Quote returns the latest executable quote snapshot for one symbol.
+*/
+func (ledger *Ledger) Quote(symbol string) (QuoteSnapshot, bool) {
+	ledger.mu.RLock()
+	defer ledger.mu.RUnlock()
+
+	quote, ok := ledger.quotes[symbol]
+
+	if !ok || quote.mark <= 0 {
+		return QuoteSnapshot{}, false
+	}
+
+	return QuoteSnapshot{
+		Symbol:    symbol,
+		Mark:      quote.mark,
+		Bid:       quote.bid,
+		Ask:       quote.ask,
+		UpdatedAt: quote.updatedAt,
+	}, true
 }
 
 func (ledger *Ledger) HeldQuantity(symbol string) float64 {

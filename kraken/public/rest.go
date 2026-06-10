@@ -19,6 +19,7 @@ import (
 type RestClient interface {
 	Get(ctx context.Context, request fiber.Map, model any, headers ...map[string]string) error
 	Post(ctx context.Context, request fiber.Map, model any, headers ...map[string]string) error
+	PostBody(ctx context.Context, body []byte, model any, headers ...map[string]string) error
 	Error() error
 	Close() error
 }
@@ -106,7 +107,22 @@ func (rest *Rest) Post(
 	model any,
 	headers ...map[string]string,
 ) error {
-	errnie.Debug("kraken.public.rest.Post", request, model)
+	body, err := sonic.Marshal(request)
+
+	if err != nil {
+		return fmt.Errorf("kraken public encode: %w", err)
+	}
+
+	return rest.PostBody(ctx, body, model, headers...)
+}
+
+func (rest *Rest) PostBody(
+	ctx context.Context,
+	body []byte,
+	model any,
+	headers ...map[string]string,
+) error {
+	errnie.Debug("kraken.public.rest.PostBody", string(body), model)
 
 	header := map[string]string{
 		"Content-Type": "application/json",
@@ -124,7 +140,8 @@ func (rest *Rest) Post(
 		Ctx:     ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
-		Body:    request}); rest.err != nil {
+		Body:    body,
+	}); rest.err != nil {
 		return errnie.Error(rest.err)
 	}
 

@@ -55,7 +55,7 @@ market:
   ws_reconnect_multiplier: 2
   ws_ping_interval: 15s
   story:
-    window_capacity: 1024
+    measurement_max_age: 30s
     ui_interval: 1s
   book:
     checksum:
@@ -64,6 +64,7 @@ market:
 ui:
   addr: 127.0.0.1:8765
   heartbeat_interval: 1s
+  outbound_buffer: 512
 
 trading:
   order_ack_timeout: 500ms
@@ -88,8 +89,11 @@ trading:
   entry:
     batch_window: 50ms
     preemption_enabled: true
+    transit_ttl: 5s
     confidence_baseline: 0.55
     turbulence_confidence_scale: 0.30
+    surprise_baseline: 1.0
+    turbulence_surprise_scale: 0.25
   paper:
     wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
       usd: 200 # As such, it will be the only amount I am willing to trade with.
@@ -107,29 +111,8 @@ trading:
     gate_cooldown: 60s
     max_mb: 32
     max_backups: 3
-
-optimizer:
-  tune:
-    load_instrument_rules: true
-    candidate_report: ""
-    # Cap the train tape before search (0 = default 500k subsample; -1 = full train).
-    max_measurements: 0
-    search_train_rows: 0
-    beam_width: 0
-    max_rounds: 0
-    max_nodes: 0
-    patience: 0
-    workers: 0
-    # Walk-forward validation: the chronological tail is held out of the search
-    # and the winning forest must reproduce on it (and survive +50% costs)
-    # before it is written to the live playbook. 0 disables (in-sample only —
-    # the playbook will be marked unvalidated in the tune log).
-    holdout_fraction: 0.25
-    # Largest tolerated train→holdout per-trade PnL decay (0.5 = holdout keeps
-    # at least half the train edge).
-    max_holdout_decay: 0.5
-  search:
-    regime_aware: true
+  record:
+    file: ""
 
 regime:
   window: 256

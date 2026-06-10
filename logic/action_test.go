@@ -16,7 +16,7 @@ func TestActionKrakenOrderType(t *testing.T) {
 			So(marketErr, ShouldBeNil)
 			So(settleErr, ShouldBeNil)
 			So(marketType, ShouldEqual, trading.Market)
-			So(settleType, ShouldEqual, trading.Market)
+			So(settleType, ShouldEqual, trading.SettlePosition)
 		})
 	})
 }

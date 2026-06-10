@@ -38,10 +38,66 @@ func NewBookParams(symbols []string, depth int) json.RawMessage {
 
 /*
 BookLevel is one price level in an L2 book snapshot or update.
+Price and Qty are float values for signal math; priceWire and qtyWire preserve
+the exact Kraken wire form required by the book checksum.
 */
 type BookLevel struct {
-	Price float64 `json:"price"`
-	Qty   float64 `json:"qty"`
+	Price     float64
+	Qty       float64
+	priceWire string
+	qtyWire   string
+}
+
+func (level *BookLevel) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Price json.RawMessage `json:"price"`
+		Qty   json.RawMessage `json:"qty"`
+	}
+
+	if err := sonic.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	priceWire, priceValue, priceErr := parseWireAmount(raw.Price)
+
+	if priceErr != nil {
+		return priceErr
+	}
+
+	qtyWire, qtyValue, qtyErr := parseWireAmount(raw.Qty)
+
+	if qtyErr != nil {
+		return qtyErr
+	}
+
+	level.Price = priceValue
+	level.Qty = qtyValue
+	level.priceWire = priceWire
+	level.qtyWire = qtyWire
+
+	return nil
+}
+
+func (level BookLevel) MarshalJSON() ([]byte, error) {
+	price := level.priceWire
+
+	if price == "" {
+		price = floatWire(level.Price)
+	}
+
+	qty := level.qtyWire
+
+	if qty == "" {
+		qty = floatWire(level.Qty)
+	}
+
+	return sonic.Marshal(struct {
+		Price string `json:"price"`
+		Qty   string `json:"qty"`
+	}{
+		Price: price,
+		Qty:   qty,
+	})
 }
 
 /*

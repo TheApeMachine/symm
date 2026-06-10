@@ -76,7 +76,12 @@ func NewWebSocket(
 				wsCtx,
 				pool,
 				[]string{"raw", "level3", "kraken:public", "ui"},
-				[]string{"raw", "level3", "kraken:public", "kraken:private"},
+				[]internal.Subscription{
+					internal.Subscribe("raw", "kraken:private:raw"),
+					internal.Subscribe("level3", "kraken:private:level3"),
+					internal.Subscribe("kraken:public", "kraken:private:public"),
+					internal.Subscribe("kraken:private", "kraken:private:bus"),
+				},
 			),
 			streams:   &sync.Map{},
 			latencies: ring.New(64),
@@ -215,6 +220,18 @@ func (ws *WebSocket) Tick() (err error) {
 			if !ok {
 				qvaluePool.Put(message)
 				continue
+			}
+
+			if frame.Method == trading.MethodAddOrder {
+				params, paramsOK := addParams(frame.Params)
+
+				if paramsOK {
+					if transitErr := trading.RejectStaleEntry(&params); transitErr != nil {
+						errnie.Error(transitErr)
+						qvaluePool.Put(message)
+						continue
+					}
+				}
 			}
 
 			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
@@ -396,4 +413,19 @@ func (ws *WebSocket) Close() error {
 	ws.cancel()
 
 	return nil
+}
+
+func addParams(value any) (trading.AddParams, bool) {
+	switch typed := value.(type) {
+	case trading.AddParams:
+		return typed, true
+	case *trading.AddParams:
+		if typed == nil {
+			return trading.AddParams{}, false
+		}
+
+		return *typed, true
+	default:
+		return trading.AddParams{}, false
+	}
 }

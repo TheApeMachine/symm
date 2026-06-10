@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -32,6 +33,7 @@ type Writer struct {
 	maxBackups   int
 	file         *os.File
 	bytesWritten int64
+	drops        atomic.Uint64
 	err          error
 	done         chan struct{}
 }
@@ -86,6 +88,58 @@ func NewWriter(ctx context.Context) (*Writer, error) {
 	go writer.run()
 
 	return writer, nil
+}
+
+/*
+TryEnqueue appends one audit frame without blocking. Returns false when full.
+*/
+func (writer *Writer) TryEnqueue(frame map[string]any) bool {
+	if writer == nil {
+		return true
+	}
+
+	if frame == nil {
+		errnie.Error(errors.New("audit: nil frame"))
+		return false
+	}
+
+	select {
+	case writer.queue <- auditJob{frame: frame}:
+		return true
+	default:
+		writer.drops.Add(1)
+		return false
+	}
+}
+
+/*
+TryEnqueueDeduped is the non-blocking variant of EnqueueDeduped.
+*/
+func (writer *Writer) TryEnqueueDeduped(dedupeKey string, frame map[string]any) bool {
+	if writer == nil {
+		return true
+	}
+
+	if frame == nil {
+		errnie.Error(errors.New("audit: nil frame"))
+		return false
+	}
+
+	select {
+	case writer.queue <- auditJob{dedupeKey: dedupeKey, frame: frame}:
+		return true
+	default:
+		writer.drops.Add(1)
+		return false
+	}
+}
+
+func (writer *Writer) Drops() uint64 {
+	if writer == nil {
+		return 0
+	}
+
+	return writer.drops.Load()
 }
 
 /*

@@ -78,7 +78,11 @@ func TestFrontendClientSendRejectsNonFiniteJSON(t *testing.T) {
 			_ = conn.Close()
 		})
 
-		client := &frontendClient{conn: conn}
+		client := startFrontendClient(&Hub{}, conn)
+
+		t.Cleanup(func() {
+			client.close()
+		})
 
 		client.send(map[string]any{
 			"type": "fluid",

@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
@@ -22,6 +23,21 @@ func EntryTransitTTL() time.Duration {
 	}
 
 	return configured
+}
+
+/*
+RejectStaleEntry drops entries whose desk decision aged beyond transit TTL.
+*/
+func RejectStaleEntry(params *AddParams) error {
+	if params == nil || params.EntryQueuedAt.IsZero() {
+		return nil
+	}
+
+	if time.Since(params.EntryQueuedAt) > EntryTransitTTL() {
+		return fmt.Errorf("trading: entry transit ttl exceeded")
+	}
+
+	return nil
 }
 
 const (
@@ -51,6 +67,7 @@ const (
 	TrailingStop      OrderType = "trailing-stop"
 	TrailingStopLimit OrderType = "trailing-stop-limit"
 	Iceberg           OrderType = "iceberg"
+	SettlePosition    OrderType = "settle-position"
 )
 
 type Side string

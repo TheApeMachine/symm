@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +12,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
@@ -20,14 +20,16 @@ import (
 )
 
 type Desk struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pool      *qpool.Q[any]
-	bus       *internal.Bus
-	ledger    *Ledger
-	treeStats *logic.TreeStats
-	orders    *sync.Map
-	audit     *audit.Writer
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q[any]
+	bus         *internal.Bus
+	ledger      *Ledger
+	treeStats   *logic.TreeStats
+	orders      *OrderRegistry
+	audit       *audit.Writer
+	gate        PreTradeGate
+	instruments *krakenmarket.InstrumentRegistry
 }
 
 func NewDesk(
@@ -36,6 +38,7 @@ func NewDesk(
 	ledger *Ledger,
 	treeStats *logic.TreeStats,
 	auditWriter *audit.Writer,
+	instruments *krakenmarket.InstrumentRegistry,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -47,20 +50,39 @@ func NewDesk(
 			ctx,
 			pool,
 			[]string{"kraken:private", "ui"},
-			[]string{"raw"},
+			[]internal.Subscription{
+				internal.Subscribe("raw", "desk"),
+			},
 		),
-		ledger:    ledger,
-		treeStats: treeStats,
-		orders:    &sync.Map{},
-		audit:     auditWriter,
+		ledger:      ledger,
+		treeStats:   treeStats,
+		orders:      NewOrderRegistry(),
+		audit:       auditWriter,
+		instruments: instruments,
 	}
 }
 
 func (desk *Desk) Tick() error {
 	for {
+		if errnie.Error(desk.ctx.Err()) != nil {
+			return desk.ctx.Err()
+		}
+
+		for _, clOrdID := range desk.orders.RejectStaleEntries() {
+			desk.orders.Delete(clOrdID)
+		}
+
 		message, err := desk.bus.Receive("raw")
 
-		if errnie.Error(err) != nil || message == nil {
+		if errnie.Error(err) != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+
+			continue
+		}
+
+		if message == nil {
 			continue
 		}
 
@@ -97,6 +119,7 @@ func (desk *Desk) Tick() error {
 
 			for _, execution := range updates {
 				if execution.ClOrdID != "" {
+					desk.orders.MarkFilled(execution.ClOrdID)
 					desk.orders.Delete(execution.ClOrdID)
 				}
 
@@ -121,13 +144,6 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		return errnie.Error(errors.New("desk: nil action"))
 	}
 
-	orderType, typeErr := action.Type.KrakenOrderType()
-
-	if typeErr != nil {
-		desk.publishDecision(action, "rejected", typeErr.Error())
-		return errnie.Error(typeErr)
-	}
-
 	heldQty := desk.ledger.HeldQuantity(action.Symbol)
 
 	if action.Type.IsExit() && heldQty <= 0 {
@@ -150,7 +166,38 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 		return errnie.Error(ErrNoMark)
 	}
 
-	quantity, sizeErr := SizeOrder(action, desk.ledger.QuoteCash(), heldQty, mark)
+	quote, quoteOK := desk.ledger.Quote(action.Symbol)
+
+	if !quoteOK {
+		desk.publishDecision(action, "rejected", "no quote")
+		return errnie.Error(ErrNoMark)
+	}
+
+	if gateErr := desk.gate.CheckEntry(action, quote); gateErr != nil {
+		desk.publishDecision(action, "rejected", gateErr.Error())
+		return errnie.Error(gateErr)
+	}
+
+	constraints, hasConstraints := desk.instrumentConstraints(action.Symbol)
+
+	if !action.Type.IsExit() && !hasConstraints {
+		desk.publishDecision(action, "rejected", "no instrument constraints")
+		return errnie.Error(fmt.Errorf("desk: no instrument constraints for %s", action.Symbol))
+	}
+
+	var constraintsPtr *krakenmarket.InstrumentConstraints
+
+	if hasConstraints {
+		constraintsPtr = &constraints
+	}
+
+	quantity, sizeErr := SizeOrder(
+		action,
+		desk.ledger.QuoteCash(),
+		heldQty,
+		mark,
+		constraintsPtr,
+	)
 
 	if sizeErr != nil {
 		desk.publishDecision(action, "rejected", sizeErr.Error())
@@ -165,24 +212,28 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 	}
 
 	clOrdID := uuid.New().String()
-	limitPrice := action.Price
 
-	if limitPrice <= 0 {
-		limitPrice = mark
-	}
+	params, buildErr := BuildAddOrder(
+		action,
+		OrderContext{Mark: mark},
+		quantity,
+		clOrdID,
+		token,
+		constraintsPtr,
+	)
 
-	params := &trading.AddParams{
-		OrderType:  orderType,
-		Side:       action.Side,
-		Symbol:     action.Symbol,
-		LimitPrice: limitPrice,
-		OrderQty:   quantity,
-		ClOrdID:    clOrdID,
-		Token:      token,
+	if buildErr != nil {
+		desk.publishDecision(action, "rejected", buildErr.Error())
+		return errnie.Error(buildErr)
 	}
 
 	if !action.Type.IsExit() {
-		params.EntryQueuedAt = time.Now()
+		params.EntryQueuedAt = time.Now().UTC()
+
+		if transitErr := RejectStaleEntry(params); transitErr != nil {
+			desk.publishDecision(action, "rejected", transitErr.Error())
+			return errnie.Error(transitErr)
+		}
 	}
 
 	frame := types.KrakenMessage{
@@ -195,6 +246,14 @@ func (desk *Desk) submitAction(action *logic.Action) error {
 	desk.publishDecision(action, "submitted", "")
 
 	return errnie.Error(desk.bus.Send("kraken:private", "orders", frame))
+}
+
+func (desk *Desk) instrumentConstraints(symbol string) (krakenmarket.InstrumentConstraints, bool) {
+	if desk.instruments == nil {
+		return krakenmarket.InstrumentConstraints{}, false
+	}
+
+	return desk.instruments.Constraints(symbol)
 }
 
 func (desk *Desk) publishDecision(

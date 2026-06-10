@@ -36,8 +36,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should publish mean forecast at each maturity target second", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 			eventAt := time.Unix(1_710_000_000, 0)
 
@@ -68,8 +68,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should average symbols sharing the same maturity target", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 
 			target := float64(1_710_000_120)
@@ -99,8 +99,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should publish settlement trio after the maturity second closes", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 
 			target := int64(1_710_000_000)
@@ -162,8 +162,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should keep historical forecasts when a symbol rolls forward", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 
 			firstTarget := float64(1_710_000_060)
@@ -204,8 +204,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should align error with the plotted mean lines", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 
 			target := int64(1_710_000_500)
@@ -246,8 +246,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should republish when the cross-section mean changes at the same target", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-			subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+			publisher := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 			chart := NewChart(publisher, time.Minute)
 
 			target := float64(1_710_000_120)
@@ -292,7 +292,7 @@ func TestChartApply(t *testing.T) {
 func BenchmarkChartApply(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 2, 8, nil)
-	bus := internal.NewBus(ctx, pool, []string{"ui"}, nil)
+	bus := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
 	chart := NewChart(bus, time.Minute)
 
 	events := ChartEvents{

@@ -105,7 +105,7 @@ func (rest *Rest) Post(
 		return err
 	}
 
-	return rest.client.Post(ctx, request, model, map[string]string{
+	return rest.client.PostBody(ctx, body, model, map[string]string{
 		"API-Key":  rest.apiKey,
 		"API-Sign": signature,
 	})

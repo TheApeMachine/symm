@@ -178,7 +178,7 @@ branches:
                   category:
                     type: vertical_ignition
                     confidence: $confidence.regime_adjusted_baseline
-                    surprise: 1.0
+                    surprise: $surprise.regime_adjusted_baseline
             - type: is_true
               left:
                 subject:
@@ -187,7 +187,7 @@ branches:
                   category:
                     type: coiled_compression
                     confidence: $confidence.regime_adjusted_baseline
-                    surprise: 1.0
+                    surprise: $surprise.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: and
@@ -592,7 +592,7 @@ branches:
                   category:
                     type: coiled_compression
                     confidence: $confidence.regime_adjusted_baseline
-                    surprise: 1.0
+                    surprise: $surprise.regime_adjusted_baseline
             - type: is_true
               left:
                 subject:
@@ -601,7 +601,7 @@ branches:
                   category:
                     type: vertical_ignition
                     confidence: $confidence.regime_adjusted_baseline
-                    surprise: 1.0
+                    surprise: $surprise.regime_adjusted_baseline
         branches:
           - condition_group:
               boolean: and
@@ -722,44 +722,57 @@ branches:
               category:
                 type: extreme_scarcity
                 confidence: $confidence.regime_adjusted_baseline
-        - type: is_true
-          left:
-            subject:
-              source: pumpdump
-              type: category
-              category:
-                type: coiled_compression
-                confidence: $confidence.regime_adjusted_baseline
-                surprise: 1.0
     branches:
       - condition_group:
-          boolean: and
+          boolean: or
           conditions:
             - type: is_true
               left:
                 subject:
-                  source: hawkes
+                  source: pumpdump
                   type: category
                   category:
-                    type: frenzy
+                    type: vertical_ignition
                     confidence: $confidence.regime_adjusted_baseline
+                    surprise: $surprise.regime_adjusted_baseline
             - type: is_true
               left:
                 subject:
-                  source: causal
+                  source: pumpdump
                   type: category
                   category:
-                    type: endogenous_alpha
+                    type: coiled_compression
                     confidence: $confidence.regime_adjusted_baseline
-            - type: is_false
-              left:
-                subject:
-                  source: toxicity
-                  type: category
-                  category:
-                    type: liquidity_vacuum
-                    confidence: $confidence.regime_adjusted_baseline
-        action:
-          type: market
-          side: buy
-          fraction: 0.15
+                    surprise: $surprise.regime_adjusted_baseline
+        branches:
+          - condition_group:
+              boolean: and
+              conditions:
+                - type: is_true
+                  left:
+                    subject:
+                      source: hawkes
+                      type: category
+                      category:
+                        type: frenzy
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_true
+                  left:
+                    subject:
+                      source: causal
+                      type: category
+                      category:
+                        type: endogenous_alpha
+                        confidence: $confidence.regime_adjusted_baseline
+                - type: is_false
+                  left:
+                    subject:
+                      source: toxicity
+                      type: category
+                      category:
+                        type: liquidity_vacuum
+                        confidence: $confidence.regime_adjusted_baseline
+            action:
+              type: market
+              side: buy
+              fraction: 0.15

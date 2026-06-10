@@ -30,6 +30,34 @@ func TestEvalTraceBottleneck(t *testing.T) {
 	})
 }
 
+func TestEvalTraceAuditScore(t *testing.T) {
+	Convey("Given entry-path traces with different depths", t, func() {
+		ignition := &EvalTrace{
+			Nodes: []TraceNode{
+				{Key: "5", Held: true},
+				{Key: "5/0", Held: true},
+				{Key: "5/0/0", Held: false},
+			},
+		}
+		scarcity := &EvalTrace{
+			Nodes: []TraceNode{
+				{Key: "10", Held: false},
+			},
+		}
+
+		Convey("It should rank the deeper ignition bottleneck higher", func() {
+			ignitionDepth, ignitionBranch := ignition.AuditScore()
+			scarcityDepth, scarcityBranch := scarcity.AuditScore()
+
+			So(ignitionDepth, ShouldEqual, 3)
+			So(ignitionBranch, ShouldEqual, 5)
+			So(scarcityDepth, ShouldEqual, 0)
+			So(scarcityBranch, ShouldEqual, 999)
+			So(ignition.BeatsAuditScore(scarcityDepth, scarcityBranch), ShouldBeTrue)
+		})
+	})
+}
+
 func TestSnapshotSignals(t *testing.T) {
 	Convey("Given a measurement window with duplicate sources", t, func() {
 		measurements := []Measurement{

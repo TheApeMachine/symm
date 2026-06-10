@@ -42,6 +42,7 @@ func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Eval
 
 /*
 EvaluateTraced runs the playbook and optionally records the gate path for audit.
+Entry-path traces are collected per branch; the deepest blocking gate wins.
 */
 func (tree *Tree) EvaluateTraced(
 	measurements []Measurement,
@@ -54,13 +55,20 @@ func (tree *Tree) EvaluateTraced(
 		tree.stats.BeginEvaluation()
 	}
 
+	bestDepth := 0
+	bestBranchIndex := 999
+	var bestAudit *EvalTrace
+
 	for branchIndex, branch := range tree.Branches {
+		branchKey := strconv.Itoa(branchIndex)
+		branchTrace := traceForBranch(trace, branchIndex)
+
 		evaluation, err := branch.evaluate(
 			measurements,
 			evalContext,
 			tree.stats,
-			trace,
-			strconv.Itoa(branchIndex),
+			branchTrace,
+			branchKey,
 		)
 
 		if errnie.Error(err) != nil {
@@ -68,11 +76,36 @@ func (tree *Tree) EvaluateTraced(
 		}
 
 		if evaluation != nil {
+			if trace != nil && branchTrace != nil {
+				trace.Adopt(branchTrace)
+			}
+
 			return evaluation
+		}
+
+		if trace == nil || branchIndex < firstEntryBranchIndex || branchTrace == nil {
+			continue
+		}
+
+		if bestAudit == nil || branchTrace.BeatsAuditScore(bestDepth, bestBranchIndex) {
+			bestAudit = branchTrace
+			bestDepth, bestBranchIndex = branchTrace.AuditScore()
 		}
 	}
 
+	if trace != nil && bestAudit != nil {
+		trace.Adopt(bestAudit)
+	}
+
 	return nil
+}
+
+func traceForBranch(auditTrace *EvalTrace, branchIndex int) *EvalTrace {
+	if auditTrace == nil {
+		return nil
+	}
+
+	return &EvalTrace{}
 }
 
 /*

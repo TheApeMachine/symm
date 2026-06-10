@@ -9,6 +9,7 @@ import { Page } from "#/components/layout/page";
 import { PositionsPanel } from "#/components/panels/positions";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { Flex } from "#/components/ui/flex";
 import { Popover, PopoverPopup, PopoverTrigger } from "#/components/ui/popover";
 import { ToastProvider } from "#/components/ui/toast";
 import { cn, releaseSciChartWasm } from "#/lib/utils";
@@ -126,12 +127,14 @@ const PageHeader = () => {
 
 				<Button className="h-auto! px-4 py-3 text-left" variant="outline">
 					<div className="flex flex-col gap-0.5">
-						<h3 className="tabular-nums">
-							{online ? playbookEvaluations.toLocaleString() : "…"}
-						</h3>
-						<p className="font-normal text-muted-foreground">
-							playbook evaluations
-						</p>
+						<Flex.Row gap={1} align="center">
+							<h3 className="tabular-nums">
+								{online ? playbookEvaluations.toLocaleString() : "…"}
+							</h3>
+							<p className="font-normal text-muted-foreground">
+								playbook evaluations
+							</p>
+						</Flex.Row>
 						<p className="text-xs font-normal text-muted-foreground">
 							{online
 								? `${storyTicks.toLocaleString()} story ticks`

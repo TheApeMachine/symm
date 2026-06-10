@@ -20,16 +20,21 @@ import (
 )
 
 type Crypto struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q[any]
-	ui     *qpool.BroadcastGroup
-	bus    *internal.Bus
-	pairs  *sync.Map
-	chart  sync.Once
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q[any]
+	ui          *qpool.BroadcastGroup
+	bus         *internal.Bus
+	pairs       *sync.Map
+	instruments *market.InstrumentRegistry
+	chart       sync.Once
 }
 
-func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
+func NewCrypto(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	instruments *market.InstrumentRegistry,
+) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Crypto{
@@ -41,9 +46,12 @@ func NewCrypto(ctx context.Context, pool *qpool.Q[any]) *Crypto {
 			ctx,
 			pool,
 			[]string{"kraken:public", "kraken:private", "kraken:futures", "ui", "raw"},
-			[]string{"raw"},
+			[]internal.Subscription{
+				internal.Subscribe("raw", "trader:crypto"),
+			},
 		),
-		pairs: &sync.Map{},
+		pairs:       &sync.Map{},
+		instruments: instruments,
 	}
 }
 
@@ -94,6 +102,10 @@ func (crypto *Crypto) Tick() (err error) {
 				if instrument, ok = message.Value.(*market.InstrumentUpdate); !ok {
 					errnie.Error(errors.New("crypto: invalid instrument"), "crypto: invalid instrument")
 					continue
+				}
+
+				if crypto.instruments != nil {
+					crypto.instruments.Observe(instrument)
 				}
 
 				quoteCurrency := viper.GetString("market.quote_currency")

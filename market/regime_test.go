@@ -132,8 +132,8 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 8, nil)
-		bus := internal.NewBus(ctx, pool, []string{"ui"}, nil)
-		subscriber := internal.NewBus(ctx, pool, nil, []string{"ui"})
+		bus := internal.NewBus(ctx, pool, []string{"ui"}, []internal.Subscription{internal.Subscribe("ui", "test-ui")})
+		subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe("ui", "test-ui-sub")})
 
 		crossSection := &CrossSection{returnCap: 32}
 		classifier, err := NewRegimeClassifier(crossSection)

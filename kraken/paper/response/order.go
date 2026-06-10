@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
@@ -26,9 +27,14 @@ type Orders struct {
 	pendingExec []user.Execution
 	observers   []types.Socket
 	fillHandler *Balances
+	bookStore   *market.BookStore
 }
 
-func NewOrders(ctx context.Context, pool *qpool.Q[any]) *Orders {
+func NewOrders(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	bookStore *market.BookStore,
+) *Orders {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Orders{
@@ -40,6 +46,7 @@ func NewOrders(ctx context.Context, pool *qpool.Q[any]) *Orders {
 		model:      make(map[string]trading.OrderUpdate),
 		executions: make(map[string]user.Execution),
 		observers:  make([]types.Socket, 0),
+		bookStore:  bookStore,
 	}
 }
 
@@ -75,7 +82,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 			OrderID: params.ClOrdID,
 		}
 
-		if params.OrderType == trading.Market && params.OrderQty > 0 && params.LimitPrice > 0 {
+		if params.OrderType == trading.Market && params.OrderQty > 0 {
 			orders.fillMarket(params)
 		}
 	case trading.MethodCancelOrder:
@@ -144,7 +151,23 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 		return
 	}
 
-	execution, fillErr := orders.fillHandler.ApplyFill(params, params.LimitPrice)
+	fillPrice := params.LimitPrice
+
+	if orders.bookStore != nil {
+		side := string(params.Side)
+		vwapPrice, _, vwapErr := orders.bookStore.VWAP(params.Symbol, side, params.OrderQty)
+
+		if vwapErr == nil {
+			fillPrice = vwapPrice
+		}
+	}
+
+	if fillPrice <= 0 {
+		delete(orders.model, params.ClOrdID)
+		return
+	}
+
+	execution, fillErr := orders.fillHandler.ApplyFill(params, fillPrice)
 
 	if fillErr != nil {
 		delete(orders.model, params.ClOrdID)
