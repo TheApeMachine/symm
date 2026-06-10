@@ -2,7 +2,6 @@ package signal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -69,28 +68,28 @@ func (system *System) Tick() error {
 	for {
 		message, err := system.bus.Receive(internal.ChannelRaw)
 
-		if errnie.Error(err) != nil || message == nil {
+		if errnie.Error(err) != nil {
+			return err
+		}
+
+		if message == nil {
 			continue
 		}
 
 		switch rawbus.TypeFrom(message.Type) {
 		case rawbus.TypeSymbols:
-			symbols, symbolOk := message.Value.([]string)
+			symbols, ok := message.Value.([]string)
 
-			if symbolOk {
+			if ok {
 				system.gauge.RegisterSymbols(symbols)
 			}
 
 			continue
 		case rawbus.TypeTrade:
-			trades, ok := tradeUpdates(message.Value)
+			trades, ok := message.Value.([]*krakenmarket.TradeUpdate)
 
 			if !ok {
-				errnie.Error(errors.New(
-					string(system.source) + ": invalid trade",
-				))
-
-				continue
+				return fmt.Errorf("%s: invalid trade", system.source)
 			}
 
 			for _, trade := range trades {
@@ -98,31 +97,25 @@ func (system *System) Tick() error {
 					continue
 				}
 
-				signal := system.LoadSignal(logic.EntityTrade, trade.Symbol)
+				signal, loadErr := system.LoadSignal(logic.EntityTrade, trade.Symbol)
 
-				if signal == nil {
-					errnie.Error(errors.New(
-						string(system.source) + ": symbol not found",
-					))
-
-					continue
+				if loadErr != nil {
+					return loadErr
 				}
 
-				system.publishMeasurement(
+				if publishErr := system.publishMeasurement(
 					signal,
 					signal.Record(trade),
 					trade.Timestamp,
-				)
+				); publishErr != nil {
+					return publishErr
+				}
 			}
 		case rawbus.TypeTicker:
-			tickers, ok := tickerUpdates(message.Value)
+			tickers, ok := message.Value.([]*krakenmarket.TickerUpdate)
 
 			if !ok {
-				errnie.Error(errors.New(
-					string(system.source) + ": invalid ticker",
-				))
-
-				continue
+				return fmt.Errorf("%s: invalid ticker", system.source)
 			}
 
 			for _, ticker := range tickers {
@@ -130,31 +123,25 @@ func (system *System) Tick() error {
 					continue
 				}
 
-				signal := system.LoadSignal(logic.EntityTick, ticker.Symbol)
+				signal, loadErr := system.LoadSignal(logic.EntityTick, ticker.Symbol)
 
-				if signal == nil {
-					errnie.Error(errors.New(
-						string(system.source) + ": symbol not found",
-					))
-
-					continue
+				if loadErr != nil {
+					return loadErr
 				}
 
-				system.publishMeasurement(
+				if publishErr := system.publishMeasurement(
 					signal,
 					signal.Record(ticker),
 					ticker.Timestamp,
-				)
+				); publishErr != nil {
+					return publishErr
+				}
 			}
 		case rawbus.TypeBook:
-			books, ok := bookUpdates(message.Value)
+			books, ok := message.Value.([]*krakenmarket.BookUpdate)
 
 			if !ok {
-				errnie.Error(errors.New(
-					string(system.source) + ": invalid book",
-				))
-
-				continue
+				return fmt.Errorf("%s: invalid book", system.source)
 			}
 
 			for _, book := range books {
@@ -162,33 +149,25 @@ func (system *System) Tick() error {
 					continue
 				}
 
-				signal := system.LoadSignal(logic.EntityBook, book.Symbol)
+				signal, loadErr := system.LoadSignal(logic.EntityBook, book.Symbol)
 
-				if signal == nil {
-					errnie.Error(errors.New(
-						string(system.source) + ": symbol not found",
-					))
-
-					continue
+				if loadErr != nil {
+					return loadErr
 				}
 
-				eventAt := book.Timestamp
-
-				system.publishMeasurement(
+				if publishErr := system.publishMeasurement(
 					signal,
 					signal.Record(book),
-					eventAt,
-				)
+					book.Timestamp,
+				); publishErr != nil {
+					return publishErr
+				}
 			}
 		case rawbus.TypeFeedback:
 			feedback, ok := message.Value.(*market.Feedback)
 
 			if !ok {
-				errnie.Error(errors.New(
-					string(system.source) + ": invalid feedback",
-				))
-
-				continue
+				return fmt.Errorf("%s: invalid feedback", system.source)
 			}
 
 			system.feedback = feedback
@@ -202,77 +181,29 @@ func (system *System) publishMeasurement(
 	signal market.Signal,
 	warmed bool,
 	eventAt time.Time,
-) {
+) error {
 	if signal == nil {
-		return
+		return fmt.Errorf("%s: nil signal", system.source)
 	}
 
 	system.gauge.RecordWarmup(signal.Symbol(), warmed)
 
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
-	if errnie.Error(err) != nil {
-		return
+	if err != nil {
+		return err
 	}
 
-	if err := measurement.Publish(system.bus); errnie.Error(err) != nil {
-		return
+	if err := measurement.Publish(system.bus); err != nil {
+		return err
 	}
 
-	errnie.Error(system.gauge.Publish(
-		measurement,
-		signal.Symbol(),
-	))
-}
-
-func tradeUpdates(value any) (krakenmarket.TradeUpdates, bool) {
-	switch updates := value.(type) {
-	case krakenmarket.TradeUpdates:
-		return updates, true
-	case *krakenmarket.TradeUpdates:
-		if updates == nil {
-			return nil, false
-		}
-
-		return *updates, true
-	default:
-		return nil, false
-	}
-}
-
-func tickerUpdates(value any) (krakenmarket.TickerUpdates, bool) {
-	switch updates := value.(type) {
-	case krakenmarket.TickerUpdates:
-		return updates, true
-	case *krakenmarket.TickerUpdates:
-		if updates == nil {
-			return nil, false
-		}
-
-		return *updates, true
-	default:
-		return nil, false
-	}
-}
-
-func bookUpdates(value any) (krakenmarket.BookUpdates, bool) {
-	switch updates := value.(type) {
-	case krakenmarket.BookUpdates:
-		return updates, true
-	case *krakenmarket.BookUpdates:
-		if updates == nil {
-			return nil, false
-		}
-
-		return *updates, true
-	default:
-		return nil, false
-	}
+	return system.gauge.Publish(measurement, signal.Symbol())
 }
 
 func (system *System) LoadSignal(
 	entity logic.EntityType, symbol string,
-) market.Signal {
+) (market.Signal, error) {
 	var (
 		raw    any
 		signal market.Signal
@@ -289,16 +220,13 @@ func (system *System) LoadSignal(
 		),
 	)
 
-	if signal, ok = raw.(market.Signal); !ok {
-		errnie.Error(
-			errors.New(string(system.source)+": symbol is not a Signal"),
-			string(system.source)+": symbol is not a Signal",
-		)
+	signal, ok = raw.(market.Signal)
 
-		return nil
+	if !ok {
+		return nil, fmt.Errorf("%s: symbol is not a Signal", system.source)
 	}
 
-	return signal
+	return signal, nil
 }
 
 func (system *System) Bus() *internal.Bus {

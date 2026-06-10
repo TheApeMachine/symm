@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -55,57 +56,32 @@ func (engine *Engine) Context() context.Context {
 func (engine *Engine) Start() error {
 	var (
 		waitGroup sync.WaitGroup
-		errorMu   sync.Mutex
-		firstErr  error
 	)
 
-	recordErr := func(tickErr error) {
-		if tickErr == nil || errors.Is(tickErr, context.Canceled) {
-			return
-		}
-
-		errorMu.Lock()
-
-		if firstErr == nil {
-			firstErr = tickErr
-		}
-
-		errorMu.Unlock()
-		engine.cancel()
-	}
-
 	for _, system := range engine.systems {
-		waitGroup.Add(1)
-
-		go func(running System) {
-			defer waitGroup.Done()
-
-			recordErr(running.Tick())
-		}(system)
+		waitGroup.Go(func() {
+			if err := errnie.Error(system.Tick()); err != nil {
+				engine.cancel()
+			}
+		})
 	}
 
-	errnie.Error(engine.bus.Send(internal.ChannelKrakenPublic, "instrument", types.KrakenMessage{
+	if err := errnie.Error(engine.bus.Send(internal.ChannelKrakenPublic, "instrument", types.KrakenMessage{
 		Method: "subscribe",
 		Params: market.NewInstrumentParams(),
 		ReqID:  time.Now().UnixNano(),
-	}))
-
-	waitGroup.Wait()
-
-	closeErr := engine.Close()
-
-	if firstErr != nil {
-		return firstErr
+	})); err != nil {
+		engine.cancel()
+		return err
 	}
 
-	return errnie.Error(closeErr)
+	waitGroup.Wait()
+	return errnie.Error(engine.Close())
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {
-	for _, system := range systems {
-		if systemNil(system) {
-			return fmt.Errorf("engine: nil system")
-		}
+	if slices.ContainsFunc(systems, systemNil) {
+		return fmt.Errorf("engine: nil system")
 	}
 
 	engine.systems = append(engine.systems, systems...)

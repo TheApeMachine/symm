@@ -156,7 +156,6 @@ func (ws *WebSocket) Tick() (err error) {
 
 			if rand.Intn(10) == 0 {
 				ws.disconnect()
-				break
 			}
 		default:
 			slot := qvaluePool.Get().(*qpool.QValue[any])

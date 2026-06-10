@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -80,6 +81,69 @@ func TestSystemTickBookUpdates(t *testing.T) {
 			So(second.Symbol, ShouldEqual, "ETH/USD")
 		})
 	})
+}
+
+func TestSystemTickReturnsMeasureError(t *testing.T) {
+	Convey("Given a signal that fails Measure", t, func() {
+		viper.Set("system.queue.ttl", time.Second)
+		viper.Set("system.queue.buffer", 8)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
+		defer pool.Close()
+
+		measureErr := errors.New("fluid: measure failed")
+		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
+			return &measureErrorStub{symbol: symbol, err: measureErr}
+		})
+
+		So(system, ShouldNotBeNil)
+
+		t.Cleanup(func() {
+			cancel()
+			_ = system.Close()
+		})
+
+		tickErr := make(chan error, 1)
+
+		go func() {
+			tickErr <- system.Tick()
+		}()
+
+		updates := krakenmarket.BookUpdates{{Symbol: "BTC/USD"}}
+		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
+
+		Convey("Tick should return the Measure error", func() {
+			var err error
+
+			select {
+			case err = <-tickErr:
+			case <-time.After(2 * time.Second):
+				So("tick error", ShouldEqual, "received")
+			}
+
+			So(err, ShouldEqual, measureErr)
+		})
+	})
+}
+
+type measureErrorStub struct {
+	symbol string
+	err    error
+}
+
+func (stub *measureErrorStub) Measure(*market.Feedback, time.Time) (logic.Measurement, error) {
+	return logic.Measurement{}, stub.err
+}
+
+func (stub *measureErrorStub) Record(any) bool {
+	return true
+}
+
+func (stub *measureErrorStub) Symbol() string {
+	return stub.symbol
 }
 
 func readRecordedBook(recorded chan any) *krakenmarket.BookUpdate {
