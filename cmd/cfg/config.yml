@@ -102,6 +102,11 @@ trading:
     stop_loss_pct: 1.2
     take_profit_pct: 2.4
     trailing_volatility_multiple: 2.5
+  audit:
+    file: runs/audit.jsonl
+    gate_cooldown: 60s
+    max_mb: 32
+    max_backups: 3
 
 optimizer:
   tune:

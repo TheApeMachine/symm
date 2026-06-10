@@ -37,6 +37,17 @@ func NewTree() (*Tree, error) {
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Evaluation {
+	return tree.EvaluateTraced(measurements, holdings, nil)
+}
+
+/*
+EvaluateTraced runs the playbook and optionally records the gate path for audit.
+*/
+func (tree *Tree) EvaluateTraced(
+	measurements []Measurement,
+	holdings *Holdings,
+	trace *EvalTrace,
+) *Evaluation {
 	evalContext := NewEvalContext(measurements, holdings)
 
 	if tree.stats != nil {
@@ -48,6 +59,7 @@ func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Eval
 			measurements,
 			evalContext,
 			tree.stats,
+			trace,
 			strconv.Itoa(branchIndex),
 		)
 

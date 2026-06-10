@@ -241,52 +241,24 @@ branches:
                         type: stochastic_noise
                         confidence: $confidence.regime_adjusted_baseline
             branches:
-          - condition_group:
-              boolean: or
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: causal
-                      type: category
-                      category:
-                        type: endogenous_alpha
-                        confidence: $confidence.regime_adjusted_baseline
-                - type: is_true
-                  left:
-                    subject:
-                      source: correlation
-                      type: category
-                      category:
-                        type: decoupled_alpha
-                        confidence: $confidence.regime_adjusted_baseline
-            branches:
               - condition_group:
                   boolean: or
                   conditions:
                     - type: is_true
                       left:
                         subject:
-                          source: cvd
+                          source: causal
                           type: category
                           category:
-                            type: aggressive_drive
+                            type: endogenous_alpha
                             confidence: $confidence.regime_adjusted_baseline
                     - type: is_true
                       left:
                         subject:
-                          source: depthflow
+                          source: correlation
                           type: category
                           category:
-                            type: loaded_imbalance
-                            confidence: $confidence.regime_adjusted_baseline
-                    - type: is_true
-                      left:
-                        subject:
-                          source: toxicity
-                          type: category
-                          category:
-                            type: hard_support
+                            type: decoupled_alpha
                             confidence: $confidence.regime_adjusted_baseline
                 branches:
                   - condition_group:
@@ -295,31 +267,59 @@ branches:
                         - type: is_true
                           left:
                             subject:
-                              source: fluid
+                              source: cvd
                               type: category
                               category:
-                                type: laminar
+                                type: aggressive_drive
                                 confidence: $confidence.regime_adjusted_baseline
                         - type: is_true
                           left:
                             subject:
-                              source: fluid
+                              source: depthflow
                               type: category
                               category:
-                                type: inertial
+                                type: loaded_imbalance
                                 confidence: $confidence.regime_adjusted_baseline
                         - type: is_true
                           left:
                             subject:
-                              source: manifold
+                              source: toxicity
                               type: category
                               category:
-                                type: synchronized_drift
+                                type: hard_support
                                 confidence: $confidence.regime_adjusted_baseline
-                    action:
-                      type: market
-                      side: buy
-                      fraction: 0.25
+                    branches:
+                      - condition_group:
+                          boolean: or
+                          conditions:
+                            - type: is_true
+                              left:
+                                subject:
+                                  source: fluid
+                                  type: category
+                                  category:
+                                    type: laminar
+                                    confidence: $confidence.regime_adjusted_baseline
+                            - type: is_true
+                              left:
+                                subject:
+                                  source: fluid
+                                  type: category
+                                  category:
+                                    type: inertial
+                                    confidence: $confidence.regime_adjusted_baseline
+                            - type: is_true
+                              left:
+                                subject:
+                                  source: manifold
+                                  type: category
+                                  category:
+                                    type: synchronized_drift
+                                    confidence: $confidence.regime_adjusted_baseline
+                        action:
+                          type: market
+                          side: buy
+                          fraction: 0.25
 
   # --- catch-up: leader lag with local driver ---
 

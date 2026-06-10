@@ -23,13 +23,14 @@ func (branch *Branch) Evaluate(
 	measurements []Measurement,
 	evalContext *EvalContext,
 ) (*Evaluation, error) {
-	return branch.evaluate(measurements, evalContext, nil, "")
+	return branch.evaluate(measurements, evalContext, nil, nil, "")
 }
 
 func (branch *Branch) evaluate(
 	measurements []Measurement,
 	evalContext *EvalContext,
 	stats *TreeStats,
+	trace *EvalTrace,
 	key string,
 ) (*Evaluation, error) {
 	if branch.ConditionGroup == nil {
@@ -47,6 +48,10 @@ func (branch *Branch) evaluate(
 		return nil, err
 	}
 
+	if trace != nil && key != "" {
+		trace.RecordNode(key, branch.ConditionGroup, matched, measurements, evalContext)
+	}
+
 	if stats != nil && key != "" && matched {
 		stats.Hold(key)
 	}
@@ -58,11 +63,11 @@ func (branch *Branch) evaluate(
 	for childIndex, child := range branch.Branches {
 		childKey := key
 
-		if stats != nil && key != "" {
+		if key != "" {
 			childKey = key + "/" + strconv.Itoa(childIndex)
 		}
 
-		action, err := child.evaluate(measurements, evalContext, stats, childKey)
+		action, err := child.evaluate(measurements, evalContext, stats, trace, childKey)
 
 		if errnie.Error(err) != nil {
 			continue

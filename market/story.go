@@ -4,12 +4,14 @@ import (
 	"container/ring"
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 )
@@ -70,9 +72,15 @@ type Story struct {
 	regime          *RegimeClassifier
 	holdings        *logic.Holdings
 	lastTreePublish time.Time
+	audit           *audit.Writer
 }
 
-func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings) *Story {
+func NewStory(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	holdings *logic.Holdings,
+	auditWriter *audit.Writer,
+) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree, err := logic.NewTree()
@@ -103,6 +111,7 @@ func NewStory(ctx context.Context, pool *qpool.Q[any], holdings *logic.Holdings)
 		crossSection: crossSection,
 		regime:       regime,
 		holdings:     holdings,
+		audit:        auditWriter,
 		err:          err,
 	}
 }
@@ -163,7 +172,14 @@ func (story *Story) Tick() error {
 		var evaluation *logic.Evaluation
 
 		if len(measurements) > 0 {
-			evaluation = story.tree.Evaluate(measurements, story.holdings)
+			trace := &logic.EvalTrace{}
+			evaluation = story.tree.EvaluateTraced(measurements, story.holdings, trace)
+
+			if evaluation == nil || evaluation.Action == nil {
+				story.recordPlaybookEval(measurement.Symbol, trace, measurements)
+			} else {
+				story.recordPlaybookAction(measurement.Symbol, evaluation)
+			}
 		}
 
 		if evaluation == nil || evaluation.Action == nil {
@@ -186,6 +202,55 @@ func (story *Story) Tick() error {
 		story.publishMarketRegime()
 		story.publishDecisionTree()
 	}
+}
+
+func (story *Story) recordPlaybookEval(
+	symbol string,
+	trace *logic.EvalTrace,
+	measurements []logic.Measurement,
+) {
+	if story.audit == nil || trace == nil || trace.Depth() < 2 {
+		return
+	}
+
+	bottleneck := trace.Bottleneck()
+
+	if bottleneck == nil || bottleneck.Key == "" {
+		return
+	}
+
+	frame := map[string]any{
+		"event":             "playbook_eval",
+		"ts":                time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol":            symbol,
+		"bottleneck_key":    bottleneck.Key,
+		"bottleneck_label":  bottleneck.Label,
+		"failed_conditions": trace.FailedConditionLabels(),
+		"signals":           logic.SnapshotSignals(measurements),
+	}
+
+	dedupeKey := fmt.Sprintf("playbook_eval:%s:%s", symbol, bottleneck.Key)
+
+	errnie.Error(story.audit.EnqueueDeduped(dedupeKey, frame))
+}
+
+func (story *Story) recordPlaybookAction(symbol string, evaluation *logic.Evaluation) {
+	if story.audit == nil || evaluation == nil || evaluation.Action == nil {
+		return
+	}
+
+	action := evaluation.Action
+
+	frame := map[string]any{
+		"event":  "playbook_action",
+		"ts":     time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol": symbol,
+		"key":    evaluation.Key,
+		"action": action.Type.String(),
+		"side":   string(action.Side),
+	}
+
+	errnie.Error(story.audit.Enqueue(frame))
 }
 
 func (story *Story) publishDecisionTree() {

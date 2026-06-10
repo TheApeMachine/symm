@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
@@ -105,7 +106,14 @@ var (
 			}
 
 			ledger := broker.NewLedger(systemCtx, pool)
-			story := market.NewStory(systemCtx, pool, ledger.Holdings())
+
+			auditWriter, auditErr := audit.NewWriter(systemCtx)
+
+			if auditErr != nil {
+				return errnie.Error(auditErr)
+			}
+
+			story := market.NewStory(systemCtx, pool, ledger.Holdings(), auditWriter)
 
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
@@ -127,8 +135,12 @@ var (
 				ledger,
 				story,
 				trader.NewCrypto(systemCtx, pool),
-				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats()),
+				broker.NewDesk(systemCtx, pool, ledger, story.TreeStats(), auditWriter),
 				ui.NewHub(systemCtx, pool),
+			}
+
+			if auditWriter != nil {
+				systems = append(systems, auditWriter)
 			}
 
 			if os.Getenv("SYMM_KRAKEN_API_KEY") != "" {

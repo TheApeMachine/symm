@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
@@ -26,6 +27,7 @@ type Desk struct {
 	ledger    *Ledger
 	treeStats *logic.TreeStats
 	orders    *sync.Map
+	audit     *audit.Writer
 }
 
 func NewDesk(
@@ -33,6 +35,7 @@ func NewDesk(
 	pool *qpool.Q[any],
 	ledger *Ledger,
 	treeStats *logic.TreeStats,
+	auditWriter *audit.Writer,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -49,6 +52,7 @@ func NewDesk(
 		ledger:    ledger,
 		treeStats: treeStats,
 		orders:    &sync.Map{},
+		audit:     auditWriter,
 	}
 }
 
@@ -221,6 +225,39 @@ func (desk *Desk) publishDecision(
 		"chart":    "decision_tree",
 		"decision": true,
 	}))
+
+	desk.recordDeskDecision(action, verdict, reason)
+}
+
+func (desk *Desk) recordDeskDecision(
+	action *logic.Action,
+	verdict string,
+	reason string,
+) {
+	if desk.audit == nil || action == nil {
+		return
+	}
+
+	frame := map[string]any{
+		"event":   "desk_decision",
+		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
+		"symbol":  action.Symbol,
+		"type":    action.Type.String(),
+		"side":    string(action.Side),
+		"key":     action.BranchKey,
+		"verdict": verdict,
+		"reason":  reason,
+	}
+
+	if verdict == "rejected" && reason != "" {
+		dedupeKey := fmt.Sprintf("desk_reject:%s:%s:%s", action.Symbol, action.Type.String(), reason)
+
+		errnie.Error(desk.audit.EnqueueDeduped(dedupeKey, frame))
+
+		return
+	}
+
+	errnie.Error(desk.audit.Enqueue(frame))
 }
 
 func (desk *Desk) CheckOrder(orderID string) error {
